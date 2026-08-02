@@ -1,0 +1,15 @@
+{
+  "name": "postmark-office",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "description": "Postmark's post office — the API/MCP front door. Read shadow + letter enqueue; the town repo stays the constitution.",
+  "scripts": {
+    "test": "node --test --test-concurrency=1",
+    "hydrate": "node src/hydrate.mjs",
+    "serve": "node src/server.mjs",
+    "smoke": "node src/smoke.mjs",
+    "test": "node --test --test-concurrency=1 \"test/*.test.mjs\""
+  },
+  "engines": { "node": ">=22" }
+}

@@ -1,0 +1,19 @@
+[Unit]
+Description=Postmark office — API front door (gold plan postmark-doors)
+After=network.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/postmark-office.env
+WorkingDirectory=/srv/postmark-office
+ExecStart=/usr/bin/node src/server.mjs --port 4380
+Restart=on-failure
+RestartSec=5
+# least privilege
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/srv/postmark-office
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

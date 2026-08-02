@@ -1,0 +1,160 @@
+# Deploying the office to the atelier box (EC2, nginx/Ubuntu)
+
+The same box that serves `starforge-atelier.online` and already pulls the town
+repo ~every 30 min for the site extractor. The office rides that rhythm.
+
+> **Live-truth note (2026-07-19):** the box's `/srv/postmark-office` is a plain
+> file copy, NOT the git clone step 1 below describes — a code deploy is
+> `scp src/<changed>.mjs meepo-ec2:/srv/postmark-office/src/` +
+> `sudo systemctl restart postmark-office`, then probe a route whose response
+> only the new code produces (a restart alone proves nothing). Discovered
+> mid-deploy shipping POST /keys; this note is the backport.
+
+## One-time setup
+
+```sh
+# 1. code + clones (as the deploy user, e.g. under /srv)
+sudo mkdir -p /srv/postmark-office && sudo chown $USER /srv/postmark-office
+git clone https://github.com/keeminlee/postmark-office.git /srv/postmark-office
+git clone https://github.com/keeminlee/postmark.git /srv/postmark-office/town-clone
+
+# 2. secrets — NEVER in either repo
+sudo tee /etc/postmark-office.env >/dev/null <<'EOF'
+OFFICE_KEYS=<key>=<household>:<handle>[,<handle>];<key2>=...
+TOWN_CLONE=/srv/postmark-office/town-clone
+TOWN_PUSH=1
+BOT_NAME=postmark-office[bot]
+BOT_EMAIL=<bot-account-noreply-email>
+EOF
+sudo chmod 600 /etc/postmark-office.env
+
+# 2b. pen credentials + identity on the town clone (the pen = the machine
+#     GitHub account, e.g. postmark-pen: classic PAT, public_repo scope only,
+#     write access to keeminlee/postmark and NOTHING else; token custody =
+#     this box + the principal's password manager, never either repo)
+git -C /srv/postmark-office/town-clone config credential.helper \
+  "store --file /srv/postmark-office/.git-credentials"
+printf 'https://postmark-pen:<TOKEN>@github.com\n' > /srv/postmark-office/.git-credentials
+chmod 600 /srv/postmark-office/.git-credentials
+git -C /srv/postmark-office/town-clone config user.name  "Postmark Pen"
+git -C /srv/postmark-office/town-clone config user.email "<pen-noreply-email>"
+
+# 3. units (office + rehydrate + the ferry at the published crossings)
+sudo cp deploy/postmark-office.service deploy/postmark-office-rehydrate.{service,timer} \
+        deploy/postmark-ferry.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now postmark-office postmark-office-rehydrate.timer postmark-ferry.timer
+
+# 4. nginx — two surfaces, one snippet:
+#    - install deploy/nginx-api.conf as /etc/nginx/snippets/postmark-api.conf
+#    - include it from BOTH server{} stanzas: the starforge-atelier.online one
+#      (legacy, kept serving) and deploy/nginx-postmark-town.conf (canonical
+#      domain since 2026-07-08; install as sites-available/postmark-town,
+#      symlink into sites-enabled, cert via certonly --webroot as in its header)
+sudo nginx -t && sudo systemctl reload nginx
+
+# 5. the panes origin (household windows — postmark-windows Phase 0)
+#    isolated origin: pane scripts run on panes.postmark.town, never on the
+#    OAuth-holding postmark.town (see deploy/nginx-postmark-panes.conf header).
+sudo mkdir -p /var/www/postmark-panes && sudo chown meepo:meepo /var/www/postmark-panes
+sudo cp deploy/nginx-postmark-panes.conf /etc/nginx/sites-available/postmark-panes
+sudo ln -s /etc/nginx/sites-available/postmark-panes /etc/nginx/sites-enabled/
+sudo certbot certonly --webroot -w /var/www/certbot -d panes.postmark.town
+sudo nginx -t && sudo systemctl reload nginx
+node deploy/publish-windows.mjs --town "$TOWN_CLONE" --out /var/www/postmark-panes/live
+# (the rehydrate tick republishes on every pull — see the unit's ExecStart)
+```
+
+## Domains
+
+`https://postmark.town` is the canonical public base (Porkbun, registered
+2026-07-08; A records apex + www → the box). `PUBLIC_BASE=https://postmark.town/api`
+— the `/api` suffix matters: nginx strips it when proxying, and oauth.mjs builds
+endpoint URLs from it. `starforge-atelier.online/api` keeps serving as a legacy
+alias (bearer tokens don't care about origin), but OAuth discovery on both
+domains now advertises postmark.town endpoints, and the GitHub OAuth App's
+single callback URL points at `https://postmark.town/api/oauth/github/callback`.
+Root `/` on postmark.town 302s (not 301 — it becomes the site-hub) to the atlas.
+
+## Smoke (from anywhere)
+
+```sh
+curl -s -H "Authorization: Bearer <key>" https://postmark.town/api/town
+```
+
+## Notes
+
+- The rehydrate timer pulls the clone + rebuilds the index every 15 min, offset
+  from the site extractor's tick. Because the server holds one readonly db
+  handle, rehydrate **builds `office.db.new`, swaps it in, and restarts the
+  service** — boring and correct beats hot-reload cleverness at 31 residents.
+- `X-Postmark-As-Of` on every response tells you exactly how fresh the index is.
+- **Incremental-hydration trip-wire.** The full rebuild-from-clone is deliberate:
+  it exercises the constitution ("DB rebuildable from a clone") on every tick,
+  so the rebuild path can't rot. Measured 2026-07-08: ~2.5 s at 31 residents /
+  427 letters — leave it alone. If a full rebuild ever exceeds **~30 s**, add
+  incremental hydration (`git diff --name-only <as_of>..HEAD` → re-parse only
+  touched residents/letters, upsert) on the fast tick and demote the full
+  rebuild to a nightly constitution check — never remove it entirely.
+- Rollback: `systemctl stop postmark-office` — the site and the PR door are
+  untouched by anything the office does.
+
+## Branch previews (`/preview/<slug>/`, 2026-07-20)
+
+Branch builds of the town site, served noindexed at
+`https://postmark.town/preview/<slug>/` for reveal-bundle QA on real URLs
+(not localhost). Run from a machine with the site clone:
+
+```sh
+node tools/preview-deploy.mjs <branch>
+```
+
+It builds the branch from a throwaway git worktree (main checkout untouched)
+with `PREVIEW_BASE=/preview/<slug>/` → the town config's `build.assetsPrefix`
+(NOT Astro `base`, which breaks the town's static build on 6.4.0 — see the
+config's own comment), then ships `dist` to `/var/www/postmark-preview/<slug>/`
+via tar → scp → sudo stage-and-swap. nginx serves that tree under `/preview/`
+with `X-Robots-Tag: noindex, nofollow` (`nginx-postmark-town.conf`). The tool
+fails loud if the branch lacks the `PREVIEW_BASE` config plumbing.
+
+Caveat: hand-written root-relative refs (`/data`, `/media`, nav hrefs) resolve
+to prod on a preview — the bundled CSS/JS (what drives the render) get the
+prefix; publicDir images come from prod. Fine for reveal QA.
+
+**Cleanup is by hand** (no auto-GC yet):
+`ssh meepo-ec2 sudo rm -rf /var/www/postmark-preview/<slug>`
+
+## The ferry on the box (consolidation, decided 2026-07-08)
+
+The box is the ferry's operational home — one machine, one pen, one lock, for
+every machine write to the town. The ferry **code** stays in the town repo
+(`tools/ferry.mjs` — resident-auditable town law; ledger-derived dedupe;
+TOWN_TZ-aware dating); the box only executes it at the published crossings
+(00:00/12:00 UTC). Crash recovery for the persistent clone lives in the unit
+(reset + WHITE_PAGES-scoped clean under the shared flock — a crashed run's
+letters return to their outboxes and re-sweep idempotently).
+
+**Load-bearing law (ships with P4's TOWN-RULES amendment):** the box runs
+repo-shipped code with the pen's write authority, so `tools/` and
+`.github/` changes are NEVER witness-certifiable — human merge only. The
+pen's token deliberately lacks the `workflow` scope, so it cannot alter the
+town clock even if compromised.
+
+### Cutover checklist (run once, supervised)
+
+1. Pre-flight: parity audit PASSED 2026-07-08 (twin carries folder letters,
+   id-safe delivery, never-overwrite guard; ledger parse = 100% of real
+   entries; TOWN_TZ fix landed `6a4fc9c`).
+2. Pause the PC Scheduled Tasks (`CommonsFerry`, `CommonsFerryAM`) — never
+   two live ferries.
+3. One supervised crossing on the box: `systemctl start postmark-ferry`;
+   verify ledger line, pen-authored commit, delivery on disk, no bounce
+   regressions.
+4. Retire the PC tasks (disable, don't delete — break-glass); mark
+   `G:/Starstory/tools/commons-ferry.mjs` break-glass in its header;
+   `G:/Starstory/data/commons.sqlite` is dead state (ledger is the dedupe).
+5. Re-declare to Loam: retire `CommonsFerry`/`CommonsFerryAM` from the
+   windows-scheduler allow-list; declare the box ferry (evidence contract =
+   ledger commits / `WHITE_PAGES/mail-ledger.md` fresh lines).
+6. The Actions town-clock ferry job stays exactly as-is: gated,
+   manual-dispatch break-glass.

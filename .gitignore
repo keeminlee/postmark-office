@@ -1,0 +1,8 @@
+node_modules/
+*.db
+*.db-journal
+.env
+office-keys.json
+town-clone/
+server.log
+telemetry/access-*.jsonl

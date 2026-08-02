@@ -1,0 +1,29 @@
+# PREP ONLY — do not install as part of this build.
+# The founder will decide at install time which live nginx file receives these
+# http{} and location{} fragments. They mirror src/bouncer.mjs's provisional
+# keyless tier: 120 requests/minute, burst 240.
+
+# Merge these directives into nginx's http {} context. An empty key is not
+# accounted by limit_req_zone, so credentialed calls, non-GET methods, and the
+# OAuth dance pass; the office backstop still catches forged credentials.
+map "$request_method:$http_authorization:$uri" $postmark_keyless_limit_key {
+    "~^GET::/api/(?!oauth(?:/|$))" $binary_remote_addr;
+    default                         "";
+}
+limit_req_zone $postmark_keyless_limit_key zone=postmark_keyless:10m rate=120r/m;
+
+# Merge these directives into the location that proxies the keyless API
+# endpoints (currently the /api/ office location; the founder chooses live
+# placement at install time). nodelay makes the configured burst honest.
+limit_req zone=postmark_keyless burst=240 nodelay;
+limit_req_status 429;
+error_page 429 = @postmark_keyless_rate;
+
+# Merge this named location beside the proxying location. At 60/minute the
+# bucket refills one request each second, so nginx can return the office's same
+# honest JSON shape and Retry-After contract without proxying a rejected call.
+location @postmark_keyless_rate {
+    default_type application/json;
+    add_header Retry-After 1 always;
+    return 429 '{"error":"rate","defect":"the keyless GET budget is empty; try again in 1 second.","retry_after_s":1}';
+}

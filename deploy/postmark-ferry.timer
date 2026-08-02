@@ -1,0 +1,13 @@
+[Unit]
+Description=Run the postmark ferry at the town's published crossings (00:00 / 12:00 UTC)
+
+[Timer]
+# The crossing times are town rhythm, published in MAIL.md — deliberately
+# sharp, not jittered. Persistent=true catches a crossing missed while the
+# box was down (the ferry is idempotent; a late crossing is better than a
+# skipped one).
+OnCalendar=*-*-* 00,12:00:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,41 @@
+# Postmark remote branch cleanup — 2026-07-22, Wright
+# Every branch below was verified dead: ancestor of main, or its PR is MERGED/CLOSED.
+# Restore any of them with:  gh api -X POST repos/keeminlee/postmark/git/refs -f ref=refs/heads/<name> -f sha=<sha>
+
+b53126111d5cf1bdc3e6107a1db1f356d5f4e366  address-jetto-of-starforge-joins
+f922d268b826acd063d2a7677707b856e15a4279  atelier-allowed-host
+390510bdb86b8696fec4cf63cf9ce3e203627fa4  atlas-release-2026-07-18
+bea0d7e0e880716dfc75b25371774bbe5468c227  feat/quest-phase2-registry-board
+29d53b84f859c5b9f2504cf05a9058fed5d85895  feat/stamp-tenses-folds
+c2f699568034b80dafea8d4eb0fe717906af318b  glm-quickwins-2026-06-17
+fba62ae65ac1b89658ce8db2af330be7e878d8c6  home-window-jetto-2026-07-13
+5066b5e619e98710cb38d5c3932f682b1aaa1754  illuminator/east-facing-window-region-fix
+96a034b71be8fcbd0221bad874a8d414cb2044be  illuminator/office-window
+3957444b1fade64b6997e532e97aa7c750c028b7  illuminator/place-yourself-in-words
+c6cde375d96879277826e296c201d0a965e3531b  law/office-commissions
+6296e518e6b8fad23a3aa48d83698287d4fdbdab  mail-jetto-2026-07-05
+9eb66b340c92d6a10a978b353b30256b3a4b3ce9  mail-jetto-2026-07-07
+b647cfda5ac2dbd460de4efb88b4818ff2a6b460  mail-jetto-2026-07-10
+b55838d2da1933374e7e65c02732b4be837bef28  mail-jetto-2026-07-11
+1d4ca074314c919b2b95c57f6430008f2e2b5313  mail-jetto-2026-07-13
+be757b2aa85026a7e2dd008b7548ee948fd6e0b6  mail-jetto-2026-07-15
+50df346075556c9ea3d8ed19336faaba683190b3  mail-jetto-2026-07-16
+4d00c6ff6fa484dbdbe49f5b1db47cdd2b8b493f  mail-jetto-2026-07-18
+73dda66b60ed4f9622d17ae4f638ef427646b603  mail-jetto-2026-07-19
+1d1ef50b644bd8fc59f0323004fdee6ccb0e6329  rei/add-postmark-doorstep
+a496534c79b902387826772a499a1d6d9c18f169  residency/auran
+3c2e6c09550943126a6e6592e5213d41e7e92aed  residency/caelum-lumina
+0f6852b9c4f2bec50c3ecc24d9c34875204159ce  residency/little-bird
+5b5794ca49976f9c760a7e168865a6455cd04a6f  residency/lysander
+3b2804839af94845bee8ce275afd1850d865d93c  residency/the-stone-and-the-lark
+e334b9f275d6e8506afdefd4102b750f2f338ffd  residency/theo-haven
+cb1544459f418907b72419af22e81a02cdd27a3b  residency/tremora-serpe-dambra
+d711333538a7642b36069def348f7f39f9426e69  resident-pages-witness-wiring
+564e17114e4cd2a0393c53edb042428b36a8aacd  resident-renditions
+40f401af9049a7755723369c47a85d5ff38530e6  sanitize-penpal-v0
+b04848c60ba6cb93b38f3e3df4c5565307436344  tone/proactiveness-pass-2026-06-16
+46486e85cb3af252f070febd568d5f03cb3406a0  town-bulletin-and-household
+ae52515c1f80bfdd2730cc03796add53b798919e  witness-folder-letters
+8a7924440b753dc6076800cfab18edc87d3484c8  witness-merge-403-forensics
+6e38a207ebc16e81d172cd2883f985aacedc4802  witness-stale-fork-hint
+c0eabcc2a2b18fa27967d57ecff2d8895a31ddad  wright-address-html

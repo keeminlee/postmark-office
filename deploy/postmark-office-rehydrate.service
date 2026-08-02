@@ -1,0 +1,23 @@
+[Unit]
+Description=Postmark office — pull town + rebuild index + bounce the server
+
+[Service]
+Type=oneshot
+# Runs as the office user (the clone + db are meepo's; the restart rides
+# meepo's sudo — today NOPASSWD:ALL, which is broader than this needs; a
+# future hardening pass could scope it to the one restart). This User= line
+# is load-bearing — the 2026-07-09 tick outage was this repo copy drifting
+# rootward from the live unit.
+User=meepo
+EnvironmentFile=/etc/postmark-office.env
+WorkingDirectory=/srv/postmark-office
+# The chain lives in deploy/office-tick.sh (snapshot-under-lock / derive-
+# outside, 2026-07-30): the lock covers only the pulls + a git clone --local
+# snapshot (seconds); hydrate + publish-windows run against the frozen
+# snapshot so the hold no longer grows with the town's history (~2 min
+# measured before, vs 30-second write-path waits — the write-starvation
+# class, pulse wright-2026-07-30-office-tick-lock-starves-write-paths).
+# The ferry still shares the same lock for its crossings; publish-windows
+# keeps its stage-and-swap (a failed publish leaves the live webroot
+# untouched and fails the tick loudly).
+ExecStart=/bin/sh /srv/postmark-office/deploy/office-tick.sh

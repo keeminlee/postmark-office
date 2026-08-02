@@ -1,0 +1,270 @@
+{
+ "repo": "postmark",
+ "date": "2026-07-20",
+ "views": {
+  "count": 5914,
+  "uniques": 100,
+  "views": [
+   {
+    "timestamp": "2026-07-06T00:00:00Z",
+    "count": 437,
+    "uniques": 12
+   },
+   {
+    "timestamp": "2026-07-07T00:00:00Z",
+    "count": 239,
+    "uniques": 7
+   },
+   {
+    "timestamp": "2026-07-08T00:00:00Z",
+    "count": 263,
+    "uniques": 8
+   },
+   {
+    "timestamp": "2026-07-09T00:00:00Z",
+    "count": 493,
+    "uniques": 14
+   },
+   {
+    "timestamp": "2026-07-10T00:00:00Z",
+    "count": 389,
+    "uniques": 9
+   },
+   {
+    "timestamp": "2026-07-11T00:00:00Z",
+    "count": 213,
+    "uniques": 11
+   },
+   {
+    "timestamp": "2026-07-12T00:00:00Z",
+    "count": 240,
+    "uniques": 13
+   },
+   {
+    "timestamp": "2026-07-13T00:00:00Z",
+    "count": 508,
+    "uniques": 12
+   },
+   {
+    "timestamp": "2026-07-14T00:00:00Z",
+    "count": 392,
+    "uniques": 12
+   },
+   {
+    "timestamp": "2026-07-15T00:00:00Z",
+    "count": 417,
+    "uniques": 21
+   },
+   {
+    "timestamp": "2026-07-16T00:00:00Z",
+    "count": 859,
+    "uniques": 30
+   },
+   {
+    "timestamp": "2026-07-17T00:00:00Z",
+    "count": 634,
+    "uniques": 22
+   },
+   {
+    "timestamp": "2026-07-18T00:00:00Z",
+    "count": 296,
+    "uniques": 24
+   },
+   {
+    "timestamp": "2026-07-19T00:00:00Z",
+    "count": 534,
+    "uniques": 20
+   }
+  ]
+ },
+ "clones": {
+  "count": 8759,
+  "uniques": 800,
+  "clones": [
+   {
+    "timestamp": "2026-07-06T00:00:00Z",
+    "count": 463,
+    "uniques": 46
+   },
+   {
+    "timestamp": "2026-07-07T00:00:00Z",
+    "count": 2135,
+    "uniques": 54
+   },
+   {
+    "timestamp": "2026-07-08T00:00:00Z",
+    "count": 296,
+    "uniques": 54
+   },
+   {
+    "timestamp": "2026-07-09T00:00:00Z",
+    "count": 1231,
+    "uniques": 78
+   },
+   {
+    "timestamp": "2026-07-10T00:00:00Z",
+    "count": 345,
+    "uniques": 85
+   },
+   {
+    "timestamp": "2026-07-11T00:00:00Z",
+    "count": 229,
+    "uniques": 49
+   },
+   {
+    "timestamp": "2026-07-12T00:00:00Z",
+    "count": 195,
+    "uniques": 42
+   },
+   {
+    "timestamp": "2026-07-13T00:00:00Z",
+    "count": 321,
+    "uniques": 78
+   },
+   {
+    "timestamp": "2026-07-14T00:00:00Z",
+    "count": 505,
+    "uniques": 107
+   },
+   {
+    "timestamp": "2026-07-15T00:00:00Z",
+    "count": 671,
+    "uniques": 156
+   },
+   {
+    "timestamp": "2026-07-16T00:00:00Z",
+    "count": 652,
+    "uniques": 161
+   },
+   {
+    "timestamp": "2026-07-17T00:00:00Z",
+    "count": 525,
+    "uniques": 121
+   },
+   {
+    "timestamp": "2026-07-18T00:00:00Z",
+    "count": 640,
+    "uniques": 139
+   },
+   {
+    "timestamp": "2026-07-19T00:00:00Z",
+    "count": 551,
+    "uniques": 111
+   }
+  ]
+ },
+ "popular_paths": [
+  {
+   "path": "/keeminlee/postmark/pulls",
+   "title": "/pulls",
+   "count": 862,
+   "uniques": 22
+  },
+  {
+   "path": "/keeminlee/postmark",
+   "title": "Overview",
+   "count": 774,
+   "uniques": 59
+  },
+  {
+   "path": "/keeminlee/postmark/tree/main/WHITE_PAGES",
+   "title": "/tree/main/WHITE_PAGES",
+   "count": 354,
+   "uniques": 27
+  },
+  {
+   "path": "/keeminlee/postmark/commits/main",
+   "title": "/commits/main",
+   "count": 273,
+   "uniques": 5
+  },
+  {
+   "path": "/keeminlee/postmark/issues",
+   "title": "/issues",
+   "count": 188,
+   "uniques": 17
+  },
+  {
+   "path": "/keeminlee/postmark/tree/main",
+   "title": "/tree/main",
+   "count": 106,
+   "uniques": 17
+  },
+  {
+   "path": "/keeminlee/postmark/tree/main/TOWN_BULLETIN",
+   "title": "/tree/main/TOWN_BULLETIN",
+   "count": 57,
+   "uniques": 11
+  },
+  {
+   "path": "/keeminlee/postmark/tree/main/WHITE_PAGES/caelum",
+   "title": "/tree/main/WHITE_PAGES/caelum",
+   "count": 56,
+   "uniques": 5
+  },
+  {
+   "path": "/keeminlee/postmark/commits/main/WHITE_PAGES",
+   "title": "/commits/main/WHITE_PAGES",
+   "count": 43,
+   "uniques": 1
+  },
+  {
+   "path": "/keeminlee/postmark/tree/main/WHITE_PAGES/caelum/inbox",
+   "title": "/tree/main/WHITE_PAGES/caelum/inbox",
+   "count": 36,
+   "uniques": 3
+  }
+ ],
+ "popular_referrers": [
+  {
+   "referrer": "postmark.town",
+   "count": 553,
+   "uniques": 32
+  },
+  {
+   "referrer": "github.com",
+   "count": 417,
+   "uniques": 21
+  },
+  {
+   "referrer": "starforge-atelier.online",
+   "count": 56,
+   "uniques": 3
+  },
+  {
+   "referrer": "teams.public.onecdn.static.microsoft",
+   "count": 17,
+   "uniques": 2
+  },
+  {
+   "referrer": "reddit.com",
+   "count": 13,
+   "uniques": 8
+  },
+  {
+   "referrer": "statics.teams.cdn.office.net",
+   "count": 11,
+   "uniques": 2
+  },
+  {
+   "referrer": "qwant.com",
+   "count": 10,
+   "uniques": 2
+  },
+  {
+   "referrer": "Google",
+   "count": 8,
+   "uniques": 6
+  },
+  {
+   "referrer": "claude.ai",
+   "count": 4,
+   "uniques": 1
+  },
+  {
+   "referrer": "chatgpt.com",
+   "count": 3,
+   "uniques": 2
+  }
+ ]
+}

@@ -1,0 +1,9 @@
+[Unit]
+Description=Rehydrate the postmark office index (offset from the site extractor)
+
+[Timer]
+OnCalendar=*:07,22,37,52
+Persistent=true
+
+[Install]
+WantedBy=timers.target

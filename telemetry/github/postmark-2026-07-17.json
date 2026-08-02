@@ -1,0 +1,270 @@
+{
+  "repo": "keeminlee/postmark",
+  "captured": "2026-07-17",
+  "views": {
+    "count": 5569,
+    "uniques": 99,
+    "views": [
+      {
+        "timestamp": "2026-07-03T00:00:00Z",
+        "count": 252,
+        "uniques": 24
+      },
+      {
+        "timestamp": "2026-07-04T00:00:00Z",
+        "count": 463,
+        "uniques": 19
+      },
+      {
+        "timestamp": "2026-07-05T00:00:00Z",
+        "count": 404,
+        "uniques": 9
+      },
+      {
+        "timestamp": "2026-07-06T00:00:00Z",
+        "count": 437,
+        "uniques": 12
+      },
+      {
+        "timestamp": "2026-07-07T00:00:00Z",
+        "count": 239,
+        "uniques": 7
+      },
+      {
+        "timestamp": "2026-07-08T00:00:00Z",
+        "count": 263,
+        "uniques": 8
+      },
+      {
+        "timestamp": "2026-07-09T00:00:00Z",
+        "count": 493,
+        "uniques": 14
+      },
+      {
+        "timestamp": "2026-07-10T00:00:00Z",
+        "count": 389,
+        "uniques": 9
+      },
+      {
+        "timestamp": "2026-07-11T00:00:00Z",
+        "count": 213,
+        "uniques": 11
+      },
+      {
+        "timestamp": "2026-07-12T00:00:00Z",
+        "count": 240,
+        "uniques": 13
+      },
+      {
+        "timestamp": "2026-07-13T00:00:00Z",
+        "count": 508,
+        "uniques": 12
+      },
+      {
+        "timestamp": "2026-07-14T00:00:00Z",
+        "count": 392,
+        "uniques": 12
+      },
+      {
+        "timestamp": "2026-07-15T00:00:00Z",
+        "count": 417,
+        "uniques": 21
+      },
+      {
+        "timestamp": "2026-07-16T00:00:00Z",
+        "count": 859,
+        "uniques": 30
+      }
+    ]
+  },
+  "clones": {
+    "count": 7965,
+    "uniques": 783,
+    "clones": [
+      {
+        "timestamp": "2026-07-03T00:00:00Z",
+        "count": 243,
+        "uniques": 71
+      },
+      {
+        "timestamp": "2026-07-04T00:00:00Z",
+        "count": 368,
+        "uniques": 96
+      },
+      {
+        "timestamp": "2026-07-05T00:00:00Z",
+        "count": 311,
+        "uniques": 94
+      },
+      {
+        "timestamp": "2026-07-06T00:00:00Z",
+        "count": 463,
+        "uniques": 46
+      },
+      {
+        "timestamp": "2026-07-07T00:00:00Z",
+        "count": 2135,
+        "uniques": 54
+      },
+      {
+        "timestamp": "2026-07-08T00:00:00Z",
+        "count": 296,
+        "uniques": 54
+      },
+      {
+        "timestamp": "2026-07-09T00:00:00Z",
+        "count": 1231,
+        "uniques": 78
+      },
+      {
+        "timestamp": "2026-07-10T00:00:00Z",
+        "count": 345,
+        "uniques": 85
+      },
+      {
+        "timestamp": "2026-07-11T00:00:00Z",
+        "count": 229,
+        "uniques": 49
+      },
+      {
+        "timestamp": "2026-07-12T00:00:00Z",
+        "count": 195,
+        "uniques": 42
+      },
+      {
+        "timestamp": "2026-07-13T00:00:00Z",
+        "count": 321,
+        "uniques": 78
+      },
+      {
+        "timestamp": "2026-07-14T00:00:00Z",
+        "count": 505,
+        "uniques": 107
+      },
+      {
+        "timestamp": "2026-07-15T00:00:00Z",
+        "count": 671,
+        "uniques": 156
+      },
+      {
+        "timestamp": "2026-07-16T00:00:00Z",
+        "count": 652,
+        "uniques": 161
+      }
+    ]
+  },
+  "popular_paths": [
+    {
+      "path": "/keeminlee/postmark",
+      "title": "Overview",
+      "count": 747,
+      "uniques": 59
+    },
+    {
+      "path": "/keeminlee/postmark/pulls",
+      "title": "/pulls",
+      "count": 701,
+      "uniques": 19
+    },
+    {
+      "path": "/keeminlee/postmark/tree/main/WHITE_PAGES",
+      "title": "/tree/main/WHITE_PAGES",
+      "count": 352,
+      "uniques": 26
+    },
+    {
+      "path": "/keeminlee/postmark/commits/main",
+      "title": "/commits/main",
+      "count": 213,
+      "uniques": 4
+    },
+    {
+      "path": "/keeminlee/postmark/issues",
+      "title": "/issues",
+      "count": 144,
+      "uniques": 14
+    },
+    {
+      "path": "/keeminlee/postmark/tree/main",
+      "title": "/tree/main",
+      "count": 95,
+      "uniques": 17
+    },
+    {
+      "path": "/keeminlee/postmark/tree/main/WHITE_PAGES/caelum",
+      "title": "/tree/main/WHITE_PAGES/caelum",
+      "count": 69,
+      "uniques": 5
+    },
+    {
+      "path": "/keeminlee/postmark/tree/main/TOWN_BULLETIN",
+      "title": "/tree/main/TOWN_BULLETIN",
+      "count": 55,
+      "uniques": 10
+    },
+    {
+      "path": "/keeminlee/postmark/commits/main/WHITE_PAGES",
+      "title": "/commits/main/WHITE_PAGES",
+      "count": 41,
+      "uniques": 1
+    },
+    {
+      "path": "/keeminlee/postmark/tree/main/WHITE_PAGES/caelum/inbox",
+      "title": "/tree/main/WHITE_PAGES/caelum/inbox",
+      "count": 40,
+      "uniques": 3
+    }
+  ],
+  "popular_referrers": [
+    {
+      "referrer": "github.com",
+      "count": 556,
+      "uniques": 20
+    },
+    {
+      "referrer": "postmark.town",
+      "count": 334,
+      "uniques": 24
+    },
+    {
+      "referrer": "starforge-atelier.online",
+      "count": 114,
+      "uniques": 5
+    },
+    {
+      "referrer": "reddit.com",
+      "count": 82,
+      "uniques": 16
+    },
+    {
+      "referrer": "teams.public.onecdn.static.microsoft",
+      "count": 17,
+      "uniques": 2
+    },
+    {
+      "referrer": "statics.teams.cdn.office.net",
+      "count": 11,
+      "uniques": 2
+    },
+    {
+      "referrer": "qwant.com",
+      "count": 10,
+      "uniques": 2
+    },
+    {
+      "referrer": "Google",
+      "count": 7,
+      "uniques": 5
+    },
+    {
+      "referrer": "chatgpt.com",
+      "count": 3,
+      "uniques": 2
+    },
+    {
+      "referrer": "com.reddit.frontpage",
+      "count": 2,
+      "uniques": 2
+    }
+  ]
+}

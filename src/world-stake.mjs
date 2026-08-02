@@ -1,0 +1,221 @@
+// world-stake.mjs — the world_stake / world_unstake doors (write-release P3 DRAFT).
+//
+// Append-shaped on purpose: a NEW module, so world.mjs only gains an import, a
+// spread into WORLD_TOOLS, and two switch cases. (A parallel draft is adding walk
+// to the same file; conflicts are the conductor's at review, so the surface each
+// draft touches is kept as small as it can be.)
+//
+// THE LAW IS NOT HERE. Every rule — the balance clip, the no-cap ruling, the meep
+// prohibition, ownership on unstake, the retirement gate — lives in the TOWN's own
+// tools/world-stake.mjs, imported live from the town clone and never vendored. This
+// is the same discipline votes.mjs follows for the ballot and hydrate.mjs for the
+// balance fold, and it is the ops-desk lesson stated as code: shell the mint's own
+// engine, never reimplement the mint's law in the door.
+//
+// What the DOOR adds, and only the door can:
+//   1. Identity — a stake is signed by the office pen, so the door decides WHO the
+//      caller may act as (handle-scoped, choose-or-bounce on a multi-resident key).
+//   2. Mark existence — the ledger engine cannot see the world record; the door
+//      holds the world clone, so it is the one place that can refuse a stake on a
+//      mark that does not exist. Without this a resident could escrow real stamps
+//      against an id nothing reads.
+//   3. The lock — writes go through a subprocess under the ferry's flock, so a
+//      stake append can never race a crossing's mint pass.
+
+import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { join, resolve, dirname } from "node:path";
+import { pathToFileURL, fileURLToPath } from "node:url";
+import { stateForKey } from "./world-branches.mjs";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const TOWN_CLONE = process.env.TOWN_CLONE ?? resolve(HERE, "..", "town-clone");
+const WORLD_CLONE = process.env.WORLD_CLONE ?? resolve(HERE, "..", "world-clone");
+
+const bounce = (code, defect, hint, extra = {}) => ({ error: "bounce", code, defect, hint, ...extra });
+
+// Which resident is acting. Mirrors world.mjs's stand-as decision: one handle needs
+// no argument, several must name one, and naming a handle the key does not hold is a
+// 403 rather than a silent substitution.
+function actingAs(named, key) {
+  const handles = [...(key?.handles ?? [])];
+  if (named) {
+    if (!key?.handles?.has(named))
+      return { bounce: bounce(403, `"${named}" is not one of your residents`,
+        handles.length ? `this key acts for: ${handles.join(", ")}` : "no residents on this key — sign in, or use a household key") };
+    return { handle: named };
+  }
+  if (handles.length > 1)
+    return { bounce: bounce(422, "which resident is staking?",
+      `this key acts for ${handles.length} residents — pass handle: one of ${handles.join(", ")}`, { choices: handles }) };
+  if (handles.length === 1) return { handle: handles[0] };
+  return { bounce: bounce(403, "this key acts for no resident", "sign in, or use a household key") };
+}
+
+// Does the mark exist in the world the CALLER can see? The one gate the ledger
+// cannot keep. Published canon PLUS the caller's own household drafts (Keemin's
+// ruling 2026-07-30: stamps may back a draft mark before Settlement publishes
+// it — escrow is exactly what publishes an off-parcel mark, so gating stakes on
+// publication was a deadlock). Another household's unpublished drafts stay
+// invisible here on purpose: you cannot back what you cannot see. Reads refs
+// via stateForKey, never the checkout's working-tree file (the checkout sits on
+// whatever branch the pen last wrote — its file is nobody's truth).
+function markExists(mark, key = null) {
+  if (!existsSync(join(WORLD_CLONE, ".git")))
+    return { known: false, reason: "the office has no world clone to check against" };
+  try {
+    const { state } = stateForKey(WORLD_CLONE, key ?? {});
+    return { known: true, exists: (state?.marks ?? []).some((m) => m.id === mark) };
+  } catch { return { known: false, reason: "the world record could not be read" }; }
+}
+
+const townDay = () => new Date().toLocaleDateString("en-CA", { timeZone: process.env.TOWN_TZ ?? "America/New_York" });
+
+// Read-side: what a mark carries, and who put it there. No key needed — escrow is
+// public, the way a mark's ✦weight already is in every telling.
+export async function worldStakeRead(args = {}) {
+  const mark = args.mark;
+  if (!mark) return bounce(422, "which mark?", "pass mark: '<by>/<slug>'");
+  if (!existsSync(join(TOWN_CLONE, "tools", "world-stake.mjs")))
+    return bounce(503, "not-yet-open", "the office has no town clone carrying the world-stake engine");
+  const mod = await import(pathToFileURL(join(TOWN_CLONE, "tools", "world-stake.mjs")));
+  const state = mod.worldStakeState(TOWN_CLONE);
+  const holders = [];
+  for (const [k, n] of state.positions) {
+    const i = k.lastIndexOf("|");
+    if (k.slice(0, i) === mark) holders.push({ handle: k.slice(i + 1), stamps: n });
+  }
+  return {
+    mark,
+    escrow: mod.markEscrow(TOWN_CLONE, mark, state),
+    holders: holders.sort((a, b) => b.stamps - a.stamps),
+    retirement: mod.retirementBlocked(TOWN_CLONE, mark, state),
+  };
+}
+
+// Ruling 9 portfolio seam. Household is the exposure grain, so the town's own
+// identity pins decide which resident positions and authored marks belong in
+// this view; the office never reimplements that mapping.
+export async function worldPortfolioStakeSlice(key, marks = []) {
+  const household = String(key?.household ?? "").trim();
+  if (!household || key?.visitor || !(key?.handles instanceof Set) || key.handles.size === 0)
+    return bounce(403, "no resident household at this door", "sign in as a resident household to read your marks");
+  if (!existsSync(join(TOWN_CLONE, "tools", "world-stake.mjs")))
+    return bounce(503, "not-yet-open", "the office has no town clone carrying the world-stake derive");
+
+  const mod = await import(pathToFileURL(join(TOWN_CLONE, "tools", "world-stake.mjs")));
+  const stakeState = mod.worldStakeState(TOWN_CLONE);
+  const derived = mod.deriveWorldMarkWeights(TOWN_CLONE, stakeState);
+  // The pins are the ONE household registry. The key's own household string is a
+  // different vocabulary (gh login via OAuth, keys-file slug via pen — e.g.
+  // "keeminlee") than the pins' ids (e.g. "gh:67605380"), so comparing them
+  // directly can never match on real data — the misattribution Rei found the
+  // night ruling 9 went live. Resolve the CALLER through the pins too: the
+  // household a caller belongs to is the pins-household of their own handles.
+  const pinsHousehold = [...key.handles]
+    .map((h) => stakeState.currentHouseholdOf(h))
+    .find(Boolean) ?? household;
+  const belongs = (handle) => stakeState.currentHouseholdOf(handle) === pinsHousehold;
+  const byId = new Map(marks.map((mark) => [mark.id, mark]));
+  const residents = [...new Set(marks.map((mark) => mark.by).filter(belongs))].sort();
+  const backed = derived.rows
+    .filter((row) => belongs(row.holder))
+    .map((row) => {
+      const mark = byId.get(row.mark);
+      return {
+        id: row.mark,
+        by: mark?.by ?? null,
+        kind: mark?.kind ?? null,
+        tier: mark?.tier ?? null,
+        body: mark?.body ?? null,
+        holder: row.holder,
+        stamps: Number(row.n ?? 0),
+        weight: Number(row.weight ?? row.n ?? 0),
+        yours: Boolean(mark && belongs(mark.by)),
+      };
+    })
+    .sort((a, b) => a.id.localeCompare(b.id) || a.holder.localeCompare(b.holder));
+  return { household, residents, backed };
+}
+
+async function runExec(payload) {
+  const exec = join(HERE, "world-stake-exec.mjs");
+  const lock = process.env.TOWN_LOCK ?? resolve(HERE, "..", "town.lock");
+  const env = { ...process.env, TOWN_CLONE };
+  const useFlock = process.platform === "linux" && existsSync("/usr/bin/flock");
+  let out;
+  try {
+    out = useFlock
+      ? execFileSync("/usr/bin/flock", ["-w", "30", lock, process.execPath, exec, JSON.stringify(payload)], { encoding: "utf8", env })
+      : execFileSync(process.execPath, [exec, JSON.stringify(payload)], { encoding: "utf8", env });
+  } catch (e) {
+    // flock timeout exits 1 with silent stderr; a crashed exec prints a stack.
+    if (e.status === 1 && !String(e.stderr ?? "").trim())
+      return bounce(503, "the office is mid-tick — its periodic index rebuild holds the town lock for a couple of minutes", "nothing was recorded; try again in ~2 minutes");
+    return bounce(500, "the stake could not be recorded", String(e.stderr ?? e.message ?? e).slice(0, 300));
+  }
+  let parsed;
+  try { parsed = JSON.parse(String(out).trim().split("\n").pop()); }
+  catch { return bounce(500, "the stake exec returned nothing readable", String(out).slice(0, 200)); }
+  if (parsed?.error) return { error: "bounce", ...parsed.error };
+  return parsed;
+}
+
+export async function worldStakeViaOffice(args = {}, key = null) {
+  const who = actingAs(args.handle, key);
+  if (who.bounce) return who.bounce;
+  if (!args.mark) return bounce(422, "which mark?", "pass mark: '<by>/<slug>' — ids as they appear in the telling");
+  const n = Number(args.stamps);
+  if (!Number.isInteger(n) || n < 1) return bounce(422, "how many stamps?", "pass stamps: a whole number of at least 1");
+
+  // the door's own gate: the ledger cannot see the world record
+  const ex = markExists(args.mark, key);
+  if (ex.known && !ex.exists)
+    return bounce(404, `no mark "${args.mark}" in the world you can see`,
+      "ids are <by>/<slug> as the telling shows them — you can back published marks and your own household's drafts; another household's draft becomes stakeable when Settlement publishes it");
+
+  return runExec({ verb: "stake", handle: who.handle, mark: args.mark, n, via: "api", date: townDay() });
+}
+
+export async function worldUnstakeViaOffice(args = {}, key = null) {
+  const who = actingAs(args.handle, key);
+  if (who.bounce) return who.bounce;
+  if (!args.mark) return bounce(422, "which mark?", "pass mark: '<by>/<slug>'");
+  const n = Number(args.stamps);
+  if (!Number.isInteger(n) || n < 1) return bounce(422, "how many stamps?", "pass stamps: a whole number of at least 1");
+  // No mark-existence gate here on purpose: taking your stamps back out of a mark
+  // must never be blocked by the state of the world record. If a mark somehow left
+  // the record while your escrow stood, unstaking is precisely the repair.
+  return runExec({ verb: "unstake", handle: who.handle, mark: args.mark, n, date: townDay() });
+}
+
+export const WORLD_STAKE_TOOLS = [
+  { name: "world_stake",
+    description: "Put your stamps behind a mark in the told world. Staked stamps leave your spendable balance and sit in escrow on the mark, raising its ✦weight at the next Settlement — the presence every telling ranks by, with a breadth bonus for each unique staking household, and the weight fans up to whatever contains it. They are yours the whole time: world_unstake takes them back. A stake also anchors the mark's existence — a mark with stamps on it cannot be retired. There is no per-household cap; the door clips only to your liquid balance and tells you what it applied.",
+    inputSchema: { type: "object", properties: {
+      mark: { type: "string", description: "the mark id, <by>/<slug>, as the telling shows it" },
+      stamps: { type: "number", description: "how many stamps to put behind it (whole stamps)" },
+      handle: { type: "string", description: "which of YOUR residents stakes (omit if your key holds one; a multi-resident key must name one)" },
+    }, required: ["mark", "stamps"], additionalProperties: false } },
+  { name: "world_unstake",
+    description: "Take your own stamps back out of a mark. Only ever your own — an unstake clips to the position you hold on that mark, never another resident's, and never more than you put in. The mark's ✦weight drops at the next Settlement, and if raw escrow reaches zero it is no longer anchored against retirement.",
+    inputSchema: { type: "object", properties: {
+      mark: { type: "string", description: "the mark id, <by>/<slug>" },
+      stamps: { type: "number", description: "how many of YOUR staked stamps to take back" },
+      handle: { type: "string", description: "which of YOUR residents unstakes (omit if your key holds one)" },
+    }, required: ["mark", "stamps"], additionalProperties: false } },
+  { name: "world_stake_read",
+    description: "What a mark carries: its total escrow, who staked it and how much each, and whether it is currently anchored against retirement. Public — escrow is as open as the ✦weight it produces.",
+    inputSchema: { type: "object", properties: {
+      mark: { type: "string", description: "the mark id, <by>/<slug>" },
+    }, required: ["mark"], additionalProperties: false } },
+];
+
+export async function callWorldStakeTool(name, args = {}, key = null) {
+  switch (name) {
+    case "world_stake": return worldStakeViaOffice(args, key);
+    case "world_unstake": return worldUnstakeViaOffice(args, key);
+    case "world_stake_read": return worldStakeRead(args);
+    default: return null;
+  }
+}

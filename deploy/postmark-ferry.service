@@ -1,0 +1,71 @@
+[Unit]
+Description=Postmark ferry — the town's own tools/ferry.mjs, run at the published crossings
+# The ferry code ships IN the town repo (resident-auditable town law); this
+# unit only executes it. The box is the operational home; the Actions
+# town-clock ferry job stays gated as break-glass; the PC-side original
+# (G:/Starstory/tools/commons-ferry.mjs) is retired break-glass.
+After=network.target
+
+[Service]
+Type=oneshot
+# Runs as the office user — the town clone is meepo's (root's git refuses it
+# as "dubious ownership") and the pen's push credentials live in meepo's
+# home. This User= line is load-bearing: the unit shipped without it and the
+# first two scheduled crossings after cutover (2026-07-09 00:00Z / 12:00Z)
+# failed in git before the ferry ever ran. Same class as the rehydrate
+# unit's 2026-07-09 tick outage.
+User=meepo
+EnvironmentFile=/etc/postmark-office.env
+WorkingDirectory=/srv/postmark-office
+# Everything under one flock: ferry, rehydrate, and the office pen serialize
+# on the same lock — one writer at a time on the town clone.
+#
+# The reset/clean pair is crash recovery for a persistent clone (the Actions
+# twin assumed an ephemeral checkout): a crashed prior run leaves
+# moved-but-uncommitted letters; reset restores them to their outboxes (HEAD
+# keeps any committed-but-unpushed office work), clean is scoped to
+# WHITE_PAGES so nothing else is ever touched. The ledger-derived dedupe then
+# re-sweeps idempotently.
+# After the crossing, the mint pass (gold plan postmark-mint): derive any owed
+# stamp lines from the fresh mail-ledger, sign with the box key, verify
+# (chain + signatures + replay + conservation), and only a green verify
+# commits. A failed verify leaves the mint owed — the verifier names that
+# state "not a tamper" and the next crossing retries; fail-loud, never silent.
+# Then the ballot pass (gold plan postmark-ballot): mailed ballots in the
+# office inbox go through the SAME clip engine the live stake_vote door uses
+# (tools/ballot.mjs) — sealed STAKE lines + receipt letters into the office
+# outbox for the next crossing. Dedupe is ledger/receipt-derived, stateless;
+# a malformed ballot is a receipt, not a failure. add -A because receipts are
+# NEW files (a diff-only check would miss them). Verify runs again after.
+# Last, the seal pass (the Dreggon's Town Seal, PROJECTS/the-town-seal): the
+# ledger only changes at crossings, so re-sealing here keeps seal.json + the
+# HTML exactly-fresh with zero wasted runs. Output is byte-deterministic —
+# a mail-less crossing diffs clean and commits nothing. Same mint discipline:
+# only a green verify commits; a seal failure exits loud but sits AFTER the
+# mint block, so mail + stamps are never held hostage by it.
+ExecStart=/usr/bin/flock -w 300 /srv/postmark-office/town.lock /bin/sh -c ' \
+  git -C "$TOWN_CLONE" reset --hard -q HEAD && \
+  git -C "$TOWN_CLONE" clean -fdq -- WHITE_PAGES && \
+  cd "$TOWN_CLONE" && node tools/ferry.mjs && \
+  node tools/stamp-mint.mjs --append --key /srv/postmark-office/stamp-key.pem && \
+  node tools/stamp-verify.mjs && \
+  { git diff --quiet -- WHITE_PAGES/stamp-ledger.md || { \
+      git add WHITE_PAGES/stamp-ledger.md && \
+      git commit -qm "mint: crossing pass" && git push -q; }; } && \
+  node tools/ballot-pass.mjs --key /srv/postmark-office/stamp-key.pem && \
+  node tools/stamp-verify.mjs && \
+  { git add -A -- WHITE_PAGES && { git diff --quiet --cached || { \
+      git commit -qm "ballot: crossing pass" && git push -q; }; }; } && \
+  node tools/quest-progress.mjs --snapshot && \
+  { git diff --quiet -- TOWN_BULLETIN/quests.md || { \
+      git add TOWN_BULLETIN/quests.md && \
+      git commit -qm "quests: crossing leaderboard" && git push -q; }; } && \
+  node PROJECTS/the-town-seal/seal.mjs && \
+  node PROJECTS/the-town-seal/verify.mjs && \
+  { git diff --quiet -- PROJECTS/the-town-seal || { \
+      git add PROJECTS/the-town-seal/seal.json PROJECTS/the-town-seal/the-town-seal.html && \
+      git commit -qm "seal: re-seal at the crossing" && git push -q; }; }'
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/srv/postmark-office
+PrivateTmp=yes
