@@ -82,10 +82,16 @@ export function draftRefForHousehold(repo, household) {
   // a stale hash once dressed the convergence up as 171 deletion intents.
   try {
     const ahead = Number(git(repo, ["rev-list", "--count", `${remote}..${local}`]).trim());
-    if (ahead > 0) return local;
     const behind = Number(git(repo, ["rev-list", "--count", `${local}..${remote}`]).trim());
+    // Strictly ahead (origin is local's ancestor) = unpushed pen work in
+    // flight — the one state where local is the truer ref. DIVERGED (both
+    // counts positive) is the after-a-Settlement-rebase state: local's
+    // "ahead" commits are pre-rebase ghosts whose rebased twins live on
+    // origin, and the pen itself resolves this by rebasing ONTO origin at
+    // next write — so reads mirror the pen's policy and serve origin.
+    if (ahead > 0 && behind === 0) return local;
     if (behind > 0)
-      console.error(`[world] pen branch ${branch} is ${behind} behind origin — serving origin (normal between writes)`);
+      console.error(`[world] pen branch ${branch} is ${behind} behind origin${ahead > 0 ? ` (diverged, ${ahead} pre-rebase ghost(s))` : ""} — serving origin (normal between writes)`);
     return remote;
   } catch {
     return local;
