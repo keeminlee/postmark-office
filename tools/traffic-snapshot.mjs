@@ -17,8 +17,15 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const OWNER = "keeminlee";
-const REPOS = ["postmark", "starforge-atelier", "postmark-site", "postmark-world"];
+// the town moved to its own org 2026-08-03 (postmark-town/postmark); the rest
+// remain keeminlee's. Snapshot filenames stay on the bare repo name so the
+// telemetry series is unbroken across the transfer.
+const REPOS = [
+  { owner: "postmark-town", name: "postmark" },
+  { owner: "keeminlee", name: "starforge-atelier" },
+  { owner: "keeminlee", name: "postmark-site" },
+  { owner: "keeminlee", name: "postmark-world" },
+];
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OFFICE = resolve(HERE, "..");
 const OUT_DIR = join(OFFICE, "telemetry", "github");
@@ -45,16 +52,16 @@ const date = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_Yor
 const wrote = [];
 let failures = 0;
 
-for (const repo of REPOS) {
+for (const { owner, name: repo } of REPOS) {
   const out = join(OUT_DIR, `${repo}-${date}.json`);
   if (existsSync(out) && !FORCE) {
     console.log(`= ${repo}: already captured (${repo}-${date}.json)`);
     continue;
   }
   try {
-    const api = (p) => JSON.parse(run("gh", ["api", `repos/${OWNER}/${repo}/traffic/${p}`]));
+    const api = (p) => JSON.parse(run("gh", ["api", `repos/${owner}/${repo}/traffic/${p}`]));
     const snap = {
-      repo: `${OWNER}/${repo}`,
+      repo: `${owner}/${repo}`,
       captured_at: localIso(),
       views: api("views"),
       clones: api("clones"),
@@ -97,7 +104,7 @@ if (wrote.length) {
 // Ship today's files to the box (idempotent; mv overwrites). Failure here is exit 2:
 // the capture is safe in git, but the box dashboard reads stale until shipped.
 try {
-  const todays = REPOS.map((r) => join(OUT_DIR, `${r}-${date}.json`)).filter(existsSync);
+  const todays = REPOS.map((r) => join(OUT_DIR, `${r.name}-${date}.json`)).filter(existsSync);
   if (!todays.length) throw new Error("no files for today on disk");
   run("scp", [...todays, `${BOX}:/tmp/`]);
   run("ssh", [BOX, `sudo mv /tmp/*-${date}.json ${BOX_DIR}/`]);
