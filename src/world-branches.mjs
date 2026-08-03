@@ -68,9 +68,28 @@ export function draftRefForHousehold(repo, household) {
   if (!HOUSEHOLD_RE.test(String(household ?? ""))) return null;
   const branch = draftBranch(household);
   const local = `refs/heads/${branch}`;
-  if (refExists(repo, local)) return local;
   const remote = `refs/remotes/origin/${branch}`;
-  return refExists(repo, remote) ? remote : null;
+  const haveLocal = refExists(repo, local);
+  const haveRemote = refExists(repo, remote);
+  if (!haveLocal) return haveRemote ? remote : null;
+  if (!haveRemote) return local;
+  // The clone plays two roles. Local draft branches are the write pen's
+  // checkouts — reseated per-write by ensureDraftCheckout, and legitimately
+  // stale between writes (the tick fetches, never pulls). Origin's are the
+  // Settlement's — rebased every crossing. Reads serve the pen's branch ONLY
+  // while it is ahead (unpushed work in flight); otherwise origin is the
+  // household's current truth. Serving a between-writes local as truth is how
+  // a stale hash once dressed the convergence up as 171 deletion intents.
+  try {
+    const ahead = Number(git(repo, ["rev-list", "--count", `${remote}..${local}`]).trim());
+    if (ahead > 0) return local;
+    const behind = Number(git(repo, ["rev-list", "--count", `${local}..${remote}`]).trim());
+    if (behind > 0)
+      console.error(`[world] pen branch ${branch} is ${behind} behind origin — serving origin (normal between writes)`);
+    return remote;
+  } catch {
+    return local;
+  }
 }
 
 export function draftRefForKey(repo, key) {
@@ -282,8 +301,15 @@ export function draftDeltaForKey(repo, key) {
     counts: { added: 0, modified: 0, deleted: 0 },
   };
 
+  // Three-dot: diff from the MERGE-BASE, never tip-to-tip. A two-dot diff
+  // reports everything main gained since divergence as deletions the household
+  // is "proposing" — the convergence's 172 published marks once rendered as
+  // 171 phantom deletion intents this way. The question this function answers
+  // is "what has this household changed since it diverged," and that question
+  // starts at the merge-base by definition.
+  const mergeBase = git(repo, ["merge-base", base, ref]).trim();
   const raw = git(repo, [
-    "diff", "--name-status", "--no-renames", "-z", base, ref, "--", "WORLD/marks",
+    "diff", "--name-status", "--no-renames", "-z", mergeBase, ref, "--", "WORLD/marks",
   ]);
   const parts = raw.split("\0").filter(Boolean);
   const marks = [];
@@ -291,7 +317,9 @@ export function draftDeltaForKey(repo, key) {
     const status = parts[i];
     const path = parts[i + 1].replace(/\\/g, "/");
     if (!path.endsWith("/mark.md")) continue;
-    const source = status === "D" ? base : ref;
+    // A deleted mark's content lives at the merge-base — main's tip may have
+    // since changed or deleted the same file for its own reasons.
+    const source = status === "D" ? mergeBase : ref;
     const record = parseDeltaRecord(readAtRef(repo, source, path), path);
     marks.push({
       status: status === "A" ? "added" : status === "D" ? "deleted" : "modified",
