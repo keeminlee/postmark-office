@@ -47,6 +47,7 @@ export function currentCrossing(now = Date.now()) {
 
 // ── engine + world cache ─────────────────────────────────────────────────────
 let _mods = null;         // { verbs, build }
+let _where = null;        // the clone's where-is.mjs — the one position join
 const _worlds = new Map(); // ref+sha -> assembled composed view
 
 async function mods() {
@@ -122,38 +123,34 @@ export function chooseStandpoint(args, key) {
   return { stance: "spectator", coords: { ...QUAY, from: "the quay (Ferry's crossing)" } };
 }
 
-// THE PARCEL IS THE HOME (ruling 7, 2026-07-27). Home is the household's parcel
-// — the claim is the address — and the house is an ordinary sited mark standing
-// on that ground. So this resolves handle → household → parcel off the fold's
-// `parcels: [{ household, at, extent }]`. The fold did NOT publish that list
-// before this build; it was added to assembleWorld for exactly this, so the
-// office and the spectator answer "where is home" from one contract rather than
-// each reaching into the raw record. The seeding-manifest join is no longer the
-// derivation for *where home is* (it survives below only as the house's display
-// id), which retires the note that used to sit here asking for this repointing.
+// THE PARCEL IS THE HOME (ruling 7, 2026-07-27) — and the derivation is NOT
+// HERE. `tools/where-is.mjs` in the world clone owns "where is this resident",
+// the same way world-verbs owns seeing and walk.mjs owns movement. The office
+// used to carry its own copy of the household→parcel join, the walk-first rule,
+// and a second one for read_home; four implementations of one question is what
+// let read_home tell vermillion he was unplaced while orient knew his ground.
+// Imported live from the clone, never vendored — if the join ever changes, it
+// changes in one file and every surface follows.
 //
-// The parcel is an AREA and a standpoint is a POINT, so something must choose:
-// this takes the parcel's centre (CALLS.md C2). Unplaced households have no
-// parcel and keep the quay default — under ruling 7 that reads as "no ground yet
-// = still shipboard", the hook the parked harbor-ship silver will land on.
-function parcelOf(handle, w) {
-  const hh = householdOf(handle, w);
-  if (!hh) return null;
-  return (w.parcels ?? []).find((p) => p.household === hh) ?? null;
+// Local shape only: the engine answers { x, y, placed, source, mark_id }; the
+// door's own vocabulary (`from`, and the quay default for the unplaced) is the
+// office's to speak, so the mapping lives here and the reasoning does not.
+async function whereMod() {
+  if (_where) return _where;
+  _where = await import(pathToFileURL(join(WORLD_CLONE, "tools/where-is.mjs")));
+  return _where;
 }
 
-// A handle's household. Marks carry `household`, so the resident's own marks name
-// it; for the common case handle === household this still answers correctly.
-function householdOf(handle, w) {
-  const own = (w.marks ?? []).find((m) => m.by === handle && m.household);
-  return own?.household ?? handle;
-}
-
-function homeCoords(handle, w) {
-  const parcel = parcelOf(handle, w);
-  if (parcel) {
-    return { x: parcel.at.x, y: parcel.at.y, from: `your ground (${parcel.id})`,
-             parcel: { id: parcel.id, at: parcel.at, extent: parcel.extent } };
+// The door's phrasing over the engine's answer. Unplaced still stands at the
+// quay HERE — a standpoint must be a point — but that default is now this
+// function's choice, spoken in words that say so, not a null smuggled in as
+// coordinates (see NOWHERE in the engine: unplaced never reads as the origin).
+async function homeCoords(handle, w) {
+  const { homeOf } = await whereMod();
+  const home = homeOf(handle, w);
+  if (home.placed) {
+    return { x: home.x, y: home.y, from: `your ground (${home.mark_id})`,
+             parcel: { id: home.parcel.id, at: home.parcel.at, extent: home.parcel.extent } };
   }
   return { ...QUAY, from: `${handle} has no ground on the map yet — the quay` };
 }
@@ -174,16 +171,18 @@ const walkLedgerAtMain = (repo) => readAtRef(repo, mainRef(repo), "WORLD/walk-le
 // otherwise.
 async function standCoords(handle, w) {
   try {
-    const { parseWalkLedger, currentDeparture, positionAt, fractionalCrossing } =
-      await import(pathToFileURL(join(WORLD_CLONE, "tools", "walk.mjs")));
-    const text = walkLedgerAtMain(WORLD_CLONE);
-    const mine = currentDeparture(parseWalkLedger(text).departures, handle);
-    if (mine) {
-      const p = positionAt(mine, fractionalCrossing());
-      if (p) return { x: p.x, y: p.y,
+    const [{ parseWalkLedger }, { whereIs }] = await Promise.all([
+      import(pathToFileURL(join(WORLD_CLONE, "tools", "walk.mjs"))),
+      whereMod(),
+    ]);
+    const { departures } = parseWalkLedger(walkLedgerAtMain(WORLD_CLONE));
+    const here = whereIs(handle, { world: w, departures });
+    if (here.placed && here.source === "walk") {
+      const p = here.position;
+      return { x: here.x, y: here.y,
         from: p.arrived ? "where your walk arrived" : `the road — your walk in progress (${Math.round(p.remainingM)} m to go)` };
     }
-  } catch { /* no ledger or no walk — home is the honest fallback */ }
+  } catch { /* no ledger or no engine — home is the honest fallback */ }
   return homeCoords(handle, w);
 }
 
@@ -337,25 +336,30 @@ function noteForHandle(worldClone, key, handle) {
 // missed him"): read_home said unplaced, so the viewer could derive no origin and
 // he could not walk at all. #1044 is the same bug on wren-winter.
 //
-// It also retires a split-brain: world_orient already resolved home through
-// parcelOf and answered correctly for him, while this surface answered no. One
-// question must not have two derivations that disagree — both now end at the fold.
+// It also retires a split-brain: world_orient already answered correctly for him
+// while this surface answered no. One question must not have two derivations
+// that disagree — so neither of them derives anything now. Both call the clone's
+// where-is.mjs, and the office keeps only the wording.
 export async function worldBlockForHandle(handle, key = null) {
+  // The house's DISPLAY id still comes from the seeding manifest — that is all
+  // it was ever meant to be (see homesIndex). Placement comes from the engine.
   const id = homesIndex().get(handle) ?? null;
   // No world to read (unconfigured clone, no main ref) → unplaced is still the
-  // honest answer, never a throw. The pre-fold version got this free by
-  // short-circuiting before the engine loaded; the fold join has to ask for it.
-  let w = null;
-  try { w = await world(key); }
+  // honest answer, never a throw. The pre-engine version got this free by
+  // short-circuiting; asking the engine means asking for it explicitly.
+  let w = null, homeOf = null;
+  try { w = await world(key); ({ homeOf } = await whereMod()); }
   catch { return { mark_id: id, x: null, y: null, sited: false }; }
-  if (id) {
-    const mark = w.marks.find((m) => m.id === id && m.at);
-    if (mark) return { mark_id: id, x: mark.at.x, y: mark.at.y, sited: true };
-  }
-  // The fold's own answer — the same join world_orient stands on.
-  const parcel = parcelOf(handle, w);
-  if (parcel) return { mark_id: parcel.id, x: parcel.at.x, y: parcel.at.y, sited: true };
-  return { mark_id: id, x: null, y: null, sited: false };
+
+  // ONE derivation, shared with world_orient. Prefer the seeded house mark as
+  // the id when it exists and is actually placed (26 residents read that way and
+  // it is the more specific answer); otherwise name the ground itself.
+  const home = homeOf(handle, w);
+  if (!home.placed) return { mark_id: id, x: null, y: null, sited: false };
+  const house = id ? w.marks.find((m) => m.id === id && m.at) : null;
+  return house
+    ? { mark_id: id, x: house.at.x, y: house.at.y, sited: true }
+    : { mark_id: home.mark_id, x: home.x, y: home.y, sited: true };
 }
 
 // ── the write verb (credentialed) ────────────────────────────────────────────
@@ -530,7 +534,7 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
   const { departures } = parseWalkLedger(ledgerText);
   const mine = currentDeparture(departures, who);
   const derived = mine ? positionAt(mine, at) : null;
-  const home = homeCoords(who, w);
+  const home = await homeCoords(who, w);
   const from = derived ? { x: derived.x, y: derived.y } : { x: home.x, y: home.y };
 
   // WHERE TO — ruling 2's order.

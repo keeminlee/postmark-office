@@ -58,6 +58,23 @@ export function openYourEyes(_state, world) {
 }
 export function investigate(id, world) { return world.marks.find((m) => m.id === id) ?? null; }
 `);
+put("tools/where-is.mjs", `
+export const NOWHERE = Object.freeze({ x: null, y: null, placed: false, source: null, mark_id: null });
+export function householdOf(handle, world) {
+  const own = (world?.marks ?? []).find((m) => m.by === handle && m.household);
+  return own?.household ?? handle;
+}
+export function parcelFor(handle, world) {
+  const hh = householdOf(handle, world);
+  return (world?.parcels ?? []).find((p) => p.household === hh) ?? null;
+}
+export function homeOf(handle, world) {
+  const parcel = parcelFor(handle, world);
+  if (!parcel) return { ...NOWHERE };
+  return { x: parcel.at.x, y: parcel.at.y, placed: true, source: "parcel", mark_id: parcel.id, parcel };
+}
+export function whereIs(handle, { world = null } = {}) { return homeOf(handle, world); }
+`);
 put("tools/mark-lint.mjs", "process.exit(0);\n");
 put("tools/marks-fold.mjs", `
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";

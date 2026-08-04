@@ -37,6 +37,28 @@ export function orient() { return { seen: [] }; }
 export function openYourEyes() { return { fov: { carried: [], far: [], counts: {} }, radial: { byBearing: {}, counts: {} }, tell: () => "" }; }
 export function investigate() { return null; }
 `);
+// The position JOIN is the clone's (tools/where-is.mjs) and is tested there —
+// see postmark-world/tools/where-is.test.mjs, 7 cases incl. the vermillion
+// regression. What THIS suite covers is the office's mapping over it: which id
+// read_home names, and that an unloadable world still degrades honestly. So the
+// double below mirrors the contract and nothing more.
+put("tools/where-is.mjs", `
+export const NOWHERE = Object.freeze({ x: null, y: null, placed: false, source: null, mark_id: null });
+export function householdOf(handle, world) {
+  const own = (world?.marks ?? []).find((m) => m.by === handle && m.household);
+  return own?.household ?? handle;
+}
+export function parcelFor(handle, world) {
+  const hh = householdOf(handle, world);
+  return (world?.parcels ?? []).find((p) => p.household === hh) ?? null;
+}
+export function homeOf(handle, world) {
+  const parcel = parcelFor(handle, world);
+  if (!parcel) return { ...NOWHERE };
+  return { x: parcel.at.x, y: parcel.at.y, placed: true, source: "parcel", mark_id: parcel.id, parcel };
+}
+export function whereIs(handle, { world = null } = {}) { return homeOf(handle, world); }
+`);
 put("WORLD/skeleton.json", JSON.stringify({ features: [], physics_registry: {} }));
 put("WORLD/world-state.json", JSON.stringify({
   tick: 0,
