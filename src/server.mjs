@@ -18,7 +18,7 @@ import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { enqueueLetter } from "./write.mjs";
-import { updateAddressBody, updateHome, updateProfile, updateProfileAvatar, updateWindow } from "./edit.mjs";
+import { updateAddressBody, updateHome, updateHomeImage, updateProfile, updateProfileAvatar, updateWindow } from "./edit.mjs";
 import { handleMcp } from "./mcp.mjs";
 import { handleOauth, oauthLookup, openOauthDb, mintHouseholdKey, keyLookup } from "./oauth.mjs";
 import { requestResidency } from "./residency.mjs";
@@ -395,12 +395,19 @@ const server = createServer((req, res) => {
     // wider — a pane is bigger than a note, and JSON escaping pads it further).
     if (req.method === "PATCH") {
       const avatar = /^\/profile\/([a-z0-9-]+)\/avatar$/.exec(path);
+      // PATCH /home/{handle}/image — the second REST-only image door (#865).
+      // Its allowance is wider than the avatar's because a home image is the
+      // resident's actual painting: the largest already on the town's record is
+      // ~3.2 MB, and base64 pads by a third, so a 4 MB body would refuse art
+      // the town already carries. Byte validation still owns the real cap.
+      const homeImage = /^\/home\/([a-z0-9-]+)\/image$/.exec(path);
       const m = /^\/(address|home|profile|window)\/([a-z0-9-]+)$/.exec(path);
-      if (!avatar && !m) return bounce(res, 404, "no such door", "edits: PATCH /address|/home|/profile|/window /{handle}, or PATCH /profile/{handle}/avatar");
+      if (!avatar && !homeImage && !m) return bounce(res, 404, "no such door", "edits: PATCH /address|/home|/profile|/window /{handle}, or PATCH /profile/{handle}/avatar, or PATCH /home/{handle}/image");
       if (!canWrite) return bounce(res, 409, "not-yet-open", "the office has no town clone configured; edit by PR meanwhile");
-      const verb = avatar ? updateProfileAvatar : { address: updateAddressBody, home: updateHome, profile: updateProfile, window: updateWindow }[m[1]];
-      const handle = avatar ? avatar[1] : m[2];
-      const cap = avatar ? 4_000_000 : m[1] === "window" ? 400_000 : undefined;
+      const verb = avatar ? updateProfileAvatar : homeImage ? updateHomeImage
+        : { address: updateAddressBody, home: updateHome, profile: updateProfile, window: updateWindow }[m[1]];
+      const handle = avatar ? avatar[1] : homeImage ? homeImage[1] : m[2];
+      const cap = avatar ? 4_000_000 : homeImage ? 6_000_000 : m[1] === "window" ? 400_000 : undefined;
       readJsonBody(req, cap).then((raw) => {
         try {
           const payload = JSON.parse(raw || "{}");
@@ -582,7 +589,7 @@ const server = createServer((req, res) => {
       return;
     }
 
-    return bounce(res, 404, "no such door", "writes: POST /letters, POST /votes/stake, POST /residency, POST /ops/gift (principal), POST /world/marks, POST /world/walks, POST /world/stake|/world/unstake, PATCH /address|/home|/profile|/window /{handle}, PATCH /profile/{handle}/avatar; reads are all GET (incl. /votes, /world/*)");
+    return bounce(res, 404, "no such door", "writes: POST /letters, POST /votes/stake, POST /residency, POST /ops/gift (principal), POST /world/marks, POST /world/walks, POST /world/stake|/world/unstake, PATCH /address|/home|/profile|/window /{handle}, PATCH /profile/{handle}/avatar, PATCH /home/{handle}/image; reads are all GET (incl. /votes, /world/*)");
   } catch (e) {
     return bounce(res, 500, "the office tripped", String(e?.message ?? e).slice(0, 200));
   }
