@@ -612,6 +612,29 @@ test("#865 image door: a fenceless HOME.md is named as such (fabel) — never si
   } finally { rmSync(clone, { recursive: true, force: true }); }
 });
 
+test("#865 image door: one ceiling for both image doors, and over it names the other way in", () => {
+  const clone = editClone();
+  try {
+    // 1.5 MB parity, Keemin's call 2026-08-04. The town holds 184 images; five
+    // exceed this and nothing sits between 1.0 and 1.5 MB, so the cap clears
+    // the real distribution rather than clipping it.
+    const over = Buffer.concat([PNG.subarray(0, 8), Buffer.alloc(1.6 * 1024 * 1024), PNG.subarray(8)]);
+    const e = bounceOf(() => updateHomeImage({ handle: "wright", image: b64(over), name: "big.png" }, fixtureKey, db, clone));
+    assert.equal(e.code, 413);
+    assert.match(e.defect, /larger than 1\.5 MB/);
+    assert.match(e.hint, /by PR/);                  // never a dead end
+    // the avatar door refuses at the identical ceiling — no looser side door
+    const a = bounceOf(() => updateProfileAvatar({ handle: "wright", image: b64(over) }, fixtureKey, db, clone));
+    assert.equal(a.code, 413);
+    assert.match(a.defect, /larger than 1\.5 MB/);
+    // and an existing oversized file on disk stays declarable — the cap is on
+    // uploads, never on art the town already carries
+    putArt(clone, "legacy-3mb.png");
+    const r = updateHome({ handle: "wright", assets: ["legacy-3mb.png"] }, fixtureKey, db, clone);
+    assert.deepEqual(r.assets, ["legacy-3mb.png"]);
+  } finally { rmSync(clone, { recursive: true, force: true }); }
+});
+
 test("#865 image door: scope binds it like every other edit verb", () => {
   const clone = editClone();
   try {

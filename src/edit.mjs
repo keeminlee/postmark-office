@@ -24,13 +24,15 @@ import { penCommit } from "./write.mjs";
 
 const MAX_BODY = 50_000;     // a face, not an archive
 const MAX_WINDOW = 150_000;  // a pane, not an app — and Ferry reads every pane
-const MAX_AVATAR = 1.5 * 1024 * 1024; // witness parity: no looser side door
-// A home image is the resident's actual painting, not a thumbnail. The cap is
-// set from the live town rather than guessed: the largest HOME art already on
-// the record is ~3.2 MB (carta/long-run-overhead.png), so an avatar-parity cap
-// would refuse work the town is already carrying. 4 MB clears the observed
-// distribution with headroom; anything larger stays a PR, where a human looks.
-const MAX_HOME_IMAGE = 4 * 1024 * 1024;
+// ONE ceiling for every image door — witness parity, and no looser side door.
+// Keemin's call (2026-08-04) after the alternative was measured: of the 184
+// images the town holds, five exceed this, the median is 193 KB, and NOTHING
+// sits between 1.0 and 1.5 MB — so the cap clears the whole body of real art
+// with a clean gap rather than clipping a distribution. It governs uploads
+// only: files already on disk are never re-validated, and declaring `assets:`
+// checks existence, never size, so the existing large art keeps rendering.
+// Anything genuinely bigger stays a PR, where a human looks.
+const MAX_IMAGE = 1.5 * 1024 * 1024;
 const HOME_IMAGE_EXT = { jpg: "jpg", jpeg: "jpg", png: "png", webp: "webp" };
 const PROFILE_CAPS = { color_name: 56, bio: 400, runtime: 72 };
 const PROFILE_FIELDS = ["color", "color_name", "bio", "runtime"];
@@ -377,20 +379,25 @@ export function updateProfile(args, key, db, clone) {
 // One owner for "are these bytes a real, whole image the office will accept" —
 // the avatar door and the home-image door ask the identical question and must
 // never drift into two answers. Only the size ceiling and the noun differ.
-function decodeImage(image, max = MAX_AVATAR, what = "avatar") {
+function decodeImage(image, max = MAX_IMAGE, what = "avatar") {
   const mb = `${(max / 1024 / 1024).toFixed(max % (1024 * 1024) === 0 ? 0 : 1)} MB`;
+  // Over the ceiling is not a dead end — say the other door out loud, or the
+  // resident is back to the silence #865 was filed about.
+  const tooBig = what === "home image"
+    ? `crop or re-export it under ${mb} — or add a larger image by PR, where a human looks`
+    : `choose or crop an image whose decoded size is ${mb} or less`;
   if (typeof image !== "string" || !image.trim())
     throw bounce(422, `no ${what} image`, "send image as base64 in the JSON body");
   const compact = image.replace(/\s/g, "");
   const padding = compact.endsWith("==") ? 2 : compact.endsWith("=") ? 1 : 0;
   const decodedSize = Math.max(0, Math.floor(compact.length * 3 / 4) - padding);
   if (decodedSize > max)
-    throw bounce(413, `${what} is larger than ${mb}`, `choose or crop an image whose decoded size is ${mb} or less`);
+    throw bounce(413, `${what} is larger than ${mb}`, tooBig);
   if (!/^[A-Za-z0-9+/]*={0,2}$/.test(compact) || compact.length % 4 !== 0)
     throw bounce(422, `${what} image is not valid base64`, "choose the file again and let the site prepare it for upload");
   const bytes = Buffer.from(compact, "base64");
   if (bytes.length > max)
-    throw bounce(413, `${what} is larger than ${mb}`, `choose or crop an image whose decoded size is ${mb} or less`);
+    throw bounce(413, `${what} is larger than ${mb}`, tooBig);
   if (bytes.toString("base64").replace(/=+$/, "") !== compact.replace(/=+$/, ""))
     throw bounce(422, `${what} image is not valid base64`, "choose the file again and let the site prepare it for upload");
   return bytes;
@@ -421,7 +428,7 @@ function imageFormat(bytes) {
 export function updateProfileAvatar(args, key, db, clone) {
   const { handle } = args;
   scope(handle, key);
-  const bytes = decodeImage(args.image, MAX_AVATAR, "avatar"); // size first
+  const bytes = decodeImage(args.image, MAX_IMAGE, "avatar"); // size first
   const { ext, mediaType } = imageFormat(bytes); // then magic bytes + enclosure
   void args.type; // caller-declared MIME is deliberately never authoritative
 
@@ -529,7 +536,7 @@ export function updateWindow(args, key, db, clone) {
 export function updateHomeImage(args, key, db, clone) {
   const { handle } = args;
   scope(handle, key);
-  const bytes = decodeImage(args.image, MAX_HOME_IMAGE, "home image");
+  const bytes = decodeImage(args.image, MAX_IMAGE, "home image");
   const { ext, mediaType } = imageFormat(bytes);
   void args.type; // caller-declared MIME is courtesy only, never authoritative
 
