@@ -7,6 +7,7 @@
 
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -105,6 +106,61 @@ export function draftRefForKey(repo, key) {
 
 export function readAtRef(repo, ref, path, encoding = "utf8") {
   return git(repo, ["show", `${ref}:${path.replace(/\\/g, "/")}`], { encoding });
+}
+
+// THE FRESHEST published main. `mainRef` prefers the local branch because that
+// is the pen's own checkout; for CODE we want the town's published truth, and on
+// a box the local branch lags — the tick FETCHES the world clone and never pulls
+// (deliberately: a pull would move the pen's checkout mid-write), so local main
+// only advances when some resident's walk happens to pull it. Reading engine
+// modules off that is reading whatever the last walker left behind.
+export function freshestMainRef(repo) {
+  const local = refExists(repo, "refs/heads/main");
+  const remote = refExists(repo, "refs/remotes/origin/main");
+  if (local && remote) {
+    try {
+      const behind = Number(git(repo, ["rev-list", "--count", "refs/heads/main..refs/remotes/origin/main"]).trim());
+      return behind > 0 ? "refs/remotes/origin/main" : "refs/heads/main";
+    } catch { return "refs/heads/main"; }
+  }
+  if (local) return "refs/heads/main";
+  if (remote) return "refs/remotes/origin/main";
+  throw new Error("world clone has no main ref");
+}
+
+// Materialise a directory AT A REF into a sha-keyed cache, and hand back a path
+// safe to import from.
+//
+// Why this exists (2026-08-04): the office imported its engine — world-verbs,
+// walk.mjs, where-is.mjs — straight out of the world clone's WORKING TREE. That
+// tree is fetch-never-pull and is routinely parked on a household's draft branch
+// by the write pen; it was on `draft/FluffUPando` the day this was written. So
+// engine code reached the running office only when somebody's next write
+// happened to rebase onto a newer main. That is weather, not a deploy path, and
+// it went unnoticed because nothing had ever depended on a SPECIFIC module being
+// present on a specific day.
+//
+// Reading at a ref makes the checked-out branch irrelevant, which is the same
+// move already made for world-state (readAtRef/foldedStateAtRef). Cached by sha:
+// the extraction happens once per world revision, not once per request. Relative
+// imports inside the modules keep working because the whole subtree is written
+// out together — which is why this copies a DIRECTORY rather than one file.
+const ENGINE_CACHE = join(tmpdir(), "postmark-engine");
+export function materializeAtRef(repo, ref, subdir, cacheRoot = ENGINE_CACHE) {
+  const sha = git(repo, ["rev-parse", ref]).trim();
+  const dir = join(cacheRoot, `${sha}--${subdir.replace(/[^\w.-]/g, "_")}`);
+  const stamp = join(dir, ".materialized");
+  if (existsSync(stamp)) return dir;
+  const listing = git(repo, ["ls-tree", "-r", "--name-only", "-z", sha, "--", subdir]);
+  const files = listing.split("\0").filter(Boolean);
+  if (!files.length) throw new Error(`no files under ${subdir} at ${ref}`);
+  for (const rel of files) {
+    const out = join(dir, rel);
+    mkdirSync(dirname(out), { recursive: true });
+    writeFileSync(out, git(repo, ["show", `${sha}:${rel}`], { encoding: "buffer" }));
+  }
+  writeFileSync(stamp, `${sha}\n${ref}\n`);
+  return dir;
 }
 
 export function readJsonAtRef(repo, ref, path) {

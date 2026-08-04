@@ -20,7 +20,9 @@ import { isPrincipal } from "./ops.mjs";
 import {
   draftDeltaForKey,
   draftRefForKey,
+  freshestMainRef,
   mainRef,
+  materializeAtRef,
   readAtRef,
   skeletonForKey,
   stateForKey,
@@ -50,10 +52,35 @@ let _mods = null;         // { verbs, build }
 let _where = null;        // the clone's where-is.mjs — the one position join
 const _worlds = new Map(); // ref+sha -> assembled composed view
 
+// THE ENGINE COMES FROM A REF, NOT THE WORKING TREE (2026-08-04).
+//
+// The clone plays two roles and the tree belongs to the write pen: the tick
+// fetches and never pulls, and a draft exec parks the checkout on a household
+// branch (`draft/FluffUPando`, the day this was written). Importing engine code
+// from that tree meant the office ran whatever the last writer happened to leave
+// behind — engine updates arrived by weather, not by deploy. `engineDir()` reads
+// the whole `tools/` subtree at the freshest published main into a sha-keyed
+// cache and imports from there, so what is checked out cannot change what the
+// office executes. Same move already made for world-state; code just never got it.
+//
+// The fallback to the tree is deliberate and LOUD — a silent fallback here would
+// look exactly like success while serving stale code, which is the failure this
+// whole change exists to end.
+function engineDir() {
+  try {
+    return materializeAtRef(WORLD_CLONE, freshestMainRef(WORLD_CLONE), "tools");
+  } catch (e) {
+    console.error(`[world] engine materialise FAILED (${String(e?.message ?? e).slice(0, 120)}) — falling back to the working tree, which may be a draft branch`);
+    return WORLD_CLONE;
+  }
+}
+
+const engineImport = (file) => import(pathToFileURL(join(engineDir(), "tools", file)));
+
 async function mods() {
   if (_mods) return _mods;
-  const verbs = await import(pathToFileURL(join(WORLD_CLONE, "tools/world-verbs.mjs")));
-  const build = await import(pathToFileURL(join(WORLD_CLONE, "tools/world-build.mjs")));
+  const verbs = await engineImport("world-verbs.mjs");
+  const build = await engineImport("world-build.mjs");
   _mods = { verbs, build };
   return _mods;
 }
@@ -137,7 +164,7 @@ export function chooseStandpoint(args, key) {
 // office's to speak, so the mapping lives here and the reasoning does not.
 async function whereMod() {
   if (_where) return _where;
-  _where = await import(pathToFileURL(join(WORLD_CLONE, "tools/where-is.mjs")));
+  _where = await engineImport("where-is.mjs");
   return _where;
 }
 
@@ -172,7 +199,7 @@ const walkLedgerAtMain = (repo) => readAtRef(repo, mainRef(repo), "WORLD/walk-le
 async function standCoords(handle, w) {
   try {
     const [{ parseWalkLedger }, { whereIs }] = await Promise.all([
-      import(pathToFileURL(join(WORLD_CLONE, "tools", "walk.mjs"))),
+      engineImport("walk.mjs"),
       whereMod(),
     ]);
     const { departures } = parseWalkLedger(walkLedgerAtMain(WORLD_CLONE));
@@ -628,16 +655,38 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
 
 // The presence layer's read side (ruling 1): every walker's derived position at
 // one instant, from public records only. Read-only, keyless-safe.
-export async function worldWalkers(worldClone) {
+export async function worldWalkers(worldClone, key = null) {
   // publicWalkers is the single writer of the walker vocabulary — the spectator
   // publishes the same shape from the same function, so the two cannot drift.
-  const { parseWalkLedger, publicWalkers, fractionalCrossing } =
-    await import(pathToFileURL(join(worldClone, "tools", "walk.mjs")));
+  const { parseWalkLedger, publicWalkers, fractionalCrossing } = await engineImport("walk.mjs");
   let text = "";
-  try { text = walkLedgerAtMain(worldClone); } catch { return { at: fractionalCrossing(), walkers: [] }; }
+  try { text = walkLedgerAtMain(worldClone); } catch { return { at: fractionalCrossing(), walkers: [], standing: [] }; }
   const { departures } = parseWalkLedger(text);
   const at = fractionalCrossing();
-  return { at, walkers: publicWalkers(departures, at) };
+  const walkers = publicWalkers(departures, at);
+
+  // STANDING residents — everyone whose ground is on the record but who has
+  // never declared a walk. They are not "walkers" and are published under their
+  // own key rather than being folded in: `walkers` keeps meaning exactly what it
+  // has always meant, so nothing reading it changes underfoot. Before this, a map
+  // could only draw the 8 people who had ever moved, and the other ~26 households
+  // simply were not on it — which is why a resident could stand on his own
+  // mountain and appear nowhere.
+  let standing = [];
+  try {
+    const w = await world(key);
+    const { homeOf } = await whereMod();
+    const walked = new Set(walkers.map((v) => v.handle));
+    standing = (w.parcels ?? [])
+      .map((p) => p.household)
+      .filter((h) => h && !walked.has(h))
+      .map((handle) => {
+        const home = homeOf(handle, w);
+        return home.placed ? { handle, x: home.x, y: home.y, mark_id: home.mark_id, standing: true } : null;
+      })
+      .filter(Boolean);
+  } catch { /* no world to fold — walkers alone is still an honest answer */ }
+  return { at, walkers, standing };
 }
 
 // whoami — the session's identity, keyless-safe. Read-side (ships with the read
