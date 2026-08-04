@@ -663,30 +663,26 @@ export async function worldWalkers(worldClone, key = null) {
   try { text = walkLedgerAtMain(worldClone); } catch { return { at: fractionalCrossing(), walkers: [], standing: [] }; }
   const { departures } = parseWalkLedger(text);
   const at = fractionalCrossing();
-  const walkers = publicWalkers(departures, at);
-
-  // STANDING residents — everyone whose ground is on the record but who has
-  // never declared a walk. They are not "walkers" and are published under their
-  // own key rather than being folded in: `walkers` keeps meaning exactly what it
-  // has always meant, so nothing reading it changes underfoot. Before this, a map
-  // could only draw the 8 people who had ever moved, and the other ~26 households
-  // simply were not on it — which is why a resident could stand on his own
-  // mountain and appear nowhere.
-  let standing = [];
+  // ONE list. Briefly this door published `walkers` and `standing` separately and
+  // the map painted three colours, which was a category error: "arrived" and
+  // "standing" are the same state (a person at rest), differing only in how the
+  // position was learned. Two lists became two shapes became three renders — a
+  // divergence built in the same afternoon as the consolidation that was supposed
+  // to end them. So the engine owns the shape now (publicResidents), and both
+  // publishers of this vocabulary — this door and the local spectator server —
+  // call it rather than each assembling their own.
   try {
     const w = await world(key);
-    const { homeOf } = await whereMod();
-    const walked = new Set(walkers.map((v) => v.handle));
-    standing = (w.parcels ?? [])
-      .map((p) => p.household)
-      .filter((h) => h && !walked.has(h))
-      .map((handle) => {
-        const home = homeOf(handle, w);
-        return home.placed ? { handle, x: home.x, y: home.y, mark_id: home.mark_id, standing: true } : null;
-      })
-      .filter(Boolean);
-  } catch { /* no world to fold — walkers alone is still an honest answer */ }
-  return { at, walkers, standing };
+    const { publicResidents } = await whereMod();
+    const roster = [
+      ...departures.map((d) => d.handle),
+      ...(w.parcels ?? []).map((p) => p.household),
+    ].filter(Boolean);
+    return { at, walkers: publicResidents(roster, { world: w, departures, at }) };
+  } catch {
+    // No world to fold: the walk ledger alone is still an honest answer.
+    return { at, walkers: publicWalkers(departures, at) };
+  }
 }
 
 // whoami — the session's identity, keyless-safe. Read-side (ships with the read
