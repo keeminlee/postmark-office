@@ -319,23 +319,43 @@ function noteForHandle(worldClone, key, handle) {
   }
 }
 
-// read_home's "where do I live" answer: the home's world coordinate, joined from
-// the seeding manifest + the world marks. A door-founded (unplaced) home has no
-// placement yet → sited:false, the honest first-class answer, never a fake
-// origin. Short-circuits without loading the engine when the home isn't placed.
+// read_home's "where do I live" answer: the home's world coordinate. A home that
+// truly has no ground → sited:false, the honest first-class answer, never a fake
+// origin.
 //
-// Derivation: the seeding manifest today (same as homesIndex). The parcels ruling
-// has now LANDED (world main 5818a13: 26 slot:home predicates, sovereignty folds
-// true), so the SUCCESSOR derivation is the fold itself — slot:home → parcel →
-// house. The manifest join is now the bridge, not the destination: re-point this
-// (and homesIndex) at the fold when the office picks up the parcels-canonical world.
+// TWO derivations, in order, and the order is the whole design. The seeding
+// manifest answers first (it names the HOUSE, which is the more specific answer
+// and what every placed resident already reads). The FOLD answers second, off the
+// household's parcel — because ruling 7 says the parcel IS the home, and the fold
+// is the living record where the manifest is a one-time snapshot.
+//
+// The fallback is not a nicety; it closes a real hole. A resident placed AFTER
+// the seeding — founder-initialized, or door-founded onto ground — is absent from
+// the manifest forever, so the old short-circuit returned sited:false while the
+// world plainly held their parcel. That is exactly what happened to vermillion
+// (parcel founder-initialized 2026-07-30 at Keemin's ruling, "the seeding had
+// missed him"): read_home said unplaced, so the viewer could derive no origin and
+// he could not walk at all. #1044 is the same bug on wren-winter.
+//
+// It also retires a split-brain: world_orient already resolved home through
+// parcelOf and answered correctly for him, while this surface answered no. One
+// question must not have two derivations that disagree — both now end at the fold.
 export async function worldBlockForHandle(handle, key = null) {
   const id = homesIndex().get(handle) ?? null;
-  if (!id) return { mark_id: null, x: null, y: null, sited: false };
-  const w = await world(key);
-  const mark = w.marks.find((m) => m.id === id && m.at);
-  return mark ? { mark_id: id, x: mark.at.x, y: mark.at.y, sited: true }
-              : { mark_id: id, x: null, y: null, sited: false };
+  // No world to read (unconfigured clone, no main ref) → unplaced is still the
+  // honest answer, never a throw. The pre-fold version got this free by
+  // short-circuiting before the engine loaded; the fold join has to ask for it.
+  let w = null;
+  try { w = await world(key); }
+  catch { return { mark_id: id, x: null, y: null, sited: false }; }
+  if (id) {
+    const mark = w.marks.find((m) => m.id === id && m.at);
+    if (mark) return { mark_id: id, x: mark.at.x, y: mark.at.y, sited: true };
+  }
+  // The fold's own answer — the same join world_orient stands on.
+  const parcel = parcelOf(handle, w);
+  if (parcel) return { mark_id: parcel.id, x: parcel.at.x, y: parcel.at.y, sited: true };
+  return { mark_id: id, x: null, y: null, sited: false };
 }
 
 // ── the write verb (credentialed) ────────────────────────────────────────────
