@@ -306,11 +306,3 @@ test("WORLD_POOL=0 falls back to the shared checkout and still answers the same 
     git("switch", "-q", "main"); // put it back for anything after this
   }
 });
-
-// The pool registers worktrees against the fixture repo; drop them before the
-// temp dirs go, so a stray failure cannot leave git metadata pointing at nothing.
-after(() => {
-  for (const slot of poolStats(repo)?.slots ?? []) {
-    if (slot.made) try { git("worktree", "remove", "--force", slot.dir); } catch { /* going away anyway */ }
-  }
-});
