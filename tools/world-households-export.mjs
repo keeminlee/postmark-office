@@ -32,11 +32,27 @@ const households = {};
 for (const [handle, rec] of [...map.entries()].sort((a, b) => a[0].localeCompare(b[0])))
   households[handle] = rec.key;
 
+// logins: lowercased GitHub login → household key. The PR lane's branch-name
+// binding (draft/<login> is WHOSE sketchbook?) and the Settlement sweep's
+// authorship wall both resolve through this — same pins, same resolver, one
+// more projection of the ONE vocabulary. Pinned handles contribute their pin's
+// login; login-keyed households bind their own name by construction.
+const logins = {};
+const pins = (() => {
+  try { return JSON.parse(readFileSync(join(TOWN, "tools", "github-ids.json"), "utf8")); }
+  catch { return {}; }
+})();
+for (const rec of Object.values(pins))
+  if (rec?.login && rec?.id) logins[rec.login.toLowerCase()] = `gh:${rec.id}`;
+for (const key of Object.values(households))
+  if (key.startsWith("login:")) logins[key.slice("login:".length).toLowerCase()] = key;
+
 const out = {
   generated_at: new Date().toISOString(),
   source: "town pins (tools/github-ids.json) + ADDRESS logins, via the town's own resolver: postmark tools/stamp-mint.mjs householdKeys() — the ONE household vocabulary (ruling 9's lesson: never a second resolver)",
-  note: "DERIVED registry, refreshed by postmark-office/tools/world-households-export.mjs. Handles absent here fold as their own household (solo:<handle>) — a new resident is never blocked by registry lag, only grouped once the pins know them. Consumed by marks-fold.mjs § parcel admissibility (the claim cap, ruled 2026-07-30).",
+  note: "DERIVED registry, refreshed by postmark-office/tools/world-households-export.mjs. Handles absent here fold as their own household (solo:<handle>) — a new resident is never blocked by registry lag, only grouped once the pins know them. Consumed by marks-fold.mjs § parcel admissibility (the claim cap, ruled 2026-07-30); logins consumed by the PR lane (lane-wall, settlement-sweep authorship wall).",
   households,
+  logins: Object.fromEntries(Object.entries(logins).sort(([a], [b]) => a.localeCompare(b))),
 };
 
 const dest = join(WORLD, "WORLD", "households.json");
