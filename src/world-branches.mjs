@@ -167,8 +167,29 @@ export function readJsonAtRef(repo, ref, path) {
   return JSON.parse(readAtRef(repo, ref, path));
 }
 
-// The write pen owns one checkout and serializes this under town.lock. It may
-// switch that checkout among draft branches, but never to author on main.
+// Advance the SHARED clone's main when a pool worktree cannot (see below). The
+// shared clone stands on main after world-pool's one-time normalisation, so it
+// is the only checkout that may move that branch. Fast-forward only, only when
+// actually behind, and silent about anything else: a diverged or dirty shared
+// clone is left exactly as found.
+let warnedSharedMain = false;
+function freshenSharedMain(shared) {
+  try {
+    if (git(shared, ["branch", "--show-current"]).trim() !== "main") return;
+    const local = git(shared, ["rev-parse", "refs/heads/main"]).trim();
+    const remote = git(shared, ["rev-parse", "refs/remotes/origin/main^{commit}"]).trim();
+    if (local === remote || !isAncestor(shared, local, remote)) return;
+    git(shared, ["merge", "--ff-only", "--quiet", "refs/remotes/origin/main"]);
+    console.error(`[world] shared clone main ${local.slice(0, 8)} → ${remote.slice(0, 8)} (fast-forward)`);
+  } catch (e) {
+    if (warnedSharedMain) return;
+    warnedSharedMain = true;
+    console.error(`[world] local main could not be advanced in the shared clone (${String(e?.message ?? e).slice(0, 120)}) — published-main reads may lag origin until the walk lane pulls`);
+  }
+}
+
+// Seat a checkout on a household's draft branch. It may switch that checkout
+// among draft branches, but never author on main.
 //
 // The Worldkeeper rewrites every draft branch at each Settlement (rebase onto
 // the new main + force-with-lease), so local refs here may point at replaced
@@ -176,11 +197,31 @@ export function readJsonAtRef(repo, ref, path) {
 // on origin: fast-forward when merely behind, rebase when local holds unpushed
 // commits (they replay onto the rewritten history and the next push is clean).
 // A rebase conflict aborts and bounces the write — never guess at a merge
-// inside the shared checkout.
-export function ensureDraftCheckout(repo, household) {
+// inside the checkout.
+//
+// TWO CALLERS, ONE CEREMONY (tier 1, 2026-08-05):
+//
+//   { pooled: false } — the shared clone's one checkout, serialized under the
+//     exclusive town lock. This is the pre-tier-1 pen and the rollback path
+//     (WORLD_POOL=0). A dirty tree is a fault here: nothing else touches it.
+//
+//   { pooled: true, shared } — a leased pool worktree (see world-pool.mjs).
+//     Three differences, all following from "the tree is disposable and shared
+//     with nobody": dirt is HEALED rather than refused (a crashed write's
+//     leftovers, or a tree left stale because another slot moved this branch
+//     while this one idled — reset-on-lease is the whole cleanup discipline);
+//     the switch tolerates the branch still being parked in another idle slot;
+//     and local `main` is advanced through the shared clone, because a worktree
+//     may not force a branch that the shared clone has checked out.
+export function ensureDraftCheckout(repo, household, { pooled = false, shared = null } = {}) {
   const branch = draftBranch(household);
-  const dirt = git(repo, ["status", "--porcelain"]).trim();
-  if (dirt) throw new Error(`world clone is not clean before branch selection: ${dirt.split(/\r?\n/)[0]}`);
+  if (pooled) {
+    git(repo, ["reset", "--hard", "--quiet", "HEAD"]);
+    git(repo, ["clean", "-qfd"]);
+  } else {
+    const dirt = git(repo, ["status", "--porcelain"]).trim();
+    if (dirt) throw new Error(`world clone is not clean before branch selection: ${dirt.split(/\r?\n/)[0]}`);
+  }
 
   // A fetch blip must not block the write: with the reseat below in place a
   // stale write is self-healing (the next successful fetch rebases it out),
@@ -191,7 +232,16 @@ export function ensureDraftCheckout(repo, household) {
   const current = git(repo, ["branch", "--show-current"]).trim();
   if (current !== branch) {
     if (refExists(repo, `refs/heads/${branch}`)) {
-      git(repo, ["switch", "--quiet", branch]);
+      // --ignore-other-worktrees: an IDLE pool slot may still be parked on this
+      // branch from an earlier lease. Git's guard exists to stop two trees
+      // writing one branch; what actually guarantees that here is the lease (one
+      // household, one writer at a time), and the idle slot re-syncs at its own
+      // next lease. Releasing the branch on the way out instead would be cleanup
+      // a crash can skip. The un-pooled path needs the same tolerance for the
+      // same reason — WORLD_POOL=0 must still be able to write a branch some
+      // idle worktree of a previous run is holding, or the rollback switch
+      // bounces every draft write it is supposed to rescue.
+      git(repo, ["switch", "--quiet", "--ignore-other-worktrees", branch]);
     } else if (refExists(repo, `refs/remotes/origin/${branch}`)) {
       git(repo, ["switch", "--quiet", "--create", branch, "--track", `origin/${branch}`]);
     } else {
@@ -225,9 +275,21 @@ export function ensureDraftCheckout(repo, household) {
   }
 
   // Keep the local main ref honest too — draft deltas and new-branch bases
-  // measure against it, and nothing else ever advances it in this checkout.
-  if (refExists(repo, "refs/remotes/origin/main") && git(repo, ["branch", "--show-current"]).trim() !== "main")
-    git(repo, ["branch", "--quiet", "-f", "main", "refs/remotes/origin/main"]);
+  // measure against it (mainRef prefers refs/heads/main), and before tier 1
+  // nothing else ever advanced it. A pool worktree cannot: the shared clone has
+  // main checked out, and git rightly refuses to force a branch out from under a
+  // working tree. So the pooled path fast-forwards the shared clone itself —
+  // the same `--ff-only` move the walk lane already makes on that clone, run
+  // only when origin has actually moved (a Settlement), and never fatal: a
+  // stale local main degrades reads, it does not corrupt them.
+  if (refExists(repo, "refs/remotes/origin/main") && git(repo, ["branch", "--show-current"]).trim() !== "main") {
+    try {
+      git(repo, ["branch", "--quiet", "-f", "main", "refs/remotes/origin/main"]);
+    } catch (e) {
+      if (!pooled) throw e;
+      if (shared) freshenSharedMain(shared);
+    }
+  }
 
   const selected = git(repo, ["branch", "--show-current"]).trim();
   if (selected !== branch) throw new Error(`world pen selected "${selected}", expected "${branch}"`);

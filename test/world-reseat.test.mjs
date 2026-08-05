@@ -8,7 +8,7 @@
 import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { ensureDraftCheckout } from "../src/world-branches.mjs";
@@ -106,6 +106,54 @@ test("a clean pen merely behind an advanced branch fast-forwards to it", () => {
   assert.equal(g(pen, "rev-parse", "HEAD"), g(pen, "rev-parse", "refs/remotes/origin/draft/alpha"));
   // the local main ref was carried forward too — draft deltas measure against it
   assert.equal(g(pen, "rev-parse", "main"), g(pen, "rev-parse", "refs/remotes/origin/main"));
+});
+
+// Tier 1: the pen may be a leased WORKTREE of the same clone. Same reseat, two
+// differences that only exist because the shared clone is standing right there
+// holding main — the branch switch must tolerate an idle slot still parked on
+// the branch, and the local main ref can no longer be forced from the worktree.
+test("a pooled worktree reseats on origin and advances main through the shared clone it may not force", () => {
+  g(pen, "switch", "-q", "main"); // where world-pool's normalisation leaves it
+  const wt = join(root, "pool-wt");
+  g(pen, "worktree", "add", "--quiet", "--detach", wt, "refs/heads/main");
+
+  // a Settlement moves origin/main on
+  g(keeper, "switch", "-q", "main");
+  g(keeper, "pull", "-q", "--ff-only");
+  put(keeper, "WORLD/settled4.md", "S4 published things\n");
+  g(keeper, "add", "-A");
+  g(keeper, "commit", "-q", "-m", "settlement: S4");
+  g(keeper, "push", "-q", "origin", "main");
+
+  const staleMain = g(pen, "rev-parse", "refs/heads/main");
+  const branch = ensureDraftCheckout(wt, "beta", { pooled: true, shared: pen });
+  assert.equal(branch, "draft/beta");
+  assert.equal(g(wt, "branch", "--show-current"), "draft/beta");
+  assert.equal(g(pen, "branch", "--show-current"), "main", "the shared clone was not dragged onto the household branch");
+
+  // `git branch -f main` from the worktree is refused (main is checked out in
+  // the shared clone), so the fallback fast-forwards that clone instead — and
+  // local main, which mainRef prefers and every draft delta measures against,
+  // stays honest.
+  assert.notEqual(g(pen, "rev-parse", "refs/heads/main"), staleMain);
+  assert.equal(g(pen, "rev-parse", "refs/heads/main"), g(pen, "rev-parse", "refs/remotes/origin/main"));
+
+  // and the branch the worktree holds is no obstacle to seating it again later
+  g(pen, "worktree", "add", "--quiet", "--detach", join(root, "pool-wt-2"), "refs/heads/main");
+  assert.equal(ensureDraftCheckout(join(root, "pool-wt-2"), "beta", { pooled: true, shared: pen }), "draft/beta");
+});
+
+test("a pooled lease heals what the last write abandoned, rather than refusing to start", () => {
+  const wt = join(root, "pool-wt");
+  writeFileSync(join(wt, "WORLD", "junk.md"), "a write that never finished\n");
+  writeFileSync(join(wt, "WORLD", "base.md"), "clobbered\n");
+  assert.equal(ensureDraftCheckout(wt, "beta", { pooled: true, shared: pen }), "draft/beta");
+  assert.equal(existsSync(join(wt, "WORLD", "junk.md")), false, "untracked leftovers are cleaned");
+  assert.equal(readFileSync(join(wt, "WORLD", "base.md"), "utf8").trim(), "the world", "tracked damage is reset");
+  // the un-pooled pen keeps refusing: its checkout is nobody's to trample
+  writeFileSync(join(pen, "WORLD", "base.md"), "clobbered\n");
+  assert.throws(() => ensureDraftCheckout(pen, "alpha"), /not clean before branch selection/);
+  g(pen, "checkout", "-q", "--", "WORLD/base.md");
 });
 
 test("a rewrite that already CONTAINS the pen's unpushed work drops it cleanly (the publish case)", () => {

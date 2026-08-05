@@ -9,6 +9,13 @@
 // execFile, so the event loop keeps answering readers while a write waits its
 // turn in line.
 //
+// Tier 1 (2026-08-05) narrows the lane without leaving this file: the two
+// draft-branch lanes (marks, notes) pass `{ shared: true, alsoLock }` and take a
+// SHARED flock on the same town.lock plus an exclusive per-household file, so
+// two households write at once while the tick and the crossing — which take
+// town.lock exclusively — stay excluded exactly as before. The four
+// shared-ledger lanes pass nothing and keep the exclusive lane unchanged.
+//
 // The flock ceremony and the busy-lock sentence live HERE and nowhere else
 // (one file, one writer). Six call-sites each carried their own copy of a 503
 // blaming the tick's "couple of minutes" index rebuild — false since the
@@ -23,6 +30,30 @@ import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
+export const townLockPath = () => process.env.TOWN_LOCK ?? resolve(HERE, "..", "town.lock");
+export const useFlock = () => process.platform === "linux" && existsSync("/usr/bin/flock");
+
+// Build the argv for one locked child. Split out from the runner because the
+// lock MODE is now the whole tier-1 argument and a claim about it should be
+// testable on any platform, not only where /usr/bin/flock exists.
+//
+//   exclusive (default) — the town-global lane every write took before tier 1,
+//     and the lane the shared-ledger execs (walk, stake, gift, world stake)
+//     still take. Excludes everything, including the tick and the crossing.
+//   shared + alsoLock  — the pooled draft lane. SHARED on town.lock keeps the
+//     tick and the ferry excluded (they take it exclusively, and flock's
+//     LOCK_SH/LOCK_EX compose on one file) while admitting other draft writes;
+//     the per-household file is what those writes exclude each other on.
+export function lockArgv(exec, payload, { shared = false, alsoLock = null } = {}, flock = useFlock()) {
+  const child = [process.execPath, exec, payload];
+  if (!flock) return [child[0], child.slice(1)];
+  return ["/usr/bin/flock", [
+    ...(shared ? ["-s"] : []), "-w", "30", townLockPath(),
+    ...(alsoLock ? ["/usr/bin/flock", "-w", "30", alsoLock] : []),
+    ...child,
+  ]];
+}
+
 // Run one exec script under the town lock, off the event loop. Resolves with
 // the child's stdout; rejects with the child's error carrying .status (exit
 // code) and .stderr — the same shape execFileSync threw, so call-sites keep
@@ -30,14 +61,12 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 //
 // Every run logs `[town-lock] <exec> total=<ms>`; an exec that stamps its own
 // `[timing] child=<ms> …` stderr line (leave-exec does) makes the decomposition
-// readable in one place: total − child ≈ spawn + lock wait. These lines ARE the
-// write-path instrumentation — the real numbers the concurrency plan lacked.
-export function execUnderTownLock(exec, payload, env) {
-  const lock = process.env.TOWN_LOCK ?? resolve(HERE, "..", "town.lock");
-  const useFlock = process.platform === "linux" && existsSync("/usr/bin/flock");
-  const [file, args] = useFlock
-    ? ["/usr/bin/flock", ["-w", "30", lock, process.execPath, exec, payload]]
-    : [process.execPath, [exec, payload]];
+// readable in one place: total − child ≈ spawn + lock wait. A pooled lane adds
+// `lease=<ms> slot=wt-<n>` through `note`, so the fourth term — how long this
+// write waited for a worktree — is readable on the same line. These lines ARE
+// the write-path instrumentation.
+export function execUnderTownLock(exec, payload, env, { note = "", ...lock } = {}) {
+  const [file, args] = lockArgv(exec, payload, lock);
   const t0 = performance.now();
   return new Promise((res, rej) => {
     execFile(file, args, { encoding: "utf8", env }, (error, stdout, stderr) => {
@@ -45,7 +74,7 @@ export function execUnderTownLock(exec, payload, env) {
       // the child's stderr is its log (timing + push-pending lines); surface it —
       // execFileSync used to swallow it on success
       if (!error && String(stderr ?? "").trim()) console.error(String(stderr).trimEnd());
-      console.error(`[town-lock] ${basename(exec)} total=${total}ms${error ? ` exit=${error.code ?? error.signal}` : ""}`);
+      console.error(`[town-lock] ${basename(exec)} total=${total}ms${note ? ` ${note}` : ""}${error ? ` exit=${error.code ?? error.signal}` : ""}`);
       if (error) {
         if (typeof error.code === "number") error.status = error.code;
         error.stderr = stderr;

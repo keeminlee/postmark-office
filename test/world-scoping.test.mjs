@@ -9,6 +9,10 @@ import { tmpdir } from "node:os";
 
 const repo = mkdtempSync(join(tmpdir(), "postmark-world-scope-"));
 after(() => rmSync(repo, { recursive: true, force: true }));
+// the draft lanes lease worktrees out of a pool beside the clone (tier 1)
+const pool = mkdtempSync(join(tmpdir(), "postmark-world-scope-pool-"));
+process.env.WORLD_POOL_DIR = pool;
+after(() => rmSync(pool, { recursive: true, force: true }));
 const town = mkdtempSync(join(tmpdir(), "postmark-town-scope-"));
 after(() => rmSync(town, { recursive: true, force: true }));
 const git = (...args) => execFileSync("git", ["-C", repo, ...args], {
@@ -190,7 +194,12 @@ test("ruling 9 scopes reads by household and every write lands off main", async 
     body: "a second household sketch",
   }, houseB);
   assert.equal(result.branch, "draft/house-b");
-  assert.equal(git("branch", "--show-current").trim(), "draft/house-b");
+  // Tier 1: the write lands on the household's REF, and the shared clone is no
+  // longer dragged onto that household's branch to do it — the pen's checkout is
+  // a leased worktree now. The shared clone stays on main, which is what the read
+  // path (seeding/manifest.json, the engine fallback) has always wanted from it.
+  assert.equal(git("branch", "--show-current").trim(), "main");
+  assert.equal(git("rev-parse", "draft/house-b").trim(), result.commit);
   assert.equal(git("ls-tree", "--name-only", "main", "--", "WORLD/marks/let-there-be-light/new-sketch/mark.md").trim(), "");
   assert.match(git("show", "draft/house-b:WORLD/marks/let-there-be-light/new-sketch/mark.md"), /a second household sketch/);
   assert.equal(git("diff-tree", "--no-commit-id", "--name-only", "-r", result.commit).trim(),

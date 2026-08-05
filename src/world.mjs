@@ -10,7 +10,9 @@
 //
 // The clone: WORLD_CLONE env, else ./world-clone (box), else ../postmark-world
 // (dev checkout). The office rehydrate tick pulls it like town-clone; the
-// assembled views are cached by selected ref + commit.
+// assembled views are cached by selected ref + commit. Reads use that clone's
+// REFS; the draft-branch writes below use leased worktrees of it (world-pool.mjs,
+// tier 1) so two households do not queue behind one working tree.
 
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -28,6 +30,7 @@ import {
   stateForKey,
 } from "./world-branches.mjs";
 import { WORLD_STAKE_TOOLS, callWorldStakeTool, worldPortfolioStakeSlice } from "./world-stake.mjs"; // P3 draft, append-shaped
+import { householdLockPath, poolEnabled, pushDraftBranch, withDraftLease } from "./world-pool.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..");
@@ -389,6 +392,47 @@ export async function worldBlockForHandle(handle, key = null) {
     : { mark_id: home.mark_id, x: home.x, y: home.y, sited: true };
 }
 
+// ── the draft-branch lane (tier 1) ───────────────────────────────────────────
+// The two verbs that write `draft/<household>` — a mark and a note — share one
+// lane, and it is the only lane in the office that runs more than one write at a
+// time. A lease hands this write its own worktree of the world clone; the child
+// runs under a SHARED town lock plus an exclusive per-household one, so it
+// excludes the tick and the crossing but not another household; the lease and
+// the locks are released the moment the child exits; and only then does the push
+// happen — still inside this household's turn, so its own writes cannot race
+// each other to origin, but holding nothing anyone else is waiting for.
+//
+// WORLD_POOL=0 falls back to the tier-0 lane (one shared checkout, exclusive
+// lock, child pushes) with no other difference. The answer shape is identical on
+// both paths: same fields, same bounce grammar, same push-pending rule.
+async function draftWrite(worldClone, exec, payload, household, subject) {
+  if (!poolEnabled()) {
+    const out = await execUnderTownLock(exec, payload, { ...process.env, WORLD_CLONE: worldClone });
+    return JSON.parse(out.trim().split("\n").at(-1));
+  }
+  return withDraftLease(worldClone, household, async ({ dir, slot, leaseMs, release }) => {
+    const env = { ...process.env, WORLD_CLONE: dir, WORLD_POOL_SLOT: slot, WORLD_SHARED_CLONE: worldClone };
+    let out;
+    try {
+      out = await execUnderTownLock(exec, payload, env, {
+        shared: true,
+        alsoLock: householdLockPath(household),
+        note: `lease=${leaseMs}ms slot=${slot}`,
+      });
+    } finally { release(); }
+
+    const result = JSON.parse(out.trim().split("\n").at(-1));
+    if (result.error || !result.commit || !result.branch || process.env.TOWN_PUSH !== "1") return result;
+    const push = await pushDraftBranch(worldClone, result.branch);
+    result.pushed = push.pushed;
+    if (push.push_error) {
+      result.push_error = push.push_error;
+      console.error(`[world-pool] push pending for ${subject}: ${push.push_error}`);
+    }
+    return result;
+  });
+}
+
 // ── the write verb (credentialed) ────────────────────────────────────────────
 // world_leave_mark — leave a mark on the world. by/date are server-derived (never
 // the client's); the CLONE'S OWN placementParent decides the directory (geometry
@@ -433,15 +477,13 @@ export async function leaveMarkViaOffice(worldClone, payload = {}, key = null) {
   if (!household) throw bounce(403, "this credential has no resident household", "sign in as a resident household before leaving a mark");
   const clean = { slug, kind, at, extent, points, body: String(body).trim(), tier: t, slot, value, parent_id, by, household, date: new Date().toISOString() };
   const exec = join(HERE, "leave-exec.mjs");
-  const env = { ...process.env, WORLD_CLONE: worldClone };
-  let out;
+  let result;
   try {
-    out = await execUnderTownLock(exec, JSON.stringify(clean), env);
+    result = await draftWrite(worldClone, exec, JSON.stringify(clean), household, `${by}/${slug}`);
   } catch (e) {
     if (lockTimedOut(e)) throw bounce(LOCK_BUSY.code, LOCK_BUSY.defect, LOCK_BUSY.hint);
     throw bounce(500, "the mark pass tripped", String(e.stderr ?? e.message ?? e).slice(0, 300));
   }
-  const result = JSON.parse(out.trim().split("\n").at(-1));
   if (result.error) throw bounce(result.error.code ?? 500, result.error.defect, result.error.hint);
   return result;
 }
@@ -475,15 +517,13 @@ export async function worldNoteViaOffice(worldClone, payload = {}, key = null) {
   const household = String(key?.household ?? "").trim();
   if (!household) throw bounce(403, "this credential has no resident household", "sign in as a resident household before leaving a note");
   const exec = join(HERE, "note-exec.mjs");
-  const env = { ...process.env, WORLD_CLONE: worldClone };
-  let out;
+  let result;
   try {
-    out = await execUnderTownLock(exec, JSON.stringify({ handle, body, household }), env);
+    result = await draftWrite(worldClone, exec, JSON.stringify({ handle, body, household }), household, handle);
   } catch (e) {
     if (lockTimedOut(e)) throw bounce(LOCK_BUSY.code, LOCK_BUSY.defect, LOCK_BUSY.hint);
     throw bounce(500, "the note pass tripped", String(e.stderr ?? e.message ?? e).slice(0, 300));
   }
-  const result = JSON.parse(out.trim().split("\n").at(-1));
   if (result.error) throw bounce(result.error.code ?? 500, result.error.defect, result.error.hint);
   return result;
 }

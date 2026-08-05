@@ -28,7 +28,14 @@ import { penCommit } from "./write.mjs";
 import { ensureDraftCheckout } from "./world-branches.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+// WORLD_CLONE is the LEASED WORKTREE when the pool is on (tier 1) and the shared
+// clone otherwise — same directory shape either way, so everything below reads
+// the same. WORLD_POOL_SLOT is the parent's signal that this is a lease: seat
+// with the pooled ceremony, and leave the push to the parent, which does it
+// after the locks are released.
 const CLONE = process.env.WORLD_CLONE ?? resolve(HERE, "..", "world-clone");
+const SLOT = process.env.WORLD_POOL_SLOT ?? null;
+const SHARED = process.env.WORLD_SHARED_CLONE ?? null;
 const MARKS_DIR = join(CLONE, "WORLD", "marks");
 const ROOT_DIR = join(MARKS_DIR, "let-there-be-light");
 
@@ -58,7 +65,7 @@ async function main() {
   phases.push(`engine=${Math.round(performance.now() - tEngine)}ms`);
   let branch;
   try {
-    branch = timed("checkout", () => ensureDraftCheckout(CLONE, p.household));
+    branch = timed("checkout", () => ensureDraftCheckout(CLONE, p.household, { pooled: !!SLOT, shared: SHARED }));
   } catch (e) {
     return err(409, "the household sketchbook is not ready", String(e?.message ?? e).slice(0, 300));
   }
@@ -163,7 +170,11 @@ async function main() {
   // Commit the draft record only, then push the household branch best-effort.
   // Derived files stay on main so a private draft never masquerades as canon.
   const addPaths = [join(dir, "mark.md")];
-  const pushRequested = process.env.TOWN_PUSH === "1";
+  // A pooled write's push belongs to the parent, AFTER it drops the town lock
+  // and the worktree lease: a network round-trip is the one part of this that
+  // has no business inside a critical section. The reported fields are the same
+  // either way — the parent fills in pushed/push_error before answering.
+  const pushRequested = process.env.TOWN_PUSH === "1" && !SLOT;
   const savedPush = process.env.TOWN_PUSH;
   delete process.env.TOWN_PUSH; // penCommit's push throws; this door degrades to push-pending
   let commit;

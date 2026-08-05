@@ -4,5 +4,7 @@ node_modules/
 .env
 office-keys.json
 town-clone/
+world-clone-pool/
+draft-locks/
 server.log
 telemetry/access-*.jsonl

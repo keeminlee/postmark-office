@@ -12,7 +12,11 @@ import { penCommit } from "./write.mjs";
 import { ensureDraftCheckout } from "./world-branches.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+// WORLD_CLONE is a leased pool worktree when WORLD_POOL_SLOT is set (tier 1),
+// the shared clone otherwise; the mark lane's exact arrangement.
 const CLONE = process.env.WORLD_CLONE ?? resolve(HERE, "..", "world-clone");
+const SLOT = process.env.WORLD_POOL_SLOT ?? null;
+const SHARED = process.env.WORLD_SHARED_CLONE ?? null;
 
 const answer = (obj) => { console.log(JSON.stringify(obj)); process.exit(0); };
 const err = (code, defect, hint) => answer({ error: { code, defect, hint } });
@@ -26,7 +30,7 @@ async function main() {
 
   let branch;
   try {
-    branch = ensureDraftCheckout(CLONE, p.household);
+    branch = ensureDraftCheckout(CLONE, p.household, { pooled: !!SLOT, shared: SHARED });
   } catch (e) {
     return err(409, "the household sketchbook is not ready", String(e?.message ?? e).slice(0, 300));
   }
@@ -36,7 +40,8 @@ async function main() {
   mkdirSync(notesDir, { recursive: true });
   writeFileSync(file, `${String(p.body).trim()}\n`);
 
-  const pushRequested = process.env.TOWN_PUSH === "1";
+  // pooled: the parent pushes, outside the lock and the lease (see leave-exec)
+  const pushRequested = process.env.TOWN_PUSH === "1" && !SLOT;
   const savedPush = process.env.TOWN_PUSH;
   delete process.env.TOWN_PUSH;
   let commit;

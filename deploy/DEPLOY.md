@@ -99,6 +99,42 @@ curl -s -H "Authorization: Bearer <key>" https://postmark.town/api/town
 - Rollback: `systemctl stop postmark-office` — the site and the PR door are
   untouched by anything the office does.
 
+### The world write pool (tier 1, 2026-08-05)
+
+The two draft-branch write lanes — `world_leave_mark` and `world_note`, which
+write `draft/<household>` — no longer share the world clone's one working tree.
+They lease from a pool of `git worktree`s of that same clone, so two households
+write at once. Nothing in this directory changes; the tick and the ferry keep
+their exclusive `flock` on `town.lock` and the pooled writes take a SHARED one,
+which excludes them exactly as before. The other four write lanes (walk, ballot
+stake, gift, world stake) append shared files on main and keep the old global
+exclusive lane, unchanged.
+
+What appears on the box:
+
+- `world-clone-pool/wt-0 … wt-N` beside the world clone — created lazily on
+  first use, then permanent. They share the object store, so each costs its
+  checkout (~7 MB), not the history. Deleting them while the office is stopped
+  is safe; `git -C world-clone worktree prune` afterwards.
+- `draft-locks/<household>.lock` beside `town.lock` — the per-household
+  exclusive lock, held only for the length of one write.
+- One extra log term: `[town-lock] leave-exec.mjs total=… lease=…ms slot=wt-2`.
+  `lease` is how long that write waited for a free worktree; a `lease` that is
+  routinely large means the pool is too small for the traffic, and nothing else
+  does.
+
+Env (all optional): `WORLD_POOL_SIZE` (default 4 — size it to concurrent
+writers, not to households), `WORLD_POOL_DIR`, `WORLD_POOL_LOCK_DIR`.
+**`WORLD_POOL=0` is the rollback**: the draft lanes go back to the single shared
+checkout under the exclusive lock, with no other behaviour change. Set it in
+`/etc/postmark-office.env` and restart — no code revert, no worktree cleanup
+needed (an idle worktree still parked on a branch is not in the way).
+
+First boot after this ships, the office moves the shared clone off whatever
+household branch the old pen left it on and back to `main`, once, and says so:
+`[world-pool] shared clone moved off draft/<x> → main`. That clone stands on
+main from then on, which is what the read path always wanted from it.
+
 ## Branch previews (`/preview/<slug>/`, 2026-07-20)
 
 Branch builds of the town site, served noindexed at
