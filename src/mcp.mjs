@@ -204,7 +204,7 @@ async function callTool(name, args, ctx) {
     }
     case "stake_vote": {
       if (!canWrite || !votesAvailable(clone)) return notFound("not-yet-open", "the office has no town clone with the ballot engine");
-      try { return stakeViaOffice(clone, args, key); }
+      try { return await stakeViaOffice(clone, args, key); }
       catch (e) { if (e.code) return { error: "bounce", defect: e.defect, hint: e.hint }; throw e; }
     }
     case "request_blessing": return notFound("not-yet-open", "the blessing lane gates irreversible spends (transfers, burns), which stay dormant; stakes need no blessing — a stake is not a spend, it returns");

@@ -68,7 +68,7 @@ const principalKey = { household: "keemin", handles: new Set(["wright"]), ghId: 
 const strangerKey = { household: "someone", handles: new Set(["finn"]), ghId: 999999, ghLogin: "someone", keyKind: "oauth" };
 const staticKey = { household: "shell", handles: new Set(["finn"]) }; // no ghId
 
-const bounceOf = (fn) => { try { fn(); } catch (e) { return e; } assert.fail("expected a bounce"); };
+const bounceOf = async (fn) => { try { await fn(); } catch (e) { return e; } assert.fail("expected a bounce"); };
 
 // ── the principal gate ───────────────────────────────────────────────────────
 
@@ -92,10 +92,10 @@ test("/me carries principal: true only for the principal's session", () => {
 
 // ── the gift mint mechanics (giftViaOffice → gift-exec → the town's CLI) ──────
 
-test("giftViaOffice: a valid gift mints the exact line + returns the new balance; the ledger verifies", () => {
+test("giftViaOffice: a valid gift mints the exact line + returns the new balance; the ledger verifies", async () => {
   const clone = giftClone();
   try {
-    const r = giftViaOffice(clone, { handle: "finn", amount: 20, slug: "door-held-open" }, principalKey);
+    const r = await giftViaOffice(clone, { handle: "finn", amount: 20, slug: "door-held-open" }, principalKey);
     assert.match(r.line, /^- \d{4}-\d{2}-\d{2} · MINT → finn · 20 · for: gift:door-held-open · by: keemin · sig: \S+$/,
       "the signed line is the exact gift grammar");
     assert.equal(typeof r.balance, "number");
@@ -107,30 +107,30 @@ test("giftViaOffice: a valid gift mints the exact line + returns the new balance
   } finally { rmSync(clone, { recursive: true, force: true }); }
 });
 
-test("giftViaOffice: a meep recipient is refused (the CLI's law, passed through as 422)", () => {
+test("giftViaOffice: a meep recipient is refused (the CLI's law, passed through as 422)", async () => {
   const clone = giftClone();
   try {
-    const e = bounceOf(() => giftViaOffice(clone, { handle: "postmaster", amount: 5, slug: "for-ferry" }, principalKey));
+    const e = await bounceOf(() => giftViaOffice(clone, { handle: "postmaster", amount: 5, slug: "for-ferry" }, principalKey));
     assert.equal(e.code, 422);
     assert.match(e.defect, /meep/i);
   } finally { rmSync(clone, { recursive: true, force: true }); }
 });
 
-test("giftViaOffice: an unknown recipient is refused 422 (a gift needs a resident)", () => {
+test("giftViaOffice: an unknown recipient is refused 422 (a gift needs a resident)", async () => {
   const clone = giftClone();
   try {
-    const e = bounceOf(() => giftViaOffice(clone, { handle: "nobody-here", amount: 5, slug: "hello" }, principalKey));
+    const e = await bounceOf(() => giftViaOffice(clone, { handle: "nobody-here", amount: 5, slug: "hello" }, principalKey));
     assert.equal(e.code, 422);
   } finally { rmSync(clone, { recursive: true, force: true }); }
 });
 
-test("giftViaOffice: a non-kebab slug is refused 422 before it ever reaches the mint", () => {
+test("giftViaOffice: a non-kebab slug is refused 422 before it ever reaches the mint", async () => {
   const clone = giftClone();
   try {
-    const e = bounceOf(() => giftViaOffice(clone, { handle: "finn", amount: 5, slug: "Not_Kebab" }, principalKey));
+    const e = await bounceOf(() => giftViaOffice(clone, { handle: "finn", amount: 5, slug: "Not_Kebab" }, principalKey));
     assert.equal(e.code, 422);
     assert.match(e.defect, /kebab/i);
-    const e2 = bounceOf(() => giftViaOffice(clone, { handle: "finn", amount: 0, slug: "zero" }, principalKey));
+    const e2 = await bounceOf(() => giftViaOffice(clone, { handle: "finn", amount: 0, slug: "zero" }, principalKey));
     assert.equal(e2.code, 422);
   } finally { rmSync(clone, { recursive: true, force: true }); }
 });

@@ -487,10 +487,10 @@ const server = createServer((req, res) => {
         return bounce(res, 409, "not-yet-open", "the office has no town clone with the ballot engine");
       if (key.visitor)
         return bounce(res, 403, "visitor pass: no stamps yet", "staking needs an address and a balance — POST /residency first");
-      readJsonBody(req).then((raw) => {
+      readJsonBody(req).then(async (raw) => {
         try {
           const payload = JSON.parse(raw || "{}");
-          const result = stakeViaOffice(TOWN_CLONE, payload, key);
+          const result = await stakeViaOffice(TOWN_CLONE, payload, key);
           return j(res, 200, result);
         } catch (e) {
           if (e.code) return bounce(res, e.code, e.defect, e.hint);
@@ -512,10 +512,10 @@ const server = createServer((req, res) => {
         return bounce(res, 403, "the ops desk is the principal's", "this desk mints founder gifts and answers only to Keemin's GitHub sign-in");
       if (!canWrite)
         return bounce(res, 409, "not-yet-open", "the office has no town clone configured; the desk is dark");
-      readJsonBody(req).then((raw) => {
+      readJsonBody(req).then(async (raw) => {
         try {
           const payload = JSON.parse(raw || "{}");
-          const result = giftViaOffice(TOWN_CLONE, payload, key);
+          const result = await giftViaOffice(TOWN_CLONE, payload, key);
           return j(res, 200, result); // 200: a gift is a pen commit, done now (no ferry)
         } catch (e) {
           if (e.code) return bounce(res, e.code, e.defect, e.hint);
@@ -531,10 +531,10 @@ const server = createServer((req, res) => {
     // failure is a 422 bounce with the exact field, never a half-written record.
     if (req.method === "POST" && path === "/world/marks") {
       if (!key) return bounce(res, 401, "a mark needs a key", "leaving a mark is a credentialed act — send your resident key as a Bearer token");
-      readJsonBody(req).then((raw) => {
+      readJsonBody(req).then(async (raw) => {
         try {
           const payload = JSON.parse(raw || "{}");
-          const result = leaveMarkViaOffice(WORLD_CLONE, payload, key);
+          const result = await leaveMarkViaOffice(WORLD_CLONE, payload, key);
           return j(res, 200, result); // 200: a mark is a pen commit, folded now (no ferry)
         } catch (e) {
           if (e.code) return bounce(res, e.code, e.defect, e.hint);

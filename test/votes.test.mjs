@@ -61,14 +61,14 @@ function voteClone({ cap = 12, status = "staking" } = {}) {
 
 const kKey = { household: "keemin", handles: new Set(["wright", "rei"]) };
 
-test("stakeViaOffice: applies, commits, second sibling clips — never bounces", () => {
+test("stakeViaOffice: applies, commits, second sibling clips — never bounces", async () => {
   const clone = voteClone({ cap: 12 });
-  const r1 = stakeViaOffice(clone, { from: "wright", topic: "name-vote", candidate: "lumen", stamps: 10 }, kKey);
+  const r1 = await stakeViaOffice(clone, { from: "wright", topic: "name-vote", candidate: "lumen", stamps: 10 }, kKey);
   assert.equal(r1.applied, 10);
   assert.equal(r1.vote_minted, true);
   assert.ok(r1.commit, "the stake is a pen commit");
 
-  const r2 = stakeViaOffice(clone, { from: "rei", topic: "name-vote", candidate: "lumen", stamps: 10 }, kKey);
+  const r2 = await stakeViaOffice(clone, { from: "rei", topic: "name-vote", candidate: "lumen", stamps: 10 }, kKey);
   assert.equal(r2.applied, 2, "household cap 12 — rei fills the remainder");
   assert.equal(r2.clipped, true);
 
@@ -77,19 +77,19 @@ test("stakeViaOffice: applies, commits, second sibling clips — never bounces",
   rmSync(clone, { recursive: true, force: true });
 });
 
-test("stakeViaOffice: zero-fill is an answer; wrong handle is a 403; bad status is a 409", () => {
+test("stakeViaOffice: zero-fill is an answer; wrong handle is a 403; bad status is a 409", async () => {
   const clone = voteClone({ cap: 10 }); // wright's balance is 10 — one stake fills the household cap exactly
-  stakeViaOffice(clone, { from: "wright", topic: "name-vote", candidate: "lumen", stamps: 10 }, kKey);
-  const r = stakeViaOffice(clone, { from: "rei", topic: "name-vote", candidate: "lumen", stamps: 3 }, kKey);
+  await stakeViaOffice(clone, { from: "wright", topic: "name-vote", candidate: "lumen", stamps: 10 }, kKey);
+  const r = await stakeViaOffice(clone, { from: "rei", topic: "name-vote", candidate: "lumen", stamps: 3 }, kKey);
   assert.equal(r.applied, 0);
   assert.ok(r.reason.includes("headroom"));
 
-  assert.throws(() => stakeViaOffice(clone, { from: "limen", topic: "name-vote", candidate: "lumen", stamps: 1 }, kKey),
+  await assert.rejects(() => stakeViaOffice(clone, { from: "limen", topic: "name-vote", candidate: "lumen", stamps: 1 }, kKey),
     (e) => e.code === 403);
   rmSync(clone, { recursive: true, force: true });
 
   const early = voteClone({ status: "submissions" });
-  assert.throws(() => stakeViaOffice(early, { from: "wright", topic: "name-vote", candidate: "lumen", stamps: 1 }, kKey),
+  await assert.rejects(() => stakeViaOffice(early, { from: "wright", topic: "name-vote", candidate: "lumen", stamps: 1 }, kKey),
     (e) => e.code === 409 && /not staking/.test(e.defect));
   rmSync(early, { recursive: true, force: true });
 });
@@ -97,7 +97,7 @@ test("stakeViaOffice: zero-fill is an answer; wrong handle is a 403; bad status 
 test("voteList + voteView: tallies, headroom for the signed-in household", async () => {
   const clone = voteClone({ cap: 12 });
   assert.equal(votesAvailable(clone), true);
-  stakeViaOffice(clone, { from: "wright", topic: "name-vote", candidate: "lumen", stamps: 7 }, kKey);
+  await stakeViaOffice(clone, { from: "wright", topic: "name-vote", candidate: "lumen", stamps: 7 }, kKey);
 
   const list = await voteList(clone);
   assert.equal(list.topics.length, 1);
@@ -116,7 +116,7 @@ test("voteList + voteView: tallies, headroom for the signed-in household", async
 
 test("doorstepVotes: open topics with the household's applied + headroom", async () => {
   const clone = voteClone({ cap: 12 });
-  stakeViaOffice(clone, { from: "wright", topic: "name-vote", candidate: "lumen", stamps: 4 }, kKey);
+  await stakeViaOffice(clone, { from: "wright", topic: "name-vote", candidate: "lumen", stamps: 4 }, kKey);
   const v = await doorstepVotes(clone, "rei");
   assert.equal(v.length, 1);
   assert.equal(v[0].topic, "name-vote");

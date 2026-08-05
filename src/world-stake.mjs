@@ -22,11 +22,11 @@
 //   3. The lock — writes go through a subprocess under the ferry's flock, so a
 //      stake append can never race a crossing's mint pass.
 
-import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { stateForKey } from "./world-branches.mjs";
+import { execUnderTownLock, lockTimedOut, LOCK_BUSY } from "./town-lock.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TOWN_CLONE = process.env.TOWN_CLONE ?? resolve(HERE, "..", "town-clone");
@@ -140,18 +140,12 @@ export async function worldPortfolioStakeSlice(key, marks = []) {
 
 async function runExec(payload) {
   const exec = join(HERE, "world-stake-exec.mjs");
-  const lock = process.env.TOWN_LOCK ?? resolve(HERE, "..", "town.lock");
   const env = { ...process.env, TOWN_CLONE };
-  const useFlock = process.platform === "linux" && existsSync("/usr/bin/flock");
   let out;
   try {
-    out = useFlock
-      ? execFileSync("/usr/bin/flock", ["-w", "30", lock, process.execPath, exec, JSON.stringify(payload)], { encoding: "utf8", env })
-      : execFileSync(process.execPath, [exec, JSON.stringify(payload)], { encoding: "utf8", env });
+    out = await execUnderTownLock(exec, JSON.stringify(payload), env);
   } catch (e) {
-    // flock timeout exits 1 with silent stderr; a crashed exec prints a stack.
-    if (e.status === 1 && !String(e.stderr ?? "").trim())
-      return bounce(503, "the office is mid-tick — its periodic index rebuild holds the town lock for a couple of minutes", "nothing was recorded; try again in ~2 minutes");
+    if (lockTimedOut(e)) return bounce(LOCK_BUSY.code, LOCK_BUSY.defect, LOCK_BUSY.hint);
     return bounce(500, "the stake could not be recorded", String(e.stderr ?? e.message ?? e).slice(0, 300));
   }
   let parsed;

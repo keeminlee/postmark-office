@@ -88,27 +88,27 @@ const validMark = {
   body: "The lint never sees a malformed mark.",
 };
 const bounced = (payload, defect) => {
-  assert.throws(
+  return assert.rejects(
     () => leaveMarkViaOffice(process.env.WORLD_CLONE, payload, one),
     (error) => error.code === 422 && error.defect === defect,
   );
 };
 
-test("world_leave_mark pre-check names the exact body overage in Unicode characters", () => {
-  bounced({ ...validMark, body: "x".repeat(163) }, "body is 163 chars; the cap is 150");
-  bounced({ ...validMark, body: "😀".repeat(151) }, "body is 151 chars; the cap is 150");
+test("world_leave_mark pre-check names the exact body overage in Unicode characters", async () => {
+  await bounced({ ...validMark, body: "x".repeat(163) }, "body is 163 chars; the cap is 150");
+  await bounced({ ...validMark, body: "😀".repeat(151) }, "body is 151 chars; the cap is 150");
 });
 
-test("world_leave_mark pre-check enforces predicated and naming slot/value law", () => {
-  bounced({ ...validMark, slot: undefined }, "predicated marks need slot and value");
-  bounced({ ...validMark, value: undefined }, "predicated marks need slot and value");
-  bounced({
+test("world_leave_mark pre-check enforces predicated and naming slot/value law", async () => {
+  await bounced({ ...validMark, slot: undefined }, "predicated marks need slot and value");
+  await bounced({ ...validMark, value: undefined }, "predicated marks need slot and value");
+  await bounced({
     ...validMark,
     kind: "naming",
     slot: undefined,
     value: undefined,
   }, 'naming marks need value (the name); slot is implicitly "name"');
-  bounced({
+  await bounced({
     ...validMark,
     kind: "naming",
     slot: "label",
@@ -116,8 +116,8 @@ test("world_leave_mark pre-check enforces predicated and naming slot/value law",
   }, 'naming marks use slot "name" (or omit it); got "label"');
 });
 
-test("world_leave_mark pre-check refuses slot/value on every other kind", () => {
-  bounced({
+test("world_leave_mark pre-check refuses slot/value on every other kind", async () => {
+  await bounced({
     ...validMark,
     kind: "sited",
     at: { x: 0, y: 0 },
@@ -126,7 +126,7 @@ test("world_leave_mark pre-check refuses slot/value on every other kind", () => 
     value: undefined,
     parent_id: undefined,
   }, "sited marks carry no slot/value");
-  bounced({
+  await bounced({
     ...validMark,
     kind: "parcel",
     at: { x: 0, y: 0 },
@@ -136,9 +136,9 @@ test("world_leave_mark pre-check refuses slot/value on every other kind", () => 
   }, "parcel marks carry no slot/value");
 });
 
-test("world_leave_mark locks the parcel dial — extent is the town's, not the claimant's", () => {
+test("world_leave_mark locks the parcel dial — extent is the town's, not the claimant's", async () => {
   // the vermillion 200×200 class dies at the door (Keemin ruling 2026-07-31)
-  bounced({
+  await bounced({
     ...validMark,
     kind: "parcel",
     at: { x: 0, y: 0 },
@@ -162,8 +162,8 @@ test("world_leave_mark tool contract states the complete mark law and craft warn
   assert.match(tool.inputSchema.properties.by.description, /omit if your key holds exactly one/);
 });
 
-test("world_note pre-check uses actingAs choices and the 2000-character cap", () => {
-  assert.throws(
+test("world_note pre-check uses actingAs choices and the 2000-character cap", async () => {
+  await assert.rejects(
     () => worldNoteViaOffice(process.env.WORLD_CLONE, { body: "remember" }, two),
     (error) => {
       assert.equal(error.code, 422);
@@ -172,11 +172,11 @@ test("world_note pre-check uses actingAs choices and the 2000-character cap", ()
       return true;
     },
   );
-  assert.throws(
+  await assert.rejects(
     () => worldNoteViaOffice(process.env.WORLD_CLONE, { handle: "zeta", body: "remember" }, two),
     (error) => error.code === 403 && /not one of your residents/.test(error.defect),
   );
-  assert.throws(
+  await assert.rejects(
     () => worldNoteViaOffice(process.env.WORLD_CLONE, { body: "x".repeat(2001) }, one),
     (error) => error.code === 422 && error.defect === "body is 2001 chars; the cap is 2000",
   );

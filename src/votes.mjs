@@ -7,10 +7,10 @@
 // subprocess under the ferry's flock (src/stake-exec.mjs) so a stake append
 // can never race a crossing's mint pass or its reset.
 
-import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { join, resolve, dirname } from "node:path";
+import { join, dirname } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
+import { execUnderTownLock, lockTimedOut, LOCK_BUSY } from "./town-lock.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -96,7 +96,7 @@ export function townDay() {
 // POST /votes/stake — the live door. Runs the stake in a subprocess under the
 // ferry's flock (linux); direct on platforms without flock (dev/test).
 // Returns the clip result or throws { code, defect, hint }.
-export function stakeViaOffice(clone, { from, topic, candidate, stamps }, key) {
+export async function stakeViaOffice(clone, { from, topic, candidate, stamps }, key) {
   const bounce = (code, defect, hint) => { const e = new Error(defect); Object.assign(e, { code, defect, hint }); return e; };
   if (!from || !topic || !candidate || stamps === undefined)
     throw bounce(422, "incomplete stake", "required: from, topic, candidate, stamps");
@@ -105,17 +105,12 @@ export function stakeViaOffice(clone, { from, topic, candidate, stamps }, key) {
 
   const exec = join(HERE, "stake-exec.mjs");
   const payload = JSON.stringify({ handle: from, topic, candidate, n: stamps, via: "api", date: townDay() });
-  const lock = process.env.TOWN_LOCK ?? resolve(HERE, "..", "town.lock");
   const env = { ...process.env, TOWN_CLONE: clone };
-  const useFlock = process.platform === "linux" && existsSync("/usr/bin/flock");
   let out;
   try {
-    out = useFlock
-      ? execFileSync("/usr/bin/flock", ["-w", "30", lock, process.execPath, exec, payload], { encoding: "utf8", env })
-      : execFileSync(process.execPath, [exec, payload], { encoding: "utf8", env });
+    out = await execUnderTownLock(exec, payload, env);
   } catch (e) {
-    if (e.status === 1 && !String(e.stderr ?? "").trim())
-      throw bounce(503, "the office is mid-tick — its periodic index rebuild holds the town lock for a couple of minutes", "nothing was recorded; try again in ~2 minutes");
+    if (lockTimedOut(e)) throw bounce(LOCK_BUSY.code, LOCK_BUSY.defect, LOCK_BUSY.hint);
     const msg = String(e.stderr ?? e.message ?? e).slice(0, 300);
     throw bounce(500, "the stake pass tripped", msg);
   }

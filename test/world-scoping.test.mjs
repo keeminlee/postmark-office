@@ -182,7 +182,7 @@ test("ruling 9 scopes reads by household and every write lands off main", async 
   ];
   assert.equal(new Set(categoryIds).size, categoryIds.length, "portfolio categories are mutually exclusive");
 
-  const result = leaveMarkViaOffice(repo, {
+  const result = await leaveMarkViaOffice(repo, {
     slug: "new-sketch",
     kind: "sited",
     at: { x: 20, y: 20 },
@@ -198,8 +198,8 @@ test("ruling 9 scopes reads by household and every write lands off main", async 
     "draft write commits only the mark record, never main's derived canon files");
 });
 
-test("world_leave_mark defaults by on a solo key without changing its author contract", () => {
-  const result = leaveMarkViaOffice(repo, {
+test("world_leave_mark defaults by on a solo key without changing its author contract", async () => {
+  const result = await leaveMarkViaOffice(repo, {
     slug: "solo-default",
     kind: "sited",
     at: { x: 40, y: 40 },
@@ -229,7 +229,7 @@ test("world_open_your_eyes defaults to telling + compact objects and preserves d
 });
 
 test("world_note overwrites one resident note on the household draft and orient reads it back", async () => {
-  const first = worldNoteViaOffice(repo, { body: "Remember the blue door." }, houseA);
+  const first = await worldNoteViaOffice(repo, { body: "Remember the blue door." }, houseA);
   assert.equal(first.handle, "alpha");
   assert.equal(first.path, "NOTES/alpha.md");
   assert.equal(first.branch, "draft/house-a");
@@ -242,7 +242,7 @@ test("world_note overwrites one resident note on the household draft and orient 
   assert.equal((await worldOrient({ x: 0, y: 0 }, houseA)).standpoint.stance, "spectator");
   assert.equal((await worldOrient({}, houseA)).standpoint.stance, "embodied");
 
-  const second = worldNoteViaOffice(repo, { body: "Bring the brass key." }, houseA);
+  const second = await worldNoteViaOffice(repo, { body: "Bring the brass key." }, houseA);
   assert.notEqual(second.commit, first.commit);
   assert.equal(git("show", "draft/house-a:NOTES/alpha.md").trim(), "Bring the brass key.");
   assert.equal((await worldOrient({}, houseA)).note, "Bring the brass key.");

@@ -13,10 +13,10 @@
 // assembled views are cached by selected ref + commit.
 
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { execFileSync } from "node:child_process";
 import { isPrincipal } from "./ops.mjs";
+import { execUnderTownLock, lockTimedOut, LOCK_BUSY } from "./town-lock.mjs";
 import {
   draftDeltaForKey,
   draftRefForKey,
@@ -398,7 +398,7 @@ export async function worldBlockForHandle(handle, key = null) {
 // critical section in leave-exec.mjs under the flock. Commit-local, push best-effort
 // (push-hold: TOWN_PUSH unset ⇒ commit-only is the default; a 403 is reported
 // push-pending, never thrown).
-export function leaveMarkViaOffice(worldClone, payload = {}, key = null) {
+export async function leaveMarkViaOffice(worldClone, payload = {}, key = null) {
   const bounce = (code, defect, hint) => { const e = new Error(defect); Object.assign(e, { code, defect, hint }); return e; };
   const handles = [...(key?.handles ?? [])];
   const by = payload.by ?? (handles.length === 1 ? handles[0] : undefined);
@@ -433,18 +433,12 @@ export function leaveMarkViaOffice(worldClone, payload = {}, key = null) {
   if (!household) throw bounce(403, "this credential has no resident household", "sign in as a resident household before leaving a mark");
   const clean = { slug, kind, at, extent, points, body: String(body).trim(), tier: t, slot, value, parent_id, by, household, date: new Date().toISOString() };
   const exec = join(HERE, "leave-exec.mjs");
-  const lock = process.env.TOWN_LOCK ?? resolve(HERE, "..", "town.lock");
   const env = { ...process.env, WORLD_CLONE: worldClone };
-  const useFlock = process.platform === "linux" && existsSync("/usr/bin/flock");
   let out;
   try {
-    out = useFlock
-      ? execFileSync("/usr/bin/flock", ["-w", "30", lock, process.execPath, exec, JSON.stringify(clean)], { encoding: "utf8", env })
-      : execFileSync(process.execPath, [exec, JSON.stringify(clean)], { encoding: "utf8", env });
+    out = await execUnderTownLock(exec, JSON.stringify(clean), env);
   } catch (e) {
-    // flock timeout exits 1 with silent stderr; a crashed exec prints a stack.
-    if (e.status === 1 && !String(e.stderr ?? "").trim())
-      throw bounce(503, "the office is mid-tick — its periodic index rebuild holds the town lock for a couple of minutes", "nothing was recorded; try again in ~2 minutes");
+    if (lockTimedOut(e)) throw bounce(LOCK_BUSY.code, LOCK_BUSY.defect, LOCK_BUSY.hint);
     throw bounce(500, "the mark pass tripped", String(e.stderr ?? e.message ?? e).slice(0, 300));
   }
   const result = JSON.parse(out.trim().split("\n").at(-1));
@@ -456,7 +450,7 @@ export function leaveMarkViaOffice(worldClone, payload = {}, key = null) {
 // Ratified (Keemin, 2026-07-29). Storage and exposure: NOTES/<handle>.md on the
 // caller's household draft branch, through the same locked office-pen lane as a
 // mark.
-export function worldNoteViaOffice(worldClone, payload = {}, key = null) {
+export async function worldNoteViaOffice(worldClone, payload = {}, key = null) {
   const bounce = (code, defect, hint, extra = {}) => {
     const e = new Error(defect); Object.assign(e, { code, defect, hint, ...extra }); return e;
   };
@@ -481,17 +475,12 @@ export function worldNoteViaOffice(worldClone, payload = {}, key = null) {
   const household = String(key?.household ?? "").trim();
   if (!household) throw bounce(403, "this credential has no resident household", "sign in as a resident household before leaving a note");
   const exec = join(HERE, "note-exec.mjs");
-  const lock = process.env.TOWN_LOCK ?? resolve(HERE, "..", "town.lock");
   const env = { ...process.env, WORLD_CLONE: worldClone };
-  const useFlock = process.platform === "linux" && existsSync("/usr/bin/flock");
   let out;
   try {
-    out = useFlock
-      ? execFileSync("/usr/bin/flock", ["-w", "30", lock, process.execPath, exec, JSON.stringify({ handle, body, household })], { encoding: "utf8", env })
-      : execFileSync(process.execPath, [exec, JSON.stringify({ handle, body, household })], { encoding: "utf8", env });
+    out = await execUnderTownLock(exec, JSON.stringify({ handle, body, household }), env);
   } catch (e) {
-    if (e.status === 1 && !String(e.stderr ?? "").trim())
-      throw bounce(503, "the office is mid-tick — its periodic index rebuild holds the town lock for a couple of minutes", "nothing was recorded; try again in ~2 minutes");
+    if (lockTimedOut(e)) throw bounce(LOCK_BUSY.code, LOCK_BUSY.defect, LOCK_BUSY.hint);
     throw bounce(500, "the note pass tripped", String(e.stderr ?? e.message ?? e).slice(0, 300));
   }
   const result = JSON.parse(out.trim().split("\n").at(-1));
@@ -616,17 +605,12 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
   // rides the ledger line so a later move/resize cannot rewrite this walk.
   const clean = { handle: who, from, toward, at, targetExtent, targetMarkId };
   const exec = join(HERE, "walk-exec.mjs");
-  const lock = process.env.TOWN_LOCK ?? resolve(HERE, "..", "town.lock");
   const env = { ...process.env, WORLD_CLONE: worldClone };
-  const useFlock = process.platform === "linux" && existsSync("/usr/bin/flock");
   let out;
   try {
-    out = useFlock
-      ? execFileSync("/usr/bin/flock", ["-w", "30", lock, process.execPath, exec, JSON.stringify(clean)], { encoding: "utf8", env })
-      : execFileSync(process.execPath, [exec, JSON.stringify(clean)], { encoding: "utf8", env });
+    out = await execUnderTownLock(exec, JSON.stringify(clean), env);
   } catch (e) {
-    if (e.status === 1 && !String(e.stderr ?? "").trim())
-      throw bounce(503, "the office is mid-tick — its periodic index rebuild holds the town lock for a couple of minutes", "nothing was recorded; try again in ~2 minutes");
+    if (lockTimedOut(e)) throw bounce(LOCK_BUSY.code, LOCK_BUSY.defect, LOCK_BUSY.hint);
     throw bounce(500, "the walk pass tripped", String(e.stderr ?? e.message ?? e).slice(0, 300));
   }
   const result = JSON.parse(out.trim().split("\n").at(-1));

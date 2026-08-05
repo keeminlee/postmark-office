@@ -40,22 +40,30 @@ const fmtVal = (v) => Array.isArray(v) ? JSON.stringify(v)
   : (v && typeof v === "object") ? `{ ${Object.entries(v).map(([k, n]) => `${k}: ${n}`).join(", ")} }`
   : String(v);
 
+// phase stamps for the one [timing] stderr line printed on the success path —
+// the write-path decomposition (lock wait lives in the parent's total).
+const T0 = performance.now();
+const phases = [];
+const timed = (name, fn) => { const t = performance.now(); const r = fn(); phases.push(`${name}=${Math.round(performance.now() - t)}ms`); return r; };
+
 async function main() {
   const p = JSON.parse(process.argv[2] ?? "{}");
   if (!existsSync(ROOT_DIR)) return err(409, "not-yet-open", "the office has no world clone with a marks tree");
   if (!p.household) return err(403, "this credential has no resident household", "sign in as a resident household before leaving a mark");
 
   const tools = join(CLONE, "tools");
+  const tEngine = performance.now();
   const { loadMarks, placementParent, marksContain, PARCEL_CLAIM_CAP, PARCEL_CAP_LAW_DATE, PARCEL_EXTENT_M } =
     await import(pathToFileURL(join(tools, "marks-fold.mjs")));
+  phases.push(`engine=${Math.round(performance.now() - tEngine)}ms`);
   let branch;
   try {
-    branch = ensureDraftCheckout(CLONE, p.household);
+    branch = timed("checkout", () => ensureDraftCheckout(CLONE, p.household));
   } catch (e) {
     return err(409, "the household sketchbook is not ready", String(e?.message ?? e).slice(0, 300));
   }
 
-  const marks = loadMarks(MARKS_DIR);
+  const marks = timed("load", () => loadMarks(MARKS_DIR));
   const byId = new Map(marks.map((m) => [m.id, m]));
   const id = `${p.by}/${p.slug}`;
   if (byId.has(id)) return err(409, `you already have a mark "${p.slug}"`, "a slug is unique per author — pick another, or investigate the one you have");
@@ -130,7 +138,7 @@ async function main() {
   // GATE 1 — the clone's own lint (the schema + "you cannot lie with an edge").
   // A non-zero exit is a bounce; unwind the write and hand back the exact field.
   try {
-    execFileSync(process.execPath, [join(tools, "mark-lint.mjs")], { encoding: "utf8" });
+    timed("lint", () => execFileSync(process.execPath, [join(tools, "mark-lint.mjs")], { encoding: "utf8" }));
   } catch (e) {
     rmSync(dir, { recursive: true, force: true });
     const line = String(e.stdout ?? e.message ?? "").split("\n").find((l) => /ERROR/.test(l)) ?? "the mark failed the lint";
@@ -140,12 +148,12 @@ async function main() {
   // GATE 2 — fold the composed draft tree without writing derived canon files.
   // world-state.json + INDEX.md belong to published main and the Settlement;
   // authenticated reads fold this branch tree on demand.
-  const folded = execFileSync(process.execPath, [
+  const folded = timed("fold", () => execFileSync(process.execPath, [
     join(tools, "marks-fold.mjs"),
     "--marks-dir", MARKS_DIR,
     "--terrain", join(CLONE, "WORLD", "skeleton.json"),
     "--no-write", "--json",
-  ], { encoding: "utf8" });
+  ], { encoding: "utf8" }));
   const state = JSON.parse(folded);
   if (state.errors?.length) {
     rmSync(dir, { recursive: true, force: true });
@@ -160,17 +168,18 @@ async function main() {
   delete process.env.TOWN_PUSH; // penCommit's push throws; this door degrades to push-pending
   let commit;
   try {
-    commit = penCommit(CLONE, addPaths, `mark: ${id} — by ${p.by} (via world_leave_mark)`);
+    commit = timed("commit", () => penCommit(CLONE, addPaths, `mark: ${id} — by ${p.by} (via world_leave_mark)`));
   } finally {
     if (savedPush !== undefined) process.env.TOWN_PUSH = savedPush;
   }
 
   let pushed = false, push_error;
   if (pushRequested && commit) {
-    try { execFileSync("git", ["-C", CLONE, "push", "-q", "--set-upstream", "origin", branch], { encoding: "utf8" }); pushed = true; }
+    try { timed("push", () => execFileSync("git", ["-C", CLONE, "push", "-q", "--set-upstream", "origin", branch], { encoding: "utf8" })); pushed = true; }
     catch (e) { push_error = String(e.stderr ?? e.message ?? e).split("\n").find(Boolean)?.slice(0, 160); console.error(`[leave-exec] push pending for ${id}: ${push_error}`); }
   }
 
+  console.error(`[timing] child=${Math.round(performance.now() - T0)}ms ${phases.join(" ")}`);
   answer({ id, dir: relative(MARKS_DIR, dir).replace(/\\/g, "/"), parent: parentId, kind: p.kind, branch, commit, pushed, push_error });
 }
 
