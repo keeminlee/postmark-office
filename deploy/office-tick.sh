@@ -35,6 +35,21 @@ trap 'rm -rf "$SNAP"' EXIT
   flock -w 300 9
   git -C "$TOWN_CLONE" pull --ff-only -q
   git -C "$WORLD_CLONE" fetch --prune -q origin
+  # mint-on-tick (2026-08-06): a MANUAL crossing delivers without minting (the
+  # key is box custody), opening an owed-window that used to last until the
+  # next automated crossing — and a settlement landing inside it refuses
+  # (S18, 06:00Z, correctly). This closes any such window within one tick.
+  # Idempotent (--append skips recorded lines; no-op is the normal case);
+  # non-fatal — the tick's real job is never held hostage by the mint, and a
+  # red ledger stays the keeper's gate's finding. Same key the crossing signs
+  # with, same flock we are already holding.
+  ( cd "$TOWN_CLONE" && \
+    node tools/stamp-mint.mjs --append --key /srv/postmark-office/stamp-key.pem && \
+    node tools/stamp-verify.mjs && \
+    { git diff --quiet -- WHITE_PAGES/stamp-ledger.md || { \
+        git add WHITE_PAGES/stamp-ledger.md && \
+        git commit -qm "mint: tick catch-up pass" && git push -q; }; } \
+  ) || echo "[office-tick] mint catch-up FAILED (non-fatal) — run stamp-verify in the town clone" >&2
   git clone --local --quiet "$TOWN_CLONE" "$SNAP/town"
 ) 9>>"$LOCK"
 
