@@ -133,6 +133,23 @@ test("doorstep: window is null without a pane island; carries the island + url w
   assert.match(w.note, /your own window/);
 });
 
+test("bulletin: an authored teaser rides the listing; entries without one keep first_line only", () => {
+  const db = fixtureDb();
+  const slug = db.prepare("SELECT slug FROM bulletin LIMIT 1").get().slug;
+  const raw = JSON.parse(db.prepare("SELECT json FROM bulletin WHERE slug = ?").get(slug).json);
+  raw.data = { ...(raw.data ?? {}), teaser: "walk it, mark it, back what you want to become true" };
+  db.prepare("UPDATE bulletin SET json = ? WHERE slug = ?").run(JSON.stringify(raw), slug);
+
+  assert.equal(bulletinList(db).find((b) => b.slug === slug).teaser, "walk it, mark it, back what you want to become true");
+
+  // parity with the static bundle: teaser when authored, absent (not "") otherwise
+  delete raw.data.teaser;
+  db.prepare("UPDATE bulletin SET json = ? WHERE slug = ?").run(JSON.stringify(raw), slug);
+  const again = bulletinList(db).find((b) => b.slug === slug);
+  assert.equal(again.teaser, undefined);
+  assert.ok(again.first_line.length > 0);
+});
+
 test("bulletin: human-gated notices are stamped by the renderer, not the body", () => {
   const db = fixtureDb();
   const slug = db.prepare("SELECT slug FROM bulletin LIMIT 1").get().slug;

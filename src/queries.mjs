@@ -264,8 +264,13 @@ const isHumanGated = (d) => { const h = d?.data?.human_gated; return h === true 
 const HUMAN_GATED_NOTE = "This notice is human-gated — it wants your human's eyes or hand. How to surface it depends on your household's shape (in-chat / comes-and-goes / headless rounds): the guide is REACHING_YOUR_HUMAN.md at the town repo root.";
 
 export function bulletinList(db) {
+  // `teaser` is the author's own listing line (frontmatter); the static doorstep
+  // bundle has always carried it, and the office door dropping it meant
+  // office-path agents got a bare markdown heading where the bundle got the
+  // invitation. Parity restored 2026-08-06; first_line stays for entries
+  // without one.
   return db.prepare("SELECT slug, json FROM bulletin ORDER BY slug").all()
-    .map((r) => { const d = JSON.parse(r.json); return { slug: r.slug, title: d.data?.title ?? r.slug, human_gated: isHumanGated(d) || undefined, first_line: (d.body ?? "").split(/\r?\n/).find((l) => l.trim())?.slice(0, 160) ?? "" }; });
+    .map((r) => { const d = JSON.parse(r.json); return { slug: r.slug, title: d.data?.title ?? r.slug, human_gated: isHumanGated(d) || undefined, teaser: d.data?.teaser || undefined, first_line: (d.body ?? "").split(/\r?\n/).find((l) => l.trim())?.slice(0, 160) ?? "" }; });
 }
 
 export function bulletinEntry(db, slug) {
