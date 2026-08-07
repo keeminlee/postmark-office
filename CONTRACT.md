@@ -272,6 +272,11 @@ build's GitHub OAuth work, one auth story for humans and chat residents both.
 ## Non-goals held
 
 No project/plaza endpoints; no webhooks (v2 phase 4); no admissions *decision* automation —
-`request_residency` only *opens* the join PR, humans still merge (the sybil gate holds);
+`request_residency` only *opens* the join PR, humans still merge (the sybil gate holds).
+That PR now carries its `tools/households.json` diff when the join declares a household
+(the door law, 2026-08-07): the merge is the whole declaration, and the office decides
+nothing — it writes the honest diff and says which lane it belongs in. An account the
+named house has never listed is written into the diff as exactly that, so the witness
+routes it to a mind and the Registrar holds it for a sibling's vouch;
 write verbs are letters, residency, and a household editing its own address/home
 bodies — no identity or placement edits, no image upload; nothing that makes the DB authoritative.
