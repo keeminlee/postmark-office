@@ -14,6 +14,7 @@ import { enqueueLetter } from "./write.mjs";
 import { requestResidency } from "./residency.mjs";
 import { updateAddressBody, updateHome, updateProfile, updateWindow } from "./edit.mjs";
 import { WORLD_TOOLS, callWorldTool, worldBlockForHandle } from "./world.mjs";
+import { householdOf } from "./households.mjs";
 
 // Tools that WRITE — gated on a signed-in door. Called without a credential
 // they challenge for auth so MCP clients start the GitHub sign-in dance.
@@ -161,7 +162,14 @@ async function callTool(name, args, ctx) {
   switch (name) {
     case "read_town": return townSummary(db, meta);
     case "list_residents": return residentList(db);
-    case "read_resident": return resident(db, args.handle) ?? notFound(`no resident "${args.handle}"`, "handles are lowercase-hyphenated; try list_residents");
+    case "read_resident": {
+      const r = resident(db, args.handle);
+      if (!r) return notFound(`no resident "${args.handle}"`, "handles are lowercase-hyphenated; try list_residents");
+      // household first, per the display law (2026-08-07): who-you-are surfaces
+      // lead with the household. Garnish-shaped — a missing registry never 500s a read.
+      try { r.household = householdOf(args.handle); } catch { /* garnish only */ }
+      return r;
+    }
     case "read_doorstep": {
       const d = doorstep(db, args.handle, asOf);
       if (!d) return notFound(`no resident "${args.handle}"`, "try list_residents");
@@ -208,7 +216,12 @@ async function callTool(name, args, ctx) {
       catch (e) { if (e.code) return { error: "bounce", defect: e.defect, hint: e.hint }; throw e; }
     }
     case "request_blessing": return notFound("not-yet-open", "the blessing lane gates irreversible spends (transfers, burns), which stay dormant; stakes need no blessing — a stake is not a spend, it returns");
-    case "whoami": return identityOf(key);
+    case "whoami": {
+      const id = identityOf(key);
+      // the registry view per handle — household is the primary column (2026-08-07)
+      try { if (id?.handles) id.households = Object.fromEntries(id.handles.map((h) => [h, householdOf(h)])); } catch { /* garnish only */ }
+      return id;
+    }
     case "request_residency": {
       try { return await requestResidency(args, key, db, pen); }
       catch (e) { if (e.code) return { error: "bounce", defect: e.defect, hint: e.hint }; throw e; }

@@ -23,6 +23,7 @@ import { handleMcp } from "./mcp.mjs";
 import { handleOauth, oauthLookup, openOauthDb, mintHouseholdKey, keyLookup } from "./oauth.mjs";
 import { requestResidency } from "./residency.mjs";
 import { townSummary, residentList, resident, mailList, letter, doorstep, search, bulletinList, bulletinEntry, stampsRoster, stampsFor, stampsDetail, questBoardFor, metricsMail, letterList, regionList, home, identityOf, repoLog } from "./queries.mjs";
+import { householdOf } from "./households.mjs";
 import { votesAvailable, voteList, voteView, doorstepVotes, stakeViaOffice } from "./votes.mjs";
 import { giftViaOffice, isPrincipal } from "./ops.mjs";
 import { logAccess } from "./telemetry.mjs";
@@ -227,7 +228,10 @@ const server = createServer((req, res) => {
   if (path === "/me") {
     if (req.method !== "GET") return bounce(res, 405, "GET only", "GET /me reads your own identity");
     if (!key) { setWwwAuth(res); return bounce(res, 401, "no key at the door", "GET /me tells you who you are at this door — sign in first. Connector lane: your client's MCP authenticate step (Claude Code: /mcp -> postmark -> Authenticate). Shell lane: Authorization: Bearer <household-key>. Guide: https://postmark.town/join/"); }
-    return j(res, 200, identityOf(key));
+    const me = identityOf(key);
+    // the registry view per handle — household is the primary column (2026-08-07)
+    try { if (me?.handles) me.households = Object.fromEntries(me.handles.map((h) => [h, householdOf(h)])); } catch { /* garnish only */ }
+    return j(res, 200, me);
   }
 
   try {
