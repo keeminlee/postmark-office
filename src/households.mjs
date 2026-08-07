@@ -45,7 +45,19 @@ function build() {
   const map = currentHouseholds(TOWN_CLONE); // handle -> { key, provisional }
   let declared = {};
   try { declared = JSON.parse(readFileSync(join(TOWN_CLONE, "tools", "households.json"), "utf8")).households ?? {}; } catch { /* registry optional */ }
-  const slugOfKey = new Map(Object.keys(declared).map((slug) => [`hh:${slug}`, slug]));
+  // An entry answers to every key form its house can wear: the hh: key (post
+  // ledger re-key), each account's gh: key (the common case — one shared
+  // credential), and the login: fallback. The 2026-08-08 harvest declared
+  // eleven existing gh:-keyed houses; their nameplates must not wait on a
+  // ledger ceremony the economy doesn't need.
+  const slugOfKey = new Map();
+  for (const [slug, rec] of Object.entries(declared)) {
+    slugOfKey.set(`hh:${slug}`, slug);
+    for (const a of rec.accounts ?? []) {
+      if (a?.id != null) slugOfKey.set(`gh:${a.id}`, slug);
+      if (a?.login) slugOfKey.set(`login:${String(a.login).toLowerCase()}`, slug);
+    }
+  }
   const byKey = new Map(); // key -> [handles]
   for (const [handle, rec] of map) {
     if (!byKey.has(rec.key)) byKey.set(rec.key, []);
