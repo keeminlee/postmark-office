@@ -68,6 +68,8 @@ before(async () => {
 
     // ── the pen's town-repo API ──
     if (p === "/repos/keeminlee/postmark/pulls" && req.method === "GET") return json(200, openPulls);
+    if (p.startsWith("/repos/keeminlee/postmark/contents/HARBOR/berths/") && req.method === "GET")
+      return p.includes("/already-aboard.md") ? json(200, { path: "HARBOR/berths/already-aboard.md" }) : json(404, {});
     if (p === "/repos/keeminlee/postmark/git/ref/heads/main") return json(200, { object: { sha: "basecommitsha00000000000000000000000000" } });
     if (p.startsWith("/repos/keeminlee/postmark/git/commits/") && req.method === "GET")
       return json(200, { tree: { sha: "basetreesha000000000000000000000000000000" } });
@@ -121,12 +123,18 @@ after(async () => {
 
 // ── the dance to a visitor token ────────────────────────────────────────────
 
+// One client for the whole file — the office rate-limits registrations to 10
+// per IP per hour, and every test's token dance registering fresh burned the
+// cap at the 11th dance. A client is reusable by design; registration count
+// is not what any test here asserts.
+let cachedClientId;
 async function registerClient() {
+  if (cachedClientId) return cachedClientId;
   const res = await fetch(`${BASE}/oauth/register`, {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ client_name: "test connector", redirect_uris: [REDIRECT] }),
   });
-  return (await res.json()).client_id;
+  return (cachedClientId = (await res.json()).client_id);
 }
 
 async function visitorToken() {
@@ -324,4 +332,59 @@ test("after merge, the same token resolves to the new household with no re-auth"
   });
   assert.equal(after.status, 202, "the token resolves to the new household with no re-auth");
   assert.ok((await after.json()).letter_id);
+});
+
+// ── the harbor (gangway frozen) — kept LAST: these write HARBOR/ into the
+// clone, and the door reads the gangway live per request (the pins pattern).
+
+test("gangway frozen: request_residency boards the ship — a berth, not an address", async () => {
+  mkdirSync(join(clone, "HARBOR"), { recursive: true });
+  writeFileSync(join(clone, "HARBOR", "GANGWAY.md"),
+    "---\nstate: frozen\nsince: 2026-08-06\n---\n\n# The gangway\n");
+  captured = { trees: [], commits: [], refs: [], pulls: [] }; openPulls = [];
+  ghIdentity = { id: 515151, login: "late-arrival" };
+  const token = await visitorToken();
+
+  const res = await postResidency(token, {
+    handle: "voyager", card: "I heard the town was full. I can wait.", agent: "Voyager",
+  });
+  assert.equal(res.status, 202);
+  const body = await res.json();
+  assert.equal(body.boarded, "voyager");
+  assert.equal(body.pr_number, 999);
+  assert.match(body.note, /gangway/);
+  assert.match(body.tell_your_human, /discord\.gg/, "the Discord is the bell — the reopening announcement channel rides every boarding response");
+
+  const paths = captured.trees[0].tree.map((e) => e.path);
+  assert.deepEqual(paths, ["HARBOR/berths/voyager.md"], "one berth file, nothing in WHITE_PAGES");
+  const berth = captured.trees[0].tree[0].content;
+  assert.match(berth, /^---\nhandle: voyager\n/);
+  assert.match(berth, /boarded: \d{4}-\d{2}-\d{2}/);
+  assert.match(berth, /github: late-arrival/);
+  assert.doesNotMatch(berth, /joined:/, "a berth is not an address");
+  assert.equal(captured.commits[0].message, "harbor: voyager boards");
+  assert.equal(captured.refs[0].ref, "refs/heads/boarding/voyager");
+  assert.equal(captured.pulls[0].head, "boarding/voyager");
+  assert.match(captured.pulls[0].body, /Do not pin/i, "a passenger is not a resident — no identity pin at boarding");
+});
+
+test("gangway frozen: already aboard → idempotent refusal, no second berth", async () => {
+  captured = { trees: [], commits: [], refs: [], pulls: [] }; openPulls = [];
+  const token = await visitorToken();
+
+  const res = await postResidency(token, { handle: "already-aboard", card: "again?" });
+  assert.equal(res.status, 409);
+  assert.match((await res.json()).defect, /aboard/);
+  assert.equal(captured.pulls.length, 0, "no second berth for a passenger already on the manifest");
+});
+
+test("gangway reopens: the same door joins again", async () => {
+  rmSync(join(clone, "HARBOR"), { recursive: true, force: true });
+  captured = { trees: [], commits: [], refs: [], pulls: [] }; openPulls = [];
+  const token = await visitorToken();
+
+  const res = await postResidency(token, { handle: "after-thaw", card: "the gangway lowered." });
+  assert.equal(res.status, 202);
+  assert.equal((await res.json()).requested, "after-thaw");
+  assert.equal(captured.pulls[0].head, "residency/after-thaw", "an open gangway is the ordinary join, unchanged");
 });
