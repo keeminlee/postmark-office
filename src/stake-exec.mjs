@@ -33,7 +33,7 @@ async function main() {
   const { clipApply } = await import(pathToFileURL(join(CLONE, "tools", "ballot.mjs")));
 
   if (process.env.TOWN_PUSH === "1")
-    execFileSync("git", ["-C", CLONE, "pull", "--ff-only", "-q"], { encoding: "utf8" });
+    execFileSync("git", ["-C", CLONE, "pull", "--rebase", "-q"], { encoding: "utf8" });
 
   let result;
   try {

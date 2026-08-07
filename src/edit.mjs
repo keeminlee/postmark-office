@@ -76,7 +76,7 @@ function selfContainedOnly(html) {
 }
 
 const pullIfPush = (clone) => {
-  if (process.env.TOWN_PUSH === "1") execFileSync("git", ["-C", clone, "pull", "--ff-only", "-q"], { encoding: "utf8" });
+  if (process.env.TOWN_PUSH === "1") execFileSync("git", ["-C", clone, "pull", "--rebase", "-q"], { encoding: "utf8" });
 };
 
 // Split a file into its frontmatter block (verbatim, through the closing ---)

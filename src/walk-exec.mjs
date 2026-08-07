@@ -59,7 +59,7 @@ async function main() {
   try { execFileSync("git", ["-C", CLONE, "switch", "-q", "main"], { encoding: "utf8" }); }
   catch (e) { return err(500, "the world clone would not stand on main", String(e?.message ?? e).slice(0, 160)); }
   if (process.env.TOWN_PUSH === "1")
-    try { execFileSync("git", ["-C", CLONE, "pull", "--ff-only", "-q"], { encoding: "utf8" }); } catch { /* offline/behind — serve local */ }
+    try { execFileSync("git", ["-C", CLONE, "pull", "--rebase", "-q"], { encoding: "utf8" }); } catch { /* offline/behind — serve local */ }
 
   for (const k of ["handle", "from", "toward"]) if (!p[k]) return err(422, `missing ${k}`, "the door fills these in; this exec is not a public surface");
 

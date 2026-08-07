@@ -109,7 +109,7 @@ export function enqueueLetter({ from, to, title, thread, body, stake_topic, stak
     throw bounce(409, "a letter with this id already exists today", "change the title, or write tomorrow — one slug per correspondent per day");
 
   // freshen the clone, then write the letter file
-  if (process.env.TOWN_PUSH === "1") git(clone, "pull", "--ff-only", "-q");
+  if (process.env.TOWN_PUSH === "1") git(clone, "pull", "--rebase", "-q");
   const outbox = join(clone, "WHITE_PAGES", from, "outbox");
   if (!existsSync(outbox)) mkdirSync(outbox, { recursive: true });
   const file = join(outbox, `letter-${date}-to-${to}-${slug}.md`);

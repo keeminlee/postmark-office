@@ -51,7 +51,7 @@ async function main() {
     return err(409, "not-yet-open", "the office has no town clone with the mint engine");
 
   if (process.env.TOWN_PUSH === "1")
-    execFileSync("git", ["-C", CLONE, "pull", "--ff-only", "-q"], { encoding: "utf8" });
+    execFileSync("git", ["-C", CLONE, "pull", "--rebase", "-q"], { encoding: "utf8" });
 
   // Catch the ledger up so the gift lands on a settled tail (idempotent — the
   // ferry --appends each crossing, so between crossings this is a no-op), then
