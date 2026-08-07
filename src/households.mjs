@@ -26,8 +26,13 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TOWN_CLONE = process.env.TOWN_CLONE ?? resolve(HERE, "..", "town-clone");
 
-const { currentHouseholds } =
-  await import(pathToFileURL(join(TOWN_CLONE, "tools", "stamp-mint.mjs")));
+// Guarded: with no town clone (test fixtures, a bare checkout) the module must
+// load anyway and householdOf must answer null — the block is garnish, and a
+// missing engine at import time took 73 tests down before this guard existed.
+const { currentHouseholds } = await (async () => {
+  try { return await import(pathToFileURL(join(TOWN_CLONE, "tools", "stamp-mint.mjs"))); }
+  catch { return { currentHouseholds: null }; }
+})();
 
 let cache = null; // { stamp, byHandle: Map<handle, block> }
 
@@ -60,6 +65,7 @@ function build() {
 }
 
 export function householdOf(handle) {
+  if (!currentHouseholds) return null; // no engine at this checkout — garnish stays absent
   const stamp = stampOf();
   if (!cache || cache.stamp !== stamp) cache = { stamp, byHandle: build() };
   return cache.byHandle.get(handle) ?? null;

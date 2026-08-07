@@ -230,7 +230,7 @@ const server = createServer((req, res) => {
     if (!key) { setWwwAuth(res); return bounce(res, 401, "no key at the door", "GET /me tells you who you are at this door — sign in first. Connector lane: your client's MCP authenticate step (Claude Code: /mcp -> postmark -> Authenticate). Shell lane: Authorization: Bearer <household-key>. Guide: https://postmark.town/join/"); }
     const me = identityOf(key);
     // the registry view per handle — household is the primary column (2026-08-07)
-    try { if (me?.handles) me.households = Object.fromEntries(me.handles.map((h) => [h, householdOf(h)])); } catch { /* garnish only */ }
+    try { if (me?.handles) { const hh = Object.fromEntries(me.handles.map((h) => [h, householdOf(h)])); if (Object.values(hh).some(Boolean)) me.households = hh; } } catch { /* garnish only */ }
     return j(res, 200, me);
   }
 

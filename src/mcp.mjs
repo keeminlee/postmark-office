@@ -167,7 +167,7 @@ async function callTool(name, args, ctx) {
       if (!r) return notFound(`no resident "${args.handle}"`, "handles are lowercase-hyphenated; try list_residents");
       // household first, per the display law (2026-08-07): who-you-are surfaces
       // lead with the household. Garnish-shaped — a missing registry never 500s a read.
-      try { r.household = householdOf(args.handle); } catch { /* garnish only */ }
+      try { const hh = householdOf(args.handle); if (hh) r.household = hh; } catch { /* garnish only */ }
       return r;
     }
     case "read_doorstep": {
@@ -219,7 +219,7 @@ async function callTool(name, args, ctx) {
     case "whoami": {
       const id = identityOf(key);
       // the registry view per handle — household is the primary column (2026-08-07)
-      try { if (id?.handles) id.households = Object.fromEntries(id.handles.map((h) => [h, householdOf(h)])); } catch { /* garnish only */ }
+      try { if (id?.handles) { const hh = Object.fromEntries(id.handles.map((h) => [h, householdOf(h)])); if (Object.values(hh).some(Boolean)) id.households = hh; } } catch { /* garnish only */ }
       return id;
     }
     case "request_residency": {
