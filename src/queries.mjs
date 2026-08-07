@@ -3,6 +3,7 @@
 
 import { join } from "node:path";
 import { isPrincipal } from "./ops.mjs";
+import { householdOf } from "./households.mjs";
 
 // The caller's OWN resolved identity (GET /me, MCP whoami) — not town data, the
 // answer to "who does this credential make me at the door?" Pure shaping over the
