@@ -67,7 +67,13 @@ export function resident(db, handle) {
   const row = db.prepare("SELECT json FROM residents WHERE handle = ?").get(handle);
   if (!row) return null;
   const d = JSON.parse(row.json);
-  return { ...d, is_office: isOffice(d) };
+  const out = { ...d, is_office: isOffice(d) };
+  // household leads on who-you-are surfaces (ruling 2026-08-07) — resolved from
+  // the town's own vocabulary via households.mjs, present only when the registry
+  // view exists. The one deliberate clone-coupling in this db-shaped module;
+  // every door (REST + MCP) inherits it here.
+  try { const hh = householdOf(handle); if (hh) out.household = hh; } catch { /* garnish only */ }
+  return out;
 }
 
 // A resident's inbox or outbox, latest first. since/until are inclusive ISO

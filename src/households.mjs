@@ -31,7 +31,7 @@ const TOWN_CLONE = process.env.TOWN_CLONE ?? resolve(HERE, "..", "town-clone");
 // missing engine at import time took 73 tests down before this guard existed.
 const { currentHouseholds } = await (async () => {
   try { return await import(pathToFileURL(join(TOWN_CLONE, "tools", "stamp-mint.mjs"))); }
-  catch { return { currentHouseholds: null }; }
+  catch (e) { console.warn("households: engine import failed:", e?.message); return { currentHouseholds: null }; }
 })();
 
 let cache = null; // { stamp, byHandle: Map<handle, block> }
@@ -64,9 +64,15 @@ function build() {
   return byHandle;
 }
 
+let warned = false;
 export function householdOf(handle) {
   if (!currentHouseholds) return null; // no engine at this checkout — garnish stays absent
-  const stamp = stampOf();
-  if (!cache || cache.stamp !== stamp) cache = { stamp, byHandle: build() };
-  return cache.byHandle.get(handle) ?? null;
+  try {
+    const stamp = stampOf();
+    if (!cache || cache.stamp !== stamp) cache = { stamp, byHandle: build() };
+    return cache.byHandle.get(handle) ?? null;
+  } catch (e) {
+    if (!warned) { warned = true; console.warn("households: resolve failed:", e?.message); }
+    return null;
+  }
 }
