@@ -210,10 +210,31 @@ async function standCoords(handle, w) {
     if (here.placed && here.source === "walk") {
       const p = here.position;
       return { x: here.x, y: here.y,
-        from: p.arrived ? "where your walk arrived" : `the road — your walk in progress (${Math.round(p.remainingM)} m to go)` };
+        from: p.arrived ? "where your walk arrived" : `${aboardOrRoad(handle, departures)} (${Math.round(p.remainingM)} m to go)` };
     }
   } catch { /* no ledger or no engine — home is the honest fallback */ }
   return homeCoords(handle, w);
+}
+
+// A passenger is a walker whose current departure IS the vessel's — same
+// instant, same route, same paced stride (the pen files them together at
+// sailing time; pace ruling 2026-08-06). Telling them "the road" would be
+// true and wrong; they are on the water. The vessel is found by its own
+// ledger line, so this costs one lookup and no new state.
+const VESSEL_HANDLE = "the-post-office";
+function aboardOrRoad(handle, departures) {
+  try {
+    if (handle !== VESSEL_HANDLE) {
+      const last = (h) => departures.filter((d) => d.handle === h).at(-1);
+      const mine = last(handle), vessel = last(VESSEL_HANDLE);
+      if (mine && vessel && mine.pace != null && mine.pace === vessel.pace &&
+          mine.iso === vessel.iso &&
+          mine.toward.x === vessel.toward.x && mine.toward.y === vessel.toward.y) {
+        return `aboard ${VESSEL_HANDLE}, underway`;
+      }
+    }
+  } catch { /* narration nicety only — the road is never the wrong fallback */ }
+  return "the road — your walk in progress";
 }
 
 function crossingOf(args) {
