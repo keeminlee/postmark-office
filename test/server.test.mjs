@@ -24,7 +24,7 @@ before(async () => {
   const dbPath = join(tmp, "fixture.db");
   fixtureDb(dbPath).close();
   child = spawn(process.execPath, [join(ROOT, "src", "server.mjs"), "--port", String(PORT), "--db", dbPath], {
-    env: { ...process.env, OFFICE_KEYS: `${KEY}=keemin:wright`, TOWN_CLONE: join(tmp, "no-clone-here"), WORLD_CLONE: join(tmp, "no-world-clone"), TOWN_PUSH: "" },
+    env: { ...process.env, OFFICE_KEYS: `${KEY}=keemin:wright`, TOWN_CLONE: join(tmp, "no-clone-here"), WORLD_CLONE: join(tmp, "no-world-clone"), VOICES_LOG: join(tmp, "voices-log.jsonl"), TOWN_PUSH: "" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   await new Promise((ok, no) => {
@@ -290,6 +290,22 @@ test("GET /world/my-marks requires a resident identity", async () => {
   assert.equal(anon.status, 401);
   assert.match(anon.headers.get("www-authenticate") ?? "", /resource_metadata=/);
   assert.match((await anon.json()).hint, /resident household identity/i);
+});
+
+test("GET /world/conversations is a keyless read — the page needs no credential", async () => {
+  const res = await get("/world/conversations", null);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.deepEqual([body.live, body.closed], [[], []], "a quiet town, honestly empty");
+  assert.equal(body.earshot_m, 60);
+  assert.equal(body.fade_minutes, 5);
+  assert.ok(Date.parse(body.now));
+});
+
+test("world_say bounces honestly when the office has no world to stand in", async () => {
+  const said = JSON.parse((await rpc("tools/call", { name: "world_say", arguments: { text: "anyone there?" } })).body.result.content[0].text);
+  assert.equal(said.error, "bounce");
+  assert.match(`${said.defect} ${said.hint}`, /world/i);
 });
 
 test("MCP whoami mirrors GET /me", async () => {

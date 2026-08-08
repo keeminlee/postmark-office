@@ -8,3 +8,4 @@ world-clone-pool/
 draft-locks/
 server.log
 telemetry/access-*.jsonl
+voices-log.jsonl*
