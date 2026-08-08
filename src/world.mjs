@@ -321,7 +321,18 @@ export async function placeWords({ x, y, aboard = false, moving = false } = {}) 
 // ── earshot (the party line) ─────────────────────────────────────────────────
 // The store owns the rules; this file owns the positions and the door manners.
 const voices = createVoices({
-  standpoint: (handle) => residentStandpoint(handle),
+  // The unplaced speak from the threshold (Keemin, party night — FireflyArc's
+  // human bounced off the room with a cheer unsaid): a resident whose home
+  // hasn't reached the atlas and who has never walked still has a place in
+  // town — the quay, the world's own default standpoint, where every address
+  // begins. Their voice lands there honestly instead of being refused. Only
+  // placed:false falls back — an engine failure still throws; the quay must
+  // never mask real breakage.
+  standpoint: async (handle) => {
+    const here = await residentStandpoint(handle);
+    if (here?.placed) return here;
+    return { handle, placed: true, x: QUAY.x, y: QUAY.y, aboard: false, moving: false };
+  },
   place: (at) => placeWords(at),
 });
 
@@ -382,11 +393,11 @@ export async function worldSayHuman(args = {}, key = null) {
       if (here.aboard) { standAs = h; break; }
       firstPlaced ??= h;
     }
-    standAs ??= firstPlaced;
+    // nobody placed → the first handle, and the store's own quay fallback
+    // stands the household at the threshold (the FireflyArc class: home not
+    // yet on the atlas, never walked — the town's door is still a place)
+    standAs = standAs ?? firstPlaced ?? handles[0];
   }
-  if (!standAs)
-    return { error: "bounce", defect: "the world doesn't know where your household stands yet",
-      hint: "a voice is spoken from a place — once one of your residents walks somewhere (or their home settles), you can speak standing with them" };
   try {
     const text = args.text == null ? "" : String(args.text);
     return text.trim() ? await voices.say(speaker, text, { standAs }) : await voices.hear(speaker, { standAs });
