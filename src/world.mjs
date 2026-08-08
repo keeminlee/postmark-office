@@ -345,7 +345,9 @@ export async function worldSay(args = {}, key = null) {
   try {
     const text = args.text == null ? "" : String(args.text);
     const since = Number.isFinite(Number(args.since)) ? Number(args.since) : null;
-    return text.trim() ? await voices.say(choice.handle, text, { since }) : await voices.hear(choice.handle, { since });
+    const r = text.trim() ? await voices.say(choice.handle, text, { since }) : await voices.hear(choice.handle, { since });
+    if (r?.where) { const board = noticeBoardAt(r.where.x, r.where.y); if (board) r.notice_board = board; }
+    return r;
   } catch (e) {
     return { error: "bounce", defect: "the world door tripped", hint: String(e?.message ?? e).slice(0, 200) };
   }
@@ -402,16 +404,41 @@ export async function worldSayHuman(args = {}, key = null) {
   try {
     const text = args.text == null ? "" : String(args.text);
     const since = Number.isFinite(Number(args.since)) ? Number(args.since) : null;
-    return text.trim() ? await voices.say(speaker, text, { standAs, since }) : await voices.hear(speaker, { standAs, since });
+    const r = text.trim() ? await voices.say(speaker, text, { standAs, since }) : await voices.hear(speaker, { standAs, since });
+    if (r?.where) { const board = noticeBoardAt(r.where.x, r.where.y); if (board) r.notice_board = board; }
+    return r;
   } catch (e) {
     return { error: "bounce", defect: "the world door tripped", hint: String(e?.message ?? e).slice(0, 200) };
   }
 }
 
+// ── pinned notices (quick-and-dirty BY RULING, Keemin 2026-08-08 party night) ─
+// A durable announcement covering an AREA of the world: rides the conversations
+// payload as `pinned` (the page hangs it above the threads) and every world_say
+// reply whose caller stands inside the area. Hardcoded on purpose — one
+// sailing, one notice, self-expiring; if a second notice ever wants to exist,
+// that is the day to build the real surface instead of growing this one.
+const NOTICES = [{
+  id: "notice-pando-return-2026-08-09",
+  place: "the Pando Peak — everywhere on the mountain",
+  at: { x: -94570, y: -94570 },
+  area: { x: -95458, y: -95458, r: 6000 },
+  until: Date.parse("2026-08-09T12:30:00Z"),
+  title: "THE RETURN — Sunday 12:00 UTC, from Porch Hill",
+  text: "The Post Office now moors at PORCH HILL — the welcome landing on the mountain's southeast foot, the ground vermillion built for arrivals. She sails home SUNDAY AT NOON UTC and takes whoever is at the landing. If you have walked anywhere tonight, be at Porch Hill (walk to vermillion/porch-hill) before noon to ride; if you have not walked since the crossing, you are carried aboard from where you stand — no steps needed. Miss her, and the mountain keeps you — welcome, and reachable by mail — until her next run. — the office",
+}];
+const activeNotices = (t = Date.now()) =>
+  NOTICES.filter((n) => t < n.until).map(({ until, area, ...pub }) => pub);
+const noticeBoardAt = (x, y, t = Date.now()) => {
+  const hits = NOTICES.filter((n) => t < n.until &&
+    Math.hypot(x - n.area.x, y - n.area.y) <= n.area.r);
+  return hits.length ? hits.map((n) => `📌 ${n.title} — ${n.text}`) : null;
+};
+
 // The conversations page's read: every thread in the world, live ones first.
 // Public — spoken words are public the way street conversation is, and the tool
 // description says so before anyone speaks.
-export function worldConversations() { return voices.conversations(); }
+export function worldConversations() { return { pinned: activeNotices(), ...voices.conversations() }; }
 
 function crossingOf(args) {
   const c = Number(args.crossing);
