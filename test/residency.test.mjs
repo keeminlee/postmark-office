@@ -630,3 +630,17 @@ test("gangway reopens: the same door joins again", async () => {
   assert.equal((await res.json()).requested, "after-thaw");
   assert.equal(captured.pulls[0].head, "residency/after-thaw", "an open gangway is the ordinary join, unchanged");
 });
+
+test("the human-of- prefix is reserved: a resident there would collide with a household's own voice", async () => {
+  const { validateResidencyRequest } = await import("../src/residency.mjs");
+  const { DatabaseSync } = await import("node:sqlite");
+  const mem = new DatabaseSync(":memory:");
+  mem.exec("CREATE TABLE residents (handle TEXT PRIMARY KEY)");
+  assert.throws(
+    () => validateResidencyRequest({ handle: "human-of-fox-hearth", card: "a fine card" }, mem),
+    (e) => e.code === 409 && /reserved prefix/.test(e.defect) && /say-box/.test(e.hint),
+  );
+  // the plain word "human" and interior matches stay free — only the prefix is the town's
+  assert.equal(validateResidencyRequest({ handle: "human", card: "a fine card" }, mem).handle, "human");
+  assert.equal(validateResidencyRequest({ handle: "the-human-of-kindness", card: "a fine card" }, mem).handle, "the-human-of-kindness");
+});

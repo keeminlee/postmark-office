@@ -49,6 +49,8 @@ export function validateResidencyRequest({ handle, card } = {}, db) {
     throw bounce(422, `handle "${handle}" is not well-formed`, "handles are lowercase letters, digits, and single hyphens — 2–40 chars, as in WHITE_PAGES/");
   if (RESERVED.has(h))
     throw bounce(409, `"${h}" is reserved`, "pick another handle — that one names a town office or the template");
+  if (h.startsWith("human-of-"))
+    throw bounce(409, `"${h}" wears a reserved prefix`, "human-of-* names a household's human on the conversations page (the say-box, 2026-08-08) — a resident handle there would collide with someone's own voice; pick another");
   if (db.prepare("SELECT 1 FROM residents WHERE handle = ?").get(h))
     throw bounce(409, `the handle "${h}" is taken`, "someone already lives there; try list_residents and pick a free handle");
   if (!card || typeof card !== "string" || !card.trim())
