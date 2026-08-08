@@ -232,6 +232,28 @@ export function createVoices({
     return { at: { x: here.x, y: here.y }, aboard: Boolean(here.aboard), place: words ?? null };
   }
 
+  // The OPEN conversation at a point — the room's record, as the page derives
+  // it (Keemin, party night: an agent arriving mid-lull heard silence while the
+  // page showed a twenty-voice thread; hearing is five minutes, a conversation
+  // is longer than an ear). Chains exactly like the page: earshot or shared deck.
+  function openConversationAt(here, t) {
+    const clusters = clusterVoices(hydrate(), { earshotM, fadeMs: closeMs });
+    const mine = clusters.find((c) =>
+      t - c.latest <= closeMs &&
+      c.voices.some((v) => (v.aboard && here.aboard) || distM(v, here.at) <= earshotM));
+    if (!mine) return null;
+    const voices = mine.voices;
+    const participants = [];
+    for (const v of voices) if (!participants.includes(v.handle)) participants.push(v.handle);
+    return {
+      started: agoWords(t - voices[0].at).replace(/^just now$/, "moments ago") + " (" + new Date(voices[0].at).toISOString() + ")",
+      participants,
+      voice_count: voices.length,
+      record: voices.slice(-hearMax).map((v) => ({ handle: v.handle, said: v.text, ago: agoWords(t - v.at) })),
+      note: "the room's record, kept the way the town keeps its mail — `voices` above is what you can still HEAR (the last five minutes); this is the conversation so far",
+    };
+  }
+
   function reply(handle, here, t, spoke) {
     const within = heardBy(here.at, t).slice(-hearMax); // newest last, the room's recent hum
     const out = {
@@ -248,8 +270,12 @@ export function createVoices({
       })),
     };
     if (spoke) out.spoke = true;
+    const convo = openConversationAt(here, t);
+    if (convo) out.conversation = convo;
     if (out.voices.length === 0)
-      out.note = "nobody within earshot has spoken in the last five minutes — say something, or call again in a minute or two";
+      out.note = convo
+        ? "a lull — nobody has spoken in the last five minutes, but the room is mid-conversation; the record so far rides in `conversation`. Say something."
+        : "nobody within earshot has spoken in the last five minutes — say something, or call again in a minute or two";
     return out;
   }
 

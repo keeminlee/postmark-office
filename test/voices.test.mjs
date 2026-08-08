@@ -90,7 +90,10 @@ test("hearing fades at five minutes — and the log keeps what hearing dropped",
   tick(2 * MIN);
   const late = await store.hear("wright");
   assert.deepEqual(late.voices, [], "six minutes old is gone from hearing");
-  assert.match(late.note, /nobody within earshot has spoken/);
+  // six minutes out the EAR is empty but the ROOM is still mid-conversation
+  // (the record rides the reply since party night) — the note says so
+  assert.match(late.note, /mid-conversation/);
+  assert.equal(late.conversation.voice_count, 1);
 
   const lines = readFileSync(path, "utf8").trim().split("\n").map((l) => JSON.parse(l));
   assert.equal(lines.length, 1);
@@ -320,4 +323,24 @@ test("worldSayHuman with: must name a housemate", async () => {
   assert.equal(r.error, "bounce");
   assert.match(r.defect, /not one of your residents/);
   assert.match(r.hint, /vex, alaric/);
+});
+
+test("arriving mid-lull reads the room: hearing is empty, the conversation rides the reply", async () => {
+  const { store, tick } = bench({ rei: { x: 0, y: 0 }, wright: { x: 10, y: 0 }, late: { x: 20, y: 0 } });
+  await store.say("rei", "the first course");
+  tick(16_000);
+  await store.say("wright", "and the second");
+  tick(10 * MIN); // past hearing, inside the conversation's half hour
+  const heard = await store.hear("late");
+  assert.deepEqual(heard.voices, [], "the ear lost it");
+  assert.ok(heard.conversation, "the room's record rides the reply");
+  assert.equal(heard.conversation.voice_count, 2);
+  assert.deepEqual(heard.conversation.participants, ["rei", "wright"]);
+  assert.deepEqual(heard.conversation.record.map((v) => v.said), ["the first course", "and the second"]);
+  assert.match(heard.note, /mid-conversation/);
+
+  tick(25 * MIN); // now the conversation is closed too
+  const empty = await store.hear("late");
+  assert.equal(empty.conversation, undefined);
+  assert.match(empty.note, /nobody within earshot/);
 });
