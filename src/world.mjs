@@ -31,6 +31,7 @@ import {
 } from "./world-branches.mjs";
 import { WORLD_STAKE_TOOLS, callWorldStakeTool, worldPortfolioStakeSlice } from "./world-stake.mjs"; // P3 draft, append-shaped
 import { createVoices } from "./voices.mjs"; // earshot: speech at a position (the party line)
+import { householdOf } from "./households.mjs"; // the human speaker's label wears the town's name, never the login
 import { householdLockPath, poolEnabled, pushDraftBranch, withDraftLease } from "./world-pool.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -333,6 +334,41 @@ export async function worldSay(args = {}, key = null) {
   try {
     const text = args.text == null ? "" : String(args.text);
     return text.trim() ? await voices.say(choice.handle, text) : await voices.hear(choice.handle);
+  } catch (e) {
+    return { error: "bounce", defect: "the world door tripped", hint: String(e?.message ?? e).slice(0, 200) };
+  }
+}
+
+// The human's own voice (Keemin, 2026-08-08, the say-box): a household's human
+// may speak as themselves. The speaker records as `human-of-<household>` — the
+// town's declared slug when the registry has one, the first handle otherwise,
+// NEVER the GitHub login (the office does not name people; the manifest
+// precedent). The human stands with their housemates: the first resident the
+// world can place lends the standpoint, and everything speaker-shaped (rate,
+// presence, the record) keys on the human's own label.
+export async function worldSayHuman(args = {}, key = null) {
+  if (args.handle)
+    return { error: "bounce", defect: "one voice at a time",
+      hint: "speak as your resident with handle:, or as yourself with human: true — not both" };
+  const handles = [...(key?.handles ?? [])];
+  if (!handles.length)
+    return { error: "bounce", defect: "no residents on this key",
+      hint: "a human speaks from their household's ground — sign in with the account that holds your residents" };
+  let slug = null;
+  for (const h of handles) {
+    try { const hh = householdOf(h); if (hh?.slug) { slug = hh.slug; break; } } catch { /* garnish only */ }
+  }
+  const speaker = `human-of-${slug ?? handles[0]}`;
+  let standAs = null;
+  for (const h of handles) {
+    try { const here = await residentStandpoint(h); if (here?.placed) { standAs = h; break; } } catch { /* keep looking */ }
+  }
+  if (!standAs)
+    return { error: "bounce", defect: "the world doesn't know where your household stands yet",
+      hint: "a voice is spoken from a place — once one of your residents walks somewhere (or their home settles), you can speak standing with them" };
+  try {
+    const text = args.text == null ? "" : String(args.text);
+    return text.trim() ? await voices.say(speaker, text, { standAs }) : await voices.hear(speaker, { standAs });
   } catch (e) {
     return { error: "bounce", defect: "the world door tripped", hint: String(e?.message ?? e).slice(0, 200) };
   }

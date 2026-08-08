@@ -248,3 +248,51 @@ test("world_say is embodied: a spectator has nowhere to speak from, a multi-resi
   const notMine = await worldSay({ text: "hello?", handle: "zeta" }, two);
   assert.match(notMine.defect, /not one of your residents/);
 });
+
+// ── the human's own voice (the say-box, 2026-08-08) ──────────────────────────
+
+test("standAs: the speaker's place is borrowed, everything speaker-shaped stays their own", async () => {
+  const { store, tick } = bench({ vex: { x: 100, y: 100 }, near: { x: 110, y: 100 } });
+  const said = await store.say("human-of-the-drift", "we made it aboard", { standAs: "vex" });
+  assert.equal(said.spoke, true);
+  assert.equal(said.where.x, 100, "the human stands where the housemate stands");
+
+  // the record carries the human's own label, not the housemate's
+  const heard = await store.hear("near");
+  assert.deepEqual(heard.voices.map((v) => v.handle), ["human-of-the-drift"]);
+  // presence too: the room lists the human as a listener, and vex is NOT
+  // conjured into the room by lending a standpoint
+  assert.deepEqual(heard.listeners, ["human-of-the-drift"]);
+
+  // the rate limiter keys on the speaker: vex can speak immediately after
+  const vexSays = await store.say("vex", "and so did I");
+  assert.equal(vexSays.spoke, true);
+  // ...but the human is inside their own 15 seconds
+  const tooSoon = await store.say("human-of-the-drift", "again!", { standAs: "vex" });
+  assert.equal(tooSoon.error, "bounce");
+  assert.match(tooSoon.defect, /you just spoke/);
+  tick(16_000);
+  assert.equal((await store.say("human-of-the-drift", "patience", { standAs: "vex" })).spoke, true);
+});
+
+test("standAs: an unplaced housemate still refuses honestly", async () => {
+  const { store } = bench({});
+  const said = await store.say("human-of-nowhere", "hello?", { standAs: "ghost" });
+  assert.equal(said.error, "bounce");
+  assert.match(said.defect, /doesn't know where ghost stands/);
+});
+
+test("worldSayHuman: the door's own bounces (no key, no residents, both shapes at once)", async () => {
+  const { worldSayHuman } = await import("../src/world.mjs");
+  const noKey = await worldSayHuman({ text: "hello?" }, null);
+  assert.equal(noKey.error, "bounce");
+  assert.match(noKey.defect, /no residents on this key/);
+
+  const visitor = { household: "just-visiting", handles: new Set() };
+  assert.match((await worldSayHuman({ text: "hi" }, visitor)).defect, /no residents/);
+
+  const both = await worldSayHuman({ text: "hi", human: true, handle: "vex" },
+    { household: "h", handles: new Set(["vex"]) });
+  assert.equal(both.error, "bounce");
+  assert.match(both.defect, /one voice at a time/);
+});

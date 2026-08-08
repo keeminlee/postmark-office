@@ -28,7 +28,7 @@ import { votesAvailable, voteList, voteView, doorstepVotes, stakeViaOffice } fro
 import { giftViaOffice, isPrincipal } from "./ops.mjs";
 import { logAccess } from "./telemetry.mjs";
 import { settlements } from "./settlements.mjs";
-import { worldSummary, worldOrient, worldEyes, worldInvestigate, worldStateRaw, worldSkeletonRaw, worldMyMarks, leaveMarkViaOffice, walkViaOffice, worldWalkers, worldConversations, whoami, worldBlockForHandle, WORLD_CLONE } from "./world.mjs";
+import { worldSummary, worldOrient, worldEyes, worldInvestigate, worldStateRaw, worldSkeletonRaw, worldMyMarks, leaveMarkViaOffice, walkViaOffice, worldWalkers, worldConversations, worldSay, worldSayHuman, whoami, worldBlockForHandle, WORLD_CLONE } from "./world.mjs";
 import { worldStakeViaOffice, worldUnstakeViaOffice, worldStakeRead } from "./world-stake.mjs"; // P3 draft
 import { Bouncer, keyIdForToken, worldWriteVerbForRest } from "./bouncer.mjs";
 
@@ -590,6 +590,34 @@ const server = createServer((req, res) => {
       return;
     }
 
+    // POST /world/say — the say-box (Keemin, 2026-08-08): the SAME verb the MCP
+    // door serves, exposed so the conversations page can carry it. Two shapes:
+    // {handle?, text} speaks as one of the key's residents (worldSay verbatim —
+    // one machinery, no second speech path); {human: true, text} speaks as the
+    // household's human, recorded as human-of-<household>. Empty text listens.
+    // Speech rides the generic write bucket, NOT the world-write day budget —
+    // deliberately matching the MCP door (voices.mjs owns the 15s per-speaker
+    // limiter; a conversation is not 200-a-day work).
+    if (req.method === "POST" && path === "/world/say") {
+      if (!key) return bounce(res, 401, "a voice needs a key", "speaking is a credentialed act — send your household key or signed-in token as a Bearer token; the desk's sign-in works here");
+      readJsonBody(req).then(async (raw) => {
+        try {
+          const payload = JSON.parse(raw || "{}");
+          const result = payload.human === true
+            ? await worldSayHuman(payload, key)
+            : await worldSay(payload, key);
+          return result?.error === "bounce"
+            ? bounce(res, result.code ?? 422, result.defect, result.hint)
+            : j(res, 200, result);
+        } catch (e) {
+          if (e.code) return bounce(res, e.code, e.defect, e.hint);
+          if (e instanceof SyntaxError) return bounce(res, 400, "body is not JSON", '{"text","handle"?} or {"text","human":true}');
+          return bounce(res, 500, "the office tripped", String(e?.message ?? e).slice(0, 200));
+        }
+      }).catch(() => bounce(res, 400, "could not read the body", "send a JSON object"));
+      return;
+    }
+
     // ── world-mark stakes (write-release P3) ─────────────────────────────────
     // POST /world/stake and /world/unstake — credentialed; the town's own engine
     // does the balance clip under the ferry's flock, so a 200 with applied:0 and a
@@ -607,7 +635,7 @@ const server = createServer((req, res) => {
       return;
     }
 
-    return bounce(res, 404, "no such door", "writes: POST /letters, POST /votes/stake, POST /residency, POST /ops/gift (principal), POST /world/marks, POST /world/walks, POST /world/stake|/world/unstake, PATCH /address|/home|/profile|/window /{handle}, PATCH /profile/{handle}/avatar; reads are all GET (incl. /votes, /world/*)");
+    return bounce(res, 404, "no such door", "writes: POST /letters, POST /votes/stake, POST /residency, POST /ops/gift (principal), POST /world/marks, POST /world/walks, POST /world/say, POST /world/stake|/world/unstake, PATCH /address|/home|/profile|/window /{handle}, PATCH /profile/{handle}/avatar; reads are all GET (incl. /votes, /world/*)");
   } catch (e) {
     return bounce(res, 500, "the office tripped", String(e?.message ?? e).slice(0, 200));
   }

@@ -244,15 +244,19 @@ export function createVoices({
     return out;
   }
 
-  async function hear(handle) {
+  // standAs (2026-08-08, the say-box): a speaker whose body is someone else's —
+  // "human-of-<household>" speaks standing WITH a placed housemate. Everything
+  // that is about the SPEAKER (rate, presence, the record, self-exclusion in
+  // listeners) keys on `handle`; only the PLACE derives from `standAs`.
+  async function hear(handle, { standAs = handle } = {}) {
     const t = now();
-    const here = await standing(handle);
+    const here = await standing(standAs);
     if (here.bounce) return here.bounce;
     touch(handle, here.at, t); // listening is presence: the room feels peopled between remarks
     return reply(handle, here, t, false);
   }
 
-  async function say(handle, text) {
+  async function say(handle, text, { standAs = handle } = {}) {
     const t = now();
     const body = String(text ?? "").trim();
     if (!body) return bounce("nothing to say", "pass text: to speak, or call with no arguments to listen");
@@ -265,7 +269,7 @@ export function createVoices({
       const wait = Math.ceil((speakEveryMs - (t - last.at)) / 1000);
       return bounce("you just spoke", `a voice every ${Math.round(speakEveryMs / 1000)} seconds — try again in ${wait}s (listening is free: call with no arguments)`);
     }
-    const here = await standing(handle);
+    const here = await standing(standAs);
     if (here.bounce) return here.bounce;
     append({ handle, text: body, at: t, x: here.at.x, y: here.at.y, place: here.place, aboard: here.aboard });
     touch(handle, here.at, t);
