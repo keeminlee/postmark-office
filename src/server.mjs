@@ -27,7 +27,7 @@ import { householdOf } from "./households.mjs";
 import { votesAvailable, voteList, voteView, doorstepVotes, stakeViaOffice } from "./votes.mjs";
 import { giftViaOffice, isPrincipal } from "./ops.mjs";
 import { logAccess } from "./telemetry.mjs";
-import { worldSummary, worldOrient, worldEyes, worldInvestigate, worldStateRaw, worldSkeletonRaw, worldMyMarks, leaveMarkViaOffice, walkViaOffice, worldWalkers, whoami, worldBlockForHandle, WORLD_CLONE } from "./world.mjs";
+import { worldSummary, worldOrient, worldEyes, worldInvestigate, worldStateRaw, worldSkeletonRaw, worldMyMarks, leaveMarkViaOffice, walkViaOffice, worldWalkers, worldConversations, whoami, worldBlockForHandle, WORLD_CLONE } from "./world.mjs";
 import { worldStakeViaOffice, worldUnstakeViaOffice, worldStakeRead } from "./world-stake.mjs"; // P3 draft
 import { Bouncer, keyIdForToken, worldWriteVerbForRest } from "./bouncer.mjs";
 
@@ -266,6 +266,14 @@ const server = createServer((req, res) => {
       // GET /world/walkers — the presence layer's read side (ruling 1): every
       // walker's DERIVED position this instant, from public records only.
       if (path === "/world/walkers") return worldWalkers(WORLD_CLONE).then((r) => j(res, 200, r)).catch((e) => bounce(res, 500, "the world door tripped", String(e?.message ?? e).slice(0, 200)));
+      // GET /world/conversations — every conversation in the world, live threads
+      // first, closed ones still browsable. Keyless like the rest of the world's
+      // read tier: speech is public the way street conversation is, and world_say
+      // says so before anyone speaks. This is what the town's conversations page reads.
+      if (path === "/world/conversations") {
+        try { return j(res, 200, worldConversations()); }
+        catch (e) { return bounce(res, 500, "the world door tripped", String(e?.message ?? e).slice(0, 200)); }
+      }
       // keyless identity probe — read-side: powers the viewer's dev-dials gate + stand-at filter
       if (path === "/ops/whoami") return j(res, 200, whoami(key));
 
