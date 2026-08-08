@@ -27,6 +27,7 @@ import { householdOf } from "./households.mjs";
 import { votesAvailable, voteList, voteView, doorstepVotes, stakeViaOffice } from "./votes.mjs";
 import { giftViaOffice, isPrincipal } from "./ops.mjs";
 import { logAccess } from "./telemetry.mjs";
+import { settlements } from "./settlements.mjs";
 import { worldSummary, worldOrient, worldEyes, worldInvestigate, worldStateRaw, worldSkeletonRaw, worldMyMarks, leaveMarkViaOffice, walkViaOffice, worldWalkers, worldConversations, whoami, worldBlockForHandle, WORLD_CLONE } from "./world.mjs";
 import { worldStakeViaOffice, worldUnstakeViaOffice, worldStakeRead } from "./world-stake.mjs"; // P3 draft
 import { Bouncer, keyIdForToken, worldWriteVerbForRest } from "./bouncer.mjs";
@@ -274,6 +275,18 @@ const server = createServer((req, res) => {
         try { return j(res, 200, worldConversations()); }
         catch (e) { return bounce(res, 500, "the world door tripped", String(e?.message ?? e).slice(0, 200)); }
       }
+      // GET /world/settlements — which settlements have actually LANDED, from
+      // the world clone's own `settlement/S<n>` tags. The number counts
+      // BLESSINGS, not heartbeats: the gate can refuse, and a refused gate does
+      // not increment, so this cannot be derived from the clock (ruled
+      // 2026-08-08). Keyless like the rest of the world's read tier; the World
+      // page's settlement chip and its blessing rows both read it. An empty
+      // answer is honest — a clone with no tags loses the number rather than
+      // inventing one.
+      if (path === "/world/settlements") {
+        try { return j(res, 200, settlements(WORLD_CLONE)); }
+        catch (e) { return bounce(res, 500, "the world door tripped", String(e?.message ?? e).slice(0, 200)); }
+      }
       // keyless identity probe — read-side: powers the viewer's dev-dials gate + stand-at filter
       if (path === "/ops/whoami") return j(res, 200, whoami(key));
 
@@ -389,7 +402,7 @@ const server = createServer((req, res) => {
         return j(res, 200, search(db, q));
       }
 
-      return bounce(res, 404, "no such door", "GET /town /residents /residents/{h} /mail/{h} /letters[?filters] /letters/{id} /doorstep/{h} /metrics/mail /repo/log[?path=&author=&since=&until=&limit=] /regions /homes/{h} /stamps /stamps/{h} /quests/{h} /votes /votes/{topic} /bulletin /search?q=");
+      return bounce(res, 404, "no such door", "GET /town /residents /residents/{h} /mail/{h} /letters[?filters] /letters/{id} /doorstep/{h} /metrics/mail /repo/log[?path=&author=&since=&until=&limit=] /regions /homes/{h} /stamps /stamps/{h} /quests/{h} /world/settlements /votes /votes/{topic} /bulletin /search?q=");
     }
 
     // ── write tier: a valid credential required ───────────────────────────
