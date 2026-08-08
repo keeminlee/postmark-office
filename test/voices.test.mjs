@@ -251,7 +251,8 @@ test("world_say's description carries the fade, the linger, the disclosure, and 
   assert.match(tool.description, /60 metres/);
   assert.match(tool.description, /500 characters, one voice every 15 seconds/);
   assert.match(tool.inputSchema.properties.text.description, /omit to listen without speaking/);
-  assert.deepEqual(Object.keys(tool.inputSchema.properties).sort(), ["handle", "text"]);
+  assert.match(tool.description, /pass it back as since: on your next call/, "the linger economy is taught");
+  assert.deepEqual(Object.keys(tool.inputSchema.properties).sort(), ["handle", "since", "text"]);
 });
 
 test("world_say is embodied: a spectator has nowhere to speak from, a multi-resident key must choose", async () => {
@@ -343,4 +344,29 @@ test("arriving mid-lull reads the room: hearing is empty, the conversation rides
   const empty = await store.hear("late");
   assert.equal(empty.conversation, undefined);
   assert.match(empty.note, /nobody within earshot/);
+});
+
+test("the cursor: since filters both arrays to strictly-newer, latest echoes forward", async () => {
+  const { store, tick } = bench({ rei: { x: 0, y: 0 }, wright: { x: 10, y: 0 } });
+  await store.say("rei", "first");
+  tick(16_000);
+  await store.say("rei", "second");
+  const full = await store.hear("wright");
+  assert.equal(full.voices.length, 2);
+  assert.equal(full.conversation.record.length, 2);
+  assert.ok(Number.isFinite(full.latest));
+
+  tick(16_000);
+  await store.say("rei", "third");
+  const inc = await store.hear("wright", { since: full.latest });
+  assert.deepEqual(inc.voices.map((v) => v.said), ["third"], "hearing filtered to newer");
+  assert.deepEqual(inc.conversation.record.map((v) => v.said), ["third"], "record filtered to newer");
+  assert.equal(inc.conversation.voice_count, 3, "the room's shape still rides full");
+  assert.ok(inc.latest > full.latest);
+
+  const quiet = await store.hear("wright", { since: inc.latest });
+  assert.deepEqual(quiet.voices, []);
+  assert.deepEqual(quiet.conversation.record, []);
+  assert.match(quiet.conversation.note, /nothing new since your last call/);
+  assert.equal(quiet.latest, inc.latest, "the cursor holds steady through silence");
 });

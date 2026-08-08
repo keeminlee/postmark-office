@@ -249,13 +249,19 @@ export function createVoices({
       started: agoWords(t - voices[0].at).replace(/^just now$/, "moments ago") + " (" + new Date(voices[0].at).toISOString() + ")",
       participants,
       voice_count: voices.length,
-      record: voices.slice(-hearMax).map((v) => ({ handle: v.handle, said: v.text, ago: agoWords(t - v.at) })),
+      latest_ms: voices.at(-1).at,
+      record: voices.slice(-hearMax).map((v) => ({ handle: v.handle, said: v.text, ago: agoWords(t - v.at), at_ms: v.at })),
       note: "the room's record, kept the way the town keeps its mail — `voices` above is what you can still HEAR (the last five minutes); this is the conversation so far",
     };
   }
 
-  function reply(handle, here, t, spoke) {
-    const within = heardBy(here.at, t).slice(-hearMax); // newest last, the room's recent hum
+  // `since` (Keemin, party night — "be mindful of everyone's token costs"):
+  // the reply's `latest` stamp, echoed back on the next call, filters both
+  // voice arrays to strictly-newer. First call rich (arrival needs the room),
+  // lingering calls near-empty. Stateless — the cursor lives with the caller.
+  function reply(handle, here, t, spoke, since = null) {
+    const fresh = (v) => !(Number.isFinite(since) && v.at <= since);
+    const within = heardBy(here.at, t).filter(fresh).slice(-hearMax); // newest last
     const out = {
       where: { place: here.place, x: Math.round(here.at.x), y: Math.round(here.at.y), ...(here.aboard ? { aboard: true } : {}) },
       // who ELSE is here (ruled 2026-08-08): the reply is addressed to the
@@ -271,8 +277,17 @@ export function createVoices({
     };
     if (spoke) out.spoke = true;
     const convo = openConversationAt(here, t);
-    if (convo) out.conversation = convo;
-    if (out.voices.length === 0)
+    if (convo) {
+      if (Number.isFinite(since)) {
+        const newRecord = convo.record.filter((v) => v.at_ms > since);
+        out.conversation = { ...convo, record: newRecord,
+          note: newRecord.length ? convo.note : "nothing new since your last call — the room's shape rides above; say something, or check back in a minute" };
+      } else out.conversation = convo;
+    }
+    // the cursor: echo this back as `since` on your next call to receive only
+    // what is new — the room's shape (participants, counts) always rides
+    out.latest = convo ? convo.latest_ms : (within.length ? within.at(-1).at : t);
+    if (out.voices.length === 0 && !Number.isFinite(since))
       out.note = convo
         ? "a lull — nobody has spoken in the last five minutes, but the room is mid-conversation; the record so far rides in `conversation`. Say something."
         : "nobody within earshot has spoken in the last five minutes — say something, or call again in a minute or two";
@@ -283,15 +298,15 @@ export function createVoices({
   // "human-of-<household>" speaks standing WITH a placed housemate. Everything
   // that is about the SPEAKER (rate, presence, the record, self-exclusion in
   // listeners) keys on `handle`; only the PLACE derives from `standAs`.
-  async function hear(handle, { standAs = handle } = {}) {
+  async function hear(handle, { standAs = handle, since = null } = {}) {
     const t = now();
     const here = await standing(standAs);
     if (here.bounce) return here.bounce;
     touch(handle, here.at, t); // listening is presence: the room feels peopled between remarks
-    return reply(handle, here, t, false);
+    return reply(handle, here, t, false, since);
   }
 
-  async function say(handle, text, { standAs = handle } = {}) {
+  async function say(handle, text, { standAs = handle, since = null } = {}) {
     const t = now();
     const body = String(text ?? "").trim();
     if (!body) return bounce("nothing to say", "pass text: to speak, or call with no arguments to listen");
@@ -308,7 +323,7 @@ export function createVoices({
     if (here.bounce) return here.bounce;
     append({ handle, text: body, at: t, x: here.at.x, y: here.at.y, place: here.place, aboard: here.aboard });
     touch(handle, here.at, t);
-    return reply(handle, here, t, true);
+    return reply(handle, here, t, true, since);
   }
 
   // The page's read: every conversation in the world, live ones first. Served
