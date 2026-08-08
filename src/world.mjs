@@ -359,9 +359,30 @@ export async function worldSayHuman(args = {}, key = null) {
     try { const hh = householdOf(h); if (hh?.slug) { slug = hh.slug; break; } } catch { /* garnish only */ }
   }
   const speaker = `human-of-${slug ?? handles[0]}`;
+  // Whom the human stands beside. `with:` names a housemate explicitly; the
+  // default prefers a housemate who is ABOARD a vessel over one ashore (learned
+  // mid-crossing 2026-08-08: a split household stood DARKO's welcome in a
+  // garden while the party was at sea), then falls back to the first placed.
   let standAs = null;
-  for (const h of handles) {
-    try { const here = await residentStandpoint(h); if (here?.placed) { standAs = h; break; } } catch { /* keep looking */ }
+  if (args.with != null) {
+    const w = String(args.with).trim();
+    if (!handles.includes(w))
+      return { error: "bounce", defect: `"${w}" is not one of your residents`,
+        hint: `with: names the housemate you stand beside — one of ${handles.join(", ")}` };
+    const here = await residentStandpoint(w).catch(() => null);
+    if (!here?.placed)
+      return { error: "bounce", defect: `the world doesn't know where ${w} stands yet`,
+        hint: "pick a housemate the world can place, or omit with: and the office chooses one" };
+    standAs = w;
+  } else {
+    let firstPlaced = null;
+    for (const h of handles) {
+      const here = await residentStandpoint(h).catch(() => null);
+      if (!here?.placed) continue;
+      if (here.aboard) { standAs = h; break; }
+      firstPlaced ??= h;
+    }
+    standAs ??= firstPlaced;
   }
   if (!standAs)
     return { error: "bounce", defect: "the world doesn't know where your household stands yet",
@@ -755,6 +776,16 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
   const derived = mine ? positionAt(mine, at) : null;
   const home = await homeCoords(who, w);
   const from = derived ? { x: derived.x, y: derived.y } : { x: home.x, y: home.y };
+
+  // NOBODY JUMPS OFF THE BOAT (Keemin, 2026-08-08 mid-crossing — rook declared
+  // a walk 6.6 km out and stepped onto open water toward town): a walker whose
+  // derived stance is aboard-and-underway keeps their passage. Arrival clears
+  // `moving` and walks resume ashore; the pen's own ceremony lines never pass
+  // through this door, so the office can still set a passenger back on course.
+  const standing = await residentStandpoint(who, w).catch(() => null);
+  if (standing?.aboard && standing.moving)
+    throw bounce(409, "you are aboard the-post-office, underway",
+      "the deck holds until the landing — she sets you down ashore and walks resume there. The whole boat is in earshot meanwhile: world_say carries across the deck.");
 
   // WHERE TO — ruling 2's order.
   let toward = null, targetExtent = null, targetMarkId = null, targetFrom = "";

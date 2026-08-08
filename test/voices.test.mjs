@@ -163,10 +163,26 @@ test("a chained circle is ONE conversation — the ends need not hear each other
   assert.equal(live[0].voice_count, 3);
 });
 
-test("five silent minutes at the same spot start a NEW conversation", async () => {
+test("a lull is not a goodbye: the record chains across a quiet gap the ear has already lost", async () => {
+  // Two clocks (Keemin, sailing night): a 6-minute lull is PAST hearing but
+  // still ONE conversation on the record — the maiden crossing shattered the
+  // deck into serial threads when closure reused the hearing fade.
+  const { store, tick } = bench({ rei: { x: 0, y: 0 }, wright: { x: 10, y: 0 } });
+  await store.say("rei", "the first remark");
+  tick(6 * MIN);
+  const heard = await store.hear("wright");
+  assert.deepEqual(heard.voices, [], "the ear lost it — hearing still fades at five minutes");
+  await store.say("rei", "the lull survived");
+  const c = store.conversations();
+  assert.equal(c.live.length, 1, "one conversation across the lull");
+  assert.equal(c.closed.length, 0);
+  assert.deepEqual(c.live[0].voices.map((v) => v.said), ["the first remark", "the lull survived"]);
+});
+
+test("thirty-one silent minutes at the same spot start a NEW conversation", async () => {
   const { store, tick } = bench({ rei: { x: 0, y: 0 } });
   await store.say("rei", "the first evening");
-  tick(6 * MIN);
+  tick(31 * MIN);
   await store.say("rei", "a different night");
   const c = store.conversations();
   assert.equal(c.live.length, 1);
@@ -203,7 +219,7 @@ test("a closed conversation stays browsable, and survives a restart of the offic
   const { store, path, tick } = bench({ rei: { x: 12, y: -8 }, wright: { x: 20, y: -8 } });
   await store.say("rei", "goodnight then");
   await store.say("wright", "goodnight");
-  tick(30 * MIN);
+  tick(31 * MIN);
   const c = store.conversations();
   assert.deepEqual(c.live, []);
   assert.equal(c.closed.length, 1);
@@ -214,7 +230,7 @@ test("a closed conversation stays browsable, and survives a restart of the offic
 
   // a second store over the same log is the office coming back up
   const fresh = bench({ rei: { x: 12, y: -8 } }, { log: path });
-  fresh.tick(30 * MIN);
+  fresh.tick(31 * MIN);
   const after = fresh.store.conversations();
   assert.equal(after.closed.length, 1);
   assert.deepEqual(after.closed[0].voices.map((v) => v.said), ["goodnight then", "goodnight"]);
@@ -295,4 +311,13 @@ test("worldSayHuman: the door's own bounces (no key, no residents, both shapes a
     { household: "h", handles: new Set(["vex"]) });
   assert.equal(both.error, "bounce");
   assert.match(both.defect, /one voice at a time/);
+});
+
+test("worldSayHuman with: must name a housemate", async () => {
+  const { worldSayHuman } = await import("../src/world.mjs");
+  const key = { household: "h", handles: new Set(["vex", "alaric"]) };
+  const r = await worldSayHuman({ text: "hi", human: true, with: "stranger" }, key);
+  assert.equal(r.error, "bounce");
+  assert.match(r.defect, /not one of your residents/);
+  assert.match(r.hint, /vex, alaric/);
 });

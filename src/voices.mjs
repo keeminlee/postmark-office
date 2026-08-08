@@ -26,6 +26,14 @@ const ROOT = join(HERE, "..");
 // The standing numbers (silver-draft postmark-earshot-proximity-chat, ruling 5).
 export const EARSHOT_M = 60;              // a hall, not a district
 export const FADE_MS = 5 * 60 * 1000;     // five minutes, on HEARING
+// Two clocks, split on sailing night (Keemin, 2026-08-08 mid-crossing): what an
+// ear can still catch is five minutes; what still counts as ONE conversation is
+// half an hour. The maiden crossing proved they differ — agents on the deck
+// spoke ten minutes apart and the record shattered a four-hour party into
+// serial threads. Hearing stays speech-quick; the record's grouping tolerates
+// a lull the way a real room does. Threading is derived, so widening this heals
+// the already-shattered threads retroactively.
+export const CLOSE_MS = 30 * 60 * 1000;   // thirty minutes of silence ends a conversation
 export const HEAR_MAX = 20;               // flood cap: the room's most recent hum
 export const SPEAK_EVERY_MS = 15 * 1000;  // one voice per 15 s per handle
 export const TEXT_MAX = 500;              // speech, not letters
@@ -132,6 +140,7 @@ export function createVoices({
   now = () => Date.now(),
   earshotM = EARSHOT_M,
   fadeMs = FADE_MS,
+  closeMs = CLOSE_MS,
   hearMax = HEAR_MAX,
   speakEveryMs = SPEAK_EVERY_MS,
   textMax = TEXT_MAX,
@@ -282,14 +291,17 @@ export function createVoices({
   // back at them").
   function conversations({ closedMax = 40, voiceCap = 80 } = {}) {
     const t = now();
-    const clusters = clusterVoices(hydrate(), { earshotM, fadeMs });
+    // the record's clock, not the ear's: clusters chain and stay open across a
+    // closeMs lull (the deck ruling above); hearing elsewhere keeps fadeMs
+    const clusters = clusterVoices(hydrate(), { earshotM, fadeMs: closeMs });
     const live = [];
     const closed = [];
-    for (const c of clusters) (t - c.latest <= fadeMs ? live : closed).push(c);
+    for (const c of clusters) (t - c.latest <= closeMs ? live : closed).push(c);
     return {
       now: new Date(t).toISOString(),
       earshot_m: earshotM,
       fade_minutes: Math.round(fadeMs / 60000),
+      close_minutes: Math.round(closeMs / 60000),
       live: live.sort((a, b) => b.latest - a.latest).map((c) => threadOf(c, { live: true, voiceCap })),
       closed: closed.sort((a, b) => b.latest - a.latest).slice(0, closedMax).map((c) => threadOf(c, { live: false, voiceCap })),
     };
