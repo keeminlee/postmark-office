@@ -31,7 +31,12 @@ import { join, relative, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 
-export const ASSET_EXT = /\.(css|js|png|jpg|jpeg|webp|gif|txt)$/i;
+// html/svg/json joined 2026-08-08 (party night): panes grew little sites —
+// vermillion's window links games and decorated assets beside itself, and the
+// publisher was silently stripping them to their stylesheets. Panes already
+// serve resident-authored html (the pane itself) on their own isolated origin;
+// more of the same trust class, same origin.
+export const ASSET_EXT = /\.(css|js|png|jpg|jpeg|webp|gif|txt|html|svg|json)$/i;
 const HANDLE_OK = /^[a-z0-9][a-z0-9_-]*$/i; // dir-listing paranoia: a handle is a plain slug
 
 function* assetWalk(dir, base) {

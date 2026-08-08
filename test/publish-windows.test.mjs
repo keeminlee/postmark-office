@@ -52,9 +52,14 @@ test("stageWindows ships the pane + WINDOW assets only; plot stays home", () => 
   }
 });
 
-test("asset extension set matches the witness's certifiable set", () => {
-  for (const ok of ["a.css", "b.js", "c.png", "d.jpg", "e.jpeg", "f.webp", "g.gif", "h.txt"])
+test("asset extension set: the publisher LEADS the witness's certifiable set (2026-08-08)", () => {
+  // html/svg/json joined on party night — panes grew little sites (vermillion's
+  // games and decorated assets), and the publisher was stripping them. The
+  // witness's own set still lags; aligning it is tracked on the witness-lint
+  // lane so residents can PR what founders can already place. Until then the
+  // divergence is DELIBERATE and this test names it rather than hiding it.
+  for (const ok of ["a.css", "b.js", "c.png", "d.jpg", "e.jpeg", "f.webp", "g.gif", "h.txt", "i.html", "j.svg", "k.json"])
     assert.ok(ASSET_EXT.test(ok), ok);
-  for (const no of ["x.md", "x.html", "x.svg", "x.wasm", "x.mjs", "x"])
+  for (const no of ["x.md", "x.wasm", "x.mjs", "x"])
     assert.ok(!ASSET_EXT.test(no), no);
 });
