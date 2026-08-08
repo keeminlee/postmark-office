@@ -1,0 +1,225 @@
+{
+  "repo": "keeminlee/postmark-site",
+  "captured_at": "2026-08-08T08:51:02-04:00",
+  "views": {
+    "count": 124,
+    "uniques": 5,
+    "views": [
+      {
+        "timestamp": "2026-07-25T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-07-26T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-07-27T00:00:00Z",
+        "count": 42,
+        "uniques": 2
+      },
+      {
+        "timestamp": "2026-07-28T00:00:00Z",
+        "count": 12,
+        "uniques": 3
+      },
+      {
+        "timestamp": "2026-07-29T00:00:00Z",
+        "count": 3,
+        "uniques": 1
+      },
+      {
+        "timestamp": "2026-07-30T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-07-31T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-08-01T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-08-02T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-08-03T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-08-04T00:00:00Z",
+        "count": 12,
+        "uniques": 1
+      },
+      {
+        "timestamp": "2026-08-05T00:00:00Z",
+        "count": 3,
+        "uniques": 2
+      },
+      {
+        "timestamp": "2026-08-06T00:00:00Z",
+        "count": 45,
+        "uniques": 2
+      },
+      {
+        "timestamp": "2026-08-07T00:00:00Z",
+        "count": 7,
+        "uniques": 2
+      }
+    ]
+  },
+  "clones": {
+    "count": 1972,
+    "uniques": 493,
+    "clones": [
+      {
+        "timestamp": "2026-07-25T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-07-26T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-07-27T00:00:00Z",
+        "count": 59,
+        "uniques": 31
+      },
+      {
+        "timestamp": "2026-07-28T00:00:00Z",
+        "count": 229,
+        "uniques": 90
+      },
+      {
+        "timestamp": "2026-07-29T00:00:00Z",
+        "count": 162,
+        "uniques": 65
+      },
+      {
+        "timestamp": "2026-07-30T00:00:00Z",
+        "count": 163,
+        "uniques": 51
+      },
+      {
+        "timestamp": "2026-07-31T00:00:00Z",
+        "count": 156,
+        "uniques": 60
+      },
+      {
+        "timestamp": "2026-08-01T00:00:00Z",
+        "count": 280,
+        "uniques": 115
+      },
+      {
+        "timestamp": "2026-08-02T00:00:00Z",
+        "count": 225,
+        "uniques": 97
+      },
+      {
+        "timestamp": "2026-08-03T00:00:00Z",
+        "count": 112,
+        "uniques": 43
+      },
+      {
+        "timestamp": "2026-08-04T00:00:00Z",
+        "count": 145,
+        "uniques": 56
+      },
+      {
+        "timestamp": "2026-08-05T00:00:00Z",
+        "count": 145,
+        "uniques": 57
+      },
+      {
+        "timestamp": "2026-08-06T00:00:00Z",
+        "count": 86,
+        "uniques": 38
+      },
+      {
+        "timestamp": "2026-08-07T00:00:00Z",
+        "count": 210,
+        "uniques": 71
+      }
+    ]
+  },
+  "popular_paths": [
+    {
+      "path": "/keeminlee/postmark-site",
+      "title": "Overview",
+      "count": 25,
+      "uniques": 5
+    },
+    {
+      "path": "/keeminlee/postmark-site/pulls",
+      "title": "/pulls",
+      "count": 15,
+      "uniques": 2
+    },
+    {
+      "path": "/keeminlee/postmark-site/issues",
+      "title": "/issues",
+      "count": 7,
+      "uniques": 2
+    },
+    {
+      "path": "/keeminlee/postmark-site/tree/main/src/lib",
+      "title": "/tree/main/src/lib",
+      "count": 6,
+      "uniques": 1
+    },
+    {
+      "path": "/keeminlee/postmark-site/issues/3",
+      "title": "/issues/3",
+      "count": 5,
+      "uniques": 2
+    },
+    {
+      "path": "/keeminlee/postmark-site/blob/main/src/lib/tutorial-registry.mjs",
+      "title": "/blob/main/src/lib/tutorial-registry.mjs",
+      "count": 5,
+      "uniques": 1
+    },
+    {
+      "path": "/keeminlee/postmark-site/tree/main/src",
+      "title": "/tree/main/src",
+      "count": 5,
+      "uniques": 1
+    },
+    {
+      "path": "/keeminlee/postmark-site/tree/main",
+      "title": "/tree/main",
+      "count": 3,
+      "uniques": 2
+    },
+    {
+      "path": "/keeminlee/postmark-site/commit/a733c63203db4b54c770bd24f36575ba3bf7a2a0",
+      "title": "/commit/a733c63203db4b54c770bd24f36575ba3bf7a2a0",
+      "count": 3,
+      "uniques": 1
+    },
+    {
+      "path": "/keeminlee/postmark-site/blob/main/src/lib/tutorial.mjs",
+      "title": "/blob/main/src/lib/tutorial.mjs",
+      "count": 2,
+      "uniques": 1
+    }
+  ],
+  "popular_referrers": [
+    {
+      "referrer": "github.com",
+      "count": 36,
+      "uniques": 3
+    }
+  ]
+}
