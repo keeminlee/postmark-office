@@ -26,8 +26,12 @@ const opt = (name, def) => { const i = args.indexOf(name); return i >= 0 ? args[
 const TOWN = resolve(opt("--town", process.env.TOWN_CLONE ?? join(HERE, "..", "town-clone")));
 const WORLD = resolve(opt("--world", process.env.WORLD_CLONE ?? join(HERE, "..", "world-clone")));
 
-const { householdKeys } = await import(pathToFileURL(join(TOWN, "tools", "stamp-mint.mjs")));
-const map = householdKeys(TOWN);
+const { currentHouseholds } = await import(pathToFileURL(join(TOWN, "tools", "stamp-mint.mjs")));
+// currentHouseholds, not householdKeys: the base is from-genesis truth, and a
+// household re-key rides the stamp ledger as a dated registry: line — reading
+// the bare base made a ledger-only re-key invisible to the parcel cap
+// (caught 2026-08-07, the cadaeic.space unification).
+const map = currentHouseholds(TOWN);
 const households = {};
 for (const [handle, rec] of [...map.entries()].sort((a, b) => a[0].localeCompare(b[0])))
   households[handle] = rec.key;
