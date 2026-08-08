@@ -58,16 +58,17 @@ test("earshot: inside carries, the edge carries, one metre beyond does not", asy
   assert.equal(heard.where.place, "the ground at 0,0");
 });
 
-test("earshot: your own voice is beside you, and listening puts you in the room", async () => {
+test("earshot: your own voice is beside you, and listeners means who ELSE is here", async () => {
   const { store } = bench({ rei: { x: 10, y: 10 }, wright: { x: 20, y: 10 } });
   const said = await store.say("rei", "the hall is warm");
   assert.equal(said.spoke, true);
   assert.deepEqual(said.voices.map((v) => [v.handle, v.distance, v.ago]), [["rei", "beside you", "just now"]]);
-  assert.deepEqual(said.listeners, ["rei"]);
+  // you are not your own audience (ruled 2026-08-08): alone means nobody else
+  assert.deepEqual(said.listeners, []);
 
   const heard = await store.hear("wright"); // never spoke — listening is presence
-  assert.deepEqual(heard.listeners, ["rei", "wright"]);
-  assert.deepEqual((await store.hear("rei")).listeners, ["rei", "wright"]);
+  assert.deepEqual(heard.listeners, ["rei"]);
+  assert.deepEqual((await store.hear("rei")).listeners, ["wright"]);
 });
 
 test("a resident the world cannot place is refused honestly, not stood at the origin", async () => {

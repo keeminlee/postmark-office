@@ -227,7 +227,10 @@ export function createVoices({
     const within = heardBy(here.at, t).slice(-hearMax); // newest last, the room's recent hum
     const out = {
       where: { place: here.place, x: Math.round(here.at.x), y: Math.round(here.at.y), ...(here.aboard ? { aboard: true } : {}) },
-      listeners: listenersAround(here.at, t),
+      // who ELSE is here (ruled 2026-08-08): the reply is addressed to the
+      // caller, and you are not your own audience. The conversations page
+      // stays third-person and keeps everyone.
+      listeners: listenersAround(here.at, t).filter((h) => h !== handle),
       voices: within.map((v) => ({
         handle: v.handle,
         said: v.text,
