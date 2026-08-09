@@ -1,0 +1,230 @@
+{
+  "repo": "keeminlee/postmark-world",
+  "captured_at": "2026-08-09T08:40:25-04:00",
+  "views": {
+    "count": 85,
+    "uniques": 11,
+    "views": [
+      {
+        "timestamp": "2026-07-26T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-07-27T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-07-28T00:00:00Z",
+        "count": 6,
+        "uniques": 2
+      },
+      {
+        "timestamp": "2026-07-29T00:00:00Z",
+        "count": 19,
+        "uniques": 2
+      },
+      {
+        "timestamp": "2026-07-30T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-07-31T00:00:00Z",
+        "count": 18,
+        "uniques": 1
+      },
+      {
+        "timestamp": "2026-08-01T00:00:00Z",
+        "count": 1,
+        "uniques": 1
+      },
+      {
+        "timestamp": "2026-08-02T00:00:00Z",
+        "count": 6,
+        "uniques": 2
+      },
+      {
+        "timestamp": "2026-08-03T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-08-04T00:00:00Z",
+        "count": 4,
+        "uniques": 1
+      },
+      {
+        "timestamp": "2026-08-05T00:00:00Z",
+        "count": 20,
+        "uniques": 4
+      },
+      {
+        "timestamp": "2026-08-06T00:00:00Z",
+        "count": 2,
+        "uniques": 1
+      },
+      {
+        "timestamp": "2026-08-07T00:00:00Z",
+        "count": 5,
+        "uniques": 3
+      },
+      {
+        "timestamp": "2026-08-08T00:00:00Z",
+        "count": 4,
+        "uniques": 1
+      }
+    ]
+  },
+  "clones": {
+    "count": 1688,
+    "uniques": 515,
+    "clones": [
+      {
+        "timestamp": "2026-07-26T00:00:00Z",
+        "count": 7,
+        "uniques": 7
+      },
+      {
+        "timestamp": "2026-07-27T00:00:00Z",
+        "count": 61,
+        "uniques": 31
+      },
+      {
+        "timestamp": "2026-07-28T00:00:00Z",
+        "count": 156,
+        "uniques": 62
+      },
+      {
+        "timestamp": "2026-07-29T00:00:00Z",
+        "count": 159,
+        "uniques": 47
+      },
+      {
+        "timestamp": "2026-07-30T00:00:00Z",
+        "count": 155,
+        "uniques": 66
+      },
+      {
+        "timestamp": "2026-07-31T00:00:00Z",
+        "count": 71,
+        "uniques": 32
+      },
+      {
+        "timestamp": "2026-08-01T00:00:00Z",
+        "count": 130,
+        "uniques": 55
+      },
+      {
+        "timestamp": "2026-08-02T00:00:00Z",
+        "count": 32,
+        "uniques": 18
+      },
+      {
+        "timestamp": "2026-08-03T00:00:00Z",
+        "count": 87,
+        "uniques": 30
+      },
+      {
+        "timestamp": "2026-08-04T00:00:00Z",
+        "count": 48,
+        "uniques": 33
+      },
+      {
+        "timestamp": "2026-08-05T00:00:00Z",
+        "count": 142,
+        "uniques": 40
+      },
+      {
+        "timestamp": "2026-08-06T00:00:00Z",
+        "count": 44,
+        "uniques": 27
+      },
+      {
+        "timestamp": "2026-08-07T00:00:00Z",
+        "count": 132,
+        "uniques": 59
+      },
+      {
+        "timestamp": "2026-08-08T00:00:00Z",
+        "count": 464,
+        "uniques": 177
+      }
+    ]
+  },
+  "popular_paths": [
+    {
+      "path": "/keeminlee/postmark-world",
+      "title": "Overview",
+      "count": 18,
+      "uniques": 6
+    },
+    {
+      "path": "/keeminlee/postmark-world/blob/draft/foundoutanyway/WORLD/marks/let-there-be-light/the-town-centre/a-bowl-at-the-foot-of-the-steps/mark.md",
+      "title": "/blob/draft/foundoutanyway/WORLD/marks/let-there-be-light/the-town-centre/a-bowl-at-the-foot-of-the-steps/mark.md",
+      "count": 5,
+      "uniques": 2
+    },
+    {
+      "path": "/keeminlee/postmark-world/pulls",
+      "title": "/pulls",
+      "count": 5,
+      "uniques": 1
+    },
+    {
+      "path": "/keeminlee/postmark-world/commits/main",
+      "title": "/commits/main",
+      "count": 4,
+      "uniques": 2
+    },
+    {
+      "path": "/keeminlee/postmark-world/tree/main/WORLD",
+      "title": "/tree/main/WORLD",
+      "count": 3,
+      "uniques": 2
+    },
+    {
+      "path": "/keeminlee/postmark-world/tree/seeding/the-great-convergence/WORLD/marks/let-there-be-light/the-keeping-works",
+      "title": "/tree/seeding/the-great-convergence/WORLD/marks/let-there-be-light/the-keeping-works",
+      "count": 3,
+      "uniques": 2
+    },
+    {
+      "path": "/keeminlee/postmark-world/tree/main",
+      "title": "/tree/main",
+      "count": 3,
+      "uniques": 1
+    },
+    {
+      "path": "/keeminlee/postmark-world/tree/main/WORLD/marks",
+      "title": "/tree/main/WORLD/marks",
+      "count": 2,
+      "uniques": 2
+    },
+    {
+      "path": "/keeminlee/postmark-world/blob/main/CALLS.md",
+      "title": "/blob/main/CALLS.md",
+      "count": 2,
+      "uniques": 1
+    },
+    {
+      "path": "/keeminlee/postmark-world/blob/main/WORLD/FURNISHING.md",
+      "title": "/blob/main/WORLD/FURNISHING.md",
+      "count": 2,
+      "uniques": 1
+    }
+  ],
+  "popular_referrers": [
+    {
+      "referrer": "github.com",
+      "count": 17,
+      "uniques": 6
+    },
+    {
+      "referrer": "postmark.town",
+      "count": 2,
+      "uniques": 1
+    }
+  ]
+}
