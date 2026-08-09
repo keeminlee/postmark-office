@@ -58,7 +58,7 @@ const bouncer = new Bouncer();
 // GitHub API base is injectable (GITHUB_API_URL — the same override the oauth
 // dance uses) so the pen path is testable end to end; the real token lives only
 // on the box. No token configured → request_residency answers not-yet-open.
-const [PEN_OWNER, PEN_REPO] = (process.env.POSTMARK_TOWN_REPO ?? "keeminlee/postmark").split("/");
+const [PEN_OWNER, PEN_REPO] = (process.env.POSTMARK_TOWN_REPO ?? "postmark-town/postmark").split("/");
 const PEN = {
   apiBase: (process.env.GITHUB_API_URL ?? "https://api.github.com").replace(/\/+$/, ""),
   token: process.env.POSTMARK_PEN_TOKEN ?? "",

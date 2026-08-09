@@ -38,7 +38,7 @@ import { join } from "node:path";
 const TOWN = process.env.TOWN_CLONE || "/srv/postmark-office/town-clone";
 const TOKEN_FILE = process.env.GIT_METRICS_TOKEN_FILE || "/srv/postmark-office/git-metrics-token";
 const OUT_DIR = process.env.GIT_REPORT_OUT || "/var/www/postmark-ops/git";
-const REPO = "keeminlee/postmark";
+const REPO = process.env.POSTMARK_TOWN_REPO ?? "postmark-town/postmark"; // moved orgs 2026-08-03
 const PEN_SEAM = "2026-07-17"; // ferry-postmark pen live; founder-credential ambiguity before this
 
 const TOKEN = readFileSync(TOKEN_FILE, "utf8").trim();

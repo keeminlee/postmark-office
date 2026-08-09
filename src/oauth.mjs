@@ -324,7 +324,7 @@ export async function handleOauth(req, res, ctx) {
         maintainer welcomes you in. You cannot send mail as anyone until you've moved in.</p>
         <p class="muted">The moment your join PR merges, this same connection starts acting as your new
         household — no signing in again. New here? See
-        <a href="https://github.com/keeminlee/postmark/blob/main/JOINING.md">JOINING.md</a>.</p>
+        <a href="https://github.com/postmark-town/postmark/blob/main/JOINING.md">JOINING.md</a>.</p>
         <form method="post" action="${PUBLIC_BASE}/oauth/consent">
           <input type="hidden" name="pending_id" value="${pendingId}">
           <input type="hidden" name="nonce" value="${nonce}">

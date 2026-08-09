@@ -171,7 +171,10 @@ if (existsSync(GHDIR)) {
   for (const f of readdirSync(GHDIR).sort()) {
     if (!f.endsWith(".json")) continue;
     let s; try { s = JSON.parse(readFileSync(join(GHDIR, f), "utf8")); } catch { continue; }
-    const repo = (s.repo ?? f).replace(/^keeminlee\//, "");
+    // Owner-agnostic: the town moved to postmark-town 2026-08-03 while the rest
+    // stayed keeminlee's, and stripping only the old owner would have split one
+    // repo's series into two rows at the transfer date.
+    const repo = (s.repo ?? f).replace(/^[^/]+\//, "");
     const g = (gh[repo] ??= { views: {}, clones: {}, paths: [], snapshotDate: "" });
     for (const v of s.views?.views ?? []) g.views[v.timestamp.slice(0, 10)] = { count: v.count, uniques: v.uniques };
     for (const c of s.clones?.clones ?? []) g.clones[c.timestamp.slice(0, 10)] = { count: c.count, uniques: c.uniques };
@@ -222,7 +225,7 @@ for (const [repo, g] of Object.entries(gh)) {
   const rows = vd.slice(-21).map((d) => [d, g.views[d]?.count ?? "", g.views[d]?.uniques ?? "", g.clones[d]?.count ?? "", g.clones[d]?.uniques ?? ""]);
   ghHtml += `<h3>${esc(repo)} <span class="dim">(snapshots through ${esc(g.snapshotDate)})</span></h3>
   ${table(["day", "views", "uniq", "clones", "uniq"], rows)}
-  <p class="dim">popular paths (latest snapshot): ${esc(g.paths.slice(0, 6).map((p) => `${p.path.replace("/keeminlee/", "")} (${p.uniques}u)`).join(" · ")) || "—"}</p>`;
+  <p class="dim">popular paths (latest snapshot): ${esc(g.paths.slice(0, 6).map((p) => `${p.path.replace(/^\/(?:keeminlee|postmark-town)\//, "/")} (${p.uniques}u)`).join(" · ")) || "—"}</p>`;
 }
 
 const now = new Date().toISOString().replace("T", " ").slice(0, 16) + "Z";
