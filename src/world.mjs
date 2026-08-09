@@ -376,7 +376,17 @@ export async function worldSayHuman(args = {}, key = null) {
   // Whom the human stands beside. `with:` names a housemate explicitly; the
   // default prefers a housemate who is ABOARD a vessel over one ashore (learned
   // mid-crossing 2026-08-08: a split household stood DARKO's welcome in a
-  // garden while the party was at sea), then falls back to the first placed.
+  // garden while the party was at sea), then the housemate most recently ALIVE
+  // in the world — spoke or listened inside the presence window — and only then
+  // falls back to the first placed.
+  //
+  // The presence rung is the same lesson as the aboard rung, generalized. The
+  // boat was a special case of "the household is scattered and the list order
+  // decides where its human lands", which on a mountain with four residents at
+  // three altitudes is not a tiebreak, it is a coin toss. A house's human
+  // belongs where the house is awake. (Keemin, party night: "why am I with iris
+  // instead of with you guys" — iris was placed first in key order and idle at
+  // the landing hall while three housemates talked at the summit.)
   let standAs = null;
   if (args.with != null) {
     const w = String(args.with).trim();
@@ -390,16 +400,18 @@ export async function worldSayHuman(args = {}, key = null) {
     standAs = w;
   } else {
     let firstPlaced = null;
+    const placed = [];
     for (const h of handles) {
       const here = await residentStandpoint(h).catch(() => null);
       if (!here?.placed) continue;
+      placed.push(h);
       if (here.aboard) { standAs = h; break; }
       firstPlaced ??= h;
     }
     // nobody placed → the first handle, and the store's own quay fallback
     // stands the household at the threshold (the FireflyArc class: home not
     // yet on the atlas, never walked — the town's door is still a place)
-    standAs = standAs ?? firstPlaced ?? handles[0];
+    standAs = standAs ?? voices.lastPresent(placed) ?? firstPlaced ?? handles[0];
   }
   try {
     const text = args.text == null ? "" : String(args.text);

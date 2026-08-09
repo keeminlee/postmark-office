@@ -262,6 +262,25 @@ test("a closed conversation stays browsable, and survives a restart of the offic
   assert.deepEqual(after.closed[0].voices.map((v) => v.said), ["goodnight then", "goodnight"]);
 });
 
+test("lastPresent names the housemate most recently alive, and forgets them on time", async () => {
+  const { store, tick } = bench({ iris: { x: 0, y: 0 }, wright: { x: 900, y: 900 }, rei: { x: 905, y: 900 } });
+  await store.hear("iris");            // iris is alive first…
+  tick(2 * MIN);
+  await store.say("wright", "up here");  // …then wright, further along the clock
+  assert.equal(store.lastPresent(["iris", "wright", "rei"]), "wright", "latest wins, not list order");
+
+  tick(2 * MIN);
+  await store.hear("rei");             // listening counts exactly like speaking
+  assert.equal(store.lastPresent(["iris", "wright", "rei"]), "rei");
+
+  // a house nobody has touched inside the window answers null, so the caller
+  // keeps whatever fallback it had rather than being handed a stale room
+  tick(16 * MIN);
+  assert.equal(store.lastPresent(["iris", "wright", "rei"]), null);
+  assert.equal(store.lastPresent([]), null);
+  assert.equal(store.lastPresent(["nobody-here"]), null);
+});
+
 // ── the door: the verb's contract and its bounces ────────────────────────────
 
 test("world_say's description carries the fade, the linger, the disclosure, and the reading law", () => {

@@ -369,5 +369,22 @@ export function createVoices({
     };
   }
 
-  return { say, hear, conversations, log: pathOf, _voices: () => hydrate(), _presence: presence };
+  // Which of these handles is most recently ALIVE in the world — spoke or
+  // listened, whichever is later. `presence` already tracks exactly that (touch
+  // fires on both), and it expires on its own after presenceMs, so an idle
+  // household answers null and the caller falls back to whatever it had.
+  // Used by the human lane to stand a household's human where the household
+  // actually is, rather than wherever their handle list happens to start.
+  function lastPresent(handles) {
+    const t = now();
+    let best = null, bestAt = -Infinity;
+    for (const h of handles ?? []) {
+      const p = presence.get(h);
+      if (!p || t - p.at > presenceMs) continue;
+      if (p.at > bestAt) { bestAt = p.at; best = h; }
+    }
+    return best;
+  }
+
+  return { say, hear, conversations, lastPresent, log: pathOf, _voices: () => hydrate(), _presence: presence };
 }
