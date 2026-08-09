@@ -273,12 +273,28 @@ test("lastPresent names the housemate most recently alive, and forgets them on t
   await store.hear("rei");             // listening counts exactly like speaking
   assert.equal(store.lastPresent(["iris", "wright", "rei"]), "rei");
 
-  // a house nobody has touched inside the window answers null, so the caller
-  // keeps whatever fallback it had rather than being handed a stale room
+  // once the RAM window lapses the durable log still answers: wright is the
+  // last of them who actually SPOKE (rei only listened, which the log cannot see)
   tick(16 * MIN);
-  assert.equal(store.lastPresent(["iris", "wright", "rei"]), null);
+  assert.equal(store.lastPresent(["iris", "wright", "rei"]), "wright");
   assert.equal(store.lastPresent([]), null);
   assert.equal(store.lastPresent(["nobody-here"]), null);
+});
+
+test("a restart does not send the household back to list order", async () => {
+  // the party-night defect: presence is RAM, a deploy wipes it, and the human of
+  // a six-resident house lands on whoever is first in the key rather than on the
+  // housemate who has been talking all evening.
+  const at = { illuminator: { x: 0, y: 0 }, postmaster: { x: 500, y: 0 }, wright: { x: 900, y: 900 } };
+  const first = bench(at);
+  await first.store.say("wright", "up at the peak");
+  assert.equal(first.store.lastPresent(["illuminator", "postmaster", "wright"]), "wright");
+
+  // a second store over the same log IS the office coming back up: RAM gone,
+  // record intact — and the answer must not change
+  const after = bench(at, { log: first.path });
+  assert.equal(after.store._presence.size, 0, "presence really is cold");
+  assert.equal(after.store.lastPresent(["illuminator", "postmaster", "wright"]), "wright");
 });
 
 // ── the door: the verb's contract and its bounces ────────────────────────────

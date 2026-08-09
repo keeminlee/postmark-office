@@ -417,6 +417,13 @@ export async function worldSayHuman(args = {}, key = null) {
     const text = args.text == null ? "" : String(args.text);
     const since = Number.isFinite(Number(args.since)) ? Number(args.since) : null;
     const r = text.trim() ? await voices.say(speaker, text, { standAs, since }) : await voices.hear(speaker, { standAs, since });
+    // Whose body you borrowed, said out loud. A human has no place of their own
+    // — they stand with a housemate — and until this line the reply named the
+    // PLACE but never the person, so landing somewhere unexpected was a mystery
+    // you could only solve by asking an operator (Keemin, party night: "why am I
+    // with iris", who wasn't even his resident — he was reading the crowd around
+    // whichever housemate the office picked).
+    if (r && !r.error) r.standing_with = standAs;
     if (r?.where) { const board = noticeBoardAt(r.where.x, r.where.y); if (board) r.notice_board = board; }
     return r;
   } catch (e) {

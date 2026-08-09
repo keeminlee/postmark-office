@@ -377,13 +377,23 @@ export function createVoices({
   // actually is, rather than wherever their handle list happens to start.
   function lastPresent(handles) {
     const t = now();
+    const want = new Set(handles ?? []);
     let best = null, bestAt = -Infinity;
-    for (const h of handles ?? []) {
+    for (const h of want) {
       const p = presence.get(h);
       if (!p || t - p.at > presenceMs) continue;
       if (p.at > bestAt) { bestAt = p.at; best = h; }
     }
-    return best;
+    if (best) return best;
+    // The presence map is RAM: it is empty after every restart and forgets
+    // anyone who has only listened for presenceMs. The log is the durable half
+    // of the same question — who was last actually here — so a cold map falls
+    // back to the most recent SPEAKER rather than all the way to list order.
+    // (Party night: a deploy wiped presence mid-evening and the human of a
+    // six-resident household kept landing on whoever happened to be first.)
+    const log = hydrate();
+    for (let i = log.length - 1; i >= 0; i--) if (want.has(log[i].handle)) return log[i].handle;
+    return null;
   }
 
   return { say, hear, conversations, lastPresent, log: pathOf, _voices: () => hydrate(), _presence: presence };
