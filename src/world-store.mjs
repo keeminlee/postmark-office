@@ -1,0 +1,374 @@
+// world-store.mjs — the world graph's DDL and read-side runtime.
+//
+// world.db is a SIBLING of office.db, never a part of it. Same constitution
+// ("The DB is an INDEX, never the truth", rebuilt from scratch every hydration,
+// as-of shas stamped in `meta`, served read-only), but a separate file for a
+// separate reason: office.db indexes the TOWN repo, world.db indexes the WORLD
+// repo, and the two advance on different clocks. Mixing them would mean one
+// rehydration could not be truthful about both shas at once.
+//
+// Everything in world.db is recomputable from the two checkouts named in `meta`
+// at the shas named in `meta`, so the file may be deleted at any moment without
+// losing a fact the town owns.
+//
+// Node kinds today: mark | class | code | doctrine. `entity` (residents with
+// world-frame positions) and `emission` (voices, TTL'd presence) are Stage 2 —
+// the columns are already shaped for them: an entity is a node with at_x/at_y
+// and no repo path; an emission is a node with a source edge and a TTL in props.
+
+import { DatabaseSync } from "node:sqlite";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { MultiDirectedGraph } from "graphology";
+
+// ── the DDL ──────────────────────────────────────────────────────────────────
+
+export const SCHEMA = `
+  CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+
+  -- at_x/at_y are ABSOLUTE grid metres (origin = the Ferry's crossing, x east,
+  -- y south) — the coordinate the mark record itself carries. Relative
+  -- coordinates and the transform chain are Stage D; this table stores what the
+  -- repo says, at the sha named in meta.
+  CREATE TABLE nodes (
+    id TEXT PRIMARY KEY,
+    kind TEXT, subkind TEXT, tier TEXT, by TEXT,
+    at_x REAL, at_y REAL, extent_w REAL, extent_h REAL,
+    props TEXT
+  );
+  CREATE INDEX nodes_kind ON nodes (kind, subkind);
+  CREATE INDEX nodes_by ON nodes (by);
+
+  -- Edges are DATA, not schema: the taxonomy grows by use, and a dst that
+  -- resolves to no node is kept verbatim rather than dropped — a dangling edge
+  -- is the finding, and deleting it would delete the finding.
+  CREATE TABLE edges (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    src TEXT, dst TEXT, type TEXT, props TEXT, born_at TEXT
+  );
+  CREATE INDEX edges_src ON edges (src, type);
+  CREATE INDEX edges_dst ON edges (dst, type);
+  CREATE INDEX edges_type ON edges (type);
+
+  CREATE TABLE events (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    at TEXT, actor TEXT, type TEXT, payload TEXT
+  );
+  CREATE INDEX events_at ON events (at);
+  CREATE INDEX events_actor ON events (actor, at);
+
+  CREATE TABLE edge_type_registry (type TEXT PRIMARY KEY, note TEXT);
+
+  -- THE TENSE LAW (Stage 1's addition). A mark's geometry is not a fact, it is
+  -- a fact WITH A VALIDITY WINDOW, and an event must be judgeable against the
+  -- geometry of its own instant. Without this table every lint over historical
+  -- events re-decides history each time a mark moves: the spike watched the
+  -- Pando landing move 1216 m and turn a 22 m near-miss into a 1238 m gross
+  -- error that never happened.
+  --
+  -- Derived mechanically from git history — one row per (mark, geometry) pair
+  -- the record has ever held, never hand-authored. valid_from is the COMMITTER
+  -- instant of the commit that wrote that geometry (the settled clock, the same
+  -- one office.db's repo_log uses); valid_to is the next version's valid_from,
+  -- NULL for the version standing at as_of. The town already enforces this rule
+  -- one level down — walk.mjs's "within w,h" freezes the target's extent at
+  -- departure "so a mark that later moves, resizes, or retires cannot rewrite
+  -- where someone walked." This is that rule, lifted to the store.
+  CREATE TABLE geometry_versions (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    mark_id TEXT,
+    at_x REAL, at_y REAL, extent_w REAL, extent_h REAL,
+    valid_from_iso TEXT, valid_to_iso TEXT,
+    sha TEXT, path TEXT, subject TEXT, authored_iso TEXT,
+    change TEXT                       -- 'birth' | 'moved' | 'resized' | 'moved+resized'
+  );
+  CREATE INDEX geometry_versions_mark ON geometry_versions (mark_id, valid_from_iso);
+  CREATE INDEX geometry_versions_from ON geometry_versions (valid_from_iso);
+
+  -- The standing invariants' verdicts, written at the end of every hydration.
+  -- One row per lint per hydration; the DB is rebuilt from scratch, so this
+  -- table holds exactly THIS run. The delta against the previous run is read
+  -- off the old file before it is deleted and reported in meta.lint_delta —
+  -- an observation about this machine's last hydration, never town truth.
+  CREATE TABLE lint_findings (
+    lint TEXT PRIMARY KEY,
+    verdict TEXT, headline TEXT, evidence TEXT,
+    hydrated_at TEXT, as_of_world TEXT
+  );
+`;
+
+// The seven decided types (§2.6 / dial 5), plus every type this hydrator
+// actually emits. A type earns its row by being emitted or by being decided;
+// the note says which and why, so the taxonomy can be read without reading the
+// hydrator.
+export const EDGE_TYPES = [
+  ["contains", "spatial containment. Asserted by directory nesting in WORLD/marks, then verified against tools/geometry.mjs `contains`. Disagreements are recorded on the edge (geometry_ok:false), never repaired."],
+  ["attached-to", "a thing riding another thing (a passenger aboard a vessel, a lamp on a post). DECIDED, not yet emitted: attachment needs entities, which arrive at Stage 2."],
+  ["emitted-by", "an emission and its source (a voice bubble and the resident who spoke it). DECIDED, not yet emitted: emissions arrive with the dynamic layer at Stage 2."],
+  ["instance-of", "a token and its type. Emitted for parcels -> the synthesized parcel class."],
+  ["implements", "a mark and the machinery that keeps its truth true — a `mechanic:` pointer, resolved against skeleton.json's physics_registry."],
+  ["reads", "code and a world surface it demonstrably reads: a quoted WORLD/... path literal in the source, or a dynamic import reaching into the world clone's tools."],
+  ["stop-of", "a stop mark and the vessel whose timetable names it. Dst is kept verbatim when it resolves to no mark — the dangling stop IS the finding."],
+  ["imports", "ADDED: static `import ... from` between code files (§2.10 wants the import graph extracted from source, never hand-maintained). Distinct from `reads`, which crosses from code into world DATA rather than into another module."],
+  ["describes", "ADDED: a predicated/naming mark and the mark it predicates. SCHEMA.md's continuation law makes this NOT containment — a predicate inherits its parent's extent whole rather than sitting inside it — so folding it into `contains` would assert geometry the record never claims. Also carries ENGINE.md headings to the mechanics they document (heading text names the mechanic id)."],
+];
+
+// ── the world clone, and reading it AT A SHA ─────────────────────────────────
+
+export const OFFICE_ROOT = resolve(import.meta.dirname, "..");
+
+// Same resolution order src/world.mjs uses, so the hydrator and the live office
+// can never be pointed at two different clones by accident.
+export const WORLD_CLONE = process.env.WORLD_CLONE
+  ?? [join(OFFICE_ROOT, "world-clone"), join(OFFICE_ROOT, "..", "postmark-world")].find(existsSync)
+  ?? join(OFFICE_ROOT, "world-clone");
+
+export const DEFAULT_DB = join(OFFICE_ROOT, "world.db");
+
+// `encoding` governs stdin as well as stdout in execFileSync, and "buffer" is
+// only a legal OUTPUT encoding — a string `input` alongside it throws. Handing
+// stdin over as bytes keeps the one helper usable for both the text calls and
+// the cat-file batch.
+export const git = (repo, args, opts = {}) => execFileSync("git", ["-C", repo, ...args], {
+  encoding: opts.encoding ?? "utf8",
+  maxBuffer: opts.maxBuffer ?? 512 * 1024 * 1024,
+  stdio: opts.stdio ?? [opts.input == null ? "ignore" : "pipe", "pipe", "pipe"],
+  input: typeof opts.input === "string" ? Buffer.from(opts.input, "utf8") : opts.input,
+});
+
+const WORLD_CACHE = join(tmpdir(), "postmark-world-store");
+
+/**
+ * Materialise world subtrees AT A SHA into a sha-keyed cache, and hand back a
+ * path safe to read and import from.
+ *
+ * This is src/world-branches.mjs's materializeAtRef discipline — "what is
+ * checked out cannot change what the office executes" — with two deliberate
+ * differences, both of which the hydrator needs:
+ *
+ *   1. It pins to the sha BEING HYDRATED rather than to freshest-main, so the
+ *      marks folded, the tools that fold them, and the as_of stamped on every
+ *      row are one commit. "Rebuildable at any commit" is only true if the
+ *      hydrator can be pointed at a commit.
+ *   2. It copies with one `ls-tree` and one `cat-file --batch` instead of one
+ *      `git show` per file. The world subtree is 637 blobs; per-file spawns
+ *      cost about a minute on Windows and this costs about a second.
+ *
+ * The working tree is never read. The world clone is fetch-never-pull and is
+ * routinely parked on a household's draft branch by the write pen — reading
+ * marks off it would mean the index described whatever the last writer left
+ * behind while claiming the sha of something else.
+ */
+export function materializeWorldAtSha(repo, sha, subdirs, cacheRoot = WORLD_CACHE) {
+  const dir = join(cacheRoot, sha);
+  const stamp = join(dir, ".materialized");
+  if (existsSync(stamp)) return dir;
+
+  const listing = git(repo, ["ls-tree", "-r", "-z", sha, "--", ...subdirs]);
+  const entries = [];
+  for (const rec of listing.split("\0")) {
+    if (!rec) continue;
+    const m = /^(\d+) (\w+) ([0-9a-f]+)\t(.*)$/.exec(rec);
+    if (!m) continue;
+    if (m[2] !== "blob") continue;                  // submodules/trees have no content to copy
+    entries.push({ oid: m[3], path: m[4] });
+  }
+  if (!entries.length) throw new Error(`no files under ${subdirs.join(", ")} at ${sha.slice(0, 12)}`);
+
+  // One cat-file process for every blob. The protocol is line-oriented on the
+  // way in and length-prefixed on the way out: "<oid> blob <size>\n" then size
+  // bytes then "\n". Parsed as a buffer because mark bodies are UTF-8 and the
+  // byte counts are what the header promises.
+  const out = git(repo, ["cat-file", "--batch"], { encoding: "buffer", input: entries.map((e) => e.oid).join("\n") + "\n" });
+  let off = 0;
+  for (const e of entries) {
+    const nl = out.indexOf(0x0a, off);
+    if (nl < 0) throw new Error(`cat-file stream ended early at ${e.path}`);
+    const header = out.subarray(off, nl).toString("utf8");
+    const size = Number(header.split(" ")[2]);
+    if (!Number.isFinite(size)) throw new Error(`cat-file header unparseable for ${e.path}: ${header}`);
+    const body = out.subarray(nl + 1, nl + 1 + size);
+    off = nl + 1 + size + 1;
+    const file = join(dir, e.path);
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, body);
+  }
+  writeFileSync(stamp, `${sha}\n${new Date().toISOString()}\n${entries.length} blobs\n`);
+  return dir;
+}
+
+// ── the runtime: world.db -> a Graphology multigraph ─────────────────────────
+//
+// §2.6 decided node:sqlite for persistence and Graphology for the in-memory
+// graph precisely so the lints, the parity harness and the visualiser traverse
+// ONE object. If each wrote its own recursive CTE they would drift and the
+// lints would be checking three different graphs.
+//
+// Nothing here writes and nothing here repairs. Where the store holds a
+// dangling edge, this materialises a PLACEHOLDER node marked `missing: true`
+// rather than dropping it — Graphology needs both endpoints, and the dangling
+// edge is the finding the hydrator went out of its way to keep.
+
+const parse = (s, fallback = {}) => { try { return JSON.parse(s ?? "") ?? fallback; } catch { return fallback; } };
+
+export function loadWorldGraph(dbPath = DEFAULT_DB, { allowFailed = false } = {}) {
+  if (!existsSync(dbPath)) throw new Error(`no world store at ${dbPath} — run: node src/world-hydrate.mjs`);
+  const db = new DatabaseSync(dbPath, { readOnly: true });
+  const all = (sql) => db.prepare(sql).all();
+
+  const meta = Object.fromEntries(all("SELECT key, value FROM meta").map((r) => [r.key, r.value]));
+  // A hydration that failed its own emptiness check stamped itself, and the
+  // whole point of stamping was that nothing should be able to read it by
+  // accident and mistake missing rows for an empty world.
+  if (!allowFailed && String(meta.hydration_status ?? "").startsWith("FAILED")) {
+    db.close();
+    throw new Error(`world store at ${dbPath} is stamped ${meta.hydration_status} — rehydrate before reading it`);
+  }
+  const graph = new MultiDirectedGraph();
+
+  for (const r of all("SELECT * FROM nodes")) {
+    graph.addNode(r.id, {
+      kind: r.kind, subkind: r.subkind, tier: r.tier, by: r.by,
+      x: r.at_x, y: r.at_y, w: r.extent_w, h: r.extent_h,
+      props: parse(r.props), label: r.id, missing: false,
+    });
+  }
+
+  const placeholders = [];
+  for (const r of all("SELECT * FROM edges")) {
+    for (const end of [r.src, r.dst]) {
+      if (end != null && !graph.hasNode(end)) {
+        graph.addNode(end, {
+          kind: end.startsWith("code:") ? "code" : "unknown",
+          subkind: "unresolved", tier: null, by: null,
+          x: null, y: null, w: null, h: null,
+          props: { unresolved: true }, label: end, missing: true,
+        });
+        placeholders.push(end);
+      }
+    }
+    if (r.src == null || r.dst == null) continue;   // an edge with no endpoint is not an edge
+    graph.addDirectedEdgeWithKey(`e${r.seq}`, r.src, r.dst, {
+      type: r.type, props: parse(r.props), bornAt: r.born_at, seq: r.seq,
+    });
+  }
+
+  const events = all("SELECT seq, at, actor, type, payload FROM events ORDER BY at")
+    .map((e) => ({ ...e, payload: parse(e.payload) }));
+  const geometryVersions = all("SELECT * FROM geometry_versions ORDER BY mark_id, valid_from_iso");
+  const edgeTypes = all("SELECT type, note FROM edge_type_registry");
+  const lintFindings = all("SELECT * FROM lint_findings").map((r) => ({ ...r, evidence: parse(r.evidence, []) }));
+
+  db.close();
+  return {
+    graph, meta, events, geometryVersions, edgeTypes, lintFindings, placeholders, dbPath,
+    counts: parse(meta.counts), anomalies: parse(meta.anomalies),
+    anomalyDetail: parse(meta.anomaly_detail), gates: parse(meta.gates, []),
+  };
+}
+
+// ── the as-of lookup ─────────────────────────────────────────────────────────
+
+/**
+ * Index geometry_versions rows for as-of reads: markId -> versions, oldest first.
+ */
+export function geometryIndex(rows) {
+  const byMark = new Map();
+  for (const r of rows) {
+    if (!byMark.has(r.mark_id)) byMark.set(r.mark_id, []);
+    byMark.get(r.mark_id).push(r);
+  }
+  for (const v of byMark.values()) v.sort((a, b) => (a.valid_from_iso < b.valid_from_iso ? -1 : 1));
+  return byMark;
+}
+
+/**
+ * The geometry a mark HAD at an instant.
+ *
+ * Returns null in two distinguishable ways, and the caller must not conflate
+ * them: `{ status: "unknown-mark" }` (nothing in the store versions this id —
+ * a non-geometric mark, or one whose history the deriver could not walk) and
+ * `{ status: "not-yet" }` (the mark's first version postdates the instant: at
+ * that moment the record did not place this thing anywhere). Answering either
+ * with current geometry is exactly the tense error this table exists to end.
+ */
+export function geometryAsOf(index, markId, iso) {
+  const versions = index.get(markId);
+  if (!versions?.length) return { status: "unknown-mark", version: null };
+  if (iso < versions[0].valid_from_iso) return { status: "not-yet", version: null, first: versions[0] };
+  let hit = versions[0];
+  for (const v of versions) if (v.valid_from_iso <= iso) hit = v; else break;
+  return { status: "ok", version: hit, versions: versions.length };
+}
+
+/** A geometry_versions row as the rect the repo's own pointInRect/contains want. */
+export const rectOfVersion = (v) => (v && v.at_x != null
+  ? { x: v.at_x, y: v.at_y, w: v.extent_w ?? 1, h: v.extent_h ?? 1 }
+  : null);
+
+// ── traversal ────────────────────────────────────────────────────────────────
+
+/** Every node reachable from `start` following only edges of `types` (outbound). Includes `start`. */
+export function reachable(graph, start, types) {
+  const want = new Set(types);
+  const seen = new Set();
+  const queue = [start];
+  while (queue.length) {
+    const id = queue.shift();
+    if (seen.has(id) || !graph.hasNode(id)) continue;
+    seen.add(id);
+    graph.forEachOutEdge(id, (_k, attr, _s, dst) => { if (want.has(attr.type)) queue.push(dst); });
+  }
+  return seen;
+}
+
+/**
+ * The containment spine of a mark: its ancestors, nearest first, walked up the
+ * inbound `contains` edges. Guarded against a cycle (a cycle would be a
+ * finding, not a reason to hang).
+ */
+export function containmentSpine(graph, id) {
+  const spine = [];
+  const seen = new Set([id]);
+  let cur = id;
+  for (;;) {
+    let parent = null;
+    graph.forEachInEdge(cur, (_k, attr, src) => { if (attr.type === "contains" && parent == null) parent = src; });
+    if (parent == null || seen.has(parent)) break;
+    spine.push(parent);
+    seen.add(parent);
+    cur = parent;
+  }
+  return spine;
+}
+
+/** All out-edges of `id` with the given type, as [{key, attr, dst}]. */
+export function out(graph, id, type) {
+  const rows = [];
+  if (graph.hasNode(id)) graph.forEachOutEdge(id, (key, attr, _s, dst) => { if (attr.type === type) rows.push({ key, attr, dst }); });
+  return rows;
+}
+
+/** All in-edges of `id` with the given type, as [{key, attr, src}]. */
+export function inbound(graph, id, type) {
+  const rows = [];
+  if (graph.hasNode(id)) graph.forEachInEdge(id, (key, attr, src) => { if (attr.type === type) rows.push({ key, attr, src }); });
+  return rows;
+}
+
+/** Nodes filtered by attribute predicate. */
+export function nodesWhere(graph, pred) {
+  const rows = [];
+  graph.forEachNode((id, attr) => { if (pred(attr, id)) rows.push({ id, attr }); });
+  return rows;
+}
+
+if (process.argv[1]?.endsWith("world-store.mjs")) {
+  const { graph, meta, events, geometryVersions, counts } = loadWorldGraph();
+  console.log(`world store · ${graph.order} nodes · ${graph.size} edges · ${events.length} events · ${geometryVersions.length} geometry versions`);
+  console.log(`  as_of world ${(meta.as_of_world ?? "?").slice(0, 12)} · office ${(meta.as_of_office ?? "?").slice(0, 12)} · hydrated ${meta.hydrated_at}`);
+  console.log(`  ${JSON.stringify(counts.nodes_by_kind)}`);
+  console.log(`  ${JSON.stringify(counts.edges_by_type)}`);
+}

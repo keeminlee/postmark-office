@@ -5,11 +5,20 @@
   "private": true,
   "description": "Postmark's post office — the API/MCP front door. Read shadow + letter enqueue; the town repo stays the constitution.",
   "scripts": {
-    "test": "node --test --test-concurrency=1",
+    "test": "node --test --test-concurrency=1 \"test/*.test.mjs\"",
     "hydrate": "node src/hydrate.mjs",
+    "hydrate:world": "node src/world-hydrate.mjs",
+    "world:lints": "node src/world-lints.mjs",
+    "world:shadow": "node tools/world-shadow.mjs",
+    "world:gexf": "node tools/world-gexf.mjs",
     "serve": "node src/server.mjs",
-    "smoke": "node src/smoke.mjs",
-    "test": "node --test --test-concurrency=1 \"test/*.test.mjs\""
+    "smoke": "node src/smoke.mjs"
   },
-  "engines": { "node": ">=22" }
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "graphology": "^0.26.0",
+    "graphology-gexf": "^0.13.2"
+  }
 }
