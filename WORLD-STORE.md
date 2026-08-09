@@ -3,19 +3,28 @@
 `world.db` — the office's read index of the **world** repo, as `office.db` is its
 read index of the **town** repo. Stage 1 of the world-graph plan
 (`G:/Starstory/docs/2026-08-09/world-graph-apex-proposal.html`, §5.2): the store,
-shadow-proven. Nothing serves from it yet; no route, no flag, no live path was
-touched to build it.
+shadow-proven, and now behind two flags a live office read can be served from —
+**both off by default**, and off is byte-identical to having no store at all.
+See **§ Serving** below for what may be served, what may not, and the one finding
+the live shadow turned up on its first run.
 
 ## Run it
 
 ```
-npm run hydrate:world                 # build world.db from the world clone at HEAD
-npm run hydrate:world -- --ref <sha>  # ...or at any commit
+npm run hydrate:world -- --ref refs/heads/main   # build world.db from published main
+npm run hydrate:world -- --ref <sha>             # ...or at any commit
 npm run world:lints                   # the six standing invariants, from the built store
 npm run world:shadow                  # parity vs the world's own engine — the serving gate
+npm run world:store                   # the serving flag's instrument panel (= GET /world/store)
 npm run world:gexf                    # regenerate the ad-hoc window by hand
 node --test test/world-store.test.mjs # the tense law and the FAILED-index guard
+node --test test/world-serve.test.mjs # the flags, the guard, the shadow
 ```
+
+**Hydrate at `refs/heads/main`, not at HEAD.** The default is `HEAD`, and the
+world clone is routinely parked on a household's draft branch by the write pen —
+a store stamped with a draft sha can never become eligible to serve, because
+eligibility is an exact match against the sha published main points at.
 
 Hydration takes about eight seconds and regenerates the lints and both GEXF files
 at the end, so nothing downstream can drift behind the store.
@@ -31,9 +40,11 @@ Flags: `--world <path>` (default: `WORLD_CLONE`, resolved exactly as
 | `src/world-store.mjs` | the DDL, the sha-pinned materialiser, the Graphology runtime, the as-of read |
 | `src/world-hydrate.mjs` | the hydrator: gates, marks, edges, geometry versions, events, code graph |
 | `src/world-lints.mjs` | the six standing invariants; also a CLI over a built store |
+| `src/world-serve.mjs` | **the serving layer**: the two flags, the eligibility guard, the shadow, the counters |
 | `tools/world-gexf.mjs` | GEXF export (full + static), regenerated every hydration |
 | `tools/world-shadow.mjs` | shadow parity vs the world's own engine at the same sha |
 | `test/world-store.test.mjs` | the tense law, locked |
+| `test/world-serve.test.mjs` | flag-off equivalence, the injected-discrepancy catch, the ruling-9 guard |
 
 `world.db`, `world-graph.gexf` and `world-graph-static.gexf` are all gitignored
 build products. Deleting any of them loses nothing.
@@ -225,9 +236,170 @@ edges: the full view keeps them because a dangling edge is a finding, and the
 window is where you go to see findings. They diverge properly at Stage 2, when
 entities and emissions enter the store.
 
+## Serving
+
+Two flags, read from the environment, both off by default:
+
+| | what it does |
+|---|---|
+| *(neither)* | the store is **never opened** — not opened and ignored. `servedRead` returns the fold on its first line, before a stat, a git call or a counter. |
+| `WORLD_STORE_SHADOW=1` | every eligible read computes **both** answers, serves the **fold's**, and logs any disagreement. Residents see nothing change. This is the mode that runs on the box first. |
+| `WORLD_STORE_READS=1` | eligible reads answer from the **store**. |
+| both | the store answers, the fold verifies. The transitional rung. |
+
+### What may be served
+
+**Published-main reads only, and the guard is a function call rather than a
+comment.** `world.db` indexes published main; ruling 9 says a resolved resident
+household folds its own `draft/<household>` branch, so a draft read has no answer
+in the store at all — serving one would not be stale, it would show a household
+the town's world in place of its own sketchbook. Eligibility therefore calls
+`draftRefForKey()`, the same function `stateForKey` uses to pick the fold's ref:
+if it returns a ref, the store is not consulted, in either mode. One function
+decides the branch for both paths, so there is no second reading of ruling 9 to
+drift from the first.
+
+The second half is **freshness, exact**: the store may answer only when
+`meta.as_of_world` is the very commit main points at. Not "recent", not "within a
+crossing" — the same sha, checked per read at the cost of one `git rev-parse`
+(the same spawn the fold path already makes).
+
+And a query may still refuse for its own reasons. `cannotAnswer(reason)` falls
+through to the fold, counted and named. Three exist today, all about place words:
+
+- **`irregular-shape-in-play`** — six water marks carry `points:` rings, and the
+  hydrator records a ring only as its **vertex count**. The engine tests a point
+  against the ring; the store would answer by bounding box. Refused whenever the
+  point lies inside any ring-carrying mark's bbox — sound and complete, because
+  a ring never reaches outside its own bbox and every other containment test goes
+  analytic once no irregular mark is in range. This is 49% of reads today and the
+  honest fix is a hydrator that stores the ring.
+- **`nearest-tie`** — when nothing contains the point, place words fall back to
+  the nearest sited mark, chosen with a strict `<`, so an exact distance tie keeps
+  whichever came first in the list. 58 pairs of marks in the world share a centre
+  (a parcel and the house standing on it — ruling 7), so this is an ordinary
+  arrangement, not a freak one. The answer is genuinely order-dependent today;
+  the store declines to guess and the resident gets exactly what they get now.
+- **`equal-extent-tie`** — `containmentChain` sorts containing marks by extent
+  area with a stable sort, so two containing marks of equal area leave the
+  innermost decided by iteration order. Not yet observed live.
+
+### The one read served, and why only one
+
+`placeWords` — the words a resident's position is spoken in, on every `world_say`
+reply and every conversations read. It is the **only** office world read whose
+entire input is the published-main mark list; `world(null)` on its first line has
+said "always published main" since long before there was a store. Every other
+verb here composes the fold's whole assembled world — skeleton, terrain, parcels,
+portfolios — which `world.db` does not hold and Stage 1 never claimed it did.
+That is the true Stage-1 boundary, and forcing more call sites through the flag
+would have meant pretending otherwise.
+
+Both paths run the **same** derivation over different mark lists: the store
+supplies the facts, the world's own engine supplies the maths. A second
+implementation over the store would have made the shadow measure my typing
+instead of the store's contents.
+
+Three further queries exist, tested, with **no live consumer yet**: `markRecord`
+(one mark's record fields — never the fold's `stamps`/`weight`, which are
+settled-stake outputs rather than repo facts), `markSpine` and `fanUp`. The last
+two answer questions **the fold cannot answer at all** — a folded mark carries no
+parent link for geometric kinds — so they are not live-shadowed; there is nothing
+on the read path to diff them against. `npm run world:shadow` is their parity
+gate, offline, against the engine's own `placementParent`.
+
+### The As-Of a store-flagged office publishes
+
+With either flag set, every REST response carries
+`x-postmark-world-store-as-of: <as_of_world>` alongside the existing
+`x-postmark-as-of` (which is and remains `office.db`'s town sha — two indexes,
+two clocks, two headers). It says **which `world.db` this office has loaded** —
+deliberately not "the sha this body was folded from", because in shadow mode the
+body is still the fold's and a header claiming otherwise would be the one kind of
+lie this layer exists to prevent. Whether that loaded store is fresh enough to
+answer anything is `GET /world/store`'s question, not the header's. With the
+flags off the header does not appear at all.
+
+### The box rollout order
+
+```
+1.  deploy with BOTH FLAGS OFF                       # nothing changes; prove it in the logs
+2.  hydrate at published main                        # npm run hydrate:world -- --ref refs/heads/main
+3.  npm run world:shadow                             # must read EMPTY DIFF
+4.  WORLD_STORE_SHADOW=1, restart, soak              # residents unaffected
+5.  watch  curl -s localhost:PORT/world/store        # counters.diffs must stay 0
+        or npm run world:store
+6.  read   world-shadow-diff.jsonl                   # one line per DISTINCT disagreement
+7.  only then WORLD_STORE_READS=1
+```
+
+Steps 4–6 are not a formality. **Do not perform step 7 until the finding below is
+closed.**
+
+### The live shadow's first finding — the fold and the records are two worlds
+
+910 place-word reads over the real world at `ea34eaf`, store and main on the same
+sha: **279 compared, 277 agreed, 2 disagreed**, 631 fell through (442
+`irregular-shape-in-play`, 189 `nearest-tie`). Both disagreements are the same
+mark:
+
+```
+{"read":"place_words","query":{"x":-94570,"y":-94570},
+ "diff":{"fold":"\"Porch Hill, Pando Peak\"","store":"\"the Pando Landing, Pando Peak\""}}
+```
+
+The store is not wrong. At one and the same commit on main, the record
+`WORLD/marks/.../the-pando-landing/mark.md` says `at: -94570,-94570` — Keemin's
+ruling moving the landing to Porch Hill — while the committed derived file
+`WORLD/world-state.json` still says `-95430,-95430`. **The store indexes the
+records; an anonymous fold serves the committed file**, and at this sha those two
+describe different worlds:
+
+| | records (the store) | committed fold (`world-state.json`) |
+|---|---|---|
+| marks | 594 | 582 — missing 12 predicated constitution marks written since the last regeneration |
+| the Pando landing | `-94570,-94570` | `-95430,-95430` |
+| bodies | 5 rewritten, plus 3 differing only by CRLF | the pre-rewrite text |
+
+Place words is a narrow window on this: the 12 absent marks are `predicated` and
+carry no geometry, so `containmentChain` cannot see them, and the body rewrites
+never reach a place word. **The divergence is much wider than two diffs.** That
+is the argument against flipping serve mode today: not that the store is
+untrustworthy, but that every other office read — orient, eyes, investigate,
+walkers — folds `world-state.json`, and serving one read from a world a
+Settlement ahead of the others would make the door disagree with itself. Being
+right in one read is worth less than the door speaking with one voice.
+
+The fix is upstream and is not this branch's: `WORLD/world-state.json` wants
+regenerating in the same commit as the marks that change it (or the office wants
+to fold the records rather than read the committed file). Until then the shadow
+sits at 2 diffs and correctly refuses to graduate.
+
+### What the flag buys
+
+200 distinct place-word cells across the Pando transect, all store-answerable:
+
+| | ms per read |
+|---|---|
+| flags off (fold) | 137 |
+| `WORLD_STORE_READS=1` | 43 |
+
+The fold path pays a `git rev-parse`, a `git show` of the whole
+`world-state.json` and the parse after it on **every** call, because
+`stateForKey` reads before the assembled-world cache is consulted. The store pays
+one `rev-parse` for the freshness check and then answers from memory. Both
+numbers are dominated by Windows process spawns.
+
+One behaviour the store path forced into the open: in serve mode `world()` never
+runs, so the rebuild that clears the place-word cache never happens either — and
+a cache **hit** returns before the harness that would notice a rehydration. A hot
+cell would have repeated a retired snapshot's words forever. The store's epoch is
+now the second clock that cache answers to; with the flags off it is a constant
+zero and never fires.
+
 ## Not in scope, deliberately
 
-No route, no serving flag, no `src/server.mjs` change, no deployment, no site,
-and nothing under `office.db`'s code paths. Stage 1's next step — office world
-reads behind a flag with the fold diffing beside them — waits on review, and
-`npm run world:shadow` is the gate it has to pass first.
+No hydrator change (the rings stay a vertex count — that is the next commit, not
+this one), no `office.db` code path, no site change, no deployment. The flags ship
+off, and `npm run world:shadow` reading EMPTY DIFF is still the gate anything
+here has to pass first.

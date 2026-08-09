@@ -9,6 +9,9 @@ draft-locks/
 server.log
 telemetry/access-*.jsonl
 voices-log.jsonl*
+# the world store's shadow diffs: an operator's soak record, rebuildable by
+# running the shadow again (WORLD_STORE_SHADOW=1)
+world-shadow-diff.jsonl*
 # the world store's window: regenerated at the end of every hydration, ~850 KiB
 # each, and rebuildable from world.db at any moment
 *.gexf

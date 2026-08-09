@@ -302,6 +302,26 @@ test("GET /world/conversations is a keyless read — the page needs no credentia
   assert.ok(Date.parse(body.now));
 });
 
+// The Stage-1 serving flag's instrument panel. This office runs with the flags
+// off and no world clone at all, which is the shape an operator sees on a box
+// before anything is turned on: mode "off", and a store that cannot be found
+// reported as absent rather than swallowed.
+test("GET /world/store is a keyless read that reports mode off when nothing is flagged", async () => {
+  const res = await get("/world/store", null);
+  assert.equal(res.status, 200);
+  const h = await res.json();
+  assert.equal(h.mode, "off");
+  assert.equal(h.counters.reads, 0);
+  assert.equal(h.counters.served_from_store, 0);
+  assert.match(h.eligibility, /published-main reads only/);
+  // no world clone here, so freshness cannot be established — and says so
+  assert.ok(h.main.error || h.main.fresh === false, `expected an honest main answer, got ${JSON.stringify(h.main)}`);
+  // flag-off equivalence at the HTTP layer: no extra header appears on ANY
+  // response, so a flags-off office is byte-identical on the wire too
+  assert.equal(res.headers.get("x-postmark-world-store-as-of"), null);
+  assert.equal((await get("/town", null)).headers.get("x-postmark-world-store-as-of"), null);
+});
+
 test("world_say bounces honestly when the office has no world to stand in", async () => {
   const said = JSON.parse((await rpc("tools/call", { name: "world_say", arguments: { text: "anyone there?" } })).body.result.content[0].text);
   assert.equal(said.error, "bounce");

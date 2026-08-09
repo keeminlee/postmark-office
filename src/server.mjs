@@ -30,6 +30,7 @@ import { logAccess } from "./telemetry.mjs";
 import { settlements } from "./settlements.mjs";
 import { worldSummary, worldOrient, worldEyes, worldInvestigate, worldStateRaw, worldSkeletonRaw, worldMyMarks, leaveMarkViaOffice, walkViaOffice, worldWalkers, worldConversations, worldSay, worldSayHuman, whoami, worldBlockForHandle, WORLD_CLONE } from "./world.mjs";
 import { worldStakeViaOffice, worldUnstakeViaOffice, worldStakeRead } from "./world-stake.mjs"; // P3 draft
+import { storeEngaged, storeSnapshot, worldStoreHealth } from "./world-serve.mjs"; // stage 1: the serving flag's instrument panel
 import { Bouncer, keyIdForToken, worldWriteVerbForRest } from "./bouncer.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -78,10 +79,19 @@ if (KEYS.size === 0) console.warn("WARN: no OFFICE_KEYS configured — every req
 // ── helpers ──────────────────────────────────────────────────────────────────
 const j = (res, code, obj) => {
   const body = JSON.stringify(obj, null, 1);
-  res.writeHead(code, {
+  const headers = {
     "content-type": "application/json; charset=utf-8",
     "x-postmark-as-of": AS_OF,
-  });
+  };
+  // Stage 1: an office with a world-store flag set says which world.db it has
+  // loaded, so a caller — or an operator correlating a shadow-log line against a
+  // live response — can name the index without a second request. Deliberately
+  // NOT "the sha this body was folded from": in shadow mode the body is still
+  // the fold's, and a header claiming otherwise would be the one kind of lie
+  // this whole layer exists to prevent. Absent entirely when the flags are off.
+  const worldStoreAsOf = storeEngaged() ? storeSnapshot().asOfWorld : null;
+  if (worldStoreAsOf) headers["x-postmark-world-store-as-of"] = worldStoreAsOf;
+  res.writeHead(code, headers);
   res.end(body);
 };
 const bounce = (res, code, defect, hint) => j(res, code, { error: "bounce", defect, hint });
@@ -287,6 +297,16 @@ const server = createServer((req, res) => {
         try { return j(res, 200, settlements(WORLD_CLONE)); }
         catch (e) { return bounce(res, 500, "the world door tripped", String(e?.message ?? e).slice(0, 200)); }
       }
+      // GET /world/store — the Stage-1 serving flag's own instrument panel: which
+      // mode this office is in, what sha world.db was hydrated at, whether that
+      // is still the sha main points at, and the running tally of what was served
+      // from where. This is what an operator watches through the shadow soak
+      // before the serve flag is turned on. Keyless: everything on it is a commit
+      // sha, a count, or a hash — the diff BODIES stay in the log file on the box.
+      if (path === "/world/store") {
+        try { return j(res, 200, worldStoreHealth({ repo: WORLD_CLONE })); }
+        catch (e) { return bounce(res, 500, "the world door tripped", String(e?.message ?? e).slice(0, 200)); }
+      }
       // keyless identity probe — read-side: powers the viewer's dev-dials gate + stand-at filter
       if (path === "/ops/whoami") return j(res, 200, whoami(key));
 
@@ -402,7 +422,7 @@ const server = createServer((req, res) => {
         return j(res, 200, search(db, q));
       }
 
-      return bounce(res, 404, "no such door", "GET /town /residents /residents/{h} /mail/{h} /letters[?filters] /letters/{id} /doorstep/{h} /metrics/mail /repo/log[?path=&author=&since=&until=&limit=] /regions /homes/{h} /stamps /stamps/{h} /quests/{h} /world/settlements /votes /votes/{topic} /bulletin /search?q=");
+      return bounce(res, 404, "no such door", "GET /town /residents /residents/{h} /mail/{h} /letters[?filters] /letters/{id} /doorstep/{h} /metrics/mail /repo/log[?path=&author=&since=&until=&limit=] /regions /homes/{h} /stamps /stamps/{h} /quests/{h} /world/settlements /world/store /votes /votes/{topic} /bulletin /search?q=");
     }
 
     // ── write tier: a valid credential required ───────────────────────────

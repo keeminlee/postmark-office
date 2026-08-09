@@ -33,6 +33,7 @@ import { WORLD_STAKE_TOOLS, callWorldStakeTool, worldPortfolioStakeSlice } from 
 import { createVoices } from "./voices.mjs"; // earshot: speech at a position (the party line)
 import { householdOf } from "./households.mjs"; // the human speaker's label wears the town's name, never the login
 import { householdLockPath, poolEnabled, pushDraftBranch, withDraftLease } from "./world-pool.mjs";
+import { cannotAnswer, pointAnswerable, servedRead, storeEpoch, storeShadowEnabled } from "./world-serve.mjs"; // stage 1: published-main reads from world.db, behind a flag
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..");
@@ -88,6 +89,17 @@ async function mods() {
   const build = await engineImport("world-build.mjs");
   _mods = { verbs, build };
   return _mods;
+}
+
+// The world's own geometry, loaded ONLY on the store-serving path (Stage 1's
+// eligibility guard needs `rect`/`pointInRect` to decide whether a point is one
+// the store may answer about). Kept out of `mods()` so a flags-off office never
+// imports a module it has no use for.
+let _geom = null;
+async function geomMod() {
+  if (_geom) return _geom;
+  _geom = await engineImport("geometry.mjs");
+  return _geom;
 }
 
 async function world(key = null) {
@@ -273,6 +285,7 @@ const WORLD_FRAME = "the-town/let-there-be-light";
 const VESSEL_NAME = "the Post Office";
 const PLACE_NEAR_M = 200;
 const _places = new Map(); // rounded point -> words (cleared whenever the world rebuilds)
+let _placesEpoch = 0;      // ...or whenever the store snapshot behind it is replaced
 
 const SMALL_WORDS = new Set(["the", "of", "at", "on", "by", "and", "a", "an", "in", "to"]);
 function prettyName(id) {
@@ -284,34 +297,81 @@ function prettyName(id) {
 }
 
 // A mark's own naming mark wins over its slug — residents name their places.
-function markName(mark, w) {
-  const named = (w.marks ?? []).find((m) => m.kind === "naming" && m.parent === mark.id && m.value);
+function markName(mark, marks) {
+  const named = marks.find((m) => m.kind === "naming" && m.parent === mark.id && m.value);
   return named?.value ?? prettyName(mark.id);
 }
 
+// The derivation, over WHICHEVER published-main mark list it is handed — the
+// fold's, or the store's (Stage 1). One body, two sources, and that is the whole
+// point: the shadow's agreement then means "the store holds the same world",
+// which is the only question a serving flag actually has to answer. A second
+// implementation over the store would have made the diff measure my typing.
+export function placeWordsFrom(marks, { x, y }, verbs) {
+  const spine = verbs.containmentChain({ x, y }, marks).filter((m) => m.id !== WORLD_FRAME);
+  if (spine.length) {
+    const inner = markName(spine[spine.length - 1], marks);
+    const outer = markName(spine[0], marks);
+    return inner === outer ? inner : `${inner}, ${outer}`;
+  }
+  let best = null, bd = Infinity;
+  for (const m of marks) {
+    if (!m.at || !(m.kind === "sited" || m.kind === "parcel")) continue;
+    const d = Math.hypot(m.at.x - x, m.at.y - y);
+    if (d < bd) { bd = d; best = m; }
+  }
+  return best && bd <= PLACE_NEAR_M ? `near ${markName(best, marks)}` : "open ground";
+}
+
+// THE ONE READ SERVED FROM THE STORE IN STAGE 1, and it is the honest choice
+// rather than the flashy one: place words are the only office world read whose
+// entire input is the published-main MARK LIST. Every other verb here composes
+// the fold's whole assembled world — skeleton, terrain, parcels, portfolios —
+// which world.db does not hold and Stage 1 never claimed it did. `world(null)`
+// on the line below said "always published main" long before there was a store;
+// the flag simply gives that sentence a second way to be true.
 export async function placeWords({ x, y, aboard = false, moving = false } = {}) {
   if (aboard) return moving ? `aboard ${VESSEL_NAME}, mid-crossing` : `aboard ${VESSEL_NAME}`;
   if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
   const cacheKey = `${Math.round(x / 10)},${Math.round(y / 10)}`;
-  if (_places.has(cacheKey)) return _places.get(cacheKey);
+  // In serve mode `world()` never runs, so the rebuild that normally clears this
+  // cache never happens — and a cache HIT returns before the harness that would
+  // otherwise notice a rehydration, so a hot cell would repeat a retired
+  // snapshot's place words forever. The store's epoch is the second clock this
+  // cache answers to; with the flags off it is a constant zero and never fires.
+  const epoch = storeEpoch();
+  if (epoch !== _placesEpoch) { _places.clear(); _placesEpoch = epoch; }
+  // Shadow mode pays for its diff with this cache. A cached answer compares
+  // nothing, and a room of residents lingering at a party would otherwise buy
+  // one comparison and then hear silence all evening — the flood is exactly
+  // where a divergence would show. Residents are unaffected: the answer served
+  // is the fold's either way, and the cache is still written.
+  if (!storeShadowEnabled() && _places.has(cacheKey)) return _places.get(cacheKey);
   let words = null;
   try {
-    const w = await world(null); // place names are public — always published main
-    const { verbs } = await mods();
-    const spine = verbs.containmentChain({ x, y }, w.marks ?? []).filter((m) => m.id !== WORLD_FRAME);
-    if (spine.length) {
-      const inner = markName(spine[spine.length - 1], w);
-      const outer = markName(spine[0], w);
-      words = inner === outer ? inner : `${inner}, ${outer}`;
-    } else {
-      let best = null, bd = Infinity;
-      for (const m of w.marks ?? []) {
-        if (!m.at || !(m.kind === "sited" || m.kind === "parcel")) continue;
-        const d = Math.hypot(m.at.x - x, m.at.y - y);
-        if (d < bd) { bd = d; best = m; }
-      }
-      words = best && bd <= PLACE_NEAR_M ? `near ${markName(best, w)}` : "open ground";
-    }
+    words = await servedRead("place_words", {
+      key: null, repo: WORLD_CLONE,        // keyless by construction: place names are public
+      detail: { route: "placeWords", query: { x, y } },
+      // The world FIRST, then the engine — the order this function has always
+      // used. On an office with no world clone `world()` throws before the
+      // engine loader can log its loud materialise-failed fallback, and keeping
+      // that order keeps flags-off identical down to what lands on stderr.
+      fold: async () => {
+        const w = await world(null); // place names are public — always published main
+        const { verbs } = await mods();
+        return placeWordsFrom(w.marks ?? [], { x, y }, verbs);
+      },
+      store: async (snap) => {
+        const { verbs } = await mods();
+        // The nearest-mark tie only matters when nothing contains the point, so
+        // the store's OWN spine decides whether that guard applies. Asking the
+        // fold would defeat the purpose — a store that consults the fold to know
+        // what it may answer has not replaced anything.
+        const spine = verbs.containmentChain({ x, y }, snap.marks).filter((m) => m.id !== WORLD_FRAME);
+        const veto = pointAnswerable(snap, { x, y }, await geomMod(), { checkNearest: spine.length === 0 });
+        return veto ? cannotAnswer(veto) : placeWordsFrom(snap.marks, { x, y }, verbs);
+      },
+    });
   } catch { return null; } // no world to read: the coordinates still speak
   if (_places.size > 500) _places.clear();
   _places.set(cacheKey, words);
