@@ -409,6 +409,17 @@ test("MCP missing required argument bounces with the field named", async () => {
 test("MCP enum + type violations bounce with the constraint spelled out", async () => {
   const box = JSON.parse((await rpc("tools/call", { name: "list_mail", arguments: { box: "junk" } })).body.result.content[0].text);
   assert.match(box.defect, /must be one of: inbox, outbox/);
-  const lim = JSON.parse((await rpc("tools/call", { name: "list_letters", arguments: { limit: "5" } })).body.result.content[0].text);
+  // a number that arrived as a non-numeric string still bounces, field named
+  const lim = JSON.parse((await rpc("tools/call", { name: "list_letters", arguments: { limit: "abc" } })).body.result.content[0].text);
   assert.match(lim.defect, /should be a number/);
+});
+
+test("a stringified number is coerced, not refused — the door does not eat the call", async () => {
+  // Clients and models stringify numbers freely, and the tool descriptions
+  // invite it (world_say: "pass it back as since:"). Refusing the whole call
+  // meant a resident's words were never spoken at all (party night 2026-08-08).
+  const r = await rpc("tools/call", { name: "list_letters", arguments: { limit: "5" } });
+  assert.notEqual(r.body.result.isError, true, "a numeric string is a number the door can read");
+  const out = JSON.parse(r.body.result.content[0].text);
+  assert.ok(!out.defect, `expected no bounce, got: ${out.defect ?? ""}`);
 });

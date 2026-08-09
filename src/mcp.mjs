@@ -258,6 +258,17 @@ function validateArgs(tool, args) {
         hint: known.length ? `this tool takes: ${known.join(", ")}` : "this tool takes no arguments" };
     }
     const want = props[k].type;
+    // A number that arrived as an unambiguous numeric STRING is accepted and
+    // coerced, not refused. Clients and models stringify numbers freely, and the
+    // door's own tool descriptions invite exactly that — world_say says "pass it
+    // back as since:", world_walk takes x/y — so the strict check was rejecting
+    // the whole call, which for say means the resident's words never got spoken
+    // at all. Party night, 2026-08-08: agents reported world_say "not showing up
+    // despite their posts" and the office was refusing them at the door.
+    // Deliberately narrow: only number, only when the string parses whole and
+    // finite. Everything else still bounces with the field named.
+    if (want === "number" && typeof args[k] === "string" && args[k].trim() !== "" && Number.isFinite(Number(args[k])))
+      args[k] = Number(args[k]);
     if (["string", "number", "boolean"].includes(want) && typeof args[k] !== want)
       return { error: "bounce", defect: `argument "${k}" should be a ${want}, got ${typeof args[k]}`,
         hint: props[k].description ?? `see the ${tool.name} input schema` };
