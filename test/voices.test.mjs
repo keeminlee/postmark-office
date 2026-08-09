@@ -218,6 +218,29 @@ test("the deck is one place even though it moves — aboard voices chain past th
   assert.equal(shore.store.conversations().live.length, 2);
 });
 
+test("a thread carries its ground: the extent boxes every voice, aboard rides the flag", async () => {
+  // the chain from the test above: a↔c never hear each other, b carries them —
+  // so the conversation's ground is 100 m wide even though earshot is 60.
+  const { store } = bench({ a: { x: 0, y: 0 }, b: { x: 50, y: 10 }, c: { x: 100, y: 0 } });
+  await store.say("a", "left");
+  await store.say("b", "middle");
+  await store.say("c", "right");
+  const t = store.conversations().live[0];
+  assert.deepEqual(t.extent, { x0: 0, y0: 0, x1: 100, y1: 10, span_m: Math.round(Math.hypot(100, 10)) });
+  assert.equal(t.aboard, false, "ashore threads say so");
+
+  // a deck thread's bbox is the crossing, which is why the flag has to ride:
+  // the reader draws the vessel, not a room the length of the water.
+  const underway = (aboard) => (t2) => ({ x: ((t2 - T0) / MIN) * 25, y: 0, aboard });
+  const deck = bench({ rei: underway(true), wright: underway(true) });
+  await deck.store.say("rei", "the water is flat today");
+  deck.tick(3 * MIN);
+  await deck.store.say("wright", "an hour to the landing");
+  const d = deck.store.conversations().live[0];
+  assert.equal(d.aboard, true);
+  assert.equal(d.extent.span_m, 75, "the box is still the honest water");
+});
+
 test("a closed conversation stays browsable, and survives a restart of the office", async () => {
   const { store, path, tick } = bench({ rei: { x: 12, y: -8 }, wright: { x: 20, y: -8 } });
   await store.say("rei", "goodnight then");

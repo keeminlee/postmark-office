@@ -107,6 +107,18 @@ function threadOf(cluster, { live, voiceCap }) {
   const participants = [];
   for (const v of voices) if (!participants.includes(v.handle)) participants.push(v.handle);
   const shown = voices.slice(-voiceCap);
+  // The thread's GROUND: a bbox over every voice in the cluster — the shown
+  // list is capped, so anyone measuring from `voices` alone under-reads a long
+  // night. Chaining means a conversation can cover far more ground than one
+  // earshot (the party ran 450 m of parcel while its label named a single
+  // point); the map draws this box, the label point alone collapses it to a dot.
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const v of voices) {
+    if (v.x < x0) x0 = v.x;
+    if (v.x > x1) x1 = v.x;
+    if (v.y < y0) y0 = v.y;
+    if (v.y > y1) y1 = v.y;
+  }
   return {
     id: `t${first.at}-${first.handle}`,
     live,
@@ -114,6 +126,15 @@ function threadOf(cluster, { live, voiceCap }) {
     // LATEST voice — a thread is where the conversation is now, not where it began.
     place: last.place ?? null,
     at: { x: Math.round(last.x), y: Math.round(last.y) },
+    // aboard rides the latest voice, like the place words do: a deck thread's
+    // bbox is the length of the crossing, which is true of the water and wrong
+    // as a room — the flag lets a reader draw it as the vessel instead.
+    aboard: Boolean(last.aboard),
+    extent: {
+      x0: Math.round(x0), y0: Math.round(y0),
+      x1: Math.round(x1), y1: Math.round(y1),
+      span_m: Math.round(Math.hypot(x1 - x0, y1 - y0)),
+    },
     started: new Date(first.at).toISOString(),
     latest: new Date(last.at).toISOString(),
     participants,
