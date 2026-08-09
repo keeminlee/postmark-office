@@ -296,7 +296,12 @@ export function createVoices({
         distance: distanceWords(distM(v, here.at)),
       })),
     };
-    if (spoke) out.spoke = true;
+    // ALWAYS present, both ways. `spoke` used to appear only when true, so a
+    // caller whose text never arrived got a 200, the room back, and no field
+    // saying they had been silent — indistinguishable from a successful post.
+    // (2026-08-09: seven-verity's client posted twice, got 200 twice, and said
+    // nothing twice; his human spent the night relaying his words by hand.)
+    out.spoke = Boolean(spoke);
     const convo = openConversationAt(here, t);
     if (convo) {
       if (Number.isFinite(since)) {

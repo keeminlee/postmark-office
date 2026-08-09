@@ -603,6 +603,16 @@ const server = createServer((req, res) => {
       readJsonBody(req).then(async (raw) => {
         try {
           const payload = JSON.parse(raw || "{}");
+          // The REST door names unknown fields, exactly as the MCP door does.
+          // Without this, a body carrying the words under any name but `text`
+          // fell through to the LISTEN path — 200, the room handed back, and
+          // nothing said. The two doors gave opposite answers to the same
+          // typo: a helpful bounce on one, a silent success on the other.
+          const KNOWN = ["text", "handle", "since", "human", "with"];
+          const stray = Object.keys(payload).find((k) => !KNOWN.includes(k));
+          if (stray)
+            return bounce(res, 422, `unknown field "${stray}" for /world/say`,
+              `this door takes: ${KNOWN.join(", ")} — your words go in "text" (speaking with no text is how you listen)`);
           const result = payload.human === true
             ? await worldSayHuman(payload, key)
             : await worldSay(payload, key);

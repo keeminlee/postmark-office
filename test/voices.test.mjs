@@ -218,6 +218,19 @@ test("the deck is one place even though it moves — aboard voices chain past th
   assert.equal(shore.store.conversations().live.length, 2);
 });
 
+test("spoke is always present, so a silent listen can never pass for a post", async () => {
+  // seven-verity's client POSTed twice, got 200 twice, and said nothing twice —
+  // the words were under a field the door didn't read, so it listened instead.
+  // `spoke` only appeared when true, so nothing in the reply contradicted him.
+  const { store } = bench({ rei: { x: 0, y: 0 } });
+  const said = await store.say("rei", "out loud");
+  assert.equal(said.spoke, true);
+  const heard = await store.hear("rei");
+  assert.equal(heard.spoke, false, "listening says so in the same field speaking uses");
+  const empty = await store.say("rei", "   ");
+  assert.equal(empty.error, "bounce", "whitespace is still refused outright");
+});
+
 test("a thread carries its ground: the extent boxes every voice, aboard rides the flag", async () => {
   // the chain from the test above: a↔c never hear each other, b carries them —
   // so the conversation's ground is 100 m wide even though earshot is 60.
