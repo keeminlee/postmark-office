@@ -19,9 +19,10 @@
 // a FETCH, not a read; git-clone readership is invisible in principle (census
 // territory). Provenance: 2026-07-11 traffic-dashboard arc (Keemin + Wright).
 
-import { readFileSync, readdirSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync, mkdirSync, writeFileSync, createReadStream } from "node:fs";
 import { join } from "node:path";
-import { gunzipSync } from "node:zlib";
+import { createGunzip } from "node:zlib";
+import { createInterface } from "node:readline";
 
 const ARCHIVE = "/var/lib/postmark-traffic/archive";
 const GHDIR = "/var/lib/postmark-traffic/github";
@@ -29,31 +30,42 @@ const OFFICE_TEL = "/srv/postmark-office/telemetry";
 const LIVE = ["/var/log/nginx/access.log", "/var/log/nginx/access.log.1"];
 const OUT_DIR = "/var/www/postmark-ops/traffic";
 
-// ── gather raw nginx lines (exact-line dedupe across overlapping sources) ────
+// ── raw nginx lines: streamed, never held ────────────────────────────────────
+// The sources are read AFTER the parser and aggregates are defined (bottom of
+// this section), because each line is now parsed the moment it arrives and then
+// discarded. The old shape read each file whole, split it into an array, and
+// kept every unique line in a Set to dedupe — three copies of the logs resident
+// at once. At 13.2 M lines / 1.6 GB uncompressed that is ~3 GB on a 1.9 GB box,
+// and the page had been frozen since 2026-08-02 because every run died in
+// Runtime_StringSplit. Dedupe now keeps a 53-bit hash per line instead of the
+// text, which is the same exact-line semantics at a fraction of the footprint.
 const seen = new Set();
-const lines = [];
-function addSource(text) {
-  for (const ln of text.split("\n")) {
-    if (!ln || seen.has(ln)) continue;
-    seen.add(ln);
-    lines.push(ln);
+// xmur3-style 53-bit hash: two 32-bit lanes combined. Over 13 M lines the
+// expected collision count is ~0.01, so an exact-line dedupe stays exact in
+// practice; a collision would drop one duplicate-looking line, never corrupt one.
+function hash53(s) {
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return 4294967296 * (2097151 & h2) + (h1 >>> 0);
+}
+let linesRead = 0; // unique lines seen — the count the page used to take from lines.length
+async function streamLines(path, gzipped, onLine) {
+  const input = gzipped ? createReadStream(path).pipe(createGunzip()) : createReadStream(path);
+  for await (const ln of createInterface({ input, crlfDelay: Infinity })) {
+    if (!ln) continue;
+    const h = hash53(ln);
+    if (seen.has(h)) continue;
+    seen.add(h);
+    linesRead++;
+    onLine(ln);
   }
 }
-if (existsSync(ARCHIVE)) {
-  for (const f of readdirSync(ARCHIVE).sort()) {
-    if (!f.endsWith(".gz")) continue;
-    try { addSource(gunzipSync(readFileSync(join(ARCHIVE, f))).toString("utf8")); } catch {}
-  }
-}
-// also read nginx's own rotations directly — the archive's mtime-keyed names can
-// collide (two rotations, one date) and silently skip a day; line-level dedupe
-// makes reading both dirs safe, and this closes any archive gap while the
-// rotations still exist (found in first visual QA: 07-03/07-05 missing).
-for (const f of readdirSync("/var/log/nginx")) {
-  if (!/^access\.log\.\d+\.gz$/.test(f)) continue;
-  try { addSource(gunzipSync(readFileSync(join("/var/log/nginx", f))).toString("utf8")); } catch {}
-}
-for (const f of LIVE) { try { if (existsSync(f)) addSource(readFileSync(f, "utf8")); } catch {} }
 
 // ── parse ─────────────────────────────────────────────────────────────────────
 const MONTHS = { Jan: "01", Feb: "02", Mar: "03", Apr: "04", May: "05", Jun: "06", Jul: "07", Aug: "08", Sep: "09", Oct: "10", Nov: "11", Dec: "12" };
@@ -95,9 +107,9 @@ const sitePages = {};                  // path -> browser views (non-asset)
 const probes = {};                     // 4xx path -> count
 let newestTs = "";
 
-for (const ln of lines) {
+function ingest(ln) {
   const m = parseLine(ln);
-  if (!m) continue;
+  if (!m) return;
   const { host, ip, dd, mon, yyyy, status, ua } = m;
   const day = `${yyyy}-${MONTHS[mon]}-${dd}`;
   const path = m.rawPath.replace(/\?.*$/, "");
@@ -110,7 +122,7 @@ for (const ln of lines) {
   // postmark-specific panels below: scope to postmark.town once the host is
   // known; legacy (pre-split) lines can't be scoped and stay counted — the
   // postmark path shapes are distinctive enough that bleed-through is minimal.
-  if (host && host !== "postmark.town") continue;
+  if (host && host !== "postmark.town") return;
 
   let mm;
   // doorstep — static bundle + REST door
@@ -140,16 +152,41 @@ for (const ln of lines) {
   if (status[0] === "4" && !GOOD_PREFIX.test(path)) probes[path] = (probes[path] ?? 0) + 1;
 }
 
+// Drive the sources now that ingest exists. Order is oldest-first so that when
+// two sources hold the same rotation the archive copy wins the dedupe; the
+// nginx rotations are read as well because the archive's mtime-keyed names can
+// collide (two rotations, one date) and silently skip a day — exact-line dedupe
+// makes reading both dirs safe, and it closes any archive gap while the
+// rotations still exist (found in first visual QA: 07-03/07-05 missing).
+if (existsSync(ARCHIVE)) {
+  for (const f of readdirSync(ARCHIVE).sort()) {
+    if (!f.endsWith(".gz")) continue;
+    try { await streamLines(join(ARCHIVE, f), true, ingest); } catch {}
+  }
+}
+for (const f of readdirSync("/var/log/nginx")) {
+  if (!/^access\.log\.\d+\.gz$/.test(f)) continue;
+  try { await streamLines(join("/var/log/nginx", f), true, ingest); } catch {}
+}
+for (const f of LIVE) { try { if (existsSync(f)) await streamLines(f, false, ingest); } catch {} }
+seen.clear(); // the dedupe index is dead weight from here on
+
 // ── office telemetry (per-tool, per-household) ───────────────────────────────
 const mcpTools = {};        // tool -> count
 const mcpHouseholds = {};   // household -> { total, tools: {} }
 const mcpByDay = {};        // day -> count
 let officeTelDays = 0;
 if (existsSync(OFFICE_TEL)) {
+  // .jsonl AND .jsonl.gz: a day's access log gets compressed once it is cold
+  // (2026-08-09, after a 401 retry-loop pushed this directory to 1.2 GB), and
+  // reading only the live extension would silently drop those days from the MCP
+  // panels. Streamed a line at a time for the same reason the nginx sources are.
   for (const f of readdirSync(OFFICE_TEL).sort()) {
-    if (!f.endsWith(".jsonl")) continue;
+    const gz = f.endsWith(".jsonl.gz");
+    if (!gz && !f.endsWith(".jsonl")) continue;
     officeTelDays++;
-    for (const ln of readFileSync(join(OFFICE_TEL, f), "utf8").split("\n")) {
+    const input = gz ? createReadStream(join(OFFICE_TEL, f)).pipe(createGunzip()) : createReadStream(join(OFFICE_TEL, f));
+    for await (const ln of createInterface({ input, crlfDelay: Infinity })) {
       if (!ln) continue;
       let e; try { e = JSON.parse(ln); } catch { continue; }
       if (e.mcp) {
@@ -263,7 +300,7 @@ const html = `<!doctype html>
   <span>newest log day: ${newestTs || "—"}</span>
   <span>office telemetry: ${officeTelDays ? `${officeTelDays} day file(s)` : "MISSING"}</span>
   <span>github snapshots: ${Object.keys(gh).length ? Object.values(gh).map((g) => g.snapshotDate).sort().at(-1) : "MISSING"}</span>
-  <span>nginx lines parsed: ${lines.length.toLocaleString()}</span>
+  <span>nginx lines parsed: ${linesRead.toLocaleString()}</span>
 </div>
 
 <h2>Overview — requests by day</h2>
@@ -319,4 +356,4 @@ writeFileSync(join(OUT_DIR, "data.json"), JSON.stringify({
   doorstep: Object.fromEntries(Object.entries(doorstep).map(([h, v]) => [h, { total: v.total, last: v.last, byDay: v.byDay }])),
   bulletinApi, bulletinSite, apiSeg, mcpTools, mcpHouseholds, mcpByDay, probes: byCountDesc(probes).slice(0, 30),
 }, null, 1));
-console.log(`traffic-report: ${lines.length} lines → ${OUT_DIR}/index.html (${sortedDays.length} days, ${Object.keys(doorstep).length} doorstep handles, ${Object.keys(mcpTools).length} tools)`);
+console.log(`traffic-report: ${linesRead} lines → ${OUT_DIR}/index.html (${sortedDays.length} days, ${Object.keys(doorstep).length} doorstep handles, ${Object.keys(mcpTools).length} tools)`);
