@@ -19,6 +19,7 @@ const {
   worldEyes,
   worldBlockForHandle,
   overhangOf,
+  unwalkableTarget,
   noticeBoardAt,
   withNoticeBoard,
 } = await import("../src/world.mjs");
@@ -270,6 +271,55 @@ test("overhang: nesting out to the world root is named, not left blank", async (
   });
   assert.equal(r.nested_in, null);
   assert.match(r.note, /^nested at the root of the world — your claim overhangs vermillion\/vermillion-view-peak/);
+});
+
+// ── issue #7 §5: the walk-target refusal explains the case that fired ────────
+//
+// The reporter asked to walk to `finn/the-still-reach-parcel` and was told
+// "predicated and naming marks have no ground of their own — walk to the mark
+// they describe." A parcel is neither. The hint was true about a different kind
+// of mark and offered no route forward; the recovery (walk to a sited mark
+// inside — finn/the-porch) is also the socially correct arrival.
+const PARCEL = { id: "finn/the-still-reach-parcel", kind: "parcel" };
+
+test("walk target: a parcel bounce names the sited marks it holds", () => {
+  const r = unwalkableTarget(PARCEL, [{ id: "finn/the-porch" }, { id: "finn/the-working-window" }]);
+  assert.match(r.defect, /is a parcel — ground held on the record/);
+  assert.doesNotMatch(r.defect, /parcel mark/, "the old wording described the kind, not the problem");
+  assert.match(r.hint, /finn\/the-porch/, "the route forward is the whole point of the hint");
+  assert.match(r.hint, /finn\/the-working-window/);
+  assert.doesNotMatch(r.hint, /predicated and naming/, "that sentence is about a different kind of mark");
+});
+
+test("walk target: an empty parcel says so plainly instead of listing nothing", () => {
+  const r = unwalkableTarget(PARCEL, []);
+  assert.match(r.defect, /is a parcel/);
+  assert.match(r.hint, /nothing is sited within it yet/);
+  assert.match(r.hint, /x\/y/, "and it still leaves one way to get there");
+});
+
+test("walk target: a parcel whose contents could not be read says less, never wrong", () => {
+  // null is "the office could not ask the world's geometry", which must not read
+  // the same as "the parcel is empty".
+  const r = unwalkableTarget(PARCEL, null);
+  assert.match(r.defect, /is a parcel/);
+  assert.match(r.hint, /open your eyes/);
+  assert.doesNotMatch(r.hint, /nothing is sited/);
+});
+
+test("walk target: predicated and naming marks keep the sentence that is true of them", () => {
+  for (const kind of ["predicated", "naming"]) {
+    const r = unwalkableTarget({ id: `alpha/${kind}-thing`, kind }, null);
+    assert.equal(r.defect, `"alpha/${kind}-thing" is a ${kind} mark, not somewhere you can stand`);
+    assert.match(r.hint, /no ground of their own — walk to the mark they describe/);
+  }
+});
+
+test("walk target: a long parcel names a few and counts the rest", () => {
+  const many = Array.from({ length: 9 }, (_, i) => ({ id: `finn/thing-${i}` }));
+  const r = unwalkableTarget(PARCEL, many);
+  assert.match(r.hint, /and 3 more/, "a refusal must not become a wall of ids");
+  assert.equal(r.hint.includes("finn/thing-8"), false);
 });
 
 test("world_walk contract carries the arrival variant and names the fence it fixes", () => {

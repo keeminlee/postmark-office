@@ -38,6 +38,7 @@ import { emissionsEnabled } from "./dynamic-store.mjs"; // stage 2: the dynamic 
 import { emissionFromVoice } from "./dynamic-emissions.mjs"; // stage 2: speech also becomes an emission instance
 import { VESSEL_HANDLE, ridesTheVessel } from "./dynamic-entities.mjs"; // the aboard test, one home for two readers
 import { byBand, presenceEnabled, presentNear, near as presenceNear, everyone as presenceEveryone } from "./dynamic-presence.mjs"; // stage 2: residents revealed to each other
+import { everyonePlaced } from "./positions.mjs"; // where is everyone: walk records ∪ parcel households, one derivation
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..");
@@ -229,6 +230,13 @@ async function standCoords(handle, w) {
   return homeCoords(handle, w);
 }
 
+// The fold, for the presence layer's half of the position union (issue #7 §1).
+// Presence must be handed a world to see the residents who have never walked —
+// their ground IS their position — and it discloses by name when it was not.
+// Never throws: a presence read that could take down `orient` or `say` would be
+// a worse bargain than not knowing who is about.
+const foldForPresence = (key = null) => world(key).then((w) => w, () => null);
+
 // THE ONE STANDPOINT DERIVATION. orient's phrasing above and earshot's geometry
 // below are two skins over this — a second answer to "where is this resident"
 // is exactly the split-brain the where-is consolidation ended (see homeCoords).
@@ -418,8 +426,14 @@ const voices = createVoices({
   //
   // The radius is EARSHOT_M, not the presence layer's own 500 m district dial:
   // this answers "who can hear you", and hearing has one range.
+  //
+  // The fold rides along because "who is within earshot BY POSITION" is the same
+  // question `present` answers, and a resident who has never walked is standing
+  // on their ground whether or not they have ever declared a departure (issue #7
+  // §1). Without it `listeners` would keep the very gap the say disclosure
+  // promises it does not have.
   nearby: async (at) => {
-    const r = await presentNear(at, { radiusM: EARSHOT_M, limit: EARSHOT_PRESENCE_CAP, repo: WORLD_CLONE });
+    const r = await presentNear(at, { radiusM: EARSHOT_M, limit: EARSHOT_PRESENCE_CAP, repo: WORLD_CLONE, world: await foldForPresence() });
     if (!r || r.unavailable || !Array.isArray(r.residents)) return null;
     return r.residents.map((p) => p.handle).sort();
   },
@@ -623,6 +637,10 @@ export async function worldOrient(args = {}, key = null) {
     // for `listeners`. A spectator glance excludes nobody: it is nobody's.
     exclude: choice.handle ? [choice.handle] : [],
     repo: WORLD_CLONE,
+    // The fold, so presence answers over the whole position union and not the
+    // walk ledger alone (issue #7 §1). This is the door the apex verb reads
+    // `present` from, so the fix lands on both at once.
+    world: w,
   });
   return { standpoint: { ...at, stance: choice.stance }, crossing: { n: crossing, derivation: CROSSING_DERIVATION }, note, primer, ...o, ...(present ? { present } : {}) };
 }
@@ -664,6 +682,7 @@ export async function worldEyes(args = {}, key = null) {
     place: (p) => placeWords(p),
     exclude: choice.handle ? [choice.handle] : [],
     repo: WORLD_CLONE,
+    world: w,
   });
   const section = presenceTelling(present);
   const telling = section ? `${engineTelling ?? ""}\n\n${section}` : engineTelling;
@@ -713,10 +732,13 @@ export async function worldPresent(args = {}) {
     return { error: "bounce", code: 422, defect: "x and y must both be numbers",
       hint: "GET /world/present?x=&y= for who is near a point, or bare for everyone" };
   const place = (p) => placeWords(p);
-  if (!has) return presenceEveryone({ place, repo: WORLD_CLONE });
+  // The fold, so this door answers over the whole position union — everyone with
+  // a walk on record AND everyone holding ground (issue #7 §1).
+  const w = await foldForPresence();
+  if (!has) return presenceEveryone({ place, repo: WORLD_CLONE, world: w });
   const radiusM = Number.isFinite(Number(args.radius_m)) ? Math.max(1, Number(args.radius_m)) : undefined;
   const limit = Number.isFinite(Number(args.limit)) ? Math.max(1, Math.floor(Number(args.limit))) : undefined;
-  return presenceNear({ x, y, place, repo: WORLD_CLONE, ...(radiusM ? { radiusM } : {}), ...(limit ? { limit } : {}) });
+  return presenceNear({ x, y, place, repo: WORLD_CLONE, world: w, ...(radiusM ? { radiusM } : {}), ...(limit ? { limit } : {}) });
 }
 
 export async function worldInvestigate(args = {}, key = null) {
@@ -1057,6 +1079,62 @@ export async function worldNoteViaOffice(worldClone, payload = {}, key = null) {
 export const WALK_TARGET_MAX_EXTENT_M = 2000;
 const WALK_EXCLUDED_TIERS = new Set(["constitution"]);
 
+// How many sited marks a parcel bounce names before it stops listing. A parcel
+// is 25 m square, so this is a cap that should almost never bite; it exists so a
+// crowded one cannot turn a refusal into a wall of ids.
+const PARCEL_HINT_MAX = 6;
+
+// WHY A MARK IS NOT A DESTINATION — and what to do instead.
+//
+// Three kinds bounce here for TWO different reasons, and one hint used to blur
+// them (issue #7 §5). A predicated or naming mark has no ground at all: it
+// describes something else, and the something else is where you go. A PARCEL is
+// the opposite — it is nothing BUT ground, 25 m of it held on the record, with
+// the porch and the window and the house sited inside. Telling a resident who
+// asked for a parcel that "predicated and naming marks have no ground of their
+// own" is true about a different kind of mark and hands them no route forward.
+//
+// Pure over (mark, what is sited within it), so every branch is testable without
+// a clone. `within` is null when the office could not ask the world's geometry
+// at all — a different answer from [], which means it asked and the parcel is
+// empty, and the two must not read the same.
+export function unwalkableTarget(mark, within = null) {
+  if (mark?.kind !== "parcel")
+    return {
+      defect: `"${mark?.id}" is a ${mark?.kind} mark, not somewhere you can stand`,
+      hint: "predicated and naming marks have no ground of their own — walk to the mark they describe",
+    };
+  const defect = `"${mark.id}" is a parcel — ground held on the record, not somewhere you can stand`;
+  if (within === null)
+    return { defect, hint: "a parcel holds sited marks and those are what you arrive at — open your eyes nearby to see which, and walk to one of them" };
+  if (!within.length)
+    return { defect, hint: "and nothing is sited within it yet, so there is nothing inside to arrive at — give x/y if you mean to stand on the ground itself" };
+  const named = within.slice(0, PARCEL_HINT_MAX).map((m) => m.id);
+  const rest = within.length - named.length;
+  return {
+    defect,
+    hint: `walk to a sited mark within it — that is also the neighbourly way to arrive: ${named.join(", ")}${rest > 0 ? `, and ${rest} more` : ""}`,
+  };
+}
+
+// The sited marks standing on a parcel's ground. The world's own geometry
+// answers "is this mark inside that one" (marksContain), so the office asks
+// rather than deciding; a clone whose geometry cannot be read answers null and
+// the bounce above says less rather than inventing containment.
+async function sitedWithin(parcel, marks) {
+  let geom = null;
+  try { geom = await geomMod(); } catch { return null; }
+  if (typeof geom.rect !== "function" || typeof geom.pointInRect !== "function") return null;
+  const box = geom.rect(parcel);
+  const holds = typeof geom.marksContain === "function"
+    ? (m) => geom.marksContain(parcel, m)
+    : () => true;   // an older engine: the centre test below is the whole answer
+  return (marks ?? []).filter((m) =>
+    m.kind === "sited" && m.at && m.id !== parcel.id
+    && geom.pointInRect(m.at.x, m.at.y, box)   // cheap first: a parcel is 25 m square
+    && holds(m));
+}
+
 export async function walkViaOffice(worldClone, payload = {}, key = null) {
   const bounce = (code, defect, hint, extra = {}) => {
     const e = new Error(defect); Object.assign(e, { code, defect, hint, ...extra }); return e;
@@ -1128,8 +1206,11 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
     const id = String(payload.mark_id);
     const m = (w.marks ?? []).find((k) => k.id === id);
     if (!m) throw bounce(422, `no mark "${id}"`, "ids are <by>/<slug>, as they appear in the telling");
-    if (m.kind !== "sited") throw bounce(422, `"${id}" is a ${m.kind} mark, not somewhere you can stand`,
-      "predicated and naming marks have no ground of their own — walk to the mark they describe");
+    if (m.kind !== "sited") {
+      const within = m.kind === "parcel" ? await sitedWithin(m, w.marks) : null;
+      const refusal = unwalkableTarget(m, within);
+      throw bounce(422, refusal.defect, refusal.hint);
+    }
     if (WALK_EXCLUDED_TIERS.has(m.tier)) throw bounce(422, `"${id}" is ${m.tier} — the town's own furniture, not a destination`,
       "walk to a market or sovereign mark, or give coordinates");
     if (!m.at) throw bounce(422, `"${id}" has no place on the map`, "an unplaced mark cannot be walked to");
@@ -1233,14 +1314,15 @@ export async function worldWalkers(worldClone, key = null) {
   // to end them. So the engine owns the shape now (publicResidents), and both
   // publishers of this vocabulary — this door and the local spectator server —
   // call it rather than each assembling their own.
+  //
+  // And the ROSTER — walk records ∪ parcel households — is no longer assembled
+  // here either. It lives in positions.mjs, because the presence layer asks the
+  // same question and asked it of half the union (issue #7 §1): `present` could
+  // not see a resident who had never walked, standing on their own porch.
   try {
     const w = await world(key);
-    const { publicResidents } = await whereMod();
-    const roster = [
-      ...departures.map((d) => d.handle),
-      ...(w.parcels ?? []).map((p) => p.household),
-    ].filter(Boolean);
-    return { at, walkers: publicResidents(roster, { world: w, departures, at }) };
+    const where = await whereMod();
+    return { at, walkers: everyonePlaced({ world: w, departures, at, where }) };
   } catch {
     // No world to fold: the walk ledger alone is still an honest answer.
     return { at, walkers: publicWalkers(departures, at) };

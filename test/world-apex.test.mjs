@@ -611,6 +611,104 @@ test("dispatch: every subverb in the table names a tool that exists on the flat 
   for (const tool of ["world_say", "world_walk", "world_leave_mark", "world_stake"]) assert.ok(flat.has(tool), tool);
 });
 
+// ── issue #7 §2 · an affordance says what its act takes ─────────────────────
+//
+// `fields: {}` on every affordance did not read as "no information here"; it
+// read as "this act takes no arguments". A resident called `do: "say"` bare,
+// got a listen, guessed `text`, and the guess bounced — the one thing the verb
+// exists to tell you from where you are standing was the thing it withheld.
+
+test("fields: the say affordance names the fields the act actually takes", async () => {
+  on();
+  const r = await worldApex({ ...A }, null);
+  const say = r.affordances.find((a) => a.subverb === "say");
+  assert.ok(Object.keys(say.fields).length > 0, "fields is empty — it reads as an act that takes no arguments");
+  assert.ok(say.fields.text, "`say` needs text and the affordance did not say so");
+  assert.equal(say.fields.text.type, "string");
+  assert.match(say.fields.text.description, /500 characters/, "the flat tool's own words, not a paraphrase");
+  assert.ok(say.fields.since, "the lingering-economically field is part of the act's grammar too");
+});
+
+test("fields: the standpoint is not offered twice — handle/x/y never appear", async () => {
+  on();
+  const r = await worldApex({ ...A }, null);
+  for (const a of r.affordances)
+    for (const param of ["handle", "x", "y"])
+      assert.equal(a.fields[param], undefined, `${a.subverb} offered ${param}, which the standpoint already answered`);
+});
+
+test("fields: they come from the dispatch target's live schema, not a copy beside it", async () => {
+  on();
+  const { WORLD_TOOLS } = await import("../src/world.mjs");
+  const say = WORLD_TOOLS.find((t) => t.name === "world_say");
+  const fields = apex.fieldsFor("say");
+  for (const [name, spec] of Object.entries(say.inputSchema.properties)) {
+    if (["handle", "x", "y"].includes(name)) continue;
+    assert.deepEqual(fields[name], spec, `${name} drifted from world_say's own schema`);
+  }
+  // every dispatchable subverb answers with its target's grammar, not {}
+  for (const subverb of apex.DISPATCHABLE)
+    assert.ok(Object.keys(apex.fieldsFor(subverb)).length > 0, `${subverb} still describes itself as argument-free`);
+  // a subverb with no handler has no schema to borrow, and says nothing rather
+  // than inventing one
+  assert.deepEqual(apex.fieldsFor("mint-gold"), {});
+});
+
+test("fields: a class that declares its OWN fields keeps them — law outranks the office", () => {
+  on();
+  const declared = { text: { type: "string", description: "the class's own words" } };
+  assert.deepEqual(apex.fieldsFor("say", declared), declared);
+});
+
+// ── issue #7 §3 · the schema and the runtime agree ──────────────────────────
+
+test("the schema is closed: it no longer advertises a pass-through the door refuses", async () => {
+  on();
+  const [tool] = apexTools();
+  assert.equal(tool.inputSchema.additionalProperties, false,
+    "the schema promised inline subverb fields and the runtime bounces them");
+  // and the promise is checkable against the door that does the refusing
+  await withOffice({ WORLD_APEX: "1" }, async () => {
+    const { body } = await rpc("tools/call", { name: "world", arguments: { do: "say", text: "hello" } });
+    const answer = JSON.parse(body.result.content[0].text);
+    assert.equal(answer.error, "bounce");
+    assert.match(answer.defect, /unknown argument "text"/, "the runtime's refusal is what the schema now declares");
+  });
+});
+
+test("the description states the split: do: is argument-free, arguments ride the flat tool", () => {
+  on();
+  const [tool] = apexTools();
+  assert.match(tool.description, /argument-free/i);
+  assert.match(tool.description, /dispatches_to/);
+});
+
+// ── issue #7 §4 · "not afforded here" and "afforded nowhere" are different ───
+
+test("bounce: afforded SOMEWHERE says where you stand, and names the place", async () => {
+  on();
+  await withStore(stageDPath, async () => {
+    const r = await worldApex({ do: "board" }, KEY_BETA); // beta is 40 km from the wheelhouse
+    assert.ok(r.affordable_at.length, "this branch needs a place that grants it");
+    assert.match(r.defect, /not afforded where you stand/);
+    assert.doesNotMatch(r.defect, /nowhere/);
+    assert.match(r.hint, /walk there and it appears/);
+  });
+});
+
+test("bounce: afforded NOWHERE says so in the defect, not only in the hint", async () => {
+  on();
+  const r = await worldApex({ do: "conjure" }, KEY_ALPHA);
+  assert.deepEqual(r.affordable_at, [], "this branch needs a verb no class grants");
+  assert.match(r.defect, /afforded nowhere in the world/,
+    "the defect sent the reader looking for a place that does not exist");
+  assert.doesNotMatch(r.defect, /where you stand/);
+  assert.match(r.hint, /nowhere to walk to/);
+  // the same is true of a verb a RESIDENT tried to mint: it exists in nobody's law
+  const decreed = await worldApex({ do: "decree" }, KEY_ALPHA);
+  assert.match(decreed.defect, /afforded nowhere in the world/);
+});
+
 // ── falsifier 4 · the terms: shown at the door, capped, authored ─────────────
 
 test("terms: the law that binds the act arrives WITH the act", async () => {

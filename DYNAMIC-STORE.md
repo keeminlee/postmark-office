@@ -186,6 +186,21 @@ store-canon, latest-wins already settled — and presence evaluates that record
 now, through the world's own `positionAt`. Same derivation, fresher clock, which
 is exactly why the save carries the departure beside the coordinates.
 
+**And the departures are only half the world.** The other half is ground: a
+resident who has never walked stands on their parcel, and the town's map has
+always drawn them there. Presence read the walk half alone until issue #7 §1 —
+twenty-one placed residents invisible, one of them from three metres away, on
+their own porch. The union (walk records ∪ parcel households) now lives in
+`src/positions.mjs`, and `world_walkers` and `present` both call it, so the two
+doors cannot answer differently again. Each row says which half it came from in
+`source` (`walk` | `parcel`); a resident holding both appears once, at the walk,
+because the walk is their own latest statement about themselves.
+
+Ground needs the fold, so the office hands one to every presence read. A read
+that is handed none answers the walk half and **says so** — `disclosed` carries
+`ground-not-read:`, which is the same refuse-or-disclose law the rest of this
+layer runs on.
+
 The one staleness this cannot fix: a resident who walked *after* the last refresh
 is shown on their previous leg. It is bounded by the refresh cadence and it is
 disclosed by name (`ledger_moved`), never smoothed. **The fix is operational:

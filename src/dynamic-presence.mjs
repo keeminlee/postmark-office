@@ -29,6 +29,19 @@
 // operational — `npm run dynamic:rebuild` on the office tick — not a second
 // derivation here.
 //
+// ── AND WHERE THE OTHER HALF COMES FROM (issue #7 §1) ───────────────────────
+//
+// Departures are half the world. The other half is GROUND: a resident who has
+// never walked stands on their parcel, and the town's map has always drawn them
+// there. This layer read only the walk half, so twenty-one placed residents were
+// invisible to `present` — one of them from three metres away, on their own
+// porch, while the visitor concluded they were out and wrote it into a letter.
+//
+// The union is not assembled here. `positions.mjs` owns the roster and the
+// world's own `where-is.mjs` owns the join, and `world_walkers` calls the same
+// function — which is the whole point: one question, one derivation, and the
+// two doors cannot disagree again.
+//
 // Env: WORLD_PRESENCE=1
 
 import { existsSync } from "node:fs";
@@ -36,9 +49,10 @@ import { existsSync } from "node:fs";
 import { WORLD_CLONE } from "./world-store.mjs";
 import { openDynamic, getMeta, dynamicDbPath } from "./dynamic-store.mjs";
 import {
-  readEntities, entityFromDeparture, toWalkRecord, entitiesStale,
+  readEntities, toWalkRecord, entitiesStale,
   walkModule, worldToolModule, ridesTheVessel, VESSEL_HANDLE,
 } from "./dynamic-entities.mjs";
+import { everyonePlaced } from "./positions.mjs";
 
 export const presenceEnabled = () => process.env.WORLD_PRESENCE === "1";
 
@@ -68,32 +82,52 @@ export function governingDepartures(db) {
 }
 
 /**
- * Every resident's position AT AN INSTANT, derived from the store's departures.
+ * Every resident's position AT AN INSTANT: the store's departures for whoever
+ * has walked, their ground for everyone who has not.
+ *
+ * WHERE comes from `everyonePlaced` — the same function `world_walkers` calls,
+ * over the same roster rule, through the world's own `where-is.mjs`. Nothing in
+ * this file decides where anybody is; what it adds is presence's own vocabulary,
+ * `standing` and `aboard`, which the shared shape does not carry.
  *
  * `aboard` uses the same test the standpoint has always used — a passenger's
  * departure IS the vessel's — asked of the same records. The vessel herself is
- * never in this list: she is a mark that moves, not a resident.
+ * never in this list: she is a mark that moves, not a resident, and the entities
+ * table she is excluded from is what feeds the departures below.
  */
-export function positionsAt(db, atMs, walk, vessel = null) {
+export function positionsAt(db, atMs, walk, vessel = null, { world = null, where = null } = {}) {
   const deps = governingDepartures(db);
-  const out = [];
-  for (const [handle, dep] of deps) {
-    if (handle === VESSEL_HANDLE) continue;   // belt and braces: she is not in this table to begin with
-    const e = entityFromDeparture(handle, dep, atMs, walk);
-    const moving = e.provenance.arrived === false;
-    out.push({
-      handle,
-      x: e.x, y: e.y,
-      standing: Boolean(e.provenance.standing),
-      moving,
+  deps.delete(VESSEL_HANDLE);   // belt and braces: she is not in this table to begin with
+  const at = walk.fractionalCrossing(atMs);
+
+  // The store's departures in the LEDGER'S own vocabulary, so the union reads
+  // them with exactly the arithmetic a walk-ledger departure gets. `toWalkRecord`
+  // is the one converter, already the crossing-save's; there is no second one.
+  const departures = [...deps].map(([handle, dep]) => ({ handle, iso: dep.iso, ...toWalkRecord(dep) }));
+
+  return everyonePlaced({ world, departures, at, where }).map((r) => {
+    const dep = deps.get(r.handle) ?? null;
+    return {
+      handle: r.handle,
+      x: r.x, y: r.y,
+      // How the position was learned — "walk" or "parcel" — carried through
+      // from the engine. It is honest and it belongs in a tooltip; it never
+      // decides what someone looks like (the three-colour lesson, publicResidents).
+      source: r.source,
+      // AT REST WITH NO LEG: a zero-distance departure ("I am stopping here"),
+      // or ground, which is the same state with no record at all. Asked of the
+      // same `positionAt` the union used, for the one field it does not return.
+      standing: r.source === "walk" && dep
+        ? Boolean(walk.positionAt(toWalkRecord(dep), at)?.standing)
+        : !r.moving,
+      moving: r.moving,
       // aboard only while actually under way: a passenger set down ashore is
       // standing on the ground, not riding a berthed boat.
-      aboard: moving && ridesTheVessel(dep, vessel),
-      remaining_m: e.provenance.remaining_m,
-      eta_crossings: e.provenance.eta_crossings,
-    });
-  }
-  return out.sort((a, b) => (a.handle < b.handle ? -1 : 1));
+      aboard: r.moving && ridesTheVessel(dep, vessel),
+      remaining_m: r.remaining_m,
+      eta_crossings: r.eta_crossings,
+    };
+  }).sort((a, b) => (a.handle < b.handle ? -1 : 1));
 }
 
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
@@ -103,7 +137,7 @@ const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
  * Never throws: a presence read that could take down `orient` would be a worse
  * bargain than not knowing who is nearby.
  */
-async function readPresence({ dbPath = null, repo = WORLD_CLONE, atMs = Date.now(), walk = null, engine = null } = {}) {
+async function readPresence({ dbPath = null, repo = WORLD_CLONE, atMs = Date.now(), walk = null, engine = null, world = null, where = null } = {}) {
   const path = dbPath ?? dynamicDbPath();
   if (!existsSync(path))
     return { error: "store-absent", detail: `no dynamic store at ${path} — run: npm run dynamic:rebuild` };
@@ -117,11 +151,18 @@ async function readPresence({ dbPath = null, repo = WORLD_CLONE, atMs = Date.now
     moved = entitiesStale(db);
     const w = walk ?? await walkModule({ repo });
     const eng = engine ?? await worldToolModule("world-engine.mjs", { repo });
+    // The world's own position join, read at a ref like every other engine
+    // module. A clone that cannot answer it leaves `whereMod` null and the
+    // disclosure below says so — never a second join written here.
+    let whereMod = where;
+    if (!whereMod) {
+      try { whereMod = await worldToolModule("where-is.mjs", { repo }); } catch { whereMod = null; }
+    }
     // The vessel is not in the entities table — she is a mark that moves — so
     // her sailing line rides in meta, saved beside the rows it governs.
     let vessel = null;
     try { vessel = JSON.parse(getMeta(db, "vessel_departure") ?? "null"); } catch { vessel = null; }
-    rows = positionsAt(db, atMs, w, vessel);
+    rows = positionsAt(db, atMs, w, vessel, { world, where: whereMod });
     db.close();
     return {
       rows, engine: eng,
@@ -131,6 +172,12 @@ async function readPresence({ dbPath = null, repo = WORLD_CLONE, atMs = Date.now
       disclosed: [
         ...(asOf ? [] : ["entities-never-derived: the presence table has never been filled — run dynamic:rebuild"]),
         ...(moved === true ? ["ledger-moved-since-refresh: someone has walked since these departures were read, and their leg here is the previous one"] : []),
+        // The gap that made issue #7 §1 possible, now named instead of silent.
+        // Half the union is GROUND, and ground needs the fold. A caller that
+        // cannot hand one over gets the walk half and is told which half it is.
+        // (Last in the list on purpose: the staleness disclosures above are the
+        // ones a reader has been trained to look for first.)
+        ...(world && whereMod ? [] : [`ground-not-read: only residents with a walk on record are in this answer — ${world ? "the world's position join could not be read" : "no world fold was handed to the presence read"}, so anyone who has never walked is missing`]),
       ],
     };
   } catch (e) {
@@ -150,9 +197,9 @@ async function readPresence({ dbPath = null, repo = WORLD_CLONE, atMs = Date.now
 export async function near({
   x, y, radiusM = PRESENCE_DIALS.near_radius_m, limit = PRESENCE_DIALS.near_cap,
   exclude = [], place = null, dbPath = null, repo = WORLD_CLONE, atMs = Date.now(),
-  walk = null, engine = null,
+  walk = null, engine = null, world = null, where = null,
 } = {}) {
-  const read = await readPresence({ dbPath, repo, atMs, walk, engine });
+  const read = await readPresence({ dbPath, repo, atMs, walk, engine, world, where });
   if (read.error) return { error: read.error, detail: read.detail, residents: [], count: 0 };
 
   const skip = new Set(exclude);
@@ -170,6 +217,7 @@ export async function near({
     residents.push({
       handle: r.handle,
       distance_m: r.distance_m,
+      source: r.source,   // walk-derived or ground-derived — how we know, never how it renders
       // The town's OWN vocabulary for direction and distance, imported from the
       // world's engine: a resident and a hill are described the same way, in the
       // same words, because presence is a thing you see and not a new sense.
@@ -207,8 +255,9 @@ export async function near({
  */
 export async function everyone({
   place = null, dbPath = null, repo = WORLD_CLONE, atMs = Date.now(), walk = null, engine = null,
+  world = null, where = null,
 } = {}) {
-  const read = await readPresence({ dbPath, repo, atMs, walk, engine });
+  const read = await readPresence({ dbPath, repo, atMs, walk, engine, world, where });
   if (read.error) return { error: read.error, detail: read.detail, residents: [], count: 0 };
 
   const residents = [];
@@ -216,6 +265,7 @@ export async function everyone({
     residents.push({
       handle: r.handle,
       at: { x: Math.round(r.x), y: Math.round(r.y) },
+      source: r.source,
       standing: r.standing, moving: r.moving, aboard: r.aboard,
       ...(r.moving ? { remaining_m: Math.round(r.remaining_m ?? 0), eta_crossings: r.eta_crossings } : {}),
       ...(place ? { place: await place({ x: r.x, y: r.y, aboard: r.aboard, moving: r.moving }) } : {}),

@@ -43,6 +43,15 @@ put("WORLD/world-state.json", JSON.stringify({
     id: "the-town/let-there-be-light", by: "the-town", household: "the-town",
     kind: "sited", tier: "constitution", at: { x: 0, y: 0 }, extent: { w: 1000, h: 1000 },
     body: "the public frame",
+  }, {
+    // A parcel with something sited on it — the shape issue #7 §5 bounced on.
+    id: "finn/the-still-reach-parcel", by: "finn", household: "finn",
+    kind: "parcel", tier: "market", at: { x: 200, y: 300 }, extent: { w: 25, h: 25 },
+    body: "the ground the Still Reach stands on",
+  }, {
+    id: "finn/the-porch", by: "finn", household: "finn",
+    kind: "sited", tier: "market", at: { x: 204, y: 300 }, extent: { w: 3, h: 2 },
+    body: "a porch faces east",
   }],
 }));
 put("seeding/manifest.json", JSON.stringify({ homes: [] }));
@@ -85,6 +94,19 @@ export function positionAt(departure) {
 }
 `);
 put("tools/water.mjs", "export function crossingsOnSegment() { return []; }\n");
+// Enough geometry for the walk door to ask "what is sited on this parcel's
+// ground" — the same two predicates the world's own module exports.
+put("tools/geometry.mjs", `
+export const rect = (mk) => ({ x: mk.at?.x ?? 0, y: mk.at?.y ?? 0, w: mk.extent?.w ?? 1, h: mk.extent?.h ?? 1 });
+export function pointInRect(px, py, r) { return px >= r.x - r.w / 2 && px <= r.x + r.w / 2 && py >= r.y - r.h / 2 && py <= r.y + r.h / 2; }
+export function overlapArea(a, b) {
+  const dx = Math.min(a.x + a.w / 2, b.x + b.w / 2) - Math.max(a.x - a.w / 2, b.x - b.w / 2);
+  const dy = Math.min(a.y + a.h / 2, b.y + b.h / 2) - Math.max(a.y - a.h / 2, b.y - b.h / 2);
+  return dx > 0 && dy > 0 ? dx * dy : 0;
+}
+export const contains = (outer, inner) => overlapArea(outer, inner) >= 0.99 * inner.w * inner.h;
+export const marksContain = (outer, inner) => contains(rect(outer), rect(inner));
+`);
 put("tools/marks-fold.mjs", `
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
@@ -286,6 +308,21 @@ test("the walk lane takes no lease and still appends the public ledger on main",
   const after = poolStats(repo);
   assert.equal(after.leases, before.leases, "a shared-ledger write never enters the pool");
   assert.equal(after.created, before.created);
+});
+
+// ── issue #7 §5: the parcel refusal, on the real walk path ──────────────────
+
+test("walking to a parcel bounces with a parcel's own hint, naming what stands on it", async () => {
+  await assert.rejects(
+    () => walkViaOffice(repo, { handle: "alpha", mark_id: "finn/the-still-reach-parcel" }, houseA),
+    (e) => {
+      assert.equal(e.code, 422);
+      assert.match(e.defect, /is a parcel — ground held on the record/);
+      assert.match(e.hint, /finn\/the-porch/, "the recovery is a sited mark inside, and the door names it");
+      assert.doesNotMatch(e.hint, /predicated and naming/,
+        "the hint explained a different kind of mark than the one that bounced");
+      return true;
+    });
 });
 
 // ── the rollback switch ──────────────────────────────────────────────────────
