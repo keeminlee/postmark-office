@@ -56,5 +56,13 @@ trap 'rm -rf "$SNAP"' EXIT
 # ── outside the lock: derive from the frozen snapshot (however long) ─────────
 node src/hydrate.mjs --town "$SNAP/town" --db office.db.new
 mv -f office.db.new office.db
+# world.db rides the same tick (dial 8: hydrate on every main-advance; the
+# public clock stays the crossing). origin/main, never HEAD — the pen parks
+# this clone on draft branches, and a draft-stamped store can never be
+# eligible. Non-fatal like the mint: the tick's real job is never held
+# hostage, and a stale-but-good world.db beats no world.db.
+( node src/world-hydrate.mjs --world "$WORLD_CLONE" --ref origin/main --db world.db.new \
+    && mv -f world.db.new world.db ) \
+  || echo "[office-tick] world hydrate FAILED (non-fatal) — world.db stays at its last good build" >&2
 node deploy/publish-windows.mjs --town "$SNAP/town" --out /var/www/postmark-panes/live
 sudo systemctl restart postmark-office
