@@ -183,6 +183,11 @@ export function doorstep(db, handle, asOf) {
     .sort((a, b) => b.joined.localeCompare(a.joined) || a.handle.localeCompare(b.handle))
     .slice(0, 5);
   return { handle, as_of: asOf, inbox, awaiting_reply: awaiting,
+    // The two-clocks disclosure (Liv's find, Keemin-ruled 2026-08-10: disclose,
+    // don't reconcile). This surface reads merge-time truth; the ledger reads
+    // delivery. Both honest, different questions — the reader deserves to know
+    // which one is answering.
+    clocks: "this doorstep reads the merge clock: a reply counts the moment it lands in the town's history, up to a crossing (~12h) before the mail-ledger records its delivery. Both clocks are honest; they answer different questions with one noun.",
     stamps: stampsFor(db, handle),
     bulletin: bulletinList(db),
     pending_outbox: one("SELECT COUNT(*) FROM letters WHERE from_h = ? AND box = 'outbox'", handle),
@@ -202,7 +207,7 @@ export function doorstep(db, handle, asOf) {
       : null,
     prs: null,
     prs_note: "PR states live on the static doorstep bundle's one GitHub-coupled field; the office index is deterministic per checkout and never calls GitHub — see postmark.town/data/doorstep/",
-    doorstep_version: "office-v0.4 (window-state continuity; prs stays on the static bundle surface)" };
+    doorstep_version: "office-v0.5 (the two-clocks disclosure: this surface names the clock it reads)" };
 }
 
 export function stampsRoster(db, meta) {
