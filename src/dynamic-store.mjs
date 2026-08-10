@@ -401,9 +401,14 @@ export function dynamicHealth({ repo = WORLD_CLONE } = {}) {
       // STAGE D. `movements` and the freeze stamp ride the health surface
       // together on purpose: an operator's first question after a cutover is
       // "is the new pen actually receiving anything", and the answer is only
-      // legible beside the instant the old one stopped.
-      movements: one("SELECT COUNT(*) c FROM movements").c,
-      movements_latest: one("SELECT MAX(at) a FROM movements").a ?? null,
+      // legible beside the instant the old one stopped. Feature-detected: a
+      // read-only open of a pre-D store cannot create the table, and flag-off
+      // must never require era-2 schema (the byte-identity gate caught exactly
+      // this — the whole stats block died on the missing table).
+      ...(one("SELECT name n FROM sqlite_master WHERE type='table' AND name='movements'")
+        ? { movements: one("SELECT COUNT(*) c FROM movements").c,
+            movements_latest: one("SELECT MAX(at) a FROM movements").a ?? null }
+        : { movements: null, movements_latest: null }),
       ledger_frozen_at: getMeta(db, "ledger_frozen_at"),
       emissions_total: one("SELECT COUNT(*) c FROM emissions").c,
       emissions_present: one("SELECT COUNT(*) c FROM emissions WHERE born_at <= ? AND ttl_expires_at > ?", now, now).c,
