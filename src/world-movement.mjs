@@ -1,0 +1,383 @@
+// world-movement.mjs — STAGE D, the movement cutover. All of it behind
+// `WORLD_MOVEMENT_V2=1`; with the flag off nothing in this file runs and every
+// door answers byte-for-byte what it answered before.
+//
+// Three sentences from the proposal become code here, and each one replaces a
+// derivation the office had been doing for itself:
+//
+//   1. A CARRIER'S POSITION IS f(TIMETABLE, CLOCK). Not a walk-ledger line that
+//      the pen files on her behalf at cast-off. `tools/vessel.mjs` has held this
+//      arithmetic since 2026-08-07 and the office never consumed it — it read
+//      her sailing line out of the ledger like a resident's and compared
+//      passengers against it field by field (`ridesTheVessel`). That comparison
+//      is the line-mirroring being retired: true only for as long as the pen
+//      keeps filing passengers with byte-identical records, which is a
+//      coincidence of the writer, not a fact about the world.
+//
+//   2. RIDING IS A FRAME, NOT A DECLARATION (ruled 2026-08-10, and it REPLACES
+//      this file's first answer). An earlier build asked residents to say "I am
+//      aboard" and validated the claim against where they stood at the cast-off
+//      instant. The frame law deletes all of it: your frame is the deepest
+//      carrier you are within, crossing the boundary is the consent, and there
+//      is no cast-off instant to be present at — you are carried if your frame
+//      is the carrier when it moves. The machinery lives in `world-frames.mjs`;
+//      this file is where the doors reach it.
+//
+//   3. AN EMISSION RIDES ITS SOURCE. A voice's frame is its speaker; a speaker's
+//      frame may be a carrier; FRAMES COMPOSE. A shared deck is one room by
+//      construction — see `heardFromV2`, and the INTERIM block in voices.mjs it
+//      supersedes. This generalized for free when attachments became frames,
+//      which is the sign the law was the right size.
+//
+// THE ENGINE COMES FROM A REF, NOT THE WORKING TREE. Same discipline (and the
+// same helper) as `dynamic-entities.mjs`: the world clone's checkout belongs to
+// the write pen and routinely sits on a household draft branch, so importing
+// movement arithmetic from the tree would mean the office computed where the
+// boat is from whatever the last writer left behind.
+
+import { existsSync } from "node:fs";
+
+import { WORLD_CLONE } from "./world-store.mjs";
+import { movementV2Enabled, openDynamic, dynamicDbPath } from "./dynamic-store.mjs";
+import { readMovements, VESSEL_HANDLE, worldToolModule } from "./dynamic-entities.mjs";
+import { boundariesOnRoad, carriersFrom, carriersWithDisclosure, carrierStateAt, foldFrames, gunwaleWarning, inRect } from "./world-frames.mjs";
+
+// The flag is read from the environment on every call and never latched at
+// import — the discipline `world-serve.mjs` and `dynamic-store.mjs` already use,
+// for the same reason: a test flips it between cases, and an operator flipping
+// it is restarting the office anyway. It is DEFINED in `dynamic-store.mjs`
+// (beside the store it governs, so the entity deriver can read it without a
+// cycle) and re-exported here, where callers look for it.
+export { movementV2Enabled };
+export { carriersFrom, carriersWithDisclosure, inRect };
+
+// ── the service, from the world's own tools ──────────────────────────────────
+
+// Keyed on the marks ARRAY, not on a ref string: `world.mjs` already caches the
+// assembled world per ref+sha and hands us the same array object until it
+// rebuilds, so this is exactly as fresh as the world it was derived from and
+// costs nothing to invalidate. A WeakMap because a retired world should be
+// collectable with the service that was folded out of it.
+const _services = new WeakMap();
+
+/**
+ * The vessel service the world currently runs, derived from the FOLD, plus the
+ * carriers this world declares.
+ *
+ * `servicesFromFold` collects errors rather than throwing, so one malformed
+ * schedule cannot blind the office to a good one — and a world with no timetable
+ * mark at all is a legitimate world (every fixture in the test suite is one), so
+ * the answer is `null` with the reason attached, never an exception.
+ */
+export async function vesselServiceFrom(worldState, { repo = WORLD_CLONE, vesselHandle = VESSEL_HANDLE } = {}) {
+  const marks = worldState?.marks ?? null;
+  if (!Array.isArray(marks)) return { service: null, carriers: [], errors: [], reason: "no folded marks to read a timetable from" };
+  const cached = _services.get(marks);
+  if (cached) return cached;
+
+  let out;
+  try {
+    // `vessel.mjs` is pure and takes the instant in; the CLOCK it converts with
+    // lives in `walk.mjs` and vessel does not re-export it. One motion law in
+    // the world, so one place the wall clock becomes a fractional crossing —
+    // this module borrows it rather than restating the epoch or the period.
+    const [vesselMod, walkMod] = await Promise.all([
+      worldToolModule("vessel.mjs", { repo }),
+      worldToolModule("walk.mjs", { repo }),
+    ]);
+    const mod = Object.assign(Object.create(vesselMod), { fractionalCrossing: walkMod.fractionalCrossing });
+    const { services, errors } = vesselMod.servicesFromFold({ marks });
+    const service = services.find((s) => s.vessel.handle === vesselHandle) ?? services[0] ?? null;
+    const { carriers, source: carrierSource, disclosed } = carriersWithDisclosure(worldState);
+    out = { service, carriers, carrierSource, disclosed, errors, mod, walk: walkMod, reason: service ? null : "no mark in this world carries `mechanic: timetable`" };
+  } catch (e) {
+    // A world clone that cannot hand over `vessel.mjs` is an office that must
+    // still answer. The flag-on path falls back to the flag-off derivation and
+    // says why, rather than refusing to tell anyone where they are.
+    out = { service: null, carriers: [], carrierSource: "none", disclosed: [], errors: [{ mark: "(engine)", error: String(e?.message ?? e).slice(0, 200) }], mod: null, walk: null, reason: "the world's tools/vessel.mjs could not be read at a ref" };
+  }
+  _services.set(marks, out);
+  return out;
+}
+
+/** Drop the memoized services — for tests that rebuild a world in place. */
+export function resetServiceCache() { /* WeakMap: entries die with their marks array */ }
+
+/**
+ * A carrier-state reader bound to one world and one clock source, memoized.
+ *
+ * The fold asks for a carrier's position many times over one derivation (once
+ * per record, plus the provenance comparison), and every ask is the same pure
+ * arithmetic over the same schedule. Memoizing on (carrier, instant) makes a
+ * fold over forty records cost a handful of evaluations instead of hundreds.
+ */
+export function carrierReader(worldState, { repo = WORLD_CLONE, service, mod }) {
+  const seen = new Map();
+  return async (carrier, atMs) => {
+    const k = `${carrier.id}|${atMs}`;
+    if (seen.has(k)) return seen.get(k);
+    const st = await carrierStateAt(carrier, worldState, atMs, { repo, service, mod });
+    seen.set(k, st);
+    return st;
+  };
+}
+
+// ── where a carrier is ───────────────────────────────────────────────────────
+
+/**
+ * The vessel's position at an instant: position = f(timetable, clock).
+ *
+ * Returns the shape the standpoint speaks — `{ x, y, placed, moving, berthed,
+ * atStop, sailing }` — or null when this world runs no service. Nothing about
+ * her position is stored, read from a ledger, or written; two clones asked the
+ * same instant answer the same coordinates.
+ */
+export async function vesselPositionAt(worldState, atMs = Date.now(), { repo = WORLD_CLONE } = {}) {
+  const { service, mod } = await vesselServiceFrom(worldState, { repo });
+  if (!service || !mod) return null;
+  const v = mod.vesselPositionAt(service, mod.fractionalCrossing(atMs));
+  if (!v || !Number.isFinite(v.x)) return null;
+  return {
+    x: v.x, y: v.y, placed: true,
+    source: "timetable",
+    moving: !v.berthed,
+    berthed: Boolean(v.berthed),
+    atStop: v.atStop ?? null,
+    sailing: v.sailing ?? null,
+    service,
+  };
+}
+
+// ── the store's own movement record ──────────────────────────────────────────
+
+/**
+ * Every movement this entity has declared into the STORE, oldest first, in the
+ * shape `walk.mjs` and `vessel.mjs` read.
+ *
+ * Never throws, for the reason every store read here does not: an unopenable
+ * store must not be able to unplace a resident whose ledger line is sitting
+ * right there in the world repo.
+ */
+export function storedRecordsFor(handle, { db = null, dbPath = null, atMs = Date.now() } = {}) {
+  const path = dbPath ?? dynamicDbPath();
+  if (!db && !existsSync(path)) return [];
+  let h = db, own = false;
+  try {
+    if (!h) { h = openDynamic(path, { readOnly: true }); own = true; }
+    const rows = readMovements(h, { until: atMs }).filter((r) => r.actor === handle);
+    if (own) h.close();
+    return rows.map((r) => {
+      const p = JSON.parse(r.payload);
+      return {
+        iso: r.at, handle,
+        from: p.from, toward: p.toward, at: p.crossing,
+        targetExtent: p.within ?? null, targetMarkId: p.to ?? null, pace: p.pace ?? null,
+        source: "store",
+      };
+    });
+  } catch {
+    if (own && h) { try { h.close(); } catch { /* already gone */ } }
+    return [];
+  }
+}
+
+/** The single governing record — the last one. Kept for surfaces that want only that. */
+export function storedDepartureFor(handle, opts = {}) {
+  return storedRecordsFor(handle, opts).at(-1) ?? null;
+}
+
+/**
+ * One entity's records across BOTH eras, oldest first.
+ *
+ * The frozen ledger is the founding era and the store is era two; ordering by
+ * instant with the store winning a tie is what lets the seam be a change of pen
+ * rather than a change of meaning. `ledgerRecords` is injected because the
+ * office already owns three ways to read the walk record and this module must
+ * not become a fourth.
+ */
+export function recordsAcrossEras(ledgerRecords = [], storeRecords = []) {
+  return [...ledgerRecords.map((r) => ({ ...r, era: "ledger" })), ...storeRecords.map((r) => ({ ...r, era: "store" }))]
+    .sort((a, b) => {
+      const ta = Date.parse(a.iso), tb = Date.parse(b.iso);
+      if (ta !== tb) return ta - tb;
+      return a.era === b.era ? 0 : (a.era === "ledger" ? -1 : 1);
+    });
+}
+
+// ── the standpoint, under the frame law ──────────────────────────────────────
+
+/**
+ * Where an entity stands, with carriers running and frames composing.
+ *
+ *   1. A CARRIER answers from its own mechanic — the timetable, never a ledger.
+ *   2. EVERYONE ELSE is the frame fold over their own movement records: the
+ *      frame they are in, their offset in it, and the composed world position.
+ *
+ * There is no third case and no floor beneath it, which is the shape of the
+ * change: the ceremony needed a fallback because a declaration could be absent,
+ * and a frame cannot be — the world is the default.
+ *
+ * `recordsOf(handle)` is injected. Returns null when the flag's machinery cannot
+ * answer (no carrier in this world, no engine), which is the caller's signal to
+ * use the derivation it has always used.
+ */
+export async function movementStandpoint(handle, worldState, {
+  repo = WORLD_CLONE, atMs = Date.now(), recordsOf = null, db = null, dbPath = null,
+} = {}) {
+  const { service, mod, carriers } = await vesselServiceFrom(worldState, { repo });
+  if (!service || !mod) return null;
+  const carrierAt = carrierReader(worldState, { repo, service, mod });
+
+  if (handle === service.vessel.handle) {
+    const v = mod.vesselPositionAt(service, mod.fractionalCrossing(atMs));
+    if (!v) return null;
+    return {
+      handle, x: v.x, y: v.y, placed: true, source: "timetable",
+      moving: !v.berthed, remaining_m: 0,
+      aboard: false, frame: null, provenance: "timetable",
+      narration: v.berthed ? `berthed at ${v.atStop}` : "under way on her timetable",
+      mark_id: v.atStop ?? null, vessel: true,
+    };
+  }
+
+  const ledgerRecords = recordsOf ? (await recordsOf(handle)) ?? [] : [];
+  const storeRecords = storedRecordsFor(handle, { db, dbPath, atMs });
+  const records = recordsAcrossEras(ledgerRecords, storeRecords);
+  if (!records.length) return null;
+
+  const walk = (await vesselServiceFrom(worldState, { repo })).walk;
+  const fold = await foldFrames(records, { carriers, carrierAt, walk, atMs });
+  if (!fold.world) return null;
+
+  // A leg still under way is still under way — the frame law governs WHERE you
+  // are, not whether you have got there. The world's own `positionAt` owns that,
+  // and asking it here keeps one arithmetic for the road.
+  const last = records.at(-1);
+  const own = walk.positionAt(last, walk.fractionalCrossing(atMs));
+  const moving = own?.arrived === false;
+
+  const inFrame = Boolean(fold.frame);
+  return {
+    handle,
+    // Mid-leg the road owns the position; arrived, the frame does. Both are the
+    // same function of the same record — they differ only in whether the leg is
+    // finished, which is exactly what `arrived` means.
+    x: moving ? own.x : fold.world.x,
+    y: moving ? own.y : fold.world.y,
+    placed: true,
+    source: inFrame ? "frame" : "walk",
+    moving,
+    remaining_m: moving ? own.remainingM : 0,
+    aboard: inFrame,
+    frame: fold.frame,
+    frame_offset: inFrame ? fold.local : null,
+    provenance: moving ? "walked" : fold.provenance,
+    transitions: fold.transitions,
+    narration: inFrame
+      ? `in ${fold.frame}'s frame${fold.provenance === "carried" ? ", carried" : ""}`
+      : (moving ? "the road — your walk in progress" : null),
+    mark_id: last.targetMarkId ?? null,
+  };
+}
+
+// ── hearing, through the frame chain ─────────────────────────────────────────
+
+/**
+ * Where a voice is heard FROM.
+ *
+ * An emission's frame is its source; frames compose (voice → speaker → carrier).
+ * The interim rule in `voices.mjs` reads a boolean the speaker's standpoint set
+ * (`v.aboard`) and relocates that voice to the vessel; this reads the SPEAKER'S
+ * FRAME at the instant they spoke and relocates through it.
+ *
+ * The difference shows the day a second thing moves. `v.aboard` can only ever
+ * mean "the Post Office"; a frame names its carrier, so a voice spoken on a cart
+ * rides the cart with no code at all. That is why this supersedes rather than
+ * wraps — and note that it needed no change when attachments became frames,
+ * because it was already asking the right question.
+ *
+ * Returns `{ x, y, frame }` — the point to hear it from — or null, meaning
+ * "heard where it was spoken", the ordinary case for everyone ashore.
+ */
+export async function heardFromV2(voice, worldState, { repo = WORLD_CLONE, atMs = Date.now(), db = null, dbPath = null, recordsOf = null } = {}) {
+  const { service, mod, carriers } = await vesselServiceFrom(worldState, { repo });
+  if (!service || !mod || !carriers.length) return null;
+  const spokenMs = Number(voice?.at);
+  if (!Number.isFinite(spokenMs)) return null;
+  const carrierAt = carrierReader(worldState, { repo, service, mod });
+
+  // WHICH FRAME THE SPEAKER WAS IN WHEN THEY SPOKE — not now. A voice records
+  // where it happened; the question is what it was riding at that instant.
+  const ledgerRecords = recordsOf ? (await recordsOf(voice.handle)) ?? [] : [];
+  const storeRecords = storedRecordsFor(voice.handle, { db, dbPath, atMs: spokenMs });
+  const records = recordsAcrossEras(ledgerRecords, storeRecords).filter((r) => Date.parse(r.iso) <= spokenMs);
+
+  let frame = null, local = null;
+  if (records.length) {
+    const walk = (await vesselServiceFrom(worldState, { repo })).walk;
+    const fold = await foldFrames(records, { carriers, carrierAt, walk, atMs: spokenMs });
+    frame = fold.frameCarrier; local = fold.local;
+  }
+
+  // THE POSITION FLOOR. A voice spoken from inside a carrier's footprint while
+  // she was under way was spoken ON HER, whatever the records say — the
+  // coordinates in the log are the fact, and a record the office cannot read
+  // must not silently move a conversation off the deck it happened on.
+  if (!frame) {
+    for (const c of carriers) {
+      const st = await carrierAt(c, spokenMs);
+      if (st && st.moving && inRect({ x: voice.x, y: voice.y }, st.footprint)) {
+        frame = c;
+        local = { x: voice.x - st.at.x, y: voice.y - st.at.y };
+        break;
+      }
+    }
+  }
+  if (!frame) return null;
+
+  const now = await carrierAt(frame, atMs);
+  if (!now) return null;
+  return { x: now.at.x + (local?.x ?? 0), y: now.at.y + (local?.y ?? 0), frame: frame.id };
+}
+
+// ── the walk answer's boundary terms ─────────────────────────────────────────
+
+/**
+ * What a proposed leg crosses, and what binds there — for the walk answer,
+ * before the step. Plus the gunwale warning when the step leaves a moving
+ * carrier. Both are DISCLOSURE, never refusal: v0 water does not block.
+ */
+export async function roadTerms({ handle, from, toward, worldState, repo = WORLD_CLONE, atMs = Date.now(), recordsOf = null, db = null, dbPath = null }) {
+  const { service, mod, carriers } = await vesselServiceFrom(worldState, { repo });
+  if (!service || !mod || !carriers.length) return null;
+  const carrierAt = carrierReader(worldState, { repo, service, mod });
+
+  const here = await movementStandpoint(handle, worldState, { repo, atMs, recordsOf, db, dbPath });
+  const frameCarrier = here?.frame ? carriers.find((c) => c.id === here.frame) ?? null : null;
+
+  const crossings = await boundariesOnRoad(from, toward, carriers, atMs, { carrierAt, mod, service });
+  const warning = await gunwaleWarning(frameCarrier, toward, atMs, { carrierAt });
+  if (!crossings.length && !warning) return null;
+  return { crosses: crossings, ...(warning ? { leaving: warning } : {}) };
+}
+
+// ── the operator's surface ───────────────────────────────────────────────────
+
+export async function movementHealth(worldState, { repo = WORLD_CLONE, atMs = Date.now() } = {}) {
+  const { service, carriers, errors, reason } = await vesselServiceFrom(worldState, { repo });
+  const v = service ? await vesselPositionAt(worldState, atMs, { repo }) : null;
+  return {
+    enabled: movementV2Enabled(),
+    flags: { WORLD_MOVEMENT_V2: process.env.WORLD_MOVEMENT_V2 ?? null },
+    carriers: (carriers ?? []).map((c) => ({ id: c.id, mobility: c.mobility, class: c.className, declared_by: c.declaredBy })),
+    carrier_source: (await vesselServiceFrom(worldState, { repo })).carrierSource ?? null,
+    disclosed: (await vesselServiceFrom(worldState, { repo })).disclosed ?? [],
+    service: service
+      ? { mark: service.markId, vessel: service.vessel.markId, pace_km_per_crossing: service.pace, stops: service.stops.map((s) => s.markId) }
+      : null,
+    service_absent_reason: reason ?? null,
+    schedule_errors: errors ?? [],
+    vessel_now: v ? { x: v.x, y: v.y, berthed: v.berthed, at_stop: v.atStop } : null,
+    evaluated_at: new Date(atMs).toISOString(),
+  };
+}

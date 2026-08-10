@@ -10,6 +10,13 @@ node_modules/
 .env
 office-keys.json
 town-clone/
+# the world clone the box actually serves from: `WORLD_CLONE`, else
+# `office/world-clone`, else `../postmark-world` (src/world.mjs). Its sibling
+# `town-clone/` has been ignored since the beginning and this one never was —
+# so on the box, and in any dev worktree that reaches its clone through a link,
+# an entire second repository sits untracked in `git status` waiting to be
+# swept into a commit by `git add -A`.
+world-clone/
 world-clone-pool/
 draft-locks/
 server.log
@@ -21,3 +28,4 @@ world-shadow-diff.jsonl*
 # the world store's window: regenerated at the end of every hydration, ~850 KiB
 # each, and rebuildable from world.db at any moment
 *.gexf
+.probe/

@@ -34,11 +34,13 @@ import { createVoices, EARSHOT_M } from "./voices.mjs"; // earshot: speech at a 
 import { householdOf } from "./households.mjs"; // the human speaker's label wears the town's name, never the login
 import { householdLockPath, poolEnabled, pushDraftBranch, withDraftLease } from "./world-pool.mjs";
 import { cannotAnswer, pointAnswerable, servedRead, storeEpoch, storeShadowEnabled } from "./world-serve.mjs"; // stage 1: published-main reads from world.db, behind a flag
-import { emissionsEnabled } from "./dynamic-store.mjs"; // stage 2: the dynamic layer's flag
+import { emissionsEnabled, openDynamic } from "./dynamic-store.mjs"; // stage 2: the dynamic layer's flag
+import { declareMovement } from "./dynamic-entities.mjs"; // stage D: the pen after the ledger's freeze
 import { emissionFromVoice } from "./dynamic-emissions.mjs"; // stage 2: speech also becomes an emission instance
 import { VESSEL_HANDLE, ridesTheVessel } from "./dynamic-entities.mjs"; // the aboard test, one home for two readers
+import { carriersFrom, carriersWithDisclosure, carrierReader, heardFromV2, inRect, movementStandpoint, movementV2Enabled, recordsAcrossEras, roadTerms, storedRecordsFor, vesselPositionAt as vesselFromTimetable, vesselServiceFrom } from "./world-movement.mjs"; // stage D: carriers carry, frames compose
 import { byBand, presenceEnabled, presentNear, near as presenceNear, everyone as presenceEveryone } from "./dynamic-presence.mjs"; // stage 2: residents revealed to each other
-import { everyonePlaced } from "./positions.mjs"; // where is everyone: walk records ∪ parcel households, one derivation
+import { everyonePlaced, withFrames } from "./positions.mjs"; // where is everyone: walk records ∪ parcel households, one derivation — plus Stage D's frame overlay
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..");
@@ -219,10 +221,16 @@ const walkLedgerAtMain = (repo) => readAtRef(repo, mainRef(repo), "WORLD/walk-le
 // 2026-07-30) — and your ground only when you have never walked. This is what
 // retires the camera/body limbo: orient said "home" while the road said
 // otherwise.
+// The sources that mean "derived from a record", as against `parcel`, which
+// means "your ground". Flag-off only `walk` ever occurs, so this set changes
+// nothing; Stage D adds the two the timetable owns, and without naming them here
+// a passenger mid-crossing would be answered with their house.
+const DERIVED_SOURCES = new Set(["walk", "timetable", "attachment"]);
+
 async function standCoords(handle, w) {
   try {
     const here = await residentStandpoint(handle, w);
-    if (here.placed && here.source === "walk") {
+    if (here.placed && DERIVED_SOURCES.has(here.source)) {
       return { x: here.x, y: here.y,
         from: here.moving ? `${here.narration} (${Math.round(here.remaining_m)} m to go)` : "where your walk arrived" };
     }
@@ -251,6 +259,36 @@ export async function residentStandpoint(handle, w = null) {
     const { parseWalkLedger } = await engineImport("walk.mjs");
     ({ departures } = parseWalkLedger(walkLedgerAtMain(WORLD_CLONE)));
   } catch { /* no ledger — ground is still an honest answer */ }
+
+  // ── STAGE D (WORLD_MOVEMENT_V2) ───────────────────────────────────────────
+  // The boat runs on her timetable, and riding her is a declared attachment.
+  // Both answers come from the WORLD's own tools/vessel.mjs, read at a ref —
+  // the office stops mirroring ledger lines to guess who is on the water.
+  //
+  // It is a PREFIX, not a rewrite: `movementStandpoint` returns null whenever
+  // it has nothing to say (no timetable mark in this world, no engine, a
+  // resident who has never walked), and the derivation below — unchanged, and
+  // the only one that runs with the flag off — answers exactly as it always
+  // has. That is what makes flag-off byte-identical rather than merely equal.
+  if (movementV2Enabled()) {
+    try {
+      // THE FOLD WANTS THE HISTORY, not the governing line. A frame is the
+      // running total of every boundary this entity has crossed, so handing it
+      // only the latest record would ask it to guess how someone got where they
+      // are — which is precisely the guess the declaration ceremony was making.
+      const v2 = await movementStandpoint(handle, world_, {
+        repo: WORLD_CLONE,
+        recordsOf: (h) => departures.filter((d) => d.handle === h),
+      });
+      if (v2) return v2;
+    } catch (e) {
+      // A cutover that could take down "where am I" would be a worse bargain
+      // than a slow cutover. The interim derivation is still correct for
+      // everyone ashore, which is almost everyone almost always.
+      console.error(`[world] the movement-v2 standpoint tripped (${String(e?.message ?? e).slice(0, 160)}) — falling back to the walk-ledger derivation`);
+    }
+  }
+
   const here = whereIs(handle, { world: world_, departures });
   if (!here.placed) return { handle, placed: false };
   const p = here.position ?? null;
@@ -264,14 +302,24 @@ export async function residentStandpoint(handle, w = null) {
   };
 }
 
-// A passenger is a walker whose current departure IS the vessel's — same
-// instant, same route, same paced stride (the pen files them together at
-// sailing time; pace ruling 2026-08-06). Telling them "the road" would be
-// true and wrong; they are on the water. The vessel is found by its own
-// ledger line, so this costs one lookup and no new state.
-// The test itself moved to dynamic-entities.mjs, unchanged: the presence layer
-// asks the same question of the same records, and one rule this subtle must not
-// be allowed two copies.
+// RETIRING — superseded by `src/world-movement.mjs` (Stage D, WORLD_MOVEMENT_V2).
+// With the flag on this function is not reached: `residentStandpoint` returns
+// above it, from the world's own tools/vessel.mjs. It stays live for flag-off
+// and is deleted with the flag, not before.
+//
+// WHAT IT DOES AND WHY IT CANNOT STAY. A passenger is guessed to be a walker
+// whose current departure IS the vessel's — same instant, same route, same paced
+// stride, because the pen files them together at sailing time. The narration it
+// buys is right, and the guess is right today, and it is still LINE-MIRRORING: a
+// fact about who wrote the records rather than about where anyone is standing.
+// Change how a sailing is filed — one field, one rounding, one passenger boarded
+// a minute late — and every rider silently becomes a walker on the road, with
+// nothing to catch it. Stage D replaces the mirror with the two things it was
+// standing in for: her position from her timetable, and riding from a declared
+// attachment validated by presence.
+// The test itself lives in dynamic-entities.mjs (`ridesTheVessel`), because the
+// presence layer asks the same question of the same records, and one rule this
+// subtle must not be allowed two copies.
 function aboardOrRoad(handle, departures) {
   try {
     if (handle !== VESSEL_HANDLE) {
@@ -444,6 +492,31 @@ const voices = createVoices({
     const here = await residentStandpoint(VESSEL_HANDLE).catch(() => null);
     return here?.placed ? { x: here.x, y: here.y } : null;
   },
+  // HEARING GOES STRUCTURAL (Stage D, WORLD_MOVEMENT_V2). The point a voice is
+  // heard from, derived through the attachment its source rides — which
+  // supersedes `vesselAt` and the aboard-flag special case beside it. The
+  // predicate below is what decides which rule runs, asked per call; with the
+  // flag off `voices.mjs` runs the INTERIM deck rule unchanged and this hook is
+  // never called.
+  //
+  // The speaker's own position at the instant they spoke is what validates their
+  // declaration, and it comes from the same standpoint every other door uses —
+  // so a voice cannot be relocated onto a deck its speaker was never standing on.
+  structuralHearing: () => movementV2Enabled(),
+  heardFrom: async (voice, t) => {
+    try {
+      return await heardFromV2(voice, await world(null), {
+        repo: WORLD_CLONE, atMs: t,
+        recordsOf: async (h) => {
+          try {
+            const { parseWalkLedger } = await engineImport("walk.mjs");
+            const { departures } = parseWalkLedger(walkLedgerAtMain(WORLD_CLONE));
+            return departures.filter((d) => d.handle === h);
+          } catch { return []; }
+        },
+      });
+    } catch { return null; }
+  },
 });
 
 export async function worldSay(args = {}, key = null) {
@@ -556,7 +629,7 @@ const NOTICES = [{
   title: "THE RETURN — Sunday 12:00 UTC, from Porch Hill",
   text: "The Post Office now moors at PORCH HILL — the welcome landing on the mountain's southeast foot, the ground vermillion built for arrivals. She sails home SUNDAY AT NOON UTC and takes whoever is at the landing. If you have walked anywhere tonight, be at Porch Hill (walk to vermillion/porch-hill) before noon to ride; if you have not walked since the crossing, you are carried aboard from where you stand — no steps needed. Miss her, and the mountain keeps you — welcome, and reachable by mail — until her next run. — the office",
 }];
-const activeNotices = (t = Date.now()) =>
+export const activeNotices = (t = Date.now()) =>
   NOTICES.filter((n) => t < n.until).map(({ until, area, ...pub }) => pub);
 export const noticeBoardAt = (x, y, t = Date.now(), notices = NOTICES) => {
   const hits = notices.filter((n) => t < n.until &&
@@ -1187,7 +1260,7 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
   const mine = currentDeparture(departures, who);
   const derived = mine ? positionAt(mine, at) : null;
   const home = await homeCoords(who, w);
-  const from = derived ? { x: derived.x, y: derived.y } : { x: home.x, y: home.y };
+  let from = derived ? { x: derived.x, y: derived.y } : { x: home.x, y: home.y };
 
   // NOBODY JUMPS OFF THE BOAT (Keemin, 2026-08-08 mid-crossing — rook declared
   // a walk 6.6 km out and stepped onto open water toward town): a walker whose
@@ -1198,6 +1271,12 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
   if (standing?.aboard && standing.moving)
     throw bounce(409, "you are aboard the-post-office, underway",
       "the deck holds until the landing — she sets you down ashore and walks resume there. The whole boat is in earshot meanwhile: world_say carries across the deck.");
+
+  // STAGE D: a new leg starts from where the STANDPOINT says you are, which now
+  // spans both eras — the frozen ledger for anyone who has not moved since the
+  // seam, the store for anyone who has. Flag-off this line does not run and
+  // `from` is the ledger's own derivation, unchanged.
+  if (movementV2Enabled() && standing?.placed) from = { x: standing.x, y: standing.y };
 
   // WHERE TO — ruling 2's order.
   let toward = null, targetExtent = null, targetMarkId = null, targetFrom = "";
@@ -1263,22 +1342,68 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
   // makes arrival mean "the derived point entered the target's ground." It
   // rides the ledger line so a later move/resize cannot rewrite this walk.
   const clean = { handle: who, from, toward, at, targetExtent, targetMarkId };
-  const exec = join(HERE, "walk-exec.mjs");
-  const env = { ...process.env, WORLD_CLONE: worldClone };
-  let out;
-  try {
-    out = await execUnderTownLock(exec, JSON.stringify(clean), env);
-  } catch (e) {
-    if (lockTimedOut(e)) throw bounce(LOCK_BUSY.code, LOCK_BUSY.defect, LOCK_BUSY.hint);
-    throw bounce(500, "the walk pass tripped", String(e.stderr ?? e.message ?? e).slice(0, 300));
+
+  // ── WHERE THE DEPARTURE IS WRITTEN (Stage D, WORLD_MOVEMENT_V2) ───────────
+  //
+  // Everything above this line is unchanged: the same choose-or-bounce, the same
+  // target rulings, the same frozen arrival rect. Only the PEN moves. With the
+  // flag on the departure goes to `dynamic.db/movements` and reaches the world
+  // repo at the next crossing-save as a `STATE/log/` line — which is what lets
+  // the walk ledger be frozen with honor without any door changing its manners.
+  //
+  // Three things follow from the store being the pen, and each is a gain rather
+  // than a compromise: no town lock is taken (a departure no longer contends
+  // with the crossing or the tick), no commit is made on the resident's turn,
+  // and there is no push to be pending. The reply says `ledger: null` and names
+  // the record that did receive it, so nobody reads a missing commit as a
+  // failure.
+  let result;
+  if (movementV2Enabled()) {
+    const store = openDynamic();
+    try {
+      declareMovement(store, {
+        actor: who, from, toward, crossing: at,
+        within: targetExtent, toMark: targetMarkId, declaredBy: who,
+      });
+    } finally { store.close(); }
+    result = { position: positionAt({ from, toward, at, targetExtent, targetMarkId }, at), movement: { record: "dynamic.db/movements", crystallizes: "STATE/log/ at the next crossing-save" } };
+  } else {
+    const exec = join(HERE, "walk-exec.mjs");
+    const env = { ...process.env, WORLD_CLONE: worldClone };
+    let out;
+    try {
+      out = await execUnderTownLock(exec, JSON.stringify(clean), env);
+    } catch (e) {
+      if (lockTimedOut(e)) throw bounce(LOCK_BUSY.code, LOCK_BUSY.defect, LOCK_BUSY.hint);
+      throw bounce(500, "the walk pass tripped", String(e.stderr ?? e.message ?? e).slice(0, 300));
+    }
+    result = JSON.parse(out.trim().split("\n").at(-1));
+    if (result.error) throw bounce(result.error.code ?? 500, result.error.defect, result.error.hint);
   }
-  const result = JSON.parse(out.trim().split("\n").at(-1));
-  if (result.error) throw bounce(result.error.code ?? 500, result.error.defect, result.error.hint);
 
   const legM = result.position.legM;
   // Naming the bridge a permitted leg walked over is how a resident learns the
   // crossings exist at all — the gate above only ever speaks when it refuses.
   const via = skeleton ? crossingsOnSegment(from, toward, skeleton) : [];
+
+  // THE CONTRACT IS SHOWN AT THE BOUNDARY (v2.2 §B). A leg that ends on a
+  // carrier's deck names the carrier and the law that binds there — "her
+  // timetable binds; standing in her frame when she departs means riding" —
+  // and a leg that steps OFF a moving carrier says so before it is taken.
+  // Both are disclosure and neither refuses: the gunwale rule is physics with
+  // a warning (Wright's call), and v0 water does not block.
+  //
+  // It rides the ANSWER rather than a bounce for the same reason the notice
+  // board does: the resident is owed the terms whether or not they would have
+  // changed their mind, and a door that only speaks when it refuses teaches
+  // residents that silence means nothing is there.
+  let terms = null;
+  if (movementV2Enabled()) {
+    terms = await roadTerms({
+      handle: who, from, toward, worldState: w, repo: worldClone,
+      recordsOf: (h) => departures.filter((d) => d.handle === h),
+    }).catch(() => null);
+  }
   return {
     handle: who, from, toward, toward_is: targetFrom, mark_id: targetMarkId,
     departed_at_crossing: at,
@@ -1287,13 +1412,73 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
     eta_crossings: result.position.etaCrossings,
     standing: result.position.standing,
     position: result.position,
-    ledger: { line: result.line, commit: result.commit, pushed: result.pushed },
+    // Provenance in every position sentence (v2.2 §B): walked, carried, or
+    // never moved — the answer always says which derivation produced it.
+    provenance: legM === 0 ? "never-moved" : "walked",
+    ...(terms ? { boundaries: terms } : {}),
+    ledger: result.movement ? null : { line: result.line, commit: result.commit, pushed: result.pushed },
+    ...(result.movement ? { movement: result.movement } : {}),
     note: legM === 0
       ? "a zero-distance departure — you are standing here"
       : via.length
         ? `position derives from this record and the clock; your road crosses water at ${via.join(", ")}`
         : "position derives from this record and the clock; you arrive whether or not anyone is watching",
   };
+}
+
+// STAGE D's half of the walkers door (WORLD_MOVEMENT_V2) — the FRAME MAP.
+//
+// `everyonePlaced` owns who and where (issue #7's one derivation) and
+// `withFrames` owns the composition; all this does is derive the folds those
+// two need, which is the part that requires the engine and the clock.
+//
+// ONE PASS, ONE STORE HANDLE, ONE CARRIER READER. This door is keyless, public,
+// and answers for the whole town at once — seventy residents the morning this
+// was written. An earlier draft asked `residentStandpoint` per walker, which
+// opened the dynamic store twice apiece: a hundred and forty file opens for one
+// public GET. The reader is memoized on (carrier, instant), so the boat's
+// position is evaluated a handful of times for the whole town.
+async function framesByHandle(w, departures, atMs) {
+  const { service, mod, carriers } = await vesselServiceFrom(w, { repo: WORLD_CLONE });
+  if (!service || !mod || !carriers.length) return null;
+  const carrierAt = carrierReader(w, { repo: WORLD_CLONE, service, mod });
+  const walk = (await vesselServiceFrom(w, { repo: WORLD_CLONE })).walk;
+  const { foldFrames } = await import("./world-frames.mjs");
+
+  const byHandle = new Map();
+  for (const d of departures) {
+    if (d.handle === service.vessel.handle) continue;
+    if (!byHandle.has(d.handle)) byHandle.set(d.handle, []);
+    byHandle.get(d.handle).push(d);
+  }
+  const out = new Map();
+  const store = openDynamic();
+  try {
+    for (const [h, ledgerRecords] of byHandle) {
+      const records = recordsAcrossEras(ledgerRecords, storedRecordsFor(h, { db: store, atMs }));
+      const fold = await foldFrames(records, { carriers, carrierAt, walk, atMs });
+      if (fold.frame) out.set(h, fold);
+    }
+  } finally { store.close(); }
+  return out;
+}
+
+/** The walkers list with carriers running: the vessel from her timetable, riders in her frame. */
+async function walkersInFrames(walkers, w, departures, atMs = Date.now()) {
+  const v = await vesselFromTimetable(w, atMs, { repo: WORLD_CLONE });
+  if (!v) return walkers;
+  const handle = v.service.vessel.handle;
+  const framed = await framesByHandle(w, departures, atMs);
+  const rows = withFrames(walkers, framed);
+
+  // THE CARRIER HERSELF is not a walker and never was — her position is
+  // f(timetable, clock). She is added when no record names her at all, which is
+  // what the world looks like the day after the freeze.
+  const asVessel = (r) => ({ ...(r ?? { handle }), handle, x: v.x, y: v.y, source: "timetable",
+    moving: v.moving, toward: null, remaining_m: 0, eta_crossings: 0, mark_id: v.atStop ?? null, provenance: "timetable" });
+  const out = rows.map((r) => (r.handle === handle ? asVessel(r) : r));
+  if (!out.some((r) => r.handle === handle)) out.push(asVessel(null));
+  return out;
 }
 
 // The presence layer's read side (ruling 1): every walker's derived position at
@@ -1322,7 +1507,13 @@ export async function worldWalkers(worldClone, key = null) {
   try {
     const w = await world(key);
     const where = await whereMod();
-    return { at, walkers: everyonePlaced({ world: w, departures, at, where }) };
+    // ONE DERIVATION FOR WHO AND WHERE (issue #7's positions.mjs), then the
+    // frame overlay on top of it. The overlay is applied here rather than
+    // inside `everyonePlaced` because that function is pure by contract and a
+    // frame needs the engine; what it takes is a precomputed map, so the purity
+    // holds and the two derivations still meet in exactly one place.
+    const walkers = everyonePlaced({ world: w, departures, at, where });
+    return { at, walkers: movementV2Enabled() ? await walkersInFrames(walkers, w, departures) : walkers };
   } catch {
     // No world to fold: the walk ledger alone is still an honest answer.
     return { at, walkers: publicWalkers(departures, at) };

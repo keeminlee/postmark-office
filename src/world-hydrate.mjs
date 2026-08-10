@@ -365,6 +365,29 @@ for (const m of marks) {
 // historical geometry is read exactly as the fold would have read it that day.
 // A version row is emitted at a mark's birth and at every commit where at/extent
 // actually changed — a commit that edited only prose creates no version.
+//
+// THE FRAME IS PART OF "AS THE FOLD WOULD HAVE READ IT" (SCHEMA v3, 2026-08-09).
+// `loadMarks` composes a relative tree for us, which is why the nodes table
+// needed no change at all when coordinates went relative. This walk does not go
+// through `loadMarks`: it reads old blobs with `parseRecord`, which hands back
+// the record exactly as it is SPELLED — and on a relative tree that spelling is
+// an offset from the parent's centre. Uncomposed, a hearth room's version row
+// would state its position as (-2, -1) and then correctly report that it
+// disagrees with the tree.
+//
+// So the composition happens here too, per commit, against the ancestor chain AS
+// IT STOOD AT THAT COMMIT — the tense law applied to the frame itself. The
+// migration commit is the instant the numbers changed meaning; a version row on
+// either side of it must be read in its own commit's frame, or the migration
+// reads as 282 marks teleporting.
+//
+// The arithmetic is the world's OWN, imported from the fold at this sha and
+// never reimplemented: plain `+` on doubles invents digits no record holds, and
+// the rows would then disagree with the tree in the sixteenth decimal place. A
+// fold that does not export `fileToWorld` cannot be reading a relative tree —
+// that is the v2 spelling, which needs no composition — so its absence is the
+// feature test, not a version string to keep in step by hand.
+const composesFrames = typeof fold.fileToWorld === "function" && typeof fold.COORDS_FIELD === "string";
 const geometryVersions = [];
 const geometryAnomalies = [];   // things that would make the table WRONG
 const identityDrift = [];       // things that make it INTERESTING: the id this mark wore then
@@ -401,24 +424,99 @@ const identityDrift = [];       // things that make it INTERESTING: the id this 
     }
   }
 
-  // Every blob in one cat-file batch, same reason as the materialiser's.
-  const requests = [];
-  for (const [id, list] of touches) for (const t of list) requests.push({ id, t, spec: `${t.sha}:${t.path}` });
+  // A mark's ancestors at a commit are the directory prefixes of its own path at
+  // that commit — top-down, so composition can accumulate. No alias map is
+  // needed here and using one would be wrong: the frame a record was written
+  // against is the tree AS IT STOOD, and a rename that happened later has not
+  // happened yet from this commit's point of view.
+  const ancestorPathsOf = (path) => {
+    const parts = path.split("/");            // WORLD/marks/<a>/<b>/…/mark.md
+    const out = [];
+    for (let n = 3; n < parts.length - 1; n++) out.push(`${parts.slice(0, n).join("/")}/mark.md`);
+    return out;
+  };
+
+  // Every blob in one cat-file batch, same reason as the materialiser's. Specs
+  // are DEDUPED and read into a spec-keyed map rather than matched positionally:
+  // the ancestor chains overlap heavily (every mark under the root asks for the
+  // root's blob at its own commit), and one shared parent asked for twice would
+  // otherwise desynchronise the whole positional walk.
+  const specs = new Set();
+  const blobOwner = new Map();                // spec -> the mark id that wanted it, for anomaly attribution
+  for (const [id, list] of touches) for (const t of list) {
+    const spec = `${t.sha}:${t.path}`;
+    specs.add(spec);
+    if (!blobOwner.has(spec)) blobOwner.set(spec, id);
+    if (composesFrames) for (const a of ancestorPathsOf(t.path)) specs.add(`${t.sha}:${a}`);
+  }
   const blobs = new Map();
-  if (requests.length) {
-    const outBuf = git(WORLD, ["cat-file", "--batch"], { encoding: "buffer", input: requests.map((r) => r.spec).join("\n") + "\n" });
+  if (specs.size) {
+    const ordered = [...specs];
+    const outBuf = git(WORLD, ["cat-file", "--batch"], { encoding: "buffer", input: ordered.join("\n") + "\n" });
     let off = 0;
-    for (const r of requests) {
+    for (const spec of ordered) {
       const nl = outBuf.indexOf(0x0a, off);
-      if (nl < 0) { note(`cat-file stream ended early at ${r.spec}`); break; }
+      if (nl < 0) { note(`cat-file stream ended early at ${spec}`); break; }
       const header = outBuf.subarray(off, nl).toString("utf8");
-      if (/missing$/.test(header.trim())) { off = nl + 1; geometryAnomalies.push({ mark: r.id, spec: r.spec, problem: "blob missing" }); continue; }
+      // A missing ANCESTOR blob is ordinary — an intermediate directory need not
+      // hold a mark — so only a missing blob somebody's version row depends on
+      // is an anomaly.
+      if (/missing$/.test(header.trim())) {
+        off = nl + 1;
+        if (blobOwner.has(spec)) geometryAnomalies.push({ mark: blobOwner.get(spec), spec, problem: "blob missing" });
+        continue;
+      }
       const size = Number(header.split(" ")[2]);
       if (!Number.isFinite(size)) { note(`cat-file header unparseable: ${header}`); break; }
-      blobs.set(r.spec, outBuf.subarray(nl + 1, nl + 1 + size).toString("utf8"));
+      blobs.set(spec, outBuf.subarray(nl + 1, nl + 1 + size).toString("utf8"));
       off = nl + 1 + size + 1;
     }
   }
+
+  // The record at a spec, parsed once. Ancestor chains overlap, so without this
+  // the root's blob is re-parsed several hundred times.
+  const recCache = new Map();
+  const recAt = (spec) => {
+    if (recCache.has(spec)) return recCache.get(spec);
+    const text = blobs.get(spec);
+    let rec = null;
+    if (text != null) { try { rec = parseRecord(text, spec); } catch { rec = null; } }
+    recCache.set(spec, rec);
+    return rec;
+  };
+
+  const isPointAt = (r) => r?.at && Number.isFinite(r.at.x) && Number.isFinite(r.at.y);
+
+  // The world centre a record at `path` was written against, at commit `sha`,
+  // and whether its tree declared the relative frame. This mirrors the loader's
+  // own walk exactly: the declaration is inherited from wherever it appears
+  // (the root, by law), a mark with no `at:` passes the frame through unchanged
+  // — a predicated mark has no centre — and the frame a mark hands its children
+  // is its own COMPOSED centre, not its file spelling.
+  const frameFor = (sha, path) => {
+    let origin = { ...fold.WORLD_ORIGIN };
+    let relative = false;
+    for (const a of ancestorPathsOf(path)) {
+      const rec = recAt(`${sha}:${a}`);
+      if (!rec) continue;
+      if (rec[fold.COORDS_FIELD] !== undefined) relative = String(rec[fold.COORDS_FIELD]).trim() === fold.COORDS_RELATIVE;
+      if (isPointAt(rec)) origin = relative ? fold.fileToWorld(rec.at, origin) : { x: rec.at.x, y: rec.at.y };
+    }
+    return { origin, relative };
+  };
+
+  // A historical record's WORLD position: composed where its own commit's tree
+  // said the numbers were offsets, taken as written where it did not. The root
+  // declares for itself as well as for everything beneath it, which is why the
+  // record's own `coords:` is consulted after the chain.
+  const worldShapeOf = (rec, t) => {
+    if (!composesFrames || !isPointAt(rec)) return rec;
+    const { origin, relative: inherited } = frameFor(t.sha, t.path);
+    const relative = rec[fold.COORDS_FIELD] !== undefined
+      ? String(rec[fold.COORDS_FIELD]).trim() === fold.COORDS_RELATIVE
+      : inherited;
+    return relative ? { ...rec, at: fold.fileToWorld(rec.at, origin) } : rec;
+  };
 
   const shape = (r) => ({
     at_x: r?.at?.x ?? null, at_y: r?.at?.y ?? null,
@@ -440,7 +538,7 @@ const identityDrift = [];       // things that make it INTERESTING: the id this 
       let rec = null;
       try { rec = parseRecord(text, t.path); }
       catch (e) { geometryAnomalies.push({ mark: id, sha: t.sha, path: t.path, problem: `unparseable at that commit: ${e.message}` }); continue; }
-      const s = shape(rec);
+      const s = shape(worldShapeOf(rec, t));
       if (s.at_x == null && s.at_y == null) continue;           // never had geometry at this commit
       const prev = versions[versions.length - 1];
       if (prev && !changed(prev.shape, s)) continue;             // prose-only edit: no new version

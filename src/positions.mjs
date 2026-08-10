@@ -67,3 +67,40 @@ export function everyonePlaced({ world = null, departures = [], at, where = null
   if (typeof where?.publicResidents !== "function") return [];
   return where.publicResidents(positionRoster({ departures, world }), { world, departures, at });
 }
+
+/**
+ * THE FRAME OVERLAY (Stage D). Everyone whose frame is a carrier reads at the
+ * carrier's position, not at the last place they walked to.
+ *
+ * This lives HERE, beside the union it corrects, for the reason this whole file
+ * exists. A resident aboard the Post Office is a resident whose walk record is
+ * true and whose position is elsewhere — exactly the shape of the split issue #7
+ * was about, one layer up. If the walkers door applied this and the presence
+ * layer did not, `present` would put a passenger back on the quay they left and
+ * somebody would write them a letter opening "you aren't home" all over again.
+ *
+ * PURE, like everything else in this file: `framesByHandle` is a precomputed map
+ * of `{ frame, world, provenance }`, because deriving a frame needs the engine
+ * and the clock and this file takes neither. The caller derives; this composes.
+ *
+ * `aboard` and `provenance` are ADDED rather than folded into `moving`, for the
+ * reason `publicResidents` gives about its own two states: how we know must
+ * never decide what someone looks like. A rider is moving because the water is
+ * moving them, and the answer says which.
+ */
+export function withFrames(rows, framesByHandle = null) {
+  if (!framesByHandle?.size) return rows;
+  return rows.map((r) => {
+    const f = framesByHandle.get(r.handle);
+    if (!f?.frame || !f.world) return r;
+    return {
+      ...r,
+      x: f.world.x, y: f.world.y,
+      aboard: true, frame: f.frame,
+      provenance: f.provenance,
+      // A carried resident is not walking a leg: there is no remainder and no
+      // ETA, because nothing they declared is still in progress.
+      remaining_m: 0, eta_crossings: 0,
+    };
+  });
+}

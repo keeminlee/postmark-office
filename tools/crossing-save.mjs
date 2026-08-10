@@ -62,10 +62,11 @@ import { dirname, join, resolve } from "node:path";
 
 import { penCommit } from "../src/write.mjs";
 import { WORLD_CLONE } from "../src/world-store.mjs";
-import { openDynamic, putMeta, getMeta } from "../src/dynamic-store.mjs";
+import { movementV2Enabled, openDynamic, putMeta, getMeta } from "../src/dynamic-store.mjs";
 import {
   readDepartureEvents, governingAt, entityFromDeparture, byHandle,
-  refreshEntities, readEntities, readAttachments, walkModule,
+  refreshEntities, readEntities, readAttachments, readMovements,
+  mergedDepartureEvents, walkModule,
 } from "../src/dynamic-entities.mjs";
 import { emissionsBetween, pruneEmissions } from "../src/dynamic-emissions.mjs";
 
@@ -220,6 +221,15 @@ async function main() {
   const read = readDepartureEvents({ repo: CLONE });
   if (read.refused) { db.close(); return die(4, read.refused.gate, read.refused.detail); }
 
+  // STAGE D: the walk ledger is frozen with honor and `STATE/log/` becomes the
+  // movement record, so a departure declared after the seam reaches the save
+  // from the store rather than from world.db's hydrated ledger. Both eras go
+  // into ONE ordered list before anything is built, so the log lines, the
+  // snapshot's governing departures and the replay all read one vocabulary and
+  // the seam is invisible to every one of them.
+  const storeMovements = movementV2Enabled() ? readMovements(db, { until: saveMs }) : [];
+  const departureEvents = storeMovements.length ? mergedDepartureEvents(read.events, storeMovements) : read.events;
+
   const attachments = readAttachments(db);
   const allEmissions = emissionsBetween(db, new Date(0).toISOString(), new Date(saveMs).toISOString());
 
@@ -241,7 +251,7 @@ async function main() {
       saves.push(buildSave({
         crossing: prev, boundaryMs: crossingStartMs(prev),
         fromMs: crossingStartMs(prev), toMs: boundaryMs, crossingMs,
-        events: read.events, attachments, emissions: allEmissions, walk,
+        events: departureEvents, attachments, emissions: allEmissions, walk,
         asOfWorld: read.as_of_world,
       }));
     }
@@ -251,7 +261,7 @@ async function main() {
   saves.push(buildSave({
     crossing, boundaryMs,
     fromMs: boundaryMs, toMs: saveMs, crossingMs,
-    events: read.events, attachments, emissions: allEmissions, walk,
+    events: departureEvents, attachments, emissions: allEmissions, walk,
     asOfWorld: read.as_of_world,
   }));
 

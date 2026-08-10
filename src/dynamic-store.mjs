@@ -55,6 +55,14 @@ import { EARSHOT_M, FADE_MS, CLOSE_MS, HEAR_MAX } from "./voices.mjs";
 
 export const emissionsEnabled = () => process.env.WORLD_EMISSIONS === "1";
 
+// STAGE D's switch lives here, beside the store flag it governs, rather than in
+// `world-movement.mjs` where the rest of the cutover lives: the entity deriver
+// has to know whether to read the `movements` table, and reaching up to the
+// movement module for that answer would put a cycle between the store and the
+// thing that reads the store. `world-movement.mjs` re-exports it, so callers
+// still find it under the name that describes what it does.
+export const movementV2Enabled = () => process.env.WORLD_MOVEMENT_V2 === "1";
+
 export const DEFAULT_DYNAMIC_DB = join(OFFICE_ROOT, "dynamic.db");
 export const dynamicDbPath = () => process.env.WORLD_DYNAMIC_DB ?? DEFAULT_DYNAMIC_DB;
 
@@ -65,6 +73,17 @@ export const dynamicDbPath = () => process.env.WORLD_DYNAMIC_DB ?? DEFAULT_DYNAM
 // would be the one way Stage 2 could lose the town's state. A version mismatch
 // refuses instead (see `openDynamic`).
 
+// THE VERSION GUARDS SHAPE, NOT SIZE. It refuses when an existing store's tables
+// mean something different from what this office believes they mean — the one
+// way state nothing else holds could be lost silently. ADDING a table is not
+// that: every column an older office reads still means what it meant, and the
+// DDL below is `IF NOT EXISTS` throughout, so a store predating `movements`
+// simply grows it on the next open. Bumping for an additive change would refuse
+// every live store on the box for no fact in dispute, and an operator who has
+// learned that the version bounces for harmless reasons is an operator who
+// migrates without reading. So Stage D's table lands at version 1, and this
+// paragraph is the rule that says when the number DOES move: a column removed,
+// a column's meaning changed, or a table's rows reinterpreted.
 export const DYNAMIC_SCHEMA_VERSION = "1";
 
 export const DYNAMIC_SCHEMA = `
@@ -102,6 +121,32 @@ export const DYNAMIC_SCHEMA = `
   CREATE INDEX IF NOT EXISTS attachments_entity ON attachments (entity, born_at);
   CREATE INDEX IF NOT EXISTS attachments_target ON attachments (target, born_at);
   CREATE UNIQUE INDEX IF NOT EXISTS attachments_once ON attachments (entity, target, born_at);
+
+  -- MOVEMENTS (store-canon-durable). STAGE D: the movement record, after the
+  -- walk ledger is frozen with honor.
+  --
+  -- The GRAMMAR IS THE LEDGER'S, column for column, and deliberately so: a
+  -- departure is a departure whether it was written in markdown or in SQLite,
+  -- and \`readMovements\` hands these rows back in exactly the shape world.db's
+  -- \`events\` table yields, so \`governingAt\`, \`buildSave\` and every replay read
+  -- one vocabulary from two eras. Latest wins across BOTH — the founding era's
+  -- lines keep governing anyone who has not moved since the seam.
+  --
+  -- \`within_w/h\` is the target's arrival rect FROZEN at departure, the tense
+  -- law's ancestor, never re-resolved from the mark. \`declared_by\` is who said
+  -- it: the office writes nobody's movement but their own.
+  CREATE TABLE IF NOT EXISTS movements (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    actor TEXT, at TEXT,
+    from_x REAL, from_y REAL,
+    toward_x REAL, toward_y REAL,
+    crossing REAL,
+    within_w REAL, within_h REAL,
+    to_mark TEXT, pace REAL,
+    declared_by TEXT, note TEXT
+  );
+  CREATE INDEX IF NOT EXISTS movements_actor ON movements (actor, at);
+  CREATE INDEX IF NOT EXISTS movements_at ON movements (at);
 
   -- EMISSIONS (store-ephemeral for presence, permanent-until-saved for
   -- occurrence). An emission rides its source and is EXEMPT FROM CONTAINMENT:
@@ -325,7 +370,10 @@ export function dynamicHealth({ repo = WORLD_CLONE } = {}) {
   const cls = soundClass({ repo });
   const base = {
     enabled: emissionsEnabled(),
-    flags: { WORLD_EMISSIONS: process.env.WORLD_EMISSIONS ?? null },
+    flags: {
+      WORLD_EMISSIONS: process.env.WORLD_EMISSIONS ?? null,
+      WORLD_MOVEMENT_V2: process.env.WORLD_MOVEMENT_V2 ?? null,
+    },
     db: { path, present: existsSync(path) },
     sound_class: {
       mark: cls.mark, version: cls.version,
@@ -350,6 +398,13 @@ export function dynamicHealth({ repo = WORLD_CLONE } = {}) {
       entities_as_of: getMeta(db, "entities_as_of"),
       entities_source_sha: getMeta(db, "entities_source_sha"),
       attachments: one("SELECT COUNT(*) c FROM attachments").c,
+      // STAGE D. `movements` and the freeze stamp ride the health surface
+      // together on purpose: an operator's first question after a cutover is
+      // "is the new pen actually receiving anything", and the answer is only
+      // legible beside the instant the old one stopped.
+      movements: one("SELECT COUNT(*) c FROM movements").c,
+      movements_latest: one("SELECT MAX(at) a FROM movements").a ?? null,
+      ledger_frozen_at: getMeta(db, "ledger_frozen_at"),
       emissions_total: one("SELECT COUNT(*) c FROM emissions").c,
       emissions_present: one("SELECT COUNT(*) c FROM emissions WHERE born_at <= ? AND ttl_expires_at > ?", now, now).c,
       emissions_oldest: one("SELECT MIN(born_at) b FROM emissions").b ?? null,
