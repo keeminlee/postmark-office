@@ -6,7 +6,7 @@
 import test, { before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
@@ -357,17 +357,31 @@ test("GET /world/graph?kinds= filters, and refuses a kind that does not exist", 
   assert.match((await bad.json()).hint, /kinds are mark, class, code, doctrine/);
 });
 
-test("GET /world/graph.gexf 404s honestly at an office that has never hydrated", async () => {
-  // The GEXF pair is written by src/world-hydrate.mjs beside the office root.
-  // This office has never run one, and the door says so rather than serving an
-  // empty file or a stale picture from somewhere else.
+test("GET /world/graph.gexf answers the filesystem, whichever state this office is in", async () => {
+  // The GEXF pair is written by src/world-hydrate.mjs beside the office root,
+  // so whether it exists depends on whether THIS checkout has ever hydrated —
+  // which a test may not assume in either direction. What it can assert is the
+  // actual contract: serve the file the hydration wrote, and say plainly when
+  // there is not one. The expectation is taken from the filesystem, so a route
+  // that 404'd with the file present, or served a body from somewhere else,
+  // still fails.
+  const exported = existsSync(join(ROOT, "world-graph.gexf"));
   const res = await get("/world/graph.gexf", null);
-  assert.equal(res.status, 404);
-  const b = await res.json();
-  assert.match(b.defect, /not exported yet/);
-  assert.match(b.hint, /hydration/);
-  // and a view nobody defined is refused by name
-  assert.match((await (await get("/world/graph.gexf?view=sideways", null)).json()).defect, /no such view/);
+  if (exported) {
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get("content-type"), /gexf\+xml/);
+    assert.match((await res.text()).slice(0, 200), /<\?xml|<gexf/);
+  } else {
+    assert.equal(res.status, 404);
+    const b = await res.json();
+    assert.match(b.defect, /not exported yet/);
+    assert.match(b.hint, /hydration/);
+  }
+  // a view nobody defined is refused by name, and that does not depend on the
+  // machine at all
+  const bad = await get("/world/graph.gexf?view=sideways", null);
+  assert.equal(bad.status, 404);
+  assert.match((await bad.json()).defect, /no such view/);
 });
 
 test("with NO store at all the window 404s — never an empty graph, which would read as a clean world", async () => {
