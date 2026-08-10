@@ -297,6 +297,29 @@ test("thread parity CATCHES speech that never became an emission", async () => {
   assert.match(r.likely_cause, /missing from the store/);
 });
 
+test("the parity harness REFUSES rather than throwing, and never reports a verdict over nothing", async () => {
+  const { threadParity } = await import("../tools/thread-parity.mjs");
+  const missingLog = join(scratch, "no-such-log.jsonl");
+
+  // No log: nothing to compare the store against.
+  wipe();
+  let r = threadParity({ logPath: missingLog, dbPath: dynPath, repo });
+  assert.equal(r.refused.gate, "voices-log");
+
+  // No store: nothing to compare the log against.
+  await speak([{ handle: "wright", text: "spoken", at: T0 }]);
+  const noStore = join(scratch, "no-such-store.db");
+  r = threadParity({ logPath, dbPath: noStore, repo });
+  assert.equal(r.refused.gate, "dynamic-store");
+  assert.match(r.refused.detail, /dynamic:rebuild|--replay-from/);
+
+  // Both present, window empty: EQUAL here would be a green that could not have
+  // gone red, which is worse than a refusal and much worse than a crash.
+  r = threadParity({ logPath, dbPath: dynPath, repo, since: "2000-01-01T00:00:00.000Z", until: "2000-01-02T00:00:00.000Z" });
+  assert.equal(r.refused.gate, "empty-window");
+  assert.equal(r.equal, undefined, "a refusal is not a verdict and must not carry one");
+});
+
 test("when the dials drift, parity names the dials rather than blaming the rows", async () => {
   const { threadParity } = await import("../tools/thread-parity.mjs");
   // Everyone in one room under the shipped 60 m; the class mark says 10 m.

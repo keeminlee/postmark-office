@@ -20,7 +20,6 @@
 
 import test, { after, before, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -246,23 +245,31 @@ test("flag off — orient and open-your-eyes answer exactly what they answered b
   assert.deepEqual(orientAgain, orientOff, "and turning it back off restores the old answer exactly");
 });
 
+// The first version of this test recovered the "before presence" text with
+// `git show HEAD:src/world.mjs` and parsed the `description: "` literal out of
+// it. That worked exactly until it was committed: the getter it was testing
+// replaced the literal it was parsing, so HEAD stopped containing the shape,
+// the parser walked into the next tool's field, and the check died on its own
+// landing. A test that can only pass before its own commit is not a test.
+//
+// The durable form asserts the COMPOSITION against the exported base text: off
+// is exactly the base, on is exactly base + disclosure, and the base carries no
+// presence language of its own. It can still fail three ways — an unconditional
+// concatenation, a disclosure edited into the base, and a getter that forgets
+// the flag — and none of them depend on where HEAD is.
 test("the presence disclosure rides the flag on both doors, and is byte-identical off", async () => {
-  const { WORLD_TOOLS, PRESENCE_DISCLOSURE } = await import("../src/world.mjs");
-  const prior = execFileSync("git", ["show", "HEAD:src/world.mjs"], { encoding: "utf8", cwd: process.cwd() });
-  const priorDescription = (name) => {
-    const a = prior.indexOf(`{ name: "${name}",`);
-    const b = prior.indexOf('description: "', a) + 'description: "'.length;
-    const c = prior.indexOf('",\n    inputSchema', b);
-    return JSON.parse(`"${prior.slice(b, c)}"`);
-  };
+  const { WORLD_TOOLS, PRESENCE_DISCLOSURE, ORIENT_DESCRIPTION, EYES_DESCRIPTION } = await import("../src/world.mjs");
 
-  for (const name of ["world_orient", "world_open_your_eyes"]) {
+  for (const [name, base] of [["world_orient", ORIENT_DESCRIPTION], ["world_open_your_eyes", EYES_DESCRIPTION]]) {
     const tool = WORLD_TOOLS.find((t) => t.name === name);
-    assert.equal(tool.description, priorDescription(name),
+    assert.equal(tool.description, base,
       `${name}: with the flag off the door says exactly what it said before presence existed`);
+    assert.equal(/presence|standing near you|who is about/i.test(base), false,
+      `${name}: the base text must carry no presence language — the flag is the only thing that adds it`);
     process.env.WORLD_PRESENCE = "1";
-    assert.equal(tool.description, priorDescription(name) + PRESENCE_DISCLOSURE);
+    assert.equal(tool.description, base + PRESENCE_DISCLOSURE);
     delete process.env.WORLD_PRESENCE;
+    assert.equal(tool.description, base, `${name}: and it goes away again`);
   }
   assert.match(PRESENCE_DISCLOSURE, /Presence is public and always has been/);
 });

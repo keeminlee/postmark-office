@@ -326,8 +326,30 @@ formalities: they are the only two places the layer can be caught lying.
 - **Stage 1 shadow after the hydrator change**: still **EMPTY DIFF** (318
   geometric marks, 0 disagreements on all three axes) — the class fields are
   additive props the serving projection never reads.
-- **Suite**: 311 tests, 303 pass, 8 fail — the same 8 that fail on `main` for a
-  missing local `town-clone/tools/stamp-mint.mjs`. +51 tests, 0 new failures.
+- **Suite**: 313 tests, 305 pass, 8 fail — the same 8 that fail on `main` for a
+  missing local `town-clone/tools/stamp-mint.mjs`. +53 tests, 0 new failures.
+- **Replay EQUAL on the live ledger**, not only on a fixture: a save at
+  2026-08-09T18:00Z over crossing 117 folds 48 boundary entities plus 64 real
+  departures and comes back EQUAL. Run with `--state` in scratch and
+  `--no-commit`, so nothing was written into the world clone.
+- **Both harnesses refuse rather than crash** when run bare with no store and no
+  save: `GATE REFUSED dynamic-store` / `GATE REFUSED state-dir`, usage printed,
+  exit 2.
+
+## One bug the live run caught that the fixtures did not
+
+The replay's fold applied **every** departure line in the log to the entity set,
+including the vessel's. She belongs in the log — a sailing is a real event and
+the record is full-fidelity — but she is not an entity, so the replay rebuilt a
+town with one inhabitant more than the store held. Against fixtures it never
+showed, because no fixture had the boat sailing mid-crossing; against 64 real
+departures it showed immediately.
+
+The fold now applies the same `NON_ENTITY_ACTORS` rule the derivation does, from
+the same home, and folds her line into a recovered `vessel_departure` instead of
+discarding it — which is where a later stage that crystallizes derived mobility
+will read it from. The crossing-save fixture now sails the boat mid-crossing so
+the case is covered by a test and not only by a memory.
 
 ## Not in scope, deliberately
 

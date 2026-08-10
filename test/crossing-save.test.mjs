@@ -47,6 +47,12 @@ const DEPARTURES = [
   { at: new Date(B - 60_000).toISOString(), actor: "wright", from: { x: 10, y: 10 }, toward: { x: 10, y: 10 }, crossing: N - 0.001, line_no: 2 },
   // a departure DURING the crossing — it must ride the log, not the snapshot
   { at: new Date(B + 30 * 60_000).toISOString(), actor: "iris", from: { x: 0, y: 0 }, toward: { x: 45000, y: 0 }, crossing: N + 0.0417, line_no: 3 },
+  // THE VESSEL SAILS DURING THE CROSSING. She belongs in the log — a sailing is
+  // a real event — and she is NOT an entity, so a replay that folds every
+  // departure line into the entity set rebuilds a world with one inhabitant too
+  // many. That is exactly what happened against the live ledger before the fold
+  // learned the rule, and this line is why it cannot happen again.
+  { at: new Date(B + 40 * 60_000).toISOString(), actor: "the-post-office", from: { x: 0, y: 0 }, toward: { x: -20000, y: 0 }, crossing: N + 0.0556, pace: 40, line_no: 4 },
 ];
 
 const env = () => ({ ...process.env, WORLD_CLONE: repo, WORLD_STORE_DB: worldDbPath, WORLD_DYNAMIC_DB: dynPath, TOWN_PUSH: "" });
@@ -108,7 +114,8 @@ test("a save writes the boundary snapshot and the crossing's log, and replay com
   assert.equal(meta.covers_from, new Date(B).toISOString());
   assert.equal(meta.covers_to, new Date(MID).toISOString());
   assert.equal(meta.complete, false, "the crossing is still open");
-  assert.deepEqual(meta.counts, { departure: 1, attachment: 0, emission: 2 });
+  assert.deepEqual(meta.counts, { departure: 2, attachment: 0, emission: 2 },
+    "iris walks and the boat sails — a sailing is a real event and belongs in the record");
 
   const lines = readFileSync(join(STATE, "log", `${N}.jsonl`), "utf8").trim().split("\n").map((l) => JSON.parse(l));
   const spoken = lines.filter((l) => l.type === "emission");
@@ -120,6 +127,9 @@ test("a save writes the boundary snapshot and the crossing's log, and replay com
   const { replayCheck } = await import("../tools/crossing-replay-check.mjs");
   const v = await replayCheck({ stateDir: STATE, repo, dbPath: dynPath });
   assert.equal(v.equal, true, `NOT EQUAL: ${v.problems.join(" | ")}`);
+  assert.equal(v.counts.applied.vessel, 1,
+    "the vessel's line is folded as the VESSEL's, not as an entity's — folding it as an entity rebuilds a town with one inhabitant too many");
+  assert.ok(v.vessel_departure, "and it is recovered from the log rather than dropped");
   assert.equal(v.counts.compared_emissions, 2);
   assert.ok(v.counts.compared_entities >= 3, "jetto, wright and the mid-crossing iris all come back");
 });
@@ -244,6 +254,24 @@ test("--prune drops faded presence only once its occurrence is committed", async
   assert.deepEqual(held, ["still in the air"], "presence that has not faded stays; the faded one is already history in STATE/log/");
   assert.ok(readFileSync(join(STATE, "log", `${N}.jsonl`), "utf8").includes("long faded"),
     "and the pruned voice is in the record before it is dropped — never after");
+});
+
+test("the replay check REFUSES by name when there is no save — never a stack, never a verdict", async () => {
+  const { replayCheck } = await import("../tools/crossing-replay-check.mjs");
+
+  let r = await replayCheck({ stateDir: join(scratch, "no-such-state"), repo, dbPath: dynPath });
+  assert.equal(r.refused.gate, "state-dir");
+  assert.equal(r.equal, undefined, "a refusal is not a verdict");
+
+  runJson("crossing-save.mjs", ["--at", new Date(MID).toISOString(), "--state", STATE]);
+  r = await replayCheck({ stateDir: STATE, repo, dbPath: join(scratch, "no-such-store.db") });
+  assert.equal(r.refused.gate, "dynamic-store");
+
+  // A half-written save is its own refusal: replaying one would silently check
+  // less than it claimed to.
+  rmSync(join(STATE, "log", `${N}.meta.json`), { force: true });
+  r = await replayCheck({ stateDir: STATE, repo, dbPath: dynPath });
+  assert.equal(r.refused.gate, "save-incomplete");
 });
 
 // ── 5. the disclosure ships with the writer ──────────────────────────────────

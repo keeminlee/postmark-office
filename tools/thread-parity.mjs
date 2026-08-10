@@ -34,7 +34,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import { clusterVoices, voicesLogPath, EARSHOT_M, CLOSE_MS } from "../src/voices.mjs";
-import { openDynamic, soundClass, soundMs, CODE_SOUND_DIALS } from "../src/dynamic-store.mjs";
+import { openDynamic, soundClass, soundMs, dynamicDbPath, CODE_SOUND_DIALS } from "../src/dynamic-store.mjs";
 import { allEmissions, emissionToVoice, recordEmission, SOUND } from "../src/dynamic-emissions.mjs";
 import { WORLD_CLONE } from "../src/world-store.mjs";
 
@@ -70,6 +70,26 @@ export function readVoicesLog(path) {
 const utterance = (v) => `${new Date(v.at).toISOString()}|${v.handle}`;
 const partition = (clusters) => new Set(clusters.map((c) => c.voices.map(utterance).sort().join("\n")));
 
+/**
+ * The deriver's gate law, applied to a harness: REFUSE OR DISCLOSE, never throw
+ * a stack at an operator, and never report a verdict over nothing.
+ *
+ * The third gate is the one worth naming. Run bare against a store and a log
+ * that are both empty, this would happily partition zero utterances into zero
+ * threads and print EQUAL — a green that could not have gone red. A probe that
+ * cannot fail is not a probe, so an empty window refuses instead.
+ */
+function parityGates({ logPath, dbPath, logged, rows }) {
+  if (!existsSync(logPath))
+    return { gate: "voices-log", detail: `no voices log at ${logPath} — nothing to compare the store against` };
+  const store = dbPath ?? dynamicDbPath();
+  if (!existsSync(store))
+    return { gate: "dynamic-store", detail: `no dynamic store at ${store} — run \`npm run dynamic:rebuild\`, or seed a scratch one with --replay-from` };
+  if (!logged.length && !rows.length)
+    return { gate: "empty-window", detail: "the log and the store are both empty in this window — EQUAL here would be a verdict over nothing" };
+  return null;
+}
+
 export function threadParity({ logPath, dbPath = null, since = null, until = null, repo = WORLD_CLONE } = {}) {
   const fromMs = since ? Date.parse(since) : -Infinity;
   const toMs = until ? Date.parse(until) : Infinity;
@@ -77,10 +97,18 @@ export function threadParity({ logPath, dbPath = null, since = null, until = nul
   const log = readVoicesLog(logPath);
   const logged = log.voices.filter((v) => v.at >= fromMs && v.at <= toMs);
 
-  const db = openDynamic(dbPath ?? undefined, { readOnly: true });
-  const rows = allEmissions(db, { cls: SOUND })
-    .filter((e) => { const t = Date.parse(e.born_at); return t >= fromMs && t <= toMs; });
-  db.close();
+  const storePath = dbPath ?? dynamicDbPath();
+  let rows = [];
+  if (existsSync(storePath)) {
+    const db = openDynamic(storePath, { readOnly: true });
+    try {
+      rows = allEmissions(db, { cls: SOUND })
+        .filter((e) => { const t = Date.parse(e.born_at); return t >= fromMs && t <= toMs; });
+    } finally { db.close(); }
+  }
+
+  const refused = parityGates({ logPath, dbPath, logged, rows });
+  if (refused) return { refused, log: { path: logPath, lines: log.lines, in_window: logged.length }, store: { path: storePath, emissions_in_window: rows.length } };
 
   const cls = soundClass({ repo });
   const { earshotM, closeMs } = soundMs(cls);
@@ -156,7 +184,11 @@ export function threadParity({ logPath, dbPath = null, since = null, until = nul
  * mistakes one for the other.
  */
 export function replayLogIntoStore(logPath, dbPath, { repo = WORLD_CLONE } = {}) {
+  if (!existsSync(logPath))
+    return { refused: { gate: "voices-log", detail: `no voices log at ${logPath} — there is nothing to replay` } };
   const { voices, rejected } = readVoicesLog(logPath);
+  if (!voices.length)
+    return { refused: { gate: "voices-log", detail: `${logPath} holds no usable voices — seeding an empty store would only manufacture a green` } };
   const cls = soundClass({ repo });
   const db = openDynamic(dbPath);
   try {
@@ -175,10 +207,32 @@ export function replayLogIntoStore(logPath, dbPath, { repo = WORLD_CLONE } = {})
   return { seeded: voices.length, rejected: rejected.length, dials: cls.dials, gate: cls.gate };
 }
 
+const USAGE = `usage: node tools/thread-parity.mjs [--log <voices-log.jsonl>] [--db <dynamic.db>]
+                                    [--replay-from <voices-log.jsonl>]
+                                    [--since <iso>] [--until <iso>] [--json]
+
+  Compares the threads the store derives against the threads voices.mjs's own
+  clusterVoices derives from the log, as a partition of utterances.
+
+  With nothing to compare — no log, no store, or an empty window — it REFUSES
+  and names which input was missing. It never prints a verdict over nothing.
+
+  To measure parity before any live emission exists, seed a scratch store from
+  the log the office already keeps:
+
+    node tools/thread-parity.mjs --replay-from voices-log.jsonl --db /tmp/parity.db`;
+
+const refuse = (gate, detail) => {
+  console.error(`\nGATE REFUSED ${gate} — ${detail}\n`);
+  console.error(USAGE);
+  process.exit(2);
+};
+
 if (process.argv[1]?.endsWith("thread-parity.mjs")) {
   const replayFrom = argOf("--replay-from", null);
   if (replayFrom) {
     const seeded = replayLogIntoStore(resolve(replayFrom), argOf("--db", null) ?? undefined);
+    if (seeded.refused) refuse(seeded.refused.gate, seeded.refused.detail);
     console.log(`seeded ${seeded.seeded} emission(s) from ${replayFrom} (${seeded.rejected} unusable line(s)), dials ${JSON.stringify(seeded.dials)} [${seeded.gate.status}]`);
   }
   const r = threadParity({
@@ -187,6 +241,10 @@ if (process.argv[1]?.endsWith("thread-parity.mjs")) {
     since: argOf("--since", null),
     until: argOf("--until", null),
   });
+  if (r.refused) {
+    if (flag("--json")) { console.log(JSON.stringify(r, null, 2)); process.exit(2); }
+    refuse(r.refused.gate, r.refused.detail);
+  }
   if (flag("--json")) { console.log(JSON.stringify(r, null, 2)); process.exit(r.equal ? 0 : 1); }
   console.log(`thread-parity · ${r.log.in_window} logged voices vs ${r.store.emissions_in_window} stored emissions`);
   console.log(`  dials      class mark ${JSON.stringify(r.dials.class_mark)}  (${r.dials.gate.status}: ${r.dials.gate.detail ?? r.dials.gate.reason})`);
