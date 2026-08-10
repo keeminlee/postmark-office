@@ -327,12 +327,21 @@ async function main() {
   // here" and the store's too. Nothing bespoke, nothing that needs a reader to
   // learn a new shape — the seam produces records the same functions read.
   let seeded = null;
-  if (flag("--apply") && flag("--set-down-ashore") && ashore && deck.residents?.length) {
+  // Who gets set down: everyone the seam would MOVE, not merely whoever stands
+  // inside her footprint at this instant. The rehearsal ran while she was
+  // berthed, when the two sets were identical; at a freeze taken while she is
+  // UNDER WAY the deck is empty mid-ocean and the moved set is the real list —
+  // keying on the deck alone left 27 residents deriving as carried to Pando
+  // (caught live at the landing, hal at -56629,-56601).
+  const setDown = new Map();
+  for (const r of deck.residents ?? []) setDown.set(r.handle, r);
+  for (const m of moved) if (m.handle && !setDown.has(m.handle)) setDown.set(m.handle, { handle: m.handle });
+  if (flag("--apply") && flag("--set-down-ashore") && ashore && setDown.size) {
     const db = openDynamic(DB_PATH ?? undefined);
     try {
       const already = new Set(readMovements(db).map((m) => `${m.actor}|${m.at}`));
       let n = 0;
-      for (const r of deck.residents) {
+      for (const r of setDown.values()) {
         if (already.has(`${r.handle}|${atIso}`)) continue;
         declareMovement(db, {
           actor: r.handle, at: atIso, from: ashore, toward: ashore, crossing: atFc,
