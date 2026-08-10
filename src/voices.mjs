@@ -169,12 +169,28 @@ function threadOf(cluster, { live, voiceCap }) {
 //
 // `vesselAt()` is the fifth (issue #5 §3): where the Post Office is at this
 // instant. Hearing needs it to re-frame voices spoken on her deck; see heardBy.
+//
+// `heardFrom(voice, t)` is the sixth, and it SUPERSEDES the fifth (Stage D): the
+// point a voice is heard from, derived through the ATTACHMENT its source rides
+// rather than through a boolean about one boat. See the DECK RULE block on
+// `heardBy`.
+//
+// `structuralHearing()` is the seventh and it exists for one reason: this module
+// is CONSTRUCTED ONCE at import and the office's switches are environment reads
+// taken per call. Deciding which rule is in force at construction time would
+// latch the flag at import — the exact mistake `world-serve.mjs` and
+// `dynamic-store.mjs` each wrote a paragraph to avoid — and a test that flips it
+// between cases would get whichever value the first import happened to see. So
+// the caller hands over a predicate, this module asks it every time, and voices
+// itself stays innocent of what a flag is.
 export function createVoices({
   standpoint,
   place = async () => null,
   onSpoke = null,
   nearby = null,
   vesselAt = null,
+  heardFrom = null,
+  structuralHearing = () => Boolean(heardFrom),
   logPath = voicesLogPath,
   now = () => Date.now(),
   earshotM = EARSHOT_M,
@@ -276,11 +292,35 @@ export function createVoices({
   // the vessel for a relocated one. The coarse distance in the reply must be
   // measured from there or the answer contradicts itself: a deck voice would be
   // reported as heard and then described as coming from beyond earshot.
-  function heardBy(here, t, vessel = null) {
+  //
+  // ── STAGE D: THAT LANDING, AND WHAT IT CHANGES ────────────────────────────
+  //
+  // With `heardFrom` injected (WORLD_MOVEMENT_V2 on) the relocation above is not
+  // reached, and the aboard-flag special case is gone with it: the point a voice
+  // is heard from is derived from the attachment its source rides, at the
+  // instant it was spoken. THE PAIR TEST GOES TOO. `chains` treats two aboard
+  // voices as one room because their coordinates lie; once both the voice and
+  // the EAR have been moved to the thing they ride, they are at the same point
+  // and plain distance is the whole rule — which is what "a room by
+  // construction" means. `here.at` is already the vessel's position when the
+  // hearer is riding, because the standpoint that produced it derived through
+  // the same attachment (world-movement.mjs § movementStandpoint).
+  //
+  // The relocation is awaited per voice, so this is async where the interim is
+  // not; every caller of `heardBy` was already inside an async function.
+  async function heardBy(here, t, vessel = null) {
     const ear = { x: here.at.x, y: here.at.y, aboard: Boolean(here.aboard) };
+    const structural = Boolean(heardFrom) && structuralHearing() === true;
     const out = [];
     for (const v of hydrate()) {
       if (v.at > t || t - v.at > fadeMs) continue;
+      if (structural) {
+        let from = null;
+        try { from = await heardFrom(v, t); } catch { from = null; }
+        const point = from ?? { x: v.x, y: v.y };
+        if (distM(point, ear) <= earshotM) out.push({ ...v, heardFrom: { x: point.x, y: point.y } });
+        continue;
+      }
       const heard = v.aboard && vessel ? { ...v, x: vessel.x, y: vessel.y } : v;
       if (chains(heard, ear, earshotM)) out.push({ ...v, heardFrom: { x: heard.x, y: heard.y } });
     }
@@ -343,7 +383,7 @@ export function createVoices({
     const fresh = (v) => !(Number.isFinite(since) && v.at <= since);
     let vessel = null;
     if (vesselAt) { try { vessel = await vesselAt(); } catch { vessel = null; } }
-    const within = heardBy(here, t, vessel).filter(fresh).slice(-hearMax); // newest last
+    const within = (await heardBy(here, t, vessel)).filter(fresh).slice(-hearMax); // newest last
 
     // WHO IS HERE vs WHO HAS BEEN TALKING (issue #5 §2).
     //

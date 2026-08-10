@@ -34,7 +34,7 @@ import { pathToFileURL } from "node:url";
 import { OFFICE_ROOT, WORLD_CLONE } from "./world-store.mjs";
 import { freshestMainRef, materializeAtRef } from "./world-branches.mjs";
 import { publishedMainSha } from "./world-serve.mjs";
-import { openDynamic, putMeta } from "./dynamic-store.mjs";
+import { movementV2Enabled, openDynamic, putMeta } from "./dynamic-store.mjs";
 
 // The vessel appears in the walk ledger as an actor — she is a mark that moves,
 // not a resident. She is never an entity; her position is `derived` mobility,
@@ -274,10 +274,19 @@ export async function refreshEntities({
   if (read.refused) return { ok: false, refused: read.refused, entities: 0 };
 
   const w = walk ?? await walkModule({ repo });
-  const rows = deriveEntities(read.events, at, w);
 
   const own = !db;
   const handle = db ?? openDynamic(dbPath ?? undefined);
+
+  // STAGE D: the two eras, folded before the derivation rather than after it.
+  // `governingAt` already implements latest-wins over one ordered list, so
+  // handing it the merged list is the whole of the seam's cost here — and with
+  // the flag off `movements` is not even read, so the derivation is the one that
+  // has always run.
+  const storeEvents = movementV2Enabled() ? readMovements(handle, { until: at }) : [];
+  const events = storeEvents.length ? mergedDepartureEvents(read.events, storeEvents) : read.events;
+  const rows = deriveEntities(events, at, w);
+
   try {
     handle.exec("BEGIN");
     handle.exec("DELETE FROM entities");
@@ -288,7 +297,7 @@ export async function refreshEntities({
     // The derivation's input, saved beside its output: without her sailing line
     // nothing downstream can tell a passenger from a walker who happens to be
     // headed the same way.
-    putMeta(handle, "vessel_departure", JSON.stringify(vesselDepartureAt(read.events, at)));
+    putMeta(handle, "vessel_departure", JSON.stringify(vesselDepartureAt(events, at)));
     putMeta(handle, "entities_source_fresh", String(read.fresh));
     putMeta(handle, "entities_refreshed_at", new Date().toISOString());
     handle.exec("COMMIT");
@@ -304,7 +313,10 @@ export async function refreshEntities({
     entities: rows.length,
     rows,
     as_of: new Date(at).toISOString(),
-    source: { as_of_world: read.as_of_world, hydrated_at: read.hydrated_at, fresh: read.fresh, path: read.path },
+    source: {
+      as_of_world: read.as_of_world, hydrated_at: read.hydrated_at, fresh: read.fresh, path: read.path,
+      ledger_events: read.events.length, store_movements: storeEvents.length,
+    },
     disclosed: read.disclosed,
     mid_walk: rows.filter((r) => !r.provenance.arrived).length,
   };
@@ -335,6 +347,90 @@ export function declareAttachment(db, { entity, target, policy = "cascade", decl
   db.prepare("INSERT OR IGNORE INTO attachments (entity, target, policy, declared_by, born_at) VALUES (?,?,?,?,?)")
     .run(entity, target, policy, declaredBy ?? entity, born);
   return { entity, target, policy, declared_by: declaredBy ?? entity, born_at: born };
+}
+
+// ── movements: the record after the seam (Stage D) ───────────────────────────
+//
+// The walk ledger is frozen with honor at the cutover — append stops, the file
+// stays forever as the founding era's record — and `STATE/log/` becomes the
+// movement record (ruled, dial 4). Between a departure being declared and the
+// next crossing-save crystallizing it, it lives here.
+//
+// ONE VOCABULARY, TWO ERAS. `readMovements` returns rows in world.db's `events`
+// shape, so `governingAt`, `deriveEntities`, `buildSave` and every replay read
+// the ledger's era and the store's era through the same function. That is what
+// makes the seam a change of WRITER rather than a change of MEANING — and it is
+// why the ledger can be frozen without any resident's position moving.
+
+/**
+ * Declare a departure into the store. The office pen's post-freeze equivalent of
+ * appending one ledger line, and it keeps the ledger's own laws: position is a
+ * pure function of (record, clock), superseding is a new departure from the
+ * derived position, stopping is a zero-distance departure, and nothing en route
+ * is ever written.
+ */
+export function declareMovement(db, {
+  actor, at = null, from, toward, crossing,
+  within = null, toMark = null, pace = null, declaredBy = null, note = null,
+} = {}) {
+  if (!actor) throw new Error("a departure needs an actor");
+  if (!from || !Number.isFinite(from.x) || !Number.isFinite(from.y)) throw new Error("a departure needs a from {x,y}");
+  if (!toward || !Number.isFinite(toward.x) || !Number.isFinite(toward.y)) throw new Error("a departure needs a toward {x,y}");
+  if (!Number.isFinite(crossing)) throw new Error("a departure needs the fractional crossing it was declared at");
+  const iso = at ?? new Date().toISOString();
+  db.prepare(`INSERT INTO movements
+      (actor, at, from_x, from_y, toward_x, toward_y, crossing, within_w, within_h, to_mark, pace, declared_by, note)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(actor, iso, from.x, from.y, toward.x, toward.y, crossing,
+      within?.w ?? null, within?.h ?? null, toMark, pace, declaredBy ?? actor, note);
+  return { actor, at: iso, from, toward, crossing, within, to: toMark, pace, declared_by: declaredBy ?? actor, note };
+}
+
+/**
+ * Every declared movement, in world.db's `events` row shape.
+ *
+ * `seq` is offset past the ledger's own event ids by the caller when the two are
+ * merged — see `mergedDepartureEvents`. Here it is the store's own sequence.
+ */
+export function readMovements(db, { until = null } = {}) {
+  const rows = db.prepare(`SELECT seq, actor, at, from_x, from_y, toward_x, toward_y, crossing,
+      within_w, within_h, to_mark, pace, declared_by, note FROM movements ORDER BY at, seq`).all();
+  return rows
+    .filter((r) => until == null || Date.parse(r.at) <= until)
+    .map((r) => ({
+      seq: r.seq, at: r.at, actor: r.actor, type: "departure",
+      payload: JSON.stringify({
+        from: { x: r.from_x, y: r.from_y },
+        toward: { x: r.toward_x, y: r.toward_y },
+        crossing: r.crossing,
+        within: (r.within_w != null && r.within_h != null) ? { w: r.within_w, h: r.within_h } : null,
+        to: r.to_mark ?? null,
+        pace: r.pace ?? null,
+        declared_by: r.declared_by ?? r.actor,
+        source: "dynamic.db/movements",
+        ...(r.note ? { note: r.note } : {}),
+      }),
+    }));
+}
+
+/**
+ * The ledger's era and the store's era, in one ordered list.
+ *
+ * Ordered by INSTANT first, and by era second where two records share one: the
+ * ledger cannot gain a new line after the freeze, so a store row at the same
+ * instant is by construction the later statement. `governingAt` walks this in
+ * order and takes the last per actor, so latest-wins spans the seam without
+ * knowing there is one.
+ */
+export function mergedDepartureEvents(ledgerEvents = [], storeEvents = []) {
+  const tag = (rows, era) => rows.map((r) => ({ ...r, era }));
+  return [...tag(ledgerEvents, "ledger"), ...tag(storeEvents, "store")]
+    .sort((a, b) => {
+      const ta = Date.parse(a.at), tb = Date.parse(b.at);
+      if (ta !== tb) return ta - tb;
+      if (a.era !== b.era) return a.era === "ledger" ? -1 : 1;
+      return (a.seq ?? 0) - (b.seq ?? 0);
+    });
 }
 
 /** Has the world store moved since the entities table was last derived from it? */

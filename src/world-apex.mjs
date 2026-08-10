@@ -41,13 +41,21 @@ import { existsSync } from "node:fs";
 import {
   WORLD_CLONE,
   WORLD_TOOLS,
+  activeNotices,
+  currentCrossing,
   leaveMarkViaOffice,
   placeWords,
+  residentStandpoint,
   walkViaOffice,
   worldEyes,
   worldOrient,
   worldSay,
+  worldStateRaw,
 } from "./world.mjs";
+// v2.2 §B — the frame block and the three-shelf delta. Both compose the one
+// standpoint derivation; neither derives a position of its own.
+import { carrierReader, movementV2Enabled, vesselServiceFrom } from "./world-movement.mjs";
+import { carriedLegsFor, happenedBlock, latestSettlement, readCrossingLogs } from "./world-happened.mjs";
 import { WORLD_STAKE_TOOLS, callWorldStakeTool } from "./world-stake.mjs";
 import { storeDbPath } from "./world-serve.mjs";
 import { AMBIENT_REACH_SQL, CLASS_MARK_GATE_SQL } from "./world-store.mjs";
@@ -363,6 +371,85 @@ export function buildTerms({ affording, spine }) {
 
 // ── the read ────────────────────────────────────────────────────────────────
 
+// ── the frame block, and the delta ──────────────────────────────────────────
+//
+// Both live here rather than in `world.mjs` because they are apex-shaped: the
+// bare read is the surface that owes a resident the terms of where they are
+// standing, and `since:` is a parameter of that read. Both call the ONE
+// derivation (`residentStandpoint` → the frame fold) rather than deriving
+// anything of their own — the design invariant, and the reason issue #7's
+// present-vs-walkers split is the cautionary tale nailed above the door.
+
+/** What you are aboard, when it next moves, and how you get off. Null when your frame is the world. */
+async function frameBlock(oriented, key) {
+  if (!movementV2Enabled()) return null;
+  const handle = oriented?.standpoint?.stance === "embodied" ? [...(key?.handles ?? [])].find((h) => true) ?? null : null;
+  const who = oriented?.standpoint?.handle ?? handle;
+  if (!who) return null;
+  try {
+    const here = await residentStandpoint(who);
+    if (!here?.frame) return null;
+    const w = await worldStateRaw(null);
+    const { service, mod } = await vesselServiceFrom(w, { repo: WORLD_CLONE });
+    const next = service && mod ? mod.nextDepartures(service, mod.fractionalCrossing(Date.now()), 1)[0] ?? null : null;
+    return {
+      aboard: here.frame,
+      offset: here.frame_offset,
+      provenance: here.provenance,
+      moves_next: next
+        ? { at: new Date(mod.instantOf(next.departFc)).toISOString(), toward: next.to.markId, crossing: next.departFc }
+        : null,
+      // How you get off, in the words of the verb that does it. The gunwale rule
+      // is disclosure, not refusal — so this says what a step costs, never that
+      // it is forbidden.
+      how_to_leave: "world_walk anywhere off her footprint. While she is under way that step puts you in the water where she left you — v0 does not stop you, and the walk answer says so before you take it.",
+      terms: "standing in her frame when she departs means riding — that is the contract of stepping aboard, and it needs no declaration from you.",
+    };
+  } catch { return null; }
+}
+
+/** The three shelves. Complete for you, capped around you, pointers for the town. */
+async function happenedFor(oriented, args, key) {
+  if (!movementV2Enabled()) return null;
+  const since = Number(args.since);
+  if (!Number.isFinite(since)) return null;
+  const who = oriented?.standpoint?.handle ?? null;
+  const nowCrossing = oriented?.crossing?.n ?? currentCrossing();
+  try {
+    const at = { x: oriented.standpoint.x, y: oriented.standpoint.y };
+    const { lines, covered, absent } = readCrossingLogs(WORLD_CLONE, since, nowCrossing);
+    let transitions = [], carriedLegs = [];
+    if (who) {
+      const here = await residentStandpoint(who);
+      transitions = (here?.transitions ?? []).map((t) => ({ ...t, crossing: null }));
+      const w = await worldStateRaw(null);
+      const { service, mod, carriers } = await vesselServiceFrom(w, { repo: WORLD_CLONE });
+      if (here?.frame && service && mod) {
+        const carrier = carriers.find((c) => c.id === here.frame);
+        if (carrier) {
+          const walkMod = (await vesselServiceFrom(w, { repo: WORLD_CLONE })).walk;
+          carriedLegs = await carriedLegsFor({
+            fold: { frameCarrier: carrier },
+            carrierAt: carrierReader(w, { repo: WORLD_CLONE, service, mod }),
+            mod, sinceCrossing: since, nowCrossing,
+            crossingMs: walkMod.CROSSING_MS, epochMs: walkMod.CROSSING_EPOCH_UTC,
+          });
+        }
+      }
+    }
+    const block = happenedBlock({
+      transitions, carriedLegs, lines, at,
+      sinceCrossing: since, nowCrossing,
+      latestSettlement: latestSettlement(WORLD_CLONE),
+      notices: activeNotices(),
+      exclude: who,
+    });
+    return { ...block, log: { crossings_read: covered.length, crossings_absent: absent.length } };
+  } catch (e) {
+    return { unavailable: "the delta could not be read", detail: String(e?.message ?? e).slice(0, 160) };
+  }
+}
+
 async function apexRead(args, key) {
   // The standpoint decision, the spine, the note and presence are orient's
   // answers — the apex composes the existing verb rather than re-deriving it.
@@ -386,12 +473,28 @@ async function apexRead(args, key) {
     }));
   } finally { store.db?.close(); }
 
+  // ── v2.2 §B: the contract at the boundary, and what happened ─────────────
+  //
+  // `frame` rides EVERY bare read whose caller is inside a carrier: what you are
+  // aboard, when it next moves, how you get off. Nobody is bound by law they
+  // were not shown at the door, extended from `do:` acts to feet — and a
+  // resident who does not know they are on a boat that sails at 18:00Z is
+  // exactly that.
+  //
+  // `happened` rides only a read that ASKED, with `since:`. It is a cursor, not
+  // a feed: the crossing number is the town's clock and the caller keeps their
+  // own place in it, the same shape `world_say`'s `latest` already proved.
+  const frame = await frameBlock(oriented, key);
+  const happened = args.since == null ? null : await happenedFor(oriented, args, key);
+
   return {
     standpoint: oriented.standpoint,
     crossing: oriented.crossing,
+    ...(frame ? { frame } : {}),
     within: spine,
     nearby,
     ...(oriented.present ? { present: oriented.present } : {}),
+    ...(happened ? { happened } : {}),
     affordances,
     law: store.unavailable
       ? { unavailable: store.unavailable, affordances: "none can be read — the class layer lives in the world store" }
@@ -497,6 +600,7 @@ export const APEX_TOOL = {
   name: "world",
   get description() { return APEX_DESCRIPTION; },
   inputSchema: { type: "object", properties: {
+    since: { type: "number", description: "the crossing number from your last reply — the answer then carries `happened`: what changed for YOU since (complete), a capped glance at what happened around you, and the town's headlines. The delta does not grow with how long you were away." },
     do: { type: "string", description: "the subverb to perform — omit to read. It must be one your standpoint affords; the bare read lists them" },
     x: { type: "number", description: "spectator read: grid metres east of Ferry's crossing (never combined with handle)" },
     y: { type: "number", description: "spectator read: grid metres south of Ferry's crossing" },

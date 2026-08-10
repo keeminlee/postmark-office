@@ -47,12 +47,12 @@
 import { existsSync } from "node:fs";
 
 import { WORLD_CLONE } from "./world-store.mjs";
-import { openDynamic, getMeta, dynamicDbPath } from "./dynamic-store.mjs";
+import { movementV2Enabled, openDynamic, getMeta, dynamicDbPath } from "./dynamic-store.mjs";
 import {
   readEntities, toWalkRecord, entitiesStale,
   walkModule, worldToolModule, ridesTheVessel, VESSEL_HANDLE,
 } from "./dynamic-entities.mjs";
-import { everyonePlaced } from "./positions.mjs";
+import { everyonePlaced, withFrames } from "./positions.mjs";
 
 export const presenceEnabled = () => process.env.WORLD_PRESENCE === "1";
 
@@ -95,7 +95,7 @@ export function governingDepartures(db) {
  * never in this list: she is a mark that moves, not a resident, and the entities
  * table she is excluded from is what feeds the departures below.
  */
-export function positionsAt(db, atMs, walk, vessel = null, { world = null, where = null } = {}) {
+export function positionsAt(db, atMs, walk, vessel = null, { world = null, where = null, frames = null } = {}) {
   const deps = governingDepartures(db);
   deps.delete(VESSEL_HANDLE);   // belt and braces: she is not in this table to begin with
   const at = walk.fractionalCrossing(atMs);
@@ -105,7 +105,13 @@ export function positionsAt(db, atMs, walk, vessel = null, { world = null, where
   // is the one converter, already the crossing-save's; there is no second one.
   const departures = [...deps].map(([handle, dep]) => ({ handle, iso: dep.iso, ...toWalkRecord(dep) }));
 
-  return everyonePlaced({ world, departures, at, where }).map((r) => {
+  // THE FRAME OVERLAY, applied to the SAME rows the walkers door composes
+  // (positions.mjs § withFrames). Without it `present` would put a passenger
+  // back on the quay they left while `world_walkers` had them mid-channel —
+  // issue #7's split-brain, one layer up and with a boat in it. The map is
+  // precomputed by the async caller because a frame needs the engine and this
+  // function is deliberately synchronous.
+  return withFrames(everyonePlaced({ world, departures, at, where }), frames).map((r) => {
     const dep = deps.get(r.handle) ?? null;
     return {
       handle: r.handle,
@@ -121,13 +127,42 @@ export function positionsAt(db, atMs, walk, vessel = null, { world = null, where
         ? Boolean(walk.positionAt(toWalkRecord(dep), at)?.standing)
         : !r.moving,
       moving: r.moving,
-      // aboard only while actually under way: a passenger set down ashore is
-      // standing on the ground, not riding a berthed boat.
-      aboard: r.moving && ridesTheVessel(dep, vessel),
+      // ABOARD. With the frame law running, `withFrames` has already said so
+      // and named the carrier; the old test — a passenger's departure IS the
+      // vessel's — is the line-mirroring Stage D retires, kept only for the
+      // flag-off path where nothing derives frames at all.
+      aboard: r.aboard ?? (r.moving && ridesTheVessel(dep, vessel)),
+      ...(r.frame ? { frame: r.frame, provenance: r.provenance } : {}),
       remaining_m: r.remaining_m,
       eta_crossings: r.eta_crossings,
     };
   }).sort((a, b) => (a.handle < b.handle ? -1 : 1));
+}
+
+/**
+ * Every resident's frame at an instant, for the overlay above.
+ *
+ * Imported lazily so that an office with `WORLD_MOVEMENT_V2` off never loads
+ * the movement modules at all — the same shape `world.mjs` uses for the frames
+ * map, and the reason the flag-off path is byte-identical rather than merely
+ * equal.
+ */
+async function framesForPresence({ db, world, repo, atMs, walk }) {
+  const [{ carrierReader, recordsAcrossEras, storedRecordsFor, vesselServiceFrom }, { foldFrames }] =
+    await Promise.all([import("./world-movement.mjs"), import("./world-frames.mjs")]);
+  const { service, mod, carriers } = await vesselServiceFrom(world, { repo });
+  if (!service || !mod || !carriers.length) return null;
+  const carrierAt = carrierReader(world, { repo, service, mod });
+
+  const out = new Map();
+  for (const [handle, dep] of governingDepartures(db)) {
+    if (handle === service.vessel.handle) continue;
+    const ledgerRecords = [{ handle, iso: dep.iso, ...toWalkRecord(dep) }];
+    const records = recordsAcrossEras(ledgerRecords, storedRecordsFor(handle, { db, atMs }));
+    const fold = await foldFrames(records, { carriers, carrierAt, walk, atMs });
+    if (fold.frame) out.set(handle, fold);
+  }
+  return out;
 }
 
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
@@ -162,7 +197,14 @@ async function readPresence({ dbPath = null, repo = WORLD_CLONE, atMs = Date.now
     // her sailing line rides in meta, saved beside the rows it governs.
     let vessel = null;
     try { vessel = JSON.parse(getMeta(db, "vessel_departure") ?? "null"); } catch { vessel = null; }
-    rows = positionsAt(db, atMs, w, vessel, { world, where: whereMod });
+    // Stage D: derive every frame once, here, and hand the map down. Flag-off
+    // this is null and `withFrames` returns its input untouched.
+    let frames = null;
+    if (movementV2Enabled() && world) {
+      try { frames = await framesForPresence({ db, world, repo, atMs, walk: w }); }
+      catch { frames = null; }   // a frame read must never cost anyone their presence
+    }
+    rows = positionsAt(db, atMs, w, vessel, { world, where: whereMod, frames });
     db.close();
     return {
       rows, engine: eng,
