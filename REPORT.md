@@ -69,6 +69,45 @@ absent) plus one on the real path in `test/world-pool.test.mjs`: `walkViaOffice`
 have no ground of their own" → `"…" is a parcel — ground held on the record, not somewhere you can
 stand` / `walk to a sited mark within it — that is also the neighbourly way to arrive: finn/the-porch, …`
 
+## 6 · The era seam: every live read now sees both eras
+
+The write path landed working and no live READ consumed era two. Four sites assembled departures
+from `parseWalkLedger` alone — the standpoint (`world.mjs:257`), hearing (`:512`), the walk's own
+`from` (`:1259`), the walkers door (`:1492`) — plus the presence fold, which derived from the
+entities table's last refresh. So on freeze day the twenty-seven set-down residents had an ashore
+record in the store that nobody read: `world_walkers` served them at the berth they had left, and
+`/world/present` could not find them at all, because the frame fold re-derived them onto a boat that
+had since sailed. They did not read as misplaced. They read as gone.
+
+One question, four derivations, live — issue #7's disease one layer down and across a seam.
+
+**The cure** `src/world.mjs § departuresAcrossEras` — the one era-spanning reader: `parseWalkLedger`
+concat `storedDepartures` (movements in the ledger's own shape), sorted by instant with a tie going
+to the store. Feature-detected on the `movements` table; era-1-only and disclosed on any failure;
+with `WORLD_MOVEMENT_V2` off the store is never opened. `src/world-movement.mjs § storedDepartures`
+is the all-handles read (`storedRecordsFor` is now its per-handle slice). The presence path reads
+era two at the instant it is asked (`positionsAt({ stored })`) rather than trusting the entities
+table's freshness, and `framesForPresence` folds over both eras so it cannot re-derive someone onto
+a boat they stepped off.
+
+**Sorted, not concatenated** — concat answers correctly today because every store record postdates
+every ledger line, but that is a property of the freeze rather than of the reader, and a reader
+whose correctness rests on a fact it does not check goes quietly wrong the first time the fact stops
+holding.
+
+**Tests** `test/era-seam.test.mjs`, nine, on the exact shape that broke: an era-1 line onto the
+vessel's footprint superseded by a newer era-2 ashore movement. Named: *"era two lands AFTER era one,
+so latest-wins answers ashore"* · *"a tie goes to the store"* · *"SORTED, not merely concatenated"* ·
+*"presence reads era two at the instant it is asked, not at the last refresh"* (the stale-entities
+path is asserted to answer nothing first, so the fixture can fail) · *"the acceptance set lands
+ashore, and wright's zero-metre record does not move him"* · *"FLAG OFF: era two is not read"*.
+Live end-to-end: flag off 317 departures and wright at `575,-2600`; flag on 319 and wright at
+`-24.8,45.2`, through the standpoint and the walkers door both.
+
+Suite **449 tests, 448 pass, 0 fail, 1 skip** — the skip is `hydrate-frames`, which now says
+*"no merge-base between main and stageD/coords"*: that branch landed as `stageD/landing` and there is
+no absolute twin left to compare against. Its premise is retired, not broken.
+
 ## Protected, checked
 `terms` and its published dials, per-item authorship/`quoted` separation, `TERMS_BUDGET_CHARS`, the
 518-character say error, `present`'s `as_of`/`evaluated_at`/`ledger_moved`/`disclosed`, and L6 GREEN —

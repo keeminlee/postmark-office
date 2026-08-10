@@ -38,7 +38,7 @@ import { emissionsEnabled, openDynamic } from "./dynamic-store.mjs"; // stage 2:
 import { declareMovement } from "./dynamic-entities.mjs"; // stage D: the pen after the ledger's freeze
 import { emissionFromVoice } from "./dynamic-emissions.mjs"; // stage 2: speech also becomes an emission instance
 import { VESSEL_HANDLE, ridesTheVessel } from "./dynamic-entities.mjs"; // the aboard test, one home for two readers
-import { carriersFrom, carriersWithDisclosure, carrierReader, heardFromV2, inRect, movementStandpoint, movementV2Enabled, recordsAcrossEras, roadTerms, storedRecordsFor, vesselPositionAt as vesselFromTimetable, vesselServiceFrom } from "./world-movement.mjs"; // stage D: carriers carry, frames compose
+import { carriersFrom, carriersWithDisclosure, carrierReader, heardFromV2, inRect, movementStandpoint, movementV2Enabled, recordsAcrossEras, roadTerms, storedDepartures, storedRecordsFor, vesselPositionAt as vesselFromTimetable, vesselServiceFrom } from "./world-movement.mjs"; // stage D: carriers carry, frames compose
 import { byBand, presenceEnabled, presentNear, near as presenceNear, everyone as presenceEveryone } from "./dynamic-presence.mjs"; // stage 2: residents revealed to each other
 import { everyonePlaced, withFrames } from "./positions.mjs"; // where is everyone: walk records ∪ parcel households, one derivation — plus Stage D's frame overlay
 
@@ -216,6 +216,65 @@ async function homeCoords(handle, w) {
 // on draft/keeminlee — she appeared reverted to her prior arrival.)
 const walkLedgerAtMain = (repo) => readAtRef(repo, mainRef(repo), "WORLD/walk-ledger.md");
 
+// ── THE MOVEMENT RECORD, ACROSS BOTH ERAS ────────────────────────────────────
+//
+// The walk ledger is frozen with honor: it is the founding era's record and it
+// takes no more lines. `dynamic.db/movements` is era two. A reader that knows
+// only the first one is reading a town that stopped moving on the day of the
+// freeze — which is exactly what shipped, and what this function exists to end.
+//
+// THE DISEASE THIS IS THE CURE FOR. Four live sites each assembled departures
+// from `parseWalkLedger` alone: the standpoint, hearing, the walk's own `from`,
+// and the walkers door. One question — where has this resident been — with four
+// derivations that agreed only while there was a single era to read. The day the
+// freeze landed, twenty-seven residents had an ashore record in the store that
+// no reader consulted, so `world_walkers` served them at the berth they had left
+// and `/world/present` could not find them at all. That is issue #7's disease
+// again, one layer down and across a seam this time; the cure is the same one —
+// ONE function, and every site calls it.
+//
+// CONCAT WOULD HAVE BEEN ENOUGH and this sorts anyway. The engine's
+// `currentDeparture` takes the LAST match in array order, and every store record
+// postdates every ledger line by construction, so appending era two would answer
+// correctly today. It sorts by instant because "by construction" is a property
+// of the freeze rather than of this function, and a reader whose correctness
+// rests on a fact it does not check is a reader that will be wrong quietly the
+// first time the fact stops holding.
+//
+// FEATURE-DETECTED, DISCLOSED, ERA-1 ON ANY FAILURE. With the flag off the store
+// is not opened at all and this returns exactly what `parseWalkLedger` returned.
+export async function departuresAcrossEras(worldClone = WORLD_CLONE, { atMs = Date.now(), db = null } = {}) {
+  const disclosed = [];
+  let ledger = [];
+  try {
+    const { parseWalkLedger } = await engineImport("walk.mjs");
+    ({ departures: ledger } = parseWalkLedger(walkLedgerAtMain(worldClone)));
+  } catch (e) {
+    disclosed.push(`walk-ledger-unreadable: ${String(e?.message ?? e).slice(0, 120)}`);
+  }
+  if (!movementV2Enabled()) return { departures: ledger, eras: ["ledger"], disclosed };
+
+  const { records, absent } = storedDepartures({ db, atMs });
+  if (absent) {
+    disclosed.push(`movements-unreadable: ${absent} — reading the founding era alone`);
+    return { departures: ledger, eras: ["ledger"], disclosed };
+  }
+  if (!records.length) return { departures: ledger, eras: ["ledger", "store"], disclosed };
+
+  const merged = [...ledger, ...records].sort((a, b) => {
+    const ta = Date.parse(a.iso), tb = Date.parse(b.iso);
+    if (ta !== tb) return ta - tb;
+    // A tie goes to the store: the ledger cannot gain a line after the freeze,
+    // so a store row at the same instant is by construction the later statement.
+    return (a.source === "store" ? 1 : 0) - (b.source === "store" ? 1 : 0);
+  });
+  return { departures: merged, eras: ["ledger", "store"], disclosed, store_records: records.length };
+}
+
+/** The array alone, for the many callers that want only that. */
+export const departuresNow = async (worldClone = WORLD_CLONE, opts = {}) =>
+  (await departuresAcrossEras(worldClone, opts)).departures;
+
 // Where a bare call stands you: your BODY first — the walk ledger's derived
 // position (presence lives in the walk ledger, the invariant recorded
 // 2026-07-30) — and your ground only when you have never walked. This is what
@@ -254,11 +313,12 @@ const foldForPresence = (key = null) => world(key).then((w) => w, () => null);
 export async function residentStandpoint(handle, w = null) {
   const world_ = w ?? await world(null);
   const { whereIs } = await whereMod();
+  // BOTH ERAS. A resident set down ashore at the freeze has that record in the
+  // store and nowhere else; reading the ledger alone puts them back at the berth
+  // they left.
   let departures = [];
-  try {
-    const { parseWalkLedger } = await engineImport("walk.mjs");
-    ({ departures } = parseWalkLedger(walkLedgerAtMain(WORLD_CLONE)));
-  } catch { /* no ledger — ground is still an honest answer */ }
+  try { departures = await departuresNow(WORLD_CLONE); }
+  catch { /* no ledger and no store — ground is still an honest answer */ }
 
   // ── STAGE D (WORLD_MOVEMENT_V2) ───────────────────────────────────────────
   // The boat runs on her timetable, and riding her is a declared attachment.
@@ -508,11 +568,10 @@ const voices = createVoices({
       return await heardFromV2(voice, await world(null), {
         repo: WORLD_CLONE, atMs: t,
         recordsOf: async (h) => {
-          try {
-            const { parseWalkLedger } = await engineImport("walk.mjs");
-            const { departures } = parseWalkLedger(walkLedgerAtMain(WORLD_CLONE));
-            return departures.filter((d) => d.handle === h);
-          } catch { return []; }
+          // Both eras: a speaker's frame at the instant they spoke is a fold
+          // over their whole history, and half a history folds to the wrong deck.
+          try { return (await departuresNow(WORLD_CLONE)).filter((d) => d.handle === h); }
+          catch { return []; }
         },
       });
     } catch { return null; }
@@ -1254,9 +1313,10 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
   // have never walked. Deriving rather than storing is the whole design law, and
   // it is what makes supersede free: a new leg simply starts where you are now.
   const at = fractionalCrossing();
-  let ledgerText = "";
-  try { ledgerText = walkLedgerAtMain(worldClone); } catch { /* no ledger yet */ }
-  const { departures } = parseWalkLedger(ledgerText);
+  // BOTH ERAS, or a new leg starts from where this resident was standing before
+  // the freeze — which for the thirty set down ashore is a berth they are no
+  // longer at.
+  const departures = await departuresNow(worldClone).catch(() => []);
   const mine = currentDeparture(departures, who);
   const derived = mine ? positionAt(mine, at) : null;
   const home = await homeCoords(who, w);
@@ -1486,11 +1546,14 @@ async function walkersInFrames(walkers, w, departures, atMs = Date.now()) {
 export async function worldWalkers(worldClone, key = null) {
   // publicWalkers is the single writer of the walker vocabulary — the spectator
   // publishes the same shape from the same function, so the two cannot drift.
-  const { parseWalkLedger, publicWalkers, fractionalCrossing } = await engineImport("walk.mjs");
-  let text = "";
-  try { text = walkLedgerAtMain(worldClone); } catch { return { at: fractionalCrossing(), walkers: [], standing: [] }; }
-  const { departures } = parseWalkLedger(text);
+  const { publicWalkers, fractionalCrossing } = await engineImport("walk.mjs");
   const at = fractionalCrossing();
+  // BOTH ERAS. This is the door that served twenty-seven residents at a berth
+  // they had left, because their ashore records were in the store and this read
+  // only the ledger.
+  let departures = [];
+  try { departures = await departuresNow(worldClone); }
+  catch { return { at, walkers: [], standing: [] }; }
   // ONE list. Briefly this door published `walkers` and `standing` separately and
   // the map painted three colours, which was a category error: "arrived" and
   // "standing" are the same state (a person at rest), differing only in how the

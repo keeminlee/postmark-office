@@ -158,27 +158,45 @@ export async function vesselPositionAt(worldState, atMs = Date.now(), { repo = W
  * store must not be able to unplace a resident whose ledger line is sitting
  * right there in the world repo.
  */
-export function storedRecordsFor(handle, { db = null, dbPath = null, atMs = Date.now() } = {}) {
+export function storedDepartures({ db = null, dbPath = null, atMs = Date.now() } = {}) {
   const path = dbPath ?? dynamicDbPath();
-  if (!db && !existsSync(path)) return [];
+  // FEATURE-DETECTED, NOT VERSION-MATCHED. A store written before the movements
+  // table existed, a store that will not open, a `movements` table that is not
+  // there yet: all of them mean "era two has nothing to say", which is a true
+  // sentence about a town that has not had its freeze yet. Era-1-only is the
+  // answer, and the caller discloses it — never a throw, because a reader that
+  // could take down `orient` over an absent second era would have made the seam
+  // more fragile than the thing it replaced.
+  if (!db && !existsSync(path)) return { records: [], absent: `no dynamic store at ${path}` };
   let h = db, own = false;
   try {
     if (!h) { h = openDynamic(path, { readOnly: true }); own = true; }
-    const rows = readMovements(h, { until: atMs }).filter((r) => r.actor === handle);
+    const rows = readMovements(h, { until: atMs });
     if (own) h.close();
-    return rows.map((r) => {
-      const p = JSON.parse(r.payload);
-      return {
-        iso: r.at, handle,
-        from: p.from, toward: p.toward, at: p.crossing,
-        targetExtent: p.within ?? null, targetMarkId: p.to ?? null, pace: p.pace ?? null,
-        source: "store",
-      };
-    });
-  } catch {
+    return {
+      records: rows.map((r) => {
+        const p = JSON.parse(r.payload);
+        return {
+          // THE LEDGER'S OWN SHAPE, so a merged list is one vocabulary. `within`
+          // and `to` are the store's column names; `targetExtent` and
+          // `targetMarkId` are what walk.mjs reads. One converter, here.
+          iso: r.at, handle: r.actor,
+          from: p.from, toward: p.toward, at: p.crossing,
+          targetExtent: p.within ?? null, targetMarkId: p.to ?? null, pace: p.pace ?? null,
+          source: "store",
+        };
+      }),
+      absent: null,
+    };
+  } catch (e) {
     if (own && h) { try { h.close(); } catch { /* already gone */ } }
-    return [];
+    return { records: [], absent: String(e?.message ?? e).slice(0, 160) };
   }
+}
+
+/** One entity's stored records, oldest first. The per-handle slice of the above. */
+export function storedRecordsFor(handle, opts = {}) {
+  return storedDepartures(opts).records.filter((r) => r.handle === handle);
 }
 
 /** The single governing record — the last one. Kept for surfaces that want only that. */

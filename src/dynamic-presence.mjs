@@ -95,15 +95,37 @@ export function governingDepartures(db) {
  * never in this list: she is a mark that moves, not a resident, and the entities
  * table she is excluded from is what feeds the departures below.
  */
-export function positionsAt(db, atMs, walk, vessel = null, { world = null, where = null, frames = null } = {}) {
+export function positionsAt(db, atMs, walk, vessel = null, { world = null, where = null, frames = null, stored = null } = {}) {
   const deps = governingDepartures(db);
   deps.delete(VESSEL_HANDLE);   // belt and braces: she is not in this table to begin with
   const at = walk.fractionalCrossing(atMs);
 
-  // The store's departures in the LEDGER'S own vocabulary, so the union reads
-  // them with exactly the arithmetic a walk-ledger departure gets. `toWalkRecord`
-  // is the one converter, already the crossing-save's; there is no second one.
-  const departures = [...deps].map(([handle, dep]) => ({ handle, iso: dep.iso, ...toWalkRecord(dep) }));
+  // The entities table's departures in the LEDGER'S own vocabulary, so the union
+  // reads them with exactly the arithmetic a walk-ledger departure gets.
+  // `toWalkRecord` is the one converter, already the crossing-save's; there is
+  // no second one.
+  const fromEntities = [...deps].map(([handle, dep]) => ({ handle, iso: dep.iso, ...toWalkRecord(dep) }));
+
+  // ── ERA TWO, READ DIRECTLY ────────────────────────────────────────────────
+  //
+  // The entities table is a CRYSTALLIZATION, refreshed on a tick: it merges both
+  // eras, but only as of the last refresh. Presence derives at the instant it is
+  // asked, so between the freeze and the next refresh it was answering from a
+  // table that predated the record — twenty-seven residents with an ashore
+  // movement in the store, and a presence layer still folding them onto a boat
+  // that had since sailed. They did not read as misplaced; they read as GONE,
+  // because the fold followed her out to sea.
+  //
+  // So the store's own movements are merged here, at read time, beside the
+  // crystallized ones. Latest wins per handle — `publicResidents` takes the last
+  // match — and the sort makes that true by instant rather than by luck.
+  const departures = (stored?.length
+    ? [...fromEntities, ...stored].sort((a, b) => {
+      const ta = Date.parse(a.iso), tb = Date.parse(b.iso);
+      if (ta !== tb) return ta - tb;
+      return (a.source === "store" ? 1 : 0) - (b.source === "store" ? 1 : 0);
+    })
+    : fromEntities).filter((d) => d.handle !== VESSEL_HANDLE);
 
   // THE FRAME OVERLAY, applied to the SAME rows the walkers door composes
   // (positions.mjs § withFrames). Without it `present` would put a passenger
@@ -147,7 +169,7 @@ export function positionsAt(db, atMs, walk, vessel = null, { world = null, where
  * map, and the reason the flag-off path is byte-identical rather than merely
  * equal.
  */
-async function framesForPresence({ db, world, repo, atMs, walk }) {
+async function framesForPresence({ db, world, repo, atMs, walk, stored = null }) {
   const [{ carrierReader, recordsAcrossEras, storedRecordsFor, vesselServiceFrom }, { foldFrames }] =
     await Promise.all([import("./world-movement.mjs"), import("./world-frames.mjs")]);
   const { service, mod, carriers } = await vesselServiceFrom(world, { repo });
@@ -157,8 +179,13 @@ async function framesForPresence({ db, world, repo, atMs, walk }) {
   const out = new Map();
   for (const [handle, dep] of governingDepartures(db)) {
     if (handle === service.vessel.handle) continue;
+    // The fold needs BOTH eras or it re-derives people onto a boat they stepped
+    // off: the entities table holds their era-1 arrival, the store holds the
+    // ashore record that ended it. `stored` is read once by the caller and
+    // sliced here rather than re-opened per resident.
     const ledgerRecords = [{ handle, iso: dep.iso, ...toWalkRecord(dep) }];
-    const records = recordsAcrossEras(ledgerRecords, storedRecordsFor(handle, { db, atMs }));
+    const mine = stored ? stored.filter((r) => r.handle === handle) : storedRecordsFor(handle, { db, atMs });
+    const records = recordsAcrossEras(ledgerRecords, mine);
     const fold = await foldFrames(records, { carriers, carrierAt, walk, atMs });
     if (fold.frame) out.set(handle, fold);
   }
@@ -199,12 +226,18 @@ async function readPresence({ dbPath = null, repo = WORLD_CLONE, atMs = Date.now
     try { vessel = JSON.parse(getMeta(db, "vessel_departure") ?? "null"); } catch { vessel = null; }
     // Stage D: derive every frame once, here, and hand the map down. Flag-off
     // this is null and `withFrames` returns its input untouched.
-    let frames = null;
-    if (movementV2Enabled() && world) {
-      try { frames = await framesForPresence({ db, world, repo, atMs, walk: w }); }
-      catch { frames = null; }   // a frame read must never cost anyone their presence
+    let frames = null, stored = null;
+    if (movementV2Enabled()) {
+      try {
+        const { storedDepartures } = await import("./world-movement.mjs");
+        stored = storedDepartures({ db, atMs }).records;
+      } catch { stored = null; }  // era-1 only, and the disclosure below says so
+      if (world) {
+        try { frames = await framesForPresence({ db, world, repo, atMs, walk: w, stored }); }
+        catch { frames = null; }  // a frame read must never cost anyone their presence
+      }
     }
-    rows = positionsAt(db, atMs, w, vessel, { world, where: whereMod, frames });
+    rows = positionsAt(db, atMs, w, vessel, { world, where: whereMod, frames, stored });
     db.close();
     return {
       rows, engine: eng,
