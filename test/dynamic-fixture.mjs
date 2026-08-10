@@ -39,6 +39,37 @@ export const DEFAULT_PACE_KM = 15;
 export function fractionalCrossing(nowMs = Date.now()) {
   return Math.max(0, (nowMs - CROSSING_EPOCH_UTC) / CROSSING_MS);
 }
+export function currentDeparture(departures, handle) {
+  let cur = null;
+  for (const d of departures ?? []) if (d.handle === handle) cur = d;
+  return cur;
+}
+// The ledger's own line grammar, in miniature — the world's DEPARTURE_RE with
+// the optional clauses (within / to / pace) left off. Enough that the walkers
+// door and the presence store can be seeded from ONE list of departures and
+// then be checked against each other.
+export const DEPARTURE_RE = /^- (\\S+) · (\\S+) · from (-?[\\d.]+),(-?[\\d.]+) · toward (-?[\\d.]+),(-?[\\d.]+) · at ([\\d.]+)$/;
+export function parseWalkLedger(text) {
+  const departures = [];
+  const unrecognized = [];
+  for (const raw of String(text ?? "").replace(/\\r\\n/g, "\\n").split("\\n")) {
+    if (!raw.startsWith("- ")) continue;
+    const m = raw.match(DEPARTURE_RE);
+    if (!m) { unrecognized.push(raw); continue; }
+    departures.push({
+      iso: m[1], handle: m[2],
+      from: { x: +m[3], y: +m[4] }, toward: { x: +m[5], y: +m[6] }, at: +m[7],
+      targetExtent: null, targetMarkId: null, pace: null, line: raw,
+    });
+  }
+  return { departures, unrecognized };
+}
+export function publicWalkers(departures, nowFractional = fractionalCrossing()) {
+  return (departures ?? []).map((d) => {
+    const p = positionAt(d, nowFractional);
+    return { handle: d.handle, x: p.x, y: p.y, source: "walk", moving: !p.arrived, remaining_m: p.remainingM, eta_crossings: p.etaCrossings };
+  });
+}
 export function positionAt(departure, nowFractional = fractionalCrossing()) {
   if (!departure) return null;
   const { from, toward, at } = departure;
@@ -119,8 +150,77 @@ export function openYourEyes(state, world) {
 export function investigate() { return null; }
 `;
 
+// THE TOWN'S OWN POSITION JOIN, carried into the fixture rather than stubbed.
+//
+// It used to be a stub returning NOWHERE and an empty list, which was fine while
+// presence read the walk ledger alone. It is not fine now: `present` answers
+// over the WHOLE position union — walk records ∪ parcel households — through
+// exactly this module (issue #7 §1), so a stub would have the tests proving the
+// office calls something rather than proving what the answer is.
+//
+// This is `tools/where-is.mjs` from the world repo, trimmed to the four
+// functions the office calls and with its long history comments left there.
+// Same rules, same order: a declared walk wins, ground stands underneath it,
+// unplaced is honestly unplaced and never the origin.
+const WHERE_IS_MJS = `
+import { currentDeparture, positionAt, fractionalCrossing } from "./walk.mjs";
+export const NOWHERE = Object.freeze({ x: null, y: null, placed: false, source: null, mark_id: null });
+export function householdOf(handle, world) {
+  const own = (world?.marks ?? []).find((m) => m.by === handle && m.household);
+  return own?.household ?? handle;
+}
+export function parcelFor(handle, world) {
+  const hh = householdOf(handle, world);
+  if (!hh) return null;
+  return (world?.parcels ?? []).find((p) => p.household === hh) ?? null;
+}
+export function homeOf(handle, world) {
+  const parcel = parcelFor(handle, world);
+  if (!parcel || !Number.isFinite(parcel.at?.x) || !Number.isFinite(parcel.at?.y)) return { ...NOWHERE };
+  return { x: parcel.at.x, y: parcel.at.y, placed: true, source: "parcel", mark_id: parcel.id ?? null, parcel };
+}
+export function whereIs(handle, { world = null, departures = [], at = fractionalCrossing() } = {}) {
+  const departure = currentDeparture(departures ?? [], handle);
+  if (departure) {
+    const p = positionAt(departure, at);
+    if (p && Number.isFinite(p.x) && Number.isFinite(p.y))
+      return { x: p.x, y: p.y, placed: true, source: "walk", mark_id: departure.targetMarkId ?? null, position: p, departure };
+  }
+  return homeOf(handle, world);
+}
+export function publicResidents(handles, { world = null, departures = [], at = fractionalCrossing() } = {}) {
+  const seen = new Set();
+  const out = [];
+  for (const handle of handles ?? []) {
+    if (!handle || seen.has(handle)) continue;
+    seen.add(handle);
+    const here = whereIs(handle, { world, departures, at });
+    if (!here.placed) continue;
+    const p = here.position ?? null;
+    const moving = Boolean(p && p.arrived === false);
+    out.push({
+      handle, x: here.x, y: here.y, source: here.source, moving,
+      toward: moving ? (here.departure?.toward ?? null) : null,
+      remaining_m: moving ? p.remainingM : 0,
+      eta_crossings: moving ? p.etaCrossings : 0,
+      mark_id: here.mark_id ?? null,
+    });
+  }
+  return out;
+}
+`;
+
+/**
+ * One departure, as a line of the public ledger. The world.db events and the
+ * ledger file are seeded from the SAME array through this, so a test that
+ * checks the walkers door against the presence layer is comparing two
+ * derivations of one record rather than two different records.
+ */
+export const ledgerLine = (d) =>
+  `- ${d.at} · ${d.actor} · from ${d.from.x},${d.from.y} · toward ${d.toward.x},${d.toward.y} · at ${d.crossing}`;
+
 /** A world clone carrying the whole miniature engine — enough for orient, eyes and place words. */
-export function fixtureWorldCloneWithEngine({ label = "presence", marks = [] } = {}) {
+export function fixtureWorldCloneWithEngine({ label = "presence", marks = [], parcels = [], departures = [] } = {}) {
   const repo = mkdtempSync(join(tmpdir(), `postmark-${label}-world-`));
   const put = (p, t) => { const f = join(repo, p); mkdirSync(dirname(f), { recursive: true }); writeFileSync(f, t); };
   put("tools/walk.mjs", WALK_MJS);
@@ -128,14 +228,9 @@ export function fixtureWorldCloneWithEngine({ label = "presence", marks = [] } =
   put("tools/geometry.mjs", GEOMETRY_MJS);
   put("tools/world-verbs.mjs", VERBS_MJS);
   put("tools/world-build.mjs", 'export function assembleWorld({ worldState, skeleton }) { return { ...worldState, skeleton }; }');
-  put("tools/where-is.mjs", `
-export const NOWHERE = Object.freeze({ x: null, y: null, placed: false, source: null, mark_id: null });
-export function homeOf() { return NOWHERE; }
-export function whereIs() { return NOWHERE; }
-export function publicResidents() { return []; }
-`);
-  put("WORLD/walk-ledger.md", "# Walk ledger\n");
-  put("WORLD/world-state.json", JSON.stringify({ tick: 0, dials: {}, marks, parcels: [], determined: {}, vague: [], rivalries: [], portfolios: {}, terrain_weight: {}, errors: [] }));
+  put("tools/where-is.mjs", WHERE_IS_MJS);
+  put("WORLD/walk-ledger.md", ["# Walk ledger", "", ...departures.map(ledgerLine), ""].join("\n"));
+  put("WORLD/world-state.json", JSON.stringify({ tick: 0, dials: {}, marks, parcels, determined: {}, vague: [], rivalries: [], portfolios: {}, terrain_weight: {}, errors: [] }));
   put("WORLD/skeleton.json", JSON.stringify({ features: [], physics_registry: {} }));
   put("seeding/manifest.json", JSON.stringify({ homes: [] }));
   const git = (...a) => execFileSync("git", ["-C", repo, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
