@@ -117,6 +117,43 @@ export const EDGE_TYPES = [
   ["describes", "ADDED: a predicated/naming mark and the mark it predicates. SCHEMA.md's continuation law makes this NOT containment — a predicate inherits its parent's extent whole rather than sitting inside it — so folding it into `contains` would assert geometry the record never claims. Also carries ENGINE.md headings to the mechanics they document (heading text names the mechanic id)."],
 ];
 
+// ── THE CLASS-MARK GATE (Stage 3, seam 1) ───────────────────────────────────
+//
+// An affordance is a VERB, and the only thing allowed to mint one is settled
+// law: a mark authored by the town, at constitution tier, carrying a `class:`
+// field. Resident prose can never mint a verb, however well-formed the
+// frontmatter someone writes.
+//
+// The gate lives HERE, in the module that owns how the store is read, because
+// it has two readers who must never disagree: the apex verb, which surfaces
+// affordances at a standpoint (SQL, for the query planner), and lint L6, which
+// checks that every exposed subverb has a handler (a predicate, over the loaded
+// graph). Two copies of a security boundary is one copy too many; a test asserts
+// the SQL and the predicate select the same nodes.
+//
+// `by = 'the-town'` is the clause that carries the weight. Tier is a word in
+// somebody's frontmatter until authorship makes it a fact, and the write doors
+// stamp `by` from the caller's own resident handles — the town is not a
+// resident, so no credential at any door can author as it.
+export const CLASS_MARK_GATE_SQL = `
+     kind = 'mark'
+     AND by   = 'the-town'
+     AND tier = 'constitution'
+     AND json_extract(props, '$.class')       IS NOT NULL
+     AND json_extract(props, '$.affordances') IS NOT NULL`;
+
+/** The same gate, as a predicate over a loaded node's attributes. */
+export const isClassMark = (attr) => attr?.kind === "mark"
+  && attr?.by === "the-town"
+  && attr?.tier === "constitution"
+  && attr?.props?.class != null
+  && attr?.props?.affordances != null;
+
+/** The subverbs a node exposes. Callers must gate first; this only reads. */
+export const subverbsOf = (attr) => (Array.isArray(attr?.props?.affordances) ? attr.props.affordances : [])
+  .map((a) => String(a?.subverb ?? "").trim())
+  .filter(Boolean);
+
 // ── the world clone, and reading it AT A SHA ─────────────────────────────────
 
 export const OFFICE_ROOT = resolve(import.meta.dirname, "..");

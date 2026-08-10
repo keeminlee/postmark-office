@@ -22,7 +22,7 @@
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { loadWorldGraph, geometryIndex, geometryAsOf, rectOfVersion, reachable, out, inbound, nodesWhere, DEFAULT_DB } from "./world-store.mjs";
+import { loadWorldGraph, geometryIndex, geometryAsOf, rectOfVersion, reachable, out, inbound, nodesWhere, isClassMark, subverbsOf, DEFAULT_DB } from "./world-store.mjs";
 
 const RED = "RED", GREEN = "GREEN", NA = "N/A";
 
@@ -374,33 +374,61 @@ export async function runLints({ dbPath = DEFAULT_DB, sources = null, engineText
   }
 
   // ── L6 · every exposed subverb has a live handler ─────────────────────────
-  // Not applicable before the apex verb exists — CHECKED rather than assumed.
-  // Tool names come from the registration shape, never from a mention of the
-  // word: an earlier pass matched the bare word "world" inside a description and
-  // declared the apex verb shipped. Dispatch is detected as CODE (a subverb or
-  // affordance table), not as prose, for the same reason.
+  //
+  // WRITTEN 2026-08-09, the day the apex verb shipped (Stage 3). Until then this
+  // reported N/A over an empty subverb set, on the ground that a conformance
+  // check with nothing to check is not green, it is unrun. There is now
+  // something to check.
+  //
+  // The question: a class mark that passes the gate ADVERTISES its subverbs to
+  // every resident standing near it. If the office has no handler for one, law
+  // has opened a door with no room behind it — and the resident finds out by
+  // reaching for it. So the exposed set comes from the STORE (the marks, which
+  // are what residents actually see) and the handled set comes from the apex's
+  // own dispatch table (the code that actually runs), and they must agree.
+  //
+  // Both sides read their single source: `isClassMark` is the same gate the
+  // apex queries with, and `DISPATCHABLE` is the key set of the table the door
+  // dispatches on. Nothing here restates either.
   {
-    const DISPATCH_RE = /\b(subverbs?|affordances?)\s*[:=[(]|\.\s*(subverbs?|affordances?)\b/i;
-    const registered = new Set();
-    let dispatch = false;
-    for (const id of RUNNING) {
-      const text = sourceOf(id);
-      if (!text) continue;
-      for (const m of text.matchAll(/name:\s*["']([a-z_]+)["']/g)) registered.add(m[1]);
-      if (DISPATCH_RE.test(text)) dispatch = true;
+    const exposed = new Map(); // subverb -> [class mark ids]
+    for (const { id, attr } of nodesWhere(graph, isClassMark))
+      for (const sub of subverbsOf(attr)) {
+        if (!exposed.has(sub)) exposed.set(sub, []);
+        exposed.get(sub).push(id);
+      }
+    // The door is loaded only when there is a question to ask of it: a world
+    // whose classes expose nothing needs no dispatch table to compare against,
+    // and the hydrator should not pull the whole office in to learn that.
+    let handled = null;
+    let handlerReadFailure = null;
+    if (exposed.size) {
+      try { ({ DISPATCHABLE: handled } = await import("./world-apex.mjs")); }
+      catch (e) { handlerReadFailure = String(e?.message ?? e).slice(0, 160); }
     }
-    const toolNames = [...registered].filter((t) => t === "world" || t.startsWith("world_")).sort();
-    const apex = registered.has("world");
+    const orphans = handled
+      ? [...exposed.entries()].filter(([sub]) => !handled.includes(sub))
+      : [];
+    // A lint that cannot read one of its two sides reports that, rather than
+    // comparing against an empty set and calling the silence green.
+    const verdict = handlerReadFailure ? RED : orphans.length ? RED : exposed.size ? GREEN : NA;
     add({
       id: "L6", name: "every exposed subverb has a live handler",
-      verdict: apex || dispatch ? RED : NA,
-      headline: apex || dispatch
-        ? "an apex verb or subverb dispatch now exists — this lint is applicable and must be written"
-        : `not applicable: no apex \`world\` verb exists yet. The running office registers ${toolNames.length} flat world_* tools across its loaded modules, and no subverb table.`,
-      method: "every module the running office loads (L1's reachable set) scanned for tool registrations (`name: \"…\"`) and for any subverb/affordance dispatch. The set of exposed subverbs is empty, so a conformance check over it would be VACUOUSLY GREEN — which would be a lie about a check that has never run. N/A is the honest verdict.",
-      limits: "This becomes a real lint the day the apex verb ships (§2.11); until then it only guards against silently reporting green. Registration is recognised by one syntactic shape; a tool registered some other way would be missed.",
-      rows: [{ world_tools: toolNames, registered_tools: registered.size, apex_verb_present: apex, subverb_dispatch_present: dispatch }],
-      evidence: [`${registered.size} tools registered across the running modules; the world_* ones: ${toolNames.join(", ")}`],
+      verdict,
+      headline: handlerReadFailure
+        ? `the dispatch table could not be read (${handlerReadFailure}) — the exposed set cannot be checked against anything`
+        : orphans.length
+          ? `${orphans.length} subverb(s) advertised by law with no handler in the office: ${orphans.map(([s, ids]) => `${s} (${ids.join(", ")})`).join("; ")}`
+          : exposed.size
+            ? `${exposed.size} subverb(s) exposed by ${new Set([...exposed.values()].flat()).size} class mark(s); every one of them dispatches`
+            : "not applicable: no class mark in the world exposes an affordance yet, so there is nothing to conform.",
+      method: "the exposed set is every subverb on every mark passing the class-mark gate (world-store.mjs `isClassMark`: by the-town, tier constitution, carrying `class:` and `affordances:`) — the same gate the apex verb queries with. The handled set is `DISPATCHABLE` from src/world-apex.mjs, the key set of the table the door actually dispatches on. Neither side is restated here.",
+      limits: "This checks that a handler EXISTS, not that it is correct, and it says nothing about subverbs the office could dispatch but no class exposes (an unused handler is dead code, not a broken promise). A class mark on a household draft branch is invisible to the store and so to this lint.",
+      rows: [...exposed.entries()].map(([subverb, from]) => ({ subverb, from, handled: Boolean(handled?.includes(subverb)) })),
+      evidence: [
+        `exposed: ${[...exposed.keys()].sort().join(", ") || "(none)"}`,
+        `dispatchable: ${handled ? handled.join(", ") : exposed.size ? "(unreadable)" : "(not consulted — nothing is exposed)"}`,
+      ],
     });
   }
 

@@ -408,6 +408,56 @@ cell would have repeated a retired snapshot's words forever. The store's epoch i
 now the second clock that cache answers to; with the flags off it is a constant
 zero and never fires.
 
+## The store's second reader — the apex verb (Stage 3)
+
+Everything above is about serving reads the fold could also have served. The
+apex verb `world` is a different kind of reader, and the difference matters:
+**it asks the store for something the fold does not have.**
+
+`marks-fold.mjs` carries a whitelist of frontmatter fields into
+`world-state.json` — `mechanic`, `top_m`, `feature`, `points`, `timetable` — and
+the class layer (`class:`, `dials:`, `affordances:`, `implements:`) is not on
+it. The store keeps whole frontmatter in `nodes.props`. So affordances have no
+fold answer to fall through to, and the store is not an optimisation here, it is
+the only reader of the fact.
+
+Two consequences, both deliberate:
+
+- **`WORLD_APEX=1` opens the store regardless of the serving flags.** The
+  promise at the top of `world-serve.mjs` — with neither flag, the store is
+  never opened — is about serving a fold-equivalent read *in place of* the fold.
+  With `WORLD_APEX` unset nothing in `world-apex.mjs` runs at all, so the
+  promise holds exactly where it was made.
+- **Absence is disclosed, never substituted.** A missing, failed or unreadable
+  store makes the read return no affordances and say why in `law.unavailable`;
+  an *act* refuses outright (503), because the law that binds an act has to
+  arrive with it.
+
+### The class-mark gate
+
+`CLASS_MARK_GATE_SQL` and `isClassMark` in `world-store.mjs` are one gate with
+two spellings, and a test asserts they select the same nodes. A mark mints an
+affordance only if it is `by: the-town`, `tier: constitution`, and carries a
+`class:` field. `by` is the clause carrying the weight: tier is a word in
+somebody's frontmatter until authorship makes it a fact, and every write door
+stamps `by` from the caller's own resident handles.
+
+The gate has two readers, which is why it lives here rather than in the door:
+the apex verb queries with the SQL, and lint **L6** — *every exposed subverb has
+a live handler* — walks the loaded graph with the predicate. L6 was written the
+day the apex shipped; before that it reported N/A over an empty set rather than
+a vacuous green.
+
+### What stands today
+
+At world `2fcaff0`, exactly **one** subverb is exposed: `say`, from
+`the-town/sound`, and it dispatches. `the-town/the-wheelhouse` declares `board`
+and carries `class: timetable`, but its frontmatter names no tier, so it
+hydrates as `market` and the gate holds it. Adding `tier: constitution` to that
+mark is a one-line world-repo act — and the day it lands, L6 turns RED naming
+`board`, because v0 dispatches no handler for it. That is the lint working, not
+a regression.
+
 ## Not in scope, deliberately
 
 No hydrator change (the rings stay a vertex count — that is the next commit, not

@@ -14,6 +14,7 @@ import { enqueueLetter } from "./write.mjs";
 import { requestResidency } from "./residency.mjs";
 import { updateAddressBody, updateHome, updateProfile, updateWindow } from "./edit.mjs";
 import { WORLD_TOOLS, callWorldTool, worldBlockForHandle } from "./world.mjs";
+import { apexEnabled, apexTools, worldApex } from "./world-apex.mjs"; // stage 3: the apex `world` verb, behind WORLD_APEX
 import { householdOf } from "./households.mjs";
 
 // Tools that WRITE — gated on a signed-in door. Called without a credential
@@ -148,12 +149,28 @@ const TOOLS = [
   ...WORLD_TOOLS,
 ];
 
+// The apex verb STANDS BESIDE the flat verbs, it does not replace them —
+// retirement is a later, per-verb act, and nothing above is retired here. With
+// WORLD_APEX unset `apexTools()` is a frozen empty array and this returns TOOLS
+// itself, the same list, the same identity, that the door served before.
+const toolList = () => (apexEnabled() ? [...TOOLS, ...apexTools()] : TOOLS);
+
+// The apex is the one tool whose SHAPE depends on its arguments: bare it is a
+// read anyone may make, and with `do:` it performs a write-shaped act through
+// the same implementation the flat verb uses. So the auth gates ask the call,
+// not just the name. Every other tool answers from the name alone, exactly as
+// before.
+const writeShaped = (name, args) => WRITE_TOOLS.has(name)
+  || (name === "world" && args != null && typeof args === "object" && args.do != null && args.do !== "");
+
 async function callTool(name, args, ctx) {
   const { db, key, meta, asOf, canWrite, clone, pen } = ctx;
   const notFound = (what, hint) => ({ error: "bounce", defect: what, hint });
-  if (name.startsWith("world_")) {
+  if (name === "world" || name.startsWith("world_")) {
     try {
-      const r = await callWorldTool(name, args, key);
+      // The apex dispatches into the same implementations the flat verbs use,
+      // so its bounces are the flat verbs' bounces and want the same envelope.
+      const r = name === "world" ? await worldApex(args, key) : await callWorldTool(name, args, key);
       if (r !== null) return r;
     } catch (e) {
       if (e.code) return { error: "bounce", code: e.code, defect: e.defect, hint: e.hint, ...(e.choices ? { choices: e.choices } : {}) };
@@ -305,10 +322,10 @@ async function handleMessage(msg, ctx) {
       });
     }
     case "ping": return rpcResult(msg.id, {});
-    case "tools/list": return rpcResult(msg.id, { tools: TOOLS });
+    case "tools/list": return rpcResult(msg.id, { tools: toolList() });
     case "tools/call": {
       const { name, arguments: args = {} } = msg.params ?? {};
-      const tool = TOOLS.find((t) => t.name === name);
+      const tool = toolList().find((t) => t.name === name);
       if (!tool) return rpcError(msg.id, -32602, `unknown tool "${name}"`);
       // The happy-path default (Keemin-approved 2026-07-20): a bare
       // read_doorstep / list_mail on a signed-in door means YOUR doorstep —
@@ -327,7 +344,7 @@ async function handleMessage(msg, ctx) {
       // Writes need a signed-in door. Without one, bounce AND flag the request
       // so the HTTP layer answers 401 + WWW-Authenticate — the OAuth dance's
       // start signal. Reads fall through and serve anonymously.
-      if (WRITE_TOOLS.has(name) && !ctx.key) {
+      if (writeShaped(name, args) && !ctx.key) {
         ctx.authChallenge = true;
         return rpcResult(msg.id, {
           content: [{ type: "text", text: JSON.stringify({ error: "bounce", defect: "no key at the door",
@@ -348,7 +365,7 @@ async function handleMessage(msg, ctx) {
       }
       // Visitor scope: a signed-in account with no household reads the whole town
       // and may request_residency — but no other write acts as a resident.
-      if (WRITE_TOOLS.has(name) && name !== "request_residency" && ctx.key?.visitor) {
+      if (writeShaped(name, args) && name !== "request_residency" && ctx.key?.visitor) {
         return rpcResult(msg.id, {
           content: [{ type: "text", text: JSON.stringify({ error: "bounce", defect: "visitor pass: no address yet",
             hint: "you can read the whole town and request_residency; acting as a resident (sending mail, editing your address or home) needs an address — the moment your join PR merges, this same token acts as you" }, null, 1) }],
@@ -409,7 +426,7 @@ export function handleMcp(req, res, ctx) {
         const verb = message?.method === "tools/call"
           ? (message.params?.name ?? "tools/call")
           : (message?.method ?? "invalid");
-        const limited = ctx.rateLimit({ verb, write: WRITE_TOOLS.has(verb) });
+        const limited = ctx.rateLimit({ verb, write: writeShaped(verb, message?.params?.arguments) });
         if (limited) return ctx.rateResponse(res, limited);
       }
     }

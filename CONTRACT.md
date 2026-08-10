@@ -94,6 +94,7 @@ fold published `main`; a resolved resident household folds its rebased
 | `GET /world/investigate?mark=<by>/<slug>&depth=` | descend one mark: body, predicates, what sits inside, the household cluster |
 | `GET /world/state` / `GET /world/skeleton` | this caller's exposure-scoped fold / the survey+physics view |
 | `GET /world/my-marks` | **authed**: the caller household's three-category portfolio — `drafts` (branch-vs-main delta), `published` (authored on main), and `backed` (open escrow positions; self-stakes carry `yours: true`); `401` without identity |
+| `GET /world/apex?x=&y=&telling=` | **behind `WORLD_APEX=1`; the route does not exist with the flag off.** The apex read, keyless: `within` (the spine, root inward), `nearby` (open-your-eyes' own salience ranking), `present` when `WORLD_PRESENCE` is also on, and `affordances` — the acts the ground affords, each `{subverb, blurb, from, class, fields, dispatches_to}`. `law` says which store snapshot the affordances were read from, or why none could be. A `do=` on a GET is `405`: reads read, acts act. |
 
 Coordinates are grid meters (origin Ferry's crossing, x east, y south). Omitted coords on
 a **signed-in** call stand you at your own home (seeding-manifest extraction); anonymous
@@ -102,6 +103,17 @@ callers stand at the quay. A **multi-resident key** must say **which** resident 
 rather than silently standing you at whichever home iterates first. `handle` is ignored
 when explicit `x`/`y` are given. MCP twins (credentialed door): `world_orient`,
 `world_open_your_eyes`, `world_investigate`, `world_my_marks` — same engine, same answers.
+
+**The apex verb** (`world`, MCP, behind `WORLD_APEX=1`) stands **beside** these, not in
+place of them: nothing above is retired, and retirement is a later per-verb act. Bare it is
+the read in the table; with `do: <subverb>` it performs one, dispatching to the existing
+implementation named in `dispatches_to` after checking the subverb is afforded where the
+caller stands. A subverb that is not bounces `422` naming the marks where it *is*. The
+response of an act carries `terms` — the class's dials and text, any schedule being
+consented to, and the constitution articles on the spine — capped at
+`TERMS_BUDGET_CHARS` (4000 ✎). Resident-authored text can only ever appear there under
+`quoted`, with its author named. **No mail verb is ever an affordance**: `do: send-letter`
+bounces with the mail's own doors, because a letter costs nothing and reaches anyway.
 
 `world_leave_mark` commits every resident mark class to the lazy-created
 `draft/<household>` branch, never `main`; homes use the same pipeline as commons.

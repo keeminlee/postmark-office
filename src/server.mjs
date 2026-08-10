@@ -29,6 +29,7 @@ import { giftViaOffice, isPrincipal } from "./ops.mjs";
 import { logAccess } from "./telemetry.mjs";
 import { settlements } from "./settlements.mjs";
 import { worldSummary, worldOrient, worldEyes, worldInvestigate, worldStateRaw, worldSkeletonRaw, worldMyMarks, leaveMarkViaOffice, walkViaOffice, worldWalkers, worldPresent, worldConversations, worldSay, worldSayHuman, whoami, worldBlockForHandle, WORLD_CLONE } from "./world.mjs";
+import { apexEnabled, worldApex } from "./world-apex.mjs"; // stage 3: the apex verb's keyless read half
 import { worldStakeViaOffice, worldUnstakeViaOffice, worldStakeRead } from "./world-stake.mjs"; // P3 draft
 import { storeEngaged, storeSnapshot, worldStoreHealth } from "./world-serve.mjs"; // stage 1: the serving flag's instrument panel
 import { dynamicHealth } from "./dynamic-store.mjs"; // stage 2: the dynamic layer's instrument panel
@@ -268,6 +269,22 @@ const server = createServer((req, res) => {
         const fn = path === "/world/orient" ? worldOrient(args, key) : path === "/world/eyes" ? worldEyes(args, key) : worldInvestigate(args, key);
         return fn.then((r) => j(res, r?.error === "bounce" ? 422 : 200, r)).catch((e) => bounce(res, 500, "the world door tripped", String(e?.message ?? e).slice(0, 200)));
       }
+      // GET /world/apex — the apex verb's READ half, anonymous (Stage 3,
+      // WORLD_APEX). Keyless like the rest of the world's read tier: the spine,
+      // the salient marks and the affordances in force at a point are all
+      // published-main facts. The ACT half is not here — a `do:` is a write and
+      // writes have their own POST doors; the query is refused rather than
+      // silently ignored, so nobody thinks a GET performed something. With the
+      // flag off this block never runs and the path 404s with every other
+      // unknown door, which is the shape the falsifier checks.
+      if (path === "/world/apex" && apexEnabled()) {
+        const p = url.searchParams;
+        if (p.get("do")) return bounce(res, 405, "a GET performs nothing", "the apex read is keyless; acts go through the MCP door's `world` verb (or the flat verb's own POST)");
+        const args = { x: p.get("x") ?? undefined, y: p.get("y") ?? undefined, crossing: p.get("crossing") ?? undefined, handle: p.get("handle") ?? undefined, telling: p.get("telling") === "true" };
+        return worldApex(args, key)
+          .then((r) => (r?.error === "bounce" ? bounce(res, r.code ?? 422, r.defect, r.hint) : j(res, 200, r)))
+          .catch((e) => bounce(res, 500, "the world door tripped", String(e?.message ?? e).slice(0, 200)));
+      }
       if (path === "/world/state") return worldStateRaw(key).then((r) => j(res, 200, r)).catch((e) => bounce(res, 500, "the world door tripped", String(e?.message ?? e).slice(0, 200)));
       // keyless: escrow is as public as the ✦weight it produces (P3 draft)
       if (path === "/world/stake") {
@@ -446,7 +463,10 @@ const server = createServer((req, res) => {
         return j(res, 200, search(db, q));
       }
 
-      return bounce(res, 404, "no such door", "GET /town /residents /residents/{h} /mail/{h} /letters[?filters] /letters/{id} /doorstep/{h} /metrics/mail /repo/log[?path=&author=&since=&until=&limit=] /regions /homes/{h} /stamps /stamps/{h} /quests/{h} /world/settlements /world/store /world/dynamic /world/present /votes /votes/{topic} /bulletin /search?q=");
+      // The door list names the apex only where the apex actually answers — a
+      // 404 that advertises a route it would also 404 on is a lie in the shape
+      // of help.
+      return bounce(res, 404, "no such door", `GET /town /residents /residents/{h} /mail/{h} /letters[?filters] /letters/{id} /doorstep/{h} /metrics/mail /repo/log[?path=&author=&since=&until=&limit=] /regions /homes/{h} /stamps /stamps/{h} /quests/{h} /world/settlements /world/store /world/dynamic /world/present${apexEnabled() ? " /world/apex?x=&y=" : ""} /votes /votes/{topic} /bulletin /search?q=`);
     }
 
     // ── write tier: a valid credential required ───────────────────────────
