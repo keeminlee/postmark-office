@@ -150,22 +150,42 @@ disclosed as `era-order-overlap`.
 Also fixed: a resident whose **only** record is era two now gets a frame. Grouping the roster by
 era-one departures alone would never have reached anyone who first moved after the freeze.
 
-**The reviewer's loose end, resolved.** The fixture asserts wright's zero-metre record must not move
-him, while my live probe reported him at `-24.8, 45.2` — opposite directions. The probe was at fault:
-it *seeded* wright a movement toward the ashore point, so latest-wins correctly moved him. Re-run with
-a genuine zero-metre record at his own position: `575,-2600` → `575,-2600`, seam moved him **false**.
-The fixture's claim stands; the commit message's live number was measuring my own seed.
+**The wright contradiction, stated plainly.** An earlier commit message reported a live run putting
+wright at `-24.8, 45.2` with the flag on, while the fixture asserts his zero-metre record must not
+move him. **Those pointed opposite ways because the run was measuring its own seed:** that probe
+wrote wright a movement *toward* the ashore point, so latest-wins correctly moved him — it was not
+the box, and it was not wright's real record. A probe with a genuine zero-metre record ("I am
+standing here") at his own position answers `575,-2600` → `575,-2600`, unmoved. The test now carries
+that case with a matching era-1 line, so the claim is asserted rather than argued. **What the live
+box answers for wright is resolved at deploy by the founder; nothing in this report is a measurement
+of it.**
 
-**Tests** `test/era-seam.test.mjs`, 18. They call the **shipped** `departuresAcrossEras` /
-`recordsAcrossEras`, not a local re-implementation — a hand-rolled copy of the law passes even when
-the law breaks. The acceptance case runs against the real timetabled carrier from
-`movement-fixture.mjs`, and its control (*"ERA ONE ALONE"*) reproduces the live symptom: reading half
-the record folds the resident onto the boat and carries him out to sea. Flag-off byte-identity is
-asserted at the doors, not just at the store read.
+**Tests** `test/era-seam.test.mjs`, 13, rebuilt at the doors on the reviewer's probe design. The
+fixture is a real world clone with a real engine (`fixtureWorldCloneWithEngine`): an era-1 line onto
+the vessel's own footprint, superseded by a newer era-2 ashore movement, driven through
+`worldWalkers` and `residentStandpoint` — what `orient` and `open_your_eyes` derive from. They call
+the **shipped** `departuresAcrossEras` / `recordsAcrossEras`; the earlier draft re-implemented the
+ordering rule locally to check it against, which passes while the law is broken.
 
-Suite **458 · 457 pass · 0 fail · 1 skip** (`hydrate-frames`, premise retired when `stageD/coords`
-landed as `stageD/landing`). Live: flag off 317 departures, flag on 319, standpoint and walkers
-agreeing in both.
+Every symbol is loaded through `mustExport`, which turns a missing export into a **named failing
+assertion** instead of a module-load crash — the earlier draft died at import against pre-fix `src`
+and executed no assertion at all, so it could not fail for the right reason, only crash for the
+wrong one.
+
+**Falsified against pre-fix `src` (`b314694`): 10 of 13 fail, every one for a named reason** —
+*"does not export departuresAcrossEras() — the fix is absent from this tree"*, *"hal must read
+ashore, not at the berth"*, *"hal's standpoint must be ashore"*, *"the file's order survives the
+merge"*. The 3 that pass are exactly the ones that should: the live-symptom control (era one alone
+serves the berth), wright unmoved, and the neither-era-readable shape.
+
+Suite **453 · 452 pass · 0 fail · 1 skip** (`hydrate-frames`, premise retired when `stageD/coords`
+landed as `stageD/landing`).
+
+**One operational note.** Verifying the pre-fix falsification needed a worktree at `b314694`, and I
+junctioned `node_modules` into it for speed; `git worktree remove --force` then followed the junction
+and emptied `office/node_modules`. Restored with `npm install` (7 packages, from the committed
+lockfile) and the suite is green above. No source was touched by it — but a junction inside a
+worktree makes a routine removal destructive to a shared directory, which is worth not repeating.
 
 ## Protected, checked
 `terms` and its published dials, per-item authorship/`quoted` separation, `TERMS_BUDGET_CHARS`, the
