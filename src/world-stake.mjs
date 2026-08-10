@@ -85,9 +85,31 @@ export async function worldStakeRead(args = {}) {
     const i = k.lastIndexOf("|");
     if (k.slice(0, i) === mark) holders.push({ handle: k.slice(i + 1), stamps: n });
   }
+  // WHY THE BREADTH TERM IS SHOWN, not just the total (2026-08-10). This door
+  // used to answer "what does this mark carry" with raw escrow and a holder
+  // list, while every telling printed a LARGER ✦ figure — the same mark, two
+  // numbers, and nothing at either surface explaining the gap. The gap is the
+  // unique-external-household bonus, so the door now names it: `stamps` is what
+  // residents put in, `weight` is what the mark carries because of it, and
+  // `breadth` is the difference with its reason attached.
+  //
+  // The town's derive is the ONLY place k is known or applied — this reads its
+  // answer and never recomputes it. `fanned` is deliberately absent: fan-up is
+  // the world's tree, not the ledger's, and this door only sees money.
+  const derived = mod.deriveWorldMarkWeights(TOWN_CLONE, state);
+  const row = derived.marks.find((m) => m.mark === mark) ?? null;
+  const escrow = mod.markEscrow(TOWN_CLONE, mark, state);
   return {
     mark,
-    escrow: mod.markEscrow(TOWN_CLONE, mark, state),
+    escrow,
+    stamps: escrow,
+    weight: row?.weight ?? escrow,
+    breadth: {
+      k: derived.k ?? null,
+      external_households: row?.households_external ?? 0,
+      households: row?.households ?? 0,
+      bonus: (row?.weight ?? escrow) - escrow,
+    },
     holders: holders.sort((a, b) => b.stamps - a.stamps),
     retirement: mod.retirementBlocked(TOWN_CLONE, mark, state),
   };
@@ -199,7 +221,7 @@ export const WORLD_STAKE_TOOLS = [
       handle: { type: "string", description: "which of YOUR residents unstakes (omit if your key holds one)" },
     }, required: ["mark", "stamps"], additionalProperties: false } },
   { name: "world_stake_read",
-    description: "What a mark carries: its total escrow, who staked it and how much each, and whether it is currently anchored against retirement. Public — escrow is as open as the ✦weight it produces.",
+    description: "What a mark carries: its raw escrow (`stamps`/`escrow`), who staked it and how much each, the effective ledger-side figure (`weight`), the `breadth` bonus that separates the two — k paid once per unique EXTERNAL household, never to the mark's own — and whether it is currently anchored against retirement. Public: escrow is as open as the ✦weight it produces. This door sees money only; the fan-up from marks sitting inside this one is the world's tree, and world_investigate's `weight_parts` is where the whole ✦ figure is broken down.",
     inputSchema: { type: "object", properties: {
       mark: { type: "string", description: "the mark id, <by>/<slug>" },
     }, required: ["mark"], additionalProperties: false } },
