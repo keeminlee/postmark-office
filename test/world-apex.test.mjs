@@ -36,12 +36,39 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { execFileSync, spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 
 const repo = mkdtempSync(join(tmpdir(), "postmark-apex-"));
 after(() => rmSync(repo, { recursive: true, force: true }));
 const dbPath = join(repo, "apex-world.db");
+
+// ── ISOLATION: A PRIVATE TEMP FOR THIS RUN ───────────────────────────────────
+//
+// The office caches the world ENGINE in a machine-global directory keyed by the
+// world clone's commit sha — `os.tmpdir()/postmark-engine/<sha>--tools`
+// (world-branches.mjs), and the hydrator's materialiser uses the sibling
+// `postmark-world-store/<sha>`. Both are shared by every postmark process on the
+// box, and the fixture below collides on that key with a certainty rather than a
+// probability: its tree is fixed text and its commit carries no nonce, so two
+// processes that build it in the same second produce THE SAME SHA. Four parallel
+// runs of this file, four temp repos, one commit id — measured, not assumed.
+//
+// So concurrent runs write each other's engine modules while importing out of
+// the same directory. That is a hazard closed on the geometry of the thing, not
+// a failure caught in the act: the collision is measured, the torn import is
+// not — the failures actually reproduced here came from the port below. It is
+// closed anyway because a shared mutable cache under a colliding key is not a
+// thing to leave standing behind a suite whose whole job is to be falsifiable.
+//
+// Redirecting TEMP gives this process its own cache root, and it must happen
+// BEFORE the first `../src` import, because those constants are computed at
+// module load. `os.tmpdir()` reads the environment on every call, on Windows and
+// POSIX alike, so this is the whole fix.
+const tmpHome = mkdtempSync(join(tmpdir(), "postmark-apex-tmp-"));
+process.env.TEMP = process.env.TMP = process.env.TMPDIR = tmpHome;
+after(() => rmSync(tmpHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
 
 process.env.WORLD_CLONE = repo;
 process.env.WORLD_STORE_DB = dbPath;
@@ -282,16 +309,35 @@ async function withStore(path, fn) {
 // an assertion about `apexTools()` would pass even if the wiring in mcp.mjs or
 // server.mjs had never been made.
 
-const PORT = 43877;
-const BASE = `http://127.0.0.1:${PORT}`;
+// The port is ASKED FOR, never chosen. A hard-coded one is a lock on a door the
+// whole box shares: 43877 was also test/ops.test.mjs's, so two office-spawning
+// suites could never run at once, and neither could two checkouts of this one —
+// which is the ordinary state of a worktree pool. The loser's office dies on
+// bind and this harness reports it as `office exited early (1)`, measured by
+// standing two offices on 43877 and watching the second one go.
+const freePort = () => new Promise((ok, no) => {
+  const probe = createServer();
+  probe.on("error", no);
+  probe.listen(0, "127.0.0.1", () => { const { port } = probe.address(); probe.close(() => ok(port)); });
+});
+
+let BASE = null; // set per office, since each one is handed a different port
 
 async function withOffice(env, fn) {
   const dir = mkdtempSync(join(tmpdir(), "postmark-apex-srv-"));
   const officeDb = join(dir, "fixture.db");
   const { fixtureDb } = await import("./fixture.mjs");
   fixtureDb(officeDb).close();
-  const child = spawn(process.execPath, [new URL("../src/server.mjs", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"), "--port", String(PORT), "--db", officeDb], {
-    env: { ...process.env, ...env, OFFICE_KEYS: "apexkey=house-a:alpha", TOWN_CLONE: join(dir, "no-clone"), WORLD_CLONE: repo, WORLD_STORE_DB: dbPath, VOICES_LOG: join(dir, "voices.jsonl"), TOWN_PUSH: "" },
+  const port = await freePort();
+  BASE = `http://127.0.0.1:${port}`;
+  // The child gets its OWN temp and its OWN oauth.db. Without the first it
+  // shares the parent's engine cache — same clone, same sha, same directory —
+  // and materialises into it while the parent imports out of it. Without the
+  // second it opens the CHECKOUT's oauth.db (server.mjs defaults `--oauth-db`
+  // to the office root), which is a live file the developer's own office holds:
+  // a test must not write there, and two test offices must not write it at once.
+  const child = spawn(process.execPath, [new URL("../src/server.mjs", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"), "--port", String(port), "--db", officeDb, "--oauth-db", join(dir, "oauth.db")], {
+    env: { ...process.env, ...env, OFFICE_KEYS: "apexkey=house-a:alpha", TOWN_CLONE: join(dir, "no-clone"), WORLD_CLONE: repo, WORLD_STORE_DB: dbPath, VOICES_LOG: join(dir, "voices.jsonl"), TOWN_PUSH: "", TEMP: dir, TMP: dir, TMPDIR: dir },
     stdio: ["ignore", "pipe", "pipe"],
   });
   try {
