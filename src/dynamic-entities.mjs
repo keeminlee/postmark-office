@@ -39,13 +39,37 @@ import { openDynamic, putMeta } from "./dynamic-store.mjs";
 // The vessel appears in the walk ledger as an actor — she is a mark that moves,
 // not a resident. She is never an entity; her position is `derived` mobility,
 // computed from (timetable, clock), and Stage 2 does not crystallize her.
-export const NON_ENTITY_ACTORS = new Set(["the-post-office"]);
+export const VESSEL_HANDLE = "the-post-office";
+export const NON_ENTITY_ACTORS = new Set([VESSEL_HANDLE]);
+
+/**
+ * Is this departure the VESSEL'S departure — i.e. is its owner aboard?
+ *
+ * A passenger is a walker whose current departure IS the vessel's: same
+ * instant, same destination, same paced stride, because the pen files them
+ * together at sailing time. Telling them "the road" would be true and wrong;
+ * they are on the water.
+ *
+ * This lives here rather than in world.mjs because two readers now need it —
+ * the standpoint the doors have always used, and the presence layer — and two
+ * copies of a rule this subtle would drift the first time the pen changed how
+ * it files a sailing. Same test, byte for byte, as the one world.mjs shipped.
+ */
+export function ridesTheVessel(mine, vessel) {
+  if (!mine || !vessel) return false;
+  return mine.pace != null && mine.pace === vessel.pace
+    && mine.iso === vessel.iso
+    && mine.toward?.x === vessel.toward?.x && mine.toward?.y === vessel.toward?.y;
+}
+
+/** One of the world's own tool modules, read at a ref — never from the working tree. */
+export async function worldToolModule(file, { repo = WORLD_CLONE } = {}) {
+  const dir = materializeAtRef(repo, freshestMainRef(repo), "tools");
+  return import(pathToFileURL(join(dir, "tools", file)).href);
+}
 
 /** The world's own walk arithmetic, read at a ref. */
-export async function walkModule({ repo = WORLD_CLONE } = {}) {
-  const dir = materializeAtRef(repo, freshestMainRef(repo), "tools");
-  return import(pathToFileURL(join(dir, "tools", "walk.mjs")).href);
-}
+export const walkModule = ({ repo = WORLD_CLONE } = {}) => worldToolModule("walk.mjs", { repo });
 
 // world.db's `events.payload` keys (`crossing`, `within`, `to`) are not
 // walk.mjs's (`at`, `targetExtent`, `targetMarkId`). ONE writer of that mapping,
@@ -202,6 +226,29 @@ export function governingAt(events, atMs = Infinity) {
   return governing;
 }
 
+/**
+ * The VESSEL's governing departure — the one record `governingAt` deliberately
+ * throws away, because she is a mark that moves and never an entity.
+ *
+ * It has to be kept anyway, and here is why: `ridesTheVessel` answers "is this
+ * walker aboard" by comparing their departure with HERS, and that comparison
+ * has to happen at the instant someone asks rather than at refresh time —
+ * aboard ends at the landing. So her sailing line is an INPUT to a derivation
+ * whose output lives in the entities table, and the law is already written for
+ * exactly this shape: save the derivation's input alongside its output. It goes
+ * into `meta.vessel_departure`, beside the rows it governs, and nothing has to
+ * reach back into the ledger to answer a question about a passenger.
+ */
+export function vesselDepartureAt(events, atMs = Infinity) {
+  let latest = null;
+  for (const ev of events) {
+    if (ev.actor !== VESSEL_HANDLE) continue;
+    if (Date.parse(ev.at) > atMs) continue;
+    latest = departureFromEvent(ev);
+  }
+  return latest;
+}
+
 /** Every entity, derived at `atMs` from the ledger. The pure half — no db writes. */
 export function deriveEntities(events, atMs, walk) {
   return [...governingAt(events, atMs).entries()]
@@ -238,6 +285,10 @@ export async function refreshEntities({
     for (const e of rows) ins.run(e.handle, e.x, e.y, e.derived_at, JSON.stringify(e.provenance));
     putMeta(handle, "entities_as_of", new Date(at).toISOString());
     putMeta(handle, "entities_source_sha", read.as_of_world);
+    // The derivation's input, saved beside its output: without her sailing line
+    // nothing downstream can tell a passenger from a walker who happens to be
+    // headed the same way.
+    putMeta(handle, "vessel_departure", JSON.stringify(vesselDepartureAt(read.events, at)));
     putMeta(handle, "entities_source_fresh", String(read.fresh));
     putMeta(handle, "entities_refreshed_at", new Date().toISOString());
     handle.exec("COMMIT");

@@ -28,7 +28,7 @@ import { votesAvailable, voteList, voteView, doorstepVotes, stakeViaOffice } fro
 import { giftViaOffice, isPrincipal } from "./ops.mjs";
 import { logAccess } from "./telemetry.mjs";
 import { settlements } from "./settlements.mjs";
-import { worldSummary, worldOrient, worldEyes, worldInvestigate, worldStateRaw, worldSkeletonRaw, worldMyMarks, leaveMarkViaOffice, walkViaOffice, worldWalkers, worldConversations, worldSay, worldSayHuman, whoami, worldBlockForHandle, WORLD_CLONE } from "./world.mjs";
+import { worldSummary, worldOrient, worldEyes, worldInvestigate, worldStateRaw, worldSkeletonRaw, worldMyMarks, leaveMarkViaOffice, walkViaOffice, worldWalkers, worldPresent, worldConversations, worldSay, worldSayHuman, whoami, worldBlockForHandle, WORLD_CLONE } from "./world.mjs";
 import { worldStakeViaOffice, worldUnstakeViaOffice, worldStakeRead } from "./world-stake.mjs"; // P3 draft
 import { storeEngaged, storeSnapshot, worldStoreHealth } from "./world-serve.mjs"; // stage 1: the serving flag's instrument panel
 import { dynamicHealth } from "./dynamic-store.mjs"; // stage 2: the dynamic layer's instrument panel
@@ -278,6 +278,19 @@ const server = createServer((req, res) => {
       // GET /world/walkers — the presence layer's read side (ruling 1): every
       // walker's DERIVED position this instant, from public records only.
       if (path === "/world/walkers") return worldWalkers(WORLD_CLONE).then((r) => j(res, 200, r)).catch((e) => bounce(res, 500, "the world door tripped", String(e?.message ?? e).slice(0, 200)));
+      // GET /world/present — who is standing where (Stage 2, WORLD_PRESENCE).
+      // With x/y: who is near that point, nearest first. Bare: everyone, with
+      // their places — world_walkers' successor shape. Keyless like the rest of
+      // the world's read tier, and for the same reason presence is disclosable
+      // at all: the walk ledger is public record and the map already draws
+      // everyone. With the flag off the door 404s rather than answering an
+      // empty world, so a caller can tell "nobody about" from "not switched on".
+      if (path === "/world/present") {
+        const args = Object.fromEntries(url.searchParams.entries());
+        return worldPresent(args)
+          .then((r) => (r?.error === "bounce" ? bounce(res, r.code ?? 422, r.defect, r.hint) : j(res, 200, r)))
+          .catch((e) => bounce(res, 500, "the world door tripped", String(e?.message ?? e).slice(0, 200)));
+      }
       // GET /world/conversations — every conversation in the world, live threads
       // first, closed ones still browsable. Keyless like the rest of the world's
       // read tier: speech is public the way street conversation is, and world_say
@@ -433,7 +446,7 @@ const server = createServer((req, res) => {
         return j(res, 200, search(db, q));
       }
 
-      return bounce(res, 404, "no such door", "GET /town /residents /residents/{h} /mail/{h} /letters[?filters] /letters/{id} /doorstep/{h} /metrics/mail /repo/log[?path=&author=&since=&until=&limit=] /regions /homes/{h} /stamps /stamps/{h} /quests/{h} /world/settlements /world/store /world/dynamic /votes /votes/{topic} /bulletin /search?q=");
+      return bounce(res, 404, "no such door", "GET /town /residents /residents/{h} /mail/{h} /letters[?filters] /letters/{id} /doorstep/{h} /metrics/mail /repo/log[?path=&author=&since=&until=&limit=] /regions /homes/{h} /stamps /stamps/{h} /quests/{h} /world/settlements /world/store /world/dynamic /world/present /votes /votes/{topic} /bulletin /search?q=");
     }
 
     // ── write tier: a valid credential required ───────────────────────────

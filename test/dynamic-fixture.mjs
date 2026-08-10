@@ -62,6 +62,89 @@ export function positionAt(departure, nowFractional = fractionalCrossing()) {
 
 export const DEFAULT_DIALS = { radius_m: 60, hearing_ttl_min: 5, flood_cap: 20, thread_close_min: 30 };
 
+// The engine's direction and distance vocabulary. The rose and the bands are the
+// world's own values rather than invented ones, because the presence tests assert
+// that a resident is described in the SAME words a hill is — "E", "close by" —
+// and a fixture with different words would prove nothing about that.
+const ENGINE_MJS = `
+export const ROSE16 = ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"];
+export const DIALS = { bearing_points: 16, distance_bands: [
+  { max: 8, name: "underfoot" }, { max: 40, name: "close by" }, { max: 150, name: "a stone's throw" },
+  { max: 600, name: "across the way" }, { max: 2500, name: "a fair way off" },
+  { max: 8000, name: "far off" }, { max: Infinity, name: "on the horizon" } ] };
+export function bearingDeg(dx, dy) { return (Math.atan2(dx, -dy) * 180 / Math.PI + 360) % 360; }
+export function quantizeBearing(deg, points = DIALS.bearing_points) {
+  const idx = Math.round(deg / (360 / points)) % points;
+  return points === 16 ? ROSE16[idx] : \`\${Math.round(idx * (360 / points))}°\`;
+}
+export function distanceBand(m, bands = DIALS.distance_bands) {
+  for (const b of bands) if (m <= b.max) return b.name;
+  return bands[bands.length - 1].name;
+}
+`;
+
+// The rest of the engine, in miniature — the same shapes tools/ exports, because
+// the office imports these from the clone and the presence tests are about the
+// PRESENCE layer, not about geometry. Mirrors test/world-serve.test.mjs's stubs.
+const GEOMETRY_MJS = `
+export const rect = (mk) => ({ x: mk.at?.x ?? 0, y: mk.at?.y ?? 0, w: mk.extent?.w ?? 1, h: mk.extent?.h ?? 1 });
+export function pointInRect(px, py, r) { return px >= r.x - r.w / 2 && px <= r.x + r.w / 2 && py >= r.y - r.h / 2 && py <= r.y + r.h / 2; }
+export function overlapArea(a, b) {
+  const dx = Math.min(a.x + a.w / 2, b.x + b.w / 2) - Math.max(a.x - a.w / 2, b.x - b.w / 2);
+  const dy = Math.min(a.y + a.h / 2, b.y + b.h / 2) - Math.max(a.y - a.h / 2, b.y - b.h / 2);
+  return dx > 0 && dy > 0 ? dx * dy : 0;
+}
+export const contains = (outer, inner) => overlapArea(outer, inner) >= 0.99 * inner.w * inner.h;
+export const polygonOf = () => null;
+export function pointInPolygon() { return false; }
+export const isIrregular = () => false;
+export const marksContain = (a, b) => contains(rect(a), rect(b));
+`;
+
+const VERBS_MJS = `
+import { rect, contains, pointInRect } from "./geometry.mjs";
+const area = (m) => (m.extent?.w ?? 1) * (m.extent?.h ?? 1);
+export function containmentChain(pos, marks) {
+  const containing = marks
+    .filter((m) => m.at && (m.kind === "sited" || m.kind === "parcel") && pointInRect(pos.x, pos.y, rect(m)))
+    .sort((a, b) => area(a) - area(b));
+  const nest = [];
+  for (const m of containing) if (!nest.length || contains(rect(m), rect(nest[nest.length - 1]))) nest.push(m);
+  return nest.reverse().map((m) => ({ id: m.id, by: m.by, tier: m.tier, body: m.body, extentM: Math.max(m.extent?.w ?? 0, m.extent?.h ?? 0) }));
+}
+export function orient(state, world) { return { self: { x: state.x, y: state.y }, within: containmentChain(state, world.marks ?? []) }; }
+export function openYourEyes(state, world) {
+  return { fov: { carried: [], far: [] }, radial: {}, tell: () => "You are standing in the fixture." };
+}
+export function investigate() { return null; }
+`;
+
+/** A world clone carrying the whole miniature engine — enough for orient, eyes and place words. */
+export function fixtureWorldCloneWithEngine({ label = "presence", marks = [] } = {}) {
+  const repo = mkdtempSync(join(tmpdir(), `postmark-${label}-world-`));
+  const put = (p, t) => { const f = join(repo, p); mkdirSync(dirname(f), { recursive: true }); writeFileSync(f, t); };
+  put("tools/walk.mjs", WALK_MJS);
+  put("tools/world-engine.mjs", ENGINE_MJS);
+  put("tools/geometry.mjs", GEOMETRY_MJS);
+  put("tools/world-verbs.mjs", VERBS_MJS);
+  put("tools/world-build.mjs", 'export function assembleWorld({ worldState, skeleton }) { return { ...worldState, skeleton }; }');
+  put("tools/where-is.mjs", `
+export const NOWHERE = Object.freeze({ x: null, y: null, placed: false, source: null, mark_id: null });
+export function homeOf() { return NOWHERE; }
+export function whereIs() { return NOWHERE; }
+export function publicResidents() { return []; }
+`);
+  put("WORLD/walk-ledger.md", "# Walk ledger\n");
+  put("WORLD/world-state.json", JSON.stringify({ tick: 0, dials: {}, marks, parcels: [], determined: {}, vague: [], rivalries: [], portfolios: {}, terrain_weight: {}, errors: [] }));
+  put("WORLD/skeleton.json", JSON.stringify({ features: [], physics_registry: {} }));
+  put("seeding/manifest.json", JSON.stringify({ homes: [] }));
+  const git = (...a) => execFileSync("git", ["-C", repo, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  git("init", "-q", "-b", "main");
+  git("add", "-A");
+  git("-c", "user.name=f", "-c", "user.email=f@t.invalid", "commit", "-q", "-m", "fixture world with engine");
+  return repo;
+}
+
 /** A world clone with the physics on `main`. Returns its path. */
 export function fixtureWorldClone({ label = "dyn" } = {}) {
   const repo = mkdtempSync(join(tmpdir(), `postmark-${label}-world-`));

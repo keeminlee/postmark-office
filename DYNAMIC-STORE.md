@@ -18,6 +18,7 @@ npm run dynamic:store                   # the flag's instrument panel (= GET /wo
 npm run crossing:save                   # crystallize the live layer into the world repo's STATE/
 npm run crossing:replay-check           # THE FALSIFIER — rebuild from STATE/ alone and diff
 npm run threads:parity                  # the store's threads vs the shipped clusterVoices
+node --test test/dynamic-presence.test.mjs
 node --test test/dynamic-store.test.mjs
 node --test test/dynamic-emissions.test.mjs
 node --test test/crossing-save.test.mjs
@@ -30,6 +31,7 @@ node --test test/crossing-save.test.mjs
 | `src/dynamic-store.mjs` | the DDL, the flag, the **class-mark dial read** and its gates, the health surface |
 | `src/dynamic-entities.mjs` | the walk-ledger derivation: events → governing departure → position, and the attachment writer |
 | `src/dynamic-emissions.mjs` | recording an emission, presence as a query, threads as a query, the gated prune |
+| `src/dynamic-presence.mjs` | who is near whom: `near`, `everyone`, and the section the doors hang off |
 | `tools/crossing-save.mjs` | the save tick: `STATE/snapshot/<N>/entities.json` + `STATE/log/<N>.jsonl`, committed with the pen |
 | `tools/crossing-replay-check.mjs` | rebuild from `STATE/` alone; EQUAL or the save does not save the world |
 | `tools/thread-parity.mjs` | store threads vs `voices.mjs`'s shipped `clusterVoices`, as a partition |
@@ -55,7 +57,11 @@ The schema is created once, never migrated automatically. A store stamped with a
 schema version this office does not speak **refuses to open** — the one way state
 nothing else holds could be lost silently.
 
-## Presence is a query, never a delete
+## Emission presence is a query, never a delete
+
+(Two different things wear the word *presence* in this file: an emission's
+presence — whether it is still hanging in the air — and a resident's, further
+down. They are unrelated, and both are queries.)
 
 An emission row is not removed when its TTL expires. `presentEmissions(at)`
 filters by `born_at`/`ttl_expires_at`; what expires is the **answer**, which is
@@ -148,6 +154,64 @@ replay cannot recover, worth knowing rather than discovering: the voices log
 records the speaker, never the body they borrowed, so a replayed `human-of-…`
 voice has itself as its source. Threads are unaffected; the rows say
 `source_from_log`.
+
+## `WORLD_PRESENCE=1` — residents revealed to each other
+
+Until now a resident could learn who was near them in exactly two ways: read the
+walk ledger and do the arithmetic, or shout into `world_say` and hope. This makes
+it legible at the point of standing.
+
+- `near(x, y, r)` — who is within r metres, nearest first, each with distance,
+  bearing, distance band, standing/moving/aboard, and place words when a `place`
+  function is injected.
+- `everyone()` — the world-wide list. `world_walkers`' successor shape, and
+  deliberately ONE list: "arrived" and "standing" are the same state, a person at
+  rest, differing only in how the position was learned. That lesson is the
+  walkers door's and is not re-learned here.
+- `GET /world/present?x=&y=` — the standalone door; bare, it answers everyone.
+  With the flag off it **404s** rather than returning an empty world, so a caller
+  can tell "nobody about" from "not switched on".
+- `world_orient` gains a `present` section; `world_open_your_eyes` gains
+  `residents` grouped by the engine's own distance bands, plus a *Who is about*
+  section appended to the telling. The engine's prose is left exactly as the
+  engine rendered it — the office composes around the telling, as it already does
+  for `standpoint` and `crossing`, rather than becoming a second author of the
+  world's voice.
+
+**The positions are derived at the instant asked, not read out of the rows.**
+`entities.x`/`y` were computed at `entities_as_of`, which can be up to a crossing
+ago; serving them would answer "who is near you" with a picture of this morning.
+What the table actually supplies is the **governing departure** per resident —
+store-canon, latest-wins already settled — and presence evaluates that record
+now, through the world's own `positionAt`. Same derivation, fresher clock, which
+is exactly why the save carries the departure beside the coordinates.
+
+The one staleness this cannot fix: a resident who walked *after* the last refresh
+is shown on their previous leg. It is bounded by the refresh cadence and it is
+disclosed by name (`ledger_moved`), never smoothed. **The fix is operational:
+`npm run dynamic:rebuild` belongs on the office tick** beside the world
+rehydration. It is cheap, it refuses rather than empties when its input is
+missing, and it is not installed by this branch.
+
+A resident is described in the town's own words — the engine's 16-point rose and
+its named distance bands — because a person and a hill are seen the same way and
+should read the same way. `aboard` uses the same test the standpoint has always
+used (a passenger's departure *is* the vessel's), which now has one home in
+`dynamic-entities.mjs` with two readers. The vessel's own sailing line rides in
+`meta.vessel_departure`: she is never an entity, but her record is an input to a
+derivation whose output is the entities table, and aboard has to be evaluated at
+the ask because it ends at the landing.
+
+The two dials — 500 m, nearest 10 — are ✎ **proposals, not law**. Nothing has
+ever answered this question before, so they have no receipts behind them. When
+presence earns a class mark they move into its `dials:` and this layer edges to
+them exactly as the sound class is edged to today.
+
+**The disclosure** ships on both doors, flag-gated like the record sentence:
+*presence is public and always has been — the walk ledger is public record and
+the world map draws everyone on it — this only says it where you are standing.*
+It reveals nothing new; saying it anyway is the cheap half of the habit that
+makes the expensive disclosures believable.
 
 ## The crossing-save
 
@@ -244,6 +308,8 @@ keeps it.
 6.  install + enable postmark-crossing-save.timer        # AND set WORLD_EMISSIONS=1, together
 7.  after the first crossing: npm run crossing:replay-check   # must read EQUAL
 8.  watch GET /world/dynamic — emissions_present, logged_through, disclosed_fallbacks
+9.  add `npm run dynamic:rebuild` to the office tick        # presence goes stale without it
+10. WORLD_PRESENCE=1                                        # independent of the emissions flag
 ```
 
 Step 6 is the one step that is deliberately not two steps. Steps 4 and 7 are not
@@ -260,8 +326,8 @@ formalities: they are the only two places the layer can be caught lying.
 - **Stage 1 shadow after the hydrator change**: still **EMPTY DIFF** (318
   geometric marks, 0 disagreements on all three axes) — the class fields are
   additive props the serving projection never reads.
-- **Suite**: 297 tests, 289 pass, 8 fail — the same 8 that fail on `main` for a
-  missing local `town-clone/tools/stamp-mint.mjs`. +37 tests, 0 new failures.
+- **Suite**: 311 tests, 303 pass, 8 fail — the same 8 that fail on `main` for a
+  missing local `town-clone/tools/stamp-mint.mjs`. +51 tests, 0 new failures.
 
 ## Not in scope, deliberately
 
