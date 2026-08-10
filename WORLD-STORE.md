@@ -433,30 +433,63 @@ Two consequences, both deliberate:
   an *act* refuses outright (503), because the law that binds an act has to
   arrive with it.
 
-### The class-mark gate
+### Two rules, four spellings, one meaning each
 
-`CLASS_MARK_GATE_SQL` and `isClassMark` in `world-store.mjs` are one gate with
-two spellings, and a test asserts they select the same nodes. A mark mints an
+**The trust gate** — `CLASS_MARK_GATE_SQL` / `isClassMark`. A mark mints an
 affordance only if it is `by: the-town`, `tier: constitution`, and carries a
-`class:` field. `by` is the clause carrying the weight: tier is a word in
-somebody's frontmatter until authorship makes it a fact, and every write door
-stamps `by` from the caller's own resident handles.
+`class:` field and an `affordances:` field. `by` is the clause carrying the
+weight: tier is a word in somebody's frontmatter until authorship makes it a
+fact, and every write door stamps `by` from the caller's own resident handles.
 
-The gate has two readers, which is why it lives here rather than in the door:
-the apex verb queries with the SQL, and lint **L6** — *every exposed subverb has
-a live handler* — walks the loaded graph with the predicate. L6 was written the
-day the apex shipped; before that it reported N/A over an empty set rather than
-a vacuous green.
+**Ambient reach** — `AMBIENT_REACH_SQL` / `isAmbient`. A class marked
+`ambient: true` gathers everywhere rather than only where it stands:
+jurisdiction travels the law, not the address. Speech is governed by the law of
+speech, not by proximity to the building that records it.
+
+The two are **not** folded together, and the separation is the point. Ambient
+widens *reach*, never *trust*: a row must clear the trust gate first, and
+ambient only decides whether a row that already cleared it is visible from where
+the caller stands. An ambient mark that is not the town's constitutional law is
+gathered by nobody, from nowhere.
+
+It is also why `isClassMark` was not narrowed to the ambient marks. That
+predicate answers "is this a class mark", and lint **L6** — *every exposed
+subverb has a live handler* — asks it of every mark in the world; narrowing it
+would blind L6 to exactly the sited affordances it exists to catch. Each rule
+has a SQL/predicate twin, and a test asserts each pair selects the same nodes.
+
+### The boolean that is a string
+
+`ambient: true` in a mark file reaches the hydrator as the **string** `"true"`.
+The world's frontmatter parser (`marks-fold.mjs` `parseRecord`) coerces objects,
+arrays and numbers, and has no boolean case at all — so both shapes are live in
+the town today depending on which pipeline a field travels: `pre` is stored as
+text, `far` as a real boolean.
+
+The hydrator therefore **normalizes at that boundary and nowhere else**:
+`true` and `"true"` become the boolean, everything else becomes null. Not
+truthiness — `ambient: 1`, `"yes"` and `"TRUE"` widen nothing, and each is
+reported through `frontmatter_problems` so an author who believed they declared
+world-wide reach finds out. Downstream the field is a real boolean and the
+store's rule stays strict (`json_type = 'true'`).
+
+The root fix is boolean support in `parseRecord`, which is a world-repo change
+with a wide blast radius — every boolean-shaped field in the town changes shape
+at once — and wants doing deliberately rather than as a side effect.
 
 ### What stands today
 
-At world `2fcaff0`, exactly **one** subverb is exposed: `say`, from
-`the-town/sound`, and it dispatches. `the-town/the-wheelhouse` declares `board`
-and carries `class: timetable`, but its frontmatter names no tier, so it
-hydrates as `market` and the gate holds it. Adding `tier: constitution` to that
-mark is a one-line world-repo act — and the day it lands, L6 turns RED naming
-`board`, because v0 dispatches no handler for it. That is the lint working, not
-a regression.
+At world `0428141`, exactly **one** subverb is exposed: `say`, from
+`the-town/sound`, ambient, and it dispatches. L6 is GREEN.
+
+`the-town/the-wheelhouse` is constitutional law now — the defaulted tier was
+latent and has been trued — but its `board` affordance is **withheld** until
+Stage D gives boarding a handler, so the mark carries no `affordances:` field
+and passes three of the gate's four clauses. An advertised door that cannot be
+invoked is a lying door; law chose not to lie rather than making the office
+apologise at the threshold. Stage D restores the affordance and the handler in
+one commit, and L6 is what makes that pairing checkable rather than a matter of
+remembering.
 
 ## Not in scope, deliberately
 

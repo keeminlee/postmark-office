@@ -224,6 +224,12 @@ for (const m of marks) {
   if (m.body != null && m.body.length > 150) problems.push(`body ${m.body.length} chars (schema says <=150)`);
   if (m.timetable != null && m.mechanic !== "timetable") problems.push("`timetable:` without `mechanic: timetable`");
   if (m.mechanic === "timetable" && m.timetable == null) problems.push("`mechanic: timetable` without `timetable:`");
+  // `ambient:` widens a class's reach to the whole world, so the one spelling
+  // that means it is the boolean. Anything else is REPORTED rather than
+  // quietly honoured or quietly dropped — a class whose author believed they
+  // had declared world-wide reach and has not is exactly the silent
+  // disagreement `frontmatter_problems` exists to surface.
+  if (m.ambient != null && m.ambient !== true && m.ambient !== "true") problems.push(`\`ambient:\` must be true to widen reach (got ${JSON.stringify(m.ambient)}) — this class reaches only where it stands`);
   if (problems.length) oddFrontmatter.push({ id: m.id, path: relPath(m._dir), problems });
 
   node(m.id, "mark", {
@@ -256,6 +262,27 @@ for (const m of marks) {
       mobility: m.mobility ?? null,
       anchor: m.anchor ?? null,
       exempt: Array.isArray(m.exempt) ? m.exempt : null,
+      // `ambient:` is class-declared REACH (2026-08-09): the class's affordances
+      // gather everywhere rather than only where the mark stands — jurisdiction
+      // travels the law, not the address.
+      //
+      // TWO SPELLINGS, AND ONLY TWO. The world's own frontmatter parser
+      // (marks-fold.mjs `parseRecord`) coerces objects, arrays and numbers but
+      // has NO boolean case, so `ambient: true` in a mark file arrives here as
+      // the STRING "true". Both shapes are live in the town today for exactly
+      // this reason — `pre` is stored as text, `far` as a real boolean, because
+      // they reach the store by different pipelines.
+      //
+      // So the boundary normalizes, and normalizing is all it does: `true` and
+      // `"true"` become the boolean, and EVERYTHING else becomes null. Not
+      // truthiness — `ambient: 1`, `ambient: "yes"` and `ambient: "TRUE"` all
+      // widen nothing, and the check below reports them rather than letting an
+      // author believe they declared world-wide reach when they did not.
+      //
+      // Downstream of here the field is a real boolean and the store's gate
+      // (`AMBIENT_REACH_SQL`, `json_type = 'true'`) is strict about it. The
+      // accommodation lives at the one place that meets the parser.
+      ambient: (m.ambient === true || m.ambient === "true") ? true : null,
       frontmatter_problems: problems.length ? problems : null,
     },
   });

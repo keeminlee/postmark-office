@@ -1,16 +1,16 @@
 // world-apex.test.mjs — Stage 3's apex verb: the gate, the dispatch, the terms,
 // and the mail asymmetry.
 //
-// Six falsifiers, each written so it CAN fail:
+// Seven falsifiers, each written so it CAN fail:
 //
 //   the flag off   the `world` tool is absent from tools/list, the verb itself
 //                  refuses, and GET /world/apex is not a door. Asserted against
 //                  the SAME list the door serves, not a copy of it.
 //   the gate       a hostile mark authored by a RESIDENT, standing on the
 //                  caller's own spine, carrying a perfectly well-formed
-//                  `affordances:` field, mints nothing. So does a `by:
-//                  the-town` mark that is not constitution tier — which is the
-//                  wheelhouse's shape on main today.
+//                  `affordances:` field, mints nothing — nor does one that
+//                  claims constitution tier, nor a market-tier mark of the
+//                  town's own. Ambient widens reach, never trust.
 //   dispatch       a subverb afforded where you stand reaches the existing
 //                  implementation; one that is not afforded bounces AND names
 //                  the coordinates where it is.
@@ -20,6 +20,9 @@
 //                  four thousand characters onto the ground you stand on.
 //   the mail       `do: send-letter` bounces, and the bounce says letters reach
 //                  anyway. This one is a promise, not a limitation.
+//   ambient        a class declaring world-wide reach is affordable 40 km from
+//                  the mark that grants it — and a RESIDENT mark declaring the
+//                  same reaches nobody. Reach and trust are separate rules.
 //   anonymous      GET /world/apex?x=&y= answers keyless, with affordances.
 //
 // A miniature world clone and a hand-built world.db, both thrown away after —
@@ -62,8 +65,9 @@ const put = (path, text) => {
 //   A (-900,-760)  inside `sound` AND inside a resident's hostile mark
 //   B (-950,-800)  inside `sound` and a plain resident parcel (the quoted lane)
 //   C (-850,-700)  inside `sound` and 4,200 characters of someone's prose
-//   D ( 2000,2000) inside a constitution-tier timetable class (board)
-//   E (  500, 500) inside the wheelhouse AS IT STANDS ON MAIN — market tier
+//   E (  500, 500) inside the wheelhouse — trued to law, withholding `board`
+//   F (  500, 640) inside the town's own market-tier hut (the tier clause)
+//   FAR (40000,40000) open ground — the ambient witness
 
 const FRAME = "the-town/let-there-be-light";
 const LOUD = "L".repeat(4200);
@@ -76,11 +80,12 @@ const MARKS = [
   { id: FRAME, by: "the-town", kind: "sited", tier: "constitution", at: { x: 0, y: 0 }, extent: { w: 100000, h: 100000 }, body: "Let there be light." },
   { id: "the-town/the-keeping-works", by: "the-town", kind: "sited", tier: "constitution", at: { x: -900, y: -760 }, extent: { w: 800, h: 800 }, body: "The quarter where the town's own machinery stands as buildings." },
 
-  // the sound class, exactly as it stands on main: constitution, the-town, a
-  // `class:` field, and one affordance
+  // the sound class, exactly as it stands on main (0428141): constitution,
+  // the-town, a `class:` field, one affordance, and `ambient: true` — the class
+  // stands in the physics quarter and its law reaches the whole world
   { id: "the-town/sound", by: "the-town", kind: "sited", tier: "constitution", at: { x: -900, y: -760 }, extent: { w: 200, h: 200 },
     body: "A voice carries sixty metres and is heard for five minutes.",
-    props: { class: "sound", class_version: 1, dials: { radius_m: 60, hearing_ttl_min: 5, flood_cap: 20 }, affordances: SOUND_AFFORDANCE } },
+    props: { class: "sound", class_version: 1, ambient: true, dials: { radius_m: 60, hearing_ttl_min: 5, flood_cap: 20 }, affordances: SOUND_AFFORDANCE } },
 
   // THE HOSTILE MINT. A resident's own market mark, on the caller's spine,
   // carrying a well-formed affordances field naming a verb that does not exist.
@@ -102,18 +107,34 @@ const MARKS = [
   // 4,200 characters of prose on the ground you stand on — the griefing shape
   { id: "alpha/verbose", by: "alpha", kind: "sited", tier: "market", at: { x: -850, y: -700 }, extent: { w: 20, h: 20 }, body: LOUD },
 
-  // the timetable class, TRUED: what the wheelhouse becomes the day it carries
-  // `tier: constitution`
-  { id: "the-town/the-wheelhouse-trued", by: "the-town", kind: "sited", tier: "constitution", at: { x: 2000, y: 2000 }, extent: { w: 40, h: 40 },
-    body: "Whoever holds the wheel holds the schedule, and the schedule is the mail's.",
-    props: { class: "timetable", class_version: 1, dials: { pace_km_per_crossing: 405 }, timetable: TIMETABLE, affordances: BOARD_AFFORDANCE } },
-
-  // the wheelhouse AS IT STANDS ON MAIN — by the-town, class timetable, a board
-  // affordance, and tier `market` because its frontmatter names no tier.
-  { id: "the-town/the-wheelhouse", by: "the-town", kind: "sited", tier: "market", at: { x: 500, y: 500 }, extent: { w: 40, h: 40 },
+  // THE WHEELHOUSE AS IT STANDS ON MAIN (0428141). It is constitutional law now
+  // — the defaulted tier was latent and has been trued — but its `board`
+  // affordance is WITHHELD until Stage D gives boarding a handler, so the mark
+  // carries no `affordances:` field at all. It therefore passes three of the
+  // gate's four clauses and is gathered by nobody: an advertised door that
+  // cannot be invoked is a lying door, and law chose not to lie rather than
+  // making the office apologise for it at the threshold.
+  { id: "the-town/the-wheelhouse", by: "the-town", kind: "sited", tier: "constitution", at: { x: 500, y: 500 }, extent: { w: 40, h: 40 },
     body: "The postmaster's wheelhouse, charts and a brass clock.",
+    props: { class: "timetable", class_version: 1, dials: { pace_km_per_crossing: 405 }, timetable: TIMETABLE } },
+
+  // a market-tier mark carrying a well-formed affordances field, authored by
+  // the town. Nothing on main looks like this today — the wheelhouse used to —
+  // and it is kept because the tier clause must stay independently falsifiable
+  // now that the real mark no longer exercises it.
+  { id: "the-town/the-old-signal-hut", by: "the-town", kind: "sited", tier: "market", at: { x: 500, y: 640 }, extent: { w: 20, h: 20 },
+    body: "A hut the town keeps but has not made law.",
     props: { class: "timetable", class_version: 1, dials: { pace_km_per_crossing: 405 }, timetable: TIMETABLE, affordances: BOARD_AFFORDANCE } },
 ];
+
+// THE STAGE-D WORLD: main, plus the wheelhouse's `board` affordance restored.
+// Kept as its own store rather than as another mark in the one above, because
+// its whole point is a world where a subverb is exposed with no handler behind
+// it — which is exactly the world L6 must call RED. Holding both in one fixture
+// would mean choosing between proving the machinery and proving the lint.
+const STAGE_D_MARKS = MARKS.map((m) => (m.id === "the-town/the-wheelhouse"
+  ? { ...m, props: { ...m.props, affordances: BOARD_AFFORDANCE } }
+  : m));
 
 put("WORLD/world-state.json", JSON.stringify({ tick: 0, dials: {}, marks: MARKS, parcels: [], determined: {}, vague: [], rivalries: [], portfolios: {}, terrain_weight: {}, errors: [] }));
 put("WORLD/skeleton.json", JSON.stringify({ features: [], physics_registry: {} }));
@@ -169,14 +190,18 @@ put("tools/world-build.mjs", `export function assembleWorld({ worldState, skelet
 put("tools/walk.mjs", `export function parseWalkLedger() { return { departures: [] }; }`);
 
 // Four residents, one per standpoint: alpha on the sound class's ground, beta
-// out at the trued wheelhouse, gamma at the wheelhouse as it stands on main,
-// delta buried in four thousand two hundred characters of somebody's prose.
-// Homes rather than walks, so no ledger is needed.
+// out on open ground with nothing whatever near her, gamma inside the
+// wheelhouse, delta buried in four thousand two hundred characters of
+// somebody's prose. Homes rather than walks, so no ledger is needed.
+//
+// Beta is the ambient witness. Her ground is 40 km from every mark in the
+// fixture: whatever reaches her reached her because the LAW travels, not
+// because she is standing near the building that records it.
 put("tools/where-is.mjs", `
 export const NOWHERE = Object.freeze({ x: null, y: null, placed: false, source: null, mark_id: null });
 const HOMES = {
   alpha: { x: -900, y: -760, mark_id: "alpha/market-stall" },
-  beta: { x: 2000, y: 2000, mark_id: "the-town/the-wheelhouse-trued" },
+  beta: { x: 40000, y: 40000, mark_id: null },
   gamma: { x: 500, y: 500, mark_id: "the-town/the-wheelhouse" },
   delta: { x: -850, y: -700, mark_id: "alpha/verbose" },
 };
@@ -196,8 +221,8 @@ git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "--quiet", "-m", "fix
 
 const { SCHEMA } = await import("../src/world-store.mjs");
 
-function buildStore(marks = MARKS) {
-  const db = new DatabaseSync(dbPath);
+function buildStore(marks = MARKS, path = dbPath) {
+  const db = new DatabaseSync(path);
   db.exec(SCHEMA);
   const meta = db.prepare("INSERT OR REPLACE INTO meta VALUES (?, ?)");
   meta.run("as_of_world", "apexfixture0000000000000000000000000000");
@@ -212,6 +237,8 @@ function buildStore(marks = MARKS) {
   db.close();
 }
 buildStore();
+const stageDPath = join(repo, "apex-world-stage-d.db");
+buildStore(STAGE_D_MARKS, stageDPath);
 
 // ── the code under test ──────────────────────────────────────────────────────
 
@@ -225,15 +252,27 @@ after(off);
 
 const KEY_ALPHA = { household: "house-a", handles: new Set(["alpha"]) };
 const KEY_BETA = { household: "house-b", handles: new Set(["beta"]) };
+const KEY_GAMMA = { household: "house-c", handles: new Set(["gamma"]) };
 const KEY_DELTA = { household: "house-d", handles: new Set(["delta"]) };
 
 const A = { x: -900, y: -760 };   // inside sound + the hostile mark
 const B = { x: -950, y: -800 };   // inside sound + a plain resident parcel
 const C = { x: -850, y: -700 };   // inside sound + 4,200 characters of prose
-const D = { x: 2000, y: 2000 };   // inside the trued timetable class
-const E = { x: 500, y: 500 };     // inside the wheelhouse as it stands on main
+const E = { x: 500, y: 500 };     // inside the wheelhouse, trued and withholding
+const F = { x: 500, y: 640 };     // inside the town's own market-tier hut
+const FAR = { x: 40000, y: 40000 }; // open ground: nothing on the spine but the
+                                    // world frame, nothing at all within reach
 
 const subverbs = (r) => (r.affordances ?? []).map((a) => a.subverb);
+
+// Run a case against a different store — used for the Stage-D world, where the
+// wheelhouse's `board` affordance is restored and a SITED (non-ambient)
+// affordance therefore exists to test reach against.
+async function withStore(path, fn) {
+  const kept = process.env.WORLD_STORE_DB;
+  process.env.WORLD_STORE_DB = path;
+  try { return await fn(); } finally { process.env.WORLD_STORE_DB = kept; }
+}
 
 // ── a real office, for the falsifiers about ABSENCE ──────────────────────────
 //
@@ -352,21 +391,79 @@ test("the gate: claiming `tier: constitution` in your own frontmatter mints noth
   assert.deepEqual(act.affordable_at, [], "the false law was offered as somewhere to walk to");
 });
 
-test("the gate: `by: the-town` is not enough — the wheelhouse's own shape on main affords nothing", async () => {
+test("the gate: `by: the-town` is not enough — a market-tier mark of the town's affords nothing", async () => {
+  on();
+  const r = await worldApex({ ...F }, null);
+  assert.ok(!r.error, JSON.stringify(r));
+  assert.ok(r.within.some((m) => m.id === "the-town/the-old-signal-hut"), "the market mark IS on the spine");
+  assert.ok(!subverbs(r).includes("board"), "a market-tier mark afforded a verb");
+});
+
+test("the withheld door: the wheelhouse is law now, and still affords nothing — it declares nothing", async () => {
   on();
   const r = await worldApex({ ...E }, null);
   assert.ok(!r.error, JSON.stringify(r));
-  assert.ok(r.within.some((m) => m.id === "the-town/the-wheelhouse"), "the wheelhouse IS on the spine");
-  assert.deepEqual(r.affordances, [], "a market-tier mark afforded a verb");
+  const wheelhouse = r.within.find((m) => m.id === "the-town/the-wheelhouse");
+  assert.equal(wheelhouse.tier, "constitution", "the wheelhouse is trued on main");
+  assert.ok(!subverbs(r).includes("board"), "a withheld affordance surfaced anyway");
+  // and the refusal is the honest one: nowhere in the world affords it
+  const act = await worldApex({ do: "board" }, KEY_GAMMA);
+  assert.equal(act.error, "bounce");
+  assert.match(act.hint, /No class mark in the world affords it/);
 });
 
-test("the gate: constitution + the-town + class: does surface, with the class named", async () => {
+// ── ambient reach · jurisdiction travels the law, not the address ───────────
+
+test("ambient: `say` reaches open ground 40 km from the mark that grants it", async () => {
   on();
-  const r = await worldApex({ ...D }, null);
-  assert.deepEqual(subverbs(r), ["board"]);
-  assert.equal(r.affordances[0].from, "the-town/the-wheelhouse-trued");
-  assert.equal(r.affordances[0].class, "timetable");
-  assert.ok(r.affordances[0].blurb.length <= 150);
+  const r = await worldApex({ ...FAR }, null);
+  assert.ok(!r.error, JSON.stringify(r));
+  // nothing is near her: the spine is the world frame alone, and the FOV is empty
+  assert.deepEqual(r.within.map((m) => m.id), [FRAME]);
+  assert.deepEqual(r.nearby, [], "the fixture put a mark within reach after all — the test proves nothing");
+  assert.deepEqual(subverbs(r), ["say"]);
+  assert.equal(r.affordances[0].via, "ambient", "it arrived by reach, not by law");
+  assert.equal(r.affordances[0].from, "the-town/sound");
+});
+
+test("ambient: and she can actually speak from there — the act dispatches", async () => {
+  on();
+  const r = await worldApex({ do: "say" }, KEY_BETA);
+  assert.ok(!r.error, JSON.stringify(r));
+  assert.equal(r.did, "say");
+  assert.equal(r.via, "ambient");
+  assert.equal(r.terms.binds.from, "the-town/sound");
+});
+
+test("ambient: `via` tells the three reaches apart — within, in reach, ambient", async () => {
+  on();
+  // standing INSIDE the sound class: the same affordance, but arriving because
+  // she is within it. The distinction is the whole content of `via`.
+  const inside = await worldApex({ ...A }, null);
+  assert.equal(inside.affordances.find((a) => a.subverb === "say").via, "within");
+  const far = await worldApex({ ...FAR }, null);
+  assert.equal(far.affordances.find((a) => a.subverb === "say").via, "ambient");
+  // and in the Stage-D world, a sited affordance seen from outside itself
+  await withStore(stageDPath, async () => {
+    const near = await worldApex({ x: 500, y: 530 }, null); // 30 m from the wheelhouse
+    const board = near.affordances.find((a) => a.subverb === "board");
+    assert.ok(board, "the wheelhouse was not within reach of a point 30 m away");
+    assert.equal(board.via, "in reach");
+  });
+});
+
+test("ambient widens REACH, never TRUST: a resident's ambient claim mints nothing", async () => {
+  on();
+  // alpha/false-constitution claims constitution tier; give it ambient too and
+  // it must still reach nobody, from nowhere
+  const hostile = MARKS.map((m) => (m.id === "alpha/false-constitution"
+    ? { ...m, props: { ...m.props, ambient: true } } : m));
+  const path = join(repo, "apex-world-hostile-ambient.db");
+  buildStore(hostile, path);
+  await withStore(path, async () => {
+    const r = await worldApex({ ...FAR }, null);
+    assert.deepEqual(subverbs(r), ["say"], "an ambient resident mark reached across the world");
+  });
 });
 
 test("the read carries the spine, the salient marks, and where the law was read from", async () => {
@@ -398,14 +495,30 @@ test("dispatch: an afforded subverb reaches the existing implementation", async 
 
 test("dispatch: an unaffordable subverb bounces AND names where it is afforded", async () => {
   on();
-  const r = await worldApex({ do: "say" }, KEY_BETA); // beta lives at the wheelhouse
-  assert.equal(r.error, "bounce");
-  assert.equal(r.code, 422);
-  assert.match(r.defect, /not afforded where you stand/);
-  assert.deepEqual(r.affordable_at.map((w) => w.mark), ["the-town/sound"]);
-  assert.deepEqual(r.affordable_at[0].at, { x: -900, y: -760 });
-  assert.match(r.hint, /-900, -760/);
-  assert.deepEqual(r.affordable_here, ["board"], "the bounce also says what you CAN do");
+  // Run against Stage D: on main every affordance is ambient, so there is no
+  // subverb that CAN be out of reach and this falsifier would have nothing to
+  // bite on. A sited `board` is what makes "not here — there" a real answer.
+  await withStore(stageDPath, async () => {
+    const r = await worldApex({ do: "board" }, KEY_BETA); // beta is 40 km out
+    assert.equal(r.error, "bounce");
+    assert.equal(r.code, 422);
+    assert.match(r.defect, /not afforded where you stand/);
+    assert.deepEqual(r.affordable_at.map((w) => w.mark), ["the-town/the-wheelhouse"]);
+    assert.deepEqual(r.affordable_at[0].at, { x: 500, y: 500 });
+    assert.match(r.hint, /500, 500/);
+    assert.deepEqual(r.affordable_here, ["say"], "the bounce also says what you CAN do");
+  });
+});
+
+test("dispatch: an ambient subverb is never unaffordable, so it never reaches the bounce", async () => {
+  on();
+  // The reason `affordableAt` has no ambient case. Beta stands 40 km from
+  // everything and `say` still dispatches; there is no standpoint in the world
+  // from which the "where IS it" hint could be asked about an ambient verb.
+  for (const at of [FAR, A, E, { x: -49000, y: 49000 }]) {
+    const r = await worldApex({ ...at }, null);
+    assert.ok(subverbs(r).includes("say"), `say was unaffordable at ${JSON.stringify(at)}`);
+  }
 });
 
 test("dispatch: the verb's own refusal stays a refusal — with the terms still shown", async () => {
@@ -429,11 +542,16 @@ test("dispatch: a subverb no class in the world affords says so plainly", async 
 
 test("dispatch: law may open a door the office has not built — and says which side is missing", async () => {
   on();
-  const r = await worldApex({ do: "board" }, KEY_BETA);
-  assert.equal(r.error, "bounce");
-  assert.equal(r.code, 501);
-  assert.match(r.defect, /afforded here but this office has no handler/);
-  assert.match(r.hint, /the office's gap, not yours/);
+  // This is the state law DECLINED to ship: Stage D restores `board` together
+  // with its handler precisely so no resident ever meets this bounce. Held as a
+  // test because the office must still answer honestly if it ever happens.
+  await withStore(stageDPath, async () => {
+    const r = await worldApex({ do: "board" }, KEY_GAMMA); // gamma is in the wheelhouse
+    assert.equal(r.error, "bounce");
+    assert.equal(r.code, 501);
+    assert.match(r.defect, /afforded here but this office has no handler/);
+    assert.match(r.hint, /the office's gap, not yours/);
+  });
 });
 
 test("dispatch: every subverb in the table names a tool that exists on the flat list", async () => {
@@ -462,12 +580,19 @@ test("terms: the law that binds the act arrives WITH the act", async () => {
 
 test("terms: a class that publishes a schedule delivers it as the consent document", () => {
   on();
-  // board has no handler, so the dispatch path cannot reach terms for it — the
-  // composer is exercised on the affording row directly. The rule is generic:
-  // any class carrying a `timetable:` delivers it, and board is its first case.
-  const db = new DatabaseSync(dbPath, { readOnly: true });
-  const row = db.prepare(apex.AFFORDANCE_QUERY).get(JSON.stringify(["the-town/the-wheelhouse-trued"]));
+  // The Stage-D store, where `board` is restored: on main the wheelhouse
+  // declares no affordance, so it passes no gate and there is no row to bind.
+  // board still has no handler, so the composer is exercised on the affording
+  // row directly. The rule is generic — any class carrying a `timetable:`
+  // delivers it — and board is the first case that will use it.
+  const db = new DatabaseSync(stageDPath, { readOnly: true });
+  // `.all(...).find(...)`, never `.get(...)`: since ambient reach landed, an
+  // id-restricted gather also returns every ambient row, so the first row of
+  // this query is `sound` no matter which id you asked about.
+  const row = db.prepare(apex.AFFORDANCE_QUERY).all(JSON.stringify(["the-town/the-wheelhouse"]))
+    .find((r) => r.id === "the-town/the-wheelhouse");
   db.close();
+  assert.ok(row, "the Stage-D wheelhouse did not pass the gate");
   const terms = apex.buildTerms({
     affording: { ...row, blurb: BOARD_AFFORDANCE[0].blurb },
     spine: [{ id: FRAME, by: "the-town", tier: "constitution", body: "Let there be light." }],
@@ -556,28 +681,96 @@ test("REST: the door answers anonymously over HTTP, and refuses to ACT over a GE
   });
 });
 
-// ── the gate has exactly one definition ─────────────────────────────────────
+// ── each rule has exactly one definition ────────────────────────────────────
+//
+// Two rules, two SQL/predicate pairs, and both are checked. They are NOT folded
+// into one: the trust gate answers "may this mark mint a verb" and L6 asks it of
+// every mark in the world; the ambient rule answers "does this one reach the
+// caller from where they stand". Narrowing `isClassMark` to the ambient marks
+// would have blinded L6 to exactly the sited affordances it exists to catch.
 
-test("the gate: the SQL and the predicate select the same marks, node for node", async () => {
+test("the trust gate: the SQL and the predicate select the same marks, node for node", async () => {
   on();
   const { loadWorldGraph, nodesWhere, isClassMark } = await import("../src/world-store.mjs");
+  for (const path of [dbPath, stageDPath]) {
+    const db = new DatabaseSync(path, { readOnly: true });
+    // AFFORDANCE_QUERY_ALL's shape: gate only, no reach restriction
+    const bySql = new Set(db.prepare(`SELECT id FROM nodes WHERE ${(await import("../src/world-store.mjs")).CLASS_MARK_GATE_SQL}`).all().map((r) => r.id));
+    db.close();
+    const byPredicate = new Set(nodesWhere(loadWorldGraph(path).graph, isClassMark).map((n) => n.id));
+    assert.deepEqual([...bySql].sort(), [...byPredicate].sort(), path);
+  }
+  // and on main, the gate passes exactly one mark: the wheelhouse is law but
+  // declares nothing, and the town's market-tier hut declares but is not law
   const db = new DatabaseSync(dbPath, { readOnly: true });
-  const bySql = new Set(db.prepare(apex.AFFORDANCE_QUERY).all(JSON.stringify(MARKS.map((m) => m.id))).map((r) => r.id));
+  const gated = db.prepare(`SELECT id FROM nodes WHERE ${(await import("../src/world-store.mjs")).CLASS_MARK_GATE_SQL}`).all().map((r) => r.id);
   db.close();
-  const byPredicate = new Set(nodesWhere(loadWorldGraph(dbPath).graph, isClassMark).map((n) => n.id));
+  assert.deepEqual(gated.sort(), ["the-town/sound"]);
+});
+
+test("the ambient rule: the SQL and the predicate select the same marks, node for node", async () => {
+  on();
+  const { loadWorldGraph, nodesWhere, isAmbient, AMBIENT_REACH_SQL } = await import("../src/world-store.mjs");
+  const db = new DatabaseSync(dbPath, { readOnly: true });
+  const bySql = new Set(db.prepare(`SELECT id FROM nodes WHERE ${AMBIENT_REACH_SQL}`).all().map((r) => r.id));
+  db.close();
+  const byPredicate = new Set(nodesWhere(loadWorldGraph(dbPath).graph, isAmbient).map((n) => n.id));
   assert.deepEqual([...bySql].sort(), [...byPredicate].sort());
-  assert.deepEqual([...bySql].sort(), ["the-town/sound", "the-town/the-wheelhouse-trued"]);
+  assert.deepEqual([...bySql].sort(), ["the-town/sound"]);
+});
+
+test("the ambient rule is strict: only the boolean true widens reach", async () => {
+  on();
+  const { loadWorldGraph, nodesWhere, isAmbient, AMBIENT_REACH_SQL } = await import("../src/world-store.mjs");
+  // The shapes a careless frontmatter could produce, none of which are law.
+  //
+  // The STRING "true" is in this list on purpose, and it is not a hypothetical:
+  // the world's own frontmatter parser has no boolean case, so `ambient: true`
+  // in a mark file reaches the hydrator as exactly that string. The hydrator
+  // normalizes it at that boundary; the store, downstream, stays strict. This
+  // test is what makes the normalization load-bearing rather than decorative —
+  // if the hydrator ever stops doing it, the store will not quietly cover.
+  const sloppy = [
+    { id: "the-town/yes-string", by: "the-town", kind: "sited", tier: "constitution", at: { x: 1, y: 1 }, extent: { w: 1, h: 1 }, body: "x",
+      props: { class: "c", affordances: [{ subverb: "nope", blurb: "b" }], ambient: "true" } },
+    { id: "the-town/one", by: "the-town", kind: "sited", tier: "constitution", at: { x: 2, y: 2 }, extent: { w: 1, h: 1 }, body: "x",
+      props: { class: "c", affordances: [{ subverb: "nope", blurb: "b" }], ambient: 1 } },
+    { id: "the-town/false", by: "the-town", kind: "sited", tier: "constitution", at: { x: 3, y: 3 }, extent: { w: 1, h: 1 }, body: "x",
+      props: { class: "c", affordances: [{ subverb: "nope", blurb: "b" }], ambient: false } },
+  ];
+  const path = join(repo, "apex-world-sloppy-ambient.db");
+  buildStore([...MARKS, ...sloppy], path);
+  const db = new DatabaseSync(path, { readOnly: true });
+  const bySql = db.prepare(`SELECT id FROM nodes WHERE ${AMBIENT_REACH_SQL}`).all().map((r) => r.id);
+  db.close();
+  assert.deepEqual(bySql.sort(), ["the-town/sound"]);
+  assert.deepEqual(nodesWhere(loadWorldGraph(path).graph, isAmbient).map((n) => n.id), ["the-town/sound"]);
+  // and they really are unreachable from far away, not merely un-flagged
+  await withStore(path, async () => {
+    const r = await worldApex({ ...FAR }, null);
+    assert.deepEqual(subverbs(r), ["say"]);
+  });
+});
+
+test("lint L6: the world as it stands is GREEN — one subverb exposed, and it dispatches", async () => {
+  on();
+  const { runLints } = await import("../src/world-lints.mjs");
+  const { lints } = await runLints({ dbPath, treePath: repo });
+  const l6 = lints.find((l) => l.id === "L6");
+  assert.equal(l6.verdict, "GREEN", l6.headline);
+  assert.deepEqual(l6.rows, [{ subverb: "say", from: ["the-town/sound"], handled: true }]);
 });
 
 test("lint L6: a subverb law exposes with no handler behind it is RED, and named", async () => {
   on();
   const { runLints } = await import("../src/world-lints.mjs");
-  const { lints } = await runLints({ dbPath, treePath: repo });
+  // Stage D restores `board` — this is the world law declined to ship without
+  // its handler, and the lint is what makes that refusal checkable rather than
+  // a matter of remembering.
+  const { lints } = await runLints({ dbPath: stageDPath, treePath: repo });
   const l6 = lints.find((l) => l.id === "L6");
-  // the fixture's trued wheelhouse advertises `board`, which v0 does not
-  // dispatch — the lint must find it rather than report the world conformant
   assert.equal(l6.verdict, "RED");
-  assert.match(l6.headline, /board \(the-town\/the-wheelhouse-trued\)/);
+  assert.match(l6.headline, /board \(the-town\/the-wheelhouse\)/);
   const say = l6.rows.find((r) => r.subverb === "say");
   assert.equal(say.handled, true, "say has a handler and must not be reported as an orphan");
 });

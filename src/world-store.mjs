@@ -149,6 +149,33 @@ export const isClassMark = (attr) => attr?.kind === "mark"
   && attr?.props?.class != null
   && attr?.props?.affordances != null;
 
+// ── AMBIENT REACH — a second, separate rule ─────────────────────────────────
+//
+// `ambient: true` on a class mark means its affordances gather EVERYWHERE
+// rather than only where the mark stands: jurisdiction travels the law, not the
+// address (LOGOS/classes.md, 2026-08-09). The sound class stands in the physics
+// quarter and `say` is affordable at the quay, because speech is governed by
+// the law of speech and not by proximity to the building that records it.
+//
+// THIS WIDENS REACH, NEVER TRUST, and the separation is structural rather than
+// a promise in a comment: a row must pass `CLASS_MARK_GATE_SQL` *first*, and
+// ambient only decides whether a row that already passed is visible from where
+// the caller stands. An ambient mark that is not the town's constitutional law
+// is gathered by nobody, from nowhere.
+//
+// It is also why this is NOT folded into `isClassMark`. That predicate answers
+// "is this a class mark", and lint L6 asks it of every mark in the world to
+// find subverbs law exposes — narrowing it to the ambient ones would blind L6
+// to exactly the sited affordances (`board`) it exists to catch. Two rules,
+// two names, each with a SQL/predicate twin the agreement test checks.
+//
+// `json_type(...) = 'true'` rather than `json_extract(...) = 1`: the strict
+// test admits the boolean and nothing that merely looks like it.
+export const AMBIENT_REACH_SQL = `json_type(props, '$.ambient') = 'true'`;
+
+/** The same ambient rule, as a predicate over a loaded node's attributes. */
+export const isAmbient = (attr) => attr?.props?.ambient === true;
+
 /** The subverbs a node exposes. Callers must gate first; this only reads. */
 export const subverbsOf = (attr) => (Array.isArray(attr?.props?.affordances) ? attr.props.affordances : [])
   .map((a) => String(a?.subverb ?? "").trim())
