@@ -60,7 +60,8 @@ async function main() {
 
   const tools = join(CLONE, "tools");
   const tEngine = performance.now();
-  const { loadMarks, placementParent, marksContain, PARCEL_CLAIM_CAP, PARCEL_CAP_LAW_DATE, PARCEL_EXTENT_M } =
+  const { loadMarks, placementParent, marksContain, PARCEL_CLAIM_CAP, PARCEL_CAP_LAW_DATE, PARCEL_EXTENT_M,
+          worldToFile, ringToFile, COORDS_FIELD, COORDS_RELATIVE } =
     await import(pathToFileURL(join(tools, "marks-fold.mjs")));
   phases.push(`engine=${Math.round(performance.now() - tEngine)}ms`);
   let branch;
@@ -132,11 +133,30 @@ async function main() {
     }
   }
 
+  // SCHEMA v3, feature-detected: in a relative tree a nested record's at:/points:
+  // are offsets from the PARENT'S CENTRE. The resident speaks world coordinates
+  // at the door; the FILE speaks the frame — the same conversion the migrator
+  // used, from the clone's own fold. Root-level marks are framed on the origin,
+  // so their numbers do not change; an old clone (no worldToFile) keeps v2
+  // behavior byte-for-byte. If this conversion is ever wrong, the lint+fold gate
+  // below refuses the write — the door cannot land a misplaced record.
+  const rootRec = marks.find((m) => m.id === "the-town/let-there-be-light");
+  const relativeTree = !!worldToFile && COORDS_FIELD &&
+    String(rootRec?.[COORDS_FIELD] ?? "").trim() === COORDS_RELATIVE;
+  const fileRec = { ...p };
+  if (relativeTree && parentId) {
+    const origin = byId.get(parentId)?.at ?? null;   // composed world centre — loadMarks composed it
+    if (origin) {
+      if (fileRec.at) fileRec.at = worldToFile(fileRec.at, origin);
+      if (fileRec.points) fileRec.points = ringToFile(fileRec.points, origin);
+    }
+  }
+
   // build the record: path owns containment, everything else is a field. by/date
   // are server-derived; a sited/parcel mark never authors a parent (geometry decides).
   const fm = ["kind", "by", "tier", "date", "at", "extent", "points", "slot", "value"]
-    .filter((k) => p[k] !== undefined && p[k] !== null && p[k] !== "")
-    .map((k) => `${k}: ${fmtVal(p[k])}`).join("\n");
+    .filter((k) => fileRec[k] !== undefined && fileRec[k] !== null && fileRec[k] !== "")
+    .map((k) => `${k}: ${fmtVal(fileRec[k])}`).join("\n");
   const record = `---\n${fm}\n---\n\n${String(p.body).trim()}\n`;
 
   mkdirSync(dir, { recursive: true });
