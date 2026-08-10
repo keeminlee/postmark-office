@@ -6,11 +6,12 @@
 import test, { before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { editClone, fixtureDb } from "./fixture.mjs";
+import { worldStoreFixture, AS_OF_WORLD } from "./world-graph-fixture.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = 43811;
@@ -23,8 +24,13 @@ before(async () => {
   tmp = mkdtempSync(join(tmpdir(), "postmark-office-srv-"));
   const dbPath = join(tmp, "fixture.db");
   fixtureDb(dbPath).close();
+  // A world store at a KNOWN path, so the window's tests do not depend on
+  // whether the machine running them happens to have hydrated one. Pointed at
+  // by WORLD_STORE_DB, the same override an operator uses to run an office
+  // beside a store that lives somewhere else.
+  worldStoreFixture(join(tmp, "world.db"));
   child = spawn(process.execPath, [join(ROOT, "src", "server.mjs"), "--port", String(PORT), "--db", dbPath], {
-    env: { ...process.env, OFFICE_KEYS: `${KEY}=keemin:wright`, TOWN_CLONE: join(tmp, "no-clone-here"), WORLD_CLONE: join(tmp, "no-world-clone"), VOICES_LOG: join(tmp, "voices-log.jsonl"), TOWN_PUSH: "" },
+    env: { ...process.env, OFFICE_KEYS: `${KEY}=keemin:wright`, TOWN_CLONE: join(tmp, "no-clone-here"), WORLD_CLONE: join(tmp, "no-world-clone"), VOICES_LOG: join(tmp, "voices-log.jsonl"), TOWN_PUSH: "", WORLD_STORE_DB: join(tmp, "world.db") },
     stdio: ["ignore", "pipe", "pipe"],
   });
   await new Promise((ok, no) => {
@@ -320,6 +326,89 @@ test("GET /world/store is a keyless read that reports mode off when nothing is f
   // response, so a flags-off office is byte-identical on the wire too
   assert.equal(res.headers.get("x-postmark-world-store-as-of"), null);
   assert.equal((await get("/town", null)).headers.get("x-postmark-world-store-as-of"), null);
+});
+
+// ── the window (Stage E) ─────────────────────────────────────────────────────
+
+test("GET /world/graph is keyless, and hands back elements cytoscape can mount", async () => {
+  const res = await get("/world/graph", null);          // no credential at all
+  assert.equal(res.status, 200);
+  const g = await res.json();
+  assert.equal(g.as_of.world, AS_OF_WORLD);
+  assert.ok(g.elements.nodes.length > 0 && g.elements.edges.length > 0);
+  assert.equal(g.counts.nodes, g.elements.nodes.length);
+  // the payload is the store's own As-Of, not the office index's — two clocks,
+  // and the window must name the one it is a window onto
+  assert.notEqual(g.as_of.world, res.headers.get("x-postmark-as-of"));
+  // findings ride with the elements, and the ids they name are painted ON them
+  const l1 = g.lints.find((l) => l.lint === "L1");
+  assert.equal(l1.verdict, "RED");
+  const painted = g.elements.edges.find((e) => e.data.lints.includes("L1"));
+  assert.equal(painted.data.type, "implements");
+});
+
+test("GET /world/graph?kinds= filters, and refuses a kind that does not exist", async () => {
+  const conv = await (await get("/world/graph?kinds=class,code,doctrine", null)).json();
+  assert.equal(conv.elements.nodes.some((n) => n.data.kind === "mark"), false);
+  assert.deepEqual(conv.filter.kinds, ["class", "code", "doctrine"]);
+
+  const bad = await get("/world/graph?kinds=marks", null);   // the plural is not a kind
+  assert.equal(bad.status, 422);
+  assert.match((await bad.json()).hint, /kinds are mark, class, code, doctrine/);
+});
+
+test("GET /world/graph.gexf answers the filesystem, whichever state this office is in", async () => {
+  // The GEXF pair is written by src/world-hydrate.mjs beside the office root,
+  // so whether it exists depends on whether THIS checkout has ever hydrated —
+  // which a test may not assume in either direction. What it can assert is the
+  // actual contract: serve the file the hydration wrote, and say plainly when
+  // there is not one. The expectation is taken from the filesystem, so a route
+  // that 404'd with the file present, or served a body from somewhere else,
+  // still fails.
+  const exported = existsSync(join(ROOT, "world-graph.gexf"));
+  const res = await get("/world/graph.gexf", null);
+  if (exported) {
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get("content-type"), /gexf\+xml/);
+    assert.match((await res.text()).slice(0, 200), /<\?xml|<gexf/);
+  } else {
+    assert.equal(res.status, 404);
+    const b = await res.json();
+    assert.match(b.defect, /not exported yet/);
+    assert.match(b.hint, /hydration/);
+  }
+  // a view nobody defined is refused by name, and that does not depend on the
+  // machine at all
+  const bad = await get("/world/graph.gexf?view=sideways", null);
+  assert.equal(bad.status, 404);
+  assert.match((await bad.json()).defect, /no such view/);
+});
+
+test("with NO store at all the window 404s — never an empty graph, which would read as a clean world", async () => {
+  // A second office, on its own port, pointed at a store that is not there:
+  // the one shape an operator meets on a box before the first hydration.
+  const port = PORT + 1;
+  const bare = spawn(process.execPath, [join(ROOT, "src", "server.mjs"), "--port", String(port), "--db", join(tmp, "fixture.db")], {
+    env: { ...process.env, OFFICE_KEYS: `${KEY}=keemin:wright`, TOWN_CLONE: join(tmp, "no-clone-here"), WORLD_CLONE: join(tmp, "no-world-clone"), VOICES_LOG: join(tmp, "voices-log-2.jsonl"), TOWN_PUSH: "", WORLD_STORE_DB: join(tmp, "no-store-here.db") },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  try {
+    await new Promise((ok, no) => {
+      const t = setTimeout(() => no(new Error("the second office never listened")), 10_000);
+      bare.stdout.on("data", (d) => { if (String(d).includes("listening")) { clearTimeout(t); ok(); } });
+      bare.on("exit", (c) => no(new Error(`the second office exited early (${c})`)));
+    });
+    const res = await fetch(`http://127.0.0.1:${port}/world/graph`);
+    assert.equal(res.status, 404);
+    const b = await res.json();
+    assert.match(b.defect, /no world store/);
+    assert.match(b.hint, /hydrate:world/);
+    assert.equal(b.elements, undefined);
+  } finally {
+    const gone = new Promise((ok) => bare.on("exit", ok));
+    bare.kill();
+    await gone;
+  }
 });
 
 test("world_say bounces honestly when the office has no world to stand in", async () => {

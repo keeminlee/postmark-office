@@ -236,16 +236,60 @@ GATE REFUSED world-history — git log over WORLD/marks returned 1 commit(s)
 
 `world.db` was byte-identical before and after all refusals.
 
-### The window
+### The window (Stage E)
 
-`world-graph.gexf` (688 nodes / 805 edges, 858 KiB) and
-`world-graph-static.gexf` (686 / 803, 856 KiB), both regenerated at the end of
-every hydration. Drop either into Gephi Lite in a browser tab; marks carry real
-coordinates, so the file opens **as the map** (y negated — the world's y runs
-south). The two views differ today only by the placeholder ends of two dangling
-edges: the full view keeps them because a dangling edge is a finding, and the
-window is where you go to see findings. They diverge properly at Stage 2, when
-entities and emissions enter the store.
+Two lanes onto the same store, and the standing page is the one with the
+findings on it.
+
+**`GET /world/graph`** — the store as one Cytoscape-ready payload: every node
+and edge, plus the lint findings **resolved onto the ids they are about**, so
+the picture can go red in the right place. That resolution is the whole of
+`src/world-graph.mjs` and it is the hop the lints themselves do not make: a lint
+says "timetable declares `world/tools/vessel.mjs` and the office never loads
+it"; this turns that sentence into the node and edge ids the sentence names.
+Three rules govern it —
+
+- **nothing is inferred from prose.** Every painted id comes from a structured
+  field the lint wrote (`carried_by`, `parcel`, `rule`, `hits[].file`), never
+  from parsing a headline;
+- **an id the graph does not hold is reported, not dropped** — each finding
+  carries an `unmatched` list, because a finding about something the store has
+  no node for is itself a finding;
+- **a lint that cannot be addressed says so** — `implicates.paints: false` with
+  a note, rather than being quietly absent from the panel. L6 has three of these
+  silences (no apex verb at all; every subverb dispatching; one that does not)
+  and they must not be confused for each other.
+
+Keyless like the rest of the world's read tier — the marks are published records
+at a named sha, the code and doctrine nodes are paths in two public repos, and
+the verdicts print from `npm run world:lints` to anyone's terminal. `?kinds=`
+mirrors `tools/world-gexf.mjs`'s flag exactly, `?types=` narrows edges, and
+`?drop-unresolved=1` gives the static view. **404 when there is no store**: the
+window has no fold to fall through to, and an empty graph would read as a clean
+world nobody had hydrated. Served compact rather than pretty-printed — 719 nodes
+and 861 edges is 353 KiB, and the one-space indent was a third of it.
+
+Positions ride **unnegated**: the world's y runs south, a canvas renderer's runs
+down, and south-down is north-up. The payload states the contract
+(`coordinates`) rather than leaving it to a comment on one side, because
+`world-gexf.mjs` must flip the same numbers for Gephi and one of the two viewers
+was otherwise always going to draw the town mirrored.
+
+**`GET /world/graph.gexf`** (`?view=static`) — the zero-build lane, streaming
+`world-graph.gexf` (719 nodes / 861 edges, 899 KiB) and `world-graph-static.gexf`
+(717 / 859, 898 KiB), both regenerated at the end of every hydration and
+resolved from `OFFICE_ROOT` because that is exactly where `world-hydrate.mjs`
+writes them. Drop either into Gephi Lite in a browser tab. The two views differ
+today only by the placeholder ends of two dangling edges: the full view keeps
+them because a dangling edge is a finding, and the window is where you go to see
+findings. They diverge properly at Stage 2, when entities and emissions enter
+the store.
+
+The page that reads all this is **postmark.town/ops/graph/**, in the site repo —
+kind-shaped nodes, marks coloured by the tier lattice, findings red on the graph
+with a panel that lights exactly what each one names, a map view at the world's
+own scale, and an As-Of bar that asks `GET /world/store` whether the store is
+still the sha main points at.
 
 ## Serving
 

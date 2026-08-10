@@ -15,7 +15,7 @@ import { createServer } from "node:http";
 import { DatabaseSync } from "node:sqlite";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { existsSync } from "node:fs";
+import { createReadStream, existsSync } from "node:fs";
 import { join } from "node:path";
 import { enqueueLetter } from "./write.mjs";
 import { updateAddressBody, updateHome, updateProfile, updateProfileAvatar, updateWindow } from "./edit.mjs";
@@ -32,6 +32,7 @@ import { worldSummary, worldOrient, worldEyes, worldInvestigate, worldStateRaw, 
 import { apexEnabled, worldApex } from "./world-apex.mjs"; // stage 3: the apex verb's keyless read half
 import { worldStakeViaOffice, worldUnstakeViaOffice, worldStakeRead } from "./world-stake.mjs"; // P3 draft
 import { storeEngaged, storeSnapshot, worldStoreHealth } from "./world-serve.mjs"; // stage 1: the serving flag's instrument panel
+import { worldGraphView, NODE_KINDS, gexfPath } from "./world-graph.mjs"; // stage E: the window
 import { dynamicHealth } from "./dynamic-store.mjs"; // stage 2: the dynamic layer's instrument panel
 import { Bouncer, keyIdForToken, worldWriteVerbForRest } from "./bouncer.mjs";
 
@@ -95,6 +96,17 @@ const j = (res, code, obj) => {
   if (worldStoreAsOf) headers["x-postmark-world-store-as-of"] = worldStoreAsOf;
   res.writeHead(code, headers);
   res.end(body);
+};
+// The same answer, without the one-space indent. Every other door pretty-prints
+// because every other door's body is something a person reads in a terminal; the
+// window's is 700 nodes and 850 edges, where the indent is a third of the bytes
+// on the wire and nobody was going to read it by eye anyway.
+const jCompact = (res, code, obj) => {
+  const headers = { "content-type": "application/json; charset=utf-8", "x-postmark-as-of": AS_OF };
+  const worldStoreAsOf = storeEngaged() ? storeSnapshot().asOfWorld : null;
+  if (worldStoreAsOf) headers["x-postmark-world-store-as-of"] = worldStoreAsOf;
+  res.writeHead(code, headers);
+  res.end(JSON.stringify(obj));
 };
 const bounce = (res, code, defect, hint) => j(res, code, { error: "bounce", defect, hint });
 const rateResponse = (res, rate) => {
@@ -338,6 +350,57 @@ const server = createServer((req, res) => {
         try { return j(res, 200, worldStoreHealth({ repo: WORLD_CLONE })); }
         catch (e) { return bounce(res, 500, "the world door tripped", String(e?.message ?? e).slice(0, 200)); }
       }
+      // GET /world/graph — the window (Stage E). world.db as one Cytoscape-ready
+      // payload: every node and edge the store holds, with the standing
+      // invariants' findings resolved onto the ids they are ABOUT, so /ops/graph/
+      // can paint them red where they actually are rather than listing them in a
+      // sidebar beside a decorative picture.
+      //
+      // Keyless, like every other world read. Everything on it is already
+      // published: the marks are the town's own records at a named sha, the code
+      // and doctrine nodes are file paths in two public repos, and the lint
+      // verdicts print to anyone's terminal from `npm run world:lints`. The
+      // As-Of is in the body rather than only in a header because the whole
+      // point of the window is to know WHICH world you are looking at.
+      //
+      // ?kinds= mirrors tools/world-gexf.mjs's flag exactly — one spelling for
+      // both windows onto the same store. ?types= narrows edges the same way,
+      // and ?drop-unresolved=1 hides the placeholder ends of dangling edges (the
+      // static view; the default keeps them, because a dangling edge is a
+      // finding and this is where you come to see findings).
+      if (path === "/world/graph") {
+        const p = url.searchParams;
+        const list = (v) => (v ? v.split(",").map((s) => s.trim()).filter(Boolean) : null);
+        const kinds = list(p.get("kinds"));
+        const bad = kinds?.filter((k) => !NODE_KINDS.includes(k)) ?? [];
+        if (bad.length) return bounce(res, 422, `no such node kind: ${bad.join(", ")}`, `kinds are ${NODE_KINDS.join(", ")}`);
+        const view = worldGraphView({
+          kinds,
+          types: list(p.get("types")),
+          dropUnresolved: p.get("drop-unresolved") === "1",
+        });
+        // A store that is not there is a 404 and says so plainly. The window has
+        // no fold to fall through to — unlike a read path, there is no second
+        // answer — so pretending with an empty graph would be the worst
+        // available lie: a clean-looking world nobody has hydrated.
+        if (view.error) return bounce(res, 404, view.error, `${view.detail ?? ""} — run: npm run hydrate:world`.trim());
+        return jCompact(res, 200, view);
+      }
+      // GET /world/graph.gexf — the same store for Gephi Lite, zero build: the
+      // file the last hydration wrote, streamed. ?view=static drops the
+      // placeholder ends; the default keeps them.
+      if (path === "/world/graph.gexf") {
+        const g = gexfPath(url.searchParams.get("view") ?? "full");
+        if (g.error) return bounce(res, 404, g.error, g.detail ?? `views: ${(g.views ?? []).join(", ")}`);
+        res.writeHead(200, {
+          "content-type": "application/gexf+xml; charset=utf-8",
+          "content-length": String(g.bytes),
+          "last-modified": new Date(g.mtime).toUTCString(),
+          "x-postmark-as-of": AS_OF,
+          "content-disposition": `inline; filename="${g.file}"`,
+        });
+        return createReadStream(g.path).pipe(res);
+      }
       // GET /world/dynamic — Stage 2's panel, and the place the DERIVER'S
       // DISCLOSURE actually lands. Which dials the sound class is being applied
       // with, whether each came from the class mark or fell back to the office's
@@ -466,7 +529,7 @@ const server = createServer((req, res) => {
       // The door list names the apex only where the apex actually answers — a
       // 404 that advertises a route it would also 404 on is a lie in the shape
       // of help.
-      return bounce(res, 404, "no such door", `GET /town /residents /residents/{h} /mail/{h} /letters[?filters] /letters/{id} /doorstep/{h} /metrics/mail /repo/log[?path=&author=&since=&until=&limit=] /regions /homes/{h} /stamps /stamps/{h} /quests/{h} /world/settlements /world/store /world/dynamic /world/present${apexEnabled() ? " /world/apex?x=&y=" : ""} /votes /votes/{topic} /bulletin /search?q=`);
+      return bounce(res, 404, "no such door", `GET /town /residents /residents/{h} /mail/{h} /letters[?filters] /letters/{id} /doorstep/{h} /metrics/mail /repo/log[?path=&author=&since=&until=&limit=] /regions /homes/{h} /stamps /stamps/{h} /quests/{h} /world/settlements /world/store /world/dynamic /world/present /world/graph[?kinds=&types=] /world/graph.gexf[?view=static]${apexEnabled() ? " /world/apex?x=&y=" : ""} /votes /votes/{topic} /bulletin /search?q=`);
     }
 
     // ── write tier: a valid credential required ───────────────────────────
