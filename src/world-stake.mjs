@@ -96,6 +96,13 @@ export async function worldStakeRead(args = {}) {
   // The town's derive is the ONLY place k is known or applied — this reads its
   // answer and never recomputes it. `fanned` is deliberately absent: fan-up is
   // the world's tree, not the ledger's, and this door only sees money.
+  // `ledger_weight`, NOT `weight` — the third meaning this branch exists to stop
+  // (founder's ruling, 2026-08-10). What this door can compute is own escrow plus
+  // the breadth bonus: 18 on pando-peak. The ✦ the telling prints for that same
+  // mark is 108, because it also carries everything sitting inside it fanning up,
+  // which is the WORLD's tree and invisible from the ledger. Two different
+  // quantities under one word is how `stamps` came to mean weight; naming it
+  // while it still has zero readers is the cheapest this fix will ever be.
   const derived = mod.deriveWorldMarkWeights(TOWN_CLONE, state);
   const row = derived.marks.find((m) => m.mark === mark) ?? null;
   const escrow = mod.markEscrow(TOWN_CLONE, mark, state);
@@ -103,13 +110,16 @@ export async function worldStakeRead(args = {}) {
     mark,
     escrow,
     stamps: escrow,
-    weight: row?.weight ?? escrow,
+    ledger_weight: row?.weight ?? escrow,
     breadth: {
       k: derived.k ?? null,
       external_households: row?.households_external ?? 0,
       households: row?.households ?? 0,
       bonus: (row?.weight ?? escrow) - escrow,
     },
+    // Said plainly in the payload, because a field name can only carry so much
+    // and this one is a genuine trap for anything comparing the two doors.
+    _note: "ledger_weight is own escrow + breadth bonus. The ✦weight in the telling also includes marks inside this one fanning up — see world_investigate.weight_parts.",
     holders: holders.sort((a, b) => b.stamps - a.stamps),
     retirement: mod.retirementBlocked(TOWN_CLONE, mark, state),
   };
@@ -152,7 +162,15 @@ export async function worldPortfolioStakeSlice(key, marks = []) {
         body: mark?.body ?? null,
         holder: row.holder,
         stamps: Number(row.n ?? 0),
-        weight: Number(row.weight ?? row.n ?? 0),
+        // `holder_weight`, not `weight` — a FOURTH quantity, and the narrowest:
+        // this one holder's row, their own escrow plus the breadth bonus if
+        // theirs was the row that earned it. It is not the mark's ✦weight and
+        // not even the mark's ledger_weight. Sitting beside published[].weight
+        // (fully effective) under the same word made the portfolio read as
+        // though a resident's stake and a mark's standing were one scale.
+        // Audited before renaming: no consumer read it — the viewer's
+        // backedPosition reads `stamps` only, the site reads none of it.
+        holder_weight: Number(row.weight ?? row.n ?? 0),
         yours: Boolean(mark && belongs(mark.by)),
       };
     })
@@ -221,7 +239,7 @@ export const WORLD_STAKE_TOOLS = [
       handle: { type: "string", description: "which of YOUR residents unstakes (omit if your key holds one)" },
     }, required: ["mark", "stamps"], additionalProperties: false } },
   { name: "world_stake_read",
-    description: "What a mark carries: its raw escrow (`stamps`/`escrow`), who staked it and how much each, the effective ledger-side figure (`weight`), the `breadth` bonus that separates the two — k paid once per unique EXTERNAL household, never to the mark's own — and whether it is currently anchored against retirement. Public: escrow is as open as the ✦weight it produces. This door sees money only; the fan-up from marks sitting inside this one is the world's tree, and world_investigate's `weight_parts` is where the whole ✦ figure is broken down.",
+    description: "What a mark carries on the LEDGER: its raw escrow (`stamps`/`escrow`), who staked it and how much each, `ledger_weight` (own escrow + breadth bonus), the `breadth` term that separates the two — k paid once per unique EXTERNAL household, never to the mark's own — and whether it is currently anchored against retirement. `ledger_weight` is NOT the ✦weight a telling prints: the effective ✦weight also includes marks sitting inside this one fanning up, which lives on world_investigate (`weight` and its `weight_parts` breakdown). Public — escrow is as open as the ✦weight it produces.",
     inputSchema: { type: "object", properties: {
       mark: { type: "string", description: "the mark id, <by>/<slug>" },
     }, required: ["mark"], additionalProperties: false } },
