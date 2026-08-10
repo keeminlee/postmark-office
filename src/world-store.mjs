@@ -11,10 +11,12 @@
 // at the shas named in `meta`, so the file may be deleted at any moment without
 // losing a fact the town owns.
 //
-// Node kinds today: mark | class | code | doctrine. `entity` (residents with
-// world-frame positions) and `emission` (voices, TTL'd presence) are Stage 2 —
-// the columns are already shaped for them: an entity is a node with at_x/at_y
-// and no repo path; an emission is a node with a source edge and a TTL in props.
+// Node kinds today: mark | class | code | doctrine — and that is the whole list.
+// `entity` and `emission` were expected here at Stage 2 and landed in a separate
+// file instead (`dynamic.db`, see DYNAMIC-STORE.md): this store is deleted and
+// rebuilt whole on every hydration, and the dynamic layer is exactly the state
+// that must survive that. The columns below would have fitted them; the covenant
+// would not.
 
 import { DatabaseSync } from "node:sqlite";
 import { execFileSync } from "node:child_process";
@@ -105,8 +107,8 @@ export const SCHEMA = `
 // hydrator.
 export const EDGE_TYPES = [
   ["contains", "spatial containment. Asserted by directory nesting in WORLD/marks, then verified against tools/geometry.mjs `contains`. Disagreements are recorded on the edge (geometry_ok:false), never repaired."],
-  ["attached-to", "a thing riding another thing (a passenger aboard a vessel, a lamp on a post). DECIDED, not yet emitted: attachment needs entities, which arrive at Stage 2."],
-  ["emitted-by", "an emission and its source (a voice bubble and the resident who spoke it). DECIDED, not yet emitted: emissions arrive with the dynamic layer at Stage 2."],
+  ["attached-to", "a thing riding another thing (a passenger aboard a vessel, a lamp on a post). DECIDED, and NOT emitted here: Stage 2 put attachments in dynamic.db's own table, because an edge in this store is deleted and rebuilt every hydration and a declared attachment must not be."],
+  ["emitted-by", "an emission and its source (a voice and the resident who spoke it). DECIDED, and NOT emitted here: Stage 2 put emissions in dynamic.db, where `source` is a column rather than an edge. Kept in the taxonomy because the relation is real and a later reader will look for it."],
   ["instance-of", "a token and its type. Emitted for parcels -> the synthesized parcel class."],
   ["implements", "a mark and the machinery that keeps its truth true — a `mechanic:` pointer, resolved against skeleton.json's physics_registry."],
   ["reads", "code and a world surface it demonstrably reads: a quoted WORLD/... path literal in the source, or a dynamic import reaching into the world clone's tools."],

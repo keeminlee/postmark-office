@@ -76,14 +76,25 @@ what it has always been: paperwork, not town truth.
 | class | canon | loss story | in the store today |
 |---|---|---|---|
 | repo-canon — marks, classes, law, mail | git | none: the store rebuilds from it at any commit | **all of it.** `nodes`, `edges`, `events`, `geometry_versions` |
-| store-canon-durable — entity positions, attachments | the dynamic db | bounded by the crossing-save: recover from the last `STATE/` crystallization | **none yet** — Stage 2 |
-| store-ephemeral — emission presence | the dynamic db, TTL | loss *is* fading; occurrence survives in the crossing log | **none yet** — Stage 2 |
+| store-canon-durable — entity positions, attachments | the dynamic db | bounded by the crossing-save: recover from the last `STATE/` crystallization | Stage 2, in `dynamic.db` — see `DYNAMIC-STORE.md` |
+| store-ephemeral — emission presence | the dynamic db, TTL | loss *is* fading; occurrence survives in the crossing log | Stage 2, in `dynamic.db` — see `DYNAMIC-STORE.md` |
 
-So `world.db` today is entirely class one: a pure index of repo truth, with no
-durable state of its own and nothing to lose. The schema is already shaped for
-the other two — an entity is a node with an `at_x`/`at_y` and no repo path, an
-emission a node with a source edge and a TTL in `props` — but Stage 1 writes
-neither, and the store is read-only by construction until it does.
+So `world.db` remains entirely class one: a pure index of repo truth, with no
+durable state of its own and nothing to lose. Stage 2 put the other two classes
+in a **separate file** rather than here, for the same reason `world.db` is
+separate from `office.db` and a sharper one: this file is deleted and rebuilt
+whole on every hydration, and the dynamic layer is precisely the state that must
+survive that. An earlier reading of the plan had entities and emissions landing
+as `nodes` rows here; the schema comment still describes that shape and it is
+kept as a record of the shape considered, not of the shape built.
+
+One Stage-2 change does land in this store: the hydrator now carries a mark's
+**class fields** — `class`, `version`, `dials`, `extends`, `implements`,
+`affordances`, `mobility`, `anchor`, `exempt` — into node props. It used to drop
+exactly the fields that make a class mark law, so `the-town/sound`'s `dials:`
+reached no reader and the running office kept its own copy of every constant.
+They are additive props; the serving projection does not read them and the
+shadow is unchanged (EMPTY DIFF at `2fcaff0`).
 
 ## The deriver's gate law
 

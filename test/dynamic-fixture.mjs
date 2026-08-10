@@ -1,0 +1,141 @@
+// dynamic-fixture.mjs — a world in a bottle for the Stage 2 tests.
+//
+// Builds three things the dynamic layer needs and nothing else:
+//
+//   a world CLONE   a git repo with a `main`, carrying `tools/walk.mjs` — the
+//                   town's physics, read at a ref exactly as the office reads it
+//   a world.db      hand-filled with the same SCHEMA the hydrator writes: the
+//                   sound class mark (with its dials) and a handful of departure
+//                   events. Hand-filled deliberately — what is under test here
+//                   is the dynamic layer over a store, never the hydrator's
+//                   derivation, which has its own tests and takes ten seconds.
+//   a dynamic.db    empty, at a throwaway path
+//
+// ON THE FIXTURE'S walk.mjs. It is a faithful miniature, not the world's own
+// module, and that is sound for what these tests falsify: the crossing-save and
+// the replay check import the SAME module, so the arithmetic cancels on both
+// sides. What is under test is whether the saved bytes carry enough to
+// reconstitute the world — falsified by a missing FIELD, not by a missing
+// formula. (Strip `departure` from a snapshot and a mid-walk resident comes back
+// frozen at the boundary under any correct physics at all.)
+
+import { DatabaseSync } from "node:sqlite";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
+
+import { SCHEMA } from "../src/world-store.mjs";
+
+export const EPOCH = Date.UTC(2026, 5, 12);
+export const CROSSING_MS = 12 * 3600 * 1000;
+export const crossingStart = (n) => EPOCH + n * CROSSING_MS;
+
+// A faithful miniature of the world's walk arithmetic. See the header.
+const WALK_MJS = `
+export const CROSSING_EPOCH_UTC = Date.UTC(2026, 5, 12);
+export const CROSSING_MS = 12 * 3600 * 1000;
+export const DEFAULT_PACE_KM = 15;
+export function fractionalCrossing(nowMs = Date.now()) {
+  return Math.max(0, (nowMs - CROSSING_EPOCH_UTC) / CROSSING_MS);
+}
+export function positionAt(departure, nowFractional = fractionalCrossing()) {
+  if (!departure) return null;
+  const { from, toward, at } = departure;
+  const paceM = (departure.pace ?? DEFAULT_PACE_KM) * 1000;
+  const legM = Math.hypot(toward.x - from.x, toward.y - from.y);
+  const travelled = Math.max(0, nowFractional - at) * paceM;
+  const arrived = travelled >= legM;
+  const f = legM === 0 ? 1 : Math.min(1, travelled / legM);
+  return {
+    x: from.x + (toward.x - from.x) * f,
+    y: from.y + (toward.y - from.y) * f,
+    arrived,
+    standing: arrived && legM === 0,
+    legM,
+    travelledM: Math.min(travelled, legM),
+    remainingM: Math.max(0, legM - travelled),
+    etaCrossings: arrived ? 0 : (legM - travelled) / paceM,
+  };
+}
+`;
+
+export const DEFAULT_DIALS = { radius_m: 60, hearing_ttl_min: 5, flood_cap: 20, thread_close_min: 30 };
+
+/** A world clone with the physics on `main`. Returns its path. */
+export function fixtureWorldClone({ label = "dyn" } = {}) {
+  const repo = mkdtempSync(join(tmpdir(), `postmark-${label}-world-`));
+  const put = (p, t) => { const f = join(repo, p); mkdirSync(dirname(f), { recursive: true }); writeFileSync(f, t); };
+  put("tools/walk.mjs", WALK_MJS);
+  put("WORLD/walk-ledger.md", "# Walk ledger\n");
+  put("WORLD/marks/.keep", "");
+  const git = (...a) => execFileSync("git", ["-C", repo, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  git("init", "-q", "-b", "main");
+  git("add", "-A");
+  git("-c", "user.name=f", "-c", "user.email=f@t.invalid", "commit", "-q", "-m", "fixture world");
+  return repo;
+}
+
+export const mainShaOf = (repo) =>
+  execFileSync("git", ["-C", repo, "rev-parse", "refs/heads/main"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+
+/**
+ * A world.db carrying the sound class and some departures.
+ *
+ * @param departures  [{ at, actor, from:{x,y}, toward:{x,y}, crossing, pace?, to?, within? }]
+ * @param dials       what `the-town/sound` declares — pass a changed dial and the
+ *                    dynamic layer must follow it. That is the falsifier.
+ */
+export function fixtureWorldDb(path, {
+  sha = "0".repeat(40),
+  dials = DEFAULT_DIALS,
+  classVersion = 1,
+  withSoundClass = true,
+  departures = [],
+  status = "OK",
+  ledgerGate = "PRESENT",
+} = {}) {
+  // Always a fresh file: world.db is an index and the hydrator rebuilds it whole
+  // every run, so a fixture that appended to a previous one would be modelling a
+  // store the office can never actually be handed.
+  for (const p of [path, `${path}-wal`, `${path}-shm`]) if (existsSync(p)) rmSync(p, { force: true });
+  const db = new DatabaseSync(path);
+  try {
+  db.exec(SCHEMA);
+  const meta = db.prepare("INSERT OR REPLACE INTO meta VALUES (?, ?)");
+  meta.run("as_of_world", sha);
+  meta.run("as_of_office", "");
+  meta.run("hydrated_at", new Date(crossingStart(0)).toISOString());
+  meta.run("hydration_status", status);
+  meta.run("counts", JSON.stringify({ nodes_total: withSoundClass ? 1 : 0 }));
+  meta.run("gates", JSON.stringify([
+    { gate: "world-clone", status: "PRESENT" },
+    { gate: "walk-ledger", input: "WORLD/walk-ledger.md", status: ledgerGate, detail: `${departures.length} departures` },
+  ]));
+
+  if (withSoundClass) {
+    db.prepare("INSERT OR REPLACE INTO nodes VALUES (?,?,?,?,?,?,?,?,?,?)").run(
+      "the-town/sound", "mark", "sited", "constitution", "the-town",
+      -930, -780, 50, 40,
+      JSON.stringify({
+        slug: "sound", body: "A voice carries sixty metres and is heard for five minutes.",
+        class: "sound", class_version: classVersion, extends: "emission",
+        dials: dials === null ? null : dials,
+        implements: [], affordances: [{ subverb: "say", blurb: "Speak aloud where you stand." }],
+      }));
+  }
+
+  const ins = db.prepare("INSERT INTO events (at, actor, type, payload) VALUES (?,?,?,?)");
+  for (const d of departures) {
+    ins.run(d.at, d.actor, "departure", JSON.stringify({
+      from: d.from, toward: d.toward, crossing: d.crossing,
+      within: d.within ?? null, to: d.to ?? null, pace: d.pace ?? null,
+      line_no: d.line_no ?? null,
+    }));
+  }
+  } finally { db.close(); }   // an unclosed handle would lock the file on Windows and turn one bad fixture into a whole failing suite
+  return path;
+}
+
+/** A throwaway directory, for a dynamic.db / STATE tree that nothing else shares. */
+export const scratchDir = (label = "dyn") => mkdtempSync(join(tmpdir(), `postmark-${label}-`));

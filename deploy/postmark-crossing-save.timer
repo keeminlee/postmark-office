@@ -1,0 +1,19 @@
+[Unit]
+Description=Crystallize the dynamic store at the town's published crossings (00:00 / 12:00 UTC)
+
+[Timer]
+# CROSSING-ALIGNED, and two minutes behind the boundary on purpose. The ferry
+# fires exactly at 00:00/12:00 and takes town.lock for the whole crossing pass;
+# a save contending for the same lock at the same instant would either wait
+# behind it or make the ferry wait. Two minutes late costs nothing — the save
+# writes the crossing it has just LEFT complete to its boundary, so the record
+# has no gap, only a short delay before it is written down.
+OnCalendar=*-*-* 00,12:02:00 UTC
+# A crossing missed while the box was down is caught up on the next boot. The
+# save is idempotent (same store, same instant, same bytes) and it closes at
+# most one crossing behind itself, so a late run writes the record rather than
+# inventing history for the days it slept.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

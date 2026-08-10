@@ -1,0 +1,42 @@
+[Unit]
+Description=Postmark crossing-save — crystallize the dynamic store into the world repo's STATE/
+# The save tick is the town's existing heartbeat, not a new clock: the crossing
+# IS the save. dynamic.db holds entity positions, attachments and emission
+# presence between saves; this unit writes STATE/snapshot/<N>/entities.json and
+# STATE/log/<N>.jsonl into the world repo and commits them with the office pen.
+#
+# NOT INSTALLED BY THIS BRANCH. Wright installs and enables after review:
+#   sudo cp deploy/postmark-crossing-save.{service,timer} /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now postmark-crossing-save.timer
+After=network.target
+
+[Service]
+Type=oneshot
+# Runs as the office user. The world clone is meepo's (root's git refuses it as
+# "dubious ownership") and the pen's push credentials live in meepo's home. This
+# User= line is load-bearing — the ferry unit shipped without it once and the
+# first two scheduled crossings after cutover failed in git before the ferry
+# ever ran.
+User=meepo
+EnvironmentFile=/etc/postmark-office.env
+WorkingDirectory=/srv/postmark-office
+# ONE FLOCK, THE SAME ONE. The ferry, the rehydrate tick and the office pen all
+# serialize on town.lock — one writer at a time on the clones. A crossing-save
+# that wrote STATE/ while the write pen had the world clone parked on a
+# household draft branch would commit the town's memory onto a sketchbook; the
+# walk ledger lost 17 public lines to exactly that class of race in 2026-07.
+#
+# --prune is what makes the ephemeral half actually ephemeral: an emission is
+# dropped only once its presence has faded AND its occurrence is in a committed
+# crossing log. Without a successful commit nothing is ever pruned, which is the
+# correct failure — a box that cannot write the record keeps the speech.
+ExecStart=/usr/bin/flock -w 300 /srv/postmark-office/town.lock \
+  /usr/bin/node /srv/postmark-office/tools/crossing-save.mjs --prune
+# The save is the only thing that may declare the record written, so a failure
+# here must be loud rather than absorbed: nothing else stamps logged_through,
+# and an unstamped store simply keeps growing until an operator looks.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/srv/postmark-office
+PrivateTmp=yes

@@ -238,6 +238,24 @@ for (const m of marks) {
       points: Array.isArray(m.points) ? m.points.length : null,
       pre: m.pre ?? null, derived_from: m.derived_from ?? null,
       parent_dir_mark: m._parentMarkId ?? null, explicit_parent: m._explicitParent ?? null,
+      // THE CLASS FIELDS (Stage 2). A class is a mark, so the nine class marks
+      // arrive here like any other record — but the hydrator used to drop
+      // exactly the fields that make them law, so `dials:` reached no reader and
+      // the running office kept its own copy of every constant. Carrying them
+      // is what turns "the class mark and the code both hold the number" into
+      // "the class mark holds the number and the code edges to it".
+      // `implements:`/`affordances:` ride along because they are the same
+      // record's other promises and a class read that had to open the repo for
+      // them would not be a store read at all.
+      class: m.class ?? null,
+      class_version: Number.isFinite(Number(m.version)) ? Number(m.version) : null,
+      extends: m.extends ?? null,
+      dials: (m.dials && typeof m.dials === "object" && !Array.isArray(m.dials)) ? m.dials : null,
+      implements: Array.isArray(m.implements) ? m.implements : null,
+      affordances: Array.isArray(m.affordances) ? m.affordances : null,
+      mobility: m.mobility ?? null,
+      anchor: m.anchor ?? null,
+      exempt: Array.isArray(m.exempt) ? m.exempt : null,
       frontmatter_problems: problems.length ? problems : null,
     },
   });

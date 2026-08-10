@@ -31,6 +31,7 @@ import { settlements } from "./settlements.mjs";
 import { worldSummary, worldOrient, worldEyes, worldInvestigate, worldStateRaw, worldSkeletonRaw, worldMyMarks, leaveMarkViaOffice, walkViaOffice, worldWalkers, worldConversations, worldSay, worldSayHuman, whoami, worldBlockForHandle, WORLD_CLONE } from "./world.mjs";
 import { worldStakeViaOffice, worldUnstakeViaOffice, worldStakeRead } from "./world-stake.mjs"; // P3 draft
 import { storeEngaged, storeSnapshot, worldStoreHealth } from "./world-serve.mjs"; // stage 1: the serving flag's instrument panel
+import { dynamicHealth } from "./dynamic-store.mjs"; // stage 2: the dynamic layer's instrument panel
 import { Bouncer, keyIdForToken, worldWriteVerbForRest } from "./bouncer.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -307,6 +308,16 @@ const server = createServer((req, res) => {
         try { return j(res, 200, worldStoreHealth({ repo: WORLD_CLONE })); }
         catch (e) { return bounce(res, 500, "the world door tripped", String(e?.message ?? e).slice(0, 200)); }
       }
+      // GET /world/dynamic — Stage 2's panel, and the place the DERIVER'S
+      // DISCLOSURE actually lands. Which dials the sound class is being applied
+      // with, whether each came from the class mark or fell back to the office's
+      // own constant, whether the two disagree, and how much presence is waiting
+      // on a crossing-save. Keyless like the rest of the world's read tier:
+      // counts, shas, and the town's own published dials.
+      if (path === "/world/dynamic") {
+        try { return j(res, 200, dynamicHealth({ repo: WORLD_CLONE })); }
+        catch (e) { return bounce(res, 500, "the world door tripped", String(e?.message ?? e).slice(0, 200)); }
+      }
       // keyless identity probe — read-side: powers the viewer's dev-dials gate + stand-at filter
       if (path === "/ops/whoami") return j(res, 200, whoami(key));
 
@@ -422,7 +433,7 @@ const server = createServer((req, res) => {
         return j(res, 200, search(db, q));
       }
 
-      return bounce(res, 404, "no such door", "GET /town /residents /residents/{h} /mail/{h} /letters[?filters] /letters/{id} /doorstep/{h} /metrics/mail /repo/log[?path=&author=&since=&until=&limit=] /regions /homes/{h} /stamps /stamps/{h} /quests/{h} /world/settlements /world/store /votes /votes/{topic} /bulletin /search?q=");
+      return bounce(res, 404, "no such door", "GET /town /residents /residents/{h} /mail/{h} /letters[?filters] /letters/{id} /doorstep/{h} /metrics/mail /repo/log[?path=&author=&since=&until=&limit=] /regions /homes/{h} /stamps /stamps/{h} /quests/{h} /world/settlements /world/store /world/dynamic /votes /votes/{topic} /bulletin /search?q=");
     }
 
     // ── write tier: a valid credential required ───────────────────────────

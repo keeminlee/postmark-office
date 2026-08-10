@@ -275,7 +275,7 @@ export function fanUp(snap, id) {
 // so a store-served read is strictly cheaper than the fold it replaces (it also
 // skips a `git show` of the whole world-state.json and the parse after it).
 const _mainRefByRepo = new Map();
-function publishedMainSha(repo) {
+export function publishedMainSha(repo) {
   let ref = _mainRefByRepo.get(repo);
   if (!ref) { ref = mainRef(repo); _mainRefByRepo.set(repo, ref); }
   try {

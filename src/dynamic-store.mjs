@@ -1,0 +1,373 @@
+// dynamic-store.mjs — `dynamic.db`, the town's THIRD database: the live layer.
+//
+// office.db indexes the TOWN repo. world.db indexes the WORLD repo. Both are
+// pure indexes — deleted and rebuilt whole on every hydration, holding nothing
+// they cannot recompute. This one is different, and the difference is the whole
+// point of Stage 2:
+//
+//   dynamic.db is STORE-CANON. It is writable between hydrations and it holds
+//   state no repo currently holds — where a resident is standing, what they are
+//   riding, what was said and is still hanging in the air.
+//
+// From the three state classes (LOGOS/state-and-time.md):
+//
+//   store-canon-durable  entity positions, attachments. Loss is bounded by the
+//                        crossing-save: at most half a crossing of movement.
+//   store-ephemeral      emission PRESENCE, under a TTL. Loss *is* fading — a
+//                        restart is a thunderclap and the air clears. The
+//                        OCCURRENCE survives, in the crossing log.
+//
+// So this file is not exempt from the covenant, it carries a narrower one:
+//
+//   EVERY ROW IS RE-DERIVABLE OR CROSSING-SAVE-RECOVERABLE. Entities re-derive
+//   from the walk ledger (via world.db's events). Attachments recover from the
+//   last STATE save plus the logs after it. Emissions do neither by design:
+//   presence is allowed to be lost, and `tools/dynamic-rebuild.mjs` says so
+//   rather than pretending to restore it.
+//
+// One consequence that shapes the code below: an emission row is NOT deleted
+// when its TTL expires. Presence is a QUERY (`presentEmissions`), never a
+// delete, because the occurrence has to survive long enough to reach a crossing
+// log. `pruneEmissions` is gated on `meta.logged_through` — the instant up to
+// which the crossing-save has crystallized occurrences into the world repo —
+// so nothing is ever dropped before it is history.
+//
+// Env:
+//   WORLD_EMISSIONS=1   world/say dual-writes an emission beside the voices log
+//   WORLD_DYNAMIC_DB    the file (default: dynamic.db beside world.db)
+
+import { DatabaseSync } from "node:sqlite";
+import { existsSync, mkdirSync, statSync } from "node:fs";
+import { dirname, join } from "node:path";
+
+import { OFFICE_ROOT, WORLD_CLONE } from "./world-store.mjs";
+import { publishedMainSha } from "./world-serve.mjs";
+// THE CODE FALLBACK IS AN EDGE, NOT A COPY. The no-literals law says a class
+// constant has exactly one home; until every reader edges to the class mark,
+// the office's shipped constants are the second-best home, and this module
+// carries none of its own. There is no `60` in this file.
+import { EARSHOT_M, FADE_MS, CLOSE_MS, HEAR_MAX } from "./voices.mjs";
+
+// ── the flag ─────────────────────────────────────────────────────────────────
+// Read from the environment on every call, never latched at import — the same
+// discipline world-serve.mjs uses, for the same reason: a test flips it between
+// cases, and an operator flipping it is restarting the office anyway.
+
+export const emissionsEnabled = () => process.env.WORLD_EMISSIONS === "1";
+
+export const DEFAULT_DYNAMIC_DB = join(OFFICE_ROOT, "dynamic.db");
+export const dynamicDbPath = () => process.env.WORLD_DYNAMIC_DB ?? DEFAULT_DYNAMIC_DB;
+
+// ── the DDL ──────────────────────────────────────────────────────────────────
+//
+// IF NOT EXISTS everywhere, and no destructive migration anywhere: this file is
+// not rebuilt from scratch, so a schema change that silently dropped a table
+// would be the one way Stage 2 could lose the town's state. A version mismatch
+// refuses instead (see `openDynamic`).
+
+export const DYNAMIC_SCHEMA_VERSION = "1";
+
+export const DYNAMIC_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
+
+  -- ENTITIES (store-canon-durable, mobility: free).
+  --
+  -- An entity's identity lives in the repo; its POSITION does not — that single
+  -- move is what makes moving residents possible without directory churn. There
+  -- is no parent column and there never will be one: an entity has no geometric
+  -- parent, ever, and "what am I within" is a query over position answered
+  -- freshly whenever asked (LOGOS/kinds.md).
+  --
+  -- \`provenance\` carries the DERIVATION'S INPUT beside its output: the
+  -- governing departure record, and how it was read. A row of bare coordinates
+  -- is a photograph of a moving thing — it cannot be carried forward to any
+  -- other instant, which is exactly what \`derived_at\` and this column exist to
+  -- make possible.
+  CREATE TABLE IF NOT EXISTS entities (
+    handle TEXT PRIMARY KEY,
+    x REAL, y REAL,
+    derived_at TEXT,
+    provenance TEXT
+  );
+
+  -- ATTACHMENTS (store-canon-durable). Declared, then validated by presence —
+  -- never inferred from geometry. \`declared_by\` is who said it, which is what
+  -- kills the forged boarding line: nobody writes a movement record on anyone
+  -- else's behalf. \`policy\` is stamped at edge birth (cascade | detach).
+  CREATE TABLE IF NOT EXISTS attachments (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    entity TEXT, target TEXT,
+    policy TEXT, declared_by TEXT, born_at TEXT
+  );
+  CREATE INDEX IF NOT EXISTS attachments_entity ON attachments (entity, born_at);
+  CREATE INDEX IF NOT EXISTS attachments_target ON attachments (target, born_at);
+  CREATE UNIQUE INDEX IF NOT EXISTS attachments_once ON attachments (entity, target, born_at);
+
+  -- EMISSIONS (store-ephemeral for presence, permanent-until-saved for
+  -- occurrence). An emission rides its source and is EXEMPT FROM CONTAINMENT:
+  -- there is no parent column here either, and the x/y is where the source stood
+  -- when it happened.
+  --
+  -- \`source\` is the thing that emitted — for the human lane, the RESIDENT the
+  -- human is stood with, because humans are not entities and do not walk.
+  -- \`props.spoken_by\` carries the human's own label. That is disclosure, never
+  -- impersonation (the sound class's human lane).
+  CREATE TABLE IF NOT EXISTS emissions (
+    id TEXT PRIMARY KEY,
+    class TEXT, source TEXT,
+    x REAL, y REAL,
+    born_at TEXT, ttl_expires_at TEXT,
+    props TEXT
+  );
+  CREATE INDEX IF NOT EXISTS emissions_born ON emissions (born_at);
+  CREATE INDEX IF NOT EXISTS emissions_expires ON emissions (ttl_expires_at);
+  CREATE INDEX IF NOT EXISTS emissions_source ON emissions (source, born_at);
+  CREATE INDEX IF NOT EXISTS emissions_class ON emissions (class, born_at);
+`;
+
+/**
+ * Open (and create, once) the dynamic store.
+ *
+ * WAL because two processes hold this file: the office writes emissions on the
+ * say path while `tools/crossing-save.mjs` reads and stamps it from its own
+ * systemd unit. A busy timeout rather than a lock: the office must never lose a
+ * resident's voice because a save was mid-flight.
+ */
+export function openDynamic(path = dynamicDbPath(), { readOnly = false } = {}) {
+  if (readOnly && !existsSync(path)) throw new Error(`no dynamic store at ${path} — run: npm run dynamic:rebuild`);
+  if (!readOnly) mkdirSync(dirname(path), { recursive: true });
+  const db = new DatabaseSync(path, readOnly ? { readOnly: true } : {});
+  // EVERY throw past this line closes the handle first. A file that is not a
+  // database throws on the very first PRAGMA, and on Windows an unclosed handle
+  // locks the file — so a corrupt store would have leaked one handle per say,
+  // turning a recoverable index into an un-deletable one. (Found by the test
+  // that asks whether a corrupt store can stop anyone speaking.)
+  try {
+    if (!readOnly) {
+      db.exec("PRAGMA journal_mode = WAL");
+      db.exec(DYNAMIC_SCHEMA);
+    }
+    db.exec("PRAGMA busy_timeout = 5000");
+
+    const version = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get()?.value ?? null;
+    if (version == null && !readOnly) {
+      db.prepare("INSERT OR REPLACE INTO meta VALUES (?, ?)").run("schema_version", DYNAMIC_SCHEMA_VERSION);
+      db.prepare("INSERT OR REPLACE INTO meta VALUES (?, ?)").run("created_at", new Date().toISOString());
+    } else if (version != null && version !== DYNAMIC_SCHEMA_VERSION) {
+      // Refuse, loudly. This file holds state nothing else holds; a store opened
+      // under the wrong schema is the one way to lose it silently.
+      throw new Error(`dynamic store at ${path} is schema ${version}, this office speaks ${DYNAMIC_SCHEMA_VERSION} — migrate deliberately, never automatically`);
+    }
+  } catch (e) {
+    try { db.close(); } catch { /* already gone */ }
+    throw e;
+  }
+  return db;
+}
+
+export const getMeta = (db, key) => db.prepare("SELECT value FROM meta WHERE key = ?").get(key)?.value ?? null;
+export const putMeta = (db, key, value) => db.prepare("INSERT OR REPLACE INTO meta VALUES (?, ?)").run(key, value == null ? null : String(value));
+
+// ── the class mark's dials ───────────────────────────────────────────────────
+//
+// "`dials:` is the one home for a constant. If a number appears anywhere else —
+// in office code, in a tool, in a test — it must EDGE to the class rather than
+// restate it" (LOGOS/classes.md). This is that edge, for the sound class.
+//
+// The class mark stands in the world repo and reaches this office through
+// world.db, which the hydrator builds. So the read has an absent-input story,
+// and the customs-house's deriver's law governs it: REFUSE OR DISCLOSE, NEVER
+// QUIETLY SUBSTITUTE.
+//
+// Three rungs, and the middle one is a ruling worth stating rather than
+// discovering:
+//
+//   store readable, fresh          the class mark governs. `fresh: true`.
+//   store readable, STALE          the class mark STILL governs, and the
+//                                  staleness is disclosed on every emission and
+//                                  on the health surface. A world.db one commit
+//                                  behind main holds the real class mark at an
+//                                  older commit; the alternative — the office's
+//                                  own constants — is a strictly OLDER copy of
+//                                  the same number with no commit attached at
+//                                  all. Using the older law and naming its sha
+//                                  is more truthful than substituting a
+//                                  hardcoded one. (This is deliberately NOT
+//                                  Stage 1's rule, where exact freshness is
+//                                  required because place words must match the
+//                                  fold byte-for-byte. A dial has no fold to
+//                                  match.)
+//   store absent / FAILED /        the office's shipped constants, DISCLOSED,
+//   class mark or dial absent      per dial. Never silently.
+//
+// Disclosure is PER DIAL. A class mark that carries three of four dials hands
+// over three, and the fourth says where it actually came from — mixing them
+// silently would be the exact substitution the law forbids.
+
+export const SOUND_CLASS_MARK = "the-town/sound";
+
+/** The office's shipped constants, as the sound class's dial names. The fallback, and the only place this module names a number — by importing it. */
+export const CODE_SOUND_DIALS = Object.freeze({
+  radius_m: EARSHOT_M,
+  hearing_ttl_min: FADE_MS / 60_000,
+  flood_cap: HEAR_MAX,
+  thread_close_min: CLOSE_MS / 60_000,
+});
+
+const DIAL_NAMES = Object.keys(CODE_SOUND_DIALS);
+
+// The world.db read is cached on the FILE (mtime+size), like world-serve's
+// snapshot: a rehydration rewrites the file even at the same sha, and a cache
+// nobody can invalidate is worse than no cache.
+let _classSnap = null;
+
+function classMarkSnapshot(worldDbPath) {
+  let st;
+  try { st = statSync(worldDbPath); }
+  catch { return { error: "store-absent", detail: `no world store at ${worldDbPath}` }; }
+  if (_classSnap && _classSnap.path === worldDbPath && _classSnap.mtimeMs === st.mtimeMs && _classSnap.size === st.size)
+    return _classSnap;
+  try {
+    const db = new DatabaseSync(worldDbPath, { readOnly: true });
+    const meta = Object.fromEntries(
+      db.prepare("SELECT key, value FROM meta WHERE key IN ('as_of_world','hydrated_at','hydration_status')").all()
+        .map((r) => [r.key, r.value]));
+    const row = db.prepare("SELECT props FROM nodes WHERE id = ?").get(SOUND_CLASS_MARK);
+    db.close();
+    if (String(meta.hydration_status ?? "").startsWith("FAILED"))
+      return { error: "store-failed", detail: meta.hydration_status };
+    let props = null;
+    try { props = row?.props ? JSON.parse(row.props) : null; } catch { props = null; }
+    _classSnap = {
+      path: worldDbPath, mtimeMs: st.mtimeMs, size: st.size,
+      asOfWorld: meta.as_of_world ?? null, hydratedAt: meta.hydrated_at ?? null,
+      present: Boolean(row), props,
+    };
+    return _classSnap;
+  } catch (e) {
+    return { error: "store-unreadable", detail: String(e?.message ?? e).slice(0, 200) };
+  }
+}
+
+/** Drop the cached class read — for tests that rewrite world.db in place. */
+export function resetClassCache() { _classSnap = null; }
+
+/**
+ * The sound class, as this office will actually apply it.
+ *
+ * Returns `{ dials, sources, disclosed, version, mark, store }` — never throws,
+ * because a class read that could take down `say` would make the law more
+ * fragile than the code it replaced.
+ */
+export function soundClass({ worldDb = null, repo = WORLD_CLONE } = {}) {
+  const worldDbPath = worldDb ?? process.env.WORLD_STORE_DB ?? join(OFFICE_ROOT, "world.db");
+  const snap = classMarkSnapshot(worldDbPath);
+
+  const dials = { ...CODE_SOUND_DIALS };
+  const sources = Object.fromEntries(DIAL_NAMES.map((d) => [d, "code-fallback"]));
+  let version = null;
+  let gate = { status: "ABSENT", reason: snap.error ?? null, detail: snap.detail ?? null };
+  let fresh = null;
+  let asOfWorld = null;
+
+  if (!snap.error) {
+    asOfWorld = snap.asOfWorld;
+    if (!snap.present) gate = { status: "ABSENT", reason: "class-mark-absent", detail: `${SOUND_CLASS_MARK} is not in the store` };
+    else {
+      const declared = snap.props?.dials;
+      if (!declared || typeof declared !== "object")
+        gate = { status: "ABSENT", reason: "class-dials-absent", detail: `${SOUND_CLASS_MARK} carries no dials: — the hydrator may predate the class fields` };
+      else {
+        version = Number.isFinite(Number(snap.props.class_version)) ? Number(snap.props.class_version) : null;
+        for (const d of DIAL_NAMES) {
+          const v = Number(declared[d]);
+          if (Number.isFinite(v) && v > 0) { dials[d] = v; sources[d] = "class-mark"; }
+        }
+        const taken = DIAL_NAMES.filter((d) => sources[d] === "class-mark").length;
+        gate = taken === DIAL_NAMES.length
+          ? { status: "PRESENT", reason: null, detail: `${taken} dials from ${SOUND_CLASS_MARK}@${version ?? "?"}` }
+          : { status: "PARTIAL", reason: "class-dials-incomplete", detail: `${taken} of ${DIAL_NAMES.length} dials declared; the rest fall back to the office's constants` };
+      }
+    }
+    // Freshness is measured but never withheld — see the ruling above.
+    try { fresh = asOfWorld != null && asOfWorld === publishedMainSha(repo); }
+    catch { fresh = null; }
+  }
+
+  const disclosed = DIAL_NAMES.filter((d) => sources[d] !== "class-mark");
+  // The `dials:` field and the office's constants are two homes for one number
+  // until every reader edges to the class. Where they disagree, say so: this is
+  // the standing lint's finding made visible at read time rather than at audit.
+  const drift = DIAL_NAMES
+    .filter((d) => sources[d] === "class-mark" && dials[d] !== CODE_SOUND_DIALS[d])
+    .map((d) => ({ dial: d, class_mark: dials[d], office_code: CODE_SOUND_DIALS[d] }));
+
+  return {
+    dials, sources, disclosed, drift,
+    version, gate,
+    mark: SOUND_CLASS_MARK,
+    store: { path: worldDbPath, as_of_world: asOfWorld, hydrated_at: snap.hydratedAt ?? null, fresh },
+  };
+}
+
+/** The sound class's TTL and close window in milliseconds — the shape every caller actually wants. */
+export const soundMs = (cls) => ({
+  earshotM: cls.dials.radius_m,
+  ttlMs: cls.dials.hearing_ttl_min * 60_000,
+  closeMs: cls.dials.thread_close_min * 60_000,
+  floodCap: cls.dials.flood_cap,
+});
+
+// ── the operator's surface ───────────────────────────────────────────────────
+
+export function dynamicHealth({ repo = WORLD_CLONE } = {}) {
+  const path = dynamicDbPath();
+  const cls = soundClass({ repo });
+  const base = {
+    enabled: emissionsEnabled(),
+    flags: { WORLD_EMISSIONS: process.env.WORLD_EMISSIONS ?? null },
+    db: { path, present: existsSync(path) },
+    sound_class: {
+      mark: cls.mark, version: cls.version,
+      dials: cls.dials, dial_sources: cls.sources,
+      gate: cls.gate,
+      // Named rather than implied: an operator reading this must be able to see
+      // at a glance whether the town's law or the office's copy is in force.
+      disclosed_fallbacks: cls.disclosed,
+      drift_from_office_constants: cls.drift,
+      world_store: cls.store,
+    },
+  };
+  if (!base.db.present) return base;
+  try {
+    const db = openDynamic(path, { readOnly: true });
+    const one = (sql, ...a) => db.prepare(sql).get(...a);
+    const now = new Date().toISOString();
+    base.db = {
+      ...base.db,
+      schema_version: getMeta(db, "schema_version"),
+      entities: one("SELECT COUNT(*) c FROM entities").c,
+      entities_as_of: getMeta(db, "entities_as_of"),
+      entities_source_sha: getMeta(db, "entities_source_sha"),
+      attachments: one("SELECT COUNT(*) c FROM attachments").c,
+      emissions_total: one("SELECT COUNT(*) c FROM emissions").c,
+      emissions_present: one("SELECT COUNT(*) c FROM emissions WHERE born_at <= ? AND ttl_expires_at > ?", now, now).c,
+      emissions_oldest: one("SELECT MIN(born_at) b FROM emissions").b ?? null,
+      // The prune's own gate, on the surface: everything older than this is
+      // already history in the world repo and may be dropped; everything newer
+      // is presence that has not yet been crystallized and may not.
+      logged_through: getMeta(db, "logged_through"),
+      last_crossing_saved: getMeta(db, "last_crossing_saved"),
+      last_save_at: getMeta(db, "last_save_at"),
+      last_save_commit: getMeta(db, "last_save_commit"),
+    };
+    db.close();
+  } catch (e) {
+    base.db.error = String(e?.message ?? e).slice(0, 200);
+  }
+  return base;
+}
+
+if (process.argv[1]?.endsWith("dynamic-store.mjs")) {
+  console.log(JSON.stringify(dynamicHealth(), null, 2));
+}

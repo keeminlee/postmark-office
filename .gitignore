@@ -1,6 +1,12 @@
 node_modules/
+# office.db and world.db are pure indexes — delete either at any moment and lose
+# nothing. dynamic.db is NOT: it is store-canon, and deleting it costs every
+# entity position and attachment since the last crossing-save, plus whatever
+# speech has not yet been crystallized. `npm run dynamic:rebuild` is the way back.
 *.db
 *.db-journal
+*.db-wal
+*.db-shm
 .env
 office-keys.json
 town-clone/

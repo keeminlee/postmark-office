@@ -154,9 +154,18 @@ function threadOf(cluster, { live, voiceCap }) {
 // `standpoint(handle)` → { placed, x, y, aboard, moving } (world.mjs's one
 // derivation); `place({x,y,aboard,moving})` → the place words. Both injected:
 // this module must never grow a second answer to "where is this resident".
+//
+// `onSpoke(voice, { standAs })` is a third injection and the newest: a listener
+// called AFTER a voice has landed in the log, for whoever else wants to know a
+// voice happened (Stage 2's emission layer is the first). It is fired last, it
+// is wrapped, and it is optional — the log is the ruled record and the
+// conversation is the town's, so nothing hung off this seam may cost a resident
+// their words. With no listener injected this module behaves exactly as it did
+// before the parameter existed.
 export function createVoices({
   standpoint,
   place = async () => null,
+  onSpoke = null,
   logPath = voicesLogPath,
   now = () => Date.now(),
   earshotM = EARSHOT_M,
@@ -199,7 +208,7 @@ export function createVoices({
     return voices;
   }
 
-  function append(voice) {
+  function append(voice, spoken = null) {
     hydrate();
     voices.push(voice);
     if (voices.length > memoryMax) voices = voices.slice(-memoryMax);
@@ -223,6 +232,13 @@ export function createVoices({
       // The log is the record, not the conversation: a box that cannot write it
       // still lets the town talk, loudly on the operator's console.
       console.error(`[voices] the voice log refused a line (${String(e?.message ?? e).slice(0, 120)})`);
+    }
+    // Last, and never fatal. The listener sees the voice as the log holds it —
+    // unrounded position included, because anything deriving threads from it
+    // must be able to reach the same answer this module does.
+    if (onSpoke) {
+      try { onSpoke(voice, spoken); }
+      catch (e) { console.error(`[voices] a voice listener threw (${String(e?.message ?? e).slice(0, 120)}) — the log and the room are unaffected`); }
     }
   }
 
@@ -347,7 +363,7 @@ export function createVoices({
     }
     const here = await standing(standAs);
     if (here.bounce) return here.bounce;
-    append({ handle, text: body, at: t, x: here.at.x, y: here.at.y, place: here.place, aboard: here.aboard });
+    append({ handle, text: body, at: t, x: here.at.x, y: here.at.y, place: here.place, aboard: here.aboard }, { standAs });
     touch(handle, here.at, t);
     return reply(handle, here, t, true, since);
   }
