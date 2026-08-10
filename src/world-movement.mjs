@@ -214,12 +214,50 @@ export function storedDepartureFor(handle, opts = {}) {
  * not become a fourth.
  */
 export function recordsAcrossEras(ledgerRecords = [], storeRecords = []) {
-  return [...ledgerRecords.map((r) => ({ ...r, era: "ledger" })), ...storeRecords.map((r) => ({ ...r, era: "store" }))]
-    .sort((a, b) => {
-      const ta = Date.parse(a.iso), tb = Date.parse(b.iso);
-      if (ta !== tb) return ta - tb;
-      return a.era === b.era ? 0 : (a.era === "ledger" ? -1 : 1);
-    });
+  // APPENDED, NOT SORTED, and the reason is era one's own law: the walk ledger
+  // is append-only and "latest wins" means latest APPENDED — which the engine
+  // implements as the last match in array order. File order and instant order
+  // disagree in the real ledger (the 08-08 sailing filed every passenger at
+  // 18:00:00.000Z and those lines were appended after walks stamped 18:16), so
+  // re-sorting here would silently re-decide which leg governs a resident. A
+  // reader may not do that. Era one keeps its order; era two follows, which is
+  // correct because every store record postdates the freeze.
+  return dedupeRecords([
+    ...ledgerRecords.map((r) => ({ ...r, era: r.source === "store" ? "store" : "ledger" })),
+    ...storeRecords.map((r) => ({ ...r, era: "store" })),
+  ]);
+}
+
+/**
+ * THE SAME EVENT, ARRIVING TWICE, IS ONE EVENT.
+ *
+ * Both callers of `recordsAcrossEras` take an injected `recordsOf` and then add
+ * the store's records themselves — and since the doors began passing
+ * ERA-SPANNING records in (`world.mjs § departuresAcrossEras`, the fix for reads
+ * that could not see era two), the store half now arrives twice. Today that is
+ * harmless by accident: `foldFrames` re-decides the frame at each record's
+ * arrival, and applying the same arrival twice lands on the same frame. It is
+ * harmless the way a duplicated line in a ledger is harmless right up until
+ * something counts the lines — and `transitions` IS a count, feeding the
+ * `happened` shelf's "frame edges born/died".
+ *
+ * So the duplicate dies here rather than being reasoned about at each call site.
+ * The key is the whole record, not just the instant: the ceremony lines all
+ * share one ISO across different handles, and a resident may legitimately
+ * declare two legs in one millisecond even if nobody ever has. Two records that
+ * agree on era, handle, instant, origin and destination are one record that was
+ * read twice.
+ */
+export function dedupeRecords(records) {
+  const seen = new Set();
+  const out = [];
+  for (const r of records) {
+    const k = [r.era, r.handle, r.iso, r.from?.x, r.from?.y, r.toward?.x, r.toward?.y, r.at].join("|");
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(r);
+  }
+  return out;
 }
 
 // ── the standpoint, under the frame law ──────────────────────────────────────

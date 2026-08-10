@@ -119,13 +119,23 @@ export function positionsAt(db, atMs, walk, vessel = null, { world = null, where
   // So the store's own movements are merged here, at read time, beside the
   // crystallized ones. Latest wins per handle — `publicResidents` takes the last
   // match — and the sort makes that true by instant rather than by luck.
-  const departures = (stored?.length
-    ? [...fromEntities, ...stored].sort((a, b) => {
-      const ta = Date.parse(a.iso), tb = Date.parse(b.iso);
-      if (ta !== tb) return ta - tb;
-      return (a.source === "store" ? 1 : 0) - (b.source === "store" ? 1 : 0);
-    })
-    : fromEntities).filter((d) => d.handle !== VESSEL_HANDLE);
+  // APPENDED, NOT SORTED — the same law world.mjs follows. Latest wins means
+  // latest in array order (the engine's `currentDeparture`), and re-sorting by
+  // instant would override the order era one was written in.
+  const departures = (stored?.length ? [...fromEntities, ...stored] : fromEntities)
+    .filter((d) => d.handle !== VESSEL_HANDLE);
+
+  // THE GOVERNING RECORD MUST COME FROM THE SAME LIST THE POSITION DID.
+  //
+  // `deps` above is the entities table — era one, as of the last refresh — and
+  // reading `standing` off it while the POSITION came from era two is how the
+  // twenty-seven ended up neither moving nor at rest: `standing:false` computed
+  // from a leg they had superseded, beside `moving:false` computed from the leg
+  // that superseded it. Two fields of one answer, derived from two different
+  // records. So the governing record is taken from the merged list, latest wins,
+  // exactly as `publicResidents` takes the position.
+  const governing = new Map();
+  for (const d of departures) governing.set(d.handle, d);
 
   // THE FRAME OVERLAY, applied to the SAME rows the walkers door composes
   // (positions.mjs § withFrames). Without it `present` would put a passenger
@@ -134,7 +144,7 @@ export function positionsAt(db, atMs, walk, vessel = null, { world = null, where
   // precomputed by the async caller because a frame needs the engine and this
   // function is deliberately synchronous.
   return withFrames(everyonePlaced({ world, departures, at, where }), frames).map((r) => {
-    const dep = deps.get(r.handle) ?? null;
+    const dep = governing.get(r.handle) ?? null;
     return {
       handle: r.handle,
       x: r.x, y: r.y,
@@ -145,8 +155,11 @@ export function positionsAt(db, atMs, walk, vessel = null, { world = null, where
       // AT REST WITH NO LEG: a zero-distance departure ("I am stopping here"),
       // or ground, which is the same state with no record at all. Asked of the
       // same `positionAt` the union used, for the one field it does not return.
+      // `dep` is already in walk shape (both eras are converted before they are
+      // merged), so it is asked directly — running it through `toWalkRecord` a
+      // second time would flatten the fields that conversion already produced.
       standing: r.source === "walk" && dep
-        ? Boolean(walk.positionAt(toWalkRecord(dep), at)?.standing)
+        ? Boolean(walk.positionAt(dep, at)?.standing)
         : !r.moving,
       moving: r.moving,
       // ABOARD. With the frame law running, `withFrames` has already said so
@@ -154,6 +167,10 @@ export function positionsAt(db, atMs, walk, vessel = null, { world = null, where
       // vessel's — is the line-mirroring Stage D retires, kept only for the
       // flag-off path where nothing derives frames at all.
       aboard: r.aboard ?? (r.moving && ridesTheVessel(dep, vessel)),
+      // Which era's record is answering for this resident, said out loud: the
+      // seam is invisible to the arithmetic and should not be invisible to an
+      // operator debugging a position.
+      ...(dep?.source === "store" ? { era: "store" } : {}),
       ...(r.frame ? { frame: r.frame, provenance: r.provenance } : {}),
       remaining_m: r.remaining_m,
       eta_crossings: r.eta_crossings,
@@ -226,12 +243,14 @@ async function readPresence({ dbPath = null, repo = WORLD_CLONE, atMs = Date.now
     try { vessel = JSON.parse(getMeta(db, "vessel_departure") ?? "null"); } catch { vessel = null; }
     // Stage D: derive every frame once, here, and hand the map down. Flag-off
     // this is null and `withFrames` returns its input untouched.
-    let frames = null, stored = null;
+    let frames = null, stored = null, storeAbsent = null;
     if (movementV2Enabled()) {
       try {
         const { storedDepartures } = await import("./world-movement.mjs");
-        stored = storedDepartures({ db, atMs }).records;
-      } catch { stored = null; }  // era-1 only, and the disclosure below says so
+        const read = storedDepartures({ db, atMs });
+        stored = read.records;
+        storeAbsent = read.absent;
+      } catch (e) { stored = null; storeAbsent = String(e?.message ?? e).slice(0, 160); }
       if (world) {
         try { frames = await framesForPresence({ db, world, repo, atMs, walk: w, stored }); }
         catch { frames = null; }  // a frame read must never cost anyone their presence
@@ -253,6 +272,13 @@ async function readPresence({ dbPath = null, repo = WORLD_CLONE, atMs = Date.now
         // (Last in the list on purpose: the staleness disclosures above are the
         // ones a reader has been trained to look for first.)
         ...(world && whereMod ? [] : [`ground-not-read: only residents with a walk on record are in this answer — ${world ? "the world's position join could not be read" : "no world fold was handed to the presence read"}, so anyone who has never walked is missing`]),
+        // ERA TWO, NAMED WHEN IT IS ABSENT. The walk ledger is frozen; the
+        // store is where movement is recorded now. A presence answer derived
+        // from the founding era alone is a picture of the town as it stood on
+        // freeze day, and the one thing it must not do is look like the present.
+        ...(movementV2Enabled() && storeAbsent
+          ? [`era-two-unread: ${storeAbsent} — this answer is the frozen walk ledger alone, so anyone who has moved since the freeze is at their pre-freeze position`]
+          : []),
       ],
     };
   } catch (e) {

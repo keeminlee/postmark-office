@@ -233,42 +233,53 @@ const walkLedgerAtMain = (repo) => readAtRef(repo, mainRef(repo), "WORLD/walk-le
 // again, one layer down and across a seam this time; the cure is the same one —
 // ONE function, and every site calls it.
 //
-// CONCAT WOULD HAVE BEEN ENOUGH and this sorts anyway. The engine's
-// `currentDeparture` takes the LAST match in array order, and every store record
-// postdates every ledger line by construction, so appending era two would answer
-// correctly today. It sorts by instant because "by construction" is a property
-// of the freeze rather than of this function, and a reader whose correctness
-// rests on a fact it does not check is a reader that will be wrong quietly the
-// first time the fact stops holding.
+// CONCAT, NOT SORT — and the first draft of this got it wrong.
+//
+// Sorting the merged list by instant looks like the safer choice and is not.
+// THE LEDGER'S FILE ORDER IS ITS LAW: it is append-only and "latest wins" means
+// latest APPENDED, which the engine implements by taking the last match in array
+// order. Those two orders disagree in the real ledger — the 2026-08-08 sailing
+// filed every passenger at `18:00:00.000Z` and those lines were appended after
+// walks stamped 18:16 — so re-sorting era one by instant silently changes WHICH
+// RECORD GOVERNS for any resident with out-of-order lines. That is a semantic
+// change to the founding era, made by a reader, which is the one thing the seam
+// promised not to do. (Caught by the flag-off door test: 317 records in, first
+// divergence at index 105, rook-of-garrison governed by a different leg.)
+//
+// So era one keeps its own order, untouched, and era two is appended after it —
+// correct because every store record postdates the freeze. That assumption is
+// CHECKED rather than trusted: a store record older than the newest ledger line
+// means the freeze assumption has broken, and it is disclosed instead of being
+// quietly mis-ordered.
 //
 // FEATURE-DETECTED, DISCLOSED, ERA-1 ON ANY FAILURE. With the flag off the store
 // is not opened at all and this returns exactly what `parseWalkLedger` returned.
 export async function departuresAcrossEras(worldClone = WORLD_CLONE, { atMs = Date.now(), db = null } = {}) {
   const disclosed = [];
-  let ledger = [];
+  let ledger = [], ledgerUnreadable = null;
   try {
     const { parseWalkLedger } = await engineImport("walk.mjs");
     ({ departures: ledger } = parseWalkLedger(walkLedgerAtMain(worldClone)));
   } catch (e) {
-    disclosed.push(`walk-ledger-unreadable: ${String(e?.message ?? e).slice(0, 120)}`);
+    ledgerUnreadable = String(e?.message ?? e).slice(0, 120);
+    disclosed.push(`walk-ledger-unreadable: ${ledgerUnreadable}`);
   }
-  if (!movementV2Enabled()) return { departures: ledger, eras: ["ledger"], disclosed };
+  if (!movementV2Enabled()) return { departures: ledger, eras: ["ledger"], disclosed, ledgerUnreadable };
 
   const { records, absent } = storedDepartures({ db, atMs });
   if (absent) {
     disclosed.push(`movements-unreadable: ${absent} — reading the founding era alone`);
-    return { departures: ledger, eras: ["ledger"], disclosed };
+    return { departures: ledger, eras: ["ledger"], disclosed, ledgerUnreadable };
   }
-  if (!records.length) return { departures: ledger, eras: ["ledger", "store"], disclosed };
+  if (!records.length) return { departures: ledger, eras: ["ledger", "store"], disclosed, ledgerUnreadable };
 
-  const merged = [...ledger, ...records].sort((a, b) => {
-    const ta = Date.parse(a.iso), tb = Date.parse(b.iso);
-    if (ta !== tb) return ta - tb;
-    // A tie goes to the store: the ledger cannot gain a line after the freeze,
-    // so a store row at the same instant is by construction the later statement.
-    return (a.source === "store" ? 1 : 0) - (b.source === "store" ? 1 : 0);
-  });
-  return { departures: merged, eras: ["ledger", "store"], disclosed, store_records: records.length };
+  const newestLedger = ledger.reduce((m, d) => Math.max(m, Date.parse(d.iso) || 0), 0);
+  const overlap = records.filter((r) => (Date.parse(r.iso) || 0) < newestLedger);
+  if (overlap.length) {
+    disclosed.push(`era-order-overlap: ${overlap.length} store record(s) predate the newest ledger line — the freeze assumption that era two is strictly later no longer holds, and append order may not be latest-wins for them`);
+  }
+  const merged = [...ledger, ...records];
+  return { departures: merged, eras: ["ledger", "store"], disclosed, ledgerUnreadable, store_records: records.length };
 }
 
 /** The array alone, for the many callers that want only that. */
@@ -1514,8 +1525,30 @@ async function framesByHandle(w, departures, atMs) {
   const out = new Map();
   const store = openDynamic();
   try {
+    // THE STORE IS READ ONCE, NOT ONCE PER RESIDENT. `storedRecordsFor` is a
+    // filter over the whole movements table, so calling it inside this loop
+    // scanned that table seventy times to answer one public GET. Read it once
+    // and slice.
+    //
+    // `departures` already spans both eras (the doors merge before they call),
+    // so the store half is passed in twice — once inside `ledgerRecords`, once
+    // here. `recordsAcrossEras` de-dupes deliberately rather than leaving that
+    // to the accident of `foldFrames` being idempotent over repeated arrivals;
+    // `transitions` is a COUNT and the `happened` shelf reads it.
+    const all = storedDepartures({ db: store, atMs }).records;
+    const storeByHandle = new Map();
+    for (const r of all) {
+      if (!storeByHandle.has(r.handle)) storeByHandle.set(r.handle, []);
+      storeByHandle.get(r.handle).push(r);
+    }
+    // A resident whose ONLY record is era two — someone who first moved after
+    // the freeze — has no ledger line to be grouped by, so the roster above
+    // would never reach them. They are added here.
+    for (const h of storeByHandle.keys()) {
+      if (h !== service.vessel.handle && !byHandle.has(h)) byHandle.set(h, []);
+    }
     for (const [h, ledgerRecords] of byHandle) {
-      const records = recordsAcrossEras(ledgerRecords, storedRecordsFor(h, { db: store, atMs }));
+      const records = recordsAcrossEras(ledgerRecords, storeByHandle.get(h) ?? []);
       const fold = await foldFrames(records, { carriers, carrierAt, walk, atMs });
       if (fold.frame) out.set(h, fold);
     }
@@ -1551,9 +1584,16 @@ export async function worldWalkers(worldClone, key = null) {
   // BOTH ERAS. This is the door that served twenty-seven residents at a berth
   // they had left, because their ashore records were in the store and this read
   // only the ledger.
-  let departures = [];
-  try { departures = await departuresNow(worldClone); }
-  catch { return { at, walkers: [], standing: [] }; }
+  // A MISSING LEDGER STILL ANSWERS THE OLD SHAPE. This door used to let
+  // `parseWalkLedger` throw and return `{ at, walkers: [], standing: [] }` — the
+  // `standing` key included, empty. The era-spanning reader catches that throw
+  // internally (it must: era two can answer even when era one cannot), which
+  // silently made that branch unreachable and changed the reply's shape for a
+  // clone with no ledger. It reports the failure instead, and the branch is
+  // restored where it always was.
+  const eras = await departuresAcrossEras(worldClone).catch(() => null);
+  if (!eras || (eras.ledgerUnreadable && !eras.departures.length)) return { at, walkers: [], standing: [] };
+  const departures = eras.departures;
   // ONE list. Briefly this door published `walkers` and `standing` separately and
   // the map painted three colours, which was a category error: "arrived" and
   // "standing" are the same state (a person at rest), differing only in how the
@@ -1576,7 +1616,14 @@ export async function worldWalkers(worldClone, key = null) {
     // frame needs the engine; what it takes is a precomputed map, so the purity
     // holds and the two derivations still meet in exactly one place.
     const walkers = everyonePlaced({ world: w, departures, at, where });
-    return { at, walkers: movementV2Enabled() ? await walkersInFrames(walkers, w, departures) : walkers };
+    return {
+      at,
+      walkers: movementV2Enabled() ? await walkersInFrames(walkers, w, departures) : walkers,
+      // The disclosure the reader assembled, carried rather than dropped. A door
+      // that reads half the record and says nothing is the failure this whole
+      // change is about.
+      ...(eras.disclosed.length ? { disclosed: eras.disclosed } : {}),
+    };
   } catch {
     // No world to fold: the walk ledger alone is still an honest answer.
     return { at, walkers: publicWalkers(departures, at) };

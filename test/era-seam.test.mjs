@@ -29,7 +29,7 @@ import { tmpdir } from "node:os";
 
 import { openDynamic } from "../src/dynamic-store.mjs";
 import { declareMovement } from "../src/dynamic-entities.mjs";
-import { storedDepartures, storedRecordsFor } from "../src/world-movement.mjs";
+import { dedupeRecords, recordsAcrossEras, storedDepartures, storedRecordsFor } from "../src/world-movement.mjs";
 import { positionsAt } from "../src/dynamic-presence.mjs";
 
 const dir = mkdtempSync(join(tmpdir(), "era-seam-"));
@@ -99,11 +99,12 @@ test("the per-handle slice is the same records, filtered", () => {
 // What must hold: newer wins, and `currentDeparture` (last match in array
 // order) therefore answers with era two.
 
-const mergeEras = (ledger, stored) => [...ledger, ...stored].sort((a, b) => {
-  const ta = Date.parse(a.iso), tb = Date.parse(b.iso);
-  if (ta !== tb) return ta - tb;
-  return (a.source === "store" ? 1 : 0) - (b.source === "store" ? 1 : 0);
-});
+// THE SHIPPED LAW, NOT A COPY OF IT. An earlier draft of this file re-implemented
+// the merge locally, which is a test that passes while the thing it names is
+// broken — the one failure mode a falsifier may not have. `departuresAcrossEras`
+// reads a world clone for era one, so the ledger half is injected and the STORE
+// half and the ORDERING RULE are the real ones.
+const mergeEras = (ledger, stored) => recordsAcrossEras(ledger, stored);
 
 test("era two lands AFTER era one, so latest-wins answers ashore", () => {
   const merged = mergeEras([era1("hal")], storedRecordsFor("hal", { dbPath: DB }));
@@ -118,14 +119,19 @@ test("a tie goes to the store — the ledger cannot gain a line after the freeze
   assert.equal(merged.at(-1).source, "store");
 });
 
-test("SORTED, not merely concatenated — correctness must not rest on an unchecked fact", () => {
-  // Every store record postdates every ledger line by construction today, so
-  // appending would answer correctly. "By construction" is a property of the
-  // freeze, not of the reader; a reader whose correctness rests on a fact it
-  // does not check goes quietly wrong the first time the fact stops holding.
-  const laterLedgerLine = { ...era1("hal"), iso: "2026-08-11T00:00:00.000Z", toward: { x: 1, y: 1 } };
-  const merged = mergeEras([laterLedgerLine], storedRecordsFor("hal", { dbPath: DB }));
-  assert.deepEqual(merged.at(-1).toward, { x: 1, y: 1 }, "the genuinely newer record wins, whichever era wrote it");
+test("APPENDED, not sorted — era one keeps the order it was written in", () => {
+  // The first draft of this reader sorted the merged list by instant, which
+  // looks safer and is not: the ledger is append-only and "latest wins" means
+  // latest APPENDED. Those orders disagree in the real ledger (the 08-08 sailing
+  // filed every passenger at 18:00:00.000Z, appended after walks stamped 18:16),
+  // so sorting silently changed which leg governed. Era one keeps its own order.
+  const outOfOrder = [
+    { ...era1("hal"), iso: "2026-08-09T18:16:00.000Z", toward: { x: 9, y: 9 } },
+    { ...era1("hal"), iso: "2026-08-09T18:00:00.000Z", toward: { x: 1, y: 1 } },
+  ];
+  const merged = recordsAcrossEras(outOfOrder, []);
+  assert.deepEqual(merged.map((r) => r.toward), [{ x: 9, y: 9 }, { x: 1, y: 1 }],
+    "the file's order survives the merge — a reader may not re-decide which record governs");
 });
 
 // ── the presence fold ────────────────────────────────────────────────────────
@@ -193,5 +199,172 @@ test("FLAG OFF: era two is not read, and the answer is era one's alone", () => {
     assert.equal(records.length, 5, "the rows are still there; the flag decides who looks");
   } finally {
     if (was === undefined) delete process.env.WORLD_MOVEMENT_V2; else process.env.WORLD_MOVEMENT_V2 = was;
+  }
+});
+
+// ── the acceptance case, end to end, against a REAL carrier ──────────────────
+//
+// "Vanished aboard" was the live symptom, so a fixture that never builds a
+// carrier cannot reproduce it. This one uses the timetabled vessel from
+// `movement-fixture.mjs`: an era-1 arrival on her footprint, and a NEWER era-2
+// ashore record. The frame fold must see BOTH — reading era one alone re-derives
+// the resident onto a boat that has since sailed, which is not a wrong position,
+// it is a disappearance.
+
+import { carriersFrom, carrierReader, recordsAcrossEras as acrossEras, vesselServiceFrom } from "../src/world-movement.mjs";
+import { foldFrames } from "../src/world-frames.mjs";
+import { withFrames } from "../src/positions.mjs";
+import { atCrossing, fixtureMarks, makeWorldClone } from "./movement-fixture.mjs";
+
+const carrierClone = makeWorldClone();
+after(() => carrierClone.cleanup());
+const CARRIER_MARKS = { marks: fixtureMarks() };
+const CARRIER_REPO = { repo: carrierClone.dir };
+
+// She is berthed at the quay from fc 9.6 to 10.5, sails 10.5, lands 10.6.
+const ABOARD_ISO = new Date(atCrossing(10.0)).toISOString();
+const STEPPED_OFF_ISO = new Date(atCrossing(10.2)).toISOString();
+const DECK_POINT = { x: 2, y: 3 };        // inside her 10x26 footprint at the quay
+const SHORE_POINT = { x: 60, y: 0 };      // clear of her
+
+const era1Aboard = (handle) => ({
+  iso: ABOARD_ISO, handle, from: SHORE_POINT, toward: DECK_POINT,
+  at: 10.0, targetExtent: null, targetMarkId: null, pace: null,
+});
+const era2Ashore = (handle) => ({
+  iso: STEPPED_OFF_ISO, handle, from: DECK_POINT, toward: SHORE_POINT,
+  at: 10.2, targetExtent: null, targetMarkId: null, pace: null, source: "store",
+});
+
+async function foldFor(records, atMs) {
+  const { service, mod, walk } = await vesselServiceFrom(CARRIER_MARKS, CARRIER_REPO);
+  const carrierAt = carrierReader(CARRIER_MARKS, { repo: carrierClone.dir, service, mod });
+  return foldFrames(records, { carriers: carriersFrom(CARRIER_MARKS), carrierAt, walk, atMs });
+}
+
+test("ERA ONE ALONE: the resident is folded onto the boat and sails away with her — the live symptom", async () => {
+  const mid = atCrossing(10.55);          // she is under way
+  const fold = await foldFor(acrossEras([era1Aboard("hal")], []), mid);
+  assert.equal(fold.frame, "the-town/the-post-office", "reading half the record puts hal aboard");
+  assert.ok(Math.abs(fold.world.x) > 100, `and carries him out to sea — x=${fold.world.x}`);
+});
+
+test("BOTH ERAS: the same resident is ashore, and stays there while she sails", async () => {
+  const mid = atCrossing(10.55);
+  const records = acrossEras([era1Aboard("hal"), era2Ashore("hal")], []);
+  const fold = await foldFor(records, mid);
+  assert.equal(fold.frame, null, "he stepped off, so his frame is the world again");
+  assert.deepEqual(fold.world, SHORE_POINT, "and he is where he walked to, not where she went");
+});
+
+test("the walkers overlay puts him ashore, not aboard", async () => {
+  const mid = atCrossing(10.55);
+  const fold = await foldFor(acrossEras([era1Aboard("hal"), era2Ashore("hal")], []), mid);
+  const rows = withFrames(
+    [{ handle: "hal", x: DECK_POINT.x, y: DECK_POINT.y, source: "walk", moving: false, remaining_m: 0, eta_crossings: 0 }],
+    fold.frame ? new Map([["hal", fold]]) : new Map(),
+  );
+  assert.equal(rows[0].aboard, undefined, "no frame means no aboard flag and no relocation");
+  assert.deepEqual({ x: rows[0].x, y: rows[0].y }, DECK_POINT);
+});
+
+test("a resident whose ONLY record is era two still gets a frame", async () => {
+  // Someone who first moved after the freeze has no ledger line at all. Grouping
+  // the roster by era-one departures would never reach them.
+  const boarded = { ...era2Ashore("newcomer"), toward: DECK_POINT, from: SHORE_POINT, iso: ABOARD_ISO, at: 10.0 };
+  const fold = await foldFor(acrossEras([], [boarded]), atCrossing(10.3));
+  assert.equal(fold.frame, "the-town/the-post-office");
+});
+
+// ── the de-dup (finding 4, made deliberate) ──────────────────────────────────
+
+test("the same era-two record arriving twice is ONE record, and births ONE edge", async () => {
+  // Both callers of `recordsAcrossEras` take injected records and then add the
+  // store's themselves, so since the doors began passing era-spanning records in
+  // the store half arrives twice. `foldFrames` is idempotent over repeated
+  // arrivals — but `transitions` is a COUNT, and the `happened` shelf reads it.
+  const stored = [era2Ashore("hal")];
+  const doubled = acrossEras([era1Aboard("hal"), ...stored], stored);
+  assert.equal(doubled.length, 2, "the duplicate is collapsed, not carried");
+
+  const fold = await foldFor(doubled, atCrossing(10.55));
+  assert.equal(fold.transitions.filter((t) => t.kind === "born").length, 1);
+  assert.equal(fold.transitions.filter((t) => t.kind === "died").length, 1);
+});
+
+test("de-dup keeps genuinely distinct records — it keys on the whole record, not the instant", () => {
+  // The ceremony lines all share one ISO across different handles, and two legs
+  // in one millisecond is legal even if nobody has ever done it.
+  const a = { era: "store", handle: "a", iso: ABOARD_ISO, from: { x: 0, y: 0 }, toward: { x: 1, y: 1 }, at: 10 };
+  const b = { ...a, handle: "b" };
+  const c = { ...a, toward: { x: 2, y: 2 } };
+  assert.equal(dedupeRecords([a, b, c, { ...a }]).length, 3);
+});
+
+// ── flag-off, AT THE DOORS ───────────────────────────────────────────────────
+
+import { existsSync } from "node:fs";
+import { departuresAcrossEras, worldWalkers } from "../src/world.mjs";
+import { WORLD_CLONE } from "../src/world-store.mjs";
+
+const withFlag = async (on, fn) => {
+  const was = process.env.WORLD_MOVEMENT_V2;
+  if (on) process.env.WORLD_MOVEMENT_V2 = "1"; else delete process.env.WORLD_MOVEMENT_V2;
+  try { return await fn(); }
+  finally { if (was === undefined) delete process.env.WORLD_MOVEMENT_V2; else process.env.WORLD_MOVEMENT_V2 = was; }
+};
+
+test("FINDING 3: a clone with no ledger answers the SAME SHAPE it always did", async () => {
+  // `worldWalkers` used to let `parseWalkLedger` throw and return
+  // `{ at, walkers: [], standing: [] }` — `standing` included, empty. The
+  // era-spanning reader catches that throw internally, because era two can
+  // answer even when era one cannot; that silently made the branch unreachable
+  // and dropped a key from the reply. Both flags must answer the old shape.
+  const nowhere = join(dir, "not-a-world-clone");
+  for (const on of [false, true]) {
+    const r = await withFlag(on, () => worldWalkers(nowhere));
+    assert.deepEqual(Object.keys(r).sort(), ["at", "standing", "walkers"],
+      `flag ${on ? "on" : "off"}: the missing-ledger reply keeps its shape`);
+    assert.deepEqual(r.walkers, []);
+    assert.deepEqual(r.standing, []);
+  }
+});
+
+test("FLAG OFF at the door: the store is never consulted, whatever it holds", async () => {
+  // The store here has five records. With the flag off the reader must return
+  // era one alone and say so — not "era one because the store happened to be
+  // empty", which is the same answer for the wrong reason.
+  const was = process.env.WORLD_DYNAMIC_DB;
+  process.env.WORLD_DYNAMIC_DB = DB;
+  try {
+    if (!existsSync(join(WORLD_CLONE, "WORLD", "walk-ledger.md"))) return;   // no clone: the door test below covers the shape
+    const off = await withFlag(false, () => departuresAcrossEras(WORLD_CLONE));
+    const on = await withFlag(true, () => departuresAcrossEras(WORLD_CLONE));
+    assert.deepEqual(off.eras, ["ledger"], "flag off names one era");
+    assert.equal(off.store_records, undefined, "and never counted the store");
+    assert.ok(on.departures.length > off.departures.length,
+      `flag on must actually add the store's records (${off.departures.length} -> ${on.departures.length})`);
+    // NOT a prefix: the merge SORTS BY INSTANT, so era-two records interleave
+    // with the ledger's later lines rather than landing in a block at the end.
+    // (This assertion originally claimed prefix and the test caught it.) What
+    // byte-identity actually means here is that era one survives untouched and
+    // in order underneath — the flag adds records, it never edits them.
+    assert.deepEqual(on.departures.filter((d) => d.source !== "store"), off.departures,
+      "era one is carried through unchanged and in the same order");
+  } finally {
+    if (was === undefined) delete process.env.WORLD_DYNAMIC_DB; else process.env.WORLD_DYNAMIC_DB = was;
+  }
+});
+
+test("the disclosure REACHES the reply rather than being assembled and dropped", async () => {
+  const was = process.env.WORLD_DYNAMIC_DB;
+  process.env.WORLD_DYNAMIC_DB = join(dir, "no-store-at-all.db");
+  try {
+    const r = await withFlag(true, () => departuresAcrossEras(join(dir, "not-a-world-clone")));
+    assert.ok(r.disclosed.some((d) => d.startsWith("walk-ledger-unreadable")),
+      "an unreadable ledger is named, not swallowed");
+    assert.ok(r.ledgerUnreadable, "and the caller can branch on it — that is what restores the old shape");
+  } finally {
+    if (was === undefined) delete process.env.WORLD_DYNAMIC_DB; else process.env.WORLD_DYNAMIC_DB = was;
   }
 });

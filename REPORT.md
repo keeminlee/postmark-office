@@ -108,6 +108,65 @@ Suite **449 tests, 448 pass, 0 fail, 1 skip** — the skip is `hydrate-frames`, 
 *"no merge-base between main and stageD/coords"*: that branch landed as `stageD/landing` and there is
 no absolute twin left to compare against. Its premise is retired, not broken.
 
+## 7 · The era seam, after review (`7505e07`)
+
+Four findings from the reviewer's read of `39dc396`, plus one my own tests caught.
+
+**A · the disclosure was built and dropped** — `departuresAcrossEras` assembled `disclosed` and
+`departuresNow` discarded it by construction, while `readPresence`'s comment claimed an era-2 clause
+that did not exist in the array below it. The walkers reply now carries the disclosure, and the
+presence clause is real: `era-two-unread` names an unreadable store rather than quietly answering
+with freeze-day positions.
+
+**B · `standing` came from the stale record** — the position came from era two and `standing` from
+the entities table, so the twenty-seven read `standing:false` beside `moving:false`: neither moving
+nor at rest, two fields of one answer derived from two different records. The governing record is now
+taken from the same merged list the position was. The old fixture missed it because it never ran
+`refreshEntities`, so an empty entities table fell through to the correct branch; the new one asserts
+the stale path answers *nothing* first, so it can fail.
+
+**C · flag-off shape change** — the era-spanning reader catches the ledger's throw internally (it
+must: era two can answer when era one cannot), which made `worldWalkers`' missing-ledger branch
+unreachable and dropped `standing` from that reply. The failure is now reported (`ledgerUnreadable`)
+rather than swallowed, and the branch is restored. Tested under both flags.
+
+**D · double-count and N+1** — since the doors began passing era-spanning records in, the store half
+reached `foldFrames` twice. Idempotent only by accident of the fold re-deciding the frame at each
+arrival — and `transitions` is a **count** that the `happened` shelf reads. `dedupeRecords` collapses
+it deliberately, keyed on the whole record because the ceremony lines share one ISO across handles.
+The movements table was also being scanned once per resident to answer one public GET; it is read
+once and sliced.
+
+**The one the tests caught, which was mine.** I sorted the merged list by instant, reasoning that
+"era two is strictly later" was a property of the freeze rather than of the reader. But **the
+ledger's file order is its law**: it is append-only, "latest wins" means latest *appended*, and the
+engine implements that as the last match in array order. Those orders disagree in the real ledger —
+the 08-08 sailing filed every passenger at `18:00:00.000Z` and those lines were appended after walks
+stamped 18:16 — so sorting silently re-decided which leg governs. 317 records in, first divergence at
+index 105, `rook-of-garrison` under a different leg. Era one now keeps its order untouched, era two
+is appended, and the assumption is **checked**: a store record older than the newest ledger line is
+disclosed as `era-order-overlap`.
+
+Also fixed: a resident whose **only** record is era two now gets a frame. Grouping the roster by
+era-one departures alone would never have reached anyone who first moved after the freeze.
+
+**The reviewer's loose end, resolved.** The fixture asserts wright's zero-metre record must not move
+him, while my live probe reported him at `-24.8, 45.2` — opposite directions. The probe was at fault:
+it *seeded* wright a movement toward the ashore point, so latest-wins correctly moved him. Re-run with
+a genuine zero-metre record at his own position: `575,-2600` → `575,-2600`, seam moved him **false**.
+The fixture's claim stands; the commit message's live number was measuring my own seed.
+
+**Tests** `test/era-seam.test.mjs`, 18. They call the **shipped** `departuresAcrossEras` /
+`recordsAcrossEras`, not a local re-implementation — a hand-rolled copy of the law passes even when
+the law breaks. The acceptance case runs against the real timetabled carrier from
+`movement-fixture.mjs`, and its control (*"ERA ONE ALONE"*) reproduces the live symptom: reading half
+the record folds the resident onto the boat and carries him out to sea. Flag-off byte-identity is
+asserted at the doors, not just at the store read.
+
+Suite **458 · 457 pass · 0 fail · 1 skip** (`hydrate-frames`, premise retired when `stageD/coords`
+landed as `stageD/landing`). Live: flag off 317 departures, flag on 319, standpoint and walkers
+agreeing in both.
+
 ## Protected, checked
 `terms` and its published dials, per-item authorship/`quoted` separation, `TERMS_BUDGET_CHARS`, the
 518-character say error, `present`'s `as_of`/`evaluated_at`/`ledger_moved`/`disclosed`, and L6 GREEN —
