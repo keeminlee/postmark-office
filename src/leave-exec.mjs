@@ -191,7 +191,12 @@ async function main() {
   }
 
   console.error(`[timing] child=${Math.round(performance.now() - T0)}ms ${phases.join(" ")}`);
-  answer({ id, dir: relative(MARKS_DIR, dir).replace(/\\/g, "/"), parent: parentId, kind: p.kind, branch, commit, pushed, push_error });
+  // `at`/`extent` are the EFFECTIVE footprint, which is not always the one that
+  // arrived: a parcel's extent is the town's dial, set here and never declared.
+  // The door reads them back to tell an author where their claim actually landed
+  // (issue #5 §1), and a resident reading the answer learns the same thing.
+  answer({ id, dir: relative(MARKS_DIR, dir).replace(/\\/g, "/"), parent: parentId, kind: p.kind,
+           at: p.at ?? null, extent: p.extent ?? null, branch, commit, pushed, push_error });
 }
 
 main().catch((e) => { console.error(String(e?.stack ?? e)); process.exit(1); });

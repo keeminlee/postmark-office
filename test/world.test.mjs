@@ -18,6 +18,9 @@ const {
   worldOrient,
   worldEyes,
   worldBlockForHandle,
+  overhangOf,
+  noticeBoardAt,
+  withNoticeBoard,
 } = await import("../src/world.mjs");
 
 const one = { household: "house-a", handles: new Set(["alpha"]) };
@@ -180,4 +183,126 @@ test("world_note pre-check uses actingAs choices and the 2000-character cap", as
     () => worldNoteViaOffice(process.env.WORLD_CLONE, { body: "x".repeat(2001) }, one),
     (error) => error.code === 422 && error.defect === "body is 2001 chars; the cap is 2000",
   );
+});
+
+// ── issue #5 §1: fence-then-claim ────────────────────────────────────────────
+//
+// The reporter's own arithmetic is the fixture, to the metre.
+// vermillion/vermillion-view-peak is centred (−96858, −95458) with extent 721,
+// so its east edge is at −96497.5 — where a mark-walk lands you. A 6×4 claim at
+// (−96497, −95455) spans x ∈ [−96500, −96494], of which only 2.5 m of 6 lies
+// inside the peak: 42%, against a ≥99% coverage rule. It nests in the-pando-peak.
+const VIEW_PEAK = { id: "vermillion/vermillion-view-peak", extentM: 721 };
+const PANDO = { id: "vermillion/the-pando-peak", extentM: 3600 };
+const ON_THE_FENCE = { placed: true, x: -96497.5, y: -95455 };
+const THE_GLASS = {
+  id: "jetto-of-starforge/the-glass-faces-back", kind: "sited",
+  at: { x: -96497, y: -95455 }, extent: { w: 6, h: 4 },
+};
+
+test("overhang: a claim left where you stand, nesting one level out, is disclosed", async () => {
+  const r = overhangOf({
+    ...THE_GLASS,
+    parent: PANDO.id,                       // what placementParent actually returned
+    standing: ON_THE_FENCE,
+    spine: [PANDO, VIEW_PEAK],              // orient says you are within view-peak
+  });
+  assert.ok(r, "the disagreement is not swallowed");
+  assert.equal(r.nested_in, PANDO.id);
+  assert.equal(r.standing_in, VIEW_PEAK.id);
+  assert.equal(r.note,
+    "nested in vermillion/the-pando-peak — your claim overhangs vermillion/vermillion-view-peak, which you are standing in",
+    "the reporter's own suggested sentence, verbatim");
+  assert.match(r.why, /a claim is a rect/, "and it names the cause, not just the fact");
+  assert.match(r.remedy, /to: "centre"/, "the remedy is the walk variant that lands with it");
+});
+
+test("overhang: the ordinary case says nothing at all", async () => {
+  // Nested where you stand — which is what happens nearly every time.
+  assert.equal(overhangOf({
+    ...THE_GLASS, parent: VIEW_PEAK.id, standing: ON_THE_FENCE, spine: [PANDO, VIEW_PEAK],
+  }), null, "agreement is silence; the disclosure must not be noise");
+  // Standing nowhere the world can place.
+  assert.equal(overhangOf({
+    ...THE_GLASS, parent: PANDO.id, standing: { placed: false }, spine: [PANDO, VIEW_PEAK],
+  }), null);
+  // Open ground: no spine, so there is no mark to be overhanging.
+  assert.equal(overhangOf({
+    ...THE_GLASS, parent: null, standing: ON_THE_FENCE, spine: [],
+  }), null);
+  // predicated/naming marks have no ground of their own.
+  assert.equal(overhangOf({
+    ...THE_GLASS, kind: "predicated", parent: PANDO.id, standing: ON_THE_FENCE, spine: [PANDO, VIEW_PEAK],
+  }), null);
+});
+
+test("overhang: a claim placed AWAY from your feet is never described by them", async () => {
+  // The guard that keeps the sentence true. A mark deliberately dropped across
+  // the valley nests wherever its geometry says; where its author happens to be
+  // standing has nothing to do with it, and claiming otherwise would be a lie
+  // shipped on every remote claim.
+  assert.equal(overhangOf({
+    ...THE_GLASS, parent: PANDO.id,
+    standing: { placed: true, x: -96497.5 + 500, y: -95455 }, // 500 m away
+    spine: [PANDO, VIEW_PEAK],
+  }), null);
+  // …and one metre inside the claim's own footprint still counts as underfoot.
+  assert.ok(overhangOf({
+    ...THE_GLASS, parent: PANDO.id,
+    standing: { placed: true, x: -96499, y: -95455 },
+    spine: [PANDO, VIEW_PEAK],
+  }));
+});
+
+test("overhang: the claim never reports that it overhangs ITSELF", async () => {
+  // The composed world the door reads includes this household's drafts, so the
+  // mark just written contains the author's feet by construction and would sort
+  // innermost. Left in the spine, every single claim would disclose an overhang.
+  assert.equal(overhangOf({
+    ...THE_GLASS, parent: VIEW_PEAK.id, standing: ON_THE_FENCE,
+    spine: [PANDO, VIEW_PEAK, { id: THE_GLASS.id, extentM: 6 }],
+  }), null);
+});
+
+test("overhang: nesting out to the world root is named, not left blank", async () => {
+  const r = overhangOf({
+    ...THE_GLASS, parent: null, standing: ON_THE_FENCE, spine: [VIEW_PEAK],
+  });
+  assert.equal(r.nested_in, null);
+  assert.match(r.note, /^nested at the root of the world — your claim overhangs vermillion\/vermillion-view-peak/);
+});
+
+test("world_walk contract carries the arrival variant and names the fence it fixes", () => {
+  const tool = WORLD_TOOLS.find(({ name }) => name === "world_walk");
+  assert.deepEqual(tool.inputSchema.properties.to.enum, ["entry", "centre"]);
+  assert.match(tool.inputSchema.properties.to.description, /default/, "entry stays the default, said out loud");
+  assert.match(tool.description, /BOUNDARY/, "the door warns where a mark-walk actually leaves you");
+  assert.match(tool.description, /nests one level OUT/, "and what that costs a claim left there");
+  assert.match(tool.description, /to: "centre"/);
+});
+
+// ── the invariants worth protecting (issue #5, "not defects") ────────────────
+
+test("INVARIANT notice-board-on-every-response: a reply with a place carries the board", () => {
+  // "I tracked a hard ferry deadline across nineteen hours without ever going to
+  // look for it." The deadline came to him. Both say doors attach through this
+  // one function, so a refactor cannot quietly drop it from one of them.
+  const notice = {
+    id: "test-notice", place: "the test ground", at: { x: 0, y: 0 },
+    area: { x: 0, y: 0, r: 100 }, until: 5_000,
+    title: "THE RETURN", text: "she sails at noon",
+  };
+  const inside = withNoticeBoard({ where: { x: 50, y: 0 } }, 1_000, [notice]);
+  assert.deepEqual(inside.notice_board, ["📌 THE RETURN — she sails at noon"]);
+
+  const outside = withNoticeBoard({ where: { x: 500, y: 0 } }, 1_000, [notice]);
+  assert.ok(!("notice_board" in outside), "a notice covers an area, not the world");
+
+  const expired = withNoticeBoard({ where: { x: 50, y: 0 } }, 9_000, [notice]);
+  assert.ok(!("notice_board" in expired), "and it self-expires rather than haunting the room");
+
+  // A reply with no place — a bounce — gets no board and is not mangled.
+  const bounced = withNoticeBoard({ error: "bounce", defect: "nowhere to speak from" }, 1_000, [notice]);
+  assert.ok(!("notice_board" in bounced));
+  assert.equal(noticeBoardAt(50, 0, 1_000, [notice]).length, 1, "the geometry is the pure half");
 });

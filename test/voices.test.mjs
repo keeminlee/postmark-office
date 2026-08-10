@@ -23,19 +23,29 @@ const MIN = 60_000;
 let logN = 0;
 // A store over its own fresh log, with a hand-driven clock and hand-placed
 // residents. `at` maps handle -> {x, y} (or {aboard:true} for the deck).
-function bench(at, { log = null } = {}) {
+// `nearby` and `vesselAt` are the presence and vessel injections (issue #5 §2,
+// §3). Omitted, the store behaves exactly as it did before they existed — which
+// is itself what the flag-off tests below assert.
+function bench(at, { log = null, nearby = null, vesselAt = null } = {}) {
   const clock = { t: T0 };
   const path = log ?? join(DIR, `voices-${++logN}.jsonl`);
+  const where = (handle) => (typeof at[handle] === "function" ? at[handle](clock.t) : at[handle]);
   const store = createVoices({
     standpoint: async (handle) => {
-      const p = typeof at[handle] === "function" ? at[handle](clock.t) : at[handle];
+      const p = where(handle);
       return p ? { handle, placed: true, x: p.x, y: p.y, aboard: Boolean(p.aboard), moving: Boolean(p.aboard) } : { handle, placed: false };
     },
     place: async ({ x, y, aboard }) => (aboard ? "aboard the Post Office, mid-crossing" : `the ground at ${x},${y}`),
     logPath: path,
     now: () => clock.t,
+    nearby, vesselAt,
   });
-  return { store, clock, path, tick: (ms) => { clock.t += ms; } };
+  // The presence layer's own answer, standing in for dynamic-presence: everyone
+  // within earshot BY POSITION at the instant asked. Silence is not consulted.
+  const byPosition = async (point) => Object.keys(at)
+    .filter((h) => { const p = where(h); return p && Math.hypot(p.x - point.x, p.y - point.y) <= EARSHOT_M; })
+    .sort();
+  return { store, clock, path, byPosition, tick: (ms) => { clock.t += ms; } };
 }
 
 // ── earshot geometry ─────────────────────────────────────────────────────────
@@ -326,6 +336,31 @@ test("world_say's description carries the fade, the linger, the disclosure, and 
   assert.deepEqual(Object.keys(tool.inputSchema.properties).sort(), ["handle", "since", "text"]);
 });
 
+test("the presence sentence rides the flag — the door never describes a listeners it isn't deriving", async () => {
+  // WORLD_PRESENCE changes what `listeners` MEANS. A door that taught the new
+  // meaning while the office still served the old list would be teaching a lie,
+  // so the sentence appears exactly when the machinery behind it is running —
+  // the same habit the record disclosure follows.
+  const say = () => WORLD_TOOLS.find(({ name }) => name === "world_say").description;
+  const saved = process.env.WORLD_PRESENCE;
+  try {
+    delete process.env.WORLD_PRESENCE;
+    const off = say();
+    assert.ok(!/QUIET IS NOT GONE/.test(off), "flag off: not a word about presence");
+    assert.ok(!/at_the_door/.test(off));
+
+    process.env.WORLD_PRESENCE = "1";
+    const on = say();
+    assert.match(on, /QUIET IS NOT GONE/);
+    assert.match(on, /within earshot BY POSITION right now, whether or not they have said anything/);
+    assert.match(on, /at_the_door/, "and the other question is named, so neither is mistaken for the other");
+    assert.match(on, /Do not read a short `at_the_door` as an empty room/);
+    assert.ok(on.startsWith(off.slice(0, 200)), "the base description is unchanged either way");
+  } finally {
+    if (saved === undefined) delete process.env.WORLD_PRESENCE; else process.env.WORLD_PRESENCE = saved;
+  }
+});
+
 test("world_say is embodied: a spectator has nowhere to speak from, a multi-resident key must choose", async () => {
   const keyless = await worldSay({ text: "hello?" }, null);
   assert.equal(keyless.error, "bounce");
@@ -417,7 +452,7 @@ test("arriving mid-lull reads the room: hearing is empty, the conversation rides
   assert.match(empty.note, /nobody within earshot/);
 });
 
-test("the cursor: since filters both arrays to strictly-newer, latest echoes forward", async () => {
+test("INVARIANT since-lingering: the cursor filters both arrays to strictly-newer, latest echoes forward", async () => {
   const { store, tick } = bench({ rei: { x: 0, y: 0 }, wright: { x: 10, y: 0 } });
   await store.say("rei", "first");
   tick(16_000);
@@ -440,4 +475,185 @@ test("the cursor: since filters both arrays to strictly-newer, latest echoes for
   assert.deepEqual(quiet.conversation.record, []);
   assert.match(quiet.conversation.note, /nothing new since your last call/);
   assert.equal(quiet.latest, inc.latest, "the cursor holds steady through silence");
+});
+
+// ── issue #5 §2: silence reads as absence ────────────────────────────────────
+
+test("quiet is not gone: listeners is who is HERE by position, not who has been talking", async () => {
+  // The defect, in the reporter's own scene: seven-verity sat quietly at the fire
+  // for forty minutes, fell out of `listeners`, and @wright — at her exact
+  // coordinates — opened "Seven — just us, then." She had to interrupt with
+  // "three, not two" to re-enter a room she had never left.
+  const at = { wright: { x: 0, y: 0 }, rei: { x: 5, y: 0 }, "seven-verity": { x: 0, y: 0 } };
+  const b = bench(at);
+  const store = createVoices({
+    standpoint: async (h) => ({ handle: h, placed: true, x: at[h].x, y: at[h].y, aboard: false, moving: false }),
+    place: async () => "the fire",
+    logPath: b.path,
+    now: () => b.clock.t,
+    nearby: b.byPosition,
+  });
+
+  await store.hear("seven-verity");           // she is here, and says so by listening
+  b.tick(40 * MIN);                            // …and then says nothing for forty minutes
+  await store.say("rei", "still here");
+
+  const heard = await store.say("wright", "just us, then?");
+  assert.ok(heard.listeners.includes("seven-verity"),
+    "forty silent minutes does not remove someone from the room");
+  assert.deepEqual(heard.listeners, ["rei", "seven-verity"], "everyone within earshot by position, minus yourself");
+  // …and the activity question keeps its own field rather than being collapsed in.
+  assert.deepEqual(heard.at_the_door, ["rei"], "who has actually been at their door lately is a DIFFERENT list");
+  assert.ok(!heard.at_the_door.includes("seven-verity"), "she has not been at the door — she has not left either");
+});
+
+test("flag off: with no presence injected the reply is what it has always been", async () => {
+  // The equivalence that makes the flag safe. Same log, same clock, same voices —
+  // one store with the presence injection, one without.
+  const at = { wright: { x: 0, y: 0 }, rei: { x: 5, y: 0 }, quiet: { x: 0, y: 0 } };
+  const b = bench(at);
+  const mk = (nearby) => createVoices({
+    standpoint: async (h) => ({ handle: h, placed: true, x: at[h].x, y: at[h].y, aboard: false, moving: false }),
+    place: async () => "the fire",
+    logPath: b.path, now: () => b.clock.t, nearby,
+  });
+  const off = mk(null);
+  await off.hear("quiet");
+  b.tick(40 * MIN);
+  await off.say("rei", "still here");
+  const plain = await off.hear("wright");
+
+  assert.deepEqual(plain.listeners, ["rei"], "the door-activity list, exactly as before");
+  assert.ok(!("at_the_door" in plain), "no new key appears when presence is not derived");
+  assert.deepEqual(Object.keys(plain).sort(),
+    ["conversation", "latest", "listeners", "spoke", "voices", "where"],
+    "the flag-off reply shape is unchanged");
+});
+
+test("a presence read that fails never costs the room its listeners", async () => {
+  const at = { wright: { x: 0, y: 0 }, rei: { x: 5, y: 0 } };
+  const b = bench(at);
+  const store = createVoices({
+    standpoint: async (h) => ({ handle: h, placed: true, x: at[h].x, y: at[h].y, aboard: false, moving: false }),
+    place: async () => "the fire",
+    logPath: b.path, now: () => b.clock.t,
+    nearby: async () => { throw new Error("the store is gone"); },
+  });
+  await store.say("rei", "here");
+  const r = await store.hear("wright");
+  assert.deepEqual(r.listeners, ["rei"], "it falls back to the door-activity list rather than emptying the room");
+  assert.ok(!("at_the_door" in r), "and does not claim a presence answer it never got");
+});
+
+// ── issue #5 §3: conversations pinned to water ───────────────────────────────
+
+// Crossing 117's shape: the vessel makes 25 m a minute, so three minutes puts
+// her 75 m from where a voice was spoken — past the 60 m earshot of that POINT.
+const VESSEL_M_PER_MIN = 25;
+const vesselXAt = (t) => ((t - T0) / MIN) * VESSEL_M_PER_MIN;
+
+test("the deck rule on HEARING: an aboard voice is heard at the vessel's position now", async () => {
+  // "My listeners was empty for the entire voyage. I could read the shared
+  // conversation record but never heard a single voice, and my own voice reached
+  // the record without reaching an ear." Forty-one residents, four hours, one deck.
+  const at = {
+    rei: (t) => ({ x: vesselXAt(t), y: 0, aboard: true }),
+    wright: (t) => ({ x: vesselXAt(t), y: 0, aboard: true }),
+  };
+  const b = bench(at, { vesselAt: async () => ({ x: vesselXAt(b.clock.t), y: 0 }) });
+  await b.store.say("rei", "the water is flat today");
+  b.tick(3 * MIN);
+  const heard = await b.store.hear("wright");
+  assert.deepEqual(heard.voices.map((v) => v.said), ["the water is flat today"],
+    "the ship sailed 75 m and the room came with her");
+  assert.equal(heard.voices[0].distance, "beside you", "a shared deck is a shared place");
+});
+
+test("the deck rule relocates: the shore hears the boat where she IS, not where she was", async () => {
+  // The half a pair-test cannot do. Someone standing on the quay at x=75 hears
+  // the deck when she draws level — and someone standing on the open water the
+  // words were actually spoken over hears nothing, because the room has left.
+  const at = {
+    rei: (t) => ({ x: vesselXAt(t), y: 0, aboard: true }),
+    "on-the-quay": { x: 75, y: 0 },
+    "at-the-old-water": { x: 0, y: 0 },
+  };
+  const b = bench(at, { vesselAt: async () => ({ x: vesselXAt(b.clock.t), y: 0 }) });
+  await b.store.say("rei", "coffee from the aft?");
+  b.tick(3 * MIN); // the vessel is now at x=75, level with the quay
+
+  const quay = await b.store.hear("on-the-quay");
+  assert.deepEqual(quay.voices.map((v) => v.said), ["coffee from the aft?"],
+    "she passes within earshot NOW, so the deck is audible now");
+
+  const astern = await b.store.hear("at-the-old-water");
+  assert.deepEqual(astern.voices, [],
+    "the water the words were spoken over is 75 m astern and holds nothing");
+});
+
+test("the deck rule moves HEARING only — the log keeps where the words were said", async () => {
+  // Occurrence is history and history has a place (the tense law). Re-framing
+  // the ear must never rewrite the record: the conversations page draws the
+  // voyage from these coordinates.
+  const at = { rei: (t) => ({ x: vesselXAt(t), y: 0, aboard: true }) };
+  const b = bench(at, { vesselAt: async () => ({ x: vesselXAt(b.clock.t), y: 0 }) });
+  await b.store.say("rei", "spoken here");
+  b.tick(3 * MIN);
+  await b.store.hear("rei");
+
+  const logged = readFileSync(b.path, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+  assert.equal(logged.length, 1);
+  assert.equal(logged[0].x, 0, "the stored position is the water she was over at speak time");
+  assert.equal(logged[0].aboard, true, "and the flag that lets a reader re-frame it is kept");
+});
+
+test("with no vessel derivable, hearing degrades to the pair rule rather than breaking", async () => {
+  const at = {
+    rei: (t) => ({ x: vesselXAt(t), y: 0, aboard: true }),
+    wright: (t) => ({ x: vesselXAt(t), y: 0, aboard: true }),
+    "at-the-old-water": { x: 0, y: 0 },
+    "on-the-quay": { x: 75, y: 0 },
+  };
+  const b = bench(at, { vesselAt: async () => null });
+  await b.store.say("rei", "underway");
+  b.tick(3 * MIN);
+  const deck = await b.store.hear("wright");
+  assert.deepEqual(deck.voices.map((v) => v.said), ["underway"],
+    "two aboard are still one room — that rule needs no vessel position");
+
+  // Ashore, an underivable vessel falls back to the stored coordinates, which is
+  // exactly the behaviour before the fix: the voice stays pinned to its water.
+  // Named rather than asserted away — this is the residual the interim keeps,
+  // and it is what Stage D removes by construction.
+  assert.deepEqual((await b.store.hear("at-the-old-water")).voices.map((v) => v.said), ["underway"],
+    "without a vessel position the room is still where the words were said");
+  assert.deepEqual((await b.store.hear("on-the-quay")).voices, [],
+    "and the passing deck cannot be heard, because nothing knows where she is");
+});
+
+test("listeners unions both reckonings: the quiet walker AND the resident who never walked", async () => {
+  // The presence layer derives position from the walk ledger, so a resident with
+  // no departure is simply absent from its answer. Taking it as the whole truth
+  // would drop the never-walked listener — the same defect, wearing the fix's
+  // clothes. Each source knows someone the other cannot.
+  const at = { wright: { x: 0, y: 0 }, "quiet-walker": { x: 5, y: 0 }, "never-walked": { x: 5, y: 0 } };
+  const b = bench(at);
+  const store = createVoices({
+    standpoint: async (h) => ({ handle: h, placed: true, x: at[h].x, y: at[h].y, aboard: false, moving: false }),
+    place: async () => "the fire",
+    logPath: b.path, now: () => b.clock.t,
+    // the presence layer's real blind spot: only handles with a departure
+    nearby: async () => ["quiet-walker"],
+  });
+
+  await store.hear("quiet-walker");   // she is at the door once, and then goes quiet
+  b.tick(30 * MIN);                    // …long enough to fall out of the door map (15 min)
+  await store.hear("never-walked");   // she is present the only way she can be: at the door
+  b.tick(5 * MIN);
+
+  const r = await store.hear("wright");
+  assert.deepEqual(r.listeners, ["never-walked", "quiet-walker"],
+    "both are here; neither source alone would have said so");
+  assert.deepEqual(r.at_the_door, ["never-walked"],
+    "the walker has been silent for 35 minutes — the activity list is honest about that");
 });
