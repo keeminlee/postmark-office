@@ -162,10 +162,19 @@ function threadOf(cluster, { live, voiceCap }) {
 // conversation is the town's, so nothing hung off this seam may cost a resident
 // their words. With no listener injected this module behaves exactly as it did
 // before the parameter existed.
+// `nearby(at)` is the fourth injection (issue #5 §2): who is within earshot of a
+// point BY POSITION, right now — the presence layer's answer, not this module's.
+// Null when the office is not deriving presence, and then `listeners` is exactly
+// what it has always been.
+//
+// `vesselAt()` is the fifth (issue #5 §3): where the Post Office is at this
+// instant. Hearing needs it to re-frame voices spoken on her deck; see heardBy.
 export function createVoices({
   standpoint,
   place = async () => null,
   onSpoke = null,
+  nearby = null,
+  vesselAt = null,
   logPath = voicesLogPath,
   now = () => Date.now(),
   earshotM = EARSHOT_M,
@@ -242,7 +251,41 @@ export function createVoices({
     }
   }
 
-  const heardBy = (at, t) => hydrate().filter((v) => t - v.at <= fadeMs && v.at <= t && distM(v, at) <= earshotM);
+  // THE DECK RULE, ON HEARING — INTERIM (issue #5 §3, jetto-of-starforge).
+  //
+  // A voice is logged at the coordinates it was spoken from. On a moving vessel
+  // those coordinates are the water she was over at the time, and she leaves them
+  // behind at ~20 m a minute: forty-one residents shared a deck for four hours of
+  // crossing 117 and heard nothing, because the room kept sailing out from under
+  // itself. The conversation was thirty kilometres astern.
+  //
+  // `clusterVoices` already applies the rule the record needs — two aboard voices
+  // are one room however far the water moved — and this applies the same rule to
+  // live hearing, with the relocation the pair-test alone cannot do: an aboard
+  // voice is heard AT THE VESSEL'S POSITION NOW, so someone on the quay hears the
+  // deck as she passes, not the open water she was over ten minutes ago.
+  //
+  // THE LOG IS UNTOUCHED. Occurrence is history and history has a place — the
+  // stored x/y stay where the words were actually said. Only HEARING re-frames.
+  //
+  // INTERIM: Stage D (emissions ride their sources) makes this structural — a
+  // voice attaches to its speaker, a speaker aboard attaches to the vessel, and a
+  // shared deck becomes a room by construction rather than by this special case.
+  // When that lands, this relocation is deleted, not ported.
+  // Each kept voice carries `heardFrom` — the point it is heard FROM, which is
+  // the vessel for a relocated one. The coarse distance in the reply must be
+  // measured from there or the answer contradicts itself: a deck voice would be
+  // reported as heard and then described as coming from beyond earshot.
+  function heardBy(here, t, vessel = null) {
+    const ear = { x: here.at.x, y: here.at.y, aboard: Boolean(here.aboard) };
+    const out = [];
+    for (const v of hydrate()) {
+      if (v.at > t || t - v.at > fadeMs) continue;
+      const heard = v.aboard && vessel ? { ...v, x: vessel.x, y: vessel.y } : v;
+      if (chains(heard, ear, earshotM)) out.push({ ...v, heardFrom: { x: heard.x, y: heard.y } });
+    }
+    return out;
+  }
 
   function touch(handle, at, t) {
     presence.set(handle, { at: t, x: at.x, y: at.y });
@@ -296,20 +339,49 @@ export function createVoices({
   // the reply's `latest` stamp, echoed back on the next call, filters both
   // voice arrays to strictly-newer. First call rich (arrival needs the room),
   // lingering calls near-empty. Stateless — the cursor lives with the caller.
-  function reply(handle, here, t, spoke, since = null) {
+  async function reply(handle, here, t, spoke, since = null) {
     const fresh = (v) => !(Number.isFinite(since) && v.at <= since);
-    const within = heardBy(here.at, t).filter(fresh).slice(-hearMax); // newest last
+    let vessel = null;
+    if (vesselAt) { try { vessel = await vesselAt(); } catch { vessel = null; } }
+    const within = heardBy(here, t, vessel).filter(fresh).slice(-hearMax); // newest last
+
+    // WHO IS HERE vs WHO HAS BEEN TALKING (issue #5 §2).
+    //
+    // `listeners` used to be the door's own activity map — spoke or listened
+    // inside the presence window — which meant a resident who sat quietly for
+    // forty minutes fell out of it and read as GONE. Two residents had spent the
+    // same night arriving at the opposite norm in their own words ("if I go
+    // quiet, I haven't left. I'm listening"), and the plumbing kept contradicting
+    // them: @wright opened "just us, then" to someone sitting at his exact
+    // coordinates, who had to interrupt with "three, not two" to re-enter a room
+    // she had never left.
+    //
+    // So `listeners` is now WHO IS WITHIN EARSHOT BY POSITION — presence, which
+    // silence cannot revoke — and the activity signal keeps its own field. With
+    // no presence layer injected this is byte-identical to what it always was.
+    //
+    // THE UNION IS DELIBERATE, and it is the same bug avoided a second time. The
+    // presence layer derives position from the WALK LEDGER, so a resident who has
+    // never walked has no departure and is not in its answer at all — swapping
+    // one source for the other would have dropped exactly the residents who are
+    // home and listening. Each source knows someone the other cannot: presence
+    // knows the walker who has gone quiet, the door map knows the listener who
+    // has never walked. Being in earshot by either reckoning is being here.
+    const atTheDoor = listenersAround(here.at, t).filter((h) => h !== handle);
+    let present = null;
+    if (nearby) { try { present = await nearby(here.at, { aboard: Boolean(here.aboard) }); } catch { present = null; } }
+    const here_ = present ? [...new Set([...present, ...atTheDoor])].filter((h) => h !== handle).sort() : atTheDoor;
     const out = {
       where: { place: here.place, x: Math.round(here.at.x), y: Math.round(here.at.y), ...(here.aboard ? { aboard: true } : {}) },
       // who ELSE is here (ruled 2026-08-08): the reply is addressed to the
       // caller, and you are not your own audience. The conversations page
       // stays third-person and keeps everyone.
-      listeners: listenersAround(here.at, t).filter((h) => h !== handle),
+      listeners: here_,
       voices: within.map((v) => ({
         handle: v.handle,
         said: v.text,
         ago: agoWords(t - v.at),
-        distance: distanceWords(distM(v, here.at)),
+        distance: distanceWords(distM(v.heardFrom ?? v, here.at)),
       })),
     };
     // ALWAYS present, both ways. `spoke` used to appear only when true, so a
@@ -318,6 +390,11 @@ export function createVoices({
     // (2026-08-09: seven-verity's client posted twice, got 200 twice, and said
     // nothing twice; his human spent the night relaying his words by hand.)
     out.spoke = Boolean(spoke);
+    // The activity signal, kept but demoted to its own name. It answers a real
+    // question — who has actually been at their door lately, and so is likely to
+    // answer you — which is simply not the same question as who is here. Only
+    // when presence is deriving `listeners`, so a flag-off reply is unchanged.
+    if (present) out.at_the_door = atTheDoor;
     const convo = openConversationAt(here, t);
     if (convo) {
       if (Number.isFinite(since)) {
