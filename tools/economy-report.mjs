@@ -32,7 +32,7 @@
 // Zero dependencies. Node 20+.
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -52,7 +52,15 @@ const sm = await import(pathToFileURL(join(TOWN_CLONE, "tools", "stamp-mint.mjs"
 const ws = await import(pathToFileURL(join(TOWN_CLONE, "tools", "world-stake.mjs")));
 
 const townSha = git(TOWN_CLONE, ["rev-parse", "--short", "HEAD"]).trim();
-const ledgerText = git(TOWN_CLONE, ["show", "HEAD:WHITE_PAGES/stamp-ledger.md"]);
+// Read the ledger from the WORKING TREE, not `git show HEAD:` — because
+// world-stake.mjs's deriveWorldMarkWeights reads the working tree, and two reads
+// of the same ledger that can disagree is a bug waiting for a dirty clone. The
+// town clone on the box is pull-only so the two are identical there; making them
+// identical BY CONSTRUCTION means a dev run on a dirty clone shows one coherent
+// picture rather than equity from HEAD beside stakes from the tree. `townSha` is
+// recorded as provenance, and `dirty` says plainly when it is not the whole truth.
+const ledgerText = readFileSync(join(TOWN_CLONE, "WHITE_PAGES", "stamp-ledger.md"), "utf8");
+const dirty = (gitTry(TOWN_CLONE, ["status", "--porcelain", "--", "WHITE_PAGES/stamp-ledger.md"], "") ?? "").trim() !== "";
 const entries = sm.parseStampLedger(ledgerText);
 
 // ── households: the town's vocabulary, never re-derived here ─────────────────
@@ -211,7 +219,7 @@ const html = `<!doctype html>
   footer { color:var(--dim); font-size:.72rem; margin-top:2.2rem; border-top:1px solid var(--line); padding-top:.8rem; max-width:860px; }
 </style></head><body>
 <h1>the economy — operator dashboard <small>postmark.town/ops/economy</small></h1>
-<div class="stamp">generated ${esc(now)} · town <code>${esc(townSha)}</code> · world <code>${esc(worldSha)}</code> · ${esc(String(entries.length))} sealed ledger lines replayed · regenerates hourly</div>
+<div class="stamp">generated ${esc(now)} · town <code>${esc(townSha)}</code>${dirty ? ' <span class="chip warn">ledger dirty — not the published tail</span>' : ""} · world <code>${esc(worldSha)}</code> · ${esc(String(entries.length))} sealed ledger lines replayed · regenerates hourly</div>
 
 <h2>equity — cumulative minted per household, all time</h2>
 <p>
@@ -309,7 +317,7 @@ ${zeroEscrowCommons.length > 200 ? `<p class="note">showing the first 200; the f
 mkdirSync(OUT_DIR, { recursive: true });
 writeFileSync(join(OUT_DIR, "index.html"), html);
 writeFileSync(join(OUT_DIR, "data.json"), JSON.stringify({
-  generated_at: now, town: townSha, world: worldSha, ledger_lines: entries.length,
+  generated_at: now, town: townSha, town_ledger_dirty: dirty, world: worldSha, ledger_lines: entries.length,
   equity: { M, households: equityRows.length, gini: Number(gini.toFixed(4)), top10_share: Number(topShare(10).toFixed(4)), rows: equityRows },
   supply: {
     minted: M, liquid: liquidTotal, escrow: escrowTotal, accounted: liquidTotal + escrowTotal,
