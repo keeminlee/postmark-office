@@ -96,18 +96,26 @@ const SHELF = [
   },
   {
     slug: "git", href: "git/", emblem: "⎇", kind: "Dashboard", title: "Git activity",
-    line: "The PR funnel through the witness, merges by actor, commits by class, the envelope-defect trend, and whose move the queue is waiting on.",
+    line: "What landed: merges the witness made unattended, merges made by hand, and commits that reached main without a PR — then the funnel, the defect trend, and whose move the queue is waiting on.",
+    // LANDED, not queued (2026-08-11, Keemin: "im less interested in current
+    // open prs and more the auto merges and commits that took place"). The card
+    // headline is what went in; "open now" demotes to the sub-line, where it is
+    // still the to-do the operator came for.
     read: (d) => {
       const r = d.recent ?? {};
-      const w = r.opened ?? sumWindow(d.funnel, (v) => v.opened);
+      const merged = r.merged ?? sumWindow(d.merge_actors, (m) => Object.values(m || {}).reduce((a, b) => a + b, 0));
+      const opened = r.opened ?? sumWindow(d.funnel, (v) => v.opened);
+      const auto = r.merged_by_lane?.witness?.cur;
       return {
         stamp: d.generated_at,
-        // The queue is already a "right now" number, so it stays the headline —
-        // it is the only card whose value is a to-do list rather than a reading.
-        value: comma(d.totals?.open ?? 0), unit: "PRs open right now",
-        sub: `${comma(w.cur)} opened and ${comma(r.merged?.cur ?? 0)} merged in ${r.window_days ?? 7}d · ${comma(d.totals?.prs ?? 0)} all time`,
-        spark: lastN(d.funnel, 14, (v) => v.opened),
-        status: (d.queue?.neverRan?.length ?? 0) ? "red" : (d.totals?.open ?? 0) > 25 ? "warn" : null,
+        value: comma(merged.cur), unit: `merged in the last ${r.window_days ?? 7} days`,
+        sub: `${deltaWord(merged)}${auto == null ? "" : ` · ${comma(auto)} by the witness`}`
+          + ` · ${comma(opened.cur)} opened · ${comma(d.totals?.open ?? 0)} open now`,
+        spark: lastN(d.merge_actors, 14, (m) => Object.values(m || {}).reduce((a, b) => a + b, 0)),
+        // the queue can still raise the alarm from here even though it is no
+        // longer the headline
+        flag: (d.queue?.neverRan?.length ?? 0) ? { cls: "red", text: `${d.queue.neverRan.length} PR(s) with no witness comment` }
+          : (d.totals?.open ?? 0) > 25 ? { cls: "warn", text: `${d.totals.open} open in the queue` } : null,
       };
     },
   },

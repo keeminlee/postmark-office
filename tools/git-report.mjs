@@ -138,12 +138,12 @@ async function refreshPRs() {
 
 // ── commits (local git, full history — regenerable, nothing evaporates) ──────
 function commitRows() {
-  const raw = execFileSync("git", ["-C", TOWN, "log", "--format=%H%an%ae%ad%s", "--date=short"], {
+  const raw = execFileSync("git", ["-C", TOWN, "log", "--format=%H%an%ae%ad%s", "--date=iso-strict"], {
     encoding: "utf8", maxBuffer: 64 * 1024 * 1024,
   });
   return raw.trim().split("\n").map((ln) => {
-    const [hash, an, ae, date, subject] = ln.split("");
-    return { hash, an, ae, date, subject };
+    const [hash, an, ae, ts, subject] = ln.split("");
+    return { hash, an, ae, ts, date: String(ts).slice(0, 10), subject };
   });
 }
 function actorClass(c, prIndex) {
@@ -267,11 +267,71 @@ const mergeWin = WIN.sum(mergeActors, (m) => Object.values(m).reduce((a, b) => a
 const certWin = WIN.sum(funnel, (f) => f.certified);
 const routedWin = WIN.sum(funnel, (f) => ROUTED_KEYS.reduce((s, k) => s + (f.routes?.[k] || 0), 0));
 const authorsWin = new Set(prs.filter((p) => WIN.inCur(day(p.created_at))).map((p) => p.author).filter(Boolean));
+
+// ── WHAT LANDED (2026-08-11) ─────────────────────────────────────────────────
+// Keemin: "im less interested in current open prs and more the auto merges and
+// commits that took place." A merged PR and a direct-to-main commit are both
+// things that LANDED, and they are the two different ways the town's main
+// branch moves — so they go into one time-ordered feed rather than two panels
+// the reader has to interleave by eye.
+//
+// The lane split is real, not inferred: `merged_by` comes from the GitHub API,
+// so "the witness merged this" is a login (github-actions[bot]), not a guess.
+// The direct-commit half is real too — a commit whose subject does not end in
+// `(#N)` did not arrive through a PR.
+const MERGE_LANES = ["witness", "office", "founder", "other"];
+const laneOf = (mb) => !mb ? "other"
+  : mb.startsWith("github-actions") ? "witness"
+  : mb === "ferry-postmark" ? "office"
+  : (mb === "keeminlee" || mb === "wright-starforge") ? "founder" : "other";
+
+const mergedPRs = prs.filter((p) => p.merged_at);
+const laneWin = Object.fromEntries(MERGE_LANES.map((l) => [l, { cur: 0, prev: 0 }]));
+for (const p of mergedPRs) {
+  const d = day(p.merged_at);
+  const side = WIN.inCur(d) ? "cur" : WIN.inPrev(d) ? "prev" : null;
+  if (side) laneWin[laneOf(p.merged_by)][side] += 1;
+}
+
+// direct-to-main commits: no PR number in the subject, and not the machinery's
+// own lanes (the clock's ticks and the ferry's crossing commits are not
+// somebody landing work — they are the town breathing).
+const MACHINE = new Set(["clock", "crossing"]);
+const directCommits = commits.filter((c) =>
+  !/\(#(\d+)\)$/.test(c.subject) && !MACHINE.has(actorClass(c, prIndex)));
+
+// One feed, newest first. PR merges carry their merge time from the API;
+// direct commits carry their author time from git.
+const landed = [
+  ...mergedPRs.map((p) => ({
+    kind: "merge", at: p.merged_at, ref: `#${p.number}`, number: p.number,
+    title: p.title, who: p.author, by: p.merged_by, lane: laneOf(p.merged_by),
+  })),
+  ...directCommits.map((c) => ({
+    kind: "commit", at: c.ts, ref: c.hash.slice(0, 7), hash: c.hash,
+    title: c.subject, who: c.an, by: c.an, lane: "direct",
+  })),
+].filter((x) => x.at).sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+
+const sinceH = (iso) => (now - Date.parse(iso)) / 36e5;
+const landed24 = landed.filter((x) => sinceH(x.at) <= 24);
+const landed48 = landed.filter((x) => sinceH(x.at) <= 48);
+// A quiet 48h is a real answer, but an empty feed tells the operator nothing
+// about what the town has been doing — so the panel falls back to the most
+// recent 25 whenever the window is thin, and says which it is showing.
+const landedFeed = landed48.length >= 8 ? landed48.slice(0, 60) : landed.slice(0, 25);
+const landedFeedIsWindow = landed48.length >= 8;
+
 data.recent = {
   window_days: W7, from: WIN.curFrom, to: WIN.curTo, prior_from: WIN.prevFrom, prior_to: WIN.prevTo,
   opened: openedWin, merged: mergeWin, commits: commitWin,
   certified: certWin, routed: routedWin, authors: authorsWin.size,
+  // added 2026-08-11: the landed reading the page and the hub card now lead with
+  merged_by_lane: laneWin,
+  landed_24h: { merges: landed24.filter((x) => x.kind === "merge").length, commits: landed24.filter((x) => x.kind === "commit").length },
+  landed_48h: { merges: landed48.filter((x) => x.kind === "merge").length, commits: landed48.filter((x) => x.kind === "commit").length },
 };
+data.landed = landedFeed.slice(0, 60);
 writeFileSync(join(OUT_DIR, "data.json"), JSON.stringify(data, null, 1));
 
 
@@ -305,22 +365,95 @@ const oldest = Math.max(0, ...open.map(ageDays));
 const clearedNow = certWin.cur + routedWin.cur ? certWin.cur / (certWin.cur + routedWin.cur) : 0;
 const clearedPrev = certWin.prev + routedWin.prev ? certWin.prev / (certWin.prev + routedWin.prev) : 0;
 
+// LANDED FIRST (2026-08-11, Keemin: "im less interested in current open prs and
+// more the auto merges and commits that took place"). The row opens on what
+// went in; "open now" is still here — it is the operator's to-do — but it is no
+// longer the first thing read, and the queue itself sits below the landed
+// section rather than above it.
+const witnessWin = laneWin.witness.cur;
+const handWin = laneWin.office.cur + laneWin.founder.cur + laneWin.other.cur;
+const autoShare = mergeWin.cur ? witnessWin / mergeWin.cur : 0;
+const autoSharePrev = mergeWin.prev
+  ? laneWin.witness.prev / mergeWin.prev : 0;
+
 const kpiRow = V.kpis([
-  { label: `PRs opened · last ${W7}d`, value: comma(openedWin.cur),
-    sub: V.deltaLine(openedWin.cur, openedWin.prev, { size: W7 }),
-    spark: V.sparkline(openedSeries, { title: "PRs opened per day, last 30d" }) },
   { label: `merged · last ${W7}d`, value: comma(mergeWin.cur),
-    sub: V.deltaLine(mergeWin.cur, mergeWin.prev, { size: W7 }) },
-  { label: "open now", value: comma(data.totals.open), sub: oldest ? `oldest ${oldest}d` : "queue clear",
-    status: data.queue.neverRan.length ? "red" : data.totals.open > 25 ? "warn" : "ok" },
-  { label: `cleared at the door · ${W7}d`, value: V.pct(clearedNow),
-    sub: clearedPrev ? `${V.pct(clearedPrev)} the ${W7}d before` : `no PRs in the prior ${W7}d`,
-    status: clearedNow < 0.5 ? "warn" : null },
+    sub: V.deltaLine(mergeWin.cur, mergeWin.prev, { size: W7 }),
+    spark: V.sparkline(last30.map((d) => Object.values(mergeActors[d] || {}).reduce((a, b) => a + b, 0)),
+      { title: "merges per day, last 30d" }) },
   { label: `commits · last ${W7}d`, value: comma(commitWin.cur),
     sub: V.deltaLine(commitWin.cur, commitWin.prev, { size: W7 }),
     spark: V.sparkline(commitSeries, { title: "commits per day, last 30d" }) },
-  { label: "writers this week", value: comma(authorsWin.size), sub: "authors who opened a PR in the window" },
+  { label: "landed in the last 24h",
+    value: comma(data.recent.landed_24h.merges + data.recent.landed_24h.commits),
+    sub: `${comma(data.recent.landed_24h.merges)} merges · ${comma(data.recent.landed_24h.commits)} direct commits` },
+  { label: `merged by the witness · ${W7}d`, value: V.pct(autoShare),
+    sub: `${comma(witnessWin)} auto · ${comma(handWin)} by hand`
+      + (autoSharePrev ? ` · ${V.pct(autoSharePrev)} the ${W7}d before` : "") },
+  { label: `PRs opened · last ${W7}d`, value: comma(openedWin.cur),
+    sub: V.deltaLine(openedWin.cur, openedWin.prev, { size: W7 }),
+    spark: V.sparkline(openedSeries, { title: "PRs opened per day, last 30d" }) },
+  { label: "open now", value: comma(data.totals.open), sub: oldest ? `oldest ${oldest}d` : "queue clear",
+    status: data.queue.neverRan.length ? "red" : data.totals.open > 25 ? "warn" : "ok" },
 ]);
+
+// ── 0. what landed — the feed, and the two lanes it arrives through ──────────
+const LANE_COLORS = {
+  witness: V.SERIES[0], office: V.SERIES[1], founder: V.SERIES[2], other: V.MUTED, direct: V.SERIES[4],
+};
+// Two registers: the long phrase names the lane in a legend, the short one fits
+// a table cell without wrapping it onto two lines (which it did at first pass,
+// and a feed of double-height rows reads as twice as much page).
+const LANE_WORD = {
+  witness: "witness (auto)", office: "office", founder: "founder", other: "other", direct: "direct to main",
+};
+const LANE_SHORT = { witness: "witness", office: "office", founder: "founder", other: "other", direct: "direct" };
+const last14 = last30.slice(-14);
+const mergeLaneChart = V.columns({
+  rows: last14.map((d) => ({ label: dd(d), values: mergeActors[d] || {} })),
+  keys: MERGE_LANES, colors: LANE_COLORS, fmt: comma,
+  empty: "no PR merged in the last 14 days",
+});
+// Seven classes is the ceiling for telling series apart; "other" is the fold.
+const ACTOR_COLORS = {
+  "witness-merge": V.SERIES[0], "hand-merge": V.SERIES[1], crossing: V.SERIES[2],
+  clock: V.SERIES[3], office: V.SERIES[4], founders: V.SERIES[5], other: V.MUTED,
+};
+const commitLandChart = V.columns({
+  rows: last14.map((d) => ({ label: dd(d), values: commitDays[d] || {} })),
+  keys: ACTORS, colors: ACTOR_COLORS, fmt: comma,
+});
+
+const hhmm = (iso) => {
+  const t = new Date(iso);
+  return `${String(t.getUTCMonth() + 1).padStart(2, "0")}-${String(t.getUTCDate()).padStart(2, "0")} ${String(t.getUTCHours()).padStart(2, "0")}:${String(t.getUTCMinutes()).padStart(2, "0")}Z`;
+};
+const agoWord = (iso) => {
+  const h = sinceH(iso);
+  return h < 1 ? `${Math.max(1, Math.round(h * 60))}m ago` : h < 48 ? `${h.toFixed(h < 10 ? 1 : 0)}h ago` : `${Math.round(h / 24)}d ago`;
+};
+const landedRow = (x) => {
+  const href = x.kind === "merge"
+    ? `https://github.com/${REPO}/pull/${x.number}`
+    : `https://github.com/${REPO}/commit/${x.hash}`;
+  return `<tr><td class="dim nw">${esc(hhmm(x.at))}</td>`
+    + `<td class="nw"><a href="${href}">${esc(x.ref)}</a></td>`
+    + `<td class="nw"><span class="lane-dot" style="background:${LANE_COLORS[x.lane]}"></span>${esc(LANE_SHORT[x.lane] ?? x.lane)}</td>`
+    + `<td class="who nw">${esc(x.who || "")}</td>`
+    + `<td class="what">${esc(String(x.title).slice(0, 86))}</td>`
+    + `<td class="dim num nw">${esc(agoWord(x.at))}</td></tr>`;
+};
+// Twenty-four visible, the rest one click away. A feed long enough to push the
+// charts off the first two screens stops being the lead and becomes the page.
+const LANDED_VISIBLE = 24;
+const landedHead = landedFeed.slice(0, LANDED_VISIBLE);
+const landedRest = landedFeed.slice(LANDED_VISIBLE);
+const feedTable = (rows) =>
+  `<div class="tablewrap"><table><thead><tr><th>when</th><th>ref</th><th>lane</th><th>author</th><th>what</th><th>ago</th></tr></thead>`
+  + `<tbody>${rows.map(landedRow).join("")}</tbody></table></div>`;
+const landedTable = landedFeed.length
+  ? feedTable(landedHead) + (landedRest.length ? V.details(`the ${landedRest.length} before those`, feedTable(landedRest)) : "")
+  : `<p class="none">nothing has landed on main yet</p>`;
 
 // ── 1. the funnel, as an outcome ─────────────────────────────────────────────
 // Certified vs routed is a pass/fail reading, so it wears STATUS ink, not series
@@ -354,23 +487,22 @@ const reasonRows = ROUTED_KEYS.filter((k) => reasonCur[k]).sort((a, b) => reason
   .map((k) => ({ label: k, values: { n: reasonCur[k] }, note: `prior ${W7}d ${reasonPrev[k] || 0} · ${reason30[k] || 0} in 30d` }));
 const reasonChart = V.bars({ rows: reasonRows, keys: ["n"], colors: { n: V.SERIES[0] }, empty: `nothing was routed in the last ${W7} days` });
 
-// ── 3. merges by actor, with the pen seam drawn on the chart ─────────────────
-const mergeRows = last30.map((d) => ({ label: dd(d), values: mergeActors[d] || {} }));
-const MERGE_COLORS = { witness: V.SERIES[0], office: V.SERIES[1], founder: V.SERIES[2], other: V.MUTED };
-const seamAt = last30.indexOf(PEN_SEAM);
-const mergeChart = V.columns({
-  rows: mergeRows, keys: ["witness", "office", "founder", "other"], colors: MERGE_COLORS, fmt: comma,
-  annotations: seamAt >= 0 ? [{ at: seamAt, text: `pen seam ${PEN_SEAM}` }] : [],
-});
-
-// ── 4. commits by actor class ────────────────────────────────────────────────
-// Seven classes is the ceiling for telling series apart; "other" is the fold.
-const ACTOR_COLORS = {
-  "witness-merge": V.SERIES[0], "hand-merge": V.SERIES[1], crossing: V.SERIES[2],
-  clock: V.SERIES[3], office: V.SERIES[4], founders: V.SERIES[5], other: V.MUTED,
-};
-const actorRows = last30.map((d) => ({ label: dd(d), values: commitDays[d] || {} }));
-const actorChart = V.columns({ rows: actorRows, keys: ACTORS, colors: ACTOR_COLORS, fmt: comma });
+// ── 3+4. the landed charts' tables ───────────────────────────────────────────
+// The 30-day merge and commit charts that used to live here are gone: the
+// landed section above draws both at 14 days, and two near-identical column
+// charts of the same measure at two spans is not context, it is repetition.
+// The month is still here — as the collapsed table under each chart.
+//
+// The PEN SEAM caveat outlives its annotation. The rule was drawn on a 30-day
+// chart; at 14 days the seam (${PEN_SEAM}) is off the left edge, so there is no
+// longer a stretch of "founder" columns on screen that silently includes office
+// rounds. It stays in prose on the lane chart and in the header's honesty
+// rules, because the 30-day table below still spans it.
+const mergeTable = V.table(["day", ...MERGE_LANES, "total"], last30.slice().reverse().map((d) => {
+  const m = mergeActors[d] || {};
+  return [d, ...MERGE_LANES.map((k) => `<span class="num">${m[k] || 0}</span>`),
+    `<b>${MERGE_LANES.reduce((s, k) => s + (m[k] || 0), 0)}</b>`];
+}));
 const actorTable = V.table(["day", ...ACTORS, "total"], last30.slice().reverse().map((d) => {
   const c = commitDays[d] || {};
   return [d, ...ACTORS.map((a) => `<span class="num">${c[a] || 0}</span>`),
@@ -407,13 +539,37 @@ const queueBlock = (label, items, note) =>
   + (items.length ? `<div class="tablewrap"><table><thead><tr><th>pr</th><th>author</th><th>title</th><th>age</th></tr></thead><tbody>${items.map(queueRow).join("")}</tbody></table></div>` : `<p class="none">none</p>`);
 
 // ── assemble ─────────────────────────────────────────────────────────────────
-// Order is by recency, not by importance-in-the-abstract: whose move it is right
-// now, then this week's flow, then the month's shape, then the long view.
+// LANDED FIRST (2026-08-11). The page used to open on the open queue; it now
+// opens on what went in — the merges the witness made automatically, the ones
+// made by hand, and the commits that reached main without a PR at all. The
+// queue keeps its place as the operator's to-do list, one section down.
 const body = `
 ${kpiRow}
 
+<h2>What landed — merges and direct commits, newest first</h2>
+<p class="note">${landedFeedIsWindow
+    ? `Everything that reached <code>main</code> in the last 48 hours: ${comma(landed48.filter((x) => x.kind === "merge").length)} merged PRs and ${comma(landed48.filter((x) => x.kind === "commit").length)} direct commits, in one time-ordered list.`
+    : `The last ${landedFeed.length} things to reach <code>main</code>. The 48-hour window held fewer than eight, so this is showing the most recent instead of an almost-empty list — the timestamps say how far back it reaches.`}
+A <b>merge</b> arrived through a PR and names the account that merged it; <code>witness (auto)</code> means the check merged it with no human in the loop. A <b>direct commit</b> never had a PR — its subject line does not end in a PR number. The clock's ticks and the ferry's crossing commits are left out: they are the town breathing, not somebody landing work.</p>
+${V.legend(["witness", "office", "founder", "direct"].map((l) => ({ name: LANE_WORD[l], color: LANE_COLORS[l] })))}
+${landedTable}
+
+${V.figure({
+  title: "Merges per day, by lane (last 14d)",
+  note: `Who actually pressed merge. <code>witness</code> is the automatic lane — the check certified the PR and merged it unattended; the rest went in by hand. <b>Pen seam ${PEN_SEAM}:</b> before that date the office merged through the founder credential, so "founder" in the 30-day table below includes ordinary office rounds. The seam is off the left edge of this 14-day chart, which is why it is written here rather than drawn on it.`,
+  legendItems: MERGE_LANES.map((l) => ({ name: LANE_WORD[l], color: LANE_COLORS[l] })),
+  chart: mergeLaneChart, detail: mergeTable, detailLabel: "per-day merges, last 30d",
+})}
+
+${V.figure({
+  title: "Commits per day, by actor class (last 14d)",
+  note: `Everything that reached the branch, however it got there. <code>witness-merge</code> and <code>hand-merge</code> are PR merge commits; <code>crossing</code> is the ferry's own pen and <code>clock</code> the town clock — those two are machinery, and they are the reason this chart runs higher than the merge chart above it. <code>other</code> is the fold for everything past the seventh class. One repo: this generator reads the town clone, so "commits" here means the town's own history and not the other Postmark repos.`,
+  legendItems: ACTORS.map((a) => ({ name: a, color: ACTOR_COLORS[a] })),
+  chart: commitLandChart, detail: actorTable, detailLabel: "per-day commits, last 30d",
+})}
+
 <h2>Queue health — whose move, right now</h2>
-<p class="note">The page opens on the only panel that is about <em>this minute</em>: one dot per open PR, placed by age. A lane filling up on the right is the signal; the lists beneath carry the links.</p>
+<p class="note">What has <em>not</em> landed: one dot per open PR, placed by age. A lane filling up on the right is the signal; the lists beneath carry the links.</p>
 <div class="plotwrap">${queueStrip}</div>
 ${queueBlock("Waiting on the resident (RRR)", data.queue.rrr, "machine-state; the office skips these")}
 ${queueBlock("Office queue (uncertified, unlabeled)", data.queue.office)}
@@ -441,25 +597,6 @@ ${V.figure({
 })}
 
 ${V.figure({
-  title: "Merges per day, by actor (last 30d)",
-  note: `The vertical rule is the <b>pen seam</b>: before ${PEN_SEAM} the office merged through the founder credential, so "founder" columns to the left of it include ordinary office rounds. Annotated on the chart, never smoothed out of it.`,
-  legendItems: [{ name: "witness", color: MERGE_COLORS.witness }, { name: "office", color: MERGE_COLORS.office },
-    { name: "founder", color: MERGE_COLORS.founder }, { name: "other", color: MERGE_COLORS.other }],
-  chart: mergeChart,
-  detail: V.table(["day", "witness", "office", "founder", "other"], last30.slice().reverse().map((d) => {
-    const m = mergeActors[d] || {};
-    return [d, ...["witness", "office", "founder", "other"].map((k) => `<span class="num">${m[k] || 0}</span>`)];
-  })),
-})}
-
-${V.figure({
-  title: "Commits per day, by actor class (last 30d)",
-  note: `Who is actually writing to the town. <code>crossing</code> is the ferry's own pen, <code>clock</code> the town clock, <code>witness-merge</code> a PR the witness merged; <code>other</code> is the fold for everything past the seventh class.`,
-  legendItems: ACTORS.map((a) => ({ name: a, color: ACTOR_COLORS[a] })),
-  chart: actorChart, detail: actorTable,
-})}
-
-${V.figure({
   title: "Envelope defects — caught at the door vs bounced at the crossing (last 30d)",
   note: `Two sides of one baseline because they are opposites, not two magnitudes: above the line a defect was caught while the resident could still fix it, below the line it reached the ferry. Above is the outcome to want. Mail <em>volume</em> is not on this page — it belongs to the town's own pulse (read_metrics); this compares catch location only.`,
   legendItems: [{ name: "caught at the door (RRR)", color: V.OK }, { name: "bounced at the crossing", color: V.BAD }],
@@ -469,7 +606,7 @@ ${V.figure({
 })}
 
 ${V.longView(
-  `Everything above reads the last ${W7} or 30 days. These are the totals since the repo's first commit — a full-history rebuild, so nothing here evaporates, but none of it changes on any given day, which is why it is no longer the first thing the page says.`,
+  `Everything above reads the last 48 hours, ${W7} days or 30 days. These are the totals since the repo's first commit — a full-history rebuild, so nothing here evaporates, but none of it changes on any given day.`,
   V.kpis([
     { label: "PRs, all time", value: comma(data.totals.prs), sub: `${comma(mergedTotal)} merged · ${comma(data.totals.prs - mergedTotal - data.totals.open)} closed unmerged` },
     { label: "witness-merged, all time", value: comma(data.totals.witness_merged), sub: `${V.pct(witnessShare)} of everything merged` },
@@ -485,7 +622,14 @@ const html = V.page({
   here: "/ops/git/",
   stamp: `generated ${esc(data.generated_at)} · repo <code>${esc(REPO)}</code> · full-history rebuild (nothing here evaporates) · <a href="data.json">data.json</a>`,
   body,
-  footer: `Machine-state only: every number derives from git, the GitHub API, labels and the mail-ledger — no LLM anywhere in the loop. Sources: the town clone (commits, ledger BOUNCE lines) and a read-only GitHub token (PRs, labels, witness comments), cached incrementally. Windows are measured against the clock, so a quiet week reads as a quiet week. Generator: <code>postmark-office/tools/git-report.mjs</code>, hourly cron. Unlinked + noindex; the operator hub is <a href="/ops/">/ops/</a>.`,
+  footer: `Machine-state only: every number derives from git, the GitHub API, labels and the mail-ledger — no LLM anywhere in the loop. The lane split is a login, not a guess: <code>merged_by</code> comes from the API, so "the witness merged this" means <code>github-actions[bot]</code> did. A direct commit is one whose subject does not end in a PR number. Sources: the town clone (commits, ledger BOUNCE lines) and a read-only GitHub token (PRs, labels, witness comments), cached incrementally. Windows are measured against the clock, so a quiet week reads as a quiet week. Generator: <code>postmark-office/tools/git-report.mjs</code>, hourly cron. Unlinked + noindex; the operator hub is <a href="/ops/">/ops/</a>.`,
+  // The feed's short columns must not wrap: a timestamp broken across two lines
+  // doubles every row's height and turns 24 rows into a wall.
+  extraCss: `.lane-dot{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:.45rem;vertical-align:baseline}
+td.nw{white-space:nowrap}
+/* the subject keeps a floor so the wrapper scrolls instead of squeezing it into
+   a four-line sliver on a phone — a log row should be a line, not a paragraph */
+td.what{min-width:22rem}`,
 });
 writeFileSync(join(OUT_DIR, "index.html"), html);
-console.log(`[git-report] wrote ${OUT_DIR}/index.html (+data.json) — ${prs.length} PRs, ${commits.length} commits, ${openedWin.cur} opened in the last ${W7}d`);
+console.log(`[git-report] wrote ${OUT_DIR}/index.html (+data.json) — ${mergeWin.cur} merges + ${commitWin.cur} commits landed in the last ${W7}d; ${landed24.length} in the last 24h; ${prs.length} PRs, ${commits.length} commits all time`);
