@@ -153,6 +153,93 @@ test("world_leave_mark locks the parcel dial — extent is the town's, not the c
   }, "a parcel carries no extent — every parcel is the town's 25×25, centred on your at");
 });
 
+// ── the bounty grammar at the door (founder-ruled 2026-08-11, BETA) ──────────
+// The door must speak the same grammar the board's reader reads (site
+// src/lib/board.mjs): class bounty + one ask ≤150 + whole-number reward ≥1 +
+// open/done. Every rule here has a bounce test that names the exact sentence,
+// because a malformed notice on the live board is counted-not-rendered — the
+// door owes the poster the honest bounce instead.
+
+const validBounty = {
+  slug: "bounty-a-map-of-the-quay",
+  kind: "sited",
+  at: { x: 250, y: -100 },
+  extent: { w: 1, h: 1 },
+  body: "Pinned to the board.",
+  class: "bounty",
+  ask: "Draw the quay as it stands, with every mail-house named.",
+  reward: 12,
+};
+
+test("bounty fields without class bounce — the grammar belongs to a classed mark", async () => {
+  await bounced({ ...validMark, ask: "orphaned" }, "ask/reward/status belong to a classed mark");
+  await bounced({ ...validMark, reward: 5 }, "ask/reward/status belong to a classed mark");
+  await bounced({ ...validMark, status: "open" }, "ask/reward/status belong to a classed mark");
+});
+
+test("unknown classes bounce — the law knows one class today", async () => {
+  await bounced({ ...validBounty, class: "quest" }, 'unknown class "quest"');
+});
+
+test("a bounty notice is a sited mark", async () => {
+  await bounced({ ...validMark, class: "bounty", ask: "x", reward: 1 }, "a bounty notice is a sited mark");
+});
+
+test("a bounty needs an ask — present, one line, ≤150 Unicode characters", async () => {
+  await bounced({ ...validBounty, ask: undefined }, "a bounty needs an ask");
+  await bounced({ ...validBounty, ask: "   " }, "a bounty needs an ask");
+  await bounced({ ...validBounty, ask: "two\nlines" }, "an ask is one line");
+  await bounced({ ...validBounty, ask: "😀".repeat(151) }, "ask is 151 chars; the cap is 150");
+});
+
+test("an ask cannot smuggle the record grammar — # truncates, non-strings coerce (review O-1)", async () => {
+  // parseRecord strips from the first '#': without this bounce, "Map the quay
+  // #3" lands in canon as "Map the quay" and no gate ever says so.
+  await bounced({ ...validBounty, ask: "Map the quay #3, every mail-house named." }, "an ask cannot carry '#'");
+  await bounced({ ...validBounty, ask: "#3 first" }, "an ask cannot carry '#'");
+  await bounced({ ...validBounty, ask: { the: "quay" } }, "an ask is a sentence");
+  await bounced({ ...validBounty, ask: [1, 2, 3] }, "an ask is a sentence");
+});
+
+test("a bounty reward is a whole number of stamps, at least 1", async () => {
+  const defect = "reward must be a whole number of stamps, at least 1";
+  await bounced({ ...validBounty, reward: undefined }, defect);
+  await bounced({ ...validBounty, reward: 0 }, defect);
+  await bounced({ ...validBounty, reward: -3 }, defect);
+  await bounced({ ...validBounty, reward: 2.5 }, defect);
+  await bounced({ ...validBounty, reward: "a dozen" }, defect);
+  // Number(true) === 1: without the typeof guard a boolean buys a 1-stamp
+  // notice silently (review note; the MCP layer's validateArgs never runs
+  // integer/minimum checks).
+  await bounced({ ...validBounty, reward: true }, defect);
+});
+
+test("a lawful bounty clears every pre-check — it dies at the clone, not at the law", async () => {
+  // The positive half the bounce corpus lacked (review note): with a
+  // nonexistent WORLD_CLONE, every unlawful payload gets its named 422 BEFORE
+  // any clone work — so a lawful one failing with anything BUT a 422 is the
+  // proof that the whole door law passed it and only the machinery stopped it.
+  await assert.rejects(
+    () => leaveMarkViaOffice(process.env.WORLD_CLONE, validBounty, one),
+    (error) => error.code !== 422,
+  );
+});
+
+test("bounty status is open or done; threshold is the town's bar", async () => {
+  await bounced({ ...validBounty, status: "closed" }, 'status is open or done — got "closed"');
+  await bounced({ ...validBounty, threshold: 100 }, "threshold is the town's bar");
+});
+
+test("world_leave_mark tool contract carries the bounty grammar", () => {
+  const tool = WORLD_TOOLS.find(({ name }) => name === "world_leave_mark");
+  assert.deepEqual(tool.inputSchema.properties.class.enum, ["bounty"]);
+  assert.match(tool.inputSchema.properties.class.description, /purely liquid/);
+  assert.match(tool.inputSchema.properties.ask.description, /150 characters/);
+  assert.equal(tool.inputSchema.properties.reward.type, "integer");
+  assert.equal(tool.inputSchema.properties.reward.minimum, 1);
+  assert.deepEqual(tool.inputSchema.properties.status.enum, ["open", "done"]);
+});
+
 test("world_leave_mark tool contract states the complete mark law and craft warning", () => {
   const tool = WORLD_TOOLS.find(({ name }) => name === "world_leave_mark");
   assert.match(tool.inputSchema.properties.body.description, /maximum 150 characters/);

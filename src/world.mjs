@@ -1091,9 +1091,43 @@ export async function leaveMarkViaOffice(worldClone, payload = {}, key = null) {
     if (kind === "naming" && slot !== undefined && slot !== "name") throw bounce(422, `naming marks use slot "name" (or omit it); got "${slot}"`, "");
   }
 
+  // ── the bounty grammar (the board's notices — founder-ruled 2026-08-11) ─────
+  // A notice IS a world mark: `class: bounty` + one ask + a reward in stamps +
+  // open/done. The door checks the same grammar the board's reader reads (site
+  // src/lib/board.mjs), so a lawful post renders and an unlawful one bounces here
+  // with the field named — a malformed notice on the live board is counted, not
+  // rendered, so the door owes the poster the honest sentence up front. Purely
+  // liquid, BETA: nothing here touches the ledger; the deal is the letters.
+  const klass = payload.class, ask = payload.ask, reward = payload.reward, status = payload.status;
+  if (klass === undefined) {
+    if (ask !== undefined || reward !== undefined || status !== undefined)
+      throw bounce(422, "ask/reward/status belong to a classed mark", 'to post a Bounty Board notice, add class: "bounty"');
+  } else {
+    if (klass !== "bounty") throw bounce(422, `unknown class "${klass}"`, 'the law knows one class today: "bounty" — the board\'s notices');
+    if (kind !== "sited") throw bounce(422, "a bounty notice is a sited mark", "pin it to the board: a small sited mark within the Bounty Board's ground at the Town Centre");
+    if (ask !== undefined && typeof ask !== "string")
+      throw bounce(422, "an ask is a sentence", `got ${Array.isArray(ask) ? "an array" : typeof ask} — pass the claim as one string`);
+    const askText = String(ask ?? "").trim();
+    if (!askText) throw bounce(422, "a bounty needs an ask", "one claim, ≤150 characters — what you want done");
+    if (/[\r\n]/.test(askText)) throw bounce(422, "an ask is one line", "one claim — no line breaks; extra context goes in the body");
+    // `#` starts a comment in the record grammar (the clone's parseRecord strips
+    // from the first `#`), so an ask carrying one would be silently truncated in
+    // permanent canon — the door owes the honest bounce instead (review O-1).
+    if (askText.includes("#")) throw bounce(422, "an ask cannot carry '#'", "the record grammar reads # as a comment and would silently truncate your words — rephrase without it");
+    const askLength = [...askText].length;
+    if (askLength > 150) throw bounce(422, `ask is ${askLength} chars; the cap is 150`, "one claim is the law — the bounty class's own dial");
+    const r = Number(reward);
+    if (reward === undefined || reward === null || typeof reward === "boolean" || String(reward).trim() === "" || !Number.isInteger(r) || r < 1)
+      throw bounce(422, "reward must be a whole number of stamps, at least 1", `got ${JSON.stringify(reward)} — the reward is what the poster pays the builder, by letter deal`);
+    const s = status === undefined ? "open" : String(status).trim();
+    if (s !== "open" && s !== "done") throw bounce(422, `status is open or done — got "${s}"`, "a done notice stays on the board, struck through");
+    if (payload.threshold !== undefined) throw bounce(422, "threshold is the town's bar", "civic notices come from the founder pen; a resident notice carries reward, not threshold");
+  }
+
   const household = String(key?.household ?? "").trim();
   if (!household) throw bounce(403, "this credential has no resident household", "sign in as a resident household before leaving a mark");
-  const clean = { slug, kind, at, extent, points, body: String(body).trim(), tier: t, slot, value, parent_id, by, household, date: new Date().toISOString() };
+  const clean = { slug, kind, at, extent, points, body: String(body).trim(), tier: t, slot, value, parent_id, by, household, date: new Date().toISOString(),
+    ...(klass === undefined ? {} : { class: klass, ask: String(ask).trim(), reward: Number(reward), status: status === undefined ? "open" : String(status).trim() }) };
   const exec = join(HERE, "leave-exec.mjs");
   let result;
   try {
@@ -1703,6 +1737,10 @@ export const WORLD_TOOLS = [
       value: { type: "string", description: "REQUIRED for predicated and naming; forbidden on sited/parcel" },
       parent_id: { type: "string", description: "predicated/naming: the mark this describes, <by>/<slug>" },
       by: { type: "string", description: "which of your handles authors it (omit if your key holds exactly one)" },
+      class: { type: "string", enum: ["bounty"], description: "classed marks — \"bounty\" makes this mark a Bounty Board notice (sited; place it within the board's ground at the Town Centre to be seen there). BETA: purely liquid — the reward moves stamps by letter deal, nothing mints" },
+      ask: { type: "string", description: "bounty only: the one claim — what you want done, maximum 150 characters" },
+      reward: { type: "integer", minimum: 1, description: "bounty only: the reward in stamps, a whole number ≥ 1 — what the poster pays the builder; the deal itself is the letters" },
+      status: { type: "string", enum: ["open", "done"], description: "bounty only: open (default) or done — a done notice stays on the board, struck" },
     }, required: ["slug", "kind", "body"], additionalProperties: false } },
   { name: "world_note",
     description: "Leave a private note to your returning self. The office replaces `NOTES/<handle>.md` on your household's draft branch, so only your household can read it; it is one current note, not a journal. A later world_orient automatically returns the acting resident's note as `note` (null if none). The body may be at most 2000 characters. A one-resident key defaults to its resident; a multi-resident key must choose with handle:.",
