@@ -73,6 +73,59 @@ export function compact(n) {
 /** Truncate for a label slot, keeping the tail visible where the tail is the identifying part. */
 export const clip = (s, n) => (String(s).length <= n ? String(s) : String(s).slice(0, n - 1) + "…");
 
+// ── recency: the two windows every page reads against ────────────────────────
+// A dashboard's first question is "what happened lately", not "what happened
+// ever" (Keemin, 2026-08-11). Lifetime totals still belong on these pages — as
+// the second reading, not the headline — so every page pairs a window with the
+// window before it, and the pair is what gets rendered.
+//
+// The clock, not the newest log line, defines the window: a generator whose
+// source has gone quiet must show a window that has fallen to zero, not a
+// window that silently slides back to wherever the data stops.
+export function windows(size = 7, now = Date.now()) {
+  const iso = (t) => new Date(t).toISOString().slice(0, 10);
+  const curFrom = iso(now - (size - 1) * 864e5);
+  const prevTo = iso(now - size * 864e5);
+  const prevFrom = iso(now - (2 * size - 1) * 864e5);
+  const listFrom = (from) => {
+    const out = [];
+    for (let d = new Date(`${from}T00:00:00Z`).getTime(); d <= now; d += 864e5) out.push(iso(d));
+    return out;
+  };
+  return {
+    size, curFrom, curTo: iso(now), prevFrom, prevTo,
+    inCur: (d) => d >= curFrom,
+    inPrev: (d) => d >= prevFrom && d <= prevTo,
+    curDays: listFrom(curFrom),
+    /** sum a { day: n } map (or via a picker) over the current / prior window */
+    sum(map, pick = (v) => v) {
+      let cur = 0, prev = 0;
+      for (const [d, v] of Object.entries(map || {})) {
+        const n = Number(pick(v)) || 0;
+        if (d >= curFrom) cur += n; else if (d >= prevFrom && d <= prevTo) prev += n;
+      }
+      return { cur, prev };
+    },
+  };
+}
+
+/**
+ * "▲ 27% vs prior 7d (640)" — the sub-line that turns a count into a direction.
+ * Deliberately NOT colour-coded by default: more requests is not obviously good
+ * and fewer marks is not obviously bad, and the method reserves status ink for
+ * measures whose direction really does mean good or bad. Pass tone:"good"/"bad"
+ * only where up genuinely is.
+ */
+export function deltaLine(cur, prev, { size = 7, unit = "", tone = null } = {}) {
+  const cls = tone === "good" ? " d-good" : tone === "bad" ? " d-bad" : "";
+  if (!prev && !cur) return `<span class="dim">nothing in either ${size}d window</span>`;
+  if (!prev) return `<span class="k-d${cls}">new</span> · nothing in the prior ${size}d`;
+  const change = (cur - prev) / prev;
+  const arrow = cur === prev ? "=" : cur > prev ? "▲" : "▼";
+  const mag = cur === prev ? "level" : `${Math.abs(change * 100) < 10 ? (Math.abs(change) * 100).toFixed(1) : Math.round(Math.abs(change) * 100)}%`;
+  return `<span class="k-d${cls}">${arrow} ${mag}</span> vs prior ${size}d (${comma(prev)}${unit})`;
+}
+
 // A y-axis that lands on clean numbers. Returns { max, step, ticks }.
 export function niceScale(rawMax, targetTicks = 4) {
   const m = Math.max(1, rawMax);
@@ -406,6 +459,15 @@ export const details = (summary, inner) => `<details class="det"><summary>${esc(
 export const table = (headers, rows) =>
   `<table><thead><tr>${headers.map((x) => `<th>${x}</th>`).join("")}</tr></thead><tbody>${rows.map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
 
+/**
+ * The long view: lifetime totals and stock measures. They stay on the page —
+ * a town with no memory of its own totals is worse off — but below a rule and
+ * under their own heading, so the first read is always what happened lately.
+ */
+export const longView = (note, body) =>
+  `<div class="longview"><p class="longview-head">the long view — lifetime and stock</p>`
+  + `<p class="note">${note}</p>${body}</div>`;
+
 /** figure — a chart with its title, legend, note and collapsed table twin. */
 export function figure({ title, note, chart, legendItems = [], detail, detailLabel = "the numbers" }) {
   return `<section class="fig"><h2>${esc(title)}</h2>${note ? `<p class="note">${note}</p>` : ""}`
@@ -467,6 +529,7 @@ code{color:var(--ink)}
 .kpi .k-l{font-size:.68rem;letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
 .kpi .k-v{font-size:1.6rem;line-height:1.15;color:var(--gold);word-break:break-word}
 .kpi .k-s{font-size:.72rem;color:var(--dim)}
+.k-d{color:var(--ink)}.k-d.d-good{color:var(--ok)}.k-d.d-bad{color:var(--bad)}
 .kpi.k-ok .k-v{color:var(--ok)}.kpi.k-warn .k-v{color:var(--warn)}.kpi.k-red .k-v{color:var(--bad)}
 .kpi .spark{margin-top:.35rem;width:100%;height:30px;display:block}
 
@@ -509,6 +572,10 @@ td,th{text-align:left;padding:.24rem .7rem .24rem 0;border-bottom:1px dotted var
 th{color:var(--dim);font-weight:400;font-size:.68rem;text-transform:uppercase;letter-spacing:.1em}
 .num{text-align:right}.dim{color:var(--dim)}.who{color:var(--gold)}
 
+/* the long view — lifetime totals and stock measures, kept but plainly second */
+.longview{margin-top:3.2rem;border-top:2px solid var(--line);padding-top:.9rem}
+.longview-head{font-size:.72rem;letter-spacing:.18em;text-transform:uppercase;color:var(--gold);margin:0 0 .3rem}
+.longview h2{margin-top:1.6rem}
 .fig{margin:0}
 .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:0 2rem}
 footer{color:var(--dim);font-size:.72rem;margin-top:2.4rem;border-top:1px solid var(--line);

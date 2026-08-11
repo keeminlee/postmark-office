@@ -252,6 +252,26 @@ const data = {
   funnel, merge_actors: mergeActors, commit_days: commitDays, envelope,
   queue: Object.fromEntries(Object.entries(queue).map(([k, v]) => [k, v.map((p) => ({ number: p.number, title: p.title, author: p.author, age_days: ageDays(p), labels: p.labels }))])),
 };
+
+// ── the recent window (2026-08-11) ───────────────────────────────────────────
+// Computed here rather than in the render because it goes into data.json too:
+// the hub reads `recent` straight off the twin instead of re-deriving a window
+// from the by-day maps, which is how two surfaces end up disagreeing about what
+// "this week" means. Every pre-existing field is untouched.
+const WIN = V.windows(7);
+const W7 = WIN.size;
+const ROUTED_KEYS = ROUTE_KEYS.filter((k) => k !== "no-witness");
+const openedWin = WIN.sum(funnel, (f) => f.opened);
+const commitWin = WIN.sum(commitDays, (c) => Object.values(c).reduce((a, b) => a + b, 0));
+const mergeWin = WIN.sum(mergeActors, (m) => Object.values(m).reduce((a, b) => a + b, 0));
+const certWin = WIN.sum(funnel, (f) => f.certified);
+const routedWin = WIN.sum(funnel, (f) => ROUTED_KEYS.reduce((s, k) => s + (f.routes?.[k] || 0), 0));
+const authorsWin = new Set(prs.filter((p) => WIN.inCur(day(p.created_at))).map((p) => p.author).filter(Boolean));
+data.recent = {
+  window_days: W7, from: WIN.curFrom, to: WIN.curTo, prior_from: WIN.prevFrom, prior_to: WIN.prevTo,
+  opened: openedWin, merged: mergeWin, commits: commitWin,
+  certified: certWin, routed: routedWin, authors: authorsWin.size,
+};
 writeFileSync(join(OUT_DIR, "data.json"), JSON.stringify(data, null, 1));
 
 
@@ -266,24 +286,40 @@ const dd = (d) => d.slice(5); // MM-DD — the year is on the stamp line
 // The route classes stay in the data and in the tables; on the chart they
 // collapse to ONE bar per reason. Thirteen colours in a stack is not a chart,
 // it is a legend with a picture attached — and past ~7 classes adjacent hues
-// stop being tellable apart at all.
-const ROUTED_KEYS = ROUTE_KEYS.filter((k) => k !== "no-witness");
+// stop being tellable apart at all. (ROUTED_KEYS and the window sums are built
+// in the assemble block above, because data.json carries them too.)
 
-// ── the four numbers the page leads with ─────────────────────────────────────
+// ── the numbers the page leads with — this week, against last week ───────────
+// RECENCY FIRST (2026-08-11). "PRs all time" and "commits all time" led here
+// until now; they were the least actionable numbers on the page — 1,599 is the
+// same figure tomorrow whatever happens today. They keep their place under
+// "the long view" at the bottom.
 const openedSeries = last30.map((d) => funnel[d]?.opened || 0);
 const commitSeries = last30.map((d) => Object.values(commitDays[d] || {}).reduce((a, b) => a + b, 0));
 const mergedTotal = prs.filter((p) => p.merged_at).length;
 const witnessShare = mergedTotal ? data.totals.witness_merged / mergedTotal : 0;
 const oldest = Math.max(0, ...open.map(ageDays));
 
+// The share the witness cleared THIS week — the number that says whether the
+// door is working now, as opposed to how it has worked since June.
+const clearedNow = certWin.cur + routedWin.cur ? certWin.cur / (certWin.cur + routedWin.cur) : 0;
+const clearedPrev = certWin.prev + routedWin.prev ? certWin.prev / (certWin.prev + routedWin.prev) : 0;
+
 const kpiRow = V.kpis([
-  { label: "PRs all time", value: comma(data.totals.prs), sub: `${comma(openedSeries.reduce((a, b) => a + b, 0))} opened in 30d`,
+  { label: `PRs opened · last ${W7}d`, value: comma(openedWin.cur),
+    sub: V.deltaLine(openedWin.cur, openedWin.prev, { size: W7 }),
     spark: V.sparkline(openedSeries, { title: "PRs opened per day, last 30d" }) },
-  { label: "witness-merged", value: comma(data.totals.witness_merged), sub: `${V.pct(witnessShare)} of ${comma(mergedTotal)} merged` },
+  { label: `merged · last ${W7}d`, value: comma(mergeWin.cur),
+    sub: V.deltaLine(mergeWin.cur, mergeWin.prev, { size: W7 }) },
   { label: "open now", value: comma(data.totals.open), sub: oldest ? `oldest ${oldest}d` : "queue clear",
     status: data.queue.neverRan.length ? "red" : data.totals.open > 25 ? "warn" : "ok" },
-  { label: "commits all time", value: comma(data.totals.commits), sub: `${comma(commitSeries.reduce((a, b) => a + b, 0))} in 30d`,
+  { label: `cleared at the door · ${W7}d`, value: V.pct(clearedNow),
+    sub: clearedPrev ? `${V.pct(clearedPrev)} the ${W7}d before` : `no PRs in the prior ${W7}d`,
+    status: clearedNow < 0.5 ? "warn" : null },
+  { label: `commits · last ${W7}d`, value: comma(commitWin.cur),
+    sub: V.deltaLine(commitWin.cur, commitWin.prev, { size: W7 }),
     spark: V.sparkline(commitSeries, { title: "commits per day, last 30d" }) },
+  { label: "writers this week", value: comma(authorsWin.size), sub: "authors who opened a PR in the window" },
 ]);
 
 // ── 1. the funnel, as an outcome ─────────────────────────────────────────────
@@ -305,12 +341,18 @@ const outcomeTable = V.table(["day", "opened", "certified", "routed", "no witnes
       `<span class="dim">${comma(f.routes?.["no-witness"] || 0)}</span>`];
   }));
 
-// ── 2. why they came back ────────────────────────────────────────────────────
-const reason30 = {};
-for (const d of last30) for (const k of ROUTED_KEYS) reason30[k] = (reason30[k] || 0) + (funnel[d]?.routes?.[k] || 0);
-const reasonRows = Object.entries(reason30).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1])
-  .map(([k, v]) => ({ label: k, values: { n: v } }));
-const reasonChart = V.bars({ rows: reasonRows, keys: ["n"], colors: { n: V.SERIES[0] }, empty: "nothing was routed in the last 30 days" });
+// ── 2. why they came back — this week, against last week ─────────────────────
+const reason30 = {}, reasonCur = {}, reasonPrev = {};
+for (const d of timeline) for (const k of ROUTED_KEYS) {
+  const n = funnel[d]?.routes?.[k] || 0;
+  if (!n) continue;
+  if (last30.includes(d)) reason30[k] = (reason30[k] || 0) + n;
+  if (WIN.inCur(d)) reasonCur[k] = (reasonCur[k] || 0) + n;
+  else if (WIN.inPrev(d)) reasonPrev[k] = (reasonPrev[k] || 0) + n;
+}
+const reasonRows = ROUTED_KEYS.filter((k) => reasonCur[k]).sort((a, b) => reasonCur[b] - reasonCur[a])
+  .map((k) => ({ label: k, values: { n: reasonCur[k] }, note: `prior ${W7}d ${reasonPrev[k] || 0} · ${reason30[k] || 0} in 30d` }));
+const reasonChart = V.bars({ rows: reasonRows, keys: ["n"], colors: { n: V.SERIES[0] }, empty: `nothing was routed in the last ${W7} days` });
 
 // ── 3. merges by actor, with the pen seam drawn on the chart ─────────────────
 const mergeRows = last30.map((d) => ({ label: dd(d), values: mergeActors[d] || {} }));
@@ -365,24 +407,37 @@ const queueBlock = (label, items, note) =>
   + (items.length ? `<div class="tablewrap"><table><thead><tr><th>pr</th><th>author</th><th>title</th><th>age</th></tr></thead><tbody>${items.map(queueRow).join("")}</tbody></table></div>` : `<p class="none">none</p>`);
 
 // ── assemble ─────────────────────────────────────────────────────────────────
+// Order is by recency, not by importance-in-the-abstract: whose move it is right
+// now, then this week's flow, then the month's shape, then the long view.
 const body = `
 ${kpiRow}
 
+<h2>Queue health — whose move, right now</h2>
+<p class="note">The page opens on the only panel that is about <em>this minute</em>: one dot per open PR, placed by age. A lane filling up on the right is the signal; the lists beneath carry the links.</p>
+<div class="plotwrap">${queueStrip}</div>
+${queueBlock("Waiting on the resident (RRR)", data.queue.rrr, "machine-state; the office skips these")}
+${queueBlock("Office queue (uncertified, unlabeled)", data.queue.office)}
+${queueBlock("Teed up — the founders' move", data.queue.teed)}
+${queueBlock("Needs principal", data.queue.principal)}
+${queueBlock("⚠ No witness comment after 1h (bot-health)", data.queue.neverRan, "the witness may have failed to run — not a routing class")}
+
 ${V.figure({
-  title: "PR outcomes per day — did the witness let it through? (last 30d)",
-  note: `The whole funnel in one reading: green cleared the door, amber came back for revision. A PR with no witness comment at all is not counted as either — it is a bot-health signal, and it has its own lane in the queue below.`,
-  legendItems: [{ name: "certified", color: V.OK }, { name: "routed for revision", color: V.WARN }],
-  chart: outcomeChart, detail: outcomeTable, detailLabel: "per-day counts",
+  title: `Why a PR came back — routing reasons, last ${W7} days`,
+  note: `One bar per reason, longest first, for the week just gone; each bar carries its prior-week count and its 30-day count. These are the thirteen classes the witness can hand back — the ones with no bar did not fire this week, and the table has every class including all time.`,
+  chart: reasonChart,
+  detail: V.table(["reason", `last ${W7}d`, `prior ${W7}d`, "30d", "all time"], ROUTE_KEYS.map((k) => [k,
+    `<span class="num">${reasonCur[k] || 0}</span>`,
+    `<span class="num dim">${reasonPrev[k] || 0}</span>`,
+    `<span class="num dim">${reason30[k] || 0}</span>`,
+    `<span class="num dim">${prs.filter((p) => p.class === k).length}</span>`])),
+  detailLabel: "every class, including all-time",
 })}
 
 ${V.figure({
-  title: "Why a PR came back — routing reasons, last 30 days",
-  note: `One bar per reason, longest first. These are the thirteen classes the witness can hand back; the ones with no bar did not fire in the window.`,
-  chart: reasonChart,
-  detail: V.table(["reason", "PRs (30d)", "all time"], ROUTE_KEYS.map((k) => [k,
-    `<span class="num">${reason30[k] || 0}</span>`,
-    `<span class="num">${prs.filter((p) => p.class === k).length}</span>`])),
-  detailLabel: "every class, including all-time",
+  title: "PR outcomes per day — did the witness let it through? (last 30d)",
+  note: `The whole funnel in one reading: green cleared the door, amber came back for revision. A PR with no witness comment at all is not counted as either — it is a bot-health signal, and it has its own lane in the queue above.`,
+  legendItems: [{ name: "certified", color: V.OK }, { name: "routed for revision", color: V.WARN }],
+  chart: outcomeChart, detail: outcomeTable, detailLabel: "per-day counts",
 })}
 
 ${V.figure({
@@ -413,14 +468,15 @@ ${V.figure({
     .map((d) => [d, `<span class="num">${envelope[d]?.door || 0}</span>`, `<span class="num">${envelope[d]?.crossing || 0}</span>`])),
 })}
 
-<h2>Queue health — whose move, right now</h2>
-<p class="note">One dot per open PR, placed by age. A lane filling up on the right is the signal; the lists beneath carry the links.</p>
-<div class="plotwrap">${queueStrip}</div>
-${queueBlock("Waiting on the resident (RRR)", data.queue.rrr, "machine-state; the office skips these")}
-${queueBlock("Office queue (uncertified, unlabeled)", data.queue.office)}
-${queueBlock("Teed up — the founders' move", data.queue.teed)}
-${queueBlock("Needs principal", data.queue.principal)}
-${queueBlock("⚠ No witness comment after 1h (bot-health)", data.queue.neverRan, "the witness may have failed to run — not a routing class")}
+${V.longView(
+  `Everything above reads the last ${W7} or 30 days. These are the totals since the repo's first commit — a full-history rebuild, so nothing here evaporates, but none of it changes on any given day, which is why it is no longer the first thing the page says.`,
+  V.kpis([
+    { label: "PRs, all time", value: comma(data.totals.prs), sub: `${comma(mergedTotal)} merged · ${comma(data.totals.prs - mergedTotal - data.totals.open)} closed unmerged` },
+    { label: "witness-merged, all time", value: comma(data.totals.witness_merged), sub: `${V.pct(witnessShare)} of everything merged` },
+    { label: "commits, all time", value: comma(data.totals.commits), sub: `since ${commits.at(-1)?.date ?? "—"}` },
+    { label: "days on record", value: comma(timeline.length), sub: `${timeline[0] ?? "—"} → ${timeline.at(-1) ?? "—"}` },
+  ]),
+)}
 `;
 
 const html = V.page({
@@ -429,7 +485,7 @@ const html = V.page({
   here: "/ops/git/",
   stamp: `generated ${esc(data.generated_at)} · repo <code>${esc(REPO)}</code> · full-history rebuild (nothing here evaporates) · <a href="data.json">data.json</a>`,
   body,
-  footer: `Machine-state only: every number derives from git, the GitHub API, labels and the mail-ledger — no LLM anywhere in the loop. Sources: the town clone (commits, ledger BOUNCE lines) and a read-only GitHub token (PRs, labels, witness comments), cached incrementally. Generator: <code>postmark-office/tools/git-report.mjs</code>, hourly cron. Unlinked + noindex; the operator hub is <a href="/ops/">/ops/</a>.`,
+  footer: `Machine-state only: every number derives from git, the GitHub API, labels and the mail-ledger — no LLM anywhere in the loop. Sources: the town clone (commits, ledger BOUNCE lines) and a read-only GitHub token (PRs, labels, witness comments), cached incrementally. Windows are measured against the clock, so a quiet week reads as a quiet week. Generator: <code>postmark-office/tools/git-report.mjs</code>, hourly cron. Unlinked + noindex; the operator hub is <a href="/ops/">/ops/</a>.`,
 });
 writeFileSync(join(OUT_DIR, "index.html"), html);
-console.log(`[git-report] wrote ${OUT_DIR}/index.html (+data.json) — ${prs.length} PRs, ${commits.length} commits`);
+console.log(`[git-report] wrote ${OUT_DIR}/index.html (+data.json) — ${prs.length} PRs, ${commits.length} commits, ${openedWin.cur} opened in the last ${W7}d`);
