@@ -48,6 +48,19 @@ const lastN = (obj, n, pick = (v) => v) => {
   return keys.map((k) => Number(pick(obj[k])) || 0);
 };
 
+// The window the cards read. Each twin publishes its own `recent` block; these
+// two are the fallback for a twin written before that block existed, so a hub
+// deployed ahead of a generator shows a real number rather than a dash.
+const WIN = V.windows(7);
+const sumWindow = (map, pick) => WIN.sum(map, pick);
+const deltaWord = (w) => {
+  if (!w || (!w.cur && !w.prev)) return "quiet in both windows";
+  if (!w.prev) return "nothing in the prior week";
+  const change = (w.cur - w.prev) / w.prev;
+  if (w.cur === w.prev) return "level with last week";
+  return `${w.cur > w.prev ? "▲" : "▼"} ${Math.abs(change * 100) < 10 ? (Math.abs(change) * 100).toFixed(1) : Math.round(Math.abs(change) * 100)}% vs last week`;
+};
+
 function read(name) {
   const p = join(OPS_ROOT, name, "data.json");
   if (!existsSync(p)) return { missing: `no data.json at ${p}` };
@@ -58,17 +71,25 @@ function read(name) {
 // ── the shelf ────────────────────────────────────────────────────────────────
 // Each entry turns its dashboard's twin into a headline + a trend. `read` is
 // only called for the generated ones; the desk has no twin by design.
+// RECENCY FIRST (2026-08-11, Keemin: "tweak the focus to be more on
+// latest/fresh activity, not so much on lifetime totals"). Every card headline
+// is now a WINDOW — what moved in the last seven days — with the lifetime
+// figure kept on the sub-line, where it is still one glance away. Each twin
+// publishes its own `recent` block, so the hub reads the window rather than
+// re-deriving one; a twin from before that block existed falls back to the
+// by-day maps rather than showing a blank card.
 const SHELF = [
   {
     slug: "traffic", href: "traffic/", emblem: "⇅", kind: "Dashboard", title: "Traffic",
     line: "Who is knocking: requests by day and by UA class, the doorstep, the bulletin, the office door, GitHub views and clones.",
     read: (d) => {
-      const days = Object.keys(d.days || {}).sort();
-      const newest = days.at(-1);
+      const r = d.recent ?? {};
+      const w = r.requests ?? sumWindow(d.days, (v) => v.total);
+      const allTime = Object.values(d.days || {}).reduce((s, v) => s + (v.total || 0), 0);
       return {
         stamp: d.generated,
-        value: compact(d.days?.[newest]?.total ?? 0), unit: `requests on ${newest ?? "—"}`,
-        sub: `${comma(Object.keys(d.doorstep || {}).length)} doorstep handles · ${comma(Object.keys(d.mcpTools || {}).length)} MCP tools`,
+        value: compact(w.cur), unit: `requests in the last ${r.window_days ?? 7} days`,
+        sub: `${deltaWord(w)} · ${compact(allTime)} across ${Object.keys(d.days || {}).length} logged days`,
         spark: lastN(d.days, 14, (v) => v.total),
       };
     },
@@ -76,39 +97,52 @@ const SHELF = [
   {
     slug: "git", href: "git/", emblem: "⎇", kind: "Dashboard", title: "Git activity",
     line: "The PR funnel through the witness, merges by actor, commits by class, the envelope-defect trend, and whose move the queue is waiting on.",
-    read: (d) => ({
-      stamp: d.generated_at,
-      value: comma(d.totals?.open ?? 0), unit: "PRs open right now",
-      sub: `${comma(d.totals?.prs ?? 0)} all time · ${comma(d.totals?.witness_merged ?? 0)} witness-merged`,
-      spark: lastN(d.funnel, 14, (v) => v.opened),
-      // the one number on this shelf that is a to-do list rather than a reading
-      status: (d.queue?.neverRan?.length ?? 0) ? "red" : (d.totals?.open ?? 0) > 25 ? "warn" : null,
-    }),
+    read: (d) => {
+      const r = d.recent ?? {};
+      const w = r.opened ?? sumWindow(d.funnel, (v) => v.opened);
+      return {
+        stamp: d.generated_at,
+        // The queue is already a "right now" number, so it stays the headline —
+        // it is the only card whose value is a to-do list rather than a reading.
+        value: comma(d.totals?.open ?? 0), unit: "PRs open right now",
+        sub: `${comma(w.cur)} opened and ${comma(r.merged?.cur ?? 0)} merged in ${r.window_days ?? 7}d · ${comma(d.totals?.prs ?? 0)} all time`,
+        spark: lastN(d.funnel, 14, (v) => v.opened),
+        status: (d.queue?.neverRan?.length ?? 0) ? "red" : (d.totals?.open ?? 0) > 25 ? "warn" : null,
+      };
+    },
   },
   {
     slug: "economy", href: "economy/", emblem: "✦", kind: "Dashboard", title: "The economy",
-    line: "Where the stamps went: the equity curve and its gini, supply split into liquid and escrow, issuance by source, and what is backing each mark.",
-    read: (d) => ({
-      stamp: d.generated_at,
-      value: comma(d.equity?.M ?? 0), unit: "stamps minted, all time",
-      sub: `${comma(d.equity?.households ?? 0)} households · gini ${(d.equity?.gini ?? 0).toFixed(3)} · ${comma(d.supply?.escrow ?? 0)} escrowed`,
-      spark: lastN(d.issuance?.by_day, 14, (v) => Object.values(v || {}).reduce((a, b) => a + b, 0)),
-      flag: d.supply?.clean === false ? { cls: "red", text: "supply guard RED" } : null,
-    }),
+    line: "What moved this week: minting by household, stamps changing hands, what got backed — with the equity curve and supply kept as the long view.",
+    read: (d) => {
+      const r = d.recent ?? {};
+      const w = r.minted ?? sumWindow(d.issuance?.by_day, (v) => Object.values(v || {}).reduce((a, b) => a + b, 0));
+      return {
+        stamp: d.generated_at,
+        value: comma(w.cur), unit: `stamps minted in the last ${r.window_days ?? 7} days`,
+        sub: `${deltaWord(w)} · ${comma(r.earning_households ?? 0)} households earning · ${comma(d.equity?.M ?? 0)} all time`,
+        spark: lastN(d.issuance?.by_day, 14, (v) => Object.values(v || {}).reduce((a, b) => a + b, 0)),
+        flag: d.supply?.clean === false ? { cls: "red", text: "supply guard RED" } : null,
+      };
+    },
   },
   {
     slug: "world", href: "world/", emblem: "◈", kind: "Dashboard", title: "The World",
-    line: "Who is staking and on what, mark creation by household, crossing health against the twice-daily law, the draft census, and door traffic.",
-    read: (d) => ({
-      stamp: d.generated_at,
-      value: comma(d.marks?.total ?? 0), unit: "marks in the world",
-      sub: `${comma(d.stakes?.count ?? 0)} stakes · crossing ${d.crossing?.status ?? "?"} · ${comma(d.tools?.writes ?? 0)} writes in 14d`,
-      spark: lastN(d.marks?.per_day_14, 14),
-      // crossing health is about the FERRY, not about the mark count — so it
-      // rides its own chip rather than tinting a number it does not describe
-      flag: d.crossing?.status === "ok" ? null
-        : { cls: d.crossing?.status === "warn" ? "warn" : "red", text: `crossing ${d.crossing?.status ?? "unknown"}` },
-    }),
+    line: "Who is staking and on what, who is building, crossing health against the twice-daily law, the draft census, and door traffic.",
+    read: (d) => {
+      const r = d.recent ?? {};
+      const w = r.marks ?? sumWindow(d.marks?.per_day_14, (v) => v);
+      return {
+        stamp: d.generated_at,
+        value: comma(w.cur), unit: `marks left in the last ${r.window_days ?? 7} days`,
+        sub: `${deltaWord(w)} · ${comma(r.staked?.cur ?? 0)}✦ staked · ${comma(d.marks?.total ?? 0)} marks all time`,
+        spark: lastN(d.marks?.per_day_14, 14),
+        // crossing health is about the FERRY, not about the mark count — so it
+        // rides its own chip rather than tinting a number it does not describe
+        flag: d.crossing?.status === "ok" ? null
+          : { cls: d.crossing?.status === "warn" ? "warn" : "red", text: `crossing ${d.crossing?.status ?? "unknown"}` },
+      };
+    },
   },
   {
     slug: null, href: "desk/", emblem: "✒", kind: "Console", title: "The Principal's Desk",

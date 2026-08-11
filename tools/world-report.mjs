@@ -108,11 +108,16 @@ const worldMainFull = git(WORLD_CLONE, ["rev-parse", "refs/remotes/origin/main"]
 const pinStatus = pin == null ? "warn" : worldMainFull.startsWith(pin) ? "ok" : "warn";
 
 
+
 // ── render ───────────────────────────────────────────────────────────────────
-// Charts first (2026-08-11 dataviz pass), with one exception kept deliberately:
-// the stake feed stays a list. A stake is an EVENT — who, on what, when — and a
-// feed of five rows is read, not measured; the measuring is in the totals chart
-// beside it.
+// RECENCY FIRST (2026-08-11). "612 marks in the world" led this page; it is a
+// stock, and it will read 612 tomorrow whatever anybody does today. The page
+// now opens on the week — marks left, stamps staked, who was at the door — and
+// the totals sit under "the long view".
+//
+// One thing stays a list on purpose: the stake feed. A stake is an EVENT with a
+// who and a when — Keemin's stated first-class thing for this dash — and events
+// are read, not measured; the measuring is in the chart beside it.
 const now = new Date().toISOString().slice(0, 16).replace("T", " ") + " UTC";
 const { esc, comma, chip } = V;
 const top = (obj, n) => Object.entries(obj).sort((a, b) => b[1] - a[1]).slice(0, n);
@@ -120,21 +125,57 @@ const days14 = [...Array(14)].map((_, i) => new Date(Date.now() - i * 864e5).toI
 const days30 = [...Array(30)].map((_, i) => new Date(Date.now() - i * 864e5).toISOString().slice(0, 10)).reverse();
 const dd = (d) => d.slice(5);
 
-// ── the numbers the page leads with ──────────────────────────────────────────
-const stakedTotal = stakes.reduce((s, x) => s + x.stamps, 0);
+const WIN = V.windows(7);
+const W7 = WIN.size;
+
+// ── the week ─────────────────────────────────────────────────────────────────
+const markWin = WIN.sum(perDay);
+const stakeWin = { cur: 0, prev: 0 }, stakeLines = { cur: 0, prev: 0 };
+const stakedByMarkWin = {}, stakersWin = {};
+for (const s of stakes) {
+  const side = WIN.inCur(s.date) ? "cur" : WIN.inPrev(s.date) ? "prev" : null;
+  if (!side) continue;
+  stakeWin[side] += s.stamps; stakeLines[side] += 1;
+  if (side === "cur") {
+    stakedByMarkWin[s.mark] = (stakedByMarkWin[s.mark] || 0) + s.stamps;
+    stakersWin[s.staker] = (stakersWin[s.staker] || 0) + s.stamps;
+  }
+}
+// marks left this week, by household — who is building right now
+const markHouseWin = {};
+for (const m of marks) {
+  const d = day(m.date);
+  if (WIN.inCur(d)) markHouseWin[m.household ?? m.by ?? "?"] = (markHouseWin[m.household ?? m.by ?? "?"] || 0) + 1;
+}
+// world door: the tool feed is a trailing 14 days by construction, so the
+// window here is 7d against the 7 before it inside that same feed.
+const toolWin = { cur: 0, prev: 0 }, writeWin = { cur: 0, prev: 0 }, toolsCur = {};
+for (const [d, tools] of Object.entries(toolDays)) {
+  const side = WIN.inCur(d) ? "cur" : WIN.inPrev(d) ? "prev" : null;
+  if (!side) continue;
+  for (const [t, n] of Object.entries(tools)) {
+    toolWin[side] += n;
+    if (WRITE_TOOLS.has(t)) writeWin[side] += n;
+    if (side === "cur") toolsCur[t] = (toolsCur[t] || 0) + n;
+  }
+}
 const draftsAhead = drafts.reduce((s, d) => s + d.ahead, 0);
+const stakedTotal = stakes.reduce((s, x) => s + x.stamps, 0);
+
 const kpiRow = V.kpis([
-  { label: "marks in the world", value: comma(marks.length),
-    sub: `${Object.keys(householdCounts).length} households have left one`,
+  { label: `marks left · last ${W7}d`, value: comma(markWin.cur),
+    sub: V.deltaLine(markWin.cur, markWin.prev, { size: W7 }),
     spark: V.sparkline(days30.map((d) => perDay[d] || 0), { title: "new marks per day, last 30d" }) },
-  { label: "stakes, all time", value: comma(stakes.length), sub: `${comma(stakedTotal)} ✦ escrowed on marks` },
+  { label: `staked · last ${W7}d`, value: `${comma(stakeWin.cur)}✦`,
+    sub: stakeLines.cur ? V.deltaLine(stakeWin.cur, stakeWin.prev, { size: W7, unit: "✦" }) : `no stake in the last ${W7}d` },
   { label: "last crossing", value: lastTagAgeH == null ? "—" : `${lastTagAgeH.toFixed(1)}h`,
     sub: lastTag ? `${lastTag[0]} · ${lastTag[1].slice(0, 16)}` : "no settlement tag found",
     status: crossStatus },
   { label: "drafts ahead of main", value: comma(draftsAhead),
-    sub: `${drafts.length} household branch(es)`, status: draftsAhead > 20 ? "warn" : "ok" },
-  { label: "world door · 14d", value: comma(readCount + writeCount),
-    sub: `${comma(writeCount)} writes · ${comma(readCount)} reads`,
+    sub: `${drafts.filter((d) => d.ahead > 0).length} household branch(es) unsettled`,
+    status: draftsAhead > 20 ? "warn" : "ok" },
+  { label: `door calls · last ${W7}d`, value: comma(toolWin.cur),
+    sub: `${comma(writeWin.cur)} of them writes · ${V.deltaLine(toolWin.cur, toolWin.prev, { size: W7 })}`,
     spark: V.sparkline(days14.map((d) => Object.values(toolDays[d] || {}).reduce((a, b) => a + b, 0)), { title: "world_* calls per day, last 14d" }) },
 ]);
 
@@ -148,8 +189,7 @@ const crossMeter = V.meter({
 
 // ── the draft census ─────────────────────────────────────────────────────────
 // Only branches actually ahead get a bar: a settled draft is a zero-length bar,
-// and a column of those is noise standing where the signal should be. The count
-// of settled branches goes in the note instead, where it is still visible.
+// and a column of those is noise standing where the signal should be.
 const ahead = drafts.filter((d) => d.ahead > 0).sort((a, b) => b.ahead - a.ahead);
 const settled = drafts.length - ahead.length;
 const draftBars = V.bars({
@@ -157,13 +197,17 @@ const draftBars = V.bars({
   keys: ["n"], colors: { n: V.SERIES[0] }, unit: " commits", empty: "every household draft branch is level with main",
 });
 
-// ── staking: totals as a chart, the feed as a feed ───────────────────────────
+// ── staking: this week's totals as a chart, the feed as a feed ───────────────
 const stakerBars = V.bars({
-  rows: Object.entries(stakerTotals).sort((a, b) => b[1] - a[1]).map(([w, n]) => ({ label: w, values: { n } })),
-  keys: ["n"], colors: { n: V.SERIES[3] }, unit: "✦", empty: "nobody has staked on a mark yet",
+  rows: Object.entries(stakersWin).sort((a, b) => b[1] - a[1]).map(([w, n]) => ({ label: w, values: { n } })),
+  keys: ["n"], colors: { n: V.SERIES[3] }, unit: "✦", empty: `nobody staked on a mark in the last ${W7} days`,
+});
+const markStakeBars = V.bars({
+  rows: Object.entries(stakedByMarkWin).sort((a, b) => b[1] - a[1]).slice(0, 14).map(([m, n]) => ({ label: m, values: { n } })),
+  keys: ["n"], colors: { n: V.SERIES[1] }, unit: "✦", empty: `no mark gained backing in the last ${W7} days`,
 });
 const stakeFeed = stakes.length
-  ? `<div class="tablewrap">${V.table(["date", "staker", "mark", "✦"], stakes.slice(0, 30).map((s) =>
+  ? `<div class="tablewrap">${V.table(["date", "staker", "mark", "✦"], stakes.slice(0, 24).map((s) =>
       [`<span class="dim">${esc(s.date)}</span>`, `<span class="who">${esc(s.staker)}</span>`, esc(s.mark),
         `<span class="num">${s.stamps}</span>`]))}</div>`
   : `<p class="none">no world-mark stakes yet</p>`;
@@ -173,25 +217,23 @@ const markChart = V.columns({
   rows: days30.map((d) => ({ label: dd(d), values: { marks: perDay[d] || 0 } })),
   keys: ["marks"], colors: { marks: V.SERIES[1] }, fmt: comma,
 });
-const householdBars = V.bars({
-  rows: top(householdCounts, 18).map(([h, n]) => ({ label: h, values: { n } })),
-  keys: ["n"], colors: { n: V.SERIES[1] },
+const markWeekBars = V.bars({
+  rows: Object.entries(markHouseWin).sort((a, b) => b[1] - a[1]).slice(0, 16).map(([h, n]) => ({ label: h, values: { n } })),
+  keys: ["n"], colors: { n: V.SERIES[1] }, empty: `no household left a mark in the last ${W7} days`,
 });
 const markTable = V.table(["date", "by", "tier", "mark", "✦"], marksByDate.slice(0, 60).map((m) =>
   [`<span class="dim">${esc(day(m.date))}</span>`, `<span class="who">${esc(m.by ?? "")}</span>`,
     `<span class="dim">${esc(m.tier ?? "")}</span>`, esc(m.id ?? ""), `<span class="num">${m.stamps ?? 0}</span>`]));
 
 // ── door traffic ─────────────────────────────────────────────────────────────
-// Reads and writes are not two series of the same kind: a write changes the
-// world. They share one bar so the ratio is the reading.
 const doorBar = V.bars({
-  rows: [{ label: "world_* calls", values: { reads: readCount, writes: writeCount } }],
+  rows: [{ label: `world_* calls · ${W7}d`, values: { reads: toolWin.cur - writeWin.cur, writes: writeWin.cur } }],
   keys: ["reads", "writes"], colors: { reads: V.SERIES[2], writes: V.SERIES[0] },
-  empty: "no world tool calls in window",
+  empty: `no world tool call in the last ${W7} days`,
 });
 const toolBars = V.bars({
-  rows: top(toolTotals, 14).map(([t, n]) => ({ label: t, values: { n }, note: WRITE_TOOLS.has(t) ? "write" : "read" })),
-  keys: ["n"], colors: { n: V.SERIES[2] }, empty: "no world tool calls in window",
+  rows: top(toolsCur, 14).map(([t, n]) => ({ label: t, values: { n }, note: WRITE_TOOLS.has(t) ? "write" : "read" })),
+  keys: ["n"], colors: { n: V.SERIES[2] }, empty: `no world tool call in the last ${W7} days`,
 });
 
 const body = `
@@ -209,8 +251,11 @@ ${V.figure({
 })}
 
 <h2>who is staking — the first-class feed</h2>
-<p class="note">${comma(stakes.length)} stake line(s) all-time, ${comma(stakedTotal)}✦ escrowed. The totals are the chart; the feed below stays a list on purpose — a stake is an event with a who and a when, and events are read, not measured.</p>
-${stakerBars}
+<p class="note">${comma(stakeWin.cur)}✦ staked in the last ${W7} days across ${stakeLines.cur} line(s), by ${Object.keys(stakersWin).length} household(s). The charts are the week; the feed beneath is the last 24 stakes whenever they happened, and it stays a list on purpose — a stake is an event with a who and a when, and events are read, not measured.</p>
+<div class="grid2">
+<div>${V.figure({ title: `stakers · last ${W7}d`, chart: stakerBars })}</div>
+<div>${V.figure({ title: `marks backed · last ${W7}d`, chart: markStakeBars })}</div>
+</div>
 ${stakeFeed}
 
 ${V.figure({
@@ -219,19 +264,36 @@ ${V.figure({
 })}
 
 ${V.figure({
-  title: "marks per household, all time",
-  chart: householdBars,
-  detail: V.table(["household", "marks"], Object.entries(householdCounts).sort((a, b) => b[1] - a[1])
-    .map(([h, n]) => [`<span class="who">${esc(h)}</span>`, `<span class="num">${n}</span>`])),
-  detailLabel: `all ${Object.keys(householdCounts).length} households`,
+  title: `who is building — marks left in the last ${W7} days, by household`,
+  note: `Ranked by the window, not by lifetime: the all-time table has sat at the same order for weeks, and it is under the long view now.`,
+  chart: markWeekBars,
 })}
 
-<h2>world door traffic — aggregate, last 14 days</h2>
-<p class="note">MCP <code>world_*</code> tools, counts only — per-household read logs are deliberately not rendered (the silver's red-pen Q3, deferred on purpose). Reads and writes share one bar because the <em>ratio</em> is the reading: a world being looked at, or a world being changed.</p>
-${V.legend([{ name: `reads (${comma(readCount)})`, color: V.SERIES[2] }, { name: `writes (${comma(writeCount)})`, color: V.SERIES[0] }])}
+<h2>world door traffic — last ${W7} days</h2>
+<p class="note">MCP <code>world_*</code> tools, counts only — per-household read logs are deliberately not rendered (the silver's red-pen Q3, deferred on purpose). Reads and writes share one bar because the <em>ratio</em> is the reading: a world being looked at, or a world being changed. The telemetry feed itself is a trailing 14 days, so the prior window is the older half of it.</p>
+${V.legend([{ name: `reads (${comma(toolWin.cur - writeWin.cur)})`, color: V.SERIES[2] }, { name: `writes (${comma(writeWin.cur)})`, color: V.SERIES[0] }])}
 ${doorBar}
-<h3>calls by tool</h3>
+<h3>calls by tool · last ${W7}d</h3>
 ${toolBars}
+
+${V.longView(
+  `Everything above reads the last ${W7} days. These are the world's totals — the register's size and the whole staking history — kept because the shape of the world matters, moved down because it is not what changed today.`,
+  V.kpis([
+    { label: "marks in the world", value: comma(marks.length), sub: `${Object.keys(householdCounts).length} households have left one` },
+    { label: "stakes, all time", value: comma(stakes.length), sub: `${comma(stakedTotal)}✦ escrowed on marks` },
+    { label: "door calls, 14d feed", value: comma(readCount + writeCount), sub: `${comma(writeCount)} writes · ${comma(readCount)} reads` },
+  ]) + V.figure({
+    title: "marks per household, all time",
+    chart: V.bars({
+      rows: top(householdCounts, 18).map(([h, n]) => ({ label: h, values: { n }, note: markHouseWin[h] ? `${markHouseWin[h]} this week` : "none this week" })),
+      keys: ["n"], colors: { n: V.MUTED },
+    }),
+    detail: V.table(["household", "all time", `last ${W7}d`], Object.entries(householdCounts).sort((a, b) => b[1] - a[1])
+      .map(([h, n]) => [`<span class="who">${esc(h)}</span>`, `<span class="num">${n}</span>`,
+        `<span class="num dim">${markHouseWin[h] || 0}</span>`])),
+    detailLabel: `all ${Object.keys(householdCounts).length} households`,
+  }),
+)}
 `;
 
 const html = V.page({
@@ -240,7 +302,7 @@ const html = V.page({
   here: "/ops/world/",
   stamp: `generated ${esc(now)} · world origin/main <code>${esc(worldMainSha)}</code> · town <code>${esc(townSha)}</code> · regenerates hourly · <a href="data.json">data.json</a>`,
   body,
-  footer: `Sources: the world record at origin/main (marks, never telemetry) · settlement tags + draft refs · the town's stamp-ledger (stake lines) · office telemetry (tool names only, aggregated) · the site's pin via raw.githubusercontent (fail-soft). A fetch is a fetch; git-clone readership is invisible in principle. Unlinked + noindex; the operator hub is <a href="/ops/">/ops/</a>.`,
+  footer: `Sources: the world record at origin/main (marks, never telemetry) · settlement tags + draft refs · the town's stamp-ledger (stake lines) · office telemetry (tool names only, aggregated) · the site's pin via raw.githubusercontent (fail-soft). Windows are measured against the clock, so a quiet week reads as a quiet week rather than sliding back to wherever the data stops. A fetch is a fetch; git-clone readership is invisible in principle. Unlinked + noindex; the operator hub is <a href="/ops/">/ops/</a>.`,
 });
 
 mkdirSync(OUT_DIR, { recursive: true });
@@ -252,5 +314,12 @@ writeFileSync(join(OUT_DIR, "data.json"), JSON.stringify({
   stakes: { count: stakes.length, totals: stakerTotals, feed: stakes.slice(0, 100) },
   marks: { total: marks.length, per_household: householdCounts, per_day_14: Object.fromEntries(days14.map((d) => [d, perDay[d] || 0])) },
   tools: { totals: toolTotals, reads: readCount, writes: writeCount },
+  // added 2026-08-11 beside every pre-existing field: the window the page leads with
+  recent: {
+    window_days: W7, from: WIN.curFrom, to: WIN.curTo, prior_from: WIN.prevFrom, prior_to: WIN.prevTo,
+    marks: markWin, staked: stakeWin, stake_lines: stakeLines,
+    door_calls: toolWin, door_writes: writeWin,
+    marks_by_household: markHouseWin, staked_by_mark: stakedByMarkWin, stakers: stakersWin,
+  },
 }, null, 2));
-console.log(`world-report: wrote ${OUT_DIR}/index.html (${marks.length} marks, ${stakes.length} stakes, crossing ${crossStatus})`);
+console.log(`world-report: wrote ${OUT_DIR}/index.html (${markWin.cur} marks + ${stakeWin.cur}✦ staked in the last ${W7}d; ${marks.length} marks all time, crossing ${crossStatus})`);

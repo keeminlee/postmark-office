@@ -112,6 +112,26 @@ const sitePages = {};                  // path -> browser views (non-asset)
 const probes = {};                     // 4xx path -> count
 let newestTs = "";
 
+// ── the recency counters (2026-08-11) ────────────────────────────────────────
+// Every panel now leads with the last 7 days against the 7 before it, so each
+// key needs two extra numbers. Deliberately TWO COUNTERS, not a day-keyed map:
+// a per-day breakdown of every site path and every 4xx probe would multiply an
+// already-unbounded key space by the number of days, and this runs on a 1.9 GB
+// box that has been killed by exactly that kind of growth before. Two integers
+// per key is the whole cost, and it is what the page actually reads.
+const WIN = V.windows(7);
+const win = {                          // key -> { cur, prev }
+  bulletinHand: {}, bulletinAuto: {}, bulletinSite: {}, apiSeg: {}, sitePages: {}, probes: {},
+  mcpTools: {}, mcpHouseholds: {},
+};
+function bump(bag, key, day) {
+  if (!WIN.inCur(day) && !WIN.inPrev(day)) return;
+  const w = (bag[key] ??= { cur: 0, prev: 0 });
+  if (WIN.inCur(day)) w.cur++; else w.prev++;
+}
+const cur = (bag, key) => bag[key]?.cur ?? 0;
+const prv = (bag, key) => bag[key]?.prev ?? 0;
+
 function ingest(ln) {
   const m = parseLine(ln);
   if (!m) return;
@@ -144,17 +164,22 @@ function ingest(ln) {
     const slug = mm[1] || "(list)";
     const b = (bulletinApi[slug] ??= { auto: 0, hand: 0 });
     cls === "automation" ? b.auto++ : b.hand++;
+    bump(cls === "automation" ? win.bulletinAuto : win.bulletinHand, slug, day);
   }
   // bulletin on the site (browser reads)
-  if ((mm = /^\/bulletin\/([a-z0-9-]+)\/?$/.exec(path)) && status === "200" && cls === "browser")
+  if ((mm = /^\/bulletin\/([a-z0-9-]+)\/?$/.exec(path)) && status === "200" && cls === "browser") {
     bulletinSite[mm[1]] = (bulletinSite[mm[1]] ?? 0) + 1;
+    bump(win.bulletinSite, mm[1], day);
+  }
   // API segments
-  if ((mm = /^\/api\/([a-z0-9._-]+)/.exec(path))) apiSeg[mm[1]] = (apiSeg[mm[1]] ?? 0) + 1;
+  if ((mm = /^\/api\/([a-z0-9._-]+)/.exec(path))) { apiSeg[mm[1]] = (apiSeg[mm[1]] ?? 0) + 1; bump(win.apiSeg, mm[1], day); }
   // site pages (browser, non-asset, 200)
-  if (!path.startsWith("/api") && !path.startsWith("/data/") && !ASSET_RE.test(path) && status === "200" && cls === "browser")
+  if (!path.startsWith("/api") && !path.startsWith("/data/") && !ASSET_RE.test(path) && status === "200" && cls === "browser") {
     sitePages[path] = (sitePages[path] ?? 0) + 1;
+    bump(win.sitePages, path, day);
+  }
   // probes / not-found noise
-  if (status[0] === "4" && !GOOD_PREFIX.test(path)) probes[path] = (probes[path] ?? 0) + 1;
+  if (status[0] === "4" && !GOOD_PREFIX.test(path)) { probes[path] = (probes[path] ?? 0) + 1; bump(win.probes, path, day); }
 }
 
 // Drive the sources now that ingest exists. Order is oldest-first so that when
@@ -197,10 +222,11 @@ if (existsSync(OFFICE_TEL)) {
       if (e.mcp) {
         mcpTools[e.mcp] = (mcpTools[e.mcp] ?? 0) + 1;
         const day = String(e.ts ?? "").slice(0, 10);
-        if (day) mcpByDay[day] = (mcpByDay[day] ?? 0) + 1;
+        if (day) { mcpByDay[day] = (mcpByDay[day] ?? 0) + 1; bump(win.mcpTools, e.mcp, day); }
         if (e.household) {
           const h = (mcpHouseholds[e.household] ??= { total: 0, tools: {} });
           h.total++; h.tools[e.mcp] = (h.tools[e.mcp] ?? 0) + 1;
+          if (day) bump(win.mcpHouseholds, e.household, day);
         }
       }
     }
@@ -225,49 +251,55 @@ if (existsSync(GHDIR)) {
 }
 
 
+
 // ── render ───────────────────────────────────────────────────────────────────
-// Charts first (2026-08-11 dataviz pass). Every panel keeps its exact numbers in
-// a collapsed table beneath the chart, so nothing is reachable only by hovering
-// — which also means the page still works on a phone and under a screen reader.
+// RECENCY FIRST (2026-08-11, Keemin: "tweak the focus to be more on
+// latest/fresh activity, not so much on lifetime totals — they can still be
+// present, just secondary"). Every panel above the rule reads the last 7 days
+// against the 7 before it; lifetime totals live under "the long view" at the
+// bottom, and inside each collapsed table, where they are still one click away.
 const { esc, comma, compact } = V;
 const sortedDays = Object.keys(days).sort();
 const dayRange = (n) => sortedDays.slice(-n);
 const dd = (d) => d.slice(5);
 const table = V.table;
 const byCountDesc = (obj) => Object.entries(obj).sort((a, b) => b[1] - a[1]);
-const topN = (obj, n) => byCountDesc(obj).slice(0, n);
 
-// A category chart never grows a ninth colour: the tail folds into one row.
-function foldTail(entries, n, label = "everything else") {
-  const head = entries.slice(0, n);
-  const tail = entries.slice(n);
-  if (tail.length) head.push([`${label} (${tail.length})`, tail.reduce((s, [, v]) => s + v, 0)]);
-  return head;
-}
-const barRows = (entries) => entries.map(([k, v]) => ({ label: k, values: { n: v } }));
+// Sort by the WINDOW, not by all time: a ranking by lifetime totals answers
+// "who has ever knocked most", which is not the question this page now leads
+// with. The all-time order is still in each table.
+const byWindow = (bag, keys) => [...keys].sort((a, b) => cur(bag, b) - cur(bag, a) || prv(bag, b) - prv(bag, a));
+const winRows = (bag, keys, n) => byWindow(bag, keys).slice(0, n).map((k) => ({
+  label: k, values: { n: cur(bag, k) }, note: `prior 7d ${prv(bag, k)}`,
+}));
 const oneHue = { n: V.SERIES[0] };
+const W7 = WIN.size;
 
-// ── the numbers the page leads with ──────────────────────────────────────────
+// ── the numbers the page leads with — all windowed ───────────────────────────
 const last30 = dayRange(30), last14 = dayRange(14);
 const newest = sortedDays.at(-1);
-const prev = sortedDays.at(-2);
-const dayTotal = (d) => days[d]?.total ?? 0;
-const delta = prev ? dayTotal(newest) - dayTotal(prev) : 0;
-const mcp14 = last14.reduce((s, d) => s + (mcpByDay[d] ?? 0), 0);
-const door7 = Object.values(doorstep).reduce((s, v) => s + dayRange(7).reduce((t, d) => t + (v.byDay[d] ?? 0), 0), 0);
+const reqWin = WIN.sum(days, (v) => v.total);
+const mcpWin = WIN.sum(mcpByDay);
+const doorWin = { cur: 0, prev: 0 };
+for (const v of Object.values(doorstep)) { const s = WIN.sum(v.byDay); doorWin.cur += s.cur; doorWin.prev += s.prev; }
+// "who showed up lately" — households seen in the window, not households ever
+const housesActive = Object.keys(mcpHouseholds).filter((h) => cur(win.mcpHouseholds, h) > 0).length;
+const handlesActive = Object.values(doorstep).filter((v) => WIN.sum(v.byDay).cur > 0).length;
 
 const kpiRow = V.kpis([
-  { label: `requests · ${newest || "—"}`, value: compact(dayTotal(newest)),
-    sub: prev ? `${delta >= 0 ? "+" : "−"}${compact(Math.abs(delta))} vs ${dd(prev)}` : "",
-    spark: V.sparkline(last30.map(dayTotal), { title: "requests per day, last 30d" }) },
-  { label: "unique IPs today", value: comma(days[newest]?.ips.size ?? 0),
-    sub: `${comma(linesRead)} log lines parsed`,
+  { label: `requests · last ${W7}d`, value: compact(reqWin.cur),
+    sub: V.deltaLine(reqWin.cur, reqWin.prev, { size: W7 }),
+    spark: V.sparkline(last30.map((d) => days[d]?.total ?? 0), { title: "requests per day, last 30d" }) },
+  { label: `busiest day · ${newest || "—"}`, value: compact(days[newest]?.total ?? 0),
+    sub: `${comma(days[newest]?.ips.size ?? 0)} unique IPs today`,
     spark: V.sparkline(last30.map((d) => days[d]?.ips.size ?? 0), { title: "unique IPs per day, last 30d" }) },
-  { label: "MCP calls · 14d", value: compact(mcp14),
-    sub: `${Object.keys(mcpTools).length} distinct tools`,
+  { label: `MCP calls · last ${W7}d`, value: compact(mcpWin.cur),
+    sub: V.deltaLine(mcpWin.cur, mcpWin.prev, { size: W7 }),
     spark: V.sparkline(last14.map((d) => mcpByDay[d] ?? 0), { title: "MCP calls per day, last 14d" }) },
-  { label: "doorstep fetches · 7d", value: comma(door7),
-    sub: `${Object.keys(doorstep).length} handles ever fetched` },
+  { label: `doorstep fetches · last ${W7}d`, value: comma(doorWin.cur),
+    sub: V.deltaLine(doorWin.cur, doorWin.prev, { size: W7 }) },
+  { label: `active this week`, value: comma(housesActive),
+    sub: `households at the office door · ${comma(handlesActive)} doorsteps read` },
 ]);
 
 // ── 1. requests by day, split by who is asking ───────────────────────────────
@@ -295,65 +327,91 @@ const hostTable = hostList.length
       .map((d) => [d, ...hostList.map((h) => `<span class="num">${comma(hostDays[d][h] ?? 0)}</span>`)]))
   : "";
 
-// ── 3. doorstep — the surface every agent reads first ────────────────────────
-const doorSorted = Object.entries(doorstep).sort((a, b) => b[1].total - a[1].total);
+// ── 3. doorstep — read this week ─────────────────────────────────────────────
+const doorWindowed = Object.entries(doorstep)
+  .map(([h, v]) => ({ handle: h, ...WIN.sum(v.byDay), total: v.total, last: v.last, sources: v.sources }))
+  .sort((a, b) => b.cur - a.cur || b.total - a.total);
 const doorChart = V.bars({
-  rows: doorSorted.slice(0, 16).map(([h, v]) => ({ label: h, values: { n: v.total }, note: `last seen ${v.last}` })),
-  keys: ["n"], colors: oneHue,
+  rows: doorWindowed.filter((r) => r.cur > 0).slice(0, 16)
+    .map((r) => ({ label: r.handle, values: { n: r.cur }, note: `prior 7d ${r.prev} · ${r.total} all time` })),
+  keys: ["n"], colors: oneHue, empty: `no doorstep was fetched in the last ${W7} days`,
 });
-const doorTable = table(["handle", "total", "last 7d", "last seen", "via", "14d"],
-  doorSorted.map(([h, v]) => [esc(h), `<span class="num">${comma(v.total)}</span>`,
-    `<span class="num">${comma(dayRange(7).reduce((s, d) => s + (v.byDay[d] ?? 0), 0))}</span>`,
-    v.last, [...v.sources].join("+"),
-    V.sparkline(dayRange(14).map((d) => v.byDay[d] ?? 0), { w: 90, h: 20, fill: false })]));
+const doorTable = table(["handle", `last ${W7}d`, `prior ${W7}d`, "all time", "last seen", "via", "14d"],
+  doorWindowed.map((r) => [esc(r.handle), `<span class="num">${comma(r.cur)}</span>`,
+    `<span class="num dim">${comma(r.prev)}</span>`, `<span class="num dim">${comma(r.total)}</span>`,
+    r.last, [...r.sources].join("+"),
+    V.sparkline(dayRange(14).map((d) => doorstep[r.handle].byDay[d] ?? 0), { w: 90, h: 20, fill: false })]));
 
-// ── 4. bulletin — who is reading which notice ────────────────────────────────
+// ── 4. bulletin — read this week ─────────────────────────────────────────────
 const bullSlugs = [...new Set([...Object.keys(bulletinApi), ...Object.keys(bulletinSite)])];
+const bullCur = (s) => cur(win.bulletinHand, s) + cur(win.bulletinAuto, s) + cur(win.bulletinSite, s);
+const bullPrev = (s) => prv(win.bulletinHand, s) + prv(win.bulletinAuto, s) + prv(win.bulletinSite, s);
 const bullTotal = (s) => (bulletinApi[s]?.hand ?? 0) + (bulletinApi[s]?.auto ?? 0) + (bulletinSite[s] ?? 0);
-const bullSorted = bullSlugs.sort((a, b) => bullTotal(b) - bullTotal(a));
-const BULL_KEYS = ["hand", "auto", "site"];
+const bullSorted = bullSlugs.slice().sort((a, b) => bullCur(b) - bullCur(a) || bullTotal(b) - bullTotal(a));
 const BULL_COLORS = { hand: V.SERIES[0], auto: V.MUTED, site: V.SERIES[2] };
 const bullChart = V.bars({
-  rows: bullSorted.slice(0, 14).map((s) => ({
-    label: s, values: { hand: bulletinApi[s]?.hand ?? 0, auto: bulletinApi[s]?.auto ?? 0, site: bulletinSite[s] ?? 0 },
+  rows: bullSorted.filter((s) => bullCur(s) > 0).slice(0, 14).map((s) => ({
+    label: s, note: `prior 7d ${bullPrev(s)} · ${bullTotal(s)} all time`,
+    values: { hand: cur(win.bulletinHand, s), auto: cur(win.bulletinAuto, s), site: cur(win.bulletinSite, s) },
   })),
-  keys: BULL_KEYS, colors: BULL_COLORS,
+  keys: ["hand", "auto", "site"], colors: BULL_COLORS,
+  empty: `no bulletin slug was read in the last ${W7} days`,
 });
-const bullTable = table(["slug", "api (hand)", "api (auto)", "site views", "total"],
-  bullSorted.map((s) => [esc(s), `<span class="num">${comma(bulletinApi[s]?.hand ?? 0)}</span>`,
-    `<span class="num">${comma(bulletinApi[s]?.auto ?? 0)}</span>`,
-    `<span class="num">${comma(bulletinSite[s] ?? 0)}</span>`,
-    `<span class="num">${comma(bullTotal(s))}</span>`]));
+const bullTable = table(["slug", `last ${W7}d`, `prior ${W7}d`, "api (hand)", "api (auto)", "site views", "all time"],
+  bullSorted.map((s) => [esc(s), `<span class="num">${comma(bullCur(s))}</span>`,
+    `<span class="num dim">${comma(bullPrev(s))}</span>`,
+    `<span class="num dim">${comma(bulletinApi[s]?.hand ?? 0)}</span>`,
+    `<span class="num dim">${comma(bulletinApi[s]?.auto ?? 0)}</span>`,
+    `<span class="num dim">${comma(bulletinSite[s] ?? 0)}</span>`,
+    `<span class="num dim">${comma(bullTotal(s))}</span>`]));
 
-// ── 5. the office door ───────────────────────────────────────────────────────
+// ── 5. the office door, this week ────────────────────────────────────────────
 const mcpDays = Object.keys(mcpByDay).sort().slice(-30);
 const mcpChart = mcpDays.length
   ? V.lines({ labels: mcpDays.map(dd), series: [{ name: "MCP calls", color: V.SERIES[0], values: mcpDays.map((d) => mcpByDay[d] ?? 0) }] })
   : `<p class="none">no office telemetry on this box yet</p>`;
-const toolChart = V.bars({ rows: barRows(foldTail(byCountDesc(mcpTools), 14, "other tools")), keys: ["n"], colors: oneHue });
-const houseSorted = Object.entries(mcpHouseholds).sort((a, b) => b[1].total - a[1].total);
-const houseChart = V.bars({
-  rows: houseSorted.slice(0, 14).map(([h, v]) => ({
-    label: h, values: { n: v.total }, note: byCountDesc(v.tools).slice(0, 3).map(([t, n]) => `${t}×${n}`).join(" · "),
-  })),
-  keys: ["n"], colors: oneHue,
+const toolChart = V.bars({
+  rows: winRows(win.mcpTools, Object.keys(mcpTools), 14),
+  keys: ["n"], colors: oneHue, empty: `no MCP tool was called in the last ${W7} days`,
 });
-const houseTable = table(["household", "calls", "top tools"], houseSorted.map(([h, v]) =>
-  [esc(h), `<span class="num">${comma(v.total)}</span>`, `<span class="dim">${esc(byCountDesc(v.tools).slice(0, 4).map(([t, n]) => `${t}×${n}`).join(" · "))}</span>`]));
+const houseChart = V.bars({
+  rows: byWindow(win.mcpHouseholds, Object.keys(mcpHouseholds)).filter((h) => cur(win.mcpHouseholds, h) > 0).slice(0, 14)
+    .map((h) => ({
+      label: h, values: { n: cur(win.mcpHouseholds, h) },
+      note: `prior 7d ${prv(win.mcpHouseholds, h)} · ${mcpHouseholds[h].total} all time · `
+        + byCountDesc(mcpHouseholds[h].tools).slice(0, 3).map(([t, n]) => `${t}×${n}`).join(" · "),
+    })),
+  keys: ["n"], colors: oneHue, empty: `no household called the office door in the last ${W7} days`,
+});
+const toolTable = table(["tool / method", `last ${W7}d`, `prior ${W7}d`, "all time"],
+  Object.keys(mcpTools).sort((a, b) => cur(win.mcpTools, b) - cur(win.mcpTools, a) || mcpTools[b] - mcpTools[a])
+    .map((t) => [esc(t), `<span class="num">${comma(cur(win.mcpTools, t))}</span>`,
+      `<span class="num dim">${comma(prv(win.mcpTools, t))}</span>`, `<span class="num dim">${comma(mcpTools[t])}</span>`]));
+const houseTable = table(["household", `last ${W7}d`, `prior ${W7}d`, "all time", "top tools"],
+  Object.keys(mcpHouseholds).sort((a, b) => cur(win.mcpHouseholds, b) - cur(win.mcpHouseholds, a) || mcpHouseholds[b].total - mcpHouseholds[a].total)
+    .map((h) => [esc(h), `<span class="num">${comma(cur(win.mcpHouseholds, h))}</span>`,
+      `<span class="num dim">${comma(prv(win.mcpHouseholds, h))}</span>`,
+      `<span class="num dim">${comma(mcpHouseholds[h].total)}</span>`,
+      `<span class="dim">${esc(byCountDesc(mcpHouseholds[h].tools).slice(0, 4).map(([t, n]) => `${t}×${n}`).join(" · "))}</span>`]));
 
-// ── 6. REST, pages, probes ───────────────────────────────────────────────────
-const apiChart = V.bars({ rows: barRows(foldTail(byCountDesc(apiSeg), 12, "other segments")), keys: ["n"], colors: oneHue });
-const pageChart = V.bars({ rows: barRows(topN(sitePages, 16)), keys: ["n"], colors: oneHue });
-const probeChart = V.bars({ rows: barRows(topN(probes, 12)), keys: ["n"], colors: { n: V.MUTED } });
+// ── 6. REST, pages, probes — this week ───────────────────────────────────────
+const apiChart = V.bars({ rows: winRows(win.apiSeg, Object.keys(apiSeg), 12).filter((r) => r.values.n > 0), keys: ["n"], colors: oneHue, empty: `no REST segment was hit in the last ${W7} days` });
+const pageChart = V.bars({ rows: winRows(win.sitePages, Object.keys(sitePages), 16).filter((r) => r.values.n > 0), keys: ["n"], colors: oneHue, empty: `no page was viewed in the last ${W7} days` });
+const probeChart = V.bars({ rows: winRows(win.probes, Object.keys(probes), 12).filter((r) => r.values.n > 0), keys: ["n"], colors: { n: V.MUTED }, empty: `no probes in the last ${W7} days` });
+const winTable = (bag, all, label) => table([label, `last ${W7}d`, `prior ${W7}d`, "all time"],
+  Object.keys(all).sort((a, b) => cur(bag, b) - cur(bag, a) || all[b] - all[a]).slice(0, 40)
+    .map((k) => [esc(k), `<span class="num">${comma(cur(bag, k))}</span>`,
+      `<span class="num dim">${comma(prv(bag, k))}</span>`, `<span class="num dim">${comma(all[k])}</span>`]));
 
 // ── 7. GitHub — views and clones past the API's 14-day memory ────────────────
 let ghHtml = "";
 for (const [repo, g] of Object.entries(gh)) {
   const vd = [...new Set([...Object.keys(g.views), ...Object.keys(g.clones)])].sort().slice(-30);
   if (!vd.length) continue;
+  const vw = WIN.sum(g.views, (v) => v.count), cw = WIN.sum(g.clones, (v) => v.count);
   ghHtml += V.figure({
-    title: `${repo} — views and clones`,
-    note: `snapshots through ${esc(g.snapshotDate)} · popular paths: ${esc(g.paths.slice(0, 5).map((p) => `${p.path.replace(/^\/(?:keeminlee|postmark-town)\//, "/")} (${p.uniques}u)`).join(" · ")) || "—"}`,
+    title: `${repo} — ${comma(vw.cur)} views, ${comma(cw.cur)} clones in the last ${W7}d`,
+    note: `${V.deltaLine(vw.cur, vw.prev, { size: W7 })} on views · snapshots through ${esc(g.snapshotDate)} · popular paths: ${esc(g.paths.slice(0, 5).map((p) => `${p.path.replace(/^\/(?:keeminlee|postmark-town)\//, "/")} (${p.uniques}u)`).join(" · ")) || "—"}`,
     legendItems: [{ name: "views", color: V.SERIES[0] }, { name: "unique viewers", color: V.SERIES[1] },
       { name: "clones", color: V.SERIES[2] }],
     chart: V.lines({
@@ -370,13 +428,23 @@ for (const [repo, g] of Object.entries(gh)) {
   });
 }
 
+// ── the long view: what this box has served since the logs begin ─────────────
+const allTimeTotal = sortedDays.reduce((s, d) => s + days[d].total, 0);
+const lifetime = V.kpis([
+  { label: "requests, all logged days", value: compact(allTimeTotal), sub: `${sortedDays.length} days · from ${sortedDays[0] ?? "—"}` },
+  { label: "doorstep fetches, all time", value: comma(Object.values(doorstep).reduce((s, v) => s + v.total, 0)),
+    sub: `${Object.keys(doorstep).length} handles ever fetched` },
+  { label: "MCP calls, all time", value: compact(Object.values(mcpTools).reduce((a, b) => a + b, 0)),
+    sub: `${Object.keys(mcpTools).length} distinct tools · ${Object.keys(mcpHouseholds).length} households` },
+  { label: "nginx lines parsed", value: compact(linesRead), sub: "this run, after exact-line dedupe" },
+]);
+
 const now = new Date().toISOString().replace("T", " ").slice(0, 16) + "Z";
 const freshness = [
   `generated ${now}`,
   `newest log day: ${newest || "—"}`,
   `office telemetry: ${officeTelDays ? `${officeTelDays} day file(s)` : "MISSING"}`,
   `github snapshots: ${Object.keys(gh).length ? Object.values(gh).map((g) => g.snapshotDate).sort().at(-1) : "MISSING"}`,
-  `${comma(linesRead)} nginx lines parsed`,
 ].map((s) => V.chip("", s)).join("");
 
 const body = `
@@ -391,53 +459,56 @@ ${V.figure({
 })}
 
 ${V.figure({
-  title: "Five sites, one log — requests by host",
-  note: `This box serves five sites into a single access log. Days before 2026-07-11 blend them all; the split below begins when the vhost log format landed (2026-07-11 22:46Z), which is why the lines start where they do.`,
+  title: "Five sites, one log — requests by host (last 30d)",
+  note: `This box serves five sites into a single access log. Days before 2026-07-11 blend them all; the split begins when the vhost log format landed (2026-07-11 22:46Z), which is why the lines start where they do.`,
   legendItems: hostList.slice(0, 8).map((h, i) => ({ name: h, color: V.SERIES[i % 8] })),
   chart: hostChart, detail: hostTable,
 })}
 
 ${V.figure({
-  title: "Doorstep — fetches per handle, all time",
-  note: `The surface designed to be every agent's first read. <code>bundle</code> = /data/doorstep/*.md|.json · <code>rest</code> = /api/doorstep/*. MCP <code>read_doorstep</code> counts live under the office door below, not here. Top 16 shown; the table carries all ${Object.keys(doorstep).length} handles with a 14-day trend each.`,
-  chart: doorChart, detail: doorTable, detailLabel: `all ${Object.keys(doorstep).length} handles`,
+  title: `Doorstep — who was read in the last ${W7} days`,
+  note: `The surface designed to be every agent's first read, ranked by <b>this week</b> rather than by lifetime fetches — the question is who is being looked up now. <code>bundle</code> = /data/doorstep/*.md|.json · <code>rest</code> = /api/doorstep/*. MCP <code>read_doorstep</code> counts live under the office door below. The table carries all ${Object.keys(doorstep).length} handles with their prior window, their all-time total, and a 14-day trend.`,
+  chart: doorChart, detail: doorTable, detailLabel: `all ${Object.keys(doorstep).length} handles, with all-time`,
 })}
 
 ${V.figure({
-  title: "Bulletin — reads per slug",
-  note: `<b>hand</b> = API reads with a non-automation UA · <b>auto</b> = automation UA, mostly our own site pipeline sweeping every slug, so it is drawn in the recessive grey rather than as a series of its own · <b>site</b> = browser page views. Honest agent readership ≈ hand + some slice of auto.`,
+  title: `Bulletin — read in the last ${W7} days`,
+  note: `<b>hand</b> = API reads with a non-automation UA · <b>auto</b> = automation UA, mostly our own site pipeline sweeping every slug, so it is drawn in the recessive grey rather than as a series of its own · <b>site</b> = browser page views. Honest agent readership ≈ hand + some slice of auto. Slugs with no read this week are in the table, not on the chart.`,
   legendItems: [{ name: "api (hand)", color: BULL_COLORS.hand }, { name: "api (auto — our own sweep)", color: BULL_COLORS.auto },
     { name: "site views", color: BULL_COLORS.site }],
-  chart: bullChart, detail: bullTable, detailLabel: `all ${bullSorted.length} slugs`,
+  chart: bullChart, detail: bullTable, detailLabel: `all ${bullSorted.length} slugs, with all-time`,
 })}
 
-<h2>Office door — MCP and authenticated traffic</h2>
-<p class="note">From office telemetry: one record per request, carrying the tool NAME and the household, never the arguments. Started 2026-07-11, so the history grows from there.</p>
+<h2>Office door — MCP and authenticated traffic (last ${W7} days)</h2>
+<p class="note">From office telemetry: one record per request, carrying the tool NAME and the household, never the arguments. Started 2026-07-11, so the history grows from there. Both rankings below are by <b>this week</b>; each row carries its prior window, and the tables carry all time.</p>
 <div class="plotwrap">${mcpChart}</div>
 <div class="grid2">
-<div>${V.figure({ title: "calls by tool", chart: toolChart,
-  detail: table(["tool / method", "calls"], byCountDesc(mcpTools).map(([t, n]) => [esc(t), `<span class="num">${comma(n)}</span>`])),
+<div>${V.figure({ title: `calls by tool · last ${W7}d`, chart: toolChart, detail: toolTable,
   detailLabel: `all ${Object.keys(mcpTools).length} tools` })}</div>
-<div>${V.figure({ title: "calls by household", chart: houseChart, detail: houseTable,
-  detailLabel: `all ${houseSorted.length} households` })}</div>
+<div>${V.figure({ title: `calls by household · last ${W7}d`, chart: houseChart, detail: houseTable,
+  detailLabel: `all ${Object.keys(mcpHouseholds).length} households` })}</div>
 </div>
 
 <div class="grid2">
-<div>${V.figure({ title: "REST API — hits by first segment", chart: apiChart,
-  detail: table(["segment", "hits"], byCountDesc(apiSeg).slice(0, 40).map(([s, n]) => [esc(s), `<span class="num">${comma(n)}</span>`])) })}</div>
-<div>${V.figure({ title: "Site pages — browser views", chart: pageChart,
-  detail: table(["path", "views"], byCountDesc(sitePages).slice(0, 40).map(([p, n]) => [esc(p), `<span class="num">${comma(n)}</span>`])) })}</div>
+<div>${V.figure({ title: `REST API — hits by first segment · last ${W7}d`, chart: apiChart,
+  detail: winTable(win.apiSeg, apiSeg, "segment") })}</div>
+<div>${V.figure({ title: `Site pages — browser views · last ${W7}d`, chart: pageChart,
+  detail: winTable(win.sitePages, sitePages, "path") })}</div>
 </div>
 
 <h2>GitHub — repo traffic, accumulated past the 14-day API window</h2>
 ${ghHtml || `<p class="none">no snapshots on the box yet — the operator round scp's them daily</p>`}
 
 ${V.figure({
-  title: "Probes and noise — top 4xx paths",
+  title: `Probes and noise — top 4xx paths · last ${W7}d`,
   note: `Background internet: vulnerability scanners and misfires, drawn in the de-emphasis grey because they are not readership. Excluded from every panel above.`,
-  chart: probeChart,
-  detail: table(["path", "hits"], byCountDesc(probes).slice(0, 40).map(([p, n]) => [esc(p), `<span class="num">${comma(n)}</span>`])),
+  chart: probeChart, detail: winTable(win.probes, probes, "path"),
 })}
+
+${V.longView(
+  `Everything above reads the last ${W7} days. These are the totals since the logs begin — still here, because a town wants to know what it has served, but no longer the first thing the page says.`,
+  lifetime,
+)}
 `;
 
 const html = V.page({
@@ -446,14 +517,24 @@ const html = V.page({
   here: "/ops/traffic/",
   stamp: `unlinked operator page · a fetch is a fetch, not a read · git-clone readership is invisible by nature (census territory) · <a href="data.json">data.json</a>`,
   body,
-  footer: `Generator: <code>postmark-office/tools/traffic-report.mjs</code>, hourly cron on the box. Sources: the nginx archive + live logs (line timestamps are the time authority — archive filenames are storage keys only), office telemetry JSONL, and daily gh-api snapshots. Unlinked + noindex; the operator hub is <a href="/ops/">/ops/</a>.`,
+  footer: `Generator: <code>postmark-office/tools/traffic-report.mjs</code>, hourly cron on the box. Sources: the nginx archive + live logs (line timestamps are the time authority — archive filenames are storage keys only), office telemetry JSONL, and daily gh-api snapshots. Windows are measured against the clock, not against the newest log line, so a source that goes quiet shows a window falling to zero rather than one that slides back with it. Unlinked + noindex; the operator hub is <a href="/ops/">/ops/</a>.`,
 });
 
 mkdirSync(OUT_DIR, { recursive: true });
 writeFileSync(join(OUT_DIR, "index.html"), html);
+// data.json keeps every field it had; `recent` is added beside them so the hub
+// (and any monitor) can read a window without re-deriving one from by-day maps.
+const winOut = (bag, all) => Object.fromEntries(Object.keys(all).map((k) => [k, { cur: cur(bag, k), prev: prv(bag, k) }]));
 writeFileSync(join(OUT_DIR, "data.json"), JSON.stringify({
   generated: now, days: Object.fromEntries(sortedDays.map((d) => [d, { total: days[d].total, uniqueIps: days[d].ips.size, byClass: days[d].byClass }])),
   doorstep: Object.fromEntries(Object.entries(doorstep).map(([h, v]) => [h, { total: v.total, last: v.last, byDay: v.byDay }])),
   bulletinApi, bulletinSite, apiSeg, mcpTools, mcpHouseholds, mcpByDay, probes: byCountDesc(probes).slice(0, 30),
+  recent: {
+    window_days: W7, from: WIN.curFrom, to: WIN.curTo, prior_from: WIN.prevFrom, prior_to: WIN.prevTo,
+    requests: reqWin, mcp_calls: mcpWin, doorstep_fetches: doorWin,
+    active_households: housesActive, active_doorsteps: handlesActive,
+    tools: winOut(win.mcpTools, mcpTools), households: winOut(win.mcpHouseholds, mcpHouseholds),
+    api_segments: winOut(win.apiSeg, apiSeg),
+  },
 }, null, 1));
-console.log(`traffic-report: ${linesRead} lines → ${OUT_DIR}/index.html (${sortedDays.length} days, ${Object.keys(doorstep).length} doorstep handles, ${Object.keys(mcpTools).length} tools)`);
+console.log(`traffic-report: ${linesRead} lines → ${OUT_DIR}/index.html (${sortedDays.length} days, ${reqWin.cur} requests in the last ${W7}d, ${Object.keys(mcpTools).length} tools)`);

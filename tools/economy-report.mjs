@@ -176,6 +176,59 @@ for (const e of entries) {
 const townByPurpose = {};
 for (const t of townIssuance) townByPurpose[t.purpose] = (townByPurpose[t.purpose] || 0) + t.n;
 
+// ── 2c. THE WEEK — flow, not stock (2026-08-11) ──────────────────────────────
+// Keemin: lead with fresh activity, not lifetime totals. Equity, supply and the
+// gini are STOCKS — true statements about everything that ever happened, and
+// therefore the same number most mornings. What actually moved this week is a
+// FLOW, and it is what this page now opens with; the stocks keep their place
+// under "the long view".
+//
+// Still no money grammar of our own: every line below is classified by the
+// town's own classifyEntry, exactly like the issuance fold above. The kinds it
+// already names (mint/gift/friendship/vote-mint/town-issuance, world-stake,
+// world-unstake, transfer) are the whole vocabulary used here.
+const WIN = V.windows(7);
+const W7 = WIN.size;
+const flow = {
+  minted: { cur: 0, prev: 0 }, gifted: { cur: 0, prev: 0 }, staked: { cur: 0, prev: 0 },
+  unstaked: { cur: 0, prev: 0 }, moved: { cur: 0, prev: 0 }, lines: { cur: 0, prev: 0 },
+  townMinted: { cur: 0, prev: 0 },
+};
+const mintedByHandleWin = {};  // handle -> stamps minted inside the window
+const stakedByMarkWin = {};    // mark   -> stamps staked inside the window
+const stakersWin = new Set();
+for (const e of entries) {
+  const c = sm.classifyEntry(e.canonical);
+  if (!c.date) continue;
+  const isCur = WIN.inCur(c.date);
+  if (!isCur && !WIN.inPrev(c.date)) continue;
+  const side = isCur ? "cur" : "prev";
+  flow.lines[side] += 1;
+  if (SOURCE_OF[c.kind]) {
+    const n = c.n ?? 1;
+    flow.minted[side] += n;
+    if (isCur && c.handle) mintedByHandleWin[c.handle] = (mintedByHandleWin[c.handle] || 0) + n;
+  }
+  if (c.kind === "gift") flow.gifted[side] += c.n;
+  if (c.kind === "town-issuance") flow.townMinted[side] += c.n;
+  if (c.kind === "world-stake") {
+    flow.staked[side] += c.n;
+    if (isCur) { stakersWin.add(c.handle); stakedByMarkWin[c.mark] = (stakedByMarkWin[c.mark] || 0) + c.n; }
+  }
+  if (c.kind === "world-unstake") flow.unstaked[side] += c.n;
+  if (c.kind === "transfer") flow.moved[side] += c.n;
+}
+// A household, not a handle, is this page's unit — the same rule the equity
+// table follows, and for the same reason: the town's machinery shares one.
+const earningHouseholds = new Set(Object.keys(mintedByHandleWin).map(householdKeyOf));
+const mintedByHouseholdWin = {};
+for (const [h, n] of Object.entries(mintedByHandleWin)) {
+  const k = householdKeyOf(h);
+  (mintedByHouseholdWin[k] ??= { key: k, handles: [], n: 0 });
+  if (!mintedByHouseholdWin[k].handles.includes(h)) mintedByHouseholdWin[k].handles.push(h);
+  mintedByHouseholdWin[k].n += n;
+}
+
 // ── 3. THE WORLD SIDE — ledger_weight and the mark register ──────────────────
 const derived = ws.deriveWorldMarkWeights(TOWN_CLONE);
 const worldSha = (gitTry(WORLD_CLONE, ["rev-parse", "--short", WORLD_REF]) ?? gitTry(WORLD_CLONE, ["rev-parse", "--short", "HEAD"], "?")).trim();
@@ -209,10 +262,13 @@ const zeroByTier = {};
 for (const m of zeroEscrowCommons) zeroByTier[m.tier ?? "?"] = (zeroByTier[m.tier ?? "?"] || 0) + 1;
 
 
+
 // ── render ───────────────────────────────────────────────────────────────────
-// Charts first (2026-08-11 dataviz pass). The prose guards and their exact
-// wording are load-bearing — test/economy-report.test.mjs asserts on them, which
-// is the point: a page that can only go green is not a monitor.
+// RECENCY FIRST (2026-08-11). The page opens on what MOVED this week; equity,
+// supply and the gini are stocks and sit under "the long view" at the bottom.
+// The prose guards and their exact wording are load-bearing either way —
+// test/economy-report.test.mjs asserts on them, which is the point: a page that
+// can only go green is not a monitor.
 const now = new Date().toISOString().slice(0, 16).replace("T", " ") + " UTC";
 const { esc, comma, chip } = V;
 const pct = (x) => (x * 100).toFixed(1) + "%";
@@ -221,52 +277,36 @@ const sourceOrder = ["correspondence", "friendship", "decisions", "discretionary
   .filter((s) => issuance[s] !== undefined);
 const SOURCE_COLORS = Object.fromEntries(sourceOrder.map((s, i) => [s, V.SERIES[i % 8]]));
 
-// ── the numbers the page leads with ──────────────────────────────────────────
+// ── the week, as the page's first reading ────────────────────────────────────
 const issuedByDay = days30.map((d) => sourceOrder.reduce((s, k) => s + (issuanceByDay[d]?.[k] || 0), 0));
+const netStake = flow.staked.cur - flow.unstaked.cur;
 const kpiRow = V.kpis([
-  { label: "minted, all time", value: comma(M), sub: `${comma(entries.length)} sealed ledger lines`,
+  { label: `minted · last ${W7}d`, value: comma(flow.minted.cur),
+    sub: V.deltaLine(flow.minted.cur, flow.minted.prev, { size: W7 }),
     spark: V.sparkline(issuedByDay, { title: "stamps issued per day, last 30d" }) },
-  { label: "households", value: comma(equityRows.length), sub: `${comma(liquidTotal)} liquid · ${comma(escrowTotal)} escrowed` },
-  { label: "gini", value: gini.toFixed(3), sub: "0 = flat · 1 = one household holds it all",
-    status: gini > 0.6 ? "warn" : "ok" },
-  { label: "top 10 hold", value: pct(topShare(10)), sub: `top 25 hold ${pct(topShare(25))}`,
-    status: topShare(10) > 0.5 ? "warn" : "ok" },
-  { label: "escrowed in stakes", value: comma(escrowTotal), sub: `${topBacked.length} marks carry backing` },
+  { label: `households earning · ${W7}d`, value: comma(earningHouseholds.size),
+    sub: `of ${comma(equityRows.length)} that have ever minted` },
+  { label: `changed hands · last ${W7}d`, value: comma(flow.moved.cur),
+    sub: V.deltaLine(flow.moved.cur, flow.moved.prev, { size: W7 }) },
+  { label: `staked on marks · ${W7}d`, value: comma(flow.staked.cur),
+    sub: flow.unstaked.cur ? `${comma(flow.unstaked.cur)} unstaked · net ${netStake >= 0 ? "+" : ""}${comma(netStake)}`
+      : V.deltaLine(flow.staked.cur, flow.staked.prev, { size: W7 }) },
+  { label: `ledger lines · last ${W7}d`, value: comma(flow.lines.cur),
+    sub: V.deltaLine(flow.lines.cur, flow.lines.prev, { size: W7 }) },
 ]);
 
-// ── equity: the shape first, the ranking second ──────────────────────────────
-const lorenzChart = V.lorenz({ values: equityRows.map((r) => r.minted), gini });
-const equityBars = V.bars({
-  rows: equityRows.slice(0, 20).map((r) => ({
-    label: r.handles.slice().sort().join(", "), values: { minted: r.minted }, note: `${pct(r.share)} of supply · ${r.key}`,
-  })),
-  keys: ["minted"], colors: { minted: V.SERIES[0] },
-});
-const equityTable = V.table(["#", "household", "handles", "minted", "share", "liquid", "escrow"],
-  equityRows.map((r, i) => [`<span class="dim">${i + 1}</span>`, `<span class="dim">${esc(r.key)}</span>`,
-    `<span class="who">${esc(r.handles.slice().sort().join(", "))}</span>`,
-    `<span class="num">${r.minted}</span>`, `<span class="num">${pct(r.share)}</span>`,
-    `<span class="num">${r.liquid}</span>`, `<span class="num">${r.escrow}</span>`]));
+// who earned this week — households, ranked by the window
+const earnRows = Object.values(mintedByHouseholdWin).sort((a, b) => b.n - a.n).slice(0, 20)
+  .map((r) => ({ label: r.handles.slice().sort().join(", "), values: { n: r.n }, note: r.key }));
+const earnChart = V.bars({ rows: earnRows, keys: ["n"], colors: { n: V.SERIES[0] },
+  empty: `no household minted a stamp in the last ${W7} days` });
 
-// ── supply: one bar, two parts, and the two guards that can go red ───────────
-const supplyBar = V.bars({
-  rows: [{ label: "all supply", values: { liquid: liquidTotal, escrow: escrowTotal } }],
-  keys: ["liquid", "escrow"], colors: { liquid: V.SERIES[0], escrow: V.SERIES[3] }, max: M,
-});
-const supplyGuards = `<p>
-  ${chip(negative.length ? "red" : "ok", negative.length
-    ? `NEGATIVE BALANCE — ${negative.length} household(s) below zero: ${negative.map((r) => r.handles.join("/")).join(", ")}`
-    : "no household is below zero")}
-  ${chip(unknown.length ? "red" : "ok", unknown.length
-    ? `UNKNOWN ACCOUNT — ${unknown.length} account(s) moved money without minting or being pinned: ${unknown.map((r) => r.handles.join("/")).join(", ")}`
-    : "every account is a pinned household or a minter")}
-</p>`;
+// what got backed this week
+const stakeRows = Object.entries(stakedByMarkWin).sort((a, b) => b[1] - a[1]).slice(0, 16)
+  .map(([mark, n]) => ({ label: mark, values: { n } }));
+const stakeChart = V.bars({ rows: stakeRows, keys: ["n"], colors: { n: V.SERIES[3] }, unit: "✦",
+  empty: `nobody staked on a mark in the last ${W7} days` });
 
-// ── issuance: where every stamp came from, and when ──────────────────────────
-const issuanceBars = V.bars({
-  rows: sourceOrder.map((s) => ({ label: s, values: { n: issuance[s] }, note: `${issuanceLines[s]} ledger line(s)` })),
-  keys: ["n"], colors: { n: V.SERIES[0] },
-});
 const issuanceOverTime = V.columns({
   rows: days30.map((d) => ({ label: d.slice(5), values: Object.fromEntries(sourceOrder.map((s) => [s, issuanceByDay[d]?.[s] || 0])) })),
   keys: sourceOrder, colors: SOURCE_COLORS, fmt: comma,
@@ -277,41 +317,24 @@ const issuanceTable = V.table(["day (last 30)", ...sourceOrder.map(esc), "day to
     return [`<span class="dim">${d}</span>`, ...sourceOrder.map((s) => `<span class="num">${row[s] || 0}</span>`),
       `<span class="num">${sourceOrder.reduce((s, k) => s + (row[k] || 0), 0)}</span>`];
   }));
-const issuanceGuard = `<p>${chip(issuanceTotal === M ? "ok" : "red", issuanceTotal === M
-  ? `every minted stamp is classified (${issuanceTotal} = M)`
-  : `UNCLASSIFIED ISSUANCE — ${issuanceTotal} classified vs M ${M}: ${M - issuanceTotal} stamp(s) entered supply through a mint class this page does not know`)}</p>`;
 
-// ── the treasury: only the cumulative line means anything ────────────────────
-const townChart = townIssuance.length
-  ? V.lines({
-      labels: townIssuance.map((t) => t.date.slice(5)),
-      series: [{ name: "cumulative minted by the town", color: V.SERIES[1], values: townIssuance.map((t) => t.cumulative) }],
-      fmt: comma,
-    })
-  : "";
-const townTable = townIssuance.length ? V.table(["date", "purpose", "minted", "cumulative", "by", "stated reason"],
-  townIssuance.map((t) => [`<span class="dim">${esc(t.date)}</span>`, esc(t.purpose), `<span class="num">${t.n}</span>`,
-    `<span class="num">${t.cumulative}</span>`, `<span class="who">${esc(t.by)}</span>`,
-    `<span class="dim">${esc(t.note)}</span>`])) : "";
-
-// ── the world side: what is actually holding a mark up ───────────────────────
-// weight = escrow + k × external households, so the bar is drawn as its own two
-// parts: a mark held up by money reads differently from one held up by company.
+// ── present state: what is holding marks up right now ────────────────────────
 const backedBars = V.bars({
   rows: topBacked.slice(0, 22).map((m) => ({
-    label: m.mark, note: `${m.tier ?? "—"}${m.exists ? "" : " · ABSENT from the world register"}`,
+    label: m.mark, note: `${m.tier ?? "—"}${m.exists ? "" : " · ABSENT from the world register"}`
+      + (stakedByMarkWin[m.mark] ? ` · +${stakedByMarkWin[m.mark]} this week` : ""),
     values: { escrow: m.escrow, households: m.weight - m.escrow },
   })),
   keys: ["escrow", "households"], colors: { escrow: V.SERIES[0], households: V.SERIES[2] },
   empty: "no mark carries escrow",
 });
-const backedTable = V.table(["#", "mark", "tier", "escrow", "ext. households", "ledger_weight"],
+const backedTable = V.table(["#", "mark", "tier", "escrow", "ext. households", "ledger_weight", `staked ${W7}d`],
   topBacked.map((m, i) => [`<span class="dim">${i + 1}</span>`,
     `${esc(m.mark)}${m.exists ? "" : ' <span class="chip red">absent</span>'}`,
     `<span class="dim">${esc(m.tier ?? "—")}</span>`, `<span class="num">${m.escrow}</span>`,
-    `<span class="num">${m.households_external}</span>`, `<span class="num">${m.weight}</span>`]));
+    `<span class="num">${m.households_external}</span>`, `<span class="num">${m.weight}</span>`,
+    `<span class="num dim">${stakedByMarkWin[m.mark] || 0}</span>`]));
 
-// ── transition: the set with no anchor ───────────────────────────────────────
 const anchored = commons.length - zeroEscrowCommons.length;
 const transitionBar = V.bars({
   rows: [{ label: "commons marks", values: { anchored, unanchored: zeroEscrowCommons.length } }],
@@ -325,57 +348,76 @@ const transitionTable = V.table(["mark", "tier", "by", "date"],
   zeroEscrowCommons.slice(0, 200).map((m) => [esc(m.id), `<span class="dim">${esc(m.tier ?? "")}</span>`,
     `<span class="who">${esc(m.by ?? "")}</span>`, `<span class="dim">${esc(String(m.date ?? "").slice(0, 10))}</span>`]));
 
+// ── the long view: stocks ────────────────────────────────────────────────────
+const lorenzChart = V.lorenz({ values: equityRows.map((r) => r.minted), gini });
+const equityBars = V.bars({
+  rows: equityRows.slice(0, 20).map((r) => ({
+    label: r.handles.slice().sort().join(", "), values: { minted: r.minted }, note: `${pct(r.share)} of supply · ${r.key}`,
+  })),
+  keys: ["minted"], colors: { minted: V.SERIES[0] },
+});
+const equityTable = V.table(["#", "household", "handles", "minted", "share", "liquid", "escrow", `minted ${W7}d`],
+  equityRows.map((r, i) => [`<span class="dim">${i + 1}</span>`, `<span class="dim">${esc(r.key)}</span>`,
+    `<span class="who">${esc(r.handles.slice().sort().join(", "))}</span>`,
+    `<span class="num">${r.minted}</span>`, `<span class="num">${pct(r.share)}</span>`,
+    `<span class="num">${r.liquid}</span>`, `<span class="num">${r.escrow}</span>`,
+    `<span class="num dim">${mintedByHouseholdWin[r.key]?.n || 0}</span>`]));
+const supplyBar = V.bars({
+  rows: [{ label: "all supply", values: { liquid: liquidTotal, escrow: escrowTotal } }],
+  keys: ["liquid", "escrow"], colors: { liquid: V.SERIES[0], escrow: V.SERIES[3] }, max: M,
+});
+const supplyGuards = `<p>
+  ${chip(negative.length ? "red" : "ok", negative.length
+    ? `NEGATIVE BALANCE — ${negative.length} household(s) below zero: ${negative.map((r) => r.handles.join("/")).join(", ")}`
+    : "no household is below zero")}
+  ${chip(unknown.length ? "red" : "ok", unknown.length
+    ? `UNKNOWN ACCOUNT — ${unknown.length} account(s) moved money without minting or being pinned: ${unknown.map((r) => r.handles.join("/")).join(", ")}`
+    : "every account is a pinned household or a minter")}
+</p>`;
+const issuanceBars = V.bars({
+  rows: sourceOrder.map((s) => ({ label: s, values: { n: issuance[s] }, note: `${issuanceLines[s]} ledger line(s)` })),
+  keys: ["n"], colors: { n: V.SERIES[0] },
+});
+const issuanceGuard = `<p>${chip(issuanceTotal === M ? "ok" : "red", issuanceTotal === M
+  ? `every minted stamp is classified (${issuanceTotal} = M)`
+  : `UNCLASSIFIED ISSUANCE — ${issuanceTotal} classified vs M ${M}: ${M - issuanceTotal} stamp(s) entered supply through a mint class this page does not know`)}</p>`;
+const townChart = townIssuance.length
+  ? V.lines({
+      labels: townIssuance.map((t) => t.date.slice(5)),
+      series: [{ name: "cumulative minted by the town", color: V.SERIES[1], values: townIssuance.map((t) => t.cumulative) }],
+      fmt: comma,
+    })
+  : "";
+const townTable = townIssuance.length ? V.table(["date", "purpose", "minted", "cumulative", "by", "stated reason"],
+  townIssuance.map((t) => [`<span class="dim">${esc(t.date)}</span>`, esc(t.purpose), `<span class="num">${t.n}</span>`,
+    `<span class="num">${t.cumulative}</span>`, `<span class="who">${esc(t.by)}</span>`,
+    `<span class="dim">${esc(t.note)}</span>`])) : "";
+
 const body = `
 ${kpiRow}
 
 ${V.figure({
-  title: "equity — how evenly the town's stamps were ever earned",
-  note: `The curve is every household's cumulative share of all stamps ever minted, poorest to richest; the straight line is what perfect equality would look like. The gap between them <em>is</em> the gini. Past tense and immutable: this is what a household ever <strong>generated</strong>, summed over every <code>MINT → handle</code> line — nothing subtracts, so it never falls when stamps are spent, staked or given away. That is exactly what separates it from a balance.`,
-  chart: lorenzChart,
-})}
-
-${V.figure({
-  title: "the twenty households that minted most",
-  note: `<strong>Read the handles before the number.</strong> A bar is a HOUSEHOLD, and a household can hold many handles — the town's own machinery and its Stars share one, so the top bar is several correspondents summed, not one resident out-earning the town. Ranking households without showing what is inside them is the easiest way to misread this.`,
-  chart: equityBars, detail: equityTable, detailLabel: `all ${equityRows.length} households, with liquid and escrow`,
-})}
-
-<h2>supply</h2>
-<p class="note">One bar, cut where the stamps actually are. <code>liquid + escrow = M</code> is arithmetic here, not a verdict: with MINT, BURN and the <code>stake:*</code> escrow accounts excluded, a double-entry fold sums to M however broken the ledger is, so a green tick on it would be assurance that cannot fail. The two chips below are the guards that can — a household below zero means the clip law was breached, and an account that moved stamps while never minting and never being pinned is money from nowhere.</p>
-${V.legend([{ name: `liquid, held by households (${comma(liquidTotal)})`, color: V.SERIES[0] },
-  { name: `escrowed in open stakes (${comma(escrowTotal)})`, color: V.SERIES[3] }])}
-${supplyBar}
-${supplyGuards}
-
-${V.figure({
-  title: "issuance by source — every stamp's origin",
-  note: `These are the mint classes the ledger carries, and only those. <strong>Quests are deliberately not a row</strong> — a quest is a visible face on the correspondence mint, not its own class, so counting it separately would be inventing money history. Joins likewise mint through correspondence.`,
-  chart: issuanceBars,
-})}
-${issuanceGuard}
-<p class="note">The chip above is the guard that makes this section able to fail: a new mint class landing in the ledger without a row here turns it red rather than quietly shrinking every share on the page.</p>
-
-${V.figure({
-  title: "issuance per day, by source (last 30d)",
+  title: `issuance per day, by source (last 30d)`,
+  note: `The flow: what the ledger actually minted, day by day. These are the mint classes the ledger carries, and only those. <strong>Quests are deliberately not a row</strong> — a quest is a visible face on the correspondence mint, not its own class, so counting it separately would be inventing money history. Joins likewise mint through correspondence.`,
   legendItems: sourceOrder.map((s) => ({ name: s, color: SOURCE_COLORS[s] })),
   chart: issuanceOverTime, detail: issuanceTable, detailLabel: "per-day counts",
 })}
 
-<h2>town issuance — the town minting into its own treasury</h2>
-<p>
-  ${chip(townIssuance.length ? "warn" : "ok", `${townCumulative} minted by the town, all time`)}
-  ${chip("ok", `${townIssuance.length} issuance line(s)`)}
-  ${chip("ok", `${M > 0 ? pct(townCumulative / M) : "0%"} of all supply`)}
-</p>
-<p class="note">The treasury runs <strong>mint-at-demand</strong>: resting state zero, income spent first, a mint only for the shortfall, every line naming its purpose. So the balance tells you nothing on its own — a treasury at zero is the normal state, not evidence of restraint. <strong>The cumulative line is the honest measure</strong>, and it is drawn as its own series so that town minting drifting from shortfall-only into routine is visible while it is still small.</p>
-${townIssuance.length
-    ? `<div class="plotwrap">${townChart}</div>${V.details("every issuance line", townTable)}
-       <p class="dim">by purpose: ${Object.entries(townByPurpose).sort((a, b) => b[1] - a[1]).map(([p, n]) => `${esc(p)} <span class="num">${n}</span>`).join(" · ")}</p>`
-    : `<p class="none">No town-issuance line exists yet. The treasury has never minted, and holds nothing — so there is no series to draw, and drawing one would be inventing it.</p>`}
+${V.figure({
+  title: `who earned this week — households minting in the last ${W7} days`,
+  note: `Ranked by the window, not by lifetime: the question is who is corresponding <em>now</em>. <strong>Read the handles before the number.</strong> A bar is a HOUSEHOLD, and a household can hold many handles — the town's own machinery and its Stars share one, so a top bar can be several correspondents summed rather than one resident out-earning the town.`,
+  chart: earnChart,
+})}
 
 ${V.figure({
-  title: "top-backed marks — what is holding each one up",
-  note: `<strong>ledger_weight is not ✦.</strong> It is the town's read-side derive — Σ open escrow + k × unique <em>external</em> staking households (k = ${derived.k}; a mark's own household never earns it). The world's effective ✦ adds terrain and the parent-consent fan-up on top and belongs to the world's fold; this page never prints a ✦ it did not fold. The bar is split into its two parts because they mean different things: money staked, and company kept. A mark marked <span class="chip red">absent</span> carries escrow against an id the world register does not hold — a fold error waiting to happen, since escrow implies existence.`,
+  title: `what was backed this week — stamps staked on marks in the last ${W7} days`,
+  note: `Escrow is an existence anchor, so a stake is a resident spending money to say a mark should keep existing. ${flow.unstaked.cur ? `${comma(flow.unstaked.cur)}✦ came back out of escrow in the same window.` : "Nothing was unstaked in the same window."} ${stakersWin.size ? `${stakersWin.size} household(s) staked.` : ""}`,
+  chart: stakeChart,
+})}
+
+${V.figure({
+  title: "top-backed marks — what is holding each one up, right now",
+  note: `Present state, not history. <strong>ledger_weight is not ✦.</strong> It is the town's read-side derive — Σ open escrow + k × unique <em>external</em> staking households (k = ${derived.k}; a mark's own household never earns it). The world's effective ✦ adds terrain and the parent-consent fan-up on top and belongs to the world's fold; this page never prints a ✦ it did not fold. The bar is split into its two parts because they mean different things: money staked, and company kept. A mark marked <span class="chip red">absent</span> carries escrow against an id the world register does not hold — a fold error waiting to happen, since escrow implies existence.`,
   legendItems: [{ name: "escrow (stamps staked)", color: V.SERIES[0] }, { name: `external households × k=${derived.k}`, color: V.SERIES[2] }],
   chart: backedBars, detail: backedTable, detailLabel: `all ${topBacked.length} backed marks`,
 })}
@@ -385,13 +427,56 @@ ${V.figure({
     : "None currently carries escrow."}</p>
 
 <h2>transition — commons marks carrying zero escrow</h2>
-<p class="note">The set the demotion announcement would act on, drawn from live data. <strong>The predicate is not ruled here.</strong> "Public commons" reads as un-sovereign (MARKS.md founds a commons mark un-sovereign by construction), and note that constitution-tier town infrastructure falls inside that set — whether the announcement should reach it is a doctrine question, not an observability one. A staked mark cannot retire: escrow is an existence anchor, so the grey part of this bar is exactly the set with no anchor.</p>
+<p class="note">Present state: the set the demotion announcement would act on. <strong>The predicate is not ruled here.</strong> "Public commons" reads as un-sovereign (MARKS.md founds a commons mark un-sovereign by construction), and note that constitution-tier town infrastructure falls inside that set — whether the announcement should reach it is a doctrine question, not an observability one. A staked mark cannot retire: escrow is an existence anchor, so the grey part of this bar is exactly the set with no anchor.</p>
 ${V.legend([{ name: `anchored by escrow (${anchored})`, color: V.SERIES[1] },
   { name: `no anchor (${zeroEscrowCommons.length})`, color: V.MUTED }])}
 ${transitionBar}
 <h3>unanchored, by tier</h3>
 ${tierBars}
 ${V.details(`the ${Math.min(200, zeroEscrowCommons.length)} unanchored marks${zeroEscrowCommons.length > 200 ? " (of " + zeroEscrowCommons.length + "; the full set is in data.json)" : ""}`, transitionTable)}
+
+${V.longView(
+  `Everything above is flow and present state. What follows is <strong>stock</strong> — true of everything that ever happened, and therefore much the same number most mornings. It is kept because a town wants to know its own shape; it is down here because it is not news.`,
+  `
+<h2>equity — how evenly the town's stamps were ever earned</h2>
+<p class="note">The curve is every household's cumulative share of all stamps ever minted, poorest to richest; the straight line is what perfect equality would look like. The gap between them <em>is</em> the gini. Past tense and immutable: this is what a household ever <strong>generated</strong>, summed over every <code>MINT → handle</code> line — nothing subtracts, so it never falls when stamps are spent, staked or given away. That is exactly what separates it from a balance, and exactly why it moves too slowly to lead a dashboard.</p>
+<p>
+  ${chip("ok", `M = ${M} minted`)} ${chip("ok", `${equityRows.length} households`)}
+  ${chip(gini > 0.6 ? "warn" : "ok", `gini ${gini.toFixed(3)}`)}
+  ${chip(topShare(10) > 0.5 ? "warn" : "ok", `top 10 hold ${pct(topShare(10))}`)}
+  ${chip("ok", `top 25 hold ${pct(topShare(25))}`)}
+</p>
+<div class="plotwrap">${lorenzChart}</div>
+
+<h2>the twenty households that minted most, all time</h2>
+${equityBars}
+${V.details(`all ${equityRows.length} households, with liquid, escrow and this week's minting`, equityTable)}
+
+<h2>supply</h2>
+<p class="note">One bar, cut where the stamps actually are. <code>liquid + escrow = M</code> is arithmetic here, not a verdict: with MINT, BURN and the <code>stake:*</code> escrow accounts excluded, a double-entry fold sums to M however broken the ledger is, so a green tick on it would be assurance that cannot fail. The two chips below are the guards that can — a household below zero means the clip law was breached, and an account that moved stamps while never minting and never being pinned is money from nowhere.</p>
+${V.legend([{ name: `liquid, held by households (${comma(liquidTotal)})`, color: V.SERIES[0] },
+  { name: `escrowed in open stakes (${comma(escrowTotal)})`, color: V.SERIES[3] }])}
+${supplyBar}
+${supplyGuards}
+
+<h2>issuance by source, all time</h2>
+${issuanceBars}
+${issuanceGuard}
+<p class="note">The chip above is the guard that makes this section able to fail: a new mint class landing in the ledger without a row here turns it red rather than quietly shrinking every share on the page.</p>
+
+<h2>town issuance — the town minting into its own treasury</h2>
+<p>
+  ${chip(townIssuance.length ? "warn" : "ok", `${townCumulative} minted by the town, all time`)}
+  ${chip("ok", `${townIssuance.length} issuance line(s)`)}
+  ${chip(flow.townMinted.cur ? "warn" : "ok", `${flow.townMinted.cur} minted by the town in the last ${W7}d`)}
+  ${chip("ok", `${M > 0 ? pct(townCumulative / M) : "0%"} of all supply`)}
+</p>
+<p class="note">The treasury runs <strong>mint-at-demand</strong>: resting state zero, income spent first, a mint only for the shortfall, every line naming its purpose. So the balance tells you nothing on its own — a treasury at zero is the normal state, not evidence of restraint. <strong>The cumulative line is the honest measure</strong>, which is exactly why this section belongs to the long view: it is a lifetime series by design, and town minting drifting from shortfall-only into routine is visible in it while it is still small.</p>
+${townIssuance.length
+    ? `<div class="plotwrap">${townChart}</div>${V.details("every issuance line", townTable)}
+       <p class="dim">by purpose: ${Object.entries(townByPurpose).sort((a, b) => b[1] - a[1]).map(([p, n]) => `${esc(p)} <span class="num">${n}</span>`).join(" · ")}</p>`
+    : `<p class="none">No town-issuance line exists yet. The treasury has never minted, and holds nothing — so there is no series to draw, and drawing one would be inventing it.</p>`}
+`)}
 `;
 
 const html = V.page({
@@ -400,7 +485,7 @@ const html = V.page({
   here: "/ops/economy/",
   stamp: `generated ${esc(now)} · town <code>${esc(townSha)}</code>${dirty ? ' <span class="chip warn">ledger dirty — not the published tail</span>' : ""} · world <code>${esc(worldSha)}</code> · ${comma(entries.length)} sealed ledger lines replayed · regenerates hourly · <a href="data.json">data.json</a>`,
   body,
-  footer: `Every number here is a replay of the sealed stamp ledger through the town's own <code>tools/stamp-mint.mjs</code> and <code>tools/world-stake.mjs</code>, imported live from the town clone. This page owns no money grammar: it does not parse the ledger itself, and a number it cannot get from the town is a number the town should export. Unlinked + noindex; the operator hub is <a href="/ops/">/ops/</a>.`,
+  footer: `Every number here is a replay of the sealed stamp ledger through the town's own <code>tools/stamp-mint.mjs</code> and <code>tools/world-stake.mjs</code>, imported live from the town clone — the weekly windows included, which are folded from the same <code>classifyEntry</code> as the lifetime totals rather than from a second reading of the ledger. This page owns no money grammar: it does not parse the ledger itself, and a number it cannot get from the town is a number the town should export. Unlinked + noindex; the operator hub is <a href="/ops/">/ops/</a>.`,
 });
 
 mkdirSync(OUT_DIR, { recursive: true });
@@ -418,5 +503,14 @@ writeFileSync(join(OUT_DIR, "data.json"), JSON.stringify({
   town_issuance: { cumulative: townCumulative, lines: townIssuance, by_purpose: townByPurpose, share_of_supply: M > 0 ? Number((townCumulative / M).toFixed(4)) : 0 },
   top_backed: { k: derived.k, marks: topBacked, constitution_excluded: constitutionBacked },
   transition: { commons: commons.length, zero_escrow: zeroEscrowCommons.length, by_tier: zeroByTier, marks: zeroEscrowCommons.map((m) => ({ id: m.id, tier: m.tier, by: m.by, date: m.date })) },
+  // added 2026-08-11 beside every pre-existing field: the flow the page now leads with
+  recent: {
+    window_days: W7, from: WIN.curFrom, to: WIN.curTo, prior_from: WIN.prevFrom, prior_to: WIN.prevTo,
+    minted: flow.minted, gifted: flow.gifted, moved: flow.moved, staked: flow.staked,
+    unstaked: flow.unstaked, town_minted: flow.townMinted, ledger_lines: flow.lines,
+    earning_households: earningHouseholds.size,
+    minted_by_household: Object.fromEntries(Object.values(mintedByHouseholdWin).map((r) => [r.key, { handles: r.handles, minted: r.n }])),
+    staked_by_mark: stakedByMarkWin,
+  },
 }, null, 2));
-console.log(`economy-report: wrote ${OUT_DIR}/index.html (M=${M}, ${equityRows.length} households, ${topBacked.length} backed marks, ${zeroEscrowCommons.length} zero-escrow commons)`);
+console.log(`economy-report: wrote ${OUT_DIR}/index.html (${flow.minted.cur} minted in the last ${W7}d, M=${M}, ${equityRows.length} households, ${topBacked.length} backed marks, ${zeroEscrowCommons.length} zero-escrow commons)`);
