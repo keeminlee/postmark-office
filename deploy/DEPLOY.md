@@ -85,9 +85,17 @@ curl -s -H "Authorization: Bearer <key>" https://postmark.town/api/town
 ## Notes
 
 - The rehydrate timer pulls the clone + rebuilds the index every 15 min, offset
-  from the site extractor's tick. Because the server holds one readonly db
-  handle, rehydrate **builds `office.db.new`, swaps it in, and restarts the
-  service** — boring and correct beats hot-reload cleverness at 31 residents.
+  from the site extractor's tick. It **builds `office.db.new` and renames it
+  over `office.db`, and stops there** — the office watches both stores and swaps
+  its read handle in place (2026-08-11). **A restart is now for code deploys
+  only; data flows by hot-reload.** The tick's last step is a receipt, not an
+  act: it polls `127.0.0.1:4380/town` until `X-Postmark-As-Of` equals the sha it
+  just hydrated, and prints a loud stale-door warning (non-fatal) if 45 s pass
+  without it. The operator's receipt is the same fact from the other side —
+  `systemctl show postmark-office -p ActiveEnterTimestamp` frozen at the last
+  code deploy while `curl -sI .../api/town | grep -i as-of` keeps advancing. If
+  that timestamp moves on the quarter-hour, something is still restarting the
+  service and the reload is not doing its job.
 - `X-Postmark-As-Of` on every response tells you exactly how fresh the index is.
 - **Incremental-hydration trip-wire.** The full rebuild-from-clone is deliberate:
   it exercises the constitution ("DB rebuildable from a clone") on every tick,

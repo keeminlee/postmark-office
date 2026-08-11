@@ -15,7 +15,16 @@
 # more likely to bounce. Pulse:
 # wright-2026-07-30-office-tick-lock-starves-write-paths.
 #
+# THE TICK NO LONGER RESTARTS THE OFFICE (2026-08-11). It ends by WRITING files
+# — office.db, world.db, the panes — and the office picks them up itself: it
+# watches both stores and swaps its read handle in place. The last step here is
+# therefore a receipt, not an act: poll the local door until it answers with the
+# sha we just hydrated. Restarting the service is now only ever a code deploy,
+# by hand. Before this, the restart WAS the reload, and it killed every live MCP
+# session four times an hour.
+#
 # Env (from /etc/postmark-office.env via the unit): TOWN_CLONE, WORLD_CLONE.
+# Optional: OFFICE_DOOR (default http://127.0.0.1:4380 — the unit's --port).
 # Cwd: /srv/postmark-office (the unit's WorkingDirectory).
 
 set -eu
@@ -65,4 +74,29 @@ mv -f office.db.new office.db
     && mv -f world.db.new world.db ) \
   || echo "[office-tick] world hydrate FAILED (non-fatal) — world.db stays at its last good build" >&2
 node deploy/publish-windows.mjs --town "$SNAP/town" --out /var/www/postmark-panes/live
-sudo systemctl restart postmark-office
+
+# ── the receipt: the door is serving what we just built ──────────────────────
+# Non-fatal like the mint and the world hydrate above, and for the same reason:
+# the tick's real work is on disk and correct by the time we get here. A door
+# still answering the old sha is a FINDING an operator must see in the journal,
+# not a cause to fail a tick that did its job. So this exits 0 either way and
+# says loudly which way it went.
+#
+# The snapshot's HEAD is the exact string hydrate stamped as `as_of` (it runs
+# `rev-parse HEAD` against this same frozen clone), so the comparison is a sha
+# against itself — no tolerance, no "recent enough".
+WANT="$(git -C "$SNAP/town" rev-parse HEAD)"
+DOOR="${OFFICE_DOOR:-http://127.0.0.1:4380}"
+DEADLINE=$(( $(date +%s) + 45 ))
+GOT=""
+while :; do
+  GOT="$(curl -s -o /dev/null -D - "$DOOR/town" | tr -d '\r' | sed -n 's/^[Xx]-[Pp]ostmark-[Aa]s-[Oo]f: *//p')"
+  if [ "$GOT" = "$WANT" ]; then break; fi
+  if [ "$(date +%s)" -ge "$DEADLINE" ]; then break; fi
+  sleep 2
+done
+if [ "$GOT" = "$WANT" ]; then
+  echo "[office-tick] door is serving $WANT — hot reload confirmed"
+else
+  echo "[office-tick] STALE DOOR (non-fatal) — hydrated $WANT, but $DOOR/town still answers '${GOT:-<no as-of header>}' after 45s. The office has NOT picked up the new office.db: journalctl -u postmark-office -n 50. (A code deploy still restarts by hand: sudo systemctl restart postmark-office.)" >&2
+fi
