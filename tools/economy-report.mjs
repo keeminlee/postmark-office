@@ -137,6 +137,7 @@ const SOURCE_OF = {
   friendship: "friendship",
   "vote-mint": "decisions",
   gift: "discretionary",
+  "town-issuance": "town issuance",
 };
 const issuance = {};      // source -> stamps
 const issuanceByDay = {}; // day -> { source -> stamps }
@@ -155,6 +156,24 @@ for (const e of entries) {
 const issuanceTotal = Object.values(issuance).reduce((a, b) => a + b, 0);
 const days30 = [...Array(30)].map((_, i) => new Date(Date.now() - i * 864e5).toISOString().slice(0, 10)).reverse();
 
+// ── 2b. TOWN ISSUANCE, as its own first-class series ─────────────────────────
+// The town minting into its own treasury is not just another issuance row: it is
+// the one source the town controls directly, so it gets its own cumulative line.
+// Under MINT-AT-DEMAND the treasury's resting state is zero and it mints only
+// shortfalls, which means the RUNNING TOTAL is the honest measure — a balance of
+// zero says nothing about how much the town has minted, and only the cumulative
+// series shows whether mint-at-demand is holding or drifting into routine.
+const townIssuance = [];
+let townCumulative = 0;
+for (const e of entries) {
+  const c = sm.classifyEntry(e.canonical);
+  if (c.kind !== "town-issuance") continue;
+  townCumulative += c.n;
+  townIssuance.push({ date: c.date, n: c.n, purpose: c.purpose, by: c.by, note: c.note, cumulative: townCumulative });
+}
+const townByPurpose = {};
+for (const t of townIssuance) townByPurpose[t.purpose] = (townByPurpose[t.purpose] || 0) + t.n;
+
 // ── 3. THE WORLD SIDE — ledger_weight and the mark register ──────────────────
 const derived = ws.deriveWorldMarkWeights(TOWN_CLONE);
 const worldSha = (gitTry(WORLD_CLONE, ["rev-parse", "--short", WORLD_REF]) ?? gitTry(WORLD_CLONE, ["rev-parse", "--short", "HEAD"], "?")).trim();
@@ -162,9 +181,17 @@ const worldStateRaw = gitTry(WORLD_CLONE, ["show", `${WORLD_REF}:WORLD/world-sta
 const marks = worldStateRaw ? (JSON.parse(worldStateRaw).marks ?? []) : [];
 const markById = new Map(marks.map((m) => [m.id, m]));
 
-const topBacked = derived.marks
+const backedAll = derived.marks
   .map((m) => ({ ...m, tier: markById.get(m.mark)?.tier ?? null, exists: markById.has(m.mark) }))
   .sort((a, b) => b.weight - a.weight || a.mark.localeCompare(b.mark));
+// CONSTITUTION TIER IS EXCLUDED FROM THE RANKING BY DESIGN (Wright, 2026-08-10):
+// the world root and the terrain bind without stamps, so ranking them against
+// marks that earned their backing is a category error — and in practice the root
+// absorbs diffuse fan-up from everything beneath it and would sit permanently at
+// the top of a list meant to show what residents are choosing. They are counted
+// and named below the table rather than hidden.
+const topBacked = backedAll.filter((m) => m.tier !== "constitution");
+const constitutionBacked = backedAll.filter((m) => m.tier === "constitution");
 
 // ── 4. TRANSITION — the demotion-eligible set, stubbed with real data ─────────
 // "Public commons" reads as un-sovereign here: MARKS.md founds a commons mark as
@@ -279,6 +306,24 @@ ${days30.map((d) => { const row = issuanceByDay[d] || {}; const t = sourceOrder.
   return `<tr><td class="dim">${d}</td>${sourceOrder.map((s) => `<td class="num">${row[s] || 0}</td>`).join("")}<td class="num">${t}</td></tr>`; }).join("")}
 </table></div>
 
+<h2>town issuance — the town minting into its own treasury</h2>
+<p>
+  ${chip(townIssuance.length ? "warn" : "ok", `${townCumulative} minted by the town, all time`)}
+  ${chip("ok", `${townIssuance.length} issuance line(s)`)}
+  ${chip("ok", `${M > 0 ? pct(townCumulative / M) : "0%"} of all supply`)}
+</p>
+<p class="note">The treasury runs <strong>mint-at-demand</strong>: resting state zero, income spent first, a mint
+only for the shortfall, every line naming its purpose. So the balance tells you nothing on its own — a treasury at
+zero is the normal state, not evidence of restraint. <strong>The cumulative line is the honest measure</strong>,
+and it is here as its own series so that town minting drifting from shortfall-only into routine is visible while
+it is still small.</p>
+${townIssuance.length ? `
+<div class="wrap"><table><tr><th>date</th><th>purpose</th><th>minted</th><th>cumulative</th><th>by</th><th>stated reason</th></tr>
+${townIssuance.map((t) => `<tr><td class="dim">${esc(t.date)}</td><td>${esc(t.purpose)}</td><td class="num">${t.n}</td><td class="num">${t.cumulative}</td><td class="who">${esc(t.by)}</td><td class="dim">${esc(t.note)}</td></tr>`).join("")}
+</table></div>
+<p class="dim">by purpose: ${Object.entries(townByPurpose).sort((a, b) => b[1] - a[1]).map(([p, n]) => `${esc(p)} <span class="num">${n}</span>`).join(" · ")}</p>`
+: `<p class="note">No town-issuance line exists yet. The treasury has never minted, and holds nothing.</p>`}
+
 <h2>top-backed marks — by ledger_weight</h2>
 <p class="note"><strong>ledger_weight is not ✦.</strong> It is the town's read-side derive —
 Σ open escrow + k × unique <em>external</em> staking households (k = ${derived.k}, a mark's own household never
@@ -289,6 +334,13 @@ implies existence.</p>
 <div class="wrap"><table><tr><th>#</th><th>mark</th><th>tier</th><th>escrow</th><th>ext. households</th><th>ledger_weight</th></tr>
 ${topBacked.map((m, i) => `<tr><td class="dim">${i + 1}</td><td>${esc(m.mark)}${m.exists ? "" : ' <span class="chip red">absent</span>'}</td><td class="dim">${esc(m.tier ?? "—")}</td><td class="num">${m.escrow}</td><td class="num">${m.households_external}</td><td class="num">${m.weight}</td></tr>`).join("") || `<tr><td colspan="6" class="dim">no mark carries escrow</td></tr>`}
 </table></div>
+<p class="note"><strong>Constitution-tier marks are excluded from this ranking by design.</strong> The world root and
+the terrain bind without stamps, so ranking them beside marks that earned their backing is a category error — and
+the root absorbs diffuse fan-up from everything beneath it, so it would sit permanently on top of a list meant to
+show what residents are choosing. ${constitutionBacked.length
+  ? `${constitutionBacked.length} carry escrow and are named here rather than hidden: ` +
+    constitutionBacked.slice(0, 8).map((m) => `${esc(m.mark)} <span class="num">${m.weight}</span>`).join(" · ")
+  : "None currently carries escrow."}</p>
 
 <h2>transition — commons marks carrying zero escrow</h2>
 <p>
@@ -326,7 +378,8 @@ writeFileSync(join(OUT_DIR, "data.json"), JSON.stringify({
     clean: negative.length === 0 && unknown.length === 0,
   },
   issuance: { totals: issuance, lines: issuanceLines, by_day: issuanceByDay },
-  top_backed: { k: derived.k, marks: topBacked },
+  town_issuance: { cumulative: townCumulative, lines: townIssuance, by_purpose: townByPurpose, share_of_supply: M > 0 ? Number((townCumulative / M).toFixed(4)) : 0 },
+  top_backed: { k: derived.k, marks: topBacked, constitution_excluded: constitutionBacked },
   transition: { commons: commons.length, zero_escrow: zeroEscrowCommons.length, by_tier: zeroByTier, marks: zeroEscrowCommons.map((m) => ({ id: m.id, tier: m.tier, by: m.by, date: m.date })) },
 }, null, 2));
 console.log(`economy-report: wrote ${OUT_DIR}/index.html (M=${M}, ${equityRows.length} households, ${topBacked.length} backed marks, ${zeroEscrowCommons.length} zero-escrow commons)`);

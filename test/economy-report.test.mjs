@@ -55,6 +55,7 @@ function commitAll(dir, msg) {
 // folds exactly like a signed one — which is what lets these fixtures be small.
 const mintLine = (date, handle, cause, side) => `- ${date} · MINT → ${handle} · 1 · for: ${cause} (${side})`;
 const giftLine = (date, handle, n, slug, by) => `- ${date} · MINT → ${handle} · ${n} · for: gift:${slug} · by: ${by}`;
+const issuanceLine = (date, handle, n, purpose, by, note) => `- ${date} · MINT → ${handle} · ${n} · for: issuance:${purpose} · by: ${by} · note: ${note}`;
 
 function buildTown(root, { extraLines = [] } = {}) {
   const town = join(root, "town");
@@ -207,5 +208,48 @@ test("the transition set is un-sovereign marks with no escrow, split by tier", {
     assert.equal(data.transition.zero_escrow, 1);
     assert.deepEqual(data.transition.marks.map((m) => m.id), ["the-town/the-quay"]);
     assert.deepEqual(data.transition.by_tier, { constitution: 1 });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("town issuance is its own cumulative series, not just a row", () => {
+  const root = mkdtempSync(join(tmpdir(), "econ-"));
+  try {
+    const town = buildTown(root, { extraLines: [
+      issuanceLine("2026-08-10", "the-town", 100, "founding-grant", "k", "the founding act"),
+      issuanceLine("2026-08-11", "the-town", 40, "ferry-repairs", "k", "the gangway plank"),
+      issuanceLine("2026-08-12", "the-town", 10, "ferry-repairs", "k", "the second plank"),
+    ] });
+    const { data, html } = run(town, buildWorld(root), join(root, "out"));
+    assert.equal(data.town_issuance.cumulative, 150);
+    assert.deepEqual(data.town_issuance.lines.map((l) => l.cumulative), [100, 140, 150],
+      "the running total is the honest measure under mint-at-demand");
+    assert.deepEqual(data.town_issuance.by_purpose, { "founding-grant": 100, "ferry-repairs": 50 });
+    // and it is still classified issuance, so the completeness guard stays green
+    assert.equal(data.issuance.totals["town issuance"], 150);
+    const classified = Object.values(data.issuance.totals).reduce((a, b) => a + b, 0);
+    assert.equal(classified, data.supply.minted);
+    assert.match(html, /every minted stamp is classified/);
+    assert.match(html, /mint-at-demand/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("FALSIFIER — constitution-tier marks are kept OUT of the top-backed ranking", () => {
+  // The root and the terrain bind without stamps and absorb fan-up from
+  // everything beneath them, so ranking them beside earned backing is a category
+  // error. They must be named, not hidden — a silent exclusion is its own lie.
+  const root = mkdtempSync(join(tmpdir(), "econ-"));
+  try {
+    // the fixture's the-town/the-quay is constitution tier; stake it heavily
+    const town = buildTown(root, { extraLines: [
+      "- 2026-06-16 · bo → stake:world-mark/the-town/the-quay · 99 · via: mail:bo-2026-06-16",
+    ] });
+    const { data, html } = run(town, buildWorld(root), join(root, "out"));
+    const ids = data.top_backed.marks.map((m) => m.mark);
+    assert.ok(!ids.includes("the-town/the-quay"), "the constitution mark is not in the ranking");
+    assert.ok(ids.includes("bo/the-hill"), "market marks still rank");
+    const excluded = data.top_backed.constitution_excluded.map((m) => m.mark);
+    assert.deepEqual(excluded, ["the-town/the-quay"], "and it is reported, not dropped");
+    assert.match(html, /excluded from this ranking by design/);
+    assert.match(html, /the-town\/the-quay/, "the excluded mark is named on the page");
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
