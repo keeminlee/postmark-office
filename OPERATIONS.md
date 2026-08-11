@@ -163,6 +163,18 @@ when `MARKS.md` finalizes. Until then: nothing marks-related is assigned.
   as duty (PM §3) but its delivery surface is unwired; under the channel law it
   belongs on **his window's founders-desk panel**. One sentence in PM when the
   skills pass happens (deliberately deferred 2026-07-17).
+- **⏰ THE ECONOMY PAGE'S TIMER IS OWED (2026-08-10).** `tools/economy-report.mjs`
+  and `deploy/cron-postmark-economy-report.sh` are written and green, but the
+  script is **not yet installed** at `/etc/cron.hourly/postmark-economy-report` —
+  that is a box-side hand, not a repo change. Until it is installed, `/ops/economy`
+  regenerates **only when someone runs it**, which is the exact failure the
+  2026-08-09 ops-freeze scar names: a monitoring page that silently freezes is
+  worse than none. The page carries `generated_at` and both source shas in its
+  body so staleness is visible rather than silent, but that is a mitigation, not
+  the fix. Install alongside its three siblings (traffic, git, world).
+
+  One command, if a timer is not wanted yet:
+  `TOWN_CLONE=… WORLD_CLONE=… node tools/economy-report.mjs`
 
 ## Drift protocol
 A rule found in two homes, or contradicting its home, is a **class** finding: fix
