@@ -334,19 +334,123 @@ export function readAttachments(db, { until = null } = {}) {
   return until == null ? rows : rows.filter((a) => Date.parse(a.born_at) <= until);
 }
 
+// ── the policy vocabulary ────────────────────────────────────────────────────
+//
+// TWO FAMILIES, and they must not be confused for one another. An OBJECT policy
+// says what happens to a thing when the thing holding it moves or goes — a
+// keystone rides its house, a lamp comes off its post. A PASSENGER policy is a
+// RESIDENT'S OWN AGREEMENT to be carried, and it is the only thing that can move
+// an entity by a mark (ruled 2026-08-11: a peer moves you only if you said so
+// when the edge was made).
+//
+// Objects keep exactly what they had. The passenger words are new, and they are
+// validated only against a target that carries the timetable class — there is no
+// such thing as agreeing to ride something that does not go anywhere, and a
+// vocabulary that let you say it would be a promise the world cannot keep.
+
+export const OBJECT_POLICIES = Object.freeze(["cascade", "detach"]);
+export const RIDING_POLICY = "riding";
+export const BOUND_PREFIX = "bound:";
+
+/** The stop a `bound:<stop-id>` policy names, or null for anything else. */
+export const boundStopOf = (policy) =>
+  String(policy ?? "").startsWith(BOUND_PREFIX) ? String(policy).slice(BOUND_PREFIX.length) : null;
+
+/** Is this an agreement to be CARRIED — the only kind that can move a resident? */
+export const isPassengerPolicy = (policy) =>
+  policy === RIDING_POLICY || Boolean(boundStopOf(policy));
+
+/** The detach marker an appended severance carries. Never a deleted row. */
+export const SEVERED_POLICY = "detach";
+
 /**
- * Declare an attachment. Born by DECLARATION, validated by presence — never
- * inferred from geometry. Stage 2 ships the table and this writer; the boarding
- * verb that calls it lands with the vessel work, and the crossing-save carries
- * whatever is here either way.
+ * Declare an attachment.
+ *
+ * Born by DECLARATION — never inferred from geometry, and since the agreement
+ * ruling never inferred from presence either. `declared_by` is who said it,
+ * which is what kills the forged boarding line: nobody agrees on anyone else's
+ * behalf.
+ *
+ * `carrier` marks the target as a timetable-class body, which is what unlocks
+ * the passenger vocabulary. The door knows that from the world fold and passes
+ * it in; this module never reaches for the world itself.
  */
-export function declareAttachment(db, { entity, target, policy = "cascade", declaredBy, bornAt }) {
+export function declareAttachment(db, { entity, target, policy = "cascade", declaredBy, bornAt, carrier = false }) {
   if (!entity || !target) throw new Error("an attachment needs both ends");
-  if (!["cascade", "detach"].includes(policy)) throw new Error(`unknown attachment policy "${policy}" — cascade | detach`);
+  if (isPassengerPolicy(policy)) {
+    if (!carrier)
+      throw new Error(`"${policy}" is an agreement to be carried, and ${target} carries nobody — a passenger policy needs a timetable-class target`);
+  } else if (!OBJECT_POLICIES.includes(policy)) {
+    throw new Error(`unknown attachment policy "${policy}" — ${OBJECT_POLICIES.join(" | ")} for objects, ${RIDING_POLICY} | ${BOUND_PREFIX}<stop-id> for a passage`);
+  }
   const born = bornAt ?? new Date().toISOString();
   db.prepare("INSERT OR IGNORE INTO attachments (entity, target, policy, declared_by, born_at) VALUES (?,?,?,?,?)")
     .run(entity, target, policy, declaredBy ?? entity, born);
   return { entity, target, policy, declared_by: declaredBy ?? entity, born_at: born };
+}
+
+/**
+ * The agreement an entity currently holds with a target, or null.
+ *
+ * A severance is an APPENDED `detach` row, so "unsevered" means the LATEST row
+ * for this pair is a passage. Reading the standing state as "the last thing said"
+ * is the ledger's own latest-wins rule, and it is what lets the record keep both
+ * ends of a ride instead of losing the first one to a DELETE.
+ */
+export function standingAgreement(db, entity, target, { until = null } = {}) {
+  const rows = db.prepare(
+    "SELECT seq, entity, target, policy, declared_by, born_at FROM attachments WHERE entity = ? AND target = ? ORDER BY born_at, seq").all(entity, target);
+  const seen = until == null ? rows : rows.filter((r) => Date.parse(r.born_at) <= until);
+  const last = seen.at(-1) ?? null;
+  return last && isPassengerPolicy(last.policy) ? last : null;
+}
+
+/**
+ * Sever a standing agreement — an APPENDED detach event with its own timestamp.
+ *
+ * NOTHING IS DELETED, EVER. A ride has two ends and the record keeps both: the
+ * row that says "bound for the landing at 14:02" stays exactly where it was, and
+ * a second row says the passage ended at 15:40. A store that deleted the first
+ * could not answer where its holder was at 15:00, and every replay depends on
+ * being able to.
+ */
+export function severAttachment(db, { entity, target, declaredBy, at = null }) {
+  const standing = standingAgreement(db, entity, target);
+  if (!standing) return null;
+  const when = at ?? new Date().toISOString();
+  db.prepare("INSERT OR IGNORE INTO attachments (entity, target, policy, declared_by, born_at) VALUES (?,?,?,?,?)")
+    .run(entity, target, SEVERED_POLICY, declaredBy ?? entity, when);
+  return { entity, target, was: standing.policy, born_at: standing.born_at, severed_at: when };
+}
+
+/**
+ * An entity's agreements in the shape the world's `tools/vessel.mjs` reads:
+ * `{ entity, target, policy, born_at, severed_at? }`, one row per passage with
+ * its ending folded in. The store's append-only pairs become the world's
+ * two-ended records HERE and nowhere else, so the office and the engine cannot
+ * drift into two readings of one history.
+ */
+export function agreementsFor(db, entity, { until = null } = {}) {
+  const rows = db.prepare(
+    "SELECT seq, entity, target, policy, declared_by, born_at FROM attachments WHERE entity = ? ORDER BY born_at, seq").all(entity)
+    .filter((r) => until == null || Date.parse(r.born_at) <= until);
+  const out = [];
+  const open = new Map();                       // target -> the passage awaiting its end
+  for (const r of rows) {
+    if (isPassengerPolicy(r.policy)) {
+      // A new passage with the same target supersedes an open one: latest wins,
+      // and the old passage ends where the new one begins.
+      const prior = open.get(r.target);
+      if (prior) prior.severed_at = r.born_at;
+      const row = { entity: r.entity, target: r.target, policy: r.policy, born_at: r.born_at, declared_by: r.declared_by };
+      open.set(r.target, row);
+      out.push(row);
+    } else if (open.has(r.target)) {
+      open.get(r.target).severed_at = r.born_at;
+      open.delete(r.target);
+    }
+  }
+  return out;
 }
 
 // ── movements: the record after the seam (Stage D) ───────────────────────────

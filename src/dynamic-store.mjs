@@ -109,10 +109,19 @@ export const DYNAMIC_SCHEMA = `
     provenance TEXT
   );
 
-  -- ATTACHMENTS (store-canon-durable). Declared, then validated by presence —
-  -- never inferred from geometry. \`declared_by\` is who said it, which is what
-  -- kills the forged boarding line: nobody writes a movement record on anyone
-  -- else's behalf. \`policy\` is stamped at edge birth (cascade | detach).
+  -- ATTACHMENTS (store-canon-durable). Declared — never inferred from geometry,
+  -- and since the 2026-08-11 agreement ruling never inferred from presence
+  -- either. \`declared_by\` is who said it, which is what kills the forged
+  -- boarding line: nobody agrees on anyone else's behalf.
+  --
+  -- \`policy\` is stamped at edge birth, from two families that must not be
+  -- confused. OBJECTS: cascade | detach — what happens to a thing when the thing
+  -- holding it moves. PASSAGES: riding | bound:<stop-id> — a resident's own
+  -- agreement to be carried, valid only against a timetable-class target.
+  --
+  -- APPEND ONLY, AND SEVERANCE IS AN APPEND. A passage that ends gets a second
+  -- row saying so; the first is never deleted, because a ride has two ends and a
+  -- replay asking where someone was mid-passage needs both.
   CREATE TABLE IF NOT EXISTS attachments (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
     entity TEXT, target TEXT,
