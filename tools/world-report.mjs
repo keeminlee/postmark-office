@@ -12,7 +12,8 @@
 //   2. settlements   — settlement/* tags + origin/draft/* refs, same clone
 //   3. stake ledger  — town-clone WHITE_PAGES/stamp-ledger.md
 //      (`stake:world-mark/<id>` lines: date · staker · mark · amount)
-//   4. office telemetry — telemetry/access-*.jsonl, mcp tool names only
+//   4. office telemetry — telemetry/access-*.jsonl AND .jsonl.gz (cold days are
+//      compressed), mcp tool names only
 //      (aggregate counts; per-household read logs deliberately NOT rendered —
 //      the silver's red-pen Q3, deferred on purpose)
 //   5. site pin      — raw.githubusercontent postmark-site/main/package.json
@@ -23,8 +24,10 @@
 // law applies to our own instruments first.
 
 import { execFileSync } from "node:child_process";
-import { readFileSync, readdirSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync, mkdirSync, writeFileSync, createReadStream } from "node:fs";
 import { join } from "node:path";
+import { createGunzip } from "node:zlib";
+import { createInterface } from "node:readline";
 import * as V from "./lib/ops-viz.mjs";
 
 const WORLD_CLONE = process.env.WORLD_CLONE || "/srv/postmark-office/world-clone";
@@ -79,18 +82,35 @@ for (const s of stakes) stakerTotals[s.staker] = (stakerTotals[s.staker] || 0) +
 // ── 4. world tool traffic, aggregate only ────────────────────────────────────
 const WRITE_TOOLS = new Set(["world_leave_mark", "world_walk", "world_stake", "world_gift", "world_edit"]);
 const toolDays = {}; // date -> tool -> count
+// .jsonl AND .jsonl.gz, mirroring traffic-report's 2026-08-09 loop. A day's
+// telemetry is gzipped once it goes cold, and this panel used to lose those days
+// twice over: `startsWith("access-")` matched the .gz files, so they were read
+// as utf8 text, split on newlines, and every binary "line" silently failed the
+// `"mcp":"world_` test — AND they still counted against the 14-file budget, so
+// each cold day also pushed a readable day out of the window. The panel was
+// therefore under-reporting on both edges, quietly, on a live page.
+//
+// Streamed rather than read whole for the same reason the traffic sources are:
+// a gunzipped day can be large, and this runs on a 1.9 GB box.
 if (existsSync(OFFICE_TEL)) {
-  const files = readdirSync(OFFICE_TEL).filter((f) => f.startsWith("access-")).sort().slice(-14);
+  const files = readdirSync(OFFICE_TEL)
+    .filter((f) => f.startsWith("access-") && (f.endsWith(".jsonl") || f.endsWith(".jsonl.gz")))
+    .sort().slice(-14);
   for (const f of files) {
-    for (const ln of readFileSync(join(OFFICE_TEL, f), "utf8").split("\n")) {
-      if (!ln.includes('"mcp":"world_')) continue;
-      try {
-        const r = JSON.parse(ln);
-        if (!r.mcp || !r.mcp.startsWith("world_")) continue;
-        const d = String(r.ts).slice(0, 10);
-        (toolDays[d] ??= {})[r.mcp] = (toolDays[d][r.mcp] || 0) + 1;
-      } catch {}
-    }
+    const input = f.endsWith(".gz")
+      ? createReadStream(join(OFFICE_TEL, f)).pipe(createGunzip())
+      : createReadStream(join(OFFICE_TEL, f));
+    try {
+      for await (const ln of createInterface({ input, crlfDelay: Infinity })) {
+        if (!ln.includes('"mcp":"world_')) continue;
+        try {
+          const r = JSON.parse(ln);
+          if (!r.mcp || !r.mcp.startsWith("world_")) continue;
+          const d = String(r.ts).slice(0, 10);
+          (toolDays[d] ??= {})[r.mcp] = (toolDays[d][r.mcp] || 0) + 1;
+        } catch {}
+      }
+    } catch {} // a truncated or half-written .gz must not take the whole page down
   }
 }
 const toolTotals = {};
