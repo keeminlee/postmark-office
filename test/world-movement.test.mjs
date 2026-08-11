@@ -566,7 +566,7 @@ test("every writer that can append to the ledger is found, and the pen is behind
   assert.deepEqual(open, [], `these can still append with the flag on: ${open.map((w) => w.file).join(", ")}`);
 });
 
-test("the freeze names who the seam would move, and offers the FILING REPAIR", async () => {
+test("the freeze names who the seam would move, and offers the FILING REPAIR", async (t) => {
   const [walk, vessel, geometry] = await Promise.all([
     import(pathToFileURL(join(clone.dir, "tools", "walk.mjs")).href),
     import(pathToFileURL(join(clone.dir, "tools", "vessel.mjs")).href),
@@ -578,11 +578,39 @@ test("the freeze names who the seam would move, and offers the FILING REPAIR", a
     departure({ handle: "on-deck", from: { x: 2, y: 3 }, toward: { x: 2, y: 3 }, at: 10 }),
     departure({ handle: "ashore", from: { x: 500, y: 500 }, toward: { x: 500, y: 500 }, at: 10 }),
   ];
+  // THE DECK IS STILL THE DECK. Who is standing in her footprint is pure
+  // geometry and the agreement ruling did not touch it — this is the half the
+  // freeze tool uses to offer `--set-down-ashore`.
   const deck = standingOnDeck({ departures, service, walk, vessel, geometry, atFc });
   assert.deepEqual(deck.residents.map((r) => r.handle), ["on-deck"]);
 
-  const moved = seamDiff({ departures, service, walk, vessel, atFc: 10.6 });
+  // WITH A PASSAGE the seam moves the one standing on her deck, and says why.
+  // TRUE UNDER BOTH LAWS — the retired one needed only the deck, the current one
+  // needs the deck and the passage, and this walker has both — so it is asserted
+  // unconditionally and guards the tool's teeth whichever engine the clone holds.
+  const passage = [{ target: "the-town/the-post-office", policy: "riding",
+                     born_at: new Date(atCrossing(9)).toISOString() }];
+  const moved = seamDiff({
+    departures, service, walk, vessel, atFc: 10.6,
+    agreementsOf: (h) => (h === "on-deck" ? passage : []),
+  });
   assert.deepEqual(moved.map((m) => m.handle), ["on-deck"]);
+  assert.match(moved[0].why, /aboard|set down/, "and the finding says why it moved them");
+
+  // WITHOUT ONE the two laws genuinely disagree, so this half branches and says
+  // which it took. Under the agreement law the schedule moves nobody who has not
+  // agreed — which is every resident in the real record, since the verb did not
+  // exist before the flip — and the freeze has nothing to repair.
+  const agreementLaw = typeof vessel.agreementAt === "function";
+  t.diagnostic(agreementLaw
+    ? "seam checked under the AGREEMENT law (this clone's vessel.mjs exports agreementAt)"
+    : "seam checked under the retired PRESENCE law (this clone predates the agreement ruling)");
+  const bare = seamDiff({ departures, service, walk, vessel, atFc: 10.6 });
+  if (agreementLaw) {
+    assert.deepEqual(bare, [], "no passages, so the schedule reads every record the ledger's way");
+  } else {
+    assert.deepEqual(bare.map((m) => m.handle), ["on-deck"], "presence alone was the whole ticket");
+  }
 
   const ashore = ashoreFor({ service, vessel, atFc });
   assert.ok(ashore, "the repair has somewhere to put them");
