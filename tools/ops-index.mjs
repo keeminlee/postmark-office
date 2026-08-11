@@ -1,0 +1,210 @@
+#!/usr/bin/env node
+// ops-index.mjs — the postmark.town/ops/ hub.
+//
+// The hub used to be a hand-written Astro page in the SITE repo: four cards with
+// prose on them, no numbers, and no economy card at all (it shipped 2026-08-10
+// and nothing linked to it). A directory of links cannot tell you that one of
+// the instruments behind it has stopped — and /ops/world/ had been frozen since
+// 2026-07-31 without the hub showing a mark on it.
+//
+// So the hub is a generated page now, a sibling of the four it points at: one
+// card per dashboard carrying a live headline number, a 14-day sparkline, and a
+// FRESHNESS chip read from that dashboard's own generated_at. A card whose JSON
+// twin is missing, unparseable or stale says so in red and still links through.
+// The desk is a console, not an instrument, so its card carries no number.
+//
+// Sources: each dashboard's data.json twin, already published beside its page —
+// this reads the contract they all already keep, and computes nothing of its own.
+//
+// Output: $OPS_ROOT/index.html (+ data.json — the freshness roll-up, so a
+// monitor can poll one file instead of four).
+//
+// Ordering note for the box: this must run AFTER its four siblings, so install
+// it as /etc/cron.hourly/zz-postmark-ops-index (run-parts runs alphabetically).
+// Reading a sibling's twin one cycle late is not fatal — the chip reports the
+// twin's own generated_at, not this run's — but out of order it is always stale
+// by an hour for no reason.
+//
+// Zero dependencies. Node 20+.
+
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import * as V from "./lib/ops-viz.mjs";
+
+const OPS_ROOT = process.env.OPS_ROOT || "/var/www/postmark-ops";
+const { esc, comma, compact } = V;
+
+// The four twins write their timestamp in three different shapes; a hub that
+// only understood one of them would report the others as broken.
+//   traffic  "2026-08-11 14:04Z"        git  "2026-08-11T13:55:38.203Z"
+//   economy/world  "2026-08-11 14:08 UTC"
+function parseStamp(s) {
+  if (!s) return null;
+  const t = Date.parse(String(s).replace(/ UTC$/, "Z").replace(/^(\d{4}-\d{2}-\d{2}) /, "$1T"));
+  return Number.isFinite(t) ? t : null;
+}
+const lastN = (obj, n, pick = (v) => v) => {
+  const keys = Object.keys(obj || {}).sort().slice(-n);
+  return keys.map((k) => Number(pick(obj[k])) || 0);
+};
+
+function read(name) {
+  const p = join(OPS_ROOT, name, "data.json");
+  if (!existsSync(p)) return { missing: `no data.json at ${p}` };
+  try { return { data: JSON.parse(readFileSync(p, "utf8")) }; }
+  catch (e) { return { missing: `unreadable data.json (${e.message.slice(0, 60)})` }; }
+}
+
+// ── the shelf ────────────────────────────────────────────────────────────────
+// Each entry turns its dashboard's twin into a headline + a trend. `read` is
+// only called for the generated ones; the desk has no twin by design.
+const SHELF = [
+  {
+    slug: "traffic", href: "traffic/", emblem: "⇅", kind: "Dashboard", title: "Traffic",
+    line: "Who is knocking: requests by day and by UA class, the doorstep, the bulletin, the office door, GitHub views and clones.",
+    read: (d) => {
+      const days = Object.keys(d.days || {}).sort();
+      const newest = days.at(-1);
+      return {
+        stamp: d.generated,
+        value: compact(d.days?.[newest]?.total ?? 0), unit: `requests on ${newest ?? "—"}`,
+        sub: `${comma(Object.keys(d.doorstep || {}).length)} doorstep handles · ${comma(Object.keys(d.mcpTools || {}).length)} MCP tools`,
+        spark: lastN(d.days, 14, (v) => v.total),
+      };
+    },
+  },
+  {
+    slug: "git", href: "git/", emblem: "⎇", kind: "Dashboard", title: "Git activity",
+    line: "The PR funnel through the witness, merges by actor, commits by class, the envelope-defect trend, and whose move the queue is waiting on.",
+    read: (d) => ({
+      stamp: d.generated_at,
+      value: comma(d.totals?.open ?? 0), unit: "PRs open right now",
+      sub: `${comma(d.totals?.prs ?? 0)} all time · ${comma(d.totals?.witness_merged ?? 0)} witness-merged`,
+      spark: lastN(d.funnel, 14, (v) => v.opened),
+      // the one number on this shelf that is a to-do list rather than a reading
+      status: (d.queue?.neverRan?.length ?? 0) ? "red" : (d.totals?.open ?? 0) > 25 ? "warn" : null,
+    }),
+  },
+  {
+    slug: "economy", href: "economy/", emblem: "✦", kind: "Dashboard", title: "The economy",
+    line: "Where the stamps went: the equity curve and its gini, supply split into liquid and escrow, issuance by source, and what is backing each mark.",
+    read: (d) => ({
+      stamp: d.generated_at,
+      value: comma(d.equity?.M ?? 0), unit: "stamps minted, all time",
+      sub: `${comma(d.equity?.households ?? 0)} households · gini ${(d.equity?.gini ?? 0).toFixed(3)} · ${comma(d.supply?.escrow ?? 0)} escrowed`,
+      spark: lastN(d.issuance?.by_day, 14, (v) => Object.values(v || {}).reduce((a, b) => a + b, 0)),
+      flag: d.supply?.clean === false ? { cls: "red", text: "supply guard RED" } : null,
+    }),
+  },
+  {
+    slug: "world", href: "world/", emblem: "◈", kind: "Dashboard", title: "The World",
+    line: "Who is staking and on what, mark creation by household, crossing health against the twice-daily law, the draft census, and door traffic.",
+    read: (d) => ({
+      stamp: d.generated_at,
+      value: comma(d.marks?.total ?? 0), unit: "marks in the world",
+      sub: `${comma(d.stakes?.count ?? 0)} stakes · crossing ${d.crossing?.status ?? "?"} · ${comma(d.tools?.writes ?? 0)} writes in 14d`,
+      spark: lastN(d.marks?.per_day_14, 14),
+      // crossing health is about the FERRY, not about the mark count — so it
+      // rides its own chip rather than tinting a number it does not describe
+      flag: d.crossing?.status === "ok" ? null
+        : { cls: d.crossing?.status === "warn" ? "warn" : "red", text: `crossing ${d.crossing?.status ?? "unknown"}` },
+    }),
+  },
+  {
+    slug: null, href: "desk/", emblem: "✒", kind: "Console", title: "The Principal's Desk",
+    line: "Gift stamps to a resident, minted with the town's own pen. A console, not an instrument — it has no reading to show.",
+  },
+];
+
+// ── build the cards ──────────────────────────────────────────────────────────
+const now = Date.now();
+const roll = {};
+const cards = SHELF.map((s) => {
+  if (!s.slug) {
+    return `<a class="card" href="${s.href}"><span class="c-em">${s.emblem}</span><div class="c-body">`
+      + `<span class="c-kind">${esc(s.kind)}</span><span class="c-title">${esc(s.title)}</span>`
+      + `<span class="c-line">${esc(s.line)}</span><span class="c-open">open →</span></div></a>`;
+  }
+  const { data, missing } = read(s.slug);
+  let v = null, err = missing;
+  if (data) { try { v = s.read(data); } catch (e) { err = `twin present but unreadable (${e.message.slice(0, 60)})`; } }
+
+  const ts = v ? parseStamp(v.stamp) : null;
+  const ageH = ts == null ? null : (now - ts) / 36e5;
+  // Hourly cron: under 3h is normal, a missed cycle or two is amber, past a day
+  // the generator has stopped and the numbers on the card are a museum piece.
+  const fresh = err ? "red" : ageH == null ? "red" : ageH < 3 ? "ok" : ageH < 24 ? "warn" : "red";
+  const freshText = err ? "NO DATA" : ageH == null ? "unreadable timestamp"
+    : ageH < 1.5 ? `fresh · ${Math.round(ageH * 60)}m ago`
+    : ageH < 24 ? `${ageH.toFixed(1)}h old`
+    : `STALE · ${Math.floor(ageH / 24)}d old`;
+  roll[s.slug] = { generated_at: v?.stamp ?? null, age_hours: ageH == null ? null : Number(ageH.toFixed(2)), freshness: fresh, headline: v ? `${v.value} ${v.unit}` : null, error: err ?? null };
+
+  const readingCls = v?.status ? ` v-${v.status}` : "";
+  // The card says what happened in a phrase; the path and the parser's own words
+  // go to the roll-up, where an operator can read them without a card reflowing.
+  const reading = err
+    ? `<span class="c-val v-red">—</span><span class="c-unit">${esc(err.startsWith("no data.json") ? "no data.json twin — this generator has never run here" : "data.json unreadable")}</span>`
+    : `<span class="c-val${readingCls}">${esc(v.value)}</span><span class="c-unit">${esc(v.unit)}</span>`
+      + `<span class="c-sub">${esc(v.sub)}</span>`
+      + (v.spark?.some((x) => x) ? V.sparkline(v.spark, { w: 150, h: 30, title: "last 14 days" }) : "");
+
+  return `<a class="card" href="${s.href}"><span class="c-em">${s.emblem}</span><div class="c-body">`
+    + `<span class="c-kind">${esc(s.kind)}</span><span class="c-title">${esc(s.title)}</span>`
+    + `<span class="c-line">${esc(s.line)}</span>`
+    + `<div class="c-read">${reading}</div>`
+    + `<div class="c-chips"><span class="chip ${fresh}">${esc(freshText)}</span>`
+    + `${v?.flag ? `<span class="chip ${v.flag.cls}">${esc(v.flag.text)}</span>` : ""}</div></div></a>`;
+});
+
+const stale = Object.entries(roll).filter(([, r]) => r.freshness !== "ok");
+const banner = stale.length
+  ? `<p class="alert">${stale.length} of ${Object.keys(roll).length} instruments ${stale.length === 1 ? "is" : "are"} not fresh: `
+    + stale.map(([k, r]) => `<b>${esc(k)}</b> (${r.error ? "no data" : r.age_hours >= 24 ? `${Math.floor(r.age_hours / 24)}d old` : `${r.age_hours}h old`})`).join(", ")
+    + `. An hourly generator that has stopped leaves a page that still looks like a reading.</p>`
+  : `<p class="ok-line">All ${Object.keys(roll).length} instruments regenerated within the hour.</p>`;
+
+const EXTRA = `
+.shelf{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:.9rem;margin:1.1rem 0 0}
+.card{display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line);border-radius:10px;
+ overflow:hidden;text-decoration:none;color:inherit;transition:border-color .15s ease,transform .15s ease}
+.card:hover{border-color:var(--gold);transform:translateY(-2px)}
+.card:focus-visible{outline:2px solid var(--gold);outline-offset:3px}
+/* the emblems are symbol codepoints; a monospace face renders half of them as
+   tofu or as a squashed glyph, so they ask for the OS symbol faces first —
+   local fonts only, nothing fetched */
+.c-em{display:grid;place-items:center;height:64px;background:rgba(232,196,139,.06);color:rgba(232,196,139,.65);
+ font-size:1.9rem;line-height:1;font-family:"Segoe UI Symbol","Apple Symbols","Noto Sans Symbols 2",system-ui,sans-serif}
+.c-body{display:flex;flex-direction:column;gap:.28rem;padding:.8rem .9rem 1rem;flex:1}
+.c-kind{font-size:.66rem;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}
+.c-title{font-size:1.02rem;font-weight:700;color:var(--gold);line-height:1.2}
+.c-line{font-size:.76rem;color:var(--dim);line-height:1.5}
+.c-read{margin-top:auto;padding-top:.6rem;display:flex;flex-direction:column;gap:.1rem}
+.c-val{font-size:1.75rem;line-height:1.1;color:var(--ink)}
+.c-val.v-warn{color:var(--warn)}.c-val.v-red{color:var(--bad)}
+.c-unit{font-size:.72rem;color:var(--dim)}
+.c-sub{font-size:.7rem;color:var(--dim);margin-top:.15rem}
+.c-open{margin-top:auto;padding-top:.8rem;font-size:.74rem;color:var(--gold)}
+.card .spark{margin-top:.4rem;width:100%;height:30px;display:block}
+.c-chips{margin-top:.55rem;display:flex;flex-wrap:wrap;gap:.1rem}
+.alert{border-left:2px solid var(--bad);padding:.4rem .8rem;margin:.9rem 0 0;font-size:.78rem;color:var(--ink);max-width:88ch}
+.ok-line{color:var(--dim);font-size:.78rem;margin:.9rem 0 0}
+`;
+
+const html = V.page({
+  title: "postmark · ops",
+  h1: "Postmark ops", sub: "the shelf of instruments for keeping the town",
+  here: "/ops/",
+  stamp: `hub regenerated ${new Date().toISOString().slice(0, 16).replace("T", " ")} UTC · each card reads its own dashboard's data.json twin · <a href="data.json">roll-up</a>`,
+  body: `${banner}<nav class="shelf" aria-label="Operator dashboards">${cards.join("")}</nav>`,
+  footer: `Every card's number and trend come from the dashboard's own published JSON twin, and the chip beside it is that twin's <code>generated_at</code>, not this page's — so an instrument that stops is visible from the hub instead of only from its own frozen page. Generator: <code>postmark-office/tools/ops-index.mjs</code>, hourly cron, after its four siblings. Unlinked + noindex.`,
+  extraCss: EXTRA,
+});
+
+mkdirSync(OPS_ROOT, { recursive: true });
+writeFileSync(join(OPS_ROOT, "index.html"), html);
+writeFileSync(join(OPS_ROOT, "data.json"), JSON.stringify({
+  generated_at: new Date().toISOString(), dashboards: roll,
+  not_fresh: stale.map(([k]) => k),
+}, null, 2));
+console.log(`ops-index: wrote ${OPS_ROOT}/index.html — ${Object.keys(roll).length} instruments, ${stale.length} not fresh`);

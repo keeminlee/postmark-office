@@ -29,12 +29,14 @@
 // ledger_weight and says so; it never prints a ✦ it did not fold.
 //
 // Output: /var/www/postmark-ops/economy/index.html (+ data.json beside it).
-// Zero dependencies. Node 20+.
+// Zero dependencies. Node 20+. Rendering lives in tools/lib/ops-viz.mjs, shared
+// with the other three dashboards and the hub.
 
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import * as V from "./lib/ops-viz.mjs";
 
 const TOWN_CLONE = process.env.TOWN_CLONE || "/srv/postmark-office/town-clone";
 const WORLD_CLONE = process.env.WORLD_CLONE || "/srv/postmark-office/world-clone";
@@ -206,105 +208,158 @@ const zeroEscrowCommons = commons.filter((m) => (escrowByMark.get(m.id) ?? 0) ==
 const zeroByTier = {};
 for (const m of zeroEscrowCommons) zeroByTier[m.tier ?? "?"] = (zeroByTier[m.tier ?? "?"] || 0) + 1;
 
+
 // ── render ───────────────────────────────────────────────────────────────────
+// Charts first (2026-08-11 dataviz pass). The prose guards and their exact
+// wording are load-bearing — test/economy-report.test.mjs asserts on them, which
+// is the point: a page that can only go green is not a monitor.
 const now = new Date().toISOString().slice(0, 16).replace("T", " ") + " UTC";
-const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-const chip = (cls, txt) => `<span class="chip ${cls}">${esc(txt)}</span>`;
+const { esc, comma, chip } = V;
 const pct = (x) => (x * 100).toFixed(1) + "%";
-const bar = (frac) => `<span class="bar"><i style="width:${Math.max(0.6, Math.min(100, frac * 100)).toFixed(2)}%"></i></span>`;
 
-const sourceOrder = ["correspondence", "friendship", "decisions", "discretionary"]
+const sourceOrder = ["correspondence", "friendship", "decisions", "discretionary", "town issuance"]
   .filter((s) => issuance[s] !== undefined);
+const SOURCE_COLORS = Object.fromEntries(sourceOrder.map((s, i) => [s, V.SERIES[i % 8]]));
 
-const html = `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="robots" content="noindex, nofollow"><title>postmark · ops · economy</title>
-<style>
-  :root { --bg:#12151c; --panel:#191d26; --line:#2a303d; --ink:#d7dae2; --dim:#8b91a0;
-          --gold:#e8c48b; --green:#7fbf7f; --amber:#e0a458; --red:#d97b6c; --violet:#8b7cff; }
-  * { box-sizing:border-box; } body { margin:0; background:var(--bg); color:var(--ink);
-      font:14px/1.5 ui-monospace,Menlo,Consolas,monospace; padding:1.6rem; }
-  h1 { font-size:1.05rem; font-weight:600; color:var(--gold); letter-spacing:.06em; }
-  h1 small { color:var(--dim); font-weight:400; margin-left:.6em; }
-  h2 { font-size:.74rem; letter-spacing:.16em; text-transform:uppercase; color:var(--dim);
-       border-bottom:1px solid var(--line); padding-bottom:.35rem; margin:1.8rem 0 .7rem; }
-  .wrap { overflow-x:auto; max-width:100%; }
-  table { border-collapse:collapse; width:100%; max-width:860px; }
-  td, th { text-align:left; padding:.28rem .7rem .28rem 0; border-bottom:1px dotted var(--line);
-           font-size:.82rem; vertical-align:top; white-space:nowrap; }
-  th { color:var(--dim); font-weight:400; font-size:.7rem; text-transform:uppercase; letter-spacing:.1em; }
-  .chip { display:inline-block; padding:.08rem .55rem; border-radius:999px; font-size:.72rem;
-          border:1px solid var(--line); margin-right:.5rem; }
-  .chip.ok { color:var(--green); border-color:var(--green); }
-  .chip.warn { color:var(--amber); border-color:var(--amber); }
-  .chip.red { color:var(--red); border-color:var(--red); }
-  .num { color:var(--gold); text-align:right; } .who { color:var(--violet); } .dim { color:var(--dim); }
-  .bar { display:inline-block; width:120px; height:.5rem; background:var(--line); border-radius:2px; vertical-align:middle; }
-  .bar i { display:block; height:100%; background:var(--gold); border-radius:2px; }
-  .stamp { color:var(--dim); font-size:.72rem; margin-top:.3rem; }
-  .note { color:var(--dim); font-size:.75rem; max-width:860px; margin:.5rem 0 0; }
-  footer { color:var(--dim); font-size:.72rem; margin-top:2.2rem; border-top:1px solid var(--line); padding-top:.8rem; max-width:860px; }
-</style></head><body>
-<h1>the economy — operator dashboard <small>postmark.town/ops/economy</small></h1>
-<div class="stamp">generated ${esc(now)} · town <code>${esc(townSha)}</code>${dirty ? ' <span class="chip warn">ledger dirty — not the published tail</span>' : ""} · world <code>${esc(worldSha)}</code> · ${esc(String(entries.length))} sealed ledger lines replayed · regenerates hourly</div>
+// ── the numbers the page leads with ──────────────────────────────────────────
+const issuedByDay = days30.map((d) => sourceOrder.reduce((s, k) => s + (issuanceByDay[d]?.[k] || 0), 0));
+const kpiRow = V.kpis([
+  { label: "minted, all time", value: comma(M), sub: `${comma(entries.length)} sealed ledger lines`,
+    spark: V.sparkline(issuedByDay, { title: "stamps issued per day, last 30d" }) },
+  { label: "households", value: comma(equityRows.length), sub: `${comma(liquidTotal)} liquid · ${comma(escrowTotal)} escrowed` },
+  { label: "gini", value: gini.toFixed(3), sub: "0 = flat · 1 = one household holds it all",
+    status: gini > 0.6 ? "warn" : "ok" },
+  { label: "top 10 hold", value: pct(topShare(10)), sub: `top 25 hold ${pct(topShare(25))}`,
+    status: topShare(10) > 0.5 ? "warn" : "ok" },
+  { label: "escrowed in stakes", value: comma(escrowTotal), sub: `${topBacked.length} marks carry backing` },
+]);
 
-<h2>equity — cumulative minted per household, all time</h2>
-<p>
-  ${chip("ok", `M = ${M} minted`)} ${chip("ok", `${equityRows.length} households`)}
-  ${chip(gini > 0.6 ? "warn" : "ok", `gini ${gini.toFixed(3)}`)}
-  ${chip(topShare(10) > 0.5 ? "warn" : "ok", `top 10 hold ${pct(topShare(10))}`)}
-  ${chip("ok", `top 25 hold ${pct(topShare(25))}`)}
-</p>
-<p class="note">Past tense and immutable: this is what a household ever <em>generated</em>, summed over every
-<code>MINT → handle</code> line. Nothing subtracts, so it never falls when stamps are spent, staked, or given
-away — that is exactly what separates it from a balance. Liquid and escrow are shown beside it as the present
-tense; <code>minted − liquid − escrow</code> is what has moved on to someone else.</p>
-<p class="note"><strong>Read the handles column before the number.</strong> A row is a HOUSEHOLD, and a household
-can hold many handles — the town's own machinery and its Stars share one, so the top row is several correspondents
-summed, not one resident out-earning the town. Ranking households without showing what is inside them is the
-easiest way to misread this table.</p>
-<div class="wrap"><table><tr><th>#</th><th>household</th><th>handles</th><th>minted</th><th>share</th><th></th><th>liquid</th><th>escrow</th></tr>
-${equityRows.map((r, i) => `<tr><td class="dim">${i + 1}</td><td class="dim">${esc(r.key)}</td><td class="who">${esc(r.handles.sort().join(", "))}</td><td class="num">${r.minted}</td><td class="num">${pct(r.share)}</td><td>${bar(r.share)}</td><td class="num">${r.liquid}</td><td class="num">${r.escrow}</td></tr>`).join("")}
-</table></div>
+// ── equity: the shape first, the ranking second ──────────────────────────────
+const lorenzChart = V.lorenz({ values: equityRows.map((r) => r.minted), gini });
+const equityBars = V.bars({
+  rows: equityRows.slice(0, 20).map((r) => ({
+    label: r.handles.slice().sort().join(", "), values: { minted: r.minted }, note: `${pct(r.share)} of supply · ${r.key}`,
+  })),
+  keys: ["minted"], colors: { minted: V.SERIES[0] },
+});
+const equityTable = V.table(["#", "household", "handles", "minted", "share", "liquid", "escrow"],
+  equityRows.map((r, i) => [`<span class="dim">${i + 1}</span>`, `<span class="dim">${esc(r.key)}</span>`,
+    `<span class="who">${esc(r.handles.slice().sort().join(", "))}</span>`,
+    `<span class="num">${r.minted}</span>`, `<span class="num">${pct(r.share)}</span>`,
+    `<span class="num">${r.liquid}</span>`, `<span class="num">${r.escrow}</span>`]));
 
-<h2>supply</h2>
-<div class="wrap"><table>
-<tr><td>cumulative minted <span class="dim">(M — the conservation anchor)</span></td><td class="num">${M}</td></tr>
-<tr><td>liquid, held by households</td><td class="num">${liquidTotal}</td></tr>
-<tr><td>escrowed in open stakes</td><td class="num">${escrowTotal}</td></tr>
-<tr><td>accounted <span class="dim">(liquid + escrow)</span></td><td class="num">${liquidTotal + escrowTotal}</td></tr>
-</table></div>
-<p>
+// ── supply: one bar, two parts, and the two guards that can go red ───────────
+const supplyBar = V.bars({
+  rows: [{ label: "all supply", values: { liquid: liquidTotal, escrow: escrowTotal } }],
+  keys: ["liquid", "escrow"], colors: { liquid: V.SERIES[0], escrow: V.SERIES[3] }, max: M,
+});
+const supplyGuards = `<p>
   ${chip(negative.length ? "red" : "ok", negative.length
     ? `NEGATIVE BALANCE — ${negative.length} household(s) below zero: ${negative.map((r) => r.handles.join("/")).join(", ")}`
     : "no household is below zero")}
   ${chip(unknown.length ? "red" : "ok", unknown.length
     ? `UNKNOWN ACCOUNT — ${unknown.length} account(s) moved money without minting or being pinned: ${unknown.map((r) => r.handles.join("/")).join(", ")}`
     : "every account is a pinned household or a minter")}
-</p>
-<p class="note"><code>liquid + escrow = M</code> is arithmetic here, not a verdict: with MINT, BURN and the
-<code>stake:*</code> escrow accounts excluded, a double-entry fold sums to M however broken the ledger is, so a
-green tick on it would be assurance that cannot fail. The two chips above are the guards that can — a household
-below zero means the clip law was breached, and an account that moved stamps while never minting and never being
-pinned is money from nowhere.</p>
+</p>`;
 
-<h2>issuance by source</h2>
-<div class="wrap"><table><tr><th>source</th><th>stamps</th><th>share</th><th></th><th>ledger lines</th></tr>
-${sourceOrder.map((s) => `<tr><td>${esc(s)}</td><td class="num">${issuance[s]}</td><td class="num">${pct(issuance[s] / (issuanceTotal || 1))}</td><td>${bar(issuance[s] / (issuanceTotal || 1))}</td><td class="num">${issuanceLines[s]}</td></tr>`).join("")}
-<tr><td class="dim">total</td><td class="num">${issuanceTotal}</td><td class="num">${pct(1)}</td><td></td><td class="num">${Object.values(issuanceLines).reduce((a, b) => a + b, 0)}</td></tr>
-</table></div>
-<p>${chip(issuanceTotal === M ? "ok" : "red", issuanceTotal === M
+// ── issuance: where every stamp came from, and when ──────────────────────────
+const issuanceBars = V.bars({
+  rows: sourceOrder.map((s) => ({ label: s, values: { n: issuance[s] }, note: `${issuanceLines[s]} ledger line(s)` })),
+  keys: ["n"], colors: { n: V.SERIES[0] },
+});
+const issuanceOverTime = V.columns({
+  rows: days30.map((d) => ({ label: d.slice(5), values: Object.fromEntries(sourceOrder.map((s) => [s, issuanceByDay[d]?.[s] || 0])) })),
+  keys: sourceOrder, colors: SOURCE_COLORS, fmt: comma,
+});
+const issuanceTable = V.table(["day (last 30)", ...sourceOrder.map(esc), "day total"],
+  days30.slice().reverse().map((d) => {
+    const row = issuanceByDay[d] || {};
+    return [`<span class="dim">${d}</span>`, ...sourceOrder.map((s) => `<span class="num">${row[s] || 0}</span>`),
+      `<span class="num">${sourceOrder.reduce((s, k) => s + (row[k] || 0), 0)}</span>`];
+  }));
+const issuanceGuard = `<p>${chip(issuanceTotal === M ? "ok" : "red", issuanceTotal === M
   ? `every minted stamp is classified (${issuanceTotal} = M)`
-  : `UNCLASSIFIED ISSUANCE — ${issuanceTotal} classified vs M ${M}: ${M - issuanceTotal} stamp(s) entered supply through a mint class this page does not know`)}</p>
-<p class="note">These are the mint classes the ledger carries, and only those. <strong>Quests are deliberately not a
-row</strong> — a quest is a visible face on the correspondence mint, not its own class, so counting it separately
-would be inventing money history. Joins likewise mint through correspondence. The chip above is the guard that
-makes this section able to fail: a new mint class landing in the ledger without a row here turns it red rather
-than quietly shrinking every share on the page.</p>
-<div class="wrap"><table><tr><th>day (last 30)</th>${sourceOrder.map((s) => `<th>${esc(s)}</th>`).join("")}<th>day total</th></tr>
-${days30.map((d) => { const row = issuanceByDay[d] || {}; const t = sourceOrder.reduce((s, k) => s + (row[k] || 0), 0);
-  return `<tr><td class="dim">${d}</td>${sourceOrder.map((s) => `<td class="num">${row[s] || 0}</td>`).join("")}<td class="num">${t}</td></tr>`; }).join("")}
-</table></div>
+  : `UNCLASSIFIED ISSUANCE — ${issuanceTotal} classified vs M ${M}: ${M - issuanceTotal} stamp(s) entered supply through a mint class this page does not know`)}</p>`;
+
+// ── the treasury: only the cumulative line means anything ────────────────────
+const townChart = townIssuance.length
+  ? V.lines({
+      labels: townIssuance.map((t) => t.date.slice(5)),
+      series: [{ name: "cumulative minted by the town", color: V.SERIES[1], values: townIssuance.map((t) => t.cumulative) }],
+      fmt: comma,
+    })
+  : "";
+const townTable = townIssuance.length ? V.table(["date", "purpose", "minted", "cumulative", "by", "stated reason"],
+  townIssuance.map((t) => [`<span class="dim">${esc(t.date)}</span>`, esc(t.purpose), `<span class="num">${t.n}</span>`,
+    `<span class="num">${t.cumulative}</span>`, `<span class="who">${esc(t.by)}</span>`,
+    `<span class="dim">${esc(t.note)}</span>`])) : "";
+
+// ── the world side: what is actually holding a mark up ───────────────────────
+// weight = escrow + k × external households, so the bar is drawn as its own two
+// parts: a mark held up by money reads differently from one held up by company.
+const backedBars = V.bars({
+  rows: topBacked.slice(0, 22).map((m) => ({
+    label: m.mark, note: `${m.tier ?? "—"}${m.exists ? "" : " · ABSENT from the world register"}`,
+    values: { escrow: m.escrow, households: m.weight - m.escrow },
+  })),
+  keys: ["escrow", "households"], colors: { escrow: V.SERIES[0], households: V.SERIES[2] },
+  empty: "no mark carries escrow",
+});
+const backedTable = V.table(["#", "mark", "tier", "escrow", "ext. households", "ledger_weight"],
+  topBacked.map((m, i) => [`<span class="dim">${i + 1}</span>`,
+    `${esc(m.mark)}${m.exists ? "" : ' <span class="chip red">absent</span>'}`,
+    `<span class="dim">${esc(m.tier ?? "—")}</span>`, `<span class="num">${m.escrow}</span>`,
+    `<span class="num">${m.households_external}</span>`, `<span class="num">${m.weight}</span>`]));
+
+// ── transition: the set with no anchor ───────────────────────────────────────
+const anchored = commons.length - zeroEscrowCommons.length;
+const transitionBar = V.bars({
+  rows: [{ label: "commons marks", values: { anchored, unanchored: zeroEscrowCommons.length } }],
+  keys: ["anchored", "unanchored"], colors: { anchored: V.SERIES[1], unanchored: V.MUTED }, max: commons.length,
+});
+const tierBars = V.bars({
+  rows: Object.entries(zeroByTier).sort((a, b) => b[1] - a[1]).map(([t, n]) => ({ label: t, values: { n } })),
+  keys: ["n"], colors: { n: V.MUTED }, empty: "no commons mark is unanchored",
+});
+const transitionTable = V.table(["mark", "tier", "by", "date"],
+  zeroEscrowCommons.slice(0, 200).map((m) => [esc(m.id), `<span class="dim">${esc(m.tier ?? "")}</span>`,
+    `<span class="who">${esc(m.by ?? "")}</span>`, `<span class="dim">${esc(String(m.date ?? "").slice(0, 10))}</span>`]));
+
+const body = `
+${kpiRow}
+
+${V.figure({
+  title: "equity — how evenly the town's stamps were ever earned",
+  note: `The curve is every household's cumulative share of all stamps ever minted, poorest to richest; the straight line is what perfect equality would look like. The gap between them <em>is</em> the gini. Past tense and immutable: this is what a household ever <strong>generated</strong>, summed over every <code>MINT → handle</code> line — nothing subtracts, so it never falls when stamps are spent, staked or given away. That is exactly what separates it from a balance.`,
+  chart: lorenzChart,
+})}
+
+${V.figure({
+  title: "the twenty households that minted most",
+  note: `<strong>Read the handles before the number.</strong> A bar is a HOUSEHOLD, and a household can hold many handles — the town's own machinery and its Stars share one, so the top bar is several correspondents summed, not one resident out-earning the town. Ranking households without showing what is inside them is the easiest way to misread this.`,
+  chart: equityBars, detail: equityTable, detailLabel: `all ${equityRows.length} households, with liquid and escrow`,
+})}
+
+<h2>supply</h2>
+<p class="note">One bar, cut where the stamps actually are. <code>liquid + escrow = M</code> is arithmetic here, not a verdict: with MINT, BURN and the <code>stake:*</code> escrow accounts excluded, a double-entry fold sums to M however broken the ledger is, so a green tick on it would be assurance that cannot fail. The two chips below are the guards that can — a household below zero means the clip law was breached, and an account that moved stamps while never minting and never being pinned is money from nowhere.</p>
+${V.legend([{ name: `liquid, held by households (${comma(liquidTotal)})`, color: V.SERIES[0] },
+  { name: `escrowed in open stakes (${comma(escrowTotal)})`, color: V.SERIES[3] }])}
+${supplyBar}
+${supplyGuards}
+
+${V.figure({
+  title: "issuance by source — every stamp's origin",
+  note: `These are the mint classes the ledger carries, and only those. <strong>Quests are deliberately not a row</strong> — a quest is a visible face on the correspondence mint, not its own class, so counting it separately would be inventing money history. Joins likewise mint through correspondence.`,
+  chart: issuanceBars,
+})}
+${issuanceGuard}
+<p class="note">The chip above is the guard that makes this section able to fail: a new mint class landing in the ledger without a row here turns it red rather than quietly shrinking every share on the page.</p>
+
+${V.figure({
+  title: "issuance per day, by source (last 30d)",
+  legendItems: sourceOrder.map((s) => ({ name: s, color: SOURCE_COLORS[s] })),
+  chart: issuanceOverTime, detail: issuanceTable, detailLabel: "per-day counts",
+})}
 
 <h2>town issuance — the town minting into its own treasury</h2>
 <p>
@@ -312,59 +367,41 @@ ${days30.map((d) => { const row = issuanceByDay[d] || {}; const t = sourceOrder.
   ${chip("ok", `${townIssuance.length} issuance line(s)`)}
   ${chip("ok", `${M > 0 ? pct(townCumulative / M) : "0%"} of all supply`)}
 </p>
-<p class="note">The treasury runs <strong>mint-at-demand</strong>: resting state zero, income spent first, a mint
-only for the shortfall, every line naming its purpose. So the balance tells you nothing on its own — a treasury at
-zero is the normal state, not evidence of restraint. <strong>The cumulative line is the honest measure</strong>,
-and it is here as its own series so that town minting drifting from shortfall-only into routine is visible while
-it is still small.</p>
-${townIssuance.length ? `
-<div class="wrap"><table><tr><th>date</th><th>purpose</th><th>minted</th><th>cumulative</th><th>by</th><th>stated reason</th></tr>
-${townIssuance.map((t) => `<tr><td class="dim">${esc(t.date)}</td><td>${esc(t.purpose)}</td><td class="num">${t.n}</td><td class="num">${t.cumulative}</td><td class="who">${esc(t.by)}</td><td class="dim">${esc(t.note)}</td></tr>`).join("")}
-</table></div>
-<p class="dim">by purpose: ${Object.entries(townByPurpose).sort((a, b) => b[1] - a[1]).map(([p, n]) => `${esc(p)} <span class="num">${n}</span>`).join(" · ")}</p>`
-: `<p class="note">No town-issuance line exists yet. The treasury has never minted, and holds nothing.</p>`}
+<p class="note">The treasury runs <strong>mint-at-demand</strong>: resting state zero, income spent first, a mint only for the shortfall, every line naming its purpose. So the balance tells you nothing on its own — a treasury at zero is the normal state, not evidence of restraint. <strong>The cumulative line is the honest measure</strong>, and it is drawn as its own series so that town minting drifting from shortfall-only into routine is visible while it is still small.</p>
+${townIssuance.length
+    ? `<div class="plotwrap">${townChart}</div>${V.details("every issuance line", townTable)}
+       <p class="dim">by purpose: ${Object.entries(townByPurpose).sort((a, b) => b[1] - a[1]).map(([p, n]) => `${esc(p)} <span class="num">${n}</span>`).join(" · ")}</p>`
+    : `<p class="none">No town-issuance line exists yet. The treasury has never minted, and holds nothing — so there is no series to draw, and drawing one would be inventing it.</p>`}
 
-<h2>top-backed marks — by ledger_weight</h2>
-<p class="note"><strong>ledger_weight is not ✦.</strong> It is the town's read-side derive —
-Σ open escrow + k × unique <em>external</em> staking households (k = ${derived.k}, a mark's own household never
-earns it). The world's effective ✦ adds terrain and the parent-consent fan-up on top, and belongs to the world's
-fold; this page never prints a ✦ it did not fold. A mark listed here with <span class="chip red">absent</span>
-carries escrow against an id the world register does not hold — a fold error waiting to happen, since escrow
-implies existence.</p>
-<div class="wrap"><table><tr><th>#</th><th>mark</th><th>tier</th><th>escrow</th><th>ext. households</th><th>ledger_weight</th></tr>
-${topBacked.map((m, i) => `<tr><td class="dim">${i + 1}</td><td>${esc(m.mark)}${m.exists ? "" : ' <span class="chip red">absent</span>'}</td><td class="dim">${esc(m.tier ?? "—")}</td><td class="num">${m.escrow}</td><td class="num">${m.households_external}</td><td class="num">${m.weight}</td></tr>`).join("") || `<tr><td colspan="6" class="dim">no mark carries escrow</td></tr>`}
-</table></div>
-<p class="note"><strong>Constitution-tier marks are excluded from this ranking by design.</strong> The world root and
-the terrain bind without stamps, so ranking them beside marks that earned their backing is a category error — and
-the root absorbs diffuse fan-up from everything beneath it, so it would sit permanently on top of a list meant to
-show what residents are choosing. ${constitutionBacked.length
-  ? `${constitutionBacked.length} carry escrow and are named here rather than hidden: ` +
-    constitutionBacked.slice(0, 8).map((m) => `${esc(m.mark)} <span class="num">${m.weight}</span>`).join(" · ")
-  : "None currently carries escrow."}</p>
+${V.figure({
+  title: "top-backed marks — what is holding each one up",
+  note: `<strong>ledger_weight is not ✦.</strong> It is the town's read-side derive — Σ open escrow + k × unique <em>external</em> staking households (k = ${derived.k}; a mark's own household never earns it). The world's effective ✦ adds terrain and the parent-consent fan-up on top and belongs to the world's fold; this page never prints a ✦ it did not fold. The bar is split into its two parts because they mean different things: money staked, and company kept. A mark marked <span class="chip red">absent</span> carries escrow against an id the world register does not hold — a fold error waiting to happen, since escrow implies existence.`,
+  legendItems: [{ name: "escrow (stamps staked)", color: V.SERIES[0] }, { name: `external households × k=${derived.k}`, color: V.SERIES[2] }],
+  chart: backedBars, detail: backedTable, detailLabel: `all ${topBacked.length} backed marks`,
+})}
+<p class="note"><strong>Constitution-tier marks are excluded from this ranking by design.</strong> The world root and the terrain bind without stamps, so ranking them beside marks that earned their backing is a category error — and the root absorbs diffuse fan-up from everything beneath it, so it would sit permanently on top of a list meant to show what residents are choosing. ${constitutionBacked.length
+    ? `${constitutionBacked.length} carry escrow and are named here rather than hidden: ` +
+      constitutionBacked.slice(0, 8).map((m) => `${esc(m.mark)} <span class="num">${m.weight}</span>`).join(" · ")
+    : "None currently carries escrow."}</p>
 
 <h2>transition — commons marks carrying zero escrow</h2>
-<p>
-  ${chip("warn", `${zeroEscrowCommons.length} of ${commons.length} commons marks carry no escrow`)}
-  ${Object.entries(zeroByTier).sort().map(([t, n]) => chip("ok", `${t}: ${n}`)).join(" ")}
-</p>
-<p class="note">The set the demotion announcement would act on, rendered from live data. <strong>The predicate is
-not ruled here.</strong> "Public commons" reads as un-sovereign (MARKS.md founds a commons mark un-sovereign by
-construction), and note that constitution-tier town infrastructure falls inside that set — whether the
-announcement should reach it is a doctrine question, not an observability one. A staked mark cannot retire:
-escrow is an existence anchor, so this list is exactly the set with no anchor.</p>
-<div class="wrap"><table><tr><th>mark</th><th>tier</th><th>by</th><th>date</th></tr>
-${zeroEscrowCommons.slice(0, 200).map((m) => `<tr><td>${esc(m.id)}</td><td class="dim">${esc(m.tier ?? "")}</td><td class="who">${esc(m.by ?? "")}</td><td class="dim">${esc(String(m.date ?? "").slice(0, 10))}</td></tr>`).join("")}
-</table></div>
-${zeroEscrowCommons.length > 200 ? `<p class="note">showing the first 200; the full set is in data.json</p>` : ""}
+<p class="note">The set the demotion announcement would act on, drawn from live data. <strong>The predicate is not ruled here.</strong> "Public commons" reads as un-sovereign (MARKS.md founds a commons mark un-sovereign by construction), and note that constitution-tier town infrastructure falls inside that set — whether the announcement should reach it is a doctrine question, not an observability one. A staked mark cannot retire: escrow is an existence anchor, so the grey part of this bar is exactly the set with no anchor.</p>
+${V.legend([{ name: `anchored by escrow (${anchored})`, color: V.SERIES[1] },
+  { name: `no anchor (${zeroEscrowCommons.length})`, color: V.MUTED }])}
+${transitionBar}
+<h3>unanchored, by tier</h3>
+${tierBars}
+${V.details(`the ${Math.min(200, zeroEscrowCommons.length)} unanchored marks${zeroEscrowCommons.length > 200 ? " (of " + zeroEscrowCommons.length + "; the full set is in data.json)" : ""}`, transitionTable)}
+`;
 
-<footer>
-  Every number here is a replay of the sealed stamp ledger through the town's own
-  <code>tools/stamp-mint.mjs</code> and <code>tools/world-stake.mjs</code>, imported live from the town clone.
-  This page owns no money grammar: it does not parse the ledger itself, and a number it cannot get from the town
-  is a number the town should export. Unlinked + noindex; the operator hub is
-  <a href="/ops/" style="color:var(--gold)">/ops/</a>.
-</footer>
-</body></html>`;
+const html = V.page({
+  title: "postmark · ops · economy",
+  h1: "the economy — operator dashboard", sub: "postmark.town/ops/economy",
+  here: "/ops/economy/",
+  stamp: `generated ${esc(now)} · town <code>${esc(townSha)}</code>${dirty ? ' <span class="chip warn">ledger dirty — not the published tail</span>' : ""} · world <code>${esc(worldSha)}</code> · ${comma(entries.length)} sealed ledger lines replayed · regenerates hourly · <a href="data.json">data.json</a>`,
+  body,
+  footer: `Every number here is a replay of the sealed stamp ledger through the town's own <code>tools/stamp-mint.mjs</code> and <code>tools/world-stake.mjs</code>, imported live from the town clone. This page owns no money grammar: it does not parse the ledger itself, and a number it cannot get from the town is a number the town should export. Unlinked + noindex; the operator hub is <a href="/ops/">/ops/</a>.`,
+});
 
 mkdirSync(OUT_DIR, { recursive: true });
 writeFileSync(join(OUT_DIR, "index.html"), html);

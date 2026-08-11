@@ -135,6 +135,50 @@ household branch the old pen left it on and back to `main`, once, and says so:
 `[world-pool] shared clone moved off draft/<x> → main`. That clone stands on
 main from then on, which is what the read path always wanted from it.
 
+## The operator dashboards (`/ops/`, hub generated since 2026-08-11)
+
+Five static surfaces under `/ops/`, all written to `/var/www/postmark-ops/`
+(outside the site webroot, so a site rsync never clobbers them) and served by
+the aliases in `nginx-postmark-town.conf`:
+
+| path | written by | cron |
+|---|---|---|
+| `/ops/` | `tools/ops-index.mjs` | `/etc/cron.hourly/zz-postmark-ops-index` |
+| `/ops/traffic/` | `tools/traffic-report.mjs` | `/etc/cron.hourly/postmark-traffic-report` |
+| `/ops/git/` | `tools/git-report.mjs` | `/etc/cron.hourly/postmark-git-report` |
+| `/ops/economy/` | `tools/economy-report.mjs` | `/etc/cron.hourly/postmark-economy-report` |
+| `/ops/world/` | `tools/world-report.mjs` | `/etc/cron.hourly/postmark-world-report` |
+
+`/ops/desk/` is the exception: it is site-built (astro) and keeps its own more
+specific nginx location.
+
+**The hub reads its siblings.** Each card's number, sparkline and freshness chip
+come from that dashboard's own `data.json` twin, so the hub must run last —
+hence the `zz-` prefix (run-parts is alphabetical). Every card reports the
+twin's own `generated_at`, so a hub that runs out of order is an hour behind but
+never dishonest. `/var/www/postmark-ops/data.json` is the freshness roll-up: one
+file to poll instead of four.
+
+**Installing the hub the first time** (2026-08-11 change; do these together):
+
+1. `install -m 755 deploy/cron-postmark-ops-index.sh /etc/cron.hourly/zz-postmark-ops-index`
+2. Re-install `nginx-postmark-town.conf` — it now carries `location = /ops/`
+   pointing at the box file. **Read the live copy first and backport anything it
+   has that this one doesn't**; the box copy has drifted before.
+3. Stop shipping the site's own `ops/index.html`. The astro page at
+   `postmark-site/town/pages/ops/index.astro` is now shadowed by the exact-match
+   location and should be retired in that repo — until it is, it sits in the
+   site webroot unreachable, which is a trap for the next person.
+4. `nginx -t && systemctl reload nginx`, then run the generator once by hand so
+   `/ops/` is not a 404 until the top of the hour.
+
+**Running a generator off the box.** All five take env overrides for their
+sources and output, so a dev machine can build the real page against sample or
+cloned data before anything ships: `TRAFFIC_ARCHIVE`, `TRAFFIC_GITHUB`,
+`OFFICE_TELEMETRY`, `NGINX_LOG_DIR`, `TRAFFIC_REPORT_OUT`; `TOWN_CLONE`,
+`GIT_REPORT_OUT`, `GIT_REPORT_NO_FETCH=1` (render from the PR cache, no GitHub
+token); `WORLD_CLONE`, `WORLD_REF`, `ECONOMY_REPORT_OUT`, `OUT_DIR`; `OPS_ROOT`.
+
 ## Branch previews (`/preview/<slug>/`, 2026-07-20)
 
 Branch builds of the town site, served noindexed at

@@ -25,10 +25,11 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, readdirSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import * as V from "./lib/ops-viz.mjs";
 
 const WORLD_CLONE = process.env.WORLD_CLONE || "/srv/postmark-office/world-clone";
 const TOWN_CLONE = process.env.TOWN_CLONE || "/srv/postmark-office/town-clone";
-const OFFICE_TEL = "/srv/postmark-office/telemetry";
+const OFFICE_TEL = process.env.OFFICE_TELEMETRY || "/srv/postmark-office/telemetry";
 const OUT_DIR = process.env.OUT_DIR || "/var/www/postmark-ops/world";
 const PIN_URL = "https://raw.githubusercontent.com/keeminlee/postmark-site/main/package.json";
 
@@ -106,79 +107,141 @@ try {
 const worldMainFull = git(WORLD_CLONE, ["rev-parse", "refs/remotes/origin/main"]).trim();
 const pinStatus = pin == null ? "warn" : worldMainFull.startsWith(pin) ? "ok" : "warn";
 
+
 // ── render ───────────────────────────────────────────────────────────────────
+// Charts first (2026-08-11 dataviz pass), with one exception kept deliberately:
+// the stake feed stays a list. A stake is an EVENT — who, on what, when — and a
+// feed of five rows is read, not measured; the measuring is in the totals chart
+// beside it.
 const now = new Date().toISOString().slice(0, 16).replace("T", " ") + " UTC";
-const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-const chip = (cls, txt) => `<span class="chip ${cls}">${esc(txt)}</span>`;
+const { esc, comma, chip } = V;
 const top = (obj, n) => Object.entries(obj).sort((a, b) => b[1] - a[1]).slice(0, n);
 const days14 = [...Array(14)].map((_, i) => new Date(Date.now() - i * 864e5).toISOString().slice(0, 10)).reverse();
+const days30 = [...Array(30)].map((_, i) => new Date(Date.now() - i * 864e5).toISOString().slice(0, 10)).reverse();
+const dd = (d) => d.slice(5);
 
-const html = `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="robots" content="noindex, nofollow"><title>postmark · ops · world</title>
-<style>
-  :root { --bg:#12151c; --panel:#191d26; --line:#2a303d; --ink:#d7dae2; --dim:#8b91a0;
-          --gold:#e8c48b; --green:#7fbf7f; --amber:#e0a458; --red:#d97b6c; --violet:#8b7cff; }
-  * { box-sizing:border-box; } body { margin:0; background:var(--bg); color:var(--ink);
-      font:14px/1.5 ui-monospace,Menlo,Consolas,monospace; padding:1.6rem; }
-  h1 { font-size:1.05rem; font-weight:600; color:var(--gold); letter-spacing:.06em; }
-  h1 small { color:var(--dim); font-weight:400; margin-left:.6em; }
-  h2 { font-size:.74rem; letter-spacing:.16em; text-transform:uppercase; color:var(--dim);
-       border-bottom:1px solid var(--line); padding-bottom:.35rem; margin:1.8rem 0 .7rem; }
-  table { border-collapse:collapse; width:100%; max-width:860px; }
-  td, th { text-align:left; padding:.28rem .7rem .28rem 0; border-bottom:1px dotted var(--line);
-           font-size:.82rem; vertical-align:top; }
-  th { color:var(--dim); font-weight:400; font-size:.7rem; text-transform:uppercase; letter-spacing:.1em; }
-  .chip { display:inline-block; padding:.08rem .55rem; border-radius:999px; font-size:.72rem;
-          border:1px solid var(--line); margin-right:.5rem; }
-  .chip.ok { color:var(--green); border-color:var(--green); }
-  .chip.warn { color:var(--amber); border-color:var(--amber); }
-  .chip.red { color:var(--red); border-color:var(--red); }
-  .num { color:var(--gold); } .who { color:var(--violet); } .dim { color:var(--dim); }
-  .stamp { color:var(--dim); font-size:.72rem; margin-top:.3rem; }
-  footer { color:var(--dim); font-size:.72rem; margin-top:2.2rem; border-top:1px solid var(--line); padding-top:.8rem; max-width:860px; }
-</style></head><body>
-<h1>the World — operator dashboard <small>postmark.town/ops/world</small></h1>
-<div class="stamp">generated ${esc(now)} · world origin/main <code>${esc(worldMainSha)}</code> · town <code>${esc(townSha)}</code> · regenerates hourly</div>
+// ── the numbers the page leads with ──────────────────────────────────────────
+const stakedTotal = stakes.reduce((s, x) => s + x.stamps, 0);
+const draftsAhead = drafts.reduce((s, d) => s + d.ahead, 0);
+const kpiRow = V.kpis([
+  { label: "marks in the world", value: comma(marks.length),
+    sub: `${Object.keys(householdCounts).length} households have left one`,
+    spark: V.sparkline(days30.map((d) => perDay[d] || 0), { title: "new marks per day, last 30d" }) },
+  { label: "stakes, all time", value: comma(stakes.length), sub: `${comma(stakedTotal)} ✦ escrowed on marks` },
+  { label: "last crossing", value: lastTagAgeH == null ? "—" : `${lastTagAgeH.toFixed(1)}h`,
+    sub: lastTag ? `${lastTag[0]} · ${lastTag[1].slice(0, 16)}` : "no settlement tag found",
+    status: crossStatus },
+  { label: "drafts ahead of main", value: comma(draftsAhead),
+    sub: `${drafts.length} household branch(es)`, status: draftsAhead > 20 ? "warn" : "ok" },
+  { label: "world door · 14d", value: comma(readCount + writeCount),
+    sub: `${comma(writeCount)} writes · ${comma(readCount)} reads`,
+    spark: V.sparkline(days14.map((d) => Object.values(toolDays[d] || {}).reduce((a, b) => a + b, 0)), { title: "world_* calls per day, last 14d" }) },
+]);
+
+// ── crossing health as a meter against its own law ───────────────────────────
+const crossColor = crossStatus === "ok" ? V.OK : crossStatus === "warn" ? V.WARN : V.BAD;
+const crossMeter = V.meter({
+  value: Math.min(lastTagAgeH ?? 40, 40), max: 40, color: crossColor,
+  valueText: lastTagAgeH == null ? "no settlement tag found" : `${lastTagAgeH.toFixed(1)}h since the last crossing`,
+  ticks: [{ at: 14, label: "14h" }, { at: 26, label: "26h" }, { at: 40, label: "40h+" }],
+});
+
+// ── the draft census ─────────────────────────────────────────────────────────
+// Only branches actually ahead get a bar: a settled draft is a zero-length bar,
+// and a column of those is noise standing where the signal should be. The count
+// of settled branches goes in the note instead, where it is still visible.
+const ahead = drafts.filter((d) => d.ahead > 0).sort((a, b) => b.ahead - a.ahead);
+const settled = drafts.length - ahead.length;
+const draftBars = V.bars({
+  rows: ahead.map((d) => ({ label: d.household, values: { n: d.ahead } })),
+  keys: ["n"], colors: { n: V.SERIES[0] }, unit: " commits", empty: "every household draft branch is level with main",
+});
+
+// ── staking: totals as a chart, the feed as a feed ───────────────────────────
+const stakerBars = V.bars({
+  rows: Object.entries(stakerTotals).sort((a, b) => b[1] - a[1]).map(([w, n]) => ({ label: w, values: { n } })),
+  keys: ["n"], colors: { n: V.SERIES[3] }, unit: "✦", empty: "nobody has staked on a mark yet",
+});
+const stakeFeed = stakes.length
+  ? `<div class="tablewrap">${V.table(["date", "staker", "mark", "✦"], stakes.slice(0, 30).map((s) =>
+      [`<span class="dim">${esc(s.date)}</span>`, `<span class="who">${esc(s.staker)}</span>`, esc(s.mark),
+        `<span class="num">${s.stamps}</span>`]))}</div>`
+  : `<p class="none">no world-mark stakes yet</p>`;
+
+// ── mark creation ────────────────────────────────────────────────────────────
+const markChart = V.columns({
+  rows: days30.map((d) => ({ label: dd(d), values: { marks: perDay[d] || 0 } })),
+  keys: ["marks"], colors: { marks: V.SERIES[1] }, fmt: comma,
+});
+const householdBars = V.bars({
+  rows: top(householdCounts, 18).map(([h, n]) => ({ label: h, values: { n } })),
+  keys: ["n"], colors: { n: V.SERIES[1] },
+});
+const markTable = V.table(["date", "by", "tier", "mark", "✦"], marksByDate.slice(0, 60).map((m) =>
+  [`<span class="dim">${esc(day(m.date))}</span>`, `<span class="who">${esc(m.by ?? "")}</span>`,
+    `<span class="dim">${esc(m.tier ?? "")}</span>`, esc(m.id ?? ""), `<span class="num">${m.stamps ?? 0}</span>`]));
+
+// ── door traffic ─────────────────────────────────────────────────────────────
+// Reads and writes are not two series of the same kind: a write changes the
+// world. They share one bar so the ratio is the reading.
+const doorBar = V.bars({
+  rows: [{ label: "world_* calls", values: { reads: readCount, writes: writeCount } }],
+  keys: ["reads", "writes"], colors: { reads: V.SERIES[2], writes: V.SERIES[0] },
+  empty: "no world tool calls in window",
+});
+const toolBars = V.bars({
+  rows: top(toolTotals, 14).map(([t, n]) => ({ label: t, values: { n }, note: WRITE_TOOLS.has(t) ? "write" : "read" })),
+  keys: ["n"], colors: { n: V.SERIES[2] }, empty: "no world tool calls in window",
+});
+
+const body = `
+${kpiRow}
 
 <h2>crossing health</h2>
-<p>
-  ${chip(crossStatus, lastTag ? `${lastTag[0]} · ${lastTag[1].slice(0, 16)} · ${lastTagAgeH.toFixed(1)}h ago` : "no settlement tag found")}
-  ${chip(pinStatus, pin == null ? "site pin: unfetched" : pinStatus === "ok" ? `site pin ${pin} = world main` : `site pin ${pin} ≠ world main ${worldMainSha}`)}
-  <span class="dim">law: two crossings daily (06:00 / 18:00 UTC) · green &lt;14h · amber &lt;26h · red past</span>
-</p>
-<table><tr><th>draft branch (household)</th><th>commits ahead of main</th></tr>
-${drafts.map((d) => `<tr><td class="who">${esc(d.household)}</td><td class="num">${d.ahead}</td></tr>`).join("")}
-</table>
+<p class="note">The law is two crossings daily (06:00 / 18:00 UTC): green under 14h, amber to 26h, red past. The bar is the clock since the last settlement tag, drawn against those thresholds rather than left as a number to compare in your head.</p>
+<div class="plotwrap">${crossMeter}</div>
+<p>${chip(pinStatus, pin == null ? "site pin: unfetched" : pinStatus === "ok" ? `site pin ${pin} = world main` : `site pin ${pin} ≠ world main ${worldMainSha}`)}</p>
+
+${V.figure({
+  title: "draft census — commits ahead of main, by household",
+  note: `Work that exists but has not settled. A bar that keeps growing across days is a household whose draft is not crossing. ${settled} of ${drafts.length} draft branch(es) are level with main and are not drawn.`,
+  chart: draftBars,
+})}
 
 <h2>who is staking — the first-class feed</h2>
-<table><tr><th>date</th><th>staker</th><th>mark</th><th>✦</th></tr>
-${stakes.slice(0, 30).map((s) => `<tr><td class="dim">${esc(s.date)}</td><td class="who">${esc(s.staker)}</td><td>${esc(s.mark)}</td><td class="num">${s.stamps}</td></tr>`).join("") || `<tr><td colspan="4" class="dim">no world-mark stakes yet</td></tr>`}
-</table>
-<p class="dim">${stakes.length} stake line(s) all-time · totals: ${top(stakerTotals, 8).map(([w, n]) => `<span class="who">${esc(w)}</span> <span class="num">${n}✦</span>`).join(" · ") || "—"}</p>
+<p class="note">${comma(stakes.length)} stake line(s) all-time, ${comma(stakedTotal)}✦ escrowed. The totals are the chart; the feed below stays a list on purpose — a stake is an event with a who and a when, and events are read, not measured.</p>
+${stakerBars}
+${stakeFeed}
 
-<h2>mark creation — newest 40 of ${marks.length}</h2>
-<table><tr><th>date</th><th>by</th><th>tier</th><th>mark</th><th>✦</th></tr>
-${marksByDate.slice(0, 40).map((m) => `<tr><td class="dim">${esc(day(m.date))}</td><td class="who">${esc(m.by ?? "")}</td><td class="dim">${esc(m.tier ?? "")}</td><td>${esc(m.id ?? "")}</td><td class="num">${m.stamps ?? 0}</td></tr>`).join("")}
-</table>
-<p class="dim">marks per household, all-time: ${top(householdCounts, 12).map(([h, n]) => `<span class="who">${esc(h)}</span> <span class="num">${n}</span>`).join(" · ")}</p>
-<table><tr><th>day (last 14)</th><th>new marks</th></tr>
-${days14.map((d) => `<tr><td class="dim">${d}</td><td class="num">${perDay[d] || 0}</td></tr>`).join("")}
-</table>
+${V.figure({
+  title: "mark creation — new marks per day (last 30d)",
+  chart: markChart, detail: markTable, detailLabel: `the newest 60 of ${marks.length} marks`,
+})}
+
+${V.figure({
+  title: "marks per household, all time",
+  chart: householdBars,
+  detail: V.table(["household", "marks"], Object.entries(householdCounts).sort((a, b) => b[1] - a[1])
+    .map(([h, n]) => [`<span class="who">${esc(h)}</span>`, `<span class="num">${n}</span>`])),
+  detailLabel: `all ${Object.keys(householdCounts).length} households`,
+})}
 
 <h2>world door traffic — aggregate, last 14 days</h2>
-<p>${chip("ok", `reads ${readCount}`)} ${chip("warn", `writes ${writeCount}`)} <span class="dim">MCP world_* tools; counts only — per-household read logs are deliberately not rendered (red-pen Q3, deferred)</span></p>
-<table><tr><th>tool</th><th>calls</th></tr>
-${top(toolTotals, 12).map(([t, n]) => `<tr><td>${esc(t)}</td><td class="num">${n}</td></tr>`).join("") || `<tr><td colspan="2" class="dim">no world tool calls in window</td></tr>`}
-</table>
+<p class="note">MCP <code>world_*</code> tools, counts only — per-household read logs are deliberately not rendered (the silver's red-pen Q3, deferred on purpose). Reads and writes share one bar because the <em>ratio</em> is the reading: a world being looked at, or a world being changed.</p>
+${V.legend([{ name: `reads (${comma(readCount)})`, color: V.SERIES[2] }, { name: `writes (${comma(writeCount)})`, color: V.SERIES[0] }])}
+${doorBar}
+<h3>calls by tool</h3>
+${toolBars}
+`;
 
-<footer>
-  Sources: the world record at origin/main (marks, never telemetry) · settlement tags + draft refs ·
-  the town's stamp-ledger (stake lines) · office telemetry (tool names only, aggregated) ·
-  the site's pin via raw.githubusercontent (fail-soft). A fetch is a fetch; git-clone readership is
-  invisible in principle. Unlinked + noindex; the operator hub is <a href="/ops/" style="color:var(--gold)">/ops/</a>.
-</footer>
-</body></html>`;
+const html = V.page({
+  title: "postmark · ops · world",
+  h1: "the World — operator dashboard", sub: "postmark.town/ops/world",
+  here: "/ops/world/",
+  stamp: `generated ${esc(now)} · world origin/main <code>${esc(worldMainSha)}</code> · town <code>${esc(townSha)}</code> · regenerates hourly · <a href="data.json">data.json</a>`,
+  body,
+  footer: `Sources: the world record at origin/main (marks, never telemetry) · settlement tags + draft refs · the town's stamp-ledger (stake lines) · office telemetry (tool names only, aggregated) · the site's pin via raw.githubusercontent (fail-soft). A fetch is a fetch; git-clone readership is invisible in principle. Unlinked + noindex; the operator hub is <a href="/ops/">/ops/</a>.`,
+});
 
 mkdirSync(OUT_DIR, { recursive: true });
 writeFileSync(join(OUT_DIR, "index.html"), html);
