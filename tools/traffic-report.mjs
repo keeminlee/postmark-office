@@ -23,12 +23,17 @@ import { readFileSync, readdirSync, existsSync, mkdirSync, writeFileSync, create
 import { join } from "node:path";
 import { createGunzip } from "node:zlib";
 import { createInterface } from "node:readline";
+import * as V from "./lib/ops-viz.mjs";
 
-const ARCHIVE = "/var/lib/postmark-traffic/archive";
-const GHDIR = "/var/lib/postmark-traffic/github";
-const OFFICE_TEL = "/srv/postmark-office/telemetry";
-const LIVE = ["/var/log/nginx/access.log", "/var/log/nginx/access.log.1"];
-const OUT_DIR = "/var/www/postmark-ops/traffic";
+// Box defaults, env-overridable so the same file runs on a dev machine against
+// sample logs — the sibling generators already worked this way, and a page whose
+// look cannot be checked before it ships is a page nobody checks.
+const ARCHIVE = process.env.TRAFFIC_ARCHIVE || "/var/lib/postmark-traffic/archive";
+const GHDIR = process.env.TRAFFIC_GITHUB || "/var/lib/postmark-traffic/github";
+const OFFICE_TEL = process.env.OFFICE_TELEMETRY || "/srv/postmark-office/telemetry";
+const NGINX_DIR = process.env.NGINX_LOG_DIR || "/var/log/nginx";
+const LIVE = [join(NGINX_DIR, "access.log"), join(NGINX_DIR, "access.log.1")];
+const OUT_DIR = process.env.TRAFFIC_REPORT_OUT || "/var/www/postmark-ops/traffic";
 
 // ── raw nginx lines: streamed, never held ────────────────────────────────────
 // The sources are read AFTER the parser and aggregates are defined (bottom of
@@ -164,9 +169,9 @@ if (existsSync(ARCHIVE)) {
     try { await streamLines(join(ARCHIVE, f), true, ingest); } catch {}
   }
 }
-for (const f of readdirSync("/var/log/nginx")) {
+if (existsSync(NGINX_DIR)) for (const f of readdirSync(NGINX_DIR)) {
   if (!/^access\.log\.\d+\.gz$/.test(f)) continue;
-  try { await streamLines(join("/var/log/nginx", f), true, ingest); } catch {}
+  try { await streamLines(join(NGINX_DIR, f), true, ingest); } catch {}
 }
 for (const f of LIVE) { try { if (existsSync(f)) await streamLines(f, false, ingest); } catch {} }
 seen.clear(); // the dedupe index is dead weight from here on
@@ -219,135 +224,230 @@ if (existsSync(GHDIR)) {
   }
 }
 
-// ── render helpers ───────────────────────────────────────────────────────────
-const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-function spark(values, w = 160, h = 28) {
-  if (!values.length) return "";
-  const max = Math.max(...values, 1);
-  const step = values.length > 1 ? w / (values.length - 1) : w;
-  const pts = values.map((v, i) => `${(i * step).toFixed(1)},${(h - 2 - (v / max) * (h - 6)).toFixed(1)}`).join(" ");
-  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><polyline points="${pts}" fill="none" stroke="#e8a94c" stroke-width="1.5"/></svg>`;
-}
+
+// ── render ───────────────────────────────────────────────────────────────────
+// Charts first (2026-08-11 dataviz pass). Every panel keeps its exact numbers in
+// a collapsed table beneath the chart, so nothing is reachable only by hovering
+// — which also means the page still works on a phone and under a screen reader.
+const { esc, comma, compact } = V;
 const sortedDays = Object.keys(days).sort();
 const dayRange = (n) => sortedDays.slice(-n);
-const table = (headers, rows) =>
-  `<table><thead><tr>${headers.map((x) => `<th>${x}</th>`).join("")}</tr></thead><tbody>${rows.map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join("")}</tr>`).join("\n")}</tbody></table>`;
+const dd = (d) => d.slice(5);
+const table = V.table;
 const byCountDesc = (obj) => Object.entries(obj).sort((a, b) => b[1] - a[1]);
+const topN = (obj, n) => byCountDesc(obj).slice(0, n);
 
-// panel data
-const overviewRows = dayRange(30).map((d) => {
-  const x = days[d];
-  return [d, x.total, x.ips.size, x.byClass.browser ?? 0, x.byClass.automation ?? 0, x.byClass.bot ?? 0];
-});
-const doorRows = Object.entries(doorstep).sort((a, b) => b[1].total - a[1].total).map(([h, v]) => {
-  const series = dayRange(14).map((d) => v.byDay[d] ?? 0);
-  const last7 = dayRange(7).reduce((s, d) => s + (v.byDay[d] ?? 0), 0);
-  return [esc(h), v.total, last7, v.last, [...v.sources].join("+"), spark(series)];
-});
-const bullSlugs = [...new Set([...Object.keys(bulletinApi), ...Object.keys(bulletinSite)])]
-  .sort((a, b) => ((bulletinApi[b]?.auto ?? 0) + (bulletinApi[b]?.hand ?? 0) + (bulletinSite[b] ?? 0)) - ((bulletinApi[a]?.auto ?? 0) + (bulletinApi[a]?.hand ?? 0) + (bulletinSite[a] ?? 0)));
-const bullRows = bullSlugs.map((s) => [esc(s), bulletinApi[s]?.hand ?? 0, bulletinApi[s]?.auto ?? 0, bulletinSite[s] ?? 0]);
-const toolRows = byCountDesc(mcpTools).map(([t, n]) => [esc(t), n]);
-const houseRows = Object.entries(mcpHouseholds).sort((a, b) => b[1].total - a[1].total)
-  .map(([h, v]) => [esc(h), v.total, esc(byCountDesc(v.tools).slice(0, 4).map(([t, n]) => `${t}×${n}`).join(" · "))]);
-const apiRows = byCountDesc(apiSeg).slice(0, 15).map(([s, n]) => [esc(s), n]);
-const pageRows = byCountDesc(sitePages).slice(0, 20).map(([p, n]) => [esc(p), n]);
-const probeRows = byCountDesc(probes).slice(0, 15).map(([p, n]) => [esc(p), n]);
-const mcpSeries = dayRange(14).map((d) => mcpByDay[d] ?? 0);
-const totalSeries = dayRange(30).map((d) => days[d].total);
+// A category chart never grows a ninth colour: the tail folds into one row.
+function foldTail(entries, n, label = "everything else") {
+  const head = entries.slice(0, n);
+  const tail = entries.slice(n);
+  if (tail.length) head.push([`${label} (${tail.length})`, tail.reduce((s, [, v]) => s + v, 0)]);
+  return head;
+}
+const barRows = (entries) => entries.map(([k, v]) => ({ label: k, values: { n: v } }));
+const oneHue = { n: V.SERIES[0] };
 
+// ── the numbers the page leads with ──────────────────────────────────────────
+const last30 = dayRange(30), last14 = dayRange(14);
+const newest = sortedDays.at(-1);
+const prev = sortedDays.at(-2);
+const dayTotal = (d) => days[d]?.total ?? 0;
+const delta = prev ? dayTotal(newest) - dayTotal(prev) : 0;
+const mcp14 = last14.reduce((s, d) => s + (mcpByDay[d] ?? 0), 0);
+const door7 = Object.values(doorstep).reduce((s, v) => s + dayRange(7).reduce((t, d) => t + (v.byDay[d] ?? 0), 0), 0);
+
+const kpiRow = V.kpis([
+  { label: `requests · ${newest || "—"}`, value: compact(dayTotal(newest)),
+    sub: prev ? `${delta >= 0 ? "+" : "−"}${compact(Math.abs(delta))} vs ${dd(prev)}` : "",
+    spark: V.sparkline(last30.map(dayTotal), { title: "requests per day, last 30d" }) },
+  { label: "unique IPs today", value: comma(days[newest]?.ips.size ?? 0),
+    sub: `${comma(linesRead)} log lines parsed`,
+    spark: V.sparkline(last30.map((d) => days[d]?.ips.size ?? 0), { title: "unique IPs per day, last 30d" }) },
+  { label: "MCP calls · 14d", value: compact(mcp14),
+    sub: `${Object.keys(mcpTools).length} distinct tools`,
+    spark: V.sparkline(last14.map((d) => mcpByDay[d] ?? 0), { title: "MCP calls per day, last 14d" }) },
+  { label: "doorstep fetches · 7d", value: comma(door7),
+    sub: `${Object.keys(doorstep).length} handles ever fetched` },
+]);
+
+// ── 1. requests by day, split by who is asking ───────────────────────────────
+const UA_KEYS = ["browser", "automation", "bot", "other", "none"];
+const UA_COLORS = { browser: V.SERIES[0], automation: V.SERIES[1], bot: V.SERIES[2], other: V.SERIES[3], none: V.MUTED };
+const overviewChart = V.columns({
+  rows: last30.map((d) => ({ label: dd(d), values: days[d].byClass })),
+  keys: UA_KEYS, colors: UA_COLORS,
+});
+const overviewTable = table(["day", "requests", "uniq IPs", ...UA_KEYS],
+  last30.slice().reverse().map((d) => [d, comma(days[d].total), comma(days[d].ips.size),
+    ...UA_KEYS.map((k) => `<span class="num">${comma(days[d].byClass[k] ?? 0)}</span>`)]));
+
+// ── 2. the five sites in one log ─────────────────────────────────────────────
+const hostList = [...new Set(Object.values(hostDays).flatMap((h) => Object.keys(h)))].sort();
+const hostDaysSorted = Object.keys(hostDays).sort().slice(-30);
+const hostChart = hostList.length
+  ? V.lines({
+      labels: hostDaysSorted.map(dd),
+      series: hostList.slice(0, 8).map((h, i) => ({ name: h, color: V.SERIES[i % 8], values: hostDaysSorted.map((d) => hostDays[d][h] ?? 0) })),
+    })
+  : `<p class="none">no vhost-format lines yet</p>`;
+const hostTable = hostList.length
+  ? table(["day", ...hostList.map(esc)], Object.keys(hostDays).sort().reverse()
+      .map((d) => [d, ...hostList.map((h) => `<span class="num">${comma(hostDays[d][h] ?? 0)}</span>`)]))
+  : "";
+
+// ── 3. doorstep — the surface every agent reads first ────────────────────────
+const doorSorted = Object.entries(doorstep).sort((a, b) => b[1].total - a[1].total);
+const doorChart = V.bars({
+  rows: doorSorted.slice(0, 16).map(([h, v]) => ({ label: h, values: { n: v.total }, note: `last seen ${v.last}` })),
+  keys: ["n"], colors: oneHue,
+});
+const doorTable = table(["handle", "total", "last 7d", "last seen", "via", "14d"],
+  doorSorted.map(([h, v]) => [esc(h), `<span class="num">${comma(v.total)}</span>`,
+    `<span class="num">${comma(dayRange(7).reduce((s, d) => s + (v.byDay[d] ?? 0), 0))}</span>`,
+    v.last, [...v.sources].join("+"),
+    V.sparkline(dayRange(14).map((d) => v.byDay[d] ?? 0), { w: 90, h: 20, fill: false })]));
+
+// ── 4. bulletin — who is reading which notice ────────────────────────────────
+const bullSlugs = [...new Set([...Object.keys(bulletinApi), ...Object.keys(bulletinSite)])];
+const bullTotal = (s) => (bulletinApi[s]?.hand ?? 0) + (bulletinApi[s]?.auto ?? 0) + (bulletinSite[s] ?? 0);
+const bullSorted = bullSlugs.sort((a, b) => bullTotal(b) - bullTotal(a));
+const BULL_KEYS = ["hand", "auto", "site"];
+const BULL_COLORS = { hand: V.SERIES[0], auto: V.MUTED, site: V.SERIES[2] };
+const bullChart = V.bars({
+  rows: bullSorted.slice(0, 14).map((s) => ({
+    label: s, values: { hand: bulletinApi[s]?.hand ?? 0, auto: bulletinApi[s]?.auto ?? 0, site: bulletinSite[s] ?? 0 },
+  })),
+  keys: BULL_KEYS, colors: BULL_COLORS,
+});
+const bullTable = table(["slug", "api (hand)", "api (auto)", "site views", "total"],
+  bullSorted.map((s) => [esc(s), `<span class="num">${comma(bulletinApi[s]?.hand ?? 0)}</span>`,
+    `<span class="num">${comma(bulletinApi[s]?.auto ?? 0)}</span>`,
+    `<span class="num">${comma(bulletinSite[s] ?? 0)}</span>`,
+    `<span class="num">${comma(bullTotal(s))}</span>`]));
+
+// ── 5. the office door ───────────────────────────────────────────────────────
+const mcpDays = Object.keys(mcpByDay).sort().slice(-30);
+const mcpChart = mcpDays.length
+  ? V.lines({ labels: mcpDays.map(dd), series: [{ name: "MCP calls", color: V.SERIES[0], values: mcpDays.map((d) => mcpByDay[d] ?? 0) }] })
+  : `<p class="none">no office telemetry on this box yet</p>`;
+const toolChart = V.bars({ rows: barRows(foldTail(byCountDesc(mcpTools), 14, "other tools")), keys: ["n"], colors: oneHue });
+const houseSorted = Object.entries(mcpHouseholds).sort((a, b) => b[1].total - a[1].total);
+const houseChart = V.bars({
+  rows: houseSorted.slice(0, 14).map(([h, v]) => ({
+    label: h, values: { n: v.total }, note: byCountDesc(v.tools).slice(0, 3).map(([t, n]) => `${t}×${n}`).join(" · "),
+  })),
+  keys: ["n"], colors: oneHue,
+});
+const houseTable = table(["household", "calls", "top tools"], houseSorted.map(([h, v]) =>
+  [esc(h), `<span class="num">${comma(v.total)}</span>`, `<span class="dim">${esc(byCountDesc(v.tools).slice(0, 4).map(([t, n]) => `${t}×${n}`).join(" · "))}</span>`]));
+
+// ── 6. REST, pages, probes ───────────────────────────────────────────────────
+const apiChart = V.bars({ rows: barRows(foldTail(byCountDesc(apiSeg), 12, "other segments")), keys: ["n"], colors: oneHue });
+const pageChart = V.bars({ rows: barRows(topN(sitePages, 16)), keys: ["n"], colors: oneHue });
+const probeChart = V.bars({ rows: barRows(topN(probes, 12)), keys: ["n"], colors: { n: V.MUTED } });
+
+// ── 7. GitHub — views and clones past the API's 14-day memory ────────────────
 let ghHtml = "";
 for (const [repo, g] of Object.entries(gh)) {
-  const vd = Object.keys(g.views).sort();
-  const rows = vd.slice(-21).map((d) => [d, g.views[d]?.count ?? "", g.views[d]?.uniques ?? "", g.clones[d]?.count ?? "", g.clones[d]?.uniques ?? ""]);
-  ghHtml += `<h3>${esc(repo)} <span class="dim">(snapshots through ${esc(g.snapshotDate)})</span></h3>
-  ${table(["day", "views", "uniq", "clones", "uniq"], rows)}
-  <p class="dim">popular paths (latest snapshot): ${esc(g.paths.slice(0, 6).map((p) => `${p.path.replace(/^\/(?:keeminlee|postmark-town)\//, "/")} (${p.uniques}u)`).join(" · ")) || "—"}</p>`;
+  const vd = [...new Set([...Object.keys(g.views), ...Object.keys(g.clones)])].sort().slice(-30);
+  if (!vd.length) continue;
+  ghHtml += V.figure({
+    title: `${repo} — views and clones`,
+    note: `snapshots through ${esc(g.snapshotDate)} · popular paths: ${esc(g.paths.slice(0, 5).map((p) => `${p.path.replace(/^\/(?:keeminlee|postmark-town)\//, "/")} (${p.uniques}u)`).join(" · ")) || "—"}`,
+    legendItems: [{ name: "views", color: V.SERIES[0] }, { name: "unique viewers", color: V.SERIES[1] },
+      { name: "clones", color: V.SERIES[2] }],
+    chart: V.lines({
+      labels: vd.map(dd),
+      series: [
+        { name: "views", color: V.SERIES[0], values: vd.map((d) => g.views[d]?.count ?? 0) },
+        { name: "unique viewers", color: V.SERIES[1], values: vd.map((d) => g.views[d]?.uniques ?? 0) },
+        { name: "clones", color: V.SERIES[2], values: vd.map((d) => g.clones[d]?.count ?? 0) },
+      ],
+    }),
+    detail: table(["day", "views", "uniq", "clones", "uniq"], vd.slice().reverse().map((d) =>
+      [d, `<span class="num">${g.views[d]?.count ?? ""}</span>`, `<span class="num">${g.views[d]?.uniques ?? ""}</span>`,
+        `<span class="num">${g.clones[d]?.count ?? ""}</span>`, `<span class="num">${g.clones[d]?.uniques ?? ""}</span>`])),
+  });
 }
 
 const now = new Date().toISOString().replace("T", " ").slice(0, 16) + "Z";
-const html = `<!doctype html>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="robots" content="noindex, nofollow">
-<title>Postmark — traffic (operator)</title>
-<style>
-  :root { --paper:#14110b; --ink:#e9dfc4; --dim:#8d8265; --amber:#e8a94c; --line:#3a321f; --card:#1c1810; }
-  * { box-sizing: border-box; }
-  body { margin:0; background:var(--paper); color:var(--ink); font: 14px/1.5 Georgia, "Palatino Linotype", serif; padding: 1.5rem 1rem 4rem; }
-  .wrap { max-width: 1080px; margin: 0 auto; }
-  h1 { font-size: 1.6rem; letter-spacing:.04em; margin:.2rem 0; }
-  h2 { font-size: 1.15rem; color: var(--amber); border-bottom: 1px solid var(--line); padding-bottom:.3rem; margin-top: 2.2rem; }
-  h3 { font-size: 1rem; margin: 1rem 0 .4rem; }
-  .dim { color: var(--dim); font-size:.85em; }
-  .note { color: var(--dim); font-size:.85rem; font-style: italic; margin:.3rem 0 .8rem; }
-  table { border-collapse: collapse; width: 100%; margin:.4rem 0 1rem; background: var(--card); }
-  th, td { text-align: left; padding: .3rem .6rem; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
-  th { color: var(--dim); font-weight: normal; font-size:.8rem; text-transform: uppercase; letter-spacing:.06em; }
-  td:first-child { font-family: ui-monospace, Consolas, monospace; font-size:.85rem; }
-  .fresh { display:flex; gap:1.2rem; flex-wrap:wrap; margin:.6rem 0 0; }
-  .fresh span { background:var(--card); border:1px solid var(--line); border-radius:4px; padding:.25rem .6rem; font-size:.8rem; color:var(--dim); }
-  svg { display:block; }
-  .row { display:flex; gap:2rem; flex-wrap:wrap; align-items:flex-start; }
-  .row > div { flex: 1 1 380px; min-width: 0; }
-  .tablewrap { overflow-x: auto; }
-</style>
-<div class="wrap">
-<h1>Postmark — traffic</h1>
-<p class="dim">operator page · unlinked · a fetch is a fetch, not a read · git-clone readership is invisible by nature (census territory)</p>
-<div class="fresh">
-  <span>generated ${now}</span>
-  <span>newest log day: ${newestTs || "—"}</span>
-  <span>office telemetry: ${officeTelDays ? `${officeTelDays} day file(s)` : "MISSING"}</span>
-  <span>github snapshots: ${Object.keys(gh).length ? Object.values(gh).map((g) => g.snapshotDate).sort().at(-1) : "MISSING"}</span>
-  <span>nginx lines parsed: ${linesRead.toLocaleString()}</span>
+const freshness = [
+  `generated ${now}`,
+  `newest log day: ${newest || "—"}`,
+  `office telemetry: ${officeTelDays ? `${officeTelDays} day file(s)` : "MISSING"}`,
+  `github snapshots: ${Object.keys(gh).length ? Object.values(gh).map((g) => g.snapshotDate).sort().at(-1) : "MISSING"}`,
+  `${comma(linesRead)} nginx lines parsed`,
+].map((s) => V.chip("", s)).join("");
+
+const body = `
+${freshness}
+${kpiRow}
+
+${V.figure({
+  title: "Requests per day, by who is asking (last 30d)",
+  note: `<b>automation</b> is UA node/curl/etc — it conflates OUR pipeline (site builds on rotating Actions IPs) with residents' own scripts, so its uniques inflate. <b>bots</b> are declared crawlers (GPTBot, Googlebot…). A fetch is a fetch, not a read.`,
+  legendItems: UA_KEYS.map((k) => ({ name: k, color: UA_COLORS[k] })),
+  chart: overviewChart, detail: overviewTable, detailLabel: "per-day counts",
+})}
+
+${V.figure({
+  title: "Five sites, one log — requests by host",
+  note: `This box serves five sites into a single access log. Days before 2026-07-11 blend them all; the split below begins when the vhost log format landed (2026-07-11 22:46Z), which is why the lines start where they do.`,
+  legendItems: hostList.slice(0, 8).map((h, i) => ({ name: h, color: V.SERIES[i % 8] })),
+  chart: hostChart, detail: hostTable,
+})}
+
+${V.figure({
+  title: "Doorstep — fetches per handle, all time",
+  note: `The surface designed to be every agent's first read. <code>bundle</code> = /data/doorstep/*.md|.json · <code>rest</code> = /api/doorstep/*. MCP <code>read_doorstep</code> counts live under the office door below, not here. Top 16 shown; the table carries all ${Object.keys(doorstep).length} handles with a 14-day trend each.`,
+  chart: doorChart, detail: doorTable, detailLabel: `all ${Object.keys(doorstep).length} handles`,
+})}
+
+${V.figure({
+  title: "Bulletin — reads per slug",
+  note: `<b>hand</b> = API reads with a non-automation UA · <b>auto</b> = automation UA, mostly our own site pipeline sweeping every slug, so it is drawn in the recessive grey rather than as a series of its own · <b>site</b> = browser page views. Honest agent readership ≈ hand + some slice of auto.`,
+  legendItems: [{ name: "api (hand)", color: BULL_COLORS.hand }, { name: "api (auto — our own sweep)", color: BULL_COLORS.auto },
+    { name: "site views", color: BULL_COLORS.site }],
+  chart: bullChart, detail: bullTable, detailLabel: `all ${bullSorted.length} slugs`,
+})}
+
+<h2>Office door — MCP and authenticated traffic</h2>
+<p class="note">From office telemetry: one record per request, carrying the tool NAME and the household, never the arguments. Started 2026-07-11, so the history grows from there.</p>
+<div class="plotwrap">${mcpChart}</div>
+<div class="grid2">
+<div>${V.figure({ title: "calls by tool", chart: toolChart,
+  detail: table(["tool / method", "calls"], byCountDesc(mcpTools).map(([t, n]) => [esc(t), `<span class="num">${comma(n)}</span>`])),
+  detailLabel: `all ${Object.keys(mcpTools).length} tools` })}</div>
+<div>${V.figure({ title: "calls by household", chart: houseChart, detail: houseTable,
+  detailLabel: `all ${houseSorted.length} households` })}</div>
 </div>
 
-<h2>Overview — requests by day</h2>
-${spark(totalSeries, 640, 60)}
-<div class="tablewrap">${table(["day", "requests", "uniq IPs", "browser", "automation", "bots"], overviewRows.reverse())}</div>
-<p class="note">automation = UA node/curl/etc — conflates OUR pipeline (site builds on rotating Actions IPs) with residents' scripts. bots = declared crawlers (GPTBot, Googlebot…). <b>This box hosts five sites in one log</b> — rows before 2026-07-11 blend them; the per-site split below starts when the vhost log format landed (2026-07-11 22:46Z).</p>
-
-<h2>Sites — requests by host per day (since the vhost split)</h2>
-${(() => {
-  const hosts = [...new Set(Object.values(hostDays).flatMap((h) => Object.keys(h)))].sort();
-  if (!hosts.length) return `<p class="dim">no vhost-format lines yet</p>`;
-  const rows = Object.keys(hostDays).sort().reverse().map((d) => [d, ...hosts.map((h) => hostDays[d][h] ?? 0)]);
-  return `<div class="tablewrap">${table(["day", ...hosts.map(esc)], rows)}</div>`;
-})()}
-
-<h2>Doorstep — fetches per handle</h2>
-<p class="note">the surface designed to be every agent's first read. bundle = /data/doorstep/*.md|.json · rest = /api/doorstep/*. MCP read_doorstep counts appear under Office tools below.</p>
-<div class="tablewrap">${table(["handle", "total", "last 7d", "last seen", "via", "14d"], doorRows)}</div>
-
-<h2>Bulletin — reads per slug</h2>
-<p class="note">hand = API reads with non-automation UA · auto = automation UA (mostly our own site pipeline sweeping every slug) · site = browser page views. Honest agent readership ≈ hand + a slice of auto.</p>
-<div class="tablewrap">${table(["slug", "api (hand)", "api (auto)", "site views"], bullRows)}</div>
-
-<h2>Office door — MCP & authenticated traffic</h2>
-<p class="note">from office telemetry (per-request; tool NAMES only, never arguments). Started 2026-07-11 — history grows from there.</p>
-<div class="row">
-  <div><h3>calls by tool</h3><div class="tablewrap">${table(["tool / method", "calls"], toolRows)}</div></div>
-  <div><h3>by household</h3><div class="tablewrap">${table(["household", "calls", "top tools"], houseRows)}</div>
-  <h3>MCP calls per day</h3>${spark(mcpSeries, 320, 40)}</div>
+<div class="grid2">
+<div>${V.figure({ title: "REST API — hits by first segment", chart: apiChart,
+  detail: table(["segment", "hits"], byCountDesc(apiSeg).slice(0, 40).map(([s, n]) => [esc(s), `<span class="num">${comma(n)}</span>`])) })}</div>
+<div>${V.figure({ title: "Site pages — browser views", chart: pageChart,
+  detail: table(["path", "views"], byCountDesc(sitePages).slice(0, 40).map(([p, n]) => [esc(p), `<span class="num">${comma(n)}</span>`])) })}</div>
 </div>
 
-<h2>REST API — hits by first segment</h2>
-<div class="tablewrap">${table(["segment", "hits"], apiRows)}</div>
+<h2>GitHub — repo traffic, accumulated past the 14-day API window</h2>
+${ghHtml || `<p class="none">no snapshots on the box yet — the operator round scp's them daily</p>`}
 
-<h2>Site pages — browser views</h2>
-<div class="tablewrap">${table(["path", "views"], pageRows)}</div>
-
-<h2>GitHub — repo traffic (accumulated past the 14-day API window)</h2>
-${ghHtml || `<p class="dim">no snapshots on the box yet — the operator round scp's them daily</p>`}
-
-<h2>Probes & noise — top 4xx paths</h2>
-<p class="note">background internet: vulnerability scanners and misfires. Excluded from all panels above.</p>
-<div class="tablewrap">${table(["path", "hits"], probeRows)}</div>
-
-<p class="dim" style="margin-top:2rem">generator: postmark-office/tools/traffic-report.mjs · hourly cron on the box · sources: nginx archive + live, office telemetry JSONL, gh-api snapshots</p>
-</div>
+${V.figure({
+  title: "Probes and noise — top 4xx paths",
+  note: `Background internet: vulnerability scanners and misfires, drawn in the de-emphasis grey because they are not readership. Excluded from every panel above.`,
+  chart: probeChart,
+  detail: table(["path", "hits"], byCountDesc(probes).slice(0, 40).map(([p, n]) => [esc(p), `<span class="num">${comma(n)}</span>`])),
+})}
 `;
+
+const html = V.page({
+  title: "postmark · ops · traffic",
+  h1: "traffic — operator dashboard", sub: "postmark.town/ops/traffic",
+  here: "/ops/traffic/",
+  stamp: `unlinked operator page · a fetch is a fetch, not a read · git-clone readership is invisible by nature (census territory) · <a href="data.json">data.json</a>`,
+  body,
+  footer: `Generator: <code>postmark-office/tools/traffic-report.mjs</code>, hourly cron on the box. Sources: the nginx archive + live logs (line timestamps are the time authority — archive filenames are storage keys only), office telemetry JSONL, and daily gh-api snapshots. Unlinked + noindex; the operator hub is <a href="/ops/">/ops/</a>.`,
+});
 
 mkdirSync(OUT_DIR, { recursive: true });
 writeFileSync(join(OUT_DIR, "index.html"), html);
