@@ -154,7 +154,10 @@ async function main() {
 
   // build the record: path owns containment, everything else is a field. by/date
   // are server-derived; a sited/parcel mark never authors a parent (geometry decides).
-  const fm = ["kind", "by", "tier", "date", "at", "extent", "points", "slot", "value"]
+  // class/ask/reward/status: the bounty grammar (founder-ruled 2026-08-11) — the
+  // door validated them; here they only need to reach the record, or the board's
+  // reader can never see a resident's notice.
+  const fm = ["kind", "by", "tier", "date", "at", "extent", "points", "slot", "value", "class", "ask", "reward", "status"]
     .filter((k) => fileRec[k] !== undefined && fileRec[k] !== null && fileRec[k] !== "")
     .map((k) => `${k}: ${fmtVal(fileRec[k])}`).join("\n");
   const record = `---\n${fm}\n---\n\n${String(p.body).trim()}\n`;
