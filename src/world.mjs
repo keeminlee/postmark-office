@@ -415,6 +415,19 @@ const PLACE_NEAR_M = 200;
 const _places = new Map(); // rounded point -> words (cleared whenever the world rebuilds)
 let _placesEpoch = 0;      // ...or whenever the store snapshot behind it is replaced
 
+/**
+ * Drop the folded place words — for a world.db swap, and for tests that rewrite
+ * it in place.
+ *
+ * The epoch below already catches a rehydration on the serving path, and
+ * `world()` already clears this on a fold rebuild, so this is the third door
+ * onto the same room rather than a fourth mechanism. It exists because those
+ * two are both LAZY (a swap is noticed by the next reader) and both conditional
+ * on which path is live; the office's watcher wants one unconditional verb it
+ * can call beside the other four drops, without knowing which flags are set.
+ */
+export function resetPlaceWordsCache() { _places.clear(); }
+
 const SMALL_WORDS = new Set(["the", "of", "at", "on", "by", "and", "a", "an", "in", "to"]);
 function prettyName(id) {
   const slug = String(id ?? "").split("/").at(-1) ?? "";

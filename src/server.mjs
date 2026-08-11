@@ -15,7 +15,7 @@ import { createServer } from "node:http";
 import { DatabaseSync } from "node:sqlite";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createReadStream, existsSync } from "node:fs";
+import { createReadStream, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { enqueueLetter } from "./write.mjs";
 import { updateAddressBody, updateHome, updateProfile, updateProfileAvatar, updateWindow } from "./edit.mjs";
@@ -28,12 +28,13 @@ import { votesAvailable, voteList, voteView, doorstepVotes, stakeViaOffice } fro
 import { giftViaOffice, isPrincipal } from "./ops.mjs";
 import { logAccess } from "./telemetry.mjs";
 import { settlements } from "./settlements.mjs";
-import { worldSummary, worldOrient, worldEyes, worldInvestigate, worldStateRaw, worldSkeletonRaw, worldMyMarks, leaveMarkViaOffice, walkViaOffice, worldWalkers, worldPresent, worldConversations, worldSay, worldSayHuman, whoami, worldBlockForHandle, WORLD_CLONE } from "./world.mjs";
+import { worldSummary, worldOrient, worldEyes, worldInvestigate, worldStateRaw, worldSkeletonRaw, worldMyMarks, leaveMarkViaOffice, walkViaOffice, worldWalkers, worldPresent, worldConversations, worldSay, worldSayHuman, whoami, worldBlockForHandle, resetPlaceWordsCache, WORLD_CLONE } from "./world.mjs";
 import { apexEnabled, worldApex } from "./world-apex.mjs"; // stage 3: the apex verb's keyless read half
 import { worldStakeViaOffice, worldUnstakeViaOffice, worldStakeRead } from "./world-stake.mjs"; // P3 draft
-import { storeEngaged, storeSnapshot, worldStoreHealth } from "./world-serve.mjs"; // stage 1: the serving flag's instrument panel
-import { worldGraphView, NODE_KINDS, gexfPath } from "./world-graph.mjs"; // stage E: the window
-import { dynamicHealth } from "./dynamic-store.mjs"; // stage 2: the dynamic layer's instrument panel
+import { resetStoreSnapshot, storeDbPath, storeEngaged, storeSnapshot, worldStoreHealth } from "./world-serve.mjs"; // stage 1: the serving flag's instrument panel
+import { resetGraphCache, worldGraphView, NODE_KINDS, gexfPath } from "./world-graph.mjs"; // stage E: the window
+import { resetClassFieldsCache } from "./world-frames.mjs"; // the frame law's class read, dropped on a world.db swap
+import { dynamicHealth, resetClassCache } from "./dynamic-store.mjs"; // stage 2: the dynamic layer's instrument panel
 import { Bouncer, keyIdForToken, worldWriteVerbForRest } from "./bouncer.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -47,15 +48,151 @@ function arg(name, fallback) {
 const PORT = Number(arg("--port", "4380"));
 const DB_PATH = resolve(ROOT, arg("--db", "office.db"));
 const TOWN_CLONE = process.env.TOWN_CLONE ?? resolve(ROOT, "town-clone");
-const db = new DatabaseSync(DB_PATH, { readOnly: true });
 // oauth.db is auth paperwork, not town truth — separate from the rebuildable
 // index by design (gold plan postmark-oauth); wiping it only re-prompts sign-in.
+// It is also NOT hot-reloaded below: nothing rewrites this file underneath us,
+// the office is its only writer, and a swapped handle would drop live sessions.
 const odb = openOauthDb(resolve(ROOT, arg("--oauth-db", "oauth.db")));
 const canWrite = existsSync(join(TOWN_CLONE, "WHITE_PAGES"));
 if (!canWrite) console.warn(`WARN: no town clone at ${TOWN_CLONE} — POST /letters will answer not-yet-open.`);
 
-const meta = Object.fromEntries(db.prepare("SELECT key, value FROM meta").all().map((r) => [r.key, r.value]));
-const AS_OF = meta.as_of ?? "unknown";
+// ── the index, and how it is replaced under a running office ─────────────────
+//
+// office.db is REBUILT every tick: hydrate writes `office.db.new` and the tick
+// renames it over this path. Until 2026-08-11 the tick then ran `systemctl
+// restart postmark-office`, because the boot-time handle WAS the data — the
+// restart was the reload. It also killed every live MCP session on the
+// quarter-hour. So the handle is swapped in place instead, and a restart goes
+// back to meaning the only thing it should mean: new code.
+//
+// THE ORDER IS THE WHOLE DESIGN. The replacement is opened and its `meta` read
+// BEFORE anything is swapped, so a half-written file, a non-database, or an
+// index with no meta table leaves the office serving exactly what it was
+// serving a moment ago — one line on stderr, and another look on the next poll.
+//
+// node:sqlite is synchronous, so no statement is ever in flight ACROSS the
+// swap. What can outlive it is a request that took the handle as an argument
+// and then awaited something slow — `handleOauth` holds one across a GitHub
+// round trip — so a retired index is kept open until its last borrower has
+// answered, not merely until a timer says probably.
+
+function openIndex(path = DB_PATH) {
+  const handle = new DatabaseSync(path, { readOnly: true });
+  try {
+    const m = Object.fromEntries(handle.prepare("SELECT key, value FROM meta").all().map((r) => [r.key, r.value]));
+    return { handle, meta: m, asOf: m.as_of ?? "unknown", refs: 0, retiredAt: 0 };
+  } catch (e) {
+    // Every throw past the open closes the handle: on Windows an unclosed one
+    // locks the file, so a bent index would cost a handle per poll forever.
+    try { handle.close(); } catch { /* it never opened far enough to matter */ }
+    throw e;                              // fatal at boot; on a reload, a retry
+  }
+}
+
+// (ino, mtime, size), not mtime alone. The tick's `mv` gives the path a new
+// inode; a test — or a Windows box, where renaming over an open handle is
+// EPERM — overwrites the same inode's bytes instead. Either one is a new index.
+const stampOf = (path) => {
+  try { const s = statSync(path); return `${s.ino}|${s.mtimeMs}|${s.size}`; }
+  catch { return null; }
+};
+
+let INDEX = openIndex();
+// The three names every route below reads. Reassigned together on each swap,
+// and read at CALL time everywhere — nothing captures them in a boot closure.
+let db = INDEX.handle;
+let meta = INDEX.meta;
+let AS_OF = INDEX.asOf;
+
+// Overridable because the numbers are a judgement about how fast a rebuild
+// should show, not a law — and because the reload tests would otherwise spend
+// half a minute each waiting out a production-sized grace.
+const msEnv = (name, fallback) => { const n = Number(process.env[name]); return Number.isFinite(n) && n > 0 ? n : fallback; };
+const RELOAD_POLL_MS = msEnv("OFFICE_RELOAD_POLL_MS", 5_000);        // the tick lands 4×/hour; 5s is "before anyone notices"
+const RETIRE_GRACE_MS = msEnv("OFFICE_RETIRE_GRACE_MS", 10_000);     // the floor a retired index waits even with no borrowers
+const RETIRE_CEILING_MS = msEnv("OFFICE_RETIRE_CEILING_MS", 300_000); // ...and the ceiling, past which a stuck borrower loses it
+const RETIRED = [];
+let indexStamp = stampOf(DB_PATH);
+let reloadComplaint = null;
+
+function reloadIndex() {
+  const stamp = stampOf(DB_PATH);
+  if (stamp === null || stamp === indexStamp) return;   // vanished, or unchanged
+  let next;
+  try { next = openIndex(); }
+  catch (e) {
+    // The stamp is deliberately NOT recorded: the file is mid-write or bent,
+    // and the next poll has to look again. One line per DISTINCT complaint —
+    // an index that stays broken must not fill the journal at 12 lines a minute.
+    const why = String(e?.message ?? e).slice(0, 160);
+    if (reloadComplaint !== why) {
+      reloadComplaint = why;
+      console.error(`[office] ${DB_PATH} changed but would not open (${why}) — still serving as-of ${AS_OF.slice(0, 12)}, retrying every ${RELOAD_POLL_MS / 1000}s`);
+    }
+    return;
+  }
+  indexStamp = stamp;
+  reloadComplaint = null;
+  const old = INDEX;
+  INDEX = next;
+  db = next.handle; meta = next.meta; AS_OF = next.asOf;
+  old.retiredAt = Date.now();
+  RETIRED.push(old);
+  console.log(`[office] index reloaded — as-of ${AS_OF.slice(0, 12)} (was ${old.asOf.slice(0, 12)})`);
+}
+
+function sweepRetired(now = Date.now()) {
+  for (let i = RETIRED.length - 1; i >= 0; i--) {
+    const idx = RETIRED[i];
+    const waited = now - idx.retiredAt;
+    if (waited < RETIRE_GRACE_MS) continue;
+    if (idx.refs > 0 && waited < RETIRE_CEILING_MS) continue;
+    // A borrower still holding after five minutes is not a slow request, it is a
+    // leak — and an index kept open forever by one is the worse of the two bugs.
+    if (idx.refs > 0)
+      console.error(`[office] closing the index as-of ${idx.asOf.slice(0, 12)} with ${idx.refs} request(s) still holding it after ${Math.round(waited / 1000)}s`);
+    try { idx.handle.close(); } catch { /* already gone */ }
+    RETIRED.splice(i, 1);
+    // Printed because a handle that is never released is invisible otherwise —
+    // on Windows it would silently lock the file, and on any box it is the one
+    // half of the swap an operator (or a test) cannot see from the outside.
+    console.log(`[office] retired index as-of ${idx.asOf.slice(0, 12)} closed`);
+  }
+}
+
+// ── the world store, same tick, different discipline ─────────────────────────
+//
+// Nothing here holds a world.db HANDLE — every reader opens and closes per call
+// — but five module-level caches are folded out of its contents, and every one
+// of them was written for a world where a restart followed each swap. They all
+// re-stat the file on the way in, so this watcher is not what makes them
+// correct; it is what makes them PROMPT, and it is the one place an operator
+// can watch the world store turn over in the journal.
+//
+// Drops, never reloads. Each cache is rebuilt lazily by its own next reader,
+// which is also the reader that knows what to say when the new file is bad. An
+// eager reload here would need a second error path for five modules that
+// already have one.
+// `storeDbPath()` rather than a second `WORLD_STORE_DB ?? …/world.db` here: the
+// store owns where it lives, and a watcher pointed at a path the readers had
+// stopped using would be a drop that never fires and a log line that lies.
+let worldStamp = stampOf(storeDbPath());
+
+function reloadWorldCaches() {
+  const path = storeDbPath();
+  const stamp = stampOf(path);
+  if (stamp === worldStamp) return;      // includes null === null: still absent
+  worldStamp = stamp;
+  resetStoreSnapshot();      // world-serve.mjs  — the served graph snapshot (bumps storeGeneration)
+  resetGraphCache();         // world-graph.mjs  — the window's built payload
+  resetClassFieldsCache();   // world-frames.mjs — mark id -> { class, mobility }
+  resetClassCache();         // dynamic-store.mjs — the sound class's dials
+  resetPlaceWordsCache();    // world.mjs        — place words folded over the marks
+  console.log(`[office] world store changed at ${path} — derived caches dropped`);
+}
+
+setInterval(() => { reloadIndex(); sweepRetired(); reloadWorldCaches(); }, RELOAD_POLL_MS).unref();
+
 const bouncer = new Bouncer();
 
 // ── the pen (request_residency opens join PRs on the town repo) ──────────────
@@ -140,6 +277,18 @@ const clientIp = (req) => {
 const server = createServer((req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   const path = url.pathname.replace(/\/+$/, "") || "/";
+
+  // ── the index this request borrows. Routes read `db` at call time, so a swap
+  // between two awaits simply means later statements run against the newer
+  // index — fine. What is not fine is a handler that took the handle as an
+  // argument and then awaited something slow (the oauth callback awaits GitHub)
+  // finding it closed underneath. Returned on `close` rather than `finish`: a
+  // client that hangs up mid-answer must still give the borrow back, and a
+  // leaked one would pin a retired index open until the ceiling.
+  const borrowed = INDEX;
+  borrowed.refs++;
+  let returned = false;
+  res.on("close", () => { if (!returned) { returned = true; borrowed.refs--; } });
 
   // ── access telemetry: one JSONL line per request, written on finish.
   // req.tel is a mutable holder — identity lands after key resolution below,
