@@ -1105,13 +1105,19 @@ export async function leaveMarkViaOffice(worldClone, payload = {}, key = null) {
   } else {
     if (klass !== "bounty") throw bounce(422, `unknown class "${klass}"`, 'the law knows one class today: "bounty" — the board\'s notices');
     if (kind !== "sited") throw bounce(422, "a bounty notice is a sited mark", "pin it to the board: a small sited mark within the Bounty Board's ground at the Town Centre");
+    if (ask !== undefined && typeof ask !== "string")
+      throw bounce(422, "an ask is a sentence", `got ${Array.isArray(ask) ? "an array" : typeof ask} — pass the claim as one string`);
     const askText = String(ask ?? "").trim();
     if (!askText) throw bounce(422, "a bounty needs an ask", "one claim, ≤150 characters — what you want done");
     if (/[\r\n]/.test(askText)) throw bounce(422, "an ask is one line", "one claim — no line breaks; extra context goes in the body");
+    // `#` starts a comment in the record grammar (the clone's parseRecord strips
+    // from the first `#`), so an ask carrying one would be silently truncated in
+    // permanent canon — the door owes the honest bounce instead (review O-1).
+    if (askText.includes("#")) throw bounce(422, "an ask cannot carry '#'", "the record grammar reads # as a comment and would silently truncate your words — rephrase without it");
     const askLength = [...askText].length;
     if (askLength > 150) throw bounce(422, `ask is ${askLength} chars; the cap is 150`, "one claim is the law — the bounty class's own dial");
     const r = Number(reward);
-    if (reward === undefined || reward === null || String(reward).trim() === "" || !Number.isInteger(r) || r < 1)
+    if (reward === undefined || reward === null || typeof reward === "boolean" || String(reward).trim() === "" || !Number.isInteger(r) || r < 1)
       throw bounce(422, "reward must be a whole number of stamps, at least 1", `got ${JSON.stringify(reward)} — the reward is what the poster pays the builder, by letter deal`);
     const s = status === undefined ? "open" : String(status).trim();
     if (s !== "open" && s !== "done") throw bounce(422, `status is open or done — got "${s}"`, "a done notice stays on the board, struck through");

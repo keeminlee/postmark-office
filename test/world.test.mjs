@@ -192,6 +192,15 @@ test("a bounty needs an ask — present, one line, ≤150 Unicode characters", a
   await bounced({ ...validBounty, ask: "😀".repeat(151) }, "ask is 151 chars; the cap is 150");
 });
 
+test("an ask cannot smuggle the record grammar — # truncates, non-strings coerce (review O-1)", async () => {
+  // parseRecord strips from the first '#': without this bounce, "Map the quay
+  // #3" lands in canon as "Map the quay" and no gate ever says so.
+  await bounced({ ...validBounty, ask: "Map the quay #3, every mail-house named." }, "an ask cannot carry '#'");
+  await bounced({ ...validBounty, ask: "#3 first" }, "an ask cannot carry '#'");
+  await bounced({ ...validBounty, ask: { the: "quay" } }, "an ask is a sentence");
+  await bounced({ ...validBounty, ask: [1, 2, 3] }, "an ask is a sentence");
+});
+
 test("a bounty reward is a whole number of stamps, at least 1", async () => {
   const defect = "reward must be a whole number of stamps, at least 1";
   await bounced({ ...validBounty, reward: undefined }, defect);
@@ -199,6 +208,21 @@ test("a bounty reward is a whole number of stamps, at least 1", async () => {
   await bounced({ ...validBounty, reward: -3 }, defect);
   await bounced({ ...validBounty, reward: 2.5 }, defect);
   await bounced({ ...validBounty, reward: "a dozen" }, defect);
+  // Number(true) === 1: without the typeof guard a boolean buys a 1-stamp
+  // notice silently (review note; the MCP layer's validateArgs never runs
+  // integer/minimum checks).
+  await bounced({ ...validBounty, reward: true }, defect);
+});
+
+test("a lawful bounty clears every pre-check — it dies at the clone, not at the law", async () => {
+  // The positive half the bounce corpus lacked (review note): with a
+  // nonexistent WORLD_CLONE, every unlawful payload gets its named 422 BEFORE
+  // any clone work — so a lawful one failing with anything BUT a 422 is the
+  // proof that the whole door law passed it and only the machinery stopped it.
+  await assert.rejects(
+    () => leaveMarkViaOffice(process.env.WORLD_CLONE, validBounty, one),
+    (error) => error.code !== 422,
+  );
 });
 
 test("bounty status is open or done; threshold is the town's bar", async () => {
