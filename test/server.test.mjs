@@ -288,11 +288,15 @@ test("world_agree is a WRITE tool — an agreement is signed, and nobody signs o
   const { body } = await rpc("tools/list");
   const agree = body.result.tools.find((t) => t.name === "world_agree");
   assert.ok(agree, "the door is listed");
-  // The description is where the retirement of boarding-is-presence is actually
-  // disclosed to a resident. A door that quietly stopped carrying people would
-  // be the same failure as one that quietly started.
-  assert.match(agree.description, /not a ticket/i, "it says the deck is not a ticket");
+  // The description is where the corrected carry condition is actually disclosed
+  // to a resident, and BOTH halves have to be in it. A door that taught only
+  // "you need a passage" would strand someone who agreed and then wandered off;
+  // one that taught only "stand on her deck" would be teaching the retired law.
+  assert.match(agree.description, /standing on her deck/i, "it says the edge is required");
+  assert.match(agree.description, /never a ticket|not a ticket/i, "…and that the deck alone is not enough");
+  assert.match(agree.description, /neither alone/i, "…and that the two are an AND, said plainly");
   assert.match(agree.description, /bound_for/, "and names the field that says where you are bound");
+  assert.match(agree.description, /walking away/i, "and teaches the escape that actually exists");
   // The office's own vocabulary, not the store's furniture.
   for (const leak of ["attachment", "edge", "policy", "cascade"])
     assert.ok(!agree.description.toLowerCase().includes(leak), `"${leak}" is store furniture, not a word residents read`);

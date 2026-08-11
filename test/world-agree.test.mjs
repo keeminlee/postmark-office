@@ -318,7 +318,7 @@ test("read surfaces speak agreements, aboard, bound for, ashore — never edge, 
     for (const leak of ["attachment", "\"edge\"", "stance", "cascade", "policy"])
       assert.ok(!prose.includes(leak), `"${leak}" leaked into what a resident reads: ${prose.slice(0, 300)}`);
     assert.match(r.passage, /riding, with no destination named/);
-    assert.match(r.note, /sets you down nowhere/);
+    assert.match(r.note, /setting you down nowhere/);
 
     // And the withdrawal's prose too — the ending is a read surface as much as
     // the beginning, and it is the one most likely to reach for store words.
@@ -339,38 +339,44 @@ test("severAttachment on a pair with no standing passage writes nothing", () => 
 
 // ── the walk-and-agree coupling ─────────────────────────────────────────────
 //
-// `world_walk`'s `bound_for` is the QoL half: one declaration, two records. The
-// walk door itself needs a whole office (a clone, a pen, a lock) to exercise, so
-// what is pinned here is the part the coupling actually turns on — that a
-// passage declared for a FUTURE instant carries nobody until that instant, which
-// is what "the agreement forms on arrival at the berth, not before" means when
-// nothing runs at arrival.
+// `world_walk`'s `bound_for` is the QoL half: one declaration, two records.
+//
+// AN EARLIER DRAFT FUTURE-DATED THE PASSAGE to the walk's arrival instant, so
+// that "the agreement forms on arrival at the berth" would be literally true of
+// the row. That arithmetic is gone. Under the corrected carry condition a
+// passage is INERT until its holder is standing on her deck at a cast-off, so it
+// can be written the moment it is agreed and simply wait — which is what the
+// test below pins, because "born now, effective when you are there" is a
+// property of the LAW rather than of a timestamp anyone computed.
 
-test("a passage born on arrival carries nobody before it — declared record, derived effect", async (t) => {
+test("the coupled passage is born AT DECLARATION and waits — no future-dated row, and none needed", async (t) => {
   const done = freshStore();
   try {
     const { service, mod } = await vesselServiceFrom(world, { repo: clone.dir });
-    const walk = await import("../src/dynamic-entities.mjs");
+    const { coupleAgreementToWalk } = await import("../src/world.mjs");
 
-    // Declared at 0.30, taking effect when the walker reaches the berth at 0.45
-    // — inside the dwell, before the 0.5 cast-off.
-    const arrivesAt = new Date(atCrossing(0.45)).toISOString();
-    walk.declareAttachment(store, {
-      entity: "wright", target: VESSEL, policy: `bound:${FAR}`,
-      declaredBy: "wright", bornAt: arrivesAt, carrier: true,
+    // A real leg: 3 km from somewhere inland, declared at 0.30, reaching the
+    // berth well inside the dwell.
+    const out = await coupleAgreementToWalk({
+      who: "wright", targetMarkId: VESSEL, boundFor: FAR,
+      departedAt: 0.30, legM: 3000, worldState: world, repo: clone.dir, db: store,
     });
+    assert.equal(out.agreed_at, new Date(atCrossing(0.30)).toISOString(),
+      "the row is dated when they said it, not when they will arrive");
+    assert.ok(!("takes_effect" in out), "and nothing pretends to schedule it");
+    assert.match(out.changing_your_mind, /goes without you/,
+      "the answer teaches the escape that actually exists: walk away");
 
-    // Before it takes effect the store still holds nothing standing AS OF THEN.
-    assert.equal(standingAgreement(store, "wright", VESSEL, { until: atCrossing(0.40) }), null,
-      "at 0.40 the passage is written but not yet born — she would sail without them");
-    assert.ok(standingAgreement(store, "wright", VESSEL, { until: atCrossing(0.46) }),
-      "at 0.46 they have arrived and it stands");
+    // IT STANDS FROM THE MOMENT IT IS WRITTEN — that is the point. Its being
+    // harmless while its holder is still on the road is the LAW's doing (no edge,
+    // no carriage), not a dated row's.
+    assert.ok(standingAgreement(store, "wright", VESSEL, { until: atCrossing(0.31) }),
+      "standing a hair after it was made");
 
-    // AND THE ENGINE AGREES — when the clone carries an engine that knows the
-    // word. This half is conditional ON PURPOSE and says which way it went: the
-    // office ships ahead of the world merge, so a clone still on the presence
-    // law has no `agreementAt` to ask, and a hard assertion here would redden the
-    // office suite for a world change that has not landed yet. What it must
+    // AND THE ENGINE AGREES that a standing passage alone carries nobody — when
+    // the clone carries an engine that knows the word. Conditional ON PURPOSE:
+    // the office ships ahead of the world merge, and a hard assertion would
+    // redden this suite for a world change that has not landed. What it must
     // never do is skip SILENTLY — a probe that can only pass is not a probe.
     const vessel = await import(
       new URL(`file://${join(clone.dir, "tools", "vessel.mjs").replace(/\\/g, "/")}`).href);
@@ -380,10 +386,17 @@ test("a passage born on arrival carries nobody before it — declared record, de
     }
     t.diagnostic("engine cross-check RAN against the agreement-law engine");
     const rows = agreementsFor(store, "wright");
-    assert.equal(vessel.agreementAt(rows, service, mod.fractionalCrossing(atCrossing(0.40))), null,
-      "the engine holds nothing whose birth is still ahead of the clock");
-    assert.equal(vessel.agreementAt(rows, service, mod.fractionalCrossing(atCrossing(0.46)))?.policy, `bound:${FAR}`,
-      "and holds it once the clock reaches it");
+    const at = (fc) => mod.fractionalCrossing(atCrossing(fc));
+    assert.equal(vessel.agreementAt(rows, service, at(0.29)), null, "not yet made");
+    assert.equal(vessel.agreementAt(rows, service, at(0.45))?.policy, `bound:${FAR}`, "made, and standing");
+
+    // Standing, and STILL not a ride: they are 3 km inland when she casts off at
+    // 0.5, so the permission is there and the edge is not.
+    const inland = { handle: "wright", iso: new Date(atCrossing(0.30)).toISOString(),
+                     from: { x: QUAY.x, y: QUAY.y + 3000 }, toward: { x: QUAY.x, y: QUAY.y + 3000 },
+                     at: 0.30, targetExtent: null, targetMarkId: null, pace: null };
+    assert.equal(vessel.positionAt(inland, at(0.55), service, rows).aboard, null,
+      "a standing passage carries nobody who is not on her deck at the hour");
   } finally { done(); }
 });
 
@@ -402,17 +415,16 @@ test("world_walk's bound_for coupling: one declaration, two records — and it r
     assert.equal(zero.vessel, "the-post-office");
     assert.equal(zero.at_stop, VESSEL);
     assert.equal(zero.bound_for, FAR);
-    assert.equal(zero.takes_effect, new Date(atCrossing(0.30)).toISOString(),
-      "a zero-length walk is already there, so the passage begins now");
-    assert.match(zero.withdrawing, /Walking somewhere else does NOT/,
-      "and the answer says the thing a resident would otherwise get wrong");
+    assert.equal(zero.agreed_at, new Date(atCrossing(0.30)).toISOString(),
+      "dated when they said it");
 
-    // A REAL LEG pushes the birth out to the arrival: 3 km at the town's 15
-    // km/crossing dial is 0.2 crossings.
+    // THE LENGTH OF THE WALK DOES NOT MOVE THE DATE. A passage is inert until its
+    // holder is on her deck at a cast-off, so there is nothing to schedule and
+    // the row says plainly when it was agreed.
     store.exec("DELETE FROM attachments");
     const walked = await couple({ legM: 3000 });
-    assert.equal(walked.takes_effect, new Date(atCrossing(0.50)).toISOString(),
-      "the passage begins when the walk arrives — she cannot carry someone still on the road");
+    assert.equal(walked.agreed_at, zero.agreed_at,
+      "same declaration instant, three kilometres of walk later — no arrival arithmetic anywhere");
 
     // WALKING SOMEWHERE THAT IS NOT A STOP is refused, and refused BEFORE
     // anything is written: a resident who asked for a passage and got a walk with

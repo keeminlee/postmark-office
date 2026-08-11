@@ -1374,12 +1374,20 @@ export async function coupleAgreementToWalk({ who, targetMarkId, boundFor, depar
   const { policyFor } = await import("./world-agree.mjs");
   const { policy, boundFor: dest } = policyFor(service, boundFor, stop.markId);
 
-  // WHEN THEY GET THERE, from the walk's own arithmetic — the same leg over the
-  // same pace every other reader uses. A zero-length walk (already standing on
-  // the berth) is born now, which is correct: they are there.
-  const paceKm = walk?.WALK_KM_PER_CROSSING ?? 15;
-  const arrivesFc = departedAt + (legM > 0 ? legM / (paceKm * 1000) : 0);
-  const bornAt = new Date(mod.instantOf(arrivesFc)).toISOString();
+  // BORN AT DECLARATION, PLAINLY — no future-dating, and none needed.
+  //
+  // An earlier draft computed the walk's arrival instant and dated the passage
+  // to it, so that "the agreement forms on arrival at the berth" would be
+  // literally true of the row. That arithmetic existed only because a passage
+  // was then sufficient on its own to be carried, and a passage standing while
+  // its holder was still on the road would have swept them off it.
+  //
+  // With the carry condition corrected to EDGE **and** PERMISSION, a passage is
+  // INERT until its holder is standing on her deck at a cast-off. So it can be
+  // written the moment it is agreed and simply wait, which is what it does for
+  // every other resident: no clock arithmetic, no row dated in the future, and
+  // one less thing that has to be right about when a walk ends.
+  const bornAt = new Date(mod.instantOf(departedAt)).toISOString();
 
   const store = db ?? openDynamic();
   try {
@@ -1397,9 +1405,9 @@ export async function coupleAgreementToWalk({ who, targetMarkId, boundFor, depar
     vessel: service.vessel.handle,
     at_stop: stop.markId,
     bound_for: dest,
-    takes_effect: bornAt,
-    note: `Your passage begins when you reach ${stop.markId}, not now — she cannot carry someone who is still on the road. She then takes you through every call between there and ${dest} without setting you down.`,
-    withdrawing: "world_agree withdraw: true ends it. Walking somewhere else does NOT — a passage is ended by saying so, the same way it was made.",
+    agreed_at: bornAt,
+    note: `Your passage is written. It carries you the first time she casts off while you are standing on her deck at ${stop.markId} — so walk on, and be there at the hour. She then takes you through every call between there and ${dest} without setting you down.`,
+    changing_your_mind: `Walk somewhere else and she goes without you: a passage carries nobody who is not aboard when she leaves. world_agree withdraw: true also ends it on the record, which is the tidier way and the only way once you are already aboard.`,
   };
 }
 
@@ -1860,7 +1868,7 @@ export const WORLD_TOOLS = [
       handle: { type: "string", description: "which of YOUR residents owns the note (omit if your key holds one; a multi-resident key must name one)" },
     }, required: ["body"], additionalProperties: false } },
   { name: "world_walk",
-    description: "Walk. Declare a departure and the world carries you — position derives from the record and the clock at 15 km per crossing, so you arrive whether or not anyone is watching. A bare call walks you HOME (your household's ground). Name a mark with mark_id: to walk to it, or give x/y for anywhere. There is no pathfinding and nothing blocks you in v0 — water included, so a leg may cross the channel; the answer names any crossings your road passes over. You are the pathfinder. Walking again supersedes: the new leg starts from wherever you are now. To stop, walk to where you already stand. WHERE IN IT YOU LAND: walking to a mark ends at the first point on its ground, which means you stop ON ITS BOUNDARY — and a mark you then leave there is a rect that straddles the line, so it nests one level OUT. Pass to: \"centre\" when you mean to arrive AT a place rather than merely reach it; it is also how you walk in off the fence once you are standing on one. CATCHING A BOAT IN ONE CALL: walking to a stop on a scheduled line, pass bound_for: with the stop you want to reach and this becomes a walk AND a passage — the agreement takes effect when you arrive at the berth, not now, because she cannot carry someone still on the road. Standing on her deck is never a ticket by itself; only an agreement is. Walking somewhere else afterwards does NOT cancel it — a passage ends by saying so (world_agree withdraw: true), the same way it was made. If you would rather arrange it on the spot, walk without bound_for and call world_agree once you are standing there.",
+    description: "Walk. Declare a departure and the world carries you — position derives from the record and the clock at 15 km per crossing, so you arrive whether or not anyone is watching. A bare call walks you HOME (your household's ground). Name a mark with mark_id: to walk to it, or give x/y for anywhere. There is no pathfinding and nothing blocks you in v0 — water included, so a leg may cross the channel; the answer names any crossings your road passes over. You are the pathfinder. Walking again supersedes: the new leg starts from wherever you are now. To stop, walk to where you already stand. WHERE IN IT YOU LAND: walking to a mark ends at the first point on its ground, which means you stop ON ITS BOUNDARY — and a mark you then leave there is a rect that straddles the line, so it nests one level OUT. Pass to: \"centre\" when you mean to arrive AT a place rather than merely reach it; it is also how you walk in off the fence once you are standing on one. CATCHING A BOAT IN ONE CALL: walking to a stop on a scheduled line, pass bound_for: with the stop you want to reach and this becomes a walk AND a passage in one declaration. BOTH HALVES ARE NEEDED TO BE CARRIED: you must be standing on her deck when she casts off, AND hold a passage. Standing there without one, she sails without you; holding one while you are elsewhere, she sails without you too — and your passage keeps standing for the next cast-off you are there for. So changing your mind is just walking away; nothing needs cancelling (world_agree withdraw: true ends it on the record, and is the only way off once you are already aboard). If you would rather arrange it on the spot, walk without bound_for and call world_agree once you are standing there.",
     inputSchema: { type: "object", properties: {
       mark_id: { type: "string", description: "walk to this mark's ground — <by>/<slug>, as ids appear in the telling (sited marks only, and not the town's own constitution furniture)" },
       x: { type: "number", description: "grid meters east of Ferry's crossing (the general case; a mark id is the path we teach)" },

@@ -226,9 +226,9 @@ export async function worldAgree(args = {}, key = null, {
       bound_next_for: check.next?.to?.markId ?? null,
       aboard: false,
       note: boundFor
-        ? `She carries you through every call between here and ${boundFor} without setting you down, and puts you ashore there. Until she casts off you are standing where you stand — the agreement moves nothing by itself.`
-        : "She carries you round her line until you say otherwise; she sets you down nowhere. Walk when you want off, and she puts you ashore at her next arrival.",
-      withdrawing: "world_agree withdraw: true ends it",
+        ? `Stay on her deck and the next cast-off takes you: she carries you through every call between here and ${boundFor} without setting you down, and puts you ashore there. Until then you are standing where you stand — a passage moves nobody by itself.`
+        : "Stay on her deck and she carries you round her line until you say otherwise, setting you down nowhere. Walk off while she is alongside and she simply goes without you; walk while she is under way and she puts you ashore at her next arrival.",
+      changing_your_mind: "Walk off her deck before she casts off and she goes without you — nothing needs cancelling. world_agree withdraw: true ends it on the record, and is the only way off once she is under way.",
     };
   } finally {
     if (ownStore) store.close();
@@ -265,7 +265,7 @@ export function agreementStateFor(db, handle, service) {
 export const WORLD_AGREE_TOOLS = [
   { name: "world_agree",
     description:
-      "Agree a passage on a scheduled service — the only way anyone is ever carried. Standing on her deck is NOT a ticket and never was: she sails without you unless you have said you are coming. Agree while she is lying alongside and you are standing on that stop's own ground; a bounce names the hour she casts off, so a refusal still tells you what you wanted to know. Name bound_for: to be set down at one of her stops — she carries you through every call in between without putting you off, so a passage across two legs is one agreement. Omit bound_for to ride with no destination: she carries you round her line and sets you down nowhere until you say otherwise. Agreeing moves nothing by itself — you stand where you stand until she casts off. To go ashore, declare a walk while aboard and she puts you down at her next arrival, or call this with withdraw: true. Your agreement is written; the withdrawal is written beside it, never over it.",
+      "Agree a passage on a scheduled service. BEING CARRIED TAKES TWO THINGS, and this is the second: you must be STANDING ON HER DECK when she casts off, and you must hold a passage. Neither alone moves you — standing there without one, she sails without you (the deck was never a ticket); holding one while you are elsewhere, she sails without you too, and your passage keeps standing for the next cast-off you are there for. Agree while she is lying alongside and you are on that stop's own ground; a bounce names the hour she casts off, so a refusal still tells you what you wanted to know. Name bound_for: to be set down at one of her stops — she carries you through every call in between without putting you off, so a passage across two legs is one agreement. Omit bound_for to ride with no destination: she carries you round her line and sets you down nowhere until you say otherwise. Agreeing moves nothing by itself; you stand where you stand until she goes. CHANGING YOUR MIND IS WALKING AWAY — no passage needs cancelling to be escaped, because a boat cannot carry someone who is not on her. withdraw: true ends it on the record anyway, and is the only way off once you are already aboard and under way; mid-channel she finishes the leg and sets you ashore at her next arrival. Your agreement is written; the withdrawal is written beside it, never over it.",
     inputSchema: { type: "object", properties: {
       bound_for: { type: "string", description: "the stop you are bound for — a mark id from her line, as the telling shows it. Omit to ride with no destination named." },
       withdraw: { type: "boolean", description: "end the passage you hold with her. She sets you down at her next arrival if she is under way; if she is alongside, she simply sails without you." },
