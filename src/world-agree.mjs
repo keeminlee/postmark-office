@@ -39,6 +39,7 @@ import {
   boundStopOf, isPassengerPolicy, RIDING_POLICY, BOUND_PREFIX,
 } from "./dynamic-entities.mjs";
 import { vesselServiceFrom } from "./world-movement.mjs";
+import { withinMarkFor } from "./world-within.mjs";
 import { WORLD_CLONE } from "./world-store.mjs";
 
 const bounce = (code, defect, hint, extra = {}) => {
@@ -171,7 +172,14 @@ export async function worldAgree(args = {}, key = null, {
       if (!standing)
         throw bounce(409, `${who} has no passage with ${service.vessel.handle} to withdraw from`,
           "call world_agree while she is alongside to arrange one");
-      const severed = severAttachment(store, { entity: who, target: vesselId, declaredBy: who, at: new Date(atMs).toISOString() });
+      // Stamped where they stood when they withdrew — an ending is an act and
+      // gets the same courtesy as a beginning.
+      const where = positionOf ? await positionOf(who).catch(() => null) : null;
+      const severed = severAttachment(store, {
+        entity: who, target: vesselId, declaredBy: who,
+        at: new Date(atMs).toISOString(),
+        withinMark: where ? withinMarkFor(where, w) : null,
+      });
       const v = mod.vesselPositionAt(service, mod.fractionalCrossing(atMs));
       return {
         handle: who, vessel: service.vessel.handle, withdrawn: true,
@@ -203,6 +211,10 @@ export async function worldAgree(args = {}, key = null, {
     declareAttachment(store, {
       entity: who, target: vesselId, policy, declaredBy: who,
       bornAt: new Date(atMs).toISOString(), carrier: true,
+      // WHERE THEY STOOD WHEN THEY AGREED — the innermost mark containing them
+      // at act time. A different field from anything the walk record's `within`
+      // means; see src/world-within.mjs. Nothing derives from it yet.
+      withinMark: withinMarkFor(where, w),
     });
 
     return {

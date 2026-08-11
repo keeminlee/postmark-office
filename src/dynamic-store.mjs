@@ -84,7 +84,22 @@ export const dynamicDbPath = () => process.env.WORLD_DYNAMIC_DB ?? DEFAULT_DYNAM
 // migrates without reading. So Stage D's table lands at version 1, and this
 // paragraph is the rule that says when the number DOES move: a column removed,
 // a column's meaning changed, or a table's rows reinterpreted.
+//
+// A NULLABLE ADDED COLUMN IS THE SAME CATEGORY, and `within_mark` (2026-08-11)
+// is the first one. Nothing that read these tables yesterday reads it, nothing
+// derives from it yet, and its absence on an old row is honestly null — "the act
+// predates the stamp" — rather than a wrong answer. `ADDED_COLUMNS` below applies
+// it idempotently, because `CREATE TABLE IF NOT EXISTS` cannot grow a table that
+// already exists and a live store would otherwise never gain the field.
 export const DYNAMIC_SCHEMA_VERSION = "1";
+
+// Columns added to existing tables after their CREATE was first shipped. Every
+// one must be NULLABLE and unread by older code — that is what makes applying it
+// on open safe rather than a silent migration. Table -> column -> type.
+export const ADDED_COLUMNS = Object.freeze({
+  movements: { within_mark: "TEXT" },
+  attachments: { within_mark: "TEXT" },
+});
 
 export const DYNAMIC_SCHEMA = `
   CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -125,7 +140,10 @@ export const DYNAMIC_SCHEMA = `
   CREATE TABLE IF NOT EXISTS attachments (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
     entity TEXT, target TEXT,
-    policy TEXT, declared_by TEXT, born_at TEXT
+    policy TEXT, declared_by TEXT, born_at TEXT,
+    -- The innermost mark containing the actor when they said it (2026-08-11).
+    -- Where the act HAPPENED, as the record saw it then; never re-resolved.
+    within_mark TEXT
   );
   CREATE INDEX IF NOT EXISTS attachments_entity ON attachments (entity, born_at);
   CREATE INDEX IF NOT EXISTS attachments_target ON attachments (target, born_at);
@@ -152,7 +170,13 @@ export const DYNAMIC_SCHEMA = `
     crossing REAL,
     within_w REAL, within_h REAL,
     to_mark TEXT, pace REAL,
-    declared_by TEXT, note TEXT
+    declared_by TEXT, note TEXT,
+    -- \`within_mark\` is a DIFFERENT FIELD from \`within_w/h\` and the names are
+    -- unhappily close. \`within_w/h\` is the TARGET's arrival rect, frozen at
+    -- departure, and arrival is derived from it. \`within_mark\` is the innermost
+    -- mark containing the ACTOR at the moment of the act — where it happened,
+    -- not where it was aimed. Nothing derives from it yet.
+    within_mark TEXT
   );
   CREATE INDEX IF NOT EXISTS movements_actor ON movements (actor, at);
   CREATE INDEX IF NOT EXISTS movements_at ON movements (at);
@@ -200,6 +224,7 @@ export function openDynamic(path = dynamicDbPath(), { readOnly = false } = {}) {
     if (!readOnly) {
       db.exec("PRAGMA journal_mode = WAL");
       db.exec(DYNAMIC_SCHEMA);
+      applyAddedColumns(db);
     }
     db.exec("PRAGMA busy_timeout = 5000");
 
@@ -217,6 +242,28 @@ export function openDynamic(path = dynamicDbPath(), { readOnly = false } = {}) {
     throw e;
   }
   return db;
+}
+
+/**
+ * Grow existing tables by the nullable columns in `ADDED_COLUMNS`.
+ *
+ * Idempotent by inspection rather than by catching an error: `PRAGMA table_info`
+ * says what is there, so a store that already has the column is not asked to add
+ * it and no exception is ever swallowed. Swallowing one here would hide a real
+ * failure — a locked file, a corrupt page — behind a migration that looked like
+ * it worked.
+ */
+export function applyAddedColumns(db) {
+  for (const [table, columns] of Object.entries(ADDED_COLUMNS)) {
+    let have;
+    try { have = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((r) => r.name)); }
+    catch { continue; }                       // no such table yet; its CREATE carries the column
+    if (!have.size) continue;
+    for (const [name, type] of Object.entries(columns)) {
+      if (have.has(name)) continue;
+      db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
+    }
+  }
 }
 
 export const getMeta = (db, key) => db.prepare("SELECT value FROM meta WHERE key = ?").get(key)?.value ?? null;

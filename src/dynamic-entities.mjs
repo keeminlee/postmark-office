@@ -330,7 +330,7 @@ export function readEntities(db) {
 
 /** Every attachment row. `born_at` order, then seq — the order a replay applies them in. */
 export function readAttachments(db, { until = null } = {}) {
-  const rows = db.prepare("SELECT seq, entity, target, policy, declared_by, born_at FROM attachments ORDER BY born_at, seq").all();
+  const rows = db.prepare("SELECT seq, entity, target, policy, declared_by, born_at, within_mark FROM attachments ORDER BY born_at, seq").all();
   return until == null ? rows : rows.filter((a) => Date.parse(a.born_at) <= until);
 }
 
@@ -375,7 +375,7 @@ export const SEVERED_POLICY = "detach";
  * the passenger vocabulary. The door knows that from the world fold and passes
  * it in; this module never reaches for the world itself.
  */
-export function declareAttachment(db, { entity, target, policy = "cascade", declaredBy, bornAt, carrier = false }) {
+export function declareAttachment(db, { entity, target, policy = "cascade", declaredBy, bornAt, carrier = false, withinMark = null }) {
   if (!entity || !target) throw new Error("an attachment needs both ends");
   if (isPassengerPolicy(policy)) {
     if (!carrier)
@@ -384,9 +384,9 @@ export function declareAttachment(db, { entity, target, policy = "cascade", decl
     throw new Error(`unknown attachment policy "${policy}" — ${OBJECT_POLICIES.join(" | ")} for objects, ${RIDING_POLICY} | ${BOUND_PREFIX}<stop-id> for a passage`);
   }
   const born = bornAt ?? new Date().toISOString();
-  db.prepare("INSERT OR IGNORE INTO attachments (entity, target, policy, declared_by, born_at) VALUES (?,?,?,?,?)")
-    .run(entity, target, policy, declaredBy ?? entity, born);
-  return { entity, target, policy, declared_by: declaredBy ?? entity, born_at: born };
+  db.prepare("INSERT OR IGNORE INTO attachments (entity, target, policy, declared_by, born_at, within_mark) VALUES (?,?,?,?,?,?)")
+    .run(entity, target, policy, declaredBy ?? entity, born, withinMark);
+  return { entity, target, policy, declared_by: declaredBy ?? entity, born_at: born, within_mark: withinMark };
 }
 
 /**
@@ -399,7 +399,7 @@ export function declareAttachment(db, { entity, target, policy = "cascade", decl
  */
 export function standingAgreement(db, entity, target, { until = null } = {}) {
   const rows = db.prepare(
-    "SELECT seq, entity, target, policy, declared_by, born_at FROM attachments WHERE entity = ? AND target = ? ORDER BY born_at, seq").all(entity, target);
+    "SELECT seq, entity, target, policy, declared_by, born_at, within_mark FROM attachments WHERE entity = ? AND target = ? ORDER BY born_at, seq").all(entity, target);
   const seen = until == null ? rows : rows.filter((r) => Date.parse(r.born_at) <= until);
   const last = seen.at(-1) ?? null;
   return last && isPassengerPolicy(last.policy) ? last : null;
@@ -414,12 +414,12 @@ export function standingAgreement(db, entity, target, { until = null } = {}) {
  * could not answer where its holder was at 15:00, and every replay depends on
  * being able to.
  */
-export function severAttachment(db, { entity, target, declaredBy, at = null }) {
+export function severAttachment(db, { entity, target, declaredBy, at = null, withinMark = null }) {
   const standing = standingAgreement(db, entity, target);
   if (!standing) return null;
   const when = at ?? new Date().toISOString();
-  db.prepare("INSERT OR IGNORE INTO attachments (entity, target, policy, declared_by, born_at) VALUES (?,?,?,?,?)")
-    .run(entity, target, SEVERED_POLICY, declaredBy ?? entity, when);
+  db.prepare("INSERT OR IGNORE INTO attachments (entity, target, policy, declared_by, born_at, within_mark) VALUES (?,?,?,?,?,?)")
+    .run(entity, target, SEVERED_POLICY, declaredBy ?? entity, when, withinMark);
   return { entity, target, was: standing.policy, born_at: standing.born_at, severed_at: when };
 }
 
@@ -432,7 +432,7 @@ export function severAttachment(db, { entity, target, declaredBy, at = null }) {
  */
 export function agreementsFor(db, entity, { until = null } = {}) {
   const rows = db.prepare(
-    "SELECT seq, entity, target, policy, declared_by, born_at FROM attachments WHERE entity = ? ORDER BY born_at, seq").all(entity)
+    "SELECT seq, entity, target, policy, declared_by, born_at, within_mark FROM attachments WHERE entity = ? ORDER BY born_at, seq").all(entity)
     .filter((r) => until == null || Date.parse(r.born_at) <= until);
   const out = [];
   const open = new Map();                       // target -> the passage awaiting its end
@@ -442,7 +442,7 @@ export function agreementsFor(db, entity, { until = null } = {}) {
       // and the old passage ends where the new one begins.
       const prior = open.get(r.target);
       if (prior) prior.severed_at = r.born_at;
-      const row = { entity: r.entity, target: r.target, policy: r.policy, born_at: r.born_at, declared_by: r.declared_by };
+      const row = { entity: r.entity, target: r.target, policy: r.policy, born_at: r.born_at, declared_by: r.declared_by, within_mark: r.within_mark ?? null };
       open.set(r.target, row);
       out.push(row);
     } else if (open.has(r.target)) {
@@ -476,18 +476,22 @@ export function agreementsFor(db, entity, { until = null } = {}) {
 export function declareMovement(db, {
   actor, at = null, from, toward, crossing,
   within = null, toMark = null, pace = null, declaredBy = null, note = null,
+  withinMark = null,
 } = {}) {
   if (!actor) throw new Error("a departure needs an actor");
   if (!from || !Number.isFinite(from.x) || !Number.isFinite(from.y)) throw new Error("a departure needs a from {x,y}");
   if (!toward || !Number.isFinite(toward.x) || !Number.isFinite(toward.y)) throw new Error("a departure needs a toward {x,y}");
   if (!Number.isFinite(crossing)) throw new Error("a departure needs the fractional crossing it was declared at");
   const iso = at ?? new Date().toISOString();
+  // `withinMark` is WHERE THEY STOOD when they declared it — a different field
+  // from `within`, which is the TARGET's frozen arrival rect. See
+  // `src/world-within.mjs` for why the two cannot share a column.
   db.prepare(`INSERT INTO movements
-      (actor, at, from_x, from_y, toward_x, toward_y, crossing, within_w, within_h, to_mark, pace, declared_by, note)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      (actor, at, from_x, from_y, toward_x, toward_y, crossing, within_w, within_h, to_mark, pace, declared_by, note, within_mark)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
     .run(actor, iso, from.x, from.y, toward.x, toward.y, crossing,
-      within?.w ?? null, within?.h ?? null, toMark, pace, declaredBy ?? actor, note);
-  return { actor, at: iso, from, toward, crossing, within, to: toMark, pace, declared_by: declaredBy ?? actor, note };
+      within?.w ?? null, within?.h ?? null, toMark, pace, declaredBy ?? actor, note, withinMark);
+  return { actor, at: iso, from, toward, crossing, within, to: toMark, pace, declared_by: declaredBy ?? actor, note, within_mark: withinMark };
 }
 
 /**
@@ -498,7 +502,7 @@ export function declareMovement(db, {
  */
 export function readMovements(db, { until = null } = {}) {
   const rows = db.prepare(`SELECT seq, actor, at, from_x, from_y, toward_x, toward_y, crossing,
-      within_w, within_h, to_mark, pace, declared_by, note FROM movements ORDER BY at, seq`).all();
+      within_w, within_h, to_mark, pace, declared_by, note, within_mark FROM movements ORDER BY at, seq`).all();
   return rows
     .filter((r) => until == null || Date.parse(r.at) <= until)
     .map((r) => ({
@@ -511,6 +515,10 @@ export function readMovements(db, { until = null } = {}) {
         to: r.to_mark ?? null,
         pace: r.pace ?? null,
         declared_by: r.declared_by ?? r.actor,
+        // Where the actor STOOD when they declared it. Additive and unread by
+        // the derivation — `within` above is the target's rect, and they are
+        // different fields (src/world-within.mjs).
+        within_mark: r.within_mark ?? null,
         source: "dynamic.db/movements",
         ...(r.note ? { note: r.note } : {}),
       }),

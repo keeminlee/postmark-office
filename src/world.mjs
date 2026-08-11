@@ -31,12 +31,13 @@ import {
 } from "./world-branches.mjs";
 import { WORLD_STAKE_TOOLS, callWorldStakeTool, worldPortfolioStakeSlice } from "./world-stake.mjs"; // P3 draft, append-shaped
 import { WORLD_AGREE_TOOLS, worldAgree } from "./world-agree.mjs"; // the agreement law, 2026-08-11 — append-shaped
+import { withinMarkFor } from "./world-within.mjs"; // where an act happened, as one mark id (additive stamp)
 import { createVoices, EARSHOT_M } from "./voices.mjs"; // earshot: speech at a position (the party line)
 import { householdOf } from "./households.mjs"; // the human speaker's label wears the town's name, never the login
 import { householdLockPath, poolEnabled, pushDraftBranch, withDraftLease } from "./world-pool.mjs";
 import { cannotAnswer, pointAnswerable, servedRead, storeEpoch, storeShadowEnabled } from "./world-serve.mjs"; // stage 1: published-main reads from world.db, behind a flag
 import { emissionsEnabled, openDynamic } from "./dynamic-store.mjs"; // stage 2: the dynamic layer's flag
-import { declareMovement, declareAttachment, standingAgreement } from "./dynamic-entities.mjs"; // stage D: the pen after the ledger's freeze — plus the agreement writer (2026-08-11)
+import { declareMovement, declareAttachment, standingAgreement, agreementsFor } from "./dynamic-entities.mjs"; // stage D: the pen after the ledger's freeze — plus the agreement writer/reader (2026-08-11)
 import { emissionFromVoice } from "./dynamic-emissions.mjs"; // stage 2: speech also becomes an emission instance
 import { VESSEL_HANDLE, ridesTheVessel } from "./dynamic-entities.mjs"; // the aboard test, one home for two readers
 import { carriersFrom, carriersWithDisclosure, carrierReader, heardFromV2, inRect, movementStandpoint, movementV2Enabled, recordsAcrossEras, roadTerms, storedDepartures, storedRecordsFor, vesselPositionAt as vesselFromTimetable, vesselServiceFrom } from "./world-movement.mjs"; // stage D: carriers carry, frames compose
@@ -1356,7 +1357,7 @@ async function sitedWithin(parcel, marks) {
  * Kept out of `walkViaOffice`'s body because it is the only part of a walk that
  * knows what a timetable is; the door above stays about roads.
  */
-export async function coupleAgreementToWalk({ who, targetMarkId, boundFor, departedAt, legM, worldState, repo, db = null }) {
+export async function coupleAgreementToWalk({ who, targetMarkId, boundFor, departedAt, legM, worldState, repo, db = null, withinMark = null }) {
   const bounce = (code, defect, hint) => {
     const e = new Error(defect); Object.assign(e, { code, defect, hint }); return e;
   };
@@ -1388,7 +1389,7 @@ export async function coupleAgreementToWalk({ who, targetMarkId, boundFor, depar
         `agreed ${held.born_at}. Withdraw first (world_agree withdraw: true) if you mean to change it.`);
     declareAttachment(store, {
       entity: who, target: service.vessel.markId, policy,
-      declaredBy: who, bornAt, carrier: true,
+      declaredBy: who, bornAt, carrier: true, withinMark,
     });
   } finally { if (!db) store.close(); }
 
@@ -1552,13 +1553,20 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
   // and there is no push to be pending. The reply says `ledger: null` and names
   // the record that did receive it, so nobody reads a missing commit as a
   // failure.
+  // WHERE THEY STOOD WHEN THEY DECLARED IT (rip 4's office half, 2026-08-11).
+  // The innermost mark containing the actor at act time — a different field from
+  // `within`/`targetExtent`, which is the TARGET's frozen arrival rect. Stamped
+  // once and never re-resolved, so a mark that later moves or retires cannot
+  // rewrite where this was said (the tense law). Nothing derives from it yet.
+  const withinMark = withinMarkFor(from, w);
+
   let result;
   if (movementV2Enabled()) {
     const store = openDynamic();
     try {
       declareMovement(store, {
         actor: who, from, toward, crossing: at,
-        within: targetExtent, toMark: targetMarkId, declaredBy: who,
+        within: targetExtent, toMark: targetMarkId, declaredBy: who, withinMark,
       });
     } finally { store.close(); }
     result = { position: positionAt({ from, toward, at, targetExtent, targetMarkId }, at), movement: { record: "dynamic.db/movements", crystallizes: "STATE/log/ at the next crossing-save" } };
@@ -1596,6 +1604,9 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
     agreement = await coupleAgreementToWalk({
       who, targetMarkId, boundFor: String(payload.bound_for),
       departedAt: at, legM: result.position.legM, worldState: w, repo: worldClone,
+      // The passage is stamped where the WALK was declared — the act that made
+      // it — not where it will take effect. Same act, same place, one stamp.
+      withinMark,
     });
   }
 
@@ -1635,6 +1646,7 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
     provenance: legM === 0 ? "never-moved" : "walked",
     ...(terms ? { boundaries: terms } : {}),
     ...(agreement ? { agreement } : {}),
+    within_mark: withinMark,
     ledger: result.movement ? null : { line: result.line, commit: result.commit, pushed: result.pushed },
     ...(result.movement ? { movement: result.movement } : {}),
     note: legM === 0
@@ -1697,7 +1709,10 @@ async function framesByHandle(w, departures, atMs) {
     }
     for (const [h, ledgerRecords] of byHandle) {
       const records = recordsAcrossEras(ledgerRecords, storeByHandle.get(h) ?? []);
-      const fold = await foldFrames(records, { carriers, carrierAt, walk, atMs });
+      // Same open handle as the departures above — the passages cost one more
+      // query per resident, not one more connection.
+      const agreements = agreementsFor(store, h, { until: atMs });
+      const fold = await foldFrames(records, { carriers, carrierAt, walk, atMs, agreements });
       if (fold.frame) out.set(h, fold);
     }
   } finally { store.close(); }

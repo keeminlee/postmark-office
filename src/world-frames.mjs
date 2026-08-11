@@ -4,13 +4,19 @@
 //   it is within; the world is the default frame. Position is always an offset
 //   in your frame.
 //
-// This file replaces Stage D's first answer — a declared attachment, validated
-// by presence at a cast-off instant — and the replacement is smaller than what
-// it replaces. The ceremony had three moving parts (a declaration act, a
-// validation rule, a lapse rule) and one hard question it kept re-asking: was
-// this person aboard AT THE MOMENT SHE SAILED. The frame law has one part and
-// never asks that question, because there is no such moment: you are carried if
-// your frame is the carrier when it moves, and it does not matter when that was.
+// This file replaced Stage D's first answer — a declared attachment validated by
+// presence at a cast-off instant — with a frame that needs no such instant: your
+// frame is the deepest carrier your last leg ended inside, and it does not matter
+// when that was. That much stands, and it is still the smaller idea.
+//
+// WHAT CAME BACK, AND WHY IT IS NOT THE OLD CEREMONY. The 2026-08-11 ruling
+// restores the DECLARATION and only the declaration. The three moving parts that
+// made the ceremony heavy are still gone: there is no validation rule here (the
+// door checks standing, once, when the passage is made), no lapse rule (a passage
+// ends at the stop it names or when its holder says so), and no "was she sailing
+// at that exact instant" question anywhere below. A passage is a row that is
+// either standing or not at the instant you ask, which is a question this fold
+// can answer without knowing what a cast-off is.
 //
 // FOUR SENTENCES DO ALL THE WORK.
 //
@@ -18,15 +24,22 @@
 //      district never carries; a vessel does. Nothing here knows the word
 //      "boat" — see `carriersFrom`, which reads the Keeping Works.
 //
-//   2. CROSSING THE BOUNDARY IS THE EDGE. The walk is the consent and the edge
-//      is the consent record. No declaration; you do not consent to gravity,
-//      but you chose to climb the mountain.
+//   2. CROSSING THE BOUNDARY IS THE EDGE, AND THE EDGE ALWAYS FORMS. It is
+//      physics: you do not consent to gravity, but you chose to climb the
+//      mountain. No declaration makes it and none is asked for.
 //
-//   3. CARRIAGE IS NOTHING HAPPENING. She sails, your offset holds, you moved.
-//      This is what relative coordinates were for — the keystone rides the
-//      house and the passenger rides the boat by one arithmetic.
+//   3. WHAT AN EDGE MAY DO IS CONTRACT PLUS PERMISSION (ruled 2026-08-11,
+//      Keemin). Carriage is the edge's most consequential effect and it is
+//      exactly the one a peer may not have for free: an entity is moved by a
+//      mark ONLY BY ITS OWN AGREEMENT. So the edge forms, and then a passage
+//      decides whether her motion is yours.
 //
-//   4. ENTITIES ARE POINTS. A point is in exactly one frame, so the straddler
+//   4. CARRIAGE IS STILL NOTHING HAPPENING. With a passage she sails, your
+//      offset holds, you moved — relative coordinates doing what they were for.
+//      Without one she sails and you do not: your world position stays composed
+//      against where she was when you stepped aboard.
+//
+//   5. ENTITIES ARE POINTS. A point is in exactly one frame, so the straddler
 //      question never arises and there is no straddle logic anywhere below.
 //
 // WHERE THE FRAME IS EVALUATED, and why it is the endpoint. A movement record
@@ -252,16 +265,26 @@ export async function carrierStateAt(carrier, worldState, atMs, { repo = WORLD_C
  *   transitions  every frame edge born or died, with the record that did it
  *   provenance   "walked" | "carried" | "never-moved"
  */
-export async function foldFrames(records, { carriers, carrierAt, walk, atMs }) {
+export async function foldFrames(records, { carriers, carrierAt, walk, atMs, agreements = [] }) {
   let frame = null;                     // null = the world frame
   let local = null;                     // offset in `frame` (or world position when frame is null)
   const transitions = [];
   let lastRecordMs = null;
   let lastArrivedMs = null;
+  let boardedMs = null;                 // when the standing frame edge was born
 
-  const composed = async (fr, off, ms) => {
+  const permits = permissionReader(agreements);
+
+  // WHERE THE PERMISSION ENTERS. The edge is physics and the composition is
+  // arithmetic; what an agreement decides is WHICH INSTANT the carrier is read
+  // at. With one, she is read NOW and her motion is yours — that is carriage.
+  // Without one, she is read at the moment you stepped aboard, so your world
+  // position is the one you had then: she sails, you stay, and the edge you are
+  // standing in is simply a fact about a boat that left without you.
+  const composed = async (fr, off, ms, since) => {
     if (!fr) return off;
-    const st = await carrierAt(fr, ms);
+    const carried = permits(fr.id, ms);
+    const st = await carrierAt(fr, carried ? ms : (since ?? ms));
     return st ? { x: st.at.x + off.x, y: st.at.y + off.y } : off;
   };
 
@@ -287,18 +310,33 @@ export async function foldFrames(records, { carriers, carrierAt, walk, atMs }) {
 
     const wasFrame = frame;
     if (landedIn && (!frame || frame.id !== landedIn.carrier.id)) {
-      // BOARDED. The walk is the consent; the edge is the record of it.
+      // THE EDGE IS BORN. Crossing her boundary makes it, and it makes itself —
+      // you did not consent to gravity, but you chose to climb the mountain.
+      // What the edge may DO is a separate question, answered at composition
+      // time by the agreement (ruled 2026-08-11). So this fires either way, and
+      // an edge with no permission behind it is reported exactly as honestly as
+      // one with.
       if (frame) transitions.push({ kind: "died", carrier: frame.id, at: new Date(arriveMs).toISOString(), by: rec.iso, reason: "left for another frame" });
       frame = landedIn.carrier;
+      boardedMs = arriveMs;
       local = { x: endWorld.x - landedIn.state.at.x, y: endWorld.y - landedIn.state.at.y };
-      transitions.push({ kind: "born", carrier: frame.id, at: new Date(arriveMs).toISOString(), by: rec.iso, reason: "crossed her boundary" });
+      transitions.push({
+        kind: "born", carrier: frame.id, at: new Date(arriveMs).toISOString(), by: rec.iso,
+        reason: "crossed her boundary",
+        carries: permits(frame.id, arriveMs),
+      });
     } else if (landedIn) {
-      // Still aboard the same carrier — a walk within the frame. The offset moves.
+      // Still inside the same carrier — a walk within the frame. The offset moves.
+      // The edge is re-anchored to this arrival too: without a passage, "where
+      // she was when you last set your feet down" is this instant, not the older
+      // one, or a second walk on her deck would silently rewind you.
+      boardedMs = arriveMs;
       local = { x: endWorld.x - landedIn.state.at.x, y: endWorld.y - landedIn.state.at.y };
     } else {
       // Ashore, or stepped off.
       if (frame) transitions.push({ kind: "died", carrier: frame.id, at: new Date(arriveMs).toISOString(), by: rec.iso, reason: "crossed out over her gunwale" });
       frame = null;
+      boardedMs = null;
       local = endWorld;
     }
     if (wasFrame && !frame) { /* the exit is already recorded above */ }
@@ -306,18 +344,51 @@ export async function foldFrames(records, { carriers, carrierAt, walk, atMs }) {
 
   if (!records.length) return { frame: null, local: null, world: null, transitions, provenance: "never-moved" };
 
-  const world = await composed(frame, local, atMs);
+  const carried = Boolean(frame) && permits(frame.id, atMs);
+  const world = await composed(frame, local, atMs, boardedMs);
   // WHAT MOVED YOU LAST. Carried beats walked only when the carrier has actually
-  // moved since you last arrived — otherwise a berthed boat would report every
-  // passenger as "carried" while nothing had happened at all.
+  // moved you since you last arrived — which now takes a passage as well as a
+  // moving boat. A berthed boat never moved anyone; nor does a sailing one, if
+  // you never agreed to be on it.
   let provenance = "walked";
-  if (frame) {
+  if (frame && carried) {
     const then = await carrierAt(frame, lastArrivedMs ?? atMs);
     const now = await carrierAt(frame, atMs);
     if (then && now && (then.at.x !== now.at.x || then.at.y !== now.at.y)) provenance = "carried";
   }
-  return { frame: frame?.id ?? null, frameCarrier: frame, local, world, transitions, provenance, lastRecordMs };
+  return {
+    frame: frame?.id ?? null, frameCarrier: frame, local, world, transitions, provenance,
+    lastRecordMs,
+    // The two halves, reported separately, because they are separately true and
+    // a caller narrating "aboard" needs to know which it has.
+    carries: carried,
+    boardedAt: boardedMs === null ? null : new Date(boardedMs).toISOString(),
+  };
 }
+
+/**
+ * A reader over one entity's agreements: does an unsevered passage with this
+ * carrier stand at this instant?
+ *
+ * The rows are the world's own shape (`{ target, policy, born_at, severed_at? }`)
+ * — `src/dynamic-entities.mjs § agreementsFor` folds the store's append-only
+ * pairs into it, in one place, so the office and the engine cannot drift into
+ * two readings of one history.
+ */
+export function permissionReader(agreements = []) {
+  const rows = (agreements ?? []).filter((a) => isPassage(a?.policy));
+  if (!rows.length) return () => false;
+  return (carrierId, atMs) => rows.some((a) => {
+    if (a.target !== carrierId) return false;
+    const born = Date.parse(a.born_at);
+    if (!Number.isFinite(born) || born > atMs) return false;
+    const severed = a.severed_at == null ? null : Date.parse(a.severed_at);
+    return !(severed !== null && severed <= atMs);
+  });
+}
+
+/** The passenger half of the policy vocabulary — `riding` or `bound:<stop-id>`. */
+const isPassage = (policy) => policy === "riding" || String(policy ?? "").startsWith("bound:");
 
 /** When a declared leg arrives — the world's own arithmetic, never restated here. */
 function arrivalMs(rec, walk) {

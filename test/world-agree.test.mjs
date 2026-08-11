@@ -436,6 +436,95 @@ test("world_walk's bound_for coupling: one declaration, two records — and it r
   } finally { done(); }
 });
 
+// ── within_mark: where an act happened ──────────────────────────────────────
+
+test("within_mark is a SEPARATE field from within — the target's rect is untouched", async () => {
+  const { innermostMarkAt, withinMarkFor } = await import("../src/world-within.mjs");
+  const marks = [
+    { id: "the-town/the-quay-district", kind: "sited", at: { x: 0, y: 0 }, extent: { w: 400, h: 400 } },
+    { id: "the-town/the-shed", kind: "sited", at: { x: 10, y: 10 }, extent: { w: 20, h: 20 } },
+    { id: "the-town/let-there-be-light", kind: "sited", tier: "constitution", at: { x: 0, y: 0 }, extent: { w: 1e6, h: 1e6 } },
+  ];
+
+  // INNERMOST IS SMALLEST-AREA. The shed sits inside the district; both contain
+  // the point, and the answer is the shed.
+  assert.equal(innermostMarkAt({ x: 12, y: 12 }, marks), "the-town/the-shed");
+  assert.equal(innermostMarkAt({ x: 150, y: 150 }, marks), "the-town/the-quay-district",
+    "outside the shed, the district still holds them");
+  assert.equal(innermostMarkAt({ x: 9e5, y: 9e5 }, marks), null,
+    "constitution furniture is excluded — 'within the constitution' is true of everyone and says nothing");
+  assert.equal(innermostMarkAt({ x: 20, y: 20 }, marks), "the-town/the-shed", "on the boundary is inside it");
+  assert.equal(withinMarkFor(null, { marks }), null, "an unplaceable actor stamps null rather than throwing");
+  assert.equal(withinMarkFor({ x: 0, y: 0 }, null), null, "and so does an unreadable world");
+});
+
+test("both writers stamp within_mark, and the two `within`s never touch each other", async () => {
+  const done = freshStore();
+  try {
+    const t = (fc) => new Date(atCrossing(fc)).toISOString();
+    const { declareMovement, readMovements, declareAttachment, readAttachments } =
+      await import("../src/dynamic-entities.mjs");
+
+    // A WALK: `within` (the target's frozen rect) and `within_mark` (where the
+    // actor stood) both present, both distinct, neither overwriting the other.
+    declareMovement(store, {
+      actor: "wright", at: t(0.4), from: { x: 1, y: 1 }, toward: { x: 90, y: 90 }, crossing: 0.4,
+      within: { w: 25, h: 25 }, toMark: "someone/a-house", withinMark: "the-town/the-shed",
+    });
+    const payload = JSON.parse(readMovements(store)[0].payload);
+    assert.deepEqual(payload.within, { w: 25, h: 25 }, "the TARGET's arrival rect, exactly as before");
+    assert.equal(payload.to, "someone/a-house", "and what was aimed at");
+    assert.equal(payload.within_mark, "the-town/the-shed", "and, separately, where the actor stood");
+
+    // AN AGREEMENT carries the same stamp.
+    declareAttachment(store, {
+      entity: "wright", target: VESSEL, policy: "riding", declaredBy: "wright",
+      bornAt: t(0.41), carrier: true, withinMark: "the-town/the-post-office",
+    });
+    assert.equal(readAttachments(store)[0].within_mark, "the-town/the-post-office");
+
+    // AN UNSTAMPED ACT IS HONESTLY NULL, not wrong: the act predates the field.
+    declareMovement(store, {
+      actor: "older", at: t(0.42), from: { x: 1, y: 1 }, toward: { x: 2, y: 2 }, crossing: 0.42,
+    });
+    const older = readMovements(store).find((r) => r.actor === "older");
+    assert.equal(JSON.parse(older.payload).within_mark, null);
+  } finally { done(); }
+});
+
+test("the added column lands on a store that predates it, without a version bump", async () => {
+  // The migration's whole point: `CREATE TABLE IF NOT EXISTS` cannot grow a table
+  // that already exists, so a LIVE store would never gain the field. This builds
+  // the old shape by hand and opens it the way the office does.
+  const { DatabaseSync } = await import("node:sqlite");
+  const { applyAddedColumns, DYNAMIC_SCHEMA_VERSION } = await import("../src/dynamic-store.mjs");
+  const dir = mkdtempSync(join(tmpdir(), "agree-migrate-"));
+  const path = join(dir, "old.db");
+  try {
+    const old = new DatabaseSync(path);
+    old.exec(`CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+      CREATE TABLE attachments (seq INTEGER PRIMARY KEY AUTOINCREMENT, entity TEXT, target TEXT, policy TEXT, declared_by TEXT, born_at TEXT);
+      CREATE TABLE movements (seq INTEGER PRIMARY KEY AUTOINCREMENT, actor TEXT, at TEXT, from_x REAL, from_y REAL, toward_x REAL, toward_y REAL, crossing REAL, within_w REAL, within_h REAL, to_mark TEXT, pace REAL, declared_by TEXT, note TEXT);`);
+    old.prepare("INSERT INTO meta VALUES (?,?)").run("schema_version", DYNAMIC_SCHEMA_VERSION);
+    old.prepare("INSERT INTO attachments (entity, target, policy, born_at) VALUES (?,?,?,?)")
+      .run("hal", VESSEL, "riding", "2026-08-01T00:00:00.000Z");
+    old.close();
+
+    const db = openDynamic(path);
+    try {
+      const cols = new Set(db.prepare("PRAGMA table_info(attachments)").all().map((r) => r.name));
+      assert.ok(cols.has("within_mark"), "the old store grew the column on open");
+      assert.ok(new Set(db.prepare("PRAGMA table_info(movements)").all().map((r) => r.name)).has("within_mark"));
+      assert.equal(db.prepare("SELECT within_mark FROM attachments").get().within_mark, null,
+        "and the row that predates the field reads null — honest, not wrong");
+      assert.equal(db.prepare("SELECT COUNT(*) c FROM attachments").get().c, 1, "nothing was dropped");
+
+      // IDEMPOTENT: running it again is a no-op, not an error.
+      assert.doesNotThrow(() => applyAddedColumns(db));
+    } finally { db.close(); }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("agreementsFor folds a supersede: the older passage ends where the newer begins", () => {
   const done = freshStore();
   try {
