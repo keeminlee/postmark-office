@@ -268,10 +268,10 @@ test("MCP initialize → protocol + instructions", async () => {
   assert.match(body.result.instructions, /The reading law/, "the handshake carries the reading law");
 });
 
-test("MCP tools/list names all 38 tools", async () => {
+test("MCP tools/list names all 39 tools", async () => {
   const { body } = await rpc("tools/list");
   const names = body.result.tools.map((t) => t.name);
-  assert.equal(names.length, 38);
+  assert.equal(names.length, 39);
   for (const n of ["read_town", "read_doorstep", "send_letter", "stake_vote", "read_votes",
     "read_metrics", "list_letters", "list_regions", "read_home", "request_residency",
     "update_address_body", "update_home", "update_profile", "update_window", "list_commits", "whoami",
@@ -280,7 +280,8 @@ test("MCP tools/list names all 38 tools", async () => {
     // world-stake P3: the three doors that put stamps behind a mark
     "world_stake", "world_unstake", "world_stake_read",
     "world_say", // earshot: speak where you stand, hear who stands near you
-    "world_agree"]) // the agreement law (2026-08-11): the only way anyone is carried
+    "world_agree", // the agreement law (2026-08-11): the only way anyone is carried
+    "world_events"]) // recall: what touched you since you last looked
     assert.ok(names.includes(n), n);
 });
 

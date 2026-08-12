@@ -534,5 +534,21 @@ export function createVoices({
     return null;
   }
 
-  return { say, hear, conversations, lastPresent, log: pathOf, _voices: () => hydrate(), _presence: presence };
+  // THE RECORD, WINDOWED — the recall door's read (world_events).
+  //
+  // Hearing is five minutes and recall is not, so `world_events` needs the log
+  // rather than the fade window. It must not open the file itself: `hydrate`
+  // owns parsing, rotation-awareness and the memory cap, and a second reader
+  // would be a second answer to "what did the town actually say".
+  //
+  // What comes back is OCCURRENCE, unfiltered by earshot — every voice in the
+  // window, at the coordinates it was spoken from. Filtering it down to one
+  // resident's own ears is the caller's job and is where the privacy rule lives
+  // (world-events.mjs § heardBetween); nothing may hand this straight to a
+  // resident.
+  function record(fromMs = -Infinity, toMs = Infinity) {
+    return hydrate().filter((v) => v.at > fromMs && v.at <= toMs);
+  }
+
+  return { say, hear, conversations, lastPresent, record, log: pathOf, _voices: () => hydrate(), _presence: presence };
 }

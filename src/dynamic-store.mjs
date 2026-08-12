@@ -201,6 +201,24 @@ export const DYNAMIC_SCHEMA = `
   CREATE INDEX IF NOT EXISTS emissions_expires ON emissions (ttl_expires_at);
   CREATE INDEX IF NOT EXISTS emissions_source ON emissions (source, born_at);
   CREATE INDEX IF NOT EXISTS emissions_class ON emissions (class, born_at);
+
+  -- READ CURSORS (store-canon-durable, and the only row here that is about a
+  -- READER rather than about the world).
+  --
+  -- The world is complete and permanent; every read of it is a projection with
+  -- a budget. \`at\` is how far one resident's own projection has reached — the
+  -- instant of the last event they were actually handed, never the instant they
+  -- happened to call. That distinction is the whole point: a read capped at
+  -- twenty leaves the cursor on the twentieth, so the twenty-first is still
+  -- waiting on the next call and a budget can never cost anyone an event.
+  --
+  -- It is a CURSOR, not a mailbox: nothing is stored per resident but this one
+  -- timestamp, and deleting the row costs a reader nothing but their place.
+  CREATE TABLE IF NOT EXISTS read_cursors (
+    handle TEXT PRIMARY KEY,
+    at TEXT,
+    updated_at TEXT
+  );
 `;
 
 /**
@@ -466,6 +484,13 @@ export function dynamicHealth({ repo = WORLD_CLONE } = {}) {
             movements_latest: one("SELECT MAX(at) a FROM movements").a ?? null }
         : { movements: null, movements_latest: null }),
       ledger_frozen_at: getMeta(db, "ledger_frozen_at"),
+      // Feature-detected for the same reason `movements` is: a read-only open of
+      // a store that predates this table cannot create it, and an operator
+      // surface that died on a missing table would take the whole block with it.
+      ...(one("SELECT name n FROM sqlite_master WHERE type='table' AND name='read_cursors'")
+        ? { read_cursors: one("SELECT COUNT(*) c FROM read_cursors").c,
+            read_cursors_latest: one("SELECT MAX(updated_at) a FROM read_cursors").a ?? null }
+        : { read_cursors: null, read_cursors_latest: null }),
       emissions_total: one("SELECT COUNT(*) c FROM emissions").c,
       emissions_present: one("SELECT COUNT(*) c FROM emissions WHERE born_at <= ? AND ttl_expires_at > ?", now, now).c,
       emissions_oldest: one("SELECT MIN(born_at) b FROM emissions").b ?? null,
