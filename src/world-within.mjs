@@ -25,6 +25,23 @@
 // both true: the actor stood on open ground inside nothing, or the act predates
 // the stamp.
 
+// ── POLYGON-HONEST CONTAINMENT (Keemin, 2026-08-11) ─────────────────────────
+//
+// "Otherwise the Main Channel covers half the town." A river is a long thin
+// ribbon whose BOUNDING BOX is enormous, so a rect test stamps every act inside
+// that box as having happened in the river — including acts on dry land a
+// kilometre from the water. The first draft of this file did exactly that.
+//
+// So a mark that carries a `points:` ring is tested against the RING, and its
+// area is the ring's true area. A mark without one keeps the rect, which for a
+// rect-shaped mark is not an approximation but the whole truth.
+//
+// The maths is the WORLD'S, injected rather than reimplemented: `polygonOf` and
+// `pointInPolygon` come from `tools/geometry.mjs`, the same pair the fold and
+// the lint use to decide containment. A second implementation here would be a
+// second answer to "is this inside that", and the office would eventually
+// disagree with the world about where something happened.
+
 /** A point inside a mark's own rect, boundary inclusive. */
 const inMarkRect = (p, m) =>
   Boolean(m?.at) && Number.isFinite(m.at.x) && Number.isFinite(m.at.y)
@@ -32,7 +49,38 @@ const inMarkRect = (p, m) =>
   && p.x >= m.at.x - m.extent.w / 2 && p.x <= m.at.x + m.extent.w / 2
   && p.y >= m.at.y - m.extent.h / 2 && p.y <= m.at.y + m.extent.h / 2;
 
-const areaOf = (m) => Math.abs(m.extent.w) * Math.abs(m.extent.h);
+/** The true area of a closed ring — the shoelace formula, absolute. */
+const ringArea = (ring) => {
+  let a = 0;
+  for (let i = 0, n = ring.length; i < n; i++) {
+    const p = ring[i], q = ring[(i + 1) % n];
+    a += p.x * q.y - q.x * p.y;
+  }
+  return Math.abs(a) / 2;
+};
+
+/**
+ * Is this point inside this mark, and how big is the mark — one answer, because
+ * the two questions must use the same shape or the ranking picks a loser that
+ * was never a candidate.
+ *
+ * `geom` is the world's geometry module, or null. Without it every mark is
+ * tested as a rect, which is what this file did before and is still correct for
+ * every ring-less mark in the town.
+ */
+function hit(p, m, geom) {
+  const ring = geom?.polygonOf ? geom.polygonOf(m) : null;
+  if (ring && geom?.pointInPolygon) {
+    // The bbox is a cheap reject before the ray cast, and nothing more: a point
+    // inside the box but outside the ring is NOT in the mark, which is the whole
+    // point of the fix.
+    if (!inMarkRect(p, m)) return null;
+    if (!geom.pointInPolygon(p.x, p.y, ring)) return null;
+    return { area: ringArea(ring), shape: "ring" };
+  }
+  if (!inMarkRect(p, m)) return null;
+  return { area: Math.abs(m.extent.w) * Math.abs(m.extent.h), shape: "rect" };
+}
 
 /**
  * The innermost mark containing this point, or null.
@@ -47,17 +95,18 @@ const areaOf = (m) => Math.abs(m.extent.w) * Math.abs(m.extent.h);
  * answer the same way in every clone. Constitution furniture is excluded: "you
  * are within the constitution" is true of everyone everywhere and says nothing.
  */
-export function innermostMarkAt(point, marks, { excludeTiers = ["constitution"] } = {}) {
+export function innermostMarkAt(point, marks, { excludeTiers = ["constitution"], geom = null } = {}) {
   if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return null;
   const skip = new Set(excludeTiers);
-  let best = null;
+  let best = null, bestArea = Infinity;
   for (const m of marks ?? []) {
     if (m?.kind !== "sited" && m?.kind !== "parcel") continue;
     if (skip.has(m.tier)) continue;
-    if (!inMarkRect(point, m)) continue;
-    if (!best) { best = m; continue; }
-    const a = areaOf(m), b = areaOf(best);
-    if (a < b || (a === b && String(m.id) < String(best.id))) best = m;
+    const h = hit(point, m, geom);
+    if (!h) continue;
+    if (h.area < bestArea || (h.area === bestArea && best && String(m.id) < String(best.id))) {
+      best = m; bestArea = h.area;
+    }
   }
   return best?.id ?? null;
 }
@@ -69,7 +118,25 @@ export function innermostMarkAt(point, marks, { excludeTiers = ["constitution"] 
  * later readers, and an office that refused a walk because it could not name a
  * containing mark would have made a note more important than a movement.
  */
-export function withinMarkFor(point, worldState) {
-  try { return innermostMarkAt(point, worldState?.marks ?? []); }
+export function withinMarkFor(point, worldState, { geom = null } = {}) {
+  try { return innermostMarkAt(point, worldState?.marks ?? [], { geom }); }
   catch { return null; }
+}
+
+/**
+ * The world's geometry module, loaded once at a ref, or null.
+ *
+ * Null is a real answer and a safe one: every ring-less mark still answers
+ * correctly, and a ringed one falls back to its bounding box — which is the
+ * behaviour this file had yesterday. A clone that cannot hand over geometry.mjs
+ * must not be able to stop a walk being written.
+ */
+let _geom = null;
+export async function worldGeometry() {
+  if (_geom !== null) return _geom || null;
+  try {
+    const { worldToolModule } = await import("./dynamic-entities.mjs");
+    _geom = await worldToolModule("geometry.mjs");
+  } catch { _geom = false; }
+  return _geom || null;
 }

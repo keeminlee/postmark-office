@@ -31,6 +31,7 @@ import {
 import { worldAgree, alongsideAt, policyFor, agreeingAs, readable } from "../src/world-agree.mjs";
 import { vesselServiceFrom } from "../src/world-movement.mjs";
 import { makeWorldClone, fixtureMarks, atCrossing, QUAY, FAR_SHORE } from "./movement-fixture.mjs";
+import { WORLD_CLONE } from "../src/world-store.mjs";
 
 const VESSEL = "the-town/the-post-office";
 const FAR = "the-town/the-far-shore";
@@ -468,6 +469,80 @@ test("within_mark is a SEPARATE field from within — the target's rect is untou
   assert.equal(innermostMarkAt({ x: 20, y: 20 }, marks), "the-town/the-shed", "on the boundary is inside it");
   assert.equal(withinMarkFor(null, { marks }), null, "an unplaceable actor stamps null rather than throwing");
   assert.equal(withinMarkFor({ x: 0, y: 0 }, null), null, "and so does an unreadable world");
+});
+
+test("POLYGON-HONEST: a ringed mark claims its ring, not its bounding box", async () => {
+  // Keemin's concern, verbatim: "otherwise the Main Channel covers half the
+  // town." A river is a thin ribbon with an enormous bbox, so the rect test
+  // stamped every act inside that box as having happened in the water.
+  const { innermostMarkAt } = await import("../src/world-within.mjs");
+  const geom = await import(
+    new URL(`file://${join(clone.dir, "tools", "geometry.mjs").replace(/\\/g, "/")}`).href);
+
+  // A NARROW DIAGONAL RIBBON, the Main Channel's own shape in miniature: it runs
+  // corner to corner, so its bounding box is vast and almost all of that box is
+  // dry land.
+  const channel = {
+    id: "the-town/the-main-channel", kind: "sited", tier: "market",
+    at: { x: 0, y: 0 }, extent: { w: 2000, h: 2000 },
+    points: [[-1000, -1000], [-900, -1000], [1000, 1000], [900, 1000]],
+  };
+  const marks = [channel];
+  const at = (x, y) => innermostMarkAt({ x, y }, marks, { excludeTiers: [], geom });
+
+  // ON THE WATER: inside the ribbon, and stamped.
+  assert.equal(at(0, 0), "the-town/the-main-channel", "midstream is in the channel");
+  assert.equal(at(-950, -1000), "the-town/the-main-channel", "and so is the near bank's edge");
+
+  // DRY LAND INSIDE THE BOX: the corner the bbox claims and the ring does not.
+  for (const [x, y] of [[900, -900], [-900, 900], [800, -200], [-500, 700]]) {
+    assert.ok(geom.pointInRect(x, y, { x: 0, y: 0, w: 2000, h: 2000 }),
+      `(${x},${y}) really is inside the bounding box — the exclusion is not an accident`);
+    assert.equal(at(x, y), null, `(${x},${y}) is dry land and must NOT be stamped as the channel`);
+  }
+
+  // THE FALSIFIER: without the ring the same points all read as the channel,
+  // which is precisely the bug. If this ever stops being true the fix is inert.
+  const rectOnly = (x, y) => innermostMarkAt({ x, y }, marks, { excludeTiers: [] });
+  assert.equal(rectOnly(900, -900), "the-town/the-main-channel",
+    "the rect test claims the dry corner — that is what was wrong");
+
+  // AREA COMES FROM THE RING TOO, or the ranking would pick a loser: a small
+  // building standing on the bank must beat a channel whose BOX contains it.
+  const shed = { id: "someone/a-shed", kind: "sited", at: { x: 0, y: 0 }, extent: { w: 40, h: 40 } };
+  assert.equal(innermostMarkAt({ x: 0, y: 0 }, [channel, shed], { excludeTiers: [], geom }),
+    "someone/a-shed", "the shed is smaller than the ribbon and wins the point they share");
+});
+
+test("the real Main Channel: its bbox is 40 km2 and its ring is a river", async () => {
+  // The actual mark, read out of the world clone the office reads engine code
+  // from — not a fixture that resembles it.
+  const { readFileSync } = await import("node:fs");
+  const geom = await import(
+    new URL(`file://${join(clone.dir, "tools", "geometry.mjs").replace(/\\/g, "/")}`).href);
+  const path = join(WORLD_CLONE, "WORLD", "marks", "let-there-be-light", "the-main-channel", "mark.md");
+  let raw;
+  try { raw = readFileSync(path, "utf8"); } catch { return; }   // not this clone's world; the miniature above still guards the law
+  const pts = /^points:\s*(.+)$/m.exec(raw)?.[1];
+  const ext = /^extent:\s*\{\s*w:\s*([\d.]+),\s*h:\s*([\d.]+)/m.exec(raw);
+  const at = /^at:\s*\{\s*x:\s*(-?[\d.]+),\s*y:\s*(-?[\d.]+)/m.exec(raw);
+  if (!pts || !ext || !at) return;
+
+  const ring = pts.trim().split(/\s+/).map((pair) => pair.split(",").map(Number));
+  const bboxArea = Number(ext[1]) * Number(ext[2]);
+  assert.ok(bboxArea > 3e7, `the bounding box really is enormous: ${Math.round(bboxArea / 1e6)} km2`);
+
+  const channel = {
+    id: "the-town/the-main-channel", kind: "sited", tier: "market",
+    at: { x: Number(at[1]), y: Number(at[2]) },
+    extent: { w: Number(ext[1]), h: Number(ext[2]) },
+    points: ring,
+  };
+  // Every ring vertex is on the channel; the box's own corners are not.
+  const { innermostMarkAt } = await import("../src/world-within.mjs");
+  const hit = (x, y) => innermostMarkAt({ x, y }, [channel], { excludeTiers: [], geom });
+  const corner = { x: channel.at.x + channel.extent.w / 2 - 1, y: channel.at.y - channel.extent.h / 2 + 1 };
+  assert.equal(hit(corner.x, corner.y), null, "the far corner of the box is not the river");
 });
 
 test("both writers stamp within_mark, and the two `within`s never touch each other", async () => {

@@ -57,6 +57,15 @@ import {
 import { carrierReader, movementV2Enabled, vesselServiceFrom } from "./world-movement.mjs";
 import { carriedLegsFor, happenedBlock, latestSettlement, readCrossingLogs } from "./world-happened.mjs";
 import { WORLD_STAKE_TOOLS, callWorldStakeTool } from "./world-stake.mjs";
+// THE TWO APEX-ONLY VERBS (Keemin, 2026-08-11). `world_agree` and `world_events`
+// are NOT on the flat tool list — they land as subverbs and only as subverbs, so
+// the migration has one shape to test rather than two. Their SCHEMAS are still
+// imported, and that is the point: `fieldsFor` reads the same declaration a flat
+// listing would have published, so an affordance's `fields` can never drift from
+// what the handler actually takes. The schema is the contract; the listing was
+// only ever the advertisement.
+import { WORLD_AGREE_TOOLS, worldAgree } from "./world-agree.mjs";
+import { WORLD_EVENTS_TOOLS, worldEvents } from "./world.mjs";
 import { storeDbPath } from "./world-serve.mjs";
 import { AMBIENT_REACH_SQL, CLASS_MARK_GATE_SQL } from "./world-store.mjs";
 
@@ -100,6 +109,7 @@ const GATE_COLUMNS = `
          json_extract(props, '$.affordances')   AS affordances,
          json_extract(props, '$.dials')         AS dials,
          json_extract(props, '$.timetable')     AS timetable,
+         json_extract(props, '$.carry_clause')  AS carry_clause,
          json_extract(props, '$.body')          AS body,
          ${AMBIENT_REACH_SQL}                   AS ambient`;
 
@@ -130,7 +140,18 @@ const DISPATCH = {
   walk: { tool: "world_walk", run: (args, key) => walkViaOffice(WORLD_CLONE, args, key) },
   "leave-mark": { tool: "world_leave_mark", run: (args, key) => leaveMarkViaOffice(WORLD_CLONE, args, key) },
   stake: { tool: "world_stake", run: (args, key) => callWorldStakeTool("world_stake", args, key) },
+  // APEX-ONLY, from here down (Keemin, 2026-08-11). These two have no flat
+  // listing: the subverb is the only door. `dispatches_to` still names their
+  // schema-bearing tool, because that schema is real and is what `fields` is
+  // read from — it is simply not advertised on `tools/list` any more.
+  agree: { tool: "world_agree", run: (args, key) => worldAgreeViaOffice(args, key), apexOnly: true },
+  events: { tool: "world_events", run: (args, key) => worldEvents(args, key), apexOnly: true },
 };
+
+// The subverbs with no flat listing — named once, so the description and the
+// tests read the same set the table does.
+export const APEX_ONLY = Object.freeze(
+  Object.entries(DISPATCH).filter(([, d]) => d.apexOnly).map(([s]) => s));
 
 // ── seam 4 · the fields a subverb takes ─────────────────────────────────────
 //
@@ -155,11 +176,36 @@ const DISPATCH = {
 // read in full.
 const STANDPOINT_PARAMS = new Set(["handle", "x", "y"]);
 
+// THE APEX'S OWN PARAMETERS — the ones that mean something to this verb rather
+// than to a subverb it dispatches. Declared here so `subverbParams()` can refuse
+// to overwrite them, and consumed by APEX_TOOL below, so there is one list.
+//
+// `since` is the collision worth naming. On a BARE read it is a crossing number
+// and drives the `happened` delta; on a `do: "events"` call it is that door's own
+// cursor (an ISO instant, or the epoch-millisecond stamp world_say hands out).
+// The two never meet, because `happened` is only built on the bare read and the
+// dispatch path passes `since` straight through to the subverb — so the routing
+// is settled by whether `do:` is present, not by a guess about the value. The
+// type widens to accept both spellings; the description says which is which.
+const APEX_OWN_PARAMS = {
+  since: { type: ["string", "number"], description: "BARE READ: the crossing number from your last reply — the answer then carries `happened`: what changed for YOU since (complete), a capped glance at what happened around you, and the town's headlines. The delta does not grow with how long you were away. WITH do: it is that subverb's own cursor and means whatever that act means by it." },
+  do: { type: "string", description: "the subverb to perform — omit to read. It must be one your standpoint affords; the bare read lists them" },
+  x: { type: "number", description: "spectator read: grid metres east of Ferry's crossing (never combined with handle)" },
+  y: { type: "number", description: "spectator read: grid metres south of Ferry's crossing" },
+  handle: { type: "string", description: "which of YOUR residents acts (omit if your key holds one; a multi-resident key must name one)" },
+  telling: { type: "boolean", description: "true adds the prose telling of what you see; omit for the cheap structural read" },
+};
+
 let _flatSchemas = null;
 function flatSchemas() {
   if (_flatSchemas) return _flatSchemas;
   _flatSchemas = new Map();
-  for (const tool of [...WORLD_TOOLS, ...WORLD_STAKE_TOOLS]) {
+  // WORLD_AGREE_TOOLS / WORLD_EVENTS_TOOLS are read here and served nowhere.
+  // That is the whole trick of de-flatting: the SCHEMA is the contract and stays
+  // in one place, while the LISTING — the advertisement, the context tax — goes
+  // away. An affordance's `fields` is therefore still generated from the real
+  // declaration of the real handler, so the two can never drift.
+  for (const tool of [...WORLD_TOOLS, ...WORLD_STAKE_TOOLS, ...WORLD_AGREE_TOOLS, ...WORLD_EVENTS_TOOLS]) {
     const props = tool?.inputSchema?.properties ?? {};
     const required = new Set(tool?.inputSchema?.required ?? []);
     const fields = {};
@@ -178,6 +224,70 @@ export function fieldsFor(subverb, declared = null) {
   if (declared && typeof declared === "object" && Object.keys(declared).length) return declared;
   const tool = DISPATCH[subverb]?.tool;
   return tool ? (flatSchemas().get(tool) ?? {}) : {};
+}
+
+// ── seam 5 · the arguments a subverb takes, INLINE ──────────────────────────
+//
+// De-flatting forced this open, and it is worth writing down why rather than
+// just doing it.
+//
+// The apex used to be argument-free by design: "a subverb's arguments belong to
+// the tool whose schema declares them", and a caller who needed `bound_for`
+// called `world_agree` directly. That reasoning depended on the flat tool being
+// THERE. Take the listing away and the deferral stops being a deferral and
+// becomes a loss: `bound_for`, `withdraw`, `limit` and `peek` would be
+// unreachable through any door, and the two verbs would land strictly less
+// capable than they were an hour ago. The door's `validateArgs` refuses any key
+// the published schema does not name, so this is not a theoretical gap.
+//
+// So the apex publishes them — and does NOT simply open the gate. Two
+// properties are kept that `additionalProperties: true` would have thrown away:
+//
+//   1. The schema stays CLOSED and honest. The published properties are
+//      GENERATED from the dispatch targets' own schemas, so the door validates
+//      by name exactly as before and a resident who reads the schema can trust
+//      it. (Issue #7 §3's lesson: the two halves of the contract must not
+//      disagree, and the schema is the half that lied last time.)
+//   2. A subverb cannot be fed ANOTHER subverb's arguments. The published union
+//      is what the door will accept at all; the matched affordance's own
+//      `fields` is what THIS act will accept, checked at dispatch. `world
+//      {do:"agree", limit:5}` bounces naming what agree takes, rather than
+//      quietly handing `limit` to the agreement door.
+//
+// The union is small on purpose — five fields across two verbs — and it is the
+// price of the migration having one shape to test instead of two.
+
+/**
+ * The inline fields the apex publishes: the union over APEX-ONLY subverbs, and
+ * only those.
+ *
+ * NARROW ON PURPOSE. A subverb that still has a flat listing keeps the old
+ * contract — its arguments ride its own tool, whose schema the affordance names
+ * in `dispatches_to` — because that tool is still there to ride. Publishing
+ * `text`, `slug`, `body`, `points`, `stamps` and the rest here would put thirty
+ * parameters on the one verb whose entire purpose is to stop charging residents
+ * for schemas they are not using.
+ *
+ * So inline pass-through is not a new general policy. It is the minimum the
+ * de-flatting costs: four fields, for the two acts that no longer have anywhere
+ * else to declare them.
+ */
+export function subverbParams() {
+  const out = {};
+  for (const [subverb, d] of Object.entries(DISPATCH)) {
+    if (!d.apexOnly) continue;
+    for (const [name, spec] of Object.entries(flatSchemas().get(d.tool) ?? {})) {
+      if (name in APEX_OWN_PARAMS) continue;          // the apex's own, never overwritten
+      // `required` is dropped: a field required BY a subverb is not required by
+      // the apex tool, which mostly is not performing that subverb. The act's own
+      // handler still enforces it, and says so in its own words.
+      const { required: _r, ...clean } = spec;
+      out[name] = out[name]
+        ? { ...out[name], description: `${out[name].description} · ${subverb}: ${clean.description ?? ""}`.slice(0, 900) }
+        : { ...clean, description: `(${subverb}) ${clean.description ?? ""}`.slice(0, 900) };
+    }
+  }
+  return out;
 }
 
 // Read by lint L6 — "every exposed subverb has a live handler" — so the lint
@@ -334,8 +444,29 @@ export function buildTerms({ affording, spine }) {
   // timetable is not a metaphor for consent to carriage — for `board` it is
   // literally the payload, and the rule is written generically so any class
   // that publishes a schedule delivers it the same way.
+  // MODE 3'S CONSENT DOCUMENT. For `agree` this is literally the payload, not a
+  // metaphor for one: the schedule you would be consenting to, and the one
+  // sentence of law that says what consenting to it does.
+  //
+  // THE CLAUSE COMES FROM THE CLASS MARK, never from here. The sentence this
+  // office used to inject — "riding is consenting to this schedule's motion" —
+  // was true under the 08-07 law and false the moment the 08-11 ruling made
+  // carriage take an agreement as well as a deck, and nothing could have caught
+  // the drift, because no record owned the sentence. `carry_clause:` on the
+  // class mark owns it now, so a ruling that changes the law changes the text a
+  // resident is shown, in the same commit, by construction.
   const timetable = parseJson(affording.timetable, null);
-  if (timetable && room(timetable)) terms.carriage = { timetable, note: "Riding is consenting to this schedule's motion, and the schedule is public." };
+  const clause = String(affording.carry_clause ?? "").trim();
+  if (timetable || clause) {
+    const carriage = {
+      ...(timetable ? { timetable } : {}),
+      ...(clause ? { clause, clause_from: affording.id } : {}),
+      note: clause
+        ? "This is the law that binds carriage here, in the class mark's own words. The schedule is public and so is this."
+        : "The schedule is public; what riding it commits you to is declared by the class that runs it.",
+    };
+    if (room(carriage)) terms.carriage = carriage;
+  }
 
   // 3 · the charter articles standing over the act: the town's own
   // constitution marks on the containment spine, root outward-in.
@@ -565,6 +696,24 @@ async function apexDo(args, key) {
     const affording = { ...rows.find((r) => r.id === match.from), blurb: match.blurb };
     const terms = buildTerms({ affording, spine });
 
+    // ONE SUBVERB'S ARGUMENTS ARE NOT ANOTHER'S. The published schema is the
+    // union over apex-only subverbs, so the door lets `limit` and `bound_for`
+    // through the gate; THIS act accepts only what the matched affordance's own
+    // `fields` declares. Without this check `world {do:"agree", limit:5}` would
+    // hand `limit` to the agreement door, which would ignore it silently — and a
+    // resident who mistyped a subverb's argument would get a successful-looking
+    // act that did not do what they asked.
+    const takes = new Set(Object.keys(match.fields ?? {}));
+    const strays = Object.keys(args).filter(
+      (k) => !(k in APEX_OWN_PARAMS) && !takes.has(k));
+    if (strays.length) {
+      return bounce(422, `"${subverb}" does not take ${strays.map((s) => `"${s}"`).join(", ")}`,
+        takes.size
+          ? `${subverb} takes: ${[...takes].join(", ")}. Those belong to a different act — the bare read lists what each one here takes.`
+          : `${subverb} takes no arguments of its own.`,
+        { subverb, takes: [...takes], stray: strays });
+    }
+
     // v0 maps to the EXISTING implementation. `do` is stripped; everything else
     // the caller passed rides through to the verb whose schema they read.
     //
@@ -599,14 +748,11 @@ export const APEX_DESCRIPTION = "Where you are, and what can be done from here �
 export const APEX_TOOL = {
   name: "world",
   get description() { return APEX_DESCRIPTION; },
-  inputSchema: { type: "object", properties: {
-    since: { type: "number", description: "the crossing number from your last reply — the answer then carries `happened`: what changed for YOU since (complete), a capped glance at what happened around you, and the town's headlines. The delta does not grow with how long you were away." },
-    do: { type: "string", description: "the subverb to perform — omit to read. It must be one your standpoint affords; the bare read lists them" },
-    x: { type: "number", description: "spectator read: grid metres east of Ferry's crossing (never combined with handle)" },
-    y: { type: "number", description: "spectator read: grid metres south of Ferry's crossing" },
-    handle: { type: "string", description: "which of YOUR residents acts (omit if your key holds one; a multi-resident key must name one)" },
-    telling: { type: "boolean", description: "true adds the prose telling of what you see; omit for the cheap structural read" },
-  },
+  // GENERATED, not restated: the apex's own parameters plus the union of every
+  // dispatchable subverb's fields, read off those subverbs' real schemas. A verb
+  // that gains a field gains it here in the same commit.
+  get inputSchema() {
+    return { type: "object", properties: { ...APEX_OWN_PARAMS, ...subverbParams() },
   // CLOSED, because the runtime was already closed (issue #7 §3). The door's own
   // validateArgs has always refused an unknown parameter by name — `additionalProperties:
   // true` advertised an inline pass-through that did not exist, so a resident who
@@ -614,7 +760,8 @@ export const APEX_TOOL = {
   // would not come. Two halves of one contract disagreeing; the schema is the
   // half that was lying. Inline pass-through stays deliberately deferred: a
   // subverb's arguments belong to the tool whose schema declares them.
-  additionalProperties: false },
+  additionalProperties: false };
+  },
 };
 
 // The tool list contribution. Frozen empty array with the flag off — the

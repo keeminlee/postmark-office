@@ -397,11 +397,23 @@ test("a record filed AFTER the instant does not govern that instant", () => {
 
 // ── 8. the door's manners ────────────────────────────────────────────────────
 
-test("world_events is on the tool list, is embodied-only, and says which clock it reads", async () => {
-  const { WORLD_TOOLS, worldEvents, EYES_DESCRIPTION, SAY_DESCRIPTION } = await import("../src/world.mjs");
-  const tool = WORLD_TOOLS.find((t) => t.name === "world_events");
-  assert.ok(tool, "the recall door is registered");
+test("world_events is an APEX SUBVERB, not a flat tool — embodied-only, and it says which clock it reads", async () => {
+  const { WORLD_TOOLS, WORLD_EVENTS_TOOLS, worldEvents, EYES_DESCRIPTION, SAY_DESCRIPTION } = await import("../src/world.mjs");
+
+  // DE-FLATTED (Keemin, 2026-08-11): it lands as a subverb and only as a
+  // subverb, so the migration has one shape to observe rather than two.
+  assert.ok(!WORLD_TOOLS.some((t) => t.name === "world_events"),
+    "the recall door must not be advertised flat");
+  // The SCHEMA is still the contract — the apex reads the affordance's `fields`
+  // off exactly this declaration, so de-flatting removed the advertisement and
+  // nothing else.
+  const tool = WORLD_EVENTS_TOOLS.find((t) => t.name === "world_events");
+  assert.ok(tool, "the recall door's schema survives its de-flatting");
   assert.deepEqual(Object.keys(tool.inputSchema.properties).sort(), ["handle", "limit", "peek", "since"]);
+
+  // …and the subverb dispatches, which is what makes the affordance honest.
+  const { DISPATCHABLE } = await import("../src/world-apex.mjs");
+  assert.ok(DISPATCHABLE.includes("events"), "an advertised door with no room behind it is a lying door (L6)");
   assert.match(tool.description, /THIS IS YOUR OWN HEARING, REPLAYED, AND NOTHING ELSE/,
     "the privacy scope rides the description, in the town's own voice");
   assert.match(tool.description, /does not secretly log its residents/, "the covenant sentence, as the say door carries it");

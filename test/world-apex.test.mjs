@@ -267,6 +267,25 @@ buildStore();
 const stageDPath = join(repo, "apex-world-stage-d.db");
 buildStore(STAGE_D_MARKS, stageDPath);
 
+// THE APEX-SUBVERB WORLD (2026-08-11): the wheelhouse affords `agree` and the
+// resident class affords `events`, both with handlers. Its own store for the
+// same reason Stage D has one — Stage D exists to be RED, and a fixture cannot
+// be the proof of a lint's alarm and the proof of its silence at once.
+const AGREE_AFFORDANCE = [{ subverb: "agree", blurb: "Arrange your passage while she lies alongside — name a stop to be set down at, or ride until you say otherwise." }];
+const EVENTS_AFFORDANCE = [{ subverb: "events", blurb: "What touched you since you last looked — your own ears' history, and your place in it is kept for you." }];
+const CARRY_CLAUSE = "You are carried only if you are STANDING on her deck when she casts off AND hold an unsevered passage. Neither alone moves you.";
+const SUBVERB_MARKS = [
+  ...MARKS.map((m) => (m.id === "the-town/the-wheelhouse"
+    ? { ...m, props: { ...m.props, affordances: AGREE_AFFORDANCE, carry_clause: CARRY_CLAUSE } }
+    : m)),
+  { id: "the-town/resident", by: "the-town", kind: "sited", tier: "constitution",
+    at: { x: -255, y: -265 }, extent: { w: 50, h: 40 },
+    body: "One resident to an address, sovereign on their own ground and carrying the walk.",
+    props: { class: "resident", class_version: 1, ambient: true, dials: {}, affordances: EVENTS_AFFORDANCE } },
+];
+const subverbPath = join(repo, "apex-world-subverbs.db");
+buildStore(SUBVERB_MARKS, subverbPath);
+
 // ── the code under test ──────────────────────────────────────────────────────
 
 const apex = await import("../src/world-apex.mjs");
@@ -743,7 +762,44 @@ test("terms: a class that publishes a schedule delivers it as the consent docume
   });
   assert.equal(terms.binds.class, "timetable");
   assert.deepEqual(terms.carriage.timetable, TIMETABLE);
-  assert.match(terms.carriage.note, /Riding is consenting/);
+  // THE NOTE NO LONGER STATES THE LAW, and that is the fix. It used to say
+  // "riding is consenting to this schedule's motion" — office prose, true under
+  // the 08-07 law and false the moment the 08-11 ruling made carriage take an
+  // agreement as well as a deck. Nothing could catch that drift, because no
+  // record owned the sentence. The office now says only where the law comes
+  // from; the law itself arrives as `clause`, off the class mark.
+  assert.doesNotMatch(terms.carriage.note, /Riding is consenting/,
+    "the office must not restate a law it does not own");
+  assert.match(terms.carriage.note, /declared by the class that runs it|class mark's own words/);
+  // This fixture's wheelhouse predates `carry_clause:`, so there is no clause to
+  // deliver — and the absence is honest rather than papered over with a default.
+  assert.equal(terms.carriage.clause, undefined,
+    "a class with no declared clause delivers none, and the note says who would declare it");
+});
+
+test("terms: the carry clause is the class mark's OWN sentence, delivered with mode 3's consent document", () => {
+  on();
+  // The whole of mode 3 for `agree`: the schedule you would be consenting to,
+  // and the one sentence of law saying what consenting to it does — both from
+  // the record, neither from this office.
+  const CLAUSE = "You are carried only if you are STANDING on her deck when she casts off AND hold an unsevered passage.";
+  const terms = apex.buildTerms({
+    affording: {
+      id: "the-town/the-wheelhouse", class: "timetable", class_version: 2,
+      blurb: "Arrange your passage while she lies alongside.",
+      dials: JSON.stringify({ pace_km_per_crossing: 405 }),
+      timetable: JSON.stringify(TIMETABLE),
+      carry_clause: CLAUSE,
+      body: "The postmaster's wheelhouse.",
+    },
+    spine: [],
+  });
+  assert.deepEqual(terms.carriage.timetable, TIMETABLE, "the schedule rides");
+  assert.equal(terms.carriage.clause, CLAUSE, "and so does the law, verbatim");
+  assert.equal(terms.carriage.clause_from, "the-town/the-wheelhouse",
+    "named, so a reader can go and check it — a term is a sentence you read");
+  assert.match(terms.carriage.note, /class mark's own words/);
+  assert.ok(terms.budget.used_chars <= apex.TERMS_BUDGET_CHARS, "and it fits the cap it was always meant to fit");
 });
 
 test("terms: only the town's settled text is law; resident prose is QUOTED, authored", async () => {
@@ -903,6 +959,79 @@ test("lint L6: the world as it stands is GREEN — one subverb exposed, and it d
   const l6 = lints.find((l) => l.id === "L6");
   assert.equal(l6.verdict, "GREEN", l6.headline);
   assert.deepEqual(l6.rows, [{ subverb: "say", from: ["the-town/sound"], handled: true }]);
+});
+
+test("THE DE-FLAT, END TO END: neither verb is on tools/list, and both are afforded and dispatched", async () => {
+  on();
+  const { WORLD_TOOLS } = await import("../src/world.mjs");
+  for (const gone of ["world_agree", "world_events"])
+    assert.ok(!WORLD_TOOLS.some((t) => t.name === gone), `${gone} must not be advertised flat`);
+
+  await withStore(subverbPath, async () => {
+    // STANDING AT THE WHEELHOUSE: `agree` is afforded because you are within it,
+    // `events` because the resident class travels with you.
+    const here = await worldApex({ x: 500, y: 500 }, null);
+    const by = Object.fromEntries(here.affordances.map((a) => [a.subverb, a]));
+
+    assert.ok(by.agree, "agree is not afforded inside the wheelhouse");
+    assert.equal(by.agree.from, "the-town/the-wheelhouse");
+    assert.equal(by.agree.via, "within");
+    assert.equal(by.agree.dispatches_to, "world_agree");
+    assert.deepEqual(Object.keys(by.agree.fields).sort(), ["bound_for", "withdraw"],
+      "the fields are DERIVED off the handler's own schema — the class declares none, so they cannot drift");
+
+    assert.ok(by.events, "events is not afforded");
+    assert.equal(by.events.from, "the-town/resident");
+    assert.equal(by.events.via, "ambient", "your ears travel with you");
+    assert.deepEqual(Object.keys(by.events.fields).sort(), ["limit", "peek", "since"]);
+
+    // AMBIENT MEANS EVERYWHERE: forty kilometres out, on open ground, recall is
+    // still afforded and the boat's passage is not.
+    const far = await worldApex({ x: 40000, y: 40000 }, null);
+    const farSubs = far.affordances.map((a) => a.subverb);
+    assert.ok(farSubs.includes("events"), "recall must reach a resident standing anywhere");
+    assert.ok(!farSubs.includes("agree"), "a passage is arranged where she lies, and nowhere else");
+
+    // AND IT BOUNCES WARMLY, naming the berth to walk to.
+    const nope = await worldApex({ do: "agree", x: 40000, y: 40000 }, null);
+    assert.equal(nope.error, "bounce");
+    assert.match(nope.defect, /not afforded where you stand/);
+    assert.ok(nope.affordable_at.some((w) => w.mark === "the-town/the-wheelhouse"));
+  });
+});
+
+test("a subverb cannot be fed ANOTHER subverb's arguments", async () => {
+  on();
+  await withStore(subverbPath, async () => {
+    // The published schema is the union over apex-only subverbs, so the door
+    // lets `limit` through the gate; the matched affordance decides what THIS
+    // act accepts. Without the check `limit` would reach the agreement door and
+    // be ignored in silence — a successful-looking act that did not do what was
+    // asked.
+    const r = await worldApex({ do: "agree", limit: 5, x: 500, y: 500 }, null);
+    assert.equal(r.error, "bounce");
+    assert.equal(r.code, 422);
+    assert.match(r.defect, /"agree" does not take "limit"/);
+    assert.deepEqual(r.takes.sort(), ["bound_for", "withdraw"]);
+    assert.deepEqual(r.stray, ["limit"]);
+  });
+});
+
+test("lint L6 CERTIFIES BOTH NEW PAIRS: agree and events are exposed by law and dispatched by the office", async () => {
+  on();
+  const { runLints } = await import("../src/world-lints.mjs");
+  const { lints } = await runLints({ dbPath: subverbPath, treePath: repo });
+  const l6 = lints.find((l) => l.id === "L6");
+  assert.equal(l6.verdict, "GREEN", l6.headline);
+
+  // Both halves of each pair, named: the class mark that EXPOSES it, and the
+  // office table that HANDLES it. L6 is the lint that would have caught an
+  // advertised door with no room behind it, and de-flatting makes it the only
+  // check that both sides of these two verbs still line up.
+  const row = (sub) => l6.rows.find((r) => r.subverb === sub);
+  assert.deepEqual(row("agree"), { subverb: "agree", from: ["the-town/the-wheelhouse"], handled: true });
+  assert.deepEqual(row("events"), { subverb: "events", from: ["the-town/resident"], handled: true });
+  assert.equal(row("say").handled, true, "and the one that was already green stays green");
 });
 
 test("lint L6: a subverb law exposes with no handler behind it is RED, and named", async () => {

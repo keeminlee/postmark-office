@@ -39,7 +39,7 @@ import {
   boundStopOf, isPassengerPolicy, RIDING_POLICY, BOUND_PREFIX,
 } from "./dynamic-entities.mjs";
 import { vesselServiceFrom } from "./world-movement.mjs";
-import { withinMarkFor } from "./world-within.mjs";
+import { withinMarkFor, worldGeometry } from "./world-within.mjs";
 import { WORLD_CLONE } from "./world-store.mjs";
 
 const bounce = (code, defect, hint, extra = {}) => {
@@ -178,7 +178,7 @@ export async function worldAgree(args = {}, key = null, {
       const severed = severAttachment(store, {
         entity: who, target: vesselId, declaredBy: who,
         at: new Date(atMs).toISOString(),
-        withinMark: where ? withinMarkFor(where, w) : null,
+        withinMark: where ? withinMarkFor(where, w, { geom: await worldGeometry() }) : null,
       });
       const v = mod.vesselPositionAt(service, mod.fractionalCrossing(atMs));
       return {
@@ -214,7 +214,7 @@ export async function worldAgree(args = {}, key = null, {
       // WHERE THEY STOOD WHEN THEY AGREED — the innermost mark containing them
       // at act time. A different field from anything the walk record's `within`
       // means; see src/world-within.mjs. Nothing derives from it yet.
-      withinMark: withinMarkFor(where, w),
+      withinMark: withinMarkFor(where, w, { geom: await worldGeometry() }),
     });
 
     return {

@@ -41,6 +41,21 @@ import {
   git, materializeWorldAtSha, geometryIndex,
 } from "./world-store.mjs";
 
+/**
+ * A frontmatter string with one pair of surrounding quotes taken off.
+ *
+ * The world's own parser (`marks-fold.mjs parseRecord`) coerces objects, arrays
+ * and numbers but has no string case, so a value quoted in the file — which a
+ * sentence containing a colon has to be — arrives here wearing its quotes. This
+ * is the same boundary `ambient:` is normalized at, and for the same reason:
+ * one place meets the parser, and downstream the field is just a sentence.
+ */
+const unquoted = (v) => {
+  if (typeof v !== "string") return null;
+  const t = v.trim().replace(/^"([\s\S]*)"$/, "$1").replace(/^'([\s\S]*)'$/, "$1").trim();
+  return t || null;
+};
+
 const argOf = (name, fallback) => { const i = process.argv.indexOf(name); return i !== -1 ? process.argv[i + 1] : fallback; };
 const flag = (name) => process.argv.includes(name);
 
@@ -230,6 +245,10 @@ for (const m of marks) {
   // had declared world-wide reach and has not is exactly the silent
   // disagreement `frontmatter_problems` exists to surface.
   if (m.ambient != null && m.ambient !== true && m.ambient !== "true") problems.push(`\`ambient:\` must be true to widen reach (got ${JSON.stringify(m.ambient)}) — this class reaches only where it stands`);
+  // A clause is injected verbatim into a resident's context, so it is worth one
+  // check that it reads as a sentence: an empty one is a class claiming to
+  // declare its law and declaring nothing.
+  if (m.carry_clause != null && !unquoted(m.carry_clause)) problems.push("`carry_clause:` is present but empty — a class that declares its law must say something");
   if (problems.length) oddFrontmatter.push({ id: m.id, path: relPath(m._dir), problems });
 
   node(m.id, "mark", {
@@ -259,6 +278,21 @@ for (const m of marks) {
       dials: (m.dials && typeof m.dials === "object" && !Array.isArray(m.dials)) ? m.dials : null,
       implements: Array.isArray(m.implements) ? m.implements : null,
       affordances: Array.isArray(m.affordances) ? m.affordances : null,
+      // `carry_clause:` is the one SENTENCE of law that binds an act the class
+      // affords — carried for the same reason `dials:` is, and delivered by the
+      // apex's terms block as mode 3's consent document (LOGOS/reads-and-
+      // affordances.md). It rides the class mark rather than the office so that
+      // the law a resident is shown at the door is law, not office prose: the
+      // office's own sentence about carriage was still saying "riding is
+      // consenting to this schedule's motion" a day after the agreement ruling
+      // made that false, and nothing could have caught it, because no record
+      // owned it.
+      // Quoted in the mark file because the clause contains a colon, and
+      // UNQUOTED here: the world's frontmatter parser has no string case that
+      // strips them, so without this the resident is shown a sentence wearing
+      // its own punctuation. Normalized at the boundary, beside `ambient:`, for
+      // the same reason — this is the one place that meets the parser.
+      carry_clause: unquoted(m.carry_clause),
       mobility: m.mobility ?? null,
       anchor: m.anchor ?? null,
       exempt: Array.isArray(m.exempt) ? m.exempt : null,

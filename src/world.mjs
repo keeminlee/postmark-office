@@ -31,8 +31,9 @@ import {
 } from "./world-branches.mjs";
 import { WORLD_STAKE_TOOLS, callWorldStakeTool, worldPortfolioStakeSlice } from "./world-stake.mjs"; // P3 draft, append-shaped
 import { WORLD_AGREE_TOOLS, worldAgree } from "./world-agree.mjs"; // the agreement law, 2026-08-11 — append-shaped
-import { withinMarkFor } from "./world-within.mjs"; // where an act happened, as one mark id (additive stamp)
-import { WORLD_EVENTS_TOOLS, createEvents, EYES_CLOCK_DISCLOSURE, SAY_CLOCK_DISCLOSURE } from "./world-events.mjs"; // the events read: truth has no budget, every READ does (2026-08-11)
+import { withinMarkFor, worldGeometry } from "./world-within.mjs"; // where an act happened, as one mark id (additive stamp)
+import { WORLD_EVENTS_TOOLS, createEvents, EYES_CLOCK_DISCLOSURE, SAY_CLOCK_DISCLOSURE } from "./world-events.mjs";
+export { WORLD_EVENTS_TOOLS }; // the events read: truth has no budget, every READ does (2026-08-11)
 import { createVoices, EARSHOT_M } from "./voices.mjs"; // earshot: speech at a position (the party line)
 import { householdOf } from "./households.mjs"; // the human speaker's label wears the town's name, never the login
 import { householdLockPath, poolEnabled, pushDraftBranch, withDraftLease } from "./world-pool.mjs";
@@ -1613,7 +1614,7 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
   // `within`/`targetExtent`, which is the TARGET's frozen arrival rect. Stamped
   // once and never re-resolved, so a mark that later moves or retires cannot
   // rewrite where this was said (the tense law). Nothing derives from it yet.
-  const withinMark = withinMarkFor(from, w);
+  const withinMark = withinMarkFor(from, w, { geom: await worldGeometry() });
 
   let result;
   if (movementV2Enabled()) {
@@ -1950,8 +1951,16 @@ export const WORLD_TOOLS = [
       since: { type: "number", description: "the `latest` stamp from your previous reply — you receive only voices newer than it. Lingering at a gathering? Always pass this; it is the difference between re-buying the room every call and hearing only what is new." },
     }, additionalProperties: false } },
   ...WORLD_STAKE_TOOLS, // world_stake / world_unstake / world_stake_read (P3)
-  ...WORLD_AGREE_TOOLS, // world_agree — the only way anyone is carried (2026-08-11)
-  ...WORLD_EVENTS_TOOLS, // world_events — the recall read (2026-08-11)
+  // DE-FLATTED 2026-08-11 (Keemin): `world_agree` and `world_events` are NOT
+  // spread here. They land as APEX SUBVERBS and only as subverbs — "anything
+  // short of that creates more work during the migration, and is a direct
+  // observability crutch that precludes us from telling if the subverb method
+  // is even working." Their schemas live on in WORLD_AGREE_TOOLS /
+  // WORLD_EVENTS_TOOLS, which `src/world-apex.mjs` imports so an affordance's
+  // `fields` reads the real declaration. The handlers are untouched, and
+  // `callWorldTool` still answers both names for the REST door and for anything
+  // holding a direct reference — de-flatting removes the advertisement, never
+  // the room behind it.
 ];
 
 // Exported so the flag-gating can be falsified against the base text itself.
@@ -1996,6 +2005,26 @@ export const SAY_PRESENCE_DISCLOSURE = " QUIET IS NOT GONE: `listeners` is every
 // were up to.
 export const SAY_RECORD_DISCLOSURE = " And the town remembers out loud: what you say leaves everyone's hearing after five minutes, but it is written into Postmark's own public record at every crossing — the words, the speaker, the place and the hour — and kept there openly, so the people whose agents live here can read back later what the day actually held.";
 
+/**
+ * `world_agree` with the office's own two readers bound in.
+ *
+ * ONE HOME FOR THE INJECTION. `world()` is module-private (the fold cache lives
+ * behind it), so anything that wants to call the agreement door has to come
+ * through here — and since the apex now dispatches `agree` as a subverb, "here"
+ * has to be one function rather than two call sites that happen to agree today.
+ * The door checks standing against the SAME standpoint every other door reports;
+ * a second binding would be a second answer to "where is this resident".
+ */
+export async function worldAgreeViaOffice(args = {}, key = null) {
+  return worldAgree(args, key, {
+    worldOf: () => world(key),
+    positionOf: async (h) => {
+      const st = await residentStandpoint(h, await world(key)).catch(() => null);
+      return st?.placed ? { x: st.x, y: st.y } : null;
+    },
+  });
+}
+
 export async function callWorldTool(name, args = {}, key = null) {
   switch (name) {
     case "world_orient": return worldOrient(args, key);
@@ -2010,13 +2039,7 @@ export async function callWorldTool(name, args = {}, key = null) {
     // The agreement door is handed the office's OWN two readers rather than
     // reaching for them itself: one fold, one standpoint, so a passage is
     // checked against the same position every other door reports.
-    case "world_agree": return worldAgree(args, key, {
-      worldOf: () => world(key),
-      positionOf: async (h) => {
-        const st = await residentStandpoint(h, await world(key)).catch(() => null);
-        return st?.placed ? { x: st.x, y: st.y } : null;
-      },
-    });
+    case "world_agree": return worldAgreeViaOffice(args, key);
     case "world_events": return worldEvents(args, key);
     default: return callWorldStakeTool(name, args, key); // P3; returns null for anything it doesn't own
   }

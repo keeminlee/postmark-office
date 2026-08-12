@@ -268,10 +268,10 @@ test("MCP initialize → protocol + instructions", async () => {
   assert.match(body.result.instructions, /The reading law/, "the handshake carries the reading law");
 });
 
-test("MCP tools/list names all 39 tools", async () => {
+test("MCP tools/list names all 37 tools", async () => {
   const { body } = await rpc("tools/list");
   const names = body.result.tools.map((t) => t.name);
-  assert.equal(names.length, 39);
+  assert.equal(names.length, 37);
   for (const n of ["read_town", "read_doorstep", "send_letter", "stake_vote", "read_votes",
     "read_metrics", "list_letters", "list_regions", "read_home", "request_residency",
     "update_address_body", "update_home", "update_profile", "update_window", "list_commits", "whoami",
@@ -279,28 +279,48 @@ test("MCP tools/list names all 39 tools", async () => {
     "world_my_marks", "world_leave_mark", "world_note", "world_walk", "world_walkers",
     // world-stake P3: the three doors that put stamps behind a mark
     "world_stake", "world_unstake", "world_stake_read",
-    "world_say", // earshot: speak where you stand, hear who stands near you
-    "world_agree", // the agreement law (2026-08-11): the only way anyone is carried
-    "world_events"]) // recall: what touched you since you last looked
+    "world_say"]) // earshot: speak where you stand, hear who stands near you
     assert.ok(names.includes(n), n);
 });
 
-test("world_agree is a WRITE tool — an agreement is signed, and nobody signs one for anyone else", async () => {
+test("DE-FLATTED: world_agree and world_events are on NO flat list — the subverb is the only door", async () => {
+  // Keemin, 2026-08-11: they land as apex subverbs or not at all — "anything
+  // short of that ... is a direct observability crutch that precludes us from
+  // telling if the subverb method is even working." A flat listing left beside
+  // the affordance is exactly that crutch, so its absence is the test.
   const { body } = await rpc("tools/list");
-  const agree = body.result.tools.find((t) => t.name === "world_agree");
-  assert.ok(agree, "the door is listed");
-  // The description is where the corrected carry condition is actually disclosed
-  // to a resident, and BOTH halves have to be in it. A door that taught only
-  // "you need a passage" would strand someone who agreed and then wandered off;
-  // one that taught only "stand on her deck" would be teaching the retired law.
-  assert.match(agree.description, /standing on her deck/i, "it says the edge is required");
-  assert.match(agree.description, /never a ticket|not a ticket/i, "…and that the deck alone is not enough");
-  assert.match(agree.description, /neither alone/i, "…and that the two are an AND, said plainly");
-  assert.match(agree.description, /bound_for/, "and names the field that says where you are bound");
-  assert.match(agree.description, /walking away/i, "and teaches the escape that actually exists");
-  // The office's own vocabulary, not the store's furniture.
-  for (const leak of ["attachment", "edge", "policy", "cascade"])
-    assert.ok(!agree.description.toLowerCase().includes(leak), `"${leak}" is store furniture, not a word residents read`);
+  const names = body.result.tools.map((t) => t.name);
+  for (const gone of ["world_agree", "world_events"])
+    assert.ok(!names.includes(gone), `${gone} must not be advertised flat — it is a subverb now`);
+
+  // AND THE ROOM IS STILL THERE. De-flatting removes the advertisement, never
+  // the handler: the schema still exists (the apex reads `fields` off it) and
+  // `callWorldTool` still answers both names for the REST door.
+  const { WORLD_AGREE_TOOLS } = await import("../src/world-agree.mjs");
+  const { WORLD_EVENTS_TOOLS } = await import("../src/world.mjs");
+  assert.equal(WORLD_AGREE_TOOLS[0].name, "world_agree", "the schema survives the de-flatting");
+  assert.equal(WORLD_EVENTS_TOOLS[0].name, "world_events");
+});
+
+test("the apex publishes the apex-only subverbs' fields inline, and nobody else's", async () => {
+  // De-flatting FORCED inline pass-through: the door refuses any argument its
+  // schema does not name, so with no flat listing `bound_for`/`withdraw`/
+  // `limit`/`peek` would be unreachable through any door at all. They are
+  // published — and narrowly, from the apex-only verbs only, because the four
+  // subverbs that still HAVE a flat tool keep the old contract.
+  const { APEX_TOOL, APEX_ONLY } = await import("../src/world-apex.mjs");
+  const props = APEX_TOOL.inputSchema.properties;
+  assert.deepEqual([...APEX_ONLY].sort(), ["agree", "events"]);
+  for (const f of ["bound_for", "withdraw", "limit", "peek"])
+    assert.ok(props[f], `${f} must be reachable — it has nowhere else to live`);
+  // …and NOT the flat-backed subverbs' fields, or the one verb built to stop
+  // charging for unused schemas would charge for thirty of them.
+  for (const f of ["text", "slug", "body", "points", "stamps", "mark_id"])
+    assert.ok(!props[f], `${f} belongs to a subverb that still has its own tool — it must not be published here`);
+  assert.ok(Object.keys(props).length <= 12, `the apex stays small: ${Object.keys(props).length} params`);
+  // The schema stays CLOSED — the door validates by name, and the published
+  // half must not promise a pass-through the runtime will refuse (issue #7 §3).
+  assert.equal(APEX_TOOL.inputSchema.additionalProperties, false);
 });
 
 test("GET /me — a static key reads its own identity; anonymous is 401 + discovery", async () => {
