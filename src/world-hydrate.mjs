@@ -32,7 +32,7 @@
 //   over historical events never re-decides history when a mark moves.
 
 import { DatabaseSync } from "node:sqlite";
-import { existsSync, rmSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, rmSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join, resolve, dirname, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -937,12 +937,43 @@ if (!flag("--no-gexf")) {
   ];
 }
 
+// The same picture, in the shape the graph hub eats. The hub
+// (world tools/graph-views.mjs) renders every graph this town has on one page
+// under the LOGOS frame, and the window pane among them is THIS payload —
+// consumed as data, with no Cytoscape and no server, so an operator can open a
+// single file and see the store beside the law.
+//
+// Written HERE, at hydration end, for exactly the reason the GEXF pair is:
+// "so the ad-hoc view can never drift behind the store it is a picture of."
+// The alternative — regenerating on request — is a live route's decision and
+// not this writer's; whichever the box ends up serving, the artifact on disk is
+// the one the hydration wrote, and its provenance is the hydration's own.
+//
+// Same spelling of the location as the GEXF exports, on the writer's side,
+// whatever --db this run was pointed at. Ignored by git like the GEXF files:
+// it is a projection of a store that is itself a pure index.
+let graphJson = null;
+if (!flag("--no-graph-json")) {
+  const { worldGraphView } = await import("./world-graph.mjs");
+  const view = worldGraphView({ dbPath: DB_PATH });
+  const out = join(OFFICE, "world-graph.json");
+  if (view?.error) {
+    graphJson = { out, error: view.error, detail: view.detail ?? null };
+    warn.push(`world-graph.json not written: ${view.error}`);
+  } else {
+    const body = JSON.stringify(view);
+    writeFileSync(out, body);
+    graphJson = { out, bytes: body.length, nodes: view.counts?.nodes ?? null, edges: view.counts?.edges ?? null };
+  }
+}
+
 // ── report ───────────────────────────────────────────────────────────────────
 if (JSON_OUT) {
-  console.log(JSON.stringify({ as_of_world: worldSha, as_of_office: officeSha, hydrated_at: hydratedAt, counts, anomalies, gates: GATES, lints: lintSummary?.lints.map((l) => ({ id: l.id, verdict: l.verdict, headline: l.headline })), gexf }, null, 2));
+  console.log(JSON.stringify({ as_of_world: worldSha, as_of_office: officeSha, hydrated_at: hydratedAt, counts, anomalies, gates: GATES, lints: lintSummary?.lints.map((l) => ({ id: l.id, verdict: l.verdict, headline: l.headline })), gexf, graph_json: graphJson }, null, 2));
 } else {
   for (const w of warn) console.warn(`WARN: ${w}`);
   console.log(`hydrated ${DB_PATH} in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+  if (graphJson) console.log(`  graph hub feed: ${graphJson.error ? `NOT WRITTEN — ${graphJson.error}` : `${graphJson.out} (${graphJson.nodes} nodes, ${graphJson.edges} edges, ${(graphJson.bytes / 1024).toFixed(0)} KB)`}`);
   console.log(`  as_of world ${worldSha.slice(0, 12)} (${REF ?? "HEAD"}) · office ${(officeSha ?? "?").slice(0, 12)}`);
   console.log(`  nodes ${counts.nodes_total} ${JSON.stringify(counts.nodes_by_kind)}`);
   console.log(`  edges ${counts.edges_total} ${JSON.stringify(counts.edges_by_type)}`);

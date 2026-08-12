@@ -28,4 +28,8 @@ world-shadow-diff.jsonl*
 # the world store's window: regenerated at the end of every hydration, ~850 KiB
 # each, and rebuildable from world.db at any moment
 *.gexf
+# the graph hub's feed: the same picture the GEXF pair holds, in the shape
+# world tools/graph-views.mjs eats. A projection of a store that is itself a
+# pure index — rewritten at the end of every hydration.
+world-graph.json
 .probe/
