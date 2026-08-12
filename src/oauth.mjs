@@ -33,7 +33,7 @@ const GH_AUTH = process.env.GITHUB_AUTH_URL ?? "https://github.com/login/oauth/a
 const GH_TOKEN = process.env.GITHUB_TOKEN_URL ?? "https://github.com/login/oauth/access_token";
 const GH_API = process.env.GITHUB_API_URL ?? "https://api.github.com";
 
-const ACCESS_TTL_S = 7 * 24 * 3600;   // 7d — connectors refresh
+const ACCESS_TTL_S = 30 * 24 * 3600;  // 30d (Keemin's word, 2026-08-12 — the first day-seven aged a founder's browser session out silently); connectors refresh regardless, and the site's silent-refresh loop is queued
 const REFRESH_TTL_S = 60 * 24 * 3600; // 60d
 const CODE_TTL_S = 120;
 const PENDING_TTL_S = 600;
