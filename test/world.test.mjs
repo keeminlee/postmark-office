@@ -98,6 +98,48 @@ const bounced = (payload, defect) => {
   );
 };
 
+// ── tier is not a field (Keemin's ruling, 2026-08-12) ────────────────────────
+// The world stopped reading a resident's `tier:` line — standing is derived
+// from the ground by the one walk. So the door stops writing one: a rank nobody
+// honours is a promise the town did not make, and the resident is owed the
+// sentence rather than a word that quietly does nothing.
+test("world_leave_mark refuses a resident-declared tier — standing derives from the ground", async () => {
+  const DEFECT = "tier is not a field — standing derives from the ground";
+  // every word a resident could once write here, including the two that worked
+  for (const tier of ["market", "sovereignty", "constitution", "draft", "whatever"])
+    await bounced({ ...validMark, tier }, DEFECT);
+
+  // the hint teaches the law rather than naming a schema
+  await assert.rejects(
+    () => leaveMarkViaOffice(process.env.WORLD_CLONE, { ...validMark, tier: "sovereignty" }, one),
+    (e) => /your own parcel is yours/.test(e.hint) && /the town's law is the town's/.test(e.hint),
+  );
+
+  // omitting it is the ordinary shape and gets past the tier check entirely —
+  // this payload dies later, at the clone, which is exactly how far it should get
+  await assert.rejects(
+    () => leaveMarkViaOffice(process.env.WORLD_CLONE, { ...validMark }, one),
+    (e) => !/tier/.test(String(e.defect)),
+  );
+});
+
+test("world_leave_mark still lets the town write its own law, and only that word", async () => {
+  // The law layer has not moved onto class-nodes yet, so the world's loader
+  // still reads `tier: constitution` off the-town's records — the founder pen
+  // must keep authoring them through this door.
+  const town = { household: "the-town", handles: new Set(["the-town"]) };
+  const townMark = { ...validMark, by: "the-town", tier: "constitution" };
+  await assert.rejects(
+    () => leaveMarkViaOffice(process.env.WORLD_CLONE, townMark, town),
+    (e) => !/tier/.test(String(e.defect)),   // past the tier gate; it dies at the clone
+  );
+  // …and the town does not get the abolished words back either
+  await assert.rejects(
+    () => leaveMarkViaOffice(process.env.WORLD_CLONE, { ...townMark, tier: "sovereignty" }, town),
+    (e) => e.code === 422 && /not a tier anyone sets/.test(e.defect),
+  );
+});
+
 test("world_leave_mark pre-check names the exact body overage in Unicode characters", async () => {
   await bounced({ ...validMark, body: "x".repeat(163) }, "body is 163 chars; the cap is 150");
   await bounced({ ...validMark, body: "😀".repeat(151) }, "body is 151 chars; the cap is 150");

@@ -1086,9 +1086,24 @@ export async function leaveMarkViaOffice(worldClone, payload = {}, key = null) {
   if (!body || !String(body).trim()) throw bounce(422, "a mark needs a body", "one present-tense observation, ≤150 characters");
   const bodyLength = [...String(body).trim()].length;
   if (bodyLength > 150) throw bounce(422, `body is ${bodyLength} chars; the cap is 150`, "MARKS.md 07-22 ruling");
-  const t = tier ?? "market";
-  if (!["market", "sovereignty", "constitution"].includes(t)) throw bounce(422, `unknown tier "${t}"`, "market (default), sovereignty (your own parcel), or constitution (the town only)");
-  if (t === "constitution" && by !== "the-town") throw bounce(403, "constitution marks are the town's alone", "a market mark cannot bind without stamps — leave it market");
+  // ── tier is not a field (Keemin's ruling, 2026-08-12) ──────────────────────
+  // STANDING IS DERIVED FROM THE GROUND, by the world's one walk
+  // (tools/mark-standing.mjs), so a resident naming their own rank is naming
+  // nothing — the world stopped reading it. The door refuses the word instead
+  // of writing one the world will ignore, because a record that carries a rank
+  // nobody honours is a promise the town did not make.
+  //
+  // The one tier still WRITTEN is the town's own law, and only the town may
+  // write it: the world's loader reads `tier: constitution` off the-town's
+  // records until the law layer moves onto class-nodes. That path is left
+  // exactly as it was, so the founder pen still authors constitution marks
+  // through this door.
+  if (tier !== undefined && by !== "the-town")
+    throw bounce(422, "tier is not a field — standing derives from the ground",
+      "your own parcel is yours, the commons contest, and the town's law is the town's. Leave tier off: where you build decides what you hold.");
+  if (tier !== undefined && tier !== "constitution")
+    throw bounce(422, `the town writes only its own law at this door — "${tier}" is not a tier anyone sets`,
+      "omit tier, or pass constitution");
   if (kind === "sited" || kind === "parcel") {
     if (!at || !Number.isFinite(Number(at.x)) || !Number.isFinite(Number(at.y))) throw bounce(422, "sited/parcel marks need at {x,y}", "grid meters east/south of Ferry's crossing");
     if (kind === "sited" && (!extent || !(Number(extent.w) || Number(extent.h)))) throw bounce(422, "a sited mark needs an extent {w,h}", "its footprint in grid meters");
@@ -1139,7 +1154,9 @@ export async function leaveMarkViaOffice(worldClone, payload = {}, key = null) {
 
   const household = String(key?.household ?? "").trim();
   if (!household) throw bounce(403, "this credential has no resident household", "sign in as a resident household before leaving a mark");
-  const clean = { slug, kind, at, extent, points, body: String(body).trim(), tier: t, slot, value, parent_id, by, household, date: new Date().toISOString(),
+  // No `tier` unless the town is writing its own law: a record with no tier
+  // line is the ordinary shape now, and the world derives its standing at read.
+  const clean = { slug, kind, at, extent, points, body: String(body).trim(), ...(tier === undefined ? {} : { tier }), slot, value, parent_id, by, household, date: new Date().toISOString(),
     ...(klass === undefined ? {} : { class: klass, ask: String(ask).trim(), reward: Number(reward), status: status === undefined ? "open" : String(status).trim() }) };
   const exec = join(HERE, "leave-exec.mjs");
   let result;
@@ -1745,7 +1762,9 @@ export const WORLD_TOOLS = [
       extent: { type: "object", description: "footprint in meters (sited only — a parcel carries no extent: every parcel is the town's 25×25, set by the door)", properties: { w: { type: "number" }, h: { type: "number" } } },
       points: { type: "array", description: "optional polygon ring [[x,y],…] for an irregular shape; its bbox must equal at/extent" },
       body: { type: "string", description: "one present-tense observation; maximum 150 characters — the mark's face in every view" },
-      tier: { type: "string", enum: ["market", "sovereignty", "constitution"], description: "default market (constitution is the town's alone)" },
+      // Kept in the schema so the door can answer in its own words rather than
+      // let the generic unknown-argument bounce field a question about the law.
+      tier: { type: "string", description: "NOT A FIELD — passing it is refused. Your standing is derived from the ground you build on: your own parcel is yours, the commons contest, and the town's law is the town's" },
       slot: { type: "string", description: "REQUIRED for predicated: the freeform rivalry key; naming omits it or uses \"name\"; forbidden on sited/parcel" },
       value: { type: "string", description: "REQUIRED for predicated and naming; forbidden on sited/parcel" },
       parent_id: { type: "string", description: "predicated/naming: the mark this describes, <by>/<slug>" },
