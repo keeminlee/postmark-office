@@ -39,7 +39,7 @@ import { existsSync } from "node:fs";
 
 import { WORLD_CLONE } from "./world-store.mjs";
 import { movementV2Enabled, openDynamic, dynamicDbPath } from "./dynamic-store.mjs";
-import { readMovements, VESSEL_HANDLE, worldToolModule } from "./dynamic-entities.mjs";
+import { agreementsFor, readMovements, VESSEL_HANDLE, worldToolModule } from "./dynamic-entities.mjs";
 import { boundariesOnRoad, carriersFrom, carriersWithDisclosure, carrierStateAt, foldFrames, gunwaleWarning, inRect } from "./world-frames.mjs";
 
 // The flag is read from the environment on every call and never latched at
@@ -205,6 +205,31 @@ export function storedDepartureFor(handle, opts = {}) {
 }
 
 /**
+ * One entity's PASSAGES, in the shape `foldFrames` and the world's `vessel.mjs`
+ * both read: `{ target, policy, born_at, severed_at? }`.
+ *
+ * Never throws, for the reason every store read in this module does not: an
+ * unopenable store must not be able to take down `orient`. It answers [] — and
+ * an empty list is the law's own default (nobody agreed, so nobody is carried),
+ * which is the SAFE direction to fail in. The failure that matters would be the
+ * other one: inventing a passage nobody made.
+ */
+export function agreementsForHandle(handle, { db = null, dbPath = null, atMs = Date.now() } = {}) {
+  const path = dbPath ?? dynamicDbPath();
+  if (!db && !existsSync(path)) return [];
+  let h = db, own = false;
+  try {
+    if (!h) { h = openDynamic(path, { readOnly: true }); own = true; }
+    const rows = agreementsFor(h, handle, { until: atMs });
+    if (own) h.close();
+    return rows;
+  } catch {
+    if (own && h) { try { h.close(); } catch { /* already gone */ } }
+    return [];
+  }
+}
+
+/**
  * One entity's records across BOTH eras, oldest first.
  *
  * The frozen ledger is the founding era and the store is era two; ordering by
@@ -302,7 +327,8 @@ export async function movementStandpoint(handle, worldState, {
   if (!records.length) return null;
 
   const walk = (await vesselServiceFrom(worldState, { repo })).walk;
-  const fold = await foldFrames(records, { carriers, carrierAt, walk, atMs });
+  const agreements = agreementsForHandle(handle, { db, dbPath, atMs });
+  const fold = await foldFrames(records, { carriers, carrierAt, walk, atMs, agreements });
   if (!fold.world) return null;
 
   // A leg still under way is still under way — the frame law governs WHERE you
@@ -313,6 +339,12 @@ export async function movementStandpoint(handle, worldState, {
   const moving = own?.arrived === false;
 
   const inFrame = Boolean(fold.frame);
+  // ABOARD IS THE CARRIAGE, NOT THE EDGE (ruled 2026-08-11). The edge is still
+  // reported — it is physics and it formed — but `aboard` is a claim that she
+  // takes you with her, and that takes a passage. Someone who walked onto her
+  // deck without one is standing on a quay she has left; saying "aboard" of them
+  // would be the office asserting the retired law at a read surface.
+  const carried = inFrame && fold.carries;
   return {
     handle,
     // Mid-leg the road owns the position; arrived, the frame does. Both are the
@@ -324,14 +356,20 @@ export async function movementStandpoint(handle, worldState, {
     source: inFrame ? "frame" : "walk",
     moving,
     remaining_m: moving ? own.remainingM : 0,
-    aboard: inFrame,
+    aboard: carried,
     frame: fold.frame,
     frame_offset: inFrame ? fold.local : null,
+    // The edge, reported separately from what it may do — a caller that wants
+    // "is this entity inside a carrier's bounds" still has its answer.
+    in_carrier: inFrame,
+    has_passage: Boolean(fold.carries),
     provenance: moving ? "walked" : fold.provenance,
     transitions: fold.transitions,
-    narration: inFrame
+    narration: carried
       ? `in ${fold.frame}'s frame${fold.provenance === "carried" ? ", carried" : ""}`
-      : (moving ? "the road — your walk in progress" : null),
+      : inFrame
+        ? `on ${fold.frame}'s deck with no passage — she sails without you`
+        : (moving ? "the road — your walk in progress" : null),
     mark_id: last.targetMarkId ?? null,
   };
 }
@@ -371,8 +409,14 @@ export async function heardFromV2(voice, worldState, { repo = WORLD_CLONE, atMs 
   let frame = null, local = null;
   if (records.length) {
     const walk = (await vesselServiceFrom(worldState, { repo })).walk;
-    const fold = await foldFrames(records, { carriers, carrierAt, walk, atMs: spokenMs });
-    frame = fold.frameCarrier; local = fold.local;
+    const agreements = agreementsForHandle(voice.handle, { db, dbPath, atMs: spokenMs });
+    const fold = await foldFrames(records, { carriers, carrierAt, walk, atMs: spokenMs, agreements });
+    // A VOICE RIDES A FRAME IT IS ACTUALLY BEING CARRIED BY. Someone standing on
+    // her deck at the quay with no passage is speaking from the quay, and their
+    // words must stay there when she sails — otherwise the office would relocate
+    // a conversation onto a boat its speaker never boarded. The position floor
+    // below still catches anyone genuinely aboard a moving carrier.
+    if (fold.carries) { frame = fold.frameCarrier; local = fold.local; }
   }
 
   // THE POSITION FLOOR. A voice spoken from inside a carrier's footprint while

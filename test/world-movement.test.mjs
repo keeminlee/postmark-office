@@ -7,8 +7,9 @@
 //   1. flag-off changes nothing               — the whole module is unreachable
 //   2. a carrier is CLASS-DECLARED            — nothing here knows the word "boat"
 //   3. the carrier runs on her timetable      — position = f(timetable, clock)
-//   4. crossing the boundary is the edge      — the walk is the consent
-//   5. carriage is nothing happening          — she sails, your offset holds
+//   4. crossing the boundary is the edge      — and the edge always forms
+//   5. carriage takes EDGE **and** PERMISSION — she sails, and your offset holds
+//                                               only if you agreed to be carried
 //   6. hearing composes through the frame     — and needed no change to do it
 //   7. the contract is shown at the boundary  — terms before the step
 //   8. the freeze is a change of pen          — and refuses to be a change of place
@@ -19,6 +20,17 @@
 // are re-proved here in frame terms — most visibly `pass-through-doesn't-board`,
 // which is now "entered and left before she moved: no live edge, no carry". The
 // protected outcome is identical; the reason it holds is simpler.
+//
+// AND WHAT CAME BACK (ruled 2026-08-11, Keemin). Edges are physics and always
+// form; what an edge may DO is contract plus permission. So the frame edge below
+// is unchanged — crossing her boundary still makes it, with no declaration — and
+// CARRIAGE is now gated on an unsevered agreement read from dynamic.db. The
+// declaration is back; the ceremony is not. There is still no validation rule
+// here (the door checks standing once, when the passage is made), no lapse rule,
+// and no "was she sailing at that instant" question anywhere.
+//
+// The fold takes `agreements` as an injected list, so the quadrant tests below
+// drive it directly and never need a store.
 
 import test, { after } from "node:test";
 import assert from "node:assert/strict";
@@ -190,22 +202,97 @@ test("nobody writes your movement but you: the edge is born by YOUR record", asy
 
 // ── 5. carriage is nothing happening ─────────────────────────────────────────
 
-test("she sails, your offset holds, you moved", async () => {
+// A passage in the shape the fold reads. `born` is well before every instant in
+// this file, so a test that passes one is testing the permission and not a clock.
+const passage = (target = "the-town/the-post-office", { policy = "riding", severed = null } = {}) =>
+  [{ target, policy, born_at: new Date(atCrossing(9)).toISOString(),
+     ...(severed === null ? {} : { severed_at: new Date(severed).toISOString() }) }];
+
+test("WITH A PASSAGE she sails, your offset holds, you moved", async () => {
+  const { carrierAt } = await reader();
+  const walk = await walkMod();
+  const carriers = carriersFrom(MARKS);
+  const records = [departure({ handle: "rider", from: { x: 60, y: 0 }, toward: { x: 2, y: 3 }, at: 10.0 })];
+  const agreements = passage();
+
+  const before = await foldFrames(records, { carriers, carrierAt, walk, atMs: BEFORE_SAILING, agreements });
+  const after_ = await foldFrames(records, { carriers, carrierAt, walk, atMs: AFTER_LANDING, agreements });
+
+  assert.deepEqual(before.local, after_.local, "the offset in her frame is UNCHANGED — that is what carriage is");
+  assert.notDeepEqual(before.world, after_.world, "and the world position moved anyway");
+  assert.equal(after_.provenance, "carried");
+  assert.equal(after_.carries, true);
+
+  const boat = await vesselPositionAt(MARKS, AFTER_LANDING, REPO);
+  assert.deepEqual(after_.world, { x: boat.x + after_.local.x, y: boat.y + after_.local.y },
+    "composition is carrier + offset, and nothing else");
+});
+
+test("WITHOUT A PASSAGE she sails and you do not — the live path refuses presence-only carriage", async () => {
+  // The retired law, refused where it actually ran. This is the same walker as
+  // the test above, same deck, same sailing; the ONLY difference is that nobody
+  // agreed. Under the 08-10 frame law alone they were carried off the quay.
+  const { carrierAt } = await reader();
+  const walk = await walkMod();
+  const carriers = carriersFrom(MARKS);
+  const records = [departure({ handle: "stander", from: { x: 60, y: 0 }, toward: { x: 2, y: 3 }, at: 10.0 })];
+
+  const before = await foldFrames(records, { carriers, carrierAt, walk, atMs: BEFORE_SAILING });
+  const after_ = await foldFrames(records, { carriers, carrierAt, walk, atMs: AFTER_LANDING });
+
+  assert.equal(before.frame, "the-town/the-post-office", "THE EDGE STILL FORMS — it is physics and nobody asked");
+  assert.equal(before.carries, false, "…and it carries nothing, because nothing was agreed");
+  assert.deepEqual(after_.world, before.world, "she sailed; they are exactly where they were");
+  assert.equal(after_.provenance, "walked", "nothing carried them, so nothing says it did");
+
+  const boat = await vesselPositionAt(MARKS, AFTER_LANDING, REPO);
+  assert.notDeepEqual(after_.world, { x: boat.x + after_.local.x, y: boat.y + after_.local.y },
+    "and they are NOT where the composition would have put them");
+});
+
+test("a SEVERED passage carries no further than its own ending", async () => {
+  const { carrierAt } = await reader();
+  const walk = await walkMod();
+  const carriers = carriersFrom(MARKS);
+  const records = [departure({ handle: "quitter", from: { x: 60, y: 0 }, toward: { x: 2, y: 3 }, at: 10.0 })];
+  // Withdrawn before she casts off.
+  const agreements = passage("the-town/the-post-office", { severed: atCrossing(10.3) });
+
+  const after_ = await foldFrames(records, { carriers, carrierAt, walk, atMs: AFTER_LANDING, agreements });
+  assert.equal(after_.carries, false, "the permission ended before the hour");
+  assert.equal(after_.provenance, "walked");
+
+  // …and reading the same records at an instant while it still stood carries.
+  const during = await foldFrames(records, { carriers, carrierAt, walk, atMs: BEFORE_SAILING, agreements });
+  assert.equal(during.carries, true, "before the withdrawal it stood, and the record still says so");
+});
+
+test("a passage with SOMEONE ELSE'S carrier is not a passage with this one", async () => {
+  const { carrierAt } = await reader();
+  const walk = await walkMod();
+  const carriers = carriersFrom(MARKS);
+  const records = [departure({ handle: "confused", from: { x: 60, y: 0 }, toward: { x: 2, y: 3 }, at: 10.0 })];
+
+  for (const wrong of [passage("someone/a-cart"), [{ target: "the-town/the-post-office", policy: "cascade", born_at: new Date(atCrossing(9)).toISOString() }]]) {
+    const fold = await foldFrames(records, { carriers, carrierAt, walk, atMs: AFTER_LANDING, agreements: wrong });
+    assert.equal(fold.carries, false, `${JSON.stringify(wrong[0].policy)} on ${wrong[0].target} is not a passage on her`);
+  }
+});
+
+test("the transition says whether the edge it records CARRIES — the two halves, reported apart", async () => {
   const { carrierAt } = await reader();
   const walk = await walkMod();
   const carriers = carriersFrom(MARKS);
   const records = [departure({ handle: "rider", from: { x: 60, y: 0 }, toward: { x: 2, y: 3 }, at: 10.0 })];
 
-  const before = await foldFrames(records, { carriers, carrierAt, walk, atMs: BEFORE_SAILING });
-  const after_ = await foldFrames(records, { carriers, carrierAt, walk, atMs: AFTER_LANDING });
+  const bare = await foldFrames(records, { carriers, carrierAt, walk, atMs: BEFORE_SAILING });
+  const ticketed = await foldFrames(records, { carriers, carrierAt, walk, atMs: BEFORE_SAILING, agreements: passage() });
 
-  assert.deepEqual(before.local, after_.local, "the offset in her frame is UNCHANGED — that is what carriage is");
-  assert.notDeepEqual(before.world, after_.world, "and the world position moved anyway");
-  assert.equal(after_.provenance, "carried");
-
-  const boat = await vesselPositionAt(MARKS, AFTER_LANDING, REPO);
-  assert.deepEqual(after_.world, { x: boat.x + after_.local.x, y: boat.y + after_.local.y },
-    "composition is carrier + offset, and nothing else");
+  const bornOf = (f) => f.transitions.find((t) => t.kind === "born");
+  assert.equal(bornOf(bare).carrier, bornOf(ticketed).carrier, "the same edge is born either way");
+  assert.equal(bornOf(bare).carries, false);
+  assert.equal(bornOf(ticketed).carries, true);
+  assert.ok(bare.boardedAt, "and both know when the edge was made");
 });
 
 test("a berthed carrier carries nobody — provenance says walked, not carried", async () => {
@@ -479,7 +566,7 @@ test("every writer that can append to the ledger is found, and the pen is behind
   assert.deepEqual(open, [], `these can still append with the flag on: ${open.map((w) => w.file).join(", ")}`);
 });
 
-test("the freeze names who the seam would move, and offers the FILING REPAIR", async () => {
+test("the freeze names who the seam would move, and offers the FILING REPAIR", async (t) => {
   const [walk, vessel, geometry] = await Promise.all([
     import(pathToFileURL(join(clone.dir, "tools", "walk.mjs")).href),
     import(pathToFileURL(join(clone.dir, "tools", "vessel.mjs")).href),
@@ -491,11 +578,39 @@ test("the freeze names who the seam would move, and offers the FILING REPAIR", a
     departure({ handle: "on-deck", from: { x: 2, y: 3 }, toward: { x: 2, y: 3 }, at: 10 }),
     departure({ handle: "ashore", from: { x: 500, y: 500 }, toward: { x: 500, y: 500 }, at: 10 }),
   ];
+  // THE DECK IS STILL THE DECK. Who is standing in her footprint is pure
+  // geometry and the agreement ruling did not touch it — this is the half the
+  // freeze tool uses to offer `--set-down-ashore`.
   const deck = standingOnDeck({ departures, service, walk, vessel, geometry, atFc });
   assert.deepEqual(deck.residents.map((r) => r.handle), ["on-deck"]);
 
-  const moved = seamDiff({ departures, service, walk, vessel, atFc: 10.6 });
+  // WITH A PASSAGE the seam moves the one standing on her deck, and says why.
+  // TRUE UNDER BOTH LAWS — the retired one needed only the deck, the current one
+  // needs the deck and the passage, and this walker has both — so it is asserted
+  // unconditionally and guards the tool's teeth whichever engine the clone holds.
+  const passage = [{ target: "the-town/the-post-office", policy: "riding",
+                     born_at: new Date(atCrossing(9)).toISOString() }];
+  const moved = seamDiff({
+    departures, service, walk, vessel, atFc: 10.6,
+    agreementsOf: (h) => (h === "on-deck" ? passage : []),
+  });
   assert.deepEqual(moved.map((m) => m.handle), ["on-deck"]);
+  assert.match(moved[0].why, /aboard|set down/, "and the finding says why it moved them");
+
+  // WITHOUT ONE the two laws genuinely disagree, so this half branches and says
+  // which it took. Under the agreement law the schedule moves nobody who has not
+  // agreed — which is every resident in the real record, since the verb did not
+  // exist before the flip — and the freeze has nothing to repair.
+  const agreementLaw = typeof vessel.agreementAt === "function";
+  t.diagnostic(agreementLaw
+    ? "seam checked under the AGREEMENT law (this clone's vessel.mjs exports agreementAt)"
+    : "seam checked under the retired PRESENCE law (this clone predates the agreement ruling)");
+  const bare = seamDiff({ departures, service, walk, vessel, atFc: 10.6 });
+  if (agreementLaw) {
+    assert.deepEqual(bare, [], "no passages, so the schedule reads every record the ledger's way");
+  } else {
+    assert.deepEqual(bare.map((m) => m.handle), ["on-deck"], "presence alone was the whole ticket");
+  }
 
   const ashore = ashoreFor({ service, vessel, atFc });
   assert.ok(ashore, "the repair has somewhere to put them");

@@ -236,17 +236,42 @@ const era2Ashore = (handle) => ({
   at: 10.2, targetExtent: null, targetMarkId: null, pace: null, source: "store",
 });
 
-async function foldFor(records, atMs) {
+async function foldFor(records, atMs, agreements = []) {
   const { service, mod, walk } = await vesselServiceFrom(CARRIER_MARKS, CARRIER_REPO);
   const carrierAt = carrierReader(CARRIER_MARKS, { repo: carrierClone.dir, service, mod });
-  return foldFrames(records, { carriers: carriersFrom(CARRIER_MARKS), carrierAt, walk, atMs });
+  return foldFrames(records, { carriers: carriersFrom(CARRIER_MARKS), carrierAt, walk, atMs, agreements });
 }
 
-test("ERA ONE ALONE: the resident is folded onto the boat and sails away with her — the live symptom", async () => {
+// A standing passage with her, born before every instant in this file.
+const HER = "the-town/the-post-office";
+const withPassage = [{ target: HER, policy: "riding", born_at: new Date(atCrossing(9)).toISOString() }];
+
+test("ERA ONE ALONE: the resident is folded onto her deck when he in fact walked off — the live symptom", async () => {
+  // The seam bug, re-pinned to what it still costs since the agreement ruling
+  // (2026-08-11). Reading half the record puts hal in HER FRAME — an edge born by
+  // a record he has already superseded — when the second era says he stepped
+  // ashore. That is the wrong place whether or not anything then carries him.
   const mid = atCrossing(10.55);          // she is under way
   const fold = await foldFor(acrossEras([era1Aboard("hal")], []), mid);
-  assert.equal(fold.frame, "the-town/the-post-office", "reading half the record puts hal aboard");
-  assert.ok(Math.abs(fold.world.x) > 100, `and carries him out to sea — x=${fold.world.x}`);
+  assert.equal(fold.frame, HER, "reading half the record puts hal on her deck");
+  assert.deepEqual(fold.local, DECK_POINT, "at an offset he left twenty minutes ago");
+});
+
+test("ERA ONE ALONE, WITH A PASSAGE: the seam carries him out to sea — the symptom in full", async () => {
+  // And for someone who DID agree, the seam costs exactly what it always cost:
+  // half the record sails him across the channel. The agreement law narrowed who
+  // this can happen to; it did not fix the seam, and a test that only checked the
+  // no-passage case would have quietly stopped guarding the expensive one.
+  const mid = atCrossing(10.55);
+  const fold = await foldFor(acrossEras([era1Aboard("hal")], []), mid, withPassage);
+  assert.equal(fold.carries, true, "he agreed, so she may carry him");
+  assert.ok(Math.abs(fold.world.x) > 100, `and half the record carries him out to sea — x=${fold.world.x}`);
+
+  // BOTH ERAS, same passage: he stepped off, and a standing passage does not drag
+  // someone who is not on her.
+  const both = await foldFor(acrossEras([era1Aboard("hal"), era2Ashore("hal")], []), mid, withPassage);
+  assert.equal(both.frame, null, "his frame is the world again");
+  assert.deepEqual(both.world, SHORE_POINT, "an unspent passage is not a rope");
 });
 
 test("BOTH ERAS: the same resident is ashore, and stays there while she sails", async () => {

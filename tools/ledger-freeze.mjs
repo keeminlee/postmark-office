@@ -208,7 +208,7 @@ export function execCallers(dir = OFFICE_SRC) {
  * the same record read with the schedule running. A resident whose two answers
  * differ is a resident the seam would move, and the freeze names them.
  */
-export function seamDiff({ departures, service, walk, vessel, atFc, toleranceM = 1 }) {
+export function seamDiff({ departures, service, walk, vessel, atFc, toleranceM = 1, agreementsOf = null }) {
   const handles = [...new Set(departures.map((d) => d.handle))];
   const moved = [];
   for (const handle of handles) {
@@ -220,7 +220,12 @@ export function seamDiff({ departures, service, walk, vessel, atFc, toleranceM =
     const d = walk.currentDeparture(departures, handle);
     if (!d) continue;
     const before = walk.positionAt(d, atFc);
-    const after = service ? vessel.positionAt(d, atFc, service) : before;
+    // THE PASSAGES ARE AN INPUT NOW (the agreement law, 2026-08-11). Since being
+    // carried takes a passage as well as a deck, the schedule moves nobody who
+    // has not agreed — so a caller that cannot supply agreements gets "the seam
+    // moves nobody", which is TRUE of a town where nobody has agreed and would be
+    // a dangerous lie in one where somebody has. Callers with a store inject it.
+    const after = service ? vessel.positionAt(d, atFc, service, agreementsOf ? agreementsOf(handle) ?? [] : []) : before;
     if (!before || !after) continue;
     const m = Math.hypot(before.x - after.x, before.y - after.y);
     if (m > toleranceM) moved.push({

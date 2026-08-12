@@ -30,12 +30,14 @@ import {
   stateForKey,
 } from "./world-branches.mjs";
 import { WORLD_STAKE_TOOLS, callWorldStakeTool, worldPortfolioStakeSlice } from "./world-stake.mjs"; // P3 draft, append-shaped
+import { WORLD_AGREE_TOOLS, worldAgree } from "./world-agree.mjs"; // the agreement law, 2026-08-11 — append-shaped
+import { withinMarkFor } from "./world-within.mjs"; // where an act happened, as one mark id (additive stamp)
 import { createVoices, EARSHOT_M } from "./voices.mjs"; // earshot: speech at a position (the party line)
 import { householdOf } from "./households.mjs"; // the human speaker's label wears the town's name, never the login
 import { householdLockPath, poolEnabled, pushDraftBranch, withDraftLease } from "./world-pool.mjs";
 import { cannotAnswer, pointAnswerable, servedRead, storeEpoch, storeShadowEnabled } from "./world-serve.mjs"; // stage 1: published-main reads from world.db, behind a flag
 import { emissionsEnabled, openDynamic } from "./dynamic-store.mjs"; // stage 2: the dynamic layer's flag
-import { declareMovement } from "./dynamic-entities.mjs"; // stage D: the pen after the ledger's freeze
+import { declareMovement, declareAttachment, standingAgreement, agreementsFor } from "./dynamic-entities.mjs"; // stage D: the pen after the ledger's freeze — plus the agreement writer/reader (2026-08-11)
 import { emissionFromVoice } from "./dynamic-emissions.mjs"; // stage 2: speech also becomes an emission instance
 import { VESSEL_HANDLE, ridesTheVessel } from "./dynamic-entities.mjs"; // the aboard test, one home for two readers
 import { carriersFrom, carriersWithDisclosure, carrierReader, heardFromV2, inRect, movementStandpoint, movementV2Enabled, recordsAcrossEras, roadTerms, storedDepartures, storedRecordsFor, vesselPositionAt as vesselFromTimetable, vesselServiceFrom } from "./world-movement.mjs"; // stage D: carriers carry, frames compose
@@ -1343,6 +1345,72 @@ async function sitedWithin(parcel, marks) {
     && holds(m));
 }
 
+/**
+ * The walk-and-agree coupling: one declaration, two records.
+ *
+ * Bounces rather than shrugging. A resident who asked for a passage and got a
+ * walk with no passage would find out at the hour she sailed without them, which
+ * is the exact failure the agreement law exists to end — so every way this can
+ * fail refuses the whole call, and the walk that already went to the record is
+ * the one they asked for either way.
+ *
+ * Kept out of `walkViaOffice`'s body because it is the only part of a walk that
+ * knows what a timetable is; the door above stays about roads.
+ */
+export async function coupleAgreementToWalk({ who, targetMarkId, boundFor, departedAt, legM, worldState, repo, db = null, withinMark = null }) {
+  const bounce = (code, defect, hint) => {
+    const e = new Error(defect); Object.assign(e, { code, defect, hint }); return e;
+  };
+  const { service, mod, walk, reason } = await vesselServiceFrom(worldState, { repo });
+  if (!service || !mod)
+    throw bounce(503, "bound_for names a passage, and there is no service to take one on",
+      reason ?? "no mark in this world carries a timetable");
+
+  const stop = service.stops.find((s) => s.markId === targetMarkId);
+  if (!stop)
+    throw bounce(422, `bound_for only means something when you are walking to one of her stops — "${targetMarkId ?? "(nowhere in particular)"}" is not one`,
+      `${service.vessel.handle} calls at: ${service.stops.map((s) => s.markId).join(", ")}. Walk to one of those with bound_for, or walk without it and agree when you arrive.`);
+
+  const { policyFor } = await import("./world-agree.mjs");
+  const { policy, boundFor: dest } = policyFor(service, boundFor, stop.markId);
+
+  // BORN AT DECLARATION, PLAINLY — no future-dating, and none needed.
+  //
+  // An earlier draft computed the walk's arrival instant and dated the passage
+  // to it, so that "the agreement forms on arrival at the berth" would be
+  // literally true of the row. That arithmetic existed only because a passage
+  // was then sufficient on its own to be carried, and a passage standing while
+  // its holder was still on the road would have swept them off it.
+  //
+  // With the carry condition corrected to EDGE **and** PERMISSION, a passage is
+  // INERT until its holder is standing on her deck at a cast-off. So it can be
+  // written the moment it is agreed and simply wait, which is what it does for
+  // every other resident: no clock arithmetic, no row dated in the future, and
+  // one less thing that has to be right about when a walk ends.
+  const bornAt = new Date(mod.instantOf(departedAt)).toISOString();
+
+  const store = db ?? openDynamic();
+  try {
+    const held = standingAgreement(store, who, service.vessel.markId);
+    if (held)
+      throw bounce(409, `${who} already has a passage with ${service.vessel.handle}`,
+        `agreed ${held.born_at}. Withdraw first (world_agree withdraw: true) if you mean to change it.`);
+    declareAttachment(store, {
+      entity: who, target: service.vessel.markId, policy,
+      declaredBy: who, bornAt, carrier: true, withinMark,
+    });
+  } finally { if (!db) store.close(); }
+
+  return {
+    vessel: service.vessel.handle,
+    at_stop: stop.markId,
+    bound_for: dest,
+    agreed_at: bornAt,
+    note: `Your passage is written. It carries you the first time she casts off while you are standing on her deck at ${stop.markId} — so walk on, and be there at the hour. She then takes you through every call between there and ${dest} without setting you down.`,
+    changing_your_mind: `Walk somewhere else and she goes without you: a passage carries nobody who is not aboard when she leaves. world_agree withdraw: true also ends it on the record, which is the tidier way and the only way once you are already aboard.`,
+  };
+}
+
 export async function walkViaOffice(worldClone, payload = {}, key = null) {
   const bounce = (code, defect, hint, extra = {}) => {
     const e = new Error(defect); Object.assign(e, { code, defect, hint, ...extra }); return e;
@@ -1493,13 +1561,20 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
   // and there is no push to be pending. The reply says `ledger: null` and names
   // the record that did receive it, so nobody reads a missing commit as a
   // failure.
+  // WHERE THEY STOOD WHEN THEY DECLARED IT (rip 4's office half, 2026-08-11).
+  // The innermost mark containing the actor at act time — a different field from
+  // `within`/`targetExtent`, which is the TARGET's frozen arrival rect. Stamped
+  // once and never re-resolved, so a mark that later moves or retires cannot
+  // rewrite where this was said (the tense law). Nothing derives from it yet.
+  const withinMark = withinMarkFor(from, w);
+
   let result;
   if (movementV2Enabled()) {
     const store = openDynamic();
     try {
       declareMovement(store, {
         actor: who, from, toward, crossing: at,
-        within: targetExtent, toMark: targetMarkId, declaredBy: who,
+        within: targetExtent, toMark: targetMarkId, declaredBy: who, withinMark,
       });
     } finally { store.close(); }
     result = { position: positionAt({ from, toward, at, targetExtent, targetMarkId }, at), movement: { record: "dynamic.db/movements", crystallizes: "STATE/log/ at the next crossing-save" } };
@@ -1515,6 +1590,32 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
     }
     result = JSON.parse(out.trim().split("\n").at(-1));
     if (result.error) throw bounce(result.error.code ?? 500, result.error.defect, result.error.hint);
+  }
+
+  // ── WALK-AND-AGREE (the QoL coupling, 2026-08-11) ─────────────────────────
+  //
+  // A walk to a berth that carries `bound_for` is two sentences in one
+  // declaration: go to the stop, and when you get there you have a passage.
+  //
+  // THE AGREEMENT FORMS ON ARRIVAL, NOT NOW. Nothing runs when a walk arrives —
+  // that is the design law, and this does not break it. The agreement is written
+  // once, here, with `born_at` set to the instant the walk's own arithmetic says
+  // the resident reaches the berth; `agreementAt` holds nothing whose birth is
+  // still ahead of the clock, so a passage declared for 14:40 carries nobody at
+  // 14:00 and needs no scheduler to start. Declared record, derived effect, the
+  // same shape as everything else here.
+  //
+  // ONE THING A REVIEWER SHOULD WEIGH: superseding the walk does NOT cancel the
+  // agreement — only `world_agree withdraw: true` does. The answer says so.
+  let agreement = null;
+  if (payload.bound_for !== undefined && payload.bound_for !== null && payload.bound_for !== "") {
+    agreement = await coupleAgreementToWalk({
+      who, targetMarkId, boundFor: String(payload.bound_for),
+      departedAt: at, legM: result.position.legM, worldState: w, repo: worldClone,
+      // The passage is stamped where the WALK was declared — the act that made
+      // it — not where it will take effect. Same act, same place, one stamp.
+      withinMark,
+    });
   }
 
   const legM = result.position.legM;
@@ -1552,6 +1653,8 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
     // never moved — the answer always says which derivation produced it.
     provenance: legM === 0 ? "never-moved" : "walked",
     ...(terms ? { boundaries: terms } : {}),
+    ...(agreement ? { agreement } : {}),
+    within_mark: withinMark,
     ledger: result.movement ? null : { line: result.line, commit: result.commit, pushed: result.pushed },
     ...(result.movement ? { movement: result.movement } : {}),
     note: legM === 0
@@ -1614,7 +1717,10 @@ async function framesByHandle(w, departures, atMs) {
     }
     for (const [h, ledgerRecords] of byHandle) {
       const records = recordsAcrossEras(ledgerRecords, storeByHandle.get(h) ?? []);
-      const fold = await foldFrames(records, { carriers, carrierAt, walk, atMs });
+      // Same open handle as the departures above — the passages cost one more
+      // query per resident, not one more connection.
+      const agreements = agreementsFor(store, h, { until: atMs });
+      const fold = await foldFrames(records, { carriers, carrierAt, walk, atMs, agreements });
       if (fold.frame) out.set(h, fold);
     }
   } finally { store.close(); }
@@ -1762,11 +1868,12 @@ export const WORLD_TOOLS = [
       handle: { type: "string", description: "which of YOUR residents owns the note (omit if your key holds one; a multi-resident key must name one)" },
     }, required: ["body"], additionalProperties: false } },
   { name: "world_walk",
-    description: "Walk. Declare a departure and the world carries you — position derives from the record and the clock at 15 km per crossing, so you arrive whether or not anyone is watching. A bare call walks you HOME (your household's ground). Name a mark with mark_id: to walk to it, or give x/y for anywhere. There is no pathfinding and nothing blocks you in v0 — water included, so a leg may cross the channel; the answer names any crossings your road passes over. You are the pathfinder. Walking again supersedes: the new leg starts from wherever you are now. To stop, walk to where you already stand. WHERE IN IT YOU LAND: walking to a mark ends at the first point on its ground, which means you stop ON ITS BOUNDARY — and a mark you then leave there is a rect that straddles the line, so it nests one level OUT. Pass to: \"centre\" when you mean to arrive AT a place rather than merely reach it; it is also how you walk in off the fence once you are standing on one.",
+    description: "Walk. Declare a departure and the world carries you — position derives from the record and the clock at 15 km per crossing, so you arrive whether or not anyone is watching. A bare call walks you HOME (your household's ground). Name a mark with mark_id: to walk to it, or give x/y for anywhere. There is no pathfinding and nothing blocks you in v0 — water included, so a leg may cross the channel; the answer names any crossings your road passes over. You are the pathfinder. Walking again supersedes: the new leg starts from wherever you are now. To stop, walk to where you already stand. WHERE IN IT YOU LAND: walking to a mark ends at the first point on its ground, which means you stop ON ITS BOUNDARY — and a mark you then leave there is a rect that straddles the line, so it nests one level OUT. Pass to: \"centre\" when you mean to arrive AT a place rather than merely reach it; it is also how you walk in off the fence once you are standing on one. CATCHING A BOAT IN ONE CALL: walking to a stop on a scheduled line, pass bound_for: with the stop you want to reach and this becomes a walk AND a passage in one declaration. BOTH HALVES ARE NEEDED TO BE CARRIED: you must be standing on her deck when she casts off, AND hold a passage. Standing there without one, she sails without you; holding one while you are elsewhere, she sails without you too — and your passage keeps standing for the next cast-off you are there for. So changing your mind is just walking away; nothing needs cancelling (world_agree withdraw: true ends it on the record, and is the only way off once you are already aboard). If you would rather arrange it on the spot, walk without bound_for and call world_agree once you are standing there.",
     inputSchema: { type: "object", properties: {
       mark_id: { type: "string", description: "walk to this mark's ground — <by>/<slug>, as ids appear in the telling (sited marks only, and not the town's own constitution furniture)" },
       x: { type: "number", description: "grid meters east of Ferry's crossing (the general case; a mark id is the path we teach)" },
       y: { type: "number", description: "grid meters south of Ferry's crossing" },
+      bound_for: { type: "string", description: "only with a mark_id that is a stop on a scheduled line: the stop you want that line to carry you to. Writes your passage in the same breath as the walk, taking effect on arrival at the berth. Bounces if the target is not one of her stops." },
       to: { type: "string", enum: ["entry", "centre"], description: "where in the target to stop: \"entry\" (default) ends the walk the moment you set foot on its ground — correct for a mountain, and it leaves you on the boundary; \"centre\" walks you to its middle. Only means anything for a mark or home target; coordinates are already a point." },
       handle: { type: "string", description: "which of YOUR residents is walking (omit if your key holds one; a multi-resident key must name one, or it bounces with the list)" },
     }, additionalProperties: false } },
@@ -1796,6 +1903,7 @@ export const WORLD_TOOLS = [
       since: { type: "number", description: "the `latest` stamp from your previous reply — you receive only voices newer than it. Lingering at a gathering? Always pass this; it is the difference between re-buying the room every call and hearing only what is new." },
     }, additionalProperties: false } },
   ...WORLD_STAKE_TOOLS, // world_stake / world_unstake / world_stake_read (P3)
+  ...WORLD_AGREE_TOOLS, // world_agree — the only way anyone is carried (2026-08-11)
 ];
 
 // Exported so the flag-gating can be falsified against the base text itself.
@@ -1842,6 +1950,16 @@ export async function callWorldTool(name, args = {}, key = null) {
     case "world_walk": return walkViaOffice(WORLD_CLONE, args, key);
     case "world_walkers": return worldWalkers(WORLD_CLONE);
     case "world_say": return worldSay(args, key);
+    // The agreement door is handed the office's OWN two readers rather than
+    // reaching for them itself: one fold, one standpoint, so a passage is
+    // checked against the same position every other door reports.
+    case "world_agree": return worldAgree(args, key, {
+      worldOf: () => world(key),
+      positionOf: async (h) => {
+        const st = await residentStandpoint(h, await world(key)).catch(() => null);
+        return st?.placed ? { x: st.x, y: st.y } : null;
+      },
+    });
     default: return callWorldStakeTool(name, args, key); // P3; returns null for anything it doesn't own
   }
 }

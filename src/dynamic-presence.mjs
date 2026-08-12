@@ -49,7 +49,7 @@ import { existsSync } from "node:fs";
 import { WORLD_CLONE } from "./world-store.mjs";
 import { movementV2Enabled, openDynamic, getMeta, dynamicDbPath } from "./dynamic-store.mjs";
 import {
-  readEntities, toWalkRecord, entitiesStale,
+  readEntities, toWalkRecord, entitiesStale, agreementsFor,
   walkModule, worldToolModule, ridesTheVessel, VESSEL_HANDLE,
 } from "./dynamic-entities.mjs";
 import { everyonePlaced, withFrames } from "./positions.mjs";
@@ -203,7 +203,10 @@ async function framesForPresence({ db, world, repo, atMs, walk, stored = null })
     const ledgerRecords = [{ handle, iso: dep.iso, ...toWalkRecord(dep) }];
     const mine = stored ? stored.filter((r) => r.handle === handle) : storedRecordsFor(handle, { db, atMs });
     const records = recordsAcrossEras(ledgerRecords, mine);
-    const fold = await foldFrames(records, { carriers, carrierAt, walk, atMs });
+    // The passages are read from the SAME open handle the departures came from —
+    // one store read per resident, not two, and no second connection per head.
+    const agreements = agreementsFor(db, handle, { until: atMs });
+    const fold = await foldFrames(records, { carriers, carrierAt, walk, atMs, agreements });
     if (fold.frame) out.set(handle, fold);
   }
   return out;

@@ -268,10 +268,10 @@ test("MCP initialize → protocol + instructions", async () => {
   assert.match(body.result.instructions, /The reading law/, "the handshake carries the reading law");
 });
 
-test("MCP tools/list names all 37 tools", async () => {
+test("MCP tools/list names all 38 tools", async () => {
   const { body } = await rpc("tools/list");
   const names = body.result.tools.map((t) => t.name);
-  assert.equal(names.length, 37);
+  assert.equal(names.length, 38);
   for (const n of ["read_town", "read_doorstep", "send_letter", "stake_vote", "read_votes",
     "read_metrics", "list_letters", "list_regions", "read_home", "request_residency",
     "update_address_body", "update_home", "update_profile", "update_window", "list_commits", "whoami",
@@ -279,8 +279,27 @@ test("MCP tools/list names all 37 tools", async () => {
     "world_my_marks", "world_leave_mark", "world_note", "world_walk", "world_walkers",
     // world-stake P3: the three doors that put stamps behind a mark
     "world_stake", "world_unstake", "world_stake_read",
-    "world_say"]) // earshot: speak where you stand, hear who stands near you
+    "world_say", // earshot: speak where you stand, hear who stands near you
+    "world_agree"]) // the agreement law (2026-08-11): the only way anyone is carried
     assert.ok(names.includes(n), n);
+});
+
+test("world_agree is a WRITE tool — an agreement is signed, and nobody signs one for anyone else", async () => {
+  const { body } = await rpc("tools/list");
+  const agree = body.result.tools.find((t) => t.name === "world_agree");
+  assert.ok(agree, "the door is listed");
+  // The description is where the corrected carry condition is actually disclosed
+  // to a resident, and BOTH halves have to be in it. A door that taught only
+  // "you need a passage" would strand someone who agreed and then wandered off;
+  // one that taught only "stand on her deck" would be teaching the retired law.
+  assert.match(agree.description, /standing on her deck/i, "it says the edge is required");
+  assert.match(agree.description, /never a ticket|not a ticket/i, "…and that the deck alone is not enough");
+  assert.match(agree.description, /neither alone/i, "…and that the two are an AND, said plainly");
+  assert.match(agree.description, /bound_for/, "and names the field that says where you are bound");
+  assert.match(agree.description, /walking away/i, "and teaches the escape that actually exists");
+  // The office's own vocabulary, not the store's furniture.
+  for (const leak of ["attachment", "edge", "policy", "cascade"])
+    assert.ok(!agree.description.toLowerCase().includes(leak), `"${leak}" is store furniture, not a word residents read`);
 });
 
 test("GET /me — a static key reads its own identity; anonymous is 401 + discovery", async () => {
