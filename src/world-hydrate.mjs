@@ -157,6 +157,34 @@ if (!marks.length) {
 }
 gatePresent("marks-readable", MARKS_DIR, `${marks.length} marks loaded by the world's own loadMarks`);
 
+// ── what the AUTHOR wrote, kept apart from what the loader supplied ──────────
+//
+// `loadMarks` composes: it defaults `tier` to "market", synthesizes `slug`,
+// `id` and `household`, and back-fills `parent` for a nested predicate
+// (marks-fold.mjs § walkMarks). By the time a record reaches the node writer
+// above, "the author wrote this down" and "the loader supplied it" are the same
+// string, and the questions the tier cutover is made of — how many records
+// still ASSERT a standing the one walk is supposed to derive, which keys on
+// disk the law places nowhere — cannot be asked of it at all.
+//
+// So the raw key list is read once, here, and carried on the node beside the
+// composed fields. It is the KEYS ONLY: the values are already on the node
+// where they belong, and a second copy of them would make the store the owner
+// of two spellings of the same fact.
+//
+// Read through the world's OWN `parseRecord`, never a second frontmatter scan —
+// the same rule the fold is imported under. A hand-rolled scanner written for
+// exactly this job in the world repo dropped the last key of every CRLF file,
+// which was nine records and all of them the town's constitution.
+const rawKeys = (m) => {
+  try {
+    const rec = parseRecord(readFileSync(join(m._dir, "mark.md"), "utf8"), m.id);
+    return Object.keys(rec).filter((k) => k !== "body");
+  } catch {
+    return null;   // a record the loader already flagged with _error; null says "not read", never "no keys"
+  }
+};
+
 // ── the previous run, read before it is destroyed ────────────────────────────
 // The store is rebuilt from scratch, so lint_findings holds exactly THIS run.
 // The alert surface §2.10 asks for is the DELTA, so the outgoing file's verdicts
@@ -284,6 +312,7 @@ for (const m of marks) {
       // accommodation lives at the one place that meets the parser.
       ambient: (m.ambient === true || m.ambient === "true") ? true : null,
       frontmatter_problems: problems.length ? problems : null,
+      keys: rawKeys(m),               // see § what the AUTHOR wrote, above
     },
   });
 }

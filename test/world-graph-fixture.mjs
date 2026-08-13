@@ -43,10 +43,16 @@ export function worldStoreFixture(path, { lints = true, l6 = "na" } = {}) {
   meta.run("counts", JSON.stringify({ nodes_total: 7 }));
 
   const node = db.prepare("INSERT INTO nodes (id, kind, subkind, tier, by, at_x, at_y, extent_w, extent_h, props) VALUES (?,?,?,?,?,?,?,?,?,?)");
-  node.run("the-town/the-wheelhouse", "mark", "predicated", "constitution", "the-town", null, null, null, null, JSON.stringify({ mechanic: "timetable", path: "WORLD/marks/the-wheelhouse" }));
-  node.run("the-town/the-quay", "mark", "sited", "constitution", "the-town", -30, 40, 9, 26, JSON.stringify({ path: "WORLD/marks/the-quay" }));
-  node.run("the-town/the-far-landing", "mark", "sited", "constitution", "the-town", -94570, -94570, 14, 40, JSON.stringify({ path: "WORLD/marks/the-far-landing" }));
-  node.run("someone/their-parcel", "mark", "parcel", "market", "someone", 100, 100, 20, 20, JSON.stringify({ date: "2026-07-24" }));
+  // `keys` is the AUTHOR's key list, not the loaded record's (world-hydrate.mjs
+  // § what the AUTHOR wrote). The three shapes that matter are all here, because
+  // the census the window draws cannot tell them apart without this field:
+  // a record that ASSERTS `tier:` (the quay), one whose "market" is the loader's
+  // default and not a word anyone wrote (the parcel), and one whose frontmatter
+  // would not parse at all, which is `null` — "not read", never "no keys".
+  node.run("the-town/the-wheelhouse", "mark", "predicated", "constitution", "the-town", null, null, null, null, JSON.stringify({ mechanic: "timetable", path: "WORLD/marks/the-wheelhouse", body: "The bell rope is worn smooth at shoulder height.", keys: ["kind", "by", "tier", "parent", "slot", "value", "mechanic", "date"] }));
+  node.run("the-town/the-quay", "mark", "sited", "constitution", "the-town", -30, 40, 9, 26, JSON.stringify({ path: "WORLD/marks/the-quay", body: "Six bollards, and the water slapping at them.", keys: ["kind", "by", "tier", "at", "extent", "date", "sea_state"] }));
+  node.run("the-town/the-far-landing", "mark", "sited", "constitution", "the-town", -94570, -94570, 14, 40, JSON.stringify({ path: "WORLD/marks/the-far-landing", keys: null }));
+  node.run("someone/their-parcel", "mark", "parcel", "market", "someone", 100, 100, 20, 20, JSON.stringify({ date: "2026-07-24", keys: ["kind", "by", "at", "extent", "date"] }));
   node.run("the-town/parcel-class", "class", "parcel", "constitution", "the-town", null, null, 25, 25, JSON.stringify({ class: "parcel" }));
   node.run("mechanic:timetable", "class", "mechanic", "constitution", "the-town", null, null, null, null, "{}");
   node.run("engine/files", "doctrine", "section", null, null, null, null, null, null, JSON.stringify({ path: "WORLD/ENGINE.md" }));
