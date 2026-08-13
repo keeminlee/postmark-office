@@ -4,7 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { fixtureDb } from "./fixture.mjs";
-import { townSummary, residentList, resident, mailList, letter, letterList, doorstep, search, bulletinList, bulletinEntry, repoLog } from "../src/queries.mjs";
+import { townSummary, residentList, resident, mailList, letter, letterList, doorstep, search, bulletinList, bulletinEntry, repoLog, indexAsOf } from "../src/queries.mjs";
 
 const db = fixtureDb();
 const meta = Object.fromEntries(db.prepare("SELECT key, value FROM meta").all().map((r) => [r.key, r.value]));
@@ -52,6 +52,25 @@ test("delivered_at: same-day mail sorts by crossing time, not id (#330)", () => 
   const unsent = mailList(db, "wright", "outbox").find((l) => l.id.endsWith("unsent"));
   assert.equal(unsent.delivered_at, null);
   assert.equal(mailList(db, "wright", "outbox")[0].id, "wright-2026-07-04-to-limen-unsent"); // date fallback still sorts it
+});
+
+test("letterList: as_of names the revision the list was read from (#1189)", () => {
+  // the same stamp the doorstep carries, so a reader can compare the two
+  // directly instead of bracketing the fetch between two doorstep reads
+  assert.equal(letterList(db).as_of, meta.as_of);
+  assert.equal(letterList(db).as_of, doorstep(db, "wright", meta.as_of).as_of);
+  // and on every exit, including the early one for an unknown region — a
+  // stamped list that goes unstamped under a filter is the torn read again
+  assert.equal(letterList(db, { region: "nowhere" }).as_of, meta.as_of);
+  assert.equal(letterList(db, { resident: "wright", limit: 1 }).as_of, meta.as_of);
+  // read off the handle, so it cannot name an index the rows did not come from
+  assert.equal(indexAsOf(db), meta.as_of);
+  // additive: nothing else about the shape moved
+  const l = letterList(db, { limit: 2 });
+  assert.deepEqual(Object.keys(l), ["count", "limit", "offset", "as_of", "letters"]);
+  assert.equal(l.count, 2);
+  assert.equal(l.limit, 2);
+  assert.equal(l.offset, 0);
 });
 
 test("repo/log: the town's history from the town's own door", () => {

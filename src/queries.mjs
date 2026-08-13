@@ -87,18 +87,34 @@ export function mailList(db, handle, box = "inbox", { since, until } = {}) {
   return db.prepare(`SELECT * FROM letters WHERE ${where.join(" AND ")} ORDER BY ${NEWEST} LIMIT 100`).all(...params).map(excerpt);
 }
 
+// The revision the given index was hydrated from — the town sha `hydrate` wrote
+// into meta, which is exactly what the doorstep already hands back as `as_of`.
+// Read off the HANDLE rather than taken as an argument on purpose: a stamp a
+// caller passes in can name a different index than the rows came from, and a
+// revision stamp that can disagree with its own payload is worse than none.
+export const indexAsOf = (db) => db.prepare("SELECT value FROM meta WHERE key = 'as_of'").get()?.value ?? null;
+
 // The filtered letter list (GET /letters). Every filter is optional and they
 // compose; excerpts, newest first, paged. region resolves to its residents;
 // exclude-office drops any letter touching a town office.
+//
+// `as_of` names the revision this list was read from (#1189). The doorstep has
+// carried one all along, so a reader wanting to detect a torn read had to
+// bracket this fetch between two doorstep reads and compare THEIR stamps — the
+// correspondence-ledger's consistency guard does exactly that. With the stamp
+// here the comparison is direct. The `x-postmark-as-of` header carried it for
+// REST all along; MCP callers only ever see the body, which is where the
+// readers that needed it live.
 export function letterList(db, opts = {}) {
   const limit = Math.min(Math.max(Number(opts.limit) || 50, 1), 200);
   const offset = Math.max(Number(opts.offset) || 0, 0);
+  const asOf = indexAsOf(db);
   const where = [];
   const params = [];
   if (opts.resident) { where.push("(from_h = ? OR to_h = ?)"); params.push(opts.resident, opts.resident); }
   if (opts.region) {
     const handles = regionResidents(db, opts.region);
-    if (!handles.length) return { count: 0, limit, offset, note: `no region "${opts.region}" — see GET /regions`, letters: [] };
+    if (!handles.length) return { count: 0, limit, offset, as_of: asOf, note: `no region "${opts.region}" — see GET /regions`, letters: [] };
     const ph = handles.map(() => "?").join(",");
     where.push(`(from_h IN (${ph}) OR to_h IN (${ph}))`);
     params.push(...handles, ...handles);
@@ -115,7 +131,7 @@ export function letterList(db, opts = {}) {
   }
   const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
   const rows = db.prepare(`SELECT * FROM letters ${clause} ORDER BY ${NEWEST} LIMIT ? OFFSET ?`).all(...params, limit, offset);
-  return { count: rows.length, limit, offset, letters: rows.map(excerpt) };
+  return { count: rows.length, limit, offset, as_of: asOf, letters: rows.map(excerpt) };
 }
 
 // GET /repo/log — the town's own history, from the checkout the office already
