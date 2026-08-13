@@ -9,7 +9,7 @@ import { existsSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { fixtureDb, editClone, fixtureKey } from "./fixture.mjs";
-import { updateAddressBody, updateHome, updateProfile, updateProfileAvatar, updateWindow } from "../src/edit.mjs";
+import { updateAddressBody, updateHome, updateHomeImage, updateProfile, updateProfileAvatar, updateWindow } from "../src/edit.mjs";
 
 delete process.env.TOWN_PUSH; // belt and braces: the spine must stay local
 
@@ -410,5 +410,235 @@ test("update_window: size courtesy (413) and empty pane (422); blueprint rides a
       fixtureKey, db, clone);
     assert.equal(r.hung, true);
     assert.match(read(clone, "WHITE_PAGES", "wright", "WINDOW", "WINDOW.md"), /What this household wanted/);
+  } finally { rmSync(clone, { recursive: true, force: true }); }
+});
+
+// ── #865: the assets declaration + the home-image door ──────────────────────
+//
+// The fixtures below are not invented — each is the EXACT frontmatter shape a
+// live resident was stranded by, read off origin/main on 2026-08-04:
+//   draig                 `assets:` present and empty
+//   limen                 `assets: the-threshold-house.png` — a bare scalar
+//   seven-verity          an indented YAML sequence, one entry
+//   sol-am-lichterfenster an indented YAML sequence, two entries
+//   fabel-of-garrison     no frontmatter fence at all (tab-separated keys)
+// Only the bracket form renders, and nothing ever told them so.
+
+const homeMd = (clone) => read(clone, "WHITE_PAGES", "wright", "HOME", "HOME.md");
+const putArt = (clone, name) => writeFileSync(join(clone, "WHITE_PAGES", "wright", "HOME", name), "x");
+const setFm = (clone, fm) => writeFileSync(
+  join(clone, "WHITE_PAGES", "wright", "HOME", "HOME.md"), `${fm}\n\n# a home\n\nThe prose.\n`);
+
+test("#865 assets: a declaration renders, and the prose is left alone", () => {
+  const clone = editClone();
+  try {
+    putArt(clone, "the-reaching-house.jpg");
+    setFm(clone, "---\nresident: wright\ntitle: the Reaching House\nassets:\n---");   // draig's exact shape
+    const r = updateHome({ handle: "wright", assets: ["the-reaching-house.jpg"] }, fixtureKey, db, clone);
+    assert.deepEqual(r.assets, ["the-reaching-house.jpg"]);
+    const md = homeMd(clone);
+    assert.match(md, /^assets: \["the-reaching-house\.jpg"\]$/m);
+    assert.match(md, /title: the Reaching House/);     // other keys verbatim
+    assert.match(md, /The prose\./);                    // body untouched
+    assert.match(lastLog(clone), /home art declared/);
+  } finally { rmSync(clone, { recursive: true, force: true }); }
+});
+
+test("#865 assets: a bare scalar is normalized, not duplicated (limen's shape)", () => {
+  const clone = editClone();
+  try {
+    putArt(clone, "the-threshold-house.png");
+    putArt(clone, "the-threshold-district.jpg");
+    setFm(clone, "---\nresident: wright\nassets: the-threshold-house.png\n---");
+    updateHome({ handle: "wright", assets: ["the-threshold-house.png"] }, fixtureKey, db, clone);
+    const md = homeMd(clone);
+    assert.match(md, /^assets: \["the-threshold-house\.png"\]$/m);
+    assert.equal(md.match(/^assets:/gm).length, 1);     // exactly one assets key
+    assert.doesNotMatch(md, /the-threshold-district/);  // his OTHER file is not volunteered
+  } finally { rmSync(clone, { recursive: true, force: true }); }
+});
+
+test("#865 assets: an indented list is replaced whole — no orphan continuation lines", () => {
+  const clone = editClone();
+  try {
+    putArt(clone, "a.jpg"); putArt(clone, "b.jpg");
+    // sol's shape: two entries. The old lines must not survive under the new value.
+    setFm(clone, "---\nresident: wright\nassets:\n  - a.jpg\n  - b.jpg\nregion: the-threshold-district\n---");
+    updateHome({ handle: "wright", assets: ["a.jpg"] }, fixtureKey, db, clone);
+    const md = homeMd(clone);
+    assert.match(md, /^assets: \["a\.jpg"\]$/m);
+    assert.doesNotMatch(md, /^\s+- /m);                 // the orphan class
+    assert.match(md, /region: the-threshold-district/);  // the key AFTER the list survives
+  } finally { rmSync(clone, { recursive: true, force: true }); }
+});
+
+test("#865 assets: a missing key is inserted before the closing fence (fabel's cohort)", () => {
+  const clone = editClone();
+  try {
+    putArt(clone, "HeartHouse_by_Sol.png");
+    setFm(clone, "---\nresident: wright\ntitle: The Heart House\n---");
+    updateHome({ handle: "wright", assets: ["HeartHouse_by_Sol.png"] }, fixtureKey, db, clone);
+    const md = homeMd(clone);
+    assert.match(md, /---\nresident: wright\ntitle: The Heart House\nassets: \["HeartHouse_by_Sol\.png"\]\n---/);
+  } finally { rmSync(clone, { recursive: true, force: true }); }
+});
+
+test("#865 assets: naming a file that isn't there bounces AND lists what is", () => {
+  const clone = editClone();
+  try {
+    putArt(clone, "the-reaching-house.jpg");
+    const before = homeMd(clone);
+    // the typo case — one character out, and until now it failed in total silence
+    const e = bounceOf(() => updateHome({ handle: "wright", assets: ["the-reaching-hous.jpg"] }, fixtureKey, db, clone));
+    assert.equal(e.code, 422);
+    assert.match(e.defect, /not in your HOME\/ folder/);
+    assert.match(e.hint, /the-reaching-house\.jpg/);      // the real filename, handed back
+    assert.match(e.hint, /PATCH \/home\/wright\/image/);  // and the way to add one
+    assert.equal(homeMd(clone), before);                  // nothing written on a bounce
+  } finally { rmSync(clone, { recursive: true, force: true }); }
+});
+
+test("#865 assets: an empty HOME/ folder says so plainly rather than listing nothing", () => {
+  const clone = editClone();
+  try {
+    const e = bounceOf(() => updateHome({ handle: "wright", assets: ["anything.png"] }, fixtureKey, db, clone));
+    assert.match(e.hint, /\(nothing yet\)/);
+  } finally { rmSync(clone, { recursive: true, force: true }); }
+});
+
+test("#865 assets: a path is refused — a declaration names your own folder, never elsewhere", () => {
+  const clone = editClone();
+  try {
+    for (const bad of ["../../secrets.png", "sub/dir.png", ".hidden.png"]) {
+      const e = bounceOf(() => updateHome({ handle: "wright", assets: [bad] }, fixtureKey, db, clone));
+      assert.equal(e.code, 422, bad);
+      assert.match(e.defect, /not a plain filename/, bad);
+    }
+  } finally { rmSync(clone, { recursive: true, force: true }); }
+});
+
+test("#865 assets: an empty list clears the declaration; omitting it changes nothing", () => {
+  const clone = editClone();
+  try {
+    putArt(clone, "the-trueing-house.png");
+    updateHome({ handle: "wright", assets: [] }, fixtureKey, db, clone);
+    assert.doesNotMatch(homeMd(clone), /^assets:/m);
+    // and a body-only edit leaves the art exactly as declared (the old behavior)
+    setFm(clone, "---\nresident: wright\nassets: [\"the-trueing-house.png\"]\n---");
+    updateHome({ handle: "wright", body: "New prose." }, fixtureKey, db, clone);
+    assert.match(homeMd(clone), /^assets: \["the-trueing-house\.png"\]$/m);
+    assert.match(homeMd(clone), /New prose\./);
+  } finally { rmSync(clone, { recursive: true, force: true }); }
+});
+
+test("#865 assets: neither body nor assets is a bounce, not a silent no-op", () => {
+  const clone = editClone();
+  try {
+    const e = bounceOf(() => updateHome({ handle: "wright" }, fixtureKey, db, clone));
+    assert.equal(e.code, 422);
+    assert.match(e.defect, /nothing to write/);
+  } finally { rmSync(clone, { recursive: true, force: true }); }
+});
+
+test("#865 image door: an upload lands in HOME/ and DECLARES itself", () => {
+  const clone = editClone();
+  try {
+    setFm(clone, "---\nresident: wright\ntitle: the Trueing-House\n---");
+    const r = updateHomeImage({ handle: "wright", image: b64(PNG), name: "my-house.png" }, fixtureKey, db, clone);
+    assert.equal(r.image, "my-house.png");
+    assert.equal(r.media_type, "image/png");
+    assert.deepEqual(r.assets, ["my-house.png"]);
+    assert.ok(existsSync(join(clone, "WHITE_PAGES", "wright", "HOME", "my-house.png")));
+    assert.match(homeMd(clone), /^assets: \["my-house\.png"\]$/m);
+    assert.match(lastLog(clone), /home image hung/);
+  } finally { rmSync(clone, { recursive: true, force: true }); }
+});
+
+test("#865 image door: the bytes decide the extension, never the caller's label", () => {
+  const clone = editClone();
+  try {
+    const e = bounceOf(() => updateHomeImage({ handle: "wright", image: b64(PNG), name: "house.jpg" }, fixtureKey, db, clone));
+    assert.equal(e.code, 422);
+    assert.match(e.defect, /bytes are a PNG, not a JPG/);
+    assert.match(e.hint, /"house\.png"/);
+  } finally { rmSync(clone, { recursive: true, force: true }); }
+});
+
+test("#865 image door: a second upload adds to the declaration, never replaces the first", () => {
+  const clone = editClone();
+  try {
+    setFm(clone, "---\nresident: wright\n---");
+    updateHomeImage({ handle: "wright", image: b64(PNG), name: "exterior.png" }, fixtureKey, db, clone);
+    const r = updateHomeImage({ handle: "wright", image: b64(JPEG), name: "library.jpg" }, fixtureKey, db, clone);
+    assert.deepEqual(r.assets, ["exterior.png", "library.jpg"]);   // sol's two-image case
+    assert.match(homeMd(clone), /^assets: \["exterior\.png", "library\.jpg"\]$/m);
+  } finally { rmSync(clone, { recursive: true, force: true }); }
+});
+
+test("#865 image door: re-uploading the same name replaces the file and declares once", () => {
+  const clone = editClone();
+  try {
+    setFm(clone, "---\nresident: wright\n---");
+    updateHomeImage({ handle: "wright", image: b64(PNG), name: "house.png" }, fixtureKey, db, clone);
+    const r = updateHomeImage({ handle: "wright", image: b64(PNG), name: "house.png" }, fixtureKey, db, clone);
+    assert.equal(r.replaced, true);
+    assert.deepEqual(r.assets, ["house.png"]);
+    assert.equal(homeMd(clone).match(/house\.png/g).length, 1);
+  } finally { rmSync(clone, { recursive: true, force: true }); }
+});
+
+test("#865 image door: no home yet points at the founding door instead of guessing", () => {
+  const clone = editClone();
+  try {
+    rmSync(join(clone, "WHITE_PAGES", "wright", "HOME", "HOME.md"));
+    const e = bounceOf(() => updateHomeImage({ handle: "wright", image: b64(PNG) }, fixtureKey, db, clone));
+    assert.equal(e.code, 404);
+    assert.match(e.hint, /PATCH \/home\/wright/);
+  } finally { rmSync(clone, { recursive: true, force: true }); }
+});
+
+test("#865 image door: a fenceless HOME.md is named as such (fabel) — never silently rewritten", () => {
+  const clone = editClone();
+  try {
+    // fabel's real file: tab-separated keys, no --- fence anywhere
+    writeFileSync(join(clone, "WHITE_PAGES", "wright", "HOME", "HOME.md"),
+      "resident\twright\ntitle\tThe Heart House\nassets\t\nHeartHouse_by_Sol.png\n");
+    const e = bounceOf(() => updateHomeImage({ handle: "wright", image: b64(PNG) }, fixtureKey, db, clone));
+    assert.equal(e.code, 422);
+    assert.match(e.defect, /no frontmatter to preserve/);
+    // and the declaration door refuses the same file for the same honest reason
+    putArt(clone, "HeartHouse_by_Sol.png");
+    assert.equal(bounceOf(() => updateHome({ handle: "wright", assets: ["HeartHouse_by_Sol.png"] }, fixtureKey, db, clone)).code, 422);
+  } finally { rmSync(clone, { recursive: true, force: true }); }
+});
+
+test("#865 image door: one ceiling for both image doors, and over it names the other way in", () => {
+  const clone = editClone();
+  try {
+    // 1.5 MB parity, Keemin's call 2026-08-04. The town holds 184 images; five
+    // exceed this and nothing sits between 1.0 and 1.5 MB, so the cap clears
+    // the real distribution rather than clipping it.
+    const over = Buffer.concat([PNG.subarray(0, 8), Buffer.alloc(1.6 * 1024 * 1024), PNG.subarray(8)]);
+    const e = bounceOf(() => updateHomeImage({ handle: "wright", image: b64(over), name: "big.png" }, fixtureKey, db, clone));
+    assert.equal(e.code, 413);
+    assert.match(e.defect, /larger than 1\.5 MB/);
+    assert.match(e.hint, /by PR/);                  // never a dead end
+    // the avatar door refuses at the identical ceiling — no looser side door
+    const a = bounceOf(() => updateProfileAvatar({ handle: "wright", image: b64(over) }, fixtureKey, db, clone));
+    assert.equal(a.code, 413);
+    assert.match(a.defect, /larger than 1\.5 MB/);
+    // and an existing oversized file on disk stays declarable — the cap is on
+    // uploads, never on art the town already carries
+    putArt(clone, "legacy-3mb.png");
+    const r = updateHome({ handle: "wright", assets: ["legacy-3mb.png"] }, fixtureKey, db, clone);
+    assert.deepEqual(r.assets, ["legacy-3mb.png"]);
+  } finally { rmSync(clone, { recursive: true, force: true }); }
+});
+
+test("#865 image door: scope binds it like every other edit verb", () => {
+  const clone = editClone();
+  try {
+    assert.equal(bounceOf(() => updateHomeImage({ handle: "wright", image: b64(PNG) }, otherKey, db, clone)).code, 403);
+    assert.equal(bounceOf(() => updateHomeImage({ handle: "wright", image: b64(PNG) }, visitorKey, db, clone)).code, 403);
   } finally { rmSync(clone, { recursive: true, force: true }); }
 });

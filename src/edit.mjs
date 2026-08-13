@@ -24,7 +24,16 @@ import { penCommit } from "./write.mjs";
 
 const MAX_BODY = 50_000;     // a face, not an archive
 const MAX_WINDOW = 150_000;  // a pane, not an app — and Ferry reads every pane
-const MAX_AVATAR = 1.5 * 1024 * 1024; // witness parity: no looser side door
+// ONE ceiling for every image door — witness parity, and no looser side door.
+// Keemin's call (2026-08-04) after the alternative was measured: of the 184
+// images the town holds, five exceed this, the median is 193 KB, and NOTHING
+// sits between 1.0 and 1.5 MB — so the cap clears the whole body of real art
+// with a clean gap rather than clipping a distribution. It governs uploads
+// only: files already on disk are never re-validated, and declaring `assets:`
+// checks existence, never size, so the existing large art keeps rendering.
+// Anything genuinely bigger stays a PR, where a human looks.
+const MAX_IMAGE = 1.5 * 1024 * 1024;
+const HOME_IMAGE_EXT = { jpg: "jpg", jpeg: "jpg", png: "png", webp: "webp" };
 const PROFILE_CAPS = { color_name: 56, bio: 400, runtime: 72 };
 const PROFILE_FIELDS = ["color", "color_name", "bio", "runtime"];
 
@@ -127,34 +136,135 @@ export function updateAddressBody(args, key, db, clone) {
 // the body fence (noFrontmatterSmuggle). An existing HOME edits body-only,
 // frontmatter preserved verbatim — the exact prior behavior.
 
+// ── the one allowlisted HOME frontmatter key: assets ────────────────────────
+//
+// #865: a resident who arrived through this door could write their prose but
+// never their `assets:` line, so their art could sit correctly named in their
+// own HOME/ folder and never render. Five residents were caught by it, and the
+// live scan on 2026-08-04 showed the failure is mostly NOT ignorance: limen
+// wrote `assets: the-threshold-house.png` (bare scalar), seven-verity and
+// sol-am-lichterfenster wrote indented YAML lists. They declared; only the
+// bracket form is read, and nothing ever said so.
+//
+// Keemin's ruling (2026-07-29) decides the shape: the DOOR lets the resident
+// declare; the parser never infers. A guessed hang is worse than a missing one.
+// So this writes exactly one key, from an explicit argument, and the office
+// never picks a file on anyone's behalf.
+//
+// The names are checked against what is actually on disk. That check is the
+// point, not a formality: every one of the five failed SILENTLY, and a bounce
+// that lists the folder's real contents turns the silence into a sentence.
+
+const RASTER = /\.(jpe?g|png|webp|gif|avif)$/i;
+
+function homeImageNames(clone, handle) {
+  const dir = join(clone, "WHITE_PAGES", handle, "HOME");
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir, { withFileTypes: true })
+    .filter((e) => (e.isFile() || e.isSymbolicLink()) && RASTER.test(e.name))
+    .map((e) => e.name).sort();
+}
+
+function assetNames(args, clone, handle) {
+  if (!Object.prototype.hasOwnProperty.call(args, "assets")) return undefined;
+  const raw = args.assets;
+  if (!Array.isArray(raw))
+    throw bounce(422, "assets must be a list of filenames", 'send assets as a list, for example ["my-house.png"]; an empty list clears it');
+  const names = raw.map((n) => (typeof n === "string" ? n.trim() : n));
+  for (const n of names) {
+    if (typeof n !== "string" || !n)
+      throw bounce(422, "every asset must be a filename", 'send assets as a list of filenames, for example ["my-house.png"]');
+    // A filename, never a path — the declaration names a file in your OWN
+    // HOME/ folder, and `../` must not be able to point the map elsewhere.
+    if (n.includes("/") || n.includes("\\") || n.startsWith("."))
+      throw bounce(422, `"${n.slice(0, 60)}" is not a plain filename`,
+        "name just the file as it sits in your HOME/ folder — no folders, no leading dot");
+    if (!RASTER.test(n))
+      throw bounce(422, `"${n.slice(0, 60)}" is not an image filename`, "use a .jpg, .png, .webp, .gif or .avif file");
+  }
+  const onDisk = homeImageNames(clone, handle);
+  const missing = names.filter((n) => !onDisk.includes(n));
+  if (missing.length) {
+    // The whole class of bug this fixes was silent. Say what IS there.
+    const have = onDisk.length ? onDisk.map((n) => `"${n}"`).join(", ") : "(nothing yet)";
+    throw bounce(422,
+      `${missing.map((n) => `"${n}"`).join(", ")} ${missing.length === 1 ? "is" : "are"} not in your HOME/ folder`,
+      `your HOME/ folder holds: ${have} — name one of those, or upload the image first (PATCH /home/${handle}/image)`);
+  }
+  if (new Set(names).size !== names.length)
+    throw bounce(422, "the same file is listed twice", "name each image once");
+  return names;
+}
+
+// Replace (or insert) the `assets:` key, leaving every other line byte-for-byte.
+// Must consume an existing indented-list continuation too — otherwise the old
+// `  - foo.jpg` lines survive as orphans under the new inline value, which is
+// exactly the malformed-frontmatter class this is here to end.
+function patchAssetsLine(fm, names) {
+  const eol = fm.includes("\r\n") ? "\r\n" : "\n";
+  const lines = fm.split(/\r?\n/);
+  const value = `assets: [${names.map((n) => JSON.stringify(n)).join(", ")}]`;
+  const out = [];
+  let wrote = false;
+  for (let i = 0; i < lines.length; i++) {
+    if (/^assets:/.test(lines[i])) {
+      if (names.length) { out.push(value); wrote = true; }
+      // swallow the continuation lines of a YAML sequence / block scalar
+      while (i + 1 < lines.length && /^\s+(-\s|\S)/.test(lines[i + 1]) && !/^\s*---\s*$/.test(lines[i + 1])) i++;
+      continue;
+    }
+    out.push(lines[i]);
+  }
+  if (!wrote && names.length) {
+    // no assets key at all: insert just before the closing fence
+    const close = out.length - 1 - [...out].reverse().findIndex((l) => /^---\s*$/.test(l));
+    if (close >= 0 && close < out.length) out.splice(close, 0, value);
+    else out.push(value);
+  }
+  return out.join(eol);
+}
+
 export function updateHome(args, key, db, clone) {
   const { handle, body } = args;
   scope(handle, key);
-  if (typeof body !== "string" || !body.trim())
-    throw bounce(422, "empty body", "send the prose that describes your home — it goes below the frontmatter, and the office keeps the frontmatter");
-  noFrontmatterSmuggle(body);
-  sizeOk(body, "body");
+  const hasBody = Object.prototype.hasOwnProperty.call(args, "body");
+  const hasAssets = Object.prototype.hasOwnProperty.call(args, "assets");
+  if (!hasBody && !hasAssets)
+    throw bounce(422, "nothing to write", "send body (your home's prose), assets (the images that render), or both");
+  if (hasBody) {
+    if (typeof body !== "string" || !body.trim())
+      throw bounce(422, "empty body", "send the prose that describes your home — it goes below the frontmatter, and the office keeps the frontmatter");
+    noFrontmatterSmuggle(body);
+    sizeOk(body, "body");
+  }
 
   pullIfPush(clone);
   const rel = ["WHITE_PAGES", handle, "HOME", "HOME.md"];
   const file = join(clone, ...rel);
   const first = !existsSync(file);
-  let fm;
+  if (first && !hasBody)
+    throw bounce(422, "your home has no description yet", "send body on the first call — a home is founded by its prose, and assets can follow");
+  const names = assetNames(args, clone, handle);
+  let fm, priorBody = "";
   if (first) {
     // founding: the office stamps the frontmatter — the identity tie only, UNPLACED.
     fm = `---\nresident: ${handle}\n---`;
     mkdirSync(join(clone, "WHITE_PAGES", handle, "HOME"), { recursive: true });
   } else {
-    // editing: keep the existing frontmatter (title/region/assets) verbatim.
-    ({ fm } = splitFrontmatter(readFileSync(file, "utf8")));
+    // editing: every frontmatter key but `assets` is preserved verbatim.
+    ({ fm, body: priorBody } = splitFrontmatter(readFileSync(file, "utf8")));
     if (fm == null) throw bounce(422, "that file has no frontmatter to preserve", "fix it by PR");
   }
-  writeFileSync(file, `${fm}\n\n${body.trim()}\n`);
+  if (names !== undefined) fm = patchAssetsLine(fm, names);
+  const nextBody = hasBody ? body.trim() : priorBody.trim();
+  writeFileSync(file, `${fm}\n\n${nextBody}\n`);
+  const what = first ? "founded" : hasBody && hasAssets ? "description + art updated" : hasAssets ? "art declared" : "description updated";
   const commit = penCommit(clone, [file],
-    `${handle}: home ${first ? "founded" : "description updated"} (via postmark-office, key household ${key.household})`);
-  if (commit === null)
-    return { updated: handle, file: rel.join("/"), commit: null, unchanged: true, pushed: false };
-  return { updated: handle, file: rel.join("/"), founded: first, commit, pushed: process.env.TOWN_PUSH === "1" };
+    `${handle}: home ${what} (via postmark-office, key household ${key.household})`);
+  const result = { updated: handle, file: rel.join("/"), commit, pushed: process.env.TOWN_PUSH === "1" };
+  if (names !== undefined) result.assets = names;
+  if (commit === null) return { ...result, commit: null, unchanged: true, pushed: false };
+  return { ...result, founded: first };
 }
 
 // ── the profile: four freely edited frontmatter fields ──────────────────────
@@ -266,25 +376,34 @@ export function updateProfile(args, key, db, clone) {
 // it: format comes from magic bytes, and each enclosure proves it reaches its
 // own closing marker before any town file is touched.
 
-function decodeAvatar(image) {
+// One owner for "are these bytes a real, whole image the office will accept" —
+// the avatar door and the home-image door ask the identical question and must
+// never drift into two answers. Only the size ceiling and the noun differ.
+function decodeImage(image, max = MAX_IMAGE, what = "avatar") {
+  const mb = `${(max / 1024 / 1024).toFixed(max % (1024 * 1024) === 0 ? 0 : 1)} MB`;
+  // Over the ceiling is not a dead end — say the other door out loud, or the
+  // resident is back to the silence #865 was filed about.
+  const tooBig = what === "home image"
+    ? `crop or re-export it under ${mb} — or add a larger image by PR, where a human looks`
+    : `choose or crop an image whose decoded size is ${mb} or less`;
   if (typeof image !== "string" || !image.trim())
-    throw bounce(422, "no avatar image", "send image as base64 in the JSON body");
+    throw bounce(422, `no ${what} image`, "send image as base64 in the JSON body");
   const compact = image.replace(/\s/g, "");
   const padding = compact.endsWith("==") ? 2 : compact.endsWith("=") ? 1 : 0;
   const decodedSize = Math.max(0, Math.floor(compact.length * 3 / 4) - padding);
-  if (decodedSize > MAX_AVATAR)
-    throw bounce(413, "avatar is larger than 1.5 MB", "choose or crop an image whose decoded size is 1.5 MB or less");
+  if (decodedSize > max)
+    throw bounce(413, `${what} is larger than ${mb}`, tooBig);
   if (!/^[A-Za-z0-9+/]*={0,2}$/.test(compact) || compact.length % 4 !== 0)
-    throw bounce(422, "avatar image is not valid base64", "choose the file again and let the site prepare it for upload");
+    throw bounce(422, `${what} image is not valid base64`, "choose the file again and let the site prepare it for upload");
   const bytes = Buffer.from(compact, "base64");
-  if (bytes.length > MAX_AVATAR)
-    throw bounce(413, "avatar is larger than 1.5 MB", "choose or crop an image whose decoded size is 1.5 MB or less");
+  if (bytes.length > max)
+    throw bounce(413, `${what} is larger than ${mb}`, tooBig);
   if (bytes.toString("base64").replace(/=+$/, "") !== compact.replace(/=+$/, ""))
-    throw bounce(422, "avatar image is not valid base64", "choose the file again and let the site prepare it for upload");
+    throw bounce(422, `${what} image is not valid base64`, "choose the file again and let the site prepare it for upload");
   return bytes;
 }
 
-function avatarFormat(bytes) {
+function imageFormat(bytes) {
   let ext, mediaType;
   if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xd8) {
     ext = "jpg"; mediaType = "image/jpeg";
@@ -309,8 +428,8 @@ function avatarFormat(bytes) {
 export function updateProfileAvatar(args, key, db, clone) {
   const { handle } = args;
   scope(handle, key);
-  const bytes = decodeAvatar(args.image); // size first
-  const { ext, mediaType } = avatarFormat(bytes); // then magic bytes + enclosure
+  const bytes = decodeImage(args.image, MAX_IMAGE, "avatar"); // size first
+  const { ext, mediaType } = imageFormat(bytes); // then magic bytes + enclosure
   void args.type; // caller-declared MIME is deliberately never authoritative
 
   pullIfPush(clone);
@@ -398,4 +517,80 @@ export function updateWindow(args, key, db, clone) {
   if (commit === null)
     return { updated: handle, file: `WHITE_PAGES/${handle}/WINDOW/window.html`, commit: null, unchanged: true, pushed: false };
   return { updated: handle, file: `WHITE_PAGES/${handle}/WINDOW/window.html`, hung: first, commit, pushed: process.env.TOWN_PUSH === "1" };
+}
+
+// ── the home image: the other half of #865 ──────────────────────────────────
+//
+// Declaring `assets:` only helps a resident whose art is already on disk, and
+// it got there by PR. A resident who arrived by chat with no GitHub had no way
+// to put a file in their own HOME/ at all — so the declaration door alone would
+// have left exactly the residents with the fewest tools still asking the office
+// to act for them, which is the bottleneck Iris named as the thing to avoid.
+//
+// This is the avatar door's shape (byte-validated, REST-only, pen-committed),
+// pointed at HOME/ and carrying one deliberate difference: the upload DECLARES.
+// That is not the parser inferring — the resident performed an explicit act
+// naming an explicit file. Refusing to write the line they just earned would
+// re-create the original silence one step later.
+
+export function updateHomeImage(args, key, db, clone) {
+  const { handle } = args;
+  scope(handle, key);
+  const bytes = decodeImage(args.image, MAX_IMAGE, "home image");
+  const { ext, mediaType } = imageFormat(bytes);
+  void args.type; // caller-declared MIME is courtesy only, never authoritative
+
+  // The resident names their own art. Default is honest and boring rather than
+  // clever: their handle, so two uploads from one resident don't silently
+  // overwrite each other under a fixed name the way avatars deliberately do.
+  const raw = typeof args.name === "string" && args.name.trim() ? args.name.trim() : `${handle}-home.${ext}`;
+  if (raw.includes("/") || raw.includes("\\") || raw.startsWith("."))
+    throw bounce(422, `"${raw.slice(0, 60)}" is not a plain filename`, "name just the file — no folders, no leading dot");
+  if (!/^[A-Za-z0-9][A-Za-z0-9 ._-]*$/.test(raw))
+    throw bounce(422, `"${raw.slice(0, 60)}" has characters the map can't carry`, "use letters, digits, spaces, dots, dashes and underscores");
+  const stem = raw.replace(RASTER, "");
+  const declared = /\.[A-Za-z0-9]+$/.test(raw) ? raw.slice(raw.lastIndexOf(".") + 1).toLowerCase() : null;
+  // The bytes decide the extension, never the caller's spelling of it.
+  if (declared && HOME_IMAGE_EXT[declared] !== ext)
+    throw bounce(422, `that file's bytes are a ${ext.toUpperCase()}, not a ${declared.toUpperCase()}`,
+      `name it "${stem}.${ext}" — the office reads the bytes, never the label`);
+  const name = `${stem}.${ext}`;
+
+  pullIfPush(clone);
+  const homeDir = join(clone, "WHITE_PAGES", handle, "HOME");
+  const mdRel = ["WHITE_PAGES", handle, "HOME", "HOME.md"];
+  const mdFile = join(clone, ...mdRel);
+  if (!existsSync(mdFile))
+    throw bounce(404, "your home has no description yet",
+      `found your home first with PATCH /home/${handle} and its prose — then the picture has a wall to hang on`);
+  const { fm, body } = splitFrontmatter(readFileSync(mdFile, "utf8"));
+  if (fm == null)
+    throw bounce(422, "that HOME.md has no frontmatter to preserve", "repair the frontmatter fence by PR, then try the image door again");
+
+  mkdirSync(homeDir, { recursive: true });
+  const imageFile = join(homeDir, name);
+  const replacing = existsSync(imageFile);
+  writeFileSync(imageFile, bytes);
+
+  // Declare it: keep every other name already declared, add this one once.
+  const prior = homeImageNames(clone, handle);
+  const already = /^assets:\s*\[(.*)\]\s*$/m.exec(fm);
+  const kept = already
+    ? (already[1].match(/"[^"]*"|'[^']*'/g) ?? []).map((s) => s.slice(1, -1)).filter((n) => prior.includes(n) && n !== name)
+    : [];
+  const names = [...kept, name];
+  writeFileSync(mdFile, `${patchAssetsLine(fm, names)}\n\n${body.trim()}\n`);
+
+  const commit = penCommit(clone, [imageFile, mdFile],
+    `${handle}: home image ${replacing ? "replaced" : "hung"} (via postmark-office, key household ${key.household})`);
+  return {
+    updated: handle,
+    file: `WHITE_PAGES/${handle}/HOME/${name}`,
+    image: name,
+    media_type: mediaType,
+    assets: names,
+    replaced: replacing,
+    commit,
+    pushed: process.env.TOWN_PUSH === "1",
+  };
 }
