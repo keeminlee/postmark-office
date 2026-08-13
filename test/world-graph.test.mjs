@@ -52,6 +52,33 @@ test("the payload is what cytoscape({ elements }) takes, with the store's own As
   assert.equal(view.counts.unresolved, 1);
 });
 
+test("a mark ships the sentence its author wrote, and the keys they wrote it under", () => {
+  const view = worldGraphView({ dbPath: fixtureStore() });
+  const quay = byId(view, "the-town/the-quay");
+  assert.equal(quay.body, "Six bollards, and the water slapping at them.");
+  assert.deepEqual(quay.keys, ["kind", "by", "tier", "at", "extent", "date", "sea_state"]);
+  // THE DISTINCTION THE CENSUS RESTS ON. Both of these read `tier` on the node,
+  // and only one of them is a word an author wrote: the loader defaults the
+  // other to "market". Without `keys` the two are the same string, and "how
+  // many records still assert a standing" has no answer in this payload.
+  const parcel = byId(view, "someone/their-parcel");
+  assert.equal(parcel.tier, "market");
+  assert.equal(parcel.keys.includes("tier"), false);
+  assert.equal(quay.keys.includes("tier"), true);
+});
+
+test("a record whose frontmatter would not parse ships no key list, and no body it never had", () => {
+  const view = worldGraphView({ dbPath: fixtureStore() });
+  const far = byId(view, "the-town/the-far-landing");
+  // `keys: null` is "not read". It must not arrive as `[]`, which a reader would
+  // count as a record that carries nothing — the opposite finding.
+  assert.equal("keys" in far, false);
+  assert.equal("body" in far, false);
+  // and the kinds that are not marks have neither, because neither is theirs
+  assert.equal("keys" in byId(view, "engine/files"), false);
+  assert.equal("body" in byId(view, "mechanic:timetable"), false);
+});
+
 test("positions pass through unnegated — south stays positive, so a y-down renderer draws north up", () => {
   const view = worldGraphView({ dbPath: fixtureStore() });
   const quay = view.elements.nodes.find((n) => n.data.id === "the-town/the-quay");

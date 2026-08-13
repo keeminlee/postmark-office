@@ -143,6 +143,19 @@ function buildPayload(dbPath, st) {
     if (p.mechanic) data.mechanic = p.mechanic;
     if (p.class) data.class = p.class;
     if (Array.isArray(p.affordances)) data.affordances = p.affordances.length;
+    // THE CLAIM ITSELF. A mark's body is the sentence the author wrote about
+    // the thing — SCHEMA.md caps it at 150 characters — and without it the
+    // window can say a node's degree, its tier and its path but not what it
+    // SAYS. Two of these ship for the cost of one of the id strings already
+    // here, and a reader who has to open the repo to find out what
+    // `the-town/the-fog` claims is not reading the world through this window.
+    if (p.body) data.body = p.body;
+    // The author's own key list (world-hydrate.mjs § what the AUTHOR wrote).
+    // Every other field on this node is COMPOSED — the loader defaults `tier`
+    // to "market" and synthesizes half the identity — so this is the only thing
+    // in the payload that answers "what does the file actually say", which is
+    // the question the tier cutover and the serialization map are both made of.
+    if (Array.isArray(p.keys)) data.keys = p.keys;
     const el = { data };
     if (a.x != null && a.y != null) { el.position = { x: a.x, y: a.y }; positioned++; }
     if (a.w != null) data.w = a.w;
