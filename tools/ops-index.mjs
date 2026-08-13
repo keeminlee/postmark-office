@@ -153,6 +153,14 @@ const SHELF = [
     },
   },
   {
+    slug: null, href: "graph/", emblem: "⌗", kind: "Console", title: "The world graph",
+    line: "world.db as one picture — every node and edge, the standing invariants painted on in red, and the law's lenses over it. A console; its numbers live on the page itself.",
+  },
+  {
+    slug: null, href: "graph/?paint=ideal", emblem: "⚖", kind: "Lens", title: "LOGOS adherence",
+    line: "The v2 gaps, live: what the law can address, what is still fields, residue and debt — the world through the law's glasses, computed from the store the office is serving right now.",
+  },
+  {
     slug: null, href: "desk/", emblem: "✒", kind: "Console", title: "The Principal's Desk",
     line: "Gift stamps to a resident, minted with the town's own pen. A console, not an instrument — it has no reading to show.",
   },
