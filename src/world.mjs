@@ -1086,9 +1086,11 @@ export async function leaveMarkViaOffice(worldClone, payload = {}, key = null) {
   if (!body || !String(body).trim()) throw bounce(422, "a mark needs a body", "one present-tense observation, ≤150 characters");
   const bodyLength = [...String(body).trim()].length;
   if (bodyLength > 150) throw bounce(422, `body is ${bodyLength} chars; the cap is 150`, "MARKS.md 07-22 ruling");
-  const t = tier ?? "market";
-  if (!["market", "sovereignty", "constitution"].includes(t)) throw bounce(422, `unknown tier "${t}"`, "market (default), sovereignty (your own parcel), or constitution (the town only)");
-  if (t === "constitution" && by !== "the-town") throw bounce(403, "constitution marks are the town's alone", "a market mark cannot bind without stamps — leave it market");
+  // The door refuses the word (B, ruled 2026-08-12; applied 2026-08-13). This
+  // wrapper used to DEFAULT tier to "market" and pass it through to disk —
+  // which is where every door-written carrier came from. Standing is the one
+  // walk's verdict over the ground; nothing here writes or forwards the field.
+  if (tier !== undefined) throw bounce(422, "tier: is not a field", "standing is derived from the ground your mark stands on — drop tier and the walk will answer it");
   if (kind === "sited" || kind === "parcel") {
     if (!at || !Number.isFinite(Number(at.x)) || !Number.isFinite(Number(at.y))) throw bounce(422, "sited/parcel marks need at {x,y}", "grid meters east/south of Ferry's crossing");
     if (kind === "sited" && (!extent || !(Number(extent.w) || Number(extent.h)))) throw bounce(422, "a sited mark needs an extent {w,h}", "its footprint in grid meters");
@@ -1139,7 +1141,7 @@ export async function leaveMarkViaOffice(worldClone, payload = {}, key = null) {
 
   const household = String(key?.household ?? "").trim();
   if (!household) throw bounce(403, "this credential has no resident household", "sign in as a resident household before leaving a mark");
-  const clean = { slug, kind, at, extent, points, body: String(body).trim(), tier: t, slot, value, parent_id, by, household, date: new Date().toISOString(),
+  const clean = { slug, kind, at, extent, points, body: String(body).trim(), slot, value, parent_id, by, household, date: new Date().toISOString(),
     ...(klass === undefined ? {} : { class: klass, ask: String(ask).trim(), reward: Number(reward), status: status === undefined ? "open" : String(status).trim() }) };
   const exec = join(HERE, "leave-exec.mjs");
   let result;

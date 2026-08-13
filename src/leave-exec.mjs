@@ -57,6 +57,12 @@ async function main() {
   const p = JSON.parse(process.argv[2] ?? "{}");
   if (!existsSync(ROOT_DIR)) return err(409, "not-yet-open", "the office has no world clone with a marks tree");
   if (!p.household) return err(403, "this credential has no resident household", "sign in as a resident household before leaving a mark");
+  // The door refuses the word (B, ruled 2026-08-12; applied 2026-08-13): tier
+  // is not a field — standing is derived by the one walk over the ground, never
+  // asserted by the author. This door used to pass the field through to disk;
+  // the residue that habit left has been stripped, and the world's own gate now
+  // bounces a carrier, so refusing here is the same law one door earlier.
+  if (p.tier !== undefined) return err(422, "tier: is not a field", "standing is derived from the ground your mark stands on — drop the tier field and the walk will answer it");
 
   const tools = join(CLONE, "tools");
   const tEngine = performance.now();
@@ -157,7 +163,7 @@ async function main() {
   // class/ask/reward/status: the bounty grammar (founder-ruled 2026-08-11) — the
   // door validated them; here they only need to reach the record, or the board's
   // reader can never see a resident's notice.
-  const fm = ["kind", "by", "tier", "date", "at", "extent", "points", "slot", "value", "class", "ask", "reward", "status"]
+  const fm = ["kind", "by", "date", "at", "extent", "points", "slot", "value", "class", "ask", "reward", "status"]
     .filter((k) => fileRec[k] !== undefined && fileRec[k] !== null && fileRec[k] !== "")
     .map((k) => `${k}: ${fmtVal(fileRec[k])}`).join("\n");
   const record = `---\n${fm}\n---\n\n${String(p.body).trim()}\n`;
