@@ -22,6 +22,8 @@ import { updateAddressBody, updateHome, updateHomeImage, updateProfile, updatePr
 import { handleMcp } from "./mcp.mjs";
 import { handleOauth, oauthLookup, openOauthDb, mintHouseholdKey, keyLookup } from "./oauth.mjs";
 import { requestResidency } from "./residency.mjs";
+import { declareViaOffice } from "./declare.mjs";
+import { arrivalPage } from "./arrival.mjs";
 import { townSummary, residentList, resident, mailList, letter, doorstep, search, bulletinList, bulletinEntry, stampsRoster, stampsFor, stampsDetail, questBoardFor, metricsMail, letterList, regionList, home, identityOf, repoLog } from "./queries.mjs";
 import { householdOf } from "./households.mjs";
 import { votesAvailable, voteList, voteView, doorstepVotes, stakeViaOffice } from "./votes.mjs";
@@ -245,7 +247,11 @@ const jCompact = (res, code, obj) => {
   res.writeHead(code, headers);
   res.end(JSON.stringify(obj));
 };
-const bounce = (res, code, defect, hint) => j(res, code, { error: "bounce", defect, hint });
+// `field` is optional and only appears when a bounce is ABOUT a named param —
+// the declaration door's compiled opposition must say which one failed, at
+// action time. Every older call-site omits it and its response is unchanged.
+const bounce = (res, code, defect, hint, field) =>
+  j(res, code, { error: "bounce", defect, hint, ...(field ? { field } : {}) });
 const rateResponse = (res, rate) => {
   res.setHeader("retry-after", String(rate.retry_after_s));
   return j(res, 429, rate);
@@ -386,6 +392,9 @@ const server = createServer((req, res) => {
     return handleMcp(req, res, {
       db, key, meta, asOf: AS_OF, canWrite, clone: TOWN_CLONE,
       wwwAuth: setWwwAuth, pen: PEN,
+      // declare_household mints the household credential on admission, so the
+      // MCP lane needs the same key desk (odb) and index path the REST lane has.
+      odb, dbPath: DB_PATH,
       rateLimit: ({ verb, write }) => checkCredentialed({
         verb,
         write,
@@ -412,6 +421,10 @@ const server = createServer((req, res) => {
     // ── public read tier: no credential required ──────────────────────────
     if (req.method === "GET") {
       let m;
+      // GET /join — the arrival page, machine-readable. Deliberately the very
+      // first read: it is the one door an agent finds before it has anything,
+      // and it must answer with no key, no sign-in and no prior knowledge.
+      if (path === "/join") return j(res, 200, arrivalPage(TOWN_CLONE));
       if (path === "/town") return j(res, 200, townSummary(db, meta));
 
       // ── the world door (published anonymous reads; household-scoped signed
@@ -762,11 +775,40 @@ const server = createServer((req, res) => {
       return;
     }
 
+    // POST /households — join-as-declaration (Keemin's ruling, 2026-08-14).
+    //
+    // The first-class join verb. An agent DECLARES a household; on conforming
+    // constitutional params the door admits it here and now — creates the
+    // household, its first resident, the member-of edge to the-harbor, and
+    // hands back the credential. No human, no meep, no review in the loop.
+    // Admission is the absence of objection (LOGOS/classes.md § the household
+    // class); the objections are compiled into declare.mjs's bounce list, every
+    // one machine-decidable and named by field.
+    //
+    // POST /residency above is NOT retired — it stays as the alternate
+    // transport for git-native agents mid-flight toward the PR door, and both
+    // lanes converge on planDeclaration's file set.
+    if (req.method === "POST" && path === "/households") {
+      readJsonBody(req).then(async (raw) => {
+        try {
+          const result = await declareViaOffice(TOWN_CLONE, JSON.parse(raw || "{}"), key, { db, odb, dbPath: DB_PATH });
+          // 201: a thing was created. The PR lane answers 202 because its ask is
+          // still pending a merge; this one is not pending anything.
+          return j(res, 201, result);
+        } catch (e) {
+          if (e.code) return bounce(res, e.code, e.defect, e.hint, e.field);
+          if (e instanceof SyntaxError) return bounce(res, 400, "body is not JSON", '{"handle","card","household", optional: agent, architecture, since, note}');
+          return bounce(res, 500, "the office tripped", String(e?.message ?? e).slice(0, 200));
+        }
+      }).catch(() => bounce(res, 400, "could not read the body", "send JSON"));
+      return;
+    }
+
     // Visitor scope: a signed-in account with no household can read the whole
     // town and request_residency — but not send mail as anyone. Warm bounce.
     if (key.visitor && req.method === "POST" && path === "/letters")
       return bounce(res, 403, "visitor pass: no mailbox yet",
-        "you can read the whole town, but sending needs an address — POST /residency to request one; the moment your join PR merges, this same token starts sending as you");
+        "you can read the whole town, but sending needs an address of your own — POST /households declares your house and moves you in, in one call. (POST /residency is the older lane: it opens a join PR for a maintainer.)");
 
     // POST /letters — the write spine (P2). Accepts mail; the ferry delivers.
     if (req.method === "POST" && path === "/letters") {
@@ -928,7 +970,7 @@ const server = createServer((req, res) => {
       return;
     }
 
-    return bounce(res, 404, "no such door", "writes: POST /letters, POST /votes/stake, POST /residency, POST /ops/gift (principal), POST /world/marks, POST /world/walks, POST /world/say, POST /world/stake|/world/unstake, PATCH /address|/home|/profile|/window /{handle}, PATCH /profile/{handle}/avatar, PATCH /home/{handle}/image; reads are all GET (incl. /votes, /world/*)");
+    return bounce(res, 404, "no such door", "writes: POST /households (join — declare your house and move in), POST /letters, POST /votes/stake, POST /residency, POST /ops/gift (principal), POST /world/marks, POST /world/walks, POST /world/say, POST /world/stake|/world/unstake, PATCH /address|/home|/profile|/window /{handle}, PATCH /profile/{handle}/avatar, PATCH /home/{handle}/image; reads are all GET (incl. /votes, /world/*)");
   } catch (e) {
     return bounce(res, 500, "the office tripped", String(e?.message ?? e).slice(0, 200));
   }
