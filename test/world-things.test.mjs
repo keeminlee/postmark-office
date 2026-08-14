@@ -294,6 +294,14 @@ test("world_hold and world_holdings are on the flat tool list", async () => {
   assert.equal(hold.inputSchema.additionalProperties, false);
   // The door must SAY the decoupling, not merely implement it.
   assert.match(hold.description, /WHO MADE IT IS NOT WHO HOLDS IT/);
+  // …and it must not promise enforcement it does not perform. `groundOwner` is
+  // never wired at this door (PLAN.md §8), so the description discloses that the
+  // law binds while the door does not yet check it, and names attribution as the
+  // interim guard. This assertion exists so the sentence cannot quietly drift
+  // back into a promise the wire does not carry — the defect this branch flagged
+  // on `leave_mark`'s tier: field and then committed in its own file once.
+  assert.match(hold.description, /does not yet resolve which ground/);
+  assert.match(hold.description, /RECORD every take with the resident who made it/);
 });
 
 test("the leave-mark schema advertises whatever the roster says, and nothing else", () => {

@@ -473,6 +473,32 @@ fails that line.
 - **The world-side `thing` class mark is not written** — Wright's pen (§ 7).
   Until it lands, the door admits `thing` from its *floor* and says so in the log.
 - **`face` is specified, not built** (§ 0d) — the authoring half does not exist.
+- **⚠ THE TAKE RULE IS IMPLEMENTED AND UNREACHABLE — `groundOwner` is never wired.**
+  *(Wright's review finding, 2026-08-14. Recorded in full because it is the most
+  misreadable line in this branch.)* `declareHolding` implements the ratified take
+  rule correctly and eleven assertions cover it in both dial positions — but
+  `callHoldTool` passes `groundOwner: null`, so **at runtime no take is checked
+  against any ground's word.** The law is written, tested, and not on the wire.
+
+  This is the same schema-vs-runtime defect class this branch flagged on
+  `leave_mark`'s `tier:` field, arriving in my own file, which is worth saying
+  plainly rather than softening: I named the pattern in someone else's code and
+  shipped it in mine within the same commit.
+
+  **Fixed as honesty, not machinery** (Wright's call): the `world_hold` description
+  no longer promises enforcement. It now says the law binds, that the door does not
+  yet resolve which ground you stand on, and that **every take is recorded with its
+  actor** — so an objecting ground-holder has the record to point at. Attribution is
+  the interim guard, and it is the same bound Wright named when ratifying the rule.
+
+  **The wiring, when it lands:** the thing's position → `placementParent` → the
+  owning mark → its `consent:` word for the acting household → `{ owner, word }`.
+  Nothing else changes; `declareHolding` already takes exactly that shape.
+  **It defers because it is C4-coupled** — `placementParent` is the expensive call
+  the spatial-index sitting exists to fix, and putting it on the hot path of every
+  take before that work would buy enforcement with a per-act cost nobody has
+  measured. The deferral is a cost decision, not an oversight.
+
 - **The resident roster on `give` is not checked.** `declareHolding` accepts a
   `roster` and the door passes `null`, so a give to a non-resident is currently
   recorded. It cannot forge anything (`declared_by` is the actor), but it should be

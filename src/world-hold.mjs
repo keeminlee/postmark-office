@@ -183,7 +183,7 @@ export function declareHolding({ db, thing, to = null, actor, roster = null, gro
 
 export const HOLD_TOOLS = [
   { name: "world_hold",
-    description: "Declare who holds a thing — the one act behind give, drop and take. Name a thing and, to hand it over, the resident who takes it; omit `to` and you either SET IT DOWN where you stand (if you are holding it) or PICK IT UP (if it is standing on the ground). Which of the three happens is read off the thing's current holder, not from what you call it, so you cannot give away what you are not holding. WHO MADE IT IS NOT WHO HOLDS IT: authorship is the mark's `by` and never moves; holding is this edge and moves freely; where it stands is a third answer again. A held thing has no position of its own — it is wherever its holder is, derived on read, and its record on disk does not change when it changes hands. Taking from another household's ground answers to that ground's word.",
+    description: "Declare who holds a thing — the one act behind give, drop and take. Name a thing and, to hand it over, the resident who takes it; omit `to` and you either SET IT DOWN where you stand (if you are holding it) or PICK IT UP (if it is standing on the ground). Which of the three happens is read off the thing's current holder, not from what you call it, so you cannot give away what you are not holding. WHO MADE IT IS NOT WHO HOLDS IT: authorship is the mark's `by` and never moves; holding is this edge and moves freely; where it stands is a third answer again. A held thing has no position of its own — it is wherever its holder is, derived on read, and its record on disk does not change when it changes hands. BY LAW, taking from another household's ground answers to that ground's word; the door does not yet resolve which ground you are standing on, so today it does not enforce that — what it does instead is RECORD every take with the resident who made it, so a ground-holder who objects has the record to point at. The enforcement lands with ground resolution.",
     inputSchema: { type: "object", properties: {
       thing: { type: "string", description: "the thing's mark id, <by>/<slug> — as ids appear in the telling" },
       to: { type: "string", description: "the resident who takes it (a give). Omit to set it down where you stand, or to pick up a thing standing on the ground" },
@@ -214,12 +214,32 @@ export async function callHoldTool(name, args = {}, key = null) {
       const held = holdingsOf(rows, actor);
       return { handle: actor, holding: held.map((id) => ({ thing: id, made_by: id.split("/")[0] })), count: held.length };
     }
-    // `roster` here is the RESIDENT roster (who may receive a give), which this
-    // office does not yet read at this door — passing null means "do not check",
-    // and the give still cannot forge a holding because `declared_by` records who
-    // actually said it. Wiring it to the household projection is a named
-    // follow-up in PLAN.md rather than a silent gap.
+    // ── TWO INPUTS THIS DOOR DOES NOT YET COMPUTE ──────────────────────────
+    //
+    // Both are `null` on purpose, and both are named in PLAN.md §8 rather than
+    // left to be discovered by whoever next reads `declareHolding`'s signature
+    // and assumes the door fills it.
+    //
+    // `roster` — the RESIDENT roster (who may receive a give). Unchecked here, so
+    // a give to a handle that is not a resident is currently recorded. It cannot
+    // forge anything: `declared_by` is the actor, and the thing does not move
+    // twice.
+    //
+    // `groundOwner` — WHOSE GROUND THE THING IS STANDING ON, which is what the
+    // take rule answers to. `declareHolding` implements and tests that rule in
+    // full; this door cannot supply its input yet, because resolving it means
+    // taking the thing's position and walking `placementParent` to the owning
+    // mark and its `consent:` word — and `placementParent` is the expensive call
+    // the spatial-index work exists to fix (C4-coupled). That coupling is WHY
+    // this defers rather than being a thing anyone forgot.
+    //
+    // ⚠ THE HONEST CONSEQUENCE, said here as well as at the door: with this null,
+    // NO take is checked against any ground's word at runtime. Ratified law is
+    // implemented and unreachable. The tool description says so in as many words
+    // — a door that promised enforcement it does not perform would be the exact
+    // schema-vs-runtime defect this branch flagged on `leave_mark`'s `tier:`, and
+    // it is not better for being mine.
     const dials = thingDials();
-    return declareHolding({ db, thing: args.thing, to: args.to ?? null, actor, roster: null, dials });
+    return declareHolding({ db, thing: args.thing, to: args.to ?? null, actor, roster: null, groundOwner: null, dials });
   } finally { db.close(); }
 }
