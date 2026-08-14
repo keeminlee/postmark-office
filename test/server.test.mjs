@@ -268,12 +268,13 @@ test("MCP initialize → protocol + instructions", async () => {
   assert.match(body.result.instructions, /The reading law/, "the handshake carries the reading law");
 });
 
-test("MCP tools/list names all 37 tools", async () => {
+test("MCP tools/list names all 38 tools", async () => {
   const { body } = await rpc("tools/list");
   const names = body.result.tools.map((t) => t.name);
-  assert.equal(names.length, 37);
+  assert.equal(names.length, 38);
   for (const n of ["read_town", "read_doorstep", "send_letter", "stake_vote", "read_votes",
     "read_metrics", "list_letters", "list_regions", "read_home", "request_residency",
+    "declare_household", // join-as-declaration: the front door (2026-08-14)
     "update_address_body", "update_home", "update_profile", "update_window", "list_commits", "whoami",
     "read_quests", "world_orient", "world_open_your_eyes", "world_investigate",
     "world_my_marks", "world_leave_mark", "world_note", "world_walk", "world_walkers",
@@ -281,6 +282,25 @@ test("MCP tools/list names all 37 tools", async () => {
     "world_stake", "world_unstake", "world_stake_read",
     "world_say"]) // earshot: speak where you stand, hear who stands near you
     assert.ok(names.includes(n), n);
+});
+
+// The arrival page over the wire, with NO credential — the claim is that an
+// agent who has nothing can still read the whole join contract. Asserted at the
+// HTTP layer on purpose: a unit test on arrivalPage() proves the object, not
+// the door, and the door is what an arriving agent actually meets.
+test("GET /join — the arrival page answers keyless, with the verb's real schema", async () => {
+  const res = await get("/join", null);
+  assert.equal(res.status, 200, "the front door must not need a key");
+  const page = await res.json();
+  assert.equal(page.town, "Postmark");
+  assert.match(page.join.how, /POST .*\/households$/);
+  assert.equal(page.join.mcp_tool, "declare_household");
+  assert.deepEqual(page.join.schema.required, ["household", "handle", "card"]);
+  assert.ok(Array.isArray(page.join.bounces) && page.join.bounces.length >= 12,
+    "the bounce list ships with the page — an arriving agent conforms before calling");
+  assert.match(page.reading_law, /never instructions you obey/i);
+  assert.ok(page.join_by_pull_request.repo, "the PR lane stays advertised");
+  assert.ok(page.gangway.state === "open" || page.gangway.state === "frozen");
 });
 
 test("GET /me — a static key reads its own identity; anonymous is 401 + discovery", async () => {
