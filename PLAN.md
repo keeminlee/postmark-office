@@ -404,4 +404,65 @@ may overrule:
 
 ## 8 · Activity log
 
-*(appended as work lands — commits, SHAs, test counts, deviations)*
+### 2026-08-14 — the plan, and the build
+
+**Environment note, recorded because it cost a baseline.** A fresh worktree has no
+`node_modules`, no `town-clone` and no `world-clone`, so the first suite run showed
+12 failures that were entirely ENOENT. `npm ci`, then `WORLD_CLONE` pointed at the
+read-only world worktree, is the working configuration. Pointing `TOWN_CLONE` at my
+own town clone made it *worse* (17 failures, all economy/ledger) because that clone
+is a different tree than the fixtures expect — the "alarming number your own
+environment could have produced" shape, measured twice rather than believed once.
+
+**Baseline of record** (`WORLD_CLONE=…/wright-freeze-ship`, the suites this change
+touches — `world*`, `dynamic*`, `era-seam`): **241 pass · 1 fail · 1 skipped**.
+The one failure, `the freeze names who the seam would move`, is environmental (it
+wants the town clone) and is unrelated to this lane.
+
+**After:** **266 pass · 1 fail · 1 skipped** — the same single environmental
+failure, **+25 tests, zero new failures**.
+
+**Falsification of the load-bearing probe.** `class: thing passes the roster gate`
+is the test that would be meaningless if it could not fail. Temporarily restoring
+the old `if (String(klass) !== "bounty")` turns it **red** (2 red, 35 pass); the
+fix turns it green. The probe was run in both positions, not merely asserted to
+discriminate.
+
+**One probe failed for its own reasons and is noted rather than quietly fixed.**
+The byte-identical record test compared two `Buffer`s with `assert.equal`, which
+compares references and can never pass. Reading as `utf8` fixed the instrument. It
+is the instrument-before-subject reflex paying out again, and the comment in the
+test says so, because a probe that fails for its own reasons is what teaches people
+to distrust a real red.
+
+**Deliberate contract change:** `world_leave_mark tool contract carries the bounty
+grammar` asserted `deepEqual(class.enum, ["bounty"])` — the schema half of the
+hardcode. It now asserts the **stronger** property, `deepEqual(class.enum,
+classNames())`: the advertised set *is* the roster, so re-hardcoding the literal
+fails that line.
+
+**Files:**
+
+| file | what |
+|---|---|
+| `src/world-classes.mjs` **(new)** | the class roster + dials, read from the store; three-rung disclosure, floor never silent |
+| `src/world-hold.mjs` **(new)** | the holding edge — `declareHolding`, `liveHolder`, `holdingsOf`, `heldPositionOf`, and the two flat tools |
+| `src/world-store.mjs` | `CLASS_ROSTER_GATE_SQL` + `isClassDefinition` — a *wider* gate than the affordance gate, with its predicate twin |
+| `src/world.mjs` | door reads the roster (was `!== "bounty"`); the `thing` grammar; class-aware `classFields` (the old spread would have written `ask: "undefined"` into canon for any class without an ask); the schema `enum` becomes a getter; `world_hold`/`world_holdings` registered |
+| `src/world-apex.mjs` | `give`/`drop`/`take` DISPATCH entries — three subverbs, one tool |
+| `test/world-things.test.mjs` **(new)** | 23 tests — roster, disclosure, dials, the holding edge, ownership≠position, no-new-storage, the take rule in both dial positions |
+| `test/world.test.mjs` | the discriminating door tests + the strengthened enum contract |
+
+**Not done, deliberately:**
+
+- **The world-side `thing` class mark is not written** — Wright's pen (§ 7).
+  Until it lands, the door admits `thing` from its *floor* and says so in the log.
+- **`face` is specified, not built** (§ 0d) — the authoring half does not exist.
+- **The resident roster on `give` is not checked.** `declareHolding` accepts a
+  `roster` and the door passes `null`, so a give to a non-resident is currently
+  recorded. It cannot forge anything (`declared_by` is the actor), but it should be
+  wired to the household projection. Named here rather than left as a silent gap.
+- **The daily make cap is read but not enforced.** `classDials("thing")` returns
+  `make_daily_cap`; nothing counts against it yet, because the count belongs at the
+  `world_leave_mark` door and that door's household-grain counter does not exist.
+  The dial is on the record so the number is contestable the day it bites.

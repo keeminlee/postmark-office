@@ -149,6 +149,35 @@ export const isClassMark = (attr) => attr?.kind === "mark"
   && attr?.props?.class != null
   && attr?.props?.affordances != null;
 
+// ── THE CLASS ROSTER — a WIDER gate than the one above, deliberately ─────────
+//
+// Which class NAMES exist in law. This is not the affordance gate minus a
+// clause by accident: `affordances:` is what lets a class mint a VERB, and most
+// classes mint none. `the-town/parcel` and `the-town/attachment` carry no
+// `affordances:` field at all and are unquestionably law; requiring one here
+// would make `class: parcel` a lie on the record while the parcel class stands
+// in the Keeping Works.
+//
+// The world's own lint already draws exactly this line (`tools/mark-lint.mjs`
+// § CLASS_ROSTER — "a class NAME is lawful exactly when the town's own
+// constitution mark declares it (the class VALUE, never the slug)"), and it
+// derives the roster from the record rather than holding a list. The office
+// held a list — one entry, `"bounty"` — so the two doors disagreed the moment
+// law grew a second resident-declarable class. This is the office's half of
+// that one definition, gated identically: authorship carries the weight, and no
+// credential at any door can author as the town.
+export const CLASS_ROSTER_GATE_SQL = `
+     kind = 'mark'
+     AND by   = 'the-town'
+     AND tier = 'constitution'
+     AND json_extract(props, '$.class') IS NOT NULL`;
+
+/** The same roster gate, as a predicate over a loaded node's attributes. */
+export const isClassDefinition = (attr) => attr?.kind === "mark"
+  && attr?.by === "the-town"
+  && attr?.tier === "constitution"
+  && attr?.props?.class != null;
+
 // ── AMBIENT REACH — a second, separate rule ─────────────────────────────────
 //
 // `ambient: true` on a class mark means its affordances gather EVERYWHERE

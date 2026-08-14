@@ -1,0 +1,225 @@
+// world-hold.mjs — WHO HOLDS WHAT. The object primitive's one verb.
+//
+// `give`, `drop` and `take` are three faces of one act: DECLARE THE HOLDING.
+// The edit law has one primitive ("to act is to declare an edge; everything
+// else is clothing"), so there is one executor here and three subverbs on the
+// class mark, because the vocabulary a resident reads and the machinery that
+// runs are allowed to differ in number.
+//
+// ── WHY THIS IS NOT CONTAINMENT, WHICH IS THE WHOLE DESIGN ───────────────────
+//
+// The obvious implementation is "the thing's containment edge points at the
+// resident, and children ride their parent's frame." It cannot be built, and
+// the reason is law rather than a gap:
+//
+//   AN ENTITY HAS NO GEOMETRIC PARENT, EVER (LOGOS/kinds.md, restated at
+//   dynamic-store.mjs § entities and dynamic-entities.mjs law 2). The entities
+//   table has no parent column and never will. A resident is not a mark, has no
+//   directory in WORLD/marks/, and cannot be a carrier — carriers are marks
+//   with `mobility: derived|free` AND a `mechanic:` (world-frames.mjs), and
+//   that `mechanic` clause exists precisely so that standing in the building
+//   that houses a class is not riding it.
+//
+// So carrying is the OTHER edge the LOGOS already named, and which has stood in
+// the Keeping Works since 2026-08-09 without ever having a verb:
+//
+//   the-town/attachment — "An attachment is born saying what becomes of it if
+//   what it holds to moves — carried along, or set down."
+//
+// Its table and its writer shipped in Stage 2 with a comment saying the verb
+// that calls them "lands with the vessel work." It did not. This is that verb.
+//
+// ── POSITION IS DERIVED, NEVER STORED ───────────────────────────────────────
+//
+// A held thing's world position is `holder's position + offset`, computed on
+// read — the same arithmetic world-frames.mjs already runs for passengers, and
+// the same discipline the-north-star.md states ("derived things are stored by
+// no one"). The alternative — rewriting the mark's `at:` on every hand-off —
+// would be a git commit per transfer AND would store a derived quantity. The
+// mark file of a thing is BYTE-IDENTICAL across any number of gives; a test
+// asserts exactly that, because it is the claim most worth being able to break.
+//
+// ── HELD vs SET DOWN, and the one judgement call in this file ────────────────
+//
+// The attachments table is store-canon-DURABLE and replayed by the crossing
+// save, so it is the wrong table to migrate on a first pass. It carries no
+// `closed_at`, so "set down" needs a spelling in the columns that exist.
+//
+// The spelling: LATEST ROW PER TARGET WINS (`born_at`, then `seq` — the order
+// readAttachments already returns and a replay already applies), and `policy`
+// says whether that latest row is a holding:
+//
+//   policy: cascade   HELD. It comes along when the holder moves.
+//   policy: detach    SET DOWN. The edge is in the log; the holding is not.
+//
+// This reads the column with its own declared meaning ("carried along, or set
+// down") and needs no migration. It is nonetheless A CHOICE I MADE, not a
+// ruling I was given, and it is the thing to overturn first if the store ever
+// grows an explicit terminal column — at which point `liveHolder` below is the
+// one function that changes.
+
+import { readAttachments, declareAttachment } from "./dynamic-entities.mjs";
+import { openDynamic } from "./dynamic-store.mjs";
+import { classDials } from "./world-classes.mjs";
+
+/** The thing class's own params, read from the record every time (never cached here). */
+export const thingDials = () => classDials("thing");
+
+const bounce = (code, defect, hint) => {
+  const e = new Error(defect);
+  Object.assign(e, { code, defect, hint });
+  return e;
+};
+
+/** Rows for one thing, oldest first — the order a replay applies them in. */
+export const rowsFor = (rows, thingId) => rows.filter((r) => r.target === thingId);
+
+/**
+ * Who holds this thing right now, or null if it is standing on the ground.
+ *
+ * Latest wins. `readAttachments` already orders by (born_at, seq), so "latest"
+ * is the last row and no comparator is restated here — the one ordering lives
+ * in the reader, the way `governingAt` keeps the one latest-wins for departures.
+ */
+export function liveHolder(rows, thingId) {
+  const mine = rowsFor(rows, thingId);
+  if (!mine.length) return null;
+  const last = mine[mine.length - 1];
+  return last.policy === "cascade" ? last.entity : null;
+}
+
+/** Everything this resident is holding, in the order they took it. */
+export function holdingsOf(rows, handle) {
+  const targets = [...new Set(rows.map((r) => r.target))];
+  return targets.filter((t) => liveHolder(rows, t) === handle);
+}
+
+/**
+ * A held thing's position: its holder's, plus the offset it was taken at.
+ *
+ * v0 offset is zero — a carried thing is AT its holder, which is what "in your
+ * hands" means and what every inventory read needs. The parameter exists
+ * because the frame arithmetic is `carrier.at + offset` and writing it without
+ * the term would make the next person re-derive why it is absent.
+ */
+export const heldPositionOf = (holderAt, offset = { x: 0, y: 0 }) =>
+  holderAt ? { x: holderAt.x + offset.x, y: holderAt.y + offset.y } : null;
+
+/**
+ * THE ACT. Declare who holds `thing`.
+ *
+ * `to` given            hand it over (give) — or pick it up, when `to` is you
+ * `to` omitted, held    set it down where you stand (drop)
+ * `to` omitted, ground  pick it up (take)
+ *
+ * The three faces are read off the CURRENT STATE rather than taken from the
+ * caller, so a resident cannot `give` a thing they are not holding by naming the
+ * act differently. Current state before history — the guard ordering the
+ * escalation lane already pays for.
+ */
+export function declareHolding({ db, thing, to = null, actor, roster = null, groundOwner = null, dials = {} }) {
+  if (!thing || !String(thing).includes("/"))
+    throw bounce(422, "which thing?", "a thing's mark id, <by>/<slug> — the id as it appears in the telling");
+  if (!actor) throw bounce(422, "which resident acts?", "a multi-resident key must name one with handle:");
+
+  const rows = readAttachments(db);
+  const holder = liveHolder(rows, thing);
+
+  // ── the three faces, derived ───────────────────────────────────────────────
+  const wantsGround = to == null;
+  const act = holder == null ? "take" : (wantsGround ? "drop" : "give");
+
+  if (act === "give" || act === "drop") {
+    if (holder !== actor)
+      throw bounce(403, `${holder === null ? "nobody" : holder} is holding ${thing}, not ${actor}`,
+        holder === null
+          ? "it is standing on the ground — take it first"
+          : "you can only give or set down what you are holding");
+  }
+
+  if (act === "take") {
+    // ⚑ THE TAKE RULE — flagged for ratification (PLAN.md § 4), and shipped as a
+    // CLASS DIAL so the other position costs no code. Default follows the
+    // response function: neutral is the resting state everywhere, so a take
+    // stands unless the ground has spoken against it. Flipping the dial to true
+    // makes an affirmative welcome the requirement instead.
+    const requiresWelcome = dials?.take_requires_welcome === true;
+    if (groundOwner && groundOwner.owner && groundOwner.owner !== actor) {
+      if (groundOwner.word === "opposed")
+        throw bounce(403, `${groundOwner.owner} has opposed taking from this ground`,
+          "their word on their own ground is absolute — ask them, by letter");
+      if (requiresWelcome && groundOwner.word !== "welcomed")
+        throw bounce(403, `${groundOwner.owner}'s ground has not welcomed taking`,
+          "this world runs take_requires_welcome: true — a standing welcome is needed here; on your own ground and on the commons you may take freely");
+    }
+  }
+
+  if (act === "give") {
+    if (to === actor) throw bounce(422, "you are already holding it", "give names another resident; omit `to` to set it down");
+    if (roster && roster.size && !roster.has(String(to)))
+      throw bounce(422, `"${to}" is not a resident of this town`, "give names a resident handle, as it appears in the telling");
+  }
+
+  const entity = act === "drop" ? actor : (act === "take" ? actor : to);
+  const policy = act === "drop" ? "detach" : "cascade";
+  const row = declareAttachment(db, { entity, target: thing, policy, declaredBy: actor, bornAt: new Date().toISOString() });
+
+  return {
+    did: act,
+    thing,
+    holder: act === "drop" ? null : entity,
+    previous_holder: holder,
+    // The whole point of the design, said in the answer: the maker is not the
+    // holder, and neither is the ground.
+    made_by: String(thing).split("/")[0],
+    policy: row.policy,
+    declared_by: row.declared_by,
+    at: row.born_at,
+    reading_law: "Holding is an edge, not a field: who made this, who holds it, and where it stands are three different answers.",
+  };
+}
+
+// ── the door ────────────────────────────────────────────────────────────────
+
+export const HOLD_TOOLS = [
+  { name: "world_hold",
+    description: "Declare who holds a thing — the one act behind give, drop and take. Name a thing and, to hand it over, the resident who takes it; omit `to` and you either SET IT DOWN where you stand (if you are holding it) or PICK IT UP (if it is standing on the ground). Which of the three happens is read off the thing's current holder, not from what you call it, so you cannot give away what you are not holding. WHO MADE IT IS NOT WHO HOLDS IT: authorship is the mark's `by` and never moves; holding is this edge and moves freely; where it stands is a third answer again. A held thing has no position of its own — it is wherever its holder is, derived on read, and its record on disk does not change when it changes hands. Taking from another household's ground answers to that ground's word.",
+    inputSchema: { type: "object", properties: {
+      thing: { type: "string", description: "the thing's mark id, <by>/<slug> — as ids appear in the telling" },
+      to: { type: "string", description: "the resident who takes it (a give). Omit to set it down where you stand, or to pick up a thing standing on the ground" },
+      handle: { type: "string", description: "which of YOUR residents acts (omit if your key holds one; a multi-resident key must name one)" },
+    }, required: ["thing"], additionalProperties: false } },
+  { name: "world_holdings",
+    description: "What you are carrying. Every thing whose live holding edge names one of your residents, with what each one is and who made it. A thing you made and gave away is not here; a thing someone gave you is, whoever authored it.",
+    inputSchema: { type: "object", properties: {
+      handle: { type: "string", description: "which of YOUR residents (omit if your key holds one)" },
+    }, additionalProperties: false } },
+];
+
+/** Which of the caller's residents is acting. One handle keys default to it. */
+function actingHandle(args, key) {
+  const handles = [...(key?.handles ?? [])];
+  const who = args.handle ?? (handles.length === 1 ? handles[0] : undefined);
+  if (!who) throw bounce(422, "which of your residents acts?", handles.length ? `pass handle: one of ${handles.join(", ")}` : "this key acts for no resident");
+  if (!key?.handles?.has(who)) throw bounce(403, `"${who}" is not one of your residents`, `this key acts for: ${handles.join(", ") || "(none)"}`);
+  return who;
+}
+
+export async function callHoldTool(name, args = {}, key = null) {
+  const actor = actingHandle(args, key);
+  const db = openDynamic();
+  try {
+    if (name === "world_holdings") {
+      const rows = readAttachments(db);
+      const held = holdingsOf(rows, actor);
+      return { handle: actor, holding: held.map((id) => ({ thing: id, made_by: id.split("/")[0] })), count: held.length };
+    }
+    // `roster` here is the RESIDENT roster (who may receive a give), which this
+    // office does not yet read at this door — passing null means "do not check",
+    // and the give still cannot forge a holding because `declared_by` records who
+    // actually said it. Wiring it to the household projection is a named
+    // follow-up in PLAN.md rather than a silent gap.
+    const dials = thingDials();
+    return declareHolding({ db, thing: args.thing, to: args.to ?? null, actor, roster: null, dials });
+  } finally { db.close(); }
+}
