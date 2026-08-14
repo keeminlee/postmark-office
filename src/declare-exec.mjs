@@ -1,0 +1,82 @@
+// declare-exec.mjs — the town-writing half of a household declaration.
+//
+// Invoked by declareViaOffice() as a subprocess (on the box: wrapped in
+// `flock -w 30 town.lock`, the same lock the ferry chain and the gift pass
+// hold — a declaration can never race a crossing, and two declarations can
+// never interleave their writes to tools/households.json). Does the whole
+// critical section in one process: pull the clone, re-read the two registers
+// FRESH under the lock, re-run conformance against them, write the file set,
+// commit + push with the pen's ceremony. Prints exactly one JSON line.
+//
+// Why conformance runs twice: the door checks it to answer fast and to bounce
+// with a named field, but that read happened outside the lock. Between then and
+// now another declaration may have taken the handle or the household name. The
+// check inside the lock is the one that decides — the first is courtesy, the
+// second is law. Uniqueness is only true if it is true when you write.
+//
+// Env: TOWN_CLONE, TOWN_PUSH=1, BOT_NAME/BOT_EMAIL (penCommit's), TOWN_TZ.
+// argv[2]: JSON { args, key } — the caller's declaration and their verified key.
+//
+// Exit 0 with the plan result or { error: { code, field, defect, hint } } (a
+// bounce is an answer); exit 1 only when the machinery itself trips.
+
+import { writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { join, resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { execFileSync } from "node:child_process";
+import { DatabaseSync } from "node:sqlite";
+import { penCommit } from "./write.mjs";
+import { conformance, planDeclaration, readJson, PINS_PATH } from "./declare.mjs";
+import { REGISTRY_PATH, gangwayState } from "./residency.mjs";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const CLONE = process.env.TOWN_CLONE ?? resolve(HERE, "..", "town-clone");
+
+const answer = (obj) => { console.log(JSON.stringify(obj)); process.exit(0); };
+const err = (code, field, defect, hint) => answer({ error: { code, field, defect, hint } });
+
+async function main() {
+  const { args, key, dbPath } = JSON.parse(process.argv[2] ?? "{}");
+
+  if (!existsSync(CLONE))
+    return err(409, null, "not-yet-open", "the office has no town clone to declare into");
+
+  // Freshen first: the registers we are about to check must be the ones the
+  // town holds, not the ones this clone happened to hold last crossing.
+  if (process.env.TOWN_PUSH === "1")
+    execFileSync("git", ["-C", CLONE, "pull", "--rebase", "-q"], { encoding: "utf8" });
+
+  const db = new DatabaseSync(dbPath ?? process.env.OFFICE_DB ?? resolve(HERE, "..", "office.db"), { readOnly: true });
+  const registry = readJson(CLONE, REGISTRY_PATH) ?? { schema_version: 1, households: {} };
+  const pins = readJson(CLONE, PINS_PATH) ?? {};
+
+  // The deciding check — inside the lock, against the freshened registers. A
+  // key arriving here is already GitHub-verified by the door; we re-check the
+  // whole list anyway rather than trusting the earlier pass.
+  let decl;
+  try {
+    decl = conformance(args, { db, registry, clone: CLONE, key });
+  } catch (e) {
+    return err(e.code ?? 422, e.field ?? null, e.defect, e.hint);
+  }
+
+  const ashore = gangwayState(CLONE) !== "frozen";
+  const plan = planDeclaration(registry, pins, decl, { ashore });
+
+  const paths = [];
+  for (const f of plan.files) {
+    const abs = join(CLONE, f.path);
+    mkdirSync(dirname(abs), { recursive: true });
+    writeFileSync(abs, f.content);
+    paths.push(abs);
+  }
+
+  const commit = penCommit(CLONE, paths,
+    ashore
+      ? `address: ${decl.handle} joins · household ${decl.slug} declared (via postmark-office, join-as-declaration)`
+      : `harbor: ${decl.handle} boards · household ${decl.slug} declared (via postmark-office, join-as-declaration)`);
+
+  answer({ slug: plan.slug, handle: decl.handle, ashore, commit, files: plan.files.map((f) => f.path) });
+}
+
+main().catch((e) => { console.error(String(e?.stack ?? e)); process.exit(1); });
