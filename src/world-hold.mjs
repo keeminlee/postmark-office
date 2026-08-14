@@ -138,11 +138,17 @@ export function declareHolding({ db, thing, to = null, actor, roster = null, gro
   }
 
   if (act === "take") {
-    // ⚑ THE TAKE RULE — flagged for ratification (PLAN.md § 4), and shipped as a
-    // CLASS DIAL so the other position costs no code. Default follows the
-    // response function: neutral is the resting state everywhere, so a take
-    // stands unless the ground has spoken against it. Flipping the dial to true
-    // makes an affirmative welcome the requirement instead.
+    // ✔ THE TAKE RULE — RATIFIED 2026-08-14 (Wright), as argued here rather than
+    // as briefed (PLAN-things.md § 4). Neutral is the resting state everywhere, so
+    // a take stands unless the ground has spoken against it; requiring an
+    // affirmative welcome would invert the law's own default. Kept as a CLASS DIAL
+    // so the town can contest it without touching code — flipping
+    // `take_requires_welcome` to true makes welcome the requirement instead, and
+    // both positions are covered by tests.
+    //
+    // The exposure this admits — a thing on the commons is takeable until its
+    // owner opposes — is bounded by attribution: every take records its actor,
+    // held things move only by the holder's own give, and grounds may oppose.
     const requiresWelcome = dials?.take_requires_welcome === true;
     if (groundOwner && groundOwner.owner && groundOwner.owner !== actor) {
       if (groundOwner.word === "opposed")
@@ -216,7 +222,7 @@ export async function callHoldTool(name, args = {}, key = null) {
     }
     // ── TWO INPUTS THIS DOOR DOES NOT YET COMPUTE ──────────────────────────
     //
-    // Both are `null` on purpose, and both are named in PLAN.md §8 rather than
+    // Both are `null` on purpose, and both are named in PLAN-things.md §8 rather than
     // left to be discovered by whoever next reads `declareHolding`'s signature
     // and assumes the door fills it.
     //

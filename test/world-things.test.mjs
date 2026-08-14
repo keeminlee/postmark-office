@@ -295,7 +295,7 @@ test("world_hold and world_holdings are on the flat tool list", async () => {
   // The door must SAY the decoupling, not merely implement it.
   assert.match(hold.description, /WHO MADE IT IS NOT WHO HOLDS IT/);
   // …and it must not promise enforcement it does not perform. `groundOwner` is
-  // never wired at this door (PLAN.md §8), so the description discloses that the
+  // never wired at this door (PLAN-things.md §8), so the description discloses that the
   // law binds while the door does not yet check it, and names attribution as the
   // interim guard. This assertion exists so the sentence cannot quietly drift
   // back into a promise the wire does not carry — the defect this branch flagged

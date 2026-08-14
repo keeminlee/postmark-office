@@ -367,9 +367,13 @@ activity log below), plus `mark-lint` CLEAN in the world clone for any fixture r
   That was luck made cheap by following the existing pattern; it is worth saying
   out loud because the plan's own prediction was wrong in the safe direction.
 
-  **The one real conflict is `PLAN.md`** — both branches add one at branch root, so
-  the merge is an add/add. Trivial, but it will stop a clean auto-merge, and Wright
-  should expect it rather than discover it.
+  **The one real conflict WAS `PLAN.md`** — both branches added one at branch root,
+  an add/add that would have stopped a clean auto-merge. **Dissolved 2026-08-14 on
+  Wright's word:** this file is now **`PLAN-things.md`**, so the two branches no
+  longer touch a single shared path and the merge is clean. The three code
+  references to it (`src/world-hold.mjs` ×2, `test/world-things.test.mjs` ×1) moved
+  with it — a rename that leaves dangling pointers is how a plan stops being
+  findable from the code that cites it.
 
   I stayed off `residency.mjs`, `oauth.mjs` and `households.mjs` entirely.
 
