@@ -331,6 +331,31 @@ Repo idiom (`node --test --test-concurrency=1 "test/*.test.mjs"`), matching
 Gates before I report: full office suite green (baseline recorded first), and
 the declaration path exercised end-to-end against the mock.
 
+### Receipts (filled in after the build)
+
+- **`test/declare.test.mjs`: 30 pass / 0 fail.**
+- **Directly-affected suites together** (`declare` + `residency` + `oauth` +
+  `server` + `queries`): **121 pass / 0 fail**, 8 clean runs.
+- **Full office suite: 462 pass.** Every remaining failure is one pre-existing
+  cause — `ENOENT … town-clone/tools/stamp-mint.mjs`, the empty `town-clone/`
+  described in § STOP-AND-REPORT. Classified mechanically across the whole run:
+  zero `AssertionError`, zero `TypeError`, zero failure naming
+  declare/arrival/`/join`/`/households`. Baseline before the change had the
+  same cause and the same two files (`era-seam`, `world-movement`); its raw
+  count is not comparable run-to-run because those tests are timing-flaky.
+- **`residency.test.mjs` unmodified and green (23/23)** — the PR lane is
+  untouched, which is the regression gate that matters most.
+- **One flake, reported rather than smoothed over.** In the very first
+  five-file run, `residency validation bounces before the pen` failed after
+  **18 s** — timeout-shaped, not an assertion. It did **not** reproduce in the
+  8 subsequent runs of the same command; a control worktree at unmodified
+  `origin/main` ran the same suites 5/5 clean. So 1 failure in 9 runs on this
+  branch versus 0 in 5 on control: too thin to attribute either way, and I am
+  not claiming it is unrelated. Likely mechanism: `residency.test.mjs` binds
+  fixed ports 43831/43832 in a `before()` hook, and this branch adds ~5 s of
+  git work ahead of it in the same run, which moves the timing. Worth one
+  watch on CI.
+
 ---
 
 ## 9. Method / boundaries
