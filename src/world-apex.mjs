@@ -57,6 +57,7 @@ import {
 import { carrierReader, movementV2Enabled, vesselServiceFrom } from "./world-movement.mjs";
 import { carriedLegsFor, happenedBlock, latestSettlement, readCrossingLogs } from "./world-happened.mjs";
 import { WORLD_STAKE_TOOLS, callWorldStakeTool } from "./world-stake.mjs";
+import { callHoldTool } from "./world-hold.mjs";
 import { storeDbPath } from "./world-serve.mjs";
 import { AMBIENT_REACH_SQL, CLASS_MARK_GATE_SQL } from "./world-store.mjs";
 
@@ -130,6 +131,20 @@ const DISPATCH = {
   walk: { tool: "world_walk", run: (args, key) => walkViaOffice(WORLD_CLONE, args, key) },
   "leave-mark": { tool: "world_leave_mark", run: (args, key) => leaveMarkViaOffice(WORLD_CLONE, args, key) },
   stake: { tool: "world_stake", run: (args, key) => callWorldStakeTool("world_stake", args, key) },
+  // THREE SUBVERBS, ONE TOOL. give / drop / take are one act — declare the
+  // holding — and which one happens is read off the thing's current holder
+  // rather than from the word the caller used (world-hold.mjs § the act). They
+  // are three entries because the vocabulary is what a resident READS on the
+  // class mark, and "pick it up" and "hand it over" are genuinely different
+  // things to want; they share a row because the edit law has one primitive.
+  //
+  // `make` is deliberately absent. A thing is made with world_leave_mark and
+  // `class: "thing"`, exactly as a bounty notice is posted — the one live
+  // precedent for a resident-declarable class added no verb either. The verb is
+  // thin; the class is thick.
+  give: { tool: "world_hold", run: (args, key) => callHoldTool("world_hold", args, key) },
+  drop: { tool: "world_hold", run: (args, key) => callHoldTool("world_hold", args, key) },
+  take: { tool: "world_hold", run: (args, key) => callHoldTool("world_hold", args, key) },
 };
 
 // ── seam 4 · the fields a subverb takes ─────────────────────────────────────

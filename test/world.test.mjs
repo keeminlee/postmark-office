@@ -23,6 +23,7 @@ const {
   noticeBoardAt,
   withNoticeBoard,
 } = await import("../src/world.mjs");
+const { classNames } = await import("../src/world-classes.mjs");
 
 const one = { household: "house-a", handles: new Set(["alpha"]) };
 const two = { household: "house-a", handles: new Set(["alpha", "beta"]) };
@@ -177,8 +178,40 @@ test("bounty fields without class bounce — the grammar belongs to a classed ma
   await bounced({ ...validMark, status: "open" }, "ask/reward/status belong to a classed mark");
 });
 
-test("unknown classes bounce — the law knows one class today", async () => {
+test("unknown classes bounce — the law knows only what the record declares", async () => {
   await bounced({ ...validBounty, class: "quest" }, 'unknown class "quest"');
+});
+
+// ── the object primitive at the door (2026-08-14) ───────────────────────────
+//
+// THE DISCRIMINATING TEST. On main this file's door read `if (klass !== "bounty")`
+// and `class: "thing"` bounced with `unknown class "thing"`. It now consults the
+// class roster, so a class the record declares is admitted. The assertion is
+// deliberately about which SENTENCE comes back rather than about success: with no
+// world clone in this environment the write still cannot land, and a test that
+// demanded a landed mark would be testing the fixture, not the gate.
+const thingMark = {
+  slug: "the-brass-key",
+  kind: "sited",
+  at: { x: 3, y: 4 },
+  extent: { w: 0.4, h: 0.4 },
+  body: "A brass key, cold, with a green thread knotted through the bow.",
+  class: "thing",
+};
+
+test("class: thing passes the roster gate — it is no longer an unknown class", async () => {
+  await assert.rejects(
+    () => leaveMarkViaOffice(process.env.WORLD_CLONE, thingMark, one),
+    (e) => {
+      assert.notEqual(e.defect, 'unknown class "thing"', "the roster admits a class the record declares");
+      assert.ok(!/unknown class/.test(String(e.defect)), `unexpected class bounce: ${e.defect}`);
+      return true;
+    });
+});
+
+test("a thing is a sited mark, and carries no bounty fields", async () => {
+  await bounced({ ...thingMark, kind: "parcel", extent: undefined }, "a thing is a sited mark");
+  await bounced({ ...thingMark, ask: "do a thing", reward: 3 }, "ask/reward/status belong to a bounty notice, not a thing");
 });
 
 test("a bounty notice is a sited mark", async () => {
@@ -232,7 +265,13 @@ test("bounty status is open or done; threshold is the town's bar", async () => {
 
 test("world_leave_mark tool contract carries the bounty grammar", () => {
   const tool = WORLD_TOOLS.find(({ name }) => name === "world_leave_mark");
-  assert.deepEqual(tool.inputSchema.properties.class.enum, ["bounty"]);
+  // CHANGED 2026-08-14 (the object primitive). This asserted `deepEqual(enum,
+  // ["bounty"])` — the schema half of a hardcode the office kept while the
+  // world's own lint derived the same roster from the record. The enum is now
+  // read from the class marks, so the assertion becomes the STRONGER one: the
+  // advertised set IS the roster. Re-hardcoding the literal fails this line.
+  assert.deepEqual(tool.inputSchema.properties.class.enum, classNames());
+  assert.ok(tool.inputSchema.properties.class.enum.includes("bounty"), "the bounty grammar is still at the door");
   assert.match(tool.inputSchema.properties.class.description, /purely liquid/);
   assert.match(tool.inputSchema.properties.ask.description, /150 characters/);
   assert.equal(tool.inputSchema.properties.reward.type, "integer");

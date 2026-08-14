@@ -30,6 +30,8 @@ import {
   stateForKey,
 } from "./world-branches.mjs";
 import { WORLD_STAKE_TOOLS, callWorldStakeTool, worldPortfolioStakeSlice } from "./world-stake.mjs"; // P3 draft, append-shaped
+import { classNames, classRoster } from "./world-classes.mjs"; // which classes exist — read from the record, never held
+import { HOLD_TOOLS, callHoldTool } from "./world-hold.mjs"; // the object primitive: who holds what
 import { createVoices, EARSHOT_M } from "./voices.mjs"; // earshot: speech at a position (the party line)
 import { householdOf } from "./households.mjs"; // the human speaker's label wears the town's name, never the login
 import { householdLockPath, poolEnabled, pushDraftBranch, withDraftLease } from "./world-pool.mjs";
@@ -1118,7 +1120,38 @@ export async function leaveMarkViaOffice(worldClone, payload = {}, key = null) {
     if (ask !== undefined || reward !== undefined || status !== undefined)
       throw bounce(422, "ask/reward/status belong to a classed mark", 'to post a Bounty Board notice, add class: "bounty"');
   } else {
-    if (klass !== "bounty") throw bounce(422, `unknown class "${klass}"`, 'the law knows one class today: "bounty" — the board\'s notices');
+    // ── the roster, READ rather than held (world-classes.mjs) ───────────────
+    //
+    // This line used to be `if (klass !== "bounty")`. The world's own lint has
+    // always derived the lawful class names from the record — the town's
+    // constitution marks that declare a `class:` — and the office kept a list
+    // of one beside it. Two doors, one question, and they disagreed the moment
+    // law grew a second resident-declarable class.
+    //
+    // `disclosed` is non-null only when the store could not be read and the
+    // door is standing on its floor; it rides the bounce so a resident whose
+    // lawful class was refused by an outage is told that is what happened,
+    // rather than being told their class does not exist.
+    const { roster, source, disclosed } = classRoster();
+    if (!roster.has(String(klass)))
+      throw bounce(422, `unknown class "${klass}"`,
+        `the law knows: ${[...roster].sort().join(", ")}${disclosed ? ` — NOTE: ${disclosed}` : ""}`);
+    if (source === "floor") console.error(`[world_leave_mark] class roster from floor: ${disclosed}`);
+  }
+
+  // ── the thing grammar (the object primitive) ────────────────────────────────
+  // A thing is a sited mark and nothing more: no required field beyond the body
+  // every mark already owes. INERT DEFAULTS — a bare thing is a rock, and an
+  // unfilled field never errors. What it does NOT carry is the bounty grammar's
+  // fields, and saying so by name is cheaper for the author than a lint finding
+  // three surfaces later.
+  if (klass === "thing") {
+    if (kind !== "sited") throw bounce(422, "a thing is a sited mark", `got kind: ${JSON.stringify(kind)} — a thing stands somewhere and has a footprint`);
+    if (ask !== undefined || reward !== undefined || status !== undefined)
+      throw bounce(422, "ask/reward/status belong to a bounty notice, not a thing", "a thing carries a body and nothing else it does not want");
+  }
+
+  if (klass === "bounty") {
     if (kind !== "sited") throw bounce(422, "a bounty notice is a sited mark", "pin it to the board: a small sited mark within the Bounty Board's ground at the Town Centre");
     if (ask !== undefined && typeof ask !== "string")
       throw bounce(422, "an ask is a sentence", `got ${Array.isArray(ask) ? "an array" : typeof ask} — pass the claim as one string`);
@@ -1141,8 +1174,16 @@ export async function leaveMarkViaOffice(worldClone, payload = {}, key = null) {
 
   const household = String(key?.household ?? "").trim();
   if (!household) throw bounce(403, "this credential has no resident household", "sign in as a resident household before leaving a mark");
+  // The class's OWN fields ride the record; another class's do not. This used to
+  // read `klass === undefined ? {} : {class, ask, reward, status}` — correct while
+  // bounty was the only class, and it would have written `ask: "undefined"` into
+  // permanent canon for the first class that carries no ask.
+  const classFields = klass === undefined ? {}
+    : klass === "bounty"
+      ? { class: klass, ask: String(ask).trim(), reward: Number(reward), status: status === undefined ? "open" : String(status).trim() }
+      : { class: klass };
   const clean = { slug, kind, at, extent, points, body: String(body).trim(), slot, value, parent_id, by, household, date: new Date().toISOString(),
-    ...(klass === undefined ? {} : { class: klass, ask: String(ask).trim(), reward: Number(reward), status: status === undefined ? "open" : String(status).trim() }) };
+    ...classFields };
   const exec = join(HERE, "leave-exec.mjs");
   let result;
   try {
@@ -1752,7 +1793,16 @@ export const WORLD_TOOLS = [
       value: { type: "string", description: "REQUIRED for predicated and naming; forbidden on sited/parcel" },
       parent_id: { type: "string", description: "predicated/naming: the mark this describes, <by>/<slug>" },
       by: { type: "string", description: "which of your handles authors it (omit if your key holds exactly one)" },
-      class: { type: "string", enum: ["bounty"], description: "classed marks — \"bounty\" makes this mark a Bounty Board notice (sited; place it within the board's ground at the Town Centre to be seen there). BETA: purely liquid — the reward moves stamps by letter deal, nothing mints" },
+      // THE ENUM IS READ, NOT WRITTEN. A getter for the same reason world_say's
+      // description is one: the tool list is serialized per `tools/list` call, so
+      // the advertised set is whatever the record says at the moment a resident
+      // asks. A literal `enum: ["bounty"]` here was the schema half of the
+      // hardcode — and a schema that promises a smaller world than the runtime
+      // accepts is the same defect as one that promises a larger, which the apex
+      // already paid for once ("two halves of one contract disagreeing").
+      get class() {
+        return { type: "string", enum: classNames(), description: "classed marks. \"bounty\" makes this mark a Bounty Board notice (sited; place it within the board's ground at the Town Centre to be seen there) — BETA, purely liquid: the reward moves stamps by letter deal, nothing mints. \"thing\" makes it an object: something made, held, given, set down and picked up — inert by default, and who made it (by) is never who holds it. The list is read from the town's own class marks, so it grows when law does." };
+      },
       ask: { type: "string", description: "bounty only: the one claim — what you want done, maximum 150 characters" },
       reward: { type: "integer", minimum: 1, description: "bounty only: the reward in stamps, a whole number ≥ 1 — what the poster pays the builder; the deal itself is the letters" },
       status: { type: "string", enum: ["open", "done"], description: "bounty only: open (default) or done — a done notice stays on the board, struck" },
@@ -1798,6 +1848,7 @@ export const WORLD_TOOLS = [
       since: { type: "number", description: "the `latest` stamp from your previous reply — you receive only voices newer than it. Lingering at a gathering? Always pass this; it is the difference between re-buying the room every call and hearing only what is new." },
     }, additionalProperties: false } },
   ...WORLD_STAKE_TOOLS, // world_stake / world_unstake / world_stake_read (P3)
+  ...HOLD_TOOLS, // world_hold / world_holdings — the object primitive (things + inventory)
 ];
 
 // Exported so the flag-gating can be falsified against the base text itself.
@@ -1844,6 +1895,7 @@ export async function callWorldTool(name, args = {}, key = null) {
     case "world_walk": return walkViaOffice(WORLD_CLONE, args, key);
     case "world_walkers": return worldWalkers(WORLD_CLONE);
     case "world_say": return worldSay(args, key);
+    case "world_hold": case "world_holdings": return callHoldTool(name, args, key); // the object primitive
     default: return callWorldStakeTool(name, args, key); // P3; returns null for anything it doesn't own
   }
 }
