@@ -23,7 +23,7 @@ import { SCHEMA, CLASS_ROSTER_GATE_SQL, isClassDefinition, isClassMark } from ".
 import { classRoster, classDials, classNames, resetClassRosterCache, ROSTER_FLOOR } from "../src/world-classes.mjs";
 import { declareHolding, liveHolder, holdingsOf, heldPositionOf } from "../src/world-hold.mjs";
 import { openDynamic } from "../src/dynamic-store.mjs";
-import { readAttachments } from "../src/dynamic-entities.mjs";
+import { readAttachments, declareAttachment } from "../src/dynamic-entities.mjs";
 
 const TMP = mkdtempSync(join(tmpdir(), "office-things-"));
 
@@ -167,6 +167,55 @@ test("take, then give, then drop — latest wins and NOTHING is mutated", () => 
   // it never edits. This is the append-only law of the log, checked where it
   // would actually be broken (an UPDATE instead of an INSERT).
   assert.equal(readAttachments(db).filter((r) => r.target === KEY).length, 3);
+  db.close();
+});
+
+test("THE SAME-MILLISECOND SWALLOW: a give and the recipient's own drop both land", () => {
+  // REGRESSION (found 2026-08-14 by running this branch against a moved main).
+  // `attachments_once` is UNIQUE (entity, target, born_at) and the writer is
+  // INSERT OR IGNORE, so two declarations naming the same entity on the same
+  // thing in one millisecond collided and the second was discarded IN SILENCE —
+  // the door answered `{did:"drop", holder:null}` while the store still said
+  // `beta` held it. A successful answer contradicting the record it claims to
+  // have written.
+  //
+  // A give followed by the recipient's own drop is that exact pair, and it is
+  // not a rare race: measured 87 in 200 rounds before the fix. Loop, because one
+  // pass of a timing bug proves nothing — the pre-fix code passes this suite
+  // roughly half the time.
+  for (let i = 0; i < 50; i++) {
+    const db = freshDynamic(`swallow-${i}.db`);
+    const t = `alpha/thing-${i}`;
+    declareHolding({ db, thing: t, actor: "alpha" });
+    declareHolding({ db, thing: t, to: "beta", actor: "alpha" });
+    const dropped = declareHolding({ db, thing: t, actor: "beta" });
+    const rows = readAttachments(db).filter((r) => r.target === t);
+    assert.equal(rows.length, 3, `round ${i}: every declaration must land`);
+    // THE ASSERTION THAT MATTERS: the door's answer and the store must agree.
+    assert.equal(dropped.holder, null, `round ${i}: the door says it is on the ground`);
+    assert.equal(liveHolder(readAttachments(db), t), null, `round ${i}: and the store agrees`);
+    db.close();
+  }
+});
+
+test("a swallowed insert REPORTS itself — `inserted: false`, never a silent no-op", () => {
+  // The second guard, tested at its own level and not through the door.
+  //
+  // Worth saying plainly: I first wrote this as a `declareHolding` test and it
+  // FAILED — because guard 1 (the strictly-later stamp) defends the very case I
+  // was trying to force, so the 409 never fired. That is the good outcome, and it
+  // means guard 2 is not the primary fix: it is belt-and-braces against a writer
+  // this process cannot see (another hand inserting between our read and our
+  // write). Unreachable-from-here is exactly why it belongs at this level, where
+  // it CAN be exercised honestly, rather than being asserted through a path that
+  // structurally cannot reach it.
+  const db = freshDynamic("swallow-guard.db");
+  const born = "2026-08-14T20:00:00.000Z";
+  const first = declareAttachment(db, { entity: "alpha", target: KEY, policy: "cascade", declaredBy: "alpha", bornAt: born });
+  assert.equal(first.inserted, true, "the first declaration lands");
+  const second = declareAttachment(db, { entity: "alpha", target: KEY, policy: "detach", declaredBy: "alpha", bornAt: born });
+  assert.equal(second.inserted, false, "the colliding one is swallowed AND SAYS SO — differing policy does not save it");
+  assert.equal(readAttachments(db).filter((r) => r.target === KEY).length, 1);
   db.close();
 });
 

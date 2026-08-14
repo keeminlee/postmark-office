@@ -344,9 +344,15 @@ export function declareAttachment(db, { entity, target, policy = "cascade", decl
   if (!entity || !target) throw new Error("an attachment needs both ends");
   if (!["cascade", "detach"].includes(policy)) throw new Error(`unknown attachment policy "${policy}" — cascade | detach`);
   const born = bornAt ?? new Date().toISOString();
-  db.prepare("INSERT OR IGNORE INTO attachments (entity, target, policy, declared_by, born_at) VALUES (?,?,?,?,?)")
+  // `INSERT OR IGNORE` against `attachments_once (entity, target, born_at)` is
+  // idempotence for a REPLAY — the same declaration applied twice must not become
+  // two rows. But an ignore and a write are indistinguishable to the caller
+  // unless this says so, and a caller that reports success for a swallowed
+  // declaration is a door whose answer contradicts its own store. So the row
+  // count comes back: `inserted: false` means THIS DECLARATION DID NOT LAND.
+  const { changes } = db.prepare("INSERT OR IGNORE INTO attachments (entity, target, policy, declared_by, born_at) VALUES (?,?,?,?,?)")
     .run(entity, target, policy, declaredBy ?? entity, born);
-  return { entity, target, policy, declared_by: declaredBy ?? entity, born_at: born };
+  return { entity, target, policy, declared_by: declaredBy ?? entity, born_at: born, inserted: Number(changes) > 0 };
 }
 
 // ── movements: the record after the seam (Stage D) ───────────────────────────

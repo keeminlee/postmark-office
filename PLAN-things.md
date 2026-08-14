@@ -423,6 +423,59 @@ may overrule:
 
 ## 8 · Activity log
 
+### 2026-08-14 (late) — a real bug, found by checking against a moved main
+
+**`origin/main` moved while I worked** — `wright/join-declaration` merged (`f5734ca` →
+`271b044`). A trial merge was textually clean with **zero file overlap**, but a clean
+textual merge is not a semantic one, so I ran the suites against the merged tree.
+Two things fell out, and one was mine.
+
+**⚠ THE SAME-MILLISECOND SWALLOW — a door that reported success for a write it did
+not make.** `attachments_once` is `UNIQUE (entity, target, born_at)` and
+`declareAttachment` writes with `INSERT OR IGNORE`. Two declarations naming the
+**same entity on the same thing in the same millisecond** therefore collide, and the
+second is discarded **in silence**. A give followed by that recipient's own drop is
+exactly that pair — one resident, one breath.
+
+The symptom is the worst available: the door answered `{did: "drop", holder: null}`
+while the store still said `beta` held it. **A successful answer contradicting the
+record it claims to have written.**
+
+Reproduced deterministically (pinned clock), then measured on the real clock:
+**87 of 200 rounds** — 43.5%, not a rare race. It would have bitten in production
+almost immediately.
+
+**Fixed with two guards, because either alone leaves a hole:**
+
+1. **The stamp is strictly later** than that pair's newest row, so the collision
+   cannot arise. Latest-wins needs a strict order anyway; borrowing the wall clock
+   for it was the actual mistake. → 200/200 clean.
+2. **The insert is checked.** `declareAttachment` now returns `inserted:` from the
+   statement's own `changes`, and `declareHolding` throws 409 rather than reporting
+   a write it did not make.
+
+Measured decomposition, since it shows why both: with **neither** guard, silent lie;
+with **guard 2 only**, an honest 409 refusal 87/200 of the time — truthful and
+broken; with **both**, 200/200 clean.
+
+**Honest note on guard 2:** I first wrote its test through `declareHolding` and it
+failed, because guard 1 defends the very case I was forcing. That is the good
+outcome — guard 2 is belt-and-braces against a writer this process cannot see, not
+the primary fix — so it is tested at `declareAttachment`'s own level where it can be
+exercised honestly, rather than through a path that structurally cannot reach it.
+
+**Two regression tests added**, both looping (one pass of a timing bug proves
+nothing — the pre-fix code passes a single round about half the time).
+
+**⚠ STILL OPEN, AND NOT MINE TO FIX UNILATERALLY — `test/server.test.mjs` on main
+asserts an exact tool count.** `MCP tools/list names all 38 tools` →
+`assert.equal(names.length, 38)`. My two tools make it **40**, so **this branch
+breaks main's suite the moment it merges**. The fix is the one-line count, but the
+file arrived with the other lane and I deliberately stayed off it. Wright's call:
+say the word and I'll merge main in and update it, or he takes it in the merge.
+Observation, not a demand: a hardcoded total breaks for every future tool, whoever
+adds it — the named-tools loop beneath it already carries the real assertion.
+
 ### 2026-08-14 — the plan, and the build
 
 **Environment note, recorded because it cost a baseline.** A fresh worktree has no
