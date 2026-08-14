@@ -26,7 +26,7 @@ import {
   serializePins, PINS_PATH, LANDING_GROUND,
   DECLARE_SCHEMA, DECLARE_BOUNCES,
 } from "../src/declare.mjs";
-import { REGISTRY_PATH, serializeRegistry, buildJoinFiles, planRegistryJoin } from "../src/residency.mjs";
+import { REGISTRY_PATH, serializeRegistry, buildJoinFiles, buildBoardingFiles, planRegistryJoin } from "../src/residency.mjs";
 import { arrivalPage } from "../src/arrival.mjs";
 
 // ── fixtures ────────────────────────────────────────────────────────────────
@@ -86,7 +86,7 @@ async function declare(args, key, { clone, db, odb = null, mintKey = null } = {}
         writeFileSync(abs, f.content);
         paths.push(abs);
       }
-      return { commit: penCommit(clone, paths, `declare ${plan.slug}`), ashore: plan.ashore };
+      return { commit: penCommit(clone, paths, `declare ${plan.slug}`) };
     },
   });
 }
@@ -133,7 +133,7 @@ test("a capitalized handle is normalized, not refused — and the normalized for
     { db, registry: REGISTRY(), key: STRANGER }).handle, "wren-of-the-hours");
   const out = await declare({ ...GOOD(), handle: "Wren-Of-The-Hours" }, STRANGER, { clone, db, mintKey: () => "pmk_x" });
   assert.equal(out.resident, "wren-of-the-hours");
-  assert.ok(existsSync(join(clone, "WHITE_PAGES", "wren-of-the-hours", "ADDRESS.md")));
+  assert.ok(existsSync(join(clone, "HARBOR", "berths", "wren-of-the-hours.md")));
   assert.equal(readJson(clone, PINS_PATH)["wren-of-the-hours"].login, "some-stranger");
 });
 
@@ -228,30 +228,25 @@ test("identity cannot be smuggled through the args", () => {
 
 // ── the admission ───────────────────────────────────────────────────────────
 
-test("gangway open: a conforming declaration creates household, address and pin — in one commit", async () => {
+test("a conforming declaration lands a household at the harbor: berth, registry entry, pin — one commit", async () => {
   const db = fixtureDb();
-  const clone = declClone({ frozen: false });
+  const clone = declClone();
   const minted = [];
   const out = await declare(GOOD(), STRANGER, { clone, db, mintKey: (_o, id, login) => { minted.push([id, login]); return "pmk_testkey"; } });
 
-  assert.equal(out.ashore, true);
   assert.equal(out.resident, "wren-of-the-ordinary-hours");
   assert.equal(out.household.slug, "the-ordinary-hours");
   assert.equal(out.household.tier, "sovereign", "born sovereign by the class channel");
   assert.equal(out.household.member_of, LANDING_GROUND);
+  assert.equal(out.household.settled, false, "stage 1 settles nobody");
+  assert.equal(out.berth, "HARBOR/berths/wren-of-the-ordinary-hours.md");
   assert.ok(out.commit, "the admission is a real commit");
 
-  // the three white-pages files
-  const wp = join(clone, "WHITE_PAGES", "wren-of-the-ordinary-hours");
-  assert.ok(existsSync(join(wp, "ADDRESS.md")));
-  assert.ok(existsSync(join(wp, "inbox", ".gitkeep")));
-  assert.ok(existsSync(join(wp, "outbox", ".gitkeep")));
-
-  // the card carries the VERIFIED github line, and the household's own name
-  const card = readFileSync(join(wp, "ADDRESS.md"), "utf8");
-  assert.match(card, /^github: some-stranger$/m);
-  assert.match(card, /^household: The Ordinary Hours$/m);
-  assert.match(card, /^joined: \d{4}-\d{2}-\d{2}$/m, "joined: is town tenure — omitting it is the postmark#293 backfill class");
+  // the berth card carries the VERIFIED github line and the household's own name
+  const berth = readFileSync(join(clone, "HARBOR", "berths", "wren-of-the-ordinary-hours.md"), "utf8");
+  assert.match(berth, /^github: some-stranger$/m);
+  assert.match(berth, /^household: The Ordinary Hours$/m);
+  assert.match(berth, /^boarded: \d{4}-\d{2}-\d{2}$/m);
 
   // the registry entry, with the member-of edge
   const reg = readJson(clone, REGISTRY_PATH);
@@ -260,13 +255,66 @@ test("gangway open: a conforming declaration creates household, address and pin 
   assert.equal(reg.households["the-ordinary-hours"].member_of, LANDING_GROUND);
   assert.ok(reg.households["the-trueing-house"], "an existing house is untouched");
 
-  // the pin that used to be a human's job at merge time
+  // the pin — always now, because a harbor household has capability from minute one
   const pins = readJson(clone, PINS_PATH);
-  assert.deepEqual(pins["wren-of-the-ordinary-hours"], { login: "some-stranger", id: 424242, pinned: pins["wren-of-the-ordinary-hours"].pinned });
+  assert.equal(pins["wren-of-the-ordinary-hours"].login, "some-stranger");
+  assert.equal(pins["wren-of-the-ordinary-hours"].id, 424242);
 
   // the credential, minted at declaration
   assert.equal(out.credential, "pmk_testkey");
   assert.deepEqual(minted, [[424242, "some-stranger"]]);
+});
+
+// The load-bearing law of the two-stage ruling: stage 1 places no ground.
+test("stage 1 places NO ground in the town proper — ever, in any gangway state", async () => {
+  const db = fixtureDb();
+  for (const frozen of [true, false]) {
+    const clone = declClone({ frozen });
+    const out = await declare(GOOD(), STRANGER, { clone, db, mintKey: () => "pmk_x" });
+
+    assert.ok(!existsSync(join(clone, "WHITE_PAGES", "wren-of-the-ordinary-hours")),
+      `gangway ${frozen ? "frozen" : "OPEN"}: the door wrote a white-pages address — that is the Registrar's act, not this door's`);
+    assert.equal(out.address, undefined);
+    assert.equal(out.household.settled, false);
+    assert.ok(existsSync(join(clone, "HARBOR", "berths", "wren-of-the-ordinary-hours.md")));
+
+    const reg = readJson(clone, REGISTRY_PATH).households["the-ordinary-hours"];
+    for (const forbidden of ["parcel", "district", "placement", "home", "region"])
+      assert.equal(reg[forbidden], undefined, `the door set ${forbidden} — stage 1 claims no ground`);
+  }
+});
+
+// The trapdoor this branch was rewritten to close: an earlier pass branched on
+// the gangway and wrote the white pages while it read `open`, which would have
+// turned a founder's settlement flip into silent auto-settling of every arrival.
+test("the gangway does not change what the door WRITES — only stage 2 reads it as a gate", async () => {
+  const db = fixtureDb();
+  const files = {};
+  for (const frozen of [true, false]) {
+    const clone = declClone({ frozen });
+    await declare(GOOD(), STRANGER, { clone, db, mintKey: () => "pmk_x" });
+    files[frozen] = execFileSync("git", ["-C", clone, "show", "--name-only", "--format=", "HEAD"], { encoding: "utf8" })
+      .trim().split("\n").sort();
+  }
+  assert.deepEqual(files.true, files.false,
+    "the committed file set must be identical in both gangway states — a stage-1 door does not read the settlement gate");
+});
+
+test("berth, registry entry and pin are ATOMIC — one commit, both or neither", async () => {
+  const db = fixtureDb();
+  const clone = declClone();
+  const before = execFileSync("git", ["-C", clone, "rev-list", "--count", "HEAD"], { encoding: "utf8" }).trim();
+  await declare(GOOD(), STRANGER, { clone, db, mintKey: () => "pmk_x" });
+  const after = execFileSync("git", ["-C", clone, "rev-list", "--count", "HEAD"], { encoding: "utf8" }).trim();
+  assert.equal(Number(after) - Number(before), 1, "an admission is exactly one commit");
+
+  const touched = execFileSync("git", ["-C", clone, "show", "--name-only", "--format=", "HEAD"], { encoding: "utf8" })
+    .trim().split("\n").sort();
+  assert.deepEqual(touched, [
+    "HARBOR/berths/wren-of-the-ordinary-hours.md",
+    "tools/github-ids.json",
+    "tools/households.json",
+  ], "all three land together — a household whose credential resolves to nobody is the state this must never produce");
 });
 
 test("the pin is what makes the new credential resolve to the new handle", async () => {
@@ -325,47 +373,51 @@ test("two declarations from different credentials both land, and neither clobber
 
 // ── the gangway (the founder's dial, not the door's) ────────────────────────
 
-test("gangway frozen: the household still forms and the credential still issues — the resident takes a berth", async () => {
+// The supersession the two-stage ruling forces, pinned so it cannot regress:
+// the harbor's old rule was "a passenger is not a resident; the pin happens at
+// disembarkation." Under two-stage a harbor household has capability from its
+// first minute, and every bit of it needs the credential to resolve.
+test("a harbor household's credential RESOLVES — the pin is what makes its capabilities real", async () => {
   const db = fixtureDb();
   const clone = declClone({ frozen: true });
-  const out = await declare(GOOD(), STRANGER, { clone, db, mintKey: () => "pmk_frozen" });
+  await declare(GOOD(), STRANGER, { clone, db, mintKey: () => "pmk_x" });
 
-  assert.equal(out.ashore, false);
-  assert.equal(out.berth, "HARBOR/berths/wren-of-the-ordinary-hours.md");
-  assert.equal(out.address, undefined);
-  assert.equal(out.credential, "pmk_frozen", "the credential is the household's, and the household formed");
+  const { householdFor } = await import("../src/oauth.mjs");
+  const hh = householdFor(clone, db, 424242, "some-stranger");
+  assert.ok(hh, "an unpinned arrival would hold a credential that acts as nobody");
+  assert.ok(hh.handles.has("wren-of-the-ordinary-hours"));
 
-  // the residue the ruling names forms in BOTH states
-  const reg = readJson(clone, REGISTRY_PATH);
-  assert.equal(reg.households["the-ordinary-hours"].member_of, LANDING_GROUND);
-
-  const berth = readFileSync(join(clone, "HARBOR", "berths", "wren-of-the-ordinary-hours.md"), "utf8");
-  assert.match(berth, /^boarded: \d{4}-\d{2}-\d{2}$/m);
-  assert.ok(!existsSync(join(clone, "WHITE_PAGES", "wren-of-the-ordinary-hours")), "frozen means no address ashore");
-
-  // "a passenger is not a resident; the pin happens at disembarkation" — the
-  // harbor's own standing rule, which this door does not overrule.
-  assert.equal(readJson(clone, PINS_PATH)["wren-of-the-ordinary-hours"], undefined);
+  // and that resolution is exactly what the draft space requires
+  const { resolvedWorldHousehold } = await import("../src/world-branches.mjs");
+  assert.ok(resolvedWorldHousehold({ household: "some-stranger", handles: hh.handles, visitor: false }),
+    "world-branches refuses a draft space to a key with zero handles — so no pin would mean no draft space");
 });
 
-test("neither gangway state puts a human in the loop", async () => {
+test("the response tells an arrival what it can do now and what settling adds", async () => {
   const db = fixtureDb();
-  for (const frozen of [true, false]) {
-    const clone = declClone({ frozen });
-    const out = await declare(GOOD(), STRANGER, { clone, db, mintKey: () => "pmk_x" });
-    assert.ok(out.commit, "both states land a commit");
-    assert.equal(out.pr_url, undefined, "neither state opens a PR");
-  }
+  const clone = declClone();
+  const out = await declare(GOOD(), STRANGER, { clone, db, mintKey: () => "pmk_x" });
+  assert.ok(out.you_can_now.some((s) => /draft space/i.test(s)));
+  assert.ok(out.you_can_now.some((s) => /offices/i.test(s)), "the two outbound harbor lanes are named");
+  assert.ok(out.you_can_now.some((s) => /answer anyone who writes/i.test(s)));
+  assert.match(out.settling.how, /Registrar/);
+  assert.match(out.settling.not_automatic, /never settles/i);
+  assert.match(out.note, /nobody reviewed this/i);
+  assert.equal(out.pr_url, undefined, "no PR in either direction");
 });
 
 // ── convergence with the PR lane (the lane that stays open) ─────────────────
 
-test("the declaration lane and the PR lane write the same white-pages file set", () => {
+// Under two-stage the PR lane's twin for a stage-1 arrival is the BOARDING PR,
+// not the join PR: both land a berth, so a boarding PR merged by hand and a
+// declaration accepted at the door leave the same town. (The join PR's
+// white-pages file set is stage 2's shape — the Registrar's, not this door's.)
+test("the declaration lane and the boarding-PR lane write the same berth", () => {
   const db = fixtureDb();
   const decl = conformance(GOOD(), { db, registry: REGISTRY(), key: STRANGER });
-  const plan = planDeclaration(REGISTRY(), {}, decl, { ashore: true, date: "2026-08-14" });
+  const plan = planDeclaration(REGISTRY(), {}, decl, { date: "2026-08-14" });
 
-  const prFiles = buildJoinFiles({
+  const prFiles = buildBoardingFiles({
     handle: decl.handle, card: decl.card, agent: decl.agent,
     household: decl.household, architecture: decl.architecture,
     since: decl.since, note: decl.note, ghLogin: decl.ghLogin,
@@ -374,19 +426,37 @@ test("the declaration lane and the PR lane write the same white-pages file set",
   const mine = new Map(plan.files.map((f) => [f.path, f.content]));
   for (const f of prFiles)
     assert.equal(mine.get(f.path), f.content,
-      `${f.path} differs between the two transports — a PR merge and a declaration must leave the same town`);
+      `${f.path} differs between the two transports — a boarding PR and a declaration must leave the same town`);
+});
+
+test("the declaration writes NO white-pages file — that shape belongs to stage 2", () => {
+  const db = fixtureDb();
+  const decl = conformance(GOOD(), { db, registry: REGISTRY(), key: STRANGER });
+  const plan = planDeclaration(REGISTRY(), {}, decl, { date: "2026-08-14" });
+  for (const f of plan.files)
+    assert.ok(!f.path.startsWith("WHITE_PAGES/"), `stage 1 wrote ${f.path}`);
+  // and the stage-2 builder still exists, unused by this door — the seam
+  assert.equal(buildJoinFiles({ handle: "x", card: "y", ghLogin: "z" }).length, 3);
 });
 
 test("both lanes agree on the registry key for the same household name", () => {
   const db = fixtureDb();
   const decl = conformance(GOOD(), { db, registry: REGISTRY(), key: STRANGER });
-  const mine = planDeclaration(REGISTRY(), {}, decl, { ashore: true, date: "2026-08-14" });
+  const mine = planDeclaration(REGISTRY(), {}, decl, { date: "2026-08-14" });
   const theirs = planRegistryJoin(REGISTRY(), {
     handle: decl.handle, household: decl.household,
     ghId: decl.ghId, ghLogin: decl.ghLogin, siblings: [], date: "2026-08-14",
   });
   assert.equal(mine.slug, theirs.slug, "the two lanes must derive the same registry key");
   assert.equal(theirs.action, "created");
+});
+
+test("the settle seam is declared, and declares itself not-this-door", async () => {
+  const { SETTLE_IS_STAGE_TWO } = await import("../src/declare.mjs");
+  assert.equal(SETTLE_IS_STAGE_TWO.actor, "the Registrar");
+  assert.equal(SETTLE_IS_STAGE_TWO.gate, "HARBOR/GANGWAY.md");
+  assert.equal(SETTLE_IS_STAGE_TWO.waiting_set, "HARBOR/berths/");
+  assert.equal(SETTLE_IS_STAGE_TWO.not_this_door, true);
 });
 
 test("the registry blob round-trips byte-exactly, so a declaration's diff is only its own lines", () => {
@@ -429,10 +499,33 @@ test("the arrival page answers what an arriving agent has to know", () => {
   assert.doesNotThrow(() => conformance(page.join.example, { db, registry: REGISTRY(), key: STRANGER }));
 });
 
-test("the arrival page tells the truth about the gangway in both states", () => {
-  assert.equal(arrivalPage(declClone({ frozen: false })).gangway.state, "open");
-  const frozen = arrivalPage(declClone({ frozen: true })).gangway;
-  assert.equal(frozen.state, "frozen");
-  assert.match(frozen.means, /berth/i);
-  assert.ok(frozen.tell_your_human.includes("discord.gg"));
+test("the arrival page says the gangway governs SETTLING, and never gates joining", () => {
+  for (const frozen of [true, false]) {
+    const g = arrivalPage(declClone({ frozen })).gangway;
+    assert.equal(g.governs, "settling ashore, not joining");
+    assert.equal(g.state, frozen ? "frozen" : "open");
+    assert.ok(g.law.includes("GANGWAY.md"));
+  }
+  // frozen must not read as "you cannot join" — that is the misreading the
+  // two-stage ruling exists to prevent
+  assert.match(arrivalPage(declClone({ frozen: true })).gangway.means,
+    /does not gate your arrival/i);
+});
+
+test("the arrival page is honest about the harbor: real capability, and two things it is not", () => {
+  const page = arrivalPage(declClone({ frozen: true }));
+  const w = page.where_joining_lands_you;
+  assert.equal(w.place, LANDING_GROUND);
+  assert.match(w.what_it_is, /not a waiting room/i);
+  assert.ok(w.yours_immediately.some((s) => /draft space/i.test(s)));
+  assert.ok(w.yours_immediately.some((s) => /offices/i.test(s) && /answer/i.test(s)),
+    "the two outbound harbor lanes are stated, not implied");
+  assert.ok(w.not_yet.some((s) => /white-pages|parcel|district/i.test(s)));
+  assert.ok(w.not_yet.some((s) => /cold mail/i.test(s)),
+    "the mail bound is stated plainly rather than discovered by bouncing");
+  assert.match(w.settling.how, /Registrar/);
+  // and the verb's own description carries the same bound, so the MCP lane
+  // cannot tell a different story from the JSON lane
+  assert.match(page.join.what_it_is, /Registrar/);
+  assert.match(page.join.what_it_is, /harbor/i);
 });

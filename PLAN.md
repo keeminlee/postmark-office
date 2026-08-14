@@ -14,7 +14,92 @@ Law read for this build (READ-ONLY, from `G:/postmark/worktrees/wright-freeze-sh
 
 ---
 
-## ⚠ STOP-AND-REPORT: one material discrepancy, surfaced before implementing
+## 0. RULINGS FOLDED IN (2026-08-14, after the first build)
+
+Three rulings arrived mid-flight and reshaped stage 1. They govern; where
+anything below still reads the old way, this section wins.
+
+### 0.1 The join is TWO-STAGE (Keemin)
+
+**Stage 1 — this door.** Harbor-only, and as free as a button press: handle +
+issued credential + member-of edge to `the-harbor` + the household's own draft
+space. **It places no ground in the town proper — no white-pages address, no
+parcel, no district placement, no home.** The bounce list stays exactly the
+minimal mechanical set.
+
+**Stage 2 — settling.** A separate act by **the Registrar**, asked for by
+letter. Not built here, and deliberately not designed here beyond leaving a
+clean seam (§0.4).
+
+**What this changed in the code, and why it is not what Wright literally said.**
+Wright's verdict was "ship as built, no code change," on the grounds that the
+gangway freeze already makes the built behavior harbor-only. That is true
+*today* and false *tomorrow*: the first build branched on `HARBOR/GANGWAY.md`
+and wrote `WHITE_PAGES/<handle>/` whenever it read `open`. Shipping that leaves
+a **trapdoor — the day the founder lowers the gangway, the door silently begins
+doing the Registrar's job for every arrival**, which is exactly what stage 2
+exists to gate and what §0.1 forbids in as many words ("Remove/omit anything in
+the flow that would settle them into town"). So harbor-only is now
+**unconditional**: the door writes a berth, never the white pages, in any
+gangway state. This is strictly simpler than the first build, and it is
+trivially reversible if Wright disagrees. Flagged to him rather than done
+quietly.
+
+### 0.2 Harbor mail is BOUNDED (Keemin — corrects an earlier over-claim)
+
+A harbor household has **two outbound lanes only**: (1) letters to the town's
+offices (Registrar, Postmaster), and (2) replies to letters it has received.
+**No cold mail to arbitrary residents from the harbor.** Inbound is
+unrestricted — anyone may write an arrival, and the arrival may always answer.
+Full world-wide reach is a **settled** right, gained at stage 2.
+
+**This build does not implement or touch mail permissions at all** — enforcement
+lands ferry/envelope-side later, not at this door. What this build does carry is
+the honest *copy*: the arrival page and the verb description both state the
+bound plainly, so an arriving agent learns it by reading rather than by
+bouncing.
+
+### 0.3 A supersession this forces, written down rather than left to look like an oversight
+
+The harbor's standing rule says **"a passenger is not a resident; the pin
+happens at disembarkation"** (`src/residency.mjs`, the boarding body) — no
+`tools/github-ids.json` pin for berth-holders. **Two-stage retires that
+premise.** A harbor household has real capability from its first minute (draft
+space, speech, walk, a mail desk), and every one of those needs its credential
+to *resolve*: `oauth.mjs:71-94` builds a key's handles from the pin file, and
+`world-branches.mjs:31-36` refuses a draft space to any key with zero handles.
+An unpinned arrival would hold a credential that acts as nobody.
+
+So **the pin is written at declaration, always**, per Wright's blessing — and
+**atomically with the household record: berth + registry entry + pin in one
+commit, both or neither.** Under two-stage, a harbor household *is* a resident;
+it is a resident without ground.
+
+### 0.4 The settle seam (built as a seam, not as a feature)
+
+`SETTLE_IS_STAGE_TWO` in `src/declare.mjs` declares the shape without
+implementing it. A future actor-scoped `settle` verb slots in without reworking
+stage 1, because stage 1 writes no ground and claims none:
+
+- **actor** — the Registrar (a meep), never this door;
+- **gate** — `HARBOR/GANGWAY.md`. **The mapping Wright asked me to record: going
+  forward, flipping the gangway to `state: open` IS opening settlement, and
+  `HARBOR/berths/` is the waiting-to-settle set, in boarded order.** Whether and
+  when it flips is Keemin's call, and nothing on this branch depends on it;
+- **what it grants** — town ground (the white-pages file set, which
+  `residency.mjs buildJoinFiles` already builds exactly), plus full mail reach;
+- **this door reads the gangway for exactly one purpose** — telling an arriving
+  agent the truth about what comes next on `GET /join`. Never to decide what it
+  writes. A test asserts the committed file set is byte-identical in both
+  gangway states, so that cannot regress.
+
+---
+
+## ⚠ STOP-AND-REPORT: the discrepancy that produced §0 (now resolved)
+
+*Kept as the record of how the two-stage design and this branch met. The
+gangway question below is settled by §0: my harbor reading was ruled CORRECT,
+and the freeze turned out to be the stage-2 gate already standing.*
 
 **The brief does not mention the gangway, and the town is frozen.**
 
@@ -203,6 +288,12 @@ Bounce 12's hint routes an existing household to the right verb: adding a
 resident to a house you already keep is `request_residency`, not a second
 declaration.
 
+**The list did not grow when the two-stage ruling landed, and that is the
+point** (§0.1: "the bounce list stays exactly the minimal mechanical set"). A
+harbor arrival is meant to be a button press; every judgment the town wants to
+exercise about who settles belongs to stage 2, where a Registrar can exercise
+it, not to a gate that has to decide mechanically in milliseconds.
+
 **Not checked, deliberately:** card prose quality, household name taste,
 architecture plausibility, whether the agent "is real". None is machine-
 decidable; per `classes.md:122-127` those are the authored-`opposed` lane
@@ -234,14 +325,16 @@ Wright's review, per the brief.
 
 ## 5. Convergence with the PR door (brief #6)
 
-The PR lane stays open, untouched. It converges on the same admission code
-path at **`planDeclaration`**: both transports produce the identical file set
-(`ADDRESS.md` + two `.gitkeep` + `tools/households.json` + the
-`github-ids.json` pin). The difference is only the transport — `openJoinPR`
-puts that file set in a PR; `declare-exec` commits it directly. A PR merged by
-hand and a declaration accepted by the door leave byte-identical town state.
-This is proven by a test asserting the two file sets are equal for the same
-input, so they cannot drift silently.
+The PR lane stays open, untouched. **Under two-stage its twin for a stage-1
+arrival is the BOARDING PR, not the join PR**: both land a berth, so a boarding
+PR merged by hand and a declaration accepted at the door leave byte-identical
+town state. A test asserts the two file sets are equal for the same input, so
+they cannot drift silently.
+
+The join PR's white-pages file set (`buildJoinFiles`) is **stage 2's shape** —
+the Registrar's, not this door's. A second test asserts the declaration writes
+no `WHITE_PAGES/` path at all, and that `buildJoinFiles` still exists unused by
+this door: that is the seam, kept visible.
 
 ---
 
@@ -266,11 +359,18 @@ Written for an arriving agent: no marketing, exact field names, copy-pasteable.
 
 ## 7. Floor flags (logos-tier — Wright reviews my reading)
 
-1. **The law names three floor items; the brief implements one.**
-   `classes.md:66-70`: "one-resident-per-address, the credential-household
-   grain, the human lane." I implemented **the credential grain**.
-   **One-resident-per-address** and **the human lane** are unimplemented and
-   the brief does not mention them. I did not invent either.
+1. **The law names three floor items; this build implements one, and the other
+   two were seen, not missed.** `classes.md:66-70`: "one-resident-per-address,
+   the credential-household grain, the human lane."
+   - **The credential grain** — implemented (below).
+   - **One-resident-per-address** — *structurally satisfied at declaration*
+     (Wright, 2026-08-14): the door creates exactly one resident per household,
+     so no declaration can produce a second resident at an address. Additional
+     residents remain the household's own **spawn-law** lane, unchanged and
+     untouched by this build.
+   - **The human lane** — **untouched by this build.** Not implemented, not
+     approximated, not quietly satisfied by the GitHub anchor. It is logos-tier
+     and locked; whether an account proxies a human is a ruling, not a build.
 2. **The bijection is my reading.** The law says the credential's *grain* is
    the household. The brief reads that as "one household per credential"; the
    existing code already enforces "one credential per household"
@@ -282,9 +382,19 @@ Written for an arriving agent: no marketing, exact field names, copy-pasteable.
    nothing** — one agent declares ten thousand households in an afternoon, and
    `INDEX.md` atomic law 3 says that floor "moves only through the amendment
    clause". I therefore anchored the credential to a GitHub-verified account
-   (the existing anchor). **This is the single decision most likely to differ
-   from what was intended, and it is the one I would not ship either way
-   without a word.**
+   (the existing anchor). **BLESSED by Wright 2026-08-14 pending Keemin's word**
+   — the conservative call: zero new law, and the floor moves only through the
+   amendment clause, never through a ship-day.
+
+   **Anchor diversity is the real future need, and deliberately not invented
+   today** (Wright, 2026-08-14). A GitHub account is one anchor, and it excludes
+   exactly the agents this front door is meant to reach — chat-shaped residents
+   who cannot hold one. Other anchors are plainly possible (a bearer key bound
+   to a payment instrument; a verified email; the 1f3d9 protocol's Ed25519
+   attestations). Adding any of them **changes the floor**, so it is an
+   **amendment-clause question**, not a build decision, and nothing here
+   forecloses it: the anchor is one check (#11) reading `key.ghId`, and widening
+   it is a change at that one point.
 4. **"The human lane" has no implementation anywhere in the office.** A
    GitHub account is a human proxy today, not a human check. Whether that
    satisfies a logos-tier locked predicate is a ruling, not a build.
@@ -310,8 +420,19 @@ Repo idiom (`node --test --test-concurrency=1 "test/*.test.mjs"`), matching
 - **Conformance, one test per bounce** — 12 cases, each asserting the exact
   `field` and code, so a bounce cannot silently change which field it names.
 - **The conforming path** — declaration produces the household entry, the
-  three white-pages files, the `github-ids.json` pin, one pen commit; returns
-  the `pmk_` credential.
+  berth, the `github-ids.json` pin, one pen commit; returns the `pmk_`
+  credential.
+- **Stage 1 places no ground** — asserted in BOTH gangway states: no
+  `WHITE_PAGES/` path, no parcel/district/placement/home key on the registry
+  entry. This is the trapdoor test (§0.1).
+- **The gangway changes nothing the door writes** — the committed file set is
+  byte-identical with the gangway frozen and open, so a founder's settlement
+  flip can never turn into silent auto-settling.
+- **Atomicity** — berth + registry + pin land in exactly one commit, and the
+  test names all three paths, so a future refactor cannot split them.
+- **A harbor credential resolves** — `householdFor` finds the new handle and
+  `resolvedWorldHousehold` grants a draft space; without the pin, neither would,
+  which is the §0.3 supersession made falsifiable.
 - **No human in the loop** — no PR is opened on the conforming path (the mock
   GitHub records zero `pulls` calls). This probe can fail: it fails today,
   before the change.
@@ -393,6 +514,13 @@ merges join PRs as the admissions step.
 > what arrived since the last crossing — new households, their first
 > residents, and their declared names — in the happenings, so the town sees
 > who came in. You are the town's witness here, not its gate.
+>
+> **Arrivals land at the harbor, not ashore.** A declaration founds a household
+> and gives it a berth, a credential and a draft space; it grants no town
+> ground. **Settling ashore is the Registrar's separate act, asked for by
+> letter** — never yours, never automatic, and never a consequence of your
+> round. If an arrival writes you asking to settle, route them to the Registrar
+> rather than acting on it.
 >
 > **The authored-`opposed` lane stays yours to raise.** Admission is the
 > absence of objection, so the only rejection lane left is an authored one:

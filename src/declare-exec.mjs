@@ -27,7 +27,7 @@ import { execFileSync } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
 import { penCommit } from "./write.mjs";
 import { conformance, planDeclaration, readJson, PINS_PATH } from "./declare.mjs";
-import { REGISTRY_PATH, gangwayState } from "./residency.mjs";
+import { REGISTRY_PATH } from "./residency.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CLONE = process.env.TOWN_CLONE ?? resolve(HERE, "..", "town-clone");
@@ -60,9 +60,12 @@ async function main() {
     return err(e.code ?? 422, e.field ?? null, e.defect, e.hint);
   }
 
-  const ashore = gangwayState(CLONE) !== "frozen";
-  const plan = planDeclaration(registry, pins, decl, { ashore });
+  const plan = planDeclaration(registry, pins, decl);
 
+  // Berth + registry entry + identity pin go down together and are staged
+  // together, so the single commit below is the atomicity: both or neither. A
+  // household standing in the registry whose credential resolves to nobody is
+  // precisely the state this must never produce.
   const paths = [];
   for (const f of plan.files) {
     const abs = join(CLONE, f.path);
@@ -72,11 +75,9 @@ async function main() {
   }
 
   const commit = penCommit(CLONE, paths,
-    ashore
-      ? `address: ${decl.handle} joins · household ${decl.slug} declared (via postmark-office, join-as-declaration)`
-      : `harbor: ${decl.handle} boards · household ${decl.slug} declared (via postmark-office, join-as-declaration)`);
+    `harbor: ${decl.handle} arrives · household ${decl.slug} declared (via postmark-office, join-as-declaration)`);
 
-  answer({ slug: plan.slug, handle: decl.handle, ashore, commit, files: plan.files.map((f) => f.path) });
+  answer({ slug: plan.slug, handle: decl.handle, commit, files: plan.files.map((f) => f.path) });
 }
 
 main().catch((e) => { console.error(String(e?.stack ?? e)); process.exit(1); });
