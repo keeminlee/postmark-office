@@ -156,6 +156,11 @@ function buildPayload(dbPath, st) {
     // in the payload that answers "what does the file actually say", which is
     // the question the tier cutover and the serialization map are both made of.
     if (Array.isArray(p.keys)) data.keys = p.keys;
+    // The one walk's verdict (world-hydrate.mjs § the one walk): standing is
+    // derived at hydration, never asserted, and the page's colours read this.
+    // Absent on a store hydrated before the walk rode along — the page says
+    // "not sent" for that rather than painting a guess.
+    if (p.standing) data.standing = p.standing;
     const el = { data };
     if (a.x != null && a.y != null) { el.position = { x: a.x, y: a.y }; positioned++; }
     if (a.w != null) data.w = a.w;

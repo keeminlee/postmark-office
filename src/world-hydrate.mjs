@@ -234,6 +234,34 @@ for (const m of marks) {
   byId.set(m.id, m);
 }
 
+// ── the one walk (tier-B, 2026-08-13) ────────────────────────────────────────
+// Standing is DERIVED, never read off the record: `tier:` is not a field, and
+// the door bounces anyone who writes it — so the composed `tier` above says
+// "market" for every silent record and the graph's standing colours went grey
+// the day the residue was stripped. mark-standing.mjs is the ONE definition of
+// the walk (its own header: "a second copy of this walk is a future drift;
+// import it") — imported live from the materialised tree exactly like the
+// fold. Soft: a world sha that predates the tool hydrates every mark with
+// standing null, and the window says "not sent" rather than guessing.
+let markStanding = null;
+try { ({ markStanding } = await import(pathToFileURL(join(TOOLS_DIR, "mark-standing.mjs")))); }
+catch (e) { note(`mark-standing.mjs not importable at this sha — standing not derived (${String(e.message).split("\n")[0]})`); }
+
+// The grain the walk scopes to. The fold resolves handle → household onto each
+// record as `_cred` (marks-fold.mjs § the household grain); this mirrors that
+// from the tree's own WORLD/households.json so two handles of one human
+// compose here exactly as they do in the fold. A missing or stale file
+// degrades to the walk's own by-handle fallback, which standingHouseholdOf
+// names safe by construction.
+if (markStanding) {
+  let hh = null;
+  try { hh = JSON.parse(readFileSync(join(TREE, "WORLD", "households.json"), "utf8")).households ?? null; } catch {}
+  for (const m of marks) {
+    const h = m.household ?? m.by ?? null;
+    if (h != null) m._cred = hh?.[h] ?? `solo:${h}`;
+  }
+}
+
 const relPath = (d) => relative(TREE, d).replace(/\\/g, "/");
 const GEOMETRIC = (m) => m?.kind === "sited" || m?.kind === "parcel";
 
@@ -271,6 +299,10 @@ for (const m of marks) {
       feature: m.feature ?? null, mechanic: m.mechanic ?? null, timetable: m.timetable ?? null,
       points: Array.isArray(m.points) ? m.points.length : null,
       pre: m.pre ?? null, derived_from: m.derived_from ?? null,
+      // The one walk's verdict (§ the one walk, above), derived at hydration
+      // and carried as data. The page's standing colours read THIS — never the
+      // composed `tier`, which the loader defaults for every silent record.
+      standing: markStanding ? markStanding(m, byId) : null,
       parent_dir_mark: m._parentMarkId ?? null, explicit_parent: m._explicitParent ?? null,
       // THE CLASS FIELDS (Stage 2). A class is a mark, so the nine class marks
       // arrive here like any other record — but the hydrator used to drop
