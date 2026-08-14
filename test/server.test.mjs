@@ -268,10 +268,15 @@ test("MCP initialize → protocol + instructions", async () => {
   assert.match(body.result.instructions, /The reading law/, "the handshake carries the reading law");
 });
 
-test("MCP tools/list names all 38 tools", async () => {
+test("MCP tools/list names all 40 tools", async () => {
   const { body } = await rpc("tools/list");
   const names = body.result.tools.map((t) => t.name);
-  assert.equal(names.length, 38);
+  // 38 → 40: world_hold + world_holdings (the object primitive, 2026-08-14).
+  // NOTE: this exact total breaks for whoever adds the next tool, whatever it is
+  // — the named-tools loop below is the assertion that actually says something,
+  // since it fails when a tool GOES MISSING rather than when one is added.
+  // Left in place deliberately; removing it is a maintainer's-taste call.
+  assert.equal(names.length, 40);
   for (const n of ["read_town", "read_doorstep", "send_letter", "stake_vote", "read_votes",
     "read_metrics", "list_letters", "list_regions", "read_home", "request_residency",
     "declare_household", // join-as-declaration: the front door (2026-08-14)
