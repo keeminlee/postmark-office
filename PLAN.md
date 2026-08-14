@@ -352,11 +352,26 @@ activity log below), plus `mark-lint` CLEAN in the world clone for any fixture r
   `affordances` with no `DISPATCH` entry turns **L6 RED** (`world-lints.mjs:409-414`).
 - **The world-side class mark is Wright's pen.** Proposed text in § 7; I write
   nothing into `postmark-world` or `postmark-office`'s `main`.
-- **Shared files I touch** (for Wright's merge sequencing against `wright/join-declaration`):
-  `src/world.mjs` (the class-roster read, ~line 1116), `src/world-apex.mjs` (DISPATCH
-  entries), `src/mcp.mjs` + `src/server.mjs` (tool registration). **`world.mjs` and
-  `mcp.mjs` are the likely collision points** with any join/auth work — I stay off
-  `residency.mjs`, `oauth.mjs`, `households.mjs` entirely.
+- **Shared files I touch** — *verified against the other lane after the build, not
+  predicted.* `git diff --stat origin/main...origin/wright/join-declaration` (that
+  branch is real, tip `4c32c34`) touches `src/arrival.mjs`, `src/declare.mjs`,
+  `src/declare-exec.mjs`, `src/mcp.mjs`, `src/server.mjs`, `test/declare.test.mjs`,
+  `test/server.test.mjs`. I touch `src/world.mjs`, `src/world-apex.mjs`,
+  `src/world-store.mjs`, `src/world-classes.mjs`, `src/world-hold.mjs`,
+  `test/world.test.mjs`, `test/world-things.test.mjs`.
+
+  **Source overlap: none.** The plan above expected to touch `mcp.mjs` and
+  `server.mjs` for tool registration and did not need to — `world_hold` and
+  `world_holdings` are spread into `WORLD_TOOLS`, which both doors already consume,
+  so registration cost zero edits in the two files the other lane is rewriting.
+  That was luck made cheap by following the existing pattern; it is worth saying
+  out loud because the plan's own prediction was wrong in the safe direction.
+
+  **The one real conflict is `PLAN.md`** — both branches add one at branch root, so
+  the merge is an add/add. Trivial, but it will stop a clean auto-merge, and Wright
+  should expect it rather than discover it.
+
+  I stayed off `residency.mjs`, `oauth.mjs` and `households.mjs` entirely.
 
 ---
 
