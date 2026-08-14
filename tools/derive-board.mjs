@@ -15,7 +15,7 @@
 // the only surface a round edits; this script is the render.
 //
 // Fails loud, never partial: any malformed input (missing file, wrong column
-// count, missing island in the pane) exits 1 and leaves window.html untouched.
+// count, missing island in the pane) exits 1 and leaves the pane untouched.
 // Zero-dependency (Node built-ins only, like lint.mjs / board-html.mjs).
 //
 // Run:  node tools/derive-board.mjs [--board <path>] [--window <path>] [--dry]
@@ -30,7 +30,7 @@ const opt = (name, dflt) => {
 };
 const DRY = args.includes("--dry");
 const BOARD = resolve(opt("--board", "G:/openclaw/wright/memory/topics/postmark-open-loops.md"));
-const WINDOW = resolve(opt("--window", "G:/Wright-HQ/postmark/WHITE_PAGES/wright/WINDOW/window.html"));
+const WINDOW = resolve(opt("--window", "G:/Wright-HQ/postmark/WHITE_PAGES/wright/WINDOW/operator.html"));  // the pane split 2026-08-14: the operator desk is its own room; window.html is the resident pane and carries no islands
 const ISSUES = "https://github.com/postmark-town/postmark/issues/";
 
 const die = (msg) => { console.error(`derive-board: ${msg}`); process.exit(1); };
