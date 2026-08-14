@@ -168,7 +168,38 @@ export function declareHolding({ db, thing, to = null, actor, roster = null, gro
 
   const entity = act === "drop" ? actor : (act === "take" ? actor : to);
   const policy = act === "drop" ? "detach" : "cascade";
-  const row = declareAttachment(db, { entity, target: thing, policy, declaredBy: actor, bornAt: new Date().toISOString() });
+
+  // ── THE SAME-MILLISECOND SWALLOW (found 2026-08-14, post-merge check) ───────
+  //
+  // `attachments_once` is UNIQUE (entity, target, born_at) and the writer is
+  // `INSERT OR IGNORE`. So two declarations naming the SAME entity on the SAME
+  // thing in the same millisecond collide — and the second is discarded in
+  // silence. A give followed by the recipient's own drop is exactly that pair,
+  // and it is not a rare race: it is what a resident does in one breath.
+  //
+  // The symptom was the worst kind. The door returned `{did: "drop", holder:
+  // null}` while the store still said `beta` held it — a SUCCESSFUL ANSWER THAT
+  // CONTRADICTS THE RECORD IT CLAIMS TO HAVE WRITTEN. Reproduced deterministically
+  // by pinning the clock, not inferred from a flaky run.
+  //
+  // Two guards, because either alone leaves a hole:
+  //
+  //   1. the stamp is strictly LATER than this pair's newest row, so the
+  //      collision cannot arise in the first place. Latest-wins needs a strict
+  //      order anyway; borrowing the wall clock for it was the real mistake.
+  //   2. the insert is CHECKED. If a row is still swallowed for any reason this
+  //      throws instead of returning a false success — a declaration that did not
+  //      land must never be reported as one that did.
+  //
+  // The unique index keeps doing its real job (replay idempotence) untouched.
+  const priorSame = rowsFor(rows, thing).filter((r) => r.entity === entity);
+  const newest = priorSame.length ? Date.parse(priorSame[priorSame.length - 1].born_at) : NaN;
+  const now = Date.now();
+  const bornAt = new Date(Number.isFinite(newest) && newest >= now ? newest + 1 : now).toISOString();
+
+  const row = declareAttachment(db, { entity, target: thing, policy, declaredBy: actor, bornAt });
+  if (row.inserted === false)
+    throw bounce(409, "that declaration did not land", `an identical holding edge for ${entity} on ${thing} already exists at ${bornAt} — nothing was written, and this door will not report a write it did not make`);
 
   return {
     did: act,
