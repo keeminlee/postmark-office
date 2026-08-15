@@ -268,15 +268,18 @@ test("MCP initialize → protocol + instructions", async () => {
   assert.match(body.result.instructions, /The reading law/, "the handshake carries the reading law");
 });
 
-test("MCP tools/list names all 40 tools", async () => {
+test("MCP tools/list names all 39 tools", async () => {
   const { body } = await rpc("tools/list");
   const names = body.result.tools.map((t) => t.name);
   // 38 → 40: world_hold + world_holdings (the object primitive, 2026-08-14).
+  // 40 → 39: request_blessing delisted (the slim, 2026-08-15) — and the loop
+  // below now asserts its ABSENCE, which is the delisting's real receipt.
   // NOTE: this exact total breaks for whoever adds the next tool, whatever it is
   // — the named-tools loop below is the assertion that actually says something,
   // since it fails when a tool GOES MISSING rather than when one is added.
   // Left in place deliberately; removing it is a maintainer's-taste call.
-  assert.equal(names.length, 40);
+  assert.equal(names.length, 39);
+  assert.ok(!names.includes("request_blessing"), "request_blessing was delisted 2026-08-15 and must not return quietly");
   for (const n of ["read_town", "read_doorstep", "send_letter", "stake_vote", "read_votes",
     "read_metrics", "list_letters", "list_regions", "read_home", "request_residency",
     "declare_household", // join-as-declaration: the front door (2026-08-14)

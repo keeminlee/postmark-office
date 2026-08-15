@@ -15,7 +15,7 @@ import { requestResidency } from "./residency.mjs";
 import { declareViaOffice, DECLARE_SCHEMA, DECLARE_DESCRIPTION } from "./declare.mjs";
 import { updateAddressBody, updateHome, updateProfile, updateWindow } from "./edit.mjs";
 import { WORLD_TOOLS, callWorldTool, worldBlockForHandle } from "./world.mjs";
-import { apexEnabled, apexTools, worldApex } from "./world-apex.mjs"; // stage 3: the apex `world` verb, behind WORLD_APEX
+import { apexEnabled, apexTools, dispatchToolFor, worldApex } from "./world-apex.mjs"; // stage 3: the apex `world` verb, behind WORLD_APEX
 import { householdOf } from "./households.mjs";
 
 // Tools that WRITE — gated on a signed-in door. Called without a credential
@@ -446,10 +446,18 @@ export function handleMcp(req, res, ctx) {
     // carrying a hidden rate error.
     if (ctx.rateLimit) {
       for (const message of messages) {
-        const verb = message?.method === "tools/call"
+        const named = message?.method === "tools/call"
           ? (message.params?.name ?? "tools/call")
           : (message?.method ?? "invalid");
-        const limited = ctx.rateLimit({ verb, write: writeShaped(verb, message?.params?.arguments) });
+        const write = writeShaped(named, message?.params?.arguments);
+        // An apex act is charged as the verb it dispatches to — the household
+        // world-write ledger must not have a second, uncounted door beside the
+        // flat one. An action with no dispatch row charges as `world` and the
+        // apex's own bounce answers it downstream.
+        const verb = named === "world" && write
+          ? (dispatchToolFor(message?.params?.arguments?.do) ?? named)
+          : named;
+        const limited = ctx.rateLimit({ verb, write });
         if (limited) return ctx.rateResponse(res, limited);
       }
     }

@@ -961,3 +961,19 @@ test("transition: a pre-rename `subverb:` affordance still mints its door, surfa
     assert.ok(r.affordances.every((a) => !("subverb" in a)), "the response leaked the pre-rename key");
   });
 });
+
+// ── the bouncer's charge map ─────────────────────────────────────────────────
+//
+// The MCP door charges an apex act as the flat verb it dispatches to, so the
+// household world-write ledger has ONE door, not a flat one and an uncounted
+// apex one. This map is what the door charges from; if a dispatch row moves,
+// this fails before the ledger quietly stops counting.
+
+test("dispatchToolFor: an apex act resolves to the flat verb it is charged as", () => {
+  assert.equal(apex.dispatchToolFor("note-to-self"), "world_note");
+  assert.equal(apex.dispatchToolFor("walk"), "world_walk");
+  assert.equal(apex.dispatchToolFor("leave-mark"), "world_leave_mark");
+  assert.equal(apex.dispatchToolFor("give"), "world_hold");
+  assert.equal(apex.dispatchToolFor("mint-gold"), null, "an unminted action must not charge as anything");
+  assert.equal(apex.dispatchToolFor(undefined), null);
+});

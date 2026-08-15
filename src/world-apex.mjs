@@ -206,6 +206,11 @@ export function fieldsFor(action, declared = null) {
 // with no room behind it, and L6 goes red the moment one appears.
 export const DISPATCHABLE = Object.freeze(Object.keys(DISPATCH));
 
+/** The flat tool an action dispatches to, or null. Read by the MCP door's
+ *  bouncer preflight so an apex act is CHARGED as the verb it becomes — the
+ *  household world-write ledger must not grow a second, uncounted door. */
+export const dispatchToolFor = (action) => DISPATCH[String(action ?? "").trim()]?.tool ?? null;
+
 // ── the mail asymmetry, kept ────────────────────────────────────────────────
 //
 // A letter costs nothing and reaches anyway. No mail verb is ever an
