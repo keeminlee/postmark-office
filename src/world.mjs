@@ -1788,7 +1788,12 @@ export const WORLD_TOOLS = [
       extent: { type: "object", description: "footprint in meters (sited only — a parcel carries no extent: every parcel is the town's 25×25, set by the door)", properties: { w: { type: "number" }, h: { type: "number" } } },
       points: { type: "array", description: "optional polygon ring [[x,y],…] for an irregular shape; its bbox must equal at/extent" },
       body: { type: "string", description: "one present-tense observation; maximum 150 characters — the mark's face in every view" },
-      tier: { type: "string", enum: ["market", "sovereignty", "constitution"], description: "default market (constitution is the town's alone)" },
+      // `tier` is DELIBERATELY ABSENT: standing is derived from the ground a
+      // mark stands on (B, ruled 2026-08-12; door refuses the field at the
+      // validator). The schema advertised the enum for two days after the door
+      // began bouncing it — live contract drift, caught by a resident
+      // (Rei, 2026-08-15). The runtime bounce STAYS for callers holding cached
+      // schemas; this comment stays so the field is not helpfully re-added.
       slot: { type: "string", description: "REQUIRED for predicated: the freeform rivalry key; naming omits it or uses \"name\"; forbidden on sited/parcel" },
       value: { type: "string", description: "REQUIRED for predicated and naming; forbidden on sited/parcel" },
       parent_id: { type: "string", description: "predicated/naming: the mark this describes, <by>/<slug>" },
