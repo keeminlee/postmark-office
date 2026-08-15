@@ -393,14 +393,33 @@ test("flag off: the verb itself refuses too, in case something calls past the li
   assert.match(r.hint, /WORLD_APEX=1/);
 });
 
-test("flag on: the office serves `world` BESIDE the flat verbs — nothing is retired", async () => {
+test("the slim: eight flats are DELISTED, the read flats and world_note stand until `read:` answers for them", async () => {
   on();
   await withOffice({ WORLD_APEX: "1" }, async () => {
     const { body } = await rpc("tools/list");
     const names = body.result.tools.map((t) => t.name);
     assert.ok(names.includes("world"), "the apex tool is missing with the flag on");
-    for (const kept of ["world_orient", "world_open_your_eyes", "world_say", "world_walk", "world_leave_mark", "world_investigate", "world_my_marks", "world_note", "world_walkers", "world_stake"])
-      assert.ok(names.includes(kept), `${kept} was retired — the apex stands beside the verbs, it does not replace them`);
+    // Delisted 2026-08-15 (Keemin-ruled): the apex performs and answers all of
+    // these, field-verified the same day. Listing-only — the runtime tests
+    // below still call them by name and are answered.
+    for (const gone of ["world_say", "world_walk", "world_leave_mark", "world_stake", "world_unstake", "world_hold", "world_orient", "world_open_your_eyes"])
+      assert.ok(!names.includes(gone), `${gone} is still listed — the slim delisted it`);
+    // Held back deliberately: no apex path answers these until `read:` lands.
+    for (const kept of ["world_investigate", "world_my_marks", "world_walkers", "world_stake_read", "world_holdings", "world_note"])
+      assert.ok(names.includes(kept), `${kept} was delisted early — nothing answers for it yet`);
+    // The apex-on total: 31 legacy tools + `world` itself. The flag-off twin
+    // (39, nothing delisted) lives in server.test.mjs — together they pin the
+    // apex-conditioning from both sides.
+    assert.equal(names.length, 32);
+  });
+});
+
+test("the slim: a delisted name still ANSWERS — cached lists never break", async () => {
+  on();
+  await withOffice({ WORLD_APEX: "1" }, async () => {
+    const { body } = await rpc("tools/call", { name: "world_orient", arguments: { x: -900, y: -760 } });
+    const answer = JSON.parse(body.result.content[0].text);
+    assert.ok(answer.standpoint, "world_orient stopped answering — delisting must be listing-only");
   });
 });
 

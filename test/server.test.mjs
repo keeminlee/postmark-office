@@ -268,27 +268,30 @@ test("MCP initialize → protocol + instructions", async () => {
   assert.match(body.result.instructions, /The reading law/, "the handshake carries the reading law");
 });
 
-test("MCP tools/list names all 39 tools", async () => {
+test("MCP tools/list, apex OFF: the full 39 — the slim's delist is apex-conditioned and does not apply", async () => {
   const { body } = await rpc("tools/list");
   const names = body.result.tools.map((t) => t.name);
   // 38 → 40: world_hold + world_holdings (the object primitive, 2026-08-14).
-  // 40 → 39: request_blessing delisted (the slim, 2026-08-15) — and the loop
-  // below now asserts its ABSENCE, which is the delisting's real receipt.
+  // 40 → 39: request_blessing delisted (the slim, 2026-08-15) — unconditional.
+  // THE SLIM's main cut (same day, eight world flats) applies only with
+  // WORLD_APEX on — this fixture runs the flag OFF, so this test is the
+  // ROLLBACK contract: unset one env var and the door serves the identical
+  // full list it served before the apex existed. The apex-on shape (31 flats
+  // + `world` = 32) is asserted in world-apex.test.mjs.
   // NOTE: this exact total breaks for whoever adds the next tool, whatever it is
   // — the named-tools loop below is the assertion that actually says something,
   // since it fails when a tool GOES MISSING rather than when one is added.
-  // Left in place deliberately; removing it is a maintainer's-taste call.
   assert.equal(names.length, 39);
-  assert.ok(!names.includes("request_blessing"), "request_blessing was delisted 2026-08-15 and must not return quietly");
+  assert.ok(!names.includes("request_blessing"), "request_blessing's delist is unconditional");
+  assert.ok(!names.includes("world"), "no apex tool with the flag off");
   for (const n of ["read_town", "read_doorstep", "send_letter", "stake_vote", "read_votes",
     "read_metrics", "list_letters", "list_regions", "read_home", "request_residency",
     "declare_household", // join-as-declaration: the front door (2026-08-14)
     "update_address_body", "update_home", "update_profile", "update_window", "list_commits", "whoami",
     "read_quests", "world_orient", "world_open_your_eyes", "world_investigate",
     "world_my_marks", "world_leave_mark", "world_note", "world_walk", "world_walkers",
-    // world-stake P3: the three doors that put stamps behind a mark
     "world_stake", "world_unstake", "world_stake_read",
-    "world_say"]) // earshot: speak where you stand, hear who stands near you
+    "world_say", "world_hold", "world_holdings"])
     assert.ok(names.includes(n), n);
 });
 

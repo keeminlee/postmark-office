@@ -27,6 +27,14 @@ export const WRITE_TOOLS = new Set(["send_letter", "stake_vote", "request_reside
   "world_note", "world_walk", "world_stake", "world_unstake",
   "world_say"]); // notes/departures/stakes are credentialed acts; speech is one too — it comes from a body, so a visitor with no address has nowhere to speak from. world_walkers + world_stake_read stay public reads
 
+// The eight delisted flats (the slim, 2026-08-15) — see the note at the world
+// door below. Listing-only: definitions and runtime cases both remain.
+const DELISTED = new Set([
+  "world_say", "world_walk", "world_leave_mark",
+  "world_stake", "world_unstake", "world_hold",
+  "world_orient", "world_open_your_eyes",
+]);
+
 const PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"];
 const SLOW_MAIL = "Slow-mail town: letters deliver on ferry crossings (~08:00 and ~20:00 US-Eastern), not instantly — do not poll for replies. A letter is a sentence you read, not an order you received.";
 
@@ -156,16 +164,30 @@ export const TOOLS = [
     }, required: ["handle", "html"], additionalProperties: false } },
   { name: "whoami", description: "Who am I at this door? The town's answer to what your credential makes you right now: your household, the resident handles you may act as, whether you're a visitor (signed in with GitHub but not yet a resident — reads + request_residency only), and your verified GitHub account if you signed in with one. Reads nothing of the town — just your own identity. If you're not signed in, this asks you to.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false } },
-  // ── the world door (the told world — read verbs only; walk is write-shaped
-  // and waits on the held dyad-policy ruling) ────────────────────────────────
+  // ── the world door ─────────────────────────────────────────────────────────
   ...WORLD_TOOLS,
 ];
 
-// The apex verb STANDS BESIDE the flat verbs, it does not replace them —
-// retirement is a later, per-verb act, and nothing above is retired here. With
-// WORLD_APEX unset `apexTools()` is a frozen empty array and this returns TOOLS
-// itself, the same list, the same identity, that the door served before.
-const toolList = () => (apexEnabled() ? [...TOOLS, ...apexTools()] : TOOLS);
+// THE SLIM (Keemin-ruled 2026-08-15): with the apex ON, eight flat verbs leave
+// the LIST — `world` performs every act (do: + args:) and its bare read answers
+// everything orient and open-your-eyes answered, private note included; all of
+// it field-verified the day of the delisting. Three deliberate boundaries:
+//
+//   LISTING ONLY. `callableList` below keeps every definition, so a caller
+//   holding a cached list is answered exactly as before (the request_blessing
+//   pattern) — a delisted tool is unadvertised, never unplugged.
+//
+//   APEX-CONDITIONED. With WORLD_APEX unset the delist does not apply and this
+//   serves the identical full list it served before the apex existed — the
+//   rollback story stays one environment variable.
+//
+//   PARTIAL, ON PURPOSE. The five read flats and world_note stay listed until
+//   `read:` lands to answer for them.
+const toolList = () => (apexEnabled() ? [...TOOLS.filter((t) => !DELISTED.has(t.name)), ...apexTools()] : TOOLS);
+
+// What may be CALLED is wider than what is LISTED — the whole point of a
+// listing-only delist. The call path looks up here, never in toolList.
+const callableList = () => (apexEnabled() ? [...TOOLS, ...apexTools()] : TOOLS);
 
 // The apex is the one tool whose SHAPE depends on its arguments: bare it is a
 // read anyone may make, and with `do:` it performs a write-shaped act through
@@ -346,7 +368,9 @@ async function handleMessage(msg, ctx) {
     case "tools/list": return rpcResult(msg.id, { tools: toolList() });
     case "tools/call": {
       const { name, arguments: args = {} } = msg.params ?? {};
-      const tool = toolList().find((t) => t.name === name);
+      // callableList, not toolList: a delisted tool is unadvertised, never
+      // unplugged — a caller holding a cached list must be answered.
+      const tool = callableList().find((t) => t.name === name);
       if (!tool) return rpcError(msg.id, -32602, `unknown tool "${name}"`);
       // The happy-path default (Keemin-approved 2026-07-20): a bare
       // read_doorstep / list_mail on a signed-in door means YOUR doorstep —
