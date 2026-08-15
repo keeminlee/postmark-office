@@ -59,6 +59,58 @@ function isAncestor(repo, ancestor, descendant) {
   }
 }
 
+// A diverged pen branch after a Settlement rewrite holds "pre-rebase ghosts"
+// — commits whose carried-forward twins live on origin. While a rewrite
+// preserves content, the write-time rebase recognizes each ghost by patch-id
+// and drops it silently. But machinery sweeps AMEND twins (tense arithmetic,
+// envelope repairs, relocations), and an amended twin no longer matches its
+// ghost — the rebase replays the ghost against its own newer twin, conflicts,
+// and bounces the resident's write (#1774, 2026-08-15: all 19 pen branches
+// diverged this way after the sweeps; vermillion's marker refused twice).
+//
+// The remote-tracking ref's reflog is the discriminator: it remembers every
+// tip this clone has fetched or pushed. A local-only commit reachable from
+// any prior tip WAS on origin — the Settlement has already ruled on that
+// history (kept it, amended it, moved it, or removed it), and replaying the
+// ghost would fight the ruling. Only a commit the reflog cannot vouch for
+// keeps the rebase path so the work replays instead of vanishing — which
+// covers the genuinely-precious case (crashed between commit and push) and,
+// honestly, also the unprovable ones (no reflog, expired entries); the
+// bounce message downstream names both readings instead of asserting one.
+//
+// Returns { ghosts, unvouched, reflogDepth }: `ghosts` = all local-only
+// commits, `unvouched` = the subset no prior tip can vouch for (empty =
+// surrender to origin is safe). One rev-list answers the whole question —
+// `<remote>..HEAD --not <tips...>` — so there is no entry cap: a resident
+// away for a month while settlements churn the reflog still gets vouched
+// (a capped newest-N scan silently expired after ~2-4 weeks of absence and
+// re-minted the #1774 bounce for exactly the sporadic writers this town is
+// full of — caught in review, reproduced at 60 settlements).
+function reflogVouchesForGhosts(repo, remote) {
+  const ghosts = git(repo, ["rev-list", `${remote}..HEAD`]).trim().split(/\s+/).filter(Boolean);
+  if (ghosts.length === 0) return { ghosts, unvouched: [], reflogDepth: 0 };
+  let tips = [];
+  try {
+    tips = git(repo, ["rev-list", "-g", remote]).trim().split(/\s+/).filter(Boolean);
+  } catch { /* a hard rev-list failure lands here; the empty-tips guard below covers it */ }
+  // A ref with no reflog does NOT throw — `rev-list -g` exits 0 with empty
+  // output (fresh clone). Empty tips must read "nothing provable", never
+  // "nothing precious".
+  if (tips.length === 0) return { ghosts, unvouched: ghosts, reflogDepth: 0 };
+  // `rev-list -g` filters unreadable entries out of its own output, so a
+  // dangling reflog entry cannot reach the --not list (review-verified) —
+  // but that safety is a git implementation behaviour, not this code's, so
+  // a hard failure here degrades to "nothing provable" rather than throwing
+  // out of a write.
+  try {
+    const unvouched = git(repo, ["rev-list", `${remote}..HEAD`, "--not", ...tips])
+      .trim().split(/\s+/).filter(Boolean);
+    return { ghosts, unvouched, reflogDepth: tips.length };
+  } catch {
+    return { ghosts, unvouched: ghosts, reflogDepth: tips.length };
+  }
+}
+
 export function mainRef(repo) {
   if (refExists(repo, "refs/heads/main")) return "refs/heads/main";
   if (refExists(repo, "refs/remotes/origin/main")) return "refs/remotes/origin/main";
@@ -257,17 +309,53 @@ export function ensureDraftCheckout(repo, household, { pooled = false, shared = 
       if (isAncestor(repo, localSha, remoteSha)) {
         git(repo, ["reset", "--hard", "--quiet", remote]);
       } else if (!isAncestor(repo, remoteSha, localSha)) {
-        // Replaying commits mints new committer idents; the clone deliberately
-        // carries no user.* config (penCommit passes -c per call), so the
-        // rebase must too or it dies on empty ident the first time a replay
-        // is actually needed.
-        const name = process.env.BOT_NAME ?? "postmark-office[bot]";
-        const email = process.env.BOT_EMAIL ?? "office@postmark.invalid";
-        try {
-          git(repo, ["-c", `user.name=${name}`, "-c", `user.email=${email}`, "rebase", "--quiet", remote]);
-        } catch (e) {
-          try { git(repo, ["rebase", "--abort"]); } catch { /* nothing in progress */ }
-          throw new Error(`draft branch ${branch} could not be reseated on origin: ${String(e.stderr ?? e.message ?? e).slice(0, 200)}`);
+        const { ghosts, unvouched, reflogDepth } = reflogVouchesForGhosts(repo, remote);
+        if (unvouched.length === 0) {
+          // Every local-only commit was on origin before the rewrite, so
+          // origin's version of that history is the Settlement's ruling —
+          // land exactly on it rather than replaying ghosts against it. A
+          // rewrite that DROPPED a pushed mark is surrendered here too, by
+          // the same principle (origin is canon) — so the log names every
+          // surrendered sha and what actually VANISHES (files present here,
+          // absent at origin tip — a two-ref diff, deliberately: it needs no
+          // merge base, so a re-rooted origin can't turn this log line into
+          // an uncaught fatal that blocks the repair, and --diff-filter=A
+          // keeps carried-forward-amended marks off the "lost" list). The
+          // pre-reset tip is printed as a SHA, not a relative ref — @{1}
+          // decays the moment the write's own commit moves the branch.
+          // Recovery window ~30 days (unreachable after reset, gc's clock).
+          let vanishing = "(diff unavailable)";
+          try {
+            vanishing = git(repo, ["diff", "--name-only", "--diff-filter=A", remote, "HEAD"]).trim().split(/\r?\n/).filter(Boolean).join(" ") || "(none — every ghost's content survives on origin in some form)";
+          } catch { /* a log line must never block a repair */ }
+          console.error(
+            `[world] pen branch ${branch} diverged after a Settlement rewrite — all ${ghosts.length} ghost(s) previously on origin; reset to origin (#1774). ` +
+            `surrendered: ${ghosts.map((s) => s.slice(0, 10)).join(" ")} · vanishing: ${vanishing} · recovery sha: ${localSha}`,
+          );
+          git(repo, ["reset", "--hard", "--quiet", remote]);
+        } else {
+          // Replaying commits mints new committer idents; the clone deliberately
+          // carries no user.* config (penCommit passes -c per call), so the
+          // rebase must too or it dies on empty ident the first time a replay
+          // is actually needed.
+          const name = process.env.BOT_NAME ?? "postmark-office[bot]";
+          const email = process.env.BOT_EMAIL ?? "office@postmark.invalid";
+          try {
+            git(repo, ["-c", `user.name=${name}`, "-c", `user.email=${email}`, "rebase", "--quiet", remote]);
+          } catch (e) {
+            try { git(repo, ["rebase", "--abort"]); } catch { /* nothing in progress */ }
+            // State facts, not a diagnosis: an unvouched commit is EITHER
+            // never-pushed work (crashed mid-write; replay it by hand) OR
+            // pushed work the reflog cannot vouch for (fresh clone, expired
+            // entries) — in the second case the remedy is exactly the reset
+            // this path declined. The operator decides; the message must
+            // not pick a side the code did not establish.
+            throw new Error(
+              `draft branch ${branch} could not be reseated on origin (#1774): ${String(e.stderr ?? e.message ?? e).slice(0, 200)} · ` +
+              `unvouched local commit(s): ${unvouched.map((s) => s.slice(0, 10)).join(", ")} (reflog depth ${reflogDepth}) — ` +
+              `either never-pushed work (replay by hand) or the reflog could not vouch (if origin is canonical, reset to origin)`,
+            );
+          }
         }
       }
       // remote strictly behind local = unpushed commits only; the push fast-forwards.
