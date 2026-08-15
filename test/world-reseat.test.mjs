@@ -191,3 +191,89 @@ test("a rewrite that already CONTAINS the pen's unpushed work drops it cleanly (
   assert.equal(g(pen, "show", "HEAD:WORLD/marks/alpha/third-mark/mark.md"), "a third mark");
   g(pen, "push", "-q", "origin", "draft/alpha");
 });
+
+test("a rewrite that AMENDED the pen's pushed mark resets to origin instead of replaying the ghost against its twin (#1774)", () => {
+  // The pen writes a mark and PUSHES it — a normal completed write. The push
+  // stamps the remote-tracking ref's reflog: the clone now remembers this
+  // commit was on origin.
+  ensureDraftCheckout(pen, "alpha");
+  put(pen, "WORLD/marks/alpha/garden-gate/mark.md", "position: 10,10\nthe garden gate\n");
+  g(pen, "add", "-A");
+  g(pen, "commit", "-q", "-m", "mark: alpha/garden-gate");
+  g(pen, "push", "-q", "origin", "draft/alpha");
+
+  // Settlement with a machinery sweep: the keeper rewrites draft/alpha onto a
+  // new main and carries the mark forward AMENDED (a tense sweep re-derives
+  // its coordinates). The ghost's twin no longer patch-id-matches, so the old
+  // ceremony replayed the ghost against it here — conflict, abort, bounce:
+  // vermillion's "a draft branch that wouldn't reseat".
+  g(keeper, "fetch", "-q", "origin");
+  g(keeper, "switch", "-q", "main");
+  g(keeper, "pull", "-q", "--ff-only");
+  put(keeper, "WORLD/settled5.md", "S5 published things\n");
+  g(keeper, "add", "-A");
+  g(keeper, "commit", "-q", "-m", "settlement: S5");
+  g(keeper, "push", "-q", "origin", "main");
+  g(keeper, "branch", "-f", "draft/alpha", "main");
+  g(keeper, "switch", "-q", "draft/alpha");
+  put(keeper, "WORLD/marks/alpha/garden-gate/mark.md", "position: 12,9\nthe garden gate\n");
+  g(keeper, "add", "-A");
+  g(keeper, "commit", "-q", "-m", "mark: alpha/garden-gate (tense sweep: coordinates re-derived)");
+  g(keeper, "push", "-q", "--force", "origin", "draft/alpha");
+  g(keeper, "switch", "-q", "main");
+
+  // The next write seats cleanly on the rewritten tip — no replay, no throw.
+  const branch = ensureDraftCheckout(pen, "alpha");
+  assert.equal(branch, "draft/alpha");
+  const remoteTip = g(pen, "rev-parse", "refs/remotes/origin/draft/alpha");
+  assert.equal(g(pen, "rev-parse", "HEAD"), remoteTip, "pen lands exactly on the rewritten tip, ghosts dropped");
+  assert.equal(
+    g(pen, "show", "HEAD:WORLD/marks/alpha/garden-gate/mark.md").split(/\r?\n/)[0],
+    "position: 12,9",
+    "the Settlement's amendment is canon; the ghost did not fight the ruling",
+  );
+  // and the household's next write flows.
+  put(pen, "WORLD/marks/alpha/garden-gate-latch/mark.md", "the latch\n");
+  g(pen, "add", "-A");
+  g(pen, "commit", "-q", "-m", "mark: alpha/garden-gate-latch");
+  g(pen, "push", "-q", "origin", "draft/alpha");
+});
+
+test("a never-pushed commit alongside an amended twin still bounces loudly — and survives the abort (the precious case keeps its guard)", () => {
+  // One pushed mark (will be amended keeper-side) + one crashed write (never
+  // pushed). The reflog can vouch for the first ghost but not the second, so
+  // the reseat must take the rebase path, hit the amended-twin conflict, and
+  // throw — WITHOUT losing the never-pushed work.
+  ensureDraftCheckout(pen, "alpha");
+  put(pen, "WORLD/marks/alpha/lantern/mark.md", "wick: short\nthe lantern\n");
+  g(pen, "add", "-A");
+  g(pen, "commit", "-q", "-m", "mark: alpha/lantern");
+  g(pen, "push", "-q", "origin", "draft/alpha");
+  put(pen, "WORLD/marks/alpha/lantern-hook/mark.md", "the hook\n");
+  g(pen, "add", "-A");
+  g(pen, "commit", "-q", "-m", "mark: alpha/lantern-hook");
+  // crashed here: lantern-hook never pushed
+
+  g(keeper, "fetch", "-q", "origin");
+  g(keeper, "switch", "-q", "main");
+  g(keeper, "pull", "-q", "--ff-only");
+  put(keeper, "WORLD/settled6.md", "S6 published things\n");
+  g(keeper, "add", "-A");
+  g(keeper, "commit", "-q", "-m", "settlement: S6");
+  g(keeper, "push", "-q", "origin", "main");
+  g(keeper, "branch", "-f", "draft/alpha", "main");
+  g(keeper, "switch", "-q", "draft/alpha");
+  put(keeper, "WORLD/marks/alpha/lantern/mark.md", "wick: long\nthe lantern\n");
+  g(keeper, "add", "-A");
+  g(keeper, "commit", "-q", "-m", "mark: alpha/lantern (sweep: wick re-derived)");
+  g(keeper, "push", "-q", "--force", "origin", "draft/alpha");
+  g(keeper, "switch", "-q", "main");
+
+  assert.throws(() => ensureDraftCheckout(pen, "alpha"), /never-pushed work/);
+  // the abort left the precious commit intact on the local branch
+  assert.equal(g(pen, "show", "draft/alpha:WORLD/marks/alpha/lantern-hook/mark.md"), "the hook");
+  // clean up for any later test: surrender the branch to origin by hand (the
+  // documented operator remedy for the compound case)
+  g(pen, "switch", "-q", "draft/alpha");
+  g(pen, "reset", "-q", "--hard", "refs/remotes/origin/draft/alpha");
+});

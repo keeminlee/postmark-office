@@ -59,6 +59,32 @@ function isAncestor(repo, ancestor, descendant) {
   }
 }
 
+// A diverged pen branch after a Settlement rewrite holds "pre-rebase ghosts"
+// — commits whose carried-forward twins live on origin. While a rewrite
+// preserves content, the write-time rebase recognizes each ghost by patch-id
+// and drops it silently. But machinery sweeps AMEND twins (tense arithmetic,
+// envelope repairs, relocations), and an amended twin no longer matches its
+// ghost — the rebase replays the ghost against its own newer twin, conflicts,
+// and bounces the resident's write (#1774, 2026-08-15: all 19 pen branches
+// diverged this way after the sweeps; vermillion's marker refused twice).
+//
+// The remote-tracking ref's reflog is the discriminator: it remembers every
+// tip this clone has fetched or pushed. A local-only commit reachable from
+// any prior tip WAS on origin — the Settlement has already ruled on that
+// history (kept it, amended it, moved it, or removed it), and replaying the
+// ghost would fight the ruling. Only a commit the reflog has never seen — a
+// write that crashed between commit and push — is genuinely unrepresented,
+// and keeps the rebase path so the work replays instead of vanishing.
+function ghostsAllPreviouslyOnOrigin(repo, remote) {
+  const ghosts = git(repo, ["rev-list", `${remote}..HEAD`]).trim().split(/\s+/).filter(Boolean);
+  if (ghosts.length === 0) return true;
+  let tips = [];
+  try {
+    tips = git(repo, ["rev-list", "-g", remote]).trim().split(/\s+/).filter(Boolean).slice(0, 50);
+  } catch { /* no reflog (fresh clone): nothing provable — treat every ghost as precious */ }
+  return ghosts.every((ghost) => tips.some((tip) => isAncestor(repo, ghost, tip)));
+}
+
 export function mainRef(repo) {
   if (refExists(repo, "refs/heads/main")) return "refs/heads/main";
   if (refExists(repo, "refs/remotes/origin/main")) return "refs/remotes/origin/main";
@@ -257,17 +283,26 @@ export function ensureDraftCheckout(repo, household, { pooled = false, shared = 
       if (isAncestor(repo, localSha, remoteSha)) {
         git(repo, ["reset", "--hard", "--quiet", remote]);
       } else if (!isAncestor(repo, remoteSha, localSha)) {
-        // Replaying commits mints new committer idents; the clone deliberately
-        // carries no user.* config (penCommit passes -c per call), so the
-        // rebase must too or it dies on empty ident the first time a replay
-        // is actually needed.
-        const name = process.env.BOT_NAME ?? "postmark-office[bot]";
-        const email = process.env.BOT_EMAIL ?? "office@postmark.invalid";
-        try {
-          git(repo, ["-c", `user.name=${name}`, "-c", `user.email=${email}`, "rebase", "--quiet", remote]);
-        } catch (e) {
-          try { git(repo, ["rebase", "--abort"]); } catch { /* nothing in progress */ }
-          throw new Error(`draft branch ${branch} could not be reseated on origin: ${String(e.stderr ?? e.message ?? e).slice(0, 200)}`);
+        if (ghostsAllPreviouslyOnOrigin(repo, remote)) {
+          // Every local-only commit was on origin before the rewrite, so
+          // origin's version of that history is the Settlement's ruling —
+          // land exactly on it rather than replaying ghosts against it.
+          const dropped = git(repo, ["rev-list", "--count", `${remote}..HEAD`]).trim();
+          console.error(`[world] pen branch ${branch} diverged after a Settlement rewrite — all ${dropped} ghost(s) previously on origin; reset to origin (#1774)`);
+          git(repo, ["reset", "--hard", "--quiet", remote]);
+        } else {
+          // Replaying commits mints new committer idents; the clone deliberately
+          // carries no user.* config (penCommit passes -c per call), so the
+          // rebase must too or it dies on empty ident the first time a replay
+          // is actually needed.
+          const name = process.env.BOT_NAME ?? "postmark-office[bot]";
+          const email = process.env.BOT_EMAIL ?? "office@postmark.invalid";
+          try {
+            git(repo, ["-c", `user.name=${name}`, "-c", `user.email=${email}`, "rebase", "--quiet", remote]);
+          } catch (e) {
+            try { git(repo, ["rebase", "--abort"]); } catch { /* nothing in progress */ }
+            throw new Error(`draft branch ${branch} could not be reseated on origin (local holds never-pushed work; resolve by hand — #1774): ${String(e.stderr ?? e.message ?? e).slice(0, 200)}`);
+          }
         }
       }
       // remote strictly behind local = unpushed commits only; the push fast-forwards.
