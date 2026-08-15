@@ -318,6 +318,10 @@ for (const m of marks) {
       extends: m.extends ?? null,
       dials: (m.dials && typeof m.dials === "object" && !Array.isArray(m.dials)) ? m.dials : null,
       implements: Array.isArray(m.implements) ? m.implements : null,
+      // `actions:` is the key (renamed from `affordances:` 2026-08-15 — the
+      // category collapsed: everything a class grants IS an action); the old
+      // key still rides so a pre-rename mark keeps its doors.
+      actions: Array.isArray(m.actions) ? m.actions : null,
       affordances: Array.isArray(m.affordances) ? m.affordances : null,
       mobility: m.mobility ?? null,
       anchor: m.anchor ?? null,
