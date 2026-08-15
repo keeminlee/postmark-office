@@ -591,6 +591,11 @@ async function apexRead(args, key) {
   return {
     standpoint: oriented.standpoint,
     crossing: oriented.crossing,
+    // The private note rides exactly as orient carries it: embodied property,
+    // key-gated there, null when none. Carrying it here is what lets the bare
+    // read answer everything world_orient answers — the delisting precondition
+    // (the slim, 2026-08-15).
+    ...(oriented.note !== undefined ? { note: oriented.note } : {}),
     ...(frame ? { frame } : {}),
     within: spine,
     nearby,
