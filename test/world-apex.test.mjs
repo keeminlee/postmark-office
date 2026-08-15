@@ -99,7 +99,10 @@ const put = (path, text) => {
 const FRAME = "the-town/let-there-be-light";
 const LOUD = "L".repeat(4200);
 
-const SOUND_AFFORDANCE = [{ action: "say", blurb: "Speak aloud where you stand — sixty metres, five minutes, the town openly remembers." }];
+// The NEW grant shape (2026-08-15): `actions:` key, residue pointer, NO blurb —
+// the door quotes the residue class's own body. Sound is say's residue, so the
+// pointer is reflexive here, exactly as it stands on main.
+const SOUND_ACTIONS = [{ action: "say", residue: "the-town/sound" }];
 const BOARD_AFFORDANCE = [{ action: "board", blurb: "Step aboard where she lies — riding is consenting to the timetable's motion." }];
 const TIMETABLE = { vessel: "the-town/the-post-office", pace: 405, stops: [{ mark: "the-town/the-post-office", departs: ["06:00Z", "18:00Z"] }] };
 
@@ -112,7 +115,7 @@ const MARKS = [
   // stands in the physics quarter and its law reaches the whole world
   { id: "the-town/sound", by: "the-town", kind: "sited", tier: "constitution", at: { x: -900, y: -760 }, extent: { w: 200, h: 200 },
     body: "A voice carries sixty metres and is heard for five minutes.",
-    props: { class: "sound", class_version: 1, ambient: true, dials: { radius_m: 60, hearing_ttl_min: 5, flood_cap: 20 }, affordances: SOUND_AFFORDANCE } },
+    props: { class: "sound", class_version: 1, ambient: true, dials: { radius_m: 60, hearing_ttl_min: 5, flood_cap: 20 }, actions: SOUND_ACTIONS } },
 
   // THE HOSTILE MINT. A resident's own market mark, on the caller's spine,
   // carrying a well-formed affordances field naming a verb that does not exist.
@@ -290,7 +293,7 @@ const F = { x: 500, y: 640 };     // inside the town's own market-tier hut
 const FAR = { x: 40000, y: 40000 }; // open ground: nothing on the spine but the
                                     // world frame, nothing at all within reach
 
-const actions = (r) => (r.affordances ?? []).map((a) => a.action);
+const actions = (r) => (r.actions ?? []).map((a) => a.action);
 
 // Run a case against a different store — used for the Stage-D world, where the
 // wheelhouse's `board` affordance is restored and a SITED (non-ambient)
@@ -421,7 +424,7 @@ test("the gate: a resident's mark on your own spine mints NOTHING, however well-
   assert.ok(!actions(r).includes("mint-gold"), "a resident minted a verb");
   // and its second affordance shadows a real one — the surfaced `say` must be
   // the town's, from the town's mark, at the town's dials
-  const say = r.affordances.filter((a) => a.action === "say");
+  const say = r.actions.filter((a) => a.action === "say");
   assert.equal(say.length, 1);
   assert.equal(say[0].from, "the-town/sound");
 });
@@ -468,8 +471,8 @@ test("ambient: `say` reaches open ground 40 km from the mark that grants it", as
   assert.deepEqual(r.within.map((m) => m.id), [FRAME]);
   assert.deepEqual(r.nearby, [], "the fixture put a mark within reach after all — the test proves nothing");
   assert.deepEqual(actions(r), ["say"]);
-  assert.equal(r.affordances[0].via, "ambient", "it arrived by reach, not by law");
-  assert.equal(r.affordances[0].from, "the-town/sound");
+  assert.equal(r.actions[0].via, "ambient", "it arrived by reach, not by law");
+  assert.equal(r.actions[0].from, "the-town/sound");
 });
 
 test("ambient: and she can actually speak from there — the act dispatches", async () => {
@@ -486,13 +489,13 @@ test("ambient: `via` tells the three reaches apart — within, in reach, ambient
   // standing INSIDE the sound class: the same affordance, but arriving because
   // she is within it. The distinction is the whole content of `via`.
   const inside = await worldApex({ ...A }, null);
-  assert.equal(inside.affordances.find((a) => a.action === "say").via, "within");
+  assert.equal(inside.actions.find((a) => a.action === "say").via, "within");
   const far = await worldApex({ ...FAR }, null);
-  assert.equal(far.affordances.find((a) => a.action === "say").via, "ambient");
+  assert.equal(far.actions.find((a) => a.action === "say").via, "ambient");
   // and in the Stage-D world, a sited affordance seen from outside itself
   await withStore(stageDPath, async () => {
     const near = await worldApex({ x: 500, y: 530 }, null); // 30 m from the wheelhouse
-    const board = near.affordances.find((a) => a.action === "board");
+    const board = near.actions.find((a) => a.action === "board");
     assert.ok(board, "the wheelhouse was not within reach of a point 30 m away");
     assert.equal(board.via, "in reach");
   });
@@ -606,7 +609,7 @@ test("dispatch: every action in the table names a tool that exists on the flat l
   const { WORLD_STAKE_TOOLS } = await import("../src/world-stake.mjs");
   const flat = new Set([...WORLD_TOOLS, ...WORLD_STAKE_TOOLS].map((t) => t.name));
   const r = await worldApex({ ...A }, null);
-  for (const a of r.affordances) if (a.dispatches_to) assert.ok(flat.has(a.dispatches_to), `${a.dispatches_to} is not a tool`);
+  for (const a of r.actions) if (a.dispatches_to) assert.ok(flat.has(a.dispatches_to), `${a.dispatches_to} is not a tool`);
   // and the whole table, not only what happens to be afforded in the fixture
   for (const tool of ["world_say", "world_walk", "world_leave_mark", "world_stake"]) assert.ok(flat.has(tool), tool);
 });
@@ -621,7 +624,7 @@ test("dispatch: every action in the table names a tool that exists on the flat l
 test("fields: the say affordance names the fields the act actually takes", async () => {
   on();
   const r = await worldApex({ ...A }, null);
-  const say = r.affordances.find((a) => a.action === "say");
+  const say = r.actions.find((a) => a.action === "say");
   assert.ok(Object.keys(say.fields).length > 0, "fields is empty — it reads as an act that takes no arguments");
   assert.ok(say.fields.text, "`say` needs text and the affordance did not say so");
   assert.equal(say.fields.text.type, "string");
@@ -632,7 +635,7 @@ test("fields: the say affordance names the fields the act actually takes", async
 test("fields: the standpoint is not offered twice — handle/x/y never appear", async () => {
   on();
   const r = await worldApex({ ...A }, null);
-  for (const a of r.affordances)
+  for (const a of r.actions)
     for (const param of ["handle", "x", "y"])
       assert.equal(a.fields[param], undefined, `${a.action} offered ${param}, which the standpoint already answered`);
 });
@@ -676,11 +679,13 @@ test("the schema is closed: it no longer advertises a pass-through the door refu
   });
 });
 
-test("the description states the split: do: is argument-free, arguments ride the flat tool", () => {
+test("the description states the contract: do: + args: is one call, terms carry binds AND means", () => {
   on();
   const [tool] = apexTools();
-  assert.match(tool.description, /argument-free/i);
-  assert.match(tool.description, /dispatches_to/);
+  assert.match(tool.description, /do: <action> with args:/, "the envelope is the advertised way to act");
+  assert.match(tool.description, /`means`/, "the defining class is promised in the terms");
+  assert.match(tool.description, /`granted`/, "the yours/here split is promised");
+  assert.ok(tool.inputSchema.properties.args, "the envelope is a declared parameter, not folklore");
 });
 
 // ── issue #7 §4 · "not afforded here" and "afforded nowhere" are different ───
@@ -733,7 +738,7 @@ test("terms: a class that publishes a schedule delivers it as the consent docume
   // `.all(...).find(...)`, never `.get(...)`: since ambient reach landed, an
   // id-restricted gather also returns every ambient row, so the first row of
   // this query is `sound` no matter which id you asked about.
-  const row = db.prepare(apex.AFFORDANCE_QUERY).all(JSON.stringify(["the-town/the-wheelhouse"]))
+  const row = db.prepare(apex.ACTION_QUERY).all(JSON.stringify(["the-town/the-wheelhouse"]))
     .find((r) => r.id === "the-town/the-wheelhouse");
   db.close();
   assert.ok(row, "the Stage-D wheelhouse did not pass the gate");
@@ -838,7 +843,7 @@ test("the trust gate: the SQL and the predicate select the same marks, node for 
   const { loadWorldGraph, nodesWhere, isClassMark } = await import("../src/world-store.mjs");
   for (const path of [dbPath, stageDPath]) {
     const db = new DatabaseSync(path, { readOnly: true });
-    // AFFORDANCE_QUERY_ALL's shape: gate only, no reach restriction
+    // ACTION_QUERY_ALL's shape: gate only, no reach restriction
     const bySql = new Set(db.prepare(`SELECT id FROM nodes WHERE ${(await import("../src/world-store.mjs")).CLASS_MARK_GATE_SQL}`).all().map((r) => r.id));
     db.close();
     const byPredicate = new Set(nodesWhere(loadWorldGraph(path).graph, isClassMark).map((n) => n.id));
@@ -927,7 +932,7 @@ test("no store: the read says the law cannot be read, and the act refuses", asyn
   process.env.WORLD_STORE_DB = join(repo, "no-such-store.db");
   try {
     const read = await worldApex({ ...A }, null);
-    assert.deepEqual(read.affordances, []);
+    assert.deepEqual(read.actions, []);
     assert.match(read.law.unavailable, /no world store/);
     const act = await worldApex({ do: "say" }, KEY_ALPHA);
     assert.equal(act.error, "bounce");
@@ -954,11 +959,11 @@ test("transition: a pre-rename `subverb:` affordance still mints its door, surfa
   buildStore([...MARKS, ...legacy], path);
   await withStore(path, async () => {
     const r = await worldApex({ ...FAR }, null);
-    const walked = r.affordances.find((a) => a.action === "walk");
+    const walked = r.actions.find((a) => a.action === "walk");
     assert.ok(walked, "the old-key affordance vanished — a store hydrated from pre-rename law lost its doors");
     assert.equal(walked.dispatches_to, "world_walk");
     assert.equal(walked.from, "the-town/old-law");
-    assert.ok(r.affordances.every((a) => !("subverb" in a)), "the response leaked the pre-rename key");
+    assert.ok(r.actions.every((a) => !("subverb" in a)), "the response leaked the pre-rename key");
   });
 });
 
@@ -976,4 +981,78 @@ test("dispatchToolFor: an apex act resolves to the flat verb it is charged as", 
   assert.equal(apex.dispatchToolFor("give"), "world_hold");
   assert.equal(apex.dispatchToolFor("mint-gold"), null, "an unminted action must not charge as anything");
   assert.equal(apex.dispatchToolFor(undefined), null);
+});
+
+// ── Stage ② · the blurb is a quote, the terms carry the meaning ─────────────
+
+test("residue: the blurb is QUOTED from the residue class's own body, attributed, with its dials lifted", async () => {
+  on();
+  const r = await worldApex({ ...A }, null);
+  const say = r.actions.find((a) => a.action === "say");
+  assert.equal(say.blurb, "A voice carries sixty metres and is heard for five minutes.",
+    "the blurb must be the residue class's body, not a copy kept beside the grant");
+  assert.equal(say.blurb_from, "the-town/sound");
+  assert.equal(say.dials.radius_m, 60, "the residue class's dials ride the entry — cost visible before acting");
+});
+
+test("residue: a pointer that cannot resolve is said out loud, never papered over", async () => {
+  on();
+  const dangling = [
+    { id: "the-town/dangle-law", by: "the-town", kind: "sited", tier: "constitution", at: { x: 2100, y: 2100 }, extent: { w: 10, h: 10 },
+      body: "A grant pointing at a residue that is not in the store.",
+      props: { class: "c", class_version: 1, ambient: true, actions: [{ action: "walk", residue: "the-town/no-such-class" }] } },
+  ];
+  const path = join(repo, "apex-world-dangling-residue.db");
+  buildStore([...MARKS, ...dangling], path);
+  await withStore(path, async () => {
+    const r = await worldApex({ ...FAR }, null);
+    const walked = r.actions.find((a) => a.action === "walk");
+    assert.equal(walked.residue_unresolved, "the-town/no-such-class");
+  });
+});
+
+test("granted: yours travels with your class; here is the ground's", async () => {
+  on();
+  const residentLaw = [
+    { id: "the-town/resident", by: "the-town", kind: "sited", tier: "constitution", at: { x: 2200, y: 2200 }, extent: { w: 10, h: 10 },
+      body: "A household's living voice.",
+      props: { class: "resident", class_version: 5, ambient: true, actions: [{ action: "walk", residue: "the-town/sound" }] } },
+  ];
+  const path = join(repo, "apex-world-granted.db");
+  buildStore([...MARKS, ...residentLaw], path);
+  await withStore(path, async () => {
+    const keyed = await worldApex({}, KEY_ALPHA);
+    assert.ok(!keyed.error, JSON.stringify(keyed).slice(0, 300));
+    assert.ok(keyed.granted.yours.includes("walk"), "a resident-class grant is YOURS to a resident");
+    assert.ok(keyed.granted.here.includes("say"), "a ground-class grant is HERE");
+    const spectator = await worldApex({ ...FAR }, null);
+    assert.deepEqual(spectator.granted.yours, [], "a spectator instantiates no actor class — nothing is theirs");
+  });
+});
+
+// ── Stage ② · the args envelope ─────────────────────────────────────────────
+
+test("envelope: an unknown field bounces BY NAME against the target's own schema", async () => {
+  on();
+  const r = await worldApex({ do: "say", args: { nonsense: 1 } }, KEY_ALPHA);
+  assert.equal(r.error, "bounce");
+  assert.equal(r.code, 422);
+  assert.match(r.defect, /does not take: nonsense/);
+  assert.ok(r.allowed.includes("text"), "the bounce names the fields the act DOES take");
+});
+
+test("envelope: a non-object args is refused plainly", async () => {
+  on();
+  const r = await worldApex({ do: "say", args: "hello" }, KEY_ALPHA);
+  assert.equal(r.error, "bounce");
+  assert.match(r.defect, /`args` must be an object/);
+});
+
+test("envelope: declared fields ride through, and the terms carry the MEANS — the residue class with its dials", async () => {
+  on();
+  const r = await worldApex({ do: "say", args: { text: "hello from the envelope" } }, KEY_ALPHA);
+  assert.ok(!r.error, JSON.stringify(r).slice(0, 300));
+  assert.equal(r.did, "say");
+  assert.equal(r.terms.means.from, "the-town/sound", "registration answers what the act IS");
+  assert.equal(r.terms.means.dials.radius_m, 60, "the physics came back to the door");
 });

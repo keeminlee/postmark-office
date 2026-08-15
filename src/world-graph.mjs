@@ -142,7 +142,7 @@ function buildPayload(dbPath, st) {
     if (p.date) data.date = p.date;
     if (p.mechanic) data.mechanic = p.mechanic;
     if (p.class) data.class = p.class;
-    if (Array.isArray(p.affordances)) data.affordances = p.affordances.length;
+    if (Array.isArray(p.actions ?? p.affordances)) data.actions = (p.actions ?? p.affordances).length;
     // THE CLAIM ITSELF. A mark's body is the sentence the author wrote about
     // the thing — SCHEMA.md caps it at 150 characters — and without it the
     // window can say a node's degree, its tier and its path but not what it

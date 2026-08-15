@@ -139,15 +139,19 @@ export const CLASS_MARK_GATE_SQL = `
      kind = 'mark'
      AND by   = 'the-town'
      AND tier = 'constitution'
-     AND json_extract(props, '$.class')       IS NOT NULL
-     AND json_extract(props, '$.affordances') IS NOT NULL`;
+     AND json_extract(props, '$.class') IS NOT NULL
+     AND (json_extract(props, '$.actions')     IS NOT NULL
+      OR  json_extract(props, '$.affordances') IS NOT NULL)`;
 
-/** The same gate, as a predicate over a loaded node's attributes. */
+/** The same gate, as a predicate over a loaded node's attributes.
+ *  `actions:` is the key (2026-08-15); `affordances:` is its pre-rename
+ *  spelling, still admitted so a store hydrated from older law keeps its
+ *  doors. */
 export const isClassMark = (attr) => attr?.kind === "mark"
   && attr?.by === "the-town"
   && attr?.tier === "constitution"
   && attr?.props?.class != null
-  && attr?.props?.affordances != null;
+  && (attr?.props?.actions != null || attr?.props?.affordances != null);
 
 // ── THE CLASS ROSTER — a WIDER gate than the one above, deliberately ─────────
 //
@@ -206,12 +210,16 @@ export const AMBIENT_REACH_SQL = `json_type(props, '$.ambient') = 'true'`;
 export const isAmbient = (attr) => attr?.props?.ambient === true;
 
 /** The actions a node exposes. Callers must gate first; this only reads.
- *  `action` is the key (renamed from `subverb` 2026-08-15 — one taxonomy:
- *  LOGOS calls them actions, so the door does too); the old key is still
- *  read so a store hydrated from pre-rename law keeps its doors. */
-export const actionsOf = (attr) => (Array.isArray(attr?.props?.affordances) ? attr.props.affordances : [])
-  .map((a) => String(a?.action ?? a?.subverb ?? "").trim())
-  .filter(Boolean);
+ *  `actions:`/`action` are the keys (renamed from `affordances:`/`subverb`
+ *  2026-08-15 — one taxonomy: LOGOS calls them actions, so the door does
+ *  too); the old spellings are still read so a store hydrated from
+ *  pre-rename law keeps its doors. */
+export const actionsOf = (attr) => {
+  const list = attr?.props?.actions ?? attr?.props?.affordances;
+  return (Array.isArray(list) ? list : [])
+    .map((a) => String(a?.action ?? a?.subverb ?? "").trim())
+    .filter(Boolean);
+};
 
 // ── the world clone, and reading it AT A SHA ─────────────────────────────────
 

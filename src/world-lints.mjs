@@ -422,7 +422,7 @@ export async function runLints({ dbPath = DEFAULT_DB, sources = null, engineText
           : exposed.size
             ? `${exposed.size} action(s) exposed by ${new Set([...exposed.values()].flat()).size} class mark(s); every one of them dispatches`
             : "not applicable: no class mark in the world exposes an affordance yet, so there is nothing to conform.",
-      method: "the exposed set is every action on every mark passing the class-mark gate (world-store.mjs `isClassMark`: by the-town, tier constitution, carrying `class:` and `affordances:`) — the same gate the apex verb queries with. The handled set is `DISPATCHABLE` from src/world-apex.mjs, the key set of the table the door actually dispatches on. Neither side is restated here.",
+      method: "the exposed set is every action on every mark passing the class-mark gate (world-store.mjs `isClassMark`: by the-town, tier constitution, carrying `class:` and `actions:` — or its pre-rename spelling `affordances:`) — the same gate the apex verb queries with. The handled set is `DISPATCHABLE` from src/world-apex.mjs, the key set of the table the door actually dispatches on. Neither side is restated here.",
       limits: "This checks that a handler EXISTS, not that it is correct, and it says nothing about actions the office could dispatch but no class exposes (an unused handler is dead code, not a broken promise). A class mark on a household draft branch is invisible to the store and so to this lint.",
       rows: [...exposed.entries()].map(([action, from]) => ({ action, from, handled: Boolean(handled?.includes(action)) })),
       evidence: [
