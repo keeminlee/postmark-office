@@ -131,6 +131,7 @@ const DISPATCH = {
   walk: { tool: "world_walk", run: (args, key) => walkViaOffice(WORLD_CLONE, args, key) },
   "leave-mark": { tool: "world_leave_mark", run: (args, key) => leaveMarkViaOffice(WORLD_CLONE, args, key) },
   stake: { tool: "world_stake", run: (args, key) => callWorldStakeTool("world_stake", args, key) },
+  unstake: { tool: "world_unstake", run: (args, key) => callWorldStakeTool("world_unstake", args, key) },
   // THREE SUBVERBS, ONE TOOL. give / drop / take are one act — declare the
   // holding — and which one happens is read off the thing's current holder
   // rather than from the word the caller used (world-hold.mjs § the act). They
