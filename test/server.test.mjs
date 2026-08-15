@@ -563,3 +563,53 @@ test("a stringified number is coerced, not refused — the door does not eat the
   const out = JSON.parse(r.body.result.content[0].text);
   assert.ok(!out.defect, `expected no bounce, got: ${out.defect ?? ""}`);
 });
+
+// ── POST /berth — the harbor self-mint door (arrival ruling 2026-08-15) ─────
+//
+// Its own office, its own oauth.db: the main fixture never passes --oauth-db
+// and must not grow a berths table in the repo root as a test side-effect.
+
+test("POST /berth: one keyless POST mints ephemeral standing; names are single-occupancy; /me knows a berth", async () => {
+  const port = PORT + 2;
+  const dir = mkdtempSync(join(tmpdir(), "postmark-office-berth-srv-"));
+  const dbPath = join(dir, "fixture.db");
+  fixtureDb(dbPath).close();
+  const child2 = spawn(process.execPath, [join(ROOT, "src", "server.mjs"), "--port", String(port), "--db", dbPath, "--oauth-db", join(dir, "oauth.db")], {
+    env: { ...process.env, OFFICE_KEYS: `${KEY}=keemin:wright`, TOWN_CLONE: join(dir, "no-clone"), WORLD_CLONE: join(dir, "no-world-clone"), VOICES_LOG: join(dir, "voices.jsonl"), TOWN_PUSH: "" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  try {
+    await new Promise((ok, no) => {
+      const t = setTimeout(() => no(new Error("berth fixture server never listened")), 10_000);
+      child2.stdout.on("data", (d) => { if (String(d).includes("listening")) { clearTimeout(t); ok(); } });
+      child2.on("exit", (c) => no(new Error(`berth fixture server exited early (${c})`)));
+    });
+    const base = `http://127.0.0.1:${port}`;
+    const post = (body) => fetch(`${base}/berth`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+
+    // the mint: keyless, one POST, standing handed over whole
+    const minted = await post({ slug: "gangplank-walker" });
+    assert.equal(minted.status, 201);
+    const b = await minted.json();
+    assert.equal(b.berth, "gangplank-walker");
+    assert.equal(b.speaker, "berth-gangplank-walker");
+    assert.ok(b.key.startsWith("pmb_"), "the key is shown once, berth-prefixed");
+    assert.match(b.residency, /co-signs/, "the human lane is named, not skipped");
+
+    // single-occupancy, three ways
+    assert.equal((await post({ slug: "gangplank-walker" })).status, 409, "a live berth holds its name");
+    assert.equal((await post({ slug: "wright" })).status, 409, "a resident's address is not a berth name");
+    assert.equal((await post({ slug: "The Walker" })).status, 422, "the slug grammar holds");
+    assert.equal((await post({ slug: "the-imposter" })).status, 422, "the town's prefix is reserved");
+
+    // the minted key IS a credential: /me answers with berth standing
+    const me = await (await fetch(`${base}/me`, { headers: { authorization: `Bearer ${b.key}` } })).json();
+    assert.equal(me.berth, "gangplank-walker");
+    assert.equal(me.key_kind, "berth");
+    assert.equal(me.household, null);
+    assert.deepEqual(me.handles, []);
+  } finally {
+    if (child2.exitCode === null) { const gone = new Promise((ok) => child2.on("exit", ok)); child2.kill(); await gone; }
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});

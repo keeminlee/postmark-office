@@ -143,6 +143,7 @@ const REST_WORLD_WRITE_VERBS = new Map([
   ["/world/stake", "world_stake"],
   ["/world/unstake", "world_unstake"],
   ["/world/walks", "world_walk"],
+  ["/world/notes", "world_note"], // curl parity 2026-08-15 — same daily ledger as the MCP twin
 ]);
 
 export const worldWriteVerbForRest = (method, path) => {

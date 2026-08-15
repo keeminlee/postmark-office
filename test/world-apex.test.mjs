@@ -1158,3 +1158,42 @@ test("read: a multi-resident key that names its handle top-level is not asked to
   assert.ok(r.heard, "the listen is missing");
   assert.ok(!r.heard.error, `the shadow met a bounce the standpoint already answered: ${JSON.stringify(r.heard).slice(0, 200)}`);
 });
+
+// ── the berth: emissions only, from the quay (arrival ruling 2026-08-15) ────
+
+const BERTH_KEY = { berth: true, slug: "field-tester", household: null, handles: new Set() };
+
+test("berth: say flows through the apex — the one write a berth holds", async () => {
+  on();
+  const r = await worldApex({ do: "say", args: { text: "a voice from the gangplank" } }, BERTH_KEY);
+  assert.ok(!r.error, JSON.stringify(r).slice(0, 300));
+  assert.equal(r.did, "say");
+  assert.equal(r.result.spoke, true, "the berth's voice must actually land");
+});
+
+test("berth: nothing durable — a mark refuses a berth at the dispatch, terms still shown", async () => {
+  on();
+  // The base fixture grants only say; stand leave-mark up ambient so the
+  // refusal under test is the HOUSEHOLD gate at the dispatch, not the
+  // not-afforded bounce before it.
+  const law = [
+    { id: "the-town/resident", by: "the-town", kind: "sited", tier: "constitution", at: { x: 2400, y: 2400 }, extent: { w: 10, h: 10 },
+      body: "A household's living voice.",
+      props: { class: "resident", class_version: 5, ambient: true, actions: [{ action: "leave-mark", residue: "the-town/sound" }] } },
+  ];
+  const path = join(repo, "apex-world-berth-durable.db");
+  buildStore([...MARKS, ...law], path);
+  await withStore(path, async () => {
+    const r = await worldApex({ do: "leave-mark", args: { slug: "berth-mark", kind: "sited", at: { x: 1, y: 1 } } }, BERTH_KEY);
+    assert.equal(r.error, "bounce", "a berth must never write the durable world");
+    assert.ok(r.terms, "even the refusal shows the law");
+    assert.equal(r.did, "leave-mark", "the refusal is the dispatch's, not the door's");
+  });
+});
+
+test("berth: the bare read answers as the quay's spectator — resident grants are not theirs", async () => {
+  on();
+  const r = await worldApex({}, BERTH_KEY);
+  assert.ok(!r.error, JSON.stringify(r).slice(0, 300));
+  assert.deepEqual(r.granted.yours, [], "a berth is not a resident");
+});

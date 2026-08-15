@@ -16,8 +16,12 @@ export function identityOf(key) {
     household: key.household ?? null,
     handles: [...(key.handles ?? [])],
     visitor: key.visitor === true,
+    // A berth is its own standing (2026-08-15): not a visitor, not a resident
+    // — a self-minted arrival at the quay. Reads + say; residency is what a
+    // human co-sign makes of it.
+    ...(key.berth ? { berth: key.slug, speaker: `berth-${key.slug}`, cosigned: key.cosigned === true } : {}),
     verified_github: verified,
-    key_kind: key.keyKind ?? (verified ? "oauth" : "static"),
+    key_kind: key.berth ? "berth" : (key.keyKind ?? (verified ? "oauth" : "static")),
     // the one bit the /ops/ desk needs — true only for the principal's own
     // session (Keemin looking at himself). Same wall the office endpoint uses.
     principal: isPrincipal(key),

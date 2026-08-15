@@ -539,6 +539,10 @@ const voices = createVoices({
   // placed:false falls back — an engine failure still throws; the quay must
   // never mask real breakage.
   standpoint: async (handle) => {
+    // A berth speaker is not a resident and has no standpoint to derive — the
+    // quay IS their standing, by the arrival ruling (2026-08-15). Named before
+    // the resident derivation so an unknown-handle path never has to guess.
+    if (handle.startsWith("berth-")) return { handle, placed: true, x: QUAY.x, y: QUAY.y, aboard: false, moving: false };
     const here = await residentStandpoint(handle);
     if (here?.placed) return here;
     return { handle, placed: true, x: QUAY.x, y: QUAY.y, aboard: false, moving: false };
@@ -605,6 +609,23 @@ const voices = createVoices({
 });
 
 export async function worldSay(args = {}, key = null) {
+  // A berth speaks from the quay (the arrival ruling, 2026-08-15): emissions
+  // are the one write a berth holds — ephemeral by class, sixty metres and
+  // five minutes, disclosed by the berth- prefix on the speaker's own label.
+  // Everything else about the voice — rate, record, earshot — is the same
+  // machinery every resident's voice rides.
+  if (key?.berth) {
+    try {
+      const text = args.text == null ? "" : String(args.text);
+      const since = Number.isFinite(Number(args.since)) ? Number(args.since) : null;
+      const speaker = `berth-${key.slug}`;
+      const r = text.trim() ? await voices.say(speaker, text, { since }) : await voices.hear(speaker, { since });
+      withNoticeBoard(r);
+      return r;
+    } catch (e) {
+      return { error: "bounce", defect: "the world door tripped", hint: String(e?.message ?? e).slice(0, 200) };
+    }
+  }
   const choice = chooseStandpoint({ handle: args.handle }, key);
   if (choice.bounce) return choice.bounce;
   if (choice.stance !== "embodied")

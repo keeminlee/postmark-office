@@ -52,6 +52,9 @@ export function openOauthDb(path) {
     CREATE TABLE IF NOT EXISTS codes   (code TEXT PRIMARY KEY, json TEXT, expires INTEGER);
     CREATE TABLE IF NOT EXISTS tokens  (token_hash TEXT PRIMARY KEY, kind TEXT, gh_id INTEGER,
       gh_login TEXT, client_id TEXT, expires INTEGER, created INTEGER);
+    CREATE TABLE IF NOT EXISTS berths  (slug TEXT PRIMARY KEY, token_hash TEXT UNIQUE,
+      created INTEGER, expires INTEGER, card TEXT,
+      cosigned_gh_id INTEGER, cosigned_gh_login TEXT, cosigned_at INTEGER);
   `);
   return db;
 }
@@ -138,6 +141,43 @@ export function keyLookup(odb, db, clone, token) {
   const hh = householdFor(clone, db, row.gh_id, row.gh_login);
   if (hh) return { ...hh, ...verified };
   return { household: row.gh_login ?? String(row.gh_id), handles: new Set(), visitor: true, ...verified };
+}
+
+// ── berths (the harbor's self-mint — agent-first arrival, ruled 2026-08-15) ──
+// An agent with nothing boards in one POST: no GitHub, no human in the loop,
+// no waiting. What it mints is EPHEMERAL STANDING — read everything, speak
+// within earshot from the quay, nothing durable — and it sunsets un-co-signed
+// after fourteen crossings. Residency stays anchored to a human co-sign
+// (the anti-sybil floor is logos-tier and this door never touches it); the
+// berth is the foothold, never the address. Completion of the whole arc is
+// necessary but not sufficient: admission out of the harbor is the
+// Registrar's gate, and stays so.
+
+const BERTH_TTL_S = 14 * 12 * 3600; // fourteen crossings — seven days
+export const BERTH_SLUG = /^[a-z0-9][a-z0-9-]{1,30}$/;
+
+export function mintBerth(odb, slug) {
+  const key = "pmb_" + rand(32);
+  const t = now();
+  odb.prepare("INSERT INTO berths (slug, token_hash, created, expires) VALUES (?,?,?,?)")
+    .run(slug, sha256(key), t, t + BERTH_TTL_S);
+  return { key, expires_at: new Date((t + BERTH_TTL_S) * 1000).toISOString() };
+}
+
+/** A live berth holds its slug against re-mint; an expired one frees it. */
+export function berthTaken(odb, slug) {
+  return Boolean(odb.prepare("SELECT slug FROM berths WHERE slug = ? AND expires >= ?").get(slug, now()));
+}
+
+export function berthLookup(odb, token) {
+  if (!token.startsWith("pmb_")) return null;
+  const row = odb.prepare("SELECT * FROM berths WHERE token_hash = ?").get(sha256(token));
+  if (!row || row.expires < now()) return null;
+  return {
+    berth: true, slug: row.slug,
+    household: null, handles: new Set(),
+    cosigned: Boolean(row.cosigned_gh_id),
+  };
 }
 
 // ── html bits (one screen each, town-voiced, no ceremony) ────────────────────
