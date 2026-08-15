@@ -393,24 +393,23 @@ test("flag off: the verb itself refuses too, in case something calls past the li
   assert.match(r.hint, /WORLD_APEX=1/);
 });
 
-test("the slim: eight flats are DELISTED, the read flats and world_note stand until `read:` answers for them", async () => {
+test("the slim: thirteen flats are DELISTED; world_note alone stands, by ruling", async () => {
   on();
   await withOffice({ WORLD_APEX: "1" }, async () => {
     const { body } = await rpc("tools/list");
     const names = body.result.tools.map((t) => t.name);
     assert.ok(names.includes("world"), "the apex tool is missing with the flag on");
-    // Delisted 2026-08-15 (Keemin-ruled): the apex performs and answers all of
-    // these, field-verified the same day. Listing-only — the runtime tests
-    // below still call them by name and are answered.
-    for (const gone of ["world_say", "world_walk", "world_leave_mark", "world_stake", "world_unstake", "world_hold", "world_orient", "world_open_your_eyes"])
+    // Delisted 2026-08-15 (Keemin-ruled): the apex performs (do:+args:) and
+    // reads (read:) all of these, field-verified the same day. Listing-only —
+    // the runtime test below still calls a delisted name and is answered.
+    for (const gone of ["world_say", "world_walk", "world_leave_mark", "world_stake", "world_unstake", "world_hold", "world_orient", "world_open_your_eyes",
+      "world_investigate", "world_my_marks", "world_walkers", "world_stake_read", "world_holdings"])
       assert.ok(!names.includes(gone), `${gone} is still listed — the slim delisted it`);
-    // Held back deliberately: no apex path answers these until `read:` lands.
-    for (const kept of ["world_investigate", "world_my_marks", "world_walkers", "world_stake_read", "world_holdings", "world_note"])
-      assert.ok(names.includes(kept), `${kept} was delisted early — nothing answers for it yet`);
-    // The apex-on total: 31 legacy tools + `world` itself. The flag-off twin
+    assert.ok(names.includes("world_note"), "world_note stays flat by ruling");
+    // The apex-on total: 26 legacy tools + `world` itself. The flag-off twin
     // (39, nothing delisted) lives in server.test.mjs — together they pin the
     // apex-conditioning from both sides.
-    assert.equal(names.length, 32);
+    assert.equal(names.length, 27);
   });
 });
 
@@ -1092,4 +1091,61 @@ test("envelope: a JSON-string args (a stale-schema connector's spelling) is read
   // parse happens before the one validator, not instead of it
   const unknown = await worldApex({ do: "say", args: "{\"nonsense\":1}" }, KEY_ALPHA);
   assert.match(unknown.defect, /does not take: nonsense/);
+});
+
+// ── the read mode · every action has a shadow (ruled 2026-08-15) ────────────
+
+test("read: an action's shadow answers with its domain AND its card — nothing performed", async () => {
+  on();
+  const r = await worldApex({ read: "say" }, KEY_ALPHA);
+  assert.ok(!r.error, JSON.stringify(r).slice(0, 300));
+  assert.equal(r.read, "say");
+  assert.ok(r.heard, "say's shadow is the listen");
+  assert.equal(r.card.action, "say");
+  assert.equal(r.card.terms.means.from, "the-town/sound", "the card carries the law before any act");
+  assert.equal(r.did, undefined, "a read must not carry an act's receipt");
+});
+
+test("read: never performs — text on a say-read bounces, and the card still rides", async () => {
+  on();
+  const r = await worldApex({ read: "say", args: { text: "smuggled" } }, KEY_ALPHA);
+  assert.equal(r.error, "bounce");
+  assert.match(r.defect, /a read never performs/);
+  assert.equal(r.card.action, "say", "the law is shown even on the refusing path");
+});
+
+test("read: and do: never ride together", async () => {
+  on();
+  const r = await worldApex({ read: "say", do: "say" }, KEY_ALPHA);
+  assert.equal(r.error, "bounce");
+  assert.match(r.defect, /one call does one thing/);
+});
+
+test("read: note-to-self returns the note field; stake without a mark says what to name", async () => {
+  on();
+  // The base fixture grants only `say` — stand these two up the way the real
+  // resident class does, ambient, so their shadows are readable anywhere.
+  const law = [
+    { id: "the-town/resident", by: "the-town", kind: "sited", tier: "constitution", at: { x: 2300, y: 2300 }, extent: { w: 10, h: 10 },
+      body: "A household's living voice.",
+      props: { class: "resident", class_version: 5, ambient: true, actions: [{ action: "note-to-self", residue: "the-town/sound" }, { action: "stake", residue: "the-town/sound" }] } },
+  ];
+  const path = join(repo, "apex-world-read-shadows.db");
+  buildStore([...MARKS, ...law], path);
+  await withStore(path, async () => {
+    const note = await worldApex({ read: "note-to-self" }, KEY_ALPHA);
+    assert.ok(!note.error, JSON.stringify(note).slice(0, 300));
+    assert.ok("note" in note, "the note rides the read, null when none");
+    const stake = await worldApex({ read: "stake" }, KEY_ALPHA);
+    assert.ok(!stake.error, JSON.stringify(stake).slice(0, 300));
+    assert.match(stake.stakes.unavailable, /name a mark/);
+  });
+});
+
+test("read: an unknown action says what IS readable from here", async () => {
+  on();
+  const r = await worldApex({ read: "mint-gold" }, KEY_ALPHA);
+  assert.equal(r.error, "bounce");
+  assert.match(r.defect, /not an action anywhere in your view/);
+  assert.ok(r.readable_here.includes("say"));
 });

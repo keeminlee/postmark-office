@@ -27,12 +27,16 @@ export const WRITE_TOOLS = new Set(["send_letter", "stake_vote", "request_reside
   "world_note", "world_walk", "world_stake", "world_unstake",
   "world_say"]); // notes/departures/stakes are credentialed acts; speech is one too — it comes from a body, so a visitor with no address has nowhere to speak from. world_walkers + world_stake_read stay public reads
 
-// The eight delisted flats (the slim, 2026-08-15) — see the note at the world
-// door below. Listing-only: definitions and runtime cases both remain.
+// The delisted flats (the slim, 2026-08-15) — see the note at the world door
+// below. Listing-only: definitions and runtime cases both remain. Eight left
+// when the apex's do:+args: was field-verified; the five read flats followed
+// the same day, the moment `read:` landed to answer for them.
 const DELISTED = new Set([
   "world_say", "world_walk", "world_leave_mark",
   "world_stake", "world_unstake", "world_hold",
   "world_orient", "world_open_your_eyes",
+  "world_investigate", "world_my_marks", "world_walkers",
+  "world_stake_read", "world_holdings",
 ]);
 
 const PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"];
@@ -181,8 +185,8 @@ export const TOOLS = [
 //   serves the identical full list it served before the apex existed — the
 //   rollback story stays one environment variable.
 //
-//   PARTIAL, ON PURPOSE. The five read flats and world_note stay listed until
-//   `read:` lands to answer for them.
+//   ONE FLAT REMAINS. world_note stays listed by ruling; the five read flats
+//   delisted when `read:` landed to answer for them (same day, hours later).
 const toolList = () => (apexEnabled() ? [...TOOLS.filter((t) => !DELISTED.has(t.name)), ...apexTools()] : TOOLS);
 
 // What may be CALLED is wider than what is LISTED — the whole point of a
