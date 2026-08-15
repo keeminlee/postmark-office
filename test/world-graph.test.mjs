@@ -138,7 +138,7 @@ test("a lint that addresses nothing says so rather than reading as a clean bill 
   const l6 = lintOf(view, "L6");
   assert.equal(l6.verdict, "N/A");
   assert.equal(l6.implicates.paints, false);
-  assert.match(l6.implicates.note, /names no subverb/);
+  assert.match(l6.implicates.note, /names no action/);
   // an invariant this module has never heard of lands in the panel, unpainted,
   // rather than taking the window down
   const l9 = lintOf(view, "L9");
@@ -148,7 +148,7 @@ test("a lint that addresses nothing says so rather than reading as a clean bill 
 });
 
 test("L6's three shapes are three different silences, and only one of them paints", () => {
-  // GREEN: every exposed subverb dispatches. Nothing is wrong, so nothing is
+  // GREEN: every exposed action dispatches. Nothing is wrong, so nothing is
   // red — but the panel must say that rather than showing the N/A sentence,
   // which would claim the check never ran.
   const green = worldGraphView({ dbPath: fixtureStore("l6-green.db", { l6: "green" }) });

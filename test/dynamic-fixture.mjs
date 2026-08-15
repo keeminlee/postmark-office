@@ -299,6 +299,10 @@ export function fixtureWorldDb(path, {
         slug: "sound", body: "A voice carries sixty metres and is heard for five minutes.",
         class: "sound", class_version: classVersion, extends: "emission",
         dials: dials === null ? null : dials,
+        // `subverb` is the PRE-RENAME key (action, 2026-08-15), kept here on
+        // purpose: a store hydrated from older law must keep its doors, and
+        // this fixture is one of the two witnesses that it does (the other is
+        // the explicit transition test in world-apex.test.mjs).
         implements: [], affordances: [{ subverb: "say", blurb: "Speak aloud where you stand." }],
       }));
   }

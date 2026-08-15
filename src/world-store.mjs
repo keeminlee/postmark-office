@@ -127,7 +127,7 @@ export const EDGE_TYPES = [
 // The gate lives HERE, in the module that owns how the store is read, because
 // it has two readers who must never disagree: the apex verb, which surfaces
 // affordances at a standpoint (SQL, for the query planner), and lint L6, which
-// checks that every exposed subverb has a handler (a predicate, over the loaded
+// checks that every exposed action has a handler (a predicate, over the loaded
 // graph). Two copies of a security boundary is one copy too many; a test asserts
 // the SQL and the predicate select the same nodes.
 //
@@ -194,7 +194,7 @@ export const isClassDefinition = (attr) => attr?.kind === "mark"
 //
 // It is also why this is NOT folded into `isClassMark`. That predicate answers
 // "is this a class mark", and lint L6 asks it of every mark in the world to
-// find subverbs law exposes — narrowing it to the ambient ones would blind L6
+// find actions law exposes — narrowing it to the ambient ones would blind L6
 // to exactly the sited affordances (`board`) it exists to catch. Two rules,
 // two names, each with a SQL/predicate twin the agreement test checks.
 //
@@ -205,9 +205,12 @@ export const AMBIENT_REACH_SQL = `json_type(props, '$.ambient') = 'true'`;
 /** The same ambient rule, as a predicate over a loaded node's attributes. */
 export const isAmbient = (attr) => attr?.props?.ambient === true;
 
-/** The subverbs a node exposes. Callers must gate first; this only reads. */
-export const subverbsOf = (attr) => (Array.isArray(attr?.props?.affordances) ? attr.props.affordances : [])
-  .map((a) => String(a?.subverb ?? "").trim())
+/** The actions a node exposes. Callers must gate first; this only reads.
+ *  `action` is the key (renamed from `subverb` 2026-08-15 — one taxonomy:
+ *  LOGOS calls them actions, so the door does too); the old key is still
+ *  read so a store hydrated from pre-rename law keeps its doors. */
+export const actionsOf = (attr) => (Array.isArray(attr?.props?.affordances) ? attr.props.affordances : [])
+  .map((a) => String(a?.action ?? a?.subverb ?? "").trim())
   .filter(Boolean);
 
 // ── the world clone, and reading it AT A SHA ─────────────────────────────────

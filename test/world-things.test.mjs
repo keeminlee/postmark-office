@@ -49,7 +49,7 @@ function storeWith(classMarks, { status = "OK", file = "world.db" } = {}) {
 
 const THING_CLASS = {
   id: "the-town/thing",
-  props: { class: "thing", class_version: 1, mobility: "settled", dials: { make_daily_cap: 12, carry_cap: 24, take_requires_welcome: false }, affordances: [{ subverb: "give", blurb: "Hand it over." }, { subverb: "drop", blurb: "Set it down." }, { subverb: "take", blurb: "Pick it up." }] },
+  props: { class: "thing", class_version: 1, mobility: "settled", dials: { make_daily_cap: 12, carry_cap: 24, take_requires_welcome: false }, affordances: [{ action: "give", blurb: "Hand it over." }, { action: "drop", blurb: "Set it down." }, { action: "take", blurb: "Pick it up." }] },
 };
 const BOUNTY_CLASS = { id: "the-town/bounty", props: { class: "bounty", class_version: 1, dials: { ask_max_chars: 150 }, affordances: [] } };
 // The class that proves the roster gate must be WIDER than the affordance gate:

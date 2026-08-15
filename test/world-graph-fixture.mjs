@@ -20,13 +20,13 @@ import { SCHEMA } from "../src/world-store.mjs";
 export const AS_OF_WORLD = "f00dcafe0000000000000000000000000000beef";
 
 // L6's three shapes, which are three different silences and must not be
-// confused: no apex verb at all (N/A, nothing named), every subverb dispatching
+// confused: no apex verb at all (N/A, nothing named), every action dispatching
 // (GREEN, all named and handled), and one that does not (RED, and the class mark
 // that exposed it is what goes red).
 const L6_ROWS = {
   na: { verdict: "N/A", headline: "no apex verb exists yet", rows: [{ apex_verb_present: false }] },
-  green: { verdict: "GREEN", headline: "1 subverb exposed; every one of them dispatches", rows: [{ subverb: "say", from: ["the-town/parcel-class"], handled: true }] },
-  unhandled: { verdict: "RED", headline: "1 subverb is exposed by law and dispatched by nothing", rows: [{ subverb: "board", from: ["the-town/parcel-class"], handled: false }] },
+  green: { verdict: "GREEN", headline: "1 action exposed; every one of them dispatches", rows: [{ action: "say", from: ["the-town/parcel-class"], handled: true }] },
+  unhandled: { verdict: "RED", headline: "1 action is exposed by law and dispatched by nothing", rows: [{ action: "board", from: ["the-town/parcel-class"], handled: false }] },
 };
 
 /** Write a fixture world store at `path`. Returns the path. */
