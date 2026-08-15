@@ -1305,7 +1305,9 @@ export async function worldNoteViaOffice(worldClone, payload = {}, key = null) {
     throw bounce(500, "the note pass tripped", String(e.stderr ?? e.message ?? e).slice(0, 300));
   }
   if (result.error) throw bounce(result.error.code ?? 500, result.error.defect, result.error.hint);
-  return result;
+  // The receipt echoes the note itself, not only the git shape — "did it say
+  // what I meant" must not cost a second call (Keemin's clunk, 2026-08-15).
+  return { ...result, note: body };
 }
 
 // ── world_walk (P2 draft) ────────────────────────────────────────────────────
