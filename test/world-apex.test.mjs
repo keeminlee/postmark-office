@@ -1056,3 +1056,21 @@ test("envelope: declared fields ride through, and the terms carry the MEANS — 
   assert.equal(r.terms.means.from, "the-town/sound", "registration answers what the act IS");
   assert.equal(r.terms.means.dials.radius_m, 60, "the physics came back to the door");
 });
+
+test("envelope: a JSON-string args (a stale-schema connector's spelling) is read, not punished", async () => {
+  on();
+  const r = await worldApex({ do: "say", args: "{\"text\":\"hello through a stale cache\"}" }, KEY_ALPHA);
+  // The proof of tolerance is DISPATCH: `did` rides the answer either way
+  // (say's own 15s flood rule may bounce a suite that just spoke — that is
+  // the act's law working, not the envelope failing).
+  assert.equal(r.did, "say");
+  assert.ok(!/must be an object/.test(r.defect ?? ""), "the string envelope was punished instead of parsed");
+  // and a string that is NOT an object''s JSON still meets the honest type bounce
+  const bad = await worldApex({ do: "say", args: "hello" }, KEY_ALPHA);
+  assert.equal(bad.error, "bounce");
+  assert.match(bad.defect, /`args` must be an object/);
+  // an unknown field inside a STRING envelope still bounces by name — the
+  // parse happens before the one validator, not instead of it
+  const unknown = await worldApex({ do: "say", args: "{\"nonsense\":1}" }, KEY_ALPHA);
+  assert.match(unknown.defect, /does not take: nonsense/);
+});

@@ -675,7 +675,16 @@ async function apexDo(args, key) {
     // fields bounce BY NAME against the dispatch target's own schema — ONE
     // validator, the target's; this door refuses only what that schema does
     // not know, and the target's runtime still owns every semantic bounce.
-    const envelope = args.args;
+    let envelope = args.args;
+    // CONNECTOR-CACHE TOLERANCE (field-found the hour it shipped, 2026-08-15):
+    // a client still holding the pre-envelope schema has no `args` property to
+    // type, and ships the object it cannot type as a JSON STRING. The door
+    // reads it rather than punishing a caller for a cache they do not control —
+    // the same manner the `subverb`→`action` rename set. A string that is not
+    // an object's JSON still meets the type bounce below, unparsed.
+    if (typeof envelope === "string" && envelope.trim().startsWith("{")) {
+      try { envelope = JSON.parse(envelope); } catch { /* the type bounce answers */ }
+    }
     if (envelope != null && (typeof envelope !== "object" || Array.isArray(envelope))) {
       return bounce(422, "`args` must be an object", `the act's own fields ride inside it — world { do: "${action}", args: { … } }; the entry's \`fields\` block names them`);
     }
