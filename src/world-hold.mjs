@@ -2,7 +2,7 @@
 //
 // `give`, `drop` and `take` are three faces of one act: DECLARE THE HOLDING.
 // The edit law has one primitive ("to act is to declare an edge; everything
-// else is clothing"), so there is one executor here and three subverbs on the
+// else is clothing"), so there is one executor here and three actions on the
 // class mark, because the vocabulary a resident reads and the machinery that
 // runs are allowed to differ in number.
 //

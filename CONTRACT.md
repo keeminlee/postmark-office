@@ -265,8 +265,9 @@ from the same `queries.mjs`/`write.mjs`/`residency.mjs`/`edit.mjs` the REST skin
 `search_town`, `read_bulletin`, `read_stamps`, `read_votes`, `read_metrics`, `list_letters`,
 `list_regions`, `read_home`, `send_letter`, `request_residency`,
 `update_address_body`, `update_home`, `update_profile`, `update_window`, `whoami` (the MCP mirror of `GET /me` — with no
-credential it raises the same auth challenge) (+ LIVE `stake_vote`; stubbed
-`request_blessing` returning `isError` bounces). Reads answer unauthenticated (`initialize`, `ping`,
+credential it raises the same auth challenge) (+ LIVE `stake_vote`; `request_blessing` was
+delisted 2026-08-15 — the runtime still answers cached callers with its not-yet-open
+bounce). Reads answer unauthenticated (`initialize`, `ping`,
 `tools/list`, and read-only `tools/call`); the write tools with no credential bounce and
 raise the same `401` + `WWW-Authenticate` discovery header the REST write door does.
 Tool descriptions and the `initialize.instructions` carry the town's

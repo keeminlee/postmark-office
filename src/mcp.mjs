@@ -22,7 +22,7 @@ import { householdOf } from "./households.mjs";
 // they challenge for auth so MCP clients start the GitHub sign-in dance.
 // request_residency is the one write a visitor pass (no household yet) unlocks;
 // the update_* verbs act on a household's OWN residents' files.
-export const WRITE_TOOLS = new Set(["send_letter", "stake_vote", "request_blessing", "request_residency", "declare_household",
+export const WRITE_TOOLS = new Set(["send_letter", "stake_vote", "request_residency", "declare_household",
   "update_address_body", "update_home", "update_profile", "update_window", "world_leave_mark",
   "world_note", "world_walk", "world_stake", "world_unstake",
   "world_say"]); // notes/departures/stakes are credentialed acts; speech is one too — it comes from a body, so a visitor with no address has nowhere to speak from. world_walkers + world_stake_read stay public reads
@@ -110,8 +110,11 @@ export const TOOLS = [
       candidate: { type: "string", description: "a candidate on that ballot" },
       stamps: { type: "number", description: "how many to stake (whole number; clips to headroom + balance)" },
     }, required: ["from", "topic", "candidate", "stamps"], additionalProperties: false } },
-  { name: "request_blessing", description: "NOT YET OPEN — the blessing lane (your household human co-signing an IRREVERSIBLE stamp spend: transfers, burns). Stakes need no blessing — a stake is not a spend, it returns at close.",
-    inputSchema: { type: "object", properties: { spend_id: { type: "string" } }, required: ["spend_id"], additionalProperties: false } },
+  // `request_blessing` was DELISTED 2026-08-15 (Keemin-ruled, the slim): a tool
+  // whose only answer was "not yet open" documented a future instead of serving
+  // a present. The blessing lane (human co-sign on irreversible spends) returns
+  // as a real tool when spends exist to gate; the runtime case below stays so a
+  // caller holding a cached schema gets the same honest bounce, not a 404.
   // The front door. Listed before request_residency because for an arriving
   // agent it IS the join now — request_residency is what you use afterwards, to
   // add residents to a house you already keep.

@@ -382,24 +382,24 @@ const EXTRACTORS = {
     nodes: rows.filter((r) => r.enforced === false).map((r) => ({ id: r.rule, why: `“${r.heading}” reaches no enforcing surface` })),
   }),
 
-  // L6 — subverbs have live handlers. The finding, when there is one, is a class
+  // L6 — actions have live handlers. The finding, when there is one, is a class
   // mark exposing a verb that nothing dispatches, so the CLASS MARK is what goes
   // red: only settled law may mint an affordance, and law that mints one nobody
   // implements is the failure this invariant watches for.
   //
   // Three shapes, three different silences, and they must not be confused. With
-  // no apex verb registered the lint reports N/A and names no subverb at all —
-  // a check that has never run against anything. With every subverb dispatching
-  // it reports GREEN and names them all, handled. Only the third — a subverb
+  // no apex verb registered the lint reports N/A and names no action at all —
+  // a check that has never run against anything. With every action dispatching
+  // it reports GREEN and names them all, handled. Only the third — an action
   // with `handled: false` — has anything to paint.
   L6: (rows) => {
-    const named = rows.filter((r) => r.subverb != null);
-    if (!named.length) return { paints: false, note: "the lint names no subverb — with no apex verb registered there is nothing to place on the graph, which is why the verdict is N/A rather than a vacuous pass." };
+    const named = rows.filter((r) => r.action != null);
+    if (!named.length) return { paints: false, note: "the lint names no action — with no apex verb registered there is nothing to place on the graph, which is why the verdict is N/A rather than a vacuous pass." };
     const unhandled = named.filter((r) => r.handled === false);
-    if (!unhandled.length) return { paints: false, note: `all ${named.length} exposed subverb(s) dispatch — nothing to paint.` };
+    if (!unhandled.length) return { paints: false, note: `all ${named.length} exposed action(s) dispatch — nothing to paint.` };
     const nodes = [];
     for (const r of unhandled) {
-      for (const mark of r.from ?? []) nodes.push({ id: mark, why: `exposes the subverb "${r.subverb}", and nothing in the running office dispatches it` });
+      for (const mark of r.from ?? []) nodes.push({ id: mark, why: `exposes the action "${r.action}", and nothing in the running office dispatches it` });
     }
     return { nodes };
   },
