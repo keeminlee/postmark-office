@@ -97,9 +97,18 @@ function reflogVouchesForGhosts(repo, remote) {
   // output (fresh clone). Empty tips must read "nothing provable", never
   // "nothing precious".
   if (tips.length === 0) return { ghosts, unvouched: ghosts, reflogDepth: 0 };
-  const unvouched = git(repo, ["rev-list", `${remote}..HEAD`, "--not", ...tips])
-    .trim().split(/\s+/).filter(Boolean);
-  return { ghosts, unvouched, reflogDepth: tips.length };
+  // `rev-list -g` filters unreadable entries out of its own output, so a
+  // dangling reflog entry cannot reach the --not list (review-verified) —
+  // but that safety is a git implementation behaviour, not this code's, so
+  // a hard failure here degrades to "nothing provable" rather than throwing
+  // out of a write.
+  try {
+    const unvouched = git(repo, ["rev-list", `${remote}..HEAD`, "--not", ...tips])
+      .trim().split(/\s+/).filter(Boolean);
+    return { ghosts, unvouched, reflogDepth: tips.length };
+  } catch {
+    return { ghosts, unvouched: ghosts, reflogDepth: tips.length };
+  }
 }
 
 export function mainRef(repo) {
@@ -307,13 +316,21 @@ export function ensureDraftCheckout(repo, household, { pooled = false, shared = 
           // land exactly on it rather than replaying ghosts against it. A
           // rewrite that DROPPED a pushed mark is surrendered here too, by
           // the same principle (origin is canon) — so the log names every
-          // surrendered sha and the paths they touched, and the pre-reset
-          // tip stays recoverable at `${branch}@{1}` (branch reflog,
-          // ~30 days: unreachable after the reset, gc's shorter clock).
-          const paths = git(repo, ["diff", "--name-only", `${remote}...HEAD`]).trim().split(/\r?\n/).filter(Boolean);
+          // surrendered sha and what actually VANISHES (files present here,
+          // absent at origin tip — a two-ref diff, deliberately: it needs no
+          // merge base, so a re-rooted origin can't turn this log line into
+          // an uncaught fatal that blocks the repair, and --diff-filter=A
+          // keeps carried-forward-amended marks off the "lost" list). The
+          // pre-reset tip is printed as a SHA, not a relative ref — @{1}
+          // decays the moment the write's own commit moves the branch.
+          // Recovery window ~30 days (unreachable after reset, gc's clock).
+          let vanishing = "(diff unavailable)";
+          try {
+            vanishing = git(repo, ["diff", "--name-only", "--diff-filter=A", remote, "HEAD"]).trim().split(/\r?\n/).filter(Boolean).join(" ") || "(none — every ghost's content survives on origin in some form)";
+          } catch { /* a log line must never block a repair */ }
           console.error(
             `[world] pen branch ${branch} diverged after a Settlement rewrite — all ${ghosts.length} ghost(s) previously on origin; reset to origin (#1774). ` +
-            `surrendered: ${ghosts.map((s) => s.slice(0, 10)).join(" ")} · paths: ${paths.join(" ") || "(none)"} · recovery: ${branch}@{1}`,
+            `surrendered: ${ghosts.map((s) => s.slice(0, 10)).join(" ")} · vanishing: ${vanishing} · recovery sha: ${localSha}`,
           );
           git(repo, ["reset", "--hard", "--quiet", remote]);
         } else {

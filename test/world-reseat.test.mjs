@@ -355,9 +355,21 @@ test("a pushed mark the rewrite DROPS is surrendered — and the pre-reset tip i
   const remoteTip = g(pen, "rev-parse", "refs/remotes/origin/draft/alpha");
   assert.equal(g(pen, "rev-parse", "HEAD"), remoteTip, "the drop is surrendered, not fought");
   assert.throws(() => g(pen, "show", "HEAD:WORLD/marks/alpha/bench/mark.md"), /does not exist|fatal/);
-  // the documented recovery ref holds the surrendered work
-  assert.equal(g(pen, "rev-parse", "draft/alpha@{1}"), preReset, "pre-reset tip parked in the branch reflog");
-  assert.equal(g(pen, "show", "draft/alpha@{1}:WORLD/marks/alpha/bench/mark.md"), "the bench");
+  // The recovery pointer is the SHA (the log prints it) — a relative @{N}
+  // decays as soon as the write's own commit moves the branch, which is
+  // exactly when an operator would be reading the journal. Prove the sha
+  // contract survives a subsequent write:
+  assert.equal(g(pen, "show", `${preReset}:WORLD/marks/alpha/bench/mark.md`), "the bench");
+  put(pen, "WORLD/marks/alpha/stool/mark.md", "the stool\n");
+  g(pen, "add", "-A");
+  g(pen, "commit", "-q", "-m", "mark: alpha/stool (the write continues after the surrender)");
+  assert.equal(
+    g(pen, "show", `${preReset}:WORLD/marks/alpha/bench/mark.md`),
+    "the bench",
+    "recovery by sha still works after the branch has moved on",
+  );
+  // put the branch back where origin expects it for later tests
+  g(pen, "reset", "-q", "--hard", "refs/remotes/origin/draft/alpha");
 });
 
 test("with nothing to vouch, the bounce names the unvouched commits and BOTH readings — never a cause it didn't establish (review finding 2)", () => {
