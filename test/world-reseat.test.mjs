@@ -277,3 +277,125 @@ test("a never-pushed commit alongside an amended twin still bounces loudly — a
   g(pen, "switch", "-q", "draft/alpha");
   g(pen, "reset", "-q", "--hard", "refs/remotes/origin/draft/alpha");
 });
+
+test("a ghost vouched only DEEP in the reflog still resets — the vouching scan has no entry cap (review finding 1)", () => {
+  // A resident writes once, then is away for weeks while the reflog churns.
+  // The capped newest-50 scan silently expired here and re-minted the #1774
+  // bounce; the one-call predicate must not.
+  ensureDraftCheckout(pen, "alpha");
+  put(pen, "WORLD/marks/alpha/weathervane/mark.md", "facing: north\nthe weathervane\n");
+  g(pen, "add", "-A");
+  g(pen, "commit", "-q", "-m", "mark: alpha/weathervane");
+  g(pen, "push", "-q", "origin", "draft/alpha");
+
+  // Bury the vouching entry: 60 reflog entries land on top of it (update-ref
+  // writes an entry per actual change; alternate two OLD shas so the ghost's
+  // own sha is never one of the fresh entries).
+  const old1 = g(pen, "rev-parse", "HEAD~1");
+  const old2 = g(pen, "rev-parse", "HEAD~2");
+  for (let i = 0; i < 30; i++) {
+    g(pen, "update-ref", "refs/remotes/origin/draft/alpha", old1);
+    g(pen, "update-ref", "refs/remotes/origin/draft/alpha", old2);
+  }
+
+  // Settlement: the keeper amends the weathervane AND relocates it (the
+  // vermillions-landing shape — moved districts) on a rewritten branch.
+  g(keeper, "fetch", "-q", "origin");
+  g(keeper, "switch", "-q", "main");
+  g(keeper, "pull", "-q", "--ff-only");
+  put(keeper, "WORLD/settled7.md", "S7 published things\n");
+  g(keeper, "add", "-A");
+  g(keeper, "commit", "-q", "-m", "settlement: S7");
+  g(keeper, "push", "-q", "origin", "main");
+  g(keeper, "branch", "-f", "draft/alpha", "main");
+  g(keeper, "switch", "-q", "draft/alpha");
+  put(keeper, "WORLD/marks/alpha/the-north-post/weathervane/mark.md", "facing: north-north-east\nthe weathervane\n");
+  g(keeper, "add", "-A");
+  g(keeper, "commit", "-q", "-m", "mark: alpha/weathervane relocated to the-north-post (sweep)");
+  g(keeper, "push", "-q", "--force", "origin", "draft/alpha");
+  g(keeper, "switch", "-q", "main");
+
+  const branch = ensureDraftCheckout(pen, "alpha"); // must NOT throw
+  assert.equal(branch, "draft/alpha");
+  const remoteTip = g(pen, "rev-parse", "refs/remotes/origin/draft/alpha");
+  assert.equal(g(pen, "rev-parse", "HEAD"), remoteTip, "deep-vouched ghost reset cleanly; no cap re-minted the bounce");
+  assert.equal(
+    g(pen, "show", "HEAD:WORLD/marks/alpha/the-north-post/weathervane/mark.md").split(/\r?\n/)[0],
+    "facing: north-north-east",
+    "the relocated, amended twin is canon",
+  );
+  assert.throws(
+    () => g(pen, "show", "HEAD:WORLD/marks/alpha/weathervane/mark.md"),
+    /exists on disk, but not in|does not exist|fatal/,
+    "the old path is gone — the relocation was not fought",
+  );
+});
+
+test("a pushed mark the rewrite DROPS is surrendered — and the pre-reset tip is recoverable at @{1} (review finding 3)", () => {
+  ensureDraftCheckout(pen, "alpha");
+  put(pen, "WORLD/marks/alpha/bench/mark.md", "the bench\n");
+  g(pen, "add", "-A");
+  g(pen, "commit", "-q", "-m", "mark: alpha/bench");
+  g(pen, "push", "-q", "origin", "draft/alpha");
+  const preReset = g(pen, "rev-parse", "HEAD");
+
+  // Settlement rewrite that simply does not carry the bench forward:
+  // keeper-side removal is a ruling too, and origin is canon.
+  g(keeper, "fetch", "-q", "origin");
+  g(keeper, "switch", "-q", "main");
+  g(keeper, "pull", "-q", "--ff-only");
+  put(keeper, "WORLD/settled8.md", "S8 published things\n");
+  g(keeper, "add", "-A");
+  g(keeper, "commit", "-q", "-m", "settlement: S8");
+  g(keeper, "push", "-q", "origin", "main");
+  g(keeper, "branch", "-f", "draft/alpha", "main");
+  g(keeper, "push", "-q", "--force", "origin", "draft/alpha");
+
+  ensureDraftCheckout(pen, "alpha");
+  const remoteTip = g(pen, "rev-parse", "refs/remotes/origin/draft/alpha");
+  assert.equal(g(pen, "rev-parse", "HEAD"), remoteTip, "the drop is surrendered, not fought");
+  assert.throws(() => g(pen, "show", "HEAD:WORLD/marks/alpha/bench/mark.md"), /does not exist|fatal/);
+  // the documented recovery ref holds the surrendered work
+  assert.equal(g(pen, "rev-parse", "draft/alpha@{1}"), preReset, "pre-reset tip parked in the branch reflog");
+  assert.equal(g(pen, "show", "draft/alpha@{1}:WORLD/marks/alpha/bench/mark.md"), "the bench");
+});
+
+test("with nothing to vouch, the bounce names the unvouched commits and BOTH readings — never a cause it didn't establish (review finding 2)", () => {
+  ensureDraftCheckout(pen, "alpha");
+  put(pen, "WORLD/marks/alpha/sundial/mark.md", "hour: noon\nthe sundial\n");
+  g(pen, "add", "-A");
+  g(pen, "commit", "-q", "-m", "mark: alpha/sundial");
+  g(pen, "push", "-q", "origin", "draft/alpha");
+
+  g(keeper, "fetch", "-q", "origin");
+  g(keeper, "switch", "-q", "main");
+  g(keeper, "pull", "-q", "--ff-only");
+  put(keeper, "WORLD/settled9.md", "S9 published things\n");
+  g(keeper, "add", "-A");
+  g(keeper, "commit", "-q", "-m", "settlement: S9");
+  g(keeper, "push", "-q", "origin", "main");
+  g(keeper, "branch", "-f", "draft/alpha", "main");
+  g(keeper, "switch", "-q", "draft/alpha");
+  put(keeper, "WORLD/marks/alpha/sundial/mark.md", "hour: dusk\nthe sundial\n");
+  g(keeper, "add", "-A");
+  g(keeper, "commit", "-q", "-m", "mark: alpha/sundial (sweep: hour re-derived)");
+  g(keeper, "push", "-q", "--force", "origin", "draft/alpha");
+  g(keeper, "switch", "-q", "main");
+
+  // Erase the vouching record: the pushed ghost becomes unprovable, exactly
+  // like a fresh clone or expired entries.
+  g(pen, "reflog", "expire", "--expire=now", "refs/remotes/origin/draft/alpha");
+
+  assert.throws(
+    () => ensureDraftCheckout(pen, "alpha"),
+    (e) =>
+      /unvouched local commit/.test(e.message) &&
+      /never-pushed work/.test(e.message) &&
+      /reflog could not vouch/.test(e.message),
+    "the message states both readings and picks neither",
+  );
+  // clean up: the operator remedy for a vouch-starved diverged branch whose
+  // origin is canonical
+  g(pen, "switch", "-q", "draft/alpha");
+  g(pen, "reset", "-q", "--hard", "refs/remotes/origin/draft/alpha");
+});

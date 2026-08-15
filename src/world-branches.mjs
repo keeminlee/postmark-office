@@ -72,17 +72,34 @@ function isAncestor(repo, ancestor, descendant) {
 // tip this clone has fetched or pushed. A local-only commit reachable from
 // any prior tip WAS on origin — the Settlement has already ruled on that
 // history (kept it, amended it, moved it, or removed it), and replaying the
-// ghost would fight the ruling. Only a commit the reflog has never seen — a
-// write that crashed between commit and push — is genuinely unrepresented,
-// and keeps the rebase path so the work replays instead of vanishing.
-function ghostsAllPreviouslyOnOrigin(repo, remote) {
+// ghost would fight the ruling. Only a commit the reflog cannot vouch for
+// keeps the rebase path so the work replays instead of vanishing — which
+// covers the genuinely-precious case (crashed between commit and push) and,
+// honestly, also the unprovable ones (no reflog, expired entries); the
+// bounce message downstream names both readings instead of asserting one.
+//
+// Returns { ghosts, unvouched, reflogDepth }: `ghosts` = all local-only
+// commits, `unvouched` = the subset no prior tip can vouch for (empty =
+// surrender to origin is safe). One rev-list answers the whole question —
+// `<remote>..HEAD --not <tips...>` — so there is no entry cap: a resident
+// away for a month while settlements churn the reflog still gets vouched
+// (a capped newest-N scan silently expired after ~2-4 weeks of absence and
+// re-minted the #1774 bounce for exactly the sporadic writers this town is
+// full of — caught in review, reproduced at 60 settlements).
+function reflogVouchesForGhosts(repo, remote) {
   const ghosts = git(repo, ["rev-list", `${remote}..HEAD`]).trim().split(/\s+/).filter(Boolean);
-  if (ghosts.length === 0) return true;
+  if (ghosts.length === 0) return { ghosts, unvouched: [], reflogDepth: 0 };
   let tips = [];
   try {
-    tips = git(repo, ["rev-list", "-g", remote]).trim().split(/\s+/).filter(Boolean).slice(0, 50);
-  } catch { /* no reflog (fresh clone): nothing provable — treat every ghost as precious */ }
-  return ghosts.every((ghost) => tips.some((tip) => isAncestor(repo, ghost, tip)));
+    tips = git(repo, ["rev-list", "-g", remote]).trim().split(/\s+/).filter(Boolean);
+  } catch { /* a hard rev-list failure lands here; the empty-tips guard below covers it */ }
+  // A ref with no reflog does NOT throw — `rev-list -g` exits 0 with empty
+  // output (fresh clone). Empty tips must read "nothing provable", never
+  // "nothing precious".
+  if (tips.length === 0) return { ghosts, unvouched: ghosts, reflogDepth: 0 };
+  const unvouched = git(repo, ["rev-list", `${remote}..HEAD`, "--not", ...tips])
+    .trim().split(/\s+/).filter(Boolean);
+  return { ghosts, unvouched, reflogDepth: tips.length };
 }
 
 export function mainRef(repo) {
@@ -283,12 +300,21 @@ export function ensureDraftCheckout(repo, household, { pooled = false, shared = 
       if (isAncestor(repo, localSha, remoteSha)) {
         git(repo, ["reset", "--hard", "--quiet", remote]);
       } else if (!isAncestor(repo, remoteSha, localSha)) {
-        if (ghostsAllPreviouslyOnOrigin(repo, remote)) {
+        const { ghosts, unvouched, reflogDepth } = reflogVouchesForGhosts(repo, remote);
+        if (unvouched.length === 0) {
           // Every local-only commit was on origin before the rewrite, so
           // origin's version of that history is the Settlement's ruling —
-          // land exactly on it rather than replaying ghosts against it.
-          const dropped = git(repo, ["rev-list", "--count", `${remote}..HEAD`]).trim();
-          console.error(`[world] pen branch ${branch} diverged after a Settlement rewrite — all ${dropped} ghost(s) previously on origin; reset to origin (#1774)`);
+          // land exactly on it rather than replaying ghosts against it. A
+          // rewrite that DROPPED a pushed mark is surrendered here too, by
+          // the same principle (origin is canon) — so the log names every
+          // surrendered sha and the paths they touched, and the pre-reset
+          // tip stays recoverable at `${branch}@{1}` (branch reflog,
+          // ~30 days: unreachable after the reset, gc's shorter clock).
+          const paths = git(repo, ["diff", "--name-only", `${remote}...HEAD`]).trim().split(/\r?\n/).filter(Boolean);
+          console.error(
+            `[world] pen branch ${branch} diverged after a Settlement rewrite — all ${ghosts.length} ghost(s) previously on origin; reset to origin (#1774). ` +
+            `surrendered: ${ghosts.map((s) => s.slice(0, 10)).join(" ")} · paths: ${paths.join(" ") || "(none)"} · recovery: ${branch}@{1}`,
+          );
           git(repo, ["reset", "--hard", "--quiet", remote]);
         } else {
           // Replaying commits mints new committer idents; the clone deliberately
@@ -301,7 +327,17 @@ export function ensureDraftCheckout(repo, household, { pooled = false, shared = 
             git(repo, ["-c", `user.name=${name}`, "-c", `user.email=${email}`, "rebase", "--quiet", remote]);
           } catch (e) {
             try { git(repo, ["rebase", "--abort"]); } catch { /* nothing in progress */ }
-            throw new Error(`draft branch ${branch} could not be reseated on origin (local holds never-pushed work; resolve by hand — #1774): ${String(e.stderr ?? e.message ?? e).slice(0, 200)}`);
+            // State facts, not a diagnosis: an unvouched commit is EITHER
+            // never-pushed work (crashed mid-write; replay it by hand) OR
+            // pushed work the reflog cannot vouch for (fresh clone, expired
+            // entries) — in the second case the remedy is exactly the reset
+            // this path declined. The operator decides; the message must
+            // not pick a side the code did not establish.
+            throw new Error(
+              `draft branch ${branch} could not be reseated on origin (#1774): ${String(e.stderr ?? e.message ?? e).slice(0, 200)} · ` +
+              `unvouched local commit(s): ${unvouched.map((s) => s.slice(0, 10)).join(", ")} (reflog depth ${reflogDepth}) — ` +
+              `either never-pushed work (replay by hand) or the reflog could not vouch (if origin is canonical, reset to origin)`,
+            );
           }
         }
       }
