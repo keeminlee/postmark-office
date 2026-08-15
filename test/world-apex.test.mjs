@@ -1149,3 +1149,12 @@ test("read: an unknown action says what IS readable from here", async () => {
   assert.match(r.defect, /not an action anywhere in your view/);
   assert.ok(r.readable_here.includes("say"));
 });
+
+test("read: a multi-resident key that names its handle top-level is not asked to choose", async () => {
+  on();
+  const TWO = { household: "house-a", handles: new Set(["alpha", "zeta"]) };
+  const r = await worldApex({ read: "say", handle: "alpha" }, TWO);
+  assert.ok(!r.error, JSON.stringify(r).slice(0, 300));
+  assert.ok(r.heard, "the listen is missing");
+  assert.ok(!r.heard.error, `the shadow met a bounce the standpoint already answered: ${JSON.stringify(r.heard).slice(0, 200)}`);
+});

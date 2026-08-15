@@ -822,7 +822,11 @@ async function apexReadAction(args, key) {
     const affording = { ...rows.find((r) => r.id === match.from), blurb: match.blurb };
     const means = match.blurb_from ? residueOf(store.db, match.blurb_from) : null;
     const card = { ...match, terms: buildTerms({ affording, spine, means }) };
-    const domain = await readDomainFor(action, envelope ?? null, key, oriented);
+    // The top-level standpoint rides into the shadow exactly as it rides into
+    // an act — a multi-resident key that named its handle must not meet the
+    // which-resident bounce on a read (field-found on the box's own key).
+    const fields = { ...(envelope ?? {}), ...(args.handle ? { handle: args.handle } : {}) };
+    const domain = await readDomainFor(action, fields, key, oriented);
     // A refused read still shows the law — the card rides the bounce exactly
     // as terms ride an act's.
     if (domain?.error) return { ...domain, read: action, card };
