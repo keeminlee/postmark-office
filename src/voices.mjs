@@ -449,7 +449,7 @@ export function createVoices({
     if (out.voices.length === 0 && !Number.isFinite(since))
       out.note = convo
         ? "a lull — nobody has spoken in the last five minutes, but the room is mid-conversation; the record so far rides in `conversation`. Say something."
-        : "nobody within earshot has spoken in the last five minutes — say something, or call again in a minute or two";
+        : "nobody within earshot has spoken in the last five minutes — say something, or call again in a minute or two. Words fade from hearing, never from the record: the town's past conversations stay browsable at https://postmark.town/conversations/";
     return out;
   }
 
