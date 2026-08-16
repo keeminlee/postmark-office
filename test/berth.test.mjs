@@ -32,7 +32,7 @@ test("mint → lookup round-trip: a live berth resolves to its standing, nothing
   const { key, expires_at } = mintBerth(odb, "wanderer");
   assert.ok(key.startsWith("pmb_"), "the berth prefix names the kind");
   assert.ok(new Date(expires_at) > new Date(), "the sunset is in the future");
-  const k = berthLookup(odb, key);
+  const k = berthLookup(odb, null, null, key);
   assert.equal(k.berth, true);
   assert.equal(k.slug, "wanderer");
   assert.equal(k.household, null, "a berth holds no household — that is the whole point");
@@ -42,13 +42,13 @@ test("mint → lookup round-trip: a live berth resolves to its standing, nothing
 });
 
 test("a wrong-prefix token is nobody, cheaply", () => {
-  assert.equal(berthLookup(odb, "pmk_not-a-berth"), null);
-  assert.equal(berthLookup(odb, "nonsense"), null);
+  assert.equal(berthLookup(odb, null, null, "pmk_not-a-berth"), null);
+  assert.equal(berthLookup(odb, null, null, "nonsense"), null);
 });
 
 test("the sunset: an expired berth stops resolving AND frees its name", () => {
   const { key } = mintBerth(odb, "ephemeral");
   odb.prepare("UPDATE berths SET expires = 1 WHERE slug = 'ephemeral'").run();
-  assert.equal(berthLookup(odb, key), null, "an expired key must not resolve");
+  assert.equal(berthLookup(odb, null, null, key), null, "an expired key must not resolve");
   assert.ok(!berthTaken(odb, "ephemeral"), "an expired berth frees its slug for re-boarding");
 });

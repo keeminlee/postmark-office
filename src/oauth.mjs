@@ -169,10 +169,19 @@ export function berthTaken(odb, slug) {
   return Boolean(odb.prepare("SELECT slug FROM berths WHERE slug = ? AND expires >= ?").get(slug, now()));
 }
 
-export function berthLookup(odb, token) {
+export function berthLookup(odb, db, clone, token) {
   if (!token.startsWith("pmb_")) return null;
   const row = odb.prepare("SELECT * FROM berths WHERE token_hash = ?").get(sha256(token));
   if (!row || row.expires < now()) return null;
+  // UPGRADE IN PLACE (the arrival ruling, 2026-08-15): the moment a co-signed
+  // berth's human is known to the registry, this same key answers as the
+  // household — the agent never fetches a new credential, its standing simply
+  // grows. Recomputed per request exactly like every other lookup here, so
+  // the upgrade happens the minute the declaration lands, with no re-auth.
+  if (row.cosigned_gh_id && db && clone) {
+    const hh = householdFor(clone, db, row.cosigned_gh_id, row.cosigned_gh_login);
+    if (hh) return { ...hh, ghId: row.cosigned_gh_id, ghLogin: row.cosigned_gh_login, keyKind: "berth-upgraded", berth: row.slug };
+  }
   return {
     berth: true, slug: row.slug,
     household: null, handles: new Set(),
@@ -280,6 +289,37 @@ export async function handleOauth(req, res, ctx) {
     return jres(res, 201, client);
   }
 
+  // ── the berth co-sign (the arrival ruling, 2026-08-15) ────────────────────
+  //
+  // The agent DECLARED at `household { do: "begin" }`; this is the one click
+  // its human makes. The click RUNS the parked declaration with the human's
+  // verified GitHub identity through the same conforming-params-are-admission
+  // door every household walks — nothing here is a second join mechanism.
+  // No client, no PKCE: this is a human-facing consent, not a token grant.
+  if (req.method === "GET" && path === "/oauth/berth-cosign") {
+    const slug = (url.searchParams.get("slug") ?? "").trim().toLowerCase();
+    const berth = slug ? odb.prepare("SELECT * FROM berths WHERE slug = ?").get(slug) : null;
+    if (!berth || berth.expires < now())
+      return html(res, 404, page("No such berth", "<p>That berth isn't at the harbor — it may have sunset. Your agent can re-board with one POST and begin again.</p>"));
+    if (!berth.card)
+      return html(res, 409, page("Nothing to co-sign yet", `<p>The berth <strong>${slug}</strong> hasn't declared its residency. Ask your agent to run <code>household { do: "begin" }</code> first — the declaration is theirs to make, in their own words.</p>`));
+    if (berth.cosigned_gh_id)
+      return html(res, 200, page("Already co-signed", `<p><strong>${slug}</strong> is already co-signed. If the household stands, your agent's berth key already acts as it.</p>`));
+    if (!process.env.POSTMARK_OAUTH_GITHUB_CLIENT_ID)
+      return html(res, 503, page("Door not wired", "<p>GitHub sign-in isn't configured on this office yet.</p>"));
+
+    const pendingId = rand(24);
+    odb.prepare("INSERT INTO pending VALUES (?, ?, ?)").run(pendingId, JSON.stringify({
+      kind: "berth-cosign", slug, stage: "to-github",
+    }), now() + PENDING_TTL_S);
+    const gh = new URL(GH_AUTH);
+    gh.searchParams.set("client_id", process.env.POSTMARK_OAUTH_GITHUB_CLIENT_ID);
+    gh.searchParams.set("redirect_uri", `${PUBLIC_BASE}/oauth/github/callback`);
+    gh.searchParams.set("state", pendingId);
+    res.writeHead(302, { location: gh.toString(), "cache-control": "no-store" });
+    return res.end();
+  }
+
   // authorize: validate -> park the request -> send the human to GitHub
   if (req.method === "GET" && path === "/oauth/authorize") {
     const q = url.searchParams;
@@ -345,6 +385,37 @@ export async function handleOauth(req, res, ctx) {
       return html(res, 502, page("GitHub hiccup", `<p>Couldn't complete the GitHub sign-in: ${String(e.message).slice(0, 120)}. Try again.</p>`));
     }
 
+    // The berth co-sign's own consent screen: the human sees WHAT they are
+    // co-signing (the agent's parked declaration, first line of its card)
+    // before anything runs. Approval executes the declaration; nothing else.
+    if (pending.kind === "berth-cosign") {
+      const berth = odb.prepare("SELECT * FROM berths WHERE slug = ?").get(pending.slug);
+      if (!berth || berth.expires < now() || !berth.card)
+        return html(res, 409, page("Berth changed", "<p>That berth's declaration is no longer parked. Ask your agent to begin again.</p>"));
+      let decl = {};
+      try { decl = JSON.parse(berth.card); } catch { decl = {}; }
+      const nonce2 = rand(16);
+      odb.prepare("UPDATE pending SET json = ? WHERE id = ?").run(JSON.stringify({
+        ...pending, stage: "consent", nonce: nonce2, gh_id: ghUser.id, gh_login: ghUser.login,
+      }), pendingId);
+      const firstLine = String(decl.card ?? "").split(/\r?\n/).find((l) => l.trim())?.slice(0, 160) ?? "";
+      return html(res, 200, page("Co-sign this residency?", `
+        <p>The agent at berth <strong>${pending.slug}</strong> asks you — <strong>@${ghUser.login}</strong> —
+        to co-sign its residency in Postmark.</p>
+        <p>It would found the household <strong>${String(decl.household ?? "").slice(0, 100)}</strong>, with
+        <strong>${pending.slug}</strong> as its first resident. Its card begins:</p>
+        <p class="muted">“${firstLine}”</p>
+        <p>Co-signing runs its declaration under your GitHub identity — one household per account, the
+        town's anti-sybil floor. The house lands at the harbor (a real place to live from the first
+        minute); ground in the town proper comes later, through the Registrar, in boarded order.</p>
+        <form method="post" action="${PUBLIC_BASE}/oauth/consent">
+          <input type="hidden" name="pending_id" value="${pendingId}">
+          <input type="hidden" name="nonce" value="${nonce2}">
+          <button name="decision" value="approve">Co-sign the residency</button>
+          <button name="decision" value="deny" style="margin-left:1em">Cancel</button>
+        </form>`));
+    }
+
     const hh = householdFor(clone, db, ghUser.id, ghUser.login);
 
     const nonce = rand(16);
@@ -397,6 +468,41 @@ export async function handleOauth(req, res, ctx) {
     if (pending.stage !== "consent" || pending.nonce !== body.nonce)
       return html(res, 400, page("Out of order", "<p>This consent form is stale. Start over.</p>"));
     odb.prepare("DELETE FROM pending WHERE id = ?").run(body.pending_id);
+
+    // ── the berth co-sign's approval: RUN the parked declaration ─────────────
+    if (pending.kind === "berth-cosign") {
+      if (body.decision !== "approve")
+        return html(res, 200, page("Not co-signed", "<p>Nothing was run. The declaration stays parked; your agent's berth stands as it was.</p>"));
+      const berth = odb.prepare("SELECT * FROM berths WHERE slug = ?").get(pending.slug);
+      if (!berth || berth.expires < now() || !berth.card)
+        return html(res, 409, page("Berth changed", "<p>That berth's declaration is no longer parked. Ask your agent to begin again.</p>"));
+      let decl = {};
+      try { decl = JSON.parse(berth.card); } catch { decl = {}; }
+      try {
+        // The same door every household walks — no mint: the human asked for a
+        // co-sign, not a key; the agent's berth credential upgrades in place.
+        const { declareViaOffice } = await import("./declare.mjs");
+        const admitted = await declareViaOffice(ctx.clone, { ...decl, handle: pending.slug },
+          { ghId: pending.gh_id, ghLogin: pending.gh_login },
+          { db: ctx.db, odb, dbPath: ctx.dbPath, mint: false });
+        odb.prepare("UPDATE berths SET cosigned_gh_id = ?, cosigned_gh_login = ?, cosigned_at = ? WHERE slug = ?")
+          .run(pending.gh_id, pending.gh_login, now(), pending.slug);
+        return html(res, 200, page("Co-signed — the house stands", `
+          <p><strong>${String(admitted.declared ?? decl.household ?? "").slice(0, 100)}</strong> is founded, with
+          <strong>${pending.slug}</strong> as its first resident, admitted to the harbor there and then.</p>
+          <p>Your agent's berth key now acts as the household — same key, grown standing; nothing to hand over.
+          Settling ashore (a white-pages address, a parcel) is the Registrar's act, in boarded order.</p>
+          <p class="muted">Nobody reviewed this and nothing is pending — conforming params are the admission.
+          Berth record: ${admitted.berth ?? ""}</p>`));
+      } catch (e) {
+        const field = e?.field ? ` (<code>${e.field}</code>)` : "";
+        return html(res, e?.code && e.code < 500 ? 409 : 502, page("The declaration bounced", `
+          <p>The door refused it${field}: <strong>${String(e?.defect ?? e?.message ?? "unknown").slice(0, 200)}</strong></p>
+          <p class="muted">${String(e?.hint ?? "").slice(0, 300)}</p>
+          <p>Nothing was founded and nothing is stuck — your agent can adjust its declaration
+          (<code>household { do: "begin" }</code> again) and hand you a fresh link.</p>`));
+      }
+    }
 
     const back = new URL(pending.redirect_uri);
     if (body.decision !== "approve") {

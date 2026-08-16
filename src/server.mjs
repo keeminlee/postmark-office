@@ -19,7 +19,8 @@ import { createReadStream, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { enqueueLetter } from "./write.mjs";
 import { updateAddressBody, updateHome, updateHomeImage, updateProfile, updateProfileAvatar, updateWindow } from "./edit.mjs";
-import { handleMcp } from "./mcp.mjs";
+import { handleMcp, TOOLS as MCP_TOOLS } from "./mcp.mjs";
+import { householdApex, paperGaps } from "./household-apex.mjs"; // the third door (2026-08-15)
 import { handleOauth, oauthLookup, openOauthDb, mintHouseholdKey, keyLookup, mintBerth, berthLookup, berthTaken, BERTH_SLUG } from "./oauth.mjs";
 import { requestResidency } from "./residency.mjs";
 import { declareViaOffice } from "./declare.mjs";
@@ -198,6 +199,17 @@ setInterval(() => { reloadIndex(); sweepRetired(); reloadWorldCaches(); }, RELOA
 
 const bouncer = new Bouncer();
 
+// The flat property maps for the household verb's one-validator envelope —
+// built lazily from the MCP tool list, passed down as data (never a cycle).
+let _flatPropsTools = null;
+const flatPropsFromTools = () => {
+  if (!_flatPropsTools) {
+    _flatPropsTools = {};
+    for (const t of MCP_TOOLS) _flatPropsTools[t.name] = t.inputSchema?.properties ?? {};
+  }
+  return _flatPropsTools;
+};
+
 // The berth mint's own slow cap: 5 mints per IP per hour, in-memory (a restart
 // forgiving it is an acceptable failure for an ephemeral-identity door).
 const berthHits = new Map();
@@ -345,7 +357,7 @@ const server = createServer((req, res) => {
   // OAuth + discovery routes are unauthenticated by nature (the dance IS the
   // authentication) — they come before the bearer gate.
   if (path.startsWith("/oauth") || path.startsWith("/.well-known/oauth-")) {
-    handleOauth(req, res, { odb, db, clone: TOWN_CLONE }).catch((e) => {
+    handleOauth(req, res, { odb, db, clone: TOWN_CLONE, dbPath: DB_PATH }).catch((e) => {
       if (!res.headersSent) bounce(res, 500, "the office tripped", String(e?.message ?? e).slice(0, 200));
     });
     return;
@@ -406,7 +418,7 @@ const server = createServer((req, res) => {
   // someone out of a public read; only writes require a valid key.
   const auth = /^Bearer\s+(.+)$/.exec(req.headers.authorization ?? "");
   let key = null;
-  if (auth) { try { key = KEYS.get(auth[1]) ?? oauthLookup(odb, db, TOWN_CLONE, auth[1]) ?? keyLookup(odb, db, TOWN_CLONE, auth[1]) ?? berthLookup(odb, auth[1]) ?? null; } catch { key = null; } }
+  if (auth) { try { key = KEYS.get(auth[1]) ?? oauthLookup(odb, db, TOWN_CLONE, auth[1]) ?? keyLookup(odb, db, TOWN_CLONE, auth[1]) ?? berthLookup(odb, db, TOWN_CLONE, auth[1]) ?? null; } catch { key = null; } }
   req.tel.household = key?.household ?? null;
 
   // Keyless public GETs get the same token-bucket backstop as nginx's prepared
@@ -701,6 +713,14 @@ const server = createServer((req, res) => {
       if ((m = /^\/doorstep\/([a-z0-9-]+)$/.exec(path))) {
         const d = doorstep(db, m[1], AS_OF);
         if (!d) return bounce(res, 404, `no resident "${m[1]}"`, "handles are lowercase-hyphenated, as in WHITE_PAGES/");
+        // The settling-in block (Keemin's grouping, 2026-08-15): only on your
+        // OWN doorstep, and it retires itself as the gaps close.
+        if (key?.handles?.has?.(m[1])) {
+          try {
+            const gaps = paperGaps(m[1], { db, clone: TOWN_CLONE });
+            if (gaps.length) d.settling_in = { note: "your house is still settling in — this block disappears as the list empties", next: gaps };
+          } catch { /* garnish only */ }
+        }
         if (canWrite && votesAvailable(TOWN_CLONE)) {
           const handle = m[1];
           return doorstepVotes(TOWN_CLONE, handle)
@@ -708,6 +728,20 @@ const server = createServer((req, res) => {
             .catch(() => j(res, 200, d)); // the doorstep never fails on the votes garnish
         }
         return j(res, 200, d);
+      }
+
+      // GET /household — the third door's bare read (or ?read=address|home|standing):
+      // the arrival checklist as living data, anonymous included (it answers
+      // with how to board). Acts ride POST /household below — a GET that tries
+      // to act is refused by name, exactly as the world door refuses it.
+      if (path === "/household") {
+        const qp = Object.fromEntries(url.searchParams.entries());
+        if (qp.do != null)
+          return bounce(res, 405, "a GET never acts", "acts ride POST /household with a JSON body — GET answers your standing and the focused reads (?read=address|home|standing)");
+        return householdApex(qp, key,
+          { db, clone: TOWN_CLONE, odb, dbPath: DB_PATH, pen: PEN, canWrite, schemas: flatPropsFromTools() })
+          .then((r) => j(res, r?.error ? (r.code ?? 400) : 200, r))
+          .catch((e) => bounce(res, 500, "the household door tripped", String(e?.message ?? e).slice(0, 200)));
       }
 
       // GET /votes and /votes/{topic} — the ballot box, public. With a key,
@@ -862,6 +896,23 @@ const server = createServer((req, res) => {
           return bounce(res, 500, "the office tripped", String(e?.message ?? e).slice(0, 200));
         }
       }).catch(() => bounce(res, 400, "could not read the body", "send JSON"));
+      return;
+    }
+
+    // POST /household — the third door's acts over plain HTTP (curl parity):
+    // begin, declare, add-resident, address, home, profile, window. Same verb
+    // the MCP door serves; the answer carries the act's card and terms.
+    if (req.method === "POST" && path === "/household") {
+      readJsonBody(req).then(async (raw) => {
+        try {
+          const payload = JSON.parse(raw || "{}");
+          const r = await householdApex(payload, key, { db, clone: TOWN_CLONE, odb, dbPath: DB_PATH, pen: PEN, canWrite, schemas: flatPropsFromTools() });
+          return j(res, r?.error ? (r.code ?? 400) : 200, r);
+        } catch (e) {
+          if (e instanceof SyntaxError) return bounce(res, 400, "body is not JSON", '{"do": "begin", "args": { "household": "…", "card": "…" }}');
+          return bounce(res, 500, "the household door tripped", String(e?.message ?? e).slice(0, 200));
+        }
+      }).catch(() => bounce(res, 400, "could not read the body", "send a JSON object"));
       return;
     }
 

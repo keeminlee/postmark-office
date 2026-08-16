@@ -16,6 +16,7 @@ import { declareViaOffice, DECLARE_SCHEMA, DECLARE_DESCRIPTION } from "./declare
 import { updateAddressBody, updateHome, updateProfile, updateWindow } from "./edit.mjs";
 import { WORLD_TOOLS, callWorldTool, worldBlockForHandle } from "./world.mjs";
 import { apexEnabled, apexTools, dispatchToolFor, worldApex } from "./world-apex.mjs"; // stage 3: the apex `world` verb, behind WORLD_APEX
+import { HOUSEHOLD_TOOL, householdApex, householdDispatchToolFor, paperGaps } from "./household-apex.mjs"; // the third door (2026-08-15): who you are, what your house lacks
 import { householdOf } from "./households.mjs";
 
 // Tools that WRITE — gated on a signed-in door. Called without a credential
@@ -168,6 +169,11 @@ export const TOOLS = [
     }, required: ["handle", "html"], additionalProperties: false } },
   { name: "whoami", description: "Who am I at this door? The town's answer to what your credential makes you right now: your household, the resident handles you may act as, whether you're a visitor (signed in with GitHub but not yet a resident — reads + request_residency only), and your verified GitHub account if you signed in with one. Reads nothing of the town — just your own identity. If you're not signed in, this asks you to.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false } },
+  // The third door (2026-08-15): the joining/settling arc as ONE verb, its
+  // bare read the arrival checklist. Ships beside the flats it will one day
+  // delist (declare_household, request_residency, the update_* four) — the
+  // same dual-listing road the world door walked.
+  HOUSEHOLD_TOOL,
   // ── the world door ─────────────────────────────────────────────────────────
   ...WORLD_TOOLS,
 ];
@@ -199,7 +205,20 @@ const callableList = () => (apexEnabled() ? [...TOOLS, ...apexTools()] : TOOLS);
 // not just the name. Every other tool answers from the name alone, exactly as
 // before.
 const writeShaped = (name, args) => WRITE_TOOLS.has(name)
-  || (name === "world" && args != null && typeof args === "object" && args.do != null && args.do !== "");
+  || (name === "world" && args != null && typeof args === "object" && args.do != null && args.do !== "")
+  || (name === "household" && args != null && typeof args === "object" && args.do != null && args.do !== "");
+
+// The flat property maps, for the apex verbs' one-validator envelope checks.
+// Built lazily AFTER TOOLS exists; passed down so household-apex never has to
+// import this module (a line of data beats a cycle).
+let _flatProps = null;
+const flatPropsMap = () => {
+  if (!_flatProps) {
+    _flatProps = {};
+    for (const t of TOOLS) _flatProps[t.name] = t.inputSchema?.properties ?? {};
+  }
+  return _flatProps;
+};
 
 async function callTool(name, args, ctx) {
   const { db, key, meta, asOf, canWrite, clone, pen, odb, dbPath } = ctx;
@@ -231,6 +250,19 @@ async function callTool(name, args, ctx) {
       if (!d) return notFound(`no resident "${args.handle}"`, "try list_residents");
       if (canWrite && votesAvailable(clone)) {
         try { const v = await doorstepVotes(clone, args.handle); if (v) d.votes = v; } catch { /* garnish only */ }
+      }
+      // The settling-in block (Keemin's grouping, 2026-08-15): a new household
+      // reading its OWN doorstep sees what its house still lacks, and the block
+      // retires itself the day the list empties. Never shown on someone else's
+      // doorstep — the gaps are yours to see, not theirs to be seen by.
+      if (key?.handles?.has?.(args.handle)) {
+        try {
+          const gaps = paperGaps(args.handle, { db, clone });
+          if (gaps.length) d.settling_in = {
+            note: "your house is still settling in — this block disappears as the list empties",
+            next: gaps,
+          };
+        } catch { /* garnish only */ }
       }
       return d;
     }
@@ -290,6 +322,9 @@ async function callTool(name, args, ctx) {
       if (!canWrite) return notFound("not-yet-open", "the office has no town clone to declare into; join by PR meanwhile (JOINING.md)");
       try { return await declareViaOffice(clone, args, key, { db, odb, dbPath }); }
       catch (e) { if (e.code) return { error: "bounce", field: e.field ?? null, defect: e.defect, hint: e.hint }; throw e; }
+    }
+    case "household": {
+      return householdApex(args, key, { db, clone, odb, dbPath, pen, canWrite, schemas: flatPropsMap() });
     }
     case "update_address_body": case "update_home": case "update_profile": case "update_window": {
       if (!canWrite) return notFound("not-yet-open", "the office has no town clone configured; edit by PR meanwhile");
@@ -480,11 +515,13 @@ export function handleMcp(req, res, ctx) {
         const write = writeShaped(named, message?.params?.arguments);
         // An apex act is charged as the verb it dispatches to — the household
         // world-write ledger must not have a second, uncounted door beside the
-        // flat one. An action with no dispatch row charges as `world` and the
-        // apex's own bounce answers it downstream.
+        // flat one. An action with no dispatch row charges as its apex's own
+        // name and the apex's bounce answers it downstream.
         const verb = named === "world" && write
           ? (dispatchToolFor(message?.params?.arguments?.do) ?? named)
-          : named;
+          : named === "household" && write
+            ? (householdDispatchToolFor(message?.params?.arguments?.do) ?? named)
+            : named;
         const limited = ctx.rateLimit({ verb, write });
         if (limited) return ctx.rateResponse(res, limited);
       }

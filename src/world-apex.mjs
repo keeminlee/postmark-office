@@ -143,7 +143,7 @@ const RESIDUE_QUERY = `SELECT id,
       WHERE id = ? AND by = 'the-town' AND tier = 'constitution'
         AND json_extract(props, '$.class') IS NOT NULL`;
 
-function residueOf(db, id) {
+export function residueOf(db, id) {
   if (!db || !id) return null;
   try {
     const row = db.prepare(RESIDUE_QUERY).get(String(id));
@@ -278,7 +278,7 @@ const bounce = (code, defect, hint, extra = {}) => ({ error: "bounce", code, def
 // control — the same manner the `subverb`→`action` rename set. A string that
 // is not an object's JSON comes back unparsed and meets the caller's own type
 // check. Shared by `do:` and `read:` so the two modes cannot drift.
-function parseEnvelope(args) {
+export function parseEnvelope(args) {
   let envelope = args.args;
   if (typeof envelope === "string" && envelope.trim().startsWith("{")) {
     try { envelope = JSON.parse(envelope); } catch { /* the type check answers */ }
@@ -288,7 +288,7 @@ function parseEnvelope(args) {
 
 // ── reading the store ───────────────────────────────────────────────────────
 
-function openStore() {
+export function openStore() {
   const path = storeDbPath();
   if (!existsSync(path)) return { db: null, path, unavailable: `no world store at ${path}` };
   try {

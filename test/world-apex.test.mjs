@@ -406,10 +406,11 @@ test("the slim: thirteen flats are DELISTED; world_note alone stands, by ruling"
       "world_investigate", "world_my_marks", "world_walkers", "world_stake_read", "world_holdings"])
       assert.ok(!names.includes(gone), `${gone} is still listed — the slim delisted it`);
     assert.ok(names.includes("world_note"), "world_note stays flat by ruling");
-    // The apex-on total: 26 legacy tools + `world` itself. The flag-off twin
-    // (39, nothing delisted) lives in server.test.mjs — together they pin the
-    // apex-conditioning from both sides.
-    assert.equal(names.length, 27);
+    // The apex-on total: 26 legacy tools + `world` + `household` (the third
+    // door, unconditional). The flag-off twin (40, nothing delisted) lives in
+    // server.test.mjs — together they pin the apex-conditioning from both sides.
+    assert.ok(names.includes("household"), "the third door rides beside the world verb");
+    assert.equal(names.length, 28);
   });
 });
 
