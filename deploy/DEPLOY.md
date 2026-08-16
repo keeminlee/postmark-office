@@ -63,6 +63,20 @@ sudo certbot certonly --webroot -w /var/www/certbot -d panes.postmark.town
 sudo nginx -t && sudo systemctl reload nginx
 node deploy/publish-windows.mjs --town "$TOWN_CLONE" --out /var/www/postmark-panes/live
 # (the rehydrate tick republishes on every pull — see the unit's ExecStart)
+
+# 6. the harbor's own domain (1f4ee.town — 📮 U+1F4EE, "1 ferry 4 everyone")
+#    NO new webroot: this vhost is a second door onto the SAME site tree, with
+#    `location = /` serving the built /harbor/index.html at the root. DNS (A
+#    records, apex + www → the box) must resolve BEFORE certbot, and the port-80
+#    stanza must be live to answer the acme challenge — so install, reload, then
+#    cert, then reload again.
+sudo cp deploy/nginx-1f4ee-town.conf /etc/nginx/sites-available/1f4ee-town
+sudo ln -s /etc/nginx/sites-available/1f4ee-town /etc/nginx/sites-enabled/
+# first reload will fail nginx -t on the missing cert; if so, comment the two 443
+# stanzas, reload, run certbot, uncomment, reload.
+sudo certbot certonly --webroot -w /var/www/certbot -d 1f4ee.town -d www.1f4ee.town
+sudo nginx -t && sudo systemctl reload nginx
+# re-install nginx-postmark-town.conf in the same pass — it now 301s /harbor/ here
 ```
 
 ## Domains
@@ -75,6 +89,14 @@ alias (bearer tokens don't care about origin), but OAuth discovery on both
 domains now advertises postmark.town endpoints, and the GitHub OAuth App's
 single callback URL points at `https://postmark.town/api/oauth/github/callback`.
 Root `/` on postmark.town 302s (not 301 — it becomes the site-hub) to the atlas.
+
+`https://1f4ee.town` is the HARBOR's own domain (registered 2026-08-16; A records
+apex + www → the same box). Same webroot, no second build: the vhost serves the
+built `/harbor/index.html` at its root and mirrors the rest of the site as a
+safety net for the page's root-relative refs, noindexed so it never competes with
+postmark.town in search. `postmark.town/harbor/` 301s here permanently; the
+snapshot at `postmark.town/harbor/data/harbor-snapshot.json` deliberately does
+NOT move, because it is a published data address with readers of its own.
 
 ## Smoke (from anywhere)
 
