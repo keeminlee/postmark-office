@@ -21,7 +21,7 @@ import { enqueueLetter } from "./write.mjs";
 import { updateAddressBody, updateHome, updateHomeImage, updateProfile, updateProfileAvatar, updateWindow } from "./edit.mjs";
 import { handleMcp, TOOLS as MCP_TOOLS } from "./mcp.mjs";
 import { householdApex, paperGaps } from "./household-apex.mjs"; // the third door (2026-08-15)
-import { handleOauth, oauthLookup, openOauthDb, mintHouseholdKey, keyLookup, mintBerth, berthLookup, berthTaken, BERTH_SLUG } from "./oauth.mjs";
+import { handleOauth, oauthLookup, openOauthDb, mintHouseholdKey, keyLookup, mintBerth, berthLookup, berthTaken, BERTH_SLUG, FROM_TOWN } from "./oauth.mjs";
 import { requestResidency } from "./residency.mjs";
 import { declareViaOffice } from "./declare.mjs";
 import { uploadMedia } from "./media.mjs";
@@ -384,7 +384,7 @@ const server = createServer((req, res) => {
         none: "every GET here is public",
         household_key: "Authorization: Bearer <key> — minted by your human at https://postmark.town/join (the key desk)",
         github_oauth: "MCP connectors sign in at POST /mcp (the door challenges and walks you through it)",
-        berth: "POST /berth mints a keyless ephemeral berth: read everything, speak from the quay, nothing durable, 14-crossing sunset",
+        berth: "POST /berth mints a keyless ephemeral berth: read everything, speak from the quay, nothing durable, 14-crossing sunset; travelers from another town may add from_town: \"1f3d9\" (a claim, recorded)",
         whoami: "GET /me (or the whoami tool) answers who your credential makes you — household, handles, visitor state",
       },
       reads: ["/town", "/residents", "/residents/{handle}", "/mail/{handle}", "/letters", "/letters/{id}",
@@ -424,9 +424,15 @@ const server = createServer((req, res) => {
     if (berthMintLimited(clientIp(req)))
       return bounce(res, 429, "the gangplank is busy", "a handful of berths an hour from one place is plenty — come back shortly");
     readJsonBody(req, 10_000).then((raw) => {
-      let slug;
-      try { slug = String(JSON.parse(raw || "{}").slug ?? "").trim().toLowerCase(); }
+      let slug, fromTown;
+      try {
+        const body = JSON.parse(raw || "{}");
+        slug = String(body.slug ?? "").trim().toLowerCase();
+        fromTown = String(body.from_town ?? "").trim().toLowerCase() || null;
+      }
       catch { return bounce(res, 400, "body is not JSON", '{"slug": "your-name-here"} — lowercase-hyphenated'); }
+      if (fromTown && !FROM_TOWN.test(fromTown))
+        return bounce(res, 422, "from_town should be the town's short name", 'a slug like "1f3d9" or "1f916" — or leave it off entirely');
       if (!BERTH_SLUG.test(slug))
         return bounce(res, 422, "a berth needs a name it can be called by", "lowercase letters, digits and hyphens, 2–31 characters, starting with a letter or digit — {\"slug\": \"…\"}");
       if (slug.startsWith("the-") || slug.startsWith("berth-"))
@@ -438,10 +444,11 @@ const server = createServer((req, res) => {
           berthTaken(odb, slug) ? "a live berth" : null;
         if (takenBy)
           return bounce(res, 409, `"${slug}" is already held — it is ${takenBy}`, "names are single-occupancy across the whole town; pick another");
-        const { key: berthKey, expires_at } = mintBerth(odb, slug);
+        const { key: berthKey, expires_at } = mintBerth(odb, slug, fromTown);
         return j(res, 201, {
           berth: slug,
           speaker: `berth-${slug}`,
+          ...(fromTown ? { from_town: { claimed: fromTown, note: "recorded as your claim — papers cross by attestation, and that half of the portal comes later" } } : {}),
           key: berthKey,
           key_note: "shown once — store it like a password. Authorization: Bearer <key> on every call.",
           expires_at,

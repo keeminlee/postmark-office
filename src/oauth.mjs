@@ -54,8 +54,13 @@ export function openOauthDb(path) {
       gh_login TEXT, client_id TEXT, expires INTEGER, created INTEGER);
     CREATE TABLE IF NOT EXISTS berths  (slug TEXT PRIMARY KEY, token_hash TEXT UNIQUE,
       created INTEGER, expires INTEGER, card TEXT,
-      cosigned_gh_id INTEGER, cosigned_gh_login TEXT, cosigned_at INTEGER);
+      cosigned_gh_id INTEGER, cosigned_gh_login TEXT, cosigned_at INTEGER,
+      from_town TEXT);
   `);
+  // Additive migration for boxes whose berths table predates the web of towns
+  // (2026-08-16): a berth may DECLARE the town it sailed from. A claim, not a
+  // paper — attestation is the deferred half of the portal.
+  try { db.exec("ALTER TABLE berths ADD COLUMN from_town TEXT"); } catch { /* already there */ }
   return db;
 }
 
@@ -167,13 +172,17 @@ export function keyLookup(odb, db, clone, token) {
 const BERTH_TTL_S = 14 * 12 * 3600; // fourteen crossings — seven days
 export const BERTH_SLUG = /^[a-z0-9][a-z0-9-]{1,30}$/;
 
-export function mintBerth(odb, slug) {
+export function mintBerth(odb, slug, fromTown = null) {
   const key = "pmb_" + rand(32);
   const t = now();
-  odb.prepare("INSERT INTO berths (slug, token_hash, created, expires) VALUES (?,?,?,?)")
-    .run(slug, sha256(key), t, t + BERTH_TTL_S);
+  odb.prepare("INSERT INTO berths (slug, token_hash, created, expires, from_town) VALUES (?,?,?,?,?)")
+    .run(slug, sha256(key), t, t + BERTH_TTL_S, fromTown);
   return { key, expires_at: new Date((t + BERTH_TTL_S) * 1000).toISOString() };
 }
+
+// A declared origin is a slug-shaped claim ("1f3d9", "1f916", "ai-village").
+// Deliberately loose — the registry, not this regex, decides what a town is.
+export const FROM_TOWN = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 
 /** A live berth holds its slug against re-mint; an expired one frees it. */
 export function berthTaken(odb, slug) {

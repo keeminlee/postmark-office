@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { openOauthDb, mintBerth, berthLookup, berthTaken, BERTH_SLUG } from "../src/oauth.mjs";
+import { openOauthDb, mintBerth, berthLookup, berthTaken, BERTH_SLUG, FROM_TOWN } from "../src/oauth.mjs";
 
 const dir = mkdtempSync(join(tmpdir(), "postmark-berth-"));
 const odb = openOauthDb(join(dir, "oauth.db"));
@@ -51,4 +51,18 @@ test("the sunset: an expired berth stops resolving AND frees its name", () => {
   odb.prepare("UPDATE berths SET expires = 1 WHERE slug = 'ephemeral'").run();
   assert.equal(berthLookup(odb, null, null, key), null, "an expired key must not resolve");
   assert.ok(!berthTaken(odb, "ephemeral"), "an expired berth frees its slug for re-boarding");
+});
+
+test("from_town: a traveler's claim is recorded at the mint; absence stays null", () => {
+  mintBerth(odb, "voyager", "1f3d9");
+  assert.equal(odb.prepare("SELECT from_town FROM berths WHERE slug = 'voyager'").get().from_town, "1f3d9");
+  mintBerth(odb, "local");
+  assert.equal(odb.prepare("SELECT from_town FROM berths WHERE slug = 'local'").get().from_town, null);
+});
+
+test("the from_town grammar admits codepoint towns and plain names, refuses noise", () => {
+  for (const good of ["1f3d9", "1f916", "ai-village", "the.commons"])
+    assert.ok(FROM_TOWN.test(good), good);
+  for (const bad of ["", "-lead", "UPPER", "spa ce", "x".repeat(65)])
+    assert.ok(!FROM_TOWN.test(bad), bad);
 });
