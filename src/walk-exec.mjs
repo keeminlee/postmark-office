@@ -22,6 +22,7 @@ import { join, resolve, dirname } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { penCommit } from "./write.mjs";
+import { classDials } from "./world-classes.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CLONE = process.env.WORLD_CLONE ?? resolve(HERE, "..", "world-clone");
@@ -64,10 +65,25 @@ async function main() {
   for (const k of ["handle", "from", "toward"]) if (!p[k]) return err(422, `missing ${k}`, "the door fills these in; this exec is not a public surface");
 
   const at = Number.isFinite(p.at) ? p.at : fractionalCrossing();
+
+  // The stride is LAW ON THE RECORD (decision 008b, 2026-08-16): the departure
+  // class's own dial, read at act time and stamped on the leg — amending the
+  // mark changes future departures only; no in-flight walker ever re-derives.
+  // Fallback is LOUD (dial_fallback in the answer) and falls to the clone's
+  // pre-008b constant via an unstamped line — never a silent second law.
+  // Sanity bounds are interim until the dial registry lands (the params
+  // migration); the record owns the value, this guards only absurdity.
+  let pace = null, dialFallback = false;
+  try {
+    const d = Number(classDials("departure")?.pace_km_per_crossing);
+    if (Number.isFinite(d) && d > 0 && d <= 1000) pace = d; else dialFallback = true;
+  } catch { dialFallback = true; }
+
   const line = formatDeparture({
     handle: p.handle, from: p.from, toward: p.toward, at,
     targetExtent: p.targetExtent ?? null,
     targetMarkId: p.targetMarkId ?? null,
+    pace,
   });
 
   // Append. Read-then-write of a file only this pen writes, under the caller's
@@ -90,6 +106,7 @@ async function main() {
   }
 
   answer({ line, at, position, commit, pushed, push_error,
+           pace, ...(dialFallback ? { dial_fallback: true } : {}),
            ledger_lines: departures.length,
            ledger_unrecognized: unrecognized.length });
 }
