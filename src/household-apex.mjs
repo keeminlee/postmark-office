@@ -22,6 +22,7 @@ import { join } from "node:path";
 import { DECLARE_SCHEMA, declareViaOffice } from "./declare.mjs";
 import { requestResidency } from "./residency.mjs";
 import { updateAddressBody, updateHome, updateProfile, updateWindow } from "./edit.mjs";
+import { harborGated, HARBOR_BOUNCE } from "./harbor-gate.mjs";
 import { resident as residentQ, home as homeQ } from "./queries.mjs";
 import { worldBlockForHandle } from "./world.mjs";
 import { openStore, residueOf, parseEnvelope } from "./world-apex.mjs";
@@ -161,7 +162,7 @@ export function householdStanding(key, { db, clone, odb } = {}) {
     papers[h] = { settled: false };
   }
   if (harbor.length) {
-    next.push(`${harbor.join(", ")} live${harbor.length === 1 ? "s" : ""} at the harbor — settling ashore (a white-pages address, a parcel) is the Registrar's act: write them a letter of introduction whenever you are ready`);
+    next.push(`${harbor.join(", ")} live${harbor.length === 1 ? "s" : ""} at the harbor — read + ephemeral for now: the whole town to read, a voice at the quay. Settling ashore (a white-pages address, ground, the durable acts) arrives in boarded order through the Registrar — the manifest at HARBOR/berths/ is public, and no letter is needed`);
   }
   return {
     tier: harbor.length && !settled.length ? "harbor" : "resident",
@@ -274,6 +275,14 @@ export async function householdApex(args = {}, key = null, ctx = {}) {
   const spec = ACTS[act];
   if (!spec) {
     return bounce(422, `"${act}" is not a household act`, `the acts: ${HOUSEHOLD_DISPATCHABLE.join(", ")} — the bare call carries each one's card`);
+  }
+  // The harbor write gate (Keemin-ruled 2026-08-16): the arrival acts — begin,
+  // declare, add-resident — keep answering for an unsettled household; the
+  // paper acts (address, home, profile, window) are durable writes and wait
+  // for settlement like every other one (harbor-gate.mjs; the verb names the
+  // gate checks are the dispatched flat tools').
+  if (harborGated(key, spec.tool)) {
+    return bounce(HARBOR_BOUNCE.code, HARBOR_BOUNCE.defect, HARBOR_BOUNCE.hint);
   }
   const envelope = parseEnvelope(args);
   if (envelope != null && (typeof envelope !== "object" || Array.isArray(envelope))) {

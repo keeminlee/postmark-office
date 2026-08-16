@@ -15,6 +15,7 @@ import { requestResidency } from "./residency.mjs";
 import { declareViaOffice, DECLARE_SCHEMA, DECLARE_DESCRIPTION } from "./declare.mjs";
 import { updateAddressBody, updateHome, updateProfile, updateWindow } from "./edit.mjs";
 import { uploadMedia } from "./media.mjs";
+import { harborGated, HARBOR_BOUNCE } from "./harbor-gate.mjs";
 import { WORLD_TOOLS, callWorldTool, worldBlockForHandle } from "./world.mjs";
 import { apexEnabled, apexTools, dispatchToolFor, worldApex } from "./world-apex.mjs"; // stage 3: the apex `world` verb, behind WORLD_APEX
 import { HOUSEHOLD_TOOL, householdApex, householdDispatchToolFor, paperGaps } from "./household-apex.mjs"; // the third door (2026-08-15): who you are, what your house lacks
@@ -460,6 +461,20 @@ async function handleMessage(msg, ctx) {
             hint: `${name} needs your own identity at this door — sign in with GitHub, or use a household key minted at the key desk (postmark.town/join)` }, null, 1) }],
           isError: true,
         });
+      }
+      // The harbor write gate (Keemin-ruled 2026-08-16, harbor-gate.mjs): an
+      // unsettled household reads everything and keeps only the ephemeral
+      // voice. The `household` verb is exempt HERE because householdApex gates
+      // its own paper acts — its arrival acts (begin/declare/add-resident)
+      // must keep answering.
+      if (writeShaped(name, args) && ctx.key && name !== "household") {
+        const gatedVerb = name === "world" ? (dispatchToolFor(args?.do) ?? "world") : name;
+        if (harborGated(ctx.key, gatedVerb)) {
+          return rpcResult(msg.id, {
+            content: [{ type: "text", text: JSON.stringify({ error: "bounce", defect: HARBOR_BOUNCE.defect, hint: HARBOR_BOUNCE.hint }, null, 1) }],
+            isError: true,
+          });
+        }
       }
       // Visitor scope: a signed-in account with no household reads the whole town
       // and may declare_household or request_residency — but no other write acts

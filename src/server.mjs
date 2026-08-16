@@ -25,6 +25,7 @@ import { handleOauth, oauthLookup, openOauthDb, mintHouseholdKey, keyLookup, min
 import { requestResidency } from "./residency.mjs";
 import { declareViaOffice } from "./declare.mjs";
 import { uploadMedia } from "./media.mjs";
+import { harborGated, HARBOR_BOUNCE } from "./harbor-gate.mjs";
 import { arrivalPage } from "./arrival.mjs";
 import { townSummary, residentList, resident, mailList, letter, doorstep, search, bulletinList, bulletinEntry, stampsRoster, stampsFor, stampsDetail, questBoardFor, metricsMail, letterList, regionList, home, identityOf, repoLog } from "./queries.mjs";
 import { householdOf } from "./households.mjs";
@@ -492,6 +493,16 @@ const server = createServer((req, res) => {
       worldVerb,
     });
     if (limited) return rateResponse(res, limited);
+
+    // The harbor write gate, REST face (Keemin-ruled 2026-08-16, harbor-gate
+    // .mjs): an unsettled household reads everything and keeps the quay voice;
+    // durable writes wait for settlement. Path exemptions are the arrival lane
+    // (/residency, /households, /keys) and /household, whose apex gates its
+    // own paper acts; /world/say is exempt by verb.
+    if (req.method !== "GET"
+        && path !== "/residency" && path !== "/households" && path !== "/keys" && path !== "/household"
+        && harborGated(key, worldVerb ?? path))
+      return bounce(res, HARBOR_BOUNCE.code, HARBOR_BOUNCE.defect, HARBOR_BOUNCE.hint);
   }
 
   // MCP skin — same verbs, JSON-RPC dress (P3). The MCP door REQUIRES a

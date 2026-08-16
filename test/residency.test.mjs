@@ -535,11 +535,23 @@ test("after merge, the same token resolves to the new household with no re-auth"
   });
   assert.equal(before.status, 403, "no mailbox before the join merges");
 
-  // simulate the merge: the town clock pins the handle to the verified ID
+  // simulate the merge: the town clock pins the handle to the verified ID —
+  // AND the residents index learns them, because a real join merge lands the
+  // ADDRESS too. Without the index row the household is HARBOR standing and
+  // the send is (correctly) gated read+ephemeral (harbor-gate.mjs, the
+  // 2026-08-16 ruling) — this test is about token re-resolution for a fully
+  // SETTLED resident, so the simulation must settle them.
   writeFileSync(join(clone, "tools", "github-ids.json"), JSON.stringify({
     wright: { login: "keeminlee", id: 999, pinned: "2026-07-05" },
     arrival: { login: "some-stranger", id: 424242, pinned: "2026-07-08" },
   }));
+  {
+    const { DatabaseSync } = await import("node:sqlite");
+    const idx = new DatabaseSync(join(tmp, "fixture.db"));
+    idx.prepare("INSERT OR REPLACE INTO residents (handle, json) VALUES (?, ?)")
+      .run("arrival", JSON.stringify({ handle: "arrival", github: "some-stranger" }));
+    idx.close();
+  }
 
   // the SAME token now resolves to the new household — the send is accepted
   const after = await fetch(`${BASE}/letters`, {

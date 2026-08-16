@@ -93,7 +93,18 @@ export function householdFor(clone, db, ghId, ghLogin) {
       if (bound === login) handles.add(r.handle);
     }
   }
-  return handles.size ? { household: ghLogin ?? String(ghId), handles } : null;
+  if (!handles.size) return null;
+  // The arrival-ladder stamp (Keemin-ruled 2026-08-16): a household none of
+  // whose handles stand in the residents index lives at the HARBOR — read +
+  // ephemeral until settlement (harbor-gate.mjs). Recomputed every lookup like
+  // everything else here, so the stamp falls off by itself the moment the
+  // Registrar lands a handle ashore.
+  let settled = false;
+  try {
+    const q = db.prepare("SELECT 1 FROM residents WHERE handle = ?");
+    for (const h of handles) if (q.get(h)) { settled = true; break; }
+  } catch { settled = true; /* an unreadable index must never widen the gate */ }
+  return { household: ghLogin ?? String(ghId), handles, ...(settled ? {} : { harbor: true }) };
 }
 
 // ── bearer lookup (the second auth source; server checks OFFICE_KEYS first) ──
@@ -180,7 +191,12 @@ export function berthLookup(odb, db, clone, token) {
   // the upgrade happens the minute the declaration lands, with no re-auth.
   if (row.cosigned_gh_id && db && clone) {
     const hh = householdFor(clone, db, row.cosigned_gh_id, row.cosigned_gh_login);
-    if (hh) return { ...hh, ghId: row.cosigned_gh_id, ghLogin: row.cosigned_gh_login, keyKind: "berth-upgraded", berth: row.slug };
+    // A HARBOR household keeps the quay voice (berth + slug ride along, so
+    // worldSay's berth branch speaks as berth-<slug>, label intact); a SETTLED
+    // household sheds the berth marker entirely — its residents speak embodied,
+    // from where they stand, like anyone else ashore.
+    if (hh) return { ...hh, ghId: row.cosigned_gh_id, ghLogin: row.cosigned_gh_login, keyKind: "berth-upgraded",
+      ...(hh.harbor ? { berth: row.slug, slug: row.slug } : {}) };
   }
   return {
     berth: true, slug: row.slug,
