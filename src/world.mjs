@@ -30,7 +30,7 @@ import {
   stateForKey,
 } from "./world-branches.mjs";
 import { WORLD_STAKE_TOOLS, callWorldStakeTool, worldPortfolioStakeSlice } from "./world-stake.mjs"; // P3 draft, append-shaped
-import { classNames, classRoster } from "./world-classes.mjs"; // which classes exist — read from the record, never held
+import { classNames, classRoster, classDials } from "./world-classes.mjs"; // which classes exist — read from the record, never held
 import { HOLD_TOOLS, callHoldTool } from "./world-hold.mjs"; // the object primitive: who holds what
 import { createVoices, EARSHOT_M } from "./voices.mjs"; // earshot: speech at a position (the party line)
 import { householdOf } from "./households.mjs"; // the human speaker's label wears the town's name, never the login
@@ -1573,14 +1573,25 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
   // failure.
   let result;
   if (movementV2Enabled()) {
+    // The stride is LAW ON THE RECORD (decision 008b, 2026-08-16): the
+    // departure class's own dial, read at act time and stamped on the row —
+    // amending the mark changes future departures only; no in-flight walker
+    // ever re-derives. Fallback is deliberate and quiet-LOUD: an unstamped
+    // row derives at the clone's pre-008b legacy constant, and `pace: null`
+    // in the reply is the visible sign the dial was unreadable.
+    let pace = null;
+    try {
+      const d = Number(classDials("departure")?.pace_km_per_crossing);
+      if (Number.isFinite(d) && d > 0 && d <= 1000) pace = d;
+    } catch { /* dial unreadable — the legacy constant derives */ }
     const store = openDynamic();
     try {
       declareMovement(store, {
         actor: who, from, toward, crossing: at,
-        within: targetExtent, toMark: targetMarkId, declaredBy: who,
+        within: targetExtent, toMark: targetMarkId, declaredBy: who, pace,
       });
     } finally { store.close(); }
-    result = { position: positionAt({ from, toward, at, targetExtent, targetMarkId }, at), movement: { record: "dynamic.db/movements", crystallizes: "STATE/log/ at the next crossing-save" } };
+    result = { position: positionAt({ from, toward, at, targetExtent, targetMarkId, pace }, at), pace, movement: { record: "dynamic.db/movements", crystallizes: "STATE/log/ at the next crossing-save" } };
   } else {
     const exec = join(HERE, "walk-exec.mjs");
     const env = { ...process.env, WORLD_CLONE: worldClone };
