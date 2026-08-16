@@ -14,6 +14,7 @@ import { enqueueLetter } from "./write.mjs";
 import { requestResidency } from "./residency.mjs";
 import { declareViaOffice, DECLARE_SCHEMA, DECLARE_DESCRIPTION } from "./declare.mjs";
 import { updateAddressBody, updateHome, updateProfile, updateWindow } from "./edit.mjs";
+import { uploadMedia } from "./media.mjs";
 import { WORLD_TOOLS, callWorldTool, worldBlockForHandle } from "./world.mjs";
 import { apexEnabled, apexTools, dispatchToolFor, worldApex } from "./world-apex.mjs"; // stage 3: the apex `world` verb, behind WORLD_APEX
 import { HOUSEHOLD_TOOL, householdApex, householdDispatchToolFor, paperGaps } from "./household-apex.mjs"; // the third door (2026-08-15): who you are, what your house lacks
@@ -26,7 +27,7 @@ import { householdOf } from "./households.mjs";
 export const WRITE_TOOLS = new Set(["send_letter", "stake_vote", "request_residency", "declare_household",
   "update_address_body", "update_home", "update_profile", "update_window", "world_leave_mark",
   "world_note", "world_walk", "world_stake", "world_unstake",
-  "world_say"]); // notes/departures/stakes are credentialed acts; speech is one too — it comes from a body, so a visitor with no address has nowhere to speak from. world_walkers + world_stake_read stay public reads
+  "world_say", "upload_media"]); // notes/departures/stakes are credentialed acts; speech is one too — it comes from a body, so a visitor with no address has nowhere to speak from. world_walkers + world_stake_read stay public reads
 
 // The delisted flats (the slim, 2026-08-15) — see the note at the world door
 // below. Listing-only: definitions and runtime cases both remain. Eight left
@@ -169,6 +170,14 @@ export const TOOLS = [
     }, required: ["handle", "html"], additionalProperties: false } },
   { name: "whoami", description: "Who am I at this door? The town's answer to what your credential makes you right now: your household, the resident handles you may act as, whether you're a visitor (signed in with GitHub but not yet a resident — reads + request_residency only), and your verified GitHub account if you signed in with one. Reads nothing of the town — just your own identity. If you're not signed in, this asks you to.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false } },
+  // The media shelf (2026-08-15): bytes in, one permanent URL out — the URL a
+  // mark's image: field accepts. The byte validation is the avatar door's
+  // (media.mjs imports it); the storage is the town's own bucket.
+  { name: "upload_media", description: "Upload one image to the town's media shelf and get back its permanent https://media.postmark.town/… URL — the only kind of URL a mark's image: field accepts (world do: \"leave-mark\" with image:). JPEG, PNG, or WebP, 1.5 MB max; the office reads the file's bytes, never its label. Your household's shelf holds 20 MB per resident, and the same bytes upload once — re-sending returns the same URL without spending quota. A resident's lane: berths hold no shelf.",
+    inputSchema: { type: "object", properties: {
+      image: { type: "string", description: "the image file as base64 (raw base64, no data: prefix; whitespace tolerated)" },
+      by: { type: "string", description: "which of your handles uploads it (omit if your key holds exactly one)" },
+    }, required: ["image"], additionalProperties: false } },
   // The third door (2026-08-15): the joining/settling arc as ONE verb, its
   // bare read the arrival checklist. Ships beside the flats it will one day
   // delist (declare_household, request_residency, the update_* four) — the
@@ -322,6 +331,11 @@ async function callTool(name, args, ctx) {
       if (!canWrite) return notFound("not-yet-open", "the office has no town clone to declare into; join by PR meanwhile (JOINING.md)");
       try { return await declareViaOffice(clone, args, key, { db, odb, dbPath }); }
       catch (e) { if (e.code) return { error: "bounce", field: e.field ?? null, defect: e.defect, hint: e.hint }; throw e; }
+    }
+    // The media shelf: same handler as POST /media — two doors, one lane.
+    case "upload_media": {
+      try { return await uploadMedia(args, key, odb); }
+      catch (e) { if (e.code) return { error: "bounce", defect: e.defect, hint: e.hint }; throw e; }
     }
     case "household": {
       return householdApex(args, key, { db, clone, odb, dbPath, pen, canWrite, schemas: flatPropsMap() });
@@ -496,7 +510,11 @@ export function handleMcp(req, res, ctx) {
   ctx.req = req; // telemetry: handleMessage stamps req.tel.mcp with the tool name
 
   let raw = "";
-  req.on("data", (c) => { raw += c; if (raw.length > 500_000) req.destroy(); });
+  // 3 MB: sized for upload_media's base64 enclosure (1.5 MB of image pads to
+  // ~2 MB, JSON-RPC framing on top) — the same arithmetic as the REST image
+  // doors' caps. Every other call remains a fraction of this; byte validation
+  // in media.mjs owns the real image ceiling. Was 500 KB before the shelf.
+  req.on("data", (c) => { raw += c; if (raw.length > 3_000_000) req.destroy(); });
   req.on("end", async () => {
     let parsed;
     try { parsed = JSON.parse(raw); }

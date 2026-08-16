@@ -268,7 +268,7 @@ test("MCP initialize → protocol + instructions", async () => {
   assert.match(body.result.instructions, /The reading law/, "the handshake carries the reading law");
 });
 
-test("MCP tools/list, apex OFF: the full 40 — the slim's delist is apex-conditioned and does not apply", async () => {
+test("MCP tools/list, apex OFF: the full 41 — the slim's delist is apex-conditioned and does not apply", async () => {
   const { body } = await rpc("tools/list");
   const names = body.result.tools.map((t) => t.name);
   // 38 → 40: world_hold + world_holdings (the object primitive, 2026-08-14).
@@ -280,17 +280,18 @@ test("MCP tools/list, apex OFF: the full 40 — the slim's delist is apex-condit
   // + `world` = 32) is asserted in world-apex.test.mjs.
   // 39 → 40: the `household` verb (the third door, 2026-08-15) — unconditional,
   // additive, not flag-gated.
+  // 40 → 41: upload_media (the media shelf, 2026-08-15) — unconditional.
   // NOTE: this exact total breaks for whoever adds the next tool, whatever it is
   // — the named-tools loop below is the assertion that actually says something,
   // since it fails when a tool GOES MISSING rather than when one is added.
-  assert.equal(names.length, 40);
+  assert.equal(names.length, 41);
   assert.ok(!names.includes("request_blessing"), "request_blessing's delist is unconditional");
   assert.ok(!names.includes("world"), "no apex tool with the flag off");
   assert.ok(names.includes("household"), "the third door stands regardless of the world flag");
   for (const n of ["read_town", "read_doorstep", "send_letter", "stake_vote", "read_votes",
     "read_metrics", "list_letters", "list_regions", "read_home", "request_residency",
     "declare_household", // join-as-declaration: the front door (2026-08-14)
-    "update_address_body", "update_home", "update_profile", "update_window", "list_commits", "whoami",
+    "update_address_body", "update_home", "update_profile", "update_window", "list_commits", "whoami", "upload_media",
     "read_quests", "world_orient", "world_open_your_eyes", "world_investigate",
     "world_my_marks", "world_leave_mark", "world_note", "world_walk", "world_walkers",
     "world_stake", "world_unstake", "world_stake_read",

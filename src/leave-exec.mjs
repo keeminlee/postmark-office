@@ -163,7 +163,10 @@ async function main() {
   // class/ask/reward/status: the bounty grammar (founder-ruled 2026-08-11) — the
   // door validated them; here they only need to reach the record, or the board's
   // reader can never see a resident's notice.
-  const fm = ["kind", "by", "date", "at", "extent", "points", "slot", "value", "class", "ask", "reward", "status"]
+  // image: the media-shelf pointer (2026-08-15) — the door validated the URL's
+  // host; here it only needs to reach the record, or investigate can never
+  // return it and the site can never render it.
+  const fm = ["kind", "by", "date", "at", "extent", "points", "slot", "value", "class", "ask", "reward", "status", "image"]
     .filter((k) => fileRec[k] !== undefined && fileRec[k] !== null && fileRec[k] !== "")
     .map((k) => `${k}: ${fmtVal(fileRec[k])}`).join("\n");
   const record = `---\n${fm}\n---\n\n${String(p.body).trim()}\n`;

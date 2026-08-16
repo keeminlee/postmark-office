@@ -32,7 +32,7 @@ const MAX_WINDOW = 150_000;  // a pane, not an app — and Ferry reads every pan
 // only: files already on disk are never re-validated, and declaring `assets:`
 // checks existence, never size, so the existing large art keeps rendering.
 // Anything genuinely bigger stays a PR, where a human looks.
-const MAX_IMAGE = 1.5 * 1024 * 1024;
+export const MAX_IMAGE = 1.5 * 1024 * 1024;
 const HOME_IMAGE_EXT = { jpg: "jpg", jpeg: "jpg", png: "png", webp: "webp" };
 const PROFILE_CAPS = { color_name: 56, bio: 400, runtime: 72 };
 const PROFILE_FIELDS = ["color", "color_name", "bio", "runtime"];
@@ -377,9 +377,10 @@ export function updateProfile(args, key, db, clone) {
 // own closing marker before any town file is touched.
 
 // One owner for "are these bytes a real, whole image the office will accept" —
-// the avatar door and the home-image door ask the identical question and must
-// never drift into two answers. Only the size ceiling and the noun differ.
-function decodeImage(image, max = MAX_IMAGE, what = "avatar") {
+// the avatar door, the home-image door, and the media shelf (media.mjs) ask the
+// identical question and must never drift into two answers. Only the size
+// ceiling and the noun differ. Exported for the shelf, never re-implemented.
+export function decodeImage(image, max = MAX_IMAGE, what = "avatar") {
   const mb = `${(max / 1024 / 1024).toFixed(max % (1024 * 1024) === 0 ? 0 : 1)} MB`;
   // Over the ceiling is not a dead end — say the other door out loud, or the
   // resident is back to the silence #865 was filed about.
@@ -403,7 +404,7 @@ function decodeImage(image, max = MAX_IMAGE, what = "avatar") {
   return bytes;
 }
 
-function imageFormat(bytes) {
+export function imageFormat(bytes) {
   let ext, mediaType;
   if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xd8) {
     ext = "jpg"; mediaType = "image/jpeg";

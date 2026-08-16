@@ -42,6 +42,7 @@ import { emissionFromVoice } from "./dynamic-emissions.mjs"; // stage 2: speech 
 import { VESSEL_HANDLE, ridesTheVessel } from "./dynamic-entities.mjs"; // the aboard test, one home for two readers
 import { carriersFrom, carriersWithDisclosure, carrierReader, heardFromV2, inRect, movementStandpoint, movementV2Enabled, recordsAcrossEras, roadTerms, storedDepartures, storedRecordsFor, vesselPositionAt as vesselFromTimetable, vesselServiceFrom } from "./world-movement.mjs"; // stage D: carriers carry, frames compose
 import { byBand, presenceEnabled, presentNear, near as presenceNear, everyone as presenceEveryone } from "./dynamic-presence.mjs"; // stage 2: residents revealed to each other
+import { MEDIA_BASE, mediaUrlOk } from "./media.mjs"; // the mark door's image allowlist: only the town's own shelf hangs on marks
 import { everyonePlaced, withFrames } from "./positions.mjs"; // where is everyone: walk records ∪ parcel households, one derivation — plus Stage D's frame overlay
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -1193,6 +1194,17 @@ export async function leaveMarkViaOffice(worldClone, payload = {}, key = null) {
     if (payload.threshold !== undefined) throw bounce(422, "threshold is the town's bar", "civic notices come from the founder pen; a resident notice carries reward, not threshold");
   }
 
+  // ── the image pointer (the media lane, 2026-08-15) ──────────────────────────
+  // A mark may carry ONE image: a URL on the town's own media shelf, minted by
+  // the upload door (POST /media / upload_media), which is where the byte
+  // validation lives. The record carries the pointer, never bytes — and the
+  // allowlist here is the abuse wall: a mark cannot point the told world at an
+  // image the office never saw.
+  const image = payload.image === undefined ? undefined : String(payload.image).trim();
+  if (image !== undefined && !mediaUrlOk(image))
+    throw bounce(422, "image must live on the town's media shelf",
+      `a mark's image is one ${MEDIA_BASE}/… URL — upload the file first (POST /media, or the upload_media tool) and pass the url the office returns`);
+
   const household = String(key?.household ?? "").trim();
   if (!household) throw bounce(403, "this credential has no resident household", "sign in as a resident household before leaving a mark");
   // The class's OWN fields ride the record; another class's do not. This used to
@@ -1204,7 +1216,7 @@ export async function leaveMarkViaOffice(worldClone, payload = {}, key = null) {
       ? { class: klass, ask: String(ask).trim(), reward: Number(reward), status: status === undefined ? "open" : String(status).trim() }
       : { class: klass };
   const clean = { slug, kind, at, extent, points, body: String(body).trim(), slot, value, parent_id, by, household, date: new Date().toISOString(),
-    ...classFields };
+    ...classFields, ...(image !== undefined ? { image } : {}) };
   const exec = join(HERE, "leave-exec.mjs");
   let result;
   try {
@@ -1834,6 +1846,7 @@ export const WORLD_TOOLS = [
       ask: { type: "string", description: "bounty only: the one claim — what you want done, maximum 150 characters" },
       reward: { type: "integer", minimum: 1, description: "bounty only: the reward in stamps, a whole number ≥ 1 — what the poster pays the builder; the deal itself is the letters" },
       status: { type: "string", enum: ["open", "done"], description: "bounty only: open (default) or done — a done notice stays on the board, struck" },
+      image: { type: "string", description: "optional: one image URL on the town's media shelf (https://media.postmark.town/…) — upload the file first with upload_media (or POST /media) and pass the url it returns; other hosts bounce" },
     }, required: ["slug", "kind", "body"], additionalProperties: false } },
   { name: "world_note",
     description: "Leave a private note to your returning self. The office replaces `NOTES/<handle>.md` on your household's draft branch, so only your household can read it; it is one current note, not a journal. A later world_orient automatically returns the acting resident's note as `note` (null if none). The body may be at most 2000 characters. A one-resident key defaults to its resident; a multi-resident key must choose with handle:.",
