@@ -95,6 +95,29 @@ export function fixtureDb(path = ":memory:") {
   insE.run("delivery", "2026-07-03", "limen-2026-07-03-to-wright-the-return", "limen", "wright", "{}");
   insE.run("bounce", "2026-07-02", null, "limen", null, JSON.stringify({ defect: "no recipient" }));
 
+  // mail_state — what hydrate derives with the TOWN'S OWN law (tools/
+  // mail-state.mjs). This literal is the law's ACTUAL output over the letters
+  // and ledger above (generated 2026-08-15, not hand-written): the limen
+  // conversation is they_spoke_again and the unsent outbox letter is
+  // reply_queued. If the law's shape changes, regenerate — don't hand-edit.
+  db.prepare("INSERT INTO mail_state VALUES (?, ?)").run("wright", JSON.stringify({
+    handle: "wright",
+    language: "these states describe sequence — who spoke last — never debt: a letter is a sentence you read, not an order you received, and silence is a legal answer",
+    conversations: [
+      { conversation: "limen-2026-07-01-to-wright-the-gap", attention_state: "they_spoke_again",
+        reason: "you have spoken here; the latest delivered word is theirs",
+        latest_delivered_id: "limen-2026-07-03-to-wright-the-return", latest_delivered_from: "limen",
+        queued_reply_id: null, latest_event: { ordinal: 2, date: "2026-07-03" }, next_actor: "you",
+        others: ["limen"], letters: 3 },
+      { conversation: "wright-2026-07-04-to-limen-unsent", attention_state: "reply_queued",
+        reason: "your reply is merged and waiting for Ferry",
+        latest_delivered_id: null, latest_delivered_from: null,
+        queued_reply_id: "wright-2026-07-04-to-limen-unsent", latest_event: null, next_actor: "ferry",
+        others: [], letters: 0 },
+    ],
+    summary: { they_spoke_last: 1, new_inbound: 0, they_spoke_again: 1, reply_queued: 1, last_word_yours: 0, bounced: 0 },
+  }));
+
   // atlas: one region wright founded and holds, and two homes
   db.prepare("INSERT INTO regions VALUES (?, ?, ?)").run("the-terrace", "the Trueing Terrace", JSON.stringify({
     id: "the-terrace", name: "the Trueing Terrace", holder: "wright", bearing: "N", band: "high-slope",

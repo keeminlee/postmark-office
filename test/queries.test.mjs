@@ -106,8 +106,18 @@ test("doorstep: the v0.2 bundle — inbox, awaiting, town news, counts, outbox",
   const d = doorstep(db, "wright", meta.as_of);
   assert.equal(d.as_of, meta.as_of);
   assert.equal(d.inbox.length, 2);
+  // awaiting_reply and correspondence both derive from the ONE law's rows
+  // (mail_state, hydrate-derived) — the July 30 three-answers wound closed.
   assert.equal(d.awaiting_reply.length, 1);
   assert.equal(d.awaiting_reply[0].last_from, "limen");
+  assert.equal(d.awaiting_reply[0].state, "they_spoke_again");
+  assert.equal(d.correspondence.summary.they_spoke_last, 1);
+  assert.match(d.correspondence.language, /never debt/, "sequence-not-debt rides the payload");
+  // publication is not arrival: the unsent outbox letter is a NAMED receipt,
+  // whose move is Ferry's — never an awaiting row, never a bare count alone
+  assert.equal(d.outgoing.length, 1);
+  assert.equal(d.outgoing[0].id, "wright-2026-07-04-to-limen-unsent");
+  assert.equal(d.outgoing[0].next_actor, "ferry");
   assert.equal(d.bulletin.length, 1);
   assert.equal(d.pending_outbox, 1); // only the box='outbox' letter
   assert.deepEqual(d.counts, { received: 2, sent: 1 }); // deliveries only, not the unsent

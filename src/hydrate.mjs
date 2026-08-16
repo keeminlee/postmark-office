@@ -137,6 +137,29 @@ for (const b of town.bulletin ?? []) insBulletin.run(b.slug, JSON.stringify(b));
 const insLedger = db.prepare("INSERT INTO ledger (kind, date, id, from_h, to_h, json) VALUES (?,?,?,?,?,?)");
 for (const e of town.ledger) insLedger.run(e.kind, e.date ?? null, e.id ?? null, e.from ?? null, e.to ?? null, JSON.stringify(e));
 
+// Correspondence state — derived with the TOWN'S OWN law (imported live from
+// the checkout, like stamps: one source of truth for the rule; HAL's "The
+// Doorstep Must Tell the Truth", 2026-07-30 — one derivation, every surface).
+// The events feed straight from readTown's parse, adapted by the law's own
+// fromTownLedger so the bounce grammar never grows a second reading. Absent
+// tool (an older checkout) leaves the table empty and the doorstep says
+// correspondence: null honestly — the office NEVER falls back to a private
+// second law; that fallback was the July 30 wound itself.
+const mailStateTool = join(TOWN, "tools", "mail-state.mjs");
+if (existsSync(mailStateTool)) {
+  const { pathToFileURL } = await import("node:url");
+  const { mailState, fromTownLedger } = await import(pathToFileURL(mailStateTool));
+  const ledgerEvents = fromTownLedger(town.ledger);
+  const insMailState = db.prepare("INSERT OR REPLACE INTO mail_state (handle, json) VALUES (?, ?)");
+  for (const r of town.residents) {
+    try { insMailState.run(r.handle, JSON.stringify(mailState({ handle: r.handle, letters: town.letters, ledgerEvents }))); }
+    catch (e) { console.warn(`WARN: mail-state failed for ${r.handle} (${String(e?.message ?? e).slice(0, 120)})`); }
+  }
+  console.log(`  mail-state: derived for ${town.residents.length} residents by the town's own law`);
+} else {
+  console.warn("WARN: town checkout has no tools/mail-state.mjs — doorsteps will say correspondence: null");
+}
+
 // Stamps — folded with the TOWN'S OWN tool (imported live from the checkout,
 // never vendored: the ledger grammar and its fold stay one source of truth).
 const stampTool = join(TOWN, "tools", "stamp-mint.mjs");

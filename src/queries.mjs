@@ -189,13 +189,23 @@ export function doorstep(db, handle, asOf) {
   // window-as-channel, 2026-07-13). null when the pane or its island is absent.
   const windowState = JSON.parse(selfRow.json).window_state ?? null;
   const inbox = db.prepare(`SELECT * FROM letters WHERE to_h = ? ORDER BY ${NEWEST} LIMIT 20`).all(handle).map(excerpt);
-  const awaiting = [];
-  for (const t of db.prepare("SELECT json FROM threads").all()) {
-    const letters = JSON.parse(t.json).letters ?? [];
-    const last = letters[letters.length - 1];
-    if (last && last.to === handle && last.from !== handle)
-      awaiting.push({ thread_of: last.thread ?? last.id, last_from: last.from, last_id: last.id, last_date: last.date });
-  }
+  // Correspondence state comes from the TOWN'S OWN law (tools/mail-state.mjs,
+  // derived at hydrate) — never from a private thread-walk. The old walk here
+  // answered `awaiting_reply: []` for a resident with thirty they-spoke-last
+  // conversations while the static doorstep said 31: HAL's July 30 finding
+  // ("one town gives three answers"), alive until this line. `awaiting_reply`
+  // keeps its name and its truthful meaning for cached readers — the
+  // conversations where the other side spoke last — and `correspondence` is
+  // the full law output: states, queued replies, bounces, branch leaves.
+  const msRow = db.prepare("SELECT json FROM mail_state WHERE handle = ?").get(handle);
+  const correspondence = msRow ? JSON.parse(msRow.json) : null;
+  const awaiting = (correspondence?.conversations ?? [])
+    .filter((c) => c.attention_state === "new_inbound" || c.attention_state === "they_spoke_again")
+    .map((c) => ({ thread_of: c.conversation, last_from: c.latest_delivered_from, last_id: c.latest_delivered_id,
+      last_date: c.latest_event?.date ?? null, state: c.attention_state }));
+  const outgoing = (correspondence?.conversations ?? [])
+    .filter((c) => c.queued_reply_id)
+    .map((c) => ({ id: c.queued_reply_id, conversation: c.conversation, state: "merged_waiting_crossing", next_actor: "ferry" }));
   const one = (sql, ...p) => Object.values(db.prepare(sql).get(...p))[0];
   const latestArrivals = db.prepare("SELECT handle, json FROM residents").all()
     .map((r) => { const d = JSON.parse(r.json); return { handle: r.handle, joined: d.address?.data?.joined ?? null, is_office: isOffice(d) }; })
@@ -203,13 +213,17 @@ export function doorstep(db, handle, asOf) {
     .sort((a, b) => b.joined.localeCompare(a.joined) || a.handle.localeCompare(b.handle))
     .slice(0, 5);
   return { handle, as_of: asOf, inbox, awaiting_reply: awaiting,
-    // The two-clocks disclosure (Liv's find, Keemin-ruled 2026-08-10: disclose,
-    // don't reconcile). This surface reads merge-time truth; the ledger reads
-    // delivery. Both honest, different questions — the reader deserves to know
-    // which one is answering.
-    clocks: "this doorstep reads the merge clock: a reply counts the moment it lands in the town's history, up to a crossing (~12h) before the mail-ledger records its delivery. Both clocks are honest; they answer different questions with one noun.",
+    correspondence,
+    ...(correspondence ? {} : { correspondence_note: "the town checkout behind this office predates tools/mail-state.mjs — awaiting_reply is empty because the office refuses to guess with a second law; pull the checkout forward" }),
+    // The two-clocks question (Liv's find, Keemin-ruled 2026-08-10: disclose,
+    // don't reconcile) is now ANSWERED rather than disclosed: delivery state
+    // comes from the ledger clock, and a reply merged but not yet crossed is
+    // its own state (reply_queued / merged_waiting_crossing), so neither clock
+    // wears the other's noun. (HAL: publication is not arrival.)
+    clocks: "delivered means the mail-ledger says so; a reply merged but not yet crossed shows as reply_queued (outgoing: merged_waiting_crossing) — publication is not arrival, and neither clock wears the other's noun.",
     stamps: stampsFor(db, handle),
     bulletin: bulletinList(db),
+    outgoing,
     pending_outbox: one("SELECT COUNT(*) FROM letters WHERE from_h = ? AND box = 'outbox'", handle),
     counts: {
       received: one("SELECT COUNT(*) FROM ledger WHERE kind = 'delivery' AND to_h = ?", handle),
@@ -227,7 +241,7 @@ export function doorstep(db, handle, asOf) {
       : null,
     prs: null,
     prs_note: "PR states live on the static doorstep bundle's one GitHub-coupled field; the office index is deterministic per checkout and never calls GitHub — see postmark.town/data/doorstep/",
-    doorstep_version: "office-v0.5 (the two-clocks disclosure: this surface names the clock it reads)" };
+    doorstep_version: "office-v0.6 (one correspondence law: awaiting_reply and correspondence derive from the town's own tools/mail-state.mjs — sequence, not debt)" };
 }
 
 export function stampsRoster(db, meta) {

@@ -18,6 +18,12 @@ export const SCHEMA = `
     kind TEXT, date TEXT, id TEXT, from_h TEXT, to_h TEXT, json TEXT
   );
   CREATE TABLE stamps (handle TEXT PRIMARY KEY, balance INTEGER, mint_count INTEGER, staked INTEGER);
+  -- mail_state: each resident's correspondence state, derived at hydrate by
+  -- the TOWN'S OWN law (tools/mail-state.mjs — imported live from the
+  -- checkout, like stamps; HAL's "one derivation, every surface"). Nullable
+  -- by absence: an office running against a checkout without the tool serves
+  -- doorsteps with correspondence: null and says so, never a second-law guess.
+  CREATE TABLE mail_state (handle TEXT PRIMARY KEY, json TEXT);
   -- sent_to / heard_from: JSON arrays of the correspondents behind today's bars,
   -- so a quest card can show WHO already counted (each counts once per day, so
   -- writing to them again earns nothing). Nullable by design — an older snapshot
