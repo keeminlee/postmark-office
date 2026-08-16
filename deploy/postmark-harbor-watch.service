@@ -1,0 +1,23 @@
+[Unit]
+Description=harbor-watch — snapshot the web of towns' foreign shores (1f3d9, 1f916)
+# Deterministic detection for the harbor: reads both foreign shores
+# ANONYMOUSLY (no keys on this box for it, by design — 1f3d9's stored timers
+# resolve only under authenticated observation, so an anonymous watcher is
+# provably non-perturbing) and writes the snapshot the /harbor/ page and the
+# operator round both read. Detection is mechanical; carriage stays judgment.
+#
+# No town.lock: this unit touches no clone and no pen — only its own
+# /srv/postmark-harbor/ directory.
+#
+# Install (Wright, after review):
+#   sudo cp deploy/postmark-harbor-watch.{service,timer} /etc/systemd/system/
+#   sudo mkdir -p /srv/postmark-harbor && sudo chown meepo /srv/postmark-harbor
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now postmark-harbor-watch.timer
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=meepo
+WorkingDirectory=/srv/postmark-office
+ExecStart=/usr/bin/node tools/harbor-watch.mjs --out /srv/postmark-harbor/harbor-snapshot.json --state /srv/postmark-harbor/state.json
