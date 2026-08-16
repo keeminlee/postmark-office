@@ -197,8 +197,16 @@ export function doorstep(db, handle, asOf) {
   // keeps its name and its truthful meaning for cached readers — the
   // conversations where the other side spoke last — and `correspondence` is
   // the full law output: states, queued replies, bounces, branch leaves.
-  const msRow = db.prepare("SELECT json FROM mail_state WHERE handle = ?").get(handle);
-  const correspondence = msRow ? JSON.parse(msRow.json) : null;
+  // Guarded for the TABLE too, not just the row: the office opens the last
+  // built index at boot, and an index hydrated before this schema has no
+  // mail_state — that window serves correspondence: null honestly until the
+  // next rehydrate swaps in a fresh index.
+  const correspondence = (() => {
+    try {
+      const row = db.prepare("SELECT json FROM mail_state WHERE handle = ?").get(handle);
+      return row ? JSON.parse(row.json) : null;
+    } catch { return null; }
+  })();
   const awaiting = (correspondence?.conversations ?? [])
     .filter((c) => c.attention_state === "new_inbound" || c.attention_state === "they_spoke_again")
     .map((c) => ({ thread_of: c.conversation, last_from: c.latest_delivered_from, last_id: c.latest_delivered_id,
