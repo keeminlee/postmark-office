@@ -153,16 +153,20 @@ const SHELF = [
     },
   },
   {
+    // ONE card for the graph, its lenses as deep links INSIDE it. This was
+    // three peer cards (console + two Lens cards), which read as three
+    // different pages of the same rank — Keemin, 2026-08-17: "I'm not sure why
+    // we have 3 different links to the graphs." The lenses are ways of LOOKING
+    // at one page (the page's own ruling), and the hub now says so with its
+    // shape: one door, four handles.
     slug: null, href: "graph/", emblem: "⌗", kind: "Console", title: "The world graph",
-    line: "world.db as one picture — every node and edge, the standing invariants painted on in red, and the law's lenses over it. A console; its numbers live on the page itself.",
-  },
-  {
-    slug: null, href: "graph/?paint=ideal", emblem: "⚖", kind: "Lens", title: "LOGOS adherence",
-    line: "The v2 gaps, live: what the law can address, what is still fields, residue and debt — the world through the law's glasses, computed from the store the office is serving right now.",
-  },
-  {
-    slug: null, href: "graph/?paint=works", emblem: "⚑", kind: "Lens", title: "The keeping works — the town's asks",
-    line: "The law's class marks and their OPEN ASKS: every action a constitutional mark advertises with no room built behind it. Red is the town asking, on purpose — the build queue, read where the law wrote it.",
+    line: "world.db as one picture — every node and edge, the standing invariants painted on in red, filters over the whole store, and the law's lenses as ways of looking at the one page.",
+    lenses: [
+      { href: "graph/", label: "standing" },
+      { href: "graph/?paint=ideal", label: "LOGOS adherence" },
+      { href: "graph/?paint=works", label: "the keeping works" },
+      { href: "graph/?paint=works&view=works", label: "the board — asks only" },
+    ],
   },
   {
     slug: null, href: "desk/", emblem: "✒", kind: "Console", title: "The Principal's Desk",
@@ -175,6 +179,15 @@ const now = Date.now();
 const roll = {};
 const cards = SHELF.map((s) => {
   if (!s.slug) {
+    // A card with lens links cannot be one big <a> — nested anchors are not
+    // HTML. The door stays the whole upper card; the lenses ride a pill row
+    // of their own below it.
+    if (s.lenses) {
+      return `<div class="card"><a class="c-door" href="${s.href}"><span class="c-em">${s.emblem}</span><div class="c-body">`
+        + `<span class="c-kind">${esc(s.kind)}</span><span class="c-title">${esc(s.title)}</span>`
+        + `<span class="c-line">${esc(s.line)}</span><span class="c-open">open →</span></div></a>`
+        + `<div class="c-lenses">${s.lenses.map((l) => `<a href="${l.href}">${esc(l.label)}</a>`).join("")}</div></div>`;
+    }
     return `<a class="card" href="${s.href}"><span class="c-em">${s.emblem}</span><div class="c-body">`
       + `<span class="c-kind">${esc(s.kind)}</span><span class="c-title">${esc(s.title)}</span>`
       + `<span class="c-line">${esc(s.line)}</span><span class="c-open">open →</span></div></a>`;
@@ -239,6 +252,13 @@ const EXTRA = `
 .c-unit{font-size:.72rem;color:var(--dim)}
 .c-sub{font-size:.7rem;color:var(--dim);margin-top:.15rem}
 .c-open{margin-top:auto;padding-top:.8rem;font-size:.74rem;color:var(--gold)}
+/* the graph card's lens row — deep links into ONE page, drawn as the same
+   pills the opsnav uses so they read as handles, not as more doors */
+.card .c-door{display:flex;flex-direction:column;flex:1;text-decoration:none;color:inherit}
+.c-lenses{display:flex;flex-wrap:wrap;gap:.3rem;padding:0 .9rem .9rem}
+.c-lenses a{text-decoration:none;color:var(--dim);border:1px solid var(--line);border-radius:999px;
+ padding:.12rem .6rem;font-size:.7rem;letter-spacing:.06em}
+.c-lenses a:hover{color:var(--gold);border-color:var(--gold)}
 .card .spark{margin-top:.4rem;width:100%;height:30px;display:block}
 .c-chips{margin-top:.55rem;display:flex;flex-wrap:wrap;gap:.1rem}
 .alert{border-left:2px solid var(--bad);padding:.4rem .8rem;margin:.9rem 0 0;font-size:.78rem;color:var(--ink);max-width:88ch}

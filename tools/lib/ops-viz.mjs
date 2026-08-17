@@ -484,9 +484,17 @@ export function kpis(tiles) {
     + `${t.spark ?? ""}</div>`).join("")}</div>`;
 }
 
+// The ops family, whole — including the two SITE-built consoles (graph, desk),
+// because a nav that lists only the box-generated half tells the reader the
+// family is smaller than it is (the graph was unreachable from every dashboard
+// until 2026-08-17).
+// SOURCE-OF-TRUTH NOTE: this list has a site-side twin in
+// `site/src/components/OpsNav.astro`, which chromes the site-built pages; the
+// two repos share no import path, so change one, change the other in the same
+// act.
 const NAV = [
   ["/ops/", "hub"], ["/ops/traffic/", "traffic"], ["/ops/git/", "git"],
-  ["/ops/economy/", "economy"], ["/ops/world/", "world"], ["/ops/desk/", "desk"],
+  ["/ops/economy/", "economy"], ["/ops/world/", "world"], ["/ops/graph/", "graph"], ["/ops/desk/", "desk"],
 ];
 export const nav = (here) => `<nav class="opsnav">${NAV.map(([h, n]) =>
   `<a href="${h}"${h === here ? ' aria-current="page"' : ""}>${n}</a>`).join("")}</nav>`;
