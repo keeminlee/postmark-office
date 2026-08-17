@@ -55,6 +55,7 @@ git -C "$WORK/town" checkout -qf "$TOWN_SHA"
 git -C "$SWEEP" fetch -qp origin '+refs/heads/*:refs/remotes/origin/*'
 WORLD_FROM="$(git -C "$SWEEP" rev-parse origin/main)"
 git -C "$SWEEP" checkout -qf -B main origin/main
+git -C "$SWEEP" clean -fdq  # a killed run leaves untracked debris; the clone is disposable
 git -C "$SWEEP" for-each-ref --format='%(refname:short) %(objectname)' 'refs/remotes/origin/draft/*' > "$WORK/tips"
 while read -r ref sha; do
   git -C "$SWEEP" branch -qf "${ref#origin/}" "$sha"
