@@ -276,11 +276,19 @@ function paintLints(findings, nodes, edges, graph) {
       method: ev.method ?? null,
       limits: ev.limits ?? null,
       // Evidence HEADS — the lint's own one-line summaries, which is what a
-      // findings panel can actually show. The rows behind them stay in the store
-      // (and in `npm run world:lints`, which prints them all).
+      // findings panel can actually show.
       evidence: heads.slice(0, 8),
       evidence_total: heads.length,
       rows_total: rows.length,
+      // The structured rows themselves, capped. The keeping-works lens reads
+      // L6's rows by contract ("the asks are L6's own rows, never recomputed
+      // here") — and a payload that shipped only rows_total left that lens
+      // confidently reporting ZERO asks beside a red L6, which is the exact
+      // shape of lie this window exists to prevent. Rows are structured facts,
+      // not prose, so they ride as the lint wrote them; the cap bounds the
+      // payload against a lint whose rows run to hundreds, and rows_total
+      // still says when the cap bit.
+      rows: rows.slice(0, 200),
       hydrated_at: f.hydrated_at ?? null,
       implicates: {
         paints: claimed.paints !== false,

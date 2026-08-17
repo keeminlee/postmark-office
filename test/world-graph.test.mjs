@@ -165,14 +165,24 @@ test("L6's three shapes are three different silences, and only one of them paint
   assert.deepEqual(b6.implicates.nodes.map((n) => n.id), ["the-town/parcel-class"]);
   assert.match(b6.implicates.nodes[0].why, /board/);
   assert.ok(bad.elements.nodes.find((n) => n.data.id === "the-town/parcel-class").data.lints.includes("L6"));
+  // the works lens' substrate: the orphan grant itself rides the payload as a
+  // structured row, so the site can read WHICH ask is open, not just how many
+  const orphan = (b6.rows || []).find((r) => r.handled === false);
+  assert.ok(orphan, "L6's unhandled grant rides the payload as a row");
+  assert.ok(Array.isArray(orphan.from) && orphan.from.includes("the-town/parcel-class"));
 });
 
-test("evidence rides as HEADS with the totals named, never as the whole row set", () => {
+test("evidence rides as HEADS with the totals named; the structured rows ride too, capped", () => {
   const view = worldGraphView({ dbPath: fixtureStore() });
   const l1 = lintOf(view, "L1");
   assert.equal(l1.evidence.length, 1);
   assert.equal(l1.evidence_total, 1);
   assert.equal(l1.rows_total, 2);
+  // The rows themselves ride now (capped at 200). The keeping-works lens reads
+  // L6's rows by contract — "the asks are L6's own rows, never recomputed
+  // here" — and a payload shipping only rows_total left that lens confidently
+  // reporting zero asks beside a red L6 (caught 2026-08-17, the step-0 pass).
+  assert.equal(l1.rows.length, 2);
   assert.match(l1.method, /implements/);
   assert.ok(l1.limits);
 });
