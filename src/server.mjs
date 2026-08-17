@@ -402,7 +402,7 @@ const server = createServer((req, res) => {
 
   // OAuth + discovery routes are unauthenticated by nature (the dance IS the
   // authentication) — they come before the bearer gate.
-  if (path.startsWith("/oauth") || path.startsWith("/.well-known/oauth-")) {
+  if (path.startsWith("/oauth") || path.startsWith("/.well-known/oauth-") || path.startsWith("/.well-known/openid-configuration")) {
     handleOauth(req, res, { odb, db, clone: TOWN_CLONE, dbPath: DB_PATH }).catch((e) => {
       if (!res.headersSent) bounce(res, 500, "the office tripped", String(e?.message ?? e).slice(0, 200));
     });
