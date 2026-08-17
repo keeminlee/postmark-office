@@ -929,7 +929,33 @@ test("lint L6: the world as it stands is GREEN — one action exposed, and it di
   const { lints } = await runLints({ dbPath, treePath: repo });
   const l6 = lints.find((l) => l.id === "L6");
   assert.equal(l6.verdict, "GREEN", l6.headline);
-  assert.deepEqual(l6.rows, [{ action: "say", from: ["the-town/sound"], handled: true }]);
+  // `for` rides every row since the actor-kind growth (2026-08-17): absent on
+  // the mark means resident — today's intent made explicit, never a guess.
+  assert.deepEqual(l6.rows, [{ action: "say", for: "resident", from: ["the-town/sound"], handled: true }]);
+});
+
+test("lint L6: an actor-kind the law names with no resolution at the door is RED, and named (the act-as-human red)", async () => {
+  on();
+  // The TDD-board method's first deliberate red: a constitutional mark minting
+  // an action FOR an actor kind the door cannot resolve. The action itself has
+  // a handler (say dispatches) — the gap is WHO may perform it, which is
+  // exactly the gap the actor seam exists to close.
+  const humanLaw = [
+    { id: "the-town/human", by: "the-town", kind: "sited", tier: "constitution", at: { x: -900, y: -760 }, extent: { w: 10, h: 10 },
+      body: "The household's human, standing beside their resident.",
+      props: { class: "human", class_version: 1, actions: [{ action: "say", for: "human", residue: "the-town/sound" }] } },
+  ];
+  const path = join(repo, "apex-l6-human.db");
+  buildStore([...MARKS, ...humanLaw], path);
+  const { runLints } = await import("../src/world-lints.mjs");
+  const { lints } = await runLints({ dbPath: path, treePath: repo });
+  const l6 = lints.find((l) => l.id === "L6");
+  assert.equal(l6.verdict, "RED");
+  assert.match(l6.headline, /say for human \(the-town\/human\)/, "the ask must name both the action and the actor kind");
+  const humanRow = l6.rows.find((r) => r.action === "say" && r.for === "human");
+  assert.equal(humanRow.handled, false, "the door has no human resolution yet — this row IS the ask");
+  const residentRow = l6.rows.find((r) => r.action === "say" && r.for === "resident");
+  assert.equal(residentRow.handled, true, "the resident's own say must not be dragged red by the human ask");
 });
 
 test("lint L6: an action law exposes with no handler behind it is RED, and named", async () => {

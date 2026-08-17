@@ -249,6 +249,12 @@ export function fieldsFor(action, declared = null) {
 // with no room behind it, and L6 goes red the moment one appears.
 export const DISPATCHABLE = Object.freeze(Object.keys(DISPATCH));
 
+// The actor kinds this door can resolve — the seam's own list (the act-as-human
+// packet, dev/act-as-human/DESIGN.md). An action the law mints `for:` a kind
+// not named here is law with no room behind it: L6's actor-kind red. "human"
+// joins when the actor seam lands; kinds grow HERE, nowhere else.
+export const RESOLVED_ACTOR_KINDS = Object.freeze(["resident", "berth"]);
+
 /** The flat tool an action dispatches to, or null. Read by the MCP door's
  *  bouncer preflight so an apex act is CHARGED as the verb it becomes — the
  *  household world-write ledger must not grow a second, uncounted door. */

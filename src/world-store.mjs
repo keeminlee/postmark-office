@@ -221,6 +221,20 @@ export const actionsOf = (attr) => {
     .filter(Boolean);
 };
 
+// The full entries, with the actor kind each grant is FOR (2026-08-17, the
+// act-as-human packet): `for:` absent means resident — today's intent made
+// explicit, never a guess. L6 reads these so an action minted for an actor
+// kind the door cannot resolve is a named red, not an invisible one.
+export const actionEntriesOf = (attr) => {
+  const list = attr?.props?.actions ?? attr?.props?.affordances;
+  return (Array.isArray(list) ? list : [])
+    .map((a) => ({
+      action: String(a?.action ?? a?.subverb ?? "").trim(),
+      for: String(a?.for ?? "resident").trim() || "resident",
+    }))
+    .filter((e) => e.action);
+};
+
 // ── the world clone, and reading it AT A SHA ─────────────────────────────────
 
 export const OFFICE_ROOT = resolve(import.meta.dirname, "..");

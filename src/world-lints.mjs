@@ -22,7 +22,7 @@
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { loadWorldGraph, geometryIndex, geometryAsOf, rectOfVersion, reachable, out, inbound, nodesWhere, isClassMark, actionsOf, DEFAULT_DB } from "./world-store.mjs";
+import { loadWorldGraph, geometryIndex, geometryAsOf, rectOfVersion, reachable, out, inbound, nodesWhere, isClassMark, actionEntriesOf, DEFAULT_DB } from "./world-store.mjs";
 
 const RED = "RED", GREEN = "GREEN", NA = "N/A";
 
@@ -391,24 +391,35 @@ export async function runLints({ dbPath = DEFAULT_DB, sources = null, engineText
   // apex queries with, and `DISPATCHABLE` is the key set of the table the door
   // dispatches on. Nothing here restates either.
   {
-    const exposed = new Map(); // action -> [class mark ids]
+    // GROWN 2026-08-17 (the act-as-human packet): a grant is per (action, FOR
+    // actor-kind), so the comparison runs per pair. The action side needs a
+    // handler in DISPATCH; the actor side needs a resolution at the door
+    // (RESOLVED_ACTOR_KINDS — the seam's own list). Either absence is law with
+    // no room behind it, and under the TDD-board method a red here is the town
+    // ASKING, on purpose — the ask's representation IS the gap.
+    const exposed = new Map(); // "action␟for" -> { action, for, ids }
     for (const { id, attr } of nodesWhere(graph, isClassMark))
-      for (const act of actionsOf(attr)) {
-        if (!exposed.has(act)) exposed.set(act, []);
-        exposed.get(act).push(id);
+      for (const e of actionEntriesOf(attr)) {
+        const k = `${e.action}${e.for}`;
+        if (!exposed.has(k)) exposed.set(k, { action: e.action, for: e.for, ids: [] });
+        exposed.get(k).ids.push(id);
       }
     // The door is loaded only when there is a question to ask of it: a world
     // whose classes expose nothing needs no dispatch table to compare against,
     // and the hydrator should not pull the whole office in to learn that.
     let handled = null;
+    let kinds = null;
     let handlerReadFailure = null;
     if (exposed.size) {
-      try { ({ DISPATCHABLE: handled } = await import("./world-apex.mjs")); }
+      try { ({ DISPATCHABLE: handled, RESOLVED_ACTOR_KINDS: kinds } = await import("./world-apex.mjs")); }
       catch (e) { handlerReadFailure = String(e?.message ?? e).slice(0, 160); }
     }
-    const orphans = handled
-      ? [...exposed.entries()].filter(([sub]) => !handled.includes(sub))
-      : [];
+    const roomed = (e) => Boolean(handled?.includes(e.action)) && Boolean(kinds?.includes(e.for));
+    const orphans = handled ? [...exposed.values()].filter((e) => !roomed(e)) : [];
+    // A resident-kind row keeps its plain name; any other kind names itself —
+    // "say for human" is a different ask than "say", and the headline is where
+    // the asking is read.
+    const label = (e) => (e.for === "resident" ? `${e.action} (${e.ids.join(", ")})` : `${e.action} for ${e.for} (${e.ids.join(", ")})`);
     // A lint that cannot read one of its two sides reports that, rather than
     // comparing against an empty set and calling the silence green.
     const verdict = handlerReadFailure ? RED : orphans.length ? RED : exposed.size ? GREEN : NA;
@@ -418,16 +429,17 @@ export async function runLints({ dbPath = DEFAULT_DB, sources = null, engineText
       headline: handlerReadFailure
         ? `the dispatch table could not be read (${handlerReadFailure}) — the exposed set cannot be checked against anything`
         : orphans.length
-          ? `${orphans.length} action(s) advertised by law with no handler in the office: ${orphans.map(([s, ids]) => `${s} (${ids.join(", ")})`).join("; ")}`
+          ? `${orphans.length} action(s) advertised by law with no handler in the office: ${orphans.map(label).join("; ")}`
           : exposed.size
-            ? `${exposed.size} action(s) exposed by ${new Set([...exposed.values()].flat()).size} class mark(s); every one of them dispatches`
+            ? `${exposed.size} action grant(s) exposed by ${new Set([...exposed.values()].flatMap((e) => e.ids)).size} class mark(s); every one of them dispatches`
             : "not applicable: no class mark in the world exposes an affordance yet, so there is nothing to conform.",
-      method: "the exposed set is every action on every mark passing the class-mark gate (world-store.mjs `isClassMark`: by the-town, tier constitution, carrying `class:` and `actions:` — or its pre-rename spelling `affordances:`) — the same gate the apex verb queries with. The handled set is `DISPATCHABLE` from src/world-apex.mjs, the key set of the table the door actually dispatches on. Neither side is restated here.",
-      limits: "This checks that a handler EXISTS, not that it is correct, and it says nothing about actions the office could dispatch but no class exposes (an unused handler is dead code, not a broken promise). A class mark on a household draft branch is invisible to the store and so to this lint.",
-      rows: [...exposed.entries()].map(([action, from]) => ({ action, from, handled: Boolean(handled?.includes(action)) })),
+      method: "the exposed set is every (action, for-actor-kind) grant on every mark passing the class-mark gate (world-store.mjs `isClassMark`; entries via `actionEntriesOf`, `for:` absent = resident) — the same gate the apex verb queries with. The handled side is `DISPATCHABLE` × `RESOLVED_ACTOR_KINDS` from src/world-apex.mjs — the table the door dispatches on and the actor kinds it can resolve. Neither side is restated here.",
+      limits: "This checks that a handler and an actor-kind resolution EXIST, not that they are correct, and it says nothing about actions the office could dispatch but no class exposes (an unused handler is dead code, not a broken promise). A class mark on a household draft branch is invisible to the store and so to this lint. Under the TDD-board method a red row may be a DECLARED ask rather than a defect — the distinction lives in the declaring commit, not here.",
+      rows: [...exposed.values()].map((e) => ({ action: e.action, for: e.for, from: e.ids, handled: handled ? roomed(e) : false })),
       evidence: [
-        `exposed: ${[...exposed.keys()].sort().join(", ") || "(none)"}`,
+        `exposed: ${[...exposed.values()].map((e) => (e.for === "resident" ? e.action : `${e.action}·for·${e.for}`)).sort().join(", ") || "(none)"}`,
         `dispatchable: ${handled ? handled.join(", ") : exposed.size ? "(unreadable)" : "(not consulted — nothing is exposed)"}`,
+        `resolved actor kinds: ${kinds ? kinds.join(", ") : exposed.size ? "(unreadable)" : "(not consulted)"}`,
       ],
     });
   }
