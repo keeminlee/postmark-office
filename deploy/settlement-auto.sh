@@ -34,6 +34,10 @@ WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 if [ ! -d "$SWEEP/.git" ]; then
   ORIGIN="$(git -C "${WORLD_CLONE:-/srv/postmark-office/world-clone}" remote get-url origin)"
   git clone -q "$ORIGIN" "$SWEEP"
+  # The pen needs its name and its key (both bit the first run, separately):
+  git -C "$SWEEP" config user.name  "the settlement sweep (box)"
+  git -C "$SWEEP" config user.email "postmark-settlement@users.noreply.github.com"
+  git -C "$SWEEP" config credential.helper "store --file /srv/postmark-office/.git-credentials"
 fi
 
 report() { # status detail
