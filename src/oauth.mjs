@@ -205,6 +205,9 @@ export function berthLookup(odb, db, clone, token) {
     // household sheds the berth marker entirely — its residents speak embodied,
     // from where they stand, like anyone else ashore.
     if (hh) return { ...hh, ghId: row.cosigned_gh_id, ghLogin: row.cosigned_gh_login, keyKind: "berth-upgraded",
+      // cosigned rides the upgraded shape too — /api/me was answering false
+      // beside /api/household's berth-cosigned tier (#1817, defect 2).
+      cosigned: true,
       ...(hh.harbor ? { berth: row.slug, slug: row.slug } : {}) };
   }
   return {

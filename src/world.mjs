@@ -128,6 +128,24 @@ async function world(key = null) {
 
 const QUAY = { x: 0, y: 0 }; // Ferry's crossing — the grid origin, the default standpoint
 
+// The BERTH quay is mark-sourced (Keemin-ruled 2026-08-17, the relocation):
+// arrivals stand at the-town/the-quay on the Long Run Harbor's stone edge —
+// read from the world's own record at act time, the 008b pattern. The {0,0}
+// constant above stays as the pre-ruling fallback and as the default
+// standpoint for everyone else (unplaced residents, spectators): if the quay
+// mark ever leaves the record, a berth stands at Ferry's crossing again
+// rather than nowhere. Only berths relocate; the crossing keeps its name.
+const QUAY_MARK_ID = "the-town/the-quay";
+async function berthQuay() {
+  try {
+    const w = await world(null);
+    const q = w?.marks?.find((m) => m.id === QUAY_MARK_ID
+      && Number.isFinite(m?.at?.x) && Number.isFinite(m?.at?.y));
+    if (q) return { x: q.at.x, y: q.at.y };
+  } catch { /* the fallback is the law, not an accident */ }
+  return QUAY;
+}
+
 // household → home mark id, extracted from the world's own seeding manifest
 // (itself extracted from the atlas HOME_XY — never a second placement source).
 let _homes = null;
@@ -543,7 +561,9 @@ const voices = createVoices({
     // A berth speaker is not a resident and has no standpoint to derive — the
     // quay IS their standing, by the arrival ruling (2026-08-15). Named before
     // the resident derivation so an unknown-handle path never has to guess.
-    if (handle.startsWith("berth-")) return { handle, placed: true, x: QUAY.x, y: QUAY.y, aboard: false, moving: false };
+    // Since the relocation (2026-08-17) the quay is the harbor's stone edge,
+    // read from the-town/the-quay's own record; {0,0} is the fallback.
+    if (handle.startsWith("berth-")) { const q = await berthQuay(); return { handle, placed: true, x: q.x, y: q.y, aboard: false, moving: false }; }
     const here = await residentStandpoint(handle);
     if (here?.placed) return here;
     return { handle, placed: true, x: QUAY.x, y: QUAY.y, aboard: false, moving: false };

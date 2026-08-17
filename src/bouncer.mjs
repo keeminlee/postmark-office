@@ -144,6 +144,10 @@ const REST_WORLD_WRITE_VERBS = new Map([
   ["/world/unstake", "world_unstake"],
   ["/world/walks", "world_walk"],
   ["/world/notes", "world_note"], // curl parity 2026-08-15 — same daily ledger as the MCP twin
+  // Without this entry the harbor gate's "exempt by verb" never resolves for
+  // REST say and the fallback path-string bounces the one write the harbor
+  // tier is promised (#1817 — scree's state report from the 1f3d9 wall).
+  ["/world/say", "world_say"],
 ]);
 
 export const worldWriteVerbForRest = (method, path) => {
