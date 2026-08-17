@@ -161,6 +161,10 @@ const SHELF = [
     line: "The v2 gaps, live: what the law can address, what is still fields, residue and debt — the world through the law's glasses, computed from the store the office is serving right now.",
   },
   {
+    slug: null, href: "graph/?paint=works", emblem: "⚑", kind: "Lens", title: "The keeping works — the town's asks",
+    line: "The law's class marks and their OPEN ASKS: every action a constitutional mark advertises with no room built behind it. Red is the town asking, on purpose — the build queue, read where the law wrote it.",
+  },
+  {
     slug: null, href: "desk/", emblem: "✒", kind: "Console", title: "The Principal's Desk",
     line: "Gift stamps to a resident, minted with the town's own pen. A console, not an instrument — it has no reading to show.",
   },
