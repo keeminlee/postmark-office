@@ -47,7 +47,7 @@ import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 
 import { DEFAULT_DB, OFFICE_ROOT, loadWorldGraph, containmentSpine } from "./world-store.mjs";
-import { draftRefForKey, mainRef } from "./world-branches.mjs";
+import { draftRefForKey, refExists } from "./world-branches.mjs";
 
 // ── flags ────────────────────────────────────────────────────────────────────
 // Read from the environment on every call rather than latched at import: a test
@@ -268,24 +268,45 @@ export function fanUp(snap, id) {
 
 // ── eligibility ──────────────────────────────────────────────────────────────
 
-// mainRef() costs up to two `rev-parse --verify` spawns and the answer is a
-// BRANCH NAME, which does not change between deploys; the sha it points at is
-// re-read every time. Caching the name and never the sha is what keeps freshness
-// exact at one git spawn per read — the same spawn `stateForKey` already makes,
-// so a store-served read is strictly cheaper than the fold it replaces (it also
-// skips a `git show` of the whole world-state.json and the parse after it).
-const _mainRefByRepo = new Map();
+// WHICH main refs exist does not change between deploys, so the ref LIST is
+// cached; the shas they point at are re-read every call, in ONE spawn for the
+// common case. TWO refs now, because two pens move published main: the box's
+// settlements advance refs/heads/main (ahead of their own push for a few
+// seconds), and the keeper's PC pushes straight to GitHub — so
+// refs/remotes/origin/main (freshened by the tick's fetch every ~15 min) can
+// be AHEAD of a local branch nothing box-side moves. mainRef()'s
+// local-preference is right for the WRITE paths (a draft forks from the
+// freshest local line mid-settlement) and was wrong here: on 2026-08-17 the
+// as-of bar read the lag backwards and reported the store BEHIND a "main"
+// that was itself two commits stale. The published sha is the DESCENDANT when
+// the two disagree; a truly diverged pair falls to origin, because published
+// truth is what the world can clone.
+const _mainRefsByRepo = new Map();
 export function publishedMainSha(repo) {
-  let ref = _mainRefByRepo.get(repo);
-  if (!ref) { ref = mainRef(repo); _mainRefByRepo.set(repo, ref); }
+  let refs = _mainRefsByRepo.get(repo);
+  if (!refs) {
+    refs = ["refs/heads/main", "refs/remotes/origin/main"].filter((r) => refExists(repo, r));
+    if (!refs.length) throw new Error("world clone has no main ref");
+    _mainRefsByRepo.set(repo, refs);
+  }
+  let shas;
   try {
-    return execFileSync("git", ["-C", repo, "rev-parse", `${ref}^{commit}`], {
+    shas = execFileSync("git", ["-C", repo, "rev-parse", ...refs.map((r) => `${r}^{commit}`)], {
       encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
-    }).trim();
+    }).trim().split("\n");
   } catch {
-    _mainRefByRepo.delete(repo);          // the ref moved or vanished; re-resolve next call
+    _mainRefsByRepo.delete(repo);         // a ref moved or vanished; re-resolve next call
     throw new Error("published main sha unreadable");
   }
+  const [local, origin] = shas;
+  if (shas.length === 1 || local === origin) return local;
+  const isAncestor = (a, b) => {
+    try { execFileSync("git", ["-C", repo, "merge-base", "--is-ancestor", a, b], { stdio: "ignore" }); return true; }
+    catch { return false; }
+  };
+  if (isAncestor(local, origin)) return origin;   // the box lagged; published truth moved ahead
+  if (isAncestor(origin, local)) return local;    // a settlement's push is in flight
+  return origin;                                  // diverged: what the world can clone wins
 }
 
 /**

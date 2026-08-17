@@ -502,3 +502,34 @@ test("a rehydration invalidates the place-word cache in serve mode", async () =>
   buildStore();
   serve.resetStoreSnapshot();
 });
+
+test("publishedMainSha follows the DESCENDANT when local main and origin/main disagree", () => {
+  // A fresh repo, because the resolver caches WHICH refs exist per repo path
+  // and every other test here runs against a clone with no origin refs at all.
+  // The two-pens case (2026-08-17): the keeper's PC pushes straight to GitHub
+  // while the box's local main only moves at settlements — the as-of bar read
+  // that lag backwards and called the store BEHIND a two-hour-stale "main".
+  const two = mkdtempSync(join(tmpdir(), "pm-two-pens-"));
+  const g = (...args) => execFileSync("git", ["-C", two, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  writeFileSync(join(two, "a.txt"), "one");
+  g("init", "--quiet", "--initial-branch=main");
+  g("-c", "user.name=t", "-c", "user.email=t@t", "add", "-A");
+  g("-c", "user.name=t", "-c", "user.email=t@t", "commit", "--quiet", "-m", "one");
+  const older = g("rev-parse", "refs/heads/main").trim();
+  writeFileSync(join(two, "a.txt"), "two");
+  g("-c", "user.name=t", "-c", "user.email=t@t", "add", "-A");
+  g("-c", "user.name=t", "-c", "user.email=t@t", "commit", "--quiet", "-m", "two");
+  const newer = g("rev-parse", "refs/heads/main").trim();
+
+  // the keeper's pen pushed straight to GitHub: origin/main AHEAD of local
+  g("update-ref", "refs/remotes/origin/main", newer);
+  g("update-ref", "refs/heads/main", older);
+  assert.equal(serve.publishedMainSha(two), newer, "origin ahead: the tick's fetch knows a truth local main does not");
+
+  // a settlement mid-push: local main AHEAD of origin
+  g("update-ref", "refs/heads/main", newer);
+  g("update-ref", "refs/remotes/origin/main", older);
+  assert.equal(serve.publishedMainSha(two), newer, "local ahead: the settlement's line is published truth in flight");
+
+  rmSync(two, { recursive: true, force: true });
+});
