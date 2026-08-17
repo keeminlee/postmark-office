@@ -74,7 +74,8 @@ done < "$WORK/tips"
 if ! (cd "$SWEEP" && npm test --silent) > "$WORK/suite.log" 2>&1; then
   report refused "grammar suite red — a finding for the keeper, not a retry"
   echo "[settlement-auto] SUITE RED — publishing nothing" >&2
-  tail -40 "$WORK/suite.log" >&2
+  cp "$WORK/suite.log" /srv/postmark-office/settlement-last-suite.log 2>/dev/null || true
+  grep -E "^not ok" "$WORK/suite.log" >&2 || tail -40 "$WORK/suite.log" >&2
   exit 1
 fi
 
