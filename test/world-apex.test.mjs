@@ -1201,3 +1201,92 @@ test("berth: the bare read answers as the quay's spectator — resident grants a
   assert.ok(!r.error, JSON.stringify(r).slice(0, 300));
   assert.deepEqual(r.granted.yours, [], "a berth is not a resident");
 });
+
+// ── the POST act door · the browser's half of the one door (2026-08-17) ─────
+//
+// The apex's ACT half over plain HTTP: the same worldApex, the same closed
+// envelope through the SAME validator (mcp.mjs validateArgs, exported), charged
+// and harbor-gated by the DISPATCHED verb inside the route — because the verb
+// lives in the body, which the path-static REST maps cannot express. These run
+// against a spawned office: every claim here is about a door.
+
+test("POST /world/apex, flag off: an absence — 404 like every unknown door", async () => {
+  off();
+  await withOffice({ WORLD_APEX: "" }, async () => {
+    const res = await fetch(`${BASE}/world/apex`, {
+      method: "POST",
+      headers: { authorization: "Bearer apexkey", "content-type": "application/json" },
+      body: JSON.stringify({ do: "say", args: { text: "hello" } }),
+    });
+    assert.equal(res.status, 404, "the falsifier's shape: off is not-there, never refused-in-disguise");
+  });
+});
+
+test("POST /world/apex: no key → 401 + www-authenticate (acting is credentialed; the read half stays keyless GET)", async () => {
+  on();
+  await withOffice({ WORLD_APEX: "1" }, async () => {
+    const res = await fetch(`${BASE}/world/apex`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ do: "say", args: { text: "hello" } }),
+    });
+    assert.equal(res.status, 401);
+    assert.ok(res.headers.get("www-authenticate"), "the sign-in dance must start here like every write door");
+  });
+});
+
+test("POST /world/apex: a bare `do: say` dispatches — world_say's own answer rides through HTTP", async () => {
+  on();
+  await withOffice({ WORLD_APEX: "1" }, async () => {
+    const res = await fetch(`${BASE}/world/apex`, {
+      method: "POST",
+      headers: { authorization: "Bearer apexkey", "content-type": "application/json" },
+      body: JSON.stringify({ do: "say" }),
+    });
+    const r = await res.json();
+    assert.equal(res.status, 200, JSON.stringify(r).slice(0, 300));
+    assert.equal(r.did, "say");
+    assert.equal(r.dispatched_to, "world_say");
+    assert.ok(r.terms, "the law rides with the act at this door too");
+    assert.ok(Array.isArray(r.result.voices), "the existing verb's own answer, not a new one");
+  });
+});
+
+test("POST /world/apex: a bounce rides out WHOLE — affordable_at survives the REST mapping", async () => {
+  on();
+  await withOffice({ WORLD_APEX: "1" }, async () => {
+    const res = await fetch(`${BASE}/world/apex`, {
+      method: "POST",
+      headers: { authorization: "Bearer apexkey", "content-type": "application/json" },
+      body: JSON.stringify({ do: "conjure" }),
+    });
+    const r = await res.json();
+    assert.equal(res.status, 422);
+    assert.equal(r.error, "bounce");
+    assert.ok("affordable_at" in r, "the rich bounce fields must not be flattened to defect+hint");
+  });
+});
+
+test("POST /world/apex: an inline act field is refused BY NAME — the same closed envelope as the MCP door", async () => {
+  on();
+  await withOffice({ WORLD_APEX: "1" }, async () => {
+    const res = await fetch(`${BASE}/world/apex`, {
+      method: "POST",
+      headers: { authorization: "Bearer apexkey", "content-type": "application/json" },
+      body: JSON.stringify({ do: "say", text: "hello" }),
+    });
+    const r = await res.json();
+    assert.equal(res.status, 422);
+    assert.match(r.defect, /unknown argument "text"/, "one validator, both doors — the story must not fork");
+  });
+});
+
+test("POST /world/apex: the GET twin's 405 now points here", async () => {
+  on();
+  await withOffice({ WORLD_APEX: "1" }, async () => {
+    const res = await fetch(`${BASE}/world/apex?do=say`);
+    assert.equal(res.status, 405);
+    const r = await res.json();
+    assert.match(r.hint, /acts POST this same path/, "the refusal must name the door that exists now");
+  });
+});

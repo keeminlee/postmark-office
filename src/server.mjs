@@ -19,7 +19,7 @@ import { createReadStream, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { enqueueLetter } from "./write.mjs";
 import { updateAddressBody, updateHome, updateHomeImage, updateProfile, updateProfileAvatar, updateWindow } from "./edit.mjs";
-import { handleMcp, TOOLS as MCP_TOOLS } from "./mcp.mjs";
+import { handleMcp, TOOLS as MCP_TOOLS, validateArgs } from "./mcp.mjs";
 import { householdApex, paperGaps } from "./household-apex.mjs"; // the third door (2026-08-15)
 import { handleOauth, oauthLookup, openOauthDb, mintHouseholdKey, keyLookup, mintBerth, berthLookup, berthTaken, BERTH_SLUG, FROM_TOWN } from "./oauth.mjs";
 import { requestResidency } from "./residency.mjs";
@@ -35,7 +35,7 @@ import { logAccess } from "./telemetry.mjs";
 import { settlements } from "./settlements.mjs";
 import { worldSummary, worldOrient, worldEyes, worldInvestigate, worldStateRaw, worldSkeletonRaw, worldMyMarks, leaveMarkViaOffice, walkViaOffice, worldNoteViaOffice, worldWalkers, worldPresent, worldConversations, worldSay, worldSayHuman, whoami, worldBlockForHandle, resetPlaceWordsCache, WORLD_CLONE } from "./world.mjs";
 import { callHoldTool } from "./world-hold.mjs"; // curl parity: /world/hold + /world/holdings (2026-08-15)
-import { apexEnabled, worldApex } from "./world-apex.mjs"; // stage 3: the apex verb's keyless read half
+import { APEX_TOOL, apexEnabled, dispatchToolFor, worldApex } from "./world-apex.mjs"; // stage 3: the apex verb — keyless read half + the POST act door (08-17)
 import { worldStakeViaOffice, worldUnstakeViaOffice, worldStakeRead } from "./world-stake.mjs"; // P3 draft
 import { resetStoreSnapshot, storeDbPath, storeEngaged, storeSnapshot, worldStoreHealth } from "./world-serve.mjs"; // stage 1: the serving flag's instrument panel
 import { resetGraphCache, worldGraphView, NODE_KINDS, gexfPath } from "./world-graph.mjs"; // stage E: the window
@@ -506,9 +506,13 @@ const server = createServer((req, res) => {
     // .mjs): an unsettled household reads everything and keeps the quay voice;
     // durable writes wait for settlement. Path exemptions are the arrival lane
     // (/residency, /households, /keys) and /household, whose apex gates its
-    // own paper acts; /world/say is exempt by verb.
+    // own paper acts; /world/say is exempt by verb. /world/apex gates itself
+    // by the DISPATCHED verb inside its route (the verb lives in the body, so
+    // this path-static check cannot resolve it — a harbor say through the apex
+    // must stay as exempt as the flat route's).
     if (req.method !== "GET"
         && path !== "/residency" && path !== "/households" && path !== "/keys" && path !== "/household"
+        && path !== "/world/apex"
         && harborGated(key, worldVerb ?? path))
       return bounce(res, HARBOR_BOUNCE.code, HARBOR_BOUNCE.defect, HARBOR_BOUNCE.hint);
   }
@@ -590,7 +594,7 @@ const server = createServer((req, res) => {
       // unknown door, which is the shape the falsifier checks.
       if (path === "/world/apex" && apexEnabled()) {
         const p = url.searchParams;
-        if (p.get("do")) return bounce(res, 405, "a GET performs nothing", "the apex read is keyless; acts go through the MCP door's `world` verb (or the flat verb's own POST)");
+        if (p.get("do")) return bounce(res, 405, "a GET performs nothing", "the apex read is keyless; acts POST this same path — {\"do\":\"…\",\"args\":{…}} with your Bearer key (the MCP door's `world` verb is its twin)");
         const args = { x: p.get("x") ?? undefined, y: p.get("y") ?? undefined, crossing: p.get("crossing") ?? undefined, handle: p.get("handle") ?? undefined, telling: p.get("telling") === "true" };
         return worldApex(args, key)
           .then((r) => (r?.error === "bounce" ? bounce(res, r.code ?? 422, r.defect, r.hint) : j(res, 200, r)))
@@ -1067,6 +1071,43 @@ const server = createServer((req, res) => {
         } catch (e) {
           if (e.code) return bounce(res, e.code, e.defect, e.hint);
           if (e instanceof SyntaxError) return bounce(res, 400, "body is not JSON", '{"image": "<base64>", "by"?: "<handle>"}');
+          return bounce(res, 500, "the office tripped", String(e?.message ?? e).slice(0, 200));
+        }
+      }).catch(() => bounce(res, 400, "could not read the body", "send a JSON object"));
+      return;
+    }
+
+    // POST /world/apex — the apex verb's ACT half over plain HTTP (the one
+    // door, 2026-08-17): the same worldApex the MCP door dispatches, so a
+    // browser — which cannot speak MCP — performs law-minted actions through
+    // the identical do:+args: envelope. Charged as the verb the act dispatches
+    // to (the household world-write ledger keeps ONE line per act, whichever
+    // door) and harbor-gated by that same dispatched verb — both mirrored from
+    // the MCP preflight (mcp.mjs), which the static REST maps cannot express
+    // because the verb lives in the body. Bounces ride out WHOLE (affordable_at,
+    // terms, choices survive), unlike the field-dropping flat mapping.
+    if (req.method === "POST" && path === "/world/apex" && apexEnabled()) {
+      if (!key) { setWwwAuth(res); return bounce(res, 401, "performing needs a key", "the apex's read half is keyless GET; a `do:` is an act — send your resident key as a Bearer token"); }
+      readJsonBody(req).then(async (raw) => {
+        try {
+          const payload = JSON.parse(raw || "{}");
+          if (payload?.do != null && payload.do !== "") {
+            const verb = dispatchToolFor(payload.do) ?? "world";
+            const limited = bouncer.checkHouseholdWorldWrite({ household: key.household, verb });
+            if (limited) return rateResponse(res, limited);
+            if (harborGated(key, verb)) return bounce(res, HARBOR_BOUNCE.code, HARBOR_BOUNCE.defect, HARBOR_BOUNCE.hint);
+          }
+          // The SAME validator the MCP door runs, against the SAME tool schema —
+          // charge-then-validate in the MCP door's own order. Unknown top-level
+          // fields bounce by name here exactly as there; numeric strings coerce
+          // identically (the party-night leniency travels with the validator).
+          const invalid = validateArgs(APEX_TOOL, payload);
+          if (invalid) return j(res, 422, invalid);
+          const r = await worldApex(payload, key);
+          return j(res, r?.error === "bounce" ? (r.code ?? 422) : 200, r);
+        } catch (e) {
+          if (e?.code) return bounce(res, e.code, e.defect, e.hint);
+          if (e instanceof SyntaxError) return bounce(res, 400, "body is not JSON", '{"do":"say","args":{"text":"…"}} — GET this same path for the card');
           return bounce(res, 500, "the office tripped", String(e?.message ?? e).slice(0, 200));
         }
       }).catch(() => bounce(res, 400, "could not read the body", "send a JSON object"));

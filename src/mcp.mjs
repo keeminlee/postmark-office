@@ -361,7 +361,7 @@ function rpcError(id, code, message) { return { jsonrpc: "2.0", id, error: { cod
 // tripped" — six hours of one household's confusion for want of a field name.
 // The door now names the defect itself: unknown params, missing required
 // fields, wrong types, bad enum values — each bounces with the field spelled out.
-function validateArgs(tool, args) {
+export function validateArgs(tool, args) { // exported 08-17: POST /world/apex runs the SAME validator — one door contract, two skins
   if (typeof args !== "object" || args === null || Array.isArray(args))
     return { error: "bounce", defect: "arguments must be a JSON object", hint: `see the ${tool.name} input schema` };
   const props = tool.inputSchema.properties ?? {};
