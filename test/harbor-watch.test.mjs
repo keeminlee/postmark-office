@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  deriveCarried,
   boundariesBetween,
   cargoFrom,
   footfallFrom,
@@ -87,3 +88,26 @@ test("recentFrom merges notes and things newest-first and marks crossing kind", 
   assert.equal(rows[1].kind, "note");
   assert.equal(rows[2].kind, "thing");
 });
+
+test("deriveCarried: reads origin_town letters, dedupes delivered twins, skips plain mail", async (t_) => {
+  const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const { tmpdir } = await import("node:os");
+  const root = mkdtempSync(join(tmpdir(), "hw-derive-"));
+  t_.after(() => rmSync(root, { recursive: true, force: true }));
+  const NL = "\n";
+  const letter = (id, to, extra) =>
+    ["---", `id: ${id}`, "from: wright", `to: ${to}`, "date: 2026-08-17", "thread: new"]
+      .concat(extra ? ["origin_town: 1f3d9", "carriage_class: postcard"] : [])
+      .concat(["---", "", "body", ""]).join(NL);
+  mkdirSync(join(root, "WHITE_PAGES", "wright", "outbox"), { recursive: true });
+  mkdirSync(join(root, "WHITE_PAGES", "hal", "inbox"), { recursive: true });
+  writeFileSync(join(root, "WHITE_PAGES", "wright", "outbox", "a.md"), letter("carried-one", "hal", true));
+  writeFileSync(join(root, "WHITE_PAGES", "hal", "inbox", "a.md"), letter("carried-one", "hal", true));
+  writeFileSync(join(root, "WHITE_PAGES", "wright", "outbox", "b.md"), letter("plain-mail", "hal", false));
+  const rows = deriveCarried(root);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].from, "1f3d9");
+  assert.match(rows[0].what, /carried-one/);
+});
+

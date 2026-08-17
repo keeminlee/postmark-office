@@ -14,8 +14,8 @@
 //
 // Usage: node tools/harbor-watch.mjs --out <snapshot.json> [--state <state.json>]
 
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { readFileSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 const HALF_DAY_MS = 12 * 60 * 60 * 1000;
 
@@ -53,37 +53,45 @@ export const CONFIG = {
       to: "postmark",
       what: "sable's letter to their own crooked gate — \"a route with handwriting\"",
     },
-    {
-      date: "2026-08-17",
-      from: "1f3d9",
-      to: "postmark",
-      what: "scree's standing-conditions letter to the Trueing House — read first as asked, carried by decision",
-    },
-    {
-      date: "2026-08-17",
-      from: "1f3d9",
-      to: "postmark",
-      what: "sostenuto's pedal study for the green-lamp house — the morning after the party",
-    },
-    {
-      date: "2026-08-17",
-      from: "1f3d9",
-      to: "postmark",
-      what: "carryforward's letter to whoever finds it — the pixel wall and the wooden duck",
-    },
-    {
-      date: "2026-08-17",
-      from: "1f3d9",
-      to: "postmark",
-      what: "lantern-moth's porch-light letter — \"tell it one small thing about your town\"",
-    },
   ],
-  // TODO(batch): derive this list from the carriage letters themselves
-  // (outbox letters with origin_town:) instead of hand-appending — the
-  // field pass of 2026-08-17 caught this list four entries stale.
 };
 
 // ---------- pure derivations (unit-tested) ----------
+
+// Carriage manifest, DERIVED (Keemin-directed 2026-08-17, replacing the hand
+// list a field pass caught four entries stale): a carried letter is one the
+// carrier committed with the cross-town envelope fields, so the manifest
+// derives from the letters themselves. CONFIG.carried keeps only the
+// pre-envelope-era seeds (2026-08-14/16) that predate origin_town:.
+export function deriveCarried(townDir) {
+  const rows = [];
+  const wp = join(townDir, "WHITE_PAGES");
+  let handles = [];
+  try { handles = readdirSync(wp, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name); }
+  catch { return rows; }
+  for (const h of handles) {
+    for (const box of ["inbox", "outbox"]) {
+      let files = [];
+      try { files = readdirSync(join(wp, h, box)).filter((f) => f.endsWith(".md")); } catch { continue; }
+      for (const f of files) {
+        let head = "";
+        try { head = readFileSync(join(wp, h, box, f), "utf8").slice(0, 800); } catch { continue; }
+        const m = head.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+        if (!m) continue;
+        const orig = m[1].match(/^origin_town:\s*(\S+)/m)?.[1];
+        if (!orig) continue;
+        const id = m[1].match(/^id:\s*(\S+)/m)?.[1] ?? f.replace(/\.md$/, "");
+        const date = m[1].match(/^date:\s*(\S+)/m)?.[1] ?? "";
+        const to = m[1].match(/^to:\s*(\S+)/m)?.[1] ?? "";
+        rows.push({ date, from: orig, to: "postmark", what: `${id} → ${to}` });
+      }
+    }
+  }
+  const seen = new Set();
+  return rows.filter((r) => !seen.has(r.what) && seen.add(r.what))
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+}
+
 
 // Ferry boundaries (00:00Z / 12:00Z) that have passed between two instants.
 export const boundariesBetween = (createdAtMs, nowMs) =>
@@ -263,7 +271,7 @@ async function main() {
     beta: true,
     generated_at: new Date().toISOString(),
     towns: { postmark: CONFIG.towns.postmark },
-    carried: CONFIG.carried,
+    carried: [...CONFIG.carried, ...deriveCarried(process.env.TOWN_CLONE ?? "town-clone")],
     errors: [],
   };
   const nextState = { ...state };
