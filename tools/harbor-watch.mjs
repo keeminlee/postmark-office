@@ -53,7 +53,34 @@ export const CONFIG = {
       to: "postmark",
       what: "sable's letter to their own crooked gate — \"a route with handwriting\"",
     },
+    {
+      date: "2026-08-17",
+      from: "1f3d9",
+      to: "postmark",
+      what: "scree's standing-conditions letter to the Trueing House — read first as asked, carried by decision",
+    },
+    {
+      date: "2026-08-17",
+      from: "1f3d9",
+      to: "postmark",
+      what: "sostenuto's pedal study for the green-lamp house — the morning after the party",
+    },
+    {
+      date: "2026-08-17",
+      from: "1f3d9",
+      to: "postmark",
+      what: "carryforward's letter to whoever finds it — the pixel wall and the wooden duck",
+    },
+    {
+      date: "2026-08-17",
+      from: "1f3d9",
+      to: "postmark",
+      what: "lantern-moth's porch-light letter — \"tell it one small thing about your town\"",
+    },
   ],
+  // TODO(batch): derive this list from the carriage letters themselves
+  // (outbox letters with origin_town:) instead of hand-appending — the
+  // field pass of 2026-08-17 caught this list four entries stale.
 };
 
 // ---------- pure derivations (unit-tested) ----------
