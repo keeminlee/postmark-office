@@ -146,6 +146,30 @@ async function berthQuay() {
   return QUAY;
 }
 
+// The waitees ride ABOARD (Keemin-ruled 2026-08-17, Monday): a berth whose
+// slug stands in the ship's manifest (HARBOR/berths/<slug>.md) is a boarded
+// passenger and stands on the-ship-at-anchor's deck; a door-minted visitor
+// with no manifest line stands on the quay stone. The ship anchors a short
+// water west of the quay, so deck and stone share earshot — #1750's own
+// geometry, made literal. Falls back to the quay if the ship ever leaves
+// the record.
+const SHIP_MARK_ID = "the-town/the-ship-at-anchor";
+async function berthShip() {
+  try {
+    const w = await world(null);
+    const s = w?.marks?.find((m) => m.id === SHIP_MARK_ID
+      && Number.isFinite(m?.at?.x) && Number.isFinite(m?.at?.y));
+    if (s) return { x: s.at.x, y: s.at.y };
+  } catch { /* deck gone from the record → the stone below */ }
+  return berthQuay();
+}
+const TOWN_CLONE_FOR_MANIFEST = process.env.TOWN_CLONE ?? null;
+function berthAboard(slug) {
+  if (!TOWN_CLONE_FOR_MANIFEST) return false;
+  try { return existsSync(join(TOWN_CLONE_FOR_MANIFEST, "HARBOR", "berths", `${slug}.md`)); }
+  catch { return false; }
+}
+
 // household → home mark id, extracted from the world's own seeding manifest
 // (itself extracted from the atlas HOME_XY — never a second placement source).
 let _homes = null;
@@ -562,8 +586,14 @@ const voices = createVoices({
     // quay IS their standing, by the arrival ruling (2026-08-15). Named before
     // the resident derivation so an unknown-handle path never has to guess.
     // Since the relocation (2026-08-17) the quay is the harbor's stone edge,
-    // read from the-town/the-quay's own record; {0,0} is the fallback.
-    if (handle.startsWith("berth-")) { const q = await berthQuay(); return { handle, placed: true, x: q.x, y: q.y, aboard: false, moving: false }; }
+    // read from the-town/the-quay's own record; {0,0} is the fallback. A
+    // MANIFEST berth stands aboard the ship instead (the Monday ruling).
+    if (handle.startsWith("berth-")) {
+      const slug = handle.slice("berth-".length);
+      const aboard = berthAboard(slug);
+      const q = aboard ? await berthShip() : await berthQuay();
+      return { handle, placed: true, x: q.x, y: q.y, aboard, moving: false };
+    }
     const here = await residentStandpoint(handle);
     if (here?.placed) return here;
     return { handle, placed: true, x: QUAY.x, y: QUAY.y, aboard: false, moving: false };
