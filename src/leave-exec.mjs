@@ -124,11 +124,15 @@ async function main() {
   const dir = join(parentDir, p.slug);
   if (existsSync(dir)) return err(409, "a mark already sits in that spot", `the directory ${relative(MARKS_DIR, dir)} exists — pick another slug`);
 
-  // sovereignty guard: a mark may not land INSIDE another household's home (its
-  // footprint contained by that home's claim). You may leave a mark near a home,
-  // never within someone else's walls. Homes are derived from the seeding manifest
-  // (household → <household>/<home_id>), never from the record.
-  if (p.kind === "sited" || p.kind === "parcel") {
+  // sovereignty guard — REPEALED for sited marks (Keemin-ruled 2026-08-17,
+  // party night; little-bird's cup was the test case). The old law refused any
+  // mark inside another household's walls; the consent law supersedes it: a
+  // gift indoors stands NEUTRAL until the owner speaks, welcome couples it,
+  // opposed returns it honorably — the same regime parcels already live under.
+  // The guard REMAINS for parcel claims: claiming GROUND inside another's
+  // walls is a land claim, not a gift, and the return machinery is built for
+  // marks, not ground. (Guard era: 2026-08-12 → 2026-08-17.)
+  if (p.kind === "parcel") {
     let manifest = null;
     try { manifest = JSON.parse(readFileSync(join(CLONE, "seeding", "manifest.json"), "utf8")); } catch { /* no manifest → no homes to protect */ }
     for (const h of manifest?.homes ?? []) {
