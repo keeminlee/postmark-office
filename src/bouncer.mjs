@@ -34,6 +34,7 @@ export const BOUNCER_LIMITS = Object.freeze({
 });
 
 export const WORLD_WRITE_VERBS = new Set([
+  "world_hold", // give/drop/take move attachments — world writes; uncounted until 08-17 (the parity audit's ledger hole)
   "world_leave_mark",
   "world_note",
   "world_stake",
@@ -148,6 +149,7 @@ const REST_WORLD_WRITE_VERBS = new Map([
   // REST say and the fallback path-string bounces the one write the harbor
   // tier is promised (#1817 — scree's state report from the 1f3d9 wall).
   ["/world/say", "world_say"],
+  ["/world/hold", "world_hold"], // same ledger as the MCP twin (the 08-17 parity audit's hole)
 ]);
 
 export const worldWriteVerbForRest = (method, path) => {
