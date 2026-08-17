@@ -1,0 +1,12 @@
+[Unit]
+Description=Postmark settlement — the mechanical sweep, box-side (the keeper keeps the judgment lane)
+
+[Service]
+Type=oneshot
+# Same user as every other office lane; the clones and push credentials are
+# meepo's. Exit 0 published/quiet · 1 refused (keeper's finding, no retry) ·
+# 2 race (lease refused — safe to rerun).
+User=meepo
+EnvironmentFile=/etc/postmark-office.env
+WorkingDirectory=/srv/postmark-office
+ExecStart=/bin/sh /srv/postmark-office/deploy/settlement-auto.sh
