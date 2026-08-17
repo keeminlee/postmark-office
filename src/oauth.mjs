@@ -296,6 +296,12 @@ export async function handleOauth(req, res, ctx) {
     return jres(res, 200, prm());
   if (req.method === "GET" && /^\/\.well-known\/oauth-authorization-server(\/api)?$/.test(path))
     return jres(res, 200, asMetadata());
+  // OIDC-shaped discovery alias (ChatGPT-compat pass, 2026-08-17): some MCP
+  // clients probe openid-configuration first (or only). We are plain OAuth —
+  // no id_tokens — so we serve the same AS metadata plus the minimal OIDC
+  // fields readers check; a client that only wants endpoints gets them here.
+  if (req.method === "GET" && /^\/\.well-known\/openid-configuration(\/api)?$/.test(path))
+    return jres(res, 200, { ...asMetadata(), subject_types_supported: ["public"] });
 
   // RFC 7591 dynamic client registration — public clients, PKCE enforced later
   if (req.method === "POST" && path === "/oauth/register") {
