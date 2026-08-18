@@ -41,7 +41,15 @@ function storeWith(classMarks, { status = "OK", file = "world.db" } = {}) {
   meta.run("as_of_world", "f00dcafe");
   const node = db.prepare("INSERT INTO nodes (id, kind, subkind, tier, by, at_x, at_y, extent_w, extent_h, props) VALUES (?,?,?,?,?,?,?,?,?,?)");
   for (const m of classMarks)
-    node.run(m.id, "mark", "sited", m.tier ?? "constitution", m.by ?? "the-town", 0, 0, 50, 40, JSON.stringify(m.props));
+    // Class-carrying rows get a Keeping-Works path unless the fixture says
+    // otherwise (m.props.path wins): the position clause (step-1, 2026-08-18)
+    // is tested on its own; these tests turn on authorship and the class key.
+    node.run(m.id, "mark", "sited", m.tier ?? "constitution", m.by ?? "the-town", 0, 0, 50, 40, JSON.stringify({
+      ...(m.props?.class != null
+        ? { path: `WORLD/marks/let-there-be-light/the-town-centre/the-keeping-works/${m.id.split("/").at(-1)}/mark.md` }
+        : {}),
+      ...m.props,
+    }));
   db.close();
   resetClassRosterCache();
   return path;
@@ -80,7 +88,12 @@ test("a class the record does not declare is not in the roster — the probe can
 test("the roster gate is WIDER than the affordance gate — a class need not mint a verb", () => {
   // parcel is law and affords nothing. The two gates must disagree about it, or
   // `class: parcel` becomes a lie on the record while the parcel class stands.
-  const attr = { kind: "mark", by: "the-town", tier: "constitution", props: PARCEL_CLASS.props };
+  // The path is the position clause's fact (step-1, 2026-08-18): a definition
+  // stands in the Keeping Works, as the real parcel mark does.
+  const attr = { kind: "mark", by: "the-town", tier: "constitution", props: {
+    ...PARCEL_CLASS.props,
+    path: "WORLD/marks/let-there-be-light/the-town-centre/the-keeping-works/parcel/mark.md",
+  } };
   assert.ok(isClassDefinition(attr), "parcel is a class definition");
   assert.ok(!isClassMark(attr), "parcel mints no verb");
   // …and the SQL twin agrees with the predicate, the way the house checks every

@@ -135,11 +135,24 @@ export const EDGE_TYPES = [
 // somebody's frontmatter until authorship makes it a fact, and the write doors
 // stamp `by` from the caller's own resident handles — the town is not a
 // resident, so no credential at any door can author as it.
+// THE POSITION CLAUSE (step-1 promotion, 2026-08-18; LOGOS/classes.md
+// § Instantiation, ruled 2026-08-17: classes are declared "constitution-tier,
+// standing in the Keeping Works"). Position is what tells a DECLARATION from
+// an INSTANCE that happens to be town-authored — the three harbor charters
+// carry `class: town` and declare nothing. The path test is ancestry by
+// construction: the marks tree nests a mark's directory under its parent's,
+// so `/the-keeping-works/` in the path IS "standing in the works", nested
+// declarations (household/human) included. Mirrors the world's own
+// mark-lint CLASS_ROSTER, same clause, same commit.
+export const WORKS_PATH_SQL = `json_extract(props, '$.path') LIKE '%/the-keeping-works/%'`;
+export const standsInTheWorks = (attr) => String(attr?.props?.path ?? "").includes("/the-keeping-works/");
+
 export const CLASS_MARK_GATE_SQL = `
      kind = 'mark'
      AND by   = 'the-town'
      AND tier = 'constitution'
      AND json_extract(props, '$.class') IS NOT NULL
+     AND ${WORKS_PATH_SQL}
      AND (json_extract(props, '$.actions')     IS NOT NULL
       OR  json_extract(props, '$.affordances') IS NOT NULL)`;
 
@@ -151,6 +164,7 @@ export const isClassMark = (attr) => attr?.kind === "mark"
   && attr?.by === "the-town"
   && attr?.tier === "constitution"
   && attr?.props?.class != null
+  && standsInTheWorks(attr)
   && (attr?.props?.actions != null || attr?.props?.affordances != null);
 
 // ── THE CLASS ROSTER — a WIDER gate than the one above, deliberately ─────────
@@ -174,13 +188,17 @@ export const CLASS_ROSTER_GATE_SQL = `
      kind = 'mark'
      AND by   = 'the-town'
      AND tier = 'constitution'
-     AND json_extract(props, '$.class') IS NOT NULL`;
+     AND json_extract(props, '$.class') IS NOT NULL
+     AND ${WORKS_PATH_SQL}`;
 
-/** The same roster gate, as a predicate over a loaded node's attributes. */
+/** The same roster gate, as a predicate over a loaded node's attributes.
+ *  Position-claused since the step-1 promotion (see WORKS_PATH_SQL above):
+ *  a class-carrying mark OUTSIDE the works is an INSTANCE of that class. */
 export const isClassDefinition = (attr) => attr?.kind === "mark"
   && attr?.by === "the-town"
   && attr?.tier === "constitution"
-  && attr?.props?.class != null;
+  && attr?.props?.class != null
+  && standsInTheWorks(attr);
 
 // ── AMBIENT REACH — a second, separate rule ─────────────────────────────────
 //

@@ -314,6 +314,13 @@ for (const m of marks) {
       // record's other promises and a class read that had to open the repo for
       // them would not be a store read at all.
       class: m.class ?? null,
+      // THE DECLARATION FACT (step-1 promotion, 2026-08-18): a class-carrying
+      // mark standing in the Keeping Works DECLARES its class; anywhere else
+      // it is an INSTANCE (LOGOS/classes.md § Instantiation; the store's
+      // WORKS_PATH gates read the same clause). Derived here once so every
+      // reader downstream — the lints, the payload, the site lens — reads the
+      // fact instead of re-deriving it. Emitted only when true.
+      declares: (m.class !== undefined && relPath(m._dir).includes("/the-keeping-works/")) || null,
       class_version: Number.isFinite(Number(m.version)) ? Number(m.version) : null,
       extends: m.extends ?? null,
       dials: (m.dials && typeof m.dials === "object" && !Array.isArray(m.dials)) ? m.dials : null,
@@ -669,22 +676,34 @@ for (const [id, r] of Object.entries(physics)) {
   });
 }
 
-const PARCEL_CLASS = "the-town/parcel-class";
-node(PARCEL_CLASS, "class", {
-  subkind: "parcel", by: "the-town",
-  extent_w: PARCEL_EXTENT_M, extent_h: PARCEL_EXTENT_M,
-  props: {
-    synthesized: true,
-    note: "NOT a mark in the repo. Parcels are class-owned by law (fixed extent, claim cap) but that law lives in code and prose, not in a record — so the store materializes the class node the instances point at. If the class ever earns a constitution mark of its own, this node is what it replaces.",
-    extent_m: PARCEL_EXTENT_M, claim_cap: PARCEL_CLAIM_CAP,
-    source: "tools/marks-fold.mjs PARCEL_EXTENT_M / PARCEL_CLAIM_CAP; WORLD/marks/SCHEMA.md",
-  },
-});
+// THE PARCEL-CLASS CUTOVER (step-1 promotion, 2026-08-18). The synthesized
+// `the-town/parcel-class` node retired exactly as its own note promised —
+// "if the class ever earns a constitution mark of its own, this node is what
+// it replaces" — the works' `the-town/parcel` mark stands, so kind:parcel
+// instances point at the real declaration now. The extent dial itself still
+// lives in code (PARCEL_EXTENT_M) until the params explosion seats it on the
+// mark; L4 says so in its limits.
+const PARCEL_CLASS = "the-town/parcel";
+
+// THE INSTANCE-OF RAILS (Stratum A made real; the edge is SoT for class
+// membership, R6). A class-carrying mark that does not DECLARE (see the
+// `declares:` fact stamped at node creation) is an INSTANCE and edges to its
+// class's declaration. A class value with no declaration dangles VISIBLY at
+// `class:<value>` — the dangle is the finding, never dropped.
+const declOfClass = new Map();
+for (const m of marks)
+  if (m.class !== undefined && relPath(m._dir).includes("/the-keeping-works/") && !declOfClass.has(String(m.class)))
+    declOfClass.set(String(m.class), m.id);
 
 const danglingMechanics = [];
 let instanceOf = 0, implementsEdges = 0;
 for (const m of marks) {
-  if (m.kind === "parcel") { edge(m.id, PARCEL_CLASS, "instance-of", { via: "kind: parcel", class_synthesized: true }, typeof m.date === "string" ? m.date : null); instanceOf++; }
+  if (m.kind === "parcel") { edge(m.id, PARCEL_CLASS, "instance-of", { via: "kind: parcel" }, typeof m.date === "string" ? m.date : null); instanceOf++; }
+  if (m.class !== undefined && declOfClass.get(String(m.class)) !== m.id) {
+    const decl = declOfClass.get(String(m.class)) ?? `class:${m.class}`;
+    edge(m.id, decl, "instance-of", { via: "class:", declared: declOfClass.has(String(m.class)) }, typeof m.date === "string" ? m.date : null);
+    instanceOf++;
+  }
   if (m.mechanic) {
     const dst = `mechanic:${m.mechanic}`;
     const resolves = Object.hasOwn(physics, m.mechanic);

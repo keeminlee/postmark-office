@@ -334,7 +334,7 @@ export async function runLints({ dbPath = DEFAULT_DB, sources = null, engineText
           : `; every one carries \`pre: true\` — seeded prior estate, which the class law explicitly grandfathers, so the door has never written an off-dial parcel`)
         : `all ${rows.length} parcels are ${dial}x${dial} or extent-absent (dial inherited)`,
       method: "nodes kind=mark subkind=parcel, extent read from the node's own extent_w/extent_h, compared against the parcel class node's extent (PARCEL_EXTENT_M). Extent-absent counts as conforming: the door fills the dial in. The `pre:` flag is reported per row, not applied as a filter.",
-      limits: "§2.10 asks for conformance to the class's CURRENT VERSION, and the class node carries no version and no prior-estate clause — that clause lives in a code comment in tools/marks-fold.mjs. So this lint answers the strict question and hands a human the `pre:` column. Also: one class has instances today, and its class node is SYNTHESIZED by the hydrator, so this is a one-class check against a class with no mark of its own.",
+      limits: "§2.10 asks for conformance to the class's CURRENT VERSION, and the prior-estate clause lives in a code comment in tools/marks-fold.mjs — so this lint answers the strict question and hands a human the `pre:` column. The instances now stand on real instance-of rails to the works' own parcel mark (the synthesized class node retired at the step-1 promotion, 2026-08-18), but the extent dial itself still lives in code (PARCEL_EXTENT_M) until the params explosion seats it on the mark — so this remains a one-class check, generalizing as classes carry their params.",
       rows,
       evidence: [
         ...bad.map((b) => `${b.parcel} ${b.w}x${b.h} · pre:${b.pre} · dated ${b.date} (${b.path})`),
@@ -440,6 +440,42 @@ export async function runLints({ dbPath = DEFAULT_DB, sources = null, engineText
         `exposed: ${[...exposed.values()].map((e) => (e.for === "resident" ? e.action : `${e.action}·for·${e.for}`)).sort().join(", ") || "(none)"}`,
         `dispatchable: ${handled ? handled.join(", ") : exposed.size ? "(unreadable)" : "(not consulted — nothing is exposed)"}`,
         `resolved actor kinds: ${kinds ? kinds.join(", ") : exposed.size ? "(unreadable)" : "(not consulted)"}`,
+      ],
+    });
+  }
+
+  // ── L7 · every mark is an instance of a class ─────────────────────────────
+  //
+  // WRITTEN 2026-08-18 (the step-1 promotion; gold plan
+  // postmark-world-view-system, R6 — Keemin: instance-of "should slowly but
+  // surely be ALL marks — should have an L7 for this"). Class membership's
+  // source of truth is the instance-of EDGE, drawn by the hydrator from the
+  // binding-rule grammar (`class:`) and the legacy kind-vocabulary
+  // (kind: parcel); a mark carrying neither is addressable by no class the
+  // law can reach. This lint is the census of that gap, grouped by the
+  // kind-word each uncovered mark still speaks.
+  {
+    const marksAll = nodesWhere(graph, (a) => a.kind === "mark");
+    const uncovered = marksAll.filter(({ id, attr }) =>
+      attr.props?.declares !== true && out(graph, id, "instance-of").length === 0);
+    const census = new Map();
+    for (const { attr } of uncovered) {
+      const k = String(attr.subkind ?? "(no kind)");
+      census.set(k, (census.get(k) ?? 0) + 1);
+    }
+    const rows = [...census.entries()].sort((a, b) => b[1] - a[1]).map(([kind, count]) => ({ kind, count }));
+    add({
+      id: "L7", name: "every mark is an instance of a class",
+      verdict: uncovered.length ? RED : marksAll.length ? GREEN : NA,
+      headline: uncovered.length
+        ? `${uncovered.length} of ${marksAll.length} marks are instances of no class — the kind-vocabulary census: ${rows.map((r) => `${r.kind} ×${r.count}`).join(", ")}`
+        : `every one of ${marksAll.length} marks declares a class or stands on an instance-of edge`,
+      method: "marks minus declarations (the hydrator's `declares:` fact — a class-carrying mark standing in the Keeping Works) minus marks with an outbound instance-of edge (drawn from `class:` under the binding rule, and from the legacy kind: parcel vocabulary). Census grouped by subkind.",
+      limits: "Under the TDD-board method this red is the STRANGLER'S ODOMETER, not a defect: a program-sized ask (the kind-vocabulary → classes ladder, its own sittings) whose number should fall as kind-words earn class marks and instances migrate. It says nothing about whether covered instances CONFORM — that is L4's question, growing as the params explode onto the class marks.",
+      rows,
+      evidence: [
+        `covered: ${marksAll.length - uncovered.length} of ${marksAll.length} (declarations + instance-of carriers)`,
+        ...rows.slice(0, 6).map((r) => `${r.kind}: ${r.count} mark(s) speaking the older vocabulary`),
       ],
     });
   }

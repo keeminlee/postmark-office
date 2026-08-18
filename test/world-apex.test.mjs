@@ -262,7 +262,18 @@ function buildStore(marks = MARKS, path = dbPath) {
   for (const m of marks) {
     node.run(m.id, "mark", m.kind, m.tier ?? null, m.by ?? null,
       m.at?.x ?? null, m.at?.y ?? null, m.extent?.w ?? null, m.extent?.h ?? null,
-      JSON.stringify({ slug: m.id.split("/").at(-1), body: m.body ?? "", ...(m.props ?? {}) }));
+      // Every class-carrying fixture mark gets a Keeping-Works path unless the
+      // fixture says otherwise (m.props.path wins via the spread): the
+      // position clause (step-1, 2026-08-18) is the DECLARATION gate's
+      // business and has its own tests; these fixtures test the apex, and
+      // their gate outcomes must keep turning on by/tier/actions as written.
+      JSON.stringify({
+        slug: m.id.split("/").at(-1), body: m.body ?? "",
+        path: m.props?.class != null
+          ? `WORLD/marks/let-there-be-light/the-town-centre/the-keeping-works/${m.id.split("/").at(-1)}/mark.md`
+          : `WORLD/marks/${m.id}/mark.md`,
+        ...(m.props ?? {}),
+      }));
   }
   db.close();
 }
