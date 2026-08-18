@@ -29,50 +29,50 @@ after(() => {
 
 // ── the standing, tier by tier ───────────────────────────────────────────────
 
-test("anonymous: the standing answers how to board — the checklist starts before any key exists", () => {
-  const s = householdStanding(null, {});
+test("anonymous: the standing answers how to board — the checklist starts before any key exists", async () => {
+  const s = await householdStanding(null, {});
   assert.equal(s.tier, "anonymous");
   assert.ok(s.next.some((n) => n.includes("/berth")), "the berth door is the named first move");
 });
 
-test("visitor: the standing points at declare", () => {
-  const s = householdStanding({ household: "gh-login", handles: new Set(), visitor: true, ghLogin: "someone" }, { db });
+test("visitor: the standing points at declare", async () => {
+  const s = await householdStanding({ household: "gh-login", handles: new Set(), visitor: true, ghLogin: "someone" }, { db });
   assert.equal(s.tier, "visitor");
   assert.ok(s.next.some((n) => n.includes("declare")));
 });
 
-test("berth tiers: bare → begin; declared → the one link; the checklist moves with the state", () => {
+test("berth tiers: bare → begin; declared → the one link; the checklist moves with the state", async () => {
   mintBerth(odb, "tier-walker");
   const key = { berth: true, slug: "tier-walker", household: null, handles: new Set() };
-  const bare = householdStanding(key, { odb });
+  const bare = await householdStanding(key, { odb });
   assert.equal(bare.tier, "berth");
   assert.ok(bare.next.some((n) => n.includes('do: "begin"')));
 
   odb.prepare("UPDATE berths SET card = ? WHERE slug = 'tier-walker'").run(JSON.stringify({ household: "The Walkers", card: "I walk." }));
-  const declared = householdStanding(key, { odb });
+  const declared = await householdStanding(key, { odb });
   assert.equal(declared.tier, "berth-declared");
   assert.ok(declared.next.some((n) => n.includes(cosignUrlFor("tier-walker"))), "the co-sign link IS the next step");
   assert.equal(declared.declaration.household, "The Walkers");
 
   odb.prepare("UPDATE berths SET cosigned_gh_id = 42, cosigned_gh_login = 'their-human' WHERE slug = 'tier-walker'").run();
-  assert.equal(householdStanding(key, { odb }).tier, "berth-cosigned");
+  assert.equal((await householdStanding(key, { odb })).tier, "berth-cosigned");
 });
 
-test("resident: papers per handle, gaps named with the do: that fixes each", () => {
+test("resident: papers per handle, gaps named with the do: that fixes each", async () => {
   const key = { household: "keemin", handles: new Set(["wright"]) };
-  const s = householdStanding(key, { db, clone: null });
+  const s = await householdStanding(key, { db, clone: null });
   assert.equal(s.tier, "resident");
   assert.equal(s.papers.wright.settled, true);
   // no clone in this fixture → the window cannot be found → the gap is named
   assert.ok(s.next.some((n) => n.includes('do: "window"')), "a missing window is a named gap");
 });
 
-test("paperGaps retire as the papers land — the self-emptying checklist", () => {
+test("paperGaps retire as the papers land — the self-emptying checklist", async () => {
   const clone = join(dir, "clone");
   mkdirSync(join(clone, "WHITE_PAGES", "wright", "WINDOW"), { recursive: true });
-  const before = paperGaps("wright", { db, clone });
+  const before = await paperGaps("wright", { db, clone });
   writeFileSync(join(clone, "WHITE_PAGES", "wright", "WINDOW", "window.html"), "<html/>");
-  const after2 = paperGaps("wright", { db, clone });
+  const after2 = await paperGaps("wright", { db, clone });
   assert.ok(after2.length < before.length, "hanging the window must retire its gap");
   assert.ok(!after2.some((g) => g.includes("window")), "the window gap is gone by name");
 });
