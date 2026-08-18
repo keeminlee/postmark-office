@@ -1,5 +1,16 @@
 // THE DEGRADED ANSWER MUST SAY SO (#1864, 2026-08-18).
 //
+// THE LAW THIS ENFORCES: `the-town/the-disclosure` — "refuse or disclose absent
+// inputs; never quietly substitute" (world repo,
+// WORLD/marks/let-there-be-light/logos/the-disclosure/, planted 2026-08-18 on
+// jetto/initiator-buttons under Keemin's nodes-first ruling). It was already the
+// office's law in prose — cited by name in world-apex.mjs, positions.mjs,
+// dynamic-store.mjs and dynamic-entities.mjs — and had no node. That is not a
+// bookkeeping detail: world-apex.mjs OBEYS it (law.unavailable / law.stale, no
+// affordances) while worldBlockForHandle two files away broke it, because a law
+// living in a comment reaches only the files whose author read that comment.
+// This test is the machinery closing that gap (`the-town/the-gap`).
+//
 // worldBlockForHandle's catch branch used to answer {mark_id, x:null, y:null,
 // sited:false} — byte-identical to a resident who genuinely has no ground. On
 // the 2026-08-18 box resize the engine went unreadable and every home in town

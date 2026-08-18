@@ -1075,7 +1075,12 @@ function noteForHandle(worldClone, key, handle) {
 // while this surface answered no. One question must not have two derivations
 // that disagree — so neither of them derives anything now. Both call the clone's
 // where-is.mjs, and the office keeps only the wording.
-// THE DEGRADED ANSWER SAYS SO (#1864, 2026-08-18). Until today the catch below
+// THE DEGRADED ANSWER SAYS SO — the law is `the-town/the-disclosure`, "refuse
+// or disclose absent inputs; never quietly substitute" (world repo,
+// logos/the-disclosure). This office has cited that law by name for a while in
+// world-apex.mjs, positions.mjs and dynamic-store.mjs; it just never reached
+// here, which is what a law with no node does. (#1864, 2026-08-18.)
+// Until today the catch below
 // returned the same four keys as a genuinely unplaced resident, so "the office
 // cannot see the world right now" and "you have no ground" were byte-identical.
 // During the box resize every home in town read homeless and residents believed
