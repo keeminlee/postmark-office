@@ -82,6 +82,18 @@ if (!canWrite) console.warn(`WARN: no town clone at ${TOWN_CLONE} — POST /lett
 // round trip — so a retired index is kept open until its last borrower has
 // answered, not merely until a timer says probably.
 
+// THE TOWN ROLL, from the office's own reader — never a second resolver.
+// `residentList` is what `/residents` and `list_residents` already answer with,
+// so the roll the position doors ask about is the same roll the town publishes.
+// One named function because three doors need it, and a roll that differed
+// between them would be the split-brain positions.mjs exists to prevent.
+// Answers `null`, never a silent `[]`: the doors disclose an absent roll
+// (`the-town/the-disclosure`), and they cannot disclose what looks like an
+// empty town.
+function townRoll() {
+  try { return residentList(db).map((r) => r.handle); } catch { return null; }
+}
+
 function openIndex(path = DB_PATH) {
   const handle = new DatabaseSync(path, { readOnly: true });
   try {
@@ -596,7 +608,7 @@ const server = createServer((req, res) => {
         const p = url.searchParams;
         if (p.get("do")) return bounce(res, 405, "a GET performs nothing", "the apex read is keyless; acts POST this same path — {\"do\":\"…\",\"args\":{…}} with your Bearer key (the MCP door's `world` verb is its twin)");
         const args = { x: p.get("x") ?? undefined, y: p.get("y") ?? undefined, crossing: p.get("crossing") ?? undefined, handle: p.get("handle") ?? undefined, telling: p.get("telling") === "true" };
-        return worldApex(args, key)
+        return worldApex(args, key, { roll: townRoll() })
           .then((r) => (r?.error === "bounce" ? bounce(res, r.code ?? 422, r.defect, r.hint) : j(res, 200, r)))
           .catch((e) => bounce(res, 500, "the world door tripped", String(e?.message ?? e).slice(0, 200)));
       }
@@ -609,7 +621,9 @@ const server = createServer((req, res) => {
       if (path === "/world/skeleton") return worldSkeletonRaw(key).then((r) => j(res, 200, r)).catch((e) => bounce(res, 500, "the world door tripped", String(e?.message ?? e).slice(0, 200)));
       // GET /world/walkers — the presence layer's read side (ruling 1): every
       // walker's DERIVED position this instant, from public records only.
-      if (path === "/world/walkers") return worldWalkers(WORLD_CLONE).then((r) => j(res, 200, r)).catch((e) => bounce(res, 500, "the world door tripped", String(e?.message ?? e).slice(0, 200)));
+      if (path === "/world/walkers") {
+        return worldWalkers(WORLD_CLONE, null, { roll: townRoll() }).then((r) => j(res, 200, r)).catch((e) => bounce(res, 500, "the world door tripped", String(e?.message ?? e).slice(0, 200)));
+      }
       // GET /world/present — who is standing where (Stage 2, WORLD_PRESENCE).
       // With x/y: who is near that point, nearest first. Bare: everyone, with
       // their places — world_walkers' successor shape. Keyless like the rest of
@@ -619,7 +633,7 @@ const server = createServer((req, res) => {
       // empty world, so a caller can tell "nobody about" from "not switched on".
       if (path === "/world/present") {
         const args = Object.fromEntries(url.searchParams.entries());
-        return worldPresent(args)
+        return worldPresent(args, { roll: townRoll() })
           .then((r) => (r?.error === "bounce" ? bounce(res, r.code ?? 422, r.defect, r.hint) : j(res, 200, r)))
           .catch((e) => bounce(res, 500, "the world door tripped", String(e?.message ?? e).slice(0, 200)));
       }
@@ -783,19 +797,27 @@ const server = createServer((req, res) => {
         if (!d) return bounce(res, 404, `no resident "${m[1]}"`, "handles are lowercase-hyphenated, as in WHITE_PAGES/");
         // The settling-in block (Keemin's grouping, 2026-08-15): only on your
         // OWN doorstep, and it retires itself as the gaps close.
-        if (key?.handles?.has?.(m[1])) {
-          try {
-            const gaps = paperGaps(m[1], { db, clone: TOWN_CLONE });
-            if (gaps.length) d.settling_in = { note: "your house is still settling in — this block disappears as the list empties", next: gaps };
-          } catch { /* garnish only */ }
-        }
-        if (canWrite && votesAvailable(TOWN_CLONE)) {
-          const handle = m[1];
-          return doorstepVotes(TOWN_CLONE, handle)
-            .then((v) => { if (v) d.votes = v; j(res, 200, d); })
-            .catch(() => j(res, 200, d)); // the doorstep never fails on the votes garnish
-        }
-        return j(res, 200, d);
+        //
+        // A PROMISE CHAIN RATHER THAN AN `await`, because this router is
+        // synchronous and making it async to reach one garnish would be a wide
+        // change for a narrow need. `paperGaps` became async when it started
+        // awaiting the world block it had always meant to read; the votes
+        // garnish two lines below was already written this way, so this is the
+        // handler's own idiom rather than a new one.
+        const settling = key?.handles?.has?.(m[1])
+          ? paperGaps(m[1], { db, clone: TOWN_CLONE })
+              .then((gaps) => { if (gaps.length) d.settling_in = { note: "your house is still settling in — this block disappears as the list empties", next: gaps }; })
+              .catch(() => { /* garnish only */ })
+          : Promise.resolve();
+        return settling.then(() => {
+          if (canWrite && votesAvailable(TOWN_CLONE)) {
+            const handle = m[1];
+            return doorstepVotes(TOWN_CLONE, handle)
+              .then((v) => { if (v) d.votes = v; j(res, 200, d); })
+              .catch(() => j(res, 200, d)); // the doorstep never fails on the votes garnish
+          }
+          return j(res, 200, d);
+        });
       }
 
       // GET /household — the third door's bare read (or ?read=address|home|standing):
@@ -1103,7 +1125,7 @@ const server = createServer((req, res) => {
           // identically (the party-night leniency travels with the validator).
           const invalid = validateArgs(APEX_TOOL, payload);
           if (invalid) return j(res, 422, invalid);
-          const r = await worldApex(payload, key);
+          const r = await worldApex(payload, key, { roll: townRoll() });
           return j(res, r?.error === "bounce" ? (r.code ?? 422) : 200, r);
         } catch (e) {
           if (e?.code) return bounce(res, e.code, e.defect, e.hint);

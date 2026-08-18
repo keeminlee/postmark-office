@@ -43,10 +43,24 @@
  * which is why a resident with both a parcel and a walk record appears once, at
  * the walk-derived position.
  */
-export function positionRoster({ departures = [], world = null } = {}) {
+export function positionRoster({ departures = [], world = null, roll = [] } = {}) {
   return [
     ...(departures ?? []).map((d) => d?.handle),
     ...((world?.parcels ?? []).map((p) => p?.household)),
+    // THE TOWN ROLL — the third term, and the one that made the union honest.
+    //
+    // The two above are records of DOING: you walked, or you claimed ground. A
+    // resident who has done neither cannot appear in either, so for as long as
+    // the roster was their union it could not contain them — 28 of 103 residents
+    // were not answered wrongly, they were never asked about. The engine has
+    // placed them since world fd965b7c (`the-town/the-standing-porch`: the quay,
+    // when the record places them nowhere else); this is the office finally
+    // putting the question.
+    //
+    // Empty by default so a caller that cannot hold a roll behaves exactly as
+    // before rather than differently-and-silently. The doors that CAN hold one
+    // pass it, and the walkers door discloses when it was given none.
+    ...(roll ?? []),
   ].filter(Boolean);
 }
 
@@ -63,9 +77,9 @@ export function positionRoster({ departures = [], world = null } = {}) {
  * exactly the state this file exists to stop happening silently. Callers that
  * can hold a fold must pass one, and say so when they cannot.
  */
-export function everyonePlaced({ world = null, departures = [], at, where = null } = {}) {
+export function everyonePlaced({ world = null, departures = [], at, where = null, roll = [] } = {}) {
   if (typeof where?.publicResidents !== "function") return [];
-  return where.publicResidents(positionRoster({ departures, world }), { world, departures, at });
+  return where.publicResidents(positionRoster({ departures, world, roll }), { world, departures, at });
 }
 
 /**

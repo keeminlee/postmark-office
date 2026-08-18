@@ -363,9 +363,15 @@ const foldForPresence = (key = null) => world(key).then((w) => w, () => null);
 // THE ONE STANDPOINT DERIVATION. orient's phrasing above and earshot's geometry
 // below are two skins over this — a second answer to "where is this resident"
 // is exactly the split-brain the where-is consolidation ended (see homeCoords).
-// Unplaced is first-class here: a resident the world cannot place gets
-// placed:false, never the quay smuggled in as coordinates. `aboard` says the
-// deck is the place, which is what lets the crossing hold one conversation.
+// Unplaced is first-class here, and as of `the-town/the-standing-porch` (world
+// fd965b7c) so is the porch: a resident the record places nowhere else stands at
+// the quay, and the answer SAYS SO — `source: "quay"` with the quay's own mark
+// id. The old wording here was "never the quay smuggled in as coordinates", and
+// the ban it named still holds exactly: what was forbidden is a place arriving
+// as bare coordinates with nothing marking it a default, because a reader who
+// cannot tell a default from a choice is misled by it. Declared is the opposite
+// of smuggled. `aboard` says the deck is the place, which is what lets the
+// crossing hold one conversation.
 export async function residentStandpoint(handle, w = null) {
   const world_ = w ?? await world(null);
   const { whereIs } = await whereMod();
@@ -952,7 +958,7 @@ export async function worldEyes(args = {}, key = null) {
 // shape). Keyless like the rest of the world's read tier, and for the same
 // reason presence is disclosable at all: the walk ledger is public record and
 // the map already draws everyone.
-export async function worldPresent(args = {}) {
+export async function worldPresent(args = {}, { roll = null } = {}) {
   if (!presenceEnabled())
     return { error: "bounce", code: 404, defect: "presence is not switched on at this office",
       hint: "the operator runs it behind WORLD_PRESENCE=1; world_walkers answers the same question from the ledger meanwhile" };
@@ -965,10 +971,10 @@ export async function worldPresent(args = {}) {
   // The fold, so this door answers over the whole position union — everyone with
   // a walk on record AND everyone holding ground (issue #7 §1).
   const w = await foldForPresence();
-  if (!has) return presenceEveryone({ place, repo: WORLD_CLONE, world: w });
+  if (!has) return presenceEveryone({ place, repo: WORLD_CLONE, world: w, roll: roll ?? [] });
   const radiusM = Number.isFinite(Number(args.radius_m)) ? Math.max(1, Number(args.radius_m)) : undefined;
   const limit = Number.isFinite(Number(args.limit)) ? Math.max(1, Math.floor(Number(args.limit))) : undefined;
-  return presenceNear({ x, y, place, repo: WORLD_CLONE, world: w, ...(radiusM ? { radiusM } : {}), ...(limit ? { limit } : {}) });
+  return presenceNear({ x, y, place, repo: WORLD_CLONE, world: w, roll: roll ?? [], ...(radiusM ? { radiusM } : {}), ...(limit ? { limit } : {}) });
 }
 
 export async function worldInvestigate(args = {}, key = null) {
@@ -1798,7 +1804,21 @@ async function walkersInFrames(walkers, w, departures, atMs = Date.now()) {
 
 // The presence layer's read side (ruling 1): every walker's derived position at
 // one instant, from public records only. Read-only, keyless-safe.
-export async function worldWalkers(worldClone, key = null) {
+/**
+ * `roll` is the town's own list of who exists — every resident, not only those
+ * the world has a record of DOING something. Without it this door can only ask
+ * about `walk records ∪ parcel households`, a union that structurally cannot
+ * contain a resident who has neither, and 28 of 103 went unasked-about while the
+ * engine stood ready to answer `the-town/the-standing-porch` for them.
+ *
+ * It is optional, and its ABSENCE IS DISCLOSED rather than silently narrowing
+ * the answer (`the-town/the-disclosure`: refuse or disclose absent inputs, never
+ * quietly substitute). A caller with no roll to give gets exactly the old
+ * behaviour plus a line saying which question was actually asked — which is the
+ * difference between this defect recurring visibly and recurring the way it did
+ * the first time.
+ */
+export async function worldWalkers(worldClone, key = null, { roll = null } = {}) {
   // publicWalkers is the single writer of the walker vocabulary — the spectator
   // publishes the same shape from the same function, so the two cannot drift.
   const { publicWalkers, fractionalCrossing } = await engineImport("walk.mjs");
@@ -1837,14 +1857,23 @@ export async function worldWalkers(worldClone, key = null) {
     // inside `everyonePlaced` because that function is pure by contract and a
     // frame needs the engine; what it takes is a precomputed map, so the purity
     // holds and the two derivations still meet in exactly one place.
-    const walkers = everyonePlaced({ world: w, departures, at, where });
+    const walkers = everyonePlaced({ world: w, departures, at, where, roll: roll ?? [] });
+    // THE ROLL'S ABSENCE IS A DISCLOSURE, not a silence. Given no roll this door
+    // answers about doers only — which is exactly the shape of the original
+    // defect — so it says which question it asked rather than letting a narrower
+    // answer pass for a complete one (`the-town/the-disclosure`).
+    const rollNote = roll
+      ? null
+      : "no town roll supplied to this door — the answer covers residents with a walk record or ground, and cannot include a resident who has neither";
     return {
       at,
       walkers: movementV2Enabled() ? await walkersInFrames(walkers, w, departures) : walkers,
       // The disclosure the reader assembled, carried rather than dropped. A door
       // that reads half the record and says nothing is the failure this whole
       // change is about.
-      ...(eras.disclosed.length ? { disclosed: eras.disclosed } : {}),
+      ...(eras.disclosed.length || rollNote
+        ? { disclosed: [...eras.disclosed, ...(rollNote ? [rollNote] : [])] }
+        : {}),
     };
   } catch {
     // No world to fold: the walk ledger alone is still an honest answer.
@@ -2004,7 +2033,10 @@ export const SAY_PRESENCE_DISCLOSURE = " QUIET IS NOT GONE: `listeners` is every
 // were up to.
 export const SAY_RECORD_DISCLOSURE = " And the town remembers out loud: what you say leaves everyone's hearing after five minutes, but it is written into Postmark's own public record at every crossing — the words, the speaker, the place and the hour — and kept there openly, so the people whose agents live here can read back later what the day actually held.";
 
-export async function callWorldTool(name, args = {}, key = null) {
+// `ctx.roll` — the town roll, when the caller holds one. Only the walkers door
+// uses it today; it rides on a ctx rather than a positional arg so the next
+// door that needs a town-side fact does not re-open this signature.
+export async function callWorldTool(name, args = {}, key = null, ctx = {}) {
   switch (name) {
     case "world_orient": return worldOrient(args, key);
     case "world_open_your_eyes": return worldEyes(args, key);
@@ -2013,7 +2045,7 @@ export async function callWorldTool(name, args = {}, key = null) {
     case "world_leave_mark": return leaveMarkViaOffice(WORLD_CLONE, args, key);
     case "world_note": return worldNoteViaOffice(WORLD_CLONE, args, key);
     case "world_walk": return walkViaOffice(WORLD_CLONE, args, key);
-    case "world_walkers": return worldWalkers(WORLD_CLONE);
+    case "world_walkers": return worldWalkers(WORLD_CLONE, null, { roll: ctx?.roll ?? null });
     case "world_say": return worldSay(args, key);
     case "world_hold": case "world_holdings": return callHoldTool(name, args, key); // the object primitive
     default: return callWorldStakeTool(name, args, key); // P3; returns null for anything it doesn't own

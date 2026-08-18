@@ -66,7 +66,7 @@ export const householdDispatchToolFor = (act) => ACTS[String(act ?? "").trim()]?
 /** The paper gaps for ONE settled resident. Exported so the doorstep can
  *  carry the same derivation (Keemin's grouping, 2026-08-15) — one function,
  *  two surfaces, and the block retires itself the day the list is empty. */
-export function paperGaps(handle, { db, clone }) {
+export async function paperGaps(handle, { db, clone, worldBlock = worldBlockForHandle } = {}) {
   const gaps = [];
   let home = null;
   try { home = homeQ(db, handle); } catch { home = null; }
@@ -77,9 +77,22 @@ export function paperGaps(handle, { db, clone }) {
   const windowHung = clone ? existsSync(join(clone, "WHITE_PAGES", handle, "WINDOW", "window.html")) : false;
   if (!windowHung)
     gaps.push(`hang your window — the pane your human checks — household { do: "window", args: { handle: "${handle}", html: … } }`);
+  // AWAITED. `worldBlockForHandle` is async, and this call was not: the value
+  // was a pending Promise, `.sited` read `undefined`, and `undefined === false`
+  // is false — so this gap has never once fired for anyone, since the day it was
+  // written. Awaiting it is the whole fix, and it makes a checklist item newly
+  // appear on three resident-facing surfaces.
   let world = null;
-  try { world = worldBlockForHandle(handle); } catch { world = null; }
-  if (world && world.sited === false)
+  try { world = await worldBlock(handle); } catch { world = null; }
+  // THE DISCLOSURE GUARD (`the-town/the-disclosure`: refuse or disclose absent
+  // inputs, never quietly substitute). A degraded read answers `sited: false`
+  // too — identical, by construction, to genuinely unplaced — but it also says
+  // `unreadable: true`, and that field is the whole difference between "the town
+  // has not placed you" and "the office cannot see the world this minute".
+  // Without this clause the await would tell placed residents to go walk ground
+  // they are already standing on: #1864 reproduced in a new mouth, and by the
+  // very code written to close it.
+  if (world && world.sited === false && !world.unreadable)
     gaps.push(`your home is not yet sited in the world — walk your ground and leave your home mark (the world verb's leave-mark)`);
   return gaps;
 }
@@ -92,7 +105,7 @@ const berthRow = (odb, slug) => {
  * The whole standing, tier-shaped. Every tier's `next` names the exact act
  * that moves it — the checklist IS the read.
  */
-export function householdStanding(key, { db, clone, odb } = {}) {
+export async function householdStanding(key, { db, clone, odb, worldBlock = worldBlockForHandle } = {}) {
   if (!key) {
     return {
       tier: "anonymous",
@@ -152,9 +165,13 @@ export function householdStanding(key, { db, clone, odb } = {}) {
   const papers = {};
   const next = [];
   for (const h of settled) {
-    const gaps = paperGaps(h, { db, clone });
+    const gaps = await paperGaps(h, { db, clone, worldBlock });
+    // AWAITED, same defect as paperGaps' and with a louder symptom: an
+    // un-awaited Promise spread into this object serialized as `"world": {}`,
+    // so the household door has been publishing an empty object where it
+    // promised a world block.
     let world = null;
-    try { world = worldBlockForHandle(h); } catch { world = null; }
+    try { world = await worldBlock(h); } catch { world = null; }
     papers[h] = { settled: true, gaps, ...(world ? { world } : {}) };
     next.push(...gaps);
   }
@@ -240,7 +257,7 @@ export async function householdApex(args = {}, key = null, ctx = {}) {
 
   // ── the bare read · the checklist ─────────────────────────────────────────
   if (!doing && !reading) {
-    const standing = householdStanding(key, ctx);
+    const standing = await householdStanding(key, ctx);
     const store = openStore();
     try {
       const acts = HOUSEHOLD_DISPATCHABLE.map((a) => actCard(a, store.db)).filter(Boolean);
