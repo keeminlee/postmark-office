@@ -77,9 +77,22 @@ test("worldOrient / worldEyes surface the bounce before the engine loads", async
 
 // ── 3b: where a home sits (read_home's "where do I live") ─────────────────────
 
-test("worldBlockForHandle: an unplaced (door-founded) home is honestly sited:false", async () => {
-  assert.deepEqual(await worldBlockForHandle("nobody-unplaced-xyz"),
-    { mark_id: null, x: null, y: null, sited: false });
+// THIS TEST WAS MIS-NAMED FROM BIRTH, and finding that out is the point of
+// #1864. It runs with no readable world clone (no main ref), so it never
+// reached the unplaced branch at all — it reached the CATCH, and it passed
+// because the catch answered in the unplaced branch's exact grammar. The test
+// could not tell the two apart for the same reason a resident could not.
+// Renamed to what it actually exercises; the genuinely-unplaced path keeps its
+// own coverage against a readable clone in test/world-home-block.test.mjs
+// ("genuinely groundless stays sited:false").
+test("worldBlockForHandle: an UNREADABLE engine discloses instead of reading as unplaced", async () => {
+  const w = await worldBlockForHandle("nobody-unplaced-xyz");
+  assert.equal(w.unreadable, true);
+  assert.match(w.unreadable_reason, /cannot read the world engine/);
+  assert.deepEqual(
+    { mark_id: w.mark_id, x: w.x, y: w.y, sited: w.sited },
+    { mark_id: null, x: null, y: null, sited: false },
+    "the four consumed keys keep their names and shapes — the field is additive");
 });
 
 // ── mark law at the door (before the clone/engine round-trip) ───────────────

@@ -114,9 +114,16 @@ test("GET /homes/{handle} → body, region, image paths, world block; 404 for no
   assert.equal(h.region, "the-terrace");
   assert.match(h.description, /shows its bones/);
   assert.deepEqual(h.images, ["WHITE_PAGES/wright/HOME/the-trueing-house.png"]);
-  // the world block (3b): with no world clone configured here, the honest answer
-  // is unplaced — the shape is always present so a reader can ask "where do I live".
-  assert.deepEqual(h.world, { mark_id: null, x: null, y: null, sited: false });
+  // The world block (3b). This suite runs with NO readable world clone, so the
+  // block comes back over the wire through the catch — and its own comment used
+  // to call that "unplaced", which is the #1864 confusion in the test file
+  // itself: unreadable and unplaced were the same four keys. The shape is still
+  // always present so a reader can ask "where do I live"; it now also says when
+  // the answer is not about their ground.
+  assert.deepEqual(
+    { mark_id: h.world.mark_id, x: h.world.x, y: h.world.y, sited: h.world.sited },
+    { mark_id: null, x: null, y: null, sited: false });
+  assert.equal(h.world.unreadable, true, "the degraded block must disclose over HTTP too, not only in-process");
   assert.equal((await get("/homes/nobody")).status, 404);
 });
 
