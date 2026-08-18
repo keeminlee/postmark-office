@@ -4,6 +4,7 @@
 import { join } from "node:path";
 import { isPrincipal } from "./ops.mjs";
 import { householdOf } from "./households.mjs";
+import { isResidentHandle } from "./residency.mjs"; // the door's own admission grammar — one definition of what a handle is
 
 // The caller's OWN resolved identity (GET /me, MCP whoami) — not town data, the
 // answer to "who does this credential make me at the door?" Pure shaping over the
@@ -58,6 +59,17 @@ export function townSummary(db, meta) {
 
 export function residentList(db) {
   return db.prepare("SELECT handle, json FROM residents ORDER BY handle").all()
+    // A row whose handle could never have been admitted at the door is not a
+    // resident, whatever a directory listing put in the table. `_archived` is
+    // the town's retirement shelf and it has been in this answer all along —
+    // invisible until the roll union rendered the roll as PEOPLE STANDING
+    // SOMEWHERE and a folder turned up on the quay.
+    //
+    // Filtered at the READ as well as at the index (hydrate.mjs) on purpose:
+    // the index on the box is already hydrated with that row, and a fix that
+    // only lands at hydration waits on the next rehydrate to take effect.
+    // Same predicate both sides, so there is nothing to drift.
+    .filter((r) => isResidentHandle(r.handle))
     .map((r) => { const d = JSON.parse(r.json); return { handle: r.handle, display: d.display ?? d.name ?? r.handle, github: d.github ?? d.address?.data?.github ?? null, is_office: isOffice(d), last_active: d.last_active ?? null }; });
 }
 

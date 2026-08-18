@@ -12,6 +12,7 @@ import { existsSync, rmSync, readFileSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readTown } from "../vendor/town.mjs";
+import { isResidentHandle } from "./residency.mjs"; // one definition of what a handle is — the door's
 import { SCHEMA } from "./schema.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -112,11 +113,27 @@ try {
   console.log(`  history: ${rows} file-change rows indexed`);
 } catch (e) { console.warn(`WARN: history pass skipped (${e.message.split("\n")[0]})`); }
 
+// WHAT THE OFFICE INDEXES AS A PERSON, decided by the door's own admission
+// grammar rather than by a directory listing. The vendored `readTown` enumerates
+// WHITE_PAGES with `n !== "TEMPLATE"` — a name list, not a rule — so the second
+// non-resident directory the town ever grew (`_archived`, the retirement shelf)
+// walked straight through it and became a row here, and from here into every
+// reader over this table. The vendor is upstream law and not ours to edit
+// (vendor/town.mjs line 2); what the office indexes IS ours.
+//
+// The skip is REPORTED, never silent: dropping a name quietly is how a town
+// loses somebody without anyone noticing (`the-town/the-disclosure` — refuse or
+// disclose absent inputs, never quietly substitute). If a real resident ever
+// trips this, the line below is how we find out on the next hydration instead
+// of from their letter asking where they went.
 const insResident = db.prepare("INSERT OR REPLACE INTO residents VALUES (?, ?)");
-for (const r of town.residents) insResident.run(r.handle, JSON.stringify({
+const notHandles = town.residents.filter((r) => !isResidentHandle(r.handle)).map((r) => r.handle);
+for (const r of town.residents.filter((r) => isResidentHandle(r.handle))) insResident.run(r.handle, JSON.stringify({
   ...r, is_office: isOffice(r), window_state: windowStateOf(r.handle),
   last_active: lastActive.get(r.handle) ?? null,
 }));
+if (notHandles.length)
+  console.log(`  residents: skipped ${notHandles.length} WHITE_PAGES entr${notHandles.length === 1 ? "y" : "ies"} that are not a handle the door could admit — ${notHandles.join(", ")}`);
 
 const insLetter = db.prepare("INSERT OR REPLACE INTO letters VALUES (?,?,?,?,?,?,?,?,?,?)");
 let anon = 0;
