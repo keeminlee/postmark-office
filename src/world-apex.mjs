@@ -753,10 +753,14 @@ async function apexDo(args, key) {
 
 /** One action's domain, read. Fields are whitelisted per action — a read
  *  passes through only what the shadow's own tool takes, never the act's. */
-async function readDomainFor(action, fields, key, oriented) {
+async function readDomainFor(action, fields, key, oriented, ctx = {}) {
   const call = async (tool, send) => {
     try {
-      const r = await callWorldTool(tool, { ...send, ...(fields?.handle ? { handle: fields.handle } : {}) }, key);
+      // ctx carries town-side facts the world tools cannot fetch themselves —
+      // today the town roll, which `world { read: "walk" }` needs so the walkers
+      // answer covers every resident and not only those with a record of having
+      // moved. This IS the door the #1864 report came through.
+      const r = await callWorldTool(tool, { ...send, ...(fields?.handle ? { handle: fields.handle } : {}) }, key, ctx);
       return r?.error ? r : r;
     } catch (e) {
       if (!e?.code) throw e;
@@ -790,7 +794,7 @@ async function readDomainFor(action, fields, key, oriented) {
   }
 }
 
-async function apexReadAction(args, key) {
+async function apexReadAction(args, key, ctx = {}) {
   const action = String(args.read ?? "").trim();
   if (MAIL_ACTIONS.has(action.toLowerCase())) {
     return bounce(422, `"${action}" is not a thing a place affords — the apex verb carries no mail`,
@@ -832,7 +836,7 @@ async function apexReadAction(args, key) {
     // an act — a multi-resident key that named its handle must not meet the
     // which-resident bounce on a read (field-found on the box's own key).
     const fields = { ...(envelope ?? {}), ...(args.handle ? { handle: args.handle } : {}) };
-    const domain = await readDomainFor(action, fields, key, oriented);
+    const domain = await readDomainFor(action, fields, key, oriented, ctx);
     // A refused read still shows the law — the card rides the bounce exactly
     // as terms ride an act's.
     if (domain?.error) return { ...domain, read: action, card };
@@ -845,14 +849,14 @@ async function apexReadAction(args, key) {
   } finally { store.db?.close(); }
 }
 
-export async function worldApex(args = {}, key = null) {
+export async function worldApex(args = {}, key = null, ctx = {}) {
   if (!apexEnabled()) return bounce(404, "the apex verb is not switched on at this office", "the operator runs it behind WORLD_APEX=1; the flat world_* verbs answer meanwhile");
   const doing = args.do != null && args.do !== "";
   const reading = args.read != null && args.read !== "";
   if (doing && reading) {
     return bounce(422, "one call does one thing — do: performs, read: observes", "they never ride together; call twice");
   }
-  if (reading) return apexReadAction(args, key);
+  if (reading) return apexReadAction(args, key, ctx);
   return doing ? apexDo(args, key) : apexRead(args, key);
 }
 

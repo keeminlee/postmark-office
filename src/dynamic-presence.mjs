@@ -95,7 +95,7 @@ export function governingDepartures(db) {
  * never in this list: she is a mark that moves, not a resident, and the entities
  * table she is excluded from is what feeds the departures below.
  */
-export function positionsAt(db, atMs, walk, vessel = null, { world = null, where = null, frames = null, stored = null } = {}) {
+export function positionsAt(db, atMs, walk, vessel = null, { world = null, where = null, frames = null, stored = null, roll = [] } = {}) {
   const deps = governingDepartures(db);
   deps.delete(VESSEL_HANDLE);   // belt and braces: she is not in this table to begin with
   const at = walk.fractionalCrossing(atMs);
@@ -143,7 +143,14 @@ export function positionsAt(db, atMs, walk, vessel = null, { world = null, where
   // issue #7's split-brain, one layer up and with a boat in it. The map is
   // precomputed by the async caller because a frame needs the engine and this
   // function is deliberately synchronous.
-  return withFrames(everyonePlaced({ world, departures, at, where }), frames).map((r) => {
+  // THE ROLL RIDES HERE TOO, and it is not optional in spirit. The invariant
+  // one file over — "world_walkers and present name the same residents, one
+  // derivation, two doors" — is not about WHERE the two doors put people, it is
+  // about WHO they can see at all. Giving the walkers door a town roll and not
+  // this one would have made the two doors disagree about the population of the
+  // world in production, which is precisely the split-brain both were
+  // consolidated to end (issue #7 §1).
+  return withFrames(everyonePlaced({ world, departures, at, where, roll }), frames).map((r) => {
     const dep = governing.get(r.handle) ?? null;
     return {
       handle: r.handle,
@@ -216,7 +223,7 @@ const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
  * Never throws: a presence read that could take down `orient` would be a worse
  * bargain than not knowing who is nearby.
  */
-async function readPresence({ dbPath = null, repo = WORLD_CLONE, atMs = Date.now(), walk = null, engine = null, world = null, where = null } = {}) {
+async function readPresence({ dbPath = null, repo = WORLD_CLONE, atMs = Date.now(), walk = null, engine = null, world = null, where = null, roll = [] } = {}) {
   const path = dbPath ?? dynamicDbPath();
   if (!existsSync(path))
     return { error: "store-absent", detail: `no dynamic store at ${path} — run: npm run dynamic:rebuild` };
@@ -256,7 +263,7 @@ async function readPresence({ dbPath = null, repo = WORLD_CLONE, atMs = Date.now
         catch { frames = null; }  // a frame read must never cost anyone their presence
       }
     }
-    rows = positionsAt(db, atMs, w, vessel, { world, where: whereMod, frames, stored });
+    rows = positionsAt(db, atMs, w, vessel, { world, where: whereMod, frames, stored, roll });
     db.close();
     return {
       rows, engine: eng,
@@ -298,9 +305,9 @@ async function readPresence({ dbPath = null, repo = WORLD_CLONE, atMs = Date.now
 export async function near({
   x, y, radiusM = PRESENCE_DIALS.near_radius_m, limit = PRESENCE_DIALS.near_cap,
   exclude = [], place = null, dbPath = null, repo = WORLD_CLONE, atMs = Date.now(),
-  walk = null, engine = null, world = null, where = null,
+  walk = null, engine = null, world = null, where = null, roll = [],
 } = {}) {
-  const read = await readPresence({ dbPath, repo, atMs, walk, engine, world, where });
+  const read = await readPresence({ dbPath, repo, atMs, walk, engine, world, where, roll });
   if (read.error) return { error: read.error, detail: read.detail, residents: [], count: 0 };
 
   const skip = new Set(exclude);
@@ -356,9 +363,9 @@ export async function near({
  */
 export async function everyone({
   place = null, dbPath = null, repo = WORLD_CLONE, atMs = Date.now(), walk = null, engine = null,
-  world = null, where = null,
+  world = null, where = null, roll = [],
 } = {}) {
-  const read = await readPresence({ dbPath, repo, atMs, walk, engine, world, where });
+  const read = await readPresence({ dbPath, repo, atMs, walk, engine, world, where, roll });
   if (read.error) return { error: read.error, detail: read.detail, residents: [], count: 0 };
 
   const residents = [];

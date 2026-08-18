@@ -237,7 +237,10 @@ async function callTool(name, args, ctx) {
     try {
       // The apex dispatches into the same implementations the flat verbs use,
       // so its bounces are the flat verbs' bounces and want the same envelope.
-      const r = name === "world" ? await worldApex(args, key) : await callWorldTool(name, args, key);
+      // THE TOWN ROLL, from the office's own reader — never a second resolver.
+      // `residentList` is what /residents and list_residents already answer with.
+      const rollFor = () => { try { return residentList(db).map((r) => r.handle); } catch { return null; } };
+      const r = name === "world" ? await worldApex(args, key, { roll: rollFor() }) : await callWorldTool(name, args, key, { roll: rollFor() });
       if (r !== null) return r;
     } catch (e) {
       if (e.code) return { error: "bounce", code: e.code, defect: e.defect, hint: e.hint, ...(e.choices ? { choices: e.choices } : {}) };
@@ -267,7 +270,7 @@ async function callTool(name, args, ctx) {
       // doorstep — the gaps are yours to see, not theirs to be seen by.
       if (key?.handles?.has?.(args.handle)) {
         try {
-          const gaps = paperGaps(args.handle, { db, clone });
+          const gaps = await paperGaps(args.handle, { db, clone });
           if (gaps.length) d.settling_in = {
             note: "your house is still settling in — this block disappears as the list empties",
             next: gaps,
