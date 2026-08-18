@@ -1075,16 +1075,29 @@ function noteForHandle(worldClone, key, handle) {
 // while this surface answered no. One question must not have two derivations
 // that disagree — so neither of them derives anything now. Both call the clone's
 // where-is.mjs, and the office keeps only the wording.
+// THE DEGRADED ANSWER SAYS SO (#1864, 2026-08-18). Until today the catch below
+// returned the same four keys as a genuinely unplaced resident, so "the office
+// cannot see the world right now" and "you have no ground" were byte-identical.
+// During the box resize every home in town read homeless and residents believed
+// it, because nothing in the answer could tell them otherwise. `unreadable` is
+// ADDITIVE — the four keys and their shapes are unchanged, and the field is
+// ABSENT on every readable path — so a reader that never learns about it reads
+// exactly what it read before, and one that does can stop impersonating.
+export const HOME_BLOCK_UNREADABLE = "the office cannot read the world engine right now — this is not an answer about your ground";
 export async function worldBlockForHandle(handle, key = null) {
   // The house's DISPLAY id still comes from the seeding manifest — that is all
   // it was ever meant to be (see homesIndex). Placement comes from the engine.
   const id = homesIndex().get(handle) ?? null;
-  // No world to read (unconfigured clone, no main ref) → unplaced is still the
-  // honest answer, never a throw. The pre-engine version got this free by
-  // short-circuiting; asking the engine means asking for it explicitly.
+  // No world to read (unconfigured clone, no main ref) → still never a throw,
+  // but no longer indistinguishable from unplaced. The pre-engine version got
+  // the non-throwing part free by short-circuiting; asking the engine means
+  // asking for it explicitly, and saying so when the ask fails.
   let w = null, homeOf = null;
   try { w = await world(key); ({ homeOf } = await whereMod()); }
-  catch { return { mark_id: id, x: null, y: null, sited: false }; }
+  catch (e) {
+    return { mark_id: id, x: null, y: null, sited: false,
+             unreadable: true, unreadable_reason: `${HOME_BLOCK_UNREADABLE} (${String(e?.message ?? e).slice(0, 120)})` };
+  }
 
   // ONE derivation, shared with world_orient. Prefer the seeded house mark as
   // the id when it exists and is actually placed (26 residents read that way and
