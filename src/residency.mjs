@@ -15,7 +15,34 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-const HANDLE_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+// THE ADMISSION GRAMMAR, and it is now the office's ONE answer to "is this a
+// resident handle?" — exported because the question is asked in three places
+// and was being answered by three different rules.
+//
+// It is the door's rule: nothing that fails this could ever have been admitted
+// as a handle. So nothing that fails it can BE one, whatever a directory listing
+// says. The office indexes the town through the vendored `readTown`, whose
+// enumeration skips exactly one name (`n !== "TEMPLATE"`) — a NAME LIST, not a
+// rule, which is why the second non-resident directory walked straight through
+// it and `_archived` came out of the live walkers door standing on the quay.
+// The vendor is upstream law and is not ours to edit (`vendor/town.mjs` line 2:
+// fix upstream and re-vendor); what IS ours is what the office indexes and
+// serves as a resident, and that is decided here, once.
+export const HANDLE_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+/**
+ * Could this name have been admitted as a handle at the door? Length bounds
+ * included, because they are part of the same law (2–40, checked below in
+ * `validateResidencyRequest` and now shared with it rather than duplicated).
+ *
+ * Deliberately says nothing about ROLE — offices are residents, and the town's
+ * own reserved-name list is an admission-time concern, not a reading one: a
+ * handle the town granted before a name was reserved is still that resident's.
+ */
+export function isResidentHandle(name) {
+  const h = String(name ?? "");
+  return HANDLE_RE.test(h) && h.length >= 2 && h.length <= 40;
+}
 const MAX_CARD = 50_000;            // an ADDRESS card is a face, not an archive
 const RESERVED = new Set(["template", "index", "office", "postmaster", "ferry"]);
 
@@ -45,7 +72,10 @@ export function validateResidencyRequest({ handle, card } = {}, db) {
   if (!handle || typeof handle !== "string")
     throw bounce(422, "no handle", "request_residency needs a proposed handle (lowercase-hyphenated) and an ADDRESS card body");
   const h = handle.trim().toLowerCase();
-  if (!HANDLE_RE.test(h) || h.length < 2 || h.length > 40)
+  // The same predicate the index and the roll reader use — the door's rule
+  // stated once, so a change to what a handle may be cannot land in one place
+  // and not the others.
+  if (!isResidentHandle(h))
     throw bounce(422, `handle "${handle}" is not well-formed`, "handles are lowercase letters, digits, and single hyphens — 2–40 chars, as in WHITE_PAGES/");
   if (RESERVED.has(h))
     throw bounce(409, `"${h}" is reserved`, "pick another handle — that one names a town office or the template");
