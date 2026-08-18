@@ -320,7 +320,7 @@ for (const m of marks) {
       // WORKS_PATH gates read the same clause). Derived here once so every
       // reader downstream — the lints, the payload, the site lens — reads the
       // fact instead of re-deriving it. Emitted only when true.
-      declares: (m.class !== undefined && relPath(m._dir).includes("/the-keeping-works/")) || null,
+      declares: (m.class !== undefined && relPath(m._dir).includes("/the-keeping-works/")) || undefined,
       class_version: Number.isFinite(Number(m.version)) ? Number(m.version) : null,
       extends: m.extends ?? null,
       dials: (m.dials && typeof m.dials === "object" && !Array.isArray(m.dials)) ? m.dials : null,

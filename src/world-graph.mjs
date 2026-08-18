@@ -142,6 +142,11 @@ function buildPayload(dbPath, st) {
     if (p.date) data.date = p.date;
     if (p.mechanic) data.mechanic = p.mechanic;
     if (p.class) data.class = p.class;
+    // The declaration FACT (step-1, 2026-08-18), derived once by the hydrator
+    // (a class-carrying mark standing in the Keeping Works) — the site lens
+    // reads this instead of re-deriving position, so a class-carrying mark
+    // without it renders as the INSTANCE it is.
+    if (p.declares === true) data.declares = true;
     if (Array.isArray(p.actions ?? p.affordances)) data.actions = (p.actions ?? p.affordances).length;
     // THE CLAIM ITSELF. A mark's body is the sentence the author wrote about
     // the thing — SCHEMA.md caps it at 150 characters — and without it the
