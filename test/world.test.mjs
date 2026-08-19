@@ -354,7 +354,7 @@ test("overhang: a claim left where you stand, nesting one level out, is disclose
     "nested in vermillion/the-pando-peak — your claim overhangs vermillion/vermillion-view-peak, which you are standing in",
     "the reporter's own suggested sentence, verbatim");
   assert.match(r.why, /a claim is a rect/, "and it names the cause, not just the fact");
-  assert.match(r.remedy, /to: "centre"/, "the remedy is the walk variant that lands with it");
+  assert.match(r.remedy, /mode: "center"/, "the remedy is the walk variant that lands with it");
 });
 
 test("overhang: the ordinary case says nothing at all", async () => {
@@ -461,13 +461,14 @@ test("walk target: a long parcel names a few and counts the rest", () => {
   assert.equal(r.hint.includes("finn/thing-8"), false);
 });
 
-test("world_walk contract carries the arrival variant and names the fence it fixes", () => {
+test("world_walk contract carries the arrival mode and says it is not a destination", () => {
   const tool = WORLD_TOOLS.find(({ name }) => name === "world_walk");
-  assert.deepEqual(tool.inputSchema.properties.to.enum, ["entry", "centre"]);
-  assert.match(tool.inputSchema.properties.to.description, /default/, "entry stays the default, said out loud");
-  assert.match(tool.description, /BOUNDARY/, "the door warns where a mark-walk actually leaves you");
-  assert.match(tool.description, /nests one level OUT/, "and what that costs a claim left there");
-  assert.match(tool.description, /to: "centre"/);
+  assert.equal(tool.inputSchema.properties.to, undefined, "the retired `to:` field is gone from the schema (renamed 2026-08-19)");
+  assert.deepEqual(tool.inputSchema.properties.mode.enum, ["rim", "center"]);
+  assert.match(tool.inputSchema.properties.mode.description, /default/, "rim is the default, said out loud");
+  assert.match(tool.inputSchema.properties.mode.description, /NOT the destination/, "the field says what it is not — the Seven confusion");
+  assert.match(tool.description, /mode: "center"/);
+  assert.match(tool.description, /mode is never a destination/, "the door itself warns the mark-id-in-mode mistake away");
 });
 
 // ── the invariants worth protecting (issue #5, "not defects") ────────────────

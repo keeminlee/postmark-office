@@ -1350,7 +1350,7 @@ export function overhangOf({ id, kind, parent, at, extent, standing, spine }) {
       ? `nested in ${parent} — your claim overhangs ${standIn.id}, which you are standing in`
       : `nested at the root of the world — your claim overhangs ${standIn.id}, which you are standing in`,
     why: `a claim is a rect, and yours straddles ${standIn.id}'s boundary, so it is not ≥99% inside it — walking to a mark stops you ON its edge, which is where this comes from`,
-    remedy: `to sit inside ${standIn.id}: world_walk mark_id: "${standIn.id}", to: "centre" — then leave the mark from there`,
+    remedy: `to sit inside ${standIn.id}: world_walk mark_id: "${standIn.id}", mode: "center" — then leave the mark from there`,
   };
 }
 
@@ -1434,9 +1434,14 @@ export async function worldNoteViaOffice(worldClone, payload = {}, key = null) {
 //       grammar as every other door.
 //   7 — home IS the parcel.
 //
-// Threshold and tolerance choices live in CALLS.md (C2, C4, C6, C7, C8) and are
-// provisional by construction.
-export const WALK_TARGET_MAX_EXTENT_M = 2000;
+// Threshold and tolerance choices live in CALLS.md (C2, C4, C6, C8) and are
+// provisional by construction. C7 — the 2,000 m extent cap on mark targets —
+// was REMOVED by founder ruling 2026-08-19 ("remove the weird/arbitrary size
+// cap... it's been confusing people"): with rim arrival the first point of any
+// ground is a well-defined stop however large the ground, so the cap's premise
+// ("too large to be a meaningful destination") no longer holds. A removed
+// check, not a lost record — CALLS.md C7 (archived in the world repo) keeps
+// the original reasoning.
 const WALK_EXCLUDED_TIERS = new Set(["constitution"]);
 
 // How many sited marks a parcel bounce names before it stops listing. A parcel
@@ -1521,16 +1526,25 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
   const { parseWalkLedger, currentDeparture, positionAt, fractionalCrossing, extentForArrival, isWalkArrival } =
     await import(pathToFileURL(join(worldClone, "tools", "walk.mjs")));
 
-  // WHERE IN THE TARGET — issue #5 §1. `entry` (the default) ends the walk at the
-  // first point on the target's ground; `centre` ends it at the middle. The world's
-  // walk.mjs owns what each MEANS — the office only asks — and a clone that has not
-  // pulled the variant yet answers `entry` for everything, which is what it did before.
-  const arrival = payload.to === undefined || payload.to === null ? "entry" : String(payload.to);
-  const knownArrival = isWalkArrival ?? ((v) => v === "entry" || v === "centre");
-  if (!knownArrival(arrival))
-    throw bounce(422, `unknown arrival "${arrival}"`,
-      'to: "entry" ends the walk where you first set foot on the target (the default); to: "centre" walks you to its middle');
-  const withinFor = extentForArrival ?? ((a, e) => (a === "centre" ? null : e ?? null));
+  // WHERE IN THE TARGET — issue #5 §1, RENAMED 2026-08-19 (founder-ruled, the
+  // Seven zero-distance confusion): the field is `mode:`, the words are `rim`
+  // (the default — stop at the first point of the target's ground) and `center`
+  // (walk to its middle). The old field `to:` invited mark ids into an enum
+  // slot, and "centre" collided with the Town Centre's own name. The world's
+  // walk.mjs owns what each mode MEANS — the office only asks — and BOTH skews
+  // are held: legacy values from old callers normalize to canon here, and a
+  // world clone that predates the rename is spoken to in its own legacy words.
+  const LEGACY_MODE = { entry: "rim", centre: "center" };
+  const askedMode = payload.mode ?? payload.to;   // `to:` is the retired name, still honored for old hands
+  const raw = askedMode === undefined || askedMode === null ? "rim" : String(askedMode);
+  const arrival = LEGACY_MODE[raw] ?? raw;        // canon: "rim" | "center"
+  const knownArrival = isWalkArrival ?? ((v) => ["rim", "center", "entry", "centre"].includes(v));
+  const cloneSpeaksCanon = knownArrival("rim");
+  const forClone = cloneSpeaksCanon ? arrival : ({ rim: "entry", center: "centre" }[arrival] ?? arrival);
+  if (!knownArrival(forClone))
+    throw bounce(422, `unknown mode "${raw}"`,
+      'mode: "rim" (the default) stops the walk at the first point of the target\'s ground — you arrive standing on its edge; mode: "center" walks you to its middle. To pick WHERE you walk, use mark_id: (a mark\'s id) or x:/y: coordinates — mode only says where on it you stop.');
+  const withinFor = extentForArrival ?? ((a, e) => ((a === "center" || a === "centre") ? null : e ?? null));
   // Only the telling half of the oracle is imported now that the gate is off for
   // v0; segmentCrossesWater / nearestCrossing / seaGated stay exported and tested in
   // the world repo, unused here until the gate returns.
@@ -1581,10 +1595,9 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
     if (WALK_EXCLUDED_TIERS.has(m.tier)) throw bounce(422, `"${id}" is ${m.tier} — the town's own furniture, not a destination`,
       "walk to a market or sovereign mark, or give coordinates");
     if (!m.at) throw bounce(422, `"${id}" has no place on the map`, "an unplaced mark cannot be walked to");
-    const span = Math.max(m.extent?.w ?? 0, m.extent?.h ?? 0);
-    if (span >= WALK_TARGET_MAX_EXTENT_M) throw bounce(422,
-      `"${id}" is ${Math.round(span)} m across — too big to be a destination`,
-      `walking "to" something that large has no single answer; name a mark inside it, or give coordinates (cap ${WALK_TARGET_MAX_EXTENT_M} m — CALLS.md C7)`);
+    // The C7 size cap once bounced here ("too big to be a destination", ≥2000 m).
+    // Removed 2026-08-19, founder-ruled: rim arrival makes any named mark a
+    // well-defined destination — you stop at the first point of its ground.
     toward = { x: m.at.x, y: m.at.y };
     targetExtent = { w: m.extent.w, h: m.extent.h };
     targetMarkId = id; targetFrom = `${id}`;
@@ -1599,13 +1612,13 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
     }
   }
 
-  // One place applies the arrival, whichever way the target was named. `centre`
+  // One place applies the mode, whichever way the target was named. `center`
   // drops the frozen extent, so the interpolation runs to `toward` — the mark's
   // centre — instead of stopping at the first contained point. Raw coordinates
-  // never had an extent, so asking for their centre is honestly a no-op.
+  // never had an extent, so asking for their center is honestly a no-op.
   if (targetExtent) {
-    const asked = withinFor(arrival, targetExtent);
-    if (asked === null) targetFrom = `${targetFrom} — its centre`;
+    const asked = withinFor(forClone, targetExtent);
+    if (asked === null) targetFrom = `${targetFrom} — its center`;
     targetExtent = asked;
   }
 
@@ -1963,12 +1976,12 @@ export const WORLD_TOOLS = [
       handle: { type: "string", description: "which of YOUR residents owns the note (omit if your key holds one; a multi-resident key must name one)" },
     }, required: ["body"], additionalProperties: false } },
   { name: "world_walk",
-    description: "Walk. Declare a departure and the world carries you — position derives from the record and the clock at 15 km per crossing, so you arrive whether or not anyone is watching. A bare call walks you HOME (your household's ground). Name a mark with mark_id: to walk to it, or give x/y for anywhere. There is no pathfinding and nothing blocks you in v0 — water included, so a leg may cross the channel; the answer names any crossings your road passes over. You are the pathfinder. Walking again supersedes: the new leg starts from wherever you are now. To stop, walk to where you already stand. WHERE IN IT YOU LAND: walking to a mark ends at the first point on its ground, which means you stop ON ITS BOUNDARY — and a mark you then leave there is a rect that straddles the line, so it nests one level OUT. Pass to: \"centre\" when you mean to arrive AT a place rather than merely reach it; it is also how you walk in off the fence once you are standing on one.",
+    description: "Walk. Declare a departure and the world carries you — position derives from the record and the clock at 15 km per crossing, so you arrive whether or not anyone is watching. WHERE YOU WALK: a bare call walks you HOME (your household's ground); mark_id: walks you to that mark (this is the path we teach — no coordinates needed, the world knows where every mark stands; find ids with world_orient's `nearby` or the telling); x:/y: walks you to raw coordinates. There is no pathfinding and nothing blocks you in v0 — water included, so a leg may cross the channel; the answer names any crossings your road passes over. You are the pathfinder. Walking again supersedes: the new leg starts from wherever you are now. WHERE ON IT YOU STOP: mode: \"rim\" (the default) ends the walk at the first point of the target's ground — you arrive standing on its edge; mode: \"center\" carries you to its middle — pass it when you mean to arrive AT a place (a plaza, the Town Centre) rather than merely reach it, and it is also how you walk in off a fence you are standing on. mode is never a destination — put mark ids in mark_id:.",
     inputSchema: { type: "object", properties: {
       mark_id: { type: "string", description: "walk to this mark's ground — <by>/<slug>, as ids appear in the telling (sited marks only, and not the town's own constitution furniture)" },
       x: { type: "number", description: "grid meters east of Ferry's crossing (the general case; a mark id is the path we teach)" },
       y: { type: "number", description: "grid meters south of Ferry's crossing" },
-      to: { type: "string", enum: ["entry", "centre"], description: "where in the target to stop: \"entry\" (default) ends the walk the moment you set foot on its ground — correct for a mountain, and it leaves you on the boundary; \"centre\" walks you to its middle. Only means anything for a mark or home target; coordinates are already a point." },
+      mode: { type: "string", enum: ["rim", "center"], description: "where ON the destination you stop — NOT the destination itself (that is mark_id: or x:/y:). \"rim\" (the default if omitted): stop at the first point of its ground, standing on its edge — right for a mountain. \"center\": walk to its middle — right for a plaza or anywhere you mean to arrive AT. Meaningless for x/y targets; a coordinate is already a point." },
       handle: { type: "string", description: "which of YOUR residents is walking (omit if your key holds one; a multi-resident key must name one, or it bounces with the list)" },
     }, additionalProperties: false } },
   { name: "world_walkers",
