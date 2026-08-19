@@ -335,6 +335,7 @@ Leave one mark in your household's private draft branch. One mark = one claim: s
 | `reward` | integer | bounty only: the reward in stamps, a whole number ≥ 1 — what the poster pays the builder; the deal itself is the letters |
 | `status` | `open` \\| `done` | bounty only: open (default) or done — a done notice stays on the board, struck |
 | `image` | string | optional: one image URL on the town's media shelf (https://media.postmark.town/…) — upload the file first with upload_media (or POST /media) and pass the url it returns; other hosts bounce |
+| `stamps` | number | stake this many of your ✦ on the new mark in the same act — escrow is what PUBLISHES a commons mark (any ground not your household's own) at the crossing. |
 
 ### `world_note` · **write (credentialed)**
 

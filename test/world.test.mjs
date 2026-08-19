@@ -19,6 +19,7 @@ const {
   worldEyes,
   worldBlockForHandle,
   overhangOf,
+  publishNoteFor,
   unwalkableTarget,
   noticeBoardAt,
   withNoticeBoard,
@@ -459,6 +460,49 @@ test("walk target: a long parcel names a few and counts the rest", () => {
   const r = unwalkableTarget(PARCEL, many);
   assert.match(r.hint, /and 3 more/, "a refusal must not become a wall of ids");
   assert.equal(r.hint.includes("finn/thing-8"), false);
+});
+
+// ── the publish note (founder-ruled 2026-08-19, the Waiting Room finding) ────
+// Six furnished marks sat leftDrafted for days because "commons needs escrow
+// > 0" was judged silently at the crossing. The door now discloses at
+// authorship time; these falsify the pure decision without a clone.
+
+const NOTE_MARKS = [
+  { id: "postmaster/the-waiting-room-parcel", kind: "parcel", by: "postmaster" },
+  { id: "little-bird/my-own-yard", kind: "parcel", by: "little-bird" },
+];
+const residentsOf = (h) => (h === "little-bird" ? ["little-bird", "little-owl"] : h === "postmaster" ? ["postmaster"] : null);
+
+test("publish note: your own household's parcel is the one silent lane", () => {
+  const note = publishNoteFor({ id: "little-owl/a-chair", parent: "little-bird/my-own-yard",
+    by: "little-owl", marks: NOTE_MARKS, residentsOf });
+  assert.equal(note, null, "a co-resident's mark on the household's own parcel publishes free — no note");
+});
+
+test("publish note: another household's parcel gets the heads-up with the stake call ready", () => {
+  const note = publishNoteFor({ id: "little-bird/a-cold-cup", parent: "postmaster/the-waiting-room-parcel",
+    by: "little-bird", marks: NOTE_MARKS, residentsOf });
+  assert.ok(note, "the Waiting Room case notes");
+  assert.match(note.heads_up, /ESCROW/, "the rule is named in the author's face");
+  assert.match(note.heads_up, /stamps: 1/, "and the inline lane is named");
+  assert.deepEqual(note.to_publish.args, { mark: "little-bird/a-cold-cup", stamps: 1 }, "the verb is loaded");
+});
+
+test("publish note: town ground and unknown parents note too — over-noting is the safe side", () => {
+  const town = publishNoteFor({ id: "a/b", parent: "the-town/the-town-centre", by: "a", marks: NOTE_MARKS, residentsOf });
+  assert.match(town.heads_up, /the town's own ground/);
+  const unknown = publishNoteFor({ id: "a/b", parent: "someone/a-draft-room", by: "a", marks: NOTE_MARKS, residentsOf });
+  assert.ok(unknown, "a parent the published fold cannot see still notes");
+  const open = publishNoteFor({ id: "a/b", parent: null, by: "a", marks: NOTE_MARKS, residentsOf });
+  assert.match(open.heads_up, /open ground/);
+});
+
+test("world_leave_mark contract carries the inline stake and points at the publishing note", () => {
+  const tool = WORLD_TOOLS.find(({ name }) => name === "world_leave_mark");
+  assert.equal(tool.inputSchema.properties.stamps.type, "number");
+  assert.match(tool.inputSchema.properties.stamps.description, /PUBLISHES/, "escrow-publishes is said on the field itself");
+  assert.match(tool.description, /stamps: 1/, "the inline lane is taught at the door");
+  assert.match(tool.description, /`publishing` note/, "and the answer's note is named");
 });
 
 test("world_walk contract carries the arrival mode and says it is not a destination", () => {

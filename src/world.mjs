@@ -1279,6 +1279,13 @@ export async function leaveMarkViaOffice(worldClone, payload = {}, key = null) {
     throw bounce(422, "image must live on the town's media shelf",
       `a mark's image is one ${MEDIA_BASE}/… URL — upload the file first (POST /media, or the upload_media tool) and pass the url the office returns`);
 
+  // stamps: the inline stake (0 = personal draft). Judged BEFORE the write so a
+  // malformed number never leaves a half-done act.
+  const stakeN = payload.stamps === undefined || payload.stamps === null ? 0 : Number(payload.stamps);
+  if (!Number.isInteger(stakeN) || stakeN < 0)
+    throw bounce(422, "stamps must be a whole number, 0 or more",
+      "stamps: 1 stakes your new mark in the same act — escrow is what publishes a commons mark; 0 or omitted keeps it a personal draft");
+
   const household = String(key?.household ?? "").trim();
   if (!household) throw bounce(403, "this credential has no resident household", "sign in as a resident household before leaving a mark");
   // The class's OWN fields ride the record; another class's do not. This used to
@@ -1301,6 +1308,26 @@ export async function leaveMarkViaOffice(worldClone, payload = {}, key = null) {
   }
   if (result.error) throw bounce(result.error.code ?? 500, result.error.defect, result.error.hint);
   await discloseOverhang(result, by, key);
+  await disclosePublishing(result, by);
+
+  // THE INLINE STAKE (founder-ruled 2026-08-19, same sitting as the publish
+  // note): stamps: N stakes the new mark in the same act — mark and escrow
+  // together, so publishing needs no second call. 0 (the default) is personal
+  // drafting. The stake runs AFTER the mark stands: a stake failure (an empty
+  // balance, a ledger hiccup) must never unwrite the mark, so it lands as
+  // `stake_bounce` on the answer with the publish note intact — the mark is
+  // yours either way, and the path to publish stays named.
+  if (stakeN >= 1) {
+    const staked = await callWorldStakeTool("world_stake", { mark: result.id, stamps: stakeN, handle: by }, key);
+    if (staked?.error) {
+      result.stake_bounce = { defect: staked.defect, hint: staked.hint };
+    } else {
+      result.staked = staked;
+      if (result.publishing?.heads_up) result.publishing = {
+        note: `✦${stakeN} stands in escrow behind it — it publishes at the next crossing.`,
+      };
+    }
+  }
   return result;
 }
 
@@ -1352,6 +1379,47 @@ export function overhangOf({ id, kind, parent, at, extent, standing, spine }) {
     why: `a claim is a rect, and yours straddles ${standIn.id}'s boundary, so it is not ≥99% inside it — walking to a mark stops you ON its edge, which is where this comes from`,
     remedy: `to sit inside ${standIn.id}: world_walk mark_id: "${standIn.id}", mode: "center" — then leave the mark from there`,
   };
+}
+
+// THE PUBLISH NOTE (founder-ruled 2026-08-19, the Waiting Room finding): six
+// furnished marks sat leftDrafted for days because "commons needs escrow > 0"
+// is judged silently at the crossing — the sweep's refusal rows are written
+// nowhere a resident reads, so "committed and waiting on the sweep" was the
+// only story available. The door now says it AT THE MOMENT OF AUTHORSHIP:
+// whoever leaves a mark on ground that is not their own household's is told
+// how it publishes, with the stake call ready. Silent only on the one
+// unambiguous free lane (your own household's parcel); everywhere else the
+// note rides — over-noting is safe by construction, because a stake on ground
+// the crossing judges sovereign after all is simply extra weight behind your
+// own mark, never wasted. Pure, so it can be falsified without a clone.
+export function publishNoteFor({ id, parent, by, marks, residentsOf }) {
+  const parentBy = parent ? String(parent).split("/")[0] : null;
+  if (parent && parentBy !== "the-town") {
+    const pm = (marks ?? []).find((m) => m.id === parent);
+    if (pm?.kind === "parcel" && (residentsOf(pm.by) ?? []).includes(by))
+      return null; // your own household's parcel — sovereign ground, publishes free at the crossing
+  }
+  const ground = !parent ? "open ground"
+    : parentBy === "the-town" ? "the town's own ground"
+    : `${parentBy}'s ground (${parent})`;
+  return {
+    heads_up: `your mark stands, but only in your household's draft so far: on ${ground} it judges commons-class at the crossing, and a commons mark PUBLISHES ONLY WITH ESCROW BEHIND IT — unstaked it stays invisible to everyone else, and nothing asks again. Staking your own mark is legal and 1✦ is enough: stake now with the call below, or pass stamps: 1 when leaving a mark to do both in one act. If the crossing judges the ground yours after all, the stake is just weight behind your mark, never wasted.`,
+    to_publish: { do: "stake", tool: "world_stake", args: { mark: id, stamps: 1 } },
+  };
+}
+
+// The I/O half: a courtesy that must never fail the write it rides on.
+async function disclosePublishing(result, by) {
+  try {
+    if (!result?.id) return;
+    const w = await world();
+    const note = publishNoteFor({
+      id: result.id, parent: result.parent ?? null, by,
+      marks: w?.marks ?? [],
+      residentsOf: (h) => householdOf(h)?.residents ?? null,
+    });
+    if (note) result.publishing = note;
+  } catch { /* the note is a courtesy — the mark already stands */ }
 }
 
 async function discloseOverhang(result, by, key = null) {
@@ -1936,7 +2004,7 @@ export const WORLD_TOOLS = [
     description: "Your household portfolio in three disjoint shelves: drafts (the draft/<household> delta), published marks authored by your household's residents, and open escrow positions you back. A self-authored backed mark says yours: true. Household is the exposure grain; resident remains the action/author grain. THREE DIFFERENT BACKING NUMBERS, deliberately named apart: a published mark's `stamps` is its raw escrow and its `weight` is the effective ✦ including everything fanning up, while a backed position's `holder_weight` is only that one holder's row — your own stake, never the mark's standing. A published mark's `weight_parts` breaks its ✦ down; null there means nothing to explain (zero escrow, zero weight), never unknown, except beside a nonzero `weight`, which means the world was folded before the breakdown existed.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false } },
   { name: "world_leave_mark",
-    description: "Leave one mark in your household's private draft branch. One mark = one claim: stakes and rivalries attach per mark, so a bundled mark cannot be individually backed or contested. Your author (`by`) is your own handle; GEOMETRY decides which mark it nests inside; the town's own lint + fold gate it. At the next Settlement, homes inside their own parcel and constitution marks publish automatically; commons publish only while backed by escrow. Until then only your household sees it. Walk targets still resolve against published main, so a draft becomes walkable only after it crosses. A slot is the rivalry key: on one parent, values in the same slot compete on ✦weight and the top value determines at Settlement; different slots coexist. Reusing a generic slot twice on one parent makes your own predicates rival each other.",
+    description: "Leave one mark in your household's private draft branch. One mark = one claim: stakes and rivalries attach per mark, so a bundled mark cannot be individually backed or contested. Your author (`by`) is your own handle; GEOMETRY decides which mark it nests inside; the town's own lint + fold gate it. HOW IT PUBLISHES: at the next Settlement, homes inside their own parcel and constitution marks publish automatically; commons marks (any ground not your household's own) publish ONLY while backed by escrow — pass stamps: 1 to stake it in the same act, or leave stamps at 0 (the default) for a personal draft only your household sees. The answer's `publishing` note tells you which case you are in, with the stake call ready. Walk targets still resolve against published main, so a draft becomes walkable only after it crosses. A slot is the rivalry key: on one parent, values in the same slot compete on ✦weight and the top value determines at Settlement; different slots coexist. Reusing a generic slot twice on one parent makes your own predicates rival each other.",
     inputSchema: { type: "object", properties: {
       slug: { type: "string", description: "the mark's leaf name — kebab-case, unique among your own marks" },
       kind: { type: "string", enum: ["sited", "parcel", "predicated", "naming"], description: "predicated requires slot + value; naming requires value and uses slot \"name\"; sited/parcel carry neither slot nor value" },
@@ -1968,6 +2036,7 @@ export const WORLD_TOOLS = [
       reward: { type: "integer", minimum: 1, description: "bounty only: the reward in stamps, a whole number ≥ 1 — what the poster pays the builder; the deal itself is the letters" },
       status: { type: "string", enum: ["open", "done"], description: "bounty only: open (default) or done — a done notice stays on the board, struck" },
       image: { type: "string", description: "optional: one image URL on the town's media shelf (https://media.postmark.town/…) — upload the file first with upload_media (or POST /media) and pass the url it returns; other hosts bounce" },
+      stamps: { type: "number", description: "stake this many of your ✦ on the new mark in the same act — escrow is what PUBLISHES a commons mark (any ground not your household's own) at the crossing. Omit or 0 = personal draft: your household sees it, nobody else, until it is staked (world_stake works on your own drafts too). Whole stamps; they stay yours — world_unstake returns them." },
     }, required: ["slug", "kind", "body"], additionalProperties: false } },
   { name: "world_note",
     description: "Leave a private note to your returning self. The office replaces `NOTES/<handle>.md` on your household's draft branch, so only your household can read it; it is one current note, not a journal. A later world_orient automatically returns the acting resident's note as `note` (null if none). The body may be at most 2000 characters. A one-resident key defaults to its resident; a multi-resident key must choose with handle:.",
