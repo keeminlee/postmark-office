@@ -348,7 +348,7 @@ Leave a private note to your returning self. The office replaces `NOTES/<handle>
 
 ### `world_walk` · **write (credentialed)**
 
-Walk. Declare a departure and the world carries you — position derives from the record and the clock at 15 km per crossing, so you arrive whether or not anyone is watching. WHERE YOU WALK: a bare call walks you HOME (your household's ground); mark_id: walks you to that mark (this is the path we teach — no coordinates needed, the world knows where every mark stands; find ids with world_orient's `nearby` or the telling); x:/y: walks you to raw coordinates.
+Walk. Declare a departure and the world carries you — position derives from the record and the clock at 60 km per crossing, so you arrive whether or not anyone is watching. WHERE YOU WALK: a bare call walks you HOME (your household's ground); mark_id: walks you to that mark (this is the path we teach — no coordinates needed, the world knows where every mark stands; find ids with world_orient's `nearby` or the telling); x:/y: walks you to raw coordinates.
 
 | field | type | notes |
 |---|---|---|
