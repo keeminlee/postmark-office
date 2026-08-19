@@ -16,6 +16,7 @@ import {
 import { basename, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 
 const HOUSEHOLD_RE = /^[a-z0-9][a-z0-9._-]*$/i;
 const viewCache = new Map();
@@ -423,9 +424,21 @@ function settledStakes(state) {
 // Fold the branch tree, rather than trusting a branch-local derived file.
 // Public mark weights are carried from the settled main-derived state as input;
 // newly drafted marks enter with zero backing until a Settlement publishes them.
-export function foldedStateAtRef(repo, ref) {
+//
+// `stakes` — the FORECAST seam (the-town/the-forecast). Pass the pending book and
+// this folds the same tree through the same judgment against a later ledger, which
+// is precisely what the next crossing will do. Pass nothing and the behaviour is
+// what it always was, byte for byte: the settled stakes carried off `prev`.
+//
+// The memo is content-addressed on the stakes as well as the sha, so a forecast
+// can never answer for a book that has moved on. Nothing lands on disk (the-town/
+// the-forecast: never stored) — the archive directory is removed in `finally` and
+// this map dies with the process. It is a memo rather than a per-request
+// derivation because the real fold costs ~6s of judgment on the live world, and
+// the settled draft-branch path already accepted exactly this trade.
+export function foldedStateAtRef(repo, ref, { stakes = null } = {}) {
   const sha = git(repo, ["rev-parse", `${ref}^{commit}`]).trim();
-  const key = `${repo}\0${ref}\0${sha}`;
+  const key = `${repo}\0${ref}\0${sha}\0${stakes ? createHash("sha1").update(JSON.stringify(stakes)).digest("hex") : ""}`;
   if (viewCache.has(key)) return viewCache.get(key);
 
   const dir = archiveRef(repo, ref);
@@ -433,7 +446,7 @@ export function foldedStateAtRef(repo, ref) {
     const prevPath = join(dir, "WORLD", "world-state.json");
     const prev = existsSync(prevPath) ? JSON.parse(readFileSync(prevPath, "utf8")) : null;
     const stakesPath = join(dir, "settled-stakes.json");
-    writeFileSync(stakesPath, JSON.stringify(settledStakes(prev)));
+    writeFileSync(stakesPath, JSON.stringify(stakes ?? settledStakes(prev)));
     const fold = join(repo, "tools", "marks-fold.mjs");
     const args = [
       fold,

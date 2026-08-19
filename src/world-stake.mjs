@@ -26,6 +26,7 @@ import { existsSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { stateForKey } from "./world-branches.mjs";
+import { forecastForMark } from "./world-forecast.mjs";
 import { execUnderTownLock, lockTimedOut, LOCK_BUSY } from "./town-lock.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -106,6 +107,12 @@ export async function worldStakeRead(args = {}) {
   const derived = mod.deriveWorldMarkWeights(TOWN_CLONE, state);
   const row = derived.marks.find((m) => m.mark === mark) ?? null;
   const escrow = mod.markEscrow(TOWN_CLONE, mark, state);
+  // THE FUTURE TENSE, beside the present one (the-town/the-tenses). Everything
+  // above is the ledger as it stands; `proposed` is what the next crossing will
+  // make of it, folded by the crossing's own judgment. Absent when the next save
+  // would say what the last one already did — a door that announced "no change"
+  // would be adding a sentence to every mark in the world to say nothing.
+  const proposed = await forecastForMark(mark, { worldClone: WORLD_CLONE, townClone: TOWN_CLONE });
   return {
     mark,
     escrow,
@@ -122,6 +129,7 @@ export async function worldStakeRead(args = {}) {
     _note: "ledger_weight is own escrow + breadth bonus. The ✦weight in the telling also includes marks inside this one fanning up — see world_investigate.weight_parts.",
     holders: holders.sort((a, b) => b.stamps - a.stamps),
     retirement: mod.retirementBlocked(TOWN_CLONE, mark, state),
+    ...(proposed ? { proposed } : {}),
   };
 }
 
