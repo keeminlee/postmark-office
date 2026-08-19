@@ -2,6 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   deriveCarried,
+  carriedThingIds,
+  splitCargo,
   boundariesBetween,
   cargoFrom,
   footfallFrom,
@@ -31,6 +33,43 @@ test("cargoFrom excludes our own things and withdrawn things", () => {
   assert.equal(cargo[0].thing_id, 3);
   assert.equal(cargo[0].status, "alarm"); // two boundaries = the exact failure this tool exists to kill
   assert.equal(cargo[0].body_excerpt, "carry me");
+});
+
+test("cargoFrom: a carried thing never alarms, a standing thing wears its reason, an unknown thing still alarms", () => {
+  const mk = (id, createdAt) => ({ id, name: `t${id}`, owner: "sable", withdrawn_at: null, created_at: createdAt, body: "" });
+  const now = Date.parse("2026-08-19T01:00:00Z");
+  const old = "2026-08-15T19:03:34Z"; // seven boundaries by now — alarm territory
+  const cargo = cargoFrom(
+    [mk(537, old), mk(646, old), mk(999, old)],
+    "wright-of-postmark", now, "p",
+    { carriedIds: new Set([537]), standing: { 646: "its own text forbids carriage" } },
+  );
+  assert.equal(cargo.find((c) => c.thing_id === 537).status, "carried");
+  assert.equal(cargo.find((c) => c.thing_id === 646).status, "standing");
+  assert.equal(cargo.find((c) => c.thing_id === 646).standing_reason, "its own text forbids carriage");
+  assert.equal(cargo.find((c) => c.thing_id === 999).status, "alarm"); // the control: the fix must not silence real cargo
+  const split = splitCargo(cargo);
+  assert.deepEqual(split.waiting.map((c) => c.thing_id), [999]);
+  assert.deepEqual(split.resolved.map((c) => c.thing_id).sort(), [537, 646]);
+});
+
+test("carriedThingIds: reads thing ids from carriage receipts (origin_town OR carried-from filename), ignores plain mail", async (t_) => {
+  const { mkdtempSync, mkdirSync: mkd, writeFileSync: wf } = await import("node:fs");
+  const { join: j } = await import("node:path");
+  const { tmpdir } = await import("node:os");
+  const root = mkdtempSync(j(tmpdir(), "carried-ids-"));
+  const box = (h, b) => { const d = j(root, "WHITE_PAGES", h, b); mkd(d, { recursive: true }); return d; };
+  // envelope-era receipt: origin_town frontmatter, thing id in prose
+  wf(j(box("wright", "inbox"), "wright-2026-08-17-carried-from-1f3d9-x.md"),
+    "---\nid: a\nfrom: wright\nto: wright\ndate: 2026-08-17\norigin_town: 1f3d9\n---\n\nCarried — thing #715, provenance intact.\n");
+  // pre-envelope receipt: carried-from filename only (the #537 shape)
+  wf(j(box("sable", "inbox"), "wright-2026-08-16-carried-from-1f3d9-a-route.md"),
+    "---\nid: b\nfrom: wright\nto: sable\ndate: 2026-08-16\n---\n\nCarried by hand — thing #537.\n");
+  // plain town mail that merely MENTIONS a thing — must not count
+  wf(j(box("hal", "inbox"), "someone-2026-08-18-plain.md"),
+    "---\nid: c\nfrom: someone\nto: hal\ndate: 2026-08-18\n---\n\nI saw thing #999 at the pier once.\n");
+  const ids = carriedThingIds(root);
+  assert.deepEqual([...ids].sort((a, b) => a - b), [537, 715]);
 });
 
 test("cargoFrom fresh and warn statuses", () => {

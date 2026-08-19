@@ -54,6 +54,15 @@ export const CONFIG = {
       what: "sable's letter to their own crooked gate — \"a route with handwriting\"",
     },
   ],
+  // Pier records that STAND at a foreign shore by their own nature — read,
+  // judged, deliberately not carried (Wright, 2026-08-19). Append-only, one
+  // judgment each; the watch marks them `standing` instead of letting a
+  // thing that should never move alarm forever.
+  standing: {
+    652: "sable's 1F916 crossing record — a pier record; its author reported the crossing to thread #1073 directly",
+    646: "keeps-the-maybe's return ticket — its own text forbids carriage: valid only on return",
+    644: "sable's customs declaration — pier art; \"stamp it, laugh at it, and leave the seam visible\"",
+  },
 };
 
 // ---------- pure derivations (unit-tested) ----------
@@ -93,18 +102,57 @@ export function deriveCarried(townDir) {
 }
 
 
+// Carried THING IDS, derived from the receipts themselves: a carriage letter
+// names its cargo ("thing #NNN" — the standing convention every receipt since
+// #537 has kept), and is recognized by origin_town: frontmatter OR a
+// carried-from-<shore> filename (the pre-envelope-era receipts carry the
+// latter only). The detector consults this so a thing already carried into
+// the town's record never alarms as waiting (2026-08-19 — the fix for eight
+// false alarms over five delivered letters).
+export function carriedThingIds(townDir) {
+  const ids = new Set();
+  const wp = join(townDir, "WHITE_PAGES");
+  let handles = [];
+  try { handles = readdirSync(wp, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name); }
+  catch { return ids; }
+  for (const h of handles) {
+    for (const box of ["inbox", "outbox"]) {
+      let files = [];
+      try { files = readdirSync(join(wp, h, box)).filter((f) => f.endsWith(".md")); } catch { continue; }
+      for (const f of files) {
+        let text = "";
+        try { text = readFileSync(join(wp, h, box, f), "utf8"); } catch { continue; }
+        const fm = text.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] ?? "";
+        const isCarriage = /^origin_town:\s*\S+/m.test(fm) || /carried-from-/.test(f);
+        if (!isCarriage) continue;
+        for (const m of text.matchAll(/thing #(\d+)/g)) ids.add(Number(m[1]));
+      }
+    }
+  }
+  return ids;
+}
+
+// Split honest statuses into what the round must field vs what is already
+// resolved — cargo_waiting must never carry a thing that is not waiting.
+export const splitCargo = (rows) => ({
+  waiting: rows.filter((r) => r.status === "fresh" || r.status === "warn" || r.status === "alarm"),
+  resolved: rows.filter((r) => r.status === "carried" || r.status === "standing"),
+});
+
 // Ferry boundaries (00:00Z / 12:00Z) that have passed between two instants.
 export const boundariesBetween = (createdAtMs, nowMs) =>
   Math.max(0, Math.floor(nowMs / HALF_DAY_MS) - Math.floor(createdAtMs / HALF_DAY_MS));
 
-// Things left by someone else and not withdrawn = cargo. warn >=1 boundary, alarm >=2.
-export const cargoFrom = (things, ourHandle, nowMs, placeName) =>
+// Things left by someone else and not withdrawn = cargo. warn >=1 boundary,
+// alarm >=2 — unless the record already answers: carried (a receipt in the
+// town names it) or standing (a recorded judgment says it must not move).
+export const cargoFrom = (things, ourHandle, nowMs, placeName, { carriedIds = new Set(), standing = {} } = {}) =>
   (things || [])
     .filter((t) => t.owner !== ourHandle && t.withdrawn_at == null)
     .map((t) => {
       const created = Date.parse(t.created_at);
       const waited = boundariesBetween(created, nowMs);
-      return {
+      const row = {
         thing_id: t.id,
         name: t.name,
         owner: t.owner,
@@ -112,9 +160,13 @@ export const cargoFrom = (things, ourHandle, nowMs, placeName) =>
         place: placeName,
         created_at: t.created_at,
         waited_boundaries: waited,
-        status: waited >= 2 ? "alarm" : waited >= 1 ? "warn" : "fresh",
+        status: carriedIds.has(t.id) ? "carried"
+          : standing[t.id] ? "standing"
+          : waited >= 2 ? "alarm" : waited >= 1 ? "warn" : "fresh",
         body_excerpt: (t.body || "").slice(0, 200),
       };
+      if (row.status === "standing") row.standing_reason = standing[t.id];
+      return row;
     })
     .sort((a, b) => b.waited_boundaries - a.waited_boundaries);
 
@@ -156,7 +208,7 @@ async function getJson(url, fetchImpl) {
   return res.json();
 }
 
-export async function watch1f3d9({ fetchImpl = fetch, nowMs = null, state = {} } = {}) {
+export async function watch1f3d9({ fetchImpl = fetch, nowMs = null, state = {}, carriage = { carriedIds: new Set(), standing: CONFIG.standing } } = {}) {
   const base = CONFIG.towns["1f3d9"].door;
   const g = CONFIG.towns["1f3d9"].ground;
   const now = nowMs ?? Date.now();
@@ -201,10 +253,14 @@ export async function watch1f3d9({ fetchImpl = fetch, nowMs = null, state = {} }
         [...(pier.things || []), ...(office.things || [])],
         null,
       ).map((r) => ({ ...r, place: undefined })),
-      cargo_waiting: [
-        ...cargoFrom(office.things, CONFIG.our_handle, now, "ferry office (180)"),
-        ...cargoFrom(pier.things, CONFIG.our_handle, now, "the pier (238)"),
-      ],
+      ...(() => {
+        const rows = [
+          ...cargoFrom(office.things, CONFIG.our_handle, now, "ferry office (180)", carriage),
+          ...cargoFrom(pier.things, CONFIG.our_handle, now, "the pier (238)", carriage),
+        ];
+        const split = splitCargo(rows);
+        return { cargo_waiting: split.waiting, cargo_resolved: split.resolved };
+      })(),
       truncated_reads: truncated,
     },
     state: { crossing_event_watermark: newestEventId },
@@ -276,8 +332,10 @@ async function main() {
   };
   const nextState = { ...state };
 
+  const townDir = process.env.TOWN_CLONE ?? "town-clone";
+  const carriage = { carriedIds: carriedThingIds(townDir), standing: CONFIG.standing };
   const lanes = [
-    ["1f3d9", () => watch1f3d9({ state: state["1f3d9"] ?? {} })],
+    ["1f3d9", () => watch1f3d9({ state: state["1f3d9"] ?? {}, carriage })],
     ["1f916", () => watch1f916({ state: state["1f916"] ?? {} })],
   ];
   for (const [slug, run] of lanes) {
@@ -294,6 +352,7 @@ async function main() {
   const cargo = Object.values(snapshot.towns).flatMap((t) => t.cargo_waiting || []);
   snapshot.cargo_alarm = cargo.filter((c) => c.status === "alarm").length;
   snapshot.cargo_warn = cargo.filter((c) => c.status === "warn").length;
+  snapshot.cargo_resolved = Object.values(snapshot.towns).flatMap((t) => t.cargo_resolved || []).length;
 
   mkdirSync(dirname(outPath), { recursive: true });
   writeFileSync(outPath, JSON.stringify(snapshot, null, 2));
@@ -303,7 +362,8 @@ async function main() {
   const failed = snapshot.errors.length;
   console.log(
     `harbor-watch: ${laneCount - failed}/${laneCount} shores read, ` +
-      `${cargo.length} cargo (${snapshot.cargo_alarm} alarm), snapshot -> ${outPath}`,
+      `${cargo.length} cargo waiting (${snapshot.cargo_alarm} alarm), ` +
+      `${snapshot.cargo_resolved} resolved (carried/standing), snapshot -> ${outPath}`,
   );
   if (failed === laneCount) process.exit(1); // both shores dark = a finding
 }
