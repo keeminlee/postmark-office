@@ -131,8 +131,17 @@ const server = createServer((req, res) => {
     const headers = { "content-type": "image/svg+xml", "x-content-type-options": "nosniff" };
     // /shelf/hardened.svg carries exactly what deploy/nginx-postmark-town.conf
     // now adds; /shelf/hostile.svg carries what the shelf serves TODAY.
-    if (p === "/shelf/hardened.svg")
+    if (p === "/shelf/hardened.svg") {
+      // BOTH headers the shipped /shelf/ location sets for a .svg, not just the
+      // CSP. Testing only the CSP tested LESS than what ships, and it also made
+      // the two navigation screenshots byte-identical — sandbox blocks script,
+      // not painting, so leg C and leg D looked the same to the eye while
+      // differing in the only way that matters. A reader comparing the two shots
+      // would have concluded nothing changed. With the disposition here, the
+      // hardened leg downloads instead of rendering and the images differ.
       headers["content-security-policy"] = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
+      headers["content-disposition"] = "attachment";
+    }
     res.writeHead(200, headers);
     return res.end(HOSTILE_SVG);
   }
@@ -187,14 +196,28 @@ const check = (name, expectInert, ran, extra = "") => {
   await page.close();
 }
 
-// D: the same navigation with the /shelf/ CSP this branch adds.
+// D: the same navigation with BOTH headers the shipped /shelf/ location sets.
+//
+// The navigation does not merely come back inert — it stops being a navigation.
+// Content-Disposition: attachment makes the browser take the bytes as a
+// download, so page.goto raises ERR_ABORTED and no document is ever created.
+// That thrown error is the PASS, which is why it is caught and named rather
+// than allowed to fail the run: no document means no script, and the tab is
+// left sitting on whatever it was showing before.
 {
-  const page = await browser.newPage({ viewport: { width: 420, height: 420 } });
-  await page.goto(`http://127.0.0.1:${PORT}/shelf/hardened.svg`, { waitUntil: "load" });
+  const page = await browser.newPage({ viewport: { width: 420, height: 420 }, acceptDownloads: true });
+  let downloaded = false;
+  page.on("download", () => { downloaded = true; });
+  let navigated = false, abort = null;
+  try {
+    await page.goto(`http://127.0.0.1:${PORT}/shelf/hardened.svg`, { waitUntil: "load" });
+    navigated = true;
+  } catch (e) { abort = String(e.message).split("\n")[0]; }
   await page.waitForTimeout(500);
   const ran = await page.evaluate(() => window.__svgRan).catch(() => undefined);
   await page.screenshot({ path: `${SHOTS}/svg-direct-navigation-hardened.png` });
-  check("D    direct navigation WITH the branch's CSP sandbox", true, ran);
+  check("D    direct navigation WITH both shipped headers", true, ran,
+    navigated ? "rendered as a document (CSP alone)" : `never became a document — ${abort}${downloaded ? " (taken as a download)" : ""}`);
   await page.close();
 }
 
