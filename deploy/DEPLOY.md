@@ -268,3 +268,22 @@ town clock even if compromised.
    ledger commits / `WHITE_PAGES/mail-ledger.md` fresh lines).
 6. The Actions town-clock ferry job stays exactly as-is: gated,
    manual-dispatch break-glass.
+
+## The one-hand rule (2026-08-20, after the stranded-crossings incident)
+
+**meepo is the only hand that touches `/srv/postmark-office`. Root never
+writes there — not a file, and NEVER git.** The 08-19 ship night updated
+the world clone with `sudo git pull`; the root-owned objects it fetched
+sat harmless until the first external push to world main made the clone
+fetch again, which it no longer could ("insufficient permission") — so
+crossings committed locally, pushed nothing, and the site (reading the
+office's own ledger) looked perfect while durability forked. A resident's
+letter found it before we did.
+
+- A deploy scp that bounces on permissions is fixed by `chown`, never by
+  escalating the deploy to sudo.
+- Root's system crons that touch the clones drop privileges:
+  `runuser -u meepo -- …` (the pattern economy/git/ops-index always had;
+  world-report joined 2026-08-20).
+- `ubuntu` is the AMI's break-glass admin login only. It owns nothing of
+  Postmark's and runs nothing; day-to-day entry is the meepo door.

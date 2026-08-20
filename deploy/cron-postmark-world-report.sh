@@ -9,4 +9,4 @@
 # five crossings including a guest's first entry — the premise is not worth
 # the risk regardless of which root process wrote them. Dropping to meepo
 # removes the whole class: no root git in the clones, from anything, ever.
-exec /usr/bin/sudo -u meepo /usr/bin/node /srv/postmark-office/tools/world-report.mjs >> /var/log/postmark-world-report.log 2>&1
+exec /usr/sbin/runuser -u meepo -- /usr/bin/node /srv/postmark-office/tools/world-report.mjs >> /var/log/postmark-world-report.log 2>&1
