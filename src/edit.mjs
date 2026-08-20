@@ -404,7 +404,100 @@ export function decodeImage(image, max = MAX_IMAGE, what = "avatar") {
   return bytes;
 }
 
-export function imageFormat(bytes) {
+// The formats a door may admit. RASTER is what every door has always taken and
+// stays the default, so adding a format below can never widen an existing door
+// by accident — a door opts in by naming its set, and the two enumerations are
+// the whole difference between the avatar door and the shelf.
+export const RASTER_FORMATS = Object.freeze(["jpg", "png", "webp"]);
+export const SHELF_FORMATS = Object.freeze([...RASTER_FORMATS, "svg"]);
+
+// SVG HAS NO MAGIC BYTES, so it cannot be recognised the way the other three
+// are: it is XML text, and the only honest question is whether these bytes are
+// a document whose root element is <svg>. That is what this answers, and it is
+// deliberately ALL it answers.
+//
+// THERE IS NO SANITIZATION HERE AND THAT IS THE DESIGN (the SVG ruling,
+// 2026-08-20). A scrubber that walks the XML stripping <script>, javascript:
+// and onload= is a parser racing every parser a browser ships, and the history
+// of that race is one bypass after another — mixed-case entities, nested
+// comments, namespace tricks. So the office does not race it. Safety comes from
+// the RENDER CONTEXT instead: a mark's image reaches a reader only through
+// <img src> or SVG <image href>, and in that context — "SVG as an image" — the
+// spec requires the browser to disable scripting and external references
+// entirely. A script-bearing SVG is therefore inert as art no matter what it
+// says, and the headers on the shelf host cover the one case that is not art:
+// somebody navigating straight at the file.
+//
+// The consequence to hold on to: an accepted SVG is UNTRUSTED MARKUP the town
+// stores and never executes. That is only true while the render context holds,
+// which is why the falsifier that fails if the gate ever reaches an inline
+// context is part of this change and not a nicety.
+const SVG_MEDIA_TYPE = "image/svg+xml";
+function looksLikeSVG(bytes) {
+  // Text, really text: a NUL says binary wearing an XML hat, and a lossy decode
+  // says the bytes are not the UTF-8 they would have to be to parse at all.
+  // Round-tripping is the same proof the base64 check above uses.
+  if (bytes.includes(0x00)) return false;
+  const text = bytes.toString("utf8");
+  if (!Buffer.from(text, "utf8").equals(bytes)) return false;
+
+  // Walk the prologue rather than pattern-match it. An XML document may open
+  // with a BOM, a declaration, comments, processing instructions and a doctype
+  // in any number, and each of those has its own closing marker — stepping over
+  // them in a loop is exact where one regex would be a guess, and it cannot
+  // backtrack on a 1.5 MB file.
+  let i = text.charCodeAt(0) === 0xfeff ? 1 : 0;
+  for (;;) {
+    while (i < text.length && /\s/.test(text[i])) i += 1;
+    if (text.startsWith("<?", i)) {                 // <?xml …?> or any PI
+      const end = text.indexOf("?>", i + 2);
+      if (end === -1) return false;
+      i = end + 2;
+    } else if (text.startsWith("<!--", i)) {        // comment
+      const end = text.indexOf("-->", i + 4);
+      if (end === -1) return false;
+      i = end + 3;
+    } else if (text.startsWith("<!", i)) {          // <!DOCTYPE …>, internal subset and all
+      let depth = 0, j = i + 2;
+      for (; j < text.length; j += 1) {
+        if (text[j] === "[") depth += 1;
+        else if (text[j] === "]") depth -= 1;
+        else if (text[j] === ">" && depth <= 0) break;
+      }
+      if (j >= text.length) return false;
+      i = j + 1;
+    } else break;
+  }
+
+  // The root element itself: <svg followed by something that ends the name, so
+  // a document rooted at <svgish> is not mistaken for one rooted at <svg>.
+  if (!text.startsWith("<svg", i)) return false;
+  const after = text[i + 4];
+  if (after !== undefined && !/[\s/>]/.test(after)) return false;
+
+  // Walk to the end of the start tag, stepping over quoted attribute values so
+  // a `>` inside an attribute cannot be mistaken for the tag's own end.
+  let j = i + 4, quote = null;
+  for (; j < text.length; j += 1) {
+    const c = text[j];
+    if (quote) { if (c === quote) quote = null; }
+    else if (c === '"' || c === "'") quote = c;
+    else if (c === ">") break;
+  }
+  if (j >= text.length) return false;             // start tag never ends
+
+  // The same enclosure law the other three formats meet: prove the document
+  // reaches its own closing marker before any town file is touched. A root that
+  // closes itself — `<svg …/>`, a legal empty document — carries its marker in
+  // the start tag, so that IS the enclosure and there is no `</svg>` to find.
+  const selfClosed = text[j - 1] === "/";
+  return selfClosed
+    ? !text.slice(j + 1).trim()
+    : /<\/svg\s*>\s*$/.test(text);
+}
+
+export function imageFormat(bytes, allow = RASTER_FORMATS) {
+  const admits = (format) => allow.includes(format);
   let ext, mediaType;
   if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xd8) {
     ext = "jpg"; mediaType = "image/jpeg";
@@ -412,9 +505,16 @@ export function imageFormat(bytes) {
     ext = "png"; mediaType = "image/png";
   } else if (bytes.length >= 12 && bytes.subarray(0, 4).toString("ascii") === "RIFF" && bytes.subarray(8, 12).toString("ascii") === "WEBP") {
     ext = "webp"; mediaType = "image/webp";
+  } else if (admits("svg") && looksLikeSVG(bytes)) {
+    // Sniffed and enclosed in one call, so there is no second `complete` arm
+    // below for a format that has no length field to check.
+    return { ext: "svg", mediaType: SVG_MEDIA_TYPE };
   } else {
-    throw bounce(422, "that is not a JPEG, PNG, or WebP image", "choose a JPEG, PNG, or WebP file; the office recognizes the file's bytes, not its filename or type label");
+    const names = admits("svg") ? "JPEG, PNG, WebP, or SVG" : "JPEG, PNG, or WebP";
+    throw bounce(422, `that is not a ${names} image`, `choose a ${names} file; the office recognizes the file's bytes, not its filename or type label`);
   }
+  if (!admits(ext))
+    throw bounce(422, `this door does not take ${ext.toUpperCase()}`, `send a ${allow.join(", ")} file`);
 
   const complete = ext === "jpg"
     ? bytes.length >= 4 && bytes.at(-2) === 0xff && bytes.at(-1) === 0xd9

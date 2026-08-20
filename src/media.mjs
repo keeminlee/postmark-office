@@ -32,7 +32,7 @@
 // the office deploys ahead of the credentials without lying about it.
 
 import { createHash, createHmac } from "node:crypto";
-import { decodeImage, imageFormat, MAX_IMAGE } from "./edit.mjs";
+import { decodeImage, imageFormat, MAX_IMAGE, SHELF_FORMATS } from "./edit.mjs";
 
 const bounce = (code, defect, hint) => Object.assign(new Error(defect), { code, defect, hint });
 
@@ -114,7 +114,13 @@ export async function uploadMedia(args = {}, key = null, odb = null, { put = r2P
       "the office has no storage credentials configured — the shelf is built and waiting on them; try again after the next announcement");
 
   const bytes = decodeImage(args.image, MAX_IMAGE, "mark"); // size first, then magic bytes + enclosure
-  const { ext, mediaType } = imageFormat(bytes);
+  // THE SHELF IS THE ONE DOOR THAT TAKES SVG (the SVG ruling, 2026-08-20), and
+  // it says so here rather than in the gate, so the avatar and home-image doors
+  // keep exactly the set they had. What makes this door the safe one is not the
+  // bytes — it is where they come out: a shelf URL is only ever rendered as
+  // art, through <img src> or <image href>, where the spec disables scripting.
+  // An avatar or a home image travels other roads.
+  const { ext, mediaType } = imageFormat(bytes, SHELF_FORMATS);
   void args.type; // caller-declared MIME is deliberately never authoritative (same law as the avatar door)
   const sha = sha256hex(bytes);
   const objectKey = `media/${household}/${sha}.${ext}`;

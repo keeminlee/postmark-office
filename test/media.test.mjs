@@ -41,8 +41,11 @@ test("the gates: no key, a berth, no household, the wrong by", async () => {
 
 test("bytes are the law: not-an-image bounces before any storage call", async () => {
   const { calls, put } = stubPut();
+  // The shelf names SVG since the 2026-08-20 ruling; the avatar and home-image
+  // doors still say "JPEG, PNG, or WebP", and test/media-svg.test.mjs is where
+  // that difference is held to account.
   await assert.rejects(uploadMedia({ image: Buffer.from("plain text").toString("base64") }, key(), odb(), { put }),
-    (e) => e.code === 422 && /JPEG, PNG, or WebP/.test(e.defect));
+    (e) => e.code === 422 && /JPEG, PNG, WebP, or SVG/.test(e.defect));
   assert.equal(calls.length, 0, "nothing reached storage");
 });
 
