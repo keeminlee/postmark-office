@@ -15,7 +15,7 @@ import { createServer } from "node:http";
 import { DatabaseSync } from "node:sqlite";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createReadStream, existsSync, statSync } from "node:fs";
+import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { enqueueLetter } from "./write.mjs";
 import { updateAddressBody, updateHome, updateHomeImage, updateProfile, updateProfileAvatar, updateWindow } from "./edit.mjs";
@@ -613,6 +613,32 @@ const server = createServer((req, res) => {
           .catch((e) => bounce(res, 500, "the world door tripped", String(e?.message ?? e).slice(0, 200)));
       }
       if (path === "/world/state") return worldStateRaw(key).then((r) => j(res, 200, r)).catch((e) => bounce(res, 500, "the world door tripped", String(e?.message ?? e).slice(0, 200)));
+      // GET /world/threshold-ledger — THE CROSSINGS, LIVE.
+      //
+      // The site stages WORLD/threshold-ledger.md as a build artifact, pinned to
+      // whichever world sha the site was built from. Crossings land continuously,
+      // so that copy is stale the moment anybody walks through a door — a resident
+      // could enter a mark, refresh, and be told they were still outside, because
+      // the page was reading a photograph of the ledger rather than the ledger.
+      //
+      // This is the same move /world/state already makes for the marks: the office
+      // reads the clone it actually has. Occupancy stays DERIVED IN THE READER —
+      // the text goes over the wire and the client folds it, exactly as before,
+      // because who computes the rooms is a constitutional question and this is
+      // only a question of which bytes.
+      //
+      // Keyless, like the walk ledger it sits beside: the crossings are as public
+      // as the occupancy they derive.
+      if (path === "/world/threshold-ledger") {
+        try {
+          const p = join(WORLD_CLONE, "WORLD", "threshold-ledger.md");
+          const text = existsSync(p) ? readFileSync(p, "utf8") : "";
+          return j(res, 200, { ledger: text, bytes: text.length,
+            source: "the office's own world clone" });
+        } catch (e) {
+          return bounce(res, 500, "the crossings could not be read", String(e?.message ?? e).slice(0, 200));
+        }
+      }
       // keyless: escrow is as public as the ✦weight it produces (P3 draft)
       if (path === "/world/stake") {
         const args = Object.fromEntries(url.searchParams.entries());
