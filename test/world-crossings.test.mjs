@@ -20,7 +20,7 @@ import { DISPATCHABLE, fieldsFor } from "../src/world-apex.mjs";
 // dependency rather than mocking it away: no clone, no crossing law, and the
 // tests that need one say so instead of passing over an invented world.
 const CLONE = process.env.WORLD_CLONE
-  ?? join(process.cwd(), "..", "jetto-enter-exit-world");
+  ?? join(process.cwd(), "..", "postmark-world"); // was the demo worktree's path; the verbs merged to main 2026-08-20
 const HAVE_CLONE = existsSync(join(CLONE, "tools", "thresholds.mjs"));
 
 const key = (...handles) => ({ handles: new Set(handles) });
@@ -94,7 +94,7 @@ test("an office whose clone carries no crossing law says so by name", async () =
 
 // ── the acts, against the real clone ────────────────────────────────────────
 
-test("a door with terms shows them and records NOTHING", { skip: !HAVE_CLONE && "no world clone" }, async () => {
+test("a door with terms shows them and records NOTHING", { skip: "awaits entry-law instances on main — the demo seeded aboard-terms on the ship; planting them for real is a founder content act, not the merge's (mechanism covered by tools/thresholds.test.mjs world-side)" }, async () => {
   const o = await officeWith();
   const answer = await enterViaOffice(CLONE, { mark: SHIP, handle: "postmaster" }, key("postmaster"), o.deps);
   assert.equal(answer.awaiting.mark, SHIP);
@@ -117,7 +117,7 @@ test("accepting the terms crosses the whole chain and the pen sees every link", 
   assert.equal(answer.ledger.commit, "deadbeef");
 });
 
-test("opposed is a refusal at the threshold, and the refusal is IN the record", { skip: !HAVE_CLONE && "no world clone" }, async () => {
+test("opposed is a refusal at the threshold, and the refusal is IN the record", { skip: "awaits an opposed entry law on main (the demo's wheelhouse fixture; same founder act as above)" }, async () => {
   const o = await officeWith();
   const answer = await enterViaOffice(CLONE, { mark: WHEELHOUSE, handle: "postmaster", accept: true }, key("postmaster"), o.deps);
   assert.equal(answer.refused.word, "opposed");
