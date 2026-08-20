@@ -63,6 +63,27 @@ export async function pendingStakeRows(townClone) {
 
 const disclose = (reason) => ({ unavailable: reason });
 
+// WHAT THE PUBLIC IS TOLD WHEN THE PENDING FOLD FAILS, and no more than this.
+// Exported so a test can grep the exact string that reaches a reader: the whole
+// point is that it names no mark, no household, and no slug.
+export const FOLD_UNREADABLE = "the next Settlement could not be read — a pending line could not be read";
+
+/**
+ * The rows that can be folded against a tree holding `published`.
+ *
+ * A row naming a mark the tree does not hold is a PUBLICATION IN TRANSIT — since
+ * the self-stake publish path shipped, the normal case rather than a fault. It
+ * cannot contribute weight to anything in this tree (there is nowhere for it to
+ * fan up from), and left in it makes marks-fold refuse the tree entirely.
+ *
+ * Pure, and exported, because the rule is the fix and the rule is what wants
+ * pinning — the plumbing around it is just a fold call.
+ */
+export function foldableStakeRows(rows = [], published = new Set()) {
+  const held = published instanceof Set ? published : new Set(published ?? []);
+  return (rows ?? []).filter((row) => row && held.has(row.mark));
+}
+
 /**
  * What the next save will say this mark carries — or nothing, when it will say
  * what the last one already did.
@@ -81,6 +102,7 @@ export async function forecastForMark(mark, { worldClone, townClone, now = new D
 
   let ref;
   let settled;
+  let published;   // the mark ids main actually holds — see the filter below
   try {
     ref = mainRef(worldClone);
     const state = readJsonAtRef(worldClone, ref, "WORLD/world-state.json");
@@ -89,6 +111,7 @@ export async function forecastForMark(mark, { worldClone, townClone, now = new D
     const row = (state?.marks ?? []).find((m) => m.id === mark);
     if (!row) return null;
     settled = Number(row.weight ?? row.stamps ?? 0);
+    published = new Set((state?.marks ?? []).map((m) => m.id));
   } catch (e) {
     return disclose(`the world record could not be read (${String(e?.message ?? e).slice(0, 120)})`);
   }
@@ -108,12 +131,47 @@ export async function forecastForMark(mark, { worldClone, townClone, now = new D
     // The judgment, imported and not repeated: the same fold, the same tree, a
     // later book. Published canon only — the stakes half of the forecast is a
     // public read, and a household's own held mark-files already render grey.
-    const state = foldedStateAtRef(worldClone, ref, { stakes: rows });
+    // A PENDING ROW FOR A MARK MAIN DOES NOT HOLD IS A PUBLICATION IN TRANSIT,
+    // and since tonight it is the NORMAL case: staking your own draft is how a
+    // draft gets published, so between the stake and the sweep the ledger
+    // legitimately names a mark that lives only on a draft branch.
+    //
+    // Unfiltered, marks-fold refuses the whole tree over it — "stake on a mark
+    // the record does not hold" — and because one bad row fails the entire fold,
+    // ONE household's in-transit publication blanked the forecast for EVERY
+    // viewer and every mark. That is the founder-reported defect.
+    //
+    // The settlement sweep already solved this, and the fix is its line borrowed:
+    // settlement-sweep.mjs filters its rows by the ids the tree holds before
+    // folding each ref. Filtering rather than tolerating per-row is right HERE
+    // for a reason particular to this function: `ref` is always mainRef, and on
+    // main the save and the marks tree are written by the same sweep, so they
+    // agree — a row main's save does not name is a row main's tree does not hold.
+    // Such a row cannot fan weight into anything published, because it has
+    // nowhere in this tree to fan up from.
+    const foldable = foldableStakeRows(rows, published);
+    // EVERY PENDING ROW WAS A DRAFT. Folding the remainder would say every
+    // published mark carries nothing — the same catastrophic claim the empty-book
+    // guard above refuses. Nothing pending touches anything published, which is
+    // precisely what "no delta" means, so answer it as one.
+    if (!foldable.length) return null;
+    const state = foldedStateAtRef(worldClone, ref, { stakes: foldable });
     const row = (state?.marks ?? []).find((m) => m.id === mark);
     if (!row) return null;
     proposed = Number(row.weight ?? 0);
   } catch (e) {
-    return disclose(`the next Settlement could not be folded (${String(e?.message ?? e).slice(0, 120)})`);
+    // THE DISCLOSURE IS PUBLIC, AND IT WAS NAMING SOMEBODY ELSE'S DRAFT.
+    //
+    // The fold's own error text carries the offending stake row, and the row
+    // carries a mark id — so slicing 120 characters of it into the answer put a
+    // foreign household's unpublished mark slug into every reader's stake pane.
+    // A draft is not public until its household publishes it; the office does not
+    // get to leak one in an error message.
+    //
+    // The cap is the SHAPE of the failure and nothing about whose it is. The full
+    // error still exists, on the server, where the operator can read it.
+    console.error("[forecast] the pending fold failed", { mark, ref, error: String(e?.stack ?? e?.message ?? e) });
+    return disclose(FOLD_UNREADABLE);
   }
 
   if (!Number.isFinite(proposed) || proposed === settled) return null;
