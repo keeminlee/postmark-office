@@ -77,10 +77,21 @@ export const apexEnabled = () => process.env.WORLD_APEX === "1";
 // ledger's own derivation, read and never written), the threshold ledger's text,
 // and the pen. Built per call rather than held, so a clone swapped underneath a
 // running office is picked up the same way every other world read picks it up.
-function crossingDeps() {
+// ONE GEOMETRY, ONE TRUTH — and the key is how a reader names which one.
+//
+// This took NO key and asked for worldStateRaw(null), so a signed-in resident
+// crossed thresholds in a DIFFERENT world from the one their own door serves
+// them: every other verb reads stateForKey(repo, key), which for a household
+// with a sketchbook is a live fold of THEIR branch, while the crossing read
+// main's committed save. Two components that must agree were reading two
+// sources, which is the same shape of fault as the sweep/forecast twin filters.
+//
+// Passing the key through does not choose a geometry — it makes the crossing
+// consume whichever one the office is already serving that reader.
+function crossingDeps(key = null) {
   const ledgerPath = join(WORLD_CLONE, "WORLD", "threshold-ledger.md");
   return {
-    world: async () => await worldStateRaw(null),
+    world: async () => await worldStateRaw(key),
     ledger: async () => { try { return readFileSync(ledgerPath, "utf8"); } catch { return ""; } },
     standpointOf: async (who) => {
       const here = await residentStandpoint(who).catch(() => null);
@@ -234,8 +245,8 @@ const DISPATCH = {
   // this row is unreachable on a live store. It is here so the door, the lint
   // (L6 reads DISPATCHABLE) and the demo all read the same table rather than
   // three, which is the drift the dispatch table exists to prevent.
-  enter: { tool: "world_enter", run: (args, key) => enterViaOffice(WORLD_CLONE, args, key, crossingDeps()) },
-  exit: { tool: "world_exit", run: (args, key) => exitViaOffice(WORLD_CLONE, args, key, crossingDeps()) },
+  enter: { tool: "world_enter", run: (args, key) => enterViaOffice(WORLD_CLONE, args, key, crossingDeps(key)) },
+  exit: { tool: "world_exit", run: (args, key) => exitViaOffice(WORLD_CLONE, args, key, crossingDeps(key)) },
 };
 
 // ── seam 4 · the fields an action takes ─────────────────────────────────────
