@@ -1,0 +1,4 @@
+# Shell scripts must land on the box with LF — a CRLF shebang is /bin/sh^M, "bad interpreter".
+# (The 08-19 /ops/world triage found three deploy scripts sitting CRLF in a Windows checkout.)
+*.sh text eol=lf
+*.mjs text eol=lf
