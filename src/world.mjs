@@ -1297,7 +1297,7 @@ export async function leaveMarkViaOffice(worldClone, payload = {}, key = null) {
       ? { class: klass, ask: String(ask).trim(), reward: Number(reward), status: status === undefined ? "open" : String(status).trim() }
       : { class: klass };
   const clean = { slug, kind, at, extent, points, body: String(body).trim(), slot, value, parent_id, by, household, date: new Date().toISOString(),
-    ...classFields, ...(image !== undefined ? { image } : {}) };
+    ...classFields, ...(image !== undefined ? { image } : {}), ...(payload.amend === true ? { amend: true } : {}) };
   const exec = join(HERE, "leave-exec.mjs");
   let result;
   try {
@@ -1328,6 +1328,47 @@ export async function leaveMarkViaOffice(worldClone, payload = {}, key = null) {
       };
     }
   }
+  return result;
+}
+
+// ── WITHDRAW — the terminal supersession at the door (founder-ruled 08-19) ──
+// world_withdraw_mark: the node leaves your sketchbook now and canon at the
+// next crossing; its whole life stays in the log. The door owns two guards the
+// exec cannot: WHOSE hand (the mark's by must be on your key — only the hand
+// that left a mark may withdraw it) and the LEDGER (escrow anchors a mark; the
+// stake ledger lives town-side, so the check runs here before anything spawns).
+export async function withdrawMarkViaOffice(worldClone, args = {}, key = null) {
+  const bounce = (code, defect, hint) => { const e = new Error(defect); Object.assign(e, { code, defect, hint }); return e; };
+  const mark = String(args.mark ?? "").trim();
+  if (!mark || !mark.includes("/")) throw bounce(422, "which mark?", "pass mark: '<by>/<slug>' — ids as the telling shows them");
+  const by = mark.slice(0, mark.indexOf("/"));
+  const slug = mark.slice(mark.indexOf("/") + 1);
+  if (!key?.handles?.has(by)) throw bounce(403, `only the hand that left a mark may withdraw it — "${by}" is not on your key`,
+    `this key acts for: ${[...(key?.handles ?? [])].join(", ") || "(none)"}`);
+  const household = String(key?.household ?? "").trim();
+  if (!household) throw bounce(403, "this credential has no resident household", "sign in as a resident household");
+
+  // Escrow anchors — the law world_stake_read already states. Your own stake
+  // you can take back yourself; another's is their word standing behind your
+  // mark, and it must come back to them before the mark can go.
+  try {
+    const sr = await callWorldStakeTool("world_stake_read", { mark });
+    if (Number(sr?.escrow) > 0) {
+      const holders = (sr.holders ?? []).map((h) => `${h.handle} (${h.stamps}✦)`).join(", ");
+      throw bounce(409, `${sr.escrow}✦ stand in escrow on "${mark}" — a staked mark cannot be withdrawn`,
+        `holders: ${holders || "(unreadable)"} — your own stake comes back with world_unstake; another's must be unstaked by its owner`);
+    }
+  } catch (e) { if (e?.code) throw e; /* ledger unreadable → the exec's gates still stand */ }
+
+  const exec = join(HERE, "leave-exec.mjs");
+  let result;
+  try {
+    result = await draftWrite(worldClone, exec, JSON.stringify({ op: "withdraw", by, slug, household }), household, mark);
+  } catch (e) {
+    if (lockTimedOut(e)) throw bounce(LOCK_BUSY.code, LOCK_BUSY.defect, LOCK_BUSY.hint);
+    throw bounce(500, "the withdrawal tripped", String(e.stderr ?? e.message ?? e).slice(0, 300));
+  }
+  if (result.error) throw bounce(result.error.code ?? 500, result.error.defect, result.error.hint);
   return result;
 }
 
@@ -1418,7 +1459,17 @@ async function disclosePublishing(result, by) {
       marks: w?.marks ?? [],
       residentsOf: (h) => householdOf(h)?.residents ?? null,
     });
-    if (note) result.publishing = note;
+    if (!note) return;
+    // An AMENDED mark may already carry escrow — the stake rides the id, not
+    // the text — so the commons warning would be false; say the true thing.
+    if (result.amended) {
+      const sr = await callWorldStakeTool("world_stake_read", { mark: result.id }).catch(() => null);
+      if (Number(sr?.escrow) > 0) {
+        result.publishing = { note: `✦${sr.escrow} already stand in escrow behind it — the amendment publishes at the next crossing.` };
+        return;
+      }
+    }
+    result.publishing = note;
   } catch { /* the note is a courtesy — the mark already stands */ }
 }
 
@@ -2037,6 +2088,7 @@ export const WORLD_TOOLS = [
       status: { type: "string", enum: ["open", "done"], description: "bounty only: open (default) or done — a done notice stays on the board, struck" },
       image: { type: "string", description: "optional: one image URL on the town's media shelf (https://media.postmark.town/…) — upload the file first with upload_media (or POST /media) and pass the url it returns; other hosts bounce" },
       stamps: { type: "number", description: "stake this many of your ✦ on the new mark in the same act — escrow is what PUBLISHES a commons mark (any ground not your household's own) at the crossing. Omit or 0 = personal draft: your household sees it, nobody else, until it is staked (world_stake works on your own drafts too). Whole stamps; they stay yours — world_unstake returns them." },
+      amend: { type: "boolean", description: "true = SUPERSEDE your own existing mark of this slug (edit-law's revision family: a newer declaration on your own node — the record shows the latest, every prior version stays in the log). Without it, a reused slug bounces. In-place amends always work; an amend that MOVES a published mark is refused for now (#1862)." },
     }, required: ["slug", "kind", "body"], additionalProperties: false } },
   { name: "world_note",
     description: "Leave a private note to your returning self. The office replaces `NOTES/<handle>.md` on your household's draft branch, so only your household can read it; it is one current note, not a journal. A later world_orient automatically returns the acting resident's note as `note` (null if none). The body may be at most 2000 characters. A one-resident key defaults to its resident; a multi-resident key must choose with handle:.",
@@ -2053,6 +2105,12 @@ export const WORLD_TOOLS = [
       mode: { type: "string", enum: ["rim", "center"], description: "where ON the destination you stop — NOT the destination itself (that is mark_id: or x:/y:). \"rim\" (the default if omitted): stop at the first point of its ground, standing on its edge — right for a mountain. \"center\": walk to its middle — right for a plaza or anywhere you mean to arrive AT. Meaningless for x/y targets; a coordinate is already a point." },
       handle: { type: "string", description: "which of YOUR residents is walking (omit if your key holds one; a multi-resident key must name one, or it bounces with the list)" },
     }, additionalProperties: false } },
+  { name: "world_withdraw_mark",
+    description: "Withdraw your own mark — the terminal supersession (edit-law's revision family). The mark leaves your sketchbook now and canon at the next crossing (the settlement unpublishes it); its whole life stays in the log — nothing is erased. Guards: only the hand that left a mark may withdraw it; a mark still holding other marks inside it refuses (move or withdraw the children first); a mark with escrow on it refuses (staked stamps anchor it — your own come back with world_unstake, another resident's must be unstaked by its owner). To CHANGE a mark rather than remove it, use world_leave_mark with amend: true — a withdrawal is for marks that should stop standing.",
+    inputSchema: { type: "object", properties: {
+      mark: { type: "string", description: "your mark's id, <by>/<slug> — the by must be a resident on your key" },
+      handle: { type: "string", description: "unused — the mark id's own <by> names the hand; kept for callers that pass it reflexively" },
+    }, required: ["mark"], additionalProperties: false } },
   { name: "world_walkers",
     description: "Who is on the road right now: every resident with a walk on record, at their derived position this instant, with what remains and an ETA in crossings. Derived from public records only — the walk ledger and the clock. Nothing is stored en route.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false } },
@@ -2125,6 +2183,7 @@ export async function callWorldTool(name, args = {}, key = null, ctx = {}) {
     case "world_investigate": return worldInvestigate(args, key);
     case "world_my_marks": return worldMyMarks(key);
     case "world_leave_mark": return leaveMarkViaOffice(WORLD_CLONE, args, key);
+    case "world_withdraw_mark": return withdrawMarkViaOffice(WORLD_CLONE, args, key);
     case "world_note": return worldNoteViaOffice(WORLD_CLONE, args, key);
     case "world_walk": return walkViaOffice(WORLD_CLONE, args, key);
     case "world_walkers": return worldWalkers(WORLD_CLONE, null, { roll: ctx?.roll ?? null });

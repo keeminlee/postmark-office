@@ -20,7 +20,7 @@
 // { error: { code, defect, hint } } (a bounce is an answer); exit 1 only when the
 // machinery itself trips.
 
-import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync, readdirSync } from "node:fs";
 import { join, resolve, dirname, relative } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
@@ -80,7 +80,73 @@ async function main() {
   const marks = timed("load", () => loadMarks(MARKS_DIR));
   const byId = new Map(marks.map((m) => [m.id, m]));
   const id = `${p.by}/${p.slug}`;
-  if (byId.has(id)) return err(409, `you already have a mark "${p.slug}"`, "a slug is unique per author — pick another, or investigate the one you have");
+
+  // helpers the revision family shares (founder-ruled 2026-08-19, edit-law's
+  // second family finally at the door): does a mark's directory hold children,
+  // and does published main hold this path.
+  const holdsChildren = (d) => readdirSync(d, { withFileTypes: true })
+    .some((e) => e.isDirectory() && existsSync(join(d, e.name, "mark.md")));
+  const onMain = (absFile) => {
+    try { execFileSync("git", ["-C", CLONE, "cat-file", "-e", `main:${relative(CLONE, absFile).replace(/\\/g, "/")}`]); return true; }
+    catch { return false; }
+  };
+
+  // ── WITHDRAW — the terminal supersession (edit-law § withdraw) ────────────
+  // The node leaves the draft now and canon at the next crossing; its whole
+  // life stays in the log. Guards: your own hand only (the door enforced by),
+  // no children (orphan re-homing is the crossing's arithmetic, not built for
+  // withdrawals yet), escrow zero (the door checked the ledger before us).
+  if (p.op === "withdraw") {
+    const rec = byId.get(id);
+    if (!rec) return err(404, `no mark "${id}" in your world`, "ids are <by>/<slug> — you can withdraw your drafts and your published marks; check world_my_marks");
+    const dir0 = rec._dir;
+    if (holdsChildren(dir0)) return err(409, `"${id}" still holds marks inside it`,
+      "withdraw or move the children first — a withdrawal may not strand what stands on it");
+    const oldFile = join(dir0, "mark.md");
+    const oldRecord = readFileSync(oldFile, "utf8");
+    const relPath = relative(CLONE, oldFile).replace(/\\/g, "/");
+    const wasPublished = onMain(oldFile);
+    rmSync(dir0, { recursive: true, force: true });
+    const restore = () => { mkdirSync(dir0, { recursive: true }); writeFileSync(oldFile, oldRecord); };
+    try {
+      timed("lint", () => execFileSync(process.execPath, [join(tools, "mark-lint.mjs")], { encoding: "utf8" }));
+    } catch (e) {
+      restore();
+      const line = String(e.stdout ?? e.message ?? "").split("\n").find((l) => /ERROR/.test(l)) ?? "the withdrawal failed the lint";
+      return err(422, "the withdrawal doesn't sit right", line.replace(/^\[ERROR\]\s*/, "").slice(0, 300));
+    }
+    const foldedW = timed("fold", () => execFileSync(process.execPath, [
+      join(tools, "marks-fold.mjs"), "--marks-dir", MARKS_DIR,
+      "--terrain", join(CLONE, "WORLD", "skeleton.json"), "--no-write", "--json",
+    ], { encoding: "utf8" }));
+    const stateW = JSON.parse(foldedW);
+    if (stateW.errors?.length) { restore(); return err(422, "the fold refused the withdrawal", JSON.stringify(stateW.errors[0]).slice(0, 300)); }
+    const pushReqW = process.env.TOWN_PUSH === "1" && !SLOT;
+    const savedW = process.env.TOWN_PUSH;
+    delete process.env.TOWN_PUSH;
+    let commitW;
+    try { commitW = timed("commit", () => penCommit(CLONE, [relPath], `withdraw: ${id} — by ${p.by} (via world_withdraw_mark)`)); }
+    finally { if (savedW !== undefined) process.env.TOWN_PUSH = savedW; }
+    let pushedW = false, pushErrW;
+    if (pushReqW && commitW) {
+      try { timed("push", () => execFileSync("git", ["-C", CLONE, "push", "-q", "--set-upstream", "origin", branch], { encoding: "utf8" })); pushedW = true; }
+      catch (e) { pushErrW = String(e.stderr ?? e.message ?? e).split("\n").find(Boolean)?.slice(0, 160); }
+    }
+    return answer({ id, withdrawn: true, was_published: wasPublished,
+      effect: wasPublished
+        ? "your sketchbook lets it go now; canon lets it go at the next crossing — the settlement unpublishes it, and its whole life stays in the log"
+        : "the draft is gone — it never crossed, so there is nothing to unpublish; its life stays in the log",
+      branch, commit: commitW, pushed: pushedW, push_error: pushErrW });
+  }
+
+  // ── AMEND — a newer declaration on your own node (edit-law § amend) ────────
+  // Same-slug leave-mark with amend: true supersedes in place: one copy, ever —
+  // the sketchbook must never hold a mark at two paths (#1862's disease).
+  const amending = byId.has(id) && p.amend === true;
+  if (byId.has(id) && !amending)
+    return err(409, `you already have a mark "${p.slug}"`,
+      "a slug is unique per author — pass amend: true to supersede it (a newer declaration on your own node, edit-law's revision family), or pick another slug");
+  const priorRec = amending ? byId.get(id) : null;
 
   // The parcel-claim cap (Keemin's ruling 2026-07-30): a credential household —
   // handles grouped by WORLD/households.json, the town-pin registry — may claim
@@ -122,7 +188,27 @@ async function main() {
   }
 
   const dir = join(parentDir, p.slug);
-  if (existsSync(dir)) return err(409, "a mark already sits in that spot", `the directory ${relative(MARKS_DIR, dir)} exists — pick another slug`);
+
+  // The amend's move law: in place (same computed directory) is always fine;
+  // a MOVE is fine for a draft-only mark, refused when the mark holds children
+  // (nothing may be stranded) and refused for a published mark until the
+  // publish+re-home seam (#1862) is fixed — a moved copy of a main path is
+  // exactly that wedge's shape.
+  let oldDir = null, oldFile = null, oldRecord = null, amendMoves = false;
+  if (amending) {
+    oldDir = priorRec._dir;
+    oldFile = join(oldDir, "mark.md");
+    oldRecord = readFileSync(oldFile, "utf8");
+    amendMoves = resolve(dir) !== resolve(oldDir);
+    if (amendMoves) {
+      if (holdsChildren(oldDir)) return err(409, "an amend that would move a mark holding others",
+        "marks stand inside this one — keep at/extent so it stays on its ground, or move the children first");
+      if (onMain(oldFile)) return err(409, "a published mark cannot MOVE by amend yet",
+        "the publish+re-home seam (#1862) is unfixed — amend in place (same ground), or withdraw and leave it anew");
+    }
+  }
+  if (existsSync(dir) && !(amending && !amendMoves))
+    return err(409, "a mark already sits in that spot", `the directory ${relative(MARKS_DIR, dir)} exists — pick another slug`);
 
   // sovereignty guard — REPEALED for sited marks (Keemin-ruled 2026-08-17,
   // party night; little-bird's cup was the test case). The old law refused any
@@ -175,15 +261,24 @@ async function main() {
     .map((k) => `${k}: ${fmtVal(fileRec[k])}`).join("\n");
   const record = `---\n${fm}\n---\n\n${String(p.body).trim()}\n`;
 
+  if (amending && amendMoves) rmSync(oldDir, { recursive: true, force: true }); // one copy, ever
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "mark.md"), record);
+
+  // Unwind for every gate below: a refused amend restores the prior record
+  // exactly — the supersession either lands whole or never happened.
+  const unwind = () => {
+    if (amending && !amendMoves) { writeFileSync(oldFile, oldRecord); return; }
+    rmSync(dir, { recursive: true, force: true });
+    if (amending && amendMoves) { mkdirSync(oldDir, { recursive: true }); writeFileSync(oldFile, oldRecord); }
+  };
 
   // GATE 1 — the clone's own lint (the schema + "you cannot lie with an edge").
   // A non-zero exit is a bounce; unwind the write and hand back the exact field.
   try {
     timed("lint", () => execFileSync(process.execPath, [join(tools, "mark-lint.mjs")], { encoding: "utf8" }));
   } catch (e) {
-    rmSync(dir, { recursive: true, force: true });
+    unwind();
     const line = String(e.stdout ?? e.message ?? "").split("\n").find((l) => /ERROR/.test(l)) ?? "the mark failed the lint";
     return err(422, "the mark doesn't sit right", line.replace(/^\[ERROR\]\s*/, "").slice(0, 300));
   }
@@ -199,13 +294,16 @@ async function main() {
   ], { encoding: "utf8" }));
   const state = JSON.parse(folded);
   if (state.errors?.length) {
-    rmSync(dir, { recursive: true, force: true });
+    unwind();
     return err(422, "the fold refused the mark", JSON.stringify(state.errors[0]).slice(0, 300));
   }
 
   // Commit the draft record only, then push the household branch best-effort.
   // Derived files stay on main so a private draft never masquerades as canon.
+  // An amend-with-move also stages the OLD path, so the commit records the
+  // supersession as one act: deletion and new declaration together.
   const addPaths = [join(dir, "mark.md")];
+  if (amending && amendMoves) addPaths.push(relative(CLONE, oldFile).replace(/\\/g, "/"));
   // A pooled write's push belongs to the parent, AFTER it drops the town lock
   // and the worktree lease: a network round-trip is the one part of this that
   // has no business inside a critical section. The reported fields are the same
@@ -215,7 +313,8 @@ async function main() {
   delete process.env.TOWN_PUSH; // penCommit's push throws; this door degrades to push-pending
   let commit;
   try {
-    commit = timed("commit", () => penCommit(CLONE, addPaths, `mark: ${id} — by ${p.by} (via world_leave_mark)`));
+    commit = timed("commit", () => penCommit(CLONE, addPaths,
+      amending ? `amend: ${id} — by ${p.by} (via world_leave_mark, supersedes in place)` : `mark: ${id} — by ${p.by} (via world_leave_mark)`));
   } finally {
     if (savedPush !== undefined) process.env.TOWN_PUSH = savedPush;
   }
@@ -232,7 +331,9 @@ async function main() {
   // The door reads them back to tell an author where their claim actually landed
   // (issue #5 §1), and a resident reading the answer learns the same thing.
   answer({ id, dir: relative(MARKS_DIR, dir).replace(/\\/g, "/"), parent: parentId, kind: p.kind,
-           at: p.at ?? null, extent: p.extent ?? null, branch, commit, pushed, push_error });
+           at: p.at ?? null, extent: p.extent ?? null, branch, commit, pushed, push_error,
+           ...(amending ? { amended: true, moved: amendMoves,
+             superseded: "the prior declaration — every version stays in the log; canon shows the latest at the next crossing" } : {}) });
 }
 
 main().catch((e) => { console.error(String(e?.stack ?? e)); process.exit(1); });

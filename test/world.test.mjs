@@ -505,6 +505,19 @@ test("world_leave_mark contract carries the inline stake and points at the publi
   assert.match(tool.description, /`publishing` note/, "and the answer's note is named");
 });
 
+test("the revision family stands at the door: amend on leave-mark, withdraw as its own verb", () => {
+  const leave = WORLD_TOOLS.find(({ name }) => name === "world_leave_mark");
+  assert.equal(leave.inputSchema.properties.amend.type, "boolean");
+  assert.match(leave.inputSchema.properties.amend.description, /SUPERSEDE/, "amend says what it does in the author's face");
+  assert.match(leave.inputSchema.properties.amend.description, /#1862/, "and names the seam that limits moves");
+  const wd = WORLD_TOOLS.find(({ name }) => name === "world_withdraw_mark");
+  assert.ok(wd, "world_withdraw_mark stands in WORLD_TOOLS");
+  assert.deepEqual(wd.inputSchema.required, ["mark"]);
+  assert.match(wd.description, /terminal supersession/, "withdraw names its law");
+  assert.match(wd.description, /whole life stays in the log/, "and the log's promise");
+  assert.match(wd.description, /amend: true/, "and points changers at amend instead");
+});
+
 test("world_walk contract carries the arrival mode and says it is not a destination", () => {
   const tool = WORLD_TOOLS.find(({ name }) => name === "world_walk");
   assert.equal(tool.inputSchema.properties.to, undefined, "the retired `to:` field is gone from the schema (renamed 2026-08-19)");

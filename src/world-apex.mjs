@@ -45,6 +45,7 @@ import {
   callWorldTool,
   currentCrossing,
   leaveMarkViaOffice,
+  withdrawMarkViaOffice,
   placeWords,
   residentStandpoint,
   walkViaOffice,
@@ -162,6 +163,10 @@ const DISPATCH = {
   say: { tool: "world_say", run: (args, key) => worldSay(args, key) },
   walk: { tool: "world_walk", run: (args, key) => walkViaOffice(WORLD_CLONE, args, key) },
   "leave-mark": { tool: "world_leave_mark", run: (args, key) => leaveMarkViaOffice(WORLD_CLONE, args, key) },
+  // The revision family's second verb (founder-ruled 2026-08-19). Amend needs
+  // no row of its own: it IS leave-mark with amend: true — a newer declaration
+  // on your own node, the same primitive wearing its revision face.
+  withdraw: { tool: "world_withdraw_mark", run: (args, key) => withdrawMarkViaOffice(WORLD_CLONE, args, key) },
   stake: { tool: "world_stake", run: (args, key) => callWorldStakeTool("world_stake", args, key) },
   unstake: { tool: "world_unstake", run: (args, key) => callWorldStakeTool("world_unstake", args, key) },
   // The private note, reskinned as an act like any other (Keemin, 2026-08-15):

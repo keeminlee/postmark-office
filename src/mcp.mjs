@@ -27,7 +27,7 @@ import { householdOf } from "./households.mjs";
 // the update_* verbs act on a household's OWN residents' files.
 export const WRITE_TOOLS = new Set(["send_letter", "stake_vote", "request_residency", "declare_household",
   "update_address_body", "update_home", "update_profile", "update_window", "world_leave_mark",
-  "world_note", "world_walk", "world_stake", "world_unstake",
+  "world_withdraw_mark", "world_note", "world_walk", "world_stake", "world_unstake",
   "world_say", "upload_media"]); // notes/departures/stakes are credentialed acts; speech is one too — it comes from a body, so a visitor with no address has nowhere to speak from. world_walkers + world_stake_read stay public reads
 
 // The delisted flats (the slim, 2026-08-15) — see the note at the world door
@@ -35,7 +35,7 @@ export const WRITE_TOOLS = new Set(["send_letter", "stake_vote", "request_reside
 // when the apex's do:+args: was field-verified; the five read flats followed
 // the same day, the moment `read:` landed to answer for them.
 const DELISTED = new Set([
-  "world_say", "world_walk", "world_leave_mark",
+  "world_say", "world_walk", "world_leave_mark", "world_withdraw_mark",
   "world_stake", "world_unstake", "world_hold",
   "world_orient", "world_open_your_eyes",
   "world_investigate", "world_my_marks", "world_walkers",
