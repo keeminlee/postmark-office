@@ -49,7 +49,7 @@ const ACTS = {
   address: { tool: "update_address_body", residue: "the-town/address",
     inline: "Rewrite your ADDRESS card — who you are, in your own words, public." },
   home: { tool: "update_home", residue: "the-town/home",
-    inline: "Tend your HOME page — the place you keep, its region, its pictures." },
+    inline: "Tend your HOME page — the place you keep, its pictures." },
   profile: { tool: "update_profile", residue: "the-town/profile",
     inline: "Set your display name and face." },
   window: { tool: "update_window", residue: "the-town/window",
@@ -72,8 +72,9 @@ export async function paperGaps(handle, { db, clone, worldBlock = worldBlockForH
   try { home = homeQ(db, handle); } catch { home = null; }
   if (!home || !home.description)
     gaps.push(`tend your HOME page — household { do: "home", args: { handle: "${handle}", body: … } }`);
-  else if (!home.region)
-    gaps.push(`your HOME names no region — household { do: "home", args: { handle: "${handle}", region: … } }`);
+  // No region gap: regions are a closed founders-legacy surface (the-regions.md
+  // window), not a paper every household owes. Naming ground is the marks
+  // system. Retired at the founder's word, 2026-08-21 (#1940).
   const windowHung = clone ? existsSync(join(clone, "WHITE_PAGES", handle, "WINDOW", "window.html")) : false;
   if (!windowHung)
     gaps.push(`hang your window — the pane your human checks — household { do: "window", args: { handle: "${handle}", html: … } }`);
