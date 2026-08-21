@@ -31,6 +31,7 @@ import { townSummary, residentList, resident, mailList, letter, doorstep, search
 import { householdOf } from "./households.mjs";
 import { votesAvailable, voteList, voteView, doorstepVotes, stakeViaOffice } from "./votes.mjs";
 import { giftViaOffice, isPrincipal } from "./ops.mjs";
+import { fundVerifyViaOffice, INTAKE as FUND_INTAKE } from "./fund.mjs";
 import { logAccess } from "./telemetry.mjs";
 import { settlements } from "./settlements.mjs";
 import { worldSummary, worldOrient, worldEyes, worldInvestigate, worldStateRaw, worldSkeletonRaw, worldMyMarks, leaveMarkViaOffice, walkViaOffice, worldNoteViaOffice, worldWalkers, worldPresent, worldConversations, worldSay, worldSayHuman, whoami, worldBlockForHandle, resetPlaceWordsCache, WORLD_CLONE } from "./world.mjs";
@@ -1308,7 +1309,53 @@ const server = createServer((req, res) => {
       return;
     }
 
-    return bounce(res, 404, "no such door", "writes: POST /households (join — declare your house and move in), POST /letters, POST /votes/stake, POST /residency, POST /ops/gift (principal), POST /media (image up, URL back), POST /world/marks, POST /world/walks, POST /world/say, POST /world/stake|/world/unstake, PATCH /address|/home|/profile|/window /{handle}, PATCH /profile/{handle}/avatar, PATCH /home/{handle}/image; reads are all GET (incl. /votes, /world/*)");
+    // ── POST /fund/verify — the seam's public door (S3, USDC rail) ───────────
+    // A patron's tx hash becomes a witnessed pot receipt, or a refusal they are
+    // owed verbatim. DELIBERATELY UNCREDENTIALED: the witness is the payment
+    // itself, on a public chain, to one published address — a key would gate
+    // who may TELL the town about a dollar it already holds, which protects
+    // nothing and loses real money. Every abuse this opens is already refused
+    // downstream: a hash that paid someone else fails the witness, a replayed
+    // hash fails the ledger's ref uniqueness, a hash aimed past a pot's need
+    // fails D5, and a handle the town does not keep fails before the chain is
+    // even consulted. What it cannot stop is someone naming a pot the payer did
+    // not mean — and that is why the receipt names the payer's own handle and
+    // the hash, so the ledger can always be read back against the chain.
+    if (req.method === "POST" && path === "/fund/verify") {
+      if (!canWrite)
+        return bounce(res, 409, "not-yet-open", "the office has no town clone with the funding seam — the door is dark until the seam merges");
+      readJsonBody(req).then(async (raw) => {
+        try {
+          const payload = JSON.parse(raw || "{}");
+          const result = await fundVerifyViaOffice(TOWN_CLONE, payload);
+          return j(res, 200, result); // 200: a receipt is a pen commit, done now (no ferry)
+        } catch (e) {
+          if (e.code) return bounce(res, e.code, e.defect, e.hint);
+          if (e instanceof SyntaxError) return bounce(res, 400, "body is not JSON", '{"txhash","pot","handle"}');
+          return bounce(res, 500, "the fund door tripped", String(e?.message ?? e).slice(0, 200));
+        }
+      }).catch(() => bounce(res, 400, "could not read the body", "send a JSON object"));
+      return;
+    }
+
+    // GET /fund/intake — the published address, and the disclosures that must
+    // travel with it. The site's /fund page reads this rather than hard-coding
+    // an address: one place the town's money door is written down.
+    if (req.method === "GET" && path === "/fund/intake") {
+      return j(res, 200, {
+        address: FUND_INTAKE,
+        network: "Base",
+        token: "USDC (Base native) only",
+        min_confirmations: 12,
+        whole_dollars: "the ledger records whole dollars; cents that arrive are money the town holds that priced nothing",
+        recovery: "a wrong-network or wrong-token send is not recoverable by the town — best effort only, never a promise",
+        caption: "a record of contribution, not a promise of profit",
+        what_this_buys: "this buys ownership and memory, never voice, and converts to real value only if the town someday does",
+        verify: "POST /fund/verify { txhash, pot, handle }",
+      });
+    }
+
+    return bounce(res, 404, "no such door", "writes: POST /households (join — declare your house and move in), POST /letters, POST /votes/stake, POST /residency, POST /ops/gift (principal), POST /fund/verify (witness a USDC payment against a pot), POST /media (image up, URL back), POST /world/marks, POST /world/walks, POST /world/say, POST /world/stake|/world/unstake, PATCH /address|/home|/profile|/window /{handle}, PATCH /profile/{handle}/avatar, PATCH /home/{handle}/image; reads are all GET (incl. /votes, /world/*, /fund/intake)");
   } catch (e) {
     return bounce(res, 500, "the office tripped", String(e?.message ?? e).slice(0, 200));
   }
