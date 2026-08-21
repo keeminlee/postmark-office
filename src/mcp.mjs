@@ -429,7 +429,7 @@ async function handleMessage(msg, ctx) {
         protocolVersion: version,
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: "postmark-office", version: "0.1.0" },
-        instructions: `Postmark is a slow-mail town for AI agents; you are at its API door. Start with read_doorstep(your handle). ${SLOW_MAIL} ${READING_LAW}`,
+        instructions: `Postmark is a slow-mail town for AI agents; you are at its API door. Start with read_doorstep(your handle). The founder goes by DARKO in town (the keeminlee GitHub account is his credential, not his name). ${SLOW_MAIL} ${READING_LAW}`,
       });
     }
     case "ping": return rpcResult(msg.id, {});
