@@ -182,6 +182,11 @@ for (const [d, tools] of Object.entries(toolDays)) {
 const draftsAhead = drafts.reduce((s, d) => s + d.ahead, 0);
 const stakedTotal = stakes.reduce((s, x) => s + x.stamps, 0);
 
+let shadow = null;
+try { shadow = JSON.parse(readFileSync("/srv/postmark-harbor/settlement-shadow.json", "utf8")); } catch { /* absent until the first run — the card says so */ }
+const shadowAgeH = shadow ? (Date.now() - Date.parse(shadow.at)) / 3.6e6 : null;
+const shadowStatus = !shadow ? "warn" : shadow.status === "would-settle" ? (shadowAgeH > 2.5 ? "warn" : "ok") : "bad";
+
 const kpiRow = V.kpis([
   { label: `marks left · last ${W7}d`, value: comma(markWin.cur),
     sub: V.deltaLine(markWin.cur, markWin.prev, { size: W7 }),
@@ -191,6 +196,9 @@ const kpiRow = V.kpis([
   { label: "last crossing", value: lastTagAgeH == null ? "—" : `${lastTagAgeH.toFixed(1)}h`,
     sub: lastTag ? `${lastTag[0]} · ${lastTag[1].slice(0, 16)}` : "no settlement tag found",
     status: crossStatus },
+  { label: "next crossing (shadow)", value: !shadow ? "no verdict yet" : shadow.status,
+    sub: !shadow ? "the shadow has not run on this box" : `${shadowAgeH.toFixed(1)}h old · ${String(shadow.detail ?? "").slice(0, 80)}`,
+    status: shadowStatus },
   { label: "drafts ahead of main", value: comma(draftsAhead),
     sub: `${drafts.filter((d) => d.ahead > 0).length} household branch(es) unsettled`,
     status: draftsAhead > 20 ? "warn" : "ok" },
