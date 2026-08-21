@@ -4,7 +4,7 @@
 import { join } from "node:path";
 import { isPrincipal } from "./ops.mjs";
 import { householdOf } from "./households.mjs";
-import { HOLO_CAPTION, TEACH } from "./funding.mjs";
+import { HOLO_CAPTION, TEACH, postingsWithoutPots } from "./funding.mjs";
 import { isResidentHandle } from "./residency.mjs"; // the door's own admission grammar — one definition of what a handle is
 
 // The caller's OWN resolved identity (GET /me, MCP whoami) — not town data, the
@@ -327,26 +327,34 @@ export function stampsDetail(db, handle) {
 }
 
 // The pot board (funding seam, 2026-08-21): every pot — a funding bounty file
-// on the quest board — with its file's own target/received/epoch/beneficiary/
-// state, the contributor roll from the ledger's patron-deed rows, the witnessed
+// on the quest board — with its file's own target/received/cadence/beneficiary/
+// status, the contributor roll from the ledger's patron-deed rows, the witnessed
 // receipts behind its dollars, and the stamps currently staked on it (escrow).
-// The file's `received` and the receipts' sum are two clocks: both disclosed,
+// The file's `received_usd` and the receipts' sum are two clocks: both disclosed,
 // never silently reconciled (the 2026-08-10 ruling's shape). Invalid funding
 // rows surface HERE, on the community read, by name — an auditor's first stop.
-export function potBoard(db) {
+//
+// Field names follow the pot file the town landed: target_usd_per_epoch is a
+// per-epoch target (not a lifetime one) and epoch_cadence is a cadence
+// ("monthly"), NOT an epoch id — the door says cadence rather than renaming it
+// `epoch`, because an agent reading "2026-09" and an agent reading "monthly"
+// are being told different things. `beneficiary` is null while a pot is a
+// draft: the keeper is named at opening, and the town's close refuses to run
+// until then.
+export function potBoard(db, extraInvalid = []) {
   const pots = db.prepare("SELECT id, json FROM pots ORDER BY id").all().map((r) => {
     const d = JSON.parse(r.json);
     const roll = db.prepare("SELECT patron, usd, date, receipt, holo FROM funding_deeds WHERE pot = ? ORDER BY date, seq").all(r.id);
-    const receipts = db.prepare("SELECT rail, usd, date, receipt FROM pot_receipts WHERE pot = ? ORDER BY date, seq").all(r.id);
+    const receipts = db.prepare("SELECT rail, usd, date, receipt, payer FROM pot_receipts WHERE pot = ? ORDER BY date, seq").all(r.id);
     const staked = db.prepare("SELECT staked FROM pot_escrow WHERE pot = ?").get(r.id)?.staked ?? 0;
     return {
       id: r.id,
       title: d.title ?? r.id,
       beneficiary: d.beneficiary,
-      target_usd: d.target,
-      received_usd: d.received,
-      epoch: d.epoch,
-      state: d.state,
+      target_usd_per_epoch: d.target_usd_per_epoch,
+      received_usd: d.received_usd,
+      epoch_cadence: d.epoch_cadence,
+      status: d.status,
       teach: TEACH.pot,
       patrons: {
         teach: TEACH.patrons,
@@ -360,7 +368,8 @@ export function potBoard(db) {
       escrow: { staked, teach: TEACH.escrow },
     };
   });
-  const invalid = db.prepare("SELECT row_kind, line, reason FROM funding_invalid ORDER BY seq").all();
+  const invalid = db.prepare("SELECT row_kind, line, reason FROM funding_invalid ORDER BY seq").all()
+    .concat(extraInvalid.map((x) => ({ row_kind: x.row_kind, line: x.line, reason: x.reason })));
   return { teach: TEACH.pots_section, list: pots, ...(invalid.length ? { invalid_rows: { teach: TEACH.invalid, list: invalid } } : {}) };
 }
 
@@ -399,7 +408,17 @@ export async function questBoardFor(db, meta, handle, clone) {
   // growing a new verb. Same section for every handle (a pot is the town's, not
   // yours). Guarded like mail_state: an index hydrated before the seam has no
   // pots table and says so honestly until the next rehydrate.
-  try { board.pots = potBoard(db); }
+  //
+  // A pot's registry row is a BOARD POSTING, never a resident card (the town's
+  // own word, seam/ledger-legs): it carries subtype "bounty" and a dollar
+  // target, and the town's boardForHandle filters only `cadence: milestone`, so
+  // left alone it would render to every resident as a daily quest sitting at
+  // 0/150 — a number nothing they can do will move. It comes off the card deck
+  // and goes where it belongs, into `pots`; a posting whose pot file is missing
+  // is surfaced by name rather than dropped between the two reads.
+  const bountyIds = (registry.quests ?? []).filter((q) => q.subtype === "bounty").map((q) => q.id);
+  board.quests = (board.quests ?? []).filter((q) => !bountyIds.includes(q.id));
+  try { board.pots = potBoard(db, postingsWithoutPots(bountyIds, db.prepare("SELECT id FROM pots").all().map((r) => r.id))); }
   catch { board.pots_note = "this index predates the funding seam — pots are not indexed here yet; they appear at the next rehydrate"; }
   return board;
 }

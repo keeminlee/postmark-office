@@ -216,8 +216,8 @@ if (existsSync(stampTool) && existsSync(stampLedger)) {
     // same rows keyed the other way, for the pure-fold consumers)
     const insDeed = db.prepare("INSERT INTO funding_deeds (patron, pot, usd, date, receipt, holo) VALUES (?,?,?,?,?,?)");
     for (const [pot, deeds] of f.deedsByPot) for (const d of deeds) insDeed.run(d.patron, pot, d.usd, d.date, d.receipt, d.holo);
-    const insRcpt = db.prepare("INSERT INTO pot_receipts (pot, rail, usd, date, receipt) VALUES (?,?,?,?,?)");
-    for (const [pot, rs] of f.receiptsByPot) for (const r of rs) insRcpt.run(pot, r.rail, r.usd, r.date, r.receipt);
+    const insRcpt = db.prepare("INSERT INTO pot_receipts (pot, rail, usd, date, receipt, payer) VALUES (?,?,?,?,?,?)");
+    for (const [pot, rs] of f.receiptsByPot) for (const r of rs) insRcpt.run(pot, r.rail, r.usd, r.date, r.receipt, r.from);
     const insEsc = db.prepare("INSERT INTO pot_escrow (pot, staked) VALUES (?, ?)");
     for (const [pot, n] of f.potEscrow) insEsc.run(pot, n);
     invalid.push(...f.invalid);

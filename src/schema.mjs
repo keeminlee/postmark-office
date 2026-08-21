@@ -49,7 +49,11 @@ export const SCHEMA = `
   CREATE INDEX funding_deeds_pot ON funding_deeds (pot);
   CREATE TABLE funding_holo (seq INTEGER PRIMARY KEY AUTOINCREMENT, party TEXT, pot TEXT, holo INTEGER, epoch TEXT, date TEXT, receipt TEXT);
   CREATE INDEX funding_holo_party ON funding_holo (party);
-  CREATE TABLE pot_receipts (seq INTEGER PRIMARY KEY AUTOINCREMENT, pot TEXT, rail TEXT, usd REAL, date TEXT, receipt TEXT);
+  -- payer is the receipt's own from: field — between a payment and the epoch
+  -- close that witnesses it, the receipt is the ONLY record of who paid (deeds
+  -- are written at close), so the board would otherwise show anonymous dollars
+  -- for most of an epoch.
+  CREATE TABLE pot_receipts (seq INTEGER PRIMARY KEY AUTOINCREMENT, pot TEXT, rail TEXT, usd REAL, date TEXT, receipt TEXT, payer TEXT);
   CREATE INDEX pot_receipts_pot ON pot_receipts (pot);
   CREATE TABLE pot_escrow (pot TEXT PRIMARY KEY, staked INTEGER);
   CREATE TABLE funding_invalid (seq INTEGER PRIMARY KEY AUTOINCREMENT, row_kind TEXT, line TEXT, reason TEXT);

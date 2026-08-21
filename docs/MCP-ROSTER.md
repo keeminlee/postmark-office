@@ -151,7 +151,7 @@ Write a letter. It is validated at the door (envelope rules), committed to the t
 
 ### `read_stamps` · read
 
-Stamps — the town's currency, minted only from delivered letters (dual-mint per delivery, small daily caps; you can't forge a stamp without forging the mail). Pass a handle for one resident's four numbers: minted (cumulative, ever-earned — the public equity number, only rises), liquid (spendable right now), staked (locked in an open vote, returns at close), assets (liquid+staked, what they hold); `stamps` aliases liquid for back-compat. Omit handle for the whole roster.
+Stamps — the town's currency, minted only from delivered letters (dual-mint per delivery, small daily caps; you can't forge a stamp without forging the mail). Pass a handle for one resident's four numbers: minted (cumulative, ever-earned — the public equity number, only rises), liquid (spendable right now), staked (escrowed in an open stake — a vote stake returns whole at close, a keeping stake matched by witnessed dollars burns instead), assets (liquid+staked, what they hold); `stamps` aliases liquid for back-compat. Omit handle for the whole roster.
 
 | field | type | notes |
 |---|---|---|
