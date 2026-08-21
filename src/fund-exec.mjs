@@ -1,0 +1,85 @@
+// fund-exec.mjs — one witnessed pot receipt, atomically, under the caller's flock.
+//
+// The gift-exec precedent, verb for verb: pull the clone, catch the ledger up
+// (--append), record the receipt through the TOWN's OWN epoch-close CLI (the
+// single seam law — its receipt-ref uniqueness and its D5 intake gate ride free,
+// and they are the enforcers this door's pre-checks only paraphrase), commit +
+// push with the pen's ceremony, read back the sealed line. One JSON line out.
+//
+// Env: TOWN_CLONE, STAMP_KEY (path to the pen's ed25519 pem), TOWN_PUSH=1,
+//      BOT_NAME/BOT_EMAIL (penCommit's), TOWN_TZ.
+// argv[2]: JSON { pot, usd, from, ref, date }.
+//
+// Exit 0 with { line, pot, usd, from, ref, date, commit } or
+// { error: { code, defect, hint } } (a bounce is an answer); exit 1 only when
+// the machinery itself trips.
+
+import { readFileSync, existsSync } from "node:fs";
+import { join, resolve, dirname } from "node:path";
+import { pathToFileURL, fileURLToPath } from "node:url";
+import { execFileSync } from "node:child_process";
+import { penCommit } from "./write.mjs";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const CLONE = process.env.TOWN_CLONE ?? resolve(HERE, "..", "town-clone");
+const KEY_PATH = process.env.STAMP_KEY ?? "/srv/postmark-office/stamp-key.pem";
+
+const answer = (obj) => { console.log(JSON.stringify(obj)); process.exit(0); };
+const err = (code, defect, hint) => answer({ error: { code, defect, hint } });
+
+// Translate the town CLI's FATALs into the door's vocabulary. The CLI is the
+// enforcer; this only gives the patron a sentence instead of a stack.
+function classifyFatal(stderr) {
+  const s = String(stderr);
+  if (/already recorded/.test(s))
+    return { code: 409, defect: "this transaction is already recorded", hint: "one dollar, one mint chance — a payment is witnessed exactly once, when it crosses the seam" };
+  if (/past pot .* posted target|fully funded for this epoch/.test(s))
+    return { code: 409, defect: "that would take the pot past its posted need", hint: (s.split("\n").find((l) => /FATAL/.test(l)) ?? s).replace(/^FATAL:\s*/, "").slice(0, 240) };
+  if (/no pot file/.test(s))
+    return { code: 404, defect: "no such pot", hint: "the town posts its needs on the board" };
+  if (/ledger is behind the mail/.test(s))
+    return { code: 409, defect: "the ledger is catching up", hint: "the town is mid-crossing — try again in a moment" };
+  if (/precedes the ledger tail/.test(s))
+    return { code: 409, defect: "the ledger moved ahead of the clock", hint: "try again in a moment" };
+  return { code: 500, defect: "the receipt refused", hint: (s.split("\n").find(Boolean) ?? "unknown").slice(0, 200) };
+}
+
+async function main() {
+  const { pot, usd, from, ref, date } = JSON.parse(process.argv[2] ?? "{}");
+  if (!existsSync(KEY_PATH))
+    return err(409, "not-yet-open", "the office has no pen key configured for the stamp-ledger");
+  const mint = join(CLONE, "tools", "stamp-mint.mjs");
+  const close = join(CLONE, "tools", "epoch-close.mjs");
+  if (!existsSync(mint) || !existsSync(close))
+    return err(409, "not-yet-open", "the office has no town clone with the funding seam");
+
+  if (process.env.TOWN_PUSH === "1")
+    execFileSync("git", ["-C", CLONE, "pull", "--rebase", "-q"], { encoding: "utf8" });
+
+  try {
+    // catch the ledger up so the receipt lands on a settled tail, then witness
+    execFileSync(process.execPath, [mint, "--append", "--key", KEY_PATH, "--repo", CLONE], { encoding: "utf8" });
+    execFileSync(process.execPath, [
+      close, "--receipt",
+      "--pot", String(pot), "--rail", "usdc", "--usd", String(usd),
+      "--from", String(from), "--ref", String(ref), "--date", String(date),
+      "--key", KEY_PATH, "--repo", CLONE,
+    ], { encoding: "utf8" });
+  } catch (e) {
+    const { code, defect, hint } = classifyFatal(e.stderr ?? e.message ?? e);
+    return err(code, defect, hint);
+  }
+
+  const commit = penCommit(CLONE, [
+    join(CLONE, "WHITE_PAGES", "stamp-ledger.md"),
+    join(CLONE, "WHITE_PAGES", `pot-${pot}.json`),
+  ], `fund: $${usd} witnessed for ${from} → pot ${pot} (usdc rail, via the /fund door)`);
+
+  const { parseStampLedger } = await import(pathToFileURL(mint));
+  const entries = parseStampLedger(readFileSync(join(CLONE, "WHITE_PAGES", "stamp-ledger.md"), "utf8"));
+  const line = entries.at(-1)?.raw ?? "";
+
+  answer({ line, pot, usd, from, ref, date, commit });
+}
+
+main().catch((e) => { console.error(String(e?.stack ?? e)); process.exit(1); });

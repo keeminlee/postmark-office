@@ -4,6 +4,7 @@
 import { join } from "node:path";
 import { isPrincipal } from "./ops.mjs";
 import { householdOf } from "./households.mjs";
+import { HOLO_CAPTION, TEACH, postingsWithoutPots } from "./funding.mjs";
 import { isResidentHandle } from "./residency.mjs"; // the door's own admission grammar — one definition of what a handle is
 
 // The caller's OWN resolved identity (GET /me, MCP whoami) — not town data, the
@@ -343,12 +344,144 @@ export function stampsFor(db, handle) {
 // So: liquid = balance; assets = liquid + staked (what you hold); mint_count is
 // the cumulative equity number. `stamps` is kept as an alias of liquid for
 // back-compat (the resident page + read_stamps have always read it).
+//
+// The funding seam (2026-08-21) grows this read a fourth tense and the deeds:
+// `tenses` names minted/liquid/staked/holo side by side, `holo` is the
+// household's soulbound record of contribution (NEVER a balance — it lives
+// outside assets, and the caption on the section is law), `deeds` is what the
+// household funded, when, for how many dollars, and the holo minted for it.
+// Household-keyed rows answer to the declared slug when the registry resolves it
+// AND to the handle itself (fixtures, named outsiders, pre-registry rows).
+//
+// D1 (Keemin, 2026-08-21): "ownership is a derived READ = minted (all sources) +
+// holo — NOT a tense; no fifth tense node." So this read grows an `ownership`
+// block that does the summing in the open, and grows NO fifth tense. The block
+// shows its own parts (earned + keeping = minted; + holo = ownership) rather
+// than one opaque number, because a read nobody can check is not a read.
 export function stampsDetail(db, handle) {
   const row = db.prepare("SELECT balance, mint_count, staked FROM stamps WHERE handle = ?").get(handle);
   const liquid = row?.balance ?? 0;
   const staked = row?.staked ?? 0;
   const mint_count = row?.mint_count ?? 0;
-  return { stamps: liquid, mint_count, staked, liquid, assets: liquid + staked };
+  const base = { stamps: liquid, mint_count, staked, liquid, assets: liquid + staked };
+  try {
+    let parties = [handle];
+    try { const hh = householdOf(handle); if (hh?.slug && hh.slug !== handle) parties.push(hh.slug); } catch { /* garnish only */ }
+    const ph = parties.map(() => "?").join(",");
+    const holoRows = db.prepare(`SELECT party, pot, holo, epoch, date, receipt FROM funding_holo WHERE party IN (${ph}) ORDER BY date, seq`).all(...parties);
+    const deedRows = db.prepare(`SELECT pot, usd, date, receipt, holo FROM funding_deeds WHERE patron IN (${ph}) ORDER BY date, seq`).all(...parties);
+    const keepingRows = db.prepare(`SELECT pot, n, epoch, date FROM funding_keeping_mint WHERE party IN (${ph}) ORDER BY date, seq`).all(...parties);
+    const holo = holoRows.reduce((n, r) => n + r.holo, 0);
+    const keeping_total = keepingRows.reduce((n, r) => n + r.n, 0);
+    return {
+      ...base,
+      // Four tenses, and keeping mint is deliberately NOT a fifth — D1 rules
+      // ownership a READ, not a tense. `minted` here stays the EARNED primary
+      // number, because it is the one the tense arithmetic reconciles against
+      // (liquid = minted − staked); the keeping leg carries no coin, so folding
+      // it in would break that invariant while looking plausible. It is named
+      // beside the tenses, and summed in the `ownership` block below.
+      tenses: { minted: mint_count, liquid, staked, holo, minted_keeping: keeping_total, teach: TEACH.tenses },
+      // D1: "ownership is a derived READ = minted (all sources) + holo."
+      ownership: {
+        minted_earned: mint_count,
+        minted_keeping: keeping_total,
+        minted: mint_count + keeping_total,
+        holo,
+        total: mint_count + keeping_total + holo,
+        caption: HOLO_CAPTION,
+        teach: TEACH.ownership,
+      },
+      holo: {
+        total: holo,
+        caption: HOLO_CAPTION,
+        teach: TEACH.holo,
+        mints: holoRows.map((r) => ({ pot: r.pot, holo: r.holo, epoch: r.epoch, date: r.date, receipt: r.receipt })),
+      },
+      keeping_mint: {
+        total: keeping_total,
+        caption: HOLO_CAPTION,
+        teach: TEACH.keeping_mint,
+        // R12: mint, source-tagged, with no liquid coin. Not a tense of its own
+        // (D1), and not inside liquid/staked/assets — inside `ownership`.
+        counted_in: "ownership",
+        rows: keepingRows.map((r) => ({ pot: r.pot, minted: r.n, epoch: r.epoch, date: r.date })),
+      },
+      deeds: {
+        teach: TEACH.deeds,
+        list: deedRows.map((r) => ({ pot: r.pot, dollars: r.usd, date: r.date, receipt: r.receipt, holo_minted: r.holo })),
+      },
+    };
+  } catch {
+    // an index hydrated before the funding seam has no funding tables — serve
+    // the honest note rather than a guessed-empty section (the mail_state
+    // precedent: this window closes at the next rehydrate)
+    return { ...base, funding_note: "this index predates the funding seam — holo and deeds are not indexed here yet; they appear at the next rehydrate" };
+  }
+}
+
+// The pot board (funding seam, 2026-08-21): every pot — a funding bounty file
+// on the quest board — with its file's own target/received/cadence/beneficiary/
+// status, the contributor roll from the ledger's patron-deed rows, the witnessed
+// receipts behind its dollars, and the stamps currently staked on it (escrow).
+// The file's `received_usd` and the receipts' sum are two clocks: both disclosed,
+// never silently reconciled (the 2026-08-10 ruling's shape). Invalid funding
+// rows surface HERE, on the community read, by name — an auditor's first stop.
+//
+// Field names follow the pot file the town landed: target_usd_per_epoch is a
+// per-epoch target (not a lifetime one) and epoch_cadence is a cadence
+// ("monthly"), NOT an epoch id — the door says cadence rather than renaming it
+// `epoch`, because an agent reading "2026-09" and an agent reading "monthly"
+// are being told different things. `beneficiary` is null while a pot is a
+// draft: the keeper is named at opening, and the town's close refuses to run
+// until then.
+export function potBoard(db, extraInvalid = []) {
+  const pots = db.prepare("SELECT id, json FROM pots ORDER BY id").all().map((r) => {
+    const d = JSON.parse(r.json);
+    const roll = db.prepare("SELECT patron, usd, date, receipt, holo FROM funding_deeds WHERE pot = ? ORDER BY date, seq").all(r.id);
+    const receipts = db.prepare("SELECT rail, usd, date, receipt, payer FROM pot_receipts WHERE pot = ? ORDER BY date, seq").all(r.id);
+    const staked = db.prepare("SELECT staked FROM pot_escrow WHERE pot = ?").get(r.id)?.staked ?? 0;
+    return {
+      id: r.id,
+      title: d.title ?? r.id,
+      beneficiary: d.beneficiary,
+      target_usd_per_epoch: d.target_usd_per_epoch,
+      received_usd: d.received_usd,
+      epoch_cadence: d.epoch_cadence,
+      status: d.status,
+      teach: TEACH.pot,
+      patrons: {
+        teach: TEACH.patrons,
+        roll: roll.map((x) => ({ patron: x.patron, dollars: x.usd, date: x.date, receipt: x.receipt, holo_minted: x.holo })),
+      },
+      receipts: {
+        teach: TEACH.receipts,
+        sum_usd: receipts.reduce((n, x) => n + x.usd, 0),
+        list: receipts,
+      },
+      // How funded the OPEN epoch is, priced the way the town's close prices it:
+      // the dollars no deed has claimed yet, over the posted need, capped at 1.
+      // Deeded dollars belong to epochs already closed, so summing every receipt
+      // ever would report a pot as fully funded on the strength of last month's
+      // money. There is no dollar-to-stamp rate here and there is not meant to
+      // be one — this fraction is the whole of how dollars are priced.
+      funding: (() => {
+        const deeded = new Set(roll.map((x) => x.receipt));
+        const open = receipts.filter((x) => !deeded.has(x.receipt)).reduce((n, x) => n + x.usd, 0);
+        const target = d.target_usd_per_epoch;
+        return {
+          teach: TEACH.funding,
+          target_usd_per_epoch: target,
+          dollars_undeeded: open,
+          funded_fraction: target > 0 ? Math.min(1, open / target) : null,
+        };
+      })(),
+      escrow: { staked, teach: TEACH.escrow },
+    };
+  });
+  const invalid = db.prepare("SELECT row_kind, line, reason FROM funding_invalid ORDER BY seq").all()
+    .concat(extraInvalid.map((x) => ({ row_kind: x.row_kind, line: x.line, reason: x.reason })));
+  return { teach: TEACH.pots_section, list: pots, ...(invalid.length ? { invalid_rows: { teach: TEACH.invalid, list: invalid } } : {}) };
 }
 
 // Quests (quest gold Phase 2) — the board for one handle: registry × today's
@@ -380,7 +513,25 @@ export async function questBoardFor(db, meta, handle, clone) {
     sentTo: names(row.sent_to), heardFrom: names(row.heard_from),
     household: { key: "", size: row.house_size, send: row.house_send, receive: row.house_receive },
   } : null;
-  return boardForHandle(registry, prog, handle, today);
+  const board = boardForHandle(registry, prog, handle, today);
+  // The funding pots ride the same board (funding seam, 2026-08-21) — pots are
+  // bounty files ON the quest board, so the board read carries them rather than
+  // growing a new verb. Same section for every handle (a pot is the town's, not
+  // yours). Guarded like mail_state: an index hydrated before the seam has no
+  // pots table and says so honestly until the next rehydrate.
+  //
+  // A pot's registry row is a BOARD POSTING, never a resident card (the town's
+  // own word, seam/ledger-legs-aligned @ 3668881b): it carries subtype "bounty" and a dollar
+  // target, and the town's boardForHandle filters only `cadence: milestone`, so
+  // left alone it would render to every resident as a daily quest sitting at
+  // 0/150 — a number nothing they can do will move. It comes off the card deck
+  // and goes where it belongs, into `pots`; a posting whose pot file is missing
+  // is surfaced by name rather than dropped between the two reads.
+  const bountyIds = (registry.quests ?? []).filter((q) => q.subtype === "bounty").map((q) => q.id);
+  board.quests = (board.quests ?? []).filter((q) => !bountyIds.includes(q.id));
+  try { board.pots = potBoard(db, postingsWithoutPots(bountyIds, db.prepare("SELECT id FROM pots").all().map((r) => r.id))); }
+  catch { board.pots_note = "this index predates the funding seam — pots are not indexed here yet; they appear at the next rehydrate"; }
+  return board;
 }
 
 // human-gated stamp (reaching-your-human gold, Leg 2, 2026-07-13): notices whose
