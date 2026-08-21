@@ -201,3 +201,77 @@ test("the uploader acts AS the resident, inside their own household — the door
     assert.equal(row.by_handle, "r", "the ledger records the resident whose art it is, not the operator");
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+// ── the box's own two questions, made into probes (2026-08-21) ───────────────
+//
+// Wright's first real run on meepo-ec2 failed with Headers.append errors from
+// CR-tainted R2 env, the second reported "no new objects" while every URL
+// HEAD-verified 200, and the three facts did not reconcile under his model of
+// this tool. They reconcile under the code — one of the two behaviours was
+// already right and untested, and the other was a real defect. Both are probes
+// now, so neither can drift back into being a matter of opinion.
+
+test("A FAILED PUT WRITES NO LEDGER ROW, NO URL, AND LANDS IN skipped.refused — the ledger may never claim what storage does not hold", () => {
+  // uploadMedia reaches its INSERT only on the line AFTER `await put(...)`, and
+  // neither is guarded, so a throw from storage takes the row with it. That is
+  // the invariant the shelf's whole dedup branch rests on: `already: true`
+  // returns a URL without sending any bytes, so a row written for an object
+  // that never landed would hand back a URL for a file that does not exist —
+  // permanently, since nothing here ever deletes.
+  const dir = staging({ "a.png": PNG, "b.png": Buffer.concat([PNG, Buffer.alloc(0)]) });
+  const db = odb();
+  const boom = async () => { throw new TypeError("Headers.append: is an invalid header value"); };
+  return (async () => {
+    const { urls, skipped } = await backfillHomeShelf({
+      images: { a: { file: "a", format: "png" } },
+      stagingDir: dir, householdFor: houses({ a: door("gh-user", ["a"]) }),
+      upload: uploadMedia, odb: db, put: boom,
+    });
+    assert.deepEqual(urls, {}, "a failed PUT writes no URL");
+    assert.equal(skipped.refused.length, 1);
+    assert.equal(skipped.refused[0].handle, "a");
+    assert.match(skipped.refused[0].why, /invalid header value/, "the storage error is carried through by name, not swallowed");
+    const rows = db.prepare("SELECT COUNT(*) AS n FROM media").get().n;
+    assert.equal(rows, 0, "THE LEDGER MUST BE EMPTY — a row here would make the next run answer `already` for bytes that never landed");
+
+    // and the failure leaves nothing poisoned: a later run with working storage
+    // mints it for real, which is exactly what the box's second run did
+    const { calls, put } = stubPut();
+    const again = await backfillHomeShelf({
+      images: { a: { file: "a", format: "png" } },
+      stagingDir: dir, householdFor: houses({ a: door("gh-user", ["a"]) }),
+      upload: uploadMedia, odb: db, put,
+    });
+    assert.ok(again.urls.a, "the retry mints");
+    assert.deepEqual(again.dedup, [], "and it is NOT reported as already on the shelf");
+    assert.deepEqual(again.minted, ["a"]);
+    assert.equal(calls.length, 1, "one object really was written this time");
+    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM media").get().n, 1);
+    rmSync(dir, { recursive: true, force: true });
+  })();
+});
+
+test("THE OBJECT COUNTER COUNTS OBJECTS THAT REACHED STORAGE — in a run with a real put as much as a mocked one", () => {
+  // The defect the box caught: the count used to be pushed from inside the DRY
+  // mock, so on a real run — where no mock exists — it was structurally zero
+  // and the tool reported "no new objects" after writing 57. `minted` is
+  // derived from the handler's own answers instead: a result that is neither a
+  // throw nor `already` is one object written, which is true in both modes.
+  const dir = staging({ "one.png": PNG, "two.png": PNG, "three.jpg": BIG_JPG });
+  const db = odb();
+  const house = door("garrison", ["one", "two", "three"]);
+  return (async () => {
+    const { calls, put } = stubPut();
+    const r = await backfillHomeShelf({
+      images: { one: { file: "a", format: "png" }, three: { file: "c", format: "jpg" }, two: { file: "b", format: "png" } },
+      stagingDir: dir, householdFor: houses({ one: house, two: house, three: house }),
+      upload: uploadMedia, odb: db, put,
+    });
+    assert.equal(Object.keys(r.urls).length, 3, "three handles got a URL");
+    assert.deepEqual(r.dedup, ["two"], "two shares one's bytes");
+    assert.deepEqual(r.minted.sort(), ["one", "three"]);
+    assert.equal(r.minted.length, calls.length, "THE COUNT IS THE NUMBER OF CALLS STORAGE ACTUALLY TOOK");
+    assert.notEqual(r.minted.length, Object.keys(r.urls).length, "and it is not simply the URL count — that is the conflation that hid the real number");
+    rmSync(dir, { recursive: true, force: true });
+  })();
+});

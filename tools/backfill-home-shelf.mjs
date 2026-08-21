@@ -66,7 +66,7 @@ export async function backfillHomeShelf({
 }) {
   const urls = {};
   const skipped = { noHousehold: [], missingBytes: [], refused: [] };
-  const dedup = [];
+  const dedup = [], minted = [];
 
   for (const handle of Object.keys(images).sort()) {
     const rec = images[handle];
@@ -84,7 +84,19 @@ export async function backfillHomeShelf({
     try {
       const r = await upload({ image: bytes.toString("base64"), by: handle }, block, odb, { put });
       urls[handle] = r.url;
-      if (r.already) dedup.push(handle);
+      // HOW MANY OBJECTS ACTUALLY REACHED STORAGE, counted where the answer is
+      // knowable rather than where it was convenient. uploadMedia reaches its
+      // ledger INSERT only after `await put(...)` has resolved, and it answers
+      // `already: true` on the dedup branch WITHOUT calling put at all — so a
+      // result that is neither a throw nor `already` is exactly one object
+      // written, in a real run and a dry one alike.
+      //
+      // This used to be counted by pushing to an array from inside the DRY
+      // mock, which made the count structurally zero on every real run: the box
+      // wrote 57 objects and the run said "no new objects" (2026-08-21). A
+      // counter that can only be right in the mode that does not matter is
+      // worse than none.
+      if (r.already) dedup.push(handle); else minted.push(handle);
       onEntry({ handle, ok: true, url: r.url, already: !!r.already, household: block.household, bytes: r.bytes, quota: r.quota });
     } catch (e) {
       const row = { handle, household: block.household, file: rec.file, code: e?.code ?? null, why: e?.defect ?? e?.message ?? String(e) };
@@ -92,7 +104,7 @@ export async function backfillHomeShelf({
       onEntry({ handle, ok: false, ...row });
     }
   }
-  return { urls, skipped, dedup };
+  return { urls, skipped, dedup, minted };
 }
 
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
@@ -180,8 +192,12 @@ if (isMain) {
   }
   const odb = openOauthDb(dbPath);
 
-  const puts = [];
-  const put = DRY ? async (objectKey, bytes, mediaType) => { puts.push({ objectKey, bytes: bytes.length, mediaType }); } : undefined;
+  // The dry mock stands in for the R2 PUT and records what it was handed. Its
+  // tally is a CROSS-CHECK, never the headline count — see the note in
+  // backfillHomeShelf on why the objects-written number is derived from the
+  // handler's own answers instead.
+  const mockedPuts = [];
+  const put = DRY ? async (objectKey, bytes, mediaType) => { mockedPuts.push({ objectKey, bytes: bytes.length, mediaType }); } : undefined;
 
   console.log(`${DRY ? "[dry] " : ""}backfilling ${Object.keys(images).length} home images onto the shelf`);
   console.log(`  manifest ${MANIFEST}`);
@@ -191,7 +207,7 @@ if (isMain) {
   if (stubbed.length) console.log(`  note     R2 credentials absent; ${stubbed.join(", ")} stubbed for the dry run and the PUT is mocked`);
   console.log("");
 
-  const { urls, skipped, dedup } = await backfillHomeShelf({
+  const { urls, skipped, dedup, minted } = await backfillHomeShelf({
     images, stagingDir: STAGING, householdFor: doorHouseholdFor, upload: uploadMedia, odb,
     ...(put ? { put } : {}),
     onEntry: (e) => console.log(e.ok
@@ -203,13 +219,21 @@ if (isMain) {
     _note: `DERIVED — every URL here was returned by the office's own uploadMedia (src/media.mjs), the same handler POST /media and the MCP upload_media land in. Consumed by the world repo's tools/home-image-backfill.mjs.${DRY ? " THIS IS A DRY RUN: no bytes reached storage and the office's own ledger was not written." : ""}`,
     generated_at: new Date().toISOString(),
     dry: DRY, media_base: MEDIA_BASE,
-    counts: { minted: Object.keys(urls).length, already: dedup.length, noHousehold: skipped.noHousehold.length, missingBytes: skipped.missingBytes.length, refused: skipped.refused.length },
+    // `urls` is how many handles got a URL; `objects` is how many of those had
+    // to be written. They differ by exactly the dedup hits, and conflating them
+    // is what made a real run report nothing.
+    counts: { urls: Object.keys(urls).length, objects: minted.length, already: dedup.length, noHousehold: skipped.noHousehold.length, missingBytes: skipped.missingBytes.length, refused: skipped.refused.length },
     urls, skipped,
   };
   writeFileSync(OUT, `${JSON.stringify(out, null, 2)}\n`);
 
-  console.log(`\n${DRY ? "[dry] " : ""}${out.counts.minted} URLs → ${OUT}`);
-  console.log(`  ${puts.length ? `${puts.length} object PUTs ${DRY ? "would have been" : "were"} made` : "no new objects"}${dedup.length ? `; ${dedup.length} already on the shelf (${dedup.join(", ")})` : ""}`);
+  console.log(`\n${DRY ? "[dry] " : ""}${out.counts.urls} URLs → ${OUT}`);
+  console.log(`  ${minted.length} object${minted.length === 1 ? "" : "s"} ${DRY ? "would have been written" : "written"}${dedup.length ? `; ${dedup.length} already on the shelf, no bytes sent and no quota spent (${dedup.join(", ")})` : ""}`);
+  // In dry mode the mock saw every call the real PUT would have taken, so the
+  // two numbers must agree. If they ever do not, the count above is describing
+  // something other than what reaches storage and should not be believed.
+  if (DRY && mockedPuts.length !== minted.length)
+    console.error(`  ⚠ the mocked PUT saw ${mockedPuts.length} call(s) but ${minted.length} object(s) were counted — the counter and the storage call disagree`);
   for (const [name, rows] of Object.entries(skipped)) {
     if (!rows.length) continue;
     console.log(`  ${name} (${rows.length}):`);
@@ -219,5 +243,9 @@ if (isMain) {
   // close before removing: an open sqlite handle holds the throwaway file open
   // on Windows, and the rm answers EPERM over a run that otherwise succeeded
   if (tmp) { try { odb.close(); } catch { /* already closed */ } rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); }
-  if (!out.counts.minted) { console.error("nothing minted — refusing to call that success"); process.exit(1); }
+  // A run that hands back no URL at all did not do its job, however it failed —
+  // and the box's first real run is why this exits loudly: CR-tainted R2 env
+  // made every PUT throw, and the honest answer is a non-zero exit with every
+  // entry named in skipped.refused, not a quiet file full of nothing.
+  if (!out.counts.urls) { console.error("no URLs minted — refusing to call that success"); process.exit(1); }
 }
