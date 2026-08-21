@@ -18,6 +18,12 @@
 # verdict JSON (/settlement-shadow.json beside settlement-auto.json) — polled
 # by the ops page and read on the operator round.
 #
+# The verification tiers (world repo): `npm run gate` is the ITERATION tier —
+# mark-lint plus the falsifier subset, under a minute, for the dev loop. The
+# full `npm test` suite is the PUBLISH tier: what this shadow rehearses and
+# what the settlement itself runs before its pen touches main. The fast gate
+# never substitutes for the suite on anything that ships.
+#
 # Env (unit): TOWN_CLONE, WORLD_CLONE (origin URL discovery only).
 # Cwd: /srv/postmark-office. Exit: 0 would-settle · 1 would-refuse.
 
