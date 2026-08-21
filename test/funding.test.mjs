@@ -1,16 +1,16 @@
 // funding.test.mjs — the funding seam at the door (2026-08-21).
 //
 // The ledger rows below are the LANDED grammar (tools/stamp-mint.mjs § THE
-// FUNDING SEAM, seam/ledger-legs @ 9e06a850), not a paraphrase of it: tight
-// `pot:` and `epoch:`, loose `rail: `/`usd: `/`from: `/`ref: `, whole dollars,
-// a keeping burn that IS the escrow movement, and two arrow-free equity rows
-// (holo to the payers, keeping-equity home to the stakers) that are verb-less
-// by shape precisely so no fold that moves money can ever see them.
+// FUNDING SEAM, seam/ledger-legs-aligned @ 3668881b), not a paraphrase of it:
+// tight `pot:` and `epoch:`, loose `rail: `/`usd: `/`from: `/`ref: `/`for: `,
+// whole dollars, a keeping burn that IS the escrow movement, and two arrow-free
+// rows (holo to the payers, the keeping mint home to the stakers) that carry no
+// arrow precisely so no fold that moves money can ever see them.
 //
 // The fixture is one coherent epoch close on the town's own pot, in the town's
-// canonical close-block order (pot-return, keeping-burn, keeping-equity, holo,
+// canonical close-block order (pot-return, keeping-burn, keeping mint, holo,
 // patron-deed), so the numbers mean something: the $150 posted need is fully
-// met, wright's 4 burns whole at funded_fraction 1, σ=0.5 → 2 keeping-equity
+// met, wright's 4 burns whole at funded_fraction 1, σ=0.5 → 2 minted for keeping
 // home to wright HIMSELF (not to the pot's beneficiary), and
 // floor((1−σ)·4 · 100/150) = 1 holo to the $100 payer, 0 to the $50 payer, with
 // deeds for both either way.
@@ -23,6 +23,9 @@
 //     sit in the pot forever looking like support that will come back
 //   - a row written in the grammar the office GUESSED before the town landed
 //     its own is surfaced invalid by name, never rendered as good
+//   - R12's σ leg IS mint, source-tagged, with no liquid coin — so it is inside
+//     the ownership read and outside every tense
+//   - D1's ownership is a READ, not a fifth tense, and shows its own parts
 //   - the reserved `treasury` pot takes deeds only, and its deeds mint nothing
 
 import test from "node:test";
@@ -47,7 +50,7 @@ const LEDGER = `# stamp-ledger — fixture
 - 2026-08-05 · keemin → stake:pot/keeping-ec2 · 6 · via: api · sig: sigF
 - 2026-08-31 · stake:pot/keeping-ec2 → limen · 2 · for: pot-return:2026-08 · sig: sigG
 - 2026-08-31 · stake:pot/keeping-ec2 → BURN · 4 · for: keeping:2026-08 · staker: wright · sig: sigH
-- 2026-08-31 · keeping-equity · wright · 2 · pot:keeping-ec2 · epoch:2026-08 · sig: sigI
+- 2026-08-31 · minted · wright · 2 · for: keeping:keeping-ec2 · epoch:2026-08 · sig: sigI
 - 2026-08-31 · holo · keemin · 1 · pot:keeping-ec2 · epoch:2026-08 · ref: ch_1QxTest · sig: sigJ
 - 2026-08-31 · patron-deed · pot:keeping-ec2 · patron: keemin · usd: 100 · epoch:2026-08 · ref: ch_1QxTest · holo: 1 · sig: sigK
 - 2026-08-31 · patron-deed · pot:keeping-ec2 · patron: marbinner · usd: 50 · epoch:2026-08 · ref: 0xdeadbeef · holo: 0 · sig: sigL
@@ -63,12 +66,20 @@ const GUESSED = `- 2026-08-21 · holo-mint → mallory · 999 · pot: keeping-ec
 - 2026-08-22 · stake:pot/keeping-ec2 → mallory · 1 · for: unstake · sig: sigS
 `;
 
-// The RETIRED σ-leg shape: a real mint, to the pot's beneficiary, in perfect
-// pre-correction form. The town's own reader returns unknown for it now, so the
-// door's job is to refuse it BY NAME — a retired row that reads as silence is
-// indistinguishable from one the door failed to notice, and this one would have
-// minted spendable stamps to the wrong party.
+// The RETIRED σ-leg shapes, all three in perfect form for the draft that wrote
+// them. The town's own reader returns unknown for each, so the door's job is to
+// refuse them BY NAME — a retired row that reads as silence is indistinguishable
+// from one the door failed to notice.
+//   sigR — draft 1: a real mint, to the pot's BENEFICIARY, spendable.
+//   sigR2 — draft 2: right recipient, right arrow-free shape, retired noun (R12
+//           retires "keeping-equity" from every surface).
+//   sigR3 — the smuggle: R12's own `for: keeping:<pot>` tag wearing a movement
+//           arrow. This is the dangerous one — it reads lawful, and its arrow
+//           would put it inside the balance AND mint-count folds, handing back
+//           liquid coin already paid when the stake burned.
 const RETIRED = `- 2026-08-31 · MINT → meepo · 2 · for: keeper-equity:keeping-ec2/2026-08 · sig: sigR
+- 2026-08-31 · keeping-equity · wright · 2 · pot:keeping-ec2 · epoch:2026-08 · sig: sigR2
+- 2026-08-31 · MINT → wright · 2 · for: keeping:keeping-ec2 · epoch:2026-08 · sig: sigR3
 `;
 
 // Complete in every field and wrong in exactly one byte: the loose colon the
@@ -105,12 +116,12 @@ test("the fold reads every landed row kind: receipts, escrow, burn, holo, deeds"
   const holo = f.holoByParty.get("keemin") ?? [];
   assert.equal(holo.reduce((n, h) => n + h.holo, 0), 1);
   assert.equal(holo[0].receipt, "ch_1QxTest", "holo rides the receipt that witnessed it");
-  assert.equal(f.holoByParty.has("wright"), false, "keeping-equity is not holo — the two legs of one close are different things");
+  assert.equal(f.holoByParty.has("wright"), false, "the keeping mint is not holo — the two legs of one close are different things");
 
-  const equity = f.equityByParty.get("wright") ?? [];
-  assert.equal(equity.reduce((n, e) => n + e.n, 0), 2, "the σ leg comes home to the STAKER at par of their own burn");
-  assert.deepEqual({ pot: equity[0].pot, epoch: equity[0].epoch }, { pot: "keeping-ec2", epoch: "2026-08" });
-  assert.equal(f.equityByParty.has("meepo"), false, "and not to the pot's beneficiary — that was the corrected law");
+  const keeping = f.keepingByParty.get("wright") ?? [];
+  assert.equal(keeping.reduce((n, e) => n + e.n, 0), 2, "the σ leg comes home to the STAKER at par of their own burn");
+  assert.deepEqual({ pot: keeping[0].pot, epoch: keeping[0].epoch }, { pot: "keeping-ec2", epoch: "2026-08" });
+  assert.equal(f.keepingByParty.has("meepo"), false, "and not to the pot's beneficiary — that was the corrected law");
 
   const roll = f.deedsByPot.get("keeping-ec2") ?? [];
   assert.equal(roll.length, 2, "a pot with two patrons rolls both deeds");
@@ -139,33 +150,54 @@ test("the grammar the office guessed before the town landed its own is now inval
   assert.equal(f.potEscrow.get("keeping-ec2"), 6, "the malformed unstake moved no escrow");
 });
 
-test("the retired σ-leg shape is refused BY NAME, never read as a lawful mint", () => {
-  // An earlier draft paid the σ share to the pot's beneficiary as a spendable
-  // MINT. It is gone from the grammar — the town's own reader returns unknown
-  // for it. Refusing it silently would be indistinguishable from failing to
-  // notice it, and this row would have handed real stamps to the wrong party.
+test("all three retired σ-leg shapes are refused BY NAME, never read as lawful mint", () => {
+  // LAW R12 (Keemin, 2026-08-21 afternoon): "the σ leg IS ORDINARY MINT,
+  //          source-tagged (`minted · for: keeping:<pot>`), with NO liquid coin
+  //          (the coin was paid when the stake burned; the row stays
+  //          purpose-tagged so balance folds never hand liquid back)."
+  // Refusing silently would be indistinguishable from failing to notice.
   const f = fold();
-  const reason = reasonFor(f, "for: keeper-equity:");
-  assert.match(reason, /RETIRED/, "the row is named as retired, not merely unparsed");
-  assert.match(reason, /goes home to the stakers/, "and the reason says where the σ leg actually goes now");
-  assert.equal(f.equityByParty.has("meepo"), false, "the beneficiary earns nothing from it");
+
+  // draft 1 — the beneficiary's spendable mint
+  const one = reasonFor(f, "for: keeper-equity:");
+  assert.match(one, /RETIRED/, "the row is named as retired, not merely unparsed");
+  assert.match(one, /goes home to the stakers/, "and the reason says where the σ leg actually goes now");
+
+  // draft 2 — the retired NOUN
+  const two = reasonFor(f, "· keeping-equity · wright");
+  assert.match(two, /RETIRED/);
+  assert.match(two, /minted · <staker>/, "the reason hands back the ruled shape");
+
+  // the smuggle — R12's tag with an arrow on it
+  const three = reasonFor(f, "MINT → wright · 2 · for: keeping:");
+  assert.match(three, /never carry a movement arrow/, "the arrow is named as the fault");
+  assert.match(three, /NO liquid coin/, "and the reason quotes the law it breaks");
+
+  assert.equal(f.keepingByParty.has("meepo"), false, "the beneficiary earns nothing from any of them");
   assert.equal(f.holoByParty.has("meepo"), false);
+  assert.equal((f.keepingByParty.get("wright") ?? []).reduce((n, r) => n + r.n, 0), 2,
+    "and wright still holds exactly the ONE lawful row's 2 — no retired shape added to it");
 });
 
-test("the σ leg is read, is shown, and is counted in no total", () => {
-  const keeping = classifyFundingRow("- 2026-08-31 · keeping-equity · wright · 2 · pot:keeping-ec2 · epoch:2026-08");
-  assert.equal(keeping.kind, "keeping-equity");
+test("the σ leg reads in R12's own vocabulary, and the arrow is the enforcement", () => {
+  // LAW R12: "source-tagged (`minted · for: keeping:<pot>`) ... with NO liquid
+  //          coin ... the row stays purpose-tagged so balance folds never hand
+  //          liquid back."
+  const keeping = classifyFundingRow("- 2026-08-31 · minted · wright · 2 · for: keeping:keeping-ec2 · epoch:2026-08");
+  assert.equal(keeping.kind, "keeping-mint");
   assert.equal(keeping.handle, "wright", "the σ leg's subject is the staker who earned it");
+  assert.equal(keeping.pot, "keeping-ec2", "and the source tag names the pot it was earned keeping");
   assert.equal(keeping.n, 2);
 
   const f = fold();
-  assert.equal(f.invalid.some((i) => i.line.includes("keeping-equity · wright")), false, "a lawful σ row is not called forged");
+  assert.equal(f.invalid.some((i) => i.line.includes("· minted · wright")), false, "a lawful σ row is not called forged");
   assert.equal((f.deedsByParty.get("wright") ?? []).length, 0, "it is not a deed");
 
   // the arrow is the enforcement, exactly as it is for holo
-  const moved = classifyFundingRow("- 2026-08-31 · keeping-equity → wright · 2 · pot:keeping-ec2 · epoch:2026-08");
+  const moved = classifyFundingRow("- 2026-08-31 · minted → wright · 2 · for: keeping:keeping-ec2 · epoch:2026-08");
   assert.equal(moved.kind, "invalid");
-  assert.match(moved.reason, /ARROW-FREE/, "a σ row that moves is refused by the law that makes it verb-less");
+  assert.match(moved.reason, /never carry a movement arrow|ARROW-FREE/,
+    "a σ row that moves is refused by the law that gives it no liquid coin");
 });
 
 test("a row that is complete but writes the loose colon is refused by the fold, not just by the message", () => {
@@ -251,16 +283,16 @@ function fundingDb() {
   // keemin: 4 liquid, 6 staked, 10 ever minted → assets 10; holo entirely apart
   db.prepare("INSERT INTO stamps (handle, balance, mint_count, staked) VALUES (?,?,?,?)").run("keemin", 4, 10, 6);
   db.prepare("INSERT INTO stamps (handle, balance, mint_count, staked) VALUES (?,?,?,?)").run("limen", 3, 3, 0);
-  // wright: the staker whose 4 burned — 2 keeping-equity came home, and none of
-  // it may show up in any of his four numbers
+  // wright: the staker whose 4 burned — 2 minted for keeping came home, and none
+  // of it may show up in any of his four tense numbers
   db.prepare("INSERT INTO stamps (handle, balance, mint_count, staked) VALUES (?,?,?,?)").run("wright", 5, 9, 0);
   const f = foldFunding(parseLedgerText(LEDGER + GUESSED + RETIRED + LOOSE + FORGED));
   // hydrate's inserts, in miniature — keyed by handle here (no household
   // registry in a fixture; the read answers to slug AND handle)
   const insHolo = db.prepare("INSERT INTO funding_holo (party, pot, holo, epoch, date, receipt) VALUES (?,?,?,?,?,?)");
   for (const [party, ms] of f.holoByParty) for (const m of ms) insHolo.run(party, m.pot, m.holo, m.epoch, m.date, m.receipt);
-  const insEq = db.prepare("INSERT INTO funding_keeping_equity (party, pot, n, epoch, date) VALUES (?,?,?,?,?)");
-  for (const [party, rs] of f.equityByParty) for (const r of rs) insEq.run(party, r.pot, r.n, r.epoch, r.date);
+  const insKeep = db.prepare("INSERT INTO funding_keeping_mint (party, pot, n, epoch, date) VALUES (?,?,?,?,?)");
+  for (const [party, rs] of f.keepingByParty) for (const r of rs) insKeep.run(party, r.pot, r.n, r.epoch, r.date);
   const insDeed = db.prepare("INSERT INTO funding_deeds (patron, pot, usd, date, receipt, holo) VALUES (?,?,?,?,?,?)");
   for (const [pot, ds] of f.deedsByPot) for (const d of ds) insDeed.run(d.patron, pot, d.usd, d.date, d.receipt, d.holo);
   const insRcpt = db.prepare("INSERT INTO pot_receipts (pot, rail, usd, date, receipt, payer) VALUES (?,?,?,?,?,?)");
@@ -289,21 +321,59 @@ test("a household with holo reads four tenses that sum sanely — and holo is ne
   assert.match(d.tenses.teach, /BURNS/, "the staked tense says out loud that a dollar-matched keeping stake burns rather than returns");
 });
 
-test("keeping-equity reads as its own section — visible, and in none of the four tenses", () => {
+test("minted · for keeping reads as its own section — no liquid coin, and no fifth tense", () => {
+  // LAW R12: "with NO liquid coin (the coin was paid when the stake burned; the
+  //          row stays purpose-tagged so balance folds never hand liquid back)."
+  // LAW D1:  "ownership is a derived READ = minted (all sources) + holo — NOT a
+  //          tense; no fifth tense node."
   const d = stampsDetail(fundingDb(), "wright");
-  assert.equal(d.keeping_equity.total, 2, "the σ leg is SHOWN, not swallowed");
-  assert.deepEqual(d.keeping_equity.rows[0], { pot: "keeping-ec2", equity: 2, epoch: "2026-08", date: "2026-08-31" });
-  assert.ok(d.keeping_equity.teach, "it teaches at the point of contact like every other new field");
+  assert.equal(d.keeping_mint.total, 2, "the σ leg is SHOWN, not swallowed");
+  assert.deepEqual(d.keeping_mint.rows[0], { pot: "keeping-ec2", minted: 2, epoch: "2026-08", date: "2026-08-31" });
+  assert.ok(d.keeping_mint.teach, "it teaches at the point of contact like every other new field");
 
-  // the whole point: visible, and counted nowhere
+  // no liquid coin: not in liquid, not in staked, not in assets, and not in the
+  // earned `minted` the tense arithmetic reconciles against
   assert.deepEqual(
     { minted: d.tenses.minted, liquid: d.tenses.liquid, staked: d.tenses.staked, holo: d.tenses.holo },
     { minted: 9, liquid: 5, staked: 0, holo: 0 },
   );
-  assert.equal(d.assets, 5, "keeping-equity is not in assets");
-  assert.equal(Object.keys(d.tenses).includes("keeping_equity"), false, "and it is NOT a fifth tense — that placement is unruled");
-  assert.equal(d.keeping_equity.tense, null);
-  assert.match(d.keeping_equity.tense_note, /not yet ruled/, "the door says the question is open rather than answering it");
+  assert.equal(d.assets, 5, "the keeping mint is not in assets");
+  assert.equal(d.liquid + d.staked, d.assets, "and the tense arithmetic still closes");
+  // D1: no fifth tense node. The number is named beside the tenses so nothing is
+  // hidden, but `minted` is not widened and no new tense appears.
+  assert.equal(d.tenses.minted_keeping, 2, "named beside the tenses, not folded into one");
+  assert.equal(d.tenses.minted, 9, "`minted` stays the EARNED number — widening it would break liquid = minted − staked");
+  assert.equal(Object.keys(d.tenses).includes("keeping_mint"), false, "and it is NOT a fifth tense");
+  assert.equal(d.keeping_mint.counted_in, "ownership", "it is counted — deliberately, in the ownership read");
+});
+
+test("D1: ownership is a derived READ — minted (all sources) + holo, with its parts shown", () => {
+  // LAW D1 (Keemin, 2026-08-21): "ownership is a derived READ = minted (all
+  //         sources) + holo — NOT a tense; no fifth tense node."
+  // LAW R12: the σ leg "COUNTS toward the ρ base" and IS mint — so it is inside
+  //          "minted (all sources)", which is the whole reason this block exists.
+  const db = fundingDb();
+
+  // wright staked and kept: 9 earned + 2 minted for keeping, no holo
+  const w = stampsDetail(db, "wright");
+  assert.equal(w.ownership.minted_earned, 9);
+  assert.equal(w.ownership.minted_keeping, 2);
+  assert.equal(w.ownership.minted, 11, "minted = all sources");
+  assert.equal(w.ownership.holo, 0);
+  assert.equal(w.ownership.total, 11, "ownership = minted + holo");
+  assert.notEqual(w.ownership.total, 9, "leaving the keeping leg out would under-read what wright owns");
+
+  // keemin paid: 10 earned, no keeping, 1 holo
+  const k = stampsDetail(db, "keemin");
+  assert.equal(k.ownership.minted, 10);
+  assert.equal(k.ownership.minted_keeping, 0);
+  assert.equal(k.ownership.total, 11, "10 minted + 1 holo");
+  assert.notEqual(k.ownership.total, k.assets, "ownership is not a balance — holo is in it and staked stamps are not spendable");
+
+  // and the promise on it is the same one holo carries everywhere
+  assert.equal(k.ownership.caption, HOLO_CAPTION, "a record of contribution, not a promise of profit");
+  assert.ok(k.ownership.teach);
+  assert.equal(Object.keys(k.tenses).includes("ownership"), false, "ownership is a read beside the tenses, never one of them");
 });
 
 test("a household with zero holo reads a well-formed empty section, not an absence", () => {
@@ -346,7 +416,7 @@ test("the pot board carries the landed pot file's own fields, the roll, and the 
 const BOUNTY_ROW = {
   id: "keeping-ec2", title: "Keep the lights on (the town box)", subtype: "bounty",
   cadence: "ongoing", validation: "needs-review", status: "draft", target: 150,
-  reward: "keeper-equity to the pot's keeper; soulbound holo to the payers",
+  reward: "minted back to the stakers, source-tagged for keeping; soulbound holo to the payers",
 };
 
 async function board(db, quests) {

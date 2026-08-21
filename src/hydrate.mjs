@@ -212,8 +212,8 @@ if (existsSync(stampTool) && existsSync(stampLedger)) {
     const f = foldFunding(parseLedgerText(readFileSync(stampLedger, "utf8")));
     const insHolo = db.prepare("INSERT INTO funding_holo (party, pot, holo, epoch, date, receipt) VALUES (?,?,?,?,?,?)");
     for (const [party, mints] of f.holoByParty) for (const m of mints) insHolo.run(party, m.pot, m.holo, m.epoch, m.date, m.receipt);
-    const insEquity = db.prepare("INSERT INTO funding_keeping_equity (party, pot, n, epoch, date) VALUES (?,?,?,?,?)");
-    for (const [party, rows] of f.equityByParty) for (const r of rows) insEquity.run(party, r.pot, r.n, r.epoch, r.date);
+    const insKeeping = db.prepare("INSERT INTO funding_keeping_mint (party, pot, n, epoch, date) VALUES (?,?,?,?,?)");
+    for (const [party, rows] of f.keepingByParty) for (const r of rows) insKeeping.run(party, r.pot, r.n, r.epoch, r.date);
     // one insert per deed — deedsByPot carries every deed (deedsByParty is the
     // same rows keyed the other way, for the pure-fold consumers)
     const insDeed = db.prepare("INSERT INTO funding_deeds (patron, pot, usd, date, receipt, holo) VALUES (?,?,?,?,?,?)");

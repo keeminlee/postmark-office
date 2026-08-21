@@ -1,14 +1,17 @@
 // funding.mjs — the office's read-side fold over the funding seam's ledger rows.
 //
 // PINNED to the grammar the town lane landed (tools/stamp-mint.mjs § THE
-// FUNDING SEAM, branch seam/ledger-legs). The seven row kinds, exactly as the
-// town writes them:
+// FUNDING SEAM, branch seam/ledger-legs-aligned @ 3668881b — re-pinned when the
+// σ leg became R12's source-tagged mint). Every pattern below was diffed
+// mechanically against that tip, not eyeballed: all nine (the seven row kinds
+// plus POT_ID_CLASS and EPOCH_CLASS) are byte-identical to the town's. The seven
+// row kinds, exactly as the town writes them:
 //
 //   - <date> · pot-receipt · pot:<pot> · rail: <stripe|usdc|grant> · usd: <n> · from: <payer> · ref: <ref>
 //   - <date> · <handle> → stake:pot/<pot> · <n> · via: <api|mail:letter-id>
 //   - <date> · stake:pot/<pot> → <handle> · <n> · for: pot-return:<epoch>
 //   - <date> · stake:pot/<pot> → BURN · <n> · for: keeping:<epoch> · staker: <handle>
-//   - <date> · MINT → <handle> · <n> · for: keeper-equity:<pot>/<epoch>
+//   - <date> · minted · <staker> · <n> · for: keeping:<pot> · epoch:<epoch>
 //   - <date> · holo · <payer> · <n> · pot:<pot> · epoch:<epoch> · ref: <ref>
 //   - <date> · patron-deed · pot:<pot> · patron: <payer> · usd: <n> · epoch:<epoch> · ref: <ref> · holo: <h>
 //
@@ -32,23 +35,38 @@
 // Dollars are whole: `usd` is [1-9]\d* in the landed grammar. $10.50 is not a
 // smaller payment, it is not a row.
 //
-// THE σ LEG GOES HOME TO THE STAKERS (ruled 2026-08-21, pinned at
-// seam/ledger-legs 9e06a850). An earlier draft of this seam paid the σ share to
-// the pot's BENEFICIARY as a spendable primary mint — `· MINT → <handle> · <n> ·
-// for: keeper-equity:<pot>/<epoch>`. That row kind is RETIRED: it names nothing
-// in the grammar now, the town's own classifyEntry returns 'unknown' for it, and
-// the verifier fails the walk. This module keeps CLAIMING it for exactly one
-// purpose — so an old row surfaces as invalid under its own name instead of
-// falling silently through a reader that no longer recognizes it. Being told
-// "this shape was retired" is a different thing from being told nothing.
+// THE σ LEG IS MINT, SOURCE-TAGGED (R12, Keemin 2026-08-21 afternoon; pinned at
+// seam/ledger-legs-aligned 3668881b): "the σ leg IS ORDINARY MINT, source-tagged
+// (`minted · for: keeping:<pot>`), with NO liquid coin (the coin was paid when
+// the stake burned; the row stays purpose-tagged so balance folds never hand
+// liquid back). It COUNTS toward the ρ base ... It stays EXCLUDED from the
+// genesis parity formula." The noun "keeping-equity" is retired from every
+// resident-facing surface; the vocabulary is "minted · for keeping".
 //
-// The live row is arrow-free, and that is the law rendered as shape: the σ share
-// is "permanent, verb-less, remembered", so it is NOT liquid and NOT a mint
-// count. The door gives it its own visible section beside holo — read, teach-
-// lined, and counted in no total. Where it belongs among the tenses is NOT YET
-// RULED (a Keemin question), and a reader does not get to answer that by
-// inventing a fifth tense. A visible section with no tense assignment is the
-// honest posture until the ruling exists.
+// THREE SHAPES ARE RETIRED, and this module keeps CLAIMING all three so an old
+// row surfaces as invalid under its own name instead of falling silently through
+// a reader that no longer recognizes it — being told "this shape was retired" is
+// a different thing from being told nothing:
+//   - `MINT → <handle> · <n> · for: keeper-equity:<pot>/<epoch>` — the first
+//     draft's row, paid to the pot's BENEFICIARY as spendable primary mint.
+//   - `· keeping-equity · <staker> · …` — the second draft's row: right
+//     recipient, right non-liquidity, retired noun.
+//   - `MINT → <staker> · <n> · for: keeping:<pot>` — the smuggle: R12's own
+//     source tag wearing a movement arrow. The town returns 'unknown' for all
+//     three and the verifier fails the walk on each.
+//
+// The live row is ARROW-FREE, and that is R12's "no liquid coin" rendered as
+// shape: the town's foldBalances and foldMintCount key on the movement shape, so
+// neither can see this row, and the readers that should count it opt in by name.
+//
+// D1 (same day): "ownership is a derived READ = minted (all sources) + holo —
+// NOT a tense; no fifth tense node." So the door does not invent a fifth tense
+// and does not quietly widen `minted`: it returns an `ownership` block that does
+// the summing in the open. `tenses.minted` stays the EARNED PRIMARY number,
+// because that is the one the tense arithmetic reconciles against (the town's own
+// invariant: liquid = mint_count − staked). Widening it would break that
+// invariant for a leg that carries no coin — which is the whole reason R12 keeps
+// the row arrow-free.
 //
 // THE ONE LAW THIS MODULE MUST NEVER BREAK: holo is SOULBOUND. It is a record
 // of contribution — never spendable, never stakeable, never a balance. No fold
@@ -68,11 +86,11 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 // The town's kind strings (classifyEntry), in its own order.
-export const FUNDING_KINDS = ["pot-stake", "pot-return", "keeping-burn", "keeping-equity", "pot-receipt", "holo", "patron-deed"];
-// Claimed so it can be refused by name, never parsed as good — see the σ-leg
+export const FUNDING_KINDS = ["pot-stake", "pot-return", "keeping-burn", "keeping-mint", "pot-receipt", "holo", "patron-deed"];
+// Claimed so they can be refused by name, never parsed as good — see the σ-leg
 // note above. A retired shape that reads as silence is indistinguishable from a
 // row the door failed to notice.
-export const RETIRED_KINDS = ["keeper-equity"];
+export const RETIRED_KINDS = ["keeper-equity", "keeping-equity", "keeping-mint-arrowed"];
 export const RAILS = new Set(["stripe", "usdc", "grant"]);
 // The reserved direct-to-town pot: deeds (and their receipts) only — no file,
 // no stakes, no close, and its deeds carry holo 0 (nothing burned, nothing
@@ -86,14 +104,15 @@ export const HOLO_CAPTION = "a record of contribution, not a promise of profit";
 // Teach lines — agents learn at the point of contact, so every new surface
 // carries one short self-describing sentence. One home for the wording.
 export const TEACH = {
-  tenses: "four tenses of one economy: minted is cumulative stamps ever earned (only rises), liquid is spendable now, staked is escrowed in open stakes, holo is soulbound funding recognition — a record, never a balance; liquid + staked = assets, and holo is outside that arithmetic. A vote stake returns whole at close; the share of a keeping stake that the epoch's dollars funded BURNS instead, and that burn is what mints keeping-equity back to the staker and holo to the payers",
+  tenses: "four tenses of one economy: minted is cumulative stamps ever earned (only rises), liquid is spendable now, staked is escrowed in open stakes, holo is soulbound funding recognition — a record, never a balance; liquid + staked = assets, and holo is outside that arithmetic. A vote stake returns whole at close; the share of a keeping stake that the epoch's dollars funded BURNS instead, and that burn is what mints your permanent record back to you (minted · for keeping) and holo to the payers. `minted` here is the earned number the tense arithmetic reconciles against; for the all-sources total see the `ownership` block",
   holo: "holo records a payer's share of a pot's epoch close: real dollars you paid, matched against other households' burned stakes, mint you holo by dollar share — soulbound, so it cannot be spent, staked, transferred, or redeemed, and no door will ever count it as balance",
-  keeping_equity: "keeping-equity is your own share of your own burned keeping stake, coming home to you at the epoch close at par of what burned — permanent, verb-less and remembered, so like holo it cannot be spent, staked, transferred or redeemed. Where it belongs among the four tenses is not yet ruled, so it is shown here on its own and counted in none of them",
+  keeping_mint: "minted · for keeping is your own share of your own burned keeping stake, coming home at the epoch close at par of what burned. It is ordinary mint, source-tagged to the pot you backed — your permanent record of having kept the town — and it carries no liquid coin, because the coin was already paid when the stake burned. So like holo it cannot be spent, staked, transferred or redeemed; unlike holo it is mint, and it is inside your ownership read",
+  ownership: "ownership is a READ, not a tense: everything you have ever minted (earned from the mail, plus minted · for keeping) plus your holo. Nothing is stored for it — it is derived from the same signed ledger every time you ask, and no part of it is a claim on money",
   deeds: "a deed is the public record of one funding act: which pot this household funded, when, how many dollars, and the holo minted for it — 0 is a real answer, because grant, treasury and outside dollars are remembered even when they mint nothing",
   pots_section: "the funding pots open on this board — each gathers real dollars toward a named need; anyone can read who funded what, and stamps staked on a pot signal support without becoming the pot's money",
   pot: "a pot is a funding bounty on the quest board: real dollars gathered toward a named need for a named keeper, epoch by epoch; status says where it stands, and a draft pot may not name its keeper yet",
   patrons: "the patrons who funded this pot, from the ledger's patron-deed rows: who, how many dollars, when, and the holo minted to them for it",
-  escrow: "stamps residents currently have staked on this pot — a stake signals that the need matters to you and never becomes the pot's dollars; at the epoch close the share of every stake that the epoch's dollars funded BURNS (fund the whole posted need and every stake converts, fund half and half of each does), and every unfunded remainder returns whole to its staker. The burn is what mints keeping-equity back to the stakers and holo to the payers",
+  escrow: "stamps residents currently have staked on this pot — a stake signals that the need matters to you and never becomes the pot's dollars; at the epoch close the share of every stake that the epoch's dollars funded BURNS (fund the whole posted need and every stake converts, fund half and half of each does), and every unfunded remainder returns whole to its staker. The burn is what mints the stakers' own permanent record back to them (minted · for keeping) and holo to the payers",
   funding: "how much of this pot's posted need the payers have actually met — dollars the ledger has witnessed and no deed has yet claimed, over the pot's per-epoch target. This fraction is the ONLY thing dollars are priced against: there is no dollar-to-stamp rate anywhere in the town, so how much a pot matters is measured by how much the community stakes on it, not by what the money says it is worth",
   receipts: "the witnessed payments behind this pot's dollars — rail (stripe, usdc, or grant), whole dollars, and the receipt ref that is unique forever; the pot file's received and this sum are two clocks, disclosed side by side, never silently reconciled",
   invalid: "rows that claim a funding kind but fail its field law — surfaced here by name rather than rendered as if they were good; a forged row cannot buy legitimacy by being listed",
@@ -123,7 +142,7 @@ const POT_RECEIPT_RE = new RegExp(String.raw`^- (\d{4}-\d{2}-\d{2}) · pot-recei
 const POT_STAKE_RE = new RegExp(String.raw`^- (\d{4}-\d{2}-\d{2}) · (\S+) → stake:pot\/(${POT_ID_CLASS}) · ([1-9]\d*) · via: (\S+)$`);
 const POT_RETURN_RE = new RegExp(String.raw`^- (\d{4}-\d{2}-\d{2}) · stake:pot\/(${POT_ID_CLASS}) → (\S+) · ([1-9]\d*) · for: pot-return:(${EPOCH_CLASS})$`);
 const KEEPING_BURN_RE = new RegExp(String.raw`^- (\d{4}-\d{2}-\d{2}) · stake:pot\/(${POT_ID_CLASS}) → BURN · ([1-9]\d*) · for: keeping:(${EPOCH_CLASS}) · staker: (\S+)$`);
-const KEEPING_EQUITY_RE = new RegExp(String.raw`^- (\d{4}-\d{2}-\d{2}) · keeping-equity · (\S+) · ([1-9]\d*) · pot:(${POT_ID_CLASS}) · epoch:(${EPOCH_CLASS})$`);
+const KEEPING_MINT_RE = new RegExp(String.raw`^- (\d{4}-\d{2}-\d{2}) · minted · (\S+) · ([1-9]\d*) · for: keeping:(${POT_ID_CLASS}) · epoch:(${EPOCH_CLASS})$`);
 const HOLO_MINT_RE = new RegExp(String.raw`^- (\d{4}-\d{2}-\d{2}) · holo · (\S+) · ([1-9]\d*) · pot:(${POT_ID_CLASS}) · epoch:(${EPOCH_CLASS}) · ref: (\S+)$`);
 const PATRON_DEED_RE = new RegExp(String.raw`^- (\d{4}-\d{2}-\d{2}) · patron-deed · pot:(${POT_ID_CLASS}) · patron: (\S+) · usd: ([1-9]\d*) · epoch:(${EPOCH_CLASS}) · ref: (\S+) · holo: (\d+)$`);
 
@@ -148,8 +167,16 @@ export function fundingKindOf(canonical) {
   // ` · holo · ` (the row) and ` · holo-mint → ` (the shape holo must never
   // wear) both claim holo; ` · holo: 0` (the deed's field) claims nothing.
   if (/ · holo(-mint)?( |$)/.test(canonical)) return "holo";
+  // R12's row: `minted` leads and `for: keeping:<pot>` tags it. Claimed before
+  // the burn's `for: keeping:` test below, which would otherwise swallow it.
+  if (/ · minted( |$)/.test(canonical)) return "keeping-mint";
+  // The retired noun, claimed so it is refused by name rather than by silence.
   if (/ · keeping-equity( |$)/.test(canonical)) return "keeping-equity";
   if (/for: keeper-equity:| · keeper-equity( |·|$)/.test(canonical)) return "keeper-equity";
+  // The smuggle: R12's own source tag wearing a movement arrow. Claimed ahead of
+  // the burn so it is named for what it is — the shape that would have handed
+  // back liquid coin — instead of being diagnosed as a malformed burn.
+  if (/→/.test(canonical) && /for: keeping:[a-z0-9]/.test(canonical)) return "keeping-mint-arrowed";
   if (/for: keeping:| · keeping-burn( |·|$)/.test(canonical)) return "keeping-burn";
   if (/for: pot-return:| · pot-return( |·|$)/.test(canonical)) return "pot-return";
   return null;
@@ -203,7 +230,7 @@ function diagnose(kind, canonical) {
   // in the path (`stake:pot/<id>`) or the cause (`keeper-equity:<pot>/<epoch>`)
   // — so for those a stray one is evidence of the wrong shape, and the shape
   // checks below get to say so instead.
-  if (kind === "pot-receipt" || kind === "holo" || kind === "patron-deed" || kind === "keeping-equity") {
+  if (kind === "pot-receipt" || kind === "holo" || kind === "patron-deed" || kind === "keeping-mint") {
     const dialect = /(?:^|· )(pot|epoch): /.exec(canonical);
     if (dialect) return `${kind} writes \`${dialect[1]}: \` with a space after the colon; the landed grammar writes \`${dialect[1]}:<value>\` with NO space after the colon — a space there is why no reader can find the ${dialect[1]}`;
   }
@@ -262,16 +289,20 @@ function diagnose(kind, canonical) {
       if (!isHandle(L.get("staker"))) return "keeping-burn names no `staker:` — a burn must say whose escrow it drained";
       return "keeping-burn has every field but not the landed order: `- <date> · stake:pot/<pot> → BURN · <n> · for: keeping:<epoch> · staker: <handle>`";
     }
-    case "keeping-equity": {
-      if (/→/.test(canonical)) return "a keeping-equity row is ARROW-FREE — the σ leg is verb-less by shape (permanent, remembered, and neither liquid nor a mint count), so a movement-shaped one is not keeping-equity";
-      if (!isHandle(L.segs[2])) return "keeping-equity names no staker — the row reads `· keeping-equity · <staker> · <n> ·`";
-      if (!isCount(L.segs[3])) return `keeping-equity carries no positive whole amount, got ${JSON.stringify(L.segs[3] ?? null)}`;
-      if (!isPot(L.get("pot"))) return potReason("keeping-equity");
-      if (!isEpoch(L.get("epoch"))) return epochReason("keeping-equity");
-      return "keeping-equity has every field but not the landed order: `- <date> · keeping-equity · <staker> · <n> · pot:<pot> · epoch:<epoch>`";
+    case "keeping-mint": {
+      if (/→/.test(canonical)) return "a keeping mint row is ARROW-FREE — R12: the σ leg carries NO liquid coin (the coin was paid when the stake burned), and arrow-free is what that means mechanically: the movement folds cannot see it. A movement-shaped one is not keeping mint";
+      if (!isHandle(L.segs[2])) return "keeping mint names no staker — the row reads `· minted · <staker> · <n> ·`";
+      if (!isCount(L.segs[3])) return `keeping mint carries no positive whole amount, got ${JSON.stringify(L.segs[3] ?? null)}`;
+      if (!isPot((L.get("for") ?? "").replace(/^keeping:/, ""))) return "keeping mint names no readable pot — the segment reads `for: keeping:<pot>`";
+      if (!isEpoch(L.get("epoch"))) return epochReason("keeping mint");
+      return "keeping mint has every field but not the landed order: `- <date> · minted · <staker> · <n> · for: keeping:<pot> · epoch:<epoch>`";
     }
     case "keeper-equity":
-      return "keeper-equity is RETIRED and names nothing in the grammar — the σ share does not go to the pot's beneficiary as a spendable mint. It goes home to the stakers, at par of their own burn, as an arrow-free `· keeping-equity · <staker> · <n> · pot:<pot> · epoch:<epoch>` row. The town's own reader returns unknown for this shape and the verifier fails the walk on it";
+      return "keeper-equity is RETIRED and names nothing in the grammar — the σ share does not go to the pot's beneficiary as a spendable mint. It goes home to the stakers, at par of their own burn, as an arrow-free `· minted · <staker> · <n> · for: keeping:<pot> · epoch:<epoch>` row. The town's own reader returns unknown for this shape and the verifier fails the walk on it";
+    case "keeping-equity":
+      return "the noun `keeping-equity` is RETIRED (R12, 2026-08-21): the σ leg IS ordinary mint, source-tagged, so the row now reads `· minted · <staker> · <n> · for: keeping:<pot> · epoch:<epoch>`. Same recipient, same arrow-free shape, the ruled vocabulary. The town's own reader returns unknown for the old noun and the verifier fails the walk on it";
+    case "keeping-mint-arrowed":
+      return "a keeping mint row may never carry a movement arrow — R12: the σ leg has NO liquid coin, because the coin was already paid when the stake burned. `MINT → <staker>` would put it inside the balance AND mint-count folds, handing back spendable stamps for a coin already spent. The lawful row is arrow-free: `· minted · <staker> · <n> · for: keeping:<pot> · epoch:<epoch>`";
   }
   return `claims ${kind} but matches no landed shape`;
 }
@@ -304,9 +335,9 @@ export function classifyFundingRow(canonical) {
     return { kind: "keeping-burn", date: m[1], pot: m[2], n: Number(m[3]), epoch: m[4], handle: m[5] };
   }
 
-  if (claimed === "keeping-equity" && (m = KEEPING_EQUITY_RE.exec(canonical))) {
-    if (m[4] === TREASURY_POT) return bad(`"${TREASURY_POT}" is the reserved direct-to-town pot; it never closes, so it mints no keeping-equity`);
-    return { kind: "keeping-equity", date: m[1], handle: m[2], n: Number(m[3]), pot: m[4], epoch: m[5] };
+  if (claimed === "keeping-mint" && (m = KEEPING_MINT_RE.exec(canonical))) {
+    if (m[4] === TREASURY_POT) return bad(`"${TREASURY_POT}" is the reserved direct-to-town pot; it never closes, so it mints nothing for keeping`);
+    return { kind: "keeping-mint", date: m[1], handle: m[2], n: Number(m[3]), pot: m[4], epoch: m[5] };
   }
 
   if (claimed === "holo" && (m = HOLO_MINT_RE.exec(canonical))) {
@@ -327,13 +358,13 @@ export function classifyFundingRow(canonical) {
 // Every funding row in the ledger, sorted into the folds the reads serve, plus
 // the invalid list. Pure — entries in, maps out.
 //
-// keeping-equity is collected but summed into NO door number. It is verb-less
-// by shape, so no balance, mint or stake fold in the town sees it, and where it
-// belongs among the tenses is unruled. It gets a section of its own; it does not
-// get quietly added to one that already means something else.
+// Keeping mint is collected into its own map and summed into no TENSE. R12 makes
+// it mint, so the `ownership` read counts it in the open — but it is arrow-free,
+// carrying no liquid coin, so it can never join liquid, staked, assets, or the
+// earned `minted` the tense arithmetic reconciles against.
 export function foldFunding(entries) {
   const holoByParty = new Map();   // payer handle -> [{date, pot, holo, epoch, receipt}]
-  const equityByParty = new Map(); // staker handle -> [{date, pot, n, epoch}]
+  const keepingByParty = new Map(); // staker handle -> [{date, pot, n, epoch}] — R12's minted-for-keeping rows
   const deedsByParty = new Map();  // patron -> [{date, pot, usd, receipt, holo}]
   const deedsByPot = new Map();    // pot -> [{patron, date, usd, receipt, holo}]
   const receiptsByPot = new Map(); // pot -> [{date, rail, usd, from, receipt}]
@@ -363,16 +394,16 @@ export function foldFunding(entries) {
       case "pot-receipt":
         push(receiptsByPot, row.pot, { date: row.date, rail: row.rail, usd: row.usd, from: row.from, receipt: row.ref });
         break;
-      // The σ leg: collected so the door can SHOW it, summed into no total.
-      // Its place in the tense model is unruled, so it lives in its own map for
-      // its own section — never added to liquid, staked, minted or assets.
-      case "keeping-equity":
-        push(equityByParty, row.handle, { date: row.date, pot: row.pot, n: row.n, epoch: row.epoch });
+      // The σ leg (R12: mint, source-tagged, no liquid coin). Its own map, so
+      // the ownership read can count it deliberately and no tense can catch it
+      // by accident.
+      case "keeping-mint":
+        push(keepingByParty, row.handle, { date: row.date, pot: row.pot, n: row.n, epoch: row.epoch });
         break;
     }
   }
   for (const [k, v] of potEscrow) if (v === 0) potEscrow.delete(k); // absent == zero, one representation
-  return { holoByParty, equityByParty, deedsByParty, deedsByPot, receiptsByPot, potEscrow, invalid };
+  return { holoByParty, keepingByParty, deedsByParty, deedsByPot, receiptsByPot, potEscrow, invalid };
 }
 
 // ── pot files (the bounty files on the quest board) ─────────────────────────

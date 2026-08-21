@@ -286,11 +286,17 @@ export function stampsFor(db, handle) {
 //
 // The funding seam (2026-08-21) grows this read a fourth tense and the deeds:
 // `tenses` names minted/liquid/staked/holo side by side, `holo` is the
-// household's soulbound funding recognition (NEVER a balance — it lives outside
-// assets, and the caption on the section is law), `deeds` is what the household
-// funded, when, for how many dollars, and the holo minted for it. Household-
-// keyed rows answer to the declared slug when the registry resolves it AND to
-// the handle itself (fixtures, named outsiders, pre-registry rows).
+// household's soulbound record of contribution (NEVER a balance — it lives
+// outside assets, and the caption on the section is law), `deeds` is what the
+// household funded, when, for how many dollars, and the holo minted for it.
+// Household-keyed rows answer to the declared slug when the registry resolves it
+// AND to the handle itself (fixtures, named outsiders, pre-registry rows).
+//
+// D1 (Keemin, 2026-08-21): "ownership is a derived READ = minted (all sources) +
+// holo — NOT a tense; no fifth tense node." So this read grows an `ownership`
+// block that does the summing in the open, and grows NO fifth tense. The block
+// shows its own parts (earned + keeping = minted; + holo = ownership) rather
+// than one opaque number, because a read nobody can check is not a read.
 export function stampsDetail(db, handle) {
   const row = db.prepare("SELECT balance, mint_count, staked FROM stamps WHERE handle = ?").get(handle);
   const liquid = row?.balance ?? 0;
@@ -303,29 +309,42 @@ export function stampsDetail(db, handle) {
     const ph = parties.map(() => "?").join(",");
     const holoRows = db.prepare(`SELECT party, pot, holo, epoch, date, receipt FROM funding_holo WHERE party IN (${ph}) ORDER BY date, seq`).all(...parties);
     const deedRows = db.prepare(`SELECT pot, usd, date, receipt, holo FROM funding_deeds WHERE patron IN (${ph}) ORDER BY date, seq`).all(...parties);
-    const equityRows = db.prepare(`SELECT pot, n, epoch, date FROM funding_keeping_equity WHERE party IN (${ph}) ORDER BY date, seq`).all(...parties);
+    const keepingRows = db.prepare(`SELECT pot, n, epoch, date FROM funding_keeping_mint WHERE party IN (${ph}) ORDER BY date, seq`).all(...parties);
     const holo = holoRows.reduce((n, r) => n + r.holo, 0);
+    const keeping_total = keepingRows.reduce((n, r) => n + r.n, 0);
     return {
       ...base,
-      // Four tenses, and keeping-equity is deliberately NOT a fifth. The town
-      // ruled the σ leg "permanent, verb-less, remembered" but has not ruled
-      // where it sits in this model, so it reads in its own section below. A
-      // door that quietly promoted it to a tense would be answering a question
-      // nobody asked it.
-      tenses: { minted: mint_count, liquid, staked, holo, teach: TEACH.tenses },
+      // Four tenses, and keeping mint is deliberately NOT a fifth — D1 rules
+      // ownership a READ, not a tense. `minted` here stays the EARNED primary
+      // number, because it is the one the tense arithmetic reconciles against
+      // (liquid = minted − staked); the keeping leg carries no coin, so folding
+      // it in would break that invariant while looking plausible. It is named
+      // beside the tenses, and summed in the `ownership` block below.
+      tenses: { minted: mint_count, liquid, staked, holo, minted_keeping: keeping_total, teach: TEACH.tenses },
+      // D1: "ownership is a derived READ = minted (all sources) + holo."
+      ownership: {
+        minted_earned: mint_count,
+        minted_keeping: keeping_total,
+        minted: mint_count + keeping_total,
+        holo,
+        total: mint_count + keeping_total + holo,
+        caption: HOLO_CAPTION,
+        teach: TEACH.ownership,
+      },
       holo: {
         total: holo,
         caption: HOLO_CAPTION,
         teach: TEACH.holo,
         mints: holoRows.map((r) => ({ pot: r.pot, holo: r.holo, epoch: r.epoch, date: r.date, receipt: r.receipt })),
       },
-      keeping_equity: {
-        total: equityRows.reduce((n, r) => n + r.n, 0),
+      keeping_mint: {
+        total: keeping_total,
         caption: HOLO_CAPTION,
-        teach: TEACH.keeping_equity,
-        tense: null,
-        tense_note: "which tense this belongs to is not yet ruled; it is counted in none of them",
-        rows: equityRows.map((r) => ({ pot: r.pot, equity: r.n, epoch: r.epoch, date: r.date })),
+        teach: TEACH.keeping_mint,
+        // R12: mint, source-tagged, with no liquid coin. Not a tense of its own
+        // (D1), and not inside liquid/staked/assets — inside `ownership`.
+        counted_in: "ownership",
+        rows: keepingRows.map((r) => ({ pot: r.pot, minted: r.n, epoch: r.epoch, date: r.date })),
       },
       deeds: {
         teach: TEACH.deeds,
@@ -441,7 +460,7 @@ export async function questBoardFor(db, meta, handle, clone) {
   // pots table and says so honestly until the next rehydrate.
   //
   // A pot's registry row is a BOARD POSTING, never a resident card (the town's
-  // own word, seam/ledger-legs): it carries subtype "bounty" and a dollar
+  // own word, seam/ledger-legs-aligned @ 3668881b): it carries subtype "bounty" and a dollar
   // target, and the town's boardForHandle filters only `cadence: milestone`, so
   // left alone it would render to every resident as a daily quest sitting at
   // 0/150 — a number nothing they can do will move. It comes off the card deck

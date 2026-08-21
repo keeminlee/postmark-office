@@ -49,13 +49,12 @@ export const SCHEMA = `
   CREATE INDEX funding_deeds_pot ON funding_deeds (pot);
   CREATE TABLE funding_holo (seq INTEGER PRIMARY KEY AUTOINCREMENT, party TEXT, pot TEXT, holo INTEGER, epoch TEXT, date TEXT, receipt TEXT);
   CREATE INDEX funding_holo_party ON funding_holo (party);
-  -- The sigma leg: a staker's own share of their own burned keeping stake,
-  -- verb-less by shape like holo. Its own table for the same reason holo has
-  -- one — indexed apart from stamps so no read can sum it into a balance by
-  -- accident. Where it belongs among the tenses is unruled, so nothing totals
-  -- it but its own section.
-  CREATE TABLE funding_keeping_equity (seq INTEGER PRIMARY KEY AUTOINCREMENT, party TEXT, pot TEXT, n INTEGER, epoch TEXT, date TEXT);
-  CREATE INDEX funding_keeping_equity_party ON funding_keeping_equity (party);
+  -- The sigma leg (R12, 2026-08-21): ordinary mint, source-tagged to the pot,
+  -- with no liquid coin. Its own table for the same reason holo has one --
+  -- indexed apart from stamps so no read can sum it into a balance by accident.
+  -- The ownership read counts it deliberately; no tense does.
+  CREATE TABLE funding_keeping_mint (seq INTEGER PRIMARY KEY AUTOINCREMENT, party TEXT, pot TEXT, n INTEGER, epoch TEXT, date TEXT);
+  CREATE INDEX funding_keeping_mint_party ON funding_keeping_mint (party);
   -- payer is the receipt's own from: field — between a payment and the epoch
   -- close that witnesses it, the receipt is the ONLY record of who paid (deeds
   -- are written at close), so the board would otherwise show anonymous dollars
