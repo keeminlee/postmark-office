@@ -203,6 +203,75 @@ test("an unreadable world is null, never a quiet false — the disclosure guard"
     "a throwing world read is unknown too — never an implicit no");
 });
 
+// ── the 08-15 gate — "not theirs to be seen by" ─────────────────────────────
+//
+// THE RULING THESE ASSERT, quoted verbatim (Keemin, 2026-08-15, the grouping
+// that put the paper gaps on the doorstep in the first place):
+//
+//   "the gaps are yours to see, not theirs to be seen by"
+//
+// settling_in has been gated on that sentence since the day it landed. The
+// next-steps block carries the same class of fact, so its GAP-SHAPED half rides
+// the same gate: a read of a doorstep the caller's key does not act for carries
+// what the PUBLIC bundle at postmark.town/data/doorstep/<handle>.md carries —
+// the town's quest-registry rows — and not the two things that page cannot see:
+// the office's paper gaps, and whether the resident's home is sited in the
+// world. Match the static page's line; never exceed it.
+//
+// The gate is a SKIP, not a filter. These tests prove that with a counting
+// worldBlock: on a foreign read the office must not so much as look the fact up.
+
+const countingWorld = (verdict) => {
+  const spy = { calls: 0 };
+  spy.block = async (h) => { spy.calls++; return verdict; };
+  return spy;
+};
+
+test('08-15: a foreign read never even LOOKS UP the gaps — "not theirs to be seen by"', async () => {
+  const db = fixtureDb();
+  const spy = countingWorld({ sited: false });
+  const ns = await nextStepsFor(db, META(), "wright", TOWN, { own: false, worldBlock: spy.block });
+  assert.ok(ns, "the block still rides — what the public page shows is not a secret");
+  assert.equal(spy.calls, 0,
+    "a stranger's read must not consult the world record at all; a fact never looked up cannot leak through a later refactor of a filter");
+  assert.ok(!ns.steps.some((s) => s.id === "walk-the-world"),
+    "world-siting is gap-shaped and the static page cannot see it — so a foreign office read must not either");
+  assert.ok(!ns.steps.some((s) => s.kind === "paper"),
+    "and no household-apex paper gap rides a foreign read");
+  assert.match(ns.withheld ?? "", /yours to see, not theirs to be seen by/,
+    "the withholding is disclosed and cites the ruling, rather than silently shrinking the list");
+});
+
+test("08-15: your OWN read carries the gaps — the gate withholds from strangers, not from you", async () => {
+  const db = fixtureDb();
+  const spy = countingWorld({ sited: false });
+  const ns = await nextStepsFor(db, META(), "wright", TOWN, { own: true, worldBlock: spy.block });
+  assert.ok(ns);
+  assert.ok(spy.calls > 0, "your own door does read the world for you");
+  assert.ok(ns.steps.some((s) => s.id === "walk-the-world"),
+    "an unsited resident reading their OWN doorstep is told to go walk their ground");
+  assert.equal(ns.withheld, undefined, "nothing is withheld from you on your own doorstep");
+});
+
+test("08-15: the two reads differ ONLY by the gap-shaped rows — the gate is narrow", async () => {
+  const db = fixtureDb();
+  const mine = await nextStepsFor(db, META(), "wright", TOWN, { own: true, worldBlock: countingWorld({ sited: false }).block });
+  const theirs = await nextStepsFor(db, META(), "wright", TOWN, { own: false, worldBlock: countingWorld({ sited: false }).block });
+  const ids = (ns) => ns.steps.map((s) => s.id);
+  const gapShaped = new Set(["walk-the-world"]);
+  assert.deepEqual(ids(theirs), ids(mine).filter((id) => !gapShaped.has(id)),
+    "a stranger loses the gap rows and NOTHING else — the onboarding line and the daily quests are the public page's own content");
+  assert.ok(ids(theirs).length > 0, "…and a foreign read is not emptied out; it is the static page's line, which is the point");
+});
+
+test("08-15: the gate defaults CLOSED — a caller that forgets to say whose door it is gets the stranger's answer", async () => {
+  const db = fixtureDb();
+  const spy = countingWorld({ sited: false });
+  const ns = await nextStepsFor(db, META(), "wright", TOWN, { worldBlock: spy.block });
+  assert.equal(spy.calls, 0, "no `own` flag means not yours — the safe default is the one that discloses less");
+  assert.ok(ns.withheld, "and it says so");
+});
+
 test("the block never throws — an unreadable handle costs the doorstep nothing", async () => {
   const db = fixtureDb();
   // The two doors attach this as a garnish; a rejected promise there would take

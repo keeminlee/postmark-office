@@ -836,10 +836,11 @@ const server = createServer((req, res) => {
               .catch(() => { /* garnish only */ })
           : Promise.resolve();
         // The next-steps block (the `doorstep` node's "their next steps", built
-        // 2026-08-21) — the same chain, and ungated: the static bundle publishes
-        // this list to anyone at postmark.town/data/doorstep/<handle>.md, so a
-        // signed-in door being stingier than a public page would mean nothing.
-        const nexts = nextStepsFor(db, meta, m[1], TOWN_CLONE)
+        // 2026-08-21) — the same chain, and its GAP-SHAPED half rides the same
+        // ownership test as settling_in above, by the 08-15 ruling: "the gaps
+        // are yours to see, not theirs to be seen by." A foreign read carries
+        // exactly what the public bundle carries.
+        const nexts = nextStepsFor(db, meta, m[1], TOWN_CLONE, { own: key?.handles?.has?.(m[1]) === true })
           .then((ns) => { if (ns?.steps?.length) d.next_steps = ns; })
           .catch(() => { /* garnish only */ });
         return Promise.all([settling, nexts]).then(() => {

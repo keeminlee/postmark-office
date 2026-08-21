@@ -285,7 +285,7 @@ export function doorstep(db, handle, asOf) {
  * Degrades rather than throws: a checkout too old to carry the onboarding fold
  * yields a null, and the doorstep simply carries no next-steps block.
  */
-export async function nextStepsFor(db, meta, handle, clone) {
+export async function nextStepsFor(db, meta, handle, clone, { own = false, worldBlock: injected } = {}) {
   try {
     const tools = await questTools(clone);
     if (typeof tools.composeNextSteps !== "function") return null; // older checkout
@@ -294,18 +294,33 @@ export async function nextStepsFor(db, meta, handle, clone) {
     // block is not free, and two reads could in principle disagree.
     let pending = null;
     const { worldBlockForHandle } = await import("./world.mjs");
-    const worldBlock = (h) => (pending ??= worldBlockForHandle(h));
+    const real = injected ?? worldBlockForHandle;
+    const worldBlock = (h) => (pending ??= real(h));
 
     const registry = JSON.parse(meta.quest_registry ?? '{"quests":[]}');
     const facts = tools.onboardingFactsFor(clone, handle);
-    const worldSited = await worldSitedFor(handle, { worldBlock });
+    // THE 08-15 GATE. Keemin's ruling, verbatim: "the gaps are yours to see, not
+    // theirs to be seen by." A stranger's read of your doorstep gets exactly
+    // what a stranger can already read on the public bundle at
+    // postmark.town/data/doorstep/<handle>.md — the town's quest-registry rows —
+    // and NOT the gap-shaped facts that page cannot see: the office's paper gaps
+    // and whether your home is sited in the world. Match the static page's line;
+    // never exceed it.
+    //
+    // The two gated reads are SKIPPED, not computed-then-filtered. A fact the
+    // office never looked up cannot leak through a later refactor of the filter,
+    // and the saved world read is the expensive half of this call besides.
+    const worldSited = own ? await worldSitedFor(handle, { worldBlock }) : null;
     const onboarding = tools.onboardingBoard(registry, facts, handle, { worldSited });
-    const paperRows = await paperGapRows(handle, { db, clone, worldBlock });
+    const paperRows = own ? await paperGapRows(handle, { db, clone, worldBlock }) : null;
     const questBoard = await questBoardFor(db, meta, handle, clone);
     return {
       ...tools.composeNextSteps({ onboarding, questBoard, paperRows }),
+      ...(own ? {} : { withheld: "the paper gaps and the world-siting row are on your OWN doorstep only — the gaps are yours to see, not theirs to be seen by (2026-08-15). This read carries what the public bundle carries, and no more." }),
       note: "what is left of arriving, and what today still offers — each step names the exact door that opens it, or says what it awaits when no door of yours does. The block empties itself as the list empties.",
-      source: "the town's own tools/quest-progress.mjs (onboarding rows + daily quests) + the office's household-apex paper gaps — one derivation, two surfaces",
+      source: own
+        ? "the town's own tools/quest-progress.mjs (onboarding rows + daily quests) + the office's household-apex paper gaps — one derivation, two surfaces"
+        : "the town's own tools/quest-progress.mjs (onboarding rows + daily quests) — the same derivation the public doorstep bundle publishes",
     };
   } catch { return null; }
 }
