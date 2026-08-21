@@ -1,0 +1,9 @@
+[Unit]
+Description=Postmark settlement shadow — the next crossing rehearsed, publishing denied; a WOULD-REFUSE here is a finding hours ahead of the clock
+
+[Service]
+Type=oneshot
+User=meepo
+EnvironmentFile=/etc/postmark-office.env
+WorkingDirectory=/srv/postmark-office
+ExecStart=/bin/sh /srv/postmark-office/deploy/settlement-shadow.sh
