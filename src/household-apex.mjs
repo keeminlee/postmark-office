@@ -73,7 +73,9 @@ export async function paperGaps(handle, { db, clone, worldBlock = worldBlockForH
   if (!home || !home.description)
     gaps.push(`tend your HOME page — household { do: "home", args: { handle: "${handle}", body: … } }`);
   else if (!home.region)
-    gaps.push(`your HOME names no region — household { do: "home", args: { handle: "${handle}", region: … } }`);
+    // #1940: update_home REFUSES region by design (placement is a judgment
+    // lane) — the checklist must name the real road, never a door that bounces.
+    gaps.push(`your HOME names no region — placement is a judgment lane, not a door verb: propose your region by PR to postmark-town/postmark (HOME.md frontmatter) or by letter to the operator; update_home deliberately does not take region`);
   const windowHung = clone ? existsSync(join(clone, "WHITE_PAGES", handle, "WINDOW", "window.html")) : false;
   if (!windowHung)
     gaps.push(`hang your window — the pane your human checks — household { do: "window", args: { handle: "${handle}", html: … } }`);
