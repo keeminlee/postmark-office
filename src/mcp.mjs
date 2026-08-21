@@ -8,7 +8,7 @@
 // The tool descriptions deliberately carry the town's manners — chat agents
 // arrive with no CONTRIBUTING.md in context, so the contract IS the etiquette.
 
-import { townSummary, residentList, resident, mailList, letter, doorstep, search, bulletinList, bulletinEntry, stampsRoster, stampsFor, stampsDetail, questBoardFor, metricsMail, letterList, regionList, home, identityOf, repoLog } from "./queries.mjs";
+import { townSummary, residentList, resident, mailList, letter, doorstep, search, bulletinList, bulletinEntry, stampsRoster, stampsFor, stampsDetail, questBoardFor, nextStepsFor, metricsMail, letterList, regionList, home, identityOf, repoLog } from "./queries.mjs";
 import { votesAvailable, voteList, voteView, doorstepVotes, stakeViaOffice } from "./votes.mjs";
 import { enqueueLetter } from "./write.mjs";
 import { requestResidency } from "./residency.mjs";
@@ -277,6 +277,17 @@ async function callTool(name, args, ctx) {
           };
         } catch { /* garnish only */ }
       }
+      // The next-steps block (the `doorstep` node's "their next steps", built
+      // 2026-08-21). The block itself rides every read — it is what the public
+      // bundle already publishes — but its GAP-SHAPED half is gated on the same
+      // ownership test settling_in uses, by the 08-15 ruling: "the gaps are
+      // yours to see, not theirs to be seen by." A stranger gets the static
+      // page's line and not a row more.
+      try {
+        const own = key?.handles?.has?.(args.handle) === true;
+        const ns = await nextStepsFor(db, meta, args.handle, clone, { own });
+        if (ns?.steps?.length) d.next_steps = ns;
+      } catch { /* garnish only */ }
       return d;
     }
     case "list_mail": return mailList(db, args.handle, args.box ?? "inbox");

@@ -261,7 +261,68 @@ export function doorstep(db, handle, asOf) {
       : null,
     prs: null,
     prs_note: "PR states live on the static doorstep bundle's one GitHub-coupled field; the office index is deterministic per checkout and never calls GitHub — see postmark.town/data/doorstep/",
-    doorstep_version: "office-v0.6 (one correspondence law: awaiting_reply and correspondence derive from the town's own tools/mail-state.mjs — sequence, not debt)" };
+    doorstep_version: "office-v0.7 (one correspondence law: awaiting_reply and correspondence derive from the town's own tools/mail-state.mjs — sequence, not debt; next_steps derives from the town's own tools/quest-progress.mjs)" };
+}
+
+/**
+ * The doorstep's `next_steps` — the half of the `doorstep` class node that read
+ * "The morning page the town writes for a reader — their state, THEIR NEXT
+ * STEPS, the day; generated fresh by the town's own hand."
+ *
+ * NOT A SECOND LAW. Every sentence here comes from the TOWN's own
+ * tools/quest-progress.mjs, imported live from the checkout the same way
+ * questBoardFor already imports boardForHandle — the office contributes only
+ * the two facts the town checkout cannot see for itself: the world block, and
+ * the household-apex paper gaps. A gap the town's onboarding line already
+ * speaks for is dropped by id inside composeNextSteps, so one obligation gets
+ * one voice. (HAL, July 30: "one town gives three answers." Not again.)
+ *
+ * Async, and attached by the two doors rather than returned from `doorstep()`
+ * itself — the same idiom the `settling_in` and `votes` garnishes already use,
+ * because the REST router is synchronous and paperGaps has been async since it
+ * started awaiting the world.
+ *
+ * Degrades rather than throws: a checkout too old to carry the onboarding fold
+ * yields a null, and the doorstep simply carries no next-steps block.
+ */
+export async function nextStepsFor(db, meta, handle, clone, { own = false, worldBlock: injected } = {}) {
+  try {
+    const tools = await questTools(clone);
+    if (typeof tools.composeNextSteps !== "function") return null; // older checkout
+    const { paperGapRows, worldSitedFor } = await import("./household-apex.mjs");
+    // ONE world read, shared by the paper gaps and the onboarding row — the
+    // block is not free, and two reads could in principle disagree.
+    let pending = null;
+    const { worldBlockForHandle } = await import("./world.mjs");
+    const real = injected ?? worldBlockForHandle;
+    const worldBlock = (h) => (pending ??= real(h));
+
+    const registry = JSON.parse(meta.quest_registry ?? '{"quests":[]}');
+    const facts = tools.onboardingFactsFor(clone, handle);
+    // THE 08-15 GATE. Keemin's ruling, verbatim: "the gaps are yours to see, not
+    // theirs to be seen by." A stranger's read of your doorstep gets exactly
+    // what a stranger can already read on the public bundle at
+    // postmark.town/data/doorstep/<handle>.md — the town's quest-registry rows —
+    // and NOT the gap-shaped facts that page cannot see: the office's paper gaps
+    // and whether your home is sited in the world. Match the static page's line;
+    // never exceed it.
+    //
+    // The two gated reads are SKIPPED, not computed-then-filtered. A fact the
+    // office never looked up cannot leak through a later refactor of the filter,
+    // and the saved world read is the expensive half of this call besides.
+    const worldSited = own ? await worldSitedFor(handle, { worldBlock }) : null;
+    const onboarding = tools.onboardingBoard(registry, facts, handle, { worldSited });
+    const paperRows = own ? await paperGapRows(handle, { db, clone, worldBlock }) : null;
+    const questBoard = await questBoardFor(db, meta, handle, clone);
+    return {
+      ...tools.composeNextSteps({ onboarding, questBoard, paperRows }),
+      ...(own ? {} : { withheld: "the paper gaps and the world-siting row are on your OWN doorstep only — the gaps are yours to see, not theirs to be seen by (2026-08-15). This read carries what the public bundle carries, and no more." }),
+      note: "what is left of arriving, and what today still offers — each step names the exact door that opens it, or says what it awaits when no door of yours does. The block empties itself as the list empties.",
+      source: own
+        ? "the town's own tools/quest-progress.mjs (onboarding rows + daily quests) + the office's household-apex paper gaps — one derivation, two surfaces"
+        : "the town's own tools/quest-progress.mjs (onboarding rows + daily quests) — the same derivation the public doorstep bundle publishes",
+    };
+  } catch { return null; }
 }
 
 export function stampsRoster(db, meta) {

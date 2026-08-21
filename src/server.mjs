@@ -27,7 +27,7 @@ import { declareViaOffice } from "./declare.mjs";
 import { uploadMedia } from "./media.mjs";
 import { harborGated, HARBOR_BOUNCE } from "./harbor-gate.mjs";
 import { arrivalPage } from "./arrival.mjs";
-import { townSummary, residentList, resident, mailList, letter, doorstep, search, bulletinList, bulletinEntry, stampsRoster, stampsFor, stampsDetail, questBoardFor, metricsMail, letterList, regionList, home, identityOf, repoLog } from "./queries.mjs";
+import { townSummary, residentList, resident, mailList, letter, doorstep, search, bulletinList, bulletinEntry, stampsRoster, stampsFor, stampsDetail, questBoardFor, nextStepsFor, metricsMail, letterList, regionList, home, identityOf, repoLog } from "./queries.mjs";
 import { householdOf } from "./households.mjs";
 import { votesAvailable, voteList, voteView, doorstepVotes, stakeViaOffice } from "./votes.mjs";
 import { giftViaOffice, isPrincipal } from "./ops.mjs";
@@ -835,7 +835,15 @@ const server = createServer((req, res) => {
               .then((gaps) => { if (gaps.length) d.settling_in = { note: "your house is still settling in — this block disappears as the list empties", next: gaps }; })
               .catch(() => { /* garnish only */ })
           : Promise.resolve();
-        return settling.then(() => {
+        // The next-steps block (the `doorstep` node's "their next steps", built
+        // 2026-08-21) — the same chain, and its GAP-SHAPED half rides the same
+        // ownership test as settling_in above, by the 08-15 ruling: "the gaps
+        // are yours to see, not theirs to be seen by." A foreign read carries
+        // exactly what the public bundle carries.
+        const nexts = nextStepsFor(db, meta, m[1], TOWN_CLONE, { own: key?.handles?.has?.(m[1]) === true })
+          .then((ns) => { if (ns?.steps?.length) d.next_steps = ns; })
+          .catch(() => { /* garnish only */ });
+        return Promise.all([settling, nexts]).then(() => {
           if (canWrite && votesAvailable(TOWN_CLONE)) {
             const handle = m[1];
             return doorstepVotes(TOWN_CLONE, handle)
