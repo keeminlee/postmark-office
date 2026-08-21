@@ -303,15 +303,29 @@ export function stampsDetail(db, handle) {
     const ph = parties.map(() => "?").join(",");
     const holoRows = db.prepare(`SELECT party, pot, holo, epoch, date, receipt FROM funding_holo WHERE party IN (${ph}) ORDER BY date, seq`).all(...parties);
     const deedRows = db.prepare(`SELECT pot, usd, date, receipt, holo FROM funding_deeds WHERE patron IN (${ph}) ORDER BY date, seq`).all(...parties);
+    const equityRows = db.prepare(`SELECT pot, n, epoch, date FROM funding_keeping_equity WHERE party IN (${ph}) ORDER BY date, seq`).all(...parties);
     const holo = holoRows.reduce((n, r) => n + r.holo, 0);
     return {
       ...base,
+      // Four tenses, and keeping-equity is deliberately NOT a fifth. The town
+      // ruled the σ leg "permanent, verb-less, remembered" but has not ruled
+      // where it sits in this model, so it reads in its own section below. A
+      // door that quietly promoted it to a tense would be answering a question
+      // nobody asked it.
       tenses: { minted: mint_count, liquid, staked, holo, teach: TEACH.tenses },
       holo: {
         total: holo,
         caption: HOLO_CAPTION,
         teach: TEACH.holo,
         mints: holoRows.map((r) => ({ pot: r.pot, holo: r.holo, epoch: r.epoch, date: r.date, receipt: r.receipt })),
+      },
+      keeping_equity: {
+        total: equityRows.reduce((n, r) => n + r.n, 0),
+        caption: HOLO_CAPTION,
+        teach: TEACH.keeping_equity,
+        tense: null,
+        tense_note: "which tense this belongs to is not yet ruled; it is counted in none of them",
+        rows: equityRows.map((r) => ({ pot: r.pot, equity: r.n, epoch: r.epoch, date: r.date })),
       },
       deeds: {
         teach: TEACH.deeds,
@@ -365,6 +379,23 @@ export function potBoard(db, extraInvalid = []) {
         sum_usd: receipts.reduce((n, x) => n + x.usd, 0),
         list: receipts,
       },
+      // How funded the OPEN epoch is, priced the way the town's close prices it:
+      // the dollars no deed has claimed yet, over the posted need, capped at 1.
+      // Deeded dollars belong to epochs already closed, so summing every receipt
+      // ever would report a pot as fully funded on the strength of last month's
+      // money. There is no dollar-to-stamp rate here and there is not meant to
+      // be one — this fraction is the whole of how dollars are priced.
+      funding: (() => {
+        const deeded = new Set(roll.map((x) => x.receipt));
+        const open = receipts.filter((x) => !deeded.has(x.receipt)).reduce((n, x) => n + x.usd, 0);
+        const target = d.target_usd_per_epoch;
+        return {
+          teach: TEACH.funding,
+          target_usd_per_epoch: target,
+          dollars_undeeded: open,
+          funded_fraction: target > 0 ? Math.min(1, open / target) : null,
+        };
+      })(),
       escrow: { staked, teach: TEACH.escrow },
     };
   });
