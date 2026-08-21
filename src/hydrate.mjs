@@ -198,6 +198,40 @@ if (existsSync(stampTool) && existsSync(stampLedger)) {
   put.run("stamps_minted", String(-(bal.get("MINT") ?? 0)));
 }
 
+// The funding seam (2026-08-21): pots + deeds + holo + receipts + escrow.
+// Folded OFFICE-SIDE for now (src/funding.mjs — field-labeled, tolerant of
+// segment order) because the town lane lands the concrete grammar in the same
+// window this reader ships; when tools/stamp-mint.mjs grows its own funding
+// folds, switch to importing them (the stamps precedent above: one source of
+// truth for the rule). Invalid rows are STORED, not dropped — the door
+// surfaces them by name (refuse or disclose, never quietly substitute).
+{
+  const { foldFunding, parseLedgerText, readPots } = await import(new URL("./funding.mjs", import.meta.url));
+  const invalid = [];
+  if (existsSync(stampLedger)) {
+    const f = foldFunding(parseLedgerText(readFileSync(stampLedger, "utf8")));
+    const insHolo = db.prepare("INSERT INTO funding_holo (party, pot, holo, epoch, date, receipt) VALUES (?,?,?,?,?,?)");
+    for (const [party, mints] of f.holoByParty) for (const m of mints) insHolo.run(party, m.pot, m.holo, m.epoch, m.date, m.receipt);
+    // one insert per deed — deedsByPot carries every deed (deedsByParty is the
+    // same rows keyed the other way, for the pure-fold consumers)
+    const insDeed = db.prepare("INSERT INTO funding_deeds (patron, pot, usd, date, receipt, holo) VALUES (?,?,?,?,?,?)");
+    for (const [pot, deeds] of f.deedsByPot) for (const d of deeds) insDeed.run(d.patron, pot, d.usd, d.date, d.receipt, d.holo);
+    const insRcpt = db.prepare("INSERT INTO pot_receipts (pot, rail, usd, date, receipt) VALUES (?,?,?,?,?)");
+    for (const [pot, rs] of f.receiptsByPot) for (const r of rs) insRcpt.run(pot, r.rail, r.usd, r.date, r.receipt);
+    const insEsc = db.prepare("INSERT INTO pot_escrow (pot, staked) VALUES (?, ?)");
+    for (const [pot, n] of f.potEscrow) insEsc.run(pot, n);
+    invalid.push(...f.invalid);
+  }
+  const potsRead = readPots(TOWN);
+  const insPot = db.prepare("INSERT OR REPLACE INTO pots (id, json) VALUES (?, ?)");
+  for (const p of potsRead.pots) insPot.run(p.id, JSON.stringify(p.data));
+  invalid.push(...potsRead.invalid);
+  const insInv = db.prepare("INSERT INTO funding_invalid (row_kind, line, reason) VALUES (?, ?, ?)");
+  for (const iv of invalid) insInv.run(iv.row_kind, iv.line, iv.reason);
+  if (potsRead.pots.length || invalid.length)
+    console.log(`  funding: ${potsRead.pots.length} pots, ${invalid.length} invalid row(s) surfaced`);
+}
+
 // Quests — today's per-resident progress (quest gold Phase 2), folded with the
 // town's OWN tool (imported live from the checkout, like stamps — one source of
 // truth for the rule). Progress is deriveMints filtered to today; the registry

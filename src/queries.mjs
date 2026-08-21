@@ -4,6 +4,7 @@
 import { join } from "node:path";
 import { isPrincipal } from "./ops.mjs";
 import { householdOf } from "./households.mjs";
+import { HOLO_CAPTION, TEACH } from "./funding.mjs";
 import { isResidentHandle } from "./residency.mjs"; // the door's own admission grammar — one definition of what a handle is
 
 // The caller's OWN resolved identity (GET /me, MCP whoami) — not town data, the
@@ -282,12 +283,85 @@ export function stampsFor(db, handle) {
 // So: liquid = balance; assets = liquid + staked (what you hold); mint_count is
 // the cumulative equity number. `stamps` is kept as an alias of liquid for
 // back-compat (the resident page + read_stamps have always read it).
+//
+// The funding seam (2026-08-21) grows this read a fourth tense and the deeds:
+// `tenses` names minted/liquid/staked/holo side by side, `holo` is the
+// household's soulbound funding recognition (NEVER a balance — it lives outside
+// assets, and the caption on the section is law), `deeds` is what the household
+// funded, when, for how many dollars, and the holo minted for it. Household-
+// keyed rows answer to the declared slug when the registry resolves it AND to
+// the handle itself (fixtures, named outsiders, pre-registry rows).
 export function stampsDetail(db, handle) {
   const row = db.prepare("SELECT balance, mint_count, staked FROM stamps WHERE handle = ?").get(handle);
   const liquid = row?.balance ?? 0;
   const staked = row?.staked ?? 0;
   const mint_count = row?.mint_count ?? 0;
-  return { stamps: liquid, mint_count, staked, liquid, assets: liquid + staked };
+  const base = { stamps: liquid, mint_count, staked, liquid, assets: liquid + staked };
+  try {
+    let parties = [handle];
+    try { const hh = householdOf(handle); if (hh?.slug && hh.slug !== handle) parties.push(hh.slug); } catch { /* garnish only */ }
+    const ph = parties.map(() => "?").join(",");
+    const holoRows = db.prepare(`SELECT party, pot, holo, epoch, date, receipt FROM funding_holo WHERE party IN (${ph}) ORDER BY date, seq`).all(...parties);
+    const deedRows = db.prepare(`SELECT pot, usd, date, receipt, holo FROM funding_deeds WHERE patron IN (${ph}) ORDER BY date, seq`).all(...parties);
+    const holo = holoRows.reduce((n, r) => n + r.holo, 0);
+    return {
+      ...base,
+      tenses: { minted: mint_count, liquid, staked, holo, teach: TEACH.tenses },
+      holo: {
+        total: holo,
+        caption: HOLO_CAPTION,
+        teach: TEACH.holo,
+        mints: holoRows.map((r) => ({ pot: r.pot, holo: r.holo, epoch: r.epoch, date: r.date, receipt: r.receipt })),
+      },
+      deeds: {
+        teach: TEACH.deeds,
+        list: deedRows.map((r) => ({ pot: r.pot, dollars: r.usd, date: r.date, receipt: r.receipt, holo_minted: r.holo })),
+      },
+    };
+  } catch {
+    // an index hydrated before the funding seam has no funding tables — serve
+    // the honest note rather than a guessed-empty section (the mail_state
+    // precedent: this window closes at the next rehydrate)
+    return { ...base, funding_note: "this index predates the funding seam — holo and deeds are not indexed here yet; they appear at the next rehydrate" };
+  }
+}
+
+// The pot board (funding seam, 2026-08-21): every pot — a funding bounty file
+// on the quest board — with its file's own target/received/epoch/beneficiary/
+// state, the contributor roll from the ledger's patron-deed rows, the witnessed
+// receipts behind its dollars, and the stamps currently staked on it (escrow).
+// The file's `received` and the receipts' sum are two clocks: both disclosed,
+// never silently reconciled (the 2026-08-10 ruling's shape). Invalid funding
+// rows surface HERE, on the community read, by name — an auditor's first stop.
+export function potBoard(db) {
+  const pots = db.prepare("SELECT id, json FROM pots ORDER BY id").all().map((r) => {
+    const d = JSON.parse(r.json);
+    const roll = db.prepare("SELECT patron, usd, date, receipt, holo FROM funding_deeds WHERE pot = ? ORDER BY date, seq").all(r.id);
+    const receipts = db.prepare("SELECT rail, usd, date, receipt FROM pot_receipts WHERE pot = ? ORDER BY date, seq").all(r.id);
+    const staked = db.prepare("SELECT staked FROM pot_escrow WHERE pot = ?").get(r.id)?.staked ?? 0;
+    return {
+      id: r.id,
+      title: d.title ?? r.id,
+      beneficiary: d.beneficiary,
+      target_usd: d.target,
+      received_usd: d.received,
+      epoch: d.epoch,
+      state: d.state,
+      teach: TEACH.pot,
+      patrons: {
+        teach: TEACH.patrons,
+        roll: roll.map((x) => ({ patron: x.patron, dollars: x.usd, date: x.date, receipt: x.receipt, holo_minted: x.holo })),
+      },
+      receipts: {
+        teach: TEACH.receipts,
+        sum_usd: receipts.reduce((n, x) => n + x.usd, 0),
+        list: receipts,
+      },
+      escrow: { staked, teach: TEACH.escrow },
+    };
+  });
+  const invalid = db.prepare("SELECT row_kind, line, reason FROM funding_invalid ORDER BY seq").all();
+  return { teach: TEACH.pots_section, list: pots, ...(invalid.length ? { invalid_rows: { teach: TEACH.invalid, list: invalid } } : {}) };
 }
 
 // Quests (quest gold Phase 2) — the board for one handle: registry × today's
@@ -319,7 +393,15 @@ export async function questBoardFor(db, meta, handle, clone) {
     sentTo: names(row.sent_to), heardFrom: names(row.heard_from),
     household: { key: "", size: row.house_size, send: row.house_send, receive: row.house_receive },
   } : null;
-  return boardForHandle(registry, prog, handle, today);
+  const board = boardForHandle(registry, prog, handle, today);
+  // The funding pots ride the same board (funding seam, 2026-08-21) — pots are
+  // bounty files ON the quest board, so the board read carries them rather than
+  // growing a new verb. Same section for every handle (a pot is the town's, not
+  // yours). Guarded like mail_state: an index hydrated before the seam has no
+  // pots table and says so honestly until the next rehydrate.
+  try { board.pots = potBoard(db); }
+  catch { board.pots_note = "this index predates the funding seam — pots are not indexed here yet; they appear at the next rehydrate"; }
+  return board;
 }
 
 // human-gated stamp (reaching-your-human gold, Leg 2, 2026-07-13): notices whose

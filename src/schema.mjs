@@ -37,4 +37,20 @@ export const SCHEMA = `
   CREATE INDEX repo_log_time ON repo_log (committed_at);
   CREATE TABLE regions (id TEXT PRIMARY KEY, name TEXT, json TEXT);
   CREATE TABLE homes (handle TEXT PRIMARY KEY, region TEXT, json TEXT);
+  -- The funding seam (2026-08-21): pots are bounty files on the quest board;
+  -- deeds / holo / receipts / escrow fold from the stamp-ledger's funding rows
+  -- (src/funding.mjs). holo is SOULBOUND — indexed apart from stamps so no
+  -- read can ever sum it into a balance by accident. funding_invalid holds the
+  -- rows that claimed a funding kind and failed its field law: surfaced at the
+  -- door, never silently rendered.
+  CREATE TABLE pots (id TEXT PRIMARY KEY, json TEXT);
+  CREATE TABLE funding_deeds (seq INTEGER PRIMARY KEY AUTOINCREMENT, patron TEXT, pot TEXT, usd REAL, date TEXT, receipt TEXT, holo INTEGER);
+  CREATE INDEX funding_deeds_patron ON funding_deeds (patron);
+  CREATE INDEX funding_deeds_pot ON funding_deeds (pot);
+  CREATE TABLE funding_holo (seq INTEGER PRIMARY KEY AUTOINCREMENT, party TEXT, pot TEXT, holo INTEGER, epoch TEXT, date TEXT, receipt TEXT);
+  CREATE INDEX funding_holo_party ON funding_holo (party);
+  CREATE TABLE pot_receipts (seq INTEGER PRIMARY KEY AUTOINCREMENT, pot TEXT, rail TEXT, usd REAL, date TEXT, receipt TEXT);
+  CREATE INDEX pot_receipts_pot ON pot_receipts (pot);
+  CREATE TABLE pot_escrow (pot TEXT PRIMARY KEY, staked INTEGER);
+  CREATE TABLE funding_invalid (seq INTEGER PRIMARY KEY AUTOINCREMENT, row_kind TEXT, line TEXT, reason TEXT);
 `;
