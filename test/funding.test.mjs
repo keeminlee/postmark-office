@@ -1,7 +1,7 @@
 // funding.test.mjs — the funding seam at the door (2026-08-21).
 //
 // The ledger rows below are the LANDED grammar (tools/stamp-mint.mjs § THE
-// FUNDING SEAM, seam/ledger-legs @ 63790640), not a paraphrase of it: tight
+// FUNDING SEAM, seam/ledger-legs @ 9e06a850), not a paraphrase of it: tight
 // `pot:` and `epoch:`, loose `rail: `/`usd: `/`from: `/`ref: `, whole dollars,
 // a keeping burn that IS the escrow movement, and two arrow-free equity rows
 // (holo to the payers, keeping-equity home to the stakers) that are verb-less

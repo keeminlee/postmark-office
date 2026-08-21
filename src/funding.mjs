@@ -33,7 +33,7 @@
 // smaller payment, it is not a row.
 //
 // THE σ LEG GOES HOME TO THE STAKERS (ruled 2026-08-21, pinned at
-// seam/ledger-legs 63790640). An earlier draft of this seam paid the σ share to
+// seam/ledger-legs 9e06a850). An earlier draft of this seam paid the σ share to
 // the pot's BENEFICIARY as a spendable primary mint — `· MINT → <handle> · <n> ·
 // for: keeper-equity:<pot>/<epoch>`. That row kind is RETIRED: it names nothing
 // in the grammar now, the town's own classifyEntry returns 'unknown' for it, and
