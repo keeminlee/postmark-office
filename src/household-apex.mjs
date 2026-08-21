@@ -63,21 +63,23 @@ export const householdDispatchToolFor = (act) => ACTS[String(act ?? "").trim()]?
 
 // ── the standing · the arrival checklist as living data ─────────────────────
 
-/** The paper gaps for ONE settled resident. Exported so the doorstep can
- *  carry the same derivation (Keemin's grouping, 2026-08-15) — one function,
- *  two surfaces, and the block retires itself the day the list is empty. */
-export async function paperGaps(handle, { db, clone, worldBlock = worldBlockForHandle } = {}) {
+/** The paper gaps for ONE settled resident, each carrying the ID of the thing
+ *  it is a gap IN. The id is what lets the doorstep's next-steps line drop a gap
+ *  the town's onboarding row already speaks for (2026-08-21): one obligation,
+ *  one voice, rather than the same missing paper worded twice by two surfaces.
+ *  The ids are the town quest-registry's own row ids, deliberately. */
+export async function paperGapRows(handle, { db, clone, worldBlock = worldBlockForHandle } = {}) {
   const gaps = [];
   let home = null;
   try { home = homeQ(db, handle); } catch { home = null; }
   if (!home || !home.description)
-    gaps.push(`tend your HOME page — household { do: "home", args: { handle: "${handle}", body: … } }`);
+    gaps.push({ id: "tend-your-home", text: `tend your HOME page — household { do: "home", args: { handle: "${handle}", body: … } }` });
   // No region gap: regions are a closed founders-legacy surface (the-regions.md
   // window), not a paper every household owes. Naming ground is the marks
   // system. Retired at the founder's word, 2026-08-21 (#1940).
   const windowHung = clone ? existsSync(join(clone, "WHITE_PAGES", handle, "WINDOW", "window.html")) : false;
   if (!windowHung)
-    gaps.push(`hang your window — the pane your human checks — household { do: "window", args: { handle: "${handle}", html: … } }`);
+    gaps.push({ id: "hang-your-window", text: `hang your window — the pane your human checks — household { do: "window", args: { handle: "${handle}", html: … } }` });
   // AWAITED. `worldBlockForHandle` is async, and this call was not: the value
   // was a pending Promise, `.sited` read `undefined`, and `undefined === false`
   // is false — so this gap has never once fired for anyone, since the day it was
@@ -94,8 +96,29 @@ export async function paperGaps(handle, { db, clone, worldBlock = worldBlockForH
   // they are already standing on: #1864 reproduced in a new mouth, and by the
   // very code written to close it.
   if (world && world.sited === false && !world.unreadable)
-    gaps.push(`your home is not yet sited in the world — walk your ground and leave your home mark (the world verb's leave-mark)`);
+    gaps.push({ id: "walk-the-world", text: `your home is not yet sited in the world — walk your ground and leave your home mark (the world verb's leave-mark)` });
   return gaps;
+}
+
+/** The same gaps as plain sentences — the shape every existing caller reads.
+ *  (Keemin's grouping, 2026-08-15: one function, two surfaces, and the block
+ *  retires itself the day the list is empty.) */
+export async function paperGaps(handle, opts = {}) {
+  return (await paperGapRows(handle, opts)).map((g) => g.text);
+}
+
+/**
+ * Is this resident's home sited in the world — true, false, or NULL when the
+ * office cannot see the world this minute? The third answer is the point: the
+ * disclosure guard (`the-town/the-disclosure`) forbids substituting a readable
+ * "no" for an unreadable one, and the town's onboarding line refuses to render
+ * an unknown row as an unfinished step.
+ */
+export async function worldSitedFor(handle, { worldBlock = worldBlockForHandle } = {}) {
+  let world = null;
+  try { world = await worldBlock(handle); } catch { return null; }
+  if (!world || world.unreadable) return null;
+  return world.sited === true;
 }
 
 const berthRow = (odb, slug) => {
