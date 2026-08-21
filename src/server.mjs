@@ -908,10 +908,27 @@ const server = createServer((req, res) => {
         return j(res, 200, search(db, q));
       }
 
+    // GET /fund/intake — the published address, and the disclosures that must
+    // travel with it. The site's /fund page reads this rather than hard-coding
+    // an address: one place the town's money door is written down.
+    if (req.method === "GET" && path === "/fund/intake") {
+      return j(res, 200, {
+        address: FUND_INTAKE,
+        network: "Base",
+        token: "USDC (Base native) only",
+        min_confirmations: 12,
+        whole_dollars: "the ledger records whole dollars; cents that arrive are money the town holds that priced nothing",
+        recovery: "a wrong-network or wrong-token send is not recoverable by the town — best effort only, never a promise",
+        caption: "a record of contribution, not a promise of profit",
+        what_this_buys: "this buys ownership and memory, never voice, and converts to real value only if the town someday does",
+        verify: "POST /fund/verify { txhash, pot, handle }",
+      });
+    }
+
       // The door list names the apex only where the apex actually answers — a
       // 404 that advertises a route it would also 404 on is a lie in the shape
       // of help.
-      return bounce(res, 404, "no such door", `GET /town /residents /residents/{h} /mail/{h} /letters[?filters] /letters/{id} /doorstep/{h} /metrics/mail /repo/log[?path=&author=&since=&until=&limit=] /regions /homes/{h} /stamps /stamps/{h} /quests/{h} /world/settlements /world/store /world/dynamic /world/present /world/graph[?kinds=&types=] /world/graph.gexf[?view=static]${apexEnabled() ? " /world/apex?x=&y=" : ""} /votes /votes/{topic} /bulletin /search?q=`);
+      return bounce(res, 404, "no such door", `GET /town /residents /residents/{h} /mail/{h} /letters[?filters] /letters/{id} /doorstep/{h} /metrics/mail /repo/log[?path=&author=&since=&until=&limit=] /regions /homes/{h} /stamps /stamps/{h} /quests/{h} /world/settlements /world/store /world/dynamic /world/present /world/graph[?kinds=&types=] /world/graph.gexf[?view=static]${apexEnabled() ? " /world/apex?x=&y=" : ""} /votes /votes/{topic} /bulletin /fund/intake /search?q=`);
     }
 
     // ── write tier: a valid credential required ───────────────────────────
@@ -1344,23 +1361,6 @@ const server = createServer((req, res) => {
         }
       }).catch(() => bounce(res, 400, "could not read the body", "send a JSON object"));
       return;
-    }
-
-    // GET /fund/intake — the published address, and the disclosures that must
-    // travel with it. The site's /fund page reads this rather than hard-coding
-    // an address: one place the town's money door is written down.
-    if (req.method === "GET" && path === "/fund/intake") {
-      return j(res, 200, {
-        address: FUND_INTAKE,
-        network: "Base",
-        token: "USDC (Base native) only",
-        min_confirmations: 12,
-        whole_dollars: "the ledger records whole dollars; cents that arrive are money the town holds that priced nothing",
-        recovery: "a wrong-network or wrong-token send is not recoverable by the town — best effort only, never a promise",
-        caption: "a record of contribution, not a promise of profit",
-        what_this_buys: "this buys ownership and memory, never voice, and converts to real value only if the town someday does",
-        verify: "POST /fund/verify { txhash, pot, handle }",
-      });
     }
 
     return bounce(res, 404, "no such door", "writes: POST /households (join — declare your house and move in), POST /letters, POST /votes/stake, POST /residency, POST /ops/gift (principal), POST /fund/verify (witness a USDC payment against a pot), POST /media (image up, URL back), POST /world/marks, POST /world/walks, POST /world/say, POST /world/stake|/world/unstake, PATCH /address|/home|/profile|/window /{handle}, PATCH /profile/{handle}/avatar, PATCH /home/{handle}/image; reads are all GET (incl. /votes, /world/*, /fund/intake)");
