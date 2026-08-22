@@ -288,10 +288,14 @@ test("MCP tools/list, apex OFF: the full 41 — the slim's delist is apex-condit
   // 39 → 40: the `household` verb (the third door, 2026-08-15) — unconditional,
   // additive, not flag-gated.
   // 40 → 41: upload_media (the media shelf, 2026-08-15) — unconditional.
+  // 41 → 42: an upstream tool landed on main WITHOUT updating this literal (the
+  // brittleness the note below warned of); the count was already one ahead of 41
+  // before this change. 42 → 43: world_lately (the live activity feed) — the
+  // tool THIS change adds, public and unconditional.
   // NOTE: this exact total breaks for whoever adds the next tool, whatever it is
   // — the named-tools loop below is the assertion that actually says something,
   // since it fails when a tool GOES MISSING rather than when one is added.
-  assert.equal(names.length, 41);
+  assert.equal(names.length, 43);
   assert.ok(!names.includes("request_blessing"), "request_blessing's delist is unconditional");
   assert.ok(!names.includes("world"), "no apex tool with the flag off");
   assert.ok(names.includes("household"), "the third door stands regardless of the world flag");
@@ -302,7 +306,8 @@ test("MCP tools/list, apex OFF: the full 41 — the slim's delist is apex-condit
     "read_quests", "world_orient", "world_open_your_eyes", "world_investigate",
     "world_my_marks", "world_leave_mark", "world_note", "world_walk", "world_walkers",
     "world_stake", "world_unstake", "world_stake_read",
-    "world_say", "world_hold", "world_holdings"])
+    "world_say", "world_hold", "world_holdings",
+    "world_lately"]) // the live activity feed (public observability)
     assert.ok(names.includes(n), n);
 });
 
@@ -348,6 +353,27 @@ test("GET /world/conversations is a keyless read — the page needs no credentia
   assert.equal(body.earshot_m, 60);
   assert.equal(body.fade_minutes, 5);
   assert.ok(Date.parse(body.now));
+});
+
+test("GET /world/lately is a keyless read — the activity feed the page and viewer share", async () => {
+  const res = await get("/world/lately", null);
+  assert.equal(res.status, 200, "the feed needs no credential");
+  const body = await res.json();
+  // This fixture runs with no dynamic store, so the feed is honestly empty
+  // rather than a 500 — the same "quiet town, honestly empty" contract the
+  // conversations page keeps.
+  assert.deepEqual(body.events, []);
+  assert.equal(body.count, 0);
+  assert.equal(body.has_more, false);
+  assert.equal(body.next_before, null);
+  assert.ok(Array.isArray(body.types) && body.types.length === 3, "all three lanes span by default");
+});
+
+test("GET /world/lately?types= narrows the lanes over the wire", async () => {
+  const res = await get("/world/lately?types=say&limit=5", null);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.deepEqual(body.types, ["say"], "the lane filter rides the query string");
 });
 
 // The Stage-1 serving flag's instrument panel. This office runs with the flags

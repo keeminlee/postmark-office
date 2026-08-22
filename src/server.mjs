@@ -34,7 +34,7 @@ import { giftViaOffice, isPrincipal } from "./ops.mjs";
 import { fundVerifyViaOffice, INTAKE as FUND_INTAKE } from "./fund.mjs";
 import { logAccess } from "./telemetry.mjs";
 import { settlements } from "./settlements.mjs";
-import { worldSummary, worldOrient, worldEyes, worldInvestigate, worldStateRaw, worldSkeletonRaw, worldMyMarks, leaveMarkViaOffice, walkViaOffice, worldNoteViaOffice, worldWalkers, worldPresent, worldConversations, worldSay, worldSayHuman, whoami, worldBlockForHandle, resetPlaceWordsCache, WORLD_CLONE } from "./world.mjs";
+import { worldSummary, worldOrient, worldEyes, worldInvestigate, worldStateRaw, worldSkeletonRaw, worldMyMarks, leaveMarkViaOffice, walkViaOffice, worldNoteViaOffice, worldWalkers, worldPresent, worldConversations, worldLately, worldSay, worldSayHuman, whoami, worldBlockForHandle, resetPlaceWordsCache, WORLD_CLONE } from "./world.mjs";
 import { callHoldTool } from "./world-hold.mjs"; // curl parity: /world/hold + /world/holdings (2026-08-15)
 import { APEX_TOOL, apexEnabled, dispatchToolFor, worldApex } from "./world-apex.mjs"; // stage 3: the apex verb — keyless read half + the POST act door (08-17)
 import { worldStakeViaOffice, worldUnstakeViaOffice, worldStakeRead } from "./world-stake.mjs"; // P3 draft
@@ -671,6 +671,22 @@ const server = createServer((req, res) => {
       if (path === "/world/conversations") {
         try { return j(res, 200, worldConversations()); }
         catch (e) { return bounce(res, 500, "the world door tripped", String(e?.message ?? e).slice(0, 200)); }
+      }
+      // GET /world/lately — the town's live activity feed: walks, voices and
+      // passages interlaced into one reverse-chronological stream. Keyless like
+      // the rest of the world's read tier — every act on it is already public
+      // (the walk ledger, the conversations page, declared passages). This is
+      // what the site's "Lately" strip and the world viewer's activity pane both
+      // read: ?before= pages into the past (echo back next_before), ?types=
+      // narrows the lanes (walk,say,carry), ?limit= sets the depth.
+      if (path === "/world/lately") {
+        const p = url.searchParams;
+        const args = { before: p.get("before"), types: p.get("types") };
+        if (p.has("limit")) args.limit = Number(p.get("limit"));
+        try {
+          const r = worldLately(args);
+          return r?.error === "bounce" ? bounce(res, r.code ?? 500, r.defect, r.hint) : j(res, 200, r);
+        } catch (e) { return bounce(res, 500, "the world door tripped", String(e?.message ?? e).slice(0, 200)); }
       }
       // GET /world/settlements — which settlements have actually LANDED, from
       // the world clone's own `settlement/S<n>` tags. The number counts

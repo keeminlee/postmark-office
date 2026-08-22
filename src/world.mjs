@@ -30,13 +30,14 @@ import {
   stateForKey,
 } from "./world-branches.mjs";
 import { WORLD_STAKE_TOOLS, callWorldStakeTool, worldPortfolioStakeSlice } from "./world-stake.mjs"; // P3 draft, append-shaped
+import { WORLD_LATELY_TOOLS, createLately } from "./world-lately.mjs"; // the live activity feed: three lanes interlaced at read (public observability)
 import { classNames, classRoster, classDials, departurePace, RESIDENT_INSTANTIABLE, residentMayInstantiate } from "./world-classes.mjs"; // which classes exist — read from the record, never held
 import { HOLD_TOOLS, callHoldTool } from "./world-hold.mjs"; // the object primitive: who holds what
 import { createVoices, EARSHOT_M } from "./voices.mjs"; // earshot: speech at a position (the party line)
 import { householdOf } from "./households.mjs"; // the human speaker's label wears the town's name, never the login
 import { householdLockPath, poolEnabled, pushDraftBranch, withDraftLease } from "./world-pool.mjs";
 import { cannotAnswer, pointAnswerable, servedRead, storeEpoch, storeShadowEnabled } from "./world-serve.mjs"; // stage 1: published-main reads from world.db, behind a flag
-import { emissionsEnabled, openDynamic } from "./dynamic-store.mjs"; // stage 2: the dynamic layer's flag
+import { emissionsEnabled, openDynamic, dynamicDbPath } from "./dynamic-store.mjs"; // stage 2: the dynamic layer's flag, and its store path (the feed reads it)
 import { declareMovement } from "./dynamic-entities.mjs"; // stage D: the pen after the ledger's freeze
 import { emissionFromVoice } from "./dynamic-emissions.mjs"; // stage 2: speech also becomes an emission instance
 import { VESSEL_HANDLE, ridesTheVessel } from "./dynamic-entities.mjs"; // the aboard test, one home for two readers
@@ -664,6 +665,31 @@ const voices = createVoices({
     } catch { return null; }
   },
 });
+
+// ── the live activity feed (world_lately) ────────────────────────────────────
+//
+// PUBLIC OBSERVABILITY, not recall. It interlaces the dynamic store's three
+// lanes — walks, voices, passages — into one reverse-chronological stream that
+// the site's "Lately" strip and the world viewer's activity pane both read. It
+// owns nothing but the store path; the fold and the paging live in
+// `world-lately.mjs`, which this composition root hands a `dbPath` and nothing
+// else. Keyless by design: every act it shows was already public.
+const lately = createLately({ dbPath: () => dynamicDbPath() });
+
+/**
+ * `world_lately` — the town's activity feed, newest first.
+ *
+ * No standpoint, no body, no key: this is the wall everyone reads, not anyone's
+ * own evening. It never throws to the caller; a tripped store is a bounce shape,
+ * an absent one an honest empty feed.
+ */
+export function worldLately(args = {}) {
+  return lately.read({
+    before: args.before == null ? null : String(args.before),
+    types: args.types ?? null,
+    limit: args.limit,
+  });
+}
 
 export async function worldSay(args = {}, key = null) {
   // A berth speaks from the quay (the arrival ruling, 2026-08-15): emissions
@@ -2145,6 +2171,7 @@ export const WORLD_TOOLS = [
       since: { type: "number", description: "the `latest` stamp from your previous reply — you receive only voices newer than it. Lingering at a gathering? Always pass this; it is the difference between re-buying the room every call and hearing only what is new." },
     }, additionalProperties: false } },
   ...WORLD_STAKE_TOOLS, // world_stake / world_unstake / world_stake_read (P3)
+  ...WORLD_LATELY_TOOLS, // world_lately — the live activity feed (public observability)
   ...HOLD_TOOLS, // world_hold / world_holdings — the object primitive (things + inventory)
 ];
 
@@ -2196,6 +2223,7 @@ export async function callWorldTool(name, args = {}, key = null, ctx = {}) {
     case "world_walk": return walkViaOffice(WORLD_CLONE, args, key);
     case "world_walkers": return worldWalkers(WORLD_CLONE, null, { roll: ctx?.roll ?? null });
     case "world_say": return worldSay(args, key);
+    case "world_lately": return worldLately(args);
     case "world_hold": case "world_holdings": return callHoldTool(name, args, key); // the object primitive
     default: return callWorldStakeTool(name, args, key); // P3; returns null for anything it doesn't own
   }
