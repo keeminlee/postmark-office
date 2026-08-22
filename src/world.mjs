@@ -30,7 +30,7 @@ import {
   stateForKey,
 } from "./world-branches.mjs";
 import { WORLD_STAKE_TOOLS, callWorldStakeTool, worldPortfolioStakeSlice } from "./world-stake.mjs"; // P3 draft, append-shaped
-import { classNames, classRoster, classDials, departurePace } from "./world-classes.mjs"; // which classes exist — read from the record, never held
+import { classNames, classRoster, classDials, departurePace, RESIDENT_INSTANTIABLE, residentMayInstantiate } from "./world-classes.mjs"; // which classes exist — read from the record, never held
 import { HOLD_TOOLS, callHoldTool } from "./world-hold.mjs"; // the object primitive: who holds what
 import { createVoices, EARSHOT_M } from "./voices.mjs"; // earshot: speech at a position (the party line)
 import { householdOf } from "./households.mjs"; // the human speaker's label wears the town's name, never the login
@@ -1233,6 +1233,16 @@ export async function leaveMarkViaOffice(worldClone, payload = {}, key = null) {
       throw bounce(422, `unknown class "${klass}"`,
         `the law knows: ${[...roster].sort().join(", ")}${disclosed ? ` — NOTE: ${disclosed}` : ""}`);
     if (source === "floor") console.error(`[world_leave_mark] class roster from floor: ${disclosed}`);
+    // ── WHO may instantiate (#1797): the roster says a class EXISTS; it does
+    // not say a resident may cite it. Residents instantiate only the ruled
+    // whitelist — the same set board-grammar.test.mjs asserts on the live
+    // tree ("this set grows by ruling, never by drift"). Every caller at THIS
+    // door is a resident household; the town's own class marks arrive by the
+    // town's pen, never here. Found 2026-08-22 when a resident's class: home
+    // sailed through and the settlement shadow caught it as a would-refuse.
+    if (!residentMayInstantiate(klass))
+      throw bounce(422, `class "${klass}" is town-only`,
+        `residents may instantiate only [${RESIDENT_INSTANTIABLE.join(", ")}] today (#1797) — the class exists in the law, but citing it on your own mark is the town's act, not a resident's`);
   }
 
   // ── the thing grammar (the object primitive) ────────────────────────────────

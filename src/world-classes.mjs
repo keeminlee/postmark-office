@@ -44,6 +44,14 @@ import { storeDbPath } from "./world-serve.mjs";
 // store is also unreadable, and the bounce says which of the two happened.
 export const ROSTER_FLOOR = Object.freeze(["bounty", "thing"]);
 
+// WHO may instantiate (#1797): the roster says a class EXISTS; this says a
+// RESIDENT may cite it. "This set grows by ruling, never by drift"
+// (board-grammar.test.mjs, the live-tree law). Found 2026-08-22: a resident's
+// class: "home" sailed through the exists-check and the settlement shadow
+// caught the crossing as a would-refuse.
+export const RESIDENT_INSTANTIABLE = Object.freeze(["bounty", "thing", "note"]);
+export const residentMayInstantiate = (klass) => RESIDENT_INSTANTIABLE.includes(String(klass));
+
 const ROSTER_SQL = `SELECT DISTINCT json_extract(props, '$.class') AS class
                       FROM nodes WHERE ${CLASS_ROSTER_GATE_SQL}`;
 
