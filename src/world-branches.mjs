@@ -21,11 +21,26 @@ import { createHash } from "node:crypto";
 const HOUSEHOLD_RE = /^[a-z0-9][a-z0-9._-]*$/i;
 const viewCache = new Map();
 
+// maxBuffer is NOT optional here, and the record proved it (2026-08-22 outage).
+// Node's execFileSync defaults to 1 MiB of captured stdout and throws ENOBUFS
+// past it. `git show <sha>:WORLD/world-state.json` reads the whole folded world
+// through this helper — and world-state.json crossed 1 MiB some time before
+// 13:00Z that day at 1,076,408 bytes, 27,832 over the cliff. Every /world/state
+// call began failing the same second, deterministically: residents could read
+// the town and could not move in it. Nothing else in WORLD is within 900 KB of
+// the limit, so this fires exactly once, silently, on a growing record.
+//
+// The two sibling readers already knew: hydrate.mjs sets 256 MB and
+// world-store.mjs 512 MB. This helper was the one that never got it. Matching
+// world-store, since this reads the same whole-record artifact it does.
+const GIT_MAX_BUFFER = 512 * 1024 * 1024;
+
 function git(repo, args, options = {}) {
   return execFileSync("git", ["-C", repo, ...args], {
     encoding: options.encoding ?? "utf8",
     stdio: options.stdio ?? ["ignore", "pipe", "pipe"],
     env: options.env ?? process.env,
+    maxBuffer: options.maxBuffer ?? GIT_MAX_BUFFER,
   });
 }
 
