@@ -261,3 +261,41 @@ test("world_note overwrites one resident note on the household draft and orient 
     "a note overwrite commits only the resident's one note",
   );
 });
+
+test("the draft delta carries WORLD-framed geometry — the overlay's whole contract (2026-08-22)", async () => {
+  // Root-level draft: file numbers ARE world numbers, verbatim.
+  const rootDraft = worldMyDrafts(houseA).marks.find((m) => m.id === "alpha/private-note");
+  assert.deepEqual(rootDraft.at, { x: 0, y: 0 }, "a root-level record ships its at verbatim");
+  assert.deepEqual(rootDraft.extent, { w: 4, h: 4 });
+
+  // Nested draft: file numbers are offsets from the parent's centre (SCHEMA v3);
+  // the delta borrows the parent's composed world at from published main's own
+  // world-state and ships WORLD numbers — never the raw offset.
+  git("switch", "-q", "--ignore-other-worktrees", "draft/house-a");
+  put("WORLD/marks/let-there-be-light/town-square/nested-draft/mark.md",
+    "---\nkind: sited\nby: alpha\ndate: 2026-08-22\nat: { x: 3, y: 4 }\nextent: { w: 2, h: 2 }\n---\n\na nested rehearsal\n");
+  git("add", "WORLD/marks/let-there-be-light/town-square/nested-draft/mark.md");
+  git("-c", "user.name=fixture", "-c", "user.email=fixture@test.invalid", "commit", "-q", "-m", "nested draft");
+  git("switch", "-q", "--ignore-other-worktrees", "main");
+
+  const nested = worldMyDrafts(houseA).marks.find((m) => m.id === "alpha/nested-draft");
+  assert.ok(nested, "the nested draft is in the delta");
+  assert.deepEqual(nested.at, { x: 13, y: 14 },
+    "town-square's composed world centre (10,10) + the file's offset (3,4) — world frame, not file frame");
+});
+
+test("the stake gate sees your OWN drafts under the tourniquet (WORLD_DRAFT_FOLD=0, 2026-08-22)", async () => {
+  const { markExists } = await import("../src/world-stake.mjs");
+  const saved = process.env.WORLD_DRAFT_FOLD;
+  process.env.WORLD_DRAFT_FOLD = "0";   // the exact prod condition: stateForKey serves published main to everyone
+  try {
+    assert.equal(markExists("alpha/published-note", houseA).exists, true, "published marks unchanged");
+    assert.equal(markExists("alpha/private-note", houseA).exists, true,
+      "your own draft counts — the delta is the second look, no fold");
+    assert.equal(markExists("alpha/private-note", houseB).exists, false,
+      "another household's draft stays unstakeable: you cannot back what you cannot see");
+    assert.equal(markExists("alpha/private-note", null).exists, false, "and no key sees no sketchbook");
+  } finally {
+    if (saved === undefined) delete process.env.WORLD_DRAFT_FOLD; else process.env.WORLD_DRAFT_FOLD = saved;
+  }
+});

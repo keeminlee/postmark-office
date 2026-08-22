@@ -534,12 +534,26 @@ function parseDeltaRecord(text, path) {
   const field = (name) => fm.match(new RegExp(`^${name}:\\s*(.+)$`, "m"))?.[1]?.trim() ?? null;
   const by = field("by");
   const slug = basename(dirname(path));
+  // Geometry, best-effort off the door's own serialization (leave-exec fmtVal):
+  // `at: { x: N, y: N }`, `extent: { w: N, h: N }`, `points: [[x,y],...]` (JSON).
+  // A record this cannot read simply carries no geometry — the delta stays an
+  // honest list either way; only the overlay loses that one badge.
+  const pair = (raw, a, b) => {
+    const m = String(raw ?? "").match(new RegExp(`\\{\\s*${a}:\\s*(-?[\\d.]+)\\s*,\\s*${b}:\\s*(-?[\\d.]+)\\s*\\}`));
+    return m ? { [a]: Number(m[1]), [b]: Number(m[2]) } : null;
+  };
+  let points = null;
+  try { const p = JSON.parse(field("points") ?? "null"); if (Array.isArray(p) && p.length) points = p; } catch { /* no ring */ }
   return {
     id: by ? `${by}/${slug}` : null,
     by,
     kind: field("kind"),
     tier: field("tier") ?? "market",
     body: (match?.[2] ?? "").trim(),
+    date: field("date"),
+    at: pair(field("at"), "x", "y"),
+    extent: pair(field("extent"), "w", "h"),
+    ...(points ? { points } : {}),
   };
 }
 
@@ -591,6 +605,44 @@ export function draftDeltaForKey(repo, key) {
     });
   }
   marks.sort((a, b) => a.path.localeCompare(b.path));
+
+  // ── WORLD-FRAME the geometry (the draft overlay, Keemin-ruled 2026-08-22:
+  // interiors showing draft marks is a crucial feature) ──────────────────────
+  //
+  // The FILE speaks the tree's frame: a root-level record's numbers are world
+  // numbers; a NESTED record's at/points are offsets from its parent's centre
+  // (SCHEMA v3). The overlay needs world numbers, and this door must not fold —
+  // so nested records borrow their parent's COMPOSED world centre from
+  // published main's own world-state (one cached JSON read), and a record whose
+  // frame cannot be resolved that cheaply ships without `at` rather than with a
+  // wrong one. Post-2026-08-22 drafts all land at the root (draft-costs-nothing),
+  // so the nested arm serves pre-ship drafts only, and shrinks to nothing.
+  const ROOT_PREFIX = "WORLD/marks/let-there-be-light/";
+  const nested = marks.filter((m) => m.at && m.path.startsWith(ROOT_PREFIX)
+    && m.path.slice(ROOT_PREFIX.length).split("/").length > 2);
+  if (nested.length) {
+    let worldAt = null;
+    try {
+      const ws = readJsonAtRef(repo, base, "WORLD/world-state.json");
+      worldAt = new Map((ws?.marks ?? []).filter((m) => m?.id && m.at).map((m) => [m.id, m.at]));
+    } catch { /* no state on main → leave nested records unframed */ }
+    for (const m of nested) {
+      let framed = null;
+      try {
+        const parentDirPath = dirname(dirname(m.path)).replace(/\\/g, "/");
+        const parentRecord = parseDeltaRecord(readAtRef(repo, m.status === "deleted" ? mergeBase : ref, `${parentDirPath}/mark.md`), `${parentDirPath}/mark.md`);
+        const origin = parentRecord?.id ? worldAt?.get(parentRecord.id) : null;
+        if (origin) framed = {
+          at: { x: m.at.x + origin.x, y: m.at.y + origin.y },
+          ...(m.points ? { points: m.points.map((p) => Array.isArray(p)
+            ? [Number(p[0]) + origin.x, Number(p[1]) + origin.y]
+            : { ...p, x: Number(p.x) + origin.x, y: Number(p.y) + origin.y }) } : {}),
+        };
+      } catch { /* parent unreadable → unframed */ }
+      if (framed) Object.assign(m, framed);
+      else { delete m.at; delete m.points; }
+    }
+  }
   return {
     household,
     branch: draftBranch(household),

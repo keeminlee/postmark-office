@@ -25,7 +25,7 @@
 import { existsSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
-import { stateForKey } from "./world-branches.mjs";
+import { stateForKey, draftDeltaForKey } from "./world-branches.mjs";
 import { forecastForMark } from "./world-forecast.mjs";
 import { execUnderTownLock, lockTimedOut, LOCK_BUSY } from "./town-lock.mjs";
 
@@ -61,12 +61,25 @@ function actingAs(named, key) {
 // invisible here on purpose: you cannot back what you cannot see. Reads refs
 // via stateForKey, never the checkout's working-tree file (the checkout sits on
 // whatever branch the pen last wrote — its file is nobody's truth).
-function markExists(mark, key = null) {
+export function markExists(mark, key = null) {
   if (!existsSync(join(WORLD_CLONE, ".git")))
     return { known: false, reason: "the office has no world clone to check against" };
   try {
     const { state } = stateForKey(WORLD_CLONE, key ?? {});
-    return { known: true, exists: (state?.marks ?? []).some((m) => m.id === mark) };
+    if ((state?.marks ?? []).some((m) => m.id === mark)) return { known: true, exists: true };
+    // YOUR OWN DRAFTS COUNT (2026-08-22). With the draft fold off the read
+    // (WORLD_DRAFT_FOLD=0), stateForKey serves published main to everyone — so
+    // a resident staking the draft they just left bounced 404 on a mark that
+    // was sitting on their own branch. The delta is the cheap second look: a
+    // git diff plus a few file reads, no fold — and it only ever shows the
+    // caller their OWN sketchbook, so "you cannot back what you cannot see"
+    // holds exactly as before: another household's drafts stay unstakeable.
+    if (key) {
+      const delta = draftDeltaForKey(WORLD_CLONE, key);
+      if (!delta?.error && (delta?.marks ?? []).some((m) => m.id === mark && m.status !== "deleted"))
+        return { known: true, exists: true };
+    }
+    return { known: true, exists: false };
   } catch { return { known: false, reason: "the world record could not be read" }; }
 }
 
