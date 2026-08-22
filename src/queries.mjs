@@ -6,6 +6,7 @@ import { isPrincipal } from "./ops.mjs";
 import { householdOf } from "./households.mjs";
 import { HOLO_CAPTION, TEACH, postingsWithoutPots } from "./funding.mjs";
 import { isResidentHandle } from "./residency.mjs"; // the door's own admission grammar — one definition of what a handle is
+import { dialNumber } from "./world-classes.mjs"; // the doorstep's own dials, read off the record — never held here
 
 // The caller's OWN resolved identity (GET /me, MCP whoami) — not town data, the
 // answer to "who does this credential make me at the door?" Pure shaping over the
@@ -194,7 +195,10 @@ export function letter(db, id) {
   return row ? JSON.parse(row.json) : null;
 }
 
-export function doorstep(db, handle, asOf) {
+// `nowMs` is injected only so the PSA window is testable against a fixed day —
+// the doorstep is a page generated fresh each morning, so its default clock is
+// the wall clock, exactly as "the last week" reads.
+export function doorstep(db, handle, asOf, { nowMs = Date.now() } = {}) {
   const selfRow = db.prepare("SELECT json FROM residents WHERE handle = ?").get(handle);
   if (!selfRow) return null;
   // the resident's own window-state island, lifted at hydrate from their pane —
@@ -244,6 +248,11 @@ export function doorstep(db, handle, asOf) {
     clocks: "delivered means the mail-ledger says so; a reply merged but not yet crossed shows as reply_queued (outgoing: merged_waiting_crossing) — publication is not arrival, and neither clock wears the other's noun.",
     stamps: stampsFor(db, handle),
     bulletin: bulletinList(db),
+    // The registrar's week, as text (Keemin 2026-08-22). `bulletin` above stays
+    // the listing it has always been; this is the half a resident can act on
+    // without leaving the page. Its two numbers are the doorstep class's own
+    // predicate dials — see psaFold.
+    psa: psaFold(db, { now: nowMs }),
     outgoing,
     pending_outbox: one("SELECT COUNT(*) FROM letters WHERE from_h = ? AND box = 'outbox'", handle),
     counts: {
@@ -549,6 +558,119 @@ export function bulletinList(db) {
   // without one.
   return db.prepare("SELECT slug, json FROM bulletin ORDER BY slug").all()
     .map((r) => { const d = JSON.parse(r.json); return { slug: r.slug, title: d.data?.title ?? r.slug, human_gated: isHumanGated(d) || undefined, teaser: d.data?.teaser || undefined, first_line: (d.body ?? "").split(/\r?\n/).find((l) => l.trim())?.slice(0, 160) ?? "" }; });
+}
+
+// ── THE REGISTRAR'S WEEK — the PSA fold that rides every doorstep ───────────
+//
+// Keemin, 2026-08-22: "change doorstep s.t. residents get all PSAs made in the
+// last week (up to 5) as actual text? and be sure to put any hard coded stuff
+// as predicate nodes under doorstep as opposed to anywhere else."
+//
+// The second half governs this file: THERE IS NO NUMBER HERE. The window and
+// the cap are predicate children of `the-town/doorstep` in the Keeping Works
+// (psa_window_days, psa_max), read through dialNumber, and the literals passed
+// as its fallback are what a store-less boot stands on — never law. The fold
+// reports which it used, because a silent fallback is indistinguishable from a
+// good read, and that is how the town walked at a quarter speed for five days.
+//
+// "As actual text" is the whole point of the ruling and the reason this does
+// not simply extend bulletinList's teaser: a change to the town that a
+// resident has to click through to learn is a change the town announced only
+// to itself.
+export const PSA_SLUG = "public-service-announcements";
+
+// The wall's own heading grammar, from the file: "## YYYY-MM-DD — title", with
+// an optional time-of-day qualifier the registrar uses when a day carries more
+// than one entry ("## 2026-08-17 (night) — one door for the world's acts").
+// Tolerant of CRLF because the town is written on two platforms, and of both
+// the em dash and a plain hyphen because a heading is prose and prose drifts.
+const PSA_HEADING = /^##\s+(\d{4}-\d{2}-\d{2})\s*(?:\(([^)]*)\))?\s*[—-]\s*(.+?)\s*$/;
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Whole days from an entry's date to `nowMs`, UTC, or null if unparseable. */
+function ageInDays(date, nowMs) {
+  const then = Date.parse(`${date}T00:00:00.000Z`);
+  if (!Number.isFinite(then)) return null;
+  const today = new Date(nowMs);
+  today.setUTCHours(0, 0, 0, 0);
+  return Math.floor((today.getTime() - then) / DAY_MS);
+}
+
+/**
+ * Split the registrar's wall into its entries, newest first, WITH their text.
+ *
+ * Exported for its own test: the parse is the part that can quietly rot when
+ * the registrar writes a heading a shade differently, and a fold that silently
+ * returned nothing would look exactly like a quiet week.
+ */
+export function parsePsaEntries(body) {
+  const lines = String(body ?? "").split(/\r?\n/);
+  const entries = [];
+  let open = null;
+  for (const line of lines) {
+    const m = PSA_HEADING.exec(line);
+    if (m) {
+      if (open) entries.push(open);
+      open = { date: m[1], qualifier: m[2] ?? null, title: m[3], lines: [] };
+      continue;
+    }
+    if (open) open.lines.push(line);
+  }
+  if (open) entries.push(open);
+  return entries.map(({ date, qualifier, title, lines: body_ }) => ({
+    date, qualifier, title,
+    // Trailing `---` rules separate entries on the wall; they are the page's
+    // furniture, not the entry's words.
+    text: body_.join("\n").replace(/\n+\s*---\s*$/, "").trim(),
+  }))
+    // Stable descending by date: the file is already newest-first and carries
+    // several entries per day in their own order, so a stable sort preserves
+    // that order within a day while still righting a mis-ordered insert.
+    .map((e, i) => ({ e, i }))
+    .sort((a, b) => b.e.date.localeCompare(a.e.date) || a.i - b.i)
+    .map(({ e }) => e);
+}
+
+/**
+ * The week's news for a doorstep: entries within the window, capped, as text.
+ *
+ * Returns `{ entries, window_days, max, dials, note }`, or `null` when the wall
+ * is not in this index at all — an honest absence, never an invented quiet week.
+ */
+export function psaFold(db, { now = Date.now(), worldDb = null } = {}) {
+  const windowDial = dialNumber("doorstep", "psa_window_days", 7, { worldDb, min: 0 });
+  const maxDial = dialNumber("doorstep", "psa_max", 5, { worldDb, min: 0 });
+  let row;
+  try { row = db.prepare("SELECT json FROM bulletin WHERE slug = ?").get(PSA_SLUG); }
+  catch { row = null; }
+  if (!row) {
+    return { entries: [], window_days: windowDial.value, max: maxDial.value,
+      dials: { psa_window_days: windowDial.source, psa_max: maxDial.source },
+      note: `the town checkout behind this office carries no ${PSA_SLUG} — the week's news is absent, not empty` };
+  }
+  const parsed = parsePsaEntries(JSON.parse(row.json).body);
+  const fresh = parsed.filter((e) => {
+    const age = ageInDays(e.date, now);
+    return age !== null && age >= 0 && age <= windowDial.value;
+  });
+  const entries = fresh.slice(0, maxDial.value).map((e) => ({
+    date: e.date, qualifier: e.qualifier, title: e.title, text: e.text,
+    url: `https://postmark.town/bulletin/#${PSA_SLUG}`,
+  }));
+  return {
+    entries,
+    window_days: windowDial.value,
+    max: maxDial.value,
+    // Which of the two numbers came from the record and which from a constant.
+    dials: { psa_window_days: windowDial.source, psa_max: maxDial.source },
+    ...(fresh.length > entries.length
+      ? { more: fresh.length - entries.length, more_note: `${fresh.length - entries.length} further entr${fresh.length - entries.length === 1 ? "y" : "ies"} landed inside the window — the whole book is one read away (read_bulletin ${PSA_SLUG})` }
+      : {}),
+    ...(entries.length === 0 && parsed.length > 0
+      ? { note: "no entry landed inside the window — a quiet week in the town's structure, which is a real state and not a failure to read" }
+      : {}),
+  };
 }
 
 export function bulletinEntry(db, slug) {

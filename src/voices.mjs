@@ -23,9 +23,75 @@ import { fileURLToPath } from "node:url";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..");
 
-// The standing numbers (silver-draft postmark-earshot-proximity-chat, ruling 5).
-export const EARSHOT_M = 60;              // a hall, not a district
-export const FADE_MS = 5 * 60 * 1000;     // five minutes, on HEARING
+// ── THE STANDING NUMBERS NOW STAND ON THE RECORD ─────────────────────────────
+//
+// Keemin, 2026-08-22: "let's update those dials for 'say'... make everything
+// pull the actual numbers from there too. I think the predicates should be
+// under the say edge rather than the residue, as we may rule future sounds
+// differently." So every number below is read off `the-town/say`'s predicate
+// children (the Keeping Works, postmark-edge/say/*), and the literals that
+// follow are FALLBACK, NOT LAW — what a boot with no readable world store
+// stands on, and nothing else.
+//
+// Read ONCE, at module init, deliberately. departurePace reads per call and is
+// right to: one walk, one lookup. These are consulted inside the clustering
+// loop and on every spoken line, so a per-call read would put SQLite in the
+// speech path for numbers that move at a ruling. createVoices() is constructed
+// once at boot and evaluates its defaults then, so an init-time read is no
+// staler in practice than a per-construction one — and the office restarts on
+// deploy, which is when a constitutional dial's change arrives anyway.
+//
+// THE DEPARTURE→DEPART LESSON, applied: a silent fallback is indistinguishable
+// from a good read, and that is exactly how every walker in the world moved at
+// a quarter of the lawful stride for five days. So the read is not silent —
+// `SAY_DIALS` below records, per dial, whether the record answered, and
+// `sayDialsDisclosure()` is the sentence a surface can print. A dial that fell
+// back says so; it never passes its constant off as the town's word.
+import { dialNumber } from "./world-classes.mjs";
+
+// The class the dials hang on. Named once, beside the reader, for the same
+// reason STRIDE_CLASS_NAME is: the slow-walk bug was a lookup asking for a
+// class that had been renamed out from under it, and a name written once fails
+// a test instead of failing the town.
+export const SAY_CLASS_NAME = "say";
+
+// slot -> [fallback, unit-multiplier to the exported value]. The record keeps
+// human units (minutes, seconds, metres); the module keeps milliseconds where
+// it always has, so the conversion lives here and nowhere downstream.
+const SAY_DIAL_SPEC = {
+  earshot_m: [60, 1],                 // a hall, not a district
+  fade_min: [5, 60 * 1000],           // on HEARING
+  conversation_lull_min: [30, 60 * 1000], // silence that ends a conversation IN THE RECORD
+  speak_every_s: [15, 1000],          // one voice per handle per this
+  text_max: [500, 1],                 // speech, not letters
+  hear_max: [20, 1],                  // flood cap: the room's most recent hum
+  presence_min: [15, 60 * 1000],      // listening counts as standing here
+};
+
+function readSayDials() {
+  const out = {};
+  for (const [slot, [fallback]] of Object.entries(SAY_DIAL_SPEC)) {
+    out[slot] = dialNumber(SAY_CLASS_NAME, slot, fallback, { min: 0 });
+  }
+  return out;
+}
+
+/** Per-dial `{ value, read, source }` — the honest half of every number here. */
+export const SAY_DIALS = readSayDials();
+
+const dial = (slot) => SAY_DIALS[slot].value * SAY_DIAL_SPEC[slot][1];
+
+/**
+ * What a surface prints when it wants to say where these numbers came from.
+ * `null` when every dial was read from the record — silence is the good case,
+ * and only the fallbacks are worth a sentence.
+ */
+export function sayDialsDisclosure() {
+  const fell = Object.entries(SAY_DIALS).filter(([, d]) => !d.read).map(([slot]) => slot);
+  if (fell.length === 0) return null;
+  return `speech is standing on built-in fallbacks for ${fell.join(", ")} — the world store did not answer for the-town/say, so these are this repo's old constants and not the town's word. Run: npm run hydrate:world`;
+}
+
 // Two clocks, split on sailing night (Keemin, 2026-08-08 mid-crossing): what an
 // ear can still catch is five minutes; what still counts as ONE conversation is
 // half an hour. The maiden crossing proved they differ — agents on the deck
@@ -33,11 +99,14 @@ export const FADE_MS = 5 * 60 * 1000;     // five minutes, on HEARING
 // serial threads. Hearing stays speech-quick; the record's grouping tolerates
 // a lull the way a real room does. Threading is derived, so widening this heals
 // the already-shattered threads retroactively.
-export const CLOSE_MS = 30 * 60 * 1000;   // thirty minutes of silence ends a conversation
-export const HEAR_MAX = 20;               // flood cap: the room's most recent hum
-export const SPEAK_EVERY_MS = 15 * 1000;  // one voice per 15 s per handle
-export const TEXT_MAX = 500;              // speech, not letters
-export const PRESENCE_MS = 15 * 60 * 1000; // listening counts as standing here
+// (The law now also stands as a node: the-town/say § the-hearing-and-the-record.)
+export const EARSHOT_M = dial("earshot_m");
+export const FADE_MS = dial("fade_min");
+export const CLOSE_MS = dial("conversation_lull_min");
+export const HEAR_MAX = dial("hear_max");
+export const SPEAK_EVERY_MS = dial("speak_every_s");
+export const TEXT_MAX = dial("text_max");
+export const PRESENCE_MS = dial("presence_min");
 
 // Log defaults: box-local, never git, never the ledger. Rotation is size-based
 // and keeps exactly one previous file — the record the page reads is the live
