@@ -88,9 +88,34 @@ if [ "$WORLD_TO" = "$WORLD_FROM" ]; then
 fi
 
 # Publish: main strictly fast-forward; sketchbooks only under their leases.
+#
+# THE CHEAP SALVAGE (founder, 2026-08-22, after S45 lost its push to a resident
+# walking through doors mid-sweep: "can we just push whatever slightly stale
+# version actually passed the settlement?"). The sweep's result is not stale
+# about anything it WRITES — the usual racer is a door pen appending ledger
+# lines, files the sweep never touches. So on a rejected push: fetch, and if
+# every raced-in change touches only paths DISJOINT from the sweep's own
+# writes, rebase the finished sweep onto the moved main and push once more.
+# Any path overlap, any rebase conflict, any second rejection — the full
+# rerun, exactly as before. The suite is deliberately NOT rerun on this path:
+# that is the founder's ruling (the 28-minute sweep losing to a 5-second
+# ledger line, twice, is the worse outcome), and the disjointness check is
+# what makes it sound.
 git -C "$SWEEP" push -q origin main:main || {
-  report race "world main moved underneath the sweep — rerun"
-  echo "[settlement-auto] RACE on main — rerun" >&2; exit 2
+  git -C "$SWEEP" fetch -q origin main
+  MB="$(git -C "$SWEEP" merge-base main origin/main)"
+  git -C "$SWEEP" diff --name-only "$MB" main | sort > "$WORK/swept-paths"
+  git -C "$SWEEP" diff --name-only "$MB" origin/main | sort > "$WORK/raced-paths"
+  if [ -s "$WORK/raced-paths" ] && [ -z "$(comm -12 "$WORK/swept-paths" "$WORK/raced-paths")" ] \
+     && git -C "$SWEEP" rebase -q origin/main >/dev/null 2>&1 \
+     && git -C "$SWEEP" push -q origin main:main; then
+    echo "[settlement-auto] main raced by disjoint paths ($(tr '\n' ' ' < "$WORK/raced-paths")) — sweep rebased and pushed" >&2
+    WORLD_TO="$(git -C "$SWEEP" rev-parse main)"   # the receipt names what actually landed
+  else
+    git -C "$SWEEP" rebase --abort >/dev/null 2>&1 || true
+    report race "world main moved underneath the sweep — rerun"
+    echo "[settlement-auto] RACE on main — rerun" >&2; exit 2
+  fi
 }
 RACED=0
 while read -r ref sha; do
