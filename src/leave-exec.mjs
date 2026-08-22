@@ -4,13 +4,17 @@
 // in `flock -w 30 town.lock` — a mark write can never race a crossing or another
 // write). Does the whole critical section in one process against the WORLD clone
 // (postmark-world), which is separate from the town clone: pull, place the mark
-// by geometry (the clone's OWN placementParent — the placer is the enforcer),
+// where the RESIDENT said (declared parent_id, or open ground at the root),
 // select/lazy-create draft/<household>, write the mark.md into that branch's
-// composed containment tree, GATE on the clone's own mark-lint + fold (0 errors
-// or the write is unwound and bounced with the exact field), commit the record
-// only, and push
-// best-effort (a 403 is logged once and reported push-pending, never thrown —
-// the clone serves the fresh fold immediately regardless). Prints one JSON line.
+// tree, commit the record only, and push best-effort (a 403 is logged once and
+// reported push-pending, never thrown). Prints one JSON line.
+//
+// A DRAFT COSTS NOTHING (Keemin-ruled 2026-08-22, the ship after the fold
+// outage): no geometry placement, no lint gate, no fold gate at this door.
+// Drafts go where the author says; the Settlement is where the world does its
+// real work — lint, fold, containment, standing, consent — and adjudicates
+// backwards-ratifiably. The gates this door used to run cost a full fold
+// (~seconds, O(m²)) per write and took the world down on 2026-08-21.
 //
 // Env: WORLD_CLONE, TOWN_PUSH=1 to push, BOT_NAME/BOT_EMAIL (penCommit's).
 // argv[2]: JSON { slug, kind, at, extent, points?, body, tier, slot?, value?,
@@ -66,7 +70,7 @@ async function main() {
 
   const tools = join(CLONE, "tools");
   const tEngine = performance.now();
-  const { loadMarks, placementParent, marksContain, PARCEL_CLAIM_CAP, PARCEL_CAP_LAW_DATE, PARCEL_EXTENT_M,
+  const { loadMarks, marksContain, PARCEL_CLAIM_CAP, PARCEL_CAP_LAW_DATE, PARCEL_EXTENT_M,
           worldToFile, ringToFile, COORDS_FIELD, COORDS_RELATIVE } =
     await import(pathToFileURL(join(tools, "marks-fold.mjs")));
   phases.push(`engine=${Math.round(performance.now() - tEngine)}ms`);
@@ -107,20 +111,8 @@ async function main() {
     const relPath = relative(CLONE, oldFile).replace(/\\/g, "/");
     const wasPublished = onMain(oldFile);
     rmSync(dir0, { recursive: true, force: true });
-    const restore = () => { mkdirSync(dir0, { recursive: true }); writeFileSync(oldFile, oldRecord); };
-    try {
-      timed("lint", () => execFileSync(process.execPath, [join(tools, "mark-lint.mjs")], { encoding: "utf8" }));
-    } catch (e) {
-      restore();
-      const line = String(e.stdout ?? e.message ?? "").split("\n").find((l) => /ERROR/.test(l)) ?? "the withdrawal failed the lint";
-      return err(422, "the withdrawal doesn't sit right", line.replace(/^\[ERROR\]\s*/, "").slice(0, 300));
-    }
-    const foldedW = timed("fold", () => execFileSync(process.execPath, [
-      join(tools, "marks-fold.mjs"), "--marks-dir", MARKS_DIR,
-      "--terrain", join(CLONE, "WORLD", "skeleton.json"), "--no-write", "--json",
-    ], { encoding: "utf8" }));
-    const stateW = JSON.parse(foldedW);
-    if (stateW.errors?.length) { restore(); return err(422, "the fold refused the withdrawal", JSON.stringify(stateW.errors[0]).slice(0, 300)); }
+    // No lint/fold gate — a draft costs nothing (header note, 2026-08-22); the
+    // Settlement adjudicates. oldRecord is kept in the log by the commit itself.
     const pushReqW = process.env.TOWN_PUSH === "1" && !SLOT;
     const savedW = process.env.TOWN_PUSH;
     delete process.env.TOWN_PUSH;
@@ -171,14 +163,21 @@ async function main() {
         `parcel claiming is capped at ${cap} per household (ruled ${PARCEL_CAP_LAW_DATE ?? "2026-07-30"}; prior holdings stand) — new ground for this household is the founder's word, not the door's`);
   }
 
-  // decide the directory (v2: the tree IS containment). sited/parcel place by
-  // geometry — the deepest existing claim that contains this one, root if none.
+  // decide the directory. sited/parcel place by the AUTHOR'S WORD (2026-08-22):
+  // a declared parent_id nests there, no parent_id is open ground at the root —
+  // the Settlement's own sweep re-homes by geometry at the save, never this door.
   // predicated/naming take the directory of the mark they describe (parent_id).
   let parentDir, parentId;
   if (p.kind === "sited" || p.kind === "parcel") {
-    parentId = placementParent({ at: p.at, extent: p.extent, points: p.points }, marks);
-    parentDir = parentId ? byId.get(parentId)?._dir : ROOT_DIR;
-    if (!parentDir) return err(500, "placement lost its parent", `computed parent ${parentId} has no directory`);
+    parentId = p.parent_id ?? null;
+    if (parentId) {
+      const parent = byId.get(parentId);
+      if (!parent) return err(422, `no mark "${parentId}" to nest under`, "parent_id names an existing mark, <by>/<slug> — or leave it off to place on open ground");
+      if (parent.kind !== "sited" && parent.kind !== "parcel") return err(422, `"${parentId}" cannot hold a ${p.kind} mark`, "only sited/parcel marks hold others — name one, or leave parent_id off");
+      parentDir = parent._dir;
+    } else {
+      parentDir = ROOT_DIR;
+    }
   } else {
     parentId = p.parent_id;
     const parent = byId.get(parentId);
@@ -265,38 +264,9 @@ async function main() {
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "mark.md"), record);
 
-  // Unwind for every gate below: a refused amend restores the prior record
-  // exactly — the supersession either lands whole or never happened.
-  const unwind = () => {
-    if (amending && !amendMoves) { writeFileSync(oldFile, oldRecord); return; }
-    rmSync(dir, { recursive: true, force: true });
-    if (amending && amendMoves) { mkdirSync(oldDir, { recursive: true }); writeFileSync(oldFile, oldRecord); }
-  };
-
-  // GATE 1 — the clone's own lint (the schema + "you cannot lie with an edge").
-  // A non-zero exit is a bounce; unwind the write and hand back the exact field.
-  try {
-    timed("lint", () => execFileSync(process.execPath, [join(tools, "mark-lint.mjs")], { encoding: "utf8" }));
-  } catch (e) {
-    unwind();
-    const line = String(e.stdout ?? e.message ?? "").split("\n").find((l) => /ERROR/.test(l)) ?? "the mark failed the lint";
-    return err(422, "the mark doesn't sit right", line.replace(/^\[ERROR\]\s*/, "").slice(0, 300));
-  }
-
-  // GATE 2 — fold the composed draft tree without writing derived canon files.
-  // world-state.json + INDEX.md belong to published main and the Settlement;
-  // authenticated reads fold this branch tree on demand.
-  const folded = timed("fold", () => execFileSync(process.execPath, [
-    join(tools, "marks-fold.mjs"),
-    "--marks-dir", MARKS_DIR,
-    "--terrain", join(CLONE, "WORLD", "skeleton.json"),
-    "--no-write", "--json",
-  ], { encoding: "utf8" }));
-  const state = JSON.parse(folded);
-  if (state.errors?.length) {
-    unwind();
-    return err(422, "the fold refused the mark", JSON.stringify(state.errors[0]).slice(0, 300));
-  }
+  // No lint gate, no fold gate — a draft costs nothing (header note,
+  // 2026-08-22). The record is written exactly as declared; the Settlement's
+  // lint + fold judge it at the save and bounce/re-home there.
 
   // Commit the draft record only, then push the household branch best-effort.
   // Derived files stay on main so a private draft never masquerades as canon.
