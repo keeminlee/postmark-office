@@ -121,17 +121,20 @@ export const classNames = (opts) => [...classRoster(opts).roster].sort();
  * caller that needs a floor supplies it at the call site where the floor can be
  * read beside the thing it protects.
  */
-// The walker's stride, read off the record's own class. THE CLASS IS NAMED
-// `depart` (WORLD/marks .../postmark-edge/depart — dials.pace_km_per_crossing,
+// The walker's stride, read off the record's own class. THE STRIDE RIDES THE
+// MOVER, NOT THE VERB (Keemin, 2026-08-22: "we can use this edge for ANYTHING
+// that departs. it should sit under resident") — so the dial lives on
+// `the-town/resident` (postmark-node/entity/resident), the vessel precedent
+// (its own 405) agreeing. History of the name:
 // 60 at this writing). On 2026-08-21 the founder clocked 650 m taking 30
 // minutes: this lookup asked for "departure", a class that has never existed,
 // classDials answered {} (absence is neutrality), and every walker quietly
 // derived at the 15 km legacy constant — 4x slower than the law. The name
 // lives HERE, once, beside the reader, so the next rename fails a test
 // instead of slowing the town.
-export const DEPART_CLASS_NAME = "depart";
+export const STRIDE_CLASS_NAME = "resident";
 export function departurePace({ worldDb = null } = {}) {
-  const d = Number(classDials(DEPART_CLASS_NAME, { worldDb })?.pace_km_per_crossing);
+  const d = Number(classDials(STRIDE_CLASS_NAME, { worldDb })?.pace_km_per_crossing);
   return Number.isFinite(d) && d > 0 && d <= 1000 ? d : null;
 }
 

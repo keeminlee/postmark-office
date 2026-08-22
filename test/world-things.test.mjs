@@ -20,7 +20,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { SCHEMA, CLASS_ROSTER_GATE_SQL, isClassDefinition, isClassMark } from "../src/world-store.mjs";
-import { classRoster, classDials, classNames, resetClassRosterCache, ROSTER_FLOOR, departurePace, DEPART_CLASS_NAME } from "../src/world-classes.mjs";
+import { classRoster, classDials, classNames, resetClassRosterCache, ROSTER_FLOOR, departurePace, STRIDE_CLASS_NAME } from "../src/world-classes.mjs";
 import { declareHolding, liveHolder, holdingsOf, heldPositionOf } from "../src/world-hold.mjs";
 import { openDynamic } from "../src/dynamic-store.mjs";
 import { readAttachments, declareAttachment } from "../src/dynamic-entities.mjs";
@@ -372,23 +372,24 @@ test("the leave-mark schema advertises whatever the roster says, and nothing els
 
 // ── the walker's stride comes off the record (the 2026-08-21 slow-walk bug) ──
 //
-// The record's class is `depart` (postmark-edge/depart, pace_km_per_crossing).
+// THE STRIDE RIDES THE MOVER, NOT THE VERB (Keemin, 2026-08-22): the dial
+// lives on `the-town/resident`, since ANYTHING can depart at its own pace.
 // The office asked classDials("departure") — a class that has never existed —
 // so the dial read {} and every walker derived at the 15 km legacy constant:
 // the founder clocked 650 m taking 30 minutes, 4x slower than the law's 60.
 // This fixture holds ONLY the class the record actually names, so pointing the
 // reader at any other name fails here instead of slowing the town again.
-const DEPART_CLASS = { id: "the-town/depart", props: { class: "depart", class_version: 4, dials: { pace_km_per_crossing: 60 } } };
+const STRIDE_CLASS = { id: "the-town/resident", props: { class: "resident", class_version: 8, dials: { pace_km_per_crossing: 60 } } };
 
-test("the walker's pace is the depart class's own dial, read by the record's own name", () => {
-  const db = storeWith([DEPART_CLASS], { file: "depart-pace.db" });
-  assert.equal(DEPART_CLASS_NAME, "depart", "the name the reader asks for is the record's");
+test("the walker's pace is the RESIDENT class's own dial, read by the record's own name", () => {
+  const db = storeWith([STRIDE_CLASS], { file: "stride-pace.db" });
+  assert.equal(STRIDE_CLASS_NAME, "resident", "the name the reader asks for is the record's");
   assert.equal(departurePace({ worldDb: db }), 60, "650 m should take ~7.5 min at the law's 60 km/crossing, not 30");
 });
 
 test("an unreadable or unlawful pace dial derives null — the legacy constant's visible sign", () => {
   const empty = storeWith([THING_CLASS], { file: "no-depart.db" });
   assert.equal(departurePace({ worldDb: empty }), null, "absent class -> null, never NaN");
-  const bad = storeWith([{ id: "the-town/depart", props: { class: "depart", class_version: 4, dials: { pace_km_per_crossing: 0 } } }], { file: "bad-pace.db" });
+  const bad = storeWith([{ id: "the-town/resident", props: { class: "resident", class_version: 8, dials: { pace_km_per_crossing: 0 } } }], { file: "bad-pace.db" });
   assert.equal(departurePace({ worldDb: bad }), null, "a zero stride is unlawful, not slow");
 });

@@ -22,7 +22,7 @@ import { join, resolve, dirname } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { penCommit } from "./write.mjs";
-import { classDials } from "./world-classes.mjs";
+import { departurePace } from "./world-classes.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CLONE = process.env.WORLD_CLONE ?? resolve(HERE, "..", "world-clone");
@@ -73,11 +73,10 @@ async function main() {
   // pre-008b constant via an unstamped line — never a silent second law.
   // Sanity bounds are interim until the dial registry lands (the params
   // migration); the record owns the value, this guards only absurdity.
-  let pace = null, dialFallback = false;
-  try {
-    const d = Number(classDials("departure")?.pace_km_per_crossing);
-    if (Number.isFinite(d) && d > 0 && d <= 1000) pace = d; else dialFallback = true;
-  } catch { dialFallback = true; }
+  // one owner: departurePace (world-classes) — this inline copy asking
+  // "departure" was the second body of the 2026-08-21 slow-walk bug.
+  const pace = departurePace();
+  const dialFallback = pace == null;
 
   const line = formatDeparture({
     handle: p.handle, from: p.from, toward: p.toward, at,
