@@ -68,7 +68,7 @@ export function ensureMediaTable(odb) {
 // above from [a-z0-9/.-] only, so the canonical URI needs no encoding pass —
 // if the key grammar ever widens, this line is the one that must learn
 // percent-encoding first.
-async function r2Put(objectKey, bytes, mediaType) {
+export async function r2Put(objectKey, bytes, mediaType) {
   const host = `${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`;
   const amzDate = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
   const day = amzDate.slice(0, 8);
