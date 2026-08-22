@@ -3,8 +3,8 @@
 // Invoked by world.mjs (leaveMarkViaOffice) as a subprocess (on the box: wrapped
 // in `flock -w 30 town.lock` — a mark write can never race a crossing or another
 // write). Does the whole critical section in one process against the WORLD clone
-// (postmark-world), which is separate from the town clone: pull, place the mark
-// where the RESIDENT said (declared parent_id, or open ground at the root),
+// (postmark-world), which is separate from the town clone: pull, write the mark
+// on open ground at the root (the Settlement re-homes by geometry at the save),
 // select/lazy-create draft/<household>, write the mark.md into that branch's
 // tree, commit the record only, and push best-effort (a 403 is logged once and
 // reported push-pending, never thrown). Prints one JSON line.
@@ -163,21 +163,16 @@ async function main() {
         `parcel claiming is capped at ${cap} per household (ruled ${PARCEL_CAP_LAW_DATE ?? "2026-07-30"}; prior holdings stand) — new ground for this household is the founder's word, not the door's`);
   }
 
-  // decide the directory. sited/parcel place by the AUTHOR'S WORD (2026-08-22):
-  // a declared parent_id nests there, no parent_id is open ground at the root —
-  // the Settlement's own sweep re-homes by geometry at the save, never this door.
+  // decide the directory. sited/parcel drafts land on open ground at the ROOT,
+  // always (Keemin-ruled 2026-08-22): no geometry at this door, and no declared
+  // parent either — asking residents to name their parent is extra work for
+  // them and helps nothing, because the Settlement's own sweep re-homes every
+  // draft by geometry at the save regardless of where the file sits.
   // predicated/naming take the directory of the mark they describe (parent_id).
   let parentDir, parentId;
   if (p.kind === "sited" || p.kind === "parcel") {
-    parentId = p.parent_id ?? null;
-    if (parentId) {
-      const parent = byId.get(parentId);
-      if (!parent) return err(422, `no mark "${parentId}" to nest under`, "parent_id names an existing mark, <by>/<slug> — or leave it off to place on open ground");
-      if (parent.kind !== "sited" && parent.kind !== "parcel") return err(422, `"${parentId}" cannot hold a ${p.kind} mark`, "only sited/parcel marks hold others — name one, or leave parent_id off");
-      parentDir = parent._dir;
-    } else {
-      parentDir = ROOT_DIR;
-    }
+    parentId = null;
+    parentDir = ROOT_DIR;
   } else {
     parentId = p.parent_id;
     const parent = byId.get(parentId);
