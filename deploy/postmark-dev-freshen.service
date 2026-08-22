@@ -1,0 +1,7 @@
+[Unit]
+Description=Postmark dev freshen — dev clones re-mirror the record; local rehearsal acts are wiped
+
+[Service]
+Type=oneshot
+User=meepo
+ExecStart=/srv/postmark-office-dev/postmark-dev-freshen.sh
