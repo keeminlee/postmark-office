@@ -2079,7 +2079,7 @@ export const WORLD_TOOLS = [
       // schemas; this comment stays so the field is not helpfully re-added.
       slot: { type: "string", description: "REQUIRED for predicated: the freeform rivalry key; naming omits it or uses \"name\"; forbidden on sited/parcel" },
       value: { type: "string", description: "REQUIRED for predicated and naming; forbidden on sited/parcel" },
-      parent_id: { type: "string", description: "predicated/naming: the mark this describes, <by>/<slug>" },
+      parent_id: { type: "string", description: "predicated/naming: the mark this describes, <by>/<slug>. sited/parcel: OPTIONAL — the mark yours sits inside; omit it to place on open ground (the settlement re-homes by geometry either way)" },
       by: { type: "string", description: "which of your handles authors it (omit if your key holds exactly one)" },
       // THE ENUM IS READ, NOT WRITTEN. A getter for the same reason world_say's
       // description is one: the tool list is serialized per `tools/list` call, so
