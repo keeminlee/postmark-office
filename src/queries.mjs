@@ -4,6 +4,7 @@
 import { join } from "node:path";
 import { isPrincipal } from "./ops.mjs";
 import { householdOf } from "./households.mjs";
+import { profileOf } from "./profiles.mjs";
 import { HOLO_CAPTION, TEACH, postingsWithoutPots } from "./funding.mjs";
 import { isResidentHandle } from "./residency.mjs"; // the door's own admission grammar — one definition of what a handle is
 import { dialNumber } from "./world-classes.mjs"; // the doorstep's own dials, read off the record — never held here
@@ -91,6 +92,20 @@ export function resident(db, handle) {
   // view exists. The one deliberate clone-coupling in this db-shaped module;
   // every door (REST + MCP) inherits it here.
   try { const hh = householdOf(handle); if (hh) out.household = hh; } catch { /* garnish only */ }
+  // The profile bubble, read at the door as well as at the index — same reason
+  // the `_archived` filter above is applied both sides: the index on the box is
+  // already hydrated without this field, and a fix that only lands at hydration
+  // waits on the next rehydrate to take effect. Same reader both sides
+  // (profiles.mjs), so there is nothing to drift. Garnish: a checkout that is
+  // missing or unreadable leaves the indexed value standing and never 500s.
+  // Always assigned, never merely omitted: the hydrated path writes an explicit
+  // `profile: null` for a resident without one, so the door must too, or the
+  // same resident answers `null` after a rehydrate and no key at all before it.
+  if (out.profile == null) {
+    let p = null;
+    try { p = profileOf(handle); } catch { /* garnish only */ }
+    out.profile = p;
+  }
   return out;
 }
 
