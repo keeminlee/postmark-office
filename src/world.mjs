@@ -1164,10 +1164,10 @@ async function draftWrite(worldClone, exec, payload, household, subject) {
 
 // ── the write verb (credentialed) ────────────────────────────────────────────
 // world_leave_mark — leave a mark on the world. by/date are server-derived (never
-// the client's); the CLONE'S OWN placementParent decides the directory (geometry
-// is the parent), and the CLONE'S OWN mark-lint + fold gate the write (0 errors or
-// it bounces with the exact field, the write unwound). The office is the wall for
-// shape + authorization; the clone is the enforcer for geometry + schema. Runs the
+// the client's). A DRAFT COSTS NOTHING (Keemin-ruled 2026-08-22): this door's own
+// in-process checks are the only gate — no geometry placement, no lint, no fold;
+// sited/parcel drafts land on open ground at the root and the Settlement re-homes
+// and judges them at the save (a bad sketchbook quarantines alone). Runs the
 // critical section in leave-exec.mjs under the flock. Commit-local, push best-effort
 // (push-hold: TOWN_PUSH unset ⇒ commit-only is the default; a 403 is reported
 // push-pending, never thrown).
