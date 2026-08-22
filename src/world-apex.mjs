@@ -61,35 +61,38 @@ import {
 import { carrierReader, movementV2Enabled, vesselServiceFrom } from "./world-movement.mjs";
 import { carriedLegsFor, happenedBlock, latestSettlement, readCrossingLogs } from "./world-happened.mjs";
 import { WORLD_STAKE_TOOLS, callWorldStakeTool } from "./world-stake.mjs";
-// DEMO SLICE (step 5) — the crossings. Imported for the dispatch table and the
+// DEMO SLICE (step 5) — enter/exit. Imported for the dispatch table and the
 // `fields` lookup; unreachable in production because no class mark grants them.
-import { CROSSING_EXEC, CROSSING_TOOLS, enterViaOffice, exitViaOffice } from "./world-crossings.mjs";
+import { ENTER_EXIT_EXEC, ENTER_EXIT_TOOLS, enterViaOffice, exitViaOffice, ledgerPathIn } from "./world-enter-exit.mjs";
 import { callHoldTool } from "./world-hold.mjs";
 import { storeDbPath } from "./world-serve.mjs";
 import { AMBIENT_REACH_SQL, CLASS_MARK_GATE_SQL } from "./world-store.mjs";
 
 export const apexEnabled = () => process.env.WORLD_APEX === "1";
 
-// ── the crossings' office plumbing (DEMO SLICE, step 5) ─────────────────────
+// ── enter/exit's office plumbing (DEMO SLICE, step 5) ──────────────────────
 //
 // enter/exit read their law from the CLONE and their people from here. This is
 // the whole of "here": the folded world, where a resident is standing (the walk
-// ledger's own derivation, read and never written), the threshold ledger's text,
+// ledger's own derivation, read and never written), the enter-exit ledger's text,
 // and the pen. Built per call rather than held, so a clone swapped underneath a
 // running office is picked up the same way every other world read picks it up.
 // ONE GEOMETRY, ONE TRUTH — and the key is how a reader names which one.
 //
 // This took NO key and asked for worldStateRaw(null), so a signed-in resident
-// crossed thresholds in a DIFFERENT world from the one their own door serves
+// entered marks in a DIFFERENT world from the one their own door serves
 // them: every other verb reads stateForKey(repo, key), which for a household
-// with a sketchbook is a live fold of THEIR branch, while the crossing read
+// with a sketchbook is a live fold of THEIR branch, while the enter-exit read
 // main's committed save. Two components that must agree were reading two
 // sources, which is the same shape of fault as the sweep/forecast twin filters.
 //
-// Passing the key through does not choose a geometry — it makes the crossing
+// Passing the key through does not choose a geometry — it makes the act
 // consume whichever one the office is already serving that reader.
-function crossingDeps(key = null) {
-  const ledgerPath = join(WORLD_CLONE, "WORLD", "threshold-ledger.md");
+function enterExitDeps(key = null) {
+  // Whichever name this clone keeps the ledger under — the exec resolves the
+  // same way, so reader and writer can never disagree across the 2026-08-22
+  // rename's deploy window.
+  const ledgerPath = ledgerPathIn(WORLD_CLONE);
   return {
     world: async () => await worldStateRaw(key),
     ledger: async () => { try { return readFileSync(ledgerPath, "utf8"); } catch { return ""; } },
@@ -102,12 +105,12 @@ function crossingDeps(key = null) {
       const { execUnderTownLock, lockTimedOut, LOCK_BUSY } = await import("./town-lock.mjs");
       let out;
       try {
-        out = await execUnderTownLock(CROSSING_EXEC, JSON.stringify({ handle, act, at, lines, summary }),
+        out = await execUnderTownLock(ENTER_EXIT_EXEC, JSON.stringify({ handle, act, at, lines, summary }),
           { ...process.env, WORLD_CLONE });
       } catch (e) {
         if (lockTimedOut(e)) { const err = new Error(LOCK_BUSY.defect); Object.assign(err, LOCK_BUSY); throw err; }
-        const err = new Error("the crossing pass tripped");
-        Object.assign(err, { code: 500, defect: "the crossing pass tripped", hint: String(e.stderr ?? e.message ?? e).slice(0, 300) });
+        const err = new Error("the enter-exit pass tripped");
+        Object.assign(err, { code: 500, defect: "the enter-exit pass tripped", hint: String(e.stderr ?? e.message ?? e).slice(0, 300) });
         throw err;
       }
       const result = JSON.parse(out.trim().split("\n").at(-1));
@@ -237,7 +240,7 @@ const DISPATCH = {
   give: { tool: "world_hold", run: (args, key) => callHoldTool("world_hold", args, key) },
   drop: { tool: "world_hold", run: (args, key) => callHoldTool("world_hold", args, key) },
   take: { tool: "world_hold", run: (args, key) => callHoldTool("world_hold", args, key) },
-  // ── the crossings (DEMO SLICE, step 5 — jetto/enter-exit-demo) ────────────
+  // ── enter/exit (DEMO SLICE, step 5 — jetto/enter-exit-demo) ───────────────
   //
   // enter/exit join the table but NOT production: R16 keeps the pair out until
   // the law is planted at the sitting, and the gate above is what actually
@@ -245,8 +248,8 @@ const DISPATCH = {
   // this row is unreachable on a live store. It is here so the door, the lint
   // (L6 reads DISPATCHABLE) and the demo all read the same table rather than
   // three, which is the drift the dispatch table exists to prevent.
-  enter: { tool: "world_enter", run: (args, key) => enterViaOffice(WORLD_CLONE, args, key, crossingDeps(key)) },
-  exit: { tool: "world_exit", run: (args, key) => exitViaOffice(WORLD_CLONE, args, key, crossingDeps(key)) },
+  enter: { tool: "world_enter", run: (args, key) => enterViaOffice(WORLD_CLONE, args, key, enterExitDeps(key)) },
+  exit: { tool: "world_exit", run: (args, key) => exitViaOffice(WORLD_CLONE, args, key, enterExitDeps(key)) },
 };
 
 // ── seam 4 · the fields an action takes ─────────────────────────────────────
@@ -276,12 +279,12 @@ let _flatSchemas = null;
 function flatSchemas() {
   if (_flatSchemas) return _flatSchemas;
   _flatSchemas = new Map();
-  // CROSSING_TOOLS ride the SCHEMA lookup without joining the flat door's tool
+  // ENTER_EXIT_TOOLS ride the SCHEMA lookup without joining the flat door's tool
   // list (R16: the pair stays out of production until the law is planted). The
   // fields an act takes must still come from the act's own schema — the seam-4
   // discipline — and inventing a second grammar here for two verbs would be
   // exactly the drift that seam exists to close.
-  for (const tool of [...WORLD_TOOLS, ...WORLD_STAKE_TOOLS, ...CROSSING_TOOLS]) {
+  for (const tool of [...WORLD_TOOLS, ...WORLD_STAKE_TOOLS, ...ENTER_EXIT_TOOLS]) {
     const props = tool?.inputSchema?.properties ?? {};
     const required = new Set(tool?.inputSchema?.required ?? []);
     const fields = {};
@@ -301,7 +304,7 @@ let _fullProps = null;
 function fullPropsFor(toolName) {
   if (!_fullProps) {
     _fullProps = new Map();
-    for (const t of [...WORLD_TOOLS, ...WORLD_STAKE_TOOLS, ...CROSSING_TOOLS]) _fullProps.set(t.name, t?.inputSchema?.properties ?? {});
+    for (const t of [...WORLD_TOOLS, ...WORLD_STAKE_TOOLS, ...ENTER_EXIT_TOOLS]) _fullProps.set(t.name, t?.inputSchema?.properties ?? {});
   }
   return _fullProps.get(toolName) ?? null;
 }

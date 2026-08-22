@@ -37,6 +37,7 @@ import { settlements } from "./settlements.mjs";
 import { worldSummary, worldOrient, worldEyes, worldInvestigate, worldStateRaw, worldSkeletonRaw, worldMyMarks, leaveMarkViaOffice, walkViaOffice, worldNoteViaOffice, worldWalkers, worldPresent, worldConversations, worldSay, worldSayHuman, whoami, worldBlockForHandle, resetPlaceWordsCache, WORLD_CLONE } from "./world.mjs";
 import { callHoldTool } from "./world-hold.mjs"; // curl parity: /world/hold + /world/holdings (2026-08-15)
 import { APEX_TOOL, apexEnabled, dispatchToolFor, worldApex } from "./world-apex.mjs"; // stage 3: the apex verb — keyless read half + the POST act door (08-17)
+import { ledgerPathIn } from "./world-enter-exit.mjs"; // which name this clone keeps the enter-exit ledger under
 import { worldStakeViaOffice, worldUnstakeViaOffice, worldStakeRead } from "./world-stake.mjs"; // P3 draft
 import { resetStoreSnapshot, storeDbPath, storeEngaged, storeSnapshot, worldStoreHealth } from "./world-serve.mjs"; // stage 1: the serving flag's instrument panel
 import { resetGraphCache, worldGraphView, NODE_KINDS, gexfPath } from "./world-graph.mjs"; // stage E: the window
@@ -614,13 +615,13 @@ const server = createServer((req, res) => {
           .catch((e) => bounce(res, 500, "the world door tripped", String(e?.message ?? e).slice(0, 200)));
       }
       if (path === "/world/state") return worldStateRaw(key).then((r) => j(res, 200, r)).catch((e) => bounce(res, 500, "the world door tripped", String(e?.message ?? e).slice(0, 200)));
-      // GET /world/threshold-ledger — THE CROSSINGS, LIVE.
+      // GET /world/enter-exit-ledger — THE ENTER-EXIT ACTS, LIVE.
       //
-      // The site stages WORLD/threshold-ledger.md as a build artifact, pinned to
-      // whichever world sha the site was built from. Crossings land continuously,
-      // so that copy is stale the moment anybody walks through a door — a resident
-      // could enter a mark, refresh, and be told they were still outside, because
-      // the page was reading a photograph of the ledger rather than the ledger.
+      // The site stages the ledger as a build artifact, pinned to whichever world
+      // sha the site was built from. Acts land continuously, so that copy is stale
+      // the moment anybody walks through a door — a resident could enter a mark,
+      // refresh, and be told they were still outside, because the page was reading
+      // a photograph of the ledger rather than the ledger.
       //
       // This is the same move /world/state already makes for the marks: the office
       // reads the clone it actually has. Occupancy stays DERIVED IN THE READER —
@@ -628,16 +629,23 @@ const server = createServer((req, res) => {
       // because who computes the rooms is a constitutional question and this is
       // only a question of which bytes.
       //
-      // Keyless, like the walk ledger it sits beside: the crossings are as public
+      // Keyless, like the walk ledger it sits beside: the acts are as public
       // as the occupancy they derive.
-      if (path === "/world/threshold-ledger") {
+      //
+      // /world/threshold-ledger IS THE SAME DOOR under its pre-2026-08-22 name,
+      // and it stays until every deployed viewer bundle has been rebuilt. The
+      // site's page and this office ship on separate clocks, so retiring the old
+      // path the same hour the new one appears would blank the occupancy layer
+      // for exactly as long as the stale bundle lives in someone's tab. The path
+      // this reads is resolved by name on disk for the same reason.
+      if (path === "/world/enter-exit-ledger" || path === "/world/threshold-ledger") {
         try {
-          const p = join(WORLD_CLONE, "WORLD", "threshold-ledger.md");
+          const p = ledgerPathIn(WORLD_CLONE);
           const text = existsSync(p) ? readFileSync(p, "utf8") : "";
           return j(res, 200, { ledger: text, bytes: text.length,
             source: "the office's own world clone" });
         } catch (e) {
-          return bounce(res, 500, "the crossings could not be read", String(e?.message ?? e).slice(0, 200));
+          return bounce(res, 500, "the enter-exit ledger could not be read", String(e?.message ?? e).slice(0, 200));
         }
       }
       // keyless: escrow is as public as the ✦weight it produces (P3 draft)

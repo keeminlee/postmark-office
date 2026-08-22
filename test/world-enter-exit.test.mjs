@@ -1,10 +1,10 @@
-// world-crossings.test.mjs — the office's half of enter/exit(mark).
-// DEMO SLICE (step 5, jetto/enter-exit-demo). Run: node --test test/world-crossings.test.mjs
+// world-enter-exit.test.mjs — the office's half of enter/exit(mark).
+// DEMO SLICE (step 5, jetto/enter-exit-demo). Run: node --test test/world-enter-exit.test.mjs
 //
 // What is under test here is exactly the office's OWN half — who is acting, what
 // is refused before any law is read, what reaches the pen and what deliberately
 // does not. The grammar, the adjudication and the derivation belong to the world
-// clone and are tested there (postmark-world tools/thresholds.test.mjs); this
+// clone and are tested there (postmark-world tools/enter-exit.test.mjs); this
 // file leans on the real clone rather than a fake, so a drift between the two
 // repos fails here rather than in front of a resident.
 
@@ -13,15 +13,23 @@ import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
-import { enterViaOffice, exitViaOffice, occupancyViaOffice, CROSSING_TOOLS } from "../src/world-crossings.mjs";
+import { enterViaOffice, exitViaOffice, occupancyViaOffice, ENTER_EXIT_TOOLS } from "../src/world-enter-exit.mjs";
 import { DISPATCHABLE, fieldsFor } from "../src/world-apex.mjs";
 
 // The world clone this office is wired to. The suite is honest about the
-// dependency rather than mocking it away: no clone, no crossing law, and the
+// dependency rather than mocking it away: no clone, no enter-exit law, and the
 // tests that need one say so instead of passing over an invented world.
 const CLONE = process.env.WORLD_CLONE
   ?? join(process.cwd(), "..", "postmark-world"); // was the demo worktree's path; the verbs merged to main 2026-08-20
-const HAVE_CLONE = existsSync(join(CLONE, "tools", "thresholds.mjs"));
+
+// Which name this clone keeps the grammar under. The 2026-08-22 rename moved
+// tools/thresholds.mjs to tools/enter-exit.mjs, and the office may be built
+// against a clone on either side of it — the source resolves both names for
+// exactly that reason, so the suite has to resolve both or it would be testing
+// a stricter office than the one that ships.
+const GRAMMAR = ["enter-exit.mjs", "thresholds.mjs"]
+  .map((n) => join(CLONE, "tools", n)).find((p) => existsSync(p)) ?? null;
+const HAVE_CLONE = !!GRAMMAR;
 
 const key = (...handles) => ({ handles: new Set(handles) });
 const SHIP = "the-town/the-post-office";
@@ -33,7 +41,8 @@ const WHEELHOUSE = "the-town/the-wheelhouse";
 async function officeWith({ at = 200, standing = { x: -30, y: 40 }, ledger = "" } = {}) {
   const { readFileSync } = await import("node:fs");
   const worldState = JSON.parse(readFileSync(join(CLONE, "WORLD", "world-state.json"), "utf8"));
-  const thresholds = await import(`file:///${join(CLONE, "tools", "thresholds.mjs").replace(/\\/g, "/")}`);
+  const mod = await import(`file:///${String(GRAMMAR).replace(/\\/g, "/")}`);
+  const law = { ...mod, parseEnterExitLedger: mod.parseEnterExitLedger ?? mod.parseThresholdLedger };
   let text = ledger;
   const written = [];
   return {
@@ -47,8 +56,8 @@ async function officeWith({ at = 200, standing = { x: -30, y: 40 }, ledger = "" 
       record: async ({ lines, handle }) => {
         written.push(...lines);
         text += lines.join("\n") + "\n";
-        const acts = thresholds.parseThresholdLedger(text).acts;
-        return { lines, within: thresholds.occupancyAt(acts, at).get(handle) ?? [], commit: "deadbeef", pushed: false };
+        const acts = law.parseEnterExitLedger(text).acts;
+        return { lines, within: law.occupancyAt(acts, at).get(handle) ?? [], commit: "deadbeef", pushed: false };
       },
     },
   };
@@ -85,16 +94,16 @@ test("exit with nothing to step out of refuses with a reason", async () => {
     (e) => e.code === 422 && /not within anything/.test(e.defect));
 });
 
-test("an office whose clone carries no crossing law says so by name", async () => {
+test("an office whose clone carries no enter-exit law says so by name", async () => {
   const o = await officeWith();
   await assert.rejects(
     () => enterViaOffice(join(CLONE, "no-such-clone"), { mark: SHIP }, key("postmaster"), o.deps),
-    (e) => e.code === 501 && /carries no crossing law/.test(e.defect));
+    (e) => e.code === 501 && /carries no enter-exit law/.test(e.defect));
 });
 
 // ── the acts, against the real clone ────────────────────────────────────────
 
-test("a door with terms shows them and records NOTHING", { skip: "awaits entry-law instances on main — the demo seeded aboard-terms on the ship; planting them for real is a founder content act, not the merge's (mechanism covered by tools/thresholds.test.mjs world-side)" }, async () => {
+test("a door with terms shows them and records NOTHING", { skip: "awaits entry-law instances on main — the demo seeded aboard-terms on the ship; planting them for real is a founder content act, not the merge's (mechanism covered by tools/enter-exit.test.mjs world-side)" }, async () => {
   const o = await officeWith();
   const answer = await enterViaOffice(CLONE, { mark: SHIP, handle: "postmaster" }, key("postmaster"), o.deps);
   assert.equal(answer.awaiting.mark, SHIP);
@@ -156,6 +165,6 @@ test("the dispatch table holds the pair, and the fields come from their own sche
   assert.ok(fieldsFor("enter").mark, "enter takes a mark");
   assert.ok(fieldsFor("enter").accept, "and the explicit word");
   assert.equal(fieldsFor("enter").handle, undefined, "minus the standpoint, exactly as every other act");
-  assert.equal(CROSSING_TOOLS.every((t) => t.inputSchema.additionalProperties === false), true,
+  assert.equal(ENTER_EXIT_TOOLS.every((t) => t.inputSchema.additionalProperties === false), true,
     "closed schemas: an unknown field bounces by name");
 });
