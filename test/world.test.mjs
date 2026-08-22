@@ -32,6 +32,8 @@ const visitor = { handles: new Set() };
 
 // ── 3a: which resident a bare call stands as ─────────────────────────────────
 
+import { RESIDENT_INSTANTIABLE, residentMayInstantiate } from "../src/world-classes.mjs";
+
 test("chooseStandpoint: coords are the spectator shape — nobody's eyes", () => {
   assert.deepEqual(chooseStandpoint({ x: 5, y: -6 }, two),
     { stance: "spectator", coords: { x: 5, y: -6, from: "coords" } });
@@ -194,6 +196,17 @@ test("bounty fields without class bounce — the grammar belongs to a classed ma
 
 test("unknown classes bounce — the law knows only what the record declares", async () => {
   await bounced({ ...validBounty, class: "quest" }, 'unknown class "quest"');
+});
+
+test('town-only classes: "residents may instantiate only [bounty, thing, note] today" (#1797)', () => {
+  // The law function the door consumes — testable even where the class store
+  // is absent and the roster stands on its floor (this env), which is exactly
+  // where the end-to-end bounce cannot be exercised. The shadow's full suite
+  // covers the live-tree half.
+  assert.deepEqual([...RESIDENT_INSTANTIABLE], ["bounty", "thing", "note"]);
+  assert.ok(residentMayInstantiate("bounty") && residentMayInstantiate("thing") && residentMayInstantiate("note"));
+  assert.ok(!residentMayInstantiate("home"), '"home" is town-only — the 2026-08-22 shadow catch');
+  assert.ok(!residentMayInstantiate("parcel") && !residentMayInstantiate("resident"));
 });
 
 // ── the object primitive at the door (2026-08-14) ───────────────────────────

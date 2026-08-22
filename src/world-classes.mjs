@@ -44,6 +44,14 @@ import { storeDbPath } from "./world-serve.mjs";
 // store is also unreadable, and the bounce says which of the two happened.
 export const ROSTER_FLOOR = Object.freeze(["bounty", "thing"]);
 
+// WHO may instantiate (#1797): the roster says a class EXISTS; this says a
+// RESIDENT may cite it. "This set grows by ruling, never by drift"
+// (board-grammar.test.mjs, the live-tree law). Found 2026-08-22: a resident's
+// class: "home" sailed through the exists-check and the settlement shadow
+// caught the crossing as a would-refuse.
+export const RESIDENT_INSTANTIABLE = Object.freeze(["bounty", "thing", "note"]);
+export const residentMayInstantiate = (klass) => RESIDENT_INSTANTIABLE.includes(String(klass));
+
 const ROSTER_SQL = `SELECT DISTINCT json_extract(props, '$.class') AS class
                       FROM nodes WHERE ${CLASS_ROSTER_GATE_SQL}`;
 
@@ -138,6 +146,56 @@ export function departurePace({ worldDb = null } = {}) {
   return Number.isFinite(d) && d > 0 && d <= 1000 ? d : null;
 }
 
+// ── WHERE A DIAL LIVES: the predicate children first, the frontmatter second ──
+//
+// classes.md § the seam: "Every dial is a predicate (the founder's convention
+// word, same review): a number the law carries rides a predicate child, never
+// a frontmatter JSON ... the wider migration of older dials is incremental,
+// one class at a time." So the record holds dials in TWO shapes right now, and
+// this reader spans the migration rather than picking a side:
+//
+//   predicate children   a `describes` edge from the class node to a
+//                        `kind: predicated` mark whose `slot` IS the dial name
+//                        and whose `value` is the number (the-rho-cap's
+//                        rho/rho-ceiling pair is the shape; say and doorstep
+//                        follow it since 2026-08-22)
+//   frontmatter dials    the older `dials: {...}` object on the class mark
+//                        (resident's pace_km_per_crossing, still live)
+//
+// One reader, one merge, predicates winning — because a class mid-migration
+// that carried both would otherwise answer differently depending on which half
+// the caller happened to ask, and a dial with two answers is worse than a dial
+// with none. A class that has migrated empties its `dials: {}` accordingly, so
+// in practice the two sets never overlap; the precedence is stated so that if
+// they ever do, the answer is the one the convention calls law.
+//
+// Values arrive as TEXT (a predicated mark's `value:` is a string), so numeric
+// dials are coerced at the reading edge — `dialNumber` below is that edge, and
+// nothing downstream should re-parse.
+// The roster gate again, spelled against the `c` alias. Written out rather than
+// derived from CLASS_ROSTER_GATE_SQL by string surgery: that string carries
+// WORKS_PATH_SQL inside it, and a blind s/props/c.props/ would rewrite the path
+// clause too — a transform over text nobody read is how the wrong query looks
+// exactly like the right one. The four clauses are the same four; if that gate
+// grows a fifth, this grows it too, and CLASS_GATE_PARITY in the test file is
+// what makes the omission fail out loud instead of narrowing the read.
+const CLASS_GATE_C = `
+     c.kind = 'mark'
+     AND c.by   = 'the-town'
+     AND c.tier = 'constitution'
+     AND json_extract(c.props, '$.class') IS NOT NULL
+     AND json_extract(c.props, '$.path') LIKE '%/the-keeping-works/%'`;
+
+const DIAL_PREDICATE_SQL = `
+  SELECT json_extract(p.props, '$.slot') AS slot,
+         json_extract(p.props, '$.value') AS value
+    FROM nodes AS c
+    JOIN edges AS e ON e.src = c.id AND e.type = 'describes'
+    JOIN nodes AS p ON p.id = e.dst
+   WHERE ${CLASS_GATE_C}
+     AND json_extract(c.props, '$.class') = ?
+     AND json_extract(p.props, '$.slot') IS NOT NULL`;
+
 export function classDials(name, { worldDb = null } = {}) {
   const path = worldDb ?? storeDbPath();
   try {
@@ -150,4 +208,50 @@ export function classDials(name, { worldDb = null } = {}) {
     const d = typeof row.dials === "string" ? JSON.parse(row.dials) : row.dials;
     return (d && typeof d === "object" && !Array.isArray(d)) ? d : {};
   } catch { return {}; }
+}
+
+/**
+ * A class's predicate children, as `slot -> value`.
+ *
+ * NOT the same question as `classDials`, and deliberately a second function.
+ * "Every dial is a predicate" does not say every predicate is a dial: the
+ * resident's `standing` clause, the doorstep's `psa-fold` clause and say's
+ * `clocks` clause are law, not knobs. Folding them into a dials map would let
+ * a sentence answer to a number's name — so this returns predicates AS
+ * predicates, and `dialNumber` is the one place a caller asks for a named slot
+ * and gets something it may do arithmetic on.
+ *
+ * Values are TEXT: a predicated mark's `value:` is a string in the record.
+ */
+export function classPredicates(name, { worldDb = null } = {}) {
+  const path = worldDb ?? storeDbPath();
+  try {
+    const db = new DatabaseSync(path, { readOnly: true });
+    const out = {};
+    for (const r of db.prepare(DIAL_PREDICATE_SQL).all(String(name))) {
+      if (r?.slot != null) out[String(r.slot)] = r.value;
+    }
+    db.close();
+    return out;
+  } catch { return {}; }
+}
+
+/**
+ * One dial as a number, with the floor the caller must supply beside it.
+ *
+ * The floor is REQUIRED and is never silently right: a caller that cannot read
+ * the record gets its own constant back, and `read` says which happened. That
+ * is the departure→depart lesson in one return value — the slow-walk bug was
+ * not a wrong number, it was a wrong number that looked exactly like a right
+ * one, because the fallback was indistinguishable from the read.
+ */
+export function dialNumber(className, slot, fallback, { worldDb = null, min = null, max = null } = {}) {
+  // Predicate children first, frontmatter second — the migration's precedence,
+  // stated once here so no caller has to know the record is mid-move.
+  const fromPredicate = classPredicates(className, { worldDb })?.[slot];
+  const raw = fromPredicate !== undefined ? fromPredicate : classDials(className, { worldDb })?.[slot];
+  const n = Number(raw);
+  const ok = raw !== undefined && raw !== null && String(raw).trim() !== "" && Number.isFinite(n)
+    && (min === null || n >= min) && (max === null || n <= max);
+  return { value: ok ? n : fallback, read: ok, source: ok ? "record" : "fallback" };
 }
