@@ -485,8 +485,31 @@ export function foldedStateAtRef(repo, ref, { stakes = null } = {}) {
   }
 }
 
+// THE COLD-FOLD STAMPEDE (outage, 2026-08-22 — this is a tourniquet, not a cure).
+//
+// A drafting resident's view needs their unpublished marks, so the miss path
+// re-folds the whole world at their branch. Measured on the live world that day:
+// ~34 SECONDS, and it runs under execFileSync — synchronous — so Node's single
+// event loop is frozen for every other resident for its whole duration. One
+// drafter's cold read takes the town down.
+//
+// The memo hides this while it is warm. It is warm exactly until the process
+// restarts or settled stakes move, and then all 27 branches go cold at once:
+// each queued read spawns its own 34s block, serially, and the accept queue
+// climbs past 200 while every request times out. A restart does not clear it —
+// a restart CAUSES it.
+//
+// WORLD_DRAFT_FOLD=0 serves a drafter the PUBLISHED world instead of folding.
+// The cost is honest and visible: until their next crossing they do not see
+// their own unpublished marks in the world view. Everything else — reading,
+// walking, writing, mail — is untouched. A degraded world beats a stopped one.
+// Set WORLD_DRAFT_FOLD=1 to restore the old behaviour the moment the real fix
+// lands (fold off the request path: serve published immediately, populate the
+// memo in the background, upgrade the view when it is ready).
+const draftFoldEnabled = () => process.env.WORLD_DRAFT_FOLD !== "0";
+
 export function stateForKey(repo, key) {
-  const ref = draftRefForKey(repo, key);
+  const ref = draftFoldEnabled() ? draftRefForKey(repo, key) : null;
   if (ref) return {
     ref,
     sha: git(repo, ["rev-parse", `${ref}^{commit}`]).trim(),
