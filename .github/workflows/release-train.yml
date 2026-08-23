@@ -1,0 +1,44 @@
+name: Release train (approved merge cuts the tag)
+
+# THE WEEKLY TRAIN (Keemin, 2026-08-23 pre-dawn) — the office's half of the
+# model the site's deploy.yml carries in full: feature branches merge into
+# train/2026-wNN; the dev office runs the train branch; ~weekly the train PRs
+# into main and the founder's Approve is the merge word. This workflow cuts
+# release/2026-wNN[.n] at the approved merge commit. The office has no
+# auto-deploy lane by design — prod deploy stays a hand-carried copy FROM THE
+# TAG with receipts (deploy/DEPLOY.md), because the box's office is a file
+# copy, not a checkout. A main push with no train name in its subject cuts
+# nothing.
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  cut-release-tag:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Derive and cut the tag
+        run: |
+          SUBJECT=$(git log -1 --format=%s)
+          WEEK=$(printf '%s' "$SUBJECT" | grep -oE 'train/2026-w[0-9]+' | head -1 | sed 's|train/||') || true
+          if [ -z "$WEEK" ]; then
+            echo "no train name in merge subject — no tag cut"
+            exit 0
+          fi
+          BASE="release/$WEEK"
+          TAG="$BASE"
+          N=0
+          while git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; do
+            N=$((N+1)); TAG="$BASE.$N"
+          done
+          git config user.name "postmark-release-train"
+          git config user.email "release-train@postmark.town"
+          git tag -a "$TAG" -m "cut by the release train from: $SUBJECT"
+          git push origin "refs/tags/$TAG"
+          echo "cut $TAG at $(git rev-parse --short HEAD)"

@@ -10,6 +10,18 @@ repo ~every 30 min for the site extractor. The office rides that rhythm.
 > only the new code produces (a restart alone proves nothing). Discovered
 > mid-deploy shipping POST /keys; this note is the backport.
 
+## The weekly train (Keemin-directed 2026-08-23)
+
+Feature branches merge into `train/2026-wNN`; the DEV office runs the train
+branch (deploy dev src from the train tip). ~Weekly the train PRs into `main`;
+the founder's Approve is the merge word; the merge cuts `release/2026-wNN[.n]`
+(`.github/workflows/release-train.yml`). PROD deploys are hand-carried FROM
+THE TAG (scp changed src + restart + a probe only the new code passes — the
+live-truth note below), never from main tip or a feature branch. Branches are
+`train/*`, tags are `release/*` — the namespaces never collide. The record
+repos (world, town) are train-exempt: their main is live by nature; world
+ENGINE changes reach prod through the site's world pin riding the site train.
+
 ## One-time setup
 
 ```sh
