@@ -38,7 +38,11 @@ const DELISTED = new Set([
   "world_say", "world_walk", "world_leave_mark", "world_withdraw_mark",
   "world_stake", "world_unstake", "world_hold",
   "world_orient", "world_open_your_eyes",
-  "world_investigate", "world_my_marks", "world_walkers",
+  // world_investigate UN-DELISTED 2026-08-23: the slim hides verbs the apex
+  // serves, and the apex has no investigate — since with_image landed, the
+  // delist was hiding a capability with NO other door (the L6 spirit: law
+  // with no room). Re-delist the day the apex grows an equivalent.
+  "world_my_marks", "world_walkers",
   "world_stake_read", "world_holdings",
 ]);
 
