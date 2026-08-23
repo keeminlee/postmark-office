@@ -605,9 +605,15 @@ test("dispatch: an ambient action is never unaffordable, so it never reaches the
 
 test("dispatch: the verb's own refusal stays a refusal — with the terms still shown", async () => {
   on();
-  // a spectator standing where `say` is afforded: the affordance is real, the
-  // body is not, and world_say's own bounce is what the caller gets back
-  const r = await worldApex({ ...A, do: "say" }, null);
+  // A keyless caller where `say` is afforded: the affordance is real, the body
+  // is not, and world_say's own bounce is what the caller gets back.
+  //
+  // The coordinates this case used to carry were dropped in the walk round —
+  // the apex went embodied-only and a do: with top-level x/y is now refused
+  // before it dispatches (its own falsifier is below). The PROPERTY under test
+  // is untouched and is the point: a verb's own refusal survives the apex as a
+  // refusal, with the terms it was shown at the door still attached.
+  const r = await worldApex({ do: "say" }, null);
   assert.equal(r.error, "bounce");
   assert.match(r.defect, /a voice comes from a body/);
   assert.equal(r.did, "say");
