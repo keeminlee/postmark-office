@@ -23,7 +23,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { isPrincipal } from "./ops.mjs";
 import { execUnderTownLock, lockTimedOut, LOCK_BUSY } from "./town-lock.mjs";
 import {
-  draftDeltaForKey,
+  // draftDeltaForKey is reached through world-journal's draftsForKey, which unions it with the live log (POS-5 slice 1)
+  draftBranch,
   draftRefForKey,
   freshestMainRef,
   mainRef,
@@ -31,7 +32,9 @@ import {
   publishedSkeleton,
   publishedState,
   readAtRef,
+  readJsonAtRef,
 } from "./world-branches.mjs";
+import { ACTION_AMEND, ACTION_LEAVE, ACTION_WITHDRAW, CLASS_MARK, anchorAt, appendJournal, draftsForKey, liveChildrenOf, liveMarks, pathFor, pinWitnesses, singleLogEnabled } from "./world-journal.mjs"; // POS-5 slice 1: the one append-only log
 import { WORLD_STAKE_TOOLS, callWorldStakeTool, worldPortfolioStakeSlice } from "./world-stake.mjs"; // P3 draft, append-shaped
 import { classNames, classRoster, classDials, departurePace, RESIDENT_INSTANTIABLE, residentMayInstantiate } from "./world-classes.mjs"; // which classes exist — read from the record, never held
 import { HOLD_TOOLS, callHoldTool } from "./world-hold.mjs"; // the object primitive: who holds what
@@ -1002,9 +1005,9 @@ export async function worldInvestigate(args = {}, key = null) {
 // to every caller, which is what makes them cacheable and what §1c settled.
 export async function worldStateRaw() { return (await world())._raw.worldState; }
 export async function worldSkeletonRaw() { return (await world())._raw.skeleton; }
-export function worldMyDrafts(key = null) { return draftDeltaForKey(WORLD_CLONE, key); }
+export function worldMyDrafts(key = null) { return draftsForKey(WORLD_CLONE, key); }
 export async function worldMyMarks(key = null) {
-  const delta = draftDeltaForKey(WORLD_CLONE, key);
+  const delta = draftsForKey(WORLD_CLONE, key);
   if (delta?.error) return delta;
 
   const main = publishedState(WORLD_CLONE).state;
@@ -1171,6 +1174,227 @@ async function draftWrite(worldClone, exec, payload, household, subject) {
   });
 }
 
+// ── THE SINGLE LOG's write lane (POS-5 slice 1, WORLD_SINGLE_LOG=1) ─────────
+//
+// The same door, the same refusals, the same answer shape — a different pen.
+// `draftWrite` above leases a worktree, takes two locks, checks out a branch,
+// writes a file, commits and pushes. Everything below replaces that with one
+// INSERT, and the git ceremony it retires is the one §2 names: "the pool, the
+// leases, the per-write git checkout — deleted; their only job was letting git
+// absorb writes it never needed before the save."
+//
+// WHAT IS NOT RETIRED: main's canon machinery, the settlement chain, the
+// sketchbook branches. Slice 2's drain writes drafts down to them at the save;
+// they stop being the WRITE MEDIUM and become the drain's artifact, which is
+// exactly Keemin's ontology ruling (§7).
+//
+// THE GUARDS MOVE WITH THE PEN. `leave-exec` reads the checked-out tree with
+// `loadMarks` to answer four questions — does this slug already exist, has this
+// household hit the parcel cap, does the named parent exist, is this parcel
+// claim inside somebody's home. Under the flag there is no checked-out tree to
+// read, so each becomes a lookup over the two sources that compose the world:
+// published main (`publishedState`, one cached JSON read at a ref) and the
+// household's own live layer (`liveMarks`, one indexed SELECT). That is the
+// three-source model from §0 with source 2 folded in at the save.
+
+/** Published canon as the guards want it, plus the ids the replay needs to tell an addition from a modification. */
+function canonForGuards() {
+  const state = publishedState(WORLD_CLONE).state ?? {};
+  const marks = state.marks ?? [];
+  return { marks, byId: new Map(marks.map((m) => [m.id, m])), ids: new Set(marks.map((m) => m.id)) };
+}
+
+/**
+ * WHERE THE ACTOR STOOD, AND WHO SAW — the-witnessed-line, at the write instant.
+ *
+ * Never throws and never refuses the write. A mark that could be lost because
+ * the office could not work out who was watching would make the witness law more
+ * expensive than the record it protects; the line says `source: "unread"` with
+ * the reason instead, which is a fact a replay can act on and an empty list is
+ * not.
+ */
+async function witnessStamp(handle) {
+  const unread = (reason) => ({ at: { anchor: null, dx: null, dy: null, unplaced: true }, witnesses: { source: "unread", reason, list: [] } });
+  try {
+    const w = await world();
+    const { verbs } = await mods();
+    const marks = w.marks ?? [];
+    const centreOf = (id) => marks.find((m) => m.id === id)?.at ?? null;
+    const chainAt = (p) => verbs.containmentChain(p, marks);
+
+    const standing = await residentStandpoint(handle, w);
+    if (!standing?.placed) return { at: { anchor: null, dx: null, dy: null, unplaced: true }, witnesses: { source: "presence", list: [] } };
+    const here = { x: standing.x, y: standing.y };
+    const at = anchorAt(here, { chain: chainAt(here), centreOf });
+
+    // `presentNear` is null when the presence layer is switched off at this
+    // office, and `{unavailable}` when it tripped. Both are "could not see",
+    // and neither is "nobody was there".
+    const seen = await presentNear(here, { exclude: [handle], repo: WORLD_CLONE });
+    const witnesses = seen == null ? pinWitnesses({ unread: "presence-off" })
+      : seen.unavailable ? pinWitnesses({ unread: seen.unavailable })
+      : pinWitnesses({ residents: seen.residents ?? [], centreOf, chainAt });
+    return { at, witnesses };
+  } catch (e) {
+    return unread(`witness-read-threw: ${String(e?.message ?? e).slice(0, 120)}`);
+  }
+}
+
+/** The clone's own dials, read at the engine ref rather than out of whatever branch the tree is parked on. */
+async function foldConstants() {
+  try { return await engineImport("marks-fold.mjs"); } catch { return {}; }
+}
+
+/**
+ * leave-mark / amend, as ONE INSERT.
+ *
+ * `clean` is exactly the payload `leaveMarkViaOffice` builds for the exec, so
+ * the two lanes cannot drift on what a declaration contains. The answer carries
+ * the same fields the exec answers with — `branch` and `commit` become `seq`,
+ * because under the flag the receipt for a write is its line in the log.
+ */
+async function journalLeaveMark(clean, { crossing = currentCrossing() } = {}) {
+  const bounce = (code, defect, hint) => { const e = new Error(defect); Object.assign(e, { code, defect, hint }); return e; };
+  const id = `${clean.by}/${clean.slug}`;
+  const canon = canonForGuards();
+  const db = openDynamic();
+  try {
+    const live = liveMarks(db, { household: clean.household });
+    const liveById = new Map(live.map((m) => [m.id, m]));
+    const priorLive = liveById.get(id) ?? null;
+    const priorCanon = canon.byId.get(id) ?? null;
+    const exists = Boolean(priorLive || priorCanon);
+    const amending = exists && clean.amend === true;
+
+    // ── slug collision, as a lookup ──────────────────────────────────────────
+    if (exists && !amending)
+      throw bounce(409, `you already have a mark "${clean.slug}"`,
+        "a slug is unique per author — pass amend: true to supersede it (a newer declaration on your own node, edit-law's revision family), or pick another slug");
+    if (clean.amend === true && !exists)
+      throw bounce(404, `no mark "${id}" to amend`, "ids are <by>/<slug> — leave it first, or drop amend: true");
+
+    // ── the parcel dial and the claim cap, as lookups ────────────────────────
+    if (clean.kind === "parcel") {
+      const { PARCEL_CLAIM_CAP, PARCEL_CAP_LAW_DATE, PARCEL_EXTENT_M, marksContain } = await foldConstants();
+      const main = mainRef(WORLD_CLONE);
+      const side = PARCEL_EXTENT_M ?? 25;
+      clean.extent = { w: side, h: side };   // the town's dial, never the claimant's
+      const cap = PARCEL_CLAIM_CAP ?? 3;
+      let registry = null;
+      try { registry = readJsonAtRef(WORLD_CLONE, main, "WORLD/households.json")?.households ?? null; } catch { /* no registry → solo grain */ }
+      const credOf = (h) => registry?.[h] ?? `solo:${h}`;
+      const cred = credOf(clean.by);
+      // Canon plus the live layer, deduped by id: a household that claimed two
+      // parcels since the last save is at two, and a cap that could not see the
+      // journal would let them claim past it until the drain.
+      const held = new Map([...canon.marks, ...live].filter((m) => m.kind === "parcel").map((m) => [m.id, m]));
+      const mine = [...held.values()].filter((m) => credOf(m.by ?? m.household) === cred && m.id !== id).length;
+      if (mine >= cap)
+        throw bounce(403, `your household already holds ${mine} parcel${mine === 1 ? "" : "s"}`,
+          `parcel claiming is capped at ${cap} per household (ruled ${PARCEL_CAP_LAW_DATE ?? "2026-07-30"}; prior holdings stand) — new ground for this household is the founder's word, not the door's`);
+
+      // ── the sovereignty guard, still standing for GROUND ─────────────────
+      // Repealed for sited marks 2026-08-17 (the consent law supersedes it);
+      // kept for parcels, because claiming ground inside another's walls is a
+      // land claim and the return machinery is built for marks, not ground.
+      let manifest = null;
+      try { manifest = readJsonAtRef(WORLD_CLONE, main, "seeding/manifest.json"); } catch { /* no manifest → no homes to protect */ }
+      if (typeof marksContain === "function") for (const h of manifest?.homes ?? []) {
+        if (h.household === clean.by) continue;
+        const home = canon.byId.get(`${h.household}/${h.home_id}`);
+        if (home?.at && marksContain(home, { at: clean.at, extent: clean.extent, points: clean.points }))
+          throw bounce(403, `that spot is inside ${h.household}'s home`, "leave a mark near a home if you like, but not within someone else's walls — pick a spot outside them");
+      }
+    }
+
+    // ── the parent, as a lookup ──────────────────────────────────────────────
+    if (clean.kind !== "sited" && clean.kind !== "parcel") {
+      const parent = liveById.get(clean.parent_id) ?? canon.byId.get(clean.parent_id);
+      if (!parent) throw bounce(422, `no mark "${clean.parent_id}" to describe`, "predicated/naming marks nest under the mark they describe — pass its id as parent_id");
+      if (parent.kind !== "sited" && parent.kind !== "parcel") throw bounce(422, `"${clean.parent_id}" cannot hold a description`, "only sited/parcel marks carry predicated/naming children");
+    }
+
+    // NO FRAME CONVERSION HERE, deliberately. The git path converts world
+    // coordinates to the parent's frame because the FILE speaks the tree's
+    // frame (SCHEMA v3). The journal is not a file: a declaration is stored in
+    // world coordinates as the resident spoke them, and the drain does the
+    // conversion once, when it decides what path the record lands at. Doing it
+    // twice is how the two eras would disagree about where a mark is.
+    const { amend, household, ...declaration } = clean;
+    const { at, witnesses } = await witnessStamp(clean.by);
+    const row = appendJournal(db, {
+      crossing, actor: clean.by, household,
+      action: amending ? ACTION_AMEND : ACTION_LEAVE,
+      object: id, at, witnesses, cls: CLASS_MARK,
+      payload: declaration,
+      effect: amending
+        ? "the prior declaration is superseded — every version stays in the log; canon shows the latest at the next crossing"
+        : "a draft stands in the live layer; it enters canon at the next crossing that ratifies it",
+    });
+
+    // THE ANSWER SHAPE HOLDS ACROSS THE FLAG, for the reason the §1c contract
+    // does: a client that learns the office changed pens has been told about
+    // plumbing it cannot act on. `dir` and `branch` stay, and they stay TRUE —
+    // they name where the drain will land this record and which sketchbook it
+    // will land in, which is what they always meant (the settlement re-homes
+    // every draft by geometry at the save, so the git path's `dir` was never
+    // more than a declaration of intent either). `commit` is ABSENT rather than
+    // null, because nothing was committed and a null commit invites a reader to
+    // believe one failed.
+    const willLandAt = pathFor({ ...declaration, id }, {
+      parentPathOf: (pid) => {
+        const p = liveById.get(pid) ?? canon.byId.get(pid);
+        return p ? pathFor({ ...p, id: pid }).replace(/\/mark\.md$/, "") : null;
+      },
+    });
+    return {
+      id, kind: clean.kind, parent: clean.parent_id ?? null,
+      at: clean.at ?? null, extent: clean.extent ?? null,
+      dir: String(willLandAt).replace(/^WORLD\/marks\//, "").replace(/\/mark\.md$/, ""),
+      branch: draftBranch(household),
+      seq: row.seq, crossing: row.crossing, log: "journal",
+      witnesses: row.witnesses ? JSON.parse(row.witnesses) : null,
+      ...(amending ? { amended: true, moved: false,
+        superseded: "the prior declaration — every version stays in the log; canon shows the latest at the next crossing" } : {}),
+    };
+  } finally { try { db.close(); } catch { /* already gone */ } }
+}
+
+/** withdraw, as one later entry. The terminal supersession (edit-law § withdraw) — nothing is deleted, a row says it ended. */
+async function journalWithdraw({ by, slug, household }, { crossing = currentCrossing() } = {}) {
+  const bounce = (code, defect, hint) => { const e = new Error(defect); Object.assign(e, { code, defect, hint }); return e; };
+  const id = `${by}/${slug}`;
+  const canon = canonForGuards();
+  const db = openDynamic();
+  try {
+    const live = liveMarks(db, { household });
+    const wasPublished = canon.ids.has(id);
+    if (!live.some((m) => m.id === id) && !wasPublished)
+      throw bounce(404, `no mark "${id}" in your world`, "ids are <by>/<slug> — you can withdraw your drafts and your published marks; check world_my_marks");
+
+    // The store's answer to `holdsChildren`: a withdrawal may not strand what
+    // stands on it. Canon's children count too — a published description of
+    // this mark does not stop being stranded because it is not in the journal.
+    const kids = [
+      ...liveChildrenOf(db, id, { household }).map((m) => m.id),
+      ...canon.marks.filter((m) => m.parent_id === id).map((m) => m.id),
+    ];
+    if (kids.length) throw bounce(409, `"${id}" still holds marks inside it`,
+      "withdraw or move the children first — a withdrawal may not strand what stands on it");
+
+    const { at, witnesses } = await witnessStamp(by);
+    const row = appendJournal(db, {
+      crossing, actor: by, household, action: ACTION_WITHDRAW,
+      object: id, at, witnesses, cls: CLASS_MARK,
+      payload: { by, slug, was_published: wasPublished },
+      effect: wasPublished
+        ? "your sketchbook lets it go now; canon lets it go at the next crossing — the settlement unpublishes it, and its whole life stays in the log"
+        : "the draft is gone — it never crossed, so there is nothing to unpublish; its life stays in the log",
+    });
+    return { id, withdrawn: true, was_published: wasPublished, effect: row.effect, seq: row.seq, crossing: row.crossing, log: "journal" };
+  } finally { try { db.close(); } catch { /* already gone */ } }
+}
+
 // ── the write verb (credentialed) ────────────────────────────────────────────
 // world_leave_mark — leave a mark on the world. by/date are server-derived (never
 // the client's). A DRAFT COSTS NOTHING (Keemin-ruled 2026-08-22): this door's own
@@ -1319,13 +1543,21 @@ export async function leaveMarkViaOffice(worldClone, payload = {}, key = null) {
     ...classFields, ...(image !== undefined ? { image } : {}), ...(payload.amend === true ? { amend: true } : {}) };
   const exec = join(HERE, "leave-exec.mjs");
   let result;
-  try {
-    result = await draftWrite(worldClone, exec, JSON.stringify(clean), household, `${by}/${slug}`);
-  } catch (e) {
-    if (lockTimedOut(e)) throw bounce(LOCK_BUSY.code, LOCK_BUSY.defect, LOCK_BUSY.hint);
-    throw bounce(500, "the mark pass tripped", String(e.stderr ?? e.message ?? e).slice(0, 300));
+  if (singleLogEnabled()) {
+    // POS-5 slice 1. The journal door throws its bounces directly (they are the
+    // same grammar the exec answers with, one process earlier), so only the
+    // machinery tripping lands in the catch.
+    try { result = await journalLeaveMark(clean); }
+    catch (e) { if (e?.code) throw e; throw bounce(500, "the mark pass tripped", String(e?.message ?? e).slice(0, 300)); }
+  } else {
+    try {
+      result = await draftWrite(worldClone, exec, JSON.stringify(clean), household, `${by}/${slug}`);
+    } catch (e) {
+      if (lockTimedOut(e)) throw bounce(LOCK_BUSY.code, LOCK_BUSY.defect, LOCK_BUSY.hint);
+      throw bounce(500, "the mark pass tripped", String(e.stderr ?? e.message ?? e).slice(0, 300));
+    }
+    if (result.error) throw bounce(result.error.code ?? 500, result.error.defect, result.error.hint);
   }
-  if (result.error) throw bounce(result.error.code ?? 500, result.error.defect, result.error.hint);
   await discloseOverhang(result, by, key);
   await disclosePublishing(result, by);
 
@@ -1381,6 +1613,10 @@ export async function withdrawMarkViaOffice(worldClone, args = {}, key = null) {
 
   const exec = join(HERE, "leave-exec.mjs");
   let result;
+  if (singleLogEnabled()) {
+    try { return await journalWithdraw({ by, slug, household }); }
+    catch (e) { if (e?.code) throw e; throw bounce(500, "the withdrawal tripped", String(e?.message ?? e).slice(0, 300)); }
+  }
   try {
     result = await draftWrite(worldClone, exec, JSON.stringify({ op: "withdraw", by, slug, household }), household, mark);
   } catch (e) {

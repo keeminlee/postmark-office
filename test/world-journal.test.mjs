@@ -1,0 +1,662 @@
+// world-journal.test.mjs — THE SINGLE LOG's falsifiers (POS-5 slice 1).
+//
+// Every test below quotes the law it asserts, verbatim from the world record,
+// because a brief is lossy and the gated doc is the law. The three marks:
+//
+//   the-witnessed-line  WORLD/marks/let-there-be-light/the-town-centre/
+//                       the-keeping-works/postmark-rules/the-record-does-not-lie/
+//                       the-witnessed-line  (tier: constitution, 2026-08-22)
+//   the-anchor          .../logos/the-position/the-anchor  (constitution)
+//   the-threshold       .../logos/the-entry/the-threshold  (constitution)
+//   the-atomic-drain    .../logos/the-save/the-atomic-drain  (constitution)
+//
+// the-witnessed-line and the-threshold were planted as DELIBERATE REDS for this
+// cutover. This slice flips the first and builds the corridor the second needs;
+// what it does NOT do is named out loud in § the-threshold below, rather than
+// left for a reader to discover by the absence of a test.
+//
+// EVERY ONE OF THESE WAS CAN-FAIL FLIPPED — the flip is recorded in the handback,
+// not asserted here, because a test that tests itself proves nothing.
+//
+//   node --test test/world-journal.test.mjs
+
+import test, { after, beforeEach } from "node:test";
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
+
+import { openDynamic } from "../src/dynamic-store.mjs";
+import {
+  ACTION_AMEND, ACTION_LEAVE, ACTION_WITHDRAW, CLASS_FRAME, CLASS_MARK, WORLD_ANCHOR,
+  anchorAt, appendJournal, composeAnchor, draftsForKey, journalHead, liveChildrenOf,
+  liveMarks, pathFor, pinWitnesses, readJournal, replayDrafts, resetPathIndex,
+} from "../src/world-journal.mjs";
+import { draftDeltaForKey } from "../src/world-branches.mjs";
+
+// ── the world in a bottle ────────────────────────────────────────────────────
+
+const sweep = (d) => { try { rmSync(d, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); } catch { /* litter */ } };
+
+const repo = mkdtempSync(join(tmpdir(), "postmark-journal-repo-"));
+const scratch = mkdtempSync(join(tmpdir(), "postmark-journal-db-"));
+after(() => { sweep(repo); sweep(scratch); });
+
+const git = (...args) => execFileSync("git", ["-C", repo, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+const put = (path, text) => {
+  const full = join(repo, path);
+  mkdirSync(dirname(full), { recursive: true });
+  writeFileSync(full, text);
+};
+const record = (by, body) => `---\nkind: sited\nby: ${by}\ndate: 2026-08-01\nat: { x: 0, y: 0 }\nextent: { w: 4, h: 4 }\n---\n\n${body}\n`;
+
+// Canon: two published marks belonging to alpha, and the world frame itself.
+const PUBLISHED = [
+  { id: "the-town/let-there-be-light", by: "the-town", kind: "sited", tier: "constitution", at: { x: 0, y: 0 }, extent: { w: 1000, h: 1000 }, body: "the world frame" },
+  { id: "the-town/town-square", by: "the-town", kind: "sited", tier: "constitution", at: { x: 100, y: 100 }, extent: { w: 40, h: 40 }, body: "the square" },
+  { id: "alpha/published-note", by: "alpha", kind: "sited", tier: "market", at: { x: 20, y: 20 }, extent: { w: 4, h: 4 }, body: "alpha published this" },
+];
+
+// THE ENGINE, in miniature, on main — the office materialises `tools/` at the
+// published ref, so the door's own path can only be exercised if the fixture
+// commits one. Faithful to the SHAPES the door reads, not to the world's
+// arithmetic, which has its own suite.
+put("tools/world-build.mjs", `export function assembleWorld({ worldState, skeleton }) { return { ...worldState, skeleton }; }\n`);
+put("tools/where-is.mjs", `
+export const NOWHERE = Object.freeze({ x: null, y: null, placed: false, source: null, mark_id: null });
+export function homeOf(handle, world) {
+  const parcel = (world?.parcels ?? []).find((p) => p.household === handle);
+  if (!parcel) return { ...NOWHERE };
+  return { x: parcel.at.x, y: parcel.at.y, placed: true, source: "parcel", mark_id: parcel.id, parcel };
+}
+export function whereIs(handle, { world = null } = {}) { return homeOf(handle, world); }
+export function publicResidents() { return []; }
+`);
+put("tools/world-verbs.mjs", `
+export function containmentChain(pos, marks) {
+  return (marks ?? [])
+    .filter((m) => m.at && m.extent && Math.abs(pos.x - m.at.x) <= m.extent.w / 2 && Math.abs(pos.y - m.at.y) <= m.extent.h / 2)
+    .sort((a, b) => (b.extent.w * b.extent.h) - (a.extent.w * a.extent.h))
+    .map((m) => ({ id: m.id, by: m.by, tier: m.tier, body: m.body }));
+}
+export function orient() { return { seen: [] }; }
+export function investigate() { return null; }
+`);
+put("tools/marks-fold.mjs", `
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { basename, join } from "node:path";
+export function loadMarks(dir) {
+  const out = [];
+  (function walk(at) {
+    if (!existsSync(at)) return;
+    const entries = readdirSync(at);
+    if (entries.includes("mark.md")) {
+      const text = readFileSync(join(at, "mark.md"), "utf8");
+      const by = text.match(/^by:\s*(.+)$/m)?.[1]?.trim();
+      const kind = text.match(/^kind:\s*(.+)$/m)?.[1]?.trim() ?? "sited";
+      out.push({ by, household: by, kind, slug: basename(at), id: by + "/" + basename(at), _dir: at });
+    }
+    for (const e of entries) {
+      const next = join(at, e);
+      if (e !== "mark.md" && statSync(next).isDirectory()) walk(next);
+    }
+  })(dir);
+  return out;
+}
+export const PARCEL_EXTENT_M = 25;
+export const PARCEL_CLAIM_CAP = 3;
+export const PARCEL_CAP_LAW_DATE = "2026-07-30";
+export function marksContain(outer, inner) {
+  if (!outer?.at || !outer?.extent || !inner?.at) return false;
+  return Math.abs(inner.at.x - outer.at.x) <= outer.extent.w / 2
+      && Math.abs(inner.at.y - outer.at.y) <= outer.extent.h / 2;
+}
+`);
+put("seeding/manifest.json", JSON.stringify({ homes: [] }));
+put("WORLD/households.json", JSON.stringify({ households: { alpha: "gh:1", beta: "gh:2" } }));
+put("WORLD/marks/let-there-be-light/mark.md", record("the-town", "the world frame"));
+put("WORLD/marks/let-there-be-light/town-square/mark.md", record("the-town", "the square"));
+put("WORLD/marks/let-there-be-light/published-note/mark.md", record("alpha", "alpha published this"));
+put("WORLD/skeleton.json", JSON.stringify({ features: [], physics_registry: {} }));
+put("WORLD/world-state.json", JSON.stringify({ tick: 0, dials: {}, marks: PUBLISHED, parcels: [{ id: "alpha/alpha-parcel", household: "alpha", at: { x: 110, y: 105 }, extent: { w: 25, h: 25 } }], determined: {}, vague: [], rivalries: [], portfolios: {}, terrain_weight: {}, errors: [] }));
+git("init", "-q", "-b", "main");
+git("config", "user.email", "test@postmark.town");
+git("config", "user.name", "journal falsifier");
+git("add", "-A");
+git("commit", "-qm", "canon");
+
+// A PRE-CUTOVER sketchbook: one draft written the old way, before the flag ever
+// flipped. It exists so the union can be falsified — a cutover that dropped it
+// would erase a resident's work on the day it shipped.
+git("checkout", "-q", "-b", "draft/alpha");
+put("WORLD/marks/let-there-be-light/sketchbook-draft/mark.md", record("alpha", "written the old way"));
+// …and one the journal NEVER touches. Without it the union is unfalsifiable:
+// every shared id is served by the journal half alone, so dropping the
+// sketchbook entirely would still pass. (Found by the can-fail flip.)
+put("WORLD/marks/let-there-be-light/only-in-the-sketchbook/mark.md", record("alpha", "the log has never heard of this"));
+git("add", "-A");
+git("commit", "-qm", "draft: alpha/sketchbook-draft");
+git("checkout", "-q", "main");
+
+const houseA = { household: "alpha", handles: new Set(["alpha"]) };
+const houseB = { household: "beta", handles: new Set(["beta"]) };
+
+let dbPath;
+let dbSeq = 0;
+beforeEach(() => {
+  dbPath = join(scratch, `dynamic-${++dbSeq}.db`);
+  process.env.WORLD_DYNAMIC_DB = dbPath;
+  delete process.env.WORLD_SINGLE_LOG;
+  resetPathIndex();
+});
+after(() => { delete process.env.WORLD_DYNAMIC_DB; delete process.env.WORLD_SINGLE_LOG; });
+
+const withDb = (fn) => { const db = openDynamic(dbPath); try { return fn(db); } finally { db.close(); } };
+
+/** A leave-mark row, as the door writes one. */
+const leave = (db, { id, by = "alpha", household = "alpha", kind = "sited", at = { x: 5, y: 5 }, body = "a declaration", action = ACTION_LEAVE, parent_id = undefined, extent = { w: 2, h: 2 }, witnesses = { source: "presence", list: [] }, standing = { anchor: WORLD_ANCHOR, dx: 5, dy: 5 } }) =>
+  appendJournal(db, {
+    crossing: 140, actor: by, household, action, object: id, cls: CLASS_MARK,
+    at: standing, witnesses,
+    // A WITHDRAW ROW DESCRIBES NOTHING — the door writes {by, slug,
+    // was_published} and no more, because a withdrawal is a declaration that
+    // something ended, not a description of it. The helper has to be honest
+    // about that or the deletion falsifier cannot fail.
+    payload: action === ACTION_WITHDRAW
+      ? { by, slug: id.split("/").slice(1).join("/"), was_published: false }
+      : { slug: id.split("/").slice(1).join("/"), by, kind, at, extent, body, date: "2026-08-23T00:00:00.000Z", ...(parent_id ? { parent_id } : {}) },
+    effect: "a draft stands in the live layer",
+  });
+
+const publishedIds = new Set(PUBLISHED.map((m) => m.id));
+const centreOf = (id) => PUBLISHED.find((m) => m.id === id)?.at ?? null;
+// The engine's containment spine, in miniature: outermost first, and only marks
+// whose rect truly holds the point. The arithmetic under test is the ANCHORING,
+// not the geometry, and the world's own `containmentChain` has its own suite.
+const chainAt = (p) => PUBLISHED
+  .filter((m) => m.at && Math.abs(p.x - m.at.x) <= m.extent.w / 2 && Math.abs(p.y - m.at.y) <= m.extent.h / 2)
+  .sort((a, b) => (b.extent.w * b.extent.h) - (a.extent.w * a.extent.h))
+  .map((m) => ({ id: m.id, by: m.by, tier: m.tier }));
+
+// ── the-witnessed-line ───────────────────────────────────────────────────────
+
+test("the-witnessed-line — every line carries an anchor and an offset: WHERE THE ACTOR STOOD, relative to what", () => {
+  // WORLD/marks/…/the-record-does-not-lie/the-witnessed-line, verbatim:
+  //
+  //   "Every line of the log carries its witnesses at write time — an anchor and
+  //    an offset: where the actor stood, relative to what, at that instant."
+  //
+  // The RED this slice flips: before it, no line of any log carried either.
+  const inSquare = { x: 110, y: 105 };
+  const standing = anchorAt(inSquare, { chain: chainAt(inSquare), centreOf });
+  assert.equal(standing.anchor, "the-town/town-square",
+    "the anchor is the innermost mark the actor is standing in — 'relative to what'");
+  assert.deepEqual({ dx: standing.dx, dy: standing.dy }, { dx: 10, dy: 5 },
+    "and the offset is measured from that anchor's centre, not from the origin");
+
+  const row = withDb((db) => {
+    leave(db, { id: "alpha/witnessed", standing });
+    return readJournal(db)[0];
+  });
+  assert.equal(row.at.anchor, "the-town/town-square", "the stored line carries the anchor");
+  assert.deepEqual({ dx: row.at.dx, dy: row.at.dy }, { dx: 10, dy: 5 }, "and the offset, on the line itself");
+});
+
+test("the-witnessed-line — the witnesses are PINNED at the write instant, and stay pinned when everyone walks away", () => {
+  //   "Every line of the log carries its witnesses AT WRITE TIME — an anchor and
+  //    an offset: where the actor stood, relative to what, AT THAT INSTANT."
+  //
+  // A handle is a pointer to wherever a resident is NOW, and now is the one
+  // instant a log line is never read at. This is the difference.
+  const bystanders = [{ handle: "gamma", at: { x: 108, y: 100 } }, { handle: "beta", at: { x: 300, y: 300 } }];
+  const witnesses = pinWitnesses({ residents: bystanders, centreOf, chainAt });
+
+  const row = withDb((db) => {
+    leave(db, { id: "alpha/witnessed", witnesses });
+    // everybody leaves — the world moves on, the line does not
+    bystanders[0].at = { x: -900, y: -900 };
+    bystanders[1].at = { x: -900, y: -900 };
+    return readJournal(db)[0];
+  });
+
+  const pinned = Object.fromEntries(row.witnesses.list.map((w) => [w.handle, w]));
+  assert.deepEqual(
+    { anchor: pinned.gamma.anchor, dx: pinned.gamma.dx, dy: pinned.gamma.dy },
+    { anchor: "the-town/town-square", dx: 8, dy: 0 },
+    "gamma stood in the square, eight metres east of its centre — and still does, on this line, forever");
+  assert.equal(pinned.beta.anchor, WORLD_ANCHOR,
+    "beta stood in no mark at all, so the world is the anchor (the-anchor: 'a mark, an entity, or the world')");
+  assert.deepEqual({ dx: pinned.beta.dx, dy: pinned.beta.dy }, { dx: 300, dy: 300 },
+    "and an offset from the world frame IS a world coordinate — §8: 'world coords = the let-there-be-light reference frame, nothing more'");
+});
+
+test("the-witnessed-line — an unreadable presence layer DISCLOSES, it does not report an empty room", () => {
+  // The law says every line carries its witnesses. "[]" for both "nobody was
+  // there" and "this office could not see" would satisfy the letter and break
+  // the sentence — the same class the office already refuses at
+  // HOME_BLOCK_UNREADABLE ("this is not an answer about your ground").
+  assert.deepEqual(pinWitnesses({ residents: [], centreOf, chainAt }),
+    { source: "presence", list: [] },
+    "nobody within earshot is a real answer, and it says who told us");
+
+  const off = pinWitnesses({ unread: "presence-off" });
+  assert.equal(off.source, "unread", "a layer that was not read never claims to have seen an empty room");
+  assert.equal(off.reason, "presence-off");
+  assert.deepEqual(off.list, []);
+});
+
+// ── the-anchor ───────────────────────────────────────────────────────────────
+
+test("the-anchor — a mark, an entity, or the world; and the offset survives the anchor MOVING", () => {
+  // WORLD/marks/…/logos/the-position/the-anchor, verbatim:
+  //
+  //   "An anchor is a mark, an entity, or the world — a held thing rides its
+  //    holder as a rider rides the deck; what may anchor where is class contract."
+  //
+  // This is the whole reason the pair is stored instead of an x,y. §8 catalogues
+  // the same absence four times (the rider, the held thing, the emission on the
+  // deck, the stale occupancy): a raw coordinate is a photograph of a moving
+  // thing and cannot be carried to any other instant.
+  const p = { x: 110, y: 105 };
+  const at = anchorAt(p, { chain: chainAt(p), centreOf });
+  assert.deepEqual(composeAnchor(at, centreOf), p, "anchor + offset composes back to where they stood");
+
+  // the square is picked up and set down 500 m away
+  const moved = (id) => (id === "the-town/town-square" ? { x: 600, y: 600 } : centreOf(id));
+  assert.deepEqual(composeAnchor(at, moved), { x: 610, y: 605 },
+    "the actor rode the square — the offset did not change, and that is the invariant a bare x,y cannot hold");
+
+  const nowhere = { x: 5000, y: 5000 };
+  const world = anchorAt(nowhere, { chain: chainAt(nowhere), centreOf });
+  assert.equal(world.anchor, WORLD_ANCHOR, "outside every mark, the world is the anchor");
+  assert.deepEqual(composeAnchor(world, centreOf), nowhere);
+});
+
+test("the-anchor — an unplaced actor gets a NULL offset, never Ferry's crossing", () => {
+  // {x:0,y:0} is a real place somebody could be standing. A deriver that
+  // substitutes it for "we do not know" is the customs-house law broken:
+  // REFUSE OR DISCLOSE, NEVER QUIETLY SUBSTITUTE.
+  const unplaced = anchorAt(null, { chain: [], centreOf });
+  assert.equal(unplaced.unplaced, true);
+  assert.equal(unplaced.dx, null, "not zero — zero is Ferry's crossing");
+  assert.equal(composeAnchor(unplaced, centreOf), null, "and nothing composes a position out of it");
+});
+
+test("the-witnessed-line — an UNPLACED actor's line keeps a null offset; the store never writes Ferry's crossing", () => {
+  // The law says the line carries where the actor stood. It does not license
+  // inventing one. Number(null) is 0 and 0 is finite, so the guard has to be
+  // explicit at the WRITE too, not only at the read — a constitutional line
+  // that says somebody stood at {0,0} when nobody knew where they stood is the
+  // record lying, which is the very rule this mark hangs under
+  // (the-record-does-not-lie).
+  const nowhere = anchorAt(null, { chain: [], centreOf });
+  const row = withDb((db) => {
+    leave(db, { id: "alpha/from-nowhere", standing: nowhere });
+    return readJournal(db)[0];
+  });
+  assert.equal(row.at.anchor, WORLD_ANCHOR, "the world is still the anchor — that much is always true");
+  assert.equal(row.at.dx, null, "but the offset is null, not zero");
+  assert.equal(row.at.dy, null);
+});
+
+// ── the-threshold (the corridor, honestly scoped) ────────────────────────────
+
+test("the-threshold — a frame transition rides THIS log, with its anchor and its witnesses, on one schema", () => {
+  // WORLD/marks/…/logos/the-entry/the-threshold, verbatim:
+  //
+  //   "A threshold crosses only from where you truly stand, and exit sets you
+  //    down at the door — no verb moves the frame from afar."
+  //
+  // §8's storage ruling (b), Keemin 2026-08-22: "frame-transition events in the
+  // single log — no frame column on dynamic.db entities. Reparentings enter the
+  // one append-only log as SUBJECT · ACTION · OBJECT · EFFECT rows."
+  //
+  // WHAT THIS ASSERTS is the corridor: one schema carries a reparenting with the
+  // anchor+offset that says where the actor truly stood, so the frame graph can
+  // derive from replay. WHAT IT DOES NOT ASSERT — said out loud rather than left
+  // to be inferred from a missing case — is the VERB half: enter/exit/walk are
+  // not re-pointed at this log in slice 1, because that is the position-core
+  // rewrite §8 defers ("NOT a land-it-today job"). Until they are, no falsifier
+  // here can say a verb refused to move a frame from afar.
+  const door = { x: 120, y: 100 };                       // the square's east edge
+  const standing = anchorAt(door, { chain: chainAt(door), centreOf });
+
+  const back = withDb((db) => {
+    appendJournal(db, {
+      crossing: 140, actor: "alpha", household: "alpha",
+      action: "enter", object: "the-town/town-square", cls: CLASS_FRAME,
+      at: standing, witnesses: pinWitnesses({ residents: [], centreOf, chainAt }),
+      payload: { from: WORLD_ANCHOR, to: "the-town/town-square" },
+      effect: "the actor's frame is now the square",
+    });
+    return readJournal(db, { cls: CLASS_FRAME });
+  });
+
+  assert.equal(back.length, 1, "a frame row needs no table of its own");
+  assert.equal(back[0].class, CLASS_FRAME);
+  assert.equal(back[0].at.anchor, "the-town/town-square",
+    "the row records where they truly stood at the boundary — the law's 'from where you truly stand', on the line");
+  assert.deepEqual(back[0].payload, { from: WORLD_ANCHOR, to: "the-town/town-square" }, "SUBJECT · ACTION · OBJECT · EFFECT, and the reparenting is the payload");
+
+  // and it does not leak into the mark fold — one log, sorted by class
+  assert.deepEqual(replayDrafts(back, { publishedIds }).marks, [],
+    "a frame transition is not a draft mark; the drain sorts by class, not by table");
+});
+
+// ── the-atomic-drain (the replayable half this slice owes) ───────────────────
+
+test("the-atomic-drain — the journal replays from a COLD read: nothing cached, nothing in memory", () => {
+  // WORLD/marks/…/logos/the-save/the-atomic-drain, verbatim:
+  //
+  //   "The drain's write-down and the journal's truncate are one act — a crash
+  //    between them eats no draft, and a lost save recomputes from the log."
+  //
+  // The drain itself is slice 2. What slice 1 owes is the second clause's
+  // precondition: the log has to actually be replayable, from disk, by a reader
+  // that shares no state with the writer. A write path whose reader does not
+  // exist is a write path nobody has proven can be read back.
+  withDb((db) => {
+    leave(db, { id: "alpha/one" });
+    leave(db, { id: "alpha/two" });
+    leave(db, { id: "alpha/one", action: ACTION_AMEND, body: "said better" });
+  });
+
+  // a different handle, a different process's worth of state
+  const cold = openDynamic(dbPath, { readOnly: true });
+  try {
+    const rows = readJournal(cold, { household: "alpha" });
+    assert.equal(rows.length, 3, "every line survives the close — nothing was an in-memory convenience");
+    assert.equal(journalHead(cold), 3, "and the head is the drain's cursor");
+    const { marks } = replayDrafts(rows, { publishedIds });
+    assert.deepEqual(marks.map((m) => m.id).sort(), ["alpha/one", "alpha/two"]);
+    assert.equal(marks.find((m) => m.id === "alpha/one").body, "said better",
+      "recomputed from the log, and the log's last word wins");
+  } finally { cold.close(); }
+});
+
+test("append-only — amend and withdraw are LATER ENTRIES; no row is ever rewritten", () => {
+  // §2: "leave_mark becomes one INSERT (amend/withdraw are later entries;
+  // supersession-by-latest)." An append-only log that UPDATEs is not one, and
+  // the-atomic-drain's replay clause is worthless the moment history mutates.
+  const before = withDb((db) => { leave(db, { id: "alpha/one", body: "first word" }); return readJournal(db)[0]; });
+
+  const rows = withDb((db) => {
+    leave(db, { id: "alpha/one", action: ACTION_AMEND, body: "second word" });
+    leave(db, { id: "alpha/one", action: ACTION_WITHDRAW });
+    return readJournal(db);
+  });
+
+  assert.equal(rows.length, 3, "three declarations, three lines");
+  assert.deepEqual(rows[0], before, "the first line is byte-for-byte what it was — its whole life stays in the log");
+  assert.deepEqual(rows.map((r) => r.action), [ACTION_LEAVE, ACTION_AMEND, ACTION_WITHDRAW]);
+  assert.deepEqual(rows.map((r) => r.seq), [1, 2, 3], "and the seq is monotonic, which is what makes 'latest' a fact rather than a guess");
+});
+
+// ── supersession, folded to §1c's shape ──────────────────────────────────────
+
+test("supersession-by-latest — a withdrawn draft that never crossed leaves NOTHING; a withdrawn published mark leaves a deletion", () => {
+  // This mirrors the git path exactly, and it has to: a three-dot diff from the
+  // merge-base shows an added-then-withdrawn draft as nothing at all, because
+  // the file appeared and vanished on the same branch. Canon is the only thing
+  // that can turn a withdrawal into something a reader must see.
+  const rows = withDb((db) => {
+    leave(db, { id: "alpha/never-crossed" });
+    leave(db, { id: "alpha/never-crossed", action: ACTION_WITHDRAW });
+    leave(db, { id: "alpha/published-note", action: ACTION_WITHDRAW });
+    leave(db, { id: "alpha/fresh" });
+    return readJournal(db);
+  });
+
+  const { marks, counts } = replayDrafts(rows, { publishedIds, publishedPathOf: () => "WORLD/marks/let-there-be-light/published-note/mark.md" });
+  const byId = Object.fromEntries(marks.map((m) => [m.id, m]));
+  assert.equal(byId["alpha/never-crossed"], undefined,
+    "it never crossed, so there is nothing to unpublish — and nothing for the overlay to draw");
+  assert.equal(byId["alpha/published-note"].status, "deleted",
+    "canon still holds it, so the household IS proposing a deletion and the delta must say so");
+  assert.equal(byId["alpha/fresh"].status, "added");
+  assert.deepEqual(counts, { added: 1, modified: 0, deleted: 1 });
+});
+
+test("supersession-by-latest — a DELETION carries the mark being taken away, not an empty rectangle", () => {
+  // A withdraw row's payload is a declaration that something ended, not a
+  // description of it. The git path has no such gap — it reads the deleted
+  // record at the merge-base — so the overlay has always had a real body, kind
+  // and footprint for a mark being removed. The journal has to answer the same.
+  const rows = withDb((db) => {
+    leave(db, { id: "alpha/published-note", action: ACTION_WITHDRAW });
+    return readJournal(db);
+  });
+  const [deleted] = replayDrafts(rows, {
+    publishedIds,
+    publishedPathOf: () => "WORLD/marks/let-there-be-light/published-note/mark.md",
+    publishedMarkOf: (id) => PUBLISHED.find((m) => m.id === id) ?? null,
+  }).marks;
+  assert.equal(deleted.status, "deleted");
+  assert.equal(deleted.body, "alpha published this", "canon's words, on a row canon is losing");
+  assert.equal(deleted.kind, "sited");
+  assert.deepEqual(deleted.at, { x: 20, y: 20 }, "and its ground, so the overlay can draw what is going away");
+});
+
+test("supersession-by-latest — an amend of a PUBLISHED mark reads 'modified', of a draft reads 'added'", () => {
+  const rows = withDb((db) => {
+    leave(db, { id: "alpha/published-note", action: ACTION_AMEND, body: "canon, said again" });
+    leave(db, { id: "alpha/draft-only" });
+    leave(db, { id: "alpha/draft-only", action: ACTION_AMEND, body: "still only mine" });
+    return readJournal(db);
+  });
+  const byId = Object.fromEntries(replayDrafts(rows, { publishedIds }).marks.map((m) => [m.id, m]));
+  assert.equal(byId["alpha/published-note"].status, "modified", "main holds it; this is a change to main");
+  assert.equal(byId["alpha/draft-only"].status, "added", "main has never seen it; an amend of your own draft is still an addition");
+  assert.equal(byId["alpha/draft-only"].body, "still only mine", "and the latest declaration is the one that shows");
+});
+
+test("the §1c contract — a journal mark carries the same keys the git delta carries", () => {
+  // "Reads serve drafts from the journal + sketchbook overlay (the 1c contract
+  // is ALREADY this shape — only the endpoint's backing store changes, the
+  // viewer half is untouched)." A key the viewer reads and the journal omits is
+  // that promise broken.
+  const gitMark = draftDeltaForKey(repo, houseA).marks.find((m) => m.id === "alpha/sketchbook-draft");
+  assert.ok(gitMark, "the fixture's pre-cutover sketchbook draft is the reference shape");
+
+  const rows = withDb((db) => { leave(db, { id: "alpha/from-the-log" }); return readJournal(db); });
+  const logMark = replayDrafts(rows, { publishedIds }).marks[0];
+
+  for (const key of Object.keys(gitMark))
+    assert.ok(key in logMark, `the journal's mark carries "${key}", as the git delta's does`);
+  assert.equal(logMark.tier, "market",
+    "tier is 'market' on both sides — the door refuses tier: as a field, so no record written since 2026-08-13 carries one");
+  assert.equal(logMark.path, "WORLD/marks/let-there-be-light/from-the-log/mark.md",
+    "and the path is where the drain will land it: open ground at the root, because a draft costs nothing and the settlement re-homes by geometry");
+});
+
+test("the §1c contract — a nested declaration's path follows the mark it describes", () => {
+  const rows = withDb((db) => {
+    leave(db, { id: "alpha/the-lamp" });
+    leave(db, { id: "alpha/lamp-colour", kind: "predicated", parent_id: "alpha/the-lamp" });
+    return readJournal(db);
+  });
+  const byId = Object.fromEntries(replayDrafts(rows, { publishedIds }).marks.map((m) => [m.id, m]));
+  assert.equal(byId["alpha/lamp-colour"].path,
+    "WORLD/marks/let-there-be-light/the-lamp/lamp-colour/mark.md",
+    "predicated/naming take the directory of the mark they describe — leave-exec's own rule, unchanged");
+  assert.equal(pathFor({ slug: "orphan", kind: "predicated", parent_id: "nobody/nothing" }),
+    "WORLD/marks/let-there-be-light/orphan/mark.md",
+    "and an unresolvable parent falls back to open ground, which the settlement can re-home");
+});
+
+// ── the door guards, as store lookups ────────────────────────────────────────
+
+test("the guards read the STORE — the live layer answers slug collision and holds-children with no checkout", () => {
+  // §2: "Door guards that read the tree today (slug collision, parcel cap)
+  // become DB lookups or move to the save, per draft-costs-nothing." Under the
+  // flag there is no checked-out draft branch to loadMarks over — the checkout
+  // is the thing being retired.
+  withDb((db) => {
+    leave(db, { id: "alpha/the-lamp" });
+    leave(db, { id: "alpha/lamp-colour", kind: "predicated", parent_id: "alpha/the-lamp" });
+    leave(db, { id: "beta/their-lamp", by: "beta", household: "beta" });
+
+    const mine = liveMarks(db, { household: "alpha" }).map((m) => m.id).sort();
+    assert.deepEqual(mine, ["alpha/lamp-colour", "alpha/the-lamp"],
+      "your own sketchbook, and only yours — you cannot collide with a slug you cannot see");
+    assert.deepEqual(liveChildrenOf(db, "alpha/the-lamp", { household: "alpha" }).map((m) => m.id), ["alpha/lamp-colour"],
+      "and 'does this mark hold others' is a lookup, where it used to be a directory listing");
+
+    leave(db, { id: "alpha/the-lamp", action: ACTION_WITHDRAW });
+    assert.equal(liveMarks(db, { household: "alpha" }).some((m) => m.id === "alpha/the-lamp"), false,
+      "a withdrawn mark leaves the live layer without leaving the log");
+  });
+});
+
+// ── the flag ─────────────────────────────────────────────────────────────────
+
+test("FLAG OFF — the §1c door is byte-identical to the git delta, and nothing reaches the log", () => {
+  // The plan's own bar, and Stage D's before it: "FLAG OFF = byte-identical
+  // behavior, provably: that is a falsifier, same as Stage D's."
+  assert.equal(process.env.WORLD_SINGLE_LOG, undefined, "the switch is off — what follows is today's behaviour");
+
+  // a journal that is not empty, so the test can only pass by ignoring it
+  withDb((db) => { leave(db, { id: "alpha/in-the-log" }); });
+
+  const viaJournalDoor = draftsForKey(repo, houseA);
+  const viaGit = draftDeltaForKey(repo, houseA);
+  assert.deepEqual(viaJournalDoor, viaGit,
+    "same object, key for key — the composed door adds nothing at all when the flag is off");
+  assert.equal("log" in viaJournalDoor, false, "not even the disclosure block, which would be a new key on an untouched contract");
+  assert.equal(viaJournalDoor.marks.some((m) => m.id === "alpha/in-the-log"), false,
+    "and the live layer is invisible: a store with rows in it changes nothing until the operator says so");
+});
+
+test("FLAG ON — the sketchbook and the journal BOTH answer, and the journal wins a shared id", () => {
+  // §0's three sources, at the one door. Dropping the sketchbook half would
+  // erase every draft written before the cutover on the day it shipped.
+  process.env.WORLD_SINGLE_LOG = "1";
+  withDb((db) => {
+    leave(db, { id: "alpha/from-the-log", body: "written the new way" });
+    leave(db, { id: "alpha/sketchbook-draft", action: ACTION_AMEND, body: "the log said it later" });
+  });
+
+  const delta = draftsForKey(repo, houseA);
+  const byId = Object.fromEntries(delta.marks.map((m) => [m.id, m]));
+  assert.ok(byId["alpha/from-the-log"], "the live layer is served");
+  assert.equal(byId["alpha/only-in-the-sketchbook"]?.body, "the log has never heard of this",
+    "and a draft written before the cutover, that the log has never seen, still reaches its author — dropping the sketchbook half would erase a resident's work on the day this shipped");
+  assert.equal(byId["alpha/sketchbook-draft"].body, "the log said it later",
+    "on a shared id the journal wins — it is later by construction");
+  assert.equal(delta.log.readable, true);
+  assert.equal(delta.log.head, 2, "and the head is disclosed in its own block, never smuggled into `draft`, which still means a commit");
+  assert.equal(delta.draft, draftDeltaForKey(repo, houseA).draft, "`draft` is the sketchbook's sha under both flag positions");
+});
+
+test("FLAG ON — another household's live layer stays invisible", () => {
+  process.env.WORLD_SINGLE_LOG = "1";
+  withDb((db) => { leave(db, { id: "alpha/private", body: "alpha's alone" }); });
+  const theirs = draftsForKey(repo, houseB);
+  assert.equal(theirs.error, undefined);
+  assert.equal((theirs.marks ?? []).some((m) => m.id === "alpha/private"), false,
+    "you cannot see what you cannot back — the sketchbook's scoping is the journal's scoping, by the household column");
+});
+
+test("FLAG ON — an unreadable live layer discloses; it does not serve an empty overlay", () => {
+  process.env.WORLD_SINGLE_LOG = "1";
+  process.env.WORLD_DYNAMIC_DB = join(scratch, "nope", "not-a-store.db");
+  try {
+    const delta = draftsForKey(repo, houseA);
+    assert.equal(delta.log.readable, false, "the door says the live layer could not be read");
+    assert.ok(delta.marks.some((m) => m.id === "alpha/sketchbook-draft"),
+      "and the sketchbook half still answers — half an answer that says which half");
+  } finally { process.env.WORLD_DYNAMIC_DB = dbPath; }
+});
+
+// ── the door itself ──────────────────────────────────────────────────────────
+//
+// Everything above tests the log. These test the thing §2 actually rules: that
+// `world_leave_mark` ENTERS it — "Every world mutation, no exceptions, enters
+// via the dynamic DB's one append-only log … `leave_mark` becomes one INSERT."
+// A module that can hold a row proves nothing about the door that used to spend
+// a worktree lease, two locks and a commit to write one.
+
+process.env.WORLD_CLONE = repo;
+
+test("THE DOOR, flag on — leave_mark is ONE INSERT: no lease, no lock, no checkout, no commit", async () => {
+  process.env.WORLD_SINGLE_LOG = "1";
+  const { leaveMarkViaOffice } = await import("../src/world.mjs");
+
+  const before = git("rev-parse", "draft/alpha").trim();
+  const result = await leaveMarkViaOffice(repo, {
+    slug: "through-the-door", kind: "sited", at: { x: 110, y: 105 }, extent: { w: 2, h: 2 },
+    body: "the door wrote this into the log",
+  }, houseA);
+
+  assert.equal(result.id, "alpha/through-the-door");
+  assert.equal(result.log, "journal", "the answer names the pen that wrote it");
+  assert.equal(result.seq, 1, "and its receipt is the line, where it used to be a commit");
+  assert.equal(result.commit, undefined, "there is no commit, because nothing was committed — absent, not null, which would invite a reader to think one failed");
+  assert.equal(result.dir, "let-there-be-light/through-the-door",
+    "and the answer shape holds across the flag: `dir` still names where the record will sit");
+  assert.equal(result.branch, "draft/alpha", "and `branch` still names the sketchbook the drain will write it to");
+
+  // the git ceremony this slice retires, asserted as absent
+  assert.equal(git("rev-parse", "draft/alpha").trim(), before, "the sketchbook branch did not move");
+  assert.equal(git("branch", "--show-current").trim(), "main", "and no checkout was parked on a household branch");
+
+  const row = withDb((db) => readJournal(db)[0]);
+  assert.equal(row.action, ACTION_LEAVE);
+  assert.equal(row.object, "alpha/through-the-door");
+  assert.equal(row.household, "alpha");
+  assert.equal(row.class, CLASS_MARK);
+  assert.equal(row.at.anchor, "the-town/town-square",
+    "and the-witnessed-line holds at the real door: the actor's anchor is on the line, derived from the engine's own containment chain");
+  assert.deepEqual({ dx: row.at.dx, dy: row.at.dy }, { dx: 10, dy: 5 });
+  assert.ok(row.witnesses, "with a witnesses block, however it was read");
+  assert.equal(row.payload.body, "the door wrote this into the log");
+
+  // and the author reads it straight back through §1c
+  assert.ok(draftsForKey(repo, houseA).marks.some((m) => m.id === "alpha/through-the-door"),
+    "the overlay serves it from the log — the viewer half never learned anything changed");
+});
+
+test("THE DOOR, flag on — the slug guard is a STORE lookup, and amend/withdraw are later entries", async () => {
+  process.env.WORLD_SINGLE_LOG = "1";
+  const { leaveMarkViaOffice, withdrawMarkViaOffice } = await import("../src/world.mjs");
+  const leaveIt = (extra = {}) => leaveMarkViaOffice(repo, {
+    slug: "twice", kind: "sited", at: { x: 110, y: 105 }, extent: { w: 2, h: 2 }, body: "said once", ...extra,
+  }, houseA);
+
+  await leaveIt();
+  await assert.rejects(leaveIt(), (e) => {
+    assert.equal(e.code, 409, "the collision bounces with the grammar the exec used, one process earlier");
+    assert.match(e.defect, /you already have a mark "twice"/);
+    return true;
+  }, "the guard read the live layer — there is no checked-out tree to loadMarks over");
+
+  const amended = await leaveIt({ amend: true, body: "said better" });
+  assert.equal(amended.amended, true);
+  const withdrawn = await withdrawMarkViaOffice(repo, { mark: "alpha/twice" }, houseA);
+  assert.equal(withdrawn.withdrawn, true);
+  assert.equal(withdrawn.was_published, false);
+
+  const rows = withDb((db) => readJournal(db, { household: "alpha" }));
+  assert.deepEqual(rows.map((r) => r.action), [ACTION_LEAVE, ACTION_AMEND, ACTION_WITHDRAW],
+    "three declarations, three lines, none of them an edit of another");
+  assert.equal(draftsForKey(repo, houseA).marks.some((m) => m.id === "alpha/twice"), false,
+    "and the withdrawn draft never crossed, so the overlay has nothing to draw");
+});
+
+test("THE DOOR, flag off — the same call still spends a commit on the sketchbook, and the log stays empty", async () => {
+  assert.equal(process.env.WORLD_SINGLE_LOG, undefined);
+  const { leaveMarkViaOffice } = await import("../src/world.mjs");
+
+  const result = await leaveMarkViaOffice(repo, {
+    slug: "the-old-way", kind: "sited", at: { x: 110, y: 105 }, extent: { w: 2, h: 2 },
+    body: "written the way today writes",
+  }, houseA);
+
+  assert.equal(result.branch, "draft/alpha", "the git lane, untouched");
+  assert.ok(result.commit, "with a commit for a receipt");
+  assert.equal(result.log, undefined, "and no mention of a journal it never used");
+  assert.match(git("show", "draft/alpha:WORLD/marks/let-there-be-light/the-old-way/mark.md"), /written the way today writes/);
+  assert.equal(withDb((db) => journalHead(db)), 0,
+    "not one row — flag off, the log is not merely ignored at the read, it is never written");
+});
