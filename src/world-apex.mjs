@@ -50,6 +50,7 @@ import {
   placeWords,
   residentStandpoint,
   walkViaOffice,
+  witnessStamp,
   worldEyes,
   worldNoteViaOffice,
   worldOrient,
@@ -64,6 +65,9 @@ import { WORLD_STAKE_TOOLS, callWorldStakeTool } from "./world-stake.mjs";
 // DEMO SLICE (step 5) — the crossings. Imported for the dispatch table and the
 // `fields` lookup; unreachable in production because no class mark grants them.
 import { CROSSING_EXEC, CROSSING_TOOLS, enterViaOffice, exitViaOffice } from "./world-crossings.mjs";
+// POS-5's consent verb. STANCE_TOOLS ride the schema lookup without joining
+// the flat tool list, exactly as CROSSING_TOOLS do and for the same reason.
+import { ACTION_STANCE, STANCE_TOOLS, declareStanceViaOffice, readNeverPerforms, stanceShadow, stancesBlock } from "./world-stance.mjs";
 import { callHoldTool } from "./world-hold.mjs";
 import { storeDbPath } from "./world-serve.mjs";
 import { AMBIENT_REACH_SQL, CLASS_MARK_GATE_SQL } from "./world-store.mjs";
@@ -246,6 +250,16 @@ const DISPATCH = {
   // three, which is the drift the dispatch table exists to prevent.
   enter: { tool: "world_enter", run: (args, key) => enterViaOffice(WORLD_CLONE, args, key, crossingDeps()) },
   exit: { tool: "world_exit", run: (args, key) => exitViaOffice(WORLD_CLONE, args, key, crossingDeps()) },
+  // ── the consent door (POS-5) ───────────────────────────────────────────────
+  //
+  // The single log's first new verb. `witnessStamp` is passed in rather than
+  // re-derived: a stance row carries the-witnessed-line exactly as a mark row
+  // does, and a second answer to "where did the actor stand" is the split-brain
+  // this office keeps a museum of.
+  [ACTION_STANCE]: {
+    tool: "world_declare_stance",
+    run: (args, key) => declareStanceViaOffice(WORLD_CLONE, args, key, { witnessStamp, crossing: currentCrossing() }),
+  },
 };
 
 // ── seam 4 · the fields an action takes ─────────────────────────────────────
@@ -280,7 +294,7 @@ function flatSchemas() {
   // fields an act takes must still come from the act's own schema — the seam-4
   // discipline — and inventing a second grammar here for two verbs would be
   // exactly the drift that seam exists to close.
-  for (const tool of [...WORLD_TOOLS, ...WORLD_STAKE_TOOLS, ...CROSSING_TOOLS]) {
+  for (const tool of [...WORLD_TOOLS, ...WORLD_STAKE_TOOLS, ...CROSSING_TOOLS, ...STANCE_TOOLS]) {
     const props = tool?.inputSchema?.properties ?? {};
     const required = new Set(tool?.inputSchema?.required ?? []);
     const fields = {};
@@ -300,7 +314,7 @@ let _fullProps = null;
 function fullPropsFor(toolName) {
   if (!_fullProps) {
     _fullProps = new Map();
-    for (const t of [...WORLD_TOOLS, ...WORLD_STAKE_TOOLS, ...CROSSING_TOOLS]) _fullProps.set(t.name, t?.inputSchema?.properties ?? {});
+    for (const t of [...WORLD_TOOLS, ...WORLD_STAKE_TOOLS, ...CROSSING_TOOLS, ...STANCE_TOOLS]) _fullProps.set(t.name, t?.inputSchema?.properties ?? {});
   }
   return _fullProps.get(toolName) ?? null;
 }
@@ -690,6 +704,13 @@ async function apexRead(args, key) {
   // from it. Aboard, `frame.moves_next` already answers — the two never speak
   // at once. The schedule is public, so no key gates this block.
   const departures = frame ? null : await departuresBlock(oriented);
+  // THE CONSENT BLOCK (POS-5), the founder-blessed exposure model's first two
+  // tiers: one integer everywhere, and — only where your own ground is in your
+  // own containment spine — the compact ambient list. The spine is the one the
+  // read already computed; nothing here derives a second geometry, and the
+  // block is null for a caller who holds nothing, so an anonymous read is
+  // byte-identical to what it was.
+  const stances = await stancesBlock(WORLD_CLONE, key, { spine });
   const happened = args.since == null ? null : await happenedFor(oriented, args, key);
 
   return {
@@ -702,6 +723,7 @@ async function apexRead(args, key) {
     ...(oriented.note !== undefined ? { note: oriented.note } : {}),
     ...(frame ? { frame } : {}),
     ...(departures ? { departures } : {}),
+    ...(stances ? { stances } : {}),
     within: spine,
     nearby,
     ...(oriented.present ? { present: oriented.present } : {}),
@@ -873,6 +895,17 @@ async function readDomainFor(action, fields, key, oriented, ctx = {}) {
       return { holdings: await call("world_holdings", {}) };
     case "note-to-self":
       return { note: oriented.note ?? null };
+    // THE VERB'S SHADOW (POS-5). "Anything you can do, you should be able to
+    // read" — and for this act the read is most of the point: the exposure
+    // model's third tier is the full cursor-paginated inbox, and it is where a
+    // resident actually finds out what is standing on their ground. A read
+    // never performs, so an envelope carrying `stance` is refused by name
+    // rather than quietly ignored.
+    case ACTION_STANCE: {
+      const performing = readNeverPerforms(fields);
+      if (performing) return performing;
+      return await stanceShadow(WORLD_CLONE, key, { cursor: fields?.cursor ?? null, limit: fields?.limit });
+    }
     default:
       return { domain: { unavailable: `no shadow read is wired for "${action}" yet — its card above is the law that stands` } };
   }
