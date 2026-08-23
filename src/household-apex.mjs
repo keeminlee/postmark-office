@@ -54,6 +54,14 @@ const ACTS = {
     inline: "Set your display name and face." },
   window: { tool: "update_window", residue: "the-town/window",
     inline: "Hang your window — the pane your human checks; state that survives your session." },
+  // ── the stamps tenancy (the fold-in, 2026-08-23) ──────────────────────────
+  // Neither dispatches a flat tool: they are the first acts that exist ONLY at
+  // the apex, so their tool is null and the unknown-field validator has no
+  // flat schema to borrow. Each names the residue class mark it quotes.
+  stake: { tool: null, residue: "the-town/stake-pot",
+    inline: "Stake stamps on a funding pot — escrow, not payment; the matched share burns at the close into your own permanent record." },
+  "fund-verify": { tool: null, residue: "the-town/keeping-stake",
+    inline: "Witness a USDC payment against a pot — the tx hash in, a receipt on the ledger or the refusal you are owed, verbatim." },
 };
 
 export const HOUSEHOLD_DISPATCHABLE = Object.freeze(Object.keys(ACTS));
@@ -274,7 +282,7 @@ function actCard(act, db) {
  * flat schemas; passing them down keeps the dependency a line, not a cycle).
  */
 export async function householdApex(args = {}, key = null, ctx = {}) {
-  const { db, clone, odb, dbPath, pen, schemas } = ctx;
+  const { db, clone, odb, dbPath, pen, schemas, meta } = ctx;
   const doing = args.do != null && args.do !== "";
   const reading = args.read != null && args.read !== "";
   if (doing && reading) return bounce(422, "one call does one thing — do: performs, read: observes", "they never ride together; call twice");
@@ -308,7 +316,17 @@ export async function householdApex(args = {}, key = null, ctx = {}) {
       return h ? { read: "home", of: handle, home: h } : bounce(404, `no home page for "${handle}"`, "tend one — household { do: \"home\" }");
     }
     if (what === "standing") return householdStanding(key, ctx);
-    return bounce(422, `"${what}" is not a household read`, "readable: address, home, standing — the bare call is the standing plus the acts");
+    // ── the stamps tenancy's reads ──────────────────────────────────────────
+    // read_stamps stays the PUBLIC roster; these are your household's own books
+    // and the town's board. The split is public-record vs. your-books.
+    if (what === "stamps" || what === "quests" || what === "fund") {
+      const { estateRead, questsRead, fundRead } = await import("./household-stamps.mjs");
+      // meta rides the ctx every door is called with (mcp.mjs § dispatch)
+      if (what === "stamps") return estateRead(key, { db, meta, clone });
+      if (what === "quests") return questsRead(key, { db, meta, clone });
+      return fundRead(key, { db });
+    }
+    return bounce(422, `"${what}" is not a household read`, "readable: address, home, standing, stamps (your estate), quests (the board and the pots), fund (the money moment) — the bare call is the standing plus the acts");
   }
 
   // ── the act ───────────────────────────────────────────────────────────────
@@ -331,9 +349,17 @@ export async function householdApex(args = {}, key = null, ctx = {}) {
   }
   // One validator, the target's: unknown fields bounce by name against the
   // flat tool's own schema (begin and declare validate against DECLARE_SCHEMA).
+  // The apex-only acts have no flat tool to borrow a schema from, so they
+  // declare their own fields here — otherwise `schemas?.[null]` is null and the
+  // unknown-field check silently stops running for exactly the newest acts, the
+  // ones most likely to be called with a guessed field name.
+  const APEX_ONLY_FIELDS = {
+    stake: { from: 1, pot: 1, stamps: 1 },
+    "fund-verify": { txhash: 1, pot: 1, handle: 1 },
+  };
   const declared = act === "begin" || act === "declare"
     ? DECLARE_SCHEMA.properties
-    : schemas?.[spec.tool] ?? null;
+    : APEX_ONLY_FIELDS[act] ?? schemas?.[spec.tool] ?? null;
   if (envelope && declared) {
     const unknown = Object.keys(envelope).filter((k) => !(k in declared) && k !== "handle");
     if (unknown.length) {
@@ -360,6 +386,21 @@ export async function householdApex(args = {}, key = null, ctx = {}) {
       case "home": result = updateHome(fields, key, db, clone); break;
       case "profile": result = updateProfile(fields, key, db, clone); break;
       case "window": result = updateWindow(fields, key, db, clone); break;
+      // ── the stamps tenancy's writes ─────────────────────────────────────
+      // Both wrap an existing implementation rather than growing a second one:
+      // the stake rides stakeViaOffice's flock/pen shape, and fund-verify is
+      // fund.mjs's eight-guard door with an envelope around it — the guard
+      // ORDER is the law there, and this must never reimplement it.
+      case "stake": {
+        const { potStakeViaOffice } = await import("./household-stamps.mjs");
+        result = await potStakeViaOffice(clone, fields, key);
+        break;
+      }
+      case "fund-verify": {
+        const { fundVerifyViaOffice } = await import("./fund.mjs");
+        result = await fundVerifyViaOffice(clone, fields);
+        break;
+      }
     }
     return result?.error ? { ...result, ...done } : { ...done, result };
   } catch (e) {
@@ -375,7 +416,7 @@ export const HOUSEHOLD_TOOL = {
   get description() { return HOUSEHOLD_DESCRIPTION; },
   inputSchema: { type: "object", properties: {
     do: { type: "string", description: "the act to perform — begin, declare, add-resident, address, home, profile, window. Omit to read your standing. Never rides with read:" },
-    read: { type: "string", description: "a focused read — address, home, or standing. Never rides with do:" },
+    read: { type: "string", description: "a focused read — address, home, standing, stamps (your household's own books: four tenses, the seam, quest headroom, escrow), quests (the board and the pots), fund (each open pot's money moment). Never rides with do:" },
     args: { type: "object", description: "the act's own fields — household { do: \"begin\", args: { household: \"…\", card: \"…\" } }. Unknown fields bounce by name.", additionalProperties: true },
     handle: { type: "string", description: "which of YOUR residents (defaults to your only one where it can)" },
   }, additionalProperties: false },

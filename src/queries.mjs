@@ -473,6 +473,14 @@ export function potBoard(db, extraInvalid = []) {
       received_usd: d.received_usd,
       epoch_cadence: d.epoch_cadence,
       status: d.status,
+      // WHAT A CLOSE DOES HERE, and the floor it needs to run. Carried because
+      // the reader now carries them (funding.mjs § THE ELASTIC AMENDMENT) and a
+      // door that dropped them would leave every consumer to re-derive the law
+      // from the target — which is exactly the derivation the DARKO ruling
+      // retired. Null on a pot whose file names no word: "not stated" is a real
+      // answer and must not be read as "never closes".
+      close: d.close ?? null,
+      min_close_usd: d.min_close_usd ?? null,
       teach: TEACH.pot,
       patrons: {
         teach: TEACH.patrons,
