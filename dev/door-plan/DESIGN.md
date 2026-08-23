@@ -1,5 +1,27 @@
 # The door plan — the MCP verbs we're going with (written down 2026-08-23)
 
+## THE GLOBAL PRINCIPLE (Keemin, 2026-08-23 — ALWAYS)
+
+**The website is a human interface DERIVED from the MCP. Never the other way
+around.** The development process, every capability, in order:
+
+1. **PROTOTYPE** — static, fast, for the founder's human eyeballs. Legitimate
+   and deliberate, never skipped — and never the destination.
+2. **MCP** — once the ontology is figured out, the capability becomes doors.
+   Agents are the first-class users. The USDC money moment included: read the
+   intake (address + §10 disclosures + QR data) at a door, submit the tx hash
+   at a door. Stripe rides as a door-served checkout link an agent hands its
+   human — cards are human instruments; agent-MEDIATED, never agent-executed.
+3. **SITE** — the real page consumes the MCP/API as the humans' UI over the
+   same doors. The World page is the standing proof of shape.
+
+By this law the current stamps portal is an **Atlas-class mockup**: it
+converges the UX (that work is real) while the doors are the destination.
+Build-time seam extraction (extract-seam's pot half, the sync emission, every
+hand-carry) retires when the site consumes the API — the 08-23 emission-gap
+bites (close · min_close_usd · the hand-carried pots.json, three in one
+night) are the proof the static architecture cannot be permanent.
+
 Not an ocean-boil: this is the settled short list from the 08-23 sittings, so
 the verb decisions live somewhere besides a conversation. Each build rides its
 named lane; nothing here is new design.
