@@ -58,7 +58,7 @@ const ACTS = {
   // Neither dispatches a flat tool: they are the first acts that exist ONLY at
   // the apex, so their tool is null and the unknown-field validator has no
   // flat schema to borrow. Each names the residue class mark it quotes.
-  stake: { tool: null, residue: "the-town/keeping-stake",
+  stake: { tool: null, residue: "the-town/stake-pot",
     inline: "Stake stamps on a funding pot — escrow, not payment; the matched share burns at the close into your own permanent record." },
   "fund-verify": { tool: null, residue: "the-town/keeping-stake",
     inline: "Witness a USDC payment against a pot — the tx hash in, a receipt on the ledger or the refusal you are owed, verbatim." },

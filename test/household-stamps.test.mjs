@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { readPots, foldFunding, parseLedgerText } from "../src/funding.mjs";
-import { escrowDetail, fundRead, KEEPING_STAKE_MARK } from "../src/household-stamps.mjs";
+import { escrowDetail, fundRead, KEEPING_STAKE_MARK, STAKE_POT_BODY, POT_STAKEABLE_BODY } from "../src/household-stamps.mjs";
 import { clipPotStake } from "../src/pot-stake-exec.mjs";
 import { intakeDisclosure } from "../src/fund.mjs";
 import { HOUSEHOLD_DISPATCHABLE, householdDispatchToolFor } from "../src/household-apex.mjs";
@@ -152,8 +152,11 @@ test("the stake act quotes its residue class mark, never its own prose", () => {
   // The fold-in law: "every new act plants its residue class mark first and the
   // door quotes it, never its own prose."
   assert.equal(KEEPING_STAKE_MARK, "the-town/keeping-stake");
+  // the PRIMARY residue moved to the mode class when the taxonomy was planted
+  // (world main 3af43f61) — asserted in its own test below; here it is enough
+  // that the act names a residue at all rather than speaking for itself.
   const src = readFileSync(new URL("../src/household-apex.mjs", import.meta.url), "utf8");
-  assert.match(src, /stake: \{ tool: null, residue: "the-town\/keeping-stake"/);
+  assert.match(src, /stake: \{ tool: null, residue: "the-town\/[a-z-]+"/);
   assert.ok(HOUSEHOLD_DISPATCHABLE.includes("stake"), "and the act is dispatchable");
   assert.ok(HOUSEHOLD_DISPATCHABLE.includes("fund-verify"));
   // apex-only acts dispatch no flat tool — which is what makes them apex-only
@@ -227,4 +230,77 @@ test("the mandated caption is imported, never hand-typed, on every money surface
   assert.match(fund, /import \{ HOLO_CAPTION \} from "\.\/funding\.mjs";/);
   assert.equal((fund.match(/caption: HOLO_CAPTION,/g) ?? []).length, 2,
     "both money answers read the one constant");
+});
+
+// ── the planted taxonomy, quoted verbatim ────────────────────────────────────
+
+test("the door quotes the planted mark bodies VERBATIM, from the world record itself", () => {
+  // THE QUOTE LAW: "every new act plants its residue class mark first and the
+  // door quotes it, never its own prose." A paraphrase is the drift class that
+  // law exists to kill — so this reads the MARK FILES, not the door's copy of
+  // them. If the two ever disagree, the record is right and the door is a bug.
+  //
+  // Skipped, never faked, when no world checkout is at hand: a green tick that
+  // proved nothing would be worse than an honest absence.
+  const roots = [process.env.WORLD_CLONE, "G:/postmark/postmark-world",
+    new URL("../../postmark-world", import.meta.url).pathname.replace(/^\//, "")];
+  const base = "WORLD/marks/let-there-be-light/the-town-centre/the-keeping-works";
+  const paths = {
+    [STAKE_POT_BODY]: `${base}/postmark-edge/stake/stake-pot/mark.md`,
+    [POT_STAKEABLE_BODY]: `${base}/postmark-node/paper/pot/pot-stakeable-slot/mark.md`,
+  };
+  let checked = 0;
+  for (const [body, rel] of Object.entries(paths)) {
+    let text = null;
+    for (const root of roots) {
+      if (!root) continue;
+      try { text = readFileSync(join(root, rel), "utf8"); break; } catch { /* next root */ }
+    }
+    if (text == null) continue;
+    checked++;
+    // the mark's prose is everything after its frontmatter
+    const prose = text.slice(text.indexOf("---", 3) + 3).trim();
+    assert.ok(prose.includes(body),
+      `the door's copy of ${rel} is a paraphrase:\n  door:   ${body}\n  record: ${prose.slice(0, 200)}`);
+  }
+  if (!checked) {
+    console.log("      ↳ no world checkout on this box — the verbatim check did not run");
+    return;
+  }
+  assert.equal(checked, 2, "both marks must be checked when the record is readable");
+});
+
+test("the stake answer and the fund read carry the menu and the mode, not a summary", () => {
+  const src = readFileSync(new URL("../src/household-stamps.mjs", import.meta.url), "utf8");
+  // the answer quotes both axes: the object's menu and the edge's mode
+  assert.match(src, /stakeable: \{ slot: "stakeable", value: "pot-mode — burns at the published close", mark: POT_STAKEABLE_SLOT, says: POT_STAKEABLE_BODY \}/);
+  // BOTH surfaces carry the mode — the stake's answer and the fund read's
+  // consent payload. Counting matters: a single-match check stayed green when
+  // the stake answer dropped its copy and the fund read kept one.
+  assert.equal((src.match(/mode: \{ mark: STAKE_POT_MARK, says: STAKE_POT_BODY \}/g) ?? []).length, 2,
+    "the mode class rides the stake answer AND the fund read's menu");
+  // NO MODE ARGUMENT, and the door says why rather than leaving it a silence
+  const apex = readFileSync(new URL("../src/household-apex.mjs", import.meta.url), "utf8");
+  assert.match(apex, /stake: \{ from: 1, pot: 1, stamps: 1 \}/,
+    "the stake takes from, pot, stamps — a mode argument would contradict the taxonomy");
+  assert.equal(/mode: 1/.test(apex), false, "no mode field is accepted");
+  assert.match(src, /the object publishes the menu and the edge records the choice/);
+  // the consent payload rides the fund read, BEFORE the money moment
+  const fundRead = src.slice(src.indexOf("export function fundRead"));
+  const menuAt = fundRead.indexOf("stakeable:");
+  const moneyAt = fundRead.indexOf("money_moment:");
+  // PRESENT, and only then BEFORE. `-1 < n` is true, so an ordering check alone
+  // went green when the menu was deleted outright — which its own flip proved.
+  assert.ok(menuAt > 0, "the fund read must carry the menu at all");
+  assert.ok(moneyAt > 0 && menuAt < moneyAt,
+    "the menu a caller is consenting to must come before the address they act on");
+  // anchored: a renamed key still contains the old name as a substring
+  assert.match(fundRead, /\bpublished_close: p\.close/);
+});
+
+test("the primary residue is the mode class, with keeping law still citable", () => {
+  const apex = readFileSync(new URL("../src/household-apex.mjs", import.meta.url), "utf8");
+  assert.match(apex, /stake: \{ tool: null, residue: "the-town\/stake-pot"/,
+    "stake-pot is the primary residue now");
+  assert.equal(KEEPING_STAKE_MARK, "the-town/keeping-stake", "and the keeping law stays citable");
 });

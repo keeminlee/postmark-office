@@ -30,9 +30,31 @@ import { intakeDisclosure } from "./fund.mjs";
 
 const bounce = (code, defect, hint, extra = {}) => ({ error: "bounce", code, defect, hint, ...extra });
 
-// The residue class mark every act here quotes. Planted before the door was
-// built, per the fold-in law: "every new act plants its residue class mark
-// first and the door quotes it, never its own prose."
+// ── THE STAKING TAXONOMY, PLANTED (world main 3af43f61, 2026-08-23) ─────────
+// Two axes, and the door quotes both rather than improvising a third:
+//
+//   the OBJECT publishes the menu — `stakeable`, sealed per carrier
+//     (mark = mark-mode/returns-at-unstake · ballot = ballot-mode/returns-at-
+//      close · pot = pot-mode/burns-at-published-close · bounty = mark-mode-
+//      for-now)
+//   the EDGE records the choice — stake-mark / stake-ballot / stake-pot
+//
+// SO THERE IS NO MODE ARGUMENT ON THIS DOOR, and that absence is the design:
+// every serviceable menu offers exactly one mode today, so the mode is IMPLIED
+// BY THE TARGET. What the door owes instead is the timetable/carriage consent
+// pattern — it quotes the menu and the return the caller is consenting to,
+// before they consent to it.
+//
+// These two strings are the planted bodies, VERBATIM from the world record.
+// A paraphrase is the exact drift the quote law exists to kill, and the
+// falsifier reads the mark files themselves rather than trusting this copy.
+export const STAKE_POT_MARK = "the-town/stake-pot";
+export const POT_STAKEABLE_SLOT = "the-town/pot-stakeable-slot";
+export const STAKE_POT_BODY =
+  "A pot stake is need with weight — it burns when the pot's published close condition is met, and re-mints by the town's one split.";
+export const POT_STAKEABLE_BODY =
+  "A pot accepts pot-mode stakes only: they burn when its own close condition is met, and the split re-mints them.";
+// Still citable as the underlying keeping law; stake-pot is the primary residue.
 export const KEEPING_STAKE_MARK = "the-town/keeping-stake";
 
 // Your own residents, and nobody else's. The estate read is your BOOKS — the
@@ -191,9 +213,15 @@ export async function potStakeViaOffice(clone, { from, pot, stamps }, key) {
   return {
     did: "stake",
     ...result,
-    // The door quotes the class mark that defines the act, never its own prose.
-    mark: KEEPING_STAKE_MARK,
-    escrow_law: "a stake is escrow, not payment — a keeping stake returns whole unless the epoch's witnessed dollars match it, and the matched share burns into your own permanent record",
+    // WHAT YOU JUST CONSENTED TO, in the planted marks' own words. The menu the
+    // object published, and the edge your choice recorded — quoted, never
+    // paraphrased, because a paraphrase of a consent term is not the term.
+    stakeable: { slot: "stakeable", value: "pot-mode — burns at the published close", mark: POT_STAKEABLE_SLOT, says: POT_STAKEABLE_BODY },
+    mode: { mark: STAKE_POT_MARK, says: STAKE_POT_BODY },
+    keeping_law: KEEPING_STAKE_MARK,
+    // No mode argument was available to you, and that is the taxonomy: a pot's
+    // menu offers exactly one mode, so the target implied it.
+    why_no_mode: "the object publishes the menu and the edge records the choice — a pot's menu is sealed to pot-mode, so the mode was implied by the pot you named",
   };
 }
 
@@ -222,6 +250,20 @@ export function fundRead(_key, { db, stripeUrl = process.env.FUND_STRIPE_URL ?? 
       target_usd_per_epoch: p.target_usd_per_epoch,
       received_usd: p.received_usd,
       escrow: p.escrow?.staked ?? 0,
+      // THE CONSENT PAYLOAD, before the money moment rather than after it. The
+      // menu this object publishes, in the planted mark's own words, beside the
+      // close word and floor that say when the burn actually happens — a caller
+      // consents to a return, and cannot consent to one nobody stated.
+      stakeable: {
+        slot: "stakeable",
+        value: "pot-mode — burns at the published close",
+        mark: POT_STAKEABLE_SLOT,
+        says: POT_STAKEABLE_BODY,
+        mode: { mark: STAKE_POT_MARK, says: STAKE_POT_BODY },
+        published_close: p.close
+          ? { word: p.close, floor_usd: p.min_close_usd }
+          : { word: null, floor_usd: null, unstated: "this pot's file names no close word — nothing in the record says when, or whether, a stake on it would burn" },
+      },
       ...(open
         ? {
             money_moment: {
