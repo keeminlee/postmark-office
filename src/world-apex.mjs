@@ -77,21 +77,20 @@ export const apexEnabled = () => process.env.WORLD_APEX === "1";
 // ledger's own derivation, read and never written), the threshold ledger's text,
 // and the pen. Built per call rather than held, so a clone swapped underneath a
 // running office is picked up the same way every other world read picks it up.
-// ONE GEOMETRY, ONE TRUTH — and the key is how a reader names which one.
+// ONE GEOMETRY, ONE TRUTH — and since §1c there is only one to name.
 //
-// This took NO key and asked for worldStateRaw(null), so a signed-in resident
-// crossed thresholds in a DIFFERENT world from the one their own door serves
-// them: every other verb reads stateForKey(repo, key), which for a household
-// with a sketchbook is a live fold of THEIR branch, while the crossing read
-// main's committed save. Two components that must agree were reading two
-// sources, which is the same shape of fault as the sweep/forecast twin filters.
-//
-// Passing the key through does not choose a geometry — it makes the crossing
-// consume whichever one the office is already serving that reader.
-function crossingDeps(key = null) {
+// The fault this line once carried is worth keeping: the crossing asked for
+// main's committed save while every other verb read a signed-in household's own
+// live fold, so a resident crossed thresholds in a DIFFERENT world from the one
+// their door served them. It was fixed by threading the key through. The fold on
+// the read is now gone — canon is the only world any door serves — so the two
+// components agree by construction, and there is no key left to thread. A
+// threshold is crossed in the published world: a door you have only drafted is
+// not yet ground you can stand in.
+function crossingDeps() {
   const ledgerPath = join(WORLD_CLONE, "WORLD", "threshold-ledger.md");
   return {
-    world: async () => await worldStateRaw(key),
+    world: async () => await worldStateRaw(),
     ledger: async () => { try { return readFileSync(ledgerPath, "utf8"); } catch { return ""; } },
     standpointOf: async (who) => {
       const here = await residentStandpoint(who).catch(() => null);
@@ -245,8 +244,8 @@ const DISPATCH = {
   // this row is unreachable on a live store. It is here so the door, the lint
   // (L6 reads DISPATCHABLE) and the demo all read the same table rather than
   // three, which is the drift the dispatch table exists to prevent.
-  enter: { tool: "world_enter", run: (args, key) => enterViaOffice(WORLD_CLONE, args, key, crossingDeps(key)) },
-  exit: { tool: "world_exit", run: (args, key) => exitViaOffice(WORLD_CLONE, args, key, crossingDeps(key)) },
+  enter: { tool: "world_enter", run: (args, key) => enterViaOffice(WORLD_CLONE, args, key, crossingDeps()) },
+  exit: { tool: "world_exit", run: (args, key) => exitViaOffice(WORLD_CLONE, args, key, crossingDeps()) },
 };
 
 // ── seam 4 · the fields an action takes ─────────────────────────────────────
@@ -570,7 +569,7 @@ async function frameBlock(oriented, key) {
   try {
     const here = await residentStandpoint(who);
     if (!here?.frame) return null;
-    const w = await worldStateRaw(null);
+    const w = await worldStateRaw();
     const { service, mod } = await vesselServiceFrom(w, { repo: WORLD_CLONE });
     const next = service && mod ? mod.nextDepartures(service, mod.fractionalCrossing(Date.now()), 1)[0] ?? null : null;
     return {
@@ -603,7 +602,7 @@ async function happenedFor(oriented, args, key) {
     if (who) {
       const here = await residentStandpoint(who);
       transitions = (here?.transitions ?? []).map((t) => ({ ...t, crossing: null }));
-      const w = await worldStateRaw(null);
+      const w = await worldStateRaw();
       const { service, mod, carriers } = await vesselServiceFrom(w, { repo: WORLD_CLONE });
       if (here?.frame && service && mod) {
         const carrier = carriers.find((c) => c.id === here.frame);

@@ -25,7 +25,7 @@
 import { existsSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
-import { stateForKey, draftDeltaForKey } from "./world-branches.mjs";
+import { publishedState, draftDeltaForKey } from "./world-branches.mjs";
 import { forecastForMark } from "./world-forecast.mjs";
 import { execUnderTownLock, lockTimedOut, LOCK_BUSY } from "./town-lock.mjs";
 
@@ -54,26 +54,27 @@ function actingAs(named, key) {
 }
 
 // Does the mark exist in the world the CALLER can see? The one gate the ledger
-// cannot keep. Published canon PLUS the caller's own household drafts (Keemin's
-// ruling 2026-07-30: stamps may back a draft mark before Settlement publishes
-// it — escrow is exactly what publishes an off-parcel mark, so gating stakes on
-// publication was a deadlock). Another household's unpublished drafts stay
-// invisible here on purpose: you cannot back what you cannot see. Reads refs
-// via stateForKey, never the checkout's working-tree file (the checkout sits on
-// whatever branch the pen last wrote — its file is nobody's truth).
+// cannot keep, and it is answered in TWO LOOKS because the world has two layers:
+// published canon, then the caller's own sketchbook (Keemin's ruling 2026-07-30:
+// stamps may back a draft mark before Settlement publishes it — escrow is
+// exactly what publishes an off-parcel mark, so gating stakes on publication was
+// a deadlock). Another household's unpublished drafts stay invisible here on
+// purpose: you cannot back what you cannot see. Canon is read at the REF, never
+// from the checkout's working-tree file (the checkout sits on whatever branch
+// the pen last wrote — its file is nobody's truth).
 export function markExists(mark, key = null) {
   if (!existsSync(join(WORLD_CLONE, ".git")))
     return { known: false, reason: "the office has no world clone to check against" };
   try {
-    const { state } = stateForKey(WORLD_CLONE, key ?? {});
+    const { state } = publishedState(WORLD_CLONE);
     if ((state?.marks ?? []).some((m) => m.id === mark)) return { known: true, exists: true };
-    // YOUR OWN DRAFTS COUNT (2026-08-22). With the draft fold off the read
-    // (WORLD_DRAFT_FOLD=0), stateForKey serves published main to everyone — so
-    // a resident staking the draft they just left bounced 404 on a mark that
-    // was sitting on their own branch. The delta is the cheap second look: a
-    // git diff plus a few file reads, no fold — and it only ever shows the
-    // caller their OWN sketchbook, so "you cannot back what you cannot see"
-    // holds exactly as before: another household's drafts stay unstakeable.
+    // THE SECOND LOOK — your own drafts count (2026-08-22). The world read is
+    // canon for everyone, so a resident staking the draft they just left would
+    // bounce 404 on a mark sitting on their own branch; that is exactly what
+    // happened the morning of the party. This is not a workaround for the read
+    // serving canon — it is the permanent shape of the pair: canon at the ref,
+    // then the delta (a git diff plus a few file reads, O(k), no fold), which
+    // only ever shows the caller their OWN sketchbook.
     if (key) {
       const delta = draftDeltaForKey(WORLD_CLONE, key);
       if (!delta?.error && (delta?.marks ?? []).some((m) => m.id === mark && m.status !== "deleted"))

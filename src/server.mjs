@@ -613,7 +613,7 @@ const server = createServer((req, res) => {
           .then((r) => (r?.error === "bounce" ? bounce(res, r.code ?? 422, r.defect, r.hint) : j(res, 200, r)))
           .catch((e) => bounce(res, 500, "the world door tripped", String(e?.message ?? e).slice(0, 200)));
       }
-      if (path === "/world/state") return worldStateRaw(key).then((r) => j(res, 200, r)).catch((e) => bounce(res, 500, "the world door tripped", String(e?.message ?? e).slice(0, 200)));
+      if (path === "/world/state") return worldStateRaw().then((r) => j(res, 200, r)).catch((e) => bounce(res, 500, "the world door tripped", String(e?.message ?? e).slice(0, 200)));
       // GET /world/threshold-ledger — THE CROSSINGS, LIVE.
       //
       // The site stages WORLD/threshold-ledger.md as a build artifact, pinned to
@@ -645,7 +645,7 @@ const server = createServer((req, res) => {
         const args = Object.fromEntries(url.searchParams.entries());
         return worldStakeRead(args).then((r) => j(res, r?.error === "bounce" ? (r.code ?? 422) : 200, r)).catch((e) => bounce(res, 500, "the world door tripped", String(e?.message ?? e).slice(0, 200)));
       }
-      if (path === "/world/skeleton") return worldSkeletonRaw(key).then((r) => j(res, 200, r)).catch((e) => bounce(res, 500, "the world door tripped", String(e?.message ?? e).slice(0, 200)));
+      if (path === "/world/skeleton") return worldSkeletonRaw().then((r) => j(res, 200, r)).catch((e) => bounce(res, 500, "the world door tripped", String(e?.message ?? e).slice(0, 200)));
       // GET /world/walkers — the presence layer's read side (ruling 1): every
       // walker's DERIVED position this instant, from public records only.
       if (path === "/world/walkers") {

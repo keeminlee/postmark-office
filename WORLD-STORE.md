@@ -441,7 +441,7 @@ sits at 2 diffs and correctly refuses to graduate.
 
 The fold path pays a `git rev-parse`, a `git show` of the whole
 `world-state.json` and the parse after it on **every** call, because
-`stateForKey` reads before the assembled-world cache is consulted. The store pays
+`publishedState` reads before the assembled-world cache is consulted. The store pays
 one `rev-parse` for the freshness check and then answers from memory. Both
 numbers are dominated by Windows process spawns.
 

@@ -1,9 +1,12 @@
 // world-branches.mjs — ruling 9's branch boundary.
 //
-// Published canon is refs/heads/main. A resident household's composed view is
-// refs/heads/draft/<household> when that branch exists: the branch is kept
-// rebased on main by the Worldkeeper, so no overlay or path translation is
-// needed. Anonymous, visitor, and otherwise unresolved callers see main.
+// Published canon is refs/heads/main, and every world READ serves it: the same
+// world for anonymous, visitor and author alike (world-runtime ladder §1c).
+// A resident household's unpublished work lives on refs/heads/draft/<household>
+// — kept rebased on main by the Worldkeeper — and reaches its own author as a
+// DELTA (`draftDeltaForKey`), which the viewer lays over canon as an overlay.
+// The branch is where a draft is written and read from by name; it is never a
+// second world the read tier composes.
 
 import {
   existsSync,
@@ -436,9 +439,16 @@ function settledStakes(state) {
     }));
 }
 
-// Fold the branch tree, rather than trusting a branch-local derived file.
+// Fold the tree at a ref, rather than trusting that ref's derived file.
 // Public mark weights are carried from the settled main-derived state as input;
 // newly drafted marks enter with zero backing until a Settlement publishes them.
+//
+// WHO CALLS THIS, and who must not: the FORECAST (world-forecast.mjs) folds MAIN
+// against a pending stake book — one deliberate derivation an operator asks for.
+// No request-path read may reach it, and none does: the world read serves canon
+// off `publishedState` and never folds (§1c). A fold is ~6s of judgment on the
+// live world; the one that ran per signed-in read is what took the town down on
+// 2026-08-22.
 //
 // `stakes` — the FORECAST seam (the-town/the-forecast). Pass the pending book and
 // this folds the same tree through the same judgment against a later ledger, which
@@ -450,7 +460,7 @@ function settledStakes(state) {
 // the-forecast: never stored) — the archive directory is removed in `finally` and
 // this map dies with the process. It is a memo rather than a per-request
 // derivation because the real fold costs ~6s of judgment on the live world, and
-// the settled draft-branch path already accepted exactly this trade.
+// the operator asking for a forecast accepts exactly this trade.
 export function foldedStateAtRef(repo, ref, { stakes = null } = {}) {
   const sha = git(repo, ["rev-parse", `${ref}^{commit}`]).trim();
   const key = `${repo}\0${ref}\0${sha}\0${stakes ? createHash("sha1").update(JSON.stringify(stakes)).digest("hex") : ""}`;
@@ -477,7 +487,7 @@ export function foldedStateAtRef(repo, ref, { stakes = null } = {}) {
       stdio: ["ignore", "pipe", "pipe"],
     }));
     if (state.errors?.length)
-      throw new Error(`draft branch fold has ${state.errors.length} error(s): ${JSON.stringify(state.errors[0])}`);
+      throw new Error(`fold at ${ref} has ${state.errors.length} error(s): ${JSON.stringify(state.errors[0])}`);
     viewCache.set(key, state);
     return state;
   } finally {
@@ -485,36 +495,29 @@ export function foldedStateAtRef(repo, ref, { stakes = null } = {}) {
   }
 }
 
-// THE COLD-FOLD STAMPEDE (outage, 2026-08-22 — this is a tourniquet, not a cure).
+// THE READ IS CANON, FOR EVERYONE (world-runtime ladder §1c, 2026-08-22).
 //
-// A drafting resident's view needs their unpublished marks, so the miss path
-// re-folds the whole world at their branch. Measured on the live world that day:
-// ~34 SECONDS, and it runs under execFileSync — synchronous — so Node's single
-// event loop is frozen for every other resident for its whole duration. One
-// drafter's cold read takes the town down.
+// One world-state per settlement, identical for anonymous, visitor and author
+// alike. These functions take a repo and nothing else: there is no key to pass,
+// so no identity can select a different world at the read, and the whole class
+// of per-household fold-on-read is closed rather than switched off.
 //
-// The memo hides this while it is warm. It is warm exactly until the process
-// restarts or settled stakes move, and then all 27 branches go cold at once:
-// each queued read spawns its own 34s block, serially, and the accept queue
-// climbs past 200 while every request times out. A restart does not clear it —
-// a restart CAUSES it.
+// A draft is a DECLARATION, and it reaches its author through the delta
+// endpoints (`draftDeltaForKey` below — a git diff and a few file reads, O(k))
+// and the viewer's own overlay, never by re-folding the world. The gold plan's
+// certainty ruling is the law here: "Demanding derived properties for a live
+// draft is whole-world computation re-entering through the display." Derived
+// properties — containment, standing, contests — are minted at the save.
 //
-// WORLD_DRAFT_FOLD=0 serves a drafter the PUBLISHED world instead of folding.
-// The cost is honest and visible: until their next crossing they do not see
-// their own unpublished marks in the world view. Everything else — reading,
-// walking, writing, mail — is untouched. A degraded world beats a stopped one.
-// Set WORLD_DRAFT_FOLD=1 to restore the old behaviour the moment the real fix
-// lands (fold off the request path: serve published immediately, populate the
-// memo in the background, upgrade the view when it is ready).
-const draftFoldEnabled = () => process.env.WORLD_DRAFT_FOLD !== "0";
-
-export function stateForKey(repo, key) {
-  const ref = draftFoldEnabled() ? draftRefForKey(repo, key) : null;
-  if (ref) return {
-    ref,
-    sha: git(repo, ["rev-parse", `${ref}^{commit}`]).trim(),
-    state: foldedStateAtRef(repo, ref),
-  };
+// What the deleted arm cost, since the record should keep it: a drafting
+// resident's view re-folded the whole world at their branch on the miss path.
+// ~34 SECONDS on the live world, under execFileSync — synchronous — freezing
+// the event loop for every other resident. The memo hid it while warm; a
+// restart went cold on all 27 branches at once, each read spawning its own 34s
+// block, and the accept queue climbed past 200 (the 2026-08-22 outage). The
+// tourniquet WORLD_DRAFT_FOLD=0 stopped the bleeding that day; the overlay made
+// it the architecture, and the switch is gone with the arm it guarded.
+export function publishedState(repo) {
   const main = mainRef(repo);
   return {
     ref: main,
@@ -523,9 +526,12 @@ export function stateForKey(repo, key) {
   };
 }
 
-export function skeletonForKey(repo, key) {
-  const ref = draftRefForKey(repo, key) ?? mainRef(repo);
-  return { ref, skeleton: readJsonAtRef(repo, ref, "WORLD/skeleton.json") };
+// Terrain is the town's, never a household's: the skeleton is authored by the
+// world's own record, and a sketchbook holds marks. It followed the draft ref
+// only because the read tier once did.
+export function publishedSkeleton(repo) {
+  const main = mainRef(repo);
+  return { ref: main, skeleton: readJsonAtRef(repo, main, "WORLD/skeleton.json") };
 }
 
 function parseDeltaRecord(text, path) {

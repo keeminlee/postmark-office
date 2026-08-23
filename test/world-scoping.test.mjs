@@ -3,7 +3,7 @@
 import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -114,6 +114,13 @@ export function loadMarks(dir) {
 export function placementParent() { return null; }
 export function marksContain() { return false; }
 if (process.argv[1]?.endsWith("marks-fold.mjs")) {
+  // THE FOLD WITNESS. Every whole-world fold this fixture performs appends one
+  // line here, so a test can assert that a read did NOT fold — the claim §1c
+  // makes about the request path, stated as a file that stays empty.
+  if (process.env.FOLD_WITNESS) {
+    const { appendFileSync } = await import("node:fs");
+    appendFileSync(process.env.FOLD_WITNESS, opt("--marks-dir", "?") + "\\n");
+  }
   const marks = loadMarks(opt("--marks-dir", "WORLD/marks")).map((m) => ({
     id: m.id, by: m.by, household: m.household, kind: m.kind, tier: m.tier,
     body: m.body, sovereign: false, stamps: 0, weight: 0,
@@ -148,6 +155,7 @@ const {
   worldMyMarks,
   worldNoteViaOffice,
   worldOrient,
+  worldSkeletonRaw,
   worldStateRaw,
 } = await import("../src/world.mjs");
 
@@ -155,12 +163,17 @@ const houseA = { household: "house-a", handles: new Set(["alpha"]) };
 const houseB = { household: "house-b", handles: new Set(["beta"]) };
 
 test("ruling 9 scopes reads by household and every write lands off main", async () => {
+  // §1c: "the signed-in fold-on-read path (`stateForKey`'s draft arm) has no
+  // remaining caller and can be DELETED". The read is canon for everyone; the
+  // household's own work comes back through the delta, asserted just below.
   const owner = await worldStateRaw(houseA);
   const other = await worldStateRaw(houseB);
   const anonymous = await worldStateRaw(null);
-  assert.equal(owner.marks.some((m) => m.id === "alpha/private-note"), true);
+  assert.equal(owner.marks.some((m) => m.id === "alpha/private-note"), false,
+    "the author's own world read is published main — the draft reaches them as a delta, not a fold");
   assert.equal(other.marks.some((m) => m.id === "alpha/private-note"), false);
   assert.deepEqual(other, anonymous, "unresolved household and anonymous both read published main");
+  assert.deepEqual(owner, anonymous, "and so does the author: one world, one payload, cacheable");
 
   const delta = worldMyDrafts(houseA);
   assert.equal(delta.household, "house-a");
@@ -284,18 +297,92 @@ test("the draft delta carries WORLD-framed geometry — the overlay's whole cont
     "town-square's composed world centre (10,10) + the file's offset (3,4) — world frame, not file frame");
 });
 
-test("the stake gate sees your OWN drafts under the tourniquet (WORLD_DRAFT_FOLD=0, 2026-08-22)", async () => {
+// ── §1c · THE TOURNIQUET IS THE ARCHITECTURE (2026-08-22) ────────────────────
+//
+// Three falsifiers for one ruling. The law they assert, verbatim from the world
+// runtime ladder, §0's certainty ruling:
+//
+//   "Demanding derived properties for a live draft is whole-world computation
+//    re-entering through the display."
+//
+// and §1c's consequence:
+//
+//   "the signed-in fold-on-read path (`stateForKey`'s draft arm) has no
+//    remaining caller and can be DELETED — the tourniquet (`WORLD_DRAFT_FOLD=0`)
+//    stops being a tourniquet and becomes the architecture."
+
+test("§1c (a) — the author still sees their own draft, by DELTA, with no env switch in play", async () => {
   const { markExists } = await import("../src/world-stake.mjs");
-  const saved = process.env.WORLD_DRAFT_FOLD;
-  process.env.WORLD_DRAFT_FOLD = "0";   // the exact prod condition: stateForKey serves published main to everyone
+  assert.equal(process.env.WORLD_DRAFT_FOLD, undefined,
+    "no tourniquet is set: what follows is the architecture, not a switch position");
+
+  // the stake gate — the door that bounced 404 on the morning of the party
+  assert.equal(markExists("alpha/published-note", houseA).exists, true, "published marks unchanged");
+  assert.equal(markExists("alpha/private-note", houseA).exists, true,
+    "your own draft counts — the delta is the second look, no fold");
+  assert.equal(markExists("alpha/private-note", houseB).exists, false,
+    "another household's draft stays unstakeable: you cannot back what you cannot see");
+  assert.equal(markExists("alpha/private-note", null).exists, false, "and no key sees no sketchbook");
+
+  // the delta doors themselves — the author's whole sketchbook, declarations only
+  const ids = worldMyDrafts(houseA).marks.map((m) => m.id);
+  for (const id of ["alpha/private-note", "alpha/nested-draft"])
+    assert.ok(ids.includes(id), `world_my_drafts hands the author ${id}`);
+  const mine = await worldMyMarks(houseA);
+  assert.ok(mine.drafts.some((m) => m.id === "alpha/private-note"),
+    "and world_my_marks files them under drafts, beside published and backed");
+});
+
+test("§1c (b) — anonymous and other households read published main; no draft leaks at the read", async () => {
+  const anonymous = await worldStateRaw(null);
+  const other = await worldStateRaw(houseB);
+  const author = await worldStateRaw(houseA);
+  const PUBLISHED = new Set([
+    "the-town/let-there-be-light", "the-town/town-square", "alpha/published-note", "alpha/backed-note",
+  ]);
+  for (const [who, state] of [["anonymous", anonymous], ["another household", other], ["the author", author]])
+    assert.deepEqual(state.marks.filter((m) => !PUBLISHED.has(m.id)), [],
+      `${who} reads canon: nothing but published main's own marks appears in the world payload`);
+  assert.deepEqual(author, anonymous, "one world, byte for byte, whoever asks");
+  assert.equal(worldMyDrafts(houseB).marks.some((m) => m.by === "alpha"), false,
+    "and the delta door is scoped to its own household — the leak has no second route");
+});
+
+test("§1c (c) — NO read folds a draft branch: the fold arm is gone and the witness stays empty", async () => {
+  const branches = await import("../src/world-branches.mjs");
+  // The arm cannot be called because it does not exist, and the read tier's
+  // state function takes no key — there is no identity to select a world with.
+  assert.equal(branches.stateForKey, undefined, "stateForKey's draft arm is deleted, not disabled");
+  assert.equal(branches.skeletonForKey, undefined, "and so is the skeleton's");
+  assert.equal(branches.publishedState.length, 1, "publishedState(repo) — no key parameter to pass a household in");
+  assert.equal(branches.publishedSkeleton.length, 1, "publishedSkeleton(repo) — likewise");
+  // The switch is gone rather than set: no module in the office reads it, so
+  // there is no environment in which the old arm comes back.
+  const src = new URL("../src/", import.meta.url);
+  const readers = readdirSync(src)
+    .filter((f) => f.endsWith(".mjs"))
+    .filter((f) => /process\.env\.WORLD_DRAFT_FOLD|draftFoldEnabled/.test(readFileSync(new URL(f, src), "utf8")));
+  assert.deepEqual(readers, [], "no office module reads WORLD_DRAFT_FOLD — both halves collapsed into the one path");
+
+  // And behaviourally: a signed-in author drives every read door in this file,
+  // and the fixture's own marks-fold — the only thing that can perform a
+  // whole-world fold — is never spawned.
+  const witness = join(repo, "..", `fold-witness-${process.pid}.log`);
+  rmSync(witness, { force: true });
+  process.env.FOLD_WITNESS = witness;
   try {
-    assert.equal(markExists("alpha/published-note", houseA).exists, true, "published marks unchanged");
-    assert.equal(markExists("alpha/private-note", houseA).exists, true,
-      "your own draft counts — the delta is the second look, no fold");
-    assert.equal(markExists("alpha/private-note", houseB).exists, false,
-      "another household's draft stays unstakeable: you cannot back what you cannot see");
-    assert.equal(markExists("alpha/private-note", null).exists, false, "and no key sees no sketchbook");
+    await worldStateRaw(houseA);
+    await worldSkeletonRaw(houseA);
+    await worldOrient({}, houseA);
+    await worldEyes({ x: 0, y: 0 }, houseA);
+    worldMyDrafts(houseA);
+    await worldMyMarks(houseA);
+    const { markExists } = await import("../src/world-stake.mjs");
+    markExists("alpha/private-note", houseA);
   } finally {
-    if (saved === undefined) delete process.env.WORLD_DRAFT_FOLD; else process.env.WORLD_DRAFT_FOLD = saved;
+    delete process.env.FOLD_WITNESS;
   }
+  assert.equal(existsSync(witness), false,
+    "not one fold ran on the request path — 'whole-world computation re-entering through the display' has no entrance left");
+  rmSync(witness, { force: true });
 });
