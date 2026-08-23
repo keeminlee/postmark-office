@@ -39,6 +39,15 @@
   var LS_ENDPOINT = "pm.mcpproto.endpoint";
   var LS_KEY = "pm.mcpproto.key";        // the credential lives HERE, in this browser, never in the page
   var LS_HISTORY = "pm.mcpproto.history";
+  // ONE credential slot (LS_KEY) holds the bearer string whatever shape filled
+  // it — a pasted household key or an OAuth access token. The office resolves
+  // both through the same resolver, so the Authorization header never varies.
+  // This record only remembers WHICH shape is loaded, and what the token
+  // grant said about itself; it is never consulted when building a request.
+  var LS_CRED = "pm.mcpproto.cred";      // { shape, obtained, expires_in, scope, refresh_token }
+  var LS_CLIENT = "pm.mcpproto.client_id";
+  var SS_VERIFIER = "pm.mcpproto.verifier";  // sessionStorage: one sign-in attempt
+  var SS_STATE = "pm.mcpproto.state";        // sessionStorage: the CSRF check
 
   // ── tiny DOM kit ──────────────────────────────────────────────────────────
 
@@ -125,6 +134,262 @@
       if (last) return last;
     }
     try { return JSON.parse(raw); } catch (e) { return null; }
+  }
+
+  // ── credentials: one slot, two shapes ─────────────────────────────────────
+  //
+  // The office's resolver already accepts a pasted household key and an OAuth
+  // access token as the same thing (src/server.mjs: KEYS.get, then oauthLookup,
+  // keyLookup, berthLookup — one Bearer, several shapes). So this page keeps
+  // ONE credential slot and never branches on shape when building a request.
+  // Signing in is therefore not a second auth path; it is a second way to fill
+  // the one field, and the header code below it does not know which happened.
+  //
+  // The flow itself is the office's existing one, piggybacked whole: RFC 7591
+  // dynamic registration, authorization-code + PKCE S256, opaque tokens held
+  // browser-side. Nothing new server-side. The town site's own sign-in does the
+  // identical dance (site: src/lib/auth.mjs + the layout island), and this is
+  // that shape re-spelled in dependency-free ES5 for a page with no build step.
+
+  // Navigation goes through a seam for the same reason fetch does: the offline
+  // harness has to watch where a sign-in would send someone without going.
+  function navigate(url) { return (window.__MCP_NAVIGATE__ || function (u) { location.assign(u); })(url); }
+
+  function sstore(k, v) { try { sessionStorage.setItem(k, v); } catch (e) { /* private window */ } }
+  function srecall(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } }
+  function sdrop(k) { try { sessionStorage.removeItem(k); } catch (e) { /* nothing to drop */ } }
+
+  function getCred() { try { return JSON.parse(recall(LS_CRED, "null")); } catch (e) { return null; } }
+  function setCred(c) { if (c) store(LS_CRED, JSON.stringify(c)); else store(LS_CRED, ""); }
+
+  // The office serves its own AS metadata, so ASK rather than assume: an office
+  // that moves its endpoints, or fronts a different authorization server, is
+  // followed rather than broken. The conventional paths are only the fallback
+  // for an office that serves no metadata at all.
+  function officeBase() {
+    var ep = (ui.endpoint.value.trim() || DEFAULT_ENDPOINT).replace(/\/+$/, "");
+    return ep.replace(/\/mcp$/, "");
+  }
+  function conventional(base) {
+    return { authorize: base + "/oauth/authorize", token: base + "/oauth/token", register: base + "/oauth/register", issuer: null, discovered: false };
+  }
+  function discoverAS() {
+    var base = officeBase();
+    return xfetch(base + "/.well-known/oauth-authorization-server", { headers: { accept: "application/json" } })
+      .then(function (r) { return r.status === 200 ? r.text() : null; })
+      .then(function (raw) {
+        var m = null;
+        try { m = raw ? JSON.parse(raw) : null; } catch (e) { m = null; }
+        if (!m || !m.authorization_endpoint) return conventional(base);
+        return {
+          authorize: m.authorization_endpoint,
+          token: m.token_endpoint || base + "/oauth/token",
+          register: m.registration_endpoint || base + "/oauth/register",
+          issuer: m.issuer || null,
+          discovered: true,
+        };
+      })
+      .catch(function () { return conventional(base); });
+  }
+
+  function b64url(buf) {
+    var bytes = new Uint8Array(buf), s = "";
+    for (var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+    return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  }
+  function randToken() { var a = new Uint8Array(32); crypto.getRandomValues(a); return b64url(a.buffer); }
+  function challengeFor(v) { return crypto.subtle.digest("SHA-256", new TextEncoder().encode(v)).then(b64url); }
+
+  // This page's own address is its redirect: it handles its own callback, so
+  // nothing on the site or the office needs to know it exists.
+  function redirectUri() { return location.origin + location.pathname; }
+
+  function clientId(as) {
+    var have = recall(LS_CLIENT, "");
+    if (have) return Promise.resolve(have);
+    return xfetch(as.register, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        client_name: "postmark mcp-prototype", redirect_uris: [redirectUri()],
+        token_endpoint_auth_method: "none", grant_types: ["authorization_code", "refresh_token"],
+        response_types: ["code"],
+      }),
+    }).then(function (r) {
+      return r.text().then(function (raw) {
+        var body = null;
+        try { body = JSON.parse(raw); } catch (e) { body = null; }
+        if (r.status >= 400 || !body || !body.client_id) throw new Error("registration refused (HTTP " + r.status + ") — " + String(raw).slice(0, 160));
+        store(LS_CLIENT, body.client_id);
+        return body.client_id;
+      });
+    });
+  }
+
+  function signIn() {
+    setStatus("wait", "discovering the authorization server…");
+    var as;
+    return discoverAS().then(function (found) {
+      as = found;
+      return clientId(as);
+    }).then(function (id) {
+      var verifier = randToken(), stateTok = randToken();
+      sstore(SS_VERIFIER, verifier);
+      sstore(SS_STATE, stateTok);
+      return challengeFor(verifier).then(function (challenge) {
+        var p = [
+          "response_type=code",
+          "client_id=" + encodeURIComponent(id),
+          "redirect_uri=" + encodeURIComponent(redirectUri()),
+          "code_challenge=" + encodeURIComponent(challenge),
+          "code_challenge_method=S256",
+          "state=" + encodeURIComponent(stateTok),
+          "scope=town",
+        ].join("&");
+        var url = as.authorize + (as.authorize.indexOf("?") >= 0 ? "&" : "?") + p;
+        // Say where this is going when it leaves the origin the page is on.
+        // An office whose PUBLIC_BASE points elsewhere will send the reader to
+        // ANOTHER office's sign-in, and the token that comes back belongs to
+        // that one — worth reading before the tab changes, not after.
+        var away = elsewhere(as.authorize);
+        setStatus(away ? "bad" : "wait", away
+          ? "sending you to " + away + " — that is not this page's origin, so the session you get back belongs to that office"
+          : "sending you to GitHub via " + as.authorize + (as.discovered ? " (discovered)" : " (no AS metadata; conventional path)"));
+        navigate(url);
+        return url;
+      });
+    }).catch(function (e) {
+      setStatus("bad", "sign-in could not start — " + String(e && e.message || e));
+      throw e;
+    });
+  }
+
+  // The origin a URL would take the reader to, or null when it stays home.
+  function elsewhere(u) {
+    try {
+      var target = new URL(u, location.href);
+      return target.origin === location.origin ? null : target.origin;
+    } catch (e) { return null; }
+  }
+
+  // Pull { code, state } out of a callback query string; null if not a callback.
+  function parseCallback(search) {
+    var p = new URLSearchParams(String(search || "").replace(/^\?/, ""));
+    var code = p.get("code"), st = p.get("state");
+    if (!code || !st) return null;
+    return { code: code, state: st, error: p.get("error") || null };
+  }
+
+  // Exchange a callback for a token and land it in the one credential slot.
+  // Takes the parsed callback rather than reading location, so the harness can
+  // drive the exact same code path without a browser navigation.
+  function completeCallback(cb) {
+    if (!cb) return Promise.resolve(null);
+    var expect = srecall(SS_STATE);
+    if (!expect || cb.state !== expect) {
+      sdrop(SS_VERIFIER); sdrop(SS_STATE);
+      setStatus("bad", "sign-in state did not match — nothing was accepted. Start the sign-in again.");
+      return Promise.resolve(null);
+    }
+    var verifier = srecall(SS_VERIFIER);
+    sdrop(SS_VERIFIER); sdrop(SS_STATE);
+    return discoverAS().then(function (as) {
+      return xfetch(as.token, {
+        method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: "grant_type=authorization_code&code=" + encodeURIComponent(cb.code)
+          + "&redirect_uri=" + encodeURIComponent(redirectUri())
+          + "&client_id=" + encodeURIComponent(recall(LS_CLIENT, ""))
+          + "&code_verifier=" + encodeURIComponent(verifier || ""),
+      });
+    }).then(function (r) {
+      return r.text().then(function (raw) {
+        var t = null;
+        try { t = JSON.parse(raw); } catch (e) { t = null; }
+        if (r.status >= 400 || !t || !t.access_token) {
+          setStatus("bad", "the token exchange was refused (HTTP " + r.status + ") — " + String(raw).slice(0, 160));
+          return null;
+        }
+        adoptToken(t);
+        return t;
+      });
+    });
+  }
+
+  // One slot, filled. Everything downstream reads ui.key like it always did.
+  function adoptToken(t) {
+    ui.key.value = t.access_token;
+    store(LS_KEY, t.access_token);
+    // `for` records WHICH string the grant put in the slot, so the indicator
+    // can tell the truth without trusting an event to have fired: a pasted key
+    // over a live session simply stops matching, and reads as a pasted key.
+    setCred({ shape: "github", for: t.access_token, obtained: Date.now(), expires_in: t.expires_in || null, scope: t.scope || null, refresh_token: t.refresh_token || null });
+    renderCred();
+    // Say so on the status line too. Without this the line keeps whatever it
+    // last said — which after a sign-out-then-renew reads as "forgotten" under
+    // a live session badge, two true statements telling one lie.
+    setStatus("ok", "signed in — the office token is in the credential slot.");
+  }
+
+  function tokenIsFresh(c, nowMs) {
+    if (!c || c.shape !== "github") return false;
+    if (!c.obtained || !c.expires_in) return true;   // no expiry stated: the office is the judge
+    return (nowMs || Date.now()) < c.obtained + c.expires_in * 1000;
+  }
+
+  // A stale session is worth one quiet retry before asking a human to click.
+  function refreshIfStale() {
+    var c = getCred();
+    if (!c || c.shape !== "github" || !c.refresh_token || tokenIsFresh(c)) return Promise.resolve(false);
+    return discoverAS().then(function (as) {
+      return xfetch(as.token, {
+        method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: "grant_type=refresh_token&refresh_token=" + encodeURIComponent(c.refresh_token)
+          + "&client_id=" + encodeURIComponent(recall(LS_CLIENT, "")),
+      });
+    }).then(function (r) { return r.text().then(function (raw) { return { status: r.status, raw: raw }; }); })
+      .then(function (got) {
+        var t = null;
+        try { t = JSON.parse(got.raw); } catch (e) { t = null; }
+        if (got.status >= 400 || !t || !t.access_token) { signOut(true); return false; }
+        adoptToken(t);
+        return true;
+      }).catch(function () { return false; });
+  }
+
+  // Forget the credential in this browser. The office is not told: an access
+  // token this page drops still stands until it ages out, which is the same
+  // bargain a pasted key has always had.
+  function signOut(stale) {
+    ui.key.value = "";
+    store(LS_KEY, "");
+    setCred(null);
+    renderCred();
+    setStatus("wait", stale ? "the signed-in session expired and could not be renewed — sign in again." : "credential forgotten in this browser.");
+  }
+
+  // Which shape is loaded. Read-only: nothing branches on this.
+  function credShape() {
+    var v = ui.key && ui.key.value ? ui.key.value.trim() : "";
+    if (!v) return { shape: "none", label: "no credential" };
+    var c = getCred();
+    // The slot decides, not the record: a github record only describes what is
+    // loaded while the string it was issued for is still the string in the slot.
+    if (c && c.shape === "github" && c.for === v) {
+      var bits = ["github session"];
+      if (c.scope) bits.push(c.scope);
+      if (c.obtained && c.expires_in) {
+        var daysLeft = Math.floor((c.obtained + c.expires_in * 1000 - Date.now()) / 86400000);
+        bits.push(daysLeft >= 0 ? "expires in " + daysLeft + "d" : "EXPIRED");
+      }
+      return { shape: "github", label: bits.join(" · ") };
+    }
+    return { shape: "key", label: "pasted key" };
+  }
+
+  function renderCred() {
+    if (!ui.cred) return;
+    var s = credShape();
+    clear(ui.cred);
+    ui.cred.appendChild(el("span", { class: "credshape " + s.shape, text: s.label }));
   }
 
   // ── schema → form (the procedural half) ───────────────────────────────────
@@ -703,12 +968,19 @@
     ui.instr = el("details", { class: "instr" });
     ui.instr.style.display = "none";
 
+    ui.cred = el("span", { class: "credwrap" });
+    // The slot's shape is worth seeing at a glance, and the field itself is the
+    // authority — so re-read it on every edit rather than trusting a flag.
+    ui.key.addEventListener("input", function () { store(LS_KEY, ui.key.value); renderCred(); });
+
     var connectBtn = el("button", { class: "primary", type: "button", text: "connect" });
     connectBtn.addEventListener("click", function () { connect(); });
+    var signInBtn = el("button", { type: "button", text: "sign in with github" });
+    signInBtn.addEventListener("click", function () { signIn().catch(function () { /* the status line already said why */ }); });
     var refreshBtn = el("button", { type: "button", text: "refresh tools" });
     refreshBtn.addEventListener("click", function () { store(LS_KEY, ui.key.value); listTools(); });
-    var forgetBtn = el("button", { class: "ghost", type: "button", text: "forget key" });
-    forgetBtn.addEventListener("click", function () { ui.key.value = ""; store(LS_KEY, ""); setStatus("wait", "key forgotten in this browser."); });
+    var forgetBtn = el("button", { class: "ghost", type: "button", text: "forget credential" });
+    forgetBtn.addEventListener("click", function () { signOut(false); });
 
     var mast = el("header", { class: "mast" }, [
       el("h1", { text: "the office, as it stands" }),
@@ -717,9 +989,11 @@
         el("div", { class: "f wide" }, [el("label", { text: "endpoint" }), ui.endpoint]),
         el("div", { class: "f" }, [el("label", { text: "bearer key" }), ui.key]),
         el("div", {}, [connectBtn]),
+        el("div", {}, [signInBtn]),
         el("div", {}, [refreshBtn]),
         el("div", {}, [forgetBtn]),
-        el("p", { class: "note", text: "the key is kept in this browser's localStorage and sent as an Authorization header. It is never written into the page." }),
+        el("div", {}, [ui.cred]),
+        el("p", { class: "note", text: "one credential slot, two ways to fill it: paste a household key, or sign in with GitHub through the office's own OAuth. Either way it is kept in this browser's localStorage and sent as an Authorization header — the office resolves both shapes, and this page never branches on which." }),
       ]),
       ui.status,
       ui.instr,
@@ -749,6 +1023,7 @@
     loadHistory();
     renderTools("");
     renderHistory();
+    renderCred();
     ui.response.appendChild(el("p", { class: "empty", text: "nothing called yet." }));
     setStatus("wait", "not connected.");
   }
@@ -758,9 +1033,27 @@
     if (!root) return null;
     clear(root);
     build(root);
-    // Auto-connect when a key is already remembered — the page is a lamp you
-    // walk up to, not a form you fill in twice.
-    if (ui.key.value) connect();
+
+    // Returning from GitHub: the office sent the reader back here with a code.
+    // Exchange it, then scrub the query out of the URL so a reload is not a
+    // replay attempt against a single-use code.
+    var cb = null;
+    try { cb = parseCallback(location.search); } catch (e) { cb = null; }
+    if (cb) {
+      completeCallback(cb).then(function (t) {
+        try { history.replaceState(null, "", location.pathname); } catch (e) { /* file:// has no history to rewrite */ }
+        if (t) connect();
+      });
+      return api;
+    }
+
+    // A remembered session that has aged out gets one quiet renewal attempt
+    // before anyone is asked to click anything.
+    refreshIfStale().then(function () {
+      // Auto-connect when a credential is already remembered — the page is a
+      // lamp you walk up to, not a form you fill in twice.
+      if (ui.key.value) connect();
+    });
     return api;
   }
 
@@ -769,9 +1062,18 @@
     connect: connect,
     listTools: listTools,
     callTool: callTool,
+    signIn: signIn,
+    signOut: signOut,
     // exposed for the offline harness, which asserts against the same units
     // the page runs on rather than a copy of them
-    _internals: { buildForm: buildForm, buildField: buildField, kindOf: kindOf, collectActions: collectActions, apexEnvelope: apexEnvelope, fieldsSchema: fieldsSchema, jsonTree: jsonTree, state: state, ui: ui },
+    _internals: {
+      buildForm: buildForm, buildField: buildField, kindOf: kindOf, collectActions: collectActions,
+      apexEnvelope: apexEnvelope, fieldsSchema: fieldsSchema, jsonTree: jsonTree, state: state, ui: ui,
+      discoverAS: discoverAS, officeBase: officeBase, parseCallback: parseCallback,
+      completeCallback: completeCallback, tokenIsFresh: tokenIsFresh, credShape: credShape,
+      getCred: getCred, redirectUri: redirectUri, elsewhere: elsewhere, refreshIfStale: refreshIfStale,
+      keys: { LS_KEY: LS_KEY, LS_CRED: LS_CRED, LS_CLIENT: LS_CLIENT, SS_STATE: SS_STATE, SS_VERIFIER: SS_VERIFIER },
+    },
   };
   window.MCPProto = api;
 
