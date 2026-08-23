@@ -187,9 +187,14 @@ const rawKeys = (m) => {
 
 // ── the previous run, read before it is destroyed ────────────────────────────
 // The store is rebuilt from scratch, so lint_findings holds exactly THIS run.
-// The alert surface §2.10 asks for is the DELTA, so the outgoing file's verdicts
-// are read first and reported against the new ones. This is an observation about
-// this machine's last hydration — named as such in meta, never town truth.
+// The alert surface is the DELTA, and that is the invariant family's own word
+// for it: every mechanic mark under
+// WORLD/marks/let-there-be-light/the-town-centre/the-keeping-works/postmark-invariant/<slug>/<slug>-mechanic
+// reads "the office runs this question over the rebuilt store at every
+// hydration; the delta between runs is the alert surface." So the outgoing
+// file's verdicts are read first and reported against the new ones. This is an
+// observation about this machine's last hydration — named as such in meta,
+// never town truth.
 let previous = null;
 if (existsSync(DB_PATH)) {
   try {
@@ -715,10 +720,14 @@ for (const m of marks) {
 }
 
 // ── doctrine: ENGINE.md's sections ───────────────────────────────────────────
-// §2.10 wants doctrine as nodes with stable rule-ids. ENGINE.md has no rule-ids
-// (a finding in itself), so the honest v0 is one node per `##` heading, and a
-// `describes` edge only where the heading text literally names a registered
-// mechanic. Nothing is inferred from prose.
+// Doctrine has to be addressable before anything can ask whether it is obeyed:
+// the-consulted-doctrine (the L5 invariant) says "Every doctrine rule reaches an
+// enforcing surface — a rule living only in prose no machine reads is a wish",
+// and a rule with no stable id is prose no machine can point at. ENGINE.md has
+// no rule-ids (a finding in itself, and L5's coarsest-honest-unit limit), so the
+// honest v0 is one node per `##` heading, and a `describes` edge only where the
+// heading text literally names a registered mechanic. Nothing is inferred from
+// prose.
 const enginePath = join(TREE, "WORLD", "ENGINE.md");
 let doctrineNodes = 0, doctrineEdges = 0;
 if (existsSync(enginePath)) {
