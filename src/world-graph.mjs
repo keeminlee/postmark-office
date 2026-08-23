@@ -278,6 +278,11 @@ function paintLints(findings, nodes, edges, graph) {
       lint: f.lint,
       verdict: f.verdict,
       headline: f.headline,
+      // The mark this question enforces, and that mark's one claim verbatim, as
+      // the lint cited them. A panel showing a red without the law it broke is
+      // asking the reader to take the lint's word for what the law says.
+      law: ev.law ?? null,
+      law_text: ev.law_text ?? null,
       method: ev.method ?? null,
       limits: ev.limits ?? null,
       // Evidence HEADS — the lint's own one-line summaries, which is what a

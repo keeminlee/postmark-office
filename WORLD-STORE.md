@@ -13,7 +13,7 @@ the live shadow turned up on its first run.
 ```
 npm run hydrate:world -- --ref refs/heads/main   # build world.db from published main
 npm run hydrate:world -- --ref <sha>             # ...or at any commit
-npm run world:lints                   # the six standing invariants, from the built store
+npm run world:lints                   # the eight standing invariants, from the built store
 npm run world:shadow                  # parity vs the world's own engine — the serving gate
 npm run world:store                   # the serving flag's instrument panel (= GET /world/store)
 npm run world:gexf                    # regenerate the ad-hoc window by hand
@@ -39,7 +39,7 @@ Flags: `--world <path>` (default: `WORLD_CLONE`, resolved exactly as
 |---|---|
 | `src/world-store.mjs` | the DDL, the sha-pinned materialiser, the Graphology runtime, the as-of read |
 | `src/world-hydrate.mjs` | the hydrator: gates, marks, edges, geometry versions, events, code graph |
-| `src/world-lints.mjs` | the six standing invariants; also a CLI over a built store |
+| `src/world-lints.mjs` | the eight standing invariants, each citing the mark it enforces; also a CLI over a built store |
 | `src/world-serve.mjs` | **the serving layer**: the two flags, the eligibility guard, the shadow, the counters |
 | `tools/world-gexf.mjs` | GEXF export (full + static), regenerated every hydration |
 | `tools/world-shadow.mjs` | shadow parity vs the world's own engine at the same sha |
@@ -173,7 +173,31 @@ materialised at a ref, never the working tree. The one deliberate difference:
 `meta.as_of_world` because it is auditing then. Same sha on both sides or the
 diff measures two worlds.
 
-### The six standing invariants
+### The eight standing invariants
+
+Each one is a constitutional mark, not this office's own opinion: the
+`postmark-invariant` family under
+`WORLD/marks/let-there-be-light/the-town-centre/the-keeping-works/`, one class
+per invariant, carrying `dials: {"lint": "Lx"}` and a single claim, with a
+mechanic child naming `src/world-lints.mjs`. Every finding leaves the office
+carrying `law` (the mark id) and `law_text` (that mark's claim, verbatim), and
+L0 reads the marks back off the world tree so a citation that has drifted from
+the law goes red instead of quietly lying. The pairing:
+
+| lint | mark | the claim it enforces |
+|---|---|---|
+| L0 | `the-town/the-readable-inputs` | A reading that cannot read its own inputs says so, loud |
+| L1 | `the-town/the-reaching-mechanic` | Every mechanic names running code and the name resolves |
+| L2 | `the-town/the-unmoved-past` | A departure is judged against the stop geometry of its own instant |
+| L3 | `the-town/the-owned-constants` | Every constant in the machinery is owned by a dial or a law |
+| L4 | `the-town/the-conforming-instance` | Every instance conforms to its class |
+| L5 | `the-town/the-consulted-doctrine` | Every doctrine rule reaches an enforcing surface |
+| L6 | `the-town/the-live-handler` | Every exposed action has a live handler |
+| L7 | `the-town/the-classed-mark` | Every mark is an instance of a class |
+
+The verdicts below are a SNAPSHOT of one run, kept for the L2 receipt that
+follows it; it predates L0 and L7 and says nothing about today. Run
+`npm run world:lints` for the live reading.
 
 | lint | verdict | headline |
 |---|---|---|

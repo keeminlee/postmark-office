@@ -989,7 +989,11 @@ if (!flag("--no-lints")) {
 
   const ins = db.prepare("INSERT OR REPLACE INTO lint_findings (lint, verdict, headline, evidence, hydrated_at, as_of_world) VALUES (?,?,?,?,?,?)");
   db.exec("BEGIN");
-  for (const l of lintSummary.lints) ins.run(l.id, l.verdict, l.headline, JSON.stringify({ method: l.method, limits: l.limits, evidence: l.evidence, rows: l.rows }), hydratedAt, worldSha);
+  // `law`/`law_text` ride into the stored detail beside method and limits: a
+  // finding read back out of the table hours later must still name the mark it
+  // enforces and quote that mark's claim, or the citation only ever existed in
+  // the process that computed it.
+  for (const l of lintSummary.lints) ins.run(l.id, l.verdict, l.headline, JSON.stringify({ law: l.law, law_text: l.law_text, method: l.method, limits: l.limits, evidence: l.evidence, rows: l.rows }), hydratedAt, worldSha);
   db.exec("COMMIT");
 
   // The delta against this machine's previous hydration — the alert surface.
