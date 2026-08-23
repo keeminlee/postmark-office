@@ -48,7 +48,7 @@ function seed({ walks = [], carries = [], says = [] } = {}) {
     at.run(c.entity, c.target, c.policy ?? "riding", c.declared_by ?? c.entity, c.born_at);
   const em = db.prepare("INSERT INTO emissions (id, class, source, x, y, born_at, ttl_expires_at, props) VALUES (?,?,?,?,?,?,?,?)");
   for (const s of says)
-    em.run(s.id, "sound", s.source, 0, 0, s.born_at, iso(Date.parse(s.born_at) + 300_000),
+    em.run(s.id, s.class ?? "sound", s.source, 0, 0, s.born_at, iso(Date.parse(s.born_at) + 300_000),
       JSON.stringify({ spoken_by: s.spoken_by ?? s.source, text: s.text ?? "", place: s.place ?? null, human: Boolean(s.human) }));
   return { db, path };
 }
@@ -165,6 +165,24 @@ test("walk and carry carry their typed effect", () => {
   assert.equal(carry.object, "ferry");
   assert.equal(carry.effect.policy, "riding");
   assert.equal(carry.effect.declared_by, "iris");
+});
+
+test("the public-acts default: a non-public emission class never reaches the feed", () => {
+  // The forward guard. A whisper-shaped class is not in PUBLIC_SAY_CLASSES, so
+  // even sitting in the emissions table it must be invisible here — while an
+  // ordinary public voice at the same instant comes through.
+  const { db } = seed({
+    says: [
+      { id: "pub", source: "wright", text: "town square", born_at: iso(T0 + 2000) },
+      { id: "priv", source: "wright", text: "a secret", class: "whisper", born_at: iso(T0 + 3000) },
+    ],
+  });
+  const events = latelyFold(db, { now: NOW }).events;
+  db.close();
+  const texts = events.map((e) => e.effect.text);
+  assert.ok(texts.includes("town square"), "the public voice is in the feed");
+  assert.ok(!texts.includes("a secret"), "the non-public class is excluded by default");
+  assert.equal(events.length, 1, "only the public act, nothing else");
 });
 
 test("an absent dynamic store is an honest empty feed, not a throw", () => {

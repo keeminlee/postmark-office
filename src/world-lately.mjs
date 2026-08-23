@@ -53,6 +53,21 @@
 import { existsSync } from "node:fs";
 
 import { openDynamic, dynamicDbPath } from "./dynamic-store.mjs";
+import { SOUND } from "./dynamic-emissions.mjs"; // the public speech class — the allowlist the say lane filters to
+
+// THE PUBLIC-ACTS DEFAULT, made explicit and enforced. This feed is public
+// observability, so it may show only acts that are ALREADY public — the walk
+// ledger the viewer draws, the speech the conversations page browses, the
+// passages declared in the open. Today every row in all three tables is such an
+// act (a private note is a git file, never an emission; a refused movement is
+// never written; there is no private passage policy), so this changes no current
+// behaviour. It is a FORWARD guard: the say lane is the one table with an
+// explicit class column, and the day someone adds a whisper- or DM-shaped
+// emission class, this list is what keeps it OUT of the feed by default rather
+// than leaking it in. A new class is public here only by being added here, on
+// purpose. Sourced from the class constant, never a bare "sound" literal.
+export const PUBLIC_SAY_CLASSES = Object.freeze([SOUND]);
+const SAY_CLASS_IN = PUBLIC_SAY_CLASSES.map((c) => `'${c}'`).join(", ");
 
 // The default depth of one page, and the hard ceiling on one. Thirty is a sane
 // glance — a strip on a page, a first screen of a pane — and a hundred is the
@@ -86,10 +101,13 @@ export const LANE_SELECT = Object.freeze({
     "SELECT born_at AS ts, 'carry' AS action, entity AS subject, target AS object, " +
     "policy AS effect, ('c' || seq) AS rowkey, declared_by AS aux FROM attachments",
   // SAYS. object = nobody in particular (a voice is spoken to the air); effect =
-  // the emission's props JSON, unpacked in `shapeEffect`. aux unused.
+  // the emission's props JSON, unpacked in `shapeEffect`. aux unused. The class
+  // filter is the public-acts default in force: only PUBLIC_SAY_CLASSES reach
+  // the feed, so a future private emission class is excluded until it is added
+  // to the allowlist on purpose.
   say:
     "SELECT born_at AS ts, 'say' AS action, source AS subject, NULL AS object, " +
-    "props AS effect, ('s:' || id) AS rowkey, NULL AS aux FROM emissions",
+    `props AS effect, ('s:' || id) AS rowkey, NULL AS aux FROM emissions WHERE class IN (${SAY_CLASS_IN})`,
 });
 
 export const ALL_TYPES = Object.freeze(Object.keys(LANE_SELECT));
