@@ -1213,7 +1213,10 @@ function canonForGuards() {
  * the reason instead, which is a fact a replay can act on and an empty list is
  * not.
  */
-async function witnessStamp(handle) {
+// Exported since POS-5's consent door: a stance row carries the-witnessed-line
+// exactly as a mark row does, and a second derivation of "where the actor
+// stood and who saw" is the split-brain this office keeps a museum of.
+export async function witnessStamp(handle) {
   const unread = (reason) => ({ at: { anchor: null, dx: null, dy: null, unplaced: true }, witnesses: { source: "unread", reason, list: [] } });
   try {
     const w = await world();
