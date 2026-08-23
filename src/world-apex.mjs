@@ -58,7 +58,7 @@ import {
 } from "./world.mjs";
 // v2.2 §B — the frame block and the three-shelf delta. Both compose the one
 // standpoint derivation; neither derives a position of its own.
-import { carrierReader, movementV2Enabled, vesselServiceFrom } from "./world-movement.mjs";
+import { carrierReader, movementV2Enabled, stopDepartures, vesselServiceFrom } from "./world-movement.mjs";
 import { carriedLegsFor, happenedBlock, latestSettlement, readCrossingLogs } from "./world-happened.mjs";
 import { WORLD_STAKE_TOOLS, callWorldStakeTool } from "./world-stake.mjs";
 // DEMO SLICE (step 5) — the crossings. Imported for the dispatch table and the
@@ -560,6 +560,14 @@ export function buildTerms({ affording, spine, means = null }) {
 // anything of their own — the design invariant, and the reason issue #7's
 // present-vs-walkers split is the cautionary tale nailed above the door.
 
+/** The landing's answer: the vessel's next departures from the stop you stand at. Null away from any stop. */
+async function departuresBlock(oriented) {
+  try {
+    const w = await worldStateRaw();
+    return await stopDepartures(w, { x: oriented?.standpoint?.x, y: oriented?.standpoint?.y }, { repo: WORLD_CLONE });
+  } catch { return null; }
+}
+
 /** What you are aboard, when it next moves, and how you get off. Null when your frame is the world. */
 async function frameBlock(oriented, key) {
   if (!movementV2Enabled()) return null;
@@ -677,6 +685,11 @@ async function apexRead(args, key) {
   // a feed: the crossing number is the town's clock and the caller keeps their
   // own place in it, the same shape `world_say`'s `latest` already proved.
   const frame = await frameBlock(oriented, key);
+  // The shore side of the same contract (the-stop-answers, timetable class,
+  // 2026-08-23): a read taken at a landing carries the vessel's next departures
+  // from it. Aboard, `frame.moves_next` already answers — the two never speak
+  // at once. The schedule is public, so no key gates this block.
+  const departures = frame ? null : await departuresBlock(oriented);
   const happened = args.since == null ? null : await happenedFor(oriented, args, key);
 
   return {
@@ -688,6 +701,7 @@ async function apexRead(args, key) {
     // (the slim, 2026-08-15).
     ...(oriented.note !== undefined ? { note: oriented.note } : {}),
     ...(frame ? { frame } : {}),
+    ...(departures ? { departures } : {}),
     within: spine,
     nearby,
     ...(oriented.present ? { present: oriented.present } : {}),
