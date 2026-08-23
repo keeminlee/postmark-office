@@ -49,7 +49,7 @@ import { VESSEL_HANDLE, ridesTheVessel } from "./dynamic-entities.mjs"; // the a
 import { carriersFrom, carriersWithDisclosure, carrierReader, heardFromV2, inRect, movementStandpoint, movementV2Enabled, recordsAcrossEras, roadTerms, storedDepartures, storedRecordsFor, vesselPositionAt as vesselFromTimetable, vesselServiceFrom } from "./world-movement.mjs"; // stage D: carriers carry, frames compose
 import { byBand, presenceEnabled, presentNear, near as presenceNear, everyone as presenceEveryone } from "./dynamic-presence.mjs"; // stage 2: residents revealed to each other
 import { MEDIA_BASE, mediaUrlOk } from "./media.mjs"; // the mark door's image allowlist: only the town's own shelf hangs on marks
-import { imageFormat, MAX_IMAGE, SHELF_FORMATS } from "./edit.mjs"; // the bytes decide the type, never the filename; and the upload seam's ceiling is the inline ceiling (with_image, below)
+import { imageFormat, SHELF_FORMATS } from "./edit.mjs"; // the bytes decide the type, never the filename (with_image, below)
 import { everyonePlaced, withFrames } from "./positions.mjs"; // where is everyone: walk records ∪ parcel households, one derivation — plus Stage D's frame overlay
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -990,24 +990,31 @@ export async function worldPresent(args = {}, { roll = null } = {}) {
 
 // ── a mark's image, as bytes (world_investigate with_image, 2026-08-23) ──────
 //
-// THE CEILING IS THE SEAM'S, NOT A SECOND ONE. Every object on the shelf was
-// admitted through the upload seam, which sizes it at MAX_IMAGE = 1.5 MB
-// (edit.mjs, imported by media.mjs) — so shelf objects are bounded at birth.
-// Minting a separate inline cap here would put two numbers in charge of one
-// question, and the day they drift is the day the door starts refusing images
-// the town says are fine. ONE CEILING, ONE OWNER: the seam that admits the
-// bytes is the seam that sizes them, and this door reads its number.
+// TWO DIFFERENT QUESTIONS, TWO DIFFERENT NUMBERS — and the distinction is the
+// point, so it is written down rather than left to be rediscovered.
 //
-// The cost is named rather than hidden: base64 inflates by 4/3, so a
-// ceiling-sized 1.5 MB image is about 2 MB of JSON string in the answer. That
-// is a real weight, and it is the price of asking for a picture — which is
-// exactly why with_image is opt-in and why the url alone remains the default.
+// The upload seam asks "may these bytes LIVE on the shelf?" and answers with
+// MAX_IMAGE = 1.5 MB (edit.mjs, imported by media.mjs). That is a storage
+// ceiling, and every shelf object is bounded by it at birth.
 //
-// The over-cap branch below therefore has NOTHING LAWFUL TO CATCH TODAY, and
-// it stays anyway, as a defensive rail: it is what stands between this door and
-// an object that reached the shelf around the seam — a direct R2 write, a
-// migration, a future upload path that forgets. A rail nobody trips is doing
-// its job; a rail deleted for being quiet is the one you wanted.
+// This door asks a different question: "should these bytes ride back inside a
+// JSON-RPC answer?" That is a TRANSPORT budget, and it is not the storage
+// ceiling's business. Base64 inflates by 4/3, so a ceiling-sized 1.5 MB image
+// is ~2 MB of JSON string — against the 3 MB this door accepts on a REQUEST
+// (mcp.mjs), which is the nearest yardstick the codebase has for what it
+// considers a large payload here. 1 MB is that budget: ~1.37 MB on the wire,
+// comfortably under the yardstick, and large enough to inline the great
+// majority of shelf images.
+//
+// Reusing MAX_IMAGE here would look like tidiness and cost the thing that
+// matters: sitting BELOW the storage ceiling is what makes the over-cap branch
+// REACHABLE BY A LAWFUL UPLOAD. A resident can shelve a 1.2 MB image today and
+// walk that path. Pinned to the seam's number the branch would be dead code
+// guarding only a seam bypass — a rail nobody can test is a rail nobody can
+// trust. The two numbers are allowed to drift precisely because they answer
+// different questions; if the seam's ceiling moves, this budget has no reason
+// to follow it.
+export const INVESTIGATE_IMAGE_MAX_BYTES = 1_000_000;
 
 // The reading law, in the register of the door's other one-liners
 // (mcp.mjs READING_LAW_LINE). The second sentence is the one that earns its
@@ -1031,7 +1038,7 @@ export const IMAGE_READING_LAW_LINE =
  * first statement in the function and there is no argument that steers past it.
  * A mark carrying an off-shelf url is disclosed and NOT requested.
  */
-export async function markImageBytes(url, { fetchImpl = null, maxBytes = MAX_IMAGE } = {}) {
+export async function markImageBytes(url, { fetchImpl = null, maxBytes = INVESTIGATE_IMAGE_MAX_BYTES } = {}) {
   if (!mediaUrlOk(url))
     return { note: `not fetched: that image url is not on the town's media shelf (${MEDIA_BASE}), so the office did not request it. The url stands as recorded — fetch it yourself if you trust it.` };
 

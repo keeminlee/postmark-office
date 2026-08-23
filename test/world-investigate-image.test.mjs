@@ -57,12 +57,12 @@ git("add", "-A");
 git("commit", "-qm", "fixture world");
 
 process.env.WORLD_CLONE = repo;
-const { worldInvestigate, markImageBytes, IMAGE_READING_LAW_LINE, WORLD_TOOLS } =
+const { worldInvestigate, markImageBytes, INVESTIGATE_IMAGE_MAX_BYTES, IMAGE_READING_LAW_LINE, WORLD_TOOLS } =
   await import("../src/world.mjs");
 const { contentFor } = await import("../src/mcp.mjs");
-// The inline ceiling is the UPLOAD SEAM's ceiling, imported from the one place
-// that owns it. The tests read the same constant the door reads, so a change to
-// the seam's number moves both together and neither can drift into a lie.
+// The seam's STORAGE ceiling, imported so the tests can assert the transport
+// budget sits below it. Two numbers, two questions — the test says so out loud
+// so the gap reads as deliberate rather than as drift.
 const { MAX_IMAGE } = await import("../src/edit.mjs");
 
 // ── a shelf that answers whatever this test wants ────────────────────────────
@@ -117,7 +117,7 @@ test('CONSTRAINT 1 — the MCP content assembly is unchanged for an answer carry
 // ── CONSTRAINT 2 ─────────────────────────────────────────────────────────────
 
 test('CONSTRAINT 2 — "over the cap ... the text answer says the image\'s byte size and that the URL stands — never silent omission."', async () => {
-  const oversize = Buffer.alloc(MAX_IMAGE + 1);
+  const oversize = Buffer.alloc(INVESTIGATE_IMAGE_MAX_BYTES + 1);
   stubFetch(shelfAnswer({ body: oversize, contentLength: oversize.length }));
 
   const r = await worldInvestigate({ mark: "fixture/shelf-picture", with_image: true });
@@ -133,14 +133,14 @@ test('CONSTRAINT 2 — "The URL rides in the text block ALWAYS, with or without 
   const text = JSON.parse(contentFor(inlined)[0].text);
   assert.equal(text.image, SHELF_URL, "the url is missing from the text block of an INLINED answer");
 
-  stubFetch(shelfAnswer({ body: Buffer.alloc(MAX_IMAGE + 1) }));
+  stubFetch(shelfAnswer({ body: Buffer.alloc(INVESTIGATE_IMAGE_MAX_BYTES + 1) }));
   const capped = await worldInvestigate({ mark: "fixture/shelf-picture", with_image: true });
   assert.equal(JSON.parse(contentFor(capped)[0].text).image, SHELF_URL,
     "the url is missing from the text block of a CAPPED answer");
 });
 
 test("CONSTRAINT 2 — a shelf that declares no length, or lies about it, cannot talk the door past the cap", async () => {
-  const oversize = Buffer.alloc(MAX_IMAGE + 1);
+  const oversize = Buffer.alloc(INVESTIGATE_IMAGE_MAX_BYTES + 1);
   // no content-length at all
   stubFetch(shelfAnswer({ body: oversize }));
   const undeclared = await markImageBytes(SHELF_URL);
@@ -152,42 +152,45 @@ test("CONSTRAINT 2 — a shelf that declares no length, or lies about it, cannot
   assert.ok(!lied.block, "a body that lied about its length was inlined");
 });
 
-test("CONSTRAINT 2 — ONE CEILING, ONE OWNER: the inline cap IS the upload seam's, not a second number", async () => {
-  // The seam that admits the bytes is the seam that sizes them. This asserts
-  // the door reads that number rather than keeping its own beside it — two
-  // numbers for one question is a drift waiting to refuse a lawful image.
-  assert.equal(MAX_IMAGE, 1.5 * 1024 * 1024, "the upload seam's ceiling moved; this test and the door should have moved with it");
+test("CONSTRAINT 2 — a TRANSPORT budget, distinct from the seam's STORAGE ceiling, and deliberately below it", async () => {
+  // Two different questions. The seam asks what may live on the shelf; this
+  // door asks what may ride back inside a JSON-RPC answer. The gap between the
+  // numbers is the feature, not an oversight — see the comment in world.mjs.
+  assert.equal(MAX_IMAGE, 1.5 * 1024 * 1024, "the seam's storage ceiling moved; re-read the arithmetic in world.mjs");
+  assert.ok(INVESTIGATE_IMAGE_MAX_BYTES < MAX_IMAGE,
+    "the transport budget must sit BELOW the storage ceiling, or the over-cap branch is unreachable by any lawful upload");
 
-  // The door's DEFAULT ceiling is that number and no other. The size guard runs
+  // The door's default budget is that number and no other. The size guard runs
   // before the format sniff, so an oversized buffer need not be a valid image
-  // to make the door state the cap it is enforcing — and the cap it names is
-  // the seam's, which is the whole claim.
-  stubFetch(shelfAnswer({ body: Buffer.alloc(MAX_IMAGE + 1) }));
+  // to make the door state the cap it is enforcing.
+  stubFetch(shelfAnswer({ body: Buffer.alloc(INVESTIGATE_IMAGE_MAX_BYTES + 1) }));
   const over = await markImageBytes(SHELF_URL);
   assert.ok(!over.block);
-  assert.match(over.note, new RegExp(`${MAX_IMAGE}-byte inline cap`),
-    `the door is enforcing some other number than the seam's ${MAX_IMAGE}: ${over.note}`);
+  assert.match(over.note, new RegExp(`${INVESTIGATE_IMAGE_MAX_BYTES}-byte inline cap`),
+    `the door is enforcing some other number than its stated budget: ${over.note}`);
 
-  // And the boundary is `>`, not `>=`: a file exactly AT the ceiling is one the
-  // upload seam would admit, so the door must not refuse it. Probed with the
-  // real PNG and the ceiling injected, because a buffer padded out to 1.5 MB is
-  // not a valid PNG (no IEND) and would be refused by the format sniff for an
-  // entirely different reason — which would make this assertion a lie.
+  // The boundary is `>`, not `>=`: a file exactly AT the budget still inlines.
+  // Probed with the real PNG and the budget injected, because a buffer padded
+  // out to a megabyte is not a valid PNG (no IEND) and would be refused by the
+  // format sniff for an entirely different reason — which would make this
+  // assertion pass for the wrong cause. That mistake was made and caught.
   stubFetch(shelfAnswer({ body: PNG_1x1, contentLength: PNG_1x1.length }));
   const exactly = await markImageBytes(SHELF_URL, { maxBytes: PNG_1x1.length });
-  assert.ok(exactly.block, "a file exactly at the ceiling was refused; the boundary is >= where it should be >");
+  assert.ok(exactly.block, "a file exactly at the budget was refused; the boundary is >= where it should be >");
 });
 
-test("CONSTRAINT 2 — the over-cap branch is a DEFENSIVE RAIL: nothing lawful can trip it, and it holds anyway", async () => {
-  // Every shelf object passed the upload seam, so today this branch has nothing
-  // lawful to catch. It exists for an object that reached the shelf AROUND the
-  // seam — a direct R2 write, a migration, a future upload path that forgets.
-  // That is the case simulated here: a shelf object one byte over the ceiling.
-  const bypassed = Buffer.alloc(MAX_IMAGE + 1);
-  stubFetch(shelfAnswer({ body: bypassed, contentLength: bypassed.length }));
+test("CONSTRAINT 2 — the over-cap branch is REACHABLE BY A LAWFUL UPLOAD, which is what makes it testable", async () => {
+  // The whole reason the budget sits below the seam's ceiling: a resident can
+  // shelve an image the seam admits and this door still declines to inline it.
+  // Pinned to the seam's number this path would be dead code guarding only a
+  // bypass — a rail nobody can reach is a rail nobody can trust.
+  const lawful = INVESTIGATE_IMAGE_MAX_BYTES + 1;
+  assert.ok(lawful <= MAX_IMAGE, "this fixture must be a size the upload seam would genuinely accept");
+
+  stubFetch(shelfAnswer({ body: Buffer.alloc(lawful), contentLength: lawful }));
   const r = await worldInvestigate({ mark: "fixture/shelf-picture", with_image: true });
-  assert.ok(!("_mcp_content" in r), "an object that bypassed the upload seam was inlined anyway");
-  assert.match(r.image_note, new RegExp(String(bypassed.length)), "the rail did not name the size it refused");
+  assert.ok(!("_mcp_content" in r), "an over-budget image was inlined anyway");
+  assert.match(r.image_note, new RegExp(String(lawful)), "the branch did not name the size it declined");
   assert.match(r.image_note, /url stands/i);
   assert.equal(r.image, SHELF_URL);
 });
