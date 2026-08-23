@@ -49,7 +49,7 @@ import { VESSEL_HANDLE, ridesTheVessel } from "./dynamic-entities.mjs"; // the a
 import { carriersFrom, carriersWithDisclosure, carrierReader, heardFromV2, inRect, movementStandpoint, movementV2Enabled, recordsAcrossEras, roadTerms, storedDepartures, storedRecordsFor, vesselPositionAt as vesselFromTimetable, vesselServiceFrom } from "./world-movement.mjs"; // stage D: carriers carry, frames compose
 import { byBand, presenceEnabled, presentNear, near as presenceNear, everyone as presenceEveryone } from "./dynamic-presence.mjs"; // stage 2: residents revealed to each other
 import { MEDIA_BASE, mediaUrlOk } from "./media.mjs"; // the mark door's image allowlist: only the town's own shelf hangs on marks
-import { imageFormat, SHELF_FORMATS } from "./edit.mjs"; // the bytes decide the type, never the filename (with_image, below)
+import { imageFormat, MAX_IMAGE, SHELF_FORMATS } from "./edit.mjs"; // the bytes decide the type, never the filename; and the upload seam's ceiling is the inline ceiling (with_image, below)
 import { everyonePlaced, withFrames } from "./positions.mjs"; // where is everyone: walk records ∪ parcel households, one derivation — plus Stage D's frame overlay
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -990,18 +990,24 @@ export async function worldPresent(args = {}, { roll = null } = {}) {
 
 // ── a mark's image, as bytes (world_investigate with_image, 2026-08-23) ──────
 //
-// THE CAP, and why this number. The shelf's own upload ceiling is 1.5 MB
-// (edit.mjs MAX_IMAGE), and base64 inflates bytes by 4/3 — so a 1 MB image is
-// about 1.37 MB of JSON string in the answer, against the 3 MB the MCP door
-// accepts on a request (mcp.mjs, the nearest yardstick this codebase has for
-// "a large payload at this door"). 1 MB inlines the great majority of shelf
-// images while keeping one answer well under that mark.
+// THE CEILING IS THE SEAM'S, NOT A SECOND ONE. Every object on the shelf was
+// admitted through the upload seam, which sizes it at MAX_IMAGE = 1.5 MB
+// (edit.mjs, imported by media.mjs) — so shelf objects are bounded at birth.
+// Minting a separate inline cap here would put two numbers in charge of one
+// question, and the day they drift is the day the door starts refusing images
+// the town says are fine. ONE CEILING, ONE OWNER: the seam that admits the
+// bytes is the seam that sizes them, and this door reads its number.
 //
-// Sitting BELOW the shelf's own 1.5 MB ceiling is deliberate rather than
-// incidental: it means the over-cap path is one a resident can actually reach
-// with a legitimately uploaded image, so the honest fallback below is a road
-// that gets walked instead of a branch nobody ever enters.
-export const INVESTIGATE_IMAGE_MAX_BYTES = 1_000_000;
+// The cost is named rather than hidden: base64 inflates by 4/3, so a
+// ceiling-sized 1.5 MB image is about 2 MB of JSON string in the answer. That
+// is a real weight, and it is the price of asking for a picture — which is
+// exactly why with_image is opt-in and why the url alone remains the default.
+//
+// The over-cap branch below therefore has NOTHING LAWFUL TO CATCH TODAY, and
+// it stays anyway, as a defensive rail: it is what stands between this door and
+// an object that reached the shelf around the seam — a direct R2 write, a
+// migration, a future upload path that forgets. A rail nobody trips is doing
+// its job; a rail deleted for being quiet is the one you wanted.
 
 // The reading law, in the register of the door's other one-liners
 // (mcp.mjs READING_LAW_LINE). The second sentence is the one that earns its
@@ -1025,7 +1031,7 @@ export const IMAGE_READING_LAW_LINE =
  * first statement in the function and there is no argument that steers past it.
  * A mark carrying an off-shelf url is disclosed and NOT requested.
  */
-export async function markImageBytes(url, { fetchImpl = null, maxBytes = INVESTIGATE_IMAGE_MAX_BYTES } = {}) {
+export async function markImageBytes(url, { fetchImpl = null, maxBytes = MAX_IMAGE } = {}) {
   if (!mediaUrlOk(url))
     return { note: `not fetched: that image url is not on the town's media shelf (${MEDIA_BASE}), so the office did not request it. The url stands as recorded — fetch it yourself if you trust it.` };
 
