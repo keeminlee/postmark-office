@@ -404,7 +404,7 @@ test("flag off: the verb itself refuses too, in case something calls past the li
   assert.match(r.hint, /WORLD_APEX=1/);
 });
 
-test("the slim: thirteen flats are DELISTED; world_note alone stands, by ruling", async () => {
+test("the slim: twelve flats are DELISTED; world_note and world_investigate stand, by ruling", async () => {
   on();
   await withOffice({ WORLD_APEX: "1" }, async () => {
     const { body } = await rpc("tools/list");
@@ -414,17 +414,23 @@ test("the slim: thirteen flats are DELISTED; world_note alone stands, by ruling"
     // reads (read:) all of these, field-verified the same day. Listing-only —
     // the runtime test below still calls a delisted name and is answered.
     for (const gone of ["world_say", "world_walk", "world_leave_mark", "world_stake", "world_unstake", "world_hold", "world_orient", "world_open_your_eyes",
-      "world_investigate", "world_my_marks", "world_walkers", "world_stake_read", "world_holdings"])
+      "world_my_marks", "world_walkers", "world_stake_read", "world_holdings"])
       assert.ok(!names.includes(gone), `${gone} is still listed — the slim delisted it`);
     assert.ok(names.includes("world_note"), "world_note stays flat by ruling");
+    // world_investigate UN-DELISTED 2026-08-23: the slim hides apex-served
+    // verbs, and the apex has no investigate — with_image made the delist a
+    // door with no room (mcp.mjs carries the same comment). Re-delist the day
+    // the apex grows an equivalent.
+    assert.ok(names.includes("world_investigate"), "world_investigate stands while the apex lacks an equivalent");
     // The apex-on total: 27 legacy tools + `world` + `household` (the third
     // door, unconditional). 28 → 29: upload_media (the media shelf,
-    // 2026-08-15) — listed, unconditional. The flag-off twin (41, nothing
-    // delisted) lives in server.test.mjs — together they pin the
+    // 2026-08-15) — listed, unconditional. 29 -> 30: world_investigate
+    // un-delisted (2026-08-23, the with_image ruling). The flag-off twin (42,
+    // nothing delisted) lives in server.test.mjs — together they pin the
     // apex-conditioning from both sides.
     assert.ok(names.includes("household"), "the third door rides beside the world verb");
     assert.ok(names.includes("upload_media"), "the media shelf is listed — a capability nobody can find is not one");
-    assert.equal(names.length, 29);
+    assert.equal(names.length, 30);
   });
 });
 
