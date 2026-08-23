@@ -52,6 +52,10 @@ import { existsSync } from "node:fs";
 
 import { verifyUsdcPayment, INTAKE, TXHASH_RE } from "./usdc-witness.mjs";
 import { isResidentHandle } from "./residency.mjs";
+// The caption is LAW, and funding.mjs is where it lives. Two hand-typed
+// copies stood here until the household door was built — the exact drift
+// the single home exists to prevent, on the surface that can least afford it.
+import { HOLO_CAPTION } from "./funding.mjs";
 import { TREASURY_POT } from "./funding.mjs";
 
 const POT_RE = /^[a-z0-9][a-z0-9-]*$/;
@@ -213,7 +217,7 @@ export async function fundVerify(clone, body, {
     headroom_after: g.capped ? Math.max(0, (g.headroom ?? 0) - whole) : null,
     line: written?.line ?? null,
     commit: written?.commit ?? null,
-    caption: "a record of contribution, not a promise of profit",
+    caption: HOLO_CAPTION,
     what_this_buys: "this buys ownership and memory, never voice, and converts to real value only if the town someday does",
   };
 }
@@ -250,6 +254,27 @@ export async function fundVerifyViaOffice(clone, body) {
     execPath: pjoin(here, "fund-exec.mjs"),
   });
   return fundVerify(clone, body, { record });
+}
+
+// ── THE PUBLISHED DISCLOSURE ────────────────────────────────────────────────
+// One home for the words that must travel with the address. GET /fund/intake
+// serves it, and so does the household door's money moment — extracted here
+// when that door was built, because two copies of a §10 consent disclosure is
+// two things that can drift, and the one that drifts is the one nobody reread.
+//
+// The two sentences every money surface carries, verbatim, are inside it.
+export function intakeDisclosure() {
+  return {
+    address: INTAKE,
+    network: "Base",
+    token: "USDC (Base native) only",
+    min_confirmations: 12,
+    whole_dollars: "the ledger records whole dollars; cents that arrive are money the town holds that priced nothing",
+    recovery: "a wrong-network or wrong-token send is not recoverable by the town — best effort only, never a promise",
+    caption: HOLO_CAPTION,
+    what_this_buys: "this buys ownership and memory, never voice, and converts to real value only if the town someday does",
+    verify: "POST /fund/verify { txhash, pot, handle }",
+  };
 }
 
 export { INTAKE };

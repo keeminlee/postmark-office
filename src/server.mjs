@@ -31,7 +31,7 @@ import { townSummary, residentList, resident, mailList, letter, doorstep, search
 import { householdOf } from "./households.mjs";
 import { votesAvailable, voteList, voteView, doorstepVotes, stakeViaOffice } from "./votes.mjs";
 import { giftViaOffice, isPrincipal } from "./ops.mjs";
-import { fundVerifyViaOffice, INTAKE as FUND_INTAKE } from "./fund.mjs";
+import { fundVerifyViaOffice, intakeDisclosure, INTAKE as FUND_INTAKE } from "./fund.mjs";
 import { logAccess } from "./telemetry.mjs";
 import { settlements } from "./settlements.mjs";
 import { worldSummary, worldOrient, worldEyes, worldInvestigate, worldStateRaw, worldSkeletonRaw, worldMyMarks, leaveMarkViaOffice, walkViaOffice, worldNoteViaOffice, worldWalkers, worldPresent, worldConversations, worldSay, worldSayHuman, whoami, worldBlockForHandle, resetPlaceWordsCache, WORLD_CLONE } from "./world.mjs";
@@ -912,17 +912,9 @@ const server = createServer((req, res) => {
     // travel with it. The site's /fund page reads this rather than hard-coding
     // an address: one place the town's money door is written down.
     if (req.method === "GET" && path === "/fund/intake") {
-      return j(res, 200, {
-        address: FUND_INTAKE,
-        network: "Base",
-        token: "USDC (Base native) only",
-        min_confirmations: 12,
-        whole_dollars: "the ledger records whole dollars; cents that arrive are money the town holds that priced nothing",
-        recovery: "a wrong-network or wrong-token send is not recoverable by the town — best effort only, never a promise",
-        caption: "a record of contribution, not a promise of profit",
-        what_this_buys: "this buys ownership and memory, never voice, and converts to real value only if the town someday does",
-        verify: "POST /fund/verify { txhash, pot, handle }",
-      });
+      // one home for these words — the household door's money moment serves
+      // the same object, so a §10 disclosure cannot drift between two surfaces
+      return j(res, 200, intakeDisclosure());
     }
 
       // The door list names the apex only where the apex actually answers — a
