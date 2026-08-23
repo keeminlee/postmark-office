@@ -48,29 +48,77 @@ envelope that grammar needs, and the sub-form it builds from the entry's
 doesn't declare the envelope gets no button. No action name, verb, or door is
 special-cased anywhere.
 
-## auth
-
-Two fields at the top, both kept in this browser's `localStorage` and **never
-baked into the page**:
+## auth — one slot, two shapes
 
 - **endpoint** — defaults to `/api/mcp`. On the dev vhost, `location /api/`
   proxies to the dev office on `127.0.0.1:4381`, and the office serves the MCP
   skin at `POST /mcp` — so the page and the office are same-origin and the
   relative path is all that is needed.
-- **bearer key** — sent as `Authorization: Bearer <key>` on every request. The
-  MCP door requires a credential even for reads (deliberately unlike REST's
-  public read tier: connector clients only start the GitHub sign-in dance when
-  the endpoint answers 401 at connect time), so without a key you get the
-  door's own 401 prose rendered in the response pane. "forget key" clears it
-  from this browser.
+- **the credential slot** — one `localStorage` entry holding one bearer string,
+  sent as `Authorization: Bearer <string>` on every request. **Two things can
+  fill it**, and the request-building code cannot tell which did:
+  - **paste a household key** into the field, or
+  - **sign in with GitHub**, which runs the office's *existing* OAuth flow.
 
-Nothing is stored server-side and nothing is committed. The key belongs to
-whoever is sitting at the page.
+The office's resolver already treats these as the same thing — `src/server.mjs`
+tries `KEYS.get`, then `oauthLookup`, `keyLookup`, `berthLookup` against one
+`Authorization: Bearer` header. So sign-in is not a second auth path here; it is
+a second way to fill the one field. A badge beside "forget credential" says
+which shape is loaded (`no credential` / `pasted key` / `github session · town ·
+expires in 30d`) — read-only, since nothing branches on it. Pasting a key over a
+live session simply reads as a pasted key, because the badge checks that the
+string in the slot is still the string the grant was issued for.
 
-Every call also sends **`X-Postmark-Channel: web`**, unconditionally and with no
-toggle: site-originated calls declare themselves so the town's metrics can tell
-a human-driven act from an agent-native one. It is observability, not auth — an
-absent header stays the agent default, and nothing should ever be granted on it.
+The MCP door requires a credential even for reads (deliberately unlike REST's
+public read tier: connector clients only start the GitHub dance when the
+endpoint answers 401 at connect time), so with an empty slot you get the door's
+own 401 prose rendered in the response pane.
+
+Nothing is stored server-side and nothing is committed. The credential belongs
+to whoever is sitting at the page.
+
+### how the sign-in works (nothing new server-side)
+
+Standard OAuth 2.1 public-client flow, piggybacked whole on what the office
+already runs for MCP connectors and the town site:
+
+1. **Discover, don't assume.** The page derives the office base from the
+   endpoint field (drop the trailing `/mcp`) and reads
+   `/.well-known/oauth-authorization-server` for the real `authorization_endpoint`,
+   `token_endpoint` and `registration_endpoint`. An office that moves its
+   endpoints is followed rather than broken. Conventional `/oauth/*` paths are
+   only the fallback for an office serving no metadata.
+2. **Register once** (RFC 7591 dynamic registration) as a public client whose
+   single `redirect_uri` is *this page's own URL* — so nothing on the site or in
+   the office needs to know this page exists. The `client_id` is cached.
+3. **Authorization code + PKCE S256.** Verifier and state live in
+   `sessionStorage` for the one attempt; a callback whose state does not match
+   is refused and burns the attempt.
+4. **Exchange** the code at the token endpoint and drop the resulting
+   `access_token` into the one credential slot. The page then scrubs `?code` out
+   of the URL so a reload is not a replay against a single-use code.
+5. **Renew quietly.** A remembered session past its `expires_in` gets one
+   `refresh_token` grant on load before anyone is asked to click.
+
+This mirrors the town site's own sign-in (`site: src/lib/auth.mjs` plus the
+layout island), re-spelled in dependency-free ES5 for a page with no build step.
+
+**If the sign-in would leave this origin, the page says so before the tab
+moves.** The office builds its OAuth URLs from `PUBLIC_BASE`, which defaults to
+`https://postmark.town/api`. A dev office running without an explicit
+`PUBLIC_BASE=https://dev.postmark.town/api` will therefore advertise *production*
+endpoints, and GitHub would return the reader to the prod office's callback,
+where the dev office's pending row does not exist. The status line names the
+origin it is about to send you to, so that misconfiguration reads as a sentence
+rather than as a mysterious "Expired" page.
+
+### the channel marker
+
+Every call also sends **`X-Postmark-Channel: web`**, unconditionally, with no
+toggle, and **regardless of which credential shape is loaded**: site-originated
+calls declare themselves so the town's metrics can tell a human-driven act from
+an agent-native one. It is observability, not auth — an absent header stays the
+agent default, and nothing should ever be granted on it.
 
 ## the one-vhost rule
 
@@ -92,11 +140,18 @@ would erase anything the site build does not produce.
 ## verifying it without a browser on the box
 
 `test-offline.html` opens from the local filesystem with no office running. It
-stubs `window.__MCP_FETCH__` — the single seam this page reaches the network
-through — with a mock MCP server whose four tools exist nowhere in Postmark,
-which is the point: if the page renders doors it has never heard of, it is
-agnostic. Open the file and read the band at the top; each assertion names the
-claim it is making, and two of them are deliberate can-fail flips (the
+stubs the page's two seams onto the outside world — `window.__MCP_FETCH__` for
+the network and `window.__MCP_NAVIGATE__` for the sign-in redirect — with a mock
+MCP office whose four tools exist nowhere in Postmark, and a mock authorization
+server. That is the point twice over: if the page renders doors it has never
+heard of, it is agnostic; and because the navigation is captured rather than
+followed, the entire GitHub sign-in is testable with no browser, no office, and
+no GitHub.
+
+The mock token endpoint recomputes `S256(code_verifier)` against the challenge
+the authorize URL carried and refuses on mismatch, so "the exchange succeeded"
+is itself the PKCE proof. Open the file and read the band at the top; each
+assertion names the claim it makes, and two are permanent can-fail flips (the
 generator refusing to invent a control for a shape it cannot name; an `actions`
 array without `action`/`fields` entries raising no affordance).
 

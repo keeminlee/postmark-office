@@ -116,6 +116,23 @@ select option { background: var(--harbor); }
   margin: 0;
 }
 
+/* which shape filled the one credential slot. Read-only: nothing branches on
+   it, so it is a label, never a control. */
+.credwrap { display: inline-flex; align-items: center; }
+.credshape {
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  border-radius: 999px;
+  padding: 4px 10px;
+  border: 1px solid currentColor;
+  white-space: nowrap;
+}
+.credshape.none { color: var(--ink-dim); }
+.credshape.key { color: var(--gold-dim); }
+.credshape.github { color: var(--green); }
+
 .status {
   font-family: var(--mono);
   font-size: 0.7rem;

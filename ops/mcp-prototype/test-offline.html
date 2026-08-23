@@ -18,6 +18,15 @@
     · a tools/call response rendered as a tree
     · the actions affordance: an `actions` array with action/fields entries
       yields one-click prefill of the SOURCE tool's do/args envelope
+    · the channel marker riding every call, whatever the credential
+    · the whole GitHub sign-in, against a mock authorization server: discovery
+      is FOLLOWED (its advertised authorize path is one no convention would
+      produce), registration happens once, the authorize URL is a PKCE S256
+      code request, a mismatched state is refused AND burns the attempt, and
+      the token endpoint really recomputes S256(verifier) before issuing —
+      so "the exchange succeeded" is proof the PKCE was correct, not decoration
+    · one credential slot: the token lands where a pasted key would, the shape
+      badge tells the truth, and a paste over a live session reads as a paste
   Then it leaves the real page mounted below, driven by the same mock, so a
   screenshot shows the surface itself and not a test report.
 -->
@@ -137,8 +146,88 @@ function mockResponse(status, obj, ct) {
   });
 }
 
+// ── the mock authorization server ───────────────────────────────────────────
+// The office's real flow, stubbed at the same seam: RFC 7591 registration,
+// authorization-code + PKCE S256, a token endpoint that ACTUALLY verifies the
+// verifier against the challenge the authorize URL carried. The authorize
+// endpoint it advertises is deliberately NOT the conventional path, so an
+// assertion that the page followed discovery cannot pass by coincidence.
+var AS_META = {
+  issuer: "mock://office/api",
+  authorization_endpoint: "mock://office/api/oauth/authorize-DISCOVERED",
+  token_endpoint: "mock://office/api/oauth/token",
+  registration_endpoint: "mock://office/api/oauth/register",
+  response_types_supported: ["code"],
+  grant_types_supported: ["authorization_code", "refresh_token"],
+  code_challenge_methods_supported: ["S256"],
+  token_endpoint_auth_method: "none",
+  scopes_supported: ["town"]
+};
+var ATTEMPT = { state: null, verifier: null };
+var OAUTH = { registers: 0, lastAuthorizeUrl: null, lastChallenge: null, issued: 0, lastGrantType: null };
+
+// where a sign-in WOULD send the reader — captured, never followed
+window.__MCP_NAVIGATE__ = function (url) {
+  OAUTH.lastAuthorizeUrl = url;
+  try { OAUTH.lastChallenge = new URL(url).searchParams.get("code_challenge"); }
+  catch (e) { OAUTH.lastChallenge = (/code_challenge=([^&]+)/.exec(url) || [])[1] || null; }
+};
+
+function b64urlOf(buf) {
+  var bytes = new Uint8Array(buf), s = "";
+  for (var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+  return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+function s256(v) { return crypto.subtle.digest("SHA-256", new TextEncoder().encode(v)).then(b64urlOf); }
+function formOf(body) {
+  var out = {};
+  String(body || "").split("&").forEach(function (kv) {
+    if (!kv) return;
+    var i = kv.indexOf("=");
+    out[decodeURIComponent(kv.slice(0, i))] = decodeURIComponent(kv.slice(i + 1).replace(/\+/g, " "));
+  });
+  return out;
+}
+
 var CALLS = [];
 window.__MCP_FETCH__ = function (url, init) {
+  init = init || {};
+
+  // ── the OAuth routes, matched on the URL before anything is parsed ────────
+  if (/\/\.well-known\/oauth-authorization-server$/.test(url)) return mockResponse(200, AS_META);
+
+  if (/\/oauth\/register$/.test(url)) {
+    OAUTH.registers++;
+    var reg = JSON.parse(init.body);
+    if (!Array.isArray(reg.redirect_uris) || !reg.redirect_uris.length)
+      return mockResponse(400, { error: "invalid_client_metadata", error_description: "redirect_uris (array) is required" });
+    return mockResponse(201, {
+      client_id: "mock-client-0001", client_name: reg.client_name,
+      redirect_uris: reg.redirect_uris, token_endpoint_auth_method: "none"
+    });
+  }
+
+  if (/\/oauth\/token$/.test(url)) {
+    var f = formOf(init.body);
+    OAUTH.lastGrantType = f.grant_type;
+    if (f.grant_type === "refresh_token") {
+      if (f.refresh_token !== "mock-refresh-1") return mockResponse(400, { error: "invalid_grant", error_description: "refresh token unknown or expired" });
+      OAUTH.issued++;
+      return mockResponse(200, { access_token: "mock-access-REFRESHED", token_type: "Bearer", expires_in: 2592000, refresh_token: "mock-refresh-1", scope: "town" });
+    }
+    if (f.grant_type !== "authorization_code") return mockResponse(400, { error: "unsupported_grant_type" });
+    // PKCE for real: the verifier must hash to the challenge the authorize URL
+    // carried, or this is a 400 exactly as the office would answer.
+    return s256(f.code_verifier || "").then(function (computed) {
+      if (!OAUTH.lastChallenge || computed !== OAUTH.lastChallenge)
+        return mockResponse(400, { error: "invalid_grant", error_description: "PKCE verification failed" });
+      if (f.code !== "mock-auth-code") return mockResponse(400, { error: "invalid_grant", error_description: "code unknown or expired" });
+      OAUTH.issued++;
+      return mockResponse(200, { access_token: "mock-access-TOKEN", token_type: "Bearer", expires_in: 2592000, refresh_token: "mock-refresh-1", scope: "town" });
+    });
+  }
+
+  // ── everything else is the MCP door ───────────────────────────────────────
   var msg = JSON.parse(init.body);
   CALLS.push({ url: url, headers: init.headers, msg: msg });
   if (msg.method === "initialize") return mockResponse(200, { jsonrpc: "2.0", id: msg.id, result: {
@@ -182,8 +271,17 @@ window.MCP_PROTO_MANUAL = true;   // the harness drives init(), not the DOMConte
   function card(name) { return MCPProto._internals.state.cards[name]; }
   function fieldEl(toolName, fieldName) { return q('[data-field="' + fieldName + '"]', card(toolName).details); }
 
+  // Independent runs: a cached client registration or a leftover session from
+  // an earlier run would make the precedence assertions lie.
+  (function wipe() {
+    var K = window.MCPProto._internals.keys;
+    try { [K.LS_KEY, K.LS_CRED, K.LS_CLIENT].forEach(function (k) { localStorage.removeItem(k); }); } catch (e) {}
+    try { [K.SS_STATE, K.SS_VERIFIER].forEach(function (k) { sessionStorage.removeItem(k); }); } catch (e) {}
+  })();
+
   MCPProto.init("mcp-root");
   var ui = MCPProto._internals.ui;
+  var IN = MCPProto._internals;
   ui.endpoint.value = "mock://office/mcp";
   ui.key.value = "mock-key-not-a-real-credential";
 
@@ -345,6 +443,129 @@ window.MCP_PROTO_MANUAL = true;   // the harness drives init(), not the DOMConte
       var h = CALLS[CALLS.length - 1].headers;
       return h["x-postmark-channel"] === "web" && h.authorization === undefined
         ? true : "keyless call headers were " + JSON.stringify(h);
+    });
+
+    // ── sign in with github: the office's own flow, piggybacked ─────────────
+    check("the AS base is derived from the endpoint by dropping the resource path", function () {
+      return IN.officeBase() === "mock://office" ? true : "officeBase() gave " + IN.officeBase();
+    });
+
+    return MCPProto.signIn();
+  }).then(function () {
+    check("sign-in registers once as a public client with this page as its redirect", function () {
+      if (OAUTH.registers !== 1) return "registered " + OAUTH.registers + " times";
+      return localStorage.getItem(IN.keys.LS_CLIENT) === "mock-client-0001" ? true : "client_id was not cached";
+    });
+    check("the page FOLLOWS discovery rather than assuming the conventional path", function () {
+      // the mock advertises an endpoint no convention would produce
+      return OAUTH.lastAuthorizeUrl && OAUTH.lastAuthorizeUrl.indexOf("/oauth/authorize-DISCOVERED?") > 0
+        ? true : "went to " + OAUTH.lastAuthorizeUrl;
+    });
+    check("the authorize URL is a PKCE S256 code request carrying this page as redirect_uri", function () {
+      var p = new URL(OAUTH.lastAuthorizeUrl).searchParams;
+      if (p.get("response_type") !== "code") return "response_type " + p.get("response_type");
+      if (p.get("code_challenge_method") !== "S256") return "challenge method " + p.get("code_challenge_method");
+      if (!p.get("code_challenge")) return "no code_challenge";
+      if (p.get("client_id") !== "mock-client-0001") return "client_id " + p.get("client_id");
+      if (p.get("redirect_uri") !== IN.redirectUri()) return "redirect_uri " + p.get("redirect_uri");
+      if (!p.get("state")) return "no state";
+      return true;
+    });
+    check("nothing was adopted merely by starting the flow", function () {
+      return ui.key.value === "mock-key-not-a-real-credential" ? true : "the slot changed before any token existed";
+    });
+
+    // Snapshot the attempt's PKCE artifacts. The refusal test below BURNS them
+    // — correctly: a rejected callback must not leave a live verifier lying
+    // around for a second try. In a real browser those are two separate
+    // sign-ins; here we re-arm the attempt so both paths can be asserted in one
+    // pass, rather than weakening the page to make the test convenient.
+    ATTEMPT.state = sessionStorage.getItem(IN.keys.SS_STATE);
+    ATTEMPT.verifier = sessionStorage.getItem(IN.keys.SS_VERIFIER);
+
+    // a forged callback, before the real one
+    return IN.completeCallback({ code: "mock-auth-code", state: "not-the-state-we-issued" });
+  }).then(function (t) {
+    check("a callback whose state does not match is refused and adopts nothing", function () {
+      if (t) return "a token was adopted from a mismatched state";
+      if (ui.key.value !== "mock-key-not-a-real-credential") return "the slot was written anyway";
+      // and the refusal BURNED the attempt — no verifier survives for a retry
+      return sessionStorage.getItem(IN.keys.SS_VERIFIER) === null && sessionStorage.getItem(IN.keys.SS_STATE) === null
+        ? true : "a refused callback left its PKCE artifacts in place";
+    });
+
+    // re-arm the attempt the refusal correctly burned (see the note above)
+    sessionStorage.setItem(IN.keys.SS_STATE, ATTEMPT.state);
+    sessionStorage.setItem(IN.keys.SS_VERIFIER, ATTEMPT.verifier);
+    return IN.completeCallback({ code: "mock-auth-code", state: ATTEMPT.state });
+  }).then(function (t) {
+    check("PKCE really verified — the mock recomputes S256(verifier) against the challenge it saw", function () {
+      // the mock 400s on mismatch, so a token at all is the proof
+      return t && t.access_token === "mock-access-TOKEN" ? true : "no token came back; the verifier did not match the challenge";
+    });
+    check("the token lands in the ONE credential slot the pasted key uses", function () {
+      return ui.key.value === "mock-access-TOKEN" && localStorage.getItem(IN.keys.LS_KEY) === "mock-access-TOKEN"
+        ? true : "slot holds " + ui.key.value;
+    });
+    check("the shape indicator reads github session, with the grant's own scope and expiry", function () {
+      var s = IN.credShape();
+      var txt = q("#mcp-root .credshape").textContent;
+      return s.shape === "github" && /github session/.test(txt) && /town/.test(txt) && /expires in 29d|expires in 30d/.test(txt)
+        ? true : "indicator says " + txt;
+    });
+
+    return MCPProto.callTool("read_thing", { handle: "signed-in" });
+  }).then(function () {
+    check("the github token rides as the Bearer, through the unchanged header path", function () {
+      var h = CALLS[CALLS.length - 1].headers;
+      return h.authorization === "Bearer mock-access-TOKEN" ? true : "sent " + h.authorization;
+    });
+    check("the web channel keeps riding regardless of credential shape", function () {
+      var h = CALLS[CALLS.length - 1].headers;
+      return h["x-postmark-channel"] === "web" ? true : "channel header was " + h["x-postmark-channel"];
+    });
+
+    // ── slot precedence ─────────────────────────────────────────────────────
+    check("pasting a key over a live session reads as a pasted key, with no event needed", function () {
+      ui.key.value = "pmk_pasted_over_the_session";     // set directly: no input event fires
+      var s = IN.credShape();
+      return s.shape === "key" ? true : "indicator still claims " + s.shape;
+    });
+    check("the github record is not deleted by the paste — restoring the string restores the shape", function () {
+      ui.key.value = "mock-access-TOKEN";
+      return IN.credShape().shape === "github" ? true : "shape did not come back";
+    });
+    check("forget clears the slot AND the record", function () {
+      MCPProto.signOut(false);
+      return ui.key.value === "" && IN.getCred() === null && IN.credShape().shape === "none"
+        ? true : "something survived: slot=" + ui.key.value + " cred=" + JSON.stringify(IN.getCred());
+    });
+
+    // ── a stale session renews itself once ──────────────────────────────────
+    localStorage.setItem(IN.keys.LS_KEY, "mock-access-STALE");
+    ui.key.value = "mock-access-STALE";
+    localStorage.setItem(IN.keys.LS_CRED, JSON.stringify({
+      shape: "github", for: "mock-access-STALE", obtained: Date.now() - 40 * 86400000,
+      expires_in: 2592000, scope: "town", refresh_token: "mock-refresh-1"
+    }));
+    return IN.refreshIfStale();
+  }).then(function (renewed) {
+    check("an aged-out session renews itself with the refresh grant rather than asking for a click", function () {
+      if (!renewed) return "refreshIfStale declined to renew";
+      return OAUTH.lastGrantType === "refresh_token" && ui.key.value === "mock-access-REFRESHED"
+        ? true : "grant was " + OAUTH.lastGrantType + ", slot holds " + ui.key.value;
+    });
+    check("tokenIsFresh is a real boundary, not a rubber stamp", function () {
+      var born = 1000000;
+      var fresh = IN.tokenIsFresh({ shape: "github", obtained: born, expires_in: 100 }, born + 99000);
+      var dead = IN.tokenIsFresh({ shape: "github", obtained: born, expires_in: 100 }, born + 101000);
+      var pasted = IN.tokenIsFresh({ shape: "key" }, born);
+      return fresh === true && dead === false && pasted === false ? true : "fresh=" + fresh + " dead=" + dead + " pasted=" + pasted;
+    });
+    check("a sign-in that would leave this origin is named as such before the tab moves", function () {
+      // same-origin returns null; another origin is reported by name
+      return IN.elsewhere(location.href) === null && IN.elsewhere("https://postmark.town/api/oauth/authorize") === "https://postmark.town"
+        ? true : "elsewhere() is not discriminating";
     });
 
     // ── the can-fail flip: prove the probes are not vacuous ─────────────────
