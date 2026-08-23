@@ -288,10 +288,13 @@ test("MCP tools/list, apex OFF: the full 41 — the slim's delist is apex-condit
   // 39 → 40: the `household` verb (the third door, 2026-08-15) — unconditional,
   // additive, not flag-gated.
   // 40 → 41: upload_media (the media shelf, 2026-08-15) — unconditional.
+  // 41 → 42: world_withdraw_mark (the revision family, founder-ruled 2026-08-19)
+  //          — added to WORLD_TOOLS without this ledger being paid; trued
+  //          2026-08-23 after the count sat red across every train tip.
   // NOTE: this exact total breaks for whoever adds the next tool, whatever it is
   // — the named-tools loop below is the assertion that actually says something,
   // since it fails when a tool GOES MISSING rather than when one is added.
-  assert.equal(names.length, 41);
+  assert.equal(names.length, 42);
   assert.ok(!names.includes("request_blessing"), "request_blessing's delist is unconditional");
   assert.ok(!names.includes("world"), "no apex tool with the flag off");
   assert.ok(names.includes("household"), "the third door stands regardless of the world flag");
