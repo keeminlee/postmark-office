@@ -14,16 +14,19 @@
 //
 // ── WHAT MAY BE SERVED, AND WHY THE GUARD IS IN CODE ────────────────────────
 //
-// world.db indexes PUBLISHED MAIN and nothing else. Ruling 9 says a resolved
-// resident household folds its own `draft/<household>` branch — its sketchbook,
-// visible to nobody else — so a draft read has no answer in the store at all.
-// Serving one from the store would not be stale, it would be WRONG: it would
-// show a household the town's world in place of its own.
+// world.db indexes PUBLISHED MAIN and nothing else — and since the world
+// runtime ladder's §1c (2026-08-22) so does every read: the fold path serves
+// canon to anonymous, visitor and author alike, and a household's drafts reach
+// their own author as a delta instead. So the two paths index the same world by
+// construction now, not by agreement.
 //
-// So eligibility is not a comment, it is `draftRefForKey()` — the very function
-// `stateForKey` uses to pick the fold's ref. If that returns a ref, this is a
-// draft read and the store is not consulted. One function decides the branch for
-// both paths; there is no second reading of ruling 9 to drift from the first.
+// The keyed refusal below therefore no longer MIRRORS a branch choice the fold
+// makes — the fold makes none. It stays as a belt: `servedRead` still takes a
+// `key`, and if a future household-scoped read is ever wired into this lane, it
+// falls through to the fold rather than quietly collecting main from the store.
+// The one live caller (`place_words`) passes `key: null` by construction, so the
+// arm fires for nobody today. Retire it when either the key parameter leaves
+// `servedRead` or a keyed read is deliberately admitted here.
 //
 // The second half of eligibility is FRESHNESS, and it is exact rather than
 // approximate: the store may answer only when `meta.as_of_world` is the very
@@ -312,10 +315,11 @@ export function publishedMainSha(repo) {
 /**
  * May this read be answered from the store? Returns `{ ok, reason, snap, sha }`.
  *
- * RULING 9 FIRST, and by calling the fold's own ref chooser. `draftRefForKey`
- * returning a ref means this caller folds a household sketchbook; world.db does
- * not index sketchbooks, so the store is not consulted — not even in shadow,
- * where a "diff" would only ever be measuring main against a draft.
+ * RULING 9 FIRST. `draftRefForKey` returning a ref means the caller passed a
+ * household key; world.db does not index sketchbooks, so the store is not
+ * consulted — not even in shadow. Since §1c no read tier folds a sketchbook, so
+ * this is a belt rather than a mirror (see the header): no live caller reaches
+ * it, and it exists so that a keyed read added to this lane fails safe.
  */
 export function eligibility({ key = null, repo }) {
   const draftRef = draftRefForKey(repo, key);
