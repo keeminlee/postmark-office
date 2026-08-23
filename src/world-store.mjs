@@ -113,7 +113,7 @@ export const EDGE_TYPES = [
   ["implements", "a mark and the machinery that keeps its truth true — a `mechanic:` pointer, resolved against skeleton.json's physics_registry."],
   ["reads", "code and a world surface it demonstrably reads: a quoted WORLD/... path literal in the source, or a dynamic import reaching into the world clone's tools."],
   ["stop-of", "a stop mark and the vessel whose timetable names it. Dst is kept verbatim when it resolves to no mark — the dangling stop IS the finding."],
-  ["imports", "ADDED: static `import ... from` between code files (§2.10 wants the import graph extracted from source, never hand-maintained). Distinct from `reads`, which crosses from code into world DATA rather than into another module."],
+  ["imports", "ADDED: static `import ... from` between code files. Extracted from source, never hand-maintained, because L1 rules on it: the-reaching-mechanic says \"Every mechanic names running code and the name resolves — a rule whose mechanic reaches nothing is ink\", and `resolves` means reachable from src/server.mjs over imports+reads. A hand-kept list would let that verdict agree with whoever last edited the list. Distinct from `reads`, which crosses from code into world DATA rather than into another module."],
   ["describes", "ADDED: a predicated/naming mark and the mark it predicates. SCHEMA.md's continuation law makes this NOT containment — a predicate inherits its parent's extent whole rather than sitting inside it — so folding it into `contains` would assert geometry the record never claims. Also carries ENGINE.md headings to the mechanics they document (heading text names the mechanic id)."],
 ];
 
