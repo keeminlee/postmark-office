@@ -304,15 +304,18 @@ Two flags, read from the environment, both off by default:
 
 ### What may be served
 
-**Published-main reads only, and the guard is a function call rather than a
-comment.** `world.db` indexes published main; ruling 9 says a resolved resident
-household folds its own `draft/<household>` branch, so a draft read has no answer
-in the store at all — serving one would not be stale, it would show a household
-the town's world in place of its own sketchbook. Eligibility therefore calls
-`draftRefForKey()`, the same function `stateForKey` uses to pick the fold's ref:
-if it returns a ref, the store is not consulted, in either mode. One function
-decides the branch for both paths, so there is no second reading of ruling 9 to
-drift from the first.
+**Published-main reads only** — `world.db` indexes published main, and since the
+world runtime ladder's **§1c** (2026-08-22) so does the fold path: every read
+serves canon, and a household's drafts reach their author as a delta. The two
+paths index the same world by construction.
+
+Eligibility still calls `draftRefForKey()` and refuses a keyed caller, but that
+arm is now a **belt, not a mirror**: `servedRead` still accepts a `key`, and a
+household-scoped read wired into this lane in future should fall through to the
+fold rather than quietly collect main from the store. The one live caller
+(`place_words`) is keyless by construction, so it fires for nobody today. Retire
+it when the `key` parameter leaves `servedRead`, or when a keyed read is
+deliberately admitted here.
 
 The second half is **freshness, exact**: the store may answer only when
 `meta.as_of_world` is the very commit main points at. Not "recent", not "within a
@@ -441,7 +444,7 @@ sits at 2 diffs and correctly refuses to graduate.
 
 The fold path pays a `git rev-parse`, a `git show` of the whole
 `world-state.json` and the parse after it on **every** call, because
-`stateForKey` reads before the assembled-world cache is consulted. The store pays
+`publishedState` reads before the assembled-world cache is consulted. The store pays
 one `rev-parse` for the freshness check and then answers from memory. Both
 numbers are dominated by Windows process spawns.
 

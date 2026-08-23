@@ -4,9 +4,12 @@
 // keyless REST reads here + world_* tools on the credentialed MCP door
 // (EPICS/POSTMARK § the semantic world; scoped 07-23, Keemin's "the mcp build").
 //
-// Ruling 9 exposure: anonymous/unresolved reads fold published main; a resolved
-// resident household folds its rebased draft/<household> branch. leave-mark is
-// credentialed and writes that branch only. Walk targets remain main-only in v0.
+// Ruling 9 exposure: every read serves published main — one world, the same for
+// anonymous, visitor and author (world-runtime ladder §1c). A household's own
+// unpublished work comes back through the DELTA doors (world_my_drafts /
+// world_my_marks) and is laid over canon by the viewer's overlay; nothing folds
+// a sketchbook at request time. leave-mark is credentialed and writes the
+// draft/<household> branch only. Walk targets remain main-only in v0.
 //
 // The clone: WORLD_CLONE env, else ./world-clone (box), else ../postmark-world
 // (dev checkout). The office rehydrate tick pulls it like town-clone; the
@@ -25,9 +28,9 @@ import {
   freshestMainRef,
   mainRef,
   materializeAtRef,
+  publishedSkeleton,
+  publishedState,
   readAtRef,
-  skeletonForKey,
-  stateForKey,
 } from "./world-branches.mjs";
 import { WORLD_STAKE_TOOLS, callWorldStakeTool, worldPortfolioStakeSlice } from "./world-stake.mjs"; // P3 draft, append-shaped
 import { classNames, classRoster, classDials, departurePace, RESIDENT_INSTANTIABLE, residentMayInstantiate } from "./world-classes.mjs"; // which classes exist — read from the record, never held
@@ -112,13 +115,16 @@ async function geomMod() {
   return _geom;
 }
 
-async function world(key = null) {
-  const selected = stateForKey(WORLD_CLONE, key);
+// ONE WORLD, and it takes no identity to ask for (§1c). Every caller below used
+// to thread a key through here so a drafter could be handed a different, folded
+// world; there is no such world any more, so there is no key to thread.
+async function world() {
+  const selected = publishedState(WORLD_CLONE);
   const cached = _worlds.get(selected.ref);
   if (cached?.sha === selected.sha) return cached.world;
   const { build } = await mods();
   const worldState = selected.state;
-  const skeleton = skeletonForKey(WORLD_CLONE, key).skeleton;
+  const skeleton = publishedSkeleton(WORLD_CLONE).skeleton;
   const assembled = build.assembleWorld({ worldState, skeleton });
   assembled._raw = { worldState, skeleton, ref: selected.ref };
   _worlds.set(selected.ref, { sha: selected.sha, world: assembled });
@@ -138,7 +144,7 @@ const QUAY = { x: 0, y: 0 }; // Ferry's crossing — the grid origin, the defaul
 const QUAY_MARK_ID = "the-town/the-quay";
 async function berthQuay() {
   try {
-    const w = await world(null);
+    const w = await world();
     const q = w?.marks?.find((m) => m.id === QUAY_MARK_ID
       && Number.isFinite(m?.at?.x) && Number.isFinite(m?.at?.y));
     if (q) return { x: q.at.x, y: q.at.y };
@@ -156,7 +162,7 @@ async function berthQuay() {
 const SHIP_MARK_ID = "the-town/the-ship-at-anchor";
 async function berthShip() {
   try {
-    const w = await world(null);
+    const w = await world();
     const s = w?.marks?.find((m) => m.id === SHIP_MARK_ID
       && Number.isFinite(m?.at?.x) && Number.isFinite(m?.at?.y));
     if (s) return { x: s.at.x, y: s.at.y };
@@ -358,7 +364,7 @@ async function standCoords(handle, w) {
 // their ground IS their position — and it discloses by name when it was not.
 // Never throws: a presence read that could take down `orient` or `say` would be
 // a worse bargain than not knowing who is about.
-const foldForPresence = (key = null) => world(key).then((w) => w, () => null);
+const foldForPresence = () => world().then((w) => w, () => null);
 
 // THE ONE STANDPOINT DERIVATION. orient's phrasing above and earshot's geometry
 // below are two skins over this — a second answer to "where is this resident"
@@ -373,7 +379,7 @@ const foldForPresence = (key = null) => world(key).then((w) => w, () => null);
 // of smuggled. `aboard` says the deck is the place, which is what lets the
 // crossing hold one conversation.
 export async function residentStandpoint(handle, w = null) {
-  const world_ = w ?? await world(null);
+  const world_ = w ?? await world();
   const { whereIs } = await whereMod();
   // BOTH ERAS. A resident set down ashore at the freeze has that record in the
   // store and nowhere else; reading the ledger alone puts them back at the berth
@@ -519,9 +525,10 @@ export function placeWordsFrom(marks, { x, y }, verbs) {
 // rather than the flashy one: place words are the only office world read whose
 // entire input is the published-main MARK LIST. Every other verb here composes
 // the fold's whole assembled world — skeleton, terrain, parcels, portfolios —
-// which world.db does not hold and Stage 1 never claimed it did. `world(null)`
-// on the line below said "always published main" long before there was a store;
-// the flag simply gives that sentence a second way to be true.
+// which world.db does not hold and Stage 1 never claimed it did. `world()` on
+// the line below said "always published main" long before there was a store;
+// the flag simply gives that sentence a second way to be true, and §1c has since
+// made it true of every other read too.
 export async function placeWords({ x, y, aboard = false, moving = false } = {}) {
   if (aboard) return moving ? `aboard ${VESSEL_NAME}, mid-crossing` : `aboard ${VESSEL_NAME}`;
   if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
@@ -549,7 +556,7 @@ export async function placeWords({ x, y, aboard = false, moving = false } = {}) 
       // engine loader can log its loud materialise-failed fallback, and keeping
       // that order keeps flags-off identical down to what lands on stderr.
       fold: async () => {
-        const w = await world(null); // place names are public — always published main
+        const w = await world(); // place names are public — always published main
         const { verbs } = await mods();
         return placeWordsFrom(w.marks ?? [], { x, y }, verbs);
       },
@@ -652,7 +659,7 @@ const voices = createVoices({
   structuralHearing: () => movementV2Enabled(),
   heardFrom: async (voice, t) => {
     try {
-      return await heardFromV2(voice, await world(null), {
+      return await heardFromV2(voice, await world(), {
         repo: WORLD_CLONE, atMs: t,
         recordsOf: async (h) => {
           // Both eras: a speaker's frame at the instant they spoke is a fold
@@ -837,7 +844,7 @@ function crossingOf(args) {
 
 // ── the verbs (shared by REST and MCP) ───────────────────────────────────────
 export async function worldSummary(key = null) {
-  const w = await world(key);
+  const w = await world();
   const root = w.marks.find((m) => m.id === "the-town/let-there-be-light");
   return {
     charter: root?.body ?? null,
@@ -853,7 +860,7 @@ export async function worldSummary(key = null) {
 export async function worldOrient(args = {}, key = null) {
   const choice = chooseStandpoint(args, key);
   if (choice.bounce) return choice.bounce; // a multi-resident key must name a handle
-  const w = await world(key);
+  const w = await world();
   const { verbs } = await mods();
   const at = choice.coords ?? await standCoords(choice.handle, w);
   const crossing = crossingOf(args);
@@ -900,7 +907,7 @@ function presenceTelling(present) {
 export async function worldEyes(args = {}, key = null) {
   const choice = chooseStandpoint(args, key);
   if (choice.bounce) return choice.bounce;
-  const w = await world(key);
+  const w = await world();
   const { verbs } = await mods();
   const at = choice.coords ?? await standCoords(choice.handle, w);
   const crossing = crossingOf(args);
@@ -979,7 +986,7 @@ export async function worldPresent(args = {}, { roll = null } = {}) {
 
 export async function worldInvestigate(args = {}, key = null) {
   if (!args.mark) return { error: "bounce", defect: "which mark?", hint: "pass mark: '<by>/<slug>' (ids in /world/state; the telling's [id] tags)" };
-  const w = await world(key);
+  const w = await world();
   const { verbs } = await mods();
   const depth = Number.isFinite(Number(args.depth)) ? Number(args.depth) : 1;
   const r = verbs.investigate(String(args.mark), w, { depth });
@@ -991,14 +998,16 @@ export async function worldInvestigate(args = {}, key = null) {
   return r;
 }
 
-export async function worldStateRaw(key = null) { return (await world(key))._raw.worldState; }
-export async function worldSkeletonRaw(key = null) { return (await world(key))._raw.skeleton; }
+// The canon pair. No key: /world/state and /world/skeleton answer the same bytes
+// to every caller, which is what makes them cacheable and what §1c settled.
+export async function worldStateRaw() { return (await world())._raw.worldState; }
+export async function worldSkeletonRaw() { return (await world())._raw.skeleton; }
 export function worldMyDrafts(key = null) { return draftDeltaForKey(WORLD_CLONE, key); }
 export async function worldMyMarks(key = null) {
   const delta = draftDeltaForKey(WORLD_CLONE, key);
   if (delta?.error) return delta;
 
-  const main = stateForKey(WORLD_CLONE, null).state;
+  const main = publishedState(WORLD_CLONE).state;
   const stake = await worldPortfolioStakeSlice(key, main.marks ?? []);
   if (stake?.error) return stake;
 
@@ -1104,7 +1113,7 @@ export async function worldBlockForHandle(handle, key = null) {
   // the non-throwing part free by short-circuiting; asking the engine means
   // asking for it explicitly, and saying so when the ask fails.
   let w = null, homeOf = null;
-  try { w = await world(key); ({ homeOf } = await whereMod()); }
+  try { w = await world(); ({ homeOf } = await whereMod()); }
   catch (e) {
     return { mark_id: id, x: null, y: null, sited: false,
              unreadable: true, unreadable_reason: `${HOME_BLOCK_UNREADABLE} (${String(e?.message ?? e).slice(0, 120)})` };
@@ -1492,7 +1501,7 @@ async function discloseOverhang(result, by, key = null) {
     // which is the tree leave-exec's placementParent ran against. Reading main
     // alone here would let a draft mark the author is standing in go unseen and
     // report an overhang that is not one.
-    const w = await world(key);
+    const w = await world();
     const { verbs } = await mods();
     const spine = verbs.containmentChain({ x: standing.x, y: standing.y }, w.marks ?? []);
     const overhang = overhangOf({ ...result, standing, spine });
@@ -1990,7 +1999,7 @@ export async function worldWalkers(worldClone, key = null, { roll = null } = {})
   // same question and asked it of half the union (issue #7 §1): `present` could
   // not see a resident who had never walked, standing on their own porch.
   try {
-    const w = await world(key);
+    const w = await world();
     const where = await whereMod();
     // ONE DERIVATION FOR WHO AND WHERE (issue #7's positions.mjs), then the
     // frame overlay on top of it. The overlay is applied here rather than

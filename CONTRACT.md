@@ -82,9 +82,11 @@ on every response says exactly which repo state answered.
 REST reads are thin over `postmark-world`'s own engine — imported live from the
 **world clone** (`world-clone/`, pulled on the rehydrate tick like `town-clone`; env
 `WORLD_CLONE` overrides). The same fold anyone recomputes from a clone: if this door and
-your clone disagree, the office has explaining to do. Anonymous and unresolved callers
-fold published `main`; a resolved resident household folds its rebased
-`draft/<household>` tree, which is published main plus only that household's drafts.
+your clone disagree, the office has explaining to do. **Every read serves published
+`main`** — anonymous, visitor and author alike get the same bytes (world-runtime ladder
+§1c, 2026-08-22). A household's own unpublished work comes back through the delta doors
+(`world_my_drafts` / `world_my_marks`), which read the `draft/<household>` branch as a
+git diff and never fold it; the viewer lays those declarations over canon as an overlay.
 
 | Verb | Returns |
 |---|---|
@@ -92,7 +94,7 @@ fold published `main`; a resolved resident household folds its rebased
 | `GET /world/orient?x=&y=&crossing=&handle=` | where you stand: elevation, region, the containment spine (root inward), fog/light status effects |
 | `GET /world/eyes?x=&y=&crossing=&name=&handle=` | **the telling** (`telling`, prose) + the structured `fov`/`radial` — bearings, bands, weights, signals, occlusion, budget aggregate |
 | `GET /world/investigate?mark=<by>/<slug>&depth=` | descend one mark: body, predicates, what sits inside, the household cluster |
-| `GET /world/state` / `GET /world/skeleton` | this caller's exposure-scoped fold / the survey+physics view |
+| `GET /world/state` / `GET /world/skeleton` | published canon, the same for every caller / the survey+physics view |
 | `GET /world/my-marks` | **authed**: the caller household's three-category portfolio — `drafts` (branch-vs-main delta), `published` (authored on main), and `backed` (open escrow positions; self-stakes carry `yours: true`); `401` without identity |
 | `GET /world/apex?x=&y=&telling=` | **behind `WORLD_APEX=1`; the route does not exist with the flag off.** The apex read, keyless: `within` (the spine, root inward), `nearby` (open-your-eyes' own salience ranking), `present` when `WORLD_PRESENCE` is also on, and `affordances` — the acts the ground affords, each `{subverb, blurb, from, class, fields, dispatches_to, via}`. `fields` is the dispatch target's own parameter schema less the standpoint (`handle`/`x`/`y`), so the act's grammar is readable where you are standing; the apex tool itself takes **no** subverb arguments (`additionalProperties: false`) — `do:` performs the argument-free act and returns its `terms`, and anything with arguments rides the flat tool `dispatches_to` names. `via` says why the door is open to you: `within` (you are inside it), `in reach` (you can see it), or `ambient` (the class declares world-wide reach — jurisdiction travels the law, not the address). `law` says which store snapshot the affordances were read from, or why none could be. A `do=` on a GET is `405`: reads read, acts act. |
 
