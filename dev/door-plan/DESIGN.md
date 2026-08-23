@@ -104,3 +104,30 @@ because it looks like one.
   unscheduled.
 - `stakeable` menus / staking-mode taxonomy — parked with the economy work
   (PULSE/silver-draft/postmark-fractal-economy.md holds the design).
+
+## The two-tense site (boarded 2026-08-23 late — UNRULED, sits at the founder's next sitting)
+
+The founder's convergence idea, caught verbatim-in-substance: the site adopts
+the town's own tense grammar. **Settled tense** = the static build, stamped
+"as of crossing N / settlement S" — the settled bulk serves free. **Live
+tense** = the dynamic layer (journal, mid-crossing acts), client-fetched from
+the doors in small targeted slots, stamped "polled just now." The seam is
+legible EVERYWHERE — one unified encoding, settled ink vs live ink; a reader
+always knows whether they see canon-as-of-the-save or the world mid-breath.
+
+Refinement, same sitting: **the 30-minute sync stays** (the mushy middle is
+useful — unattended freshness between crossings), and **hand-refresh** rides
+on top in two tense-matched flavors: a live-tense slot carries a re-poll
+affordance (sub-second, per-component); a settled-tense refresh = firing the
+existing rebuild pipeline on demand (workflow_dispatch; ~2-4 min to visible).
+
+Door half: a **two-tense provenance envelope** on every answer —
+{tense:"settled", as_of_crossing:N} | {tense:"live", polled_at} — formalizing
+the split the office already half-carries (/world/store vs /world/dynamic,
+the x-postmark-as-of header family). The DARKO card's as-of tick was this
+law's first instance.
+
+Sequencing: the build-trigger-on-settlement wiring sits BEHIND the POS-5
+cutover (the drain is what would fire it); the envelope + first live slots
+can land earlier. The w36 convergence arc's architecture; rules at the
+sitting, builds nothing tonight.
