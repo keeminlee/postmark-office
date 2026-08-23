@@ -365,6 +365,25 @@ async function callTool(name, args, ctx) {
   }
 }
 
+// A tool's answer is one text block of JSON — except where the tool has extra
+// MCP content blocks to hand over. `_mcp_content` is the generic carrier for
+// them: TRANSPORT PLUMBING, not door vocabulary, which is why it is
+// underscore-prefixed and why it is STRIPPED from the text block rather than
+// printed there (base64 image bytes rendered twice would be the alternative).
+//
+// Deliberately generic. Nothing here knows which tool uses it or what it
+// carries: any verb that has bytes, and one day audio or a resource link, hands
+// them over the same way. A malformed or absent field is simply the ordinary
+// one-text-block answer, so no tool can break this by getting it wrong.
+export function contentFor(result) {
+  const extra = result && typeof result === "object" && !Array.isArray(result) && Array.isArray(result._mcp_content)
+    ? result._mcp_content.filter((b) => b && typeof b === "object" && typeof b.type === "string")
+    : null;
+  if (!extra || !extra.length) return [{ type: "text", text: JSON.stringify(result, null, 1) }];
+  const { _mcp_content, ...rest } = result;
+  return [{ type: "text", text: JSON.stringify(rest, null, 1) }, ...extra];
+}
+
 function rpcResult(id, result) { return { jsonrpc: "2.0", id, result }; }
 function rpcError(id, code, message) { return { jsonrpc: "2.0", id, error: { code, message } }; }
 
@@ -512,7 +531,7 @@ async function handleMessage(msg, ctx) {
         const result = await callTool(name, args, ctx);
         const isBounce = result && typeof result === "object" && result.error === "bounce";
         return rpcResult(msg.id, {
-          content: [{ type: "text", text: JSON.stringify(result, null, 1) }],
+          content: contentFor(result),
           isError: Boolean(isBounce),
         });
       } catch (e) {
