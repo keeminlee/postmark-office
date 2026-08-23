@@ -54,6 +54,7 @@ import {
   worldNoteViaOffice,
   worldOrient,
   worldSay,
+  worldSayHuman,
   worldStateRaw,
 } from "./world.mjs";
 // v2.2 §B — the frame block and the three-shelf delta. Both compose the one
@@ -67,6 +68,7 @@ import { CROSSING_EXEC, CROSSING_TOOLS, enterViaOffice, exitViaOffice } from "./
 import { callHoldTool } from "./world-hold.mjs";
 import { storeDbPath } from "./world-serve.mjs";
 import { AMBIENT_REACH_SQL, CLASS_MARK_GATE_SQL } from "./world-store.mjs";
+import { resolveHumanActor } from "./human-actor.mjs";
 
 export const apexEnabled = () => process.env.WORLD_APEX === "1";
 
@@ -323,7 +325,10 @@ export const DISPATCHABLE = Object.freeze(Object.keys(DISPATCH));
 // packet, dev/act-as-human/DESIGN.md). An action the law mints `for:` a kind
 // not named here is law with no room behind it: L6's actor-kind red. "human"
 // joins when the actor seam lands; kinds grow HERE, nowhere else.
-export const RESOLVED_ACTOR_KINDS = Object.freeze(["resident", "berth"]);
+// "human" joined 2026-08-23, when the actor seam landed (src/human-actor.mjs):
+// the class was ruled 08-17 and stood with one grant and no room behind it —
+// L6's actor-kind red, which the TDD-board method reads as the town asking.
+export const RESOLVED_ACTOR_KINDS = Object.freeze(["resident", "berth", "human"]);
 
 /** The flat tool an action dispatches to, or null. Read by the MCP door's
  *  bouncer preflight so an apex act is CHARGED as the verb it becomes — the
@@ -721,6 +726,14 @@ async function apexRead(args, key) {
 async function apexDo(args, key) {
   const action = String(args.do ?? "").trim();
 
+  // ── the actor seam ────────────────────────────────────────────────────────
+  // Resolved BEFORE the standpoint is computed, because who is acting decides
+  // whose standing is even being asked for. Absent `as:` returns null and
+  // nothing below changes — the default was always resident, and this seam is
+  // invisible to every call that does not ask for it.
+  const actor = resolveHumanActor({ action, as: args.as, beside: args.beside, key, humanOf: humanOfHousehold });
+  if (actor?.error) return actor;
+
   // The mail asymmetry, refused before anything else is computed — the answer
   // does not depend on where the caller stands, and saying so plainly is the
   // point.
@@ -812,10 +825,18 @@ async function apexDo(args, key) {
     // that promise holds on the failing path too.
     const { do: _dropped, telling: _t, args: _envelope, ...rest } = args;
     const fields = envelope ? { ...rest, ...envelope } : rest;
-    const done = { did: action, via: match.via, from: match.from, dispatched_to: handler.tool, terms };
+    const done = { did: action, via: match.via, from: match.from, dispatched_to: handler.tool, terms,
+      ...(actor ? { actor: { kind: actor.kind, residue: actor.residue, says: actor.says, note: actor.note } } : {}) };
     let result;
     try {
-      result = await handler.run(fields, key);
+      // THE ACTOR SEAM'S ONE EFFECT ON DISPATCH. A human's say goes to the
+      // human's own handler, which has owned the speaker label, the companion
+      // choice and the record since 2026-08-08 — this only decides WHICH door,
+      // and never what happens behind it. `beside:` is the apex's word for that
+      // handler's `with:`.
+      result = actor?.route === "worldSayHuman"
+        ? await worldSayHuman({ ...fields, ...(actor.with ? { with: actor.with } : {}) }, key)
+        : await handler.run(fields, key);
     } catch (e) {
       if (!e?.code) throw e;
       return { ...bounce(e.code, e.defect, e.hint, e.choices ? { choices: e.choices } : {}), ...done };
