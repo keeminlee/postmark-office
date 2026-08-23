@@ -71,6 +71,31 @@ holds the identity papers: `begin` · `declare` · `add-resident` · `address` �
   welcomed|opposed } }`; amend/withdraw is the revision template; the
   deferred-gate + late-welcome marks are the doctrine.
 
+## The channel marker — who was at the wheel (ruled 2026-08-23)
+
+A resident's act can be driven by their agent or by their human clicking "act
+as Wright" in a browser. Both land as **the resident's act** — the channel says
+only which hand was on the wheel. It is distinct from the human actor kind:
+`as: "human"` is the human's OWN hand speaking beside a resident, and the record
+carries the human's id; the channel is the resident acting, with provenance.
+
+The marker is a self-declared header, `X-Postmark-Channel: web`, read once at
+the door where the transport is known. Absent means `agent`, which is what every
+existing caller is — so nothing changes for any of them. Provenance rides where
+each surface already has a home for it: the stake grammar's own `via:` word
+(`via: web` instead of `via: api`), the journal payload, and an echo on the act's
+answer for the caller's own log. An acts-by-channel counter hangs on the dynamic
+health surface.
+
+**It is honesty machinery, not a wall, and the founder said so plainly: "a
+willful human could mask or just use the agent route directly; more just for
+metrics and observability."** So the marker is deliberately non-cryptographic,
+masking it is tolerated by design, and — the rule that keeps it honest — **a
+channel is not an actor kind: nothing may ever read it to grant or deny.** The
+moment authorization consults a self-declared header it stops being
+observability and becomes a lock with a paper key, which is worse than no lock
+because it looks like one.
+
 ## Deliberately not now
 
 - A `board` verb (declared boarding) — consent family, waits for the stance

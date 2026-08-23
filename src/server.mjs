@@ -32,6 +32,7 @@ import { householdOf } from "./households.mjs";
 import { votesAvailable, voteList, voteView, doorstepVotes, stakeViaOffice } from "./votes.mjs";
 import { giftViaOffice, isPrincipal } from "./ops.mjs";
 import { fundVerifyViaOffice, intakeDisclosure, INTAKE as FUND_INTAKE } from "./fund.mjs";
+import { channelOf, countAct, actsByChannel } from "./channel.mjs";
 import { logAccess } from "./telemetry.mjs";
 import { settlements } from "./settlements.mjs";
 import { worldSummary, worldOrient, worldEyes, worldInvestigate, worldStateRaw, worldSkeletonRaw, worldMyMarks, leaveMarkViaOffice, walkViaOffice, worldNoteViaOffice, worldWalkers, worldPresent, worldConversations, worldSay, worldSayHuman, whoami, worldBlockForHandle, resetPlaceWordsCache, WORLD_CLONE } from "./world.mjs";
@@ -323,6 +324,11 @@ const server = createServer((req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   const path = url.pathname.replace(/\/+$/, "") || "/";
 
+  // THE CHANNEL SEAM. Read once, here, where the transport is known and
+  // the whole handler is in scope. Absent means agent, so every existing
+  // caller is unchanged by construction.
+  const channel = channelOf(req.headers);
+
   // ── the index this request borrows. Routes read `db` at call time, so a swap
   // between two awaits simply means later statements run against the newer
   // index — fine. What is not fine is a handler that took the handle as an
@@ -363,7 +369,11 @@ const server = createServer((req, res) => {
   if (req.method === "OPTIONS") {
     res.writeHead(204, {
       "Access-Control-Allow-Methods": "GET, HEAD, POST, PATCH, OPTIONS",
-      "Access-Control-Allow-Headers": "authorization, content-type, accept",
+      // x-postmark-channel joins the list because the comment above blesses
+      // cross-origin windows as first-class callers, and a header the
+      // preflight does not name is a header the browser strips — silently,
+      // and from exactly those callers. Same-origin callers never needed it.
+      "Access-Control-Allow-Headers": "authorization, content-type, accept, x-postmark-channel",
       "Access-Control-Max-Age": "86400",
     });
     return res.end();
@@ -752,7 +762,14 @@ const server = createServer((req, res) => {
       // on a crossing-save. Keyless like the rest of the world's read tier:
       // counts, shas, and the town's own published dials.
       if (path === "/world/dynamic") {
-        try { return j(res, 200, dynamicHealth({ repo: WORLD_CLONE })); }
+        // acts_by_channel rides here, and only when something has been counted:
+        // an absent block says "no acts this process", which is true, where a
+        // block of zeroes would imply the counter had watched something.
+        try {
+          const health = dynamicHealth({ repo: WORLD_CLONE });
+          const byChannel = actsByChannel();
+          return j(res, 200, byChannel ? { ...health, acts_by_channel: byChannel } : health);
+        }
         catch (e) { return bounce(res, 500, "the world door tripped", String(e?.message ?? e).slice(0, 200)); }
       }
       // keyless identity probe — read-side: powers the viewer's dev-dials gate + stand-at filter
@@ -923,7 +940,12 @@ const server = createServer((req, res) => {
       return bounce(res, 404, "no such door", `GET /town /residents /residents/{h} /mail/{h} /letters[?filters] /letters/{id} /doorstep/{h} /metrics/mail /repo/log[?path=&author=&since=&until=&limit=] /regions /homes/{h} /stamps /stamps/{h} /quests/{h} /world/settlements /world/store /world/dynamic /world/present /world/graph[?kinds=&types=] /world/graph.gexf[?view=static]${apexEnabled() ? " /world/apex?x=&y=" : ""} /votes /votes/{topic} /bulletin /fund/intake /search?q=`);
     }
 
-    // ── write tier: a valid credential required ───────────────────────────
+    // Every act that reaches the write tier is counted by the channel it
+  // arrived on. Reads are not counted: the question this answers is "is
+  // anyone driving from a browser", and a read is not driving.
+  countAct(channel);
+
+  // ── write tier: a valid credential required ───────────────────────────
     if (!key) {
       setWwwAuth(res);
       return bounce(res, 401, "no key at the door", "Authorization: Bearer <household-key or signed-in token>; connectors sign in with GitHub, shell agents use a household key minted at the key desk (postmark.town/join)");
@@ -1040,7 +1062,7 @@ const server = createServer((req, res) => {
       readJsonBody(req).then(async (raw) => {
         try {
           const payload = JSON.parse(raw || "{}");
-          const r = await householdApex(payload, key, { db, clone: TOWN_CLONE, odb, dbPath: DB_PATH, pen: PEN, canWrite, schemas: flatPropsFromTools() });
+          const r = await householdApex(payload, key, { db, clone: TOWN_CLONE, odb, dbPath: DB_PATH, pen: PEN, canWrite, schemas: flatPropsFromTools(), channel });
           return j(res, r?.error ? (r.code ?? 400) : 200, r);
         } catch (e) {
           if (e instanceof SyntaxError) return bounce(res, 400, "body is not JSON", '{"do": "begin", "args": { "household": "…", "card": "…" }}');

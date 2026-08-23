@@ -186,7 +186,7 @@ export async function questsRead(key, { db, meta, clone }) {
 // ── tenant 3 · the pot-mode stake ────────────────────────────────────────────
 // stakeViaOffice's twin, and deliberately so: same flock, same subprocess
 // contract, same bounce shape. One pen, one law, never a second writer.
-export async function potStakeViaOffice(clone, { from, pot, stamps }, key) {
+export async function potStakeViaOffice(clone, { from, pot, stamps }, key, { channel } = {}) {
   const { execUnderTownLock, lockTimedOut, LOCK_BUSY } = await import("./town-lock.mjs");
   const { townDay } = await import("./votes.mjs");
   const { join, dirname } = await import("node:path");
@@ -200,7 +200,11 @@ export async function potStakeViaOffice(clone, { from, pot, stamps }, key) {
       `this key acts for: ${[...(key?.handles ?? [])].join(", ") || "nobody"}`);
   }
   const exec = join(dirname(fileURLToPath(import.meta.url)), "pot-stake-exec.mjs");
-  const payload = JSON.stringify({ handle: from, pot, n: stamps, via: "api", date: townDay() });
+  // THE PROVENANCE. The stake grammar already owns `via:` — an ordinary
+  // stake still says `via: api`, and one driven from a browser says
+  // `via: web`. The row is the record; nothing else needs to remember.
+  const { viaFor } = await import("./channel.mjs");
+  const payload = JSON.stringify({ handle: from, pot, n: stamps, via: viaFor(channel), date: townDay() });
   let out;
   try {
     out = await execUnderTownLock(exec, payload, { ...process.env, TOWN_CLONE: clone });

@@ -282,7 +282,7 @@ function actCard(act, db) {
  * flat schemas; passing them down keeps the dependency a line, not a cycle).
  */
 export async function householdApex(args = {}, key = null, ctx = {}) {
-  const { db, clone, odb, dbPath, pen, schemas, meta } = ctx;
+  const { db, clone, odb, dbPath, pen, schemas, meta, channel } = ctx;
   const doing = args.do != null && args.do !== "";
   const reading = args.read != null && args.read !== "";
   if (doing && reading) return bounce(422, "one call does one thing — do: performs, read: observes", "they never ride together; call twice");
@@ -374,7 +374,10 @@ export async function householdApex(args = {}, key = null, ctx = {}) {
   const store = openStore();
   let card;
   try { card = actCard(act, store.db); } finally { store.db?.close(); }
-  const done = { did: act, dispatched_to: spec.tool, ...(card ? { card } : {}) };
+  // The channel rides the answer so a caller can log what the town recorded
+  // about how the act arrived. Echo only — nothing reads it back.
+  const done = { did: act, dispatched_to: spec.tool, ...(card ? { card } : {}),
+    ...(channel && channel !== "agent" ? { channel } : {}) };
 
   try {
     let result;
@@ -393,7 +396,7 @@ export async function householdApex(args = {}, key = null, ctx = {}) {
       // ORDER is the law there, and this must never reimplement it.
       case "stake": {
         const { potStakeViaOffice } = await import("./household-stamps.mjs");
-        result = await potStakeViaOffice(clone, fields, key);
+        result = await potStakeViaOffice(clone, fields, key, { channel });
         break;
       }
       case "fund-verify": {
