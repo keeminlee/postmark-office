@@ -1,7 +1,29 @@
 #!/usr/bin/env node
-// world-lints.mjs — the six standing invariants of §2.10, run as queries over
-// the Graphology runtime at the end of every hydration and written into
+// world-lints.mjs — the eight standing invariants of the town, run as queries
+// over the Graphology runtime at the end of every hydration and written into
 // lint_findings, where the delta between runs is the alert surface.
+//
+// The questions are not this file's to invent, and §2.10 — which this header
+// pointed at, for six of them — resolves to nothing: WORLD/ENGINE.md carries
+// no numbered sections at all. They are constitutional marks now: the
+// postmark-invariant family under
+// WORLD/marks/let-there-be-light/the-town-centre/the-keeping-works/, one class
+// per invariant, each carrying dials {"lint": "Lx"}, a one-claim body, and a
+// mechanic child naming THIS module. The family's own words:
+//
+//   "The standing questions: each invariant is a class here, its mechanic
+//    naming the code that asks it — a question no code asks is not being asked."
+//
+// and the abstraction they instantiate, logos/the-invariant:
+//
+//   "An invariant is a standing question the town asks of itself at every fold
+//    — it reports, never repairs, and names its method and its limits."
+//
+// So every finding here CITES the law it enforces: `law` is the mark id,
+// `law_text` is that mark's one claim VERBATIM. A finding that quotes its law
+// can be held against the law; a finding that quotes a section number cannot.
+// L0 keeps the citation honest — it reads the eight marks' own dials off the
+// world tree and goes RED on a drifted pairing rather than skipping quietly.
 //
 //   node src/world-lints.mjs            # human report, from the built store
 //   node src/world-lints.mjs --json     # machine rows
@@ -25,6 +47,96 @@ import { pathToFileURL } from "node:url";
 import { loadWorldGraph, geometryIndex, geometryAsOf, rectOfVersion, reachable, out, inbound, nodesWhere, isClassMark, actionEntriesOf, DEFAULT_DB } from "./world-store.mjs";
 
 const RED = "RED", GREEN = "GREEN", NA = "N/A";
+
+// ── the law each question enforces ───────────────────────────────────────────
+// The eight id↔Lx pairs, taken from the marks' own `dials: {"lint": "Lx"}`, and
+// the eight bodies quoted verbatim. This table is a COPY of law that lives
+// elsewhere, which is exactly the shape L3 exists to distrust — so it is not
+// left on trust: `readLawPairing` below reads the marks back off the world tree
+// and L0 goes red the moment this table and the marks disagree.
+//
+// `slug` is the mark's directory under LAW_ROOT and its class name; `id` is the
+// mark id the store addresses it by (author `the-town` + slug).
+export const LAW = {
+  L0: {
+    slug: "the-readable-inputs",
+    id: "the-town/the-readable-inputs",
+    text: "A reading that cannot read its own inputs says so, loud — a lint that hides its noise floor is a lint nobody can trust.",
+  },
+  L1: {
+    slug: "the-reaching-mechanic",
+    id: "the-town/the-reaching-mechanic",
+    text: "Every mechanic names running code and the name resolves — a rule whose mechanic reaches nothing is ink.",
+  },
+  L2: {
+    slug: "the-unmoved-past",
+    id: "the-town/the-unmoved-past",
+    text: "A departure is judged against the stop geometry of its own instant — rearranging the world never makes the past late.",
+  },
+  L3: {
+    slug: "the-owned-constants",
+    id: "the-town/the-owned-constants",
+    text: "Every constant in the machinery is owned by a dial or a law — an orphan number is a rule nobody declared.",
+  },
+  L4: {
+    slug: "the-conforming-instance",
+    id: "the-town/the-conforming-instance",
+    text: "Every instance conforms to its class — the contract is read against every record, never assumed.",
+  },
+  L5: {
+    slug: "the-consulted-doctrine",
+    id: "the-town/the-consulted-doctrine",
+    text: "Every doctrine rule reaches an enforcing surface — a rule living only in prose no machine reads is a wish.",
+  },
+  L6: {
+    slug: "the-live-handler",
+    id: "the-town/the-live-handler",
+    text: "Every exposed action has a live handler — a grant with no room is the town asking for one.",
+  },
+  L7: {
+    slug: "the-classed-mark",
+    id: "the-town/the-classed-mark",
+    text: "Every mark is an instance of a class — an unclassed mark stands outside the law's address.",
+  },
+};
+
+/** Where the family stands in a world clone. One path, eight directories. */
+export const LAW_ROOT = "WORLD/marks/let-there-be-light/the-town-centre/the-keeping-works/postmark-invariant";
+
+/**
+ * Hold the LAW table above against the marks themselves.
+ *
+ * For each entry: open the mark, read the `lint` dial out of its frontmatter and
+ * the one-claim body out of the rest, and report any place where the code's
+ * pairing or the code's quote no longer matches what the town wrote. It reports;
+ * it never rewrites the table.
+ *
+ * A tree we cannot reach is `unavailable`, not drift — L0 already says loudly
+ * when it cannot read its inputs, and a missing clone must not be dressed up as
+ * a constitutional disagreement. A tree we CAN reach that is missing a mark, or
+ * carries a different dial, or carries a different claim, is drift.
+ */
+export function readLawPairing(treePath, law = LAW) {
+  const root = treePath ? join(treePath, ...LAW_ROOT.split("/")) : null;
+  if (!root || !existsSync(root)) return { status: "unavailable", root, checked: 0, drift: [] };
+  const drift = [];
+  let checked = 0;
+  for (const [lint, entry] of Object.entries(law)) {
+    const file = join(root, entry.slug, "mark.md");
+    if (!existsSync(file)) { drift.push({ lint, slug: entry.slug, why: "no mark", expected: lint, found: null, at: `${LAW_ROOT}/${entry.slug}/mark.md` }); continue; }
+    const text = readFileSync(file, "utf8");
+    checked++;
+    const front = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
+    // Line endings are the checkout's business, never the law's: a clone with
+    // autocrlf on must not read as a rewritten claim.
+    const body = text.slice(front ? front[0].length : 0).replace(/\r\n/g, "\n").trim();
+    const dials = front ? /^dials:\s*(.*)$/m.exec(front[1]) : null;
+    const found = dials ? (/"lint"\s*:\s*"([^"]*)"/.exec(dials[1])?.[1] ?? null) : null;
+    if (found !== lint) drift.push({ lint, slug: entry.slug, why: "dial mismatch", expected: lint, found, at: `${LAW_ROOT}/${entry.slug}/mark.md` });
+    if (body !== entry.text) drift.push({ lint, slug: entry.slug, why: "claim mismatch", expected: entry.text, found: body || null, at: `${LAW_ROOT}/${entry.slug}/mark.md` });
+  }
+  return { status: "read", root, checked, drift };
+}
 
 /**
  * Run every standing invariant over a built store.
@@ -78,7 +190,11 @@ export async function runLints({ dbPath = DEFAULT_DB, sources = null, engineText
   const isRunning = (id) => RUNNING.has(id);
 
   const lints = [];
-  const add = (l) => { lints.push(l); return l; };
+  // Every finding leaves this door carrying the mark it enforces and that mark's
+  // claim, verbatim. No lint states its own law inline: the citation is attached
+  // here, from the one table, so a lint and its law cannot drift apart file by
+  // file.
+  const add = (l) => { const cited = { ...l, law: LAW[l.id]?.id ?? null, law_text: LAW[l.id]?.text ?? null }; lints.push(cited); return cited; };
 
   // ── L1 · every `mechanic:` reaches running code ───────────────────────────
   // The chain: a mark carries `mechanic: x` -> implements -> the class node for
@@ -480,13 +596,34 @@ export async function runLints({ dbPath = DEFAULT_DB, sources = null, engineText
     });
   }
 
-  if (unreadable.length) lints.push({
-    id: "L0", name: "the lints could read their own inputs",
+  // ── L0 · the lints could read their own inputs, and cite the law truly ─────
+  //
+  // Two readings, one question, because they fail the same way: a lint that
+  // cannot see the corpus it scans and a lint that quotes a law nobody wrote are
+  // both a reading whose noise floor is hidden. The second reading arrived with
+  // the citation pass (the invariant family, world main 27d7bd9b) — a stale LAW
+  // table would let all eight findings go on quoting a claim the town has since
+  // rewritten, and every one of them would still look clean.
+  //
+  // A tree we cannot reach is DISCLOSED, never counted as drift: the unreadable
+  // list is already the loud part, and calling a swept cache a constitutional
+  // disagreement would be this lint laundering its own noise floor.
+  const lawCheck = readLawPairing(TREE);
+  if (unreadable.length || lawCheck.drift.length) add({
+    id: "L0", name: "the lints could read their own inputs, and their law citations match the marks",
     verdict: RED,
-    headline: `${unreadable.length} source files named by the store could not be read — every text-scanning lint above is running on a partial corpus`,
-    method: "each code node's path resolved against meta.office_path / meta.world_tree_path and read.",
-    limits: "The materialised world tree lives in a temp cache keyed by sha; a swept cache produces exactly this. Rehydrate to restore it.",
-    rows: unreadable.slice(0, 40), evidence: unreadable.slice(0, 10),
+    headline: [
+      unreadable.length ? `${unreadable.length} source files named by the store could not be read — every text-scanning lint above is running on a partial corpus` : null,
+      lawCheck.drift.length ? `${lawCheck.drift.length} law citation(s) no longer match the invariant marks — the findings above are quoting law the town did not write` : null,
+    ].filter(Boolean).join("; "),
+    method: `each code node's path resolved against meta.office_path / meta.world_tree_path and read. Separately, the eight id↔Lx pairs and the eight quoted claims in this module's LAW table are read back off the marks themselves — ${LAW_ROOT}/<slug>/mark.md, the \`lint\` dial from the frontmatter and the one-claim body from the rest — and any dial or claim that disagrees is drift.`,
+    limits: `The materialised world tree lives in a temp cache keyed by sha; a swept cache produces exactly this. The citation check needs that same tree: with no tree it reports \`unavailable\` (this run: ${lawCheck.status}${lawCheck.status === "read" ? `, ${lawCheck.checked} of ${Object.keys(LAW).length} marks read` : ""}) and asserts nothing, so a clone-less run proves nothing about the citations. It compares this file's table to the marks; it cannot tell which of the two is the one that moved. Rehydrate to restore the tree.`,
+    rows: unreadable.slice(0, 40),
+    law_check: lawCheck,
+    evidence: [
+      ...unreadable.slice(0, 10),
+      ...lawCheck.drift.map((d) => `${d.lint} · ${d.why} at ${d.at} — this module says ${JSON.stringify(d.expected)}, the mark says ${JSON.stringify(d.found)}`),
+    ],
   });
 
   return { lints, meta, store };
@@ -505,6 +642,9 @@ if (process.argv[1]?.endsWith("world-lints.mjs")) {
     console.log(`geometry: ${store.geometryVersions.length} versions over ${new Set(store.geometryVersions.map((g) => g.mark_id)).size} marks\n`);
     for (const t of lints) {
       console.log(`${t.verdict.padEnd(5)} ${t.id}  ${t.name}`);
+      // The law before the finding: a reader who cannot see what was promised
+      // has to take the verdict's word for what was broken.
+      if (t.law) console.log(`      law ${t.law} — "${t.law_text}"`);
       console.log(`      ${t.headline}`);
       for (const e of t.evidence.slice(0, 8)) console.log(`      · ${e}`);
       if (t.evidence.length > 8) console.log(`      · … ${t.evidence.length - 8} more (--json for all)`);
