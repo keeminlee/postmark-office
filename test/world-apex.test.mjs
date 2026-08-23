@@ -945,12 +945,14 @@ test("lint L6: the world as it stands is GREEN — one action exposed, and it di
   assert.deepEqual(l6.rows, [{ action: "say", for: "resident", from: ["the-town/sound"], handled: true }]);
 });
 
-test("lint L6: an actor-kind the law names with no resolution at the door is RED, and named (the act-as-human red)", async () => {
+test("lint L6: the act-as-human red FLIPPED GREEN — the door resolves the human kind (2026-08-23, tenant 5)", async () => {
   on();
-  // The TDD-board method's first deliberate red: a constitutional mark minting
-  // an action FOR an actor kind the door cannot resolve. The action itself has
-  // a handler (say dispatches) — the gap is WHO may perform it, which is
-  // exactly the gap the actor seam exists to close.
+  // The TDD-board method's first deliberate red, planted 08-17, flipped 08-23:
+  // the constitutional mark mints say for:human, and RESOLVED_ACTOR_KINDS now
+  // carries "human", so the row the board once held open as THE ASK is
+  // answered. This test is the same fixture with the verdict inverted — a
+  // retired red keeps its test so a regression that drops the resolution
+  // re-reds loudly, with the history attached.
   const humanLaw = [
     { id: "the-town/human", by: "the-town", kind: "sited", tier: "constitution", at: { x: -900, y: -760 }, extent: { w: 10, h: 10 },
       body: "The household's human, standing beside their resident.",
@@ -961,12 +963,11 @@ test("lint L6: an actor-kind the law names with no resolution at the door is RED
   const { runLints } = await import("../src/world-lints.mjs");
   const { lints } = await runLints({ dbPath: path, treePath: repo });
   const l6 = lints.find((l) => l.id === "L6");
-  assert.equal(l6.verdict, "RED");
-  assert.match(l6.headline, /say for human \(the-town\/human\)/, "the ask must name both the action and the actor kind");
+  assert.equal(l6.verdict, "GREEN", "the human kind resolves at the door now — a RED here means the resolution was dropped");
   const humanRow = l6.rows.find((r) => r.action === "say" && r.for === "human");
-  assert.equal(humanRow.handled, false, "the door has no human resolution yet — this row IS the ask");
+  assert.equal(humanRow.handled, true, "say for:human has a live resolution — the 08-17 ask is answered");
   const residentRow = l6.rows.find((r) => r.action === "say" && r.for === "resident");
-  assert.equal(residentRow.handled, true, "the resident's own say must not be dragged red by the human ask");
+  assert.equal(residentRow.handled, true, "the resident's own say stands as it always did");
 });
 
 test("lint L6: an action law exposes with no handler behind it is RED, and named", async () => {
