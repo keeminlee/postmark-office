@@ -496,19 +496,31 @@ function looksLikeSVG(bytes) {
     : /<\/svg\s*>\s*$/.test(text);
 }
 
+// The extension a sniffed format is stored under, and the media type it is
+// served as — ONE table, because two readers now need it in opposite
+// directions. imageFormat goes bytes -> ext -> type at upload; the media
+// shelf's read (media.mjs § mediaShelfRows) has only the `ext` the ledger
+// recorded and must arrive at the same type the upload answered with. Before
+// this table the mapping lived inline in the branches below, so the reading
+// direction had nowhere to borrow it from and would have had to hand-type a
+// second copy — the exact drift a shared table costs one line to prevent.
+export const MEDIA_TYPE_BY_EXT = Object.freeze({
+  jpg: "image/jpeg", png: "image/png", webp: "image/webp", svg: SVG_MEDIA_TYPE,
+});
+
 export function imageFormat(bytes, allow = RASTER_FORMATS) {
   const admits = (format) => allow.includes(format);
   let ext, mediaType;
   if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xd8) {
-    ext = "jpg"; mediaType = "image/jpeg";
+    ext = "jpg"; mediaType = MEDIA_TYPE_BY_EXT.jpg;
   } else if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
-    ext = "png"; mediaType = "image/png";
+    ext = "png"; mediaType = MEDIA_TYPE_BY_EXT.png;
   } else if (bytes.length >= 12 && bytes.subarray(0, 4).toString("ascii") === "RIFF" && bytes.subarray(8, 12).toString("ascii") === "WEBP") {
-    ext = "webp"; mediaType = "image/webp";
+    ext = "webp"; mediaType = MEDIA_TYPE_BY_EXT.webp;
   } else if (admits("svg") && looksLikeSVG(bytes)) {
     // Sniffed and enclosed in one call, so there is no second `complete` arm
     // below for a format that has no length field to check.
-    return { ext: "svg", mediaType: SVG_MEDIA_TYPE };
+    return { ext: "svg", mediaType: MEDIA_TYPE_BY_EXT.svg };
   } else {
     const names = admits("svg") ? "JPEG, PNG, WebP, or SVG" : "JPEG, PNG, or WebP";
     throw bounce(422, `that is not a ${names} image`, `choose a ${names} file; the office recognizes the file's bytes, not its filename or type label`);

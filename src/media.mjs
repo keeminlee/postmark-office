@@ -32,7 +32,7 @@
 // the office deploys ahead of the credentials without lying about it.
 
 import { createHash, createHmac } from "node:crypto";
-import { decodeImage, imageFormat, MAX_IMAGE, SHELF_FORMATS } from "./edit.mjs";
+import { decodeImage, imageFormat, MAX_IMAGE, MEDIA_TYPE_BY_EXT, SHELF_FORMATS } from "./edit.mjs";
 
 const bounce = (code, defect, hint) => Object.assign(new Error(defect), { code, defect, hint });
 
@@ -61,6 +61,62 @@ export function ensureMediaTable(odb) {
       household TEXT NOT NULL, sha TEXT NOT NULL, ext TEXT NOT NULL,
       bytes INTEGER NOT NULL, by_handle TEXT NOT NULL, created INTEGER NOT NULL,
       PRIMARY KEY (household, sha))`);
+}
+
+// ── the shelf's own arithmetic, in one home ─────────────────────────────────
+//
+// Everything below was inline in uploadMedia until the shelf grew a READ
+// (household { read: "shelf" }, 2026-08-23) and a second caller needed the same
+// numbers. A read that recomputed the key grammar, the quota ceiling or the URL
+// shape would be a second copy of law that already exists here — and the first
+// divergence would be invisible, because both copies would look right on their
+// own page. So the write calls these too: there is exactly one place where a
+// shelf URL is minted and exactly one place where the wall is measured.
+
+/** The object key a household's bytes are stored under — content-addressed, and
+ *  the ONLY grammar r2Put's un-encoded canonical URI is safe for. */
+export const mediaObjectKey = (household, sha, ext) => `media/${household}/${sha}.${ext}`;
+
+/** The permanent URL those bytes answer at. Passes mediaUrlOk by construction —
+ *  test/media-shelf.test.mjs holds that to account rather than assuming it. */
+export const mediaUrlFor = (household, sha, ext) => `${MEDIA_BASE}/${mediaObjectKey(household, sha, ext)}`;
+
+/**
+ * The wall, measured. `residents` is the count of residents the CALLING KEY
+ * acts for — the same grain the quota was sized in ("20 MB each"), and the same
+ * number uploadMedia charges against, deliberately: a read that sized the
+ * ceiling off the town's roster instead would quote a household a cap its own
+ * key cannot spend.
+ */
+export function mediaQuota(odb, household, residents = 1) {
+  ensureMediaTable(odb);
+  const ceiling = QUOTA_PER_RESIDENT * Math.max(1, residents);
+  const used = odb.prepare("SELECT COALESCE(SUM(bytes), 0) AS u FROM media WHERE household = ?").get(household).u;
+  return { per_resident: QUOTA_PER_RESIDENT, ceiling, used, remaining: Math.max(0, ceiling - used) };
+}
+
+/**
+ * One household's shelf, newest first. The ledger is the office's own byte
+ * accounting (the table above), so this is the only read that can answer what a
+ * household actually holds — the upload answer names one URL and is gone.
+ */
+export function mediaShelfRows(odb, household) {
+  ensureMediaTable(odb);
+  return odb
+    .prepare("SELECT sha, ext, bytes, by_handle, created FROM media WHERE household = ? ORDER BY created DESC, sha ASC")
+    .all(household)
+    .map((r) => ({
+      url: mediaUrlFor(household, r.sha, r.ext),
+      sha: r.sha,
+      ext: r.ext,
+      // The type the upload answered with, from the one table both directions
+      // read (edit.mjs § MEDIA_TYPE_BY_EXT). An ext this office no longer
+      // recognizes answers null rather than a guess.
+      media_type: MEDIA_TYPE_BY_EXT[r.ext] ?? null,
+      bytes: r.bytes,
+      by: r.by_handle,
+      uploaded_at: new Date(r.created).toISOString(),
+    }));
 }
 
 // One SigV4 PUT, by hand. R2 speaks S3's signature v4 with region "auto"; the
@@ -123,12 +179,10 @@ export async function uploadMedia(args = {}, key = null, odb = null, { put = r2P
   const { ext, mediaType } = imageFormat(bytes, SHELF_FORMATS);
   void args.type; // caller-declared MIME is deliberately never authoritative (same law as the avatar door)
   const sha = sha256hex(bytes);
-  const objectKey = `media/${household}/${sha}.${ext}`;
-  const url = `${MEDIA_BASE}/${objectKey}`;
+  const objectKey = mediaObjectKey(household, sha, ext);
+  const url = mediaUrlFor(household, sha, ext);
 
-  ensureMediaTable(odb);
-  const ceiling = QUOTA_PER_RESIDENT * Math.max(1, handles.length);
-  const used = odb.prepare("SELECT COALESCE(SUM(bytes), 0) AS u FROM media WHERE household = ?").get(household).u;
+  const { ceiling, used } = mediaQuota(odb, household, handles.length);
   // Same bytes, same shelf: answer with the URL that already exists. This sits
   // BEFORE the quota check on purpose — re-sending what you already hold can
   // never be refused for fullness.
