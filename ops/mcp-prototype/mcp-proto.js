@@ -1,0 +1,771 @@
+/* ── mcp-proto.js — the thinnest wrapper over the MCP ────────────────────────
+ *
+ * THE PRINCIPLE (the founder's, verbatim): "the THINNEST wrapper over the
+ * MCP... procedural; agnostic to what the mcp currently is. fits whatever and
+ * renders it into a site."
+ *
+ * So: no door is named in this file. Nothing here knows that the office has a
+ * `world` verb or a `send_letter` verb or a household. It speaks the protocol —
+ * initialize, tools/list, tools/call — and renders whatever comes back:
+ *   · every tool as a card, its description rendered WHOLE (the doors'
+ *     law-prose IS the ontology display; a clamp would be an edit),
+ *   · an input form generated from each tool's inputSchema by walking the
+ *     schema, with a raw-JSON textarea wherever the walk runs out of shapes,
+ *   · the response as a collapsible JSON tree.
+ * When the doors change, this page changes with them, because it never
+ * learned them in the first place.
+ *
+ * The ONE affordance beyond raw rendering is grammar-aware, not tool-aware:
+ * a response carrying an `actions` array whose entries have `action` and
+ * `fields` gets one-click prefill of a follow-up call — and only when the
+ * source tool's OWN schema declares the `do` / `args` envelope that grammar
+ * needs. A tool that doesn't declare it doesn't get the button.
+ *
+ * Classic script, not a module: this page must open from file:// for the
+ * offline verification harness, where module scripts are blocked as
+ * cross-origin. Everything hangs off window.MCPProto.
+ *
+ * Escaping: every value that reaches the DOM goes through textContent. Tool
+ * descriptions, mark bodies and letter prose are content we are RENDERING,
+ * never markup we are executing.
+ */
+
+(function () {
+  "use strict";
+
+  var DEFAULT_ENDPOINT = "/api/mcp";     // dev vhost: /api/ proxies to the dev office (127.0.0.1:4381)
+  var PROTOCOL = "2025-06-18";
+  var HISTORY_MAX = 20;
+  var LS_ENDPOINT = "pm.mcpproto.endpoint";
+  var LS_KEY = "pm.mcpproto.key";        // the credential lives HERE, in this browser, never in the page
+  var LS_HISTORY = "pm.mcpproto.history";
+
+  // ── tiny DOM kit ──────────────────────────────────────────────────────────
+
+  function el(tag, attrs, kids) {
+    var n = document.createElement(tag);
+    if (attrs) Object.keys(attrs).forEach(function (k) {
+      if (k === "text") n.textContent = attrs[k];
+      else if (k === "class") n.className = attrs[k];
+      else if (k.slice(0, 2) === "on") n.addEventListener(k.slice(2), attrs[k]);
+      else if (attrs[k] === true) n.setAttribute(k, "");
+      else if (attrs[k] !== false && attrs[k] != null) n.setAttribute(k, attrs[k]);
+    });
+    (kids || []).forEach(function (c) { if (c) n.appendChild(c); });
+    return n;
+  }
+  function clear(n) { while (n.firstChild) n.removeChild(n.firstChild); }
+  function store(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* private window: run without memory */ } }
+  function recall(k, d) { try { var v = localStorage.getItem(k); return v == null ? d : v; } catch (e) { return d; } }
+
+  // ── state ─────────────────────────────────────────────────────────────────
+
+  var state = {
+    tools: [],
+    cards: {},          // tool name -> card handle
+    serverInfo: null,
+    protocol: null,
+    instructions: "",
+    history: [],        // {ts, tool, args, ok, ms, envelope?}  envelope kept in memory only
+    rpcId: 1,
+  };
+  var ui = {};
+
+  // ── transport ─────────────────────────────────────────────────────────────
+  //
+  // Read window.__MCP_FETCH__ at CALL time, not load time, so the offline
+  // harness can install a stub around this exact seam.
+
+  function xfetch(url, init) { return (window.__MCP_FETCH__ || window.fetch).call(window, url, init); }
+
+  function headers() {
+    var h = { "content-type": "application/json", "accept": "application/json, text/event-stream" };
+    var key = ui.key.value.trim();
+    if (key) h.authorization = "Bearer " + key;
+    if (state.protocol) h["mcp-protocol-version"] = state.protocol;
+    return h;
+  }
+
+  // A JSON-RPC round trip. Resolves {status, envelope, raw, ms} — never
+  // rejects on an HTTP error status: a 401 bounce carries the door's own prose
+  // in its body and that prose is the point.
+  function rpc(method, params, isNotification) {
+    var msg = { jsonrpc: "2.0", method: method };
+    if (!isNotification) msg.id = state.rpcId++;
+    if (params) msg.params = params;
+    var t0 = Date.now();
+    return xfetch(ui.endpoint.value.trim() || DEFAULT_ENDPOINT, {
+      method: "POST", headers: headers(), body: JSON.stringify(msg),
+    }).then(function (res) {
+      return res.text().then(function (raw) {
+        var ct = (res.headers && res.headers.get && res.headers.get("content-type")) || "";
+        return { status: res.status, ms: Date.now() - t0, raw: raw, envelope: parseBody(raw, ct) };
+      });
+    });
+  }
+
+  // JSON, or an SSE frame if a transport ever streams at us. Both shapes carry
+  // the same JSON-RPC envelope; neither is assumed.
+  function parseBody(raw, contentType) {
+    if (!raw) return null;
+    if (String(contentType).indexOf("text/event-stream") >= 0) {
+      var last = null;
+      raw.split(/\r?\n/).forEach(function (line) {
+        if (line.slice(0, 5) === "data:") { try { last = JSON.parse(line.slice(5).trim()); } catch (e) { /* keep the last good frame */ } }
+      });
+      if (last) return last;
+    }
+    try { return JSON.parse(raw); } catch (e) { return null; }
+  }
+
+  // ── schema → form (the procedural half) ───────────────────────────────────
+
+  // Which control a property spec earns. Anything this walk cannot name — an
+  // object, an array, a oneOf, an untyped property — earns the raw-JSON
+  // textarea, which is the honest fallback rather than a guess.
+  function kindOf(spec) {
+    if (!spec || typeof spec !== "object") return "raw";
+    if (Array.isArray(spec.enum) && spec.enum.length) return "enum";
+    var t = spec.type;
+    if (Array.isArray(t)) t = t.filter(function (x) { return x !== "null"; })[0];
+    if (t === "string") return "string";
+    if (t === "number" || t === "integer") return "number";
+    if (t === "boolean") return "boolean";
+    return "raw";
+  }
+
+  function typeLabel(spec) {
+    var t = spec && spec.type;
+    if (Array.isArray(t)) t = t.join("|");
+    if (!t) t = spec && (spec.oneOf ? "oneOf" : spec.anyOf ? "anyOf" : "any");
+    if (spec && Array.isArray(spec.enum)) t = (t || "enum") + " · " + spec.enum.length + " values";
+    return String(t || "any");
+  }
+
+  /* One field. Returns a handle:
+   *   node    the .field element
+   *   read()  {present, value} or {error}
+   *   set(v)  fill from a value (replay, prefill)
+   *   setSub(schema)  raw fields only — mount a generated sub-form in place of
+   *                   the textarea (this is how the actions grammar prefills
+   *                   an `args` object without this file knowing any action).
+   */
+  function buildField(name, spec, isRequired) {
+    spec = spec || {};
+    var kind = kindOf(spec);
+    var lab = el("div", { class: "lab" }, [
+      el("span", { text: name }),
+      el("span", { class: "ty", text: typeLabel(spec) }),
+      isRequired ? el("span", { class: "req", text: "required" }) : null,
+    ]);
+    var host = el("div", {});
+    var node = el("div", { class: "field" + (kind === "raw" ? " raw" : ""), "data-field": name }, [lab, host]);
+    if (spec.description) node.appendChild(el("p", { class: "hint", text: spec.description }));
+
+    var control, subhost = null, sub = null;
+
+    if (kind === "enum") {
+      control = el("select", {});
+      control.appendChild(el("option", { value: "", text: "— unset —" }));
+      spec.enum.forEach(function (v) { control.appendChild(el("option", { value: String(v), text: String(v) })); });
+      host.appendChild(control);
+    } else if (kind === "boolean") {
+      control = el("select", {});
+      [["", "— unset —"], ["true", "true"], ["false", "false"]].forEach(function (p) {
+        control.appendChild(el("option", { value: p[0], text: p[1] }));
+      });
+      host.appendChild(control);
+    } else if (kind === "number") {
+      control = el("input", { type: "number", step: spec.type === "integer" ? "1" : "any", placeholder: spec.type === "integer" ? "integer" : "number" });
+      host.appendChild(control);
+    } else if (kind === "string") {
+      control = el("input", { type: "text", placeholder: "string" });
+      host.appendChild(control);
+      // A one-line box is wrong for a letter body and right for a handle, and
+      // no schema keyword says which — so the reader decides, per field.
+      var grow = el("button", { class: "ghost grow", type: "button", text: "⤢ multiline" });
+      grow.addEventListener("click", function () {
+        var wide = control.tagName === "INPUT";
+        var next = wide ? el("textarea", { rows: "5", placeholder: "string" }) : el("input", { type: "text", placeholder: "string" });
+        next.value = control.value;
+        host.replaceChild(next, control);
+        control = next;
+        grow.textContent = wide ? "⤡ one line" : "⤢ multiline";
+        next.focus();
+      });
+      lab.appendChild(grow);
+    } else {
+      control = el("textarea", { rows: "3", placeholder: "JSON — " + typeLabel(spec) });
+      host.appendChild(control);
+      subhost = el("div", {});
+      subhost.style.display = "none";
+      host.appendChild(subhost);
+    }
+
+    function read() {
+      if (sub) {                                   // a mounted sub-form owns this field
+        var r = sub.read();
+        if (r.errors.length) return { error: r.errors.join("; ") };
+        return Object.keys(r.args).length ? { present: true, value: r.args } : { present: false };
+      }
+      var v = control.value;
+      if (v === "" || v == null) return { present: false };   // empty means UNSENT — the door names its own missing fields
+      if (kind === "number") {
+        var n = Number(v);
+        if (!isFinite(n)) return { error: name + ": not a number" };
+        return { present: true, value: n };
+      }
+      if (kind === "boolean") return { present: true, value: v === "true" };
+      if (kind === "enum") {
+        var t = spec.type;
+        if (t === "number" || t === "integer") { var e = Number(v); return { present: true, value: isFinite(e) ? e : v }; }
+        if (t === "boolean") return { present: true, value: v === "true" };
+        // match the declared value's own identity where the enum holds non-strings
+        var hit = spec.enum.filter(function (x) { return String(x) === v; });
+        return { present: true, value: hit.length ? hit[0] : v };
+      }
+      if (kind === "raw") {
+        try { return { present: true, value: JSON.parse(v) }; }
+        catch (err) { return { error: name + ": " + err.message }; }
+      }
+      return { present: true, value: v };
+    }
+
+    function set(v) {
+      if (v === undefined) { if (sub) setSub(null); control.value = ""; return; }
+      if (kind === "raw") {
+        if (sub) setSub(null);
+        control.value = typeof v === "string" ? v : JSON.stringify(v, null, 2);
+      } else if (kind === "boolean") {
+        control.value = v === true ? "true" : v === false ? "false" : "";
+      } else {
+        control.value = typeof v === "object" ? JSON.stringify(v) : String(v);
+      }
+    }
+
+    // Mount a generated sub-form over a raw field. `schema` is an ordinary
+    // object schema — the same generator serves it, so an action's `fields`
+    // block and a tool's `inputSchema` render through one code path.
+    function setSub(schema, title) {
+      if (!subhost) return false;
+      clear(subhost);
+      sub = null;
+      if (!schema) { subhost.style.display = "none"; control.style.display = ""; return true; }
+      var built = buildForm(schema);
+      var head = el("div", { class: "subhead" }, [el("span", { text: title || "fields" })]);
+      var back = el("button", { class: "ghost grow", type: "button", text: "raw JSON" });
+      back.addEventListener("click", function () { setSub(null); });
+      head.appendChild(back);
+      var box = el("div", { class: "subform" }, [head, built.node]);
+      subhost.appendChild(box);
+      subhost.style.display = "";
+      control.style.display = "none";
+      sub = built;
+      return true;
+    }
+
+    return { name: name, node: node, read: read, set: set, setSub: setSub, kind: kind };
+  }
+
+  /* A whole form from an object schema. Handles the JSON-Schema shape
+   * (properties / required) and the flatter `fields` shape the actions
+   * grammar uses, where each entry carries its own `required: true`. */
+  function buildForm(schema) {
+    schema = schema || {};
+    var props = schema.properties && typeof schema.properties === "object" ? schema.properties : schema;
+    var reqList = Array.isArray(schema.required) ? schema.required : [];
+    var node = el("div", { class: "form" });
+    var fields = {};
+    var names = Object.keys(props || {});
+    names.forEach(function (name) {
+      var spec = props[name] || {};
+      var required = reqList.indexOf(name) >= 0 || spec.required === true;
+      var f = buildField(name, spec, required);
+      fields[name] = f;
+      node.appendChild(f.node);
+    });
+    if (!names.length) node.appendChild(el("p", { class: "hint", text: "this tool takes no arguments" }));
+
+    function read() {
+      var args = {}, errors = [];
+      names.forEach(function (n) {
+        var r = fields[n].read();
+        if (r.error) errors.push(r.error);
+        else if (r.present) args[n] = r.value;
+      });
+      return { args: args, errors: errors };
+    }
+    function setValues(obj) {
+      names.forEach(function (n) { fields[n].set(obj && Object.prototype.hasOwnProperty.call(obj, n) ? obj[n] : undefined); });
+    }
+    return { node: node, fields: fields, read: read, setValues: setValues, names: names };
+  }
+
+  // ── JSON tree ─────────────────────────────────────────────────────────────
+
+  function jsonTree(value, key, depth) {
+    depth = depth || 0;
+    var prefix = key == null ? null : el("span", { class: "k", text: key + ": " });
+    if (value === null) return el("div", {}, [prefix, el("span", { class: "nul", text: "null" })]);
+    var t = typeof value;
+    if (t === "string") return el("div", {}, [prefix, el("span", { class: "s", text: JSON.stringify(value).slice(1, -1) })]);
+    if (t === "number") return el("div", {}, [prefix, el("span", { class: "n", text: String(value) })]);
+    if (t === "boolean") return el("div", {}, [prefix, el("span", { class: "b", text: String(value) })]);
+    if (t !== "object") return el("div", {}, [prefix, el("span", { class: "meta", text: String(value) })]);
+
+    var isArr = Array.isArray(value);
+    var keys = isArr ? value.map(function (_, i) { return i; }) : Object.keys(value);
+    if (!keys.length) return el("div", {}, [prefix, el("span", { class: "meta", text: isArr ? "[]" : "{}" })]);
+
+    var d = el("details", depth < 2 ? { open: true } : {});
+    var sum = el("summary", {}, [
+      key == null ? null : el("span", { class: "k", text: key }),
+      el("span", { class: "meta", text: (key == null ? "" : " ") + (isArr ? "[" + keys.length + "]" : "{" + keys.length + "}") }),
+    ]);
+    d.appendChild(sum);
+    var kids = el("div", { class: "kids" });
+    keys.forEach(function (k) { kids.appendChild(jsonTree(value[k], String(k), depth + 1)); });
+    d.appendChild(kids);
+    return d;
+  }
+
+  // ── the one grammar-aware affordance ──────────────────────────────────────
+  //
+  // Walk any payload for arrays named `actions` whose entries carry both an
+  // `action` name and a `fields` block. That pair IS the grammar; no action
+  // name, tool name or door is known here.
+
+  function collectActions(root) {
+    var out = [], seen = {};
+    (function walk(v, d) {
+      if (!v || typeof v !== "object" || d > 8) return;
+      if (Array.isArray(v)) { v.forEach(function (x) { walk(x, d + 1); }); return; }
+      Object.keys(v).forEach(function (k) {
+        var x = v[k];
+        if (k === "actions" && Array.isArray(x)) x.forEach(function (e) {
+          if (e && typeof e === "object" && typeof e.action === "string" && e.action
+              && e.fields && typeof e.fields === "object" && !Array.isArray(e.fields)
+              && !seen[e.action]) { seen[e.action] = 1; out.push(e); }
+        });
+        walk(x, d + 1);
+      });
+    })(root, 0);
+    return out;
+  }
+
+  // The envelope a prefill needs: a `do`-shaped string property and an
+  // `args`-shaped object property on the SOURCE tool's own schema. A tool that
+  // does not declare them gets no button — the affordance follows the grammar,
+  // never a name we recognised.
+  function apexEnvelope(tool) {
+    var p = (tool && tool.inputSchema && tool.inputSchema.properties) || {};
+    var hasDo = p.do && p.do.type === "string";
+    var hasArgs = p.args && p.args.type === "object";
+    return hasDo && hasArgs ? { doKey: "do", argsKey: "args" } : null;
+  }
+
+  // An action's `fields` block, rendered through the same form generator.
+  function fieldsSchema(fields) {
+    var props = {}, required = [];
+    Object.keys(fields || {}).forEach(function (n) {
+      var spec = fields[n] && typeof fields[n] === "object" ? fields[n] : { type: "string" };
+      props[n] = spec;
+      if (spec.required === true) required.push(n);
+    });
+    return { type: "object", properties: props, required: required };
+  }
+
+  function prefillAction(toolName, entry) {
+    var card = state.cards[toolName];
+    if (!card) return;
+    var env = apexEnvelope(card.tool);
+    card.details.open = true;
+    card.setRawMode(false);
+    if (env) {
+      card.form.fields[env.doKey].set(entry.action);
+      card.form.fields[env.argsKey].setSub(fieldsSchema(entry.fields), entry.action + " · fields");
+    } else {
+      // No declared envelope: hand the reader the grammar as raw arguments and
+      // let the door's own validator have the last word.
+      card.setRawMode(true);
+      card.raw.value = JSON.stringify({ do: entry.action, args: {} }, null, 2);
+    }
+    card.details.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  // ── rendering: tool cards ─────────────────────────────────────────────────
+
+  function firstLine(s) {
+    var t = String(s || "").replace(/\s+/g, " ").trim();
+    return t.length > 120 ? t.slice(0, 117) + "…" : t;
+  }
+
+  function toolCard(tool) {
+    var schema = tool.inputSchema || {};
+    var props = schema.properties || {};
+    var n = Object.keys(props).length;
+
+    var details = el("details", { class: "tool" });
+    details.appendChild(el("summary", {}, [
+      el("span", { class: "name", text: tool.name }),
+      el("span", { class: "teaser", text: firstLine(tool.description) }),
+      el("span", { class: "argcount", text: n === 1 ? "1 arg" : n + " args" }),
+    ]));
+
+    var body = el("div", { class: "body" });
+    // The description WHOLE. This is the ontology display: the door's own
+    // law-prose, unclamped, unsummarised, in the register it was written in.
+    if (tool.description) body.appendChild(el("div", { class: "law", text: String(tool.description) }));
+
+    var form = buildForm(schema);
+    var raw = el("textarea", { rows: "6", placeholder: '{ "argument": "value" }' });
+    var rawWrap = el("div", { class: "field raw" }, [
+      el("div", { class: "lab" }, [el("span", { text: "arguments" }), el("span", { class: "ty", text: "raw JSON" })]),
+      raw,
+    ]);
+    rawWrap.style.display = "none";
+    body.appendChild(form.node);
+    body.appendChild(rawWrap);
+
+    var err = el("span", { class: "callerr" });
+    var callBtn = el("button", { class: "primary", type: "button", text: "call" });
+    var rawBtn = el("button", { class: "ghost", type: "button", text: "raw arguments" });
+    var clearBtn = el("button", { class: "ghost", type: "button", text: "clear" });
+    body.appendChild(el("div", { class: "rowbtns" }, [callBtn, rawBtn, clearBtn, err]));
+    details.appendChild(body);
+
+    var rawMode = false;
+    function setRawMode(on) {
+      rawMode = !!on;
+      form.node.style.display = rawMode ? "none" : "";
+      rawWrap.style.display = rawMode ? "" : "none";
+      rawBtn.textContent = rawMode ? "generated form" : "raw arguments";
+    }
+    rawBtn.addEventListener("click", function () {
+      if (!rawMode) { var r = form.read(); if (!r.errors.length) raw.value = JSON.stringify(r.args, null, 2); }
+      setRawMode(!rawMode);
+    });
+    clearBtn.addEventListener("click", function () {
+      form.setValues({});
+      Object.keys(form.fields).forEach(function (k) { if (form.fields[k].kind === "raw") form.fields[k].setSub(null); });
+      raw.value = "";
+      err.textContent = "";
+    });
+
+    function currentArgs() {
+      if (rawMode) {
+        var v = raw.value.trim();
+        if (!v) return { args: {} };
+        try {
+          var parsed = JSON.parse(v);
+          if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { error: "arguments must be a JSON object" };
+          return { args: parsed };
+        } catch (e) { return { error: e.message }; }
+      }
+      var r = form.read();
+      return r.errors.length ? { error: r.errors.join("; ") } : { args: r.args };
+    }
+
+    callBtn.addEventListener("click", function () {
+      var got = currentArgs();
+      err.textContent = "";
+      if (got.error) { err.textContent = got.error; return; }
+      callBtn.disabled = true;
+      callTool(tool.name, got.args).then(function () { callBtn.disabled = false; },
+        function (e) { callBtn.disabled = false; err.textContent = String(e && e.message || e); });
+    });
+
+    var card = {
+      tool: tool, details: details, form: form, raw: raw,
+      setRawMode: setRawMode,
+      fill: function (args) { setRawMode(true); raw.value = JSON.stringify(args || {}, null, 2); details.open = true; },
+    };
+    state.cards[tool.name] = card;
+    return details;
+  }
+
+  function renderTools(filterText) {
+    var q = String(filterText || "").trim().toLowerCase();
+    clear(ui.tools);
+    var shown = 0;
+    state.tools.forEach(function (t) {
+      if (q && (String(t.name) + " " + String(t.description || "")).toLowerCase().indexOf(q) < 0) return;
+      shown++;
+      ui.tools.appendChild(toolCard(t));
+    });
+    if (!state.tools.length) ui.tools.appendChild(el("p", { class: "empty", text: "no tools yet — connect above." }));
+    else if (!shown) ui.tools.appendChild(el("p", { class: "empty", text: "no tool matches that filter." }));
+    ui.toolCount.textContent = state.tools.length ? (shown === state.tools.length ? state.tools.length + " listed" : shown + " of " + state.tools.length) : "";
+  }
+
+  // ── rendering: a response ─────────────────────────────────────────────────
+
+  function renderResponse(entry) {
+    clear(ui.response);
+    var env = entry.envelope;
+    ui.response.appendChild(el("div", { class: "phead" }, [
+      el("span", { class: "badge " + (entry.ok ? "ok" : "bad"), text: entry.ok ? "ok" : "error" }),
+      el("span", { text: entry.tool }),
+      el("span", { class: "ms", text: entry.ms + " ms · HTTP " + entry.status }),
+    ]));
+
+    if (!env) {
+      ui.response.appendChild(el("pre", { class: "json", text: entry.raw || "(empty body)" }));
+      return;
+    }
+
+    // The payload the door actually answered with: MCP content items carry
+    // JSON as text, so parse where we can and tree it; anything else renders
+    // as the text it is.
+    var payloads = [];
+    var result = env.result;
+    if (result && Array.isArray(result.content)) {
+      result.content.forEach(function (item) {
+        if (item && item.type === "text" && typeof item.text === "string") {
+          try { payloads.push({ parsed: JSON.parse(item.text) }); }
+          catch (e) { payloads.push({ text: item.text }); }
+        } else payloads.push({ parsed: item });
+      });
+    } else payloads.push({ parsed: env.error !== undefined ? env.error : result !== undefined ? result : env });
+
+    // The affordance strip, above the payload it came from.
+    var acts = [];
+    payloads.forEach(function (p) { if (p.parsed) acts = acts.concat(collectActions(p.parsed)); });
+    if (acts.length && state.cards[entry.tool]) {
+      var strip = el("div", { class: "afford" }, [
+        el("div", { class: "ahead", text: "actions in this answer — one click prefills a call" }),
+      ]);
+      var btns = el("div", { class: "abtns" });
+      acts.forEach(function (a) {
+        var nf = Object.keys(a.fields || {}).length;
+        // The blurb rides as the button's title where the grammar carried one:
+        // it is the act's own quoted law, and hovering is cheaper than opening
+        // the tree to find it. Still grammar, still no action named here.
+        var b = el("button", { type: "button", title: a.blurb || a.action }, [
+          el("span", { text: a.action }),
+          el("span", { class: "fc", text: nf === 1 ? "1 field" : nf + " fields" }),
+        ]);
+        b.addEventListener("click", function () { prefillAction(entry.tool, a); });
+        btns.appendChild(b);
+      });
+      strip.appendChild(btns);
+      ui.response.appendChild(strip);
+    }
+
+    payloads.forEach(function (p) {
+      if (p.text !== undefined) ui.response.appendChild(el("pre", { class: "json", text: p.text }));
+      else ui.response.appendChild(el("div", { class: "json" }, [jsonTree(p.parsed, null, 0)]));
+    });
+
+    var rawTog = el("details", { class: "instr" }, [el("summary", { text: "raw JSON-RPC envelope" })]);
+    rawTog.appendChild(el("pre", { class: "json", text: JSON.stringify(env, null, 2) }));
+    ui.response.appendChild(rawTog);
+  }
+
+  // ── history ───────────────────────────────────────────────────────────────
+
+  function persistHistory() {
+    // Replay parts only. Envelopes stay in memory: a long answer would blow
+    // the quota, and nothing about a stored answer is needed to send it again.
+    store(LS_HISTORY, JSON.stringify(state.history.map(function (h) {
+      return { ts: h.ts, tool: h.tool, args: h.args, ok: h.ok, ms: h.ms, status: h.status };
+    })));
+  }
+  function loadHistory() {
+    try {
+      var v = JSON.parse(recall(LS_HISTORY, "[]"));
+      if (Array.isArray(v)) state.history = v.slice(0, HISTORY_MAX);
+    } catch (e) { state.history = []; }
+  }
+
+  function renderHistory() {
+    clear(ui.history);
+    if (!state.history.length) { ui.history.appendChild(el("p", { class: "empty", text: "no calls yet." })); return; }
+    state.history.forEach(function (h, i) {
+      var row = el("div", { class: "row" + (h.selected ? " sel" : "") });
+      row.appendChild(el("span", { class: "dot " + (h.ok ? "ok" : "bad"), text: h.ok ? "●" : "▲" }));
+      var nm = el("span", { class: "nm", text: h.tool });
+      nm.addEventListener("click", function () {
+        if (h.envelope) { select(i); renderResponse(h); }
+        else { state.cards[h.tool] && state.cards[h.tool].fill(h.args); }
+      });
+      row.appendChild(nm);
+      row.appendChild(el("span", { class: "t", text: new Date(h.ts).toLocaleTimeString() + " · " + h.ms + "ms" }));
+      var grow = el("div", { class: "grow" });
+      var fill = el("button", { class: "ghost", type: "button", text: "fill" });
+      fill.addEventListener("click", function () { var c = state.cards[h.tool]; if (c) { c.fill(h.args); c.details.scrollIntoView({ behavior: "smooth", block: "start" }); } });
+      var again = el("button", { class: "ghost", type: "button", text: "replay" });
+      again.addEventListener("click", function () { callTool(h.tool, h.args); });
+      grow.appendChild(fill); grow.appendChild(again);
+      row.appendChild(grow);
+      ui.history.appendChild(row);
+    });
+  }
+  function select(i) { state.history.forEach(function (h, j) { h.selected = i === j; }); renderHistory(); }
+
+  // ── the calls ─────────────────────────────────────────────────────────────
+
+  function callTool(name, args) {
+    return rpc("tools/call", { name: name, arguments: args || {} }).then(function (r) {
+      var env = r.envelope;
+      var ok = r.status < 400 && env && !env.error && !(env.result && env.result.isError);
+      var entry = { ts: Date.now(), tool: name, args: args || {}, ok: ok, ms: r.ms, status: r.status, envelope: env, raw: r.raw };
+      state.history.unshift(entry);
+      state.history = state.history.slice(0, HISTORY_MAX);
+      persistHistory();
+      select(0);
+      renderResponse(entry);
+      return entry;
+    });
+  }
+
+  function setStatus(cls, text) { clear(ui.status); ui.status.appendChild(el("span", { class: cls, text: text })); }
+
+  function connect() {
+    store(LS_ENDPOINT, ui.endpoint.value.trim());
+    store(LS_KEY, ui.key.value);
+    state.protocol = null;
+    setStatus("wait", "initialize…");
+    return rpc("initialize", {
+      protocolVersion: PROTOCOL,
+      capabilities: {},
+      clientInfo: { name: "postmark-mcp-prototype", version: "0" },
+    }).then(function (r) {
+      var env = r.envelope;
+      if (r.status >= 400 || !env || env.error) {
+        setStatus("bad", "HTTP " + r.status + " — " + doorSays(env, r.raw));
+        renderResponse({ tool: "initialize", ok: false, ms: r.ms, status: r.status, envelope: env, raw: r.raw });
+        return null;
+      }
+      var res = env.result || {};
+      state.protocol = res.protocolVersion || PROTOCOL;
+      state.serverInfo = res.serverInfo || null;
+      state.instructions = res.instructions || "";
+      renderInstructions();
+      // Stateless server or not, the handshake is the handshake.
+      rpc("notifications/initialized", null, true).catch(function () { /* a 202 with no body is success */ });
+      return listTools();
+    }).catch(function (e) {
+      setStatus("bad", "no answer from " + (ui.endpoint.value.trim() || DEFAULT_ENDPOINT) + " — " + String(e && e.message || e));
+    });
+  }
+
+  // Whatever prose the door put in its own refusal. It knows its reasons; we
+  // do not invent one for it.
+  function doorSays(env, raw) {
+    if (env && env.error && env.error.message) return env.error.message;
+    if (env && (env.defect || env.hint)) return [env.defect, env.hint].filter(Boolean).join(" — ");
+    if (env && env.result) return JSON.stringify(env.result).slice(0, 200);
+    return String(raw || "").slice(0, 200) || "no body";
+  }
+
+  function listTools() {
+    setStatus("wait", "tools/list…");
+    return rpc("tools/list", {}).then(function (r) {
+      var env = r.envelope;
+      if (r.status >= 400 || !env || env.error || !env.result || !Array.isArray(env.result.tools)) {
+        setStatus("bad", "tools/list failed (HTTP " + r.status + ") — " + doorSays(env, r.raw));
+        renderResponse({ tool: "tools/list", ok: false, ms: r.ms, status: r.status, envelope: env, raw: r.raw });
+        return null;
+      }
+      state.tools = env.result.tools;
+      state.cards = {};
+      renderTools(ui.filter.value);
+      var who = state.serverInfo ? state.serverInfo.name + " " + (state.serverInfo.version || "") : "connected";
+      setStatus("ok", who.trim() + " · MCP " + (state.protocol || "?") + " · " + state.tools.length + " tools · " + r.ms + " ms");
+      return state.tools;
+    });
+  }
+
+  function renderInstructions() {
+    clear(ui.instr);
+    if (!state.instructions) { ui.instr.style.display = "none"; return; }
+    ui.instr.style.display = "";
+    ui.instr.appendChild(el("summary", { text: "the server's own instructions" }));
+    ui.instr.appendChild(el("p", { text: state.instructions }));
+  }
+
+  // ── the page ──────────────────────────────────────────────────────────────
+
+  function build(root) {
+    ui.endpoint = el("input", { type: "text", spellcheck: "false", value: recall(LS_ENDPOINT, DEFAULT_ENDPOINT) });
+    ui.key = el("input", { type: "password", spellcheck: "false", autocomplete: "off", placeholder: "Bearer …", value: recall(LS_KEY, "") });
+    ui.status = el("div", { class: "status" });
+    ui.instr = el("details", { class: "instr" });
+    ui.instr.style.display = "none";
+
+    var connectBtn = el("button", { class: "primary", type: "button", text: "connect" });
+    connectBtn.addEventListener("click", function () { connect(); });
+    var refreshBtn = el("button", { type: "button", text: "refresh tools" });
+    refreshBtn.addEventListener("click", function () { store(LS_KEY, ui.key.value); listTools(); });
+    var forgetBtn = el("button", { class: "ghost", type: "button", text: "forget key" });
+    forgetBtn.addEventListener("click", function () { ui.key.value = ""; store(LS_KEY, ""); setStatus("wait", "key forgotten in this browser."); });
+
+    var mast = el("header", { class: "mast" }, [
+      el("h1", { text: "the office, as it stands" }),
+      el("p", { class: "sub", text: "a procedural MCP surface · it knows no doors, only the protocol" }),
+      el("div", { class: "conn" }, [
+        el("div", { class: "f wide" }, [el("label", { text: "endpoint" }), ui.endpoint]),
+        el("div", { class: "f" }, [el("label", { text: "bearer key" }), ui.key]),
+        el("div", {}, [connectBtn]),
+        el("div", {}, [refreshBtn]),
+        el("div", {}, [forgetBtn]),
+        el("p", { class: "note", text: "the key is kept in this browser's localStorage and sent as an Authorization header. It is never written into the page." }),
+      ]),
+      ui.status,
+      ui.instr,
+    ]);
+
+    ui.filter = el("input", { type: "text", class: "filter", placeholder: "filter tools — name or prose" });
+    ui.filter.addEventListener("input", function () { renderTools(ui.filter.value); });
+    ui.toolCount = el("span", { class: "count" });
+    ui.tools = el("div", {});
+    ui.response = el("div", { class: "panel" });
+    ui.history = el("div", { class: "hist" });
+
+    var left = el("section", { class: "col" }, [
+      el("h2", {}, [el("span", { text: "tools" }), ui.toolCount]),
+      ui.filter, ui.tools,
+    ]);
+    var right = el("section", { class: "col right" }, [
+      el("h2", {}, [el("span", { text: "response" })]),
+      ui.response,
+      el("h2", {}, [el("span", { text: "history" })]),
+      ui.history,
+    ]);
+
+    root.appendChild(mast);
+    root.appendChild(el("div", { class: "wrap" }, [left, right]));
+
+    loadHistory();
+    renderTools("");
+    renderHistory();
+    ui.response.appendChild(el("p", { class: "empty", text: "nothing called yet." }));
+    setStatus("wait", "not connected.");
+  }
+
+  function init(rootId) {
+    var root = document.getElementById(rootId || "mcp-root");
+    if (!root) return null;
+    clear(root);
+    build(root);
+    // Auto-connect when a key is already remembered — the page is a lamp you
+    // walk up to, not a form you fill in twice.
+    if (ui.key.value) connect();
+    return api;
+  }
+
+  var api = {
+    init: init,
+    connect: connect,
+    listTools: listTools,
+    callTool: callTool,
+    // exposed for the offline harness, which asserts against the same units
+    // the page runs on rather than a copy of them
+    _internals: { buildForm: buildForm, buildField: buildField, kindOf: kindOf, collectActions: collectActions, apexEnvelope: apexEnvelope, fieldsSchema: fieldsSchema, jsonTree: jsonTree, state: state, ui: ui },
+  };
+  window.MCPProto = api;
+
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", function () { if (!window.MCP_PROTO_MANUAL) init(); });
+  else if (!window.MCP_PROTO_MANUAL) init();
+})();
