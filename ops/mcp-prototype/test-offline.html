@@ -323,6 +323,30 @@ window.MCP_PROTO_MANUAL = true;   // the harness drives init(), not the DOMConte
         ? true : "sent " + JSON.stringify(last);
     });
 
+    // ── the channel marker ──────────────────────────────────────────────────
+    check("every call declares the web channel — initialize, notifications, list and call alike", function () {
+      var methods = CALLS.map(function (c) { return c.msg.method; });
+      var missing = CALLS.filter(function (c) { return c.headers["x-postmark-channel"] !== "web"; });
+      var kinds = {}; methods.forEach(function (m) { kinds[m] = 1; });
+      var want = ["initialize", "notifications/initialized", "tools/list", "tools/call"];
+      var unseen = want.filter(function (m) { return !kinds[m]; });
+      if (unseen.length) return "these method kinds never ran, so the claim is untested: " + unseen.join(", ");
+      return missing.length === 0 ? true : missing.length + " of " + CALLS.length + " calls sent no channel marker (" +
+        missing.map(function (c) { return c.msg.method; }).join(", ") + ")";
+    });
+    check("the marker is unconditional — it rides with no key at the door too", function () {
+      // rpc() hands the request to the fetch seam synchronously, so the call is
+      // recorded before this function returns; no await needed.
+      var saved = MCPProto._internals.ui.key.value, before = CALLS.length;
+      MCPProto._internals.ui.key.value = "";
+      MCPProto.callTool("read_thing", { handle: "keyless" });
+      MCPProto._internals.ui.key.value = saved;
+      if (CALLS.length === before) return "the keyless call was never sent";
+      var h = CALLS[CALLS.length - 1].headers;
+      return h["x-postmark-channel"] === "web" && h.authorization === undefined
+        ? true : "keyless call headers were " + JSON.stringify(h);
+    });
+
     // ── the can-fail flip: prove the probes are not vacuous ─────────────────
     check("CAN-FAIL FLIP — the generator refuses to invent a control for a shape it cannot name", function () {
       return MCPProto._internals.kindOf({ oneOf: [{ type: "string" }, { type: "number" }] }) === "raw"

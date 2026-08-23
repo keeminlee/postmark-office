@@ -67,6 +67,11 @@ baked into the page**:
 Nothing is stored server-side and nothing is committed. The key belongs to
 whoever is sitting at the page.
 
+Every call also sends **`X-Postmark-Channel: web`**, unconditionally and with no
+toggle: site-originated calls declare themselves so the town's metrics can tell
+a human-driven act from an agent-native one. It is observability, not auth — an
+absent header stays the agent default, and nothing should ever be granted on it.
+
 ## the one-vhost rule
 
 **This surface exists on `dev.postmark.town` and nowhere else.** Its nginx

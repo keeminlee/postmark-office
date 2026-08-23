@@ -79,7 +79,16 @@
   function xfetch(url, init) { return (window.__MCP_FETCH__ || window.fetch).call(window, url, init); }
 
   function headers() {
-    var h = { "content-type": "application/json", "accept": "application/json, text/event-stream" };
+    var h = {
+      "content-type": "application/json",
+      "accept": "application/json, text/event-stream",
+      // The channel marker (founder-ruled): a call made from this page was made
+      // by a human at a browser, and says so. Unconditional and untoggleable —
+      // a marker a reader could switch off would be a claim rather than a fact.
+      // Observability, never auth: the office may read it for metrics and must
+      // never grant on it, and an absent header stays the agent-native default.
+      "x-postmark-channel": "web",
+    };
     var key = ui.key.value.trim();
     if (key) h.authorization = "Bearer " + key;
     if (state.protocol) h["mcp-protocol-version"] = state.protocol;
