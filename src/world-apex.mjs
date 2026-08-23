@@ -93,7 +93,12 @@ export const apexEnabled = () => process.env.WORLD_APEX === "1";
 // components agree by construction, and there is no key left to thread. A
 // threshold is crossed in the published world: a door you have only drafted is
 // not yet ground you can stand in.
-function crossingDeps() {
+// Exported since the walk round: `enter_on_arrival` composes the SAME entry
+// door with the SAME deps, substituting only the instant and the standpoint.
+// A second copy of this wiring in world.mjs would be two answers to "how does
+// the office reach the threshold ledger" — the drift this repo keeps closing.
+// world.mjs imports it lazily, so the edge back to the apex is not a cycle.
+export function crossingDeps() {
   const ledgerPath = join(WORLD_CLONE, "WORLD", "threshold-ledger.md");
   return {
     world: async () => await worldStateRaw(),
@@ -285,7 +290,42 @@ const DISPATCH = {
 // flat tool named in `dispatches_to` still publishes its whole schema, which is
 // where an action whose x/y mean something else (world_walk's destination) is
 // read in full.
-const STANDPOINT_PARAMS = new Set(["handle", "x", "y"]);
+// ── seam 4b · the apex's own names for a flat field (the walk round) ────────
+//
+// RULING 2: "walk's destination gets unambiguous names at the apex: the action
+// card carries to_x/to_y (beside mark_id, mode), apex maps them onto the flat
+// implementation's x/y."
+//
+// `x`/`y` at the apex used to be the SPECTATOR's standpoint, and walk's x/y are
+// its DESTINATION — one pair of names for two opposite things, on a verb whose
+// entire job is telling those two apart. The spectator decouple frees the names,
+// and this renames them where a resident reads them rather than leaving the
+// collision resolved only by which door you came in.
+//
+// FLAT `world_walk` KEEPS x/y UNTOUCHED for compat — the rename is the apex's
+// vocabulary, not a migration of the tool. So the alias is declared once here
+// and applied in both directions: outward when the card is built, inward when
+// the act dispatches.
+const FIELD_ALIASES = Object.freeze({
+  walk: Object.freeze({ to_x: "x", to_y: "y" }),
+});
+const aliasesFor = (action) => FIELD_ALIASES[action] ?? null;
+/** The caller's names → the flat tool's names. Unaliased fields pass through. Exported so the rename can be falsified without standing anywhere. */
+export function toFlatFields(action, fields) {
+  const map = aliasesFor(action);
+  if (!map) return fields;
+  const out = {};
+  for (const [k, v] of Object.entries(fields)) out[map[k] ?? k] = v;
+  return out;
+}
+
+// RULING 2 (the walk round): x and y no longer squat here. This set exists to
+// strip the fields that say WHO is acting and FROM WHERE — questions the
+// standpoint has already answered — and top-level x/y stopped being either the
+// moment the apex went embodied-only. While they sat here they were eating
+// walk's DESTINATION fields out of its card, so the one act whose whole point
+// is a coordinate could not show a resident what to pass.
+const STANDPOINT_PARAMS = new Set(["handle"]);
 
 let _flatSchemas = null;
 function flatSchemas() {
@@ -326,7 +366,13 @@ function fullPropsFor(toolName) {
 export function fieldsFor(action, declared = null) {
   if (declared && typeof declared === "object" && Object.keys(declared).length) return declared;
   const tool = DISPATCH[action]?.tool;
-  return tool ? (flatSchemas().get(tool) ?? {}) : {};
+  const fields = tool ? (flatSchemas().get(tool) ?? {}) : {};
+  const map = aliasesFor(action);
+  if (!map) return fields;
+  // outward: the flat tool's name becomes the apex's, so the card names what a
+  // caller should actually pass through this door.
+  const back = Object.fromEntries(Object.entries(map).map(([apex, flat]) => [flat, apex]));
+  return Object.fromEntries(Object.entries(fields).map(([k, spec]) => [back[k] ?? k, spec]));
 }
 
 // Read by lint L6 — "every exposed action has a live handler" — so the lint
@@ -826,11 +872,15 @@ async function apexDo(args, key) {
     }
     if (envelope) {
       const declared = fullPropsFor(handler.tool);
-      const unknown = declared ? Object.keys(envelope).filter((k) => !(k in declared)) : [];
+      // The envelope speaks the CARD's vocabulary, so it is translated before it
+      // is judged — otherwise the apex would print `to_x` in the card and then
+      // refuse it by name, which is the worst of both spellings.
+      const declaredNames = declared ? Object.keys(fieldsFor(action, null)).length ? Object.keys(fieldsFor(action, null)) : Object.keys(declared) : [];
+      const unknown = declared ? Object.keys(toFlatFields(action, envelope)).filter((k) => !(k in declared)) : [];
       if (unknown.length) {
         return bounce(422, `${handler.tool} does not take: ${unknown.join(", ")}`,
-          `the fields it takes: ${Object.keys(declared).join(", ")} — the action's \`fields\` block spells out each one`,
-          { unknown_fields: unknown, allowed: Object.keys(declared) });
+          `the fields it takes: ${declaredNames.join(", ")} — the action's \`fields\` block spells out each one`,
+          { unknown_fields: unknown, allowed: declaredNames });
       }
     }
 
@@ -846,7 +896,7 @@ async function apexDo(args, key) {
     // act landed. The flat write verbs THROW their bounces; the apex catches so
     // that promise holds on the failing path too.
     const { do: _dropped, telling: _t, args: _envelope, ...rest } = args;
-    const fields = envelope ? { ...rest, ...envelope } : rest;
+    const fields = toFlatFields(action, envelope ? { ...rest, ...envelope } : rest);
     const done = { did: action, via: match.via, from: match.from, dispatched_to: handler.tool, terms,
       ...(actor ? { actor: { kind: actor.kind, residue: actor.residue, says: actor.says, note: actor.note } } : {}) };
     let result;
@@ -991,6 +1041,21 @@ export async function worldApex(args = {}, key = null, ctx = {}) {
   if (!apexEnabled()) return bounce(404, "the apex verb is not switched on at this office", "the operator runs it behind WORLD_APEX=1; the flat world_* verbs answer meanwhile");
   const doing = args.do != null && args.do !== "";
   const reading = args.read != null && args.read !== "";
+
+  // ── THE SPECTATOR DECOUPLE (founder-ruled, the walk round) ────────────────
+  //
+  // "an apex answer is where-you-stand-and-what-you-may-do, and a spectator has
+  // neither." A `do:` is performed BY somebody and a `read:` is an action's
+  // shadow cast from where that somebody stands — neither is answerable from a
+  // pair of coordinates with nobody at them. The two verbs that DO answer to a
+  // point are named here rather than left for the caller to guess.
+  //
+  // The bare read is deliberately untouched: `GET /world/apex?x=&y=` is the
+  // site's public spectator door and passes x/y straight through, so it never
+  // reaches this branch and answers exactly the bytes it always did.
+  if ((doing || reading) && (args.x != null || args.y != null))
+    return bounce(422, "the apex speaks only to the embodied — a do: or read: cannot be taken from a coordinate",
+      "look as nobody through world_orient / world_open_your_eyes, or GET /world/apex?x=&y= for the keyless spectator read. To act or to read an action's shadow, stand somewhere: your resident's own position is the standpoint, named with handle: when your key holds several.");
   if (doing && reading) {
     return bounce(422, "one call does one thing — do: performs, read: observes", "they never ride together; call twice");
   }
@@ -1010,8 +1075,6 @@ export const APEX_TOOL = {
     do: { type: "string", description: "the action to perform — omit to read. It must be one your standpoint offers; the bare read lists them. Never rides with read:" },
     read: { type: "string", description: "an action's SHADOW — read its domain instead of performing it: read: \"say\" hears what stands in earshot, \"walk\" shows your position and the road, \"leave-mark\" your marks (args: {mark} to investigate one), \"stake\" the escrow behind a mark (args: {mark}), \"give\"/\"drop\"/\"take\" your holdings, \"note-to-self\" your private note. Anything you can do, you can read — and every answer carries the action's full card (blurb, fields, dials, the terms that would bind it), so the law is readable before you act. A read never performs. Never rides with do:" },
     args: { type: "object", description: "the action's own fields (with do:) or narrowing fields (with read:), exactly as the entry's `fields` block names them — world { do: \"say\", args: { text: \"hello\" } }. Unknown fields bounce by name. Your standpoint (handle) stays top-level.", additionalProperties: true },
-    x: { type: "number", description: "spectator read: grid metres east of Ferry's crossing (never combined with handle)" },
-    y: { type: "number", description: "spectator read: grid metres south of Ferry's crossing" },
     handle: { type: "string", description: "which of YOUR residents acts (omit if your key holds one; a multi-resident key must name one)" },
     telling: { type: "boolean", description: "true adds the prose telling of what you see; omit for the cheap structural read" },
   },
