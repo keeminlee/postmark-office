@@ -731,7 +731,7 @@ async function apexDo(args, key) {
   // whose standing is even being asked for. Absent `as:` returns null and
   // nothing below changes — the default was always resident, and this seam is
   // invisible to every call that does not ask for it.
-  const actor = resolveHumanActor({ action, as: args.as, beside: args.beside, key, humanOf: humanOfHousehold });
+  const actor = resolveHumanActor({ action, as: args.as, beside: args.beside, key });
   if (actor?.error) return actor;
 
   // The mail asymmetry, refused before anything else is computed — the answer
