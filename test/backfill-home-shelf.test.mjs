@@ -48,7 +48,7 @@ function staging(files) {
 const door = (household, handles) => ({ household, handles: new Set(handles) });
 const houses = (map) => (handle) => map[handle] ?? null;
 
-test('THE SHELF IS THE ONLY MINT: "Every URL written is a `https://media.postmark.town/…` URL minted by the office\'s own `uploadMedia` path (same byte validation, same content-addressed dedup, same per-household quota ledger in odb)"', async () => {
+test('THE MEDIA DOOR IS THE ONLY MINT: "Every URL written is a `https://media.postmark.town/…` URL minted by the office\'s own `uploadMedia` path (same byte validation, same content-addressed dedup, same per-household quota ledger in odb)"', async () => {
   const dir = staging({ "resident.png": PNG });
   const { calls, put } = stubPut();
   try {
@@ -73,7 +73,7 @@ test("EVERY MINTED URL PASSES THE MARK DOOR'S OWN ALLOWLIST — the household gr
   // The bug this exists to catch, found on the first real dry run: the ECONOMY
   // names this same house `gh:293432145` (stamp-mint currentHouseholds, via
   // src/households.mjs), and `mediaUrlOk` — like tools/mark-lint.mjs and the
-  // viewer — admits no colon in a shelf path. Keyed on the economy's answer the
+  // viewer — admits no colon in a media door path. Keyed on the economy's answer the
   // backfill mints URLs no mark in the town may carry and no viewer will draw,
   // and every other assertion in this file still passes. So the mint is asked
   // the only question that catches it: would the mark door take this back?
@@ -128,15 +128,15 @@ test("SAME CONTENT-ADDRESSED DEDUP: two handles of one household leading with th
       images: { one: { file: "a", format: "png" }, two: { file: "b", format: "png" } },
       stagingDir: dir, householdFor: houses({ one: house, two: house }), upload: uploadMedia, odb: db, put,
     });
-    assert.equal(urls.one, urls.two, "the same bytes are the same shelf entry");
-    assert.deepEqual(dedup, ["two"], "the second is reported as already on the shelf");
+    assert.equal(urls.one, urls.two, "the same bytes are the same media door entry");
+    assert.deepEqual(dedup, ["two"], "the second is reported as already on the media door");
     assert.equal(calls.length, 1, "and only one object was ever written");
     const spent = db.prepare("SELECT COALESCE(SUM(bytes),0) AS u FROM media WHERE household = ?").get("garrison").u;
     assert.equal(spent, PNG.length, "the quota was spent exactly once");
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test("SAME PER-HOUSEHOLD QUOTA LEDGER IN ODB: the shelf's own wall stops the backfill, and says so by name", async () => {
+test("SAME PER-HOUSEHOLD QUOTA LEDGER IN ODB: the media door's own wall stops the backfill, and says so by name", async () => {
   const dir = staging({ "a.png": PNG, "b.jpg": BIG_JPG });
   const { calls, put } = stubPut();
   const house = door("two-up", ["a", "b"]); // two residents ⇒ a 200-byte ceiling
@@ -148,7 +148,7 @@ test("SAME PER-HOUSEHOLD QUOTA LEDGER IN ODB: the shelf's own wall stops the bac
     assert.ok(urls.a, "70 of the household's 200 bytes fits");
     assert.equal(urls.b, undefined, "the next one does not");
     assert.equal(skipped.refused[0].code, 413);
-    assert.match(skipped.refused[0].why, /shelf is full/);
+    assert.match(skipped.refused[0].why, /media is full/);
     assert.equal(calls.length, 1);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
@@ -214,7 +214,7 @@ test("the uploader acts AS the resident, inside their own household — the door
 test("A FAILED PUT WRITES NO LEDGER ROW, NO URL, AND LANDS IN skipped.refused — the ledger may never claim what storage does not hold", () => {
   // uploadMedia reaches its INSERT only on the line AFTER `await put(...)`, and
   // neither is guarded, so a throw from storage takes the row with it. That is
-  // the invariant the shelf's whole dedup branch rests on: `already: true`
+  // the invariant the media door's whole dedup branch rests on: `already: true`
   // returns a URL without sending any bytes, so a row written for an object
   // that never landed would hand back a URL for a file that does not exist —
   // permanently, since nothing here ever deletes.
@@ -243,7 +243,7 @@ test("A FAILED PUT WRITES NO LEDGER ROW, NO URL, AND LANDS IN skipped.refused �
       upload: uploadMedia, odb: db, put,
     });
     assert.ok(again.urls.a, "the retry mints");
-    assert.deepEqual(again.dedup, [], "and it is NOT reported as already on the shelf");
+    assert.deepEqual(again.dedup, [], "and it is NOT reported as already on the media door");
     assert.deepEqual(again.minted, ["a"]);
     assert.equal(calls.length, 1, "one object really was written this time");
     assert.equal(db.prepare("SELECT COUNT(*) AS n FROM media").get().n, 1);

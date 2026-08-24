@@ -1,15 +1,15 @@
 #!/usr/bin/env node
-// backfill-home-shelf — mint the town's legacy HOME art onto the media shelf.
+// backfill-home-shelf — mint the town's legacy HOME art through the media door.
 //
 // The ruling this serves (Keemin, 2026-08-21): residents hung art on their HOME
-// pages long before the world had a shelf, and "simply mailing residents to
+// pages long before the world had a media door, and "simply mailing residents to
 // reupload images to our media is not an option." So the office does the
 // carrying. The world repo's tools/home-image-select.mjs reads the town's own
 // record and names each household's lead image; this tool hands those bytes to
-// the shelf and brings back the URLs a parcel mark may carry.
+// the media door and brings back the URLs a parcel mark may carry.
 //
-// THE SHELF IS THE ONLY MINT. This tool composes no URL of its own and skips no
-// check of the shelf's. Every entry goes through the SAME `uploadMedia` the
+// THE MEDIA DOOR IS THE ONLY MINT. This tool composes no URL of its own and skips no
+// check of the door's. Every entry goes through the SAME `uploadMedia` the
 // REST door and the MCP tool land in (src/media.mjs) — same decodeImage size
 // gate, same magic-byte sniff, same content-addressed key, same
 // same-bytes-same-URL dedup, same per-household quota wall, same row in odb's
@@ -22,7 +22,7 @@
 //
 // THE HOUSEHOLD IS THE DOOR'S ANSWER, NOT OURS — and it is a DIFFERENT
 // vocabulary from the economy's, which is the trap this tool exists to not fall
-// into. The shelf keys on `key.household`, and the only place that string is
+// into. The media door keys on `key.household`, and the only place that string is
 // ever minted is oauth.mjs `householdFor`: `ghLogin ?? String(ghId)`, from the
 // town's pins. The ECONOMY's household key for the same resident is
 // `gh:<id>` / `login:<x>` / `hh:<slug>` (src/households.mjs, stamp-mint's
@@ -32,7 +32,7 @@
 // in the town will accept and no viewer will draw.
 //
 // So this calls the door's own resolver with the door's own arguments, and
-// passes the object it returns straight through as the key: same shelf path,
+// passes the object it returns straight through as the key: same media path,
 // same quota ceiling (its `handles` set is what the per-resident ceiling
 // multiplies), same ledger grain as that resident's own upload. A handle the
 // pins do not know is NAMED and skipped, never guessed into a household.
@@ -80,7 +80,7 @@ export async function backfillHomeShelf({
 
     // The key IS what the door's resolver returned — passed through, never
     // rebuilt. A hand-rolled `handles` set would quietly change the quota
-    // ceiling, and a hand-rolled `household` would change the shelf path.
+    // ceiling, and a hand-rolled `household` would change the media door path.
     try {
       const r = await upload({ image: bytes.toString("base64"), by: handle }, block, odb, { put });
       urls[handle] = r.url;
@@ -174,7 +174,7 @@ if (isMain) {
   };
 
   if (!DRY && !mediaConfigured()) {
-    console.error("the media shelf has no credentials in this environment — run this on the box, where /etc/postmark-office.env is loaded");
+    console.error("the media door has no credentials in this environment — run this on the box, where /etc/postmark-office.env is loaded");
     process.exit(2);
   }
 
@@ -199,7 +199,7 @@ if (isMain) {
   const mockedPuts = [];
   const put = DRY ? async (objectKey, bytes, mediaType) => { mockedPuts.push({ objectKey, bytes: bytes.length, mediaType }); } : undefined;
 
-  console.log(`${DRY ? "[dry] " : ""}backfilling ${Object.keys(images).length} home images onto the shelf`);
+  console.log(`${DRY ? "[dry] " : ""}backfilling ${Object.keys(images).length} home images through the media door`);
   console.log(`  manifest ${MANIFEST}`);
   console.log(`  staging  ${STAGING}`);
   console.log(`  town     ${TOWN}`);
@@ -211,7 +211,7 @@ if (isMain) {
     images, stagingDir: STAGING, householdFor: doorHouseholdFor, upload: uploadMedia, odb,
     ...(put ? { put } : {}),
     onEntry: (e) => console.log(e.ok
-      ? `  ✓ ${e.handle}  ${e.household}  ${e.url}${e.already ? "  (already on the shelf — no quota spent)" : ""}`
+      ? `  ✓ ${e.handle}  ${e.household}  ${e.url}${e.already ? "  (already on the media door — no quota spent)" : ""}`
       : `  ✗ ${e.handle}  ${e.household}  ${e.code ?? "-"}: ${e.why}`),
   });
 
@@ -228,7 +228,7 @@ if (isMain) {
   writeFileSync(OUT, `${JSON.stringify(out, null, 2)}\n`);
 
   console.log(`\n${DRY ? "[dry] " : ""}${out.counts.urls} URLs → ${OUT}`);
-  console.log(`  ${minted.length} object${minted.length === 1 ? "" : "s"} ${DRY ? "would have been written" : "written"}${dedup.length ? `; ${dedup.length} already on the shelf, no bytes sent and no quota spent (${dedup.join(", ")})` : ""}`);
+  console.log(`  ${minted.length} object${minted.length === 1 ? "" : "s"} ${DRY ? "would have been written" : "written"}${dedup.length ? `; ${dedup.length} already behind the door, no bytes sent and no quota spent (${dedup.join(", ")})` : ""}`);
   // In dry mode the mock saw every call the real PUT would have taken, so the
   // two numbers must agree. If they ever do not, the count above is describing
   // something other than what reaches storage and should not be believed.

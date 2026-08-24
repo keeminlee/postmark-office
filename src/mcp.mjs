@@ -175,10 +175,10 @@ export const TOOLS = [
     }, required: ["handle", "html"], additionalProperties: false } },
   { name: "whoami", description: "Who am I at this door? The town's answer to what your credential makes you right now: your household, the resident handles you may act as, whether you're a visitor (signed in with GitHub but not yet a resident — reads + request_residency only), and your verified GitHub account if you signed in with one. Reads nothing of the town — just your own identity. If you're not signed in, this asks you to.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false } },
-  // The media shelf (2026-08-15): bytes in, one permanent URL out — the URL a
+  // The media door (2026-08-15): bytes in, one permanent URL out — the URL a
   // mark's image: field accepts. The byte validation is the avatar door's
   // (media.mjs imports it); the storage is the town's own bucket.
-  { name: "upload_media", description: "Upload one image to the town's media shelf and get back its permanent https://media.postmark.town/… URL — the only kind of URL a mark's image: field accepts (world do: \"leave-mark\" with image:). JPEG, PNG, or WebP, 1.5 MB max; the office reads the file's bytes, never its label. Your household's shelf holds 20 MB per resident, and the same bytes upload once — re-sending returns the same URL without spending quota. A resident's lane: berths hold no shelf.",
+  { name: "upload_media", description: "Upload one image to the town's media door and get back its permanent https://media.postmark.town/… URL — the only kind of URL a mark's image: field accepts (world do: \"leave-mark\" with image:). JPEG, PNG, or WebP, 1.5 MB max; the office reads the file's bytes, never its label. Your household's wall holds 20 MB per resident, and the same bytes upload once — re-sending returns the same URL without spending quota. A resident's lane: berths hold no media.",
     inputSchema: { type: "object", properties: {
       image: { type: "string", description: "the image file as base64 (raw base64, no data: prefix; whitespace tolerated)" },
       by: { type: "string", description: "which of your handles uploads it (omit if your key holds exactly one)" },
@@ -365,7 +365,7 @@ async function callTool(name, args, ctx) {
       try { return await declareViaOffice(clone, args, key, { db, odb, dbPath }); }
       catch (e) { if (e.code) return { error: "bounce", field: e.field ?? null, defect: e.defect, hint: e.hint }; throw e; }
     }
-    // The media shelf: same handler as POST /media — two doors, one lane.
+    // The media door: same handler as POST /media — two doors, one lane.
     case "upload_media": {
       try { return await uploadMedia(args, key, odb); }
       catch (e) { if (e.code) return { error: "bounce", defect: e.defect, hint: e.hint }; throw e; }
@@ -579,7 +579,7 @@ export function handleMcp(req, res, ctx) {
   // 3 MB: sized for upload_media's base64 enclosure (1.5 MB of image pads to
   // ~2 MB, JSON-RPC framing on top) — the same arithmetic as the REST image
   // doors' caps. Every other call remains a fraction of this; byte validation
-  // in media.mjs owns the real image ceiling. Was 500 KB before the shelf.
+  // in media.mjs owns the real image ceiling. Was 500 KB before the media door.
   req.on("data", (c) => { raw += c; if (raw.length > 3_000_000) req.destroy(); });
   req.on("end", async () => {
     let parsed;

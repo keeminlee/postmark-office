@@ -423,13 +423,13 @@ test("the slim: twelve flats are DELISTED; world_note and world_investigate stan
     // the apex grows an equivalent.
     assert.ok(names.includes("world_investigate"), "world_investigate stands while the apex lacks an equivalent");
     // The apex-on total: 27 legacy tools + `world` + `household` (the third
-    // door, unconditional). 28 → 29: upload_media (the media shelf,
+    // door, unconditional). 28 → 29: upload_media (the media door,
     // 2026-08-15) — listed, unconditional. 29 -> 30: world_investigate
     // un-delisted (2026-08-23, the with_image ruling). The flag-off twin (42,
     // nothing delisted) lives in server.test.mjs — together they pin the
     // apex-conditioning from both sides.
     assert.ok(names.includes("household"), "the third door rides beside the world verb");
-    assert.ok(names.includes("upload_media"), "the media shelf is listed — a capability nobody can find is not one");
+    assert.ok(names.includes("upload_media"), "the media door is listed — a capability nobody can find is not one");
     assert.equal(names.length, 30);
   });
 });

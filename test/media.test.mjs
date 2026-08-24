@@ -1,4 +1,4 @@
-// media.test.mjs — the media shelf (2026-08-15). Unit layer: the handler's
+// media.test.mjs — the media door (2026-08-15). Unit layer: the handler's
 // gates (who may upload, what bytes pass, the quota wall, content-addressed
 // dedup) and the mark door's URL allowlist — everything around the storage
 // call, with the SigV4 PUT stubbed out. The live bucket is proven at deploy,
@@ -41,7 +41,7 @@ test("the gates: no key, a berth, no household, the wrong by", async () => {
 
 test("bytes are the law: not-an-image bounces before any storage call", async () => {
   const { calls, put } = stubPut();
-  // The shelf names SVG since the 2026-08-20 ruling; the avatar and home-image
+  // The media door names SVG since the 2026-08-20 ruling; the avatar and home-image
   // doors still say "JPEG, PNG, or WebP", and test/media-svg.test.mjs is where
   // that difference is held to account.
   await assert.rejects(uploadMedia({ image: Buffer.from("plain text").toString("base64") }, key(), odb(), { put }),
@@ -49,7 +49,7 @@ test("bytes are the law: not-an-image bounces before any storage call", async ()
   assert.equal(calls.length, 0, "nothing reached storage");
 });
 
-test("the happy path: content-addressed key, URL on the shelf's own host, ledger row", async () => {
+test("the happy path: content-addressed key, URL on the media host, ledger row", async () => {
   const db = odb();
   const { calls, put } = stubPut();
   const r = await uploadMedia({ image: PNG }, key(), db, { put });
@@ -58,7 +58,7 @@ test("the happy path: content-addressed key, URL on the shelf's own host, ledger
   assert.equal(r.type, "image/png");
   assert.equal(calls.length, 1);
   assert.equal(calls[0][2], "image/png");
-  assert.ok(mediaUrlOk(r.url), "the shelf's own URL passes the mark door's allowlist");
+  assert.ok(mediaUrlOk(r.url), "the media door's own URL passes the mark door's allowlist");
   assert.equal(r.quota.used, 70);
   assert.equal(r.quota.ceiling, 100, "one resident, one quota");
 });
@@ -74,24 +74,24 @@ test("dedup: the same bytes answer with the same URL and never spend twice", asy
   assert.equal(again.quota.used, 70, "quota unchanged by the re-send");
 });
 
-test("the quota wall: a full shelf bounces 413 with the honest arithmetic", async () => {
+test("the quota wall: a full wall bounces 413 with the honest arithmetic", async () => {
   const db = odb();
   const { put } = stubPut();
   await uploadMedia({ image: PNG }, key(), db, { put }); // 70 of 100
-  // different bytes (a second real 1×1 PNG, opaque white) — same shelf
+  // different bytes (a second real 1×1 PNG, opaque white) — same wall
   const PNG2 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
   await assert.rejects(uploadMedia({ image: PNG2 }, key(), db, { put }),
     (e) => e.code === 413 && /full/.test(e.defect));
 });
 
-test("the ceiling scales per resident: a two-handle household holds twice the shelf", async () => {
+test("the ceiling scales per resident: a two-handle household holds twice the wall", async () => {
   const db = odb();
   const { put } = stubPut();
   const r = await uploadMedia({ image: PNG, by: "a" }, key({ handles: new Set(["a", "b"]) }), db, { put });
   assert.equal(r.quota.ceiling, 200);
 });
 
-test("the mark door's allowlist: only the shelf's own URLs pass", () => {
+test("the mark door's allowlist: only the media door's own URLs pass", () => {
   assert.ok(mediaUrlOk(`${MEDIA_BASE}/media/testers/abc123.png`));
   for (const bad of [
     "https://evil.example/media/testers/abc.png",
@@ -104,13 +104,13 @@ test("the mark door's allowlist: only the shelf's own URLs pass", () => {
     assert.ok(!mediaUrlOk(bad), String(bad));
 });
 
-test("the mark door itself: an off-shelf image bounces before any write", async () => {
+test("the mark door itself: an off-media image bounces before any write", async () => {
   const { leaveMarkViaOffice } = await import("../src/world.mjs");
   await assert.rejects(
     leaveMarkViaOffice("/nonexistent-clone", {
       slug: "picture-test", kind: "sited", at: { x: 0, y: 0 }, extent: { w: 1, h: 1 },
       body: "a test mark.", image: "https://evil.example/x.png",
     }, { household: "testers", handles: new Set(["tester"]) }),
-    (e) => e.code === 422 && /media shelf/.test(e.defect),
+    (e) => e.code === 422 && /media door/.test(e.defect),
     "the allowlist answers before the clone is ever touched");
 });

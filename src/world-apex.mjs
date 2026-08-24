@@ -215,6 +215,41 @@ export function residueOf(db, id) {
   } catch { return null; }
 }
 
+// ── the other shape law comes in ────────────────────────────────────────────
+//
+// residueOf above quotes CLASS marks — `kind: class`, carrying a `class:` name,
+// which is why its gate requires one. A standing rule that is not a class of
+// thing is written as a PREDICATED mark instead: `kind: predicated`, a `slot`
+// naming what it rules and a `value` saying it in short, with the sentence
+// itself as the body. logos/the-media and its two children (world main
+// 674c359c) are exactly that shape, so residueOf cannot see them — its
+// `class IS NOT NULL` clause filters them out, correctly and by design.
+//
+// So this is its sibling, not a widening of it. Same authorship and tier gate
+// — only the town's own constitutional record is ever quoted as law — with the
+// predicated shape's own discriminator in place of the class name.
+const LAW_QUERY = `SELECT id,
+         json_extract(props, '$.slot')  AS slot,
+         json_extract(props, '$.value') AS value,
+         json_extract(props, '$.body')  AS body
+       FROM nodes
+      WHERE id = ? AND by = 'the-town' AND tier = 'constitution'
+        AND json_extract(props, '$.slot') IS NOT NULL`;
+
+/**
+ * One predicated constitution mark, quoted. Null when the store cannot answer
+ * — never a substituted sentence, because a paraphrase of law that reads as
+ * law is worse than an honest silence.
+ */
+export function lawOf(db, id) {
+  if (!db || !id) return null;
+  try {
+    const row = db.prepare(LAW_QUERY).get(String(id));
+    if (!row) return null;
+    return { from: row.id, slot: row.slot, value: row.value, text: String(row.body ?? "") };
+  } catch { return null; }
+}
+
 // ── the dispatch table · the apex is a door to doors ────────────────────────
 //
 // v0 mints no write machinery. Each action names an implementation that

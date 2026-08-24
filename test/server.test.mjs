@@ -287,7 +287,7 @@ test("MCP tools/list, apex OFF: the full 41 — the slim's delist is apex-condit
   // + `world` = 32) is asserted in world-apex.test.mjs.
   // 39 → 40: the `household` verb (the third door, 2026-08-15) — unconditional,
   // additive, not flag-gated.
-  // 40 → 41: upload_media (the media shelf, 2026-08-15) — unconditional.
+  // 40 → 41: upload_media (the media door, 2026-08-15) — unconditional.
   // 41 → 42: world_withdraw_mark (the revision family, founder-ruled 2026-08-19)
   //          — added to WORLD_TOOLS without this ledger being paid; trued
   //          2026-08-23 after the count sat red across every train tip.

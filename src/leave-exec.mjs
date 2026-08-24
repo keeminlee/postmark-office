@@ -243,7 +243,7 @@ async function main() {
   // class/ask/reward/status: the bounty grammar (founder-ruled 2026-08-11) — the
   // door validated them; here they only need to reach the record, or the board's
   // reader can never see a resident's notice.
-  // image: the media-shelf pointer (2026-08-15) — the door validated the URL's
+  // image: the media pointer (2026-08-15) — the door validated the URL's
   // host; here it only needs to reach the record, or investigate can never
   // return it and the site can never render it.
   // The grammar moved to src/mark-record.mjs when the drain became its second

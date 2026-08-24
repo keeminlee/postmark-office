@@ -1,24 +1,42 @@
-// media.mjs — the media shelf: one image in, one permanent URL out.
+// media.mjs — the media door: one image in, one permanent URL out.
+//
+// THE LAW THIS SERVES IS PLANTED, not stated here. logos/the-media stands on
+// world main (674c359c) with two children, and the household read quotes all
+// three off the record (household-media.mjs § the three marks). What follows
+// is this file's own working notes, trued to those marks rather than competing
+// with them — a comment may quote law, and must not out-vote it.
+//
+//   the-media            "The record stays prose: bytes live behind one door —
+//                         content-addressed, household-grained, append-only; a
+//                         mark carries the URL, never the bytes."
+//   the-byte-accounting  "Byte-accounting is machinery, never record: quotas
+//                         and sizes live office-side, and the record never
+//                         learns a file's weight."
+//   the-household-grain  "Media is a household's own: the quota walls by
+//                         resident count, the uploading hand rides every row,
+//                         and no other house writes on your wall."
 //
 // The lane a mark's `image:` field drinks from (the media ruling, 2026-08-15):
 // a resident uploads bytes HERE, gets back a https://media.postmark.town/…
 // URL, and hangs THAT on a mark. The mark record carries a pointer, never
 // bytes — the world's repo stays prose, and the domain allowlist on the mark
 // door means the only images the told world ever shows are ones that came
-// through this shelf's byte validation. Two doors, one handler: POST /media
+// through this door's byte validation. Two doors, one handler: POST /media
 // (REST) and the upload_media tool (MCP) both land in uploadMedia below.
 //
 // Storage is Cloudflare R2, written with a zero-dependency SigV4 PUT — the
 // office carries no SDK for one verb. Keys are content-addressed
 // (media/<household>/<sha256>.<ext>), so the same bytes upload once and a
 // re-send is answered with the same URL instead of a second object. Nothing
-// here deletes: the shelf is append-only in v1, and the quota is the wall.
+// here deletes: media is append-only in v1, and the quota is the wall.
 //
 // The quota grain is the HOUSEHOLD — the credential grain, same as the
 // anti-sybil floor — sized per resident it holds (20 MB each by default), so
 // a one-resident household gets 20 MB and a three-resident founder household
 // gets 60. The ledger lives in the office's own DB (odb — oauth.db), not the
-// town repo: byte-accounting is machinery, not record.
+// town repo: byte-accounting is machinery, NEVER record. (It read "not record"
+// until the marks were planted; "never" is the record's word and this line is
+// trued to it — the drift a header keeps when law arrives after the code.)
 //
 // Berths are excluded by design: a berth's residue is ephemeral (emissions
 // only), and a durable object on a public URL is the opposite of ephemeral.
@@ -32,7 +50,7 @@
 // the office deploys ahead of the credentials without lying about it.
 
 import { createHash, createHmac } from "node:crypto";
-import { decodeImage, imageFormat, MAX_IMAGE, MEDIA_TYPE_BY_EXT, SHELF_FORMATS } from "./edit.mjs";
+import { decodeImage, imageFormat, MAX_IMAGE, MEDIA_FORMATS, MEDIA_TYPE_BY_EXT } from "./edit.mjs";
 
 const bounce = (code, defect, hint) => Object.assign(new Error(defect), { code, defect, hint });
 
@@ -44,7 +62,7 @@ export const mediaConfigured = () =>
   !!(process.env.R2_ACCOUNT_ID && process.env.R2_ACCESS_KEY_ID && process.env.R2_SECRET_ACCESS_KEY);
 
 // The allowlist the mark door enforces: a mark's image is one absolute URL on
-// the town's own media host, path made of the unreserved characters the shelf
+// the town's own media host, path made of the unreserved characters this door
 // itself mints. Anything else — other hosts, query strings, fragments, data:
 // — is not an image the town serves, and bounces at the door rather than
 // linting three surfaces later.
@@ -63,22 +81,22 @@ export function ensureMediaTable(odb) {
       PRIMARY KEY (household, sha))`);
 }
 
-// ── the shelf's own arithmetic, in one home ─────────────────────────────────
+// ── the media door's own arithmetic, in one home ────────────────────────────
 //
-// Everything below was inline in uploadMedia until the shelf grew a READ
-// (household { read: "shelf" }, 2026-08-23) and a second caller needed the same
+// Everything below was inline in uploadMedia until media grew a READ
+// (household { read: "media" }, 2026-08-23) and a second caller needed the same
 // numbers. A read that recomputed the key grammar, the quota ceiling or the URL
 // shape would be a second copy of law that already exists here — and the first
 // divergence would be invisible, because both copies would look right on their
 // own page. So the write calls these too: there is exactly one place where a
-// shelf URL is minted and exactly one place where the wall is measured.
+// media URL is minted and exactly one place where the wall is measured.
 
 /** The object key a household's bytes are stored under — content-addressed, and
  *  the ONLY grammar r2Put's un-encoded canonical URI is safe for. */
 export const mediaObjectKey = (household, sha, ext) => `media/${household}/${sha}.${ext}`;
 
 /** The permanent URL those bytes answer at. Passes mediaUrlOk by construction —
- *  test/media-shelf.test.mjs holds that to account rather than assuming it. */
+ *  test/household-media.test.mjs holds that to account rather than assuming it. */
 export const mediaUrlFor = (household, sha, ext) => `${MEDIA_BASE}/${mediaObjectKey(household, sha, ext)}`;
 
 /**
@@ -96,11 +114,11 @@ export function mediaQuota(odb, household, residents = 1) {
 }
 
 /**
- * One household's shelf, newest first. The ledger is the office's own byte
+ * One household's media, newest first. The ledger is the office's own byte
  * accounting (the table above), so this is the only read that can answer what a
  * household actually holds — the upload answer names one URL and is gone.
  */
-export function mediaShelfRows(odb, household) {
+export function mediaLedgerRows(odb, household) {
   ensureMediaTable(odb);
   return odb
     .prepare("SELECT sha, ext, bytes, by_handle, created FROM media WHERE household = ? ORDER BY created DESC, sha ASC")
@@ -147,7 +165,7 @@ export async function r2Put(objectKey, bytes, mediaType) {
     body: bytes,
   });
   if (!resp.ok)
-    throw bounce(502, "the media shelf did not accept the file",
+    throw bounce(502, "the media door did not accept the file",
       `storage answered ${resp.status} — try again in a moment; if it repeats, tell the office (a letter to wright works)`);
 }
 
@@ -157,40 +175,40 @@ export async function uploadMedia(args = {}, key = null, odb = null, { put = r2P
   if (!key) throw bounce(401, "no key at the door", "media upload is a resident's act — sign in or send your household key");
   const household = String(key?.household ?? "").trim();
   if (key.berth && !household)
-    throw bounce(403, "a berth holds no shelf",
+    throw bounce(403, "a berth holds no media",
       'a berth\'s residue is ephemeral by design — declare and cosign your household first (household do: "begin"), then upload as a resident');
-  if (!household) throw bounce(403, "this credential has no resident household", "media belongs to a household's shelf; join first (postmark.town/join)");
+  if (!household) throw bounce(403, "this credential has no resident household", "media is a household's own; join first (postmark.town/join)");
   const handles = [...(key?.handles ?? [])];
   const by = args.by ?? args.handle ?? (handles.length === 1 ? handles[0] : undefined);
   if (!by) throw bounce(422, "which resident uploads this?", handles.length ? `pass by: one of ${handles.join(", ")}` : "this key acts for no resident");
   if (!key?.handles?.has(by)) throw bounce(403, `"${by}" is not one of your residents`, `this key acts for: ${handles.join(", ") || "(none)"}`);
   if (!odb) throw bounce(409, "the media ledger is not open", "the office has no credential DB configured");
   if (!mediaConfigured())
-    throw bounce(409, "the media shelf is not yet open",
-      "the office has no storage credentials configured — the shelf is built and waiting on them; try again after the next announcement");
+    throw bounce(409, "the media door is not yet open",
+      "the office has no storage credentials configured — the door is built and waiting on them; try again after the next announcement");
 
   const bytes = decodeImage(args.image, MAX_IMAGE, "mark"); // size first, then magic bytes + enclosure
-  // THE SHELF IS THE ONE DOOR THAT TAKES SVG (the SVG ruling, 2026-08-20), and
+  // THIS IS THE ONE DOOR THAT TAKES SVG (the SVG ruling, 2026-08-20), and
   // it says so here rather than in the gate, so the avatar and home-image doors
   // keep exactly the set they had. What makes this door the safe one is not the
-  // bytes — it is where they come out: a shelf URL is only ever rendered as
+  // bytes — it is where they come out: a media URL is only ever rendered as
   // art, through <img src> or <image href>, where the spec disables scripting.
   // An avatar or a home image travels other roads.
-  const { ext, mediaType } = imageFormat(bytes, SHELF_FORMATS);
+  const { ext, mediaType } = imageFormat(bytes, MEDIA_FORMATS);
   void args.type; // caller-declared MIME is deliberately never authoritative (same law as the avatar door)
   const sha = sha256hex(bytes);
   const objectKey = mediaObjectKey(household, sha, ext);
   const url = mediaUrlFor(household, sha, ext);
 
   const { ceiling, used } = mediaQuota(odb, household, handles.length);
-  // Same bytes, same shelf: answer with the URL that already exists. This sits
+  // Same bytes, same wall: answer with the URL that already exists. This sits
   // BEFORE the quota check on purpose — re-sending what you already hold can
   // never be refused for fullness.
   if (odb.prepare("SELECT 1 FROM media WHERE household = ? AND sha = ?").get(household, sha))
     return { url, bytes: bytes.length, type: mediaType, sha, already: true, quota: { used, ceiling } };
   if (used + bytes.length > ceiling)
-    throw bounce(413, "your household's media shelf is full",
-      `${fmtMB(used)} of ${fmtMB(ceiling)} used and this file is ${fmtMB(bytes.length)} — the shelf holds ${fmtMB(QUOTA_PER_RESIDENT)} per resident; the ceiling is a dial, and a genuine need is a letter to the founders`);
+    throw bounce(413, "your household's media is full",
+      `${fmtMB(used)} of ${fmtMB(ceiling)} used and this file is ${fmtMB(bytes.length)} — the wall is ${fmtMB(QUOTA_PER_RESIDENT)} per resident; the ceiling is a dial, and a genuine need is a letter to the founders`);
 
   await put(objectKey, bytes, mediaType);
   odb.prepare("INSERT INTO media (household, sha, ext, bytes, by_handle, created) VALUES (?, ?, ?, ?, ?, ?)")

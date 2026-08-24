@@ -1155,7 +1155,7 @@ const server = createServer((req, res) => {
       return;
     }
 
-    // POST /media — the media shelf (2026-08-15): one image in (base64), one
+    // POST /media — the media door (2026-08-15): one image in (base64), one
     // permanent https://media.postmark.town/… URL out — the URL a mark's image:
     // field accepts. Same handler as the upload_media tool; byte validation is
     // the avatar door's; the 3 MB body cap fits a 1.5 MB image's base64
