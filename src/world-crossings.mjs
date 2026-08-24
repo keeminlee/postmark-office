@@ -17,6 +17,7 @@
 // law, because a door that guesses at the law it is enforcing is worse than a
 // door that says it cannot read it.
 
+import { worldFreezeBounce } from "./freeze.mjs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { fileURLToPath } from "node:url";
@@ -67,6 +68,7 @@ function actorFrom(payload, key) {
  * writes), `ledger()` (the threshold ledger's text), `record(payload)` (the pen).
  */
 export async function enterViaOffice(worldClone, payload = {}, key = null, deps = {}) {
+  { const fz = worldFreezeBounce(); if (fz) return fz; }
   const who = actorFrom(payload, key);
   const markId = String(payload.mark ?? payload.mark_id ?? "").trim();
   if (!markId) throw bounce(422, "enter what?", "name a mark — mark: \"<by>/<slug>\", as ids appear in the telling");
@@ -148,6 +150,7 @@ export async function enterViaOffice(worldClone, payload = {}, key = null, deps 
 
 /** exit(mark) — the walker nullifying his own side of the edge he authored. */
 export async function exitViaOffice(worldClone, payload = {}, key = null, deps = {}) {
+  { const fz = worldFreezeBounce(); if (fz) return fz; }
   const who = actorFrom(payload, key);
   const { thresholds, verbs } = await crossingLaw(worldClone);
   const w = await deps.world();
