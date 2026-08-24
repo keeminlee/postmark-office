@@ -53,6 +53,7 @@ import {
   witnessStamp,
   worldEyes,
   worldNoteViaOffice,
+  worldInvestigate,
   worldOrient,
   worldSay,
   worldSayHuman,
@@ -643,6 +644,43 @@ export function buildTerms({ affording, spine, means = null }) {
 // anything of their own — the design invariant, and the reason issue #7's
 // present-vs-walkers split is the cautionary tale nailed above the door.
 
+/**
+ * The close look at one mark, for the bare read's `mark:` focus.
+ *
+ * Null when nothing was asked for, so a read without `mark:` grows no key and
+ * is byte-identical to the read that shipped before this.
+ *
+ * EMBODIED BY CONSTRUCTION: the apex went embodied-only in this same round, so
+ * anything reaching here is standing somewhere. The flat `world_investigate`
+ * stays the SPECTATOR's lane and is deliberately still un-delisted — a
+ * spectator may investigate freely (it is public information), and the apex,
+ * having no standpoint to offer them, is not their door. (That un-delist was
+ * made 2026-08-23 with a note to re-delist "the day the apex grows an
+ * equivalent"; this is that day, and the answer is still no — the equivalent is
+ * embodied-only, so the flat tool is the only door a spectator has.)
+ */
+async function focusOn(args, key) {
+  const payload = focusArgs(args);
+  return payload ? worldInvestigate(payload, key) : null;
+}
+
+/**
+ * What the focus asks the flat implementation for — null when nothing was
+ * asked. Exported and pure so the pass-through is falsifiable on its own: this
+ * IS the decision (which mark, and whether the bytes ride), and a test that
+ * could only observe it through a fixture's investigate stub would be asserting
+ * the stub.
+ *
+ * `with_image` is omitted rather than sent false, so the flat tool sees exactly
+ * the call it would have seen from a caller who never mentioned it — the same
+ * off-is-byte-identical discipline the image lane itself shipped with.
+ */
+export function focusArgs(args = {}) {
+  const mark = args.mark == null ? "" : String(args.mark).trim();
+  if (!mark) return null;
+  return { mark, ...(args.with_image === true ? { with_image: true } : {}) };
+}
+
 /** The landing's answer: the vessel's next departures from the stop you stand at. Null away from any stop. */
 async function departuresBlock(oriented) {
   try {
@@ -781,6 +819,21 @@ async function apexRead(args, key) {
   // byte-identical to what it was.
   const stances = await stancesBlock(WORLD_CLONE, key, { spine });
   const happened = args.since == null ? null : await happenedFor(oriented, args, key);
+  // ── THE CLOSE LOOK (founder-ruled, the walk round's item 4) ───────────────
+  //
+  // `mark:` is a FOCUS on the bare read, not a verb, and the apex's own law is
+  // why. It says: "read: is every action's shadow … anything you can do, you
+  // can read, and never the reverse." Investigate PERFORMS NOTHING, so `do:
+  // "investigate"` would be a lie — and a `read:` shadow with no action behind
+  // it is the first reverse that law forbids. A focus on the bare read is
+  // neither: you are still standing where you stand, still being told what you
+  // may do; you have simply looked closer at one thing while you were there.
+  //
+  // WRAPPED, NEVER FORKED: `worldInvestigate` is the implementation, called
+  // whole, so the close look through this door and the close look through the
+  // flat tool cannot drift. `with_image` rides straight through to the content
+  // lane that already carries it.
+  const focus = await focusOn(args, key);
 
   return {
     standpoint: oriented.standpoint,
@@ -797,6 +850,7 @@ async function apexRead(args, key) {
     nearby,
     ...(oriented.present ? { present: oriented.present } : {}),
     ...(happened ? { happened } : {}),
+    ...(focus ? { focus } : {}),
     actions,
     granted,
     law: store.unavailable
@@ -1077,6 +1131,14 @@ export async function worldApex(args = {}, key = null, ctx = {}) {
   if (doing && reading) {
     return bounce(422, "one call does one thing — do: performs, read: observes", "they never ride together; call twice");
   }
+  // ONE CALL DOES ONE THING, extended to the focus. `mark:` narrows the bare
+  // read; an act and a shadow each answer for themselves. Riding them together
+  // would ask one answer to be two, and the caller could not tell which half
+  // failed.
+  if ((doing || reading) && args.mark != null && args.mark !== "") {
+    return bounce(422, "one call does one thing — mark: focuses the bare read, it does not narrow an act",
+      `call twice: world { mark: "${String(args.mark)}" } for the close look, and world { ${doing ? `do: "${args.do}"` : `read: "${args.read}"`}, … } for the ${doing ? "act" : "shadow"}. To investigate a mark inside a read, that read's own args carry it — world { read: "leave-mark", args: { mark: … } }.`);
+  }
   if (reading) return apexReadAction(args, key, ctx);
   return doing ? apexDo(args, key) : apexRead(args, key);
 }
@@ -1093,6 +1155,8 @@ export const APEX_TOOL = {
     do: { type: "string", description: "the action to perform — omit to read. It must be one your standpoint offers; the bare read lists them. Never rides with read:" },
     read: { type: "string", description: "an action's SHADOW — read its domain instead of performing it: read: \"say\" hears what stands in earshot, \"walk\" shows your position and the road, \"leave-mark\" your marks (args: {mark} to investigate one), \"stake\" the escrow behind a mark (args: {mark}), \"give\"/\"drop\"/\"take\" your holdings, \"note-to-self\" your private note. Anything you can do, you can read — and every answer carries the action's full card (blurb, fields, dials, the terms that would bind it), so the law is readable before you act. A read never performs. Never rides with do:" },
     args: { type: "object", description: "the action's own fields (with do:) or narrowing fields (with read:), exactly as the entry's `fields` block names them — world { do: \"say\", args: { text: \"hello\" } }. Unknown fields bounce by name. Your standpoint (handle) stays top-level.", additionalProperties: true },
+    mark: { type: "string", description: "FOCUS the bare read on one mark — <by>/<slug>, as ids appear in the telling. The answer is the read you would have got anyway, plus `focus`: the close look at that mark (its body, the properties predicated on it, what stands inside it). It is a focus rather than an action because investigating performs nothing — do: would be a lie, and read: is an action's shadow, so a shadow with no action is the reverse the apex's law forbids. Never rides with do: or read:." },
+    with_image: { type: "boolean", description: "with mark:, also bring that mark's picture back as image bytes if it has one and it fits under the inline cap. The url rides in the answer either way; this only decides whether the office spends the bytes." },
     handle: { type: "string", description: "which of YOUR residents acts (omit if your key holds one; a multi-resident key must name one)" },
     telling: { type: "boolean", description: "true adds the prose telling of what you see; omit for the cheap structural read" },
   },

@@ -31,7 +31,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { APEX_TOOL, fieldsFor, toFlatFields, worldApex } from "../src/world-apex.mjs";
+import { APEX_TOOL, fieldsFor, focusArgs, toFlatFields, worldApex } from "../src/world-apex.mjs";
 import { WORLD_TOOLS } from "../src/world.mjs";
 
 const on = () => { process.env.WORLD_APEX = "1"; };
@@ -199,4 +199,87 @@ test("ruling 3 — the guard fires BEFORE the walk touches a clone, so it is the
   const key = { household: "house-a", handles: new Set(["alpha"]) };
   await assert.rejects(() => walkViaOffice("/nonexistent-clone", { x: 1, y: 1, enter_on_arrival: true }, key),
     (e) => e.code === 422 && /needs a mark to enter/.test(e.defect));
+});
+
+// ── ruling 4 · investigate joins the apex as a FOCUS on the bare read ────────
+//
+//   "INVESTIGATE JOINS THE APEX — as a FOCUS PARAM on the bare read, not a
+//    verb. world { mark: "<id>" } (embodied, no do:, no read:) answers the close
+//    look: the investigate domain for that one mark (compose with the existing
+//    worldInvestigate implementation — wrap, never fork), plus with_image: true
+//    riding through to the content-block lane."
+//
+// WHY THIS SEAT, in the apex's own words: "read: is every action's shadow …
+// anything you can do, you can read, and never the reverse." Investigate
+// performs nothing, so do: is a lie, and a shadow with no action is the first
+// reverse. A focus on the bare read is neither.
+
+test("ruling 4 — mark: and with_image: are declared on the apex", () => {
+  const props = APEX_TOOL.inputSchema.properties;
+  assert.ok("mark" in props, "the focus is declared, not smuggled through additionalProperties");
+  assert.ok("with_image" in props);
+  assert.equal(props.mark.type, "string");
+  assert.equal(props.with_image.type, "boolean");
+  assert.match(props.mark.description, /Never rides with do: or read:/);
+});
+
+test("ruling 4 — the focus WRAPS the flat implementation, never forks it", async () => {
+  on();
+  const { worldInvestigate } = await import("../src/world.mjs");
+  const key = { household: "house-a", handles: new Set(["alpha"]) };
+  // Whatever the flat tool answers for a mark — a hit or its own bounce — the
+  // focus answers the same thing. Equality is the wrap: two implementations
+  // could not agree this exactly by accident, and one of them drifting is the
+  // failure this pins.
+  for (const mark of ["alpha/market-stall", "the-town/sound", "nobody/nothing"]) {
+    const viaApex = await worldApex({ mark }, key);
+    const viaFlat = await worldInvestigate({ mark }, key);
+    assert.deepEqual(viaApex.focus, viaFlat, `the close look at ${mark} is the same look through either door`);
+  }
+});
+
+test("ruling 4 — with_image RIDES THROUGH, and is omitted rather than sent false", () => {
+  //   "plus with_image: true riding through to the content-block lane"
+  assert.deepEqual(focusArgs({ mark: "a/b", with_image: true }), { mark: "a/b", with_image: true });
+  assert.deepEqual(focusArgs({ mark: "a/b" }), { mark: "a/b" },
+    "off is byte-identical: the flat tool sees the call a caller who never mentioned it would have made");
+  assert.deepEqual(focusArgs({ mark: "a/b", with_image: false }), { mark: "a/b" });
+  assert.deepEqual(focusArgs({ mark: "  a/b  " }), { mark: "a/b" }, "and the id is trimmed, as every other door trims it");
+  assert.equal(focusArgs({}), null, "nothing asked, nothing sent");
+  assert.equal(focusArgs({ mark: "   " }), null);
+});
+
+test("ruling 4 — mark: with do: or read: BOUNCES: one call does one thing", async () => {
+  on();
+  const key = { household: "house-a", handles: new Set(["alpha"]) };
+  const withDo = await worldApex({ mark: "alpha/market-stall", do: "say", args: { text: "hi" } }, key);
+  assert.equal(withDo.error, "bounce");
+  assert.equal(withDo.code, 422);
+  assert.match(withDo.defect, /one call does one thing/);
+  assert.match(withDo.hint, /call twice/, "and it says how to get both halves");
+
+  const withRead = await worldApex({ mark: "alpha/market-stall", read: "walk" }, key);
+  assert.equal(withRead.error, "bounce");
+  assert.match(withRead.defect, /one call does one thing/);
+});
+
+test("ruling 4 — ABSENT mark:, the bare read is byte-identical: no focus key at all", async () => {
+  on();
+  const key = { household: "house-a", handles: new Set(["alpha"]) };
+  const plain = await worldApex({}, key);
+  assert.equal("focus" in plain, false, "a read that asked for no close look grows no key");
+  const empty = await worldApex({ mark: "" }, key);
+  assert.equal("focus" in empty, false, "and an empty focus is no focus");
+  assert.deepEqual(Object.keys(plain), Object.keys(empty), "the two answers have the same shape");
+});
+
+test("ruling 4 — the flat world_investigate STAYS the spectator's lane, un-delisted", async () => {
+  // The apex is embodied-only after ruling 1, so `mark:` here is
+  // embodied-by-construction and a spectator has no apex door at all. The
+  // un-delist of 2026-08-23 carried a note to re-delist "the day the apex grows
+  // an equivalent" — this is that day, and the answer is still no, because the
+  // equivalent cannot serve the caller the flat tool exists for.
+  const { WORLD_TOOLS } = await import("../src/world.mjs");
+  assert.ok(WORLD_TOOLS.some((t) => t.name === "world_investigate"),
+    "the tool still exists; the slim's listing decision is asserted in world-apex.test.mjs and is deliberately unchanged by this lane");
 });
