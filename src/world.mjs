@@ -17,6 +17,7 @@
 // REFS; the draft-branch writes below use leased worktrees of it (world-pool.mjs,
 // tier 1) so two households do not queue behind one working tree.
 
+import { worldFreezeBounce } from "./freeze.mjs";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -677,6 +678,7 @@ const voices = createVoices({
 });
 
 export async function worldSay(args = {}, key = null) {
+  { const fz = worldFreezeBounce(); if (fz) return fz; }
   // A berth speaks from the quay (the arrival ruling, 2026-08-15): emissions
   // are the one write a berth holds — ephemeral by class, sixty metres and
   // five minutes, disclosed by the berth- prefix on the speaker's own label.
@@ -718,6 +720,7 @@ export async function worldSay(args = {}, key = null) {
 // world can place lends the standpoint, and everything speaker-shaped (rate,
 // presence, the record) keys on the human's own label.
 export async function worldSayHuman(args = {}, key = null) {
+  { const fz = worldFreezeBounce(); if (fz) return fz; }
   if (args.handle)
     return { error: "bounce", defect: "one voice at a time",
       hint: "speak as your resident with handle:, or as yourself with human: true — not both" };
@@ -1524,6 +1527,7 @@ async function journalWithdraw({ by, slug, household }, { crossing = currentCros
 // (push-hold: TOWN_PUSH unset ⇒ commit-only is the default; a 403 is reported
 // push-pending, never thrown).
 export async function leaveMarkViaOffice(worldClone, payload = {}, key = null) {
+  { const fz = worldFreezeBounce(); if (fz) return fz; }
   const bounce = (code, defect, hint) => { const e = new Error(defect); Object.assign(e, { code, defect, hint }); return e; };
   const handles = [...(key?.handles ?? [])];
   const by = payload.by ?? (handles.length === 1 ? handles[0] : undefined);
@@ -1708,6 +1712,7 @@ export async function leaveMarkViaOffice(worldClone, payload = {}, key = null) {
 // that left a mark may withdraw it) and the LEDGER (escrow anchors a mark; the
 // stake ledger lives town-side, so the check runs here before anything spawns).
 export async function withdrawMarkViaOffice(worldClone, args = {}, key = null) {
+  { const fz = worldFreezeBounce(); if (fz) return fz; }
   const bounce = (code, defect, hint) => { const e = new Error(defect); Object.assign(e, { code, defect, hint }); return e; };
   const mark = String(args.mark ?? "").trim();
   if (!mark || !mark.includes("/")) throw bounce(422, "which mark?", "pass mark: '<by>/<slug>' — ids as the telling shows them");
@@ -1873,6 +1878,7 @@ async function discloseOverhang(result, by, key = null) {
 // caller's household draft branch, through the same locked office-pen lane as a
 // mark.
 export async function worldNoteViaOffice(worldClone, payload = {}, key = null) {
+  { const fz = worldFreezeBounce(); if (fz) return fz; }
   const bounce = (code, defect, hint, extra = {}) => {
     const e = new Error(defect); Object.assign(e, { code, defect, hint, ...extra }); return e;
   };
@@ -1994,6 +2000,7 @@ async function sitedWithin(parcel, marks) {
 }
 
 export async function walkViaOffice(worldClone, payload = {}, key = null) {
+  { const fz = worldFreezeBounce(); if (fz) return fz; }
   const bounce = (code, defect, hint, extra = {}) => {
     const e = new Error(defect); Object.assign(e, { code, defect, hint, ...extra }); return e;
   };

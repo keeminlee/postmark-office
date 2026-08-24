@@ -22,6 +22,7 @@
 //   3. The lock — writes go through a subprocess under the ferry's flock, so a
 //      stake append can never race a crossing's mint pass.
 
+import { worldFreezeBounce } from "./freeze.mjs";
 import { existsSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
@@ -269,6 +270,7 @@ export const WORLD_STAKE_TOOLS = [
 ];
 
 export async function callWorldStakeTool(name, args = {}, key = null) {
+  if (name === "world_stake" || name === "world_unstake") { const fz = worldFreezeBounce(); if (fz) return fz; }
   switch (name) {
     case "world_stake": return worldStakeViaOffice(args, key);
     case "world_unstake": return worldUnstakeViaOffice(args, key);

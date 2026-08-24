@@ -58,6 +58,7 @@
 // grows an explicit terminal column — at which point `liveHolder` below is the
 // one function that changes.
 
+import { worldFreezeBounce } from "./freeze.mjs";
 import { readAttachments, declareAttachment } from "./dynamic-entities.mjs";
 import { openDynamic } from "./dynamic-store.mjs";
 import { classDials } from "./world-classes.mjs";
@@ -243,6 +244,7 @@ function actingHandle(args, key) {
 }
 
 export async function callHoldTool(name, args = {}, key = null) {
+  if (name === "world_hold") { const fz = worldFreezeBounce(); if (fz) return fz; }
   const actor = actingHandle(args, key);
   const db = openDynamic();
   try {
