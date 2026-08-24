@@ -404,7 +404,7 @@ test("flag off: the verb itself refuses too, in case something calls past the li
   assert.match(r.hint, /WORLD_APEX=1/);
 });
 
-test("the slim: twelve flats are DELISTED; world_note and world_investigate stand, by ruling", async () => {
+test("the slim: the town apex absorbs eleven more; world_note and world_investigate stand, by ruling", async () => {
   on();
   await withOffice({ WORLD_APEX: "1" }, async () => {
     const { body } = await rpc("tools/list");
@@ -430,7 +430,27 @@ test("the slim: twelve flats are DELISTED; world_note and world_investigate stan
     // apex-conditioning from both sides.
     assert.ok(names.includes("household"), "the third door rides beside the world verb");
     assert.ok(names.includes("upload_media"), "the media door is listed — a capability nobody can find is not one");
-    assert.equal(names.length, 30);
+    // ── THE SLIM, THIRD ROUND (POS-46, 2026-08-24) ────────────────────
+    //
+    // 30 → 20. The town apex joins (+1) and absorbs eleven flats (−11): the
+    // nine reads that are the town's public face — read_town, read_bulletin,
+    // read_metrics, list_residents, list_regions, list_letters, read_letter,
+    // list_commits, search_town — plus declare_household, which becomes the
+    // register's own act, plus whoami, which folds into `household`'s bare
+    // read where the standing it mirrors already lives.
+    //
+    // Every one of them still ANSWERS; the slim is listing-only, which is what
+    // makes a client holding a cached list safe. The flag-off twin in
+    // server.test.mjs is unchanged at 42, because flag-off nothing is delisted
+    // and no apex is listed — together the two pin the conditioning from both
+    // sides, and a delist that leaked into the flag-off world would move one
+    // number without the other.
+    for (const absorbed of ["read_town", "read_bulletin", "read_metrics", "list_residents",
+      "list_regions", "list_letters", "read_letter", "list_commits", "search_town",
+      "declare_household", "whoami"])
+      assert.ok(!names.includes(absorbed), `${absorbed} is still listed — the town apex serves it now`);
+    assert.ok(names.includes("town"), "the third apex rides beside the world and household verbs");
+    assert.equal(names.length, 20);
   });
 });
 

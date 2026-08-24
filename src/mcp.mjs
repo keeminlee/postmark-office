@@ -18,7 +18,8 @@ import { uploadMedia } from "./media.mjs";
 import { harborGated, HARBOR_BOUNCE } from "./harbor-gate.mjs";
 import { WORLD_TOOLS, callWorldTool, worldBlockForHandle } from "./world.mjs";
 import { apexEnabled, apexTools, dispatchToolFor, worldApex } from "./world-apex.mjs"; // stage 3: the apex `world` verb, behind WORLD_APEX
-import { HOUSEHOLD_TOOL, householdApex, householdDispatchToolFor, paperGaps } from "./household-apex.mjs"; // the third door (2026-08-15): who you are, what your house lacks
+import { HOUSEHOLD_TOOL, householdApex, householdDispatchToolFor, paperGaps } from "./household-apex.mjs";
+import { TOWN_TOOL, townApex, townDispatchToolFor, townTools } from "./town-apex.mjs"; // the third apex (POS-46): the commons' reads, the register's writes // the third door (2026-08-15): who you are, what your house lacks
 import { householdOf } from "./households.mjs";
 
 // Tools that WRITE — gated on a signed-in door. Called without a credential
@@ -44,6 +45,19 @@ const DELISTED = new Set([
   // with no room). Re-delist the day the apex grows an equivalent.
   "world_my_marks", "world_walkers",
   "world_stake_read", "world_holdings",
+  // THE SLIM, THIRD ROUND (POS-46, 2026-08-24): the town apex serves these,
+  // so they stop being listed. Definitions stand and every one still ANSWERS
+  // — delisting is listing-only, which is what makes a cached client safe.
+  // The nine reads are the town's whole public face, now found together
+  // instead of as nine names a reader had to already know.
+  "read_town", "read_bulletin", "read_metrics", "list_residents", "list_regions",
+  "list_letters", "read_letter", "list_commits", "search_town",
+  // the front door becomes a town act — the register is the town's own hands
+  "declare_household",
+  // whoami folds into `household`'s bare read: a credential mirror belongs
+  // where standing lives, and the bare household call already answers tier,
+  // residents and papers. One door for "who am I here".
+  "whoami",
 ]);
 
 const PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"];
@@ -207,11 +221,11 @@ export const TOOLS = [
 //
 //   ONE FLAT REMAINS. world_note stays listed by ruling; the five read flats
 //   delisted when `read:` landed to answer for them (same day, hours later).
-const toolList = () => (apexEnabled() ? [...TOOLS.filter((t) => !DELISTED.has(t.name)), ...apexTools()] : TOOLS);
+const toolList = () => (apexEnabled() ? [...TOOLS.filter((t) => !DELISTED.has(t.name)), ...apexTools(), ...townTools()] : TOOLS);
 
 // What may be CALLED is wider than what is LISTED — the whole point of a
 // listing-only delist. The call path looks up here, never in toolList.
-const callableList = () => (apexEnabled() ? [...TOOLS, ...apexTools()] : TOOLS);
+const callableList = () => (apexEnabled() ? [...TOOLS, ...apexTools(), ...townTools()] : TOOLS);
 
 // The apex is the one tool whose SHAPE depends on its arguments: bare it is a
 // read anyone may make, and with `do:` it performs a write-shaped act through
@@ -373,6 +387,16 @@ async function callTool(name, args, ctx) {
     case "household": {
       return householdApex(args, key, { db, clone, odb, dbPath, pen, canWrite, schemas: flatPropsMap(), schemaRequired: flatRequiredMap() });
     }
+    case "town": {
+      // `call` is this very dispatcher, handed back to the apex. The town verb
+      // reimplements no read and no act: it names the flat verb and returns
+      // what the flat verb returns, which is exactly what lets the slim delist
+      // those names while every one of them still answers.
+      return townApex(args, key, {
+        schemas: flatPropsMap(), schemaRequired: flatRequiredMap(),
+        call: (tool, fields) => callTool(tool, fields, ctx),
+      });
+    }
     case "update_address_body": case "update_home": case "update_profile": case "update_window": {
       if (!canWrite) return notFound("not-yet-open", "the office has no town clone configured; edit by PR meanwhile");
       const verb = { update_address_body: updateAddressBody, update_home: updateHome, update_profile: updateProfile, update_window: updateWindow }[name];
@@ -519,7 +543,9 @@ async function handleMessage(msg, ctx) {
       // its own paper acts — its arrival acts (begin/declare/add-resident)
       // must keep answering.
       if (writeShaped(name, args) && ctx.key && name !== "household") {
-        const gatedVerb = name === "world" ? (dispatchToolFor(args?.do) ?? "world") : name;
+        const gatedVerb = name === "world" ? (dispatchToolFor(args?.do) ?? "world")
+          : name === "town" ? (townDispatchToolFor(args?.do) ?? "town")
+          : name;
         if (harborGated(ctx.key, gatedVerb)) {
           return rpcResult(msg.id, {
             content: [{ type: "text", text: JSON.stringify({ error: "bounce", defect: HARBOR_BOUNCE.defect, hint: HARBOR_BOUNCE.hint }, null, 1) }],
@@ -605,7 +631,12 @@ export function handleMcp(req, res, ctx) {
           ? (dispatchToolFor(message?.params?.arguments?.do) ?? named)
           : named === "household" && write
             ? (householdDispatchToolFor(message?.params?.arguments?.do) ?? named)
-            : named;
+            // the town apex charges as the verb it becomes, same contract: a
+            // declare through the town door and a declare through the flat door
+            // are one act on one ledger, never two doors counted apart.
+            : named === "town" && write
+              ? (townDispatchToolFor(message?.params?.arguments?.do) ?? named)
+              : named;
         const limited = ctx.rateLimit({ verb, write });
         if (limited) return ctx.rateResponse(res, limited);
       }
