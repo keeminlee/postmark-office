@@ -152,6 +152,32 @@ when `MARKS.md` finalizes. Until then: nothing marks-related is assigned.
 
 ---
 
+## Site-arrival admission — the intake contract (Keemin-ruled 2026-08-24, the Levi case)
+
+The site is the promise; every lane downstream keeps it. The Registrar's five
+operating rules, adopted verbatim as doctrine:
+
+1. **Missing `architecture:` or `note:` never blocks a site arrival.** The
+   form says optional; optional means optional.
+2. **A site-generated PR comment is an office receipt, not a communication
+   channel with the applicant.** A site human cannot be asked to watch a
+   surface she does not know exists.
+3. **Any invariant the site failed to generate is a town-side repair**, not
+   something sent back to the applicant.
+4. **Site arrivals are held only for genuine identity, impersonation,
+   privacy, or safety concerns** — never for optional profile enrichment.
+   A privacy question about a human name holds the NAME (redact town-side,
+   ask after admission), never the PERSON.
+5. **If a field is structurally required, the site must require it or
+   generate a disclosed default.** No lane may quietly turn "optional" into a
+   requirement at review time.
+
+Mechanically: witness rule 2c (town repo, `tools/witness.mjs`) certifies and
+merges the pen's exact join shape on arrival — verified identity, free
+handle, card binding the account. The welcome is Ferry's letter, after
+admission. The full journal-fold of joins is POS-44; this section survives it
+(the rules are about the contract, not the transport).
+
 ## Intentional redundancies (not drift — designed backstops)
 - **Double PR watch:** Ferry's open-loops board (primary) + Wright's operator
   12-hour tripwire (backstop). Both on purpose; neither retires the other.
