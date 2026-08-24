@@ -103,6 +103,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { fileURLToPath } from "node:url";
 import { getMeta, openDynamic, putMeta, singleLogEnabled } from "./dynamic-store.mjs";
 import { markRecord } from "./mark-record.mjs";
 import { WORLD_CLONE } from "./world-store.mjs";
@@ -113,6 +114,9 @@ import {
 
 /** The cursor slice 1 reserved on the health surface and left unwritten. This is what writes it. */
 export const DRAIN_CURSOR = "journal_drained_through";
+
+// The proven archiver lives beside this module's own directory, in tools/.
+const HERE_TOOLS = join(dirname(fileURLToPath(import.meta.url)), "..", "tools");
 
 const ROOT_PREFIX = "WORLD/marks/let-there-be-light";
 
@@ -493,6 +497,107 @@ export function writeJournalWindow(stateDir, crossing, lines, { asOfWorld = null
   return { logPath, metaPath, wrote, meta };
 }
 
+/**
+ * THE PUBLIC LEDGERS, materialized from the journal at the save.
+ *
+ * Ruled 2026-08-22: "walks + enter-exit should settle at the save, not per-act
+ * to git main." Every walk and every crossing used to spend one commit on main.
+ * Behind WORLD_SINGLE_LOG the acts write a journal row instead, and this is
+ * where the record receives them — once, with everything else the save writes.
+ *
+ * APPENDS THE LINES VERBATIM. The rows carry the exact text the acting pen
+ * formatted (`payload.lines`), so this does not re-derive a single character.
+ * That is what makes "the record carries the same lines the per-act commits
+ * would have" true by construction rather than by two formatters agreeing —
+ * the lesson slice 2 paid for when one serialization had two homes.
+ *
+ * IN SEQ ORDER, ACROSS LEDGERS. The journal's own order is the order the acts
+ * happened in, and both ledgers are append-only records of a sequence; sorting
+ * by anything else would put a resident's exit before the entry it answers.
+ *
+ * IDEMPOTENT, like everything else the drain does before the truncate: a line
+ * already present in the ledger is not appended twice, so a crash between the
+ * write-down and the truncate replays to the same file.
+ */
+export function materializeLedgers(repo, rows) {
+  const byLedger = new Map();
+  for (const row of rows) {
+    const ledger = row?.payload?.ledger;
+    const lines = row?.payload?.lines;
+    if (!ledger || !Array.isArray(lines) || !lines.length) continue;
+    if (!byLedger.has(ledger)) byLedger.set(ledger, []);
+    for (const line of lines) byLedger.get(ledger).push({ seq: row.seq, line: String(line) });
+  }
+
+  const wrote = [];
+  for (const [ledger, entries] of byLedger) {
+    entries.sort((a, b) => a.seq - b.seq);
+    const path = join(repo, ledger);
+    if (!existsSync(path)) {
+      // The ledgers are founding files with their own headers, written by the
+      // world repo. A save does not invent one: a missing ledger means this
+      // clone is not the world these lines belong to, and appending would
+      // create a headerless file the parsers refuse.
+      wrote.push({ ledger, appended: 0, skipped: entries.length, note: "no such ledger in this clone — nothing appended" });
+      continue;
+    }
+    const prev = readFileSync(path, "utf8");
+    const have = new Set(prev.split("\n"));
+    const fresh = entries.map((e) => e.line).filter((line) => !have.has(line));
+    if (!fresh.length) { wrote.push({ ledger, appended: 0, already: entries.length }); continue; }
+    const sep = prev.endsWith("\n") ? "" : "\n";
+    writeFileSync(path, `${prev}${sep}${fresh.join("\n")}\n`, "utf8");
+    wrote.push({ ledger, appended: fresh.length, ...(fresh.length < entries.length ? { already: entries.length - fresh.length } : {}) });
+  }
+  return wrote;
+}
+
+/**
+ * THE COLD ARCHIVE, wired at the save — §5's own condition.
+ *
+ * `tools/state-to-r2.mjs` has been proven and deliberately UNWIRED since
+ * 2026-08-22 ("Deliberately NOT wired into settlement-auto.sh or crossing-save
+ * tonight — run by hand after a save/settlement; a timer is the follow-up").
+ * §5's condition was that it wires AT THE SAVE rather than on a timer of its
+ * own, and this is that wire: the save has just written STATE, so the save is
+ * the one moment the bytes are known good and known complete.
+ *
+ * THE RECORD IS GIT-TRUTH; R2 IS A MIRROR. A failed upload is DISCLOSED and
+ * never blocks: the crossing's record lives in the repo, the archive is a copy
+ * of it, and a copy that did not land is a thing to retry — never a reason to
+ * refuse a settlement that has already written the truth. That asymmetry is the
+ * whole reason this is safe to wire at all.
+ *
+ * `run` is the seam: the default spawns the proven tool as its own process, and
+ * a test passes a stub. Injected rather than imported because the tool is a CLI
+ * that calls `process.exit`, and refactoring a proven archiver to make it
+ * testable would be changing the thing under test to suit the test.
+ */
+export async function archiveToR2({ repo, stateDir, run = null } = {}) {
+  const runner = run ?? (async () => {
+    const { execFileSync } = await import("node:child_process");
+    const out = execFileSync(process.execPath, [join(HERE_TOOLS, "state-to-r2.mjs")], {
+      encoding: "utf8",
+      env: { ...process.env, WORLD_CLONE: repo },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    return { output: String(out).trim().split("\n").at(-1) ?? "" };
+  });
+  try {
+    const r = await runner({ repo, stateDir });
+    return { archived: true, ...(r ?? {}) };
+  } catch (e) {
+    // NAMED, NOT THROWN. The operator learns the mirror is behind; the
+    // settlement does not learn anything at all, because the settlement's work
+    // is already on disk.
+    return {
+      archived: false,
+      reason: String(e?.message ?? e).slice(0, 200),
+      note: "the record is git-truth and it is written; R2 is a mirror and it is behind — retry the archive, nothing here needs re-running",
+    };
+  }
+}
+
 // ── the frame conversion, read at a ref ──────────────────────────────────────
 
 /**
@@ -562,6 +667,10 @@ export async function drain({
   commitState = false,
   failAt = null,
   beforeSwap = null,
+  // §5's seam: a function runs the archive, `false` skips it entirely (the
+  // fixtures' default — a test must not reach for a bucket), omitted spawns the
+  // proven tool.
+  archiveR2 = false,
 } = {}) {
   if (!singleLogEnabled())
     return { refused: "flag-off", detail: "the drain runs only under WORLD_SINGLE_LOG=1 — the journal's pen and its drain are one switch" };
@@ -616,7 +725,16 @@ export async function drain({
     trip(failAt, "after-write-down");
 
     const windows = plan.logs.map(({ crossing, lines }) => writeJournalWindow(STATE, crossing, lines, { asOfWorld }));
+    // THE PUBLIC LEDGERS, from the same rows, in the same act. A walk or a
+    // crossing that declared itself into the journal receives its line here
+    // rather than having spent a commit of its own when it happened.
+    const ledgers = materializeLedgers(repo, rows);
     trip(failAt, "after-state");
+
+    // §5, wired at the save and nowhere else. After the write-down, so the bytes
+    // it mirrors are the ones this save just made good; never in the way, so a
+    // bucket that is down cannot cost the town a settlement.
+    const archive = archiveR2 === false ? null : await archiveToR2({ repo, stateDir: STATE, run: archiveR2 || null });
 
     let stateCommit = null, stateNote = null;
     if (commitState) {
@@ -630,7 +748,10 @@ export async function drain({
       else if (!dirty) stateNote = "nothing to commit: STATE is unchanged";
       else {
         const { penCommit } = await import("./write.mjs");
-        stateCommit = penCommit(repo, [STATE], `drain: journal windows ${plan.logs.map((l) => l.crossing).join(", ")} (seq ≤ ${plan.head})`);
+        // The ledgers ride the SAME commit as STATE: one save, one commit, which
+        // is the whole point of settling at the save rather than per act.
+        const paths = [STATE, ...ledgers.filter((l) => l.appended > 0).map((l) => join(repo, l.ledger))];
+        stateCommit = penCommit(repo, paths, `drain: journal windows ${plan.logs.map((l) => l.crossing).join(", ")} (seq ≤ ${plan.head})`);
       }
     }
 
@@ -672,6 +793,8 @@ export async function drain({
         ({ household, branch, base, base_from, commit, changed, touched })),
       windows: windows.map((w) => ({ crossing: w.meta.crossing, events: w.meta.event_count, first_seq: w.meta.first_seq, last_seq: w.meta.last_seq, wrote: w.wrote })),
       state_dir: STATE,
+      ledgers,
+      ...(archive ? { archive } : {}),
       state_commit: stateCommit,
       state_note: stateNote ?? (commitState ? null : "STATE written to the working set only — committing it is the settlement pass's act, or pass --commit-state"),
     };

@@ -30,6 +30,8 @@ import { join, resolve, dirname } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { penCommit } from "./write.mjs";
+import { openDynamic, singleLogEnabled } from "./dynamic-store.mjs";
+import { CLASS_FRAME, appendJournal } from "./world-journal.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CLONE = process.env.WORLD_CLONE ?? resolve(HERE, "..", "world-clone");
@@ -51,6 +53,41 @@ async function main() {
 
   if (!Array.isArray(p.lines) || !p.lines.length) return err(422, "no crossing to record", "the door fills these in; this exec is not a public surface");
   if (!p.handle) return err(422, "missing handle", "the door fills these in; this exec is not a public surface");
+
+  // ── SETTLE AT THE SAVE (ruled 2026-08-22; built behind WORLD_SINGLE_LOG) ───
+  //
+  // "walks + enter-exit should settle at the save, not per-act to git main."
+  //
+  // Every crossing used to spend one commit on main. Under the flag the lines go
+  // into the journal — VERBATIM, so the save appends exactly what this pen
+  // formatted — and the record receives them at the save. The occupancy answer
+  // is derived from the same ledger text either way; one copy of it simply is
+  // not on disk yet.
+  //
+  // AND THE CHECKOUT STAYS WHERE IT IS. The `switch -q main` below exists
+  // because this pen writes a file into the working tree and the clone is shared
+  // (the 2026-07-30 wandering-pen incident: 17 public ledger lines stranded on
+  // draft/jennuhh). Writing nothing, this lane needs no checkout at all — which
+  // is the same machinery §2 retires everywhere else, gone from one more door.
+  const prevJ = existsSync(LEDGER) ? readFileSync(LEDGER, "utf8") : LEDGER_HEADER;
+  if (singleLogEnabled()) {
+    const sepJ = prevJ.endsWith("\n") ? "" : "\n";
+    const { acts: actsJ, unrecognized: unrecJ } = parseThresholdLedger(`${prevJ}${sepJ}${p.lines.join("\n")}\n`);
+    const db = openDynamic();
+    let seq = null;
+    try {
+      seq = appendJournal(db, {
+        crossing: p.at, actor: p.handle, action: p.act ?? "enter", object: p.mark ?? null,
+        cls: CLASS_FRAME, at: null, witnesses: null,
+        payload: { ledger: LEDGER_NAME.replace(/\\/g, "/"), lines: p.lines, summary: p.summary },
+        effect: "the crossing is declared; the record receives it at the save",
+      }).seq;
+    } finally { try { db.close(); } catch { /* already gone */ } }
+    return answer({ lines: p.lines, at: p.at, within: occupancyAt(actsJ, p.at).get(p.handle) ?? [],
+                    commit: null, pushed: false, push_error: null, log: "journal", seq,
+                    settles: "at the save — this crossing spends no commit of its own (WORLD_SINGLE_LOG)",
+                    ledger_lines: actsJ.length, ledger_unrecognized: unrecJ.length });
+  }
 
   // The threshold ledger is PUBLIC record on main, exactly as the walk ledger
   // is — and for exactly the reason walk-exec stands on main explicitly: the

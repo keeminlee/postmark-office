@@ -86,6 +86,32 @@ export const WORLD_ANCHOR = "the-town/let-there-be-light";
 // sorts them by this column: marks to the sketchbook, frames to STATE/log.
 export const CLASS_MARK = "mark";
 export const CLASS_FRAME = "frame";
+// `move` is a walk — an entity's own declared departure. It is not a `frame`
+// row: a walk moves you WITHIN a frame, and §8 is explicit that a frame changes
+// only at a boundary you stand on. enter/exit are the reparentings and keep
+// `frame`; walk gets its own word so the log does not have to be read twice to
+// tell them apart.
+export const CLASS_MOVE = "move";
+
+// ── THE LEDGER CONTRACT (POS-5 §3's finisher) ───────────────────────────────
+//
+// The two PUBLIC ledgers — `WORLD/walk-ledger.md` and
+// `WORLD/threshold-ledger.md` — took one git commit on main PER ACT. Ruled
+// 2026-08-22: "walks + enter-exit should settle at the save, not per-act to git
+// main."
+//
+// A row that owes lines to a public ledger carries them VERBATIM:
+//
+//   payload.ledger   the repo-relative path the lines belong in
+//   payload.lines    the exact lines, already formatted by the act's own pen
+//
+// THE LINE ITSELF, not the ingredients to rebuild it. That is the whole
+// equivalence argument: the save appends what the act already wrote rather than
+// re-deriving it, so "the record carries the same lines the per-act commits
+// would have" is true by construction instead of by a second formatter agreeing
+// with the first. Slice 2 learned this the expensive way — one home for a
+// serialization, or two eras disagree in a way that still parses.
+export const LEDGER_PAYLOAD = "payload.ledger + payload.lines — the act's own formatted lines, carried verbatim";
 
 // The mark verbs, as the door speaks them. `amend` and `withdraw` are LATER
 // ENTRIES, never edits — supersession-by-latest is the whole revision family

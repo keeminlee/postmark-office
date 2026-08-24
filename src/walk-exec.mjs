@@ -22,11 +22,16 @@ import { join, resolve, dirname } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { penCommit } from "./write.mjs";
+import { openDynamic, singleLogEnabled } from "./dynamic-store.mjs";
+import { CLASS_MOVE, appendJournal } from "./world-journal.mjs";
 import { departurePace } from "./world-classes.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CLONE = process.env.WORLD_CLONE ?? resolve(HERE, "..", "world-clone");
-const LEDGER = join(CLONE, "WORLD", "walk-ledger.md");
+// The repo-relative name rides the journal row so the save knows which public
+// ledger the lines belong in without inferring it from the verb.
+export const LEDGER_NAME = "WORLD/walk-ledger.md";
+const LEDGER = join(CLONE, LEDGER_NAME);
 
 const answer = (obj) => { console.log(JSON.stringify(obj)); process.exit(0); };
 const err = (code, defect, hint) => answer({ error: { code, defect, hint } });
@@ -85,11 +90,50 @@ async function main() {
     pace,
   });
 
-  // Append. Read-then-write of a file only this pen writes, under the caller's
-  // flock — the append-only line is what keeps this safe without a merge.
+  // Read the ledger as it stands. Both lanes need it: the git lane appends to
+  // it, and the journal lane derives this walk's position from it WITHOUT
+  // writing, because a walk's position is a function of the ledger plus this
+  // line whether or not the line is on disk yet.
   const prev = existsSync(LEDGER) ? readFileSync(LEDGER, "utf8") : LEDGER_HEADER;
   const sep = prev.endsWith("\n") ? "" : "\n";
-  writeFileSync(LEDGER, `${prev}${sep}${line}\n`, "utf8");
+  const withThisWalk = `${prev}${sep}${line}\n`;
+
+  // ── SETTLE AT THE SAVE (ruled 2026-08-22; built behind WORLD_SINGLE_LOG) ───
+  //
+  // "walks + enter-exit should settle at the save, not per-act to git main."
+  //
+  // Every walk used to spend one commit on main. Under the flag the line goes
+  // into the journal — carried VERBATIM, so the save appends exactly what this
+  // pen formatted rather than re-deriving it — and the record receives it at the
+  // save with everything else.
+  //
+  // The DERIVATION IS UNCHANGED, deliberately: the answer's `position` is parsed
+  // from the same ledger text either way, one copy of which happens not to be on
+  // disk yet. A second position derivation for the journal lane is exactly the
+  // split-brain this office keeps a museum of.
+  if (singleLogEnabled()) {
+    const { departures: dep, unrecognized: unrec } = parseWalkLedger(withThisWalk);
+    const mine = dep.filter((d) => d.handle === p.handle).pop();
+    const db = openDynamic();
+    let seq = null;
+    try {
+      seq = appendJournal(db, {
+        crossing: at, actor: p.handle, action: "walk", object: p.targetMarkId ?? null,
+        cls: CLASS_MOVE, at: null, witnesses: null,
+        payload: { ledger: LEDGER_NAME, lines: [line], toward: p.toward, pace },
+        effect: "the walk is declared; the record receives it at the save",
+      }).seq;
+    } finally { try { db.close(); } catch { /* already gone */ } }
+    return answer({ line, at, position: positionAt(mine, at), commit: null, pushed: false, push_error: null,
+                    pace, ...(dialFallback ? { dial_fallback: true } : {}),
+                    log: "journal", seq,
+                    settles: "at the save — this walk spends no commit of its own (WORLD_SINGLE_LOG)",
+                    ledger_lines: dep.length, ledger_unrecognized: unrec.length });
+  }
+
+  // Append. Read-then-write of a file only this pen writes, under the caller's
+  // flock — the append-only line is what keeps this safe without a merge.
+  writeFileSync(LEDGER, withThisWalk, "utf8");
 
   const { departures, unrecognized } = parseWalkLedger(readFileSync(LEDGER, "utf8"));
   const mine = departures.filter((d) => d.handle === p.handle).pop();
