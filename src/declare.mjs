@@ -88,6 +88,8 @@ export const DECLARE_DESCRIPTION =
 // A bounce carries the exact FIELD it is about — the ruled requirement is that
 // nonconforming params are named at action time, not described in prose. `field`
 // is additive to the office's existing { code, defect, hint } shape.
+import { appendTownJournal, pendingHandles, SETTLE_THRESHOLD, townLogEnabled } from "./town-journal.mjs";
+
 const bounce = (code, field, defect, hint) => {
   const e = new Error(defect);
   return Object.assign(e, { code, field, defect, hint });
@@ -105,8 +107,25 @@ const townDate = () =>
 // (residents), the ship's manifest (berths — a passenger holds their name), and
 // the declared registry (a household may list a resident the index hasn't seen
 // yet). Three places, because a name taken in any of them is taken.
-export function handleTaken(handle, { db, registry, clone }) {
+export function handleTaken(handle, { db, registry, clone, odb = null }) {
   if (db?.prepare("SELECT 1 FROM residents WHERE handle = ?").get(handle)) return "the town";
+  // ── THE FOURTH REGISTER: names spoken for but not yet drained ──────────
+  //
+  // POS-44's first design-in, verbatim: "Pending-name uniqueness: the
+  // handle-free check reads un-drained journal rows too (two joins in one
+  // epoch must not collide at the drain)".
+  //
+  // The three registers below are all projections of THE RECORD, and between
+  // a join being written at the door and the ferry draining it at 00:00 or
+  // 12:00 UTC the record does not know the name yet. So a second declare for
+  // the same handle conforms, both rows sit in the log, and they collide
+  // inside the drain twelve hours later — where there is no door left to
+  // bounce at and no person waiting to be told. The name has to be held from
+  // the moment it is claimed.
+  if (odb && townLogEnabled()) {
+    const pending = pendingHandles(odb).get(handle);
+    if (pending) return `a join already in this epoch (${pending.household}, seq ${pending.seq})`;
+  }
   if (clone && existsSync(join(clone, "HARBOR", "berths", `${handle}.md`))) return "the ship's manifest";
   for (const rec of Object.values(registry?.households ?? {}))
     if ((rec.residents ?? []).includes(handle)) return "the household registry";
@@ -115,7 +134,7 @@ export function handleTaken(handle, { db, registry, clone }) {
 
 // The whole gate, in one pure-ish function. Throws a field-named bounce, or
 // returns the normalized declaration.
-export function conformance(args = {}, { db, registry, clone, key } = {}) {
+export function conformance(args = {}, { db, registry, clone, key, odb = null } = {}) {
   // 11 — the anchor. A credential with no verified account behind it is not a
   // credential for this purpose: the anti-sybil floor rides the household class
   // and IS the credential grain (LOGOS/classes.md:64-70, INDEX.md atom 3), so a
@@ -136,7 +155,7 @@ export function conformance(args = {}, { db, registry, clone, key } = {}) {
   }
 
   // 5 — global uniqueness, all three registers
-  const taken = handleTaken(handle, { db, registry, clone });
+  const taken = handleTaken(handle, { db, registry, clone, odb });
   if (taken)
     throw bounce(409, "handle", `the handle "${handle}" is taken`,
       `${taken} already knows that name — try list_residents and pick a free one`);
@@ -298,7 +317,7 @@ export async function declareHousehold(args, key, { db, clone, odb, mintKey, com
   const registry = readJson(clone, REGISTRY_PATH) ?? { schema_version: 1, households: {} };
   const pins = readJson(clone, PINS_PATH) ?? {};
 
-  const decl = conformance(args, { db, registry, clone, key });
+  const decl = conformance(args, { db, registry, clone, key, odb });
   const plan = planDeclaration(registry, pins, decl);
 
   // The writer is the authority on what actually landed: it re-reads the
@@ -312,6 +331,31 @@ export async function declareHousehold(args, key, { db, clone, odb, mintKey, com
   // deletes any prior household key for this account before inserting, which is
   // the "one credential per household" half of the grain.
   const credential = mintKey ? mintKey(odb, decl.ghId, decl.ghLogin) : null;
+
+  // ── the act, written to the town log (POS-44 slice 1, TOWN_SINGLE_LOG) ───
+  //
+  // FLAG-OFF THIS DOOR IS BYTE-FOR-BYTE WHAT IT WAS: the row is written after
+  // the commit and after the key, changes nothing about either, and the answer
+  // below is unchanged except for one added line that only appears flag-on.
+  //
+  // Harbor admission stays INSTANT — the credential is already minted above and
+  // berth life begins now. The row is what the ferry drains into the durable
+  // record at the next crossing; it is not a queue the resident waits in.
+  //
+  // The verified anchor rides the ROW, not just the credential, because the
+  // drain judges the row hours later when the key that wrote it may be gone
+  // (town-journal.mjs § the tier line).
+  let logged = null;
+  if (odb && townLogEnabled()) {
+    logged = appendTownJournal(odb, {
+      act: "declare-household",
+      household: decl.slug,
+      handle: decl.handle,
+      ghId: decl.ghId, ghLogin: decl.ghLogin,
+      payload: { household: decl.household, card: decl.card, member_of: LANDING_GROUND },
+      channel: key?.channel ?? null,
+    });
+  }
 
   return {
     declared: decl.household,
@@ -328,6 +372,7 @@ export async function declareHousehold(args, key, { db, clone, odb, mintKey, com
     commit: commitSha,
     verified_github: { login: decl.ghLogin, id: decl.ghId },
     ...(credential ? { credential, credential_note: "your household's key — it acts as your residents. Shown ONCE; store it like a password. Minting again at the key desk replaces it." } : {}),
+    ...(logged == null ? {} : { logged: { seq: logged, settles_at: "the next ferry crossing (00:00 / 12:00 UTC)" } }),
     draft_space: `draft/${decl.ghLogin ?? decl.slug}`,
     you_can_now: [
       "use your draft space — your own ground to build in, from this minute",

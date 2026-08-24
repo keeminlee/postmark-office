@@ -84,6 +84,8 @@ export const WORLD_ANCHOR = "the-town/let-there-be-light";
 // The row classes. `mark` is a declaration about the world's static record;
 // `frame` is a reparenting (§8's ruling (b)). Both ride one table, and the drain
 // sorts them by this column: marks to the sketchbook, frames to STATE/log.
+import { TOWN_CLASSES } from "./town-journal.mjs";
+
 export const CLASS_MARK = "mark";
 export const CLASS_FRAME = "frame";
 // `move` is a walk — an entity's own declared departure. It is not a `frame`
@@ -228,6 +230,29 @@ export function appendJournal(db, entry = {}) {
   } = entry;
 
   if (!actor) throw new Error("a journal line needs an actor — every mutation has a SUBJECT");
+  // ── THE TRIPWIRE: no row that belongs to ANOTHER log may land here ─────
+  //
+  // Added with the town log (town-journal.mjs, 2026-08-24). The two logs live
+  // in separate tables precisely so a join row cannot be deleted undrained by
+  // the world drain's class-blind truncate — but separate tables only help if
+  // rows land in the right one, and nothing about `appendJournal(db, { cls })`
+  // stops a caller aiming a join here. So it bounces at WRITE time: a stack
+  // trace on the line that wrote it, instead of somebody's household vanishing
+  // twelve hours later with nothing left to read.
+  //
+  // STATED AS A DENYLIST OF THE TOWN'S CLASSES, NOT AN ALLOWLIST OF THE
+  // WORLD'S, and the first draft got that backwards. An allowlist has to be a
+  // complete census of every class this log will ever hold — and those
+  // constants do not all live here: CLASS_STANCE is declared in
+  // world-stance.mjs, so the allowlist silently refused every stance row and
+  // took eight live tests down with it. A guard that must be updated from
+  // another file each time the world grows is a guard that will be wrong
+  // again. This one only has to know what the OTHER log owns, which is a
+  // closed set by construction, imported from the file that defines it.
+  if (TOWN_CLASSES.has(String(cls)))
+    throw new Error(
+      `"${cls}" is the town log's class, not the world's — `
+      + `a town act belongs in town_journal via appendTownJournal; writing it here would put it under a drain that does not read it`);
   if (!action) throw new Error("a journal line needs an action — every mutation has an ACTION");
 
   const row = {

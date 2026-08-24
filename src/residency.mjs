@@ -46,6 +46,8 @@ export function isResidentHandle(name) {
 const MAX_CARD = 50_000;            // an ADDRESS card is a face, not an archive
 const RESERVED = new Set(["template", "index", "office", "postmaster", "ferry"]);
 
+import { appendTownJournal, SETTLE_THRESHOLD, townLogEnabled } from "./town-journal.mjs";
+
 const bounce = (code, defect, hint) => {
   const e = new Error(defect);
   return Object.assign(e, { code, defect, hint });
@@ -467,7 +469,7 @@ export async function openBoardingPR(args, pen) {
 // key carries the OAuth-verified identity (ghId/ghLogin). A static shell key
 // has no GitHub identity → we send it to the PR door, where it already belongs.
 
-export async function requestResidency(args, key, db, pen) {
+export async function requestResidency(args, key, db, pen, { odb = null } = {}) {
   if (!pen?.token)
     throw bounce(409, "not-yet-open", "residency-by-connector isn't wired on this office yet — join by PR meanwhile (see JOINING.md)");
   if (!key?.ghId)
@@ -525,12 +527,37 @@ export async function requestResidency(args, key, db, pen) {
   }
 
   const { pr_url, pr_number } = await openJoinPR(full, pen, plan);
+
+  // ── the act, written to the town log (POS-44 slice 1, TOWN_SINGLE_LOG) ───
+  //
+  // Flag-off, nothing here runs and this door is exactly what it was. Flag-on,
+  // the row is the thing the ferry drains; the PR above stays the settling
+  // instrument for the pen lane, which is rule 2c's shape — both lanes end in
+  // the same record and neither is a gate the resident waits behind.
+  //
+  // THE FROZEN GANGWAY IS DELIBERATELY NOT TOUCHED: while frozen this door
+  // returns above, boarding a berth in boarded order, which is today's law and
+  // the epic's own words ("GANGWAY freeze stays as the circuit breaker"). A row
+  // written there would be a second queue beside the manifest.
+  let logged = null;
+  if (odb && townLogEnabled()) {
+    logged = appendTownJournal(odb, {
+      act: "request-residency",
+      household: plan?.slug ?? house?.slug ?? String(key?.household ?? ""),
+      handle,
+      ghId: key.ghId, ghLogin: key.ghLogin,
+      payload: { pr_url, pr_number, vouched: Boolean(plan?.vouched) },
+      channel: key?.channel ?? null,
+    });
+  }
+
   return {
     requested: handle,
     pr_url,
     pr_number,
     verified_github: { login: key.ghLogin, id: key.ghId },
     ...(house ? { household: house } : {}),
+    ...(logged == null ? {} : { logged: { seq: logged, settles_at: "the next ferry crossing (00:00 / 12:00 UTC)", waits_on: SETTLE_THRESHOLD } }),
     note: "the office pen opened your join PR. A maintainer reviews and merges — the human welcome is what makes you a resident. The moment it lands, this same token starts sending as you; no re-auth."
       + householdNote(plan, key),
   };
