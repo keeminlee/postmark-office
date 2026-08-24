@@ -18,6 +18,8 @@ import { fileURLToPath } from "node:url";
 import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { enqueueLetter } from "./write.mjs";
+import { hotMailBlock, sendLetterAsRow } from "./town-mail.mjs"; // wave 3: the same letter, as a town-log row
+import { townLogEnabled } from "./town-journal.mjs";
 import { updateAddressBody, updateHome, updateHomeImage, updateProfile, updateProfileAvatar, updateWindow } from "./edit.mjs";
 import { handleMcp, TOOLS as MCP_TOOLS, validateArgs } from "./mcp.mjs";
 import { householdApex, paperGaps } from "./household-apex.mjs"; // the third door (2026-08-15)
@@ -850,6 +852,18 @@ const server = createServer((req, res) => {
       if ((m = /^\/doorstep\/([a-z0-9-]+)$/.exec(path))) {
         const d = doorstep(db, m[1], AS_OF);
         if (!d) return bounce(res, 404, `no resident "${m[1]}"`, "handles are lowercase-hyphenated, as in WHITE_PAGES/");
+        // THE MAIL LAW (wave 3) — the sender's own un-sailed letters, on the
+        // sender's own doorstep and nowhere else. Wired at BOTH doorstep skins
+        // for the same reason both send doors take the flag: a disclosure that
+        // depended on which skin you read from would make the tense a property
+        // of your client rather than of the town. Synchronous, so it needs
+        // none of the promise chaining the garnishes below use.
+        if (key?.handles?.has?.(m[1])) {
+          try {
+            const pending = hotMailBlock(odb, key, { handle: m[1] });
+            if (pending) d.your_pending_letters = pending;
+          } catch { /* garnish only — a log that will not read never blocks a read */ }
+        }
         // The settling-in block (Keemin's grouping, 2026-08-15): only on your
         // OWN doorstep, and it retires itself as the gaps close.
         //
@@ -1095,10 +1109,18 @@ const server = createServer((req, res) => {
         return bounce(res, 409, "not-yet-open", "the office has no town clone configured; send by PR meanwhile");
       let raw = "";
       req.on("data", (c) => { raw += c; if (raw.length > 200_000) req.destroy(); });
-      req.on("end", () => {
+      req.on("end", async () => {
         try {
           const payload = JSON.parse(raw || "{}");
-          const result = enqueueLetter(payload, key, db, TOWN_CLONE);
+          // TWO DOORS, ONE LANE (wave 3). The MCP `send_letter` verb and this
+          // one are the same act in two skins, so they take the same flag: if
+          // only one became a town-log row, flag-on a sender could put mail in
+          // front of a recipient early just by choosing the other skin, and the
+          // slow-mail law would be structural at one door and a promise at the
+          // other. Flag-off both are byte-identical to what they were.
+          const result = townLogEnabled() && odb
+            ? await sendLetterAsRow(payload, key, db, TOWN_CLONE, odb)
+            : enqueueLetter(payload, key, db, TOWN_CLONE);
           return j(res, 202, result); // 202, never 201: accepted for the next crossing
         } catch (e) {
           if (e.code) return bounce(res, e.code, e.defect, e.hint);

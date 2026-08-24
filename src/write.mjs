@@ -10,13 +10,17 @@
 
 import { execFileSync } from "node:child_process";
 import { existsSync, writeFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 const MAX_BODY = 100_000; // size courtesy (bytes of markdown body)
 const CROSSINGS_UTC = [0, 12]; // ferry crossings: 00:00Z (~20:00 ET) + 12:00Z (~08:00 ET)
 
 const slugify = (s) =>
   s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "letter";
+
+// The bounce vocabulary, one factory for the whole spine: `{ code, defect, hint }`
+// on an Error, which is the shape both doors catch and turn into an answer.
+const bounce = (code, defect, hint) => { const e = new Error(defect); Object.assign(e, { code, defect, hint }); return e; };
 
 export function nextCrossing(now = new Date()) {
   for (const h of [...CROSSINGS_UTC, CROSSINGS_UTC[0] + 24]) {
@@ -71,11 +75,25 @@ function buildStakeFm({ stake_topic, stake_candidate, stake_stamps }, bounce) {
   return `stake_topic: ${stake_topic}\nstake_candidate: ${candidate}\nstake_stamps: ${n}\n`;
 }
 
-// Validate + write + commit. Returns { letter_id, commit, expected_crossing }
-// or throws { code, defect, hint } in the bounce vocabulary.
-export function enqueueLetter({ from, to, title, thread, body, stake_topic, stake_candidate, stake_stamps }, key, db, clone) {
-  const bounce = (code, defect, hint) => { const e = new Error(defect); Object.assign(e, { code, defect, hint }); return e; };
-
+// THE VALIDATION HALF, split out for a second caller (wave 3, POS-44).
+//
+// Flag-on, send_letter writes a town-log row instead of a file, and the row
+// must still be judged at the door — a malformed letter that bounces twelve
+// hours later at the crossing is the exact failure the whole slow-mail lane is
+// supposed to cost nobody. So the checks below became a function the DOOR can
+// run without writing anything, and enqueueLetter became its first caller
+// rather than its owner.
+//
+// Nothing about the order or the bounces changed in the split, and that is
+// load-bearing: flag-off, enqueueLetter runs these checks in this sequence and
+// throws these codes, exactly as it did when they were inline.
+//
+// Returns the letter's computed identity — the fields the write half needs and
+// the row needs alike, so neither recomputes a slug the other invented. Pure
+// data: the plan travels to the town log and into the envelope pre-flight, and
+// a callable riding inside it would be a thing those callers could mistake for
+// part of the letter.
+export function validateLetter({ from, to, title, thread, body, stake_topic, stake_candidate, stake_stamps }, key, db) {
   // envelope checks — the ferry's rules, applied at the door
   if (!from || !to || !title || !body)
     throw bounce(422, "incomplete envelope", "required: from, to, title, body");
@@ -108,11 +126,27 @@ export function enqueueLetter({ from, to, title, thread, body, stake_topic, stak
   if (db.prepare("SELECT 1 FROM letters WHERE id = ?").get(id))
     throw bounce(409, "a letter with this id already exists today", "change the title, or write tomorrow — one slug per correspondent per day");
 
-  // freshen the clone, then write the letter file
+  return { id, from, to, date, thread, slug, stakeFm, body };
+}
+
+// The relative path a letter lands at in the sender's outbox. Exported because
+// the town log's row discloses where the letter WILL stand, and a second
+// spelling of this path is a second thing that can drift from the pen's.
+export const outboxRelPath = (from, date, to, slug) =>
+  `WHITE_PAGES/${from}/outbox/letter-${date}-to-${to}-${slug}.md`;
+
+// Validate + write + commit. Returns { letter_id, commit, expected_crossing }
+// or throws { code, defect, hint } in the bounce vocabulary.
+export function enqueueLetter(args, key, db, clone) {
+  const { id, from, to, date, thread, slug, stakeFm, body } = validateLetter(args, key, db);
+
+  // freshen the clone, then write the letter file — at the path outboxRelPath
+  // spells, because the row the door writes discloses that same path to the
+  // sender, and two spellings of it would be two things that can drift.
   if (process.env.TOWN_PUSH === "1") git(clone, "pull", "--rebase", "-q");
-  const outbox = join(clone, "WHITE_PAGES", from, "outbox");
+  const file = join(clone, outboxRelPath(from, date, to, slug));
+  const outbox = dirname(file);
   if (!existsSync(outbox)) mkdirSync(outbox, { recursive: true });
-  const file = join(outbox, `letter-${date}-to-${to}-${slug}.md`);
   if (existsSync(file)) throw bounce(409, "that letter file already exists", "change the title");
 
   const fm = `---\nid: ${id}\nfrom: ${from}\nto: ${to}\ndate: ${date}\nthread: ${thread}\n${stakeFm}---\n\n`;

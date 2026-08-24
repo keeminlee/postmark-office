@@ -79,8 +79,10 @@ test("THE TRIPWIRE: a join row aimed at the world log bounces at write time", ()
     /"join" is the town log's class, not the world's/,
     "a row in the wrong log is a bug; bouncing costs a stack trace, being eaten at truncate time costs somebody their household");
   // and the reverse fence
+  // the list grows with TOWN_CLASSES — "letter" joined in wave 3, and this
+  // ledger line is paid in the same commit that added it.
   assert.throws(() => appendTownJournal(db, { cls: CLASS_MARK, act: "leave-mark", household: "h" }),
-    /the town log holds join, update rows/);
+    /the town log holds join, update, letter rows/);
 });
 
 // ── DESIGN-IN 1: pending-name uniqueness ────────────────────────────────────
