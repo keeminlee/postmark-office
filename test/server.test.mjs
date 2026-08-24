@@ -275,7 +275,7 @@ test("MCP initialize → protocol + instructions", async () => {
   assert.match(body.result.instructions, /The reading law/, "the handshake carries the reading law");
 });
 
-test("MCP tools/list, apex OFF: the full 41 — the slim's delist is apex-conditioned and does not apply", async () => {
+test("MCP tools/list, apex OFF: the full 43 — the slim's delist is apex-conditioned and does not apply", async () => {
   const { body } = await rpc("tools/list");
   const names = body.result.tools.map((t) => t.name);
   // 38 → 40: world_hold + world_holdings (the object primitive, 2026-08-14).
@@ -294,7 +294,11 @@ test("MCP tools/list, apex OFF: the full 41 — the slim's delist is apex-condit
   // NOTE: this exact total breaks for whoever adds the next tool, whatever it is
   // — the named-tools loop below is the assertion that actually says something,
   // since it fails when a tool GOES MISSING rather than when one is added.
-  assert.equal(names.length, 42);
+  // 42 -> 43 (wave 2, 2026-08-24): update_address_fields, the scoped
+  // frontmatter door. Listed unconditionally like every other paper door — the
+  // slim only hides what an APEX serves, and no apex serves this one.
+  assert.equal(names.length, 43);
+  assert.ok(names.includes("update_address_fields"), "the fields door stands regardless of the world flag");
   assert.ok(!names.includes("request_blessing"), "request_blessing's delist is unconditional");
   assert.ok(!names.includes("world"), "no apex tool with the flag off");
   assert.ok(names.includes("household"), "the third door stands regardless of the world flag");

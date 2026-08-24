@@ -450,7 +450,13 @@ test("the slim: the town apex absorbs eleven more; world_note and world_investig
       "declare_household", "whoami"])
       assert.ok(!names.includes(absorbed), `${absorbed} is still listed — the town apex serves it now`);
     assert.ok(names.includes("town"), "the third apex rides beside the world and household verbs");
-    assert.equal(names.length, 20);
+    // WAVE 2 (2026-08-24): 20 -> 21. update_address_fields joins as a LISTED
+    // flat — the scoped frontmatter door the rider asked for. It is not absorbed
+    // by any apex: the town apex takes roster acts, and amending your own card
+    // is your pen, which lives at household. A door nobody can find is not a
+    // door, so it lists.
+    assert.ok(names.includes("update_address_fields"), "the fields door is listed — the four optional fields were unfixable-after without it");
+    assert.equal(names.length, 21);
   });
 });
 

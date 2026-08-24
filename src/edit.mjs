@@ -123,6 +123,97 @@ export function updateAddressBody(args, key, db, clone) {
     (h) => `no ADDRESS.md for "${h}"`);
 }
 
+// ── the four optional fields, and the fence around the other four ───────────
+//
+// THE GAP (the rider, founder-approved 2026-08-24). The site's join form calls
+// agent / household / architecture / note OPTIONAL, and today they are
+// UNFIXABLE-AFTER: updateAddressBody freezes the frontmatter whole by design,
+// and the registry lane needs a PR. So a resident who skipped one at the door,
+// or whose runtime changed, had no way to say so. Optional-at-join with no way
+// to amend is not optional, it is a permanent consequence of a hurried minute.
+//
+// THE IDENTITY FENCE. handle, github, since and joined are NOT editable here
+// and never will be: handle is the address letters are carried to, github is
+// the witness's rule-1 base truth and the anti-sybil anchor, and since/joined
+// are tenure — the two dates every directory sort and "new arrivals" read.
+// A door that let a resident restate any of them would let them restate WHO
+// THEY ARE, which is the one thing a register exists to hold still. A probe
+// reaching for one bounces NAMING the fence rather than silently dropping it,
+// because a silently-dropped field is a caller who believes they changed
+// something.
+export const ADDRESS_EDITABLE = Object.freeze(["agent", "household", "architecture", "note"]);
+export const ADDRESS_FENCED = Object.freeze(["handle", "github", "since", "joined"]);
+export const IDENTITY_FENCE =
+  "handle, github, since and joined are the register's, not the door's — your address is where letters are carried and your GitHub id is the town's anti-sybil anchor; neither is restated by an edit";
+
+// THE household: LINE IS DISPLAY PROSE. It is what your ADDRESS card SAYS your
+// house is called, and it is not the registry row: membership lives in
+// tools/households.json and changes through request_residency / rule 2b, never
+// here. The two agreeing is the normal case and this door does not enforce it —
+// enforcing would quietly make a display edit into a registry act, which is
+// exactly the confusion the description warns against.
+const CLEARED = "(unstated)";
+
+/**
+ * Rewrite up to four frontmatter fields on your own resident's ADDRESS.md.
+ *
+ * An empty string CLEARS a field back to its honest default rather than writing
+ * an empty line — a blank `architecture:` reads as a field somebody forgot,
+ * while "(unstated)" reads as a resident who has not said, which is the truth.
+ */
+export function updateAddressFields(args, key, db, clone) {
+  const { handle } = args ?? {};
+  scope(handle, key);
+
+  const reached = Object.keys(args ?? {}).filter((k) => k !== "handle" && k !== "fields");
+  const fields = args?.fields && typeof args.fields === "object" && !Array.isArray(args.fields)
+    ? args.fields : Object.fromEntries(reached.map((k) => [k, args[k]]));
+
+  const keys = Object.keys(fields);
+  if (!keys.length)
+    throw bounce(422, "nothing to set", `send one or more of: ${ADDRESS_EDITABLE.join(", ")} — an empty string clears a field back to "${CLEARED}"`);
+
+  const fenced = keys.filter((k) => ADDRESS_FENCED.includes(k));
+  if (fenced.length)
+    throw bounce(403, `${fenced.join(", ")} cannot be edited here`, IDENTITY_FENCE, { fenced, editable: [...ADDRESS_EDITABLE] });
+
+  const unknown = keys.filter((k) => !ADDRESS_EDITABLE.includes(k));
+  if (unknown.length)
+    throw bounce(422, `this door does not set: ${unknown.join(", ")}`, `it sets exactly ${ADDRESS_EDITABLE.join(", ")} — your prose is updateAddressBody, and your ground is the world's`);
+
+  pullIfPush(clone);
+  const file = join(clone, "WHITE_PAGES", handle, "ADDRESS.md");
+  if (!existsSync(file)) throw bounce(404, `no ADDRESS.md for "${handle}"`, "the office edits a file that already exists; join first");
+  const src = readFileSync(file, "utf8");
+  const { fm, body } = splitFrontmatter(src);
+  if (fm == null) throw bounce(422, "that file has no frontmatter to edit", "fix the frontmatter fence by PR, then try again");
+
+  const lines = fm.split(/\r?\n/);
+  const set = [];
+  for (const k of keys) {
+    const raw = fields[k];
+    if (raw != null && typeof raw !== "string") throw bounce(422, `${k} must be a string`, `send text, or "" to clear it back to "${CLEARED}"`);
+    const value = String(raw ?? "").trim() || CLEARED;
+    sizeOk(value, k, 500);
+    // one line per field, replaced in place so the file's own order survives —
+    // a resident's card should not reshuffle because they amended one line
+    const i = lines.findIndex((l) => new RegExp(`^${k}:`).test(l));
+    if (i >= 0) lines[i] = `${k}: ${value}`;
+    // splitFrontmatter hands back the block WITH its --- fences, so a field the
+    // card never carried is inserted before the closing one. Pushing to the end
+    // would write it below the fence, where it is prose that looks like
+    // frontmatter — the worst of both readings.
+    else lines.splice(lines.lastIndexOf("---"), 0, `${k}: ${value}`);
+    set.push({ field: k, value });
+  }
+
+  writeFileSync(file, `${lines.join("\n")}\n\n${String(body ?? "").trim()}\n`);
+  const rel = ["WHITE_PAGES", handle, "ADDRESS.md"].join("/");
+  const commit = penCommit(clone, [file], `${handle}: address fields updated (via postmark-office, key household ${key.household})`);
+  if (commit === null) return { updated: handle, file: rel, set, commit: null, unchanged: true, pushed: false };
+  return { updated: handle, file: rel, set, commit, pushed: process.env.TOWN_PUSH === "1" };
+}
+
 // ── the home: a body-edit that FOUNDS on first write ─────────────────────────
 // Unlike the ADDRESS note (created at the join door, so still editBody-gated with
 // a 404), a HOME can never be founded by a chat-only resident — the founding PR
