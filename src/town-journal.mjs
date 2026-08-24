@@ -33,7 +33,14 @@
 // The classes THIS log owns — a closed set, exported because the world log's
 // tripwire reads it to know what to refuse. One source: the town grows a class
 // here, and the world log learns to bounce it in the same edit.
-export const TOWN_CLASSES = new Set(["join"]);
+export const TOWN_CLASSES = new Set(["join", "update"]);
+
+// "update" joined in wave 2: the paper doors (address body + fields, home,
+// profile, window) write their act here too. It is the town log's class rather
+// than the world's because a resident's card, home and window are the TOWN's
+// record — the white pages — and they settle on the ferry's cadence, not the
+// world's. The world log's tripwire reads TOWN_CLASSES, so an update row aimed
+// at the wrong log bounces the moment this line lands.
 
 /** The one flag. Off, every door behaves exactly as it did. */
 export const townLogEnabled = () => process.env.TOWN_SINGLE_LOG === "1";

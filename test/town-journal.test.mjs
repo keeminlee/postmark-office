@@ -80,7 +80,7 @@ test("THE TRIPWIRE: a join row aimed at the world log bounces at write time", ()
     "a row in the wrong log is a bug; bouncing costs a stack trace, being eaten at truncate time costs somebody their household");
   // and the reverse fence
   assert.throws(() => appendTownJournal(db, { cls: CLASS_MARK, act: "leave-mark", household: "h" }),
-    /the town log holds join rows/);
+    /the town log holds join, update rows/);
 });
 
 // ── DESIGN-IN 1: pending-name uniqueness ────────────────────────────────────

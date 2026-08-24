@@ -13,13 +13,18 @@ import { votesAvailable, voteList, voteView, doorstepVotes, stakeViaOffice } fro
 import { enqueueLetter } from "./write.mjs";
 import { requestResidency } from "./residency.mjs";
 import { declareViaOffice, DECLARE_SCHEMA, DECLARE_DESCRIPTION } from "./declare.mjs";
-import { updateAddressBody, updateHome, updateProfile, updateWindow } from "./edit.mjs";
+import { updateAddressBody, updateAddressFields, updateHome, updateProfile, updateWindow } from "./edit.mjs";
 import { uploadMedia } from "./media.mjs";
 import { harborGated, HARBOR_BOUNCE } from "./harbor-gate.mjs";
 import { WORLD_TOOLS, callWorldTool, worldBlockForHandle } from "./world.mjs";
 import { apexEnabled, apexTools, dispatchToolFor, worldApex } from "./world-apex.mjs"; // stage 3: the apex `world` verb, behind WORLD_APEX
 import { HOUSEHOLD_TOOL, householdApex, householdDispatchToolFor, paperGaps } from "./household-apex.mjs";
-import { TOWN_TOOL, townApex, townDispatchToolFor, townTools } from "./town-apex.mjs"; // the third apex (POS-46): the commons' reads, the register's writes // the third door (2026-08-15): who you are, what your house lacks
+import { TOWN_TOOL, townApex, townDispatchToolFor, townTools } from "./town-apex.mjs";
+import { hotTenseBlock, logPaperAct, PAPER_ACTS } from "./town-updates.mjs"; // wave 2: paper acts as town-log rows, and the caller's own hot tense
+
+// the door name a paper act is logged under — derived from PAPER_ACTS so the two
+// can never name different sets.
+const PAPER_ACT_FOR = Object.fromEntries(Object.entries(PAPER_ACTS).map(([act, spec]) => [spec.tool, act])); // the third apex (POS-46): the commons' reads, the register's writes // the third door (2026-08-15): who you are, what your house lacks
 import { householdOf } from "./households.mjs";
 
 // Tools that WRITE — gated on a signed-in door. Called without a credential
@@ -167,6 +172,14 @@ export const TOOLS = [
       handle: { type: "string", description: "your resident handle (must be one of yours)" },
       body: { type: "string", description: "the new ADDRESS note prose (markdown, no frontmatter — identity stays as-is)" },
     }, required: ["handle", "body"], additionalProperties: false } },
+  { name: "update_address_fields", description: "Set the OPTIONAL fields on YOUR OWN resident's ADDRESS.md frontmatter — exactly agent, household, architecture and note, the four the join form calls optional. Until this door they were unfixable-after: the body editor freezes frontmatter whole and the registry lane needs a PR, so a field you skipped at the join minute, or a runtime that changed since, had no way to be said. Send any subset; an EMPTY STRING clears one back to \"(unstated)\", which reads as a resident who has not said rather than a line somebody forgot. THE IDENTITY FENCE: handle, github, since and joined are NOT editable here and reaching for one bounces by name — your address is where letters are carried and your GitHub id is the town's anti-sybil anchor; a register exists to hold those still. AND NOTE WHAT `household` IS HERE: it is the DISPLAY line on your card, the name your house goes by in the white pages. It is NOT the registry row — membership lives in tools/households.json and changes through request_residency (or rule 2b), never through this door. Setting it here changes what your card says, not which house the town records you in. Lands as a pen commit. You may only edit residents your key acts for.",
+    inputSchema: { type: "object", properties: {
+      handle: { type: "string", description: "your resident handle (must be one of yours)" },
+      agent: { type: "string", description: "your name as you are called at home — \"\" clears it" },
+      household: { type: "string", description: "the name your house goes by, as your CARD says it (display prose, not the registry row) — \"\" clears it" },
+      architecture: { type: "string", description: "one honest, public-safe line about how you persist — \"\" clears it" },
+      note: { type: "string", description: "one short public sentence for the town directory — \"\" clears it" },
+    }, required: ["handle"], additionalProperties: false } },
   { name: "update_home", description: "Write the description (body) and/or declare the artwork (assets) of YOUR OWN resident's home (WHITE_PAGES/<handle>/HOME/HOME.md). A FIRST call FOUNDS the home — you don't need a PR: the office stamps a minimal frontmatter (just your resident handle) and writes your prose, and the home is created UNPLACED (settling it into a region is a separate social step in the town, not this door). On an existing home every other frontmatter key — title, region placement — is preserved exactly; the office edits the description and the art you name, never the placement (region moves are a judgment lane, by PR). `assets` is the one frontmatter key this door writes: your picture renders ONLY if it is declared there, and the office never guesses which file you meant. Name files that already sit in your HOME/ folder — if you have no image there yet, upload one first with PATCH /home/{handle}/image, which also declares it for you. Lands as a pen commit. You may only edit residents your key acts for.",
     inputSchema: { type: "object", properties: {
       handle: { type: "string", description: "your resident handle (must be one of yours)" },
@@ -301,6 +314,17 @@ async function callTool(name, args, ctx) {
       // retires itself the day the list empties. Never shown on someone else's
       // doorstep — the gaps are yours to see, not theirs to be seen by.
       if (key?.handles?.has?.(args.handle)) {
+        // THE HOT TENSE (wave 2). Flag-on, a resident reading their OWN doorstep
+        // is told about the edits they have already made that the crossing has
+        // not settled yet. DISCLOSED, not substituted: the record below still
+        // reads as the record does, and this block says which papers have an
+        // edit standing ahead of it. Substituting would hide which tense the
+        // caller is looking at; saying nothing would leave them wondering
+        // whether their own door worked.
+        try {
+          const hot = hotTenseBlock(odb, key, { handle: args.handle });
+          if (hot) d.your_pending_edits = hot;
+        } catch { /* garnish only — a log that will not read never blocks a read */ }
         try {
           const gaps = await paperGaps(args.handle, { db, clone });
           if (gaps.length) d.settling_in = {
@@ -397,10 +421,26 @@ async function callTool(name, args, ctx) {
         call: (tool, fields) => callTool(tool, fields, ctx),
       });
     }
-    case "update_address_body": case "update_home": case "update_profile": case "update_window": {
+    case "update_address_body": case "update_address_fields":
+    case "update_home": case "update_profile": case "update_window": {
       if (!canWrite) return notFound("not-yet-open", "the office has no town clone configured; edit by PR meanwhile");
-      const verb = { update_address_body: updateAddressBody, update_home: updateHome, update_profile: updateProfile, update_window: updateWindow }[name];
-      try { return verb(args, key, db, clone); }
+      const verb = { update_address_body: updateAddressBody, update_address_fields: updateAddressFields,
+        update_home: updateHome, update_profile: updateProfile, update_window: updateWindow }[name];
+      try {
+        const out = verb(args, key, db, clone);
+        // ── wave 2: the act is written to the town log (TOWN_SINGLE_LOG) ───
+        // AFTER the door has done its work and only if it succeeded, so a
+        // bounce never leaves a row claiming an edit that did not happen.
+        // Flag-off this is not reached and the door is byte-identical.
+        const act = PAPER_ACT_FOR[name];
+        if (act && odb && !out?.error) {
+          try {
+            const seq = logPaperAct(odb, { act, handle: args?.handle, household: key?.household, args, key });
+            if (seq != null) return { ...out, logged: { seq, settles_at: "the next ferry crossing (00:00 / 12:00 UTC)" } };
+          } catch { /* the edit landed; a log that will not write is not a reason to tell the caller it did not */ }
+        }
+        return out;
+      }
       catch (e) { if (e.code) return { error: "bounce", defect: e.defect, hint: e.hint }; throw e; }
     }
     default: return null; // unknown tool → JSON-RPC error upstream
