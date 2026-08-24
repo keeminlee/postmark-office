@@ -325,7 +325,32 @@ export function toFlatFields(action, fields) {
 // moment the apex went embodied-only. While they sat here they were eating
 // walk's DESTINATION fields out of its card, so the one act whose whole point
 // is a coordinate could not show a resident what to pass.
-const STANDPOINT_PARAMS = new Set(["handle"]);
+export const STANDPOINT_PARAMS = new Set(["handle"]);
+
+/**
+ * A tool's properties, turned into the `fields` block an action entry carries.
+ * ONE implementation, exported, because the household apex speaks this same
+ * grammar (household-apex.mjs) and a second copy of "strip the standpoint, mark
+ * the required ones" would drift the two apexes apart field by field — which is
+ * precisely what the procedural affordance downstream cannot survive.
+ *
+ * `strip` names the params the standpoint has already settled; it defaults to
+ * this door's own set. A caller whose standpoint settles a DIFFERENT set passes
+ * its own — the household apex does, because `handle` is its standpoint on the
+ * four paper acts and the act's own required field everywhere else. Which
+ * params are standpoint is a fact about the door, not about the grammar, and
+ * the walk round's narrowing of this set (x and y freed for walk's destination)
+ * is the same lesson arriving from the other side.
+ */
+export function actionFields(props = {}, required = [], { strip = STANDPOINT_PARAMS } = {}) {
+  const req = new Set(required ?? []);
+  const fields = {};
+  for (const [name, spec] of Object.entries(props ?? {})) {
+    if (strip.has(name)) continue;
+    fields[name] = { ...spec, ...(req.has(name) ? { required: true } : {}) };
+  }
+  return fields;
+}
 
 let _flatSchemas = null;
 function flatSchemas() {
@@ -337,14 +362,7 @@ function flatSchemas() {
   // discipline — and inventing a second grammar here for two verbs would be
   // exactly the drift that seam exists to close.
   for (const tool of [...WORLD_TOOLS, ...WORLD_STAKE_TOOLS, ...CROSSING_TOOLS, ...STANCE_TOOLS]) {
-    const props = tool?.inputSchema?.properties ?? {};
-    const required = new Set(tool?.inputSchema?.required ?? []);
-    const fields = {};
-    for (const [name, spec] of Object.entries(props)) {
-      if (STANDPOINT_PARAMS.has(name)) continue;
-      fields[name] = { ...spec, ...(required.has(name) ? { required: true } : {}) };
-    }
-    _flatSchemas.set(tool.name, fields);
+    _flatSchemas.set(tool.name, actionFields(tool?.inputSchema?.properties, tool?.inputSchema?.required));
   }
   return _flatSchemas;
 }

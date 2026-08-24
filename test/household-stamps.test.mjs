@@ -279,11 +279,17 @@ test("the stake answer and the fund read carry the menu and the mode, not a summ
   // the stake answer dropped its copy and the fund read kept one.
   assert.equal((src.match(/mode: \{ mark: STAKE_POT_MARK, says: STAKE_POT_BODY \}/g) ?? []).length, 2,
     "the mode class rides the stake answer AND the fund read's menu");
-  // NO MODE ARGUMENT, and the door says why rather than leaving it a silence
+  // NO MODE ARGUMENT, and the door says why rather than leaving it a silence.
+  //
+  // This asserted the SOURCE LITERAL `stake: { from: 1, pot: 1, stamps: 1 }`
+  // until the actions grammar landed (2026-08-23) and turned that presence map
+  // into a real field schema — a rewrite that changed nothing about which
+  // fields the act takes, and broke the probe anyway, because the probe was
+  // pinned to the spelling rather than to the claim. Re-aimed at the ANSWER: it
+  // now reads the fields off the door itself, where a mode argument would
+  // actually have to appear to do any harm.
   const apex = readFileSync(new URL("../src/household-apex.mjs", import.meta.url), "utf8");
-  assert.match(apex, /stake: \{ from: 1, pot: 1, stamps: 1 \}/,
-    "the stake takes from, pot, stamps — a mode argument would contradict the taxonomy");
-  assert.equal(/mode: 1/.test(apex), false, "no mode field is accepted");
+  assert.equal(/\bmode\s*:/.test(apex), false, "no mode field is declared anywhere on the door");
   assert.match(src, /the object publishes the menu and the edge records the choice/);
   // the consent payload rides the fund read, BEFORE the money moment
   const fundRead = src.slice(src.indexOf("export function fundRead"));
@@ -296,6 +302,21 @@ test("the stake answer and the fund read carry the menu and the mode, not a summ
     "the menu a caller is consenting to must come before the address they act on");
   // anchored: a renamed key still contains the old name as a substring
   assert.match(fundRead, /\bpublished_close: p\.close/);
+});
+
+test("the stake's fields, read off the door: from, pot, stamps — and no mode", async () => {
+  // The behavioural half of the claim above. THE TAXONOMY (world main 3af43f61):
+  // the OBJECT publishes the menu and the EDGE records the choice, so every
+  // serviceable menu offers exactly one mode and the mode is IMPLIED BY THE
+  // TARGET. A `mode` argument here would be the door inviting a caller to
+  // contradict the record.
+  const { householdApex } = await import("../src/household-apex.mjs");
+  const answer = await householdApex({}, { household: "testers", handles: new Set(["tester"]) },
+    { db: null, schemas: {}, schemaRequired: {} });
+  const stake = answer.actions.find((a) => a.action === "stake");
+  assert.ok(stake, "the stake must be among the acts the door publishes");
+  assert.deepEqual(Object.keys(stake.fields).sort(), ["from", "pot", "stamps"]);
+  assert.equal("mode" in stake.fields, false, "a mode argument would contradict the taxonomy");
 });
 
 test("the primary residue is the mode class, with keeping law still citable", () => {

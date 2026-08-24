@@ -234,6 +234,20 @@ const flatPropsMap = () => {
   return _flatProps;
 };
 
+// The same tools' `required` lists, kept apart from the property map because
+// the two have different readers: the property map is what the unknown-field
+// validator admits against, and this is what the actions grammar marks
+// `required: true` from (household-apex.mjs § fieldsForAct). Merging them would
+// make the validator's `k in declared` answer true for the word "required".
+let _flatRequired = null;
+const flatRequiredMap = () => {
+  if (!_flatRequired) {
+    _flatRequired = {};
+    for (const t of TOOLS) _flatRequired[t.name] = t.inputSchema?.required ?? [];
+  }
+  return _flatRequired;
+};
+
 async function callTool(name, args, ctx) {
   const { db, key, meta, asOf, canWrite, clone, pen, odb, dbPath } = ctx;
   const notFound = (what, hint) => ({ error: "bounce", defect: what, hint });
@@ -357,7 +371,7 @@ async function callTool(name, args, ctx) {
       catch (e) { if (e.code) return { error: "bounce", defect: e.defect, hint: e.hint }; throw e; }
     }
     case "household": {
-      return householdApex(args, key, { db, clone, odb, dbPath, pen, canWrite, schemas: flatPropsMap() });
+      return householdApex(args, key, { db, clone, odb, dbPath, pen, canWrite, schemas: flatPropsMap(), schemaRequired: flatRequiredMap() });
     }
     case "update_address_body": case "update_home": case "update_profile": case "update_window": {
       if (!canWrite) return notFound("not-yet-open", "the office has no town clone configured; edit by PR meanwhile");

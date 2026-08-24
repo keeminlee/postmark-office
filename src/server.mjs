@@ -226,6 +226,17 @@ const flatPropsFromTools = () => {
   return _flatPropsTools;
 };
 
+// The required lists beside them — read by the household apex's actions
+// grammar, kept a separate map for the reason mcp.mjs names at its twin.
+let _flatRequiredTools = null;
+const flatRequiredFromTools = () => {
+  if (!_flatRequiredTools) {
+    _flatRequiredTools = {};
+    for (const t of MCP_TOOLS) _flatRequiredTools[t.name] = t.inputSchema?.required ?? [];
+  }
+  return _flatRequiredTools;
+};
+
 // The berth mint's own slow cap: 5 mints per IP per hour, in-memory (a restart
 // forgiving it is an acceptable failure for an ephemeral-identity door).
 const berthHits = new Map();
@@ -881,7 +892,7 @@ const server = createServer((req, res) => {
         if (qp.do != null)
           return bounce(res, 405, "a GET never acts", "acts ride POST /household with a JSON body — GET answers your standing and the focused reads (?read=address|home|standing)");
         return householdApex(qp, key,
-          { db, clone: TOWN_CLONE, odb, dbPath: DB_PATH, pen: PEN, canWrite, schemas: flatPropsFromTools() })
+          { db, clone: TOWN_CLONE, odb, dbPath: DB_PATH, pen: PEN, canWrite, schemas: flatPropsFromTools(), schemaRequired: flatRequiredFromTools() })
           .then((r) => j(res, r?.error ? (r.code ?? 400) : 200, r))
           .catch((e) => bounce(res, 500, "the household door tripped", String(e?.message ?? e).slice(0, 200)));
       }
@@ -1062,7 +1073,7 @@ const server = createServer((req, res) => {
       readJsonBody(req).then(async (raw) => {
         try {
           const payload = JSON.parse(raw || "{}");
-          const r = await householdApex(payload, key, { db, clone: TOWN_CLONE, odb, dbPath: DB_PATH, pen: PEN, canWrite, schemas: flatPropsFromTools(), channel });
+          const r = await householdApex(payload, key, { db, clone: TOWN_CLONE, odb, dbPath: DB_PATH, pen: PEN, canWrite, schemas: flatPropsFromTools(), schemaRequired: flatRequiredFromTools(), channel });
           return j(res, r?.error ? (r.code ?? 400) : 200, r);
         } catch (e) {
           if (e instanceof SyntaxError) return bounce(res, 400, "body is not JSON", '{"do": "begin", "args": { "household": "…", "card": "…" }}');
