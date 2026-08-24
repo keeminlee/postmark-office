@@ -225,6 +225,42 @@ select option { background: var(--harbor); }
 }
 .tool[open] .teaser { display: none; }
 
+/* ── the verb register ──────────────────────────────────────────────────────
+   Two registers over the ordinary card. GOLD is the town's first-class door —
+   the apex verbs, brighter accent, a lit left edge. GRAY is a migrated flat:
+   still listed, still callable, and visually retired, so a reader's eye lands
+   on the way IN rather than on the way it used to be. Everything else keeps
+   the ordinary card, which is most of the town. */
+
+.tool .vtag {
+  font-family: var(--mono);
+  font-size: 0.54rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  border-radius: 999px;
+  padding: 2px 7px;
+  flex: none;
+}
+.tool .vtag.apex { color: var(--night); background: linear-gradient(180deg, var(--gold-bright), var(--gold)); }
+.tool .vtag.vestigial { color: var(--ink-dim); border: 1px solid rgba(142, 133, 116, 0.5); }
+
+.tool.apex {
+  border-color: rgba(232, 196, 139, 0.42);
+  box-shadow: inset 3px 0 0 var(--gold), 0 0 22px rgba(232, 196, 139, 0.06);
+  background: linear-gradient(180deg, rgba(35, 30, 18, 0.55), rgba(13, 20, 38, 0.35));
+}
+.tool.apex > summary .name { color: var(--gold-bright); }
+.tool.apex[open] { border-color: var(--gold); }
+
+.tool.vestigial { border-color: rgba(142, 133, 116, 0.22); background: rgba(13, 20, 38, 0.28); }
+.tool.vestigial > summary .name { color: var(--ink-dim); font-weight: 400; }
+.tool.vestigial > summary .teaser { color: #6f685c; }
+.tool.vestigial[open] { border-color: rgba(142, 133, 116, 0.45); }
+/* Retired in the list, fully legible once opened: a reader who deliberately
+   opens a migrated verb still needs its law-prose at full contrast. */
+.tool.vestigial[open] > summary .name { color: var(--ink); }
+
 .tool .body { padding: 0 0.9em 0.9em; }
 
 /* The description is the town's law-prose. Rendered WHOLE — never clamped,
@@ -345,6 +381,55 @@ select option { background: var(--harbor); }
 .afford .abtns button { text-transform: none; letter-spacing: 0.01em; font-size: 0.72rem; }
 .afford .abtns button .fc { color: var(--ink-dim); font-size: 0.62rem; margin-left: 0.4em; }
 
+/* ── an image content block, rendered as a picture ─────────────────────────── */
+
+.shot {
+  margin: 0 0 0.7em;
+  padding: 0.5em;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: rgba(7, 11, 21, 0.6);
+}
+/* The plate: a visible ground the picture sits on, at whatever size it really
+   is. It carries the click target and the minimum presence, so a 1px image is
+   legibly a 1px image rather than an empty frame — and a large one is simply
+   the picture. The check pattern also gives a transparent PNG something to be
+   seen against on a dark page. */
+.shot .plate {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 5em;
+  padding: 0.5em;
+  border-radius: 5px;
+  cursor: zoom-in;
+  background:
+    linear-gradient(45deg, rgba(255, 255, 255, 0.045) 25%, transparent 25%, transparent 75%, rgba(255, 255, 255, 0.045) 75%) 0 0/16px 16px,
+    linear-gradient(45deg, rgba(255, 255, 255, 0.045) 25%, transparent 25%, transparent 75%, rgba(255, 255, 255, 0.045) 75%) 8px 8px/16px 16px,
+    rgba(255, 255, 255, 0.02);
+}
+.shot .plate:hover { outline: 1px solid var(--line-hot); }
+.shot img {
+  display: block;
+  max-width: 100%;
+  max-height: 22em;
+  width: auto;
+  border-radius: 3px;
+  /* an image smaller than a few pixels still needs to be findable on the plate */
+  outline: 1px solid rgba(232, 196, 139, 0.35);
+  outline-offset: 1px;
+}
+.shot.full .plate { cursor: zoom-out; }
+.shot.full img { max-height: none; }
+.shot .shotmeta {
+  margin-top: 0.45em;
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
+  color: var(--ink-dim);
+}
+.shot .shotfail { margin: 0; font-family: var(--mono); font-size: 0.72rem; color: var(--wax-ink); }
+
 /* ── JSON tree ────────────────────────────────────────────────────────────── */
 
 .json {
@@ -372,6 +457,13 @@ select option { background: var(--harbor); }
 .json .nul { color: var(--ink-dim); }
 .json .meta { color: var(--ink-dim); }
 .json pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); }
+
+/* The raw envelope can carry a megabyte of base64 when a tool returned an
+   image. It stays WHOLE — it is the only view claiming to be the wire — and
+   inherits .json's scroll cap, so it is present and findable without eating
+   the pane. Word-breaking keeps one unbroken base64 run from forcing a
+   horizontal scrollbar across the whole page. */
+.json.raw { max-height: 20em; overflow-wrap: anywhere; word-break: break-all; }
 
 /* ── history ──────────────────────────────────────────────────────────────── */
 

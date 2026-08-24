@@ -49,6 +49,56 @@
   var SS_VERIFIER = "pm.mcpproto.verifier";  // sessionStorage: one sign-in attempt
   var SS_STATE = "pm.mcpproto.state";        // sessionStorage: the CSRF check
 
+  // ── the verb register ───────────────────────────────────────────────────────
+  //
+  // PRESENTATION SEASONING, NOT DOOR KNOWLEDGE. Everything else in this file is
+  // procedural and names no door; this block is the deliberate exception, and it
+  // is quarantined up here so that stays obvious. Only the card renderer reads
+  // it. A wrong entry costs a colour and nothing else — no call is gated,
+  // refused, reordered or altered by anything below.
+  //
+  // GOLD is DERIVED, not listed: a tool whose schema declares the do:(string) +
+  // args:(object) envelope IS an apex. That is the same gate `apexEnvelope`
+  // already uses for the actions affordance, reused rather than restated — so a
+  // new apex arrives gold the day it ships, with no edit here.
+  //
+  // GRAY is HANDROLLED, and cannot be otherwise: "this flat's function now lives
+  // behind an apex" is a fact about the town's migrations, not a fact any schema
+  // carries. A gray verb still works and is still callable; gray only says it is
+  // no longer the way in.
+  //
+  // CHECK IT AGAINST THESE WHEN A MIGRATION LANDS — they are the source of truth,
+  // this array is a copy and copies drift:
+  //   · src/world-apex.mjs      DISPATCH   — the act half (which flat each do: becomes)
+  //   · src/mcp.mjs             DELISTED   — the read half the apex answers for
+  //   · src/household-apex.mjs  ACTS       — the household half
+  // Verified against all three 2026-08-23.
+  //
+  // DELIBERATELY ABSENT, each for a reason worth keeping:
+  //   · world_investigate — un-delisted 2026-08-23 because the apex has NO
+  //     investigate, so this flat is the only door to it. Not vestigial. It
+  //     joins the day the apex grows an equivalent.
+  //   · send_letter and the mail lane — the mail asymmetry. A letter costs
+  //     nothing and reaches anyway, so no mail verb is ever an affordance of a
+  //     place; it never migrates.
+  //   · the public roster reads (read_town, read_stamps, list_residents …) —
+  //     global reads with no standpoint. There is nothing to migrate them to.
+  var MIGRATED_FLATS = [
+    // world, the act half — world { do: … }
+    "world_say", "world_walk", "world_leave_mark", "world_withdraw_mark",
+    "world_stake", "world_unstake", "world_hold",
+    // world_note dispatches from the apex too (do: "note-to-self"). It stays
+    // LISTED by ruling — "one flat remains" — but listed is about advertising,
+    // not about which door is the real one, and by function it is migrated.
+    "world_note",
+    // world, the read half — the bare apex read and read: <action>
+    "world_orient", "world_open_your_eyes", "world_my_marks", "world_walkers",
+    "world_stake_read", "world_holdings",
+    // household — household { do: … }
+    "household_begin", "declare_household", "request_residency",
+    "update_address_body", "update_home", "update_profile", "update_window",
+  ];
+
   // ── tiny DOM kit ──────────────────────────────────────────────────────────
 
   function el(tag, attrs, kids) {
@@ -603,6 +653,34 @@
     return d;
   }
 
+  // An MCP image content block, rendered as the picture it is. Capped in height
+  // so one answer cannot push the rest of the pane off screen; click to release
+  // the cap and see it whole, click again to put it back. Nothing here knows
+  // which tool produced it or what it depicts.
+  function imageNode(item) {
+    var mime = typeof item.mimeType === "string" && item.mimeType ? item.mimeType : "application/octet-stream";
+    // base64 is 4 chars per 3 bytes; near enough to state a size honestly.
+    var bytes = Math.round(String(item.data).replace(/=+$/, "").length * 3 / 4);
+    var img = el("img", { src: "data:" + mime + ";base64," + item.data, alt: "an image this tool returned" });
+    // The image sits on a PLATE rather than being the frame itself. A small
+    // image is genuinely small — a 64px avatar, a 1px dot — and upscaling it to
+    // fill a box would be the surface lying about what came back. The plate
+    // gives it a visible ground and a clickable area at any size, so a tiny
+    // picture reads as "a tiny picture" instead of as a broken frame.
+    var plate = el("div", { class: "plate" }, [img]);
+    var wrap = el("figure", { class: "shot" }, [plate]);
+    var meta = el("figcaption", { class: "shotmeta", text: mime + " · ~" + bytes.toLocaleString() + " bytes · click to toggle full size" });
+    wrap.appendChild(meta);
+    plate.addEventListener("click", function () { wrap.classList.toggle("full"); });
+    // A picture that will not decode says so, rather than leaving a broken
+    // frame and no explanation.
+    img.addEventListener("error", function () {
+      clear(wrap);
+      wrap.appendChild(el("p", { class: "shotfail", text: "this image block did not decode — " + mime + ", ~" + bytes.toLocaleString() + " bytes. The raw envelope below still holds it verbatim." }));
+    });
+    return wrap;
+  }
+
   // ── the one grammar-aware affordance ──────────────────────────────────────
   //
   // Walk any payload for arrays named `actions` whose entries carry both an
@@ -674,14 +752,29 @@
     return t.length > 120 ? t.slice(0, 117) + "…" : t;
   }
 
+  // Which register a verb wears. "apex" is derived from the tool's own schema;
+  // "vestigial" is the handrolled list at the top of this file; everything else
+  // gets the ordinary card, which is most of the town and should stay that way.
+  // An apex that somehow appeared on the migrated list is still gold: a door
+  // cannot be both the way in and retired, and the derived fact outranks the
+  // copied one.
+  function verbRegister(tool) {
+    if (apexEnvelope(tool)) return "apex";
+    if (MIGRATED_FLATS.indexOf(tool && tool.name) >= 0) return "vestigial";
+    return "";
+  }
+
   function toolCard(tool) {
     var schema = tool.inputSchema || {};
     var props = schema.properties || {};
     var n = Object.keys(props).length;
+    var register = verbRegister(tool);
 
-    var details = el("details", { class: "tool" });
+    var details = el("details", { class: "tool" + (register ? " " + register : "") });
     details.appendChild(el("summary", {}, [
       el("span", { class: "name", text: tool.name }),
+      register === "apex" ? el("span", { class: "vtag apex", text: "apex" }) : null,
+      register === "vestigial" ? el("span", { class: "vtag vestigial", title: "still works, still callable — but its function now lives behind an apex verb", text: "migrated" }) : null,
       el("span", { class: "teaser", text: firstLine(tool.description) }),
       el("span", { class: "argcount", text: n === 1 ? "1 arg" : n + " args" }),
     ]));
@@ -798,6 +891,13 @@
         if (item && item.type === "text" && typeof item.text === "string") {
           try { payloads.push({ parsed: JSON.parse(item.text) }); }
           catch (e) { payloads.push({ text: item.text }); }
+        } else if (item && item.type === "image" && typeof item.data === "string") {
+          // A picture is for looking at. Rendering base64 into the JSON tree
+          // would be several thousand lines of the reader's attention spent on
+          // bytes no human reads — so an image block becomes an image. Generic
+          // by type, as ever: any tool's image block lands here and nothing
+          // knows which tool sent it.
+          payloads.push({ image: item });
         } else payloads.push({ parsed: item });
       });
     } else payloads.push({ parsed: env.error !== undefined ? env.error : result !== undefined ? result : env });
@@ -827,12 +927,18 @@
     }
 
     payloads.forEach(function (p) {
-      if (p.text !== undefined) ui.response.appendChild(el("pre", { class: "json", text: p.text }));
+      if (p.image) ui.response.appendChild(imageNode(p.image));
+      else if (p.text !== undefined) ui.response.appendChild(el("pre", { class: "json", text: p.text }));
       else ui.response.appendChild(el("div", { class: "json" }, [jsonTree(p.parsed, null, 0)]));
     });
 
+    // The raw envelope stays WHOLE — base64 and all. It is the only view that
+    // claims to be what came off the wire, and a truncated one would be a lie
+    // dressed as a receipt. It is collapsed by default and its pre scrolls
+    // inside a fixed height, which is the honest way to keep a megabyte of
+    // base64 from eating the page: present, findable, not in the way.
     var rawTog = el("details", { class: "instr" }, [el("summary", { text: "raw JSON-RPC envelope" })]);
-    rawTog.appendChild(el("pre", { class: "json", text: JSON.stringify(env, null, 2) }));
+    rawTog.appendChild(el("pre", { class: "json raw", text: JSON.stringify(env, null, 2) }));
     ui.response.appendChild(rawTog);
   }
 
@@ -1072,6 +1178,7 @@
       discoverAS: discoverAS, officeBase: officeBase, parseCallback: parseCallback,
       completeCallback: completeCallback, tokenIsFresh: tokenIsFresh, credShape: credShape,
       getCred: getCred, redirectUri: redirectUri, elsewhere: elsewhere, refreshIfStale: refreshIfStale,
+      verbRegister: verbRegister, imageNode: imageNode, MIGRATED_FLATS: MIGRATED_FLATS,
       keys: { LS_KEY: LS_KEY, LS_CRED: LS_CRED, LS_CLIENT: LS_CLIENT, SS_STATE: SS_STATE, SS_VERIFIER: SS_VERIFIER },
     },
   };
