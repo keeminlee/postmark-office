@@ -377,9 +377,9 @@ export function updateProfile(args, key, db, clone) {
 // own closing marker before any town file is touched.
 
 // One owner for "are these bytes a real, whole image the office will accept" —
-// the avatar door, the home-image door, and the media shelf (media.mjs) ask the
+// the avatar door, the home-image door, and the media door (media.mjs) ask the
 // identical question and must never drift into two answers. Only the size
-// ceiling and the noun differ. Exported for the shelf, never re-implemented.
+// ceiling and the noun differ. Exported for media, never re-implemented.
 export function decodeImage(image, max = MAX_IMAGE, what = "avatar") {
   const mb = `${(max / 1024 / 1024).toFixed(max % (1024 * 1024) === 0 ? 0 : 1)} MB`;
   // Over the ceiling is not a dead end — say the other door out loud, or the
@@ -407,9 +407,9 @@ export function decodeImage(image, max = MAX_IMAGE, what = "avatar") {
 // The formats a door may admit. RASTER is what every door has always taken and
 // stays the default, so adding a format below can never widen an existing door
 // by accident — a door opts in by naming its set, and the two enumerations are
-// the whole difference between the avatar door and the shelf.
+// the whole difference between the avatar door and the media door.
 export const RASTER_FORMATS = Object.freeze(["jpg", "png", "webp"]);
-export const SHELF_FORMATS = Object.freeze([...RASTER_FORMATS, "svg"]);
+export const MEDIA_FORMATS = Object.freeze([...RASTER_FORMATS, "svg"]);
 
 // SVG HAS NO MAGIC BYTES, so it cannot be recognised the way the other three
 // are: it is XML text, and the only honest question is whether these bytes are
@@ -425,7 +425,7 @@ export const SHELF_FORMATS = Object.freeze([...RASTER_FORMATS, "svg"]);
 // <img src> or SVG <image href>, and in that context — "SVG as an image" — the
 // spec requires the browser to disable scripting and external references
 // entirely. A script-bearing SVG is therefore inert as art no matter what it
-// says, and the headers on the shelf host cover the one case that is not art:
+// says, and the headers on the media host cover the one case that is not art:
 // somebody navigating straight at the file.
 //
 // The consequence to hold on to: an accepted SVG is UNTRUSTED MARKUP the town
@@ -499,7 +499,7 @@ function looksLikeSVG(bytes) {
 // The extension a sniffed format is stored under, and the media type it is
 // served as — ONE table, because two readers now need it in opposite
 // directions. imageFormat goes bytes -> ext -> type at upload; the media
-// shelf's read (media.mjs § mediaShelfRows) has only the `ext` the ledger
+// media read (media.mjs § mediaLedgerRows) has only the `ext` the ledger
 // recorded and must arrive at the same type the upload answered with. Before
 // this table the mapping lived inline in the branches below, so the reading
 // direction had nowhere to borrow it from and would have had to hand-type a

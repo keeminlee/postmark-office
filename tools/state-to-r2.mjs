@@ -23,7 +23,7 @@
 // committing its lines into the world repo at each save is the follow-up rung
 // ("canon answers to replay" — the repo must NAME what it no longer holds).
 //
-// Serves from the SAME bucket the media shelf uses (public via
+// Serves from the SAME bucket the media door uses (public via
 // media.postmark.town — STATE is public data in the world repo already, so
 // the exposure is unchanged). Env: R2_* (as media.mjs), WORLD_CLONE, DYNAMIC_DB.
 //
