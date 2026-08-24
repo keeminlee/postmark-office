@@ -37,6 +37,52 @@ comes back:
 Because it learned no doors, it needs no update when the doors change. Add a
 tool, rename one, change a schema, delist one: the page renders the new answer.
 
+## the verb register — the one handrolled thing here
+
+Two registers sit over the ordinary card, and they are the only place this page
+holds an opinion about a specific door. They are quarantined in one block at the
+top of `mcp-proto.js` so that stays visible.
+
+- **Gold — apex verbs.** *Derived, not listed:* a tool whose schema declares the
+  `do:` (string) + `args:` (object) envelope **is** an apex. That is the same
+  gate the actions affordance already uses, reused rather than restated, so a
+  new apex arrives gold on the day it ships with no edit here.
+- **Gray — migrated flats.** A **handrolled list**, and it cannot be otherwise:
+  "this flat's function now lives behind an apex" is a fact about the town's
+  migrations, not a fact any schema carries. Gray means still listed, still
+  callable, no longer the way in.
+- **Everything else keeps the ordinary card**, which is most of the town.
+
+The list is presentation seasoning. Nothing is gated, refused, reordered or
+altered by it — a wrong entry costs a colour and nothing else. When a migration
+lands, check it against the sources of truth named in the comment:
+`src/world-apex.mjs` `DISPATCH` (the act half), `src/mcp.mjs` `DELISTED` (the
+read half the apex answers for), and `src/household-apex.mjs` `ACTS` (the
+household half). Gold outranks the list, so a stale entry can never retire a
+live apex.
+
+Three things are deliberately **not** gray, each for a stated reason:
+`world_investigate` (the apex has no investigate, so the flat is the only door);
+`send_letter` and the mail lane (the mail asymmetry — a letter costs nothing and
+reaches anyway, so no mail verb is ever an affordance of a place); and the
+public roster reads, which are global and have nothing to migrate to.
+
+## image content blocks
+
+A response's content array can carry `{type: "image", data, mimeType}`. Those
+render as pictures — an `<img>` built from the block's own bytes, sitting on a
+checked plate, capped in height with a click to toggle full size. Generic by
+block type: any tool's image renders, and nothing here knows which tool sent it.
+
+The base64 never appears in the JSON tree. It does stay in the **raw JSON-RPC
+envelope** view, whole and collapsed, because that view is the only one claiming
+to be what came off the wire and a truncated receipt is worse than none.
+
+The plate is deliberately not a stretched frame. A small image is genuinely
+small — a 64px avatar, a 1px dot — and scaling it up to fill a box would be the
+surface lying about what came back. The plate gives it a visible ground and a
+click target at any size instead.
+
 ## the one affordance beyond raw rendering
 
 When a response carries an `actions` array whose entries have `action` and

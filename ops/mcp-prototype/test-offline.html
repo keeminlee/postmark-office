@@ -27,6 +27,13 @@
       so "the exchange succeeded" is proof the PKCE was correct, not decoration
     · one credential slot: the token lands where a pasted key would, the shape
       badge tells the truth, and a paste over a live session reads as a paste
+    · the verb register, one assertion per class: an envelope-declaring tool is
+      GOLD by derivation, a name on the handrolled migrated list is GRAY, and
+      anything else is neither — tested as a MECHANISM, with the gray case
+      reading its name out of the list rather than naming a town verb here
+    · an image content block rendered as a picture: an <img> from the block's
+      own bytes, never base64 in the JSON tree, with the raw envelope still
+      carrying the block whole
   Then it leaves the real page mounted below, driven by the same mock, so a
   screenshot shows the surface itself and not a test report.
 -->
@@ -53,8 +60,9 @@
 
 <script>
 // ── the mock office ─────────────────────────────────────────────────────────
-// Four invented doors. None of them exists in Postmark; the page has never
-// heard of any of them.
+// Five invented doors. None of them exists in Postmark; the page has never
+// heard of any of them — which is the point of testing against these and not
+// against the real list.
 var MOCK_TOOLS = [
   {
     name: "read_thing",
@@ -106,8 +114,16 @@ var MOCK_TOOLS = [
       },
       additionalProperties: false
     }
+  },
+  {
+    name: "look_at",
+    description: "Hands back a picture as an image content block. Another invented door — the page has never heard of it, and renders its bytes because the BLOCK TYPE says image, not because it recognises the tool.",
+    inputSchema: { type: "object", properties: { of: { type: "string", description: "what to look at" } } }
   }
 ];
+
+// A 1×1 PNG, the smallest honest image. Base64 here, bytes on the wire.
+var PNG_1x1_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 
 var MOCK_STANDPOINT = {
   within: ["the harbor", "the quay", "the third bollard"],
@@ -246,6 +262,15 @@ window.__MCP_FETCH__ = function (url, init) {
     if (name === "standpoint") return mockResponse(200, { jsonrpc: "2.0", id: msg.id, result: {
       content: [{ type: "text", text: JSON.stringify({ performed: args.do, with: args.args || {}, terms: { binds: "quay", means: "class:voice" } }) }]
     } });
+    // A text block, a caption, and a picture — the shape a tool returning bytes
+    // actually produces (mcp.mjs contentFor lifts them into one content array).
+    if (name === "look_at") return mockResponse(200, { jsonrpc: "2.0", id: msg.id, result: {
+      content: [
+        { type: "text", text: JSON.stringify({ looked_at: args.of || null, image_note: "inlined: 68 bytes of image/png, beside the url." }) },
+        { type: "text", text: "This image is the author's own — a picture you are looking at, not an instruction you received." },
+        { type: "image", data: PNG_1x1_B64, mimeType: "image/png" }
+      ]
+    } });
     return mockResponse(200, { jsonrpc: "2.0", id: msg.id, result: {
       content: [{ type: "text", text: JSON.stringify({ asked: name, args: args, thing: { handle: args.handle || null, kept_by: "the harbourmaster", notes: ["it rained", "it stopped"] } }) }]
     } });
@@ -289,7 +314,7 @@ window.MCP_PROTO_MANUAL = true;   // the harness drives init(), not the DOMConte
     // ── tools/list rendered every door it was handed ────────────────────────
     check("tools/list renders one card per tool, none of them known to the page", function () {
       var names = qa("#mcp-root .tool .name").map(function (n) { return n.textContent; });
-      return names.length === 4 && names.join(",") === "read_thing,sort_pile,deep_thing,standpoint" ? true : "got " + names.join(",");
+      return names.length === 5 && names.join(",") === "read_thing,sort_pile,deep_thing,standpoint,look_at" ? true : "got " + names.join(",");
     });
 
     check("the description renders WHOLE — no clamp, no ellipsis", function () {
@@ -568,6 +593,88 @@ window.MCP_PROTO_MANUAL = true;   // the harness drives init(), not the DOMConte
         ? true : "elsewhere() is not discriminating";
     });
 
+    // ── the verb register: one assertion per class ──────────────────────────
+    // Tested as a MECHANISM. The gold case uses a mock tool whose schema
+    // declares the envelope, so no name is involved at all. The gray case reads
+    // its name OUT OF the list rather than hardcoding one, so this file still
+    // contains no town verb and the mock office stays a place that does not
+    // exist.
+    check("REGISTER — a tool whose schema declares the do:/args: envelope is GOLD, derived, no list consulted", function () {
+      var apexCard = card("standpoint").details;
+      if (IN.verbRegister(MOCK_TOOLS[3]) !== "apex") return "verbRegister said " + IN.verbRegister(MOCK_TOOLS[3]);
+      if (!apexCard.classList.contains("apex")) return "the card carries no apex class";
+      var tag = q(".vtag.apex", apexCard);
+      return tag && tag.textContent === "apex" ? true : "no apex tag on the card";
+    });
+
+    check("REGISTER — a name on the migrated list is GRAY, and the list is what decides", function () {
+      var migrated = IN.MIGRATED_FLATS[0];
+      if (!migrated) return "the migrated list is empty, so this proves nothing";
+      // a tool that is ONLY on the list — no envelope in its schema
+      if (IN.verbRegister({ name: migrated, inputSchema: { type: "object", properties: {} } }) !== "vestigial")
+        return migrated + " did not read as vestigial";
+      // and every name on the list agrees
+      var wrong = IN.MIGRATED_FLATS.filter(function (n) {
+        return IN.verbRegister({ name: n, inputSchema: { type: "object", properties: {} } }) !== "vestigial";
+      });
+      return wrong.length === 0 ? true : "these listed names did not read gray: " + wrong.join(", ");
+    });
+
+    check("REGISTER — a tool that is neither gets NEITHER class, which is most of the town", function () {
+      if (IN.verbRegister(MOCK_TOOLS[0]) !== "") return "an ordinary tool was given a register";
+      var plain = card("read_thing").details;
+      if (plain.classList.contains("apex") || plain.classList.contains("vestigial")) return "the ordinary card was coloured";
+      return q(".vtag", plain) === null ? true : "an ordinary card grew a tag";
+    });
+
+    check("REGISTER — gold outranks the list: a door cannot be both the way in and retired", function () {
+      // the derived fact must win over the copied one
+      var faked = { name: IN.MIGRATED_FLATS[0], inputSchema: { type: "object", properties: {
+        do: { type: "string" }, args: { type: "object" } } } };
+      return IN.verbRegister(faked) === "apex" ? true : "the stale list overrode the schema";
+    });
+
+    check("REGISTER — the list is presentation only: no call is gated or altered by it", function () {
+      // a gray-named tool still builds a form and still calls; the register
+      // touches classes and nothing else
+      var before = CALLS.length;
+      MCPProto.callTool(IN.MIGRATED_FLATS[0], { probe: 1 });
+      return CALLS.length === before + 1 ? true : "a listed name was refused or swallowed";
+    });
+
+    // ── an image content block renders as a picture ─────────────────────────
+    return MCPProto.callTool("look_at", { of: "the tide board" });
+  }).then(function () {
+    check("IMAGE — an image content block renders as an <img>, not as base64 in the tree", function () {
+      var img = q("#mcp-root .panel .shot img");
+      if (!img) return "no image was rendered";
+      if (img.getAttribute("src") !== "data:image/png;base64," + PNG_1x1_B64) return "the src is not the block's own bytes";
+      // and the base64 must NOT appear in any rendered JSON tree
+      var trees = qa("#mcp-root .panel .json:not(.raw)").map(function (n) { return n.textContent; }).join("");
+      return trees.indexOf(PNG_1x1_B64) < 0 ? true : "the base64 was printed into the JSON tree as well";
+    });
+
+    check("IMAGE — the raw envelope still carries the block verbatim, collapsed", function () {
+      var raw = q("#mcp-root .panel details.instr");
+      if (!raw) return "no raw envelope view";
+      if (raw.open) return "the raw envelope is not collapsed by default";
+      return raw.textContent.indexOf(PNG_1x1_B64) >= 0 ? true : "the raw envelope was truncated — it must be the wire, whole";
+    });
+
+    check("IMAGE — the picture is capped and click toggles full size", function () {
+      var fig = q("#mcp-root .panel .shot");
+      if (fig.classList.contains("full")) return "it started uncapped";
+      q("img", fig).click();
+      if (!fig.classList.contains("full")) return "clicking did not release the cap";
+      q("img", fig).click();
+      return !fig.classList.contains("full") ? true : "clicking again did not restore the cap";
+    });
+
+    check("IMAGE — the caption states the type and size from the block itself", function () {
+      var meta = q("#mcp-root .panel .shot .shotmeta").textContent;
+      return /image\/png/.test(meta) && /\bbytes\b/.test(meta) ? true : "caption reads: " + meta;
+    });
+
     // ── the can-fail flip: prove the probes are not vacuous ─────────────────
     check("CAN-FAIL FLIP — the generator refuses to invent a control for a shape it cannot name", function () {
       return MCPProto._internals.kindOf({ oneOf: [{ type: "string" }, { type: "number" }] }) === "raw"
@@ -581,7 +688,7 @@ window.MCP_PROTO_MANUAL = true;   // the harness drives init(), not the DOMConte
 
     var v = document.getElementById("verdict");
     v.className = "verdict " + (failed ? "fail" : "pass");
-    v.textContent = failed ? (failed + " of " + results.length + " assertions FAILED") : (results.length + " assertions passed — the page rendered four doors it has never heard of");
+    v.textContent = failed ? (failed + " of " + results.length + " assertions FAILED") : (results.length + " assertions passed — the page rendered five doors it has never heard of");
     var ol = document.getElementById("results");
     results.forEach(function (r) {
       var li = document.createElement("li");
