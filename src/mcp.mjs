@@ -21,6 +21,8 @@ import { apexEnabled, apexTools, dispatchToolFor, worldApex } from "./world-apex
 import { HOUSEHOLD_TOOL, householdApex, householdDispatchToolFor, paperGaps } from "./household-apex.mjs";
 import { TOWN_TOOL, townApex, townDispatchToolFor, townTools } from "./town-apex.mjs";
 import { hotTenseBlock, logPaperAct, PAPER_ACTS } from "./town-updates.mjs"; // wave 2: paper acts as town-log rows, and the caller's own hot tense
+import { hotMailBlock, sendLetterAsRow } from "./town-mail.mjs"; // wave 3: send_letter as a town-log row — the slow-mail law made structural
+import { townLogEnabled } from "./town-journal.mjs";
 
 // the door name a paper act is logged under — derived from PAPER_ACTS so the two
 // can never name different sets.
@@ -325,6 +327,18 @@ async function callTool(name, args, ctx) {
           const hot = hotTenseBlock(odb, key, { handle: args.handle });
           if (hot) d.your_pending_edits = hot;
         } catch { /* garnish only — a log that will not read never blocks a read */ }
+        // THE MAIL LAW (wave 3), and it is the asymmetric half. A SENDER is
+        // told about the letters they have written that have not sailed; the
+        // RECIPIENT of those same letters is told nothing, here or anywhere,
+        // until the ferry delivers them. Both halves come from one scope: the
+        // block matches rows whose HANDLE — the sender — the caller holds, and
+        // a letter's recipient never appears on that axis. Disclosed, never
+        // merged into the mail listing below: a pending letter that showed up
+        // in `mail` would read as delivery, which is the one thing it is not.
+        try {
+          const mail = hotMailBlock(odb, key, { handle: args.handle });
+          if (mail) d.your_pending_letters = mail;
+        } catch { /* garnish only */ }
         try {
           const gaps = await paperGaps(args.handle, { db, clone });
           if (gaps.length) d.settling_in = {
@@ -366,7 +380,18 @@ async function callTool(name, args, ctx) {
       : bulletinList(db);
     case "send_letter": {
       if (!canWrite) return notFound("not-yet-open", "the office has no town clone configured; send by PR meanwhile");
-      try { return enqueueLetter(args, key, db, clone); }
+      // ── wave 3 (TOWN_SINGLE_LOG): the letter becomes a town-log row ──────
+      // Flag-on nothing is written and nothing is committed — the letter is a
+      // row that becomes an outbox file at the crossing, which is what makes
+      // the town's slow-mail sentence structural instead of merely kept. The
+      // door still judges the letter first (the office's fence, then the
+      // ferry's own envelope law), so a malformed envelope costs a round-trip
+      // here rather than twelve hours at the crossing.
+      // Flag-off this branch is not reached and the door is byte-identical.
+      try {
+        if (townLogEnabled() && odb) return await sendLetterAsRow(args, key, db, clone, odb);
+        return enqueueLetter(args, key, db, clone);
+      }
       catch (e) { if (e.code) return { error: "bounce", defect: e.defect, hint: e.hint }; throw e; }
     }
     case "read_stamps": return args.handle

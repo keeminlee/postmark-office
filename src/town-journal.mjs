@@ -33,7 +33,7 @@
 // The classes THIS log owns — a closed set, exported because the world log's
 // tripwire reads it to know what to refuse. One source: the town grows a class
 // here, and the world log learns to bounce it in the same edit.
-export const TOWN_CLASSES = new Set(["join", "update"]);
+export const TOWN_CLASSES = new Set(["join", "update", "letter"]);
 
 // "update" joined in wave 2: the paper doors (address body + fields, home,
 // profile, window) write their act here too. It is the town log's class rather
@@ -41,6 +41,16 @@ export const TOWN_CLASSES = new Set(["join", "update"]);
 // record — the white pages — and they settle on the ferry's cadence, not the
 // world's. The world log's tripwire reads TOWN_CLASSES, so an update row aimed
 // at the wrong log bounces the moment this line lands.
+//
+// "letter" joined in wave 3 (POS-44's crown), and it is the class that makes
+// the town's oldest stated law STRUCTURAL rather than merely honoured. The door
+// already said it — "Slow-mail town: letters deliver on ferry crossings (~08:00
+// and ~20:00 US-Eastern), not instantly" — but flag-off the office still writes
+// the outbox file and commits it the instant you call, and only the FERRY's
+// cadence made the mail slow. Flag-on there is nothing to deliver early from: a
+// sent letter is a row, and a row cannot appear in anyone's inbox because rows
+// only become files at a crossing. The law stops being a promise the office
+// keeps and becomes a shape the office cannot break.
 
 /** The one flag. Off, every door behaves exactly as it did. */
 export const townLogEnabled = () => process.env.TOWN_SINGLE_LOG === "1";
