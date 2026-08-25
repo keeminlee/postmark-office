@@ -132,6 +132,8 @@ const seedLetter = (o, { from = "wright", to = "limen", date = "2026-08-24", slu
   });
 
 const db = fixtureDb();
+/** The threshold sentences carry em-dashes and parentheses; match them literally. */
+const escapeRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const run = (o, over = {}) => runTownDrain(o, { db, doors: TOWN_DOORS, lockHeld: () => true, log: () => {}, ...over });
 const flagOn = (fn) => {
   process.env.TOWN_SINGLE_LOG = "1";
@@ -161,8 +163,15 @@ test("T1 · A DEFERRED ROW STOPS THE CROSSING: nothing written, cursor unmoved, 
       assert.equal(ashore(clone, "unanchored"), false, "nothing was written");
 
       // The refusal NAMES the row and says what it is protecting, because a
-      // tripwire an operator cannot act on is an outage with extra steps.
+      // tripwire an operator cannot act on is an outage with extra steps. This
+      // refusal stops the crossing and therefore the mail, so its one line is
+      // the whole briefing: WHICH rows, and WHY each one was deferred.
       assert.match(r.skipped, new RegExp(`${seq}:unanchored`), "the row is named by seq and handle");
+      assert.ok(r.skipped.includes(SETTLE_THRESHOLD),
+        "…and the REASON it was deferred for, VERBATIM — an operator woken by a refused crossing "
+        + "should not have to go spelunking, and a paraphrase would be debugging a different town");
+      assert.match(r.skipped, new RegExp(`${seq}:unanchored — `),
+        "reason attached TO its row, not floating loose at the end where two rows' reasons would be unattributable");
       assert.match(r.skipped, /never be read again/);
       assert.match(r.skipped, /Nothing was written and the cursor did not move/);
       assert.match(r.skipped, /A deferral the cursor does not honour is a row dropped under a sentence promising it was kept/);
@@ -179,6 +188,31 @@ test("T1 · A DEFERRED ROW STOPS THE CROSSING: nothing written, cursor unmoved, 
       assert.equal(dry.dry_run, true);
       assert.deepEqual(dry.waiting.map((w) => w.handle), ["unanchored"]);
       assert.equal(townDrainCursor(o), 0);
+    });
+  } finally { o.close(); }
+});
+
+test("T1b · EVERY deferred row is named, each with its OWN reason beside it", () => {
+  const clone = townClone();
+  const o = liveOdb();
+  try {
+    flagOn(() => {
+      const first = seedUnanchored(o, "first-adrift");
+      const second = seedUnanchored(o, "second-adrift");
+
+      const r = run(o, { clone, date: "2026-08-24" });
+
+      assert.equal(r.refused, "deferred-rows");
+      assert.match(r.skipped, /defers 2 row\(s\)/, "the count is the count");
+
+      // Both rows, each with its reason ATTACHED to it. One reason printed once
+      // at the end would be a briefing an operator has to guess the shape of the
+      // moment two rows are deferred for different causes.
+      assert.match(r.skipped, new RegExp(`${first}:first-adrift — ${escapeRe(SETTLE_THRESHOLD)}`));
+      assert.match(r.skipped, new RegExp(`${second}:second-adrift — ${escapeRe(SETTLE_THRESHOLD)}`));
+
+      assert.equal(townDrainCursor(o), 0);
+      assert.equal(pendingRows(o).length, 2, "and both are still in the log");
     });
   } finally { o.close(); }
 });

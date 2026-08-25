@@ -341,11 +341,19 @@ export function runTownDrain(odb, {
     return done({ ran: false, refused: "deferred-rows", drained: 0, counts, head,
       ...(dryRun ? { dry_run: true } : {}),
       cursor: townDrainCursor(odb), commit: null,
+      // THE MESSAGE CARRIES THE REASONS, NOT JUST THE SEQS. This refusal stops
+      // the crossing and therefore the mail, so it is the one line an operator
+      // reads at whatever hour it fires — and a row named only by number tells
+      // them a crossing broke without telling them what to do about it. Each
+      // deferred row rides out with the pile's own `why`, VERBATIM: the tier
+      // line's threshold is the sentence a resident was told, and an operator
+      // reading a paraphrase of it would be debugging a different town.
       skipped: `the join plan defers ${stranded.length} row(s) to a later crossing and nothing is holding the cursor,`
-        + ` so advancing it would walk past them and they would never be read again —`
-        + ` rows ${stranded.map(({ row }) => `${row.seq}:${row.handle ?? "(no handle)"}`).join(", ")}.`
+        + ` so advancing it would walk past them and they would never be read again.`
         + ` Nothing was written and the cursor did not move: every row is still here.`
-        + ` A deferral the cursor does not honour is a row dropped under a sentence promising it was kept.`,
+        + ` The rows, each with the reason it was deferred for — `
+        + stranded.map(({ row, why }) => `${row.seq}:${row.handle ?? "(no handle)"} — ${why}`).join(" · ")
+        + `. A deferral the cursor does not honour is a row dropped under a sentence promising it was kept.`,
       // the whole plan rides out, so an operator (or a --dry-run) sees what the
       // crossing would have done rather than only what stopped it
       settled: plan.settle.map((r) => r.handle),
