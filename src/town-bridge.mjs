@@ -100,6 +100,15 @@
 // both complete before the ferry's sweep begins, so no window exists in which
 // that is reachable. It is stated here because the next person to move this
 // step later in the chain needs to know what moving it costs.
+//
+// ── WHAT THE CURSOR OWES, IN ONE LINE ──────────────────────────────────────
+//
+// It may advance past a row that was SETTLED or a row that was JUDGED, and
+// never past a row that was DEFERRED. `settle` is the first, `skipped` is the
+// second, `waiting` is the third — and only the third makes a promise, so only
+// the third can be broken. Two mechanisms keep it and they compose: the gangway
+// FREEZES the cursor over the rows it defers, and § the deferral tripwire
+// REFUSES the crossing over any other deferred row rather than walking past it.
 
 import { existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
@@ -274,13 +283,75 @@ export function runTownDrain(odb, {
   // rebuilt from WHITE_PAGES/mail-ledger.md at every crossing and `classify`
   // answers "duplicate id". Bounced, never delivered twice. That is a backstop
   // and not a design: the clean fix is per-row settlement rather than one
-  // scalar cursor, which is a bigger change than a breaker deserved, and the
-  // same shape as the tier line's own unfixed gap (a `waiting` row with no
-  // gangway raised IS still walked past today — named here, not fixed here).
+  // scalar cursor, which is a bigger change than a breaker deserved.
   const gangwayHold = plan.gangway.held > 0;
   const gangwayFields = gangwayHold
     ? { gangway: plan.gangway.state, gangway_held: plan.gangway.held }
     : {};
+
+  // ── THE DEFERRAL TRIPWIRE ────────────────────────────────────────────────
+  //
+  // ONE INVARIANT, AND IT IS THE ONLY THING THE CURSOR OWES ANYBODY: the cursor
+  // may advance past a row that was SETTLED or a row that was JUDGED, and never
+  // past a row that was DEFERRED. The three piles are exactly that distinction
+  // — `settle` drained, `skipped` judged and done ("not a settling act", "no
+  // handle", "already stands in the white pages"), `waiting` deferred — and it
+  // is `waiting` alone that makes a promise the cursor can break. Passing a
+  // deferred row does not merely drop it: it drops it while the report prints
+  // the word that says it was kept, and the tier line's own deferral says out
+  // loud to the resident "nothing about your standing expires."
+  //
+  // The gangway is exempt because it already keeps that promise a stronger way
+  // — its rows are deferred AND the cursor is frozen for them — so the rule is
+  // "deferred with nothing holding the cursor", not "deferred".
+  //
+  // IT CANNOT FIRE FROM A DOOR TODAY, AND THAT IS WHY IT IS CHEAP RATHER THAN
+  // WHY IT IS POINTLESS. The only other deferral is the tier line, which files
+  // a row with no verified GitHub id and no co-sign — and no live door can
+  // write one. Both join doors carry the identity fence in the same function as
+  // their append and above it (declare.mjs § 11 — the anchor, throwing 403
+  // "declaring a household needs a GitHub-verified sign-in"; residency.mjs §
+  // requestResidency, the same). Every credential shape either carries `ghId`
+  // or is refused there: OAuth tokens and household keys always carry it, an
+  // un-cosigned berth key carries none and is bounced, a cosigned berth upgrades
+  // in place to its human's id, and a static OFFICE_KEYS entry has no GitHub
+  // identity at all. Nor does the berth arc open a window: `household do:
+  // "begin"` PARKS the declaration on the berth row and writes no journal row
+  // ("nothing is executed until the click"), and the co-sign runs the parked
+  // declaration under the human's just-verified identity, so the row is born
+  // anchored. Verified over real HTTP against the live doors, 2026-08-24: berth
+  // boards, begins, and tries both join doors — zero rows written, zero
+  // unanchored.
+  //
+  // So this guards the same class the foreign-class tripwire above guards, in
+  // the same shape and for its own stated reason: "a hand-run migration, a
+  // restored backup, a future class added to the schema before its drain half
+  // exists" — plus the one it does not name, a future door that relaxes the
+  // fence. It REFUSES rather than passing over, and refusing holds the ferry's
+  // `&&`-joined chain on purpose, for that tripwire's own reason: a refusal
+  // means the office does not understand its own log, and delivering mail on
+  // top of that is building on a floor nobody has checked.
+  //
+  // A --dry-run reaches this before its own branch and answers the refusal
+  // instead, which is the honest answer to "what would this crossing do": it
+  // would refuse. The dry-run marker rides along so a caller keying on it still
+  // knows nothing was ever going to be written either way.
+  const stranded = gangwayHold ? [] : plan.waiting;
+  if (stranded.length)
+    return done({ ran: false, refused: "deferred-rows", drained: 0, counts, head,
+      ...(dryRun ? { dry_run: true } : {}),
+      cursor: townDrainCursor(odb), commit: null,
+      skipped: `the join plan defers ${stranded.length} row(s) to a later crossing and nothing is holding the cursor,`
+        + ` so advancing it would walk past them and they would never be read again —`
+        + ` rows ${stranded.map(({ row }) => `${row.seq}:${row.handle ?? "(no handle)"}`).join(", ")}.`
+        + ` Nothing was written and the cursor did not move: every row is still here.`
+        + ` A deferral the cursor does not honour is a row dropped under a sentence promising it was kept.`,
+      // the whole plan rides out, so an operator (or a --dry-run) sees what the
+      // crossing would have done rather than only what stopped it
+      settled: plan.settle.map((r) => r.handle),
+      waiting: stranded.map(({ row, why }) => ({ seq: row.seq, handle: row.handle, why })),
+      skipped_rows: plan.skipped.filter(({ row }) => row.cls === "join").map(({ row, why }) => ({ seq: row.seq, handle: row.handle, why })),
+      updates: [], letters: [], remaining: rows.length });
 
   if (dryRun)
     return done({ ran: true, dry_run: true, date: stamp, drained: 0, counts, head,
