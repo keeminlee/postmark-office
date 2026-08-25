@@ -284,14 +284,55 @@ const DISPATCH = {
   give: { tool: "world_hold", run: (args, key) => callHoldTool("world_hold", args, key) },
   drop: { tool: "world_hold", run: (args, key) => callHoldTool("world_hold", args, key) },
   take: { tool: "world_hold", run: (args, key) => callHoldTool("world_hold", args, key) },
-  // ── the crossings (DEMO SLICE, step 5 — jetto/enter-exit-demo) ────────────
+  // ── the crossings ─────────────────────────────────────────────────────────
   //
-  // enter/exit join the table but NOT production: R16 keeps the pair out until
+  // ⚠ THE OLD COMMENT HERE WAS FALSE, AND SAID SO CONFIDENTLY. It read:
+  // "enter/exit join the table but NOT production: R16 keeps the pair out until
   // the law is planted at the sitting, and the gate above is what actually
   // holds it — no class mark grants `enter`, so no standpoint affords it and
-  // this row is unreachable on a live store. It is here so the door, the lint
-  // (L6 reads DISPATCHABLE) and the demo all read the same table rather than
-  // three, which is the drift the dispatch table exists to prevent.
+  // this row is unreachable on a live store." That was true when written and
+  // stopped being true when interiors shipped (2026-08-20). Corrected here
+  // rather than quietly replaced, because a comment that named a gate nobody
+  // rechecked is the more useful thing for the next reader to know about.
+  //
+  // WHAT IS ACTUALLY TRUE, verified 2026-08-25. Four legs, stated separately
+  // because they are four different claims and each has its own receipt:
+  //
+  //   · THE GRANT. `the-town/resident` carries both in its own `actions`
+  //     array, on the record, ambiently — verbatim from the mark:
+  //       {"action":"enter","residue":"the-town/enter"},
+  //       {"action":"exit","residue":"the-town/enter"}
+  //     So a class mark DOES grant `enter`, and every ordinary resident is an
+  //     instance of the class granting it.
+  //
+  //   · THE READ. `world { read: "enter" }` resolves a card at an ordinary
+  //     resident standpoint — `from: the-town/resident`, `via: ambient`. It
+  //     does not bounce.
+  //
+  //   · THE GATE. `apexDo` admits an action when `gatherActions` returns it,
+  //     which is the same gathering the read uses. `enter` is in that set, so
+  //     the gate named above does not hold it either: the act reaches its
+  //     handler.
+  //
+  //   · THE WRITE. Probed against an IN-MEMORY PEN (the harness in
+  //     test/world-crossings.test.mjs; the clone was read and never written).
+  //     `enterViaOffice` adjudicates the containment chain, enters
+  //     the-town-centre and the-quay-reach, stops at a threshold that declares
+  //     a counter-edge and returns its terms with nothing recorded, accepts on
+  //     `accept: true`, and hands the pen real ledger lines
+  //     ("· wright · enters the-town/the-post-office · at 200.0000 · word
+  //     welcomed"). The write lane works end to end.
+  //
+  // So what stands between this pair and a resident using it is the freeze
+  // (`worldFreezeBounce`, first line of both handlers) and whether R16's law
+  // was in fact planted at the sitting. WHETHER IT WAS IS NOT ANSWERED HERE —
+  // that is a question about the record, and nothing in this file can settle
+  // it. What is answered here is only that the mechanism this comment named as
+  // the holder is not holding anything.
+  //
+  // The row is also here so the door, the lint (L6 reads DISPATCHABLE) and the
+  // demo all read the same table rather than three, which is the drift the
+  // dispatch table exists to prevent.
   enter: { tool: "world_enter", run: (args, key) => enterViaOffice(WORLD_CLONE, args, key, crossingDeps()) },
   exit: { tool: "world_exit", run: (args, key) => exitViaOffice(WORLD_CLONE, args, key, crossingDeps()) },
   // ── the consent door (POS-5) ───────────────────────────────────────────────
