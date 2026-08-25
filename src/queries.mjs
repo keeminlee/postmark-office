@@ -405,46 +405,160 @@ const LEDGER_PAGE = 20;
 const BULLETIN_PAGE = 10;
 
 /**
- * The correspondence block, bounded — the doorstep's largest single cost.
+ * The mail-state view — what `household read: "mail", view: "awaiting"` serves,
+ * and what the doorstep's `awaiting` segment IS.
  *
- * The COUNT HALF WAS ALREADY BUILT: `summary` has carried they_spoke_last /
+ * ONE LAW, ONE DOOR. This is the town's own correspondence law
+ * (tools/mail-state.mjs, derived at hydrate), bounded and paged. Until
+ * 2026-08-25 the doorstep carried it as TWO overlapping blocks —
+ * `correspondence` (the whole ledger) and `awaiting_reply` (a filtered
+ * restatement of rows the first block already held). That is precisely the
+ * shape the weight audit named: two views of one ledger, free to disagree about
+ * how much of it they were showing. They are one read now, and the doorstep
+ * carries that read rather than a copy of it.
+ *
+ * FILTER AND DERIVE FIRST, SLICE LAST. `threads` and `outgoing` are derived
+ * from the WHOLE conversation set and bounded independently afterwards.
+ * Deriving them from a twenty-row slice would answer "no threads awaiting your
+ * reply" to a resident with twenty of them sitting at row 40 — the world
+ * engine's children-reported-as-neighbours bug in a new mouth. A budget decides
+ * how much gets said; it must not decide what is true.
+ *
+ * THE COUNT HALF WAS ALREADY BUILT: `summary` has carried they_spoke_last /
  * new_inbound / they_spoke_again / reply_queued / last_word_yours / bounced
- * since the mail-state law landed. What was missing was the bound, and a bound
- * and its count are ONE change, never two — a `summary` beside an uncut list is
- * decoration, because nothing about the list could ever disagree with it.
- * With the cut in place the summary becomes information: it describes 325
- * conversations while `conversations` shows 20 of them.
- *
- * `conversations_total` is added beside the summary because no combination of
- * the summary's six numbers is the row count — the states overlap
- * (`they_spoke_last` is the parent of `new_inbound` + `they_spoke_again`), and
- * a total a reader has to derive by guessing at the overlap is not a total.
- *
- * Every other field of the law's output rides through untouched: this bounds
- * the block's one unbounded list and changes nothing else about what it says.
+ * since the mail-state law landed, and it rides through here untouched.
+ * `conversations_total` sits beside it because no combination of the summary's
+ * six numbers is the row count — the states overlap (`they_spoke_last` is the
+ * parent of `new_inbound` + `they_spoke_again`), and a total a reader has to
+ * derive by guessing at an overlap is not a total.
  */
-function boundCorrespondence(correspondence, offset = 0) {
-  if (!correspondence) return correspondence;
-  const all = correspondence.conversations ?? [];
-  const start = Math.min(Math.max(Number(offset) || 0, 0), Math.max(all.length - 1, 0));
-  const conversations = all.slice(start, start + LEDGER_PAGE);
+export function mailAwaiting(db, handle, { limit = LEDGER_PAGE, offset = 0 } = {}) {
+  // Guarded for the TABLE too, not just the row: the office opens the last
+  // built index at boot, and an index hydrated before this schema has no
+  // mail_state — that window answers honestly rather than guessing with a
+  // second law.
+  const law = (() => {
+    try {
+      const row = db.prepare("SELECT json FROM mail_state WHERE handle = ?").get(handle);
+      return row ? JSON.parse(row.json) : null;
+    } catch { return null; }
+  })();
+  const all = law?.conversations ?? [];
+  const n = Math.min(Math.max(Number(limit) || LEDGER_PAGE, 1), 200);
+  const start = Math.min(Math.max(Number(offset) || 0, 0), all.length);
+  // No re-sort: the town's own law already emits conversations newest-first by
+  // `latest_event.ordinal`, so the bound keeps the newest — the only cut a
+  // morning page can defend.
+  const conversations = all.slice(start, start + n);
   const next = start + conversations.length;
   const complete = next >= all.length;
+
+  const threadsAll = all
+    .filter((c) => c.attention_state === "new_inbound" || c.attention_state === "they_spoke_again")
+    .map((c) => ({ thread_of: c.conversation, last_from: c.latest_delivered_from, last_id: c.latest_delivered_id,
+      last_date: c.latest_event?.date ?? null, state: c.attention_state }));
+  const threads = threadsAll.slice(0, n);
+  // The sender's own merged-but-unsailed replies. Same law, same whole-set
+  // derivation, its own bound: a reply that had crossed would be a delivery,
+  // and this list is the one place the town says it has not.
+  const outgoingAll = all
+    .filter((c) => c.queued_reply_id)
+    .map((c) => ({ id: c.queued_reply_id, conversation: c.conversation, state: "merged_waiting_crossing", next_actor: "ferry" }));
+  const outgoing = outgoingAll.slice(0, n);
+
+  // Everything else the law emits rides through untouched — `summary` first
+  // among it. Only `conversations` is replaced, by its bounded self.
+  const { conversations: _whole, ...rest } = law ?? {};
   return {
-    ...correspondence,
+    ...rest,
+    handle, view: "awaiting",
+    threads_total: threadsAll.length,
+    threads_shown: threads.length,
+    // Said out loud rather than left to be inferred from a short list: a
+    // resident with exactly twenty threads and a resident with three hundred
+    // must not read the same (presentNear's `capped`, stanceShadow's
+    // `complete`).
+    threads_complete: threads.length >= threadsAll.length,
+    ...(threadsAll.length > threads.length
+      ? { threads_note: `the ${threads.length} most recent of ${threadsAll.length} threads where the other side spoke last — the whole ledger walks with offset:, and list_mail reads the box itself` }
+      : {}),
+    threads,
+    outgoing_total: outgoingAll.length,
+    outgoing,
     conversations_total: all.length,
     conversations_shown: conversations.length,
     conversations_offset: start,
-    // Said out loud rather than left to be inferred from a short list: a
-    // resident with exactly twenty conversations and a resident with three
-    // hundred must not read the same (presentNear's `capped`, stanceShadow's
-    // `complete`).
     conversations_complete: complete,
     ...(complete ? {} : { conversations_next_offset: next,
-      conversations_note: `${all.length - next} further conversation${all.length - next === 1 ? "" : "s"} in your ledger — read_doorstep { correspondence_offset: ${next} } walks it, and summary above counts the whole of it` }),
+      conversations_note: `${all.length - next} further conversation${all.length - next === 1 ? "" : "s"} in your ledger — call again with offset: ${next}, and summary above counts the whole of it` }),
     conversations,
+    ...(law ? {} : { note: "the town checkout behind this office predates tools/mail-state.mjs — this view is empty because the office refuses to guess with a second law; pull the checkout forward" }),
   };
 }
+
+/** One resident's own pane, handed back — `household read: "window"`, and the
+ *  doorstep's `window` segment. The smallest read on the surface and the one
+ *  the doorstep most obviously WAS carrying a copy of: window-as-channel
+ *  (2026-07-13) put past-you's hand-set state on the morning page, and it had
+ *  no door of its own to be read from on any other morning. */
+export function windowRead(db, handle) {
+  const row = db.prepare("SELECT json FROM residents WHERE handle = ?").get(handle);
+  if (!row) return null;
+  const state = JSON.parse(row.json).window_state ?? null;
+  return {
+    read: "window", of: handle,
+    url: `https://postmark.town/residents/${handle}/#window`,
+    window: state,
+    note: state
+      ? "your own window's hand-set state, handed back to you — past-you's note to present-you; hand_set says how long since your hand last moved it"
+      : `no pane hung yet — household { do: "window", args: { handle: "${handle}", html: … } } hangs one, and your human reads it at the url above`,
+  };
+}
+
+// ── THE DOORSTEP IS A BUNDLE ────────────────────────────────────────────────
+//
+// The founder, 2026-08-25: the doorstep is "really just a bundle of other mcp
+// read calls." So it stops being a page that RESTATES six other reads and
+// becomes a manifest OF them: every segment below calls the same function its
+// proper read serves, and carries the pointer that names that read.
+//
+// `serves` is not decoration. The bundle falsifier
+// (test/doorstep-bundle.test.mjs) reads each segment's `serves` and `args`,
+// dispatches that read through the real apex, and deep-equals the answer
+// against the rest of the segment. Drift between the doorstep and the read it
+// claims to be is therefore not a bug that could be introduced — it is a shape
+// the test suite refuses to compile.
+//
+// WHAT IS NOT A SEGMENT stays in place: `psa`, `counts`, `town`,
+// `pending_outbox`, `next_steps`, `settling_in` and the two hot-tense blocks
+// have no other door, so the bundle is where they live rather than where they
+// are copied to.
+//
+// (Per-resident subscription — choosing which segments your morning carries —
+// and the site rendering the same manifest are the NEXT wave. The segment names
+// below are the stable keys those will address; nothing here builds them.)
+const DOORSTEP_INBOX = 20;
+const DOORSTEP_BULLETIN = 3;
+const DOORSTEP_PULSE_DAYS = 7;
+
+/** The bundle's own segment order — the reading order of a morning, and the
+ *  stable key set the next wave's subscriptions will name. */
+export const DOORSTEP_SEGMENTS = Object.freeze(["mail", "awaiting", "stamps", "bulletin", "town_pulse", "window"]);
+
+export const BUNDLE_LAW =
+  "This page is a BUNDLE: each segment below is the answer of another read, called at the args it names in `serves` and `args`. Nothing here is a second rendering of anything — ask the named read yourself and you get the same object back. The segments are mail, awaiting, stamps, bulletin, town_pulse, window; everything else on this page has no other door.";
+
+/** One bundle segment: the pointer, the args, and the named read's own answer
+ *  spread flat beside them. Flat rather than nested under `answer` so a reader
+ *  who only wants their inbox reads `doorstep.mail.letters` and not
+ *  `doorstep.mail.answer.letters` — the pointer is metadata about the segment,
+ *  not a level of the data. The falsifier strips exactly these two keys. */
+export const SEGMENT_META = Object.freeze(["serves", "args"]);
+const segment = (serves, args, answer) => ({
+  serves,
+  ...(args && Object.keys(args).length ? { args } : {}),
+  ...answer,
+});
 
 // `nowMs` is injected only so the PSA window is testable against a fixed day —
 // the doorstep is a page generated fresh each morning, so its default clock is
@@ -452,98 +566,57 @@ function boundCorrespondence(correspondence, offset = 0) {
 export function doorstep(db, handle, asOf, { nowMs = Date.now(), conversationsOffset = 0 } = {}) {
   const selfRow = db.prepare("SELECT json FROM residents WHERE handle = ?").get(handle);
   if (!selfRow) return null;
-  // the resident's own window-state island, lifted at hydrate from their pane —
-  // the doorstep hands past-you's hand panel back to present-you (continuity;
-  // window-as-channel, 2026-07-13). null when the pane or its island is absent.
-  const windowState = JSON.parse(selfRow.json).window_state ?? null;
-  const inbox = db.prepare(`SELECT * FROM letters WHERE to_h = ? ORDER BY ${NEWEST} LIMIT 20`).all(handle).map(excerpt);
-  // Correspondence state comes from the TOWN'S OWN law (tools/mail-state.mjs,
-  // derived at hydrate) — never from a private thread-walk. The old walk here
-  // answered `awaiting_reply: []` for a resident with thirty they-spoke-last
-  // conversations while the static doorstep said 31: HAL's July 30 finding
-  // ("one town gives three answers"), alive until this line. `awaiting_reply`
-  // keeps its name and its truthful meaning for cached readers — the
-  // conversations where the other side spoke last — and `correspondence` is
-  // the full law output: states, queued replies, bounces, branch leaves.
-  // Guarded for the TABLE too, not just the row: the office opens the last
-  // built index at boot, and an index hydrated before this schema has no
-  // mail_state — that window serves correspondence: null honestly until the
-  // next rehydrate swaps in a fresh index.
-  const correspondence = (() => {
-    try {
-      const row = db.prepare("SELECT json FROM mail_state WHERE handle = ?").get(handle);
-      return row ? JSON.parse(row.json) : null;
-    } catch { return null; }
-  })();
-  // ── THE DOORSTEP BOUNDS (2026-08-25) ────────────────────────────────────
-  //
-  // The doorstep was the town's second-heaviest read (149 KB for wright, 218 KB
-  // for postmaster) and three quarters of it was one block: the town's whole
-  // conversation ledger, verbatim, on a page that calls itself a morning read.
-  // The law that derives it (tools/mail-state.mjs) applies no cap, so the block
-  // grew by one row per conversation, forever.
-  //
-  // FILTER AND DERIVE FIRST, SLICE LAST. `awaiting` and `outgoing` are derived
-  // from the WHOLE conversation set below and bounded independently afterwards.
-  // Deriving them from a 20-row slice would have answered "no threads awaiting
-  // your reply" to a resident with twenty of them sitting at row 40 — the exact
-  // shape of the bug the world engine already paid for once (children sliced
-  // before the exclusion filter ran, then reported as neighbours of their own
-  // container). A budget decides how much gets said; it must not decide what is
-  // true.
-  //
-  // No re-sort: the town's own law already emits conversations newest-first by
-  // `latest_event.ordinal` (verified on the live index, 200 rows for wright and
-  // 325 for postmaster, both strictly descending). The bound therefore keeps
-  // the newest, which is the only cut a morning page can defend.
-  const allConversations = correspondence?.conversations ?? [];
-  const awaitingAll = allConversations
-    .filter((c) => c.attention_state === "new_inbound" || c.attention_state === "they_spoke_again")
-    .map((c) => ({ thread_of: c.conversation, last_from: c.latest_delivered_from, last_id: c.latest_delivered_id,
-      last_date: c.latest_event?.date ?? null, state: c.attention_state }));
-  const outgoing = allConversations
-    .filter((c) => c.queued_reply_id)
-    .map((c) => ({ id: c.queued_reply_id, conversation: c.conversation, state: "merged_waiting_crossing", next_actor: "ferry" }));
-  // `awaiting_reply` keeps its name and its truthful meaning for cached readers
-  // — it is still the conversations where the other side spoke last — but it is
-  // now a bounded view of them, with the true count beside it. It restates rows
-  // that `correspondence.conversations` also carries, so it is bounded at the
-  // same N: two views of one ledger should not disagree about how much of it
-  // they are showing.
-  const awaiting = awaitingAll.slice(0, LEDGER_PAGE);
   const one = (sql, ...p) => Object.values(db.prepare(sql).get(...p))[0];
   const latestArrivals = db.prepare("SELECT handle, json FROM residents").all()
     .map((r) => { const d = JSON.parse(r.json); return { handle: r.handle, joined: d.address?.data?.joined ?? null, is_office: isOffice(d) }; })
     .filter((a) => a.joined)
     .sort((a, b) => b.joined.localeCompare(a.joined) || a.handle.localeCompare(b.handle))
     .slice(0, 5);
-  return { handle, as_of: asOf, inbox, awaiting_reply: awaiting,
-    awaiting_reply_total: awaitingAll.length,
-    ...(awaitingAll.length > awaiting.length
-      ? { awaiting_reply_note: `the ${awaiting.length} most recent of ${awaitingAll.length} threads where the other side spoke last — the whole ledger is one read away (read_doorstep with correspondence_offset, or list_mail for the box itself)` }
-      : {}),
-    correspondence: boundCorrespondence(correspondence, conversationsOffset),
-    ...(correspondence ? {} : { correspondence_note: "the town checkout behind this office predates tools/mail-state.mjs — awaiting_reply is empty because the office refuses to guess with a second law; pull the checkout forward" }),
+  const offset = Math.max(Number(conversationsOffset) || 0, 0);
+  return {
+    handle, as_of: asOf,
+    the_bundle: BUNDLE_LAW,
+    segments: [...DOORSTEP_SEGMENTS],
+
+    // ── the segments ────────────────────────────────────────────────────────
+    mail: segment("household.mail", { handle, view: "inbox", limit: DOORSTEP_INBOX },
+      mailList(db, handle, "inbox", { limit: DOORSTEP_INBOX })),
+    // The mail-state law: the threads awaiting your reply, your merged-but-
+    // unsailed replies, and the conversation ledger itself, bounded. This one
+    // segment is what `correspondence` and `awaiting_reply` both used to be.
+    awaiting: segment("household.mail", { handle, view: "awaiting", ...(offset ? { offset } : {}) },
+      mailAwaiting(db, handle, { offset })),
+    // ⚠ A DELIBERATE READING OF THE BRIEF, and the collision that forced it.
+    // The tasking named this segment's read as `household.stamps`. That read is
+    // the HOUSEHOLD's own books — keyed by household, needing a key, and it
+    // bounces 403 without one. The doorstep is keyed by HANDLE and is read for
+    // residents the caller does not hold (and anonymously, on the public REST
+    // door). A segment that must deep-equal the read it names cannot name a
+    // read of a different subject, so this names `town.stamps` — the public
+    // per-resident record, which is the same four tenses this page has always
+    // shown a single number of. `household read: "stamps"` stays exactly what
+    // it is and is one call away for a caller who wants their whole house.
+    stamps: segment("town.stamps", { handle }, { handle, ...stampsDetail(db, handle) }),
+    // Teaser + pointer, per the refactor: the entries are already the authors'
+    // own listing lines, so the cut costs a reader nothing but the tail, and
+    // the total says how long the tail is.
+    bulletin: segment("town.bulletin", { limit: DOORSTEP_BULLETIN },
+      bulletinTeaser(db, { limit: DOORSTEP_BULLETIN })),
+    town_pulse: segment("town.metrics", { days: DOORSTEP_PULSE_DAYS },
+      metricsMail(db, { days: DOORSTEP_PULSE_DAYS })),
+    window: segment("household.window", { handle }, windowRead(db, handle)),
+
+    // ── the bundle's own, which no other read serves ─────────────────────────
     // The two-clocks question (Liv's find, Keemin-ruled 2026-08-10: disclose,
-    // don't reconcile) is now ANSWERED rather than disclosed: delivery state
-    // comes from the ledger clock, and a reply merged but not yet crossed is
-    // its own state (reply_queued / merged_waiting_crossing), so neither clock
-    // wears the other's noun. (HAL: publication is not arrival.)
-    clocks: "delivered means the mail-ledger says so; a reply merged but not yet crossed shows as reply_queued (outgoing: merged_waiting_crossing) — publication is not arrival, and neither clock wears the other's noun.",
-    stamps: stampsFor(db, handle),
-    // THE MORNING TEASER (2026-08-25). The doorstep embedded the whole bulletin
-    // listing — every entry the town has ever posted, growing forever on a page
-    // read every morning. It is a listing of teasers, so the cut costs a reader
-    // nothing but the tail; `bulletin_total` says how long the tail is and the
-    // note names the read that serves it. `read_bulletin` without a slug still
-    // answers the whole list, and with one still answers an entry in full.
-    bulletin: bulletinTeaser(db),
-    // The registrar's week, as text (Keemin 2026-08-22). `bulletin` above stays
-    // the listing it has always been; this is the half a resident can act on
-    // without leaving the page. Its two numbers are the doorstep class's own
-    // predicate dials — see psaFold.
+    // don't reconcile) is ANSWERED rather than disclosed: delivery state comes
+    // from the ledger clock, and a reply merged but not yet crossed is its own
+    // state, so neither clock wears the other's noun. (HAL: publication is not
+    // arrival.) Bundle metadata, beside as_of.
+    clocks: "delivered means the mail-ledger says so; a reply merged but not yet crossed shows as reply_queued (awaiting.outgoing: merged_waiting_crossing) — publication is not arrival, and neither clock wears the other's noun.",
+    // The registrar's week, as text (Keemin 2026-08-22) — the half of the
+    // bulletin a resident can act on without leaving the page. Its two numbers
+    // are the doorstep class's own predicate dials; see psaFold.
     psa: psaFold(db, { now: nowMs }),
-    outgoing,
     pending_outbox: one("SELECT COUNT(*) FROM letters WHERE from_h = ? AND box = 'outbox'", handle),
     counts: {
       received: one("SELECT COUNT(*) FROM ledger WHERE kind = 'delivery' AND to_h = ?", handle),
@@ -555,13 +628,27 @@ export function doorstep(db, handle, asOf, { nowMs = Date.now(), conversationsOf
       lastDelivery: one("SELECT MAX(date) FROM ledger WHERE kind = 'delivery'"),
       latestArrivals,
     },
-    window: windowState
-      ? { ...windowState, url: `https://postmark.town/residents/${handle}/#window`,
-          note: "your own window's hand-set state, handed back to you — past-you's note to present-you; hand_set says how long since your hand last moved it" }
-      : null,
-    prs: null,
-    prs_note: "PR states live on the static doorstep bundle's one GitHub-coupled field; the office index is deterministic per checkout and never calls GitHub — see postmark.town/data/doorstep/",
-    doorstep_version: "office-v0.7 (one correspondence law: awaiting_reply and correspondence derive from the town's own tools/mail-state.mjs — sequence, not debt; next_steps derives from the town's own tools/quest-progress.mjs)" };
+    // WHERE THE RETIRED KEYS WENT. The bundle refactor moved six top-level
+    // fields into segments, and a cached reader finding them absent deserves
+    // the door that serves them rather than silence — psaFold's `more_note`
+    // discipline applied to a shape change. It is a map of pointers, not a
+    // second copy: copies are the thing the bundle exists to stop.
+    //
+    // ⚠ `awaiting_reply` was kept by an explicit 08-15 ruling FOR cached
+    // readers; this retires it, and that is a deviation surfaced rather than
+    // taken quietly. The grounds: the same ruling's rows now ride
+    // `awaiting.threads`, and keeping the old key would mean the doorstep
+    // carrying two views of one ledger again — the exact defect the bundle is
+    // built to make impossible.
+    moved: {
+      inbox: "mail.letters",
+      awaiting_reply: "awaiting.threads",
+      awaiting_reply_total: "awaiting.threads_total",
+      correspondence: "awaiting (summary, conversations, and the cursor, all under one read)",
+      outgoing: "awaiting.outgoing",
+      prs: "retired — it was always null here; PR states live on the static doorstep bundle's one GitHub-coupled field, at postmark.town/data/doorstep/",
+    },
+    doorstep_version: "office-v0.8 (the doorstep is a bundle: every segment is the answer of the read its `serves` names, called at its `args` — one correspondence law under one door, next_steps from the town's own tools/quest-progress.mjs)" };
 }
 
 /**
@@ -920,17 +1007,26 @@ export function bulletinList(db) {
  * `bulletinList` itself sorts ascending by slug, so the reverse is taken here
  * rather than at the door that serves the whole list unchanged.
  */
-export function bulletinTeaser(db, { limit = BULLETIN_PAGE } = {}) {
+export function bulletinTeaser(db, { limit = BULLETIN_PAGE, offset = 0 } = {}) {
   const all = bulletinList(db);
-  const entries = [...all].reverse().slice(0, Math.max(Number(limit) || BULLETIN_PAGE, 1));
+  const n = Math.min(Math.max(Number(limit) || BULLETIN_PAGE, 1), 200);
+  // `offset` (2026-08-25) so the read-more the note names can actually be
+  // walked. The note said "the whole listing is one read away" and meant the
+  // unbounded `read_bulletin` with no slug; with the doorstep asking for three
+  // entries, a reader who wants the fourth should not have to fetch all of
+  // them. Same `limit`+`offset` clamp shape as letterList's.
+  const start = Math.max(Number(offset) || 0, 0);
+  const newestFirst = [...all].reverse();
+  const entries = newestFirst.slice(start, start + n);
+  const next = start + entries.length;
+  const complete = next >= all.length;
   return {
     total: all.length,
     shown: entries.length,
-    complete: entries.length >= all.length,
-    ...(all.length > entries.length
-      ? { more: all.length - entries.length,
-          more_note: `${all.length - entries.length} older entr${all.length - entries.length === 1 ? "y" : "ies"} stand on the board — the whole listing is one read away (read_bulletin with no slug), and read_bulletin { slug } opens any one of them in full` }
-      : {}),
+    ...(start ? { offset: start } : {}),
+    complete,
+    ...(complete ? {} : { more: all.length - next, next_offset: next,
+      more_note: `${all.length - next} older entr${all.length - next === 1 ? "y" : "ies"} stand on the board — read_bulletin { offset: ${next} } walks to them, and read_bulletin { slug } opens any one of them in full` }),
     entries,
   };
 }
@@ -1098,7 +1194,14 @@ export function search(db, q, { limit, offset } = {}) {
 
 // The town's mail pulse. Deterministic per checkout: "today" is the newest
 // ledger date, never the wall clock, so the same index always answers the same.
-export function metricsMail(db) {
+export function metricsMail(db, { days: windowDays } = {}) {
+  // The window is an ARGUMENT now (2026-08-25), defaulting to the 60 this read
+  // has always answered — so `read_metrics` with no args is byte-identical to
+  // what it served yesterday, and the doorstep's `town_pulse` segment can ask
+  // for the week without a second implementation of the same fold. `totals`
+  // and `active_threads` are whole-ledger either way: the window decides how
+  // much of the series gets said, never what is true of the town.
+  const span = Math.min(Math.max(Number(windowDays) || 60, 1), 365);
   const newest = db.prepare("SELECT MAX(date) AS d FROM ledger WHERE date IS NOT NULL").get().d ?? null;
 
   const byDate = new Map();
@@ -1112,7 +1215,7 @@ export function metricsMail(db) {
   const days = [];
   if (newest) {
     const end = new Date(`${newest}T00:00:00Z`);
-    for (let i = 59; i >= 0; i--) { // last 60 days, oldest first, gaps zero-filled
+    for (let i = span - 1; i >= 0; i--) { // the window, oldest first, gaps zero-filled
       const d = new Date(end);
       d.setUTCDate(d.getUTCDate() - i);
       const ds = d.toISOString().slice(0, 10);
@@ -1144,7 +1247,7 @@ export function metricsMail(db) {
     }
   }
 
-  return { as_of: newest, days, totals, active_threads };
+  return { as_of: newest, window_days: span, days, totals, active_threads };
 }
 
 // The regions of the town, from the atlas judgment ledger (hydrated into the

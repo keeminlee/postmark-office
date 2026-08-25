@@ -70,10 +70,19 @@ const CURSOR_LAST_LAW =
 // no replay for instead of skipping past it.
 const ONE_LOG_ONE_CONSUMER_LAW = "the-atomic-drain's law is one log, one consumer";
 
-// src/server.mjs § the doorstep's mail block — the sentence that makes the
-// hot tense a property of the town rather than of your client. It was written
-// for `your_pending_letters` and it is exactly as true of `your_pending_edits`,
-// which is what made the missing half a defect rather than a gap.
+// src/doorstep-bundle.mjs § the doorstep's mail block — the sentence that makes
+// the hot tense a property of the town rather than of your client. It was
+// written for `your_pending_letters` and it is exactly as true of
+// `your_pending_edits`, which is what made the missing half a defect rather
+// than a gap.
+//
+// THE LAW MOVED WITH ITS BLOCK, 2026-08-25. It lived in src/server.mjs while
+// that file carried its own copy of the garnish sequence; the bundle refactor
+// gave the three doorstep doors ONE implementation, so the block — and its law
+// — now live in doorstep-bundle.mjs. The assertion follows the block rather
+// than the filename, which is the whole point of quoting a law at the surface
+// that owns it: if this ever fails, either the law was deleted or the block
+// moved again, and both are things a reviewer must be told about.
 const BOTH_SKINS_LAW =
   "a disclosure that depended on which skin you read from would make the tense a property of your client rather than of the town";
 
@@ -596,7 +605,7 @@ test("F10b · flag-off, the stance door answers as it always did", async () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 test("F11 · PARITY: the same fixture, both skins, deep-equal", async () => {
-  says("src/server.mjs", BOTH_SKINS_LAW,
+  says("src/doorstep-bundle.mjs", BOTH_SKINS_LAW,
     "the law this falsifier enforces is written where the block lives");
 
   const tmp = mkdtempSync(join(tmpdir(), "pm-parity-"));

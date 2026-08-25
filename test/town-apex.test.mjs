@@ -71,8 +71,13 @@ test("NAMED, NOT BUILT: deregistration is named, does not dispatch, and says why
 });
 
 // ── the reads ───────────────────────────────────────────────────────────────
-test("THE COMMONS' READS: nine, and each one SERVES a flat verb rather than reimplementing it", async () => {
-  assert.equal(TOWN_READABLE.length, 9);
+// NINE → THIRTEEN (POS-54, the founder's round-2 ruling, 2026-08-25). The four
+// added are the roster's siblings — resident, home, votes, stamps — and the
+// property this test asserts is unchanged by the growth: the apex reimplements
+// nothing, it names a flat verb and hands the call back. That is what keeps the
+// slim honest, so it is asserted over the WHOLE table rather than a fixed nine.
+test("THE COMMONS' READS: thirteen, and each one SERVES a flat verb rather than reimplementing it", async () => {
+  assert.equal(TOWN_READABLE.length, 13);
   for (const r of TOWN_READABLE) {
     const { calls, call } = spy();
     const out = await townApex({ read: r }, key(), ctx({ call }));
@@ -91,7 +96,7 @@ test("…and a read's own fields ride through, from args: or from the top level"
   assert.deepEqual(b.calls[0].fields, { q: "lanterns" });
 });
 
-test("an unknown read bounces naming the nine", async () => {
+test("an unknown read bounces naming every read the door serves", async () => {
   const r = await townApex({ read: "everything" }, key(), ctx({ call: spy().call }));
   assert.equal(r.code, 422);
   for (const name of TOWN_READABLE) assert.ok(r.hint.includes(name), `the hint names ${name}`);
