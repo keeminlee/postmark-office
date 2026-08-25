@@ -145,7 +145,7 @@ try {
 }
 gatePresent("world-tools", TOOLS_DIR, `marks-fold + geometry imported at ${worldSha.slice(0, 12)}`);
 
-const { loadMarks, placementParent, parseRecord, PARCEL_EXTENT_M, PARCEL_CLAIM_CAP, isValidMarkDate } = fold;
+const { loadMarks, placementParent, parseRecord, worldRootOf, PARCEL_EXTENT_M, PARCEL_CLAIM_CAP, isValidMarkDate } = fold;
 const { rect, contains, marksContain, isIrregular, pointInRect } = geom;
 
 const marks = loadMarks(MARKS_DIR);
@@ -470,9 +470,18 @@ const geomAncestor = (m) => {
 // so the old derivation starts reporting a dozen roots the day the first
 // id-filed mark lands. The map says it in one row: `parent: null` belongs to the
 // world root alone.
+// NAMED, NEVER INFERRED. The world root has a name — the fold exports
+// `worldRootOf`, which finds it by slug — and that answer holds whether or not
+// the containment map is present. "The mark with no mark.md above it" is kept
+// only as the last resort for a tree whose fold is too old to export the
+// finder, and it is the derivation that breaks: after the freeze it is true of
+// every mark filed at its id, so alphabetical order could crown a RESIDENT'S
+// mark as the world root — and ROOT_ID is the placement fallback below.
+const namedRoot = typeof worldRootOf === "function" ? (worldRootOf(marks)?.id ?? null) : null;
 const mapRoots = [...containmentParent.entries()].filter(([, p]) => p == null).map(([id]) => id);
 const treeRoots = marks.filter((m) => !m._parentMarkId).map((m) => m.id);
-const roots = containmentSource === "containment-map" ? mapRoots : treeRoots;
+const roots = namedRoot ? [namedRoot]
+  : containmentSource === "containment-map" ? mapRoots : treeRoots;
 if (roots.length !== 1) note(`expected one root mark, found ${roots.length}: ${roots.join(", ")} (containment source: ${containmentSource})`);
 const ROOT_ID = roots[0] ?? null;
 

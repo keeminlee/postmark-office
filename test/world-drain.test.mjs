@@ -32,7 +32,7 @@ import { openDynamic } from "../src/dynamic-store.mjs";
 import { markRecord } from "../src/mark-record.mjs";
 import {
   ACTION_AMEND, ACTION_LEAVE, ACTION_WITHDRAW, CLASS_FRAME, CLASS_MARK, WORLD_ANCHOR,
-  appendJournal, journalHead, readJournal,
+  appendJournal, filedPathOfAt, journalHead, pathFor, readJournal, resetPathIndex,
 } from "../src/world-journal.mjs";
 import { DRAIN_CURSOR, drain, drainStatus, fileFramer, logLine, planDrain, writeJournalWindow } from "../src/world-drain.mjs";
 
@@ -419,6 +419,70 @@ test("THE FREEZE, gate A — an UNDRAINED draft at a fossil path keeps that path
   assert.deepEqual(files.filter((f) => f.includes("/in-flight/")), [fossil],
     "the in-flight draft stays where it was filed — one file, and no duplicate at the id path");
   assert.match(w.git("show", `draft/alpha:${fossil}`), /amended after the door was fixed/);
+});
+
+test("THE FOSSIL MANIFEST answers where the slug index cannot — an ambiguous slug is why it had to come first", async () => {
+  // THE LAW (the freeze, 2026-08-25): "A mark's directory is its historical
+  // filing: it carries no claim, and it never moves again."
+  //
+  // The tree index is keyed by leaf SLUG, and a slug is unique per AUTHOR, not
+  // per tree. Its old comment reasoned that an ambiguous slug could safely
+  // resolve to nothing because "the drain re-homes by geometry at the save
+  // regardless" — the freeze deleted that re-homer, so the fallback path would
+  // now stand forever and gate A would refuse it. The manifest is keyed by id.
+  const w = makeWorld("frozen-manifest");
+  const fossil = "WORLD/marks/let-there-be-light/town-square/the-lamp";
+  const rival = "WORLD/marks/let-there-be-light/published-note/the-lamp";  // same SLUG, other household
+  const put = (rel, text) => {
+    const f = join(w.repo, rel, "mark.md");
+    mkdirSync(dirname(f), { recursive: true });
+    writeFileSync(f, text);
+  };
+  put(fossil, seedRecord("alpha", "the fossil lamp"));
+  put(rival, seedRecord("beta", "beta's lamp, same slug"));
+  writeFileSync(join(w.repo, "WORLD", "filing-freeze.json"), JSON.stringify({
+    law: "Filing is frozen as of 2026-08-25.",
+    frozen_at: "2026-08-25",
+    marks: { "alpha/the-lamp": fossil },
+  }));
+  execFileSync("git", ["-C", w.repo, "add", "-A"], { env: { ...process.env, ...SEED_ENV } });
+  execFileSync("git", ["-C", w.repo, "commit", "-qm", "two lamps and a manifest"], { env: { ...process.env, ...SEED_ENV } });
+
+  resetPathIndex();
+  const sha = w.git("rev-parse", "HEAD").trim();
+  const filed = filedPathOfAt(w.repo, sha);
+
+  assert.equal(filed("alpha/the-lamp"), `${fossil}/mark.md`,
+    "the manifest names it by id, so the shared slug cannot make it ambiguous");
+  assert.equal(pathFor({ id: "alpha/the-lamp", slug: "the-lamp", by: "alpha", kind: "sited" }, { publishedPathOf: filed }),
+    `${fossil}/mark.md`, "and gate A keeps the record there");
+
+  // THE FLIP, in the same fixture so it cannot pass by accident: a mark the
+  // manifest does not name, and whose slug is not in the tree, is a NEW mark.
+  assert.equal(filed("alpha/never-filed"), null);
+  assert.equal(pathFor({ id: "alpha/never-filed", slug: "never-filed", by: "alpha", kind: "sited" }, { publishedPathOf: filed }),
+    "WORLD/marks/alpha/never-filed/mark.md");
+  resetPathIndex();
+});
+
+test("a mark filed at its id is found by ID, never by the ambiguous slug map", async () => {
+  const w = makeWorld("id-keyed-index");
+  const put = (rel, text) => {
+    const f = join(w.repo, rel, "mark.md");
+    mkdirSync(dirname(f), { recursive: true });
+    writeFileSync(f, text);
+  };
+  put("WORLD/marks/alpha/the-lamp", seedRecord("alpha", "alpha's, filed at its id"));
+  put("WORLD/marks/beta/the-lamp", seedRecord("beta", "beta's, filed at its id"));
+  execFileSync("git", ["-C", w.repo, "add", "-A"], { env: { ...process.env, ...SEED_ENV } });
+  execFileSync("git", ["-C", w.repo, "commit", "-qm", "two id-filed lamps"], { env: { ...process.env, ...SEED_ENV } });
+
+  resetPathIndex();
+  const filed = filedPathOfAt(w.repo, w.git("rev-parse", "HEAD").trim());
+  assert.equal(filed("alpha/the-lamp"), "WORLD/marks/alpha/the-lamp/mark.md");
+  assert.equal(filed("beta/the-lamp"), "WORLD/marks/beta/the-lamp/mark.md",
+    "two households sharing a slug must not collapse into one answer or none");
+  resetPathIndex();
 });
 
 test("THE FLIP — a mark with NO existing filing anywhere still lands at its id", async () => {

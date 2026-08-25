@@ -169,6 +169,17 @@ export const EDGE_TYPES = [
 // own table without a hand-copy. (The copy in world-classes.mjs was written out
 // by hand precisely because this string carried a bare `props`; parameterising
 // the alias is what lets that copy die.)
+//
+// ── AND IT CLOSES A DIVERGENCE THAT WAS NEVER ONLY A COPY ────────────────────
+//
+// The comment this replaces claimed the office "mirrors the world's own
+// mark-lint CLASS_ROSTER, same clause, same commit". That was false at the
+// level that matters: the world's lint walked `_parentMarkId` ANCESTRY, while
+// the office matched a PATH SUBSTRING. On the pre-freeze tree the two agreed
+// because nesting and path were the same fact — so the divergence was invisible
+// and would have surfaced only as a class mark that mints on one side of the
+// town and not the other. Both now ask CONTAINMENT, which is one mechanism
+// rather than two that happen to coincide.
 export const worksClause = (alias = "") => {
   const p = alias ? `${alias}.props` : "props";
   return `(json_extract(${p}, '$.in_works') = 1

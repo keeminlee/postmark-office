@@ -588,33 +588,94 @@ export function liveChildrenOf(db, id, { household = undefined } = {}) {
 // `ls-tree` at the sha and cached on it — the tree is immutable at a commit, so
 // a cache nobody can invalidate is impossible here.
 //
-// The index is keyed by leaf SLUG, and a slug is unique per AUTHOR, not per
-// tree: two households may both keep a `the-lamp`. An ambiguous slug therefore
-// resolves to nothing and the row falls back to the root-level path — the same
-// place a draft-costs-nothing declaration would land, and the drain re-homes by
-// geometry at the save regardless. Wrong-but-plausible is not on the table: the
-// fallback is a path the settlement is already equipped to move.
+// ── THE FOSSIL MANIFEST IS THE FIRST ANSWER (the freeze, 2026-08-25) ─────────
+//
+//   "A mark's directory is its historical filing: it carries no claim, and it
+//    never moves again."
+//
+// `WORLD/filing-freeze.json` maps every mark alive on the freeze date to the
+// path it was filed at, keyed by FULL ID. It is minted once and never
+// regenerated, so it is the exact, static answer to "where does this mark
+// already live" — one JSON read, no tree walk, and no ambiguity.
+//
+// WHY IT HAD TO COME FIRST, and it is not only about speed. The `ls-tree` index
+// below is keyed by leaf SLUG, and a slug is unique per AUTHOR, not per tree:
+// two households may both keep a `the-lamp`. That index resolved an ambiguous
+// slug to NOTHING, on the reasoning — quoted from the comment this replaces —
+// that "the row falls back to the root-level path … and the drain re-homes by
+// geometry at the save regardless". The freeze DELETED that re-homer. A
+// fossil mark whose slug another household shares would now fall back to a
+// root-level path that nothing will ever move, and gate A would refuse it at the
+// next lint. The manifest is keyed by id, so it cannot be ambiguous.
+//
+// The manifest carries directories; a caller wants the record, so `/mark.md` is
+// appended here rather than at four call sites.
+let _frozen = null;
+export function frozenFilingAt(repo, sha) {
+  if (_frozen?.repo === repo && _frozen.sha === sha) return _frozen.byId;
+  const byId = new Map();
+  try {
+    const raw = execFileSync("git", ["-C", repo, "show", `${sha}:WORLD/filing-freeze.json`],
+      { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+    for (const [id, dir] of Object.entries(JSON.parse(raw)?.marks ?? {}))
+      if (id && typeof dir === "string") byId.set(id, `${dir.replace(/\/+$/, "")}/mark.md`);
+  } catch { /* no manifest at this sha → a tree that declares no freeze; the index below answers alone */ }
+  _frozen = { repo, sha, byId };
+  return byId;
+}
+
+// The tree index, for marks born AFTER the freeze — the manifest names none of
+// them, by design ("a mark born after the freeze needs no row here: its path is
+// derivable from its id").
+//
+// Keyed BOTH ways. A path of the shape `WORLD/marks/<by>/<slug>/mark.md` carries
+// the whole id, so those register under the id and are never ambiguous. The
+// slug map stays for a fossil path the manifest somehow does not name, where the
+// id genuinely is not derivable from the path — and there an ambiguous slug still
+// resolves to nothing, because a wrong-but-plausible filing is worse than none.
 let _pathIndex = null;
 function publishedPathIndex(repo, sha) {
-  if (_pathIndex?.repo === repo && _pathIndex.sha === sha) return _pathIndex.bySlug;
+  if (_pathIndex?.repo === repo && _pathIndex.sha === sha) return _pathIndex;
   const bySlug = new Map();
+  const byId = new Map();
   try {
     const out = execFileSync("git", ["-C", repo, "ls-tree", "-r", "--name-only", sha, "--", "WORLD/marks"],
       { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
     for (const line of out.split("\n")) {
       const path = line.trim();
       if (!path.endsWith("/mark.md")) continue;
-      const slug = path.slice(0, -"/mark.md".length).split("/").pop();
+      const rel = path.slice("WORLD/marks/".length, -"/mark.md".length);
+      const parts = rel.split("/");
+      const slug = parts[parts.length - 1];
       if (!slug) continue;
-      bySlug.set(slug, bySlug.has(slug) ? null : path);   // null = ambiguous
+      if (parts.length === 2) byId.set(`${parts[0]}/${parts[1]}`, path);  // filed at its id
+      bySlug.set(slug, bySlug.has(slug) ? null : path);                   // null = ambiguous
     }
   } catch { /* no tree at this sha → every published path is unknown, and says so by being absent */ }
-  _pathIndex = { repo, sha, bySlug };
-  return bySlug;
+  _pathIndex = { repo, sha, bySlug, byId };
+  return _pathIndex;
 }
 
-/** Drop the cached path index — for tests that rewrite a repo in place at the same sha. */
-export function resetPathIndex() { _pathIndex = null; }
+/**
+ * WHERE THIS MARK IS ALREADY FILED, or null if it is not filed anywhere yet.
+ *
+ * The gate-A lookup, in one place so every door asks it the same way: the fossil
+ * manifest, then the id-shaped paths in the tree, then — only for a fossil the
+ * manifest does not name — the slug index. `null` is the gate-B case, and it is
+ * the ONLY case in which a mark is filed at its id.
+ */
+export function filedPathOfAt(repo, sha) {
+  return (id) => {
+    const key = String(id);
+    const frozen = frozenFilingAt(repo, sha).get(key);
+    if (frozen) return frozen;
+    const idx = publishedPathIndex(repo, sha);
+    return idx.byId.get(key) ?? idx.bySlug.get(key.split("/").slice(1).join("/")) ?? null;
+  };
+}
+
+/** Drop the cached path indexes — for tests that rewrite a repo in place at the same sha. */
+export function resetPathIndex() { _pathIndex = null; _frozen = null; }
 
 /**
  * THE §1c CONTRACT, over whichever store holds the drafts.
@@ -652,13 +713,13 @@ export function draftsForKey(repo, key) {
     const state = publishedState(repo).state ?? {};
     const publishedIds = new Set((state.marks ?? []).map((m) => m.id));
     // LAZY, and that is the point of this whole ladder: the index costs an
-    // `ls-tree` over ~900 mark paths, and the only row that needs it is a
-    // withdrawal of a PUBLISHED mark — rare, and absent from the overwhelming
-    // majority of reads. Building it eagerly would put whole-tree work back on
-    // the request path, which is the class §0 exists to keep off it.
+    // `ls-tree` over ~900 mark paths, and it is consulted for a withdrawal of a
+    // PUBLISHED mark and for gate A — both rare. Building it eagerly would put
+    // whole-tree work back on the request path, which is the class §0 exists to
+    // keep off it. The manifest arm inside `filedPathOfAt` is one JSON read and
+    // answers first, so the common gate-A case never reaches the `ls-tree`.
     const sha = String(gitDelta.main ?? mainRef(repo));
-    const publishedPathOf = (id) =>
-      publishedPathIndex(repo, sha).get(String(id).split("/").slice(1).join("/")) ?? null;
+    const publishedPathOf = filedPathOfAt(repo, sha);
     const canonById = new Map((state.marks ?? []).map((m) => [m.id, m]));
     const publishedMarkOf = (id) => canonById.get(id) ?? null;
 

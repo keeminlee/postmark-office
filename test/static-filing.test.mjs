@@ -133,6 +133,43 @@ test("replayDrafts reports the FOSSIL path when canon already holds the mark bei
     "the overlay must name where the record actually lands, or the author is shown a move that will not happen");
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 1d. FOSSIL-AWARE FILING — the manifest is the first answer
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// THE RULE (founder-ruled; addendum 2026-08-25): a mark's path is wherever it
+// was born, forever. For a mark named in the world repo's
+// `WORLD/filing-freeze.json`, the computed path IS its manifest path — so an
+// amend of a fossil never computes a new directory and never tries to move.
+// Only marks the manifest does not name file at `WORLD/marks/<by>/<slug>/`.
+
+test("a FOSSIL mark computes its manifest path, not its id path", () => {
+  const manifest = new Map([["alpha/the-lamp", "WORLD/marks/let-there-be-light/the-town-centre/the-lamp/mark.md"]]);
+  assert.equal(
+    pathFor({ id: "alpha/the-lamp", slug: "the-lamp", by: "alpha", kind: "sited" },
+      { publishedPathOf: (id) => manifest.get(id) ?? null }),
+    "WORLD/marks/let-there-be-light/the-town-centre/the-lamp/mark.md");
+});
+
+test("THE FLIP: a mark the manifest does NOT name files at its id", () => {
+  const manifest = new Map([["alpha/the-lamp", "WORLD/marks/let-there-be-light/the-town-centre/the-lamp/mark.md"]]);
+  assert.equal(
+    pathFor({ id: "alpha/born-after", slug: "born-after", by: "alpha", kind: "sited" },
+      { publishedPathOf: (id) => manifest.get(id) ?? null }),
+    "WORLD/marks/alpha/born-after/mark.md");
+});
+
+test("the fossil's directory is taken VERBATIM — never recomposed from parent + slug", () => {
+  // A fossil's leaf directory is not guaranteed to equal its slug, and
+  // recomposing would quietly relocate any mark where they differ. The manifest
+  // names the whole path; use it whole.
+  const odd = "WORLD/marks/let-there-be-light/a-quarter/an-old-leaf-name/mark.md";
+  assert.equal(
+    pathFor({ id: "alpha/the-lamp", slug: "the-lamp", by: "alpha", kind: "sited" },
+      { publishedPathOf: () => odd }),
+    odd);
+});
+
 test("a record with no `by` and no id to read one from takes the fallback rather than filing at WORLD/marks/undefined", () => {
   assert.equal(pathFor({ slug: "orphan", kind: "sited" }), "WORLD/marks/let-there-be-light/orphan/mark.md");
   assert.equal(pathFor({ id: "", slug: "", kind: "sited" }), null);

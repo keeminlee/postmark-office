@@ -49,7 +49,7 @@ const sha = meta.as_of_world;
 if (!sha) { console.error("FATAL: the store carries no as_of_world — nothing to shadow against."); process.exit(2); }
 
 const TREE = materializeWorldAtSha(meta.world_path, sha, ["WORLD", "tools"]);
-const { loadMarks, placementParent, rect, contains, WORLD_ROOT_SLUG } = await import(pathToFileURL(join(TREE, "tools", "marks-fold.mjs")));
+const { loadMarks, placementParent, rect, contains, WORLD_ROOT_SLUG, worldRootOf } = await import(pathToFileURL(join(TREE, "tools", "marks-fold.mjs")));
 
 // ── the engine side ──────────────────────────────────────────────────────────
 const marks = loadMarks(join(TREE, "WORLD", "marks"));
@@ -61,7 +61,8 @@ const isFar = (m) => m?.far === true || m?.far === "true";
 // and every spine below is measured against the wrong frame. The world root has
 // a name; use it, and fall back to the old walk only if the fold stops
 // exporting one.
-const ROOT_ID = (WORLD_ROOT_SLUG ? marks.find((m) => m.slug === WORLD_ROOT_SLUG) : null)?.id
+const ROOT_ID = (typeof worldRootOf === "function" ? worldRootOf(marks)?.id : null)
+  ?? (WORLD_ROOT_SLUG ? marks.find((m) => m.slug === WORLD_ROOT_SLUG)?.id : null)
   ?? marks.find((m) => !m._parentMarkId)?.id ?? null;
 const byId = new Map(marks.map((m) => [m.id, m]));
 

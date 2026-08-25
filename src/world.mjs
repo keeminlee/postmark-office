@@ -35,7 +35,7 @@ import {
   readAtRef,
   readJsonAtRef,
 } from "./world-branches.mjs";
-import { ACTION_AMEND, ACTION_LEAVE, ACTION_WITHDRAW, CLASS_MARK, anchorAt, appendJournal, draftsForKey, liveChildrenOf, liveMarks, pathFor, pinWitnesses, singleLogEnabled } from "./world-journal.mjs"; // POS-5 slice 1: the one append-only log
+import { ACTION_AMEND, ACTION_LEAVE, ACTION_WITHDRAW, CLASS_MARK, anchorAt, appendJournal, draftsForKey, filedPathOfAt, liveChildrenOf, liveMarks, pathFor, pinWitnesses, singleLogEnabled } from "./world-journal.mjs"; // POS-5 slice 1: the one append-only log
 import { WORLD_STAKE_TOOLS, callWorldStakeTool, worldPortfolioStakeSlice } from "./world-stake.mjs"; // P3 draft, append-shaped
 import { classNames, classRoster, classDials, departurePace, RESIDENT_INSTANTIABLE, residentMayInstantiate } from "./world-classes.mjs"; // which classes exist — read from the record, never held
 import { HOLD_TOOLS, callHoldTool } from "./world-hold.mjs"; // the object primitive: who holds what
@@ -1569,8 +1569,18 @@ async function journalLeaveMark(clean, { crossing = currentCrossing() } = {}) {
     // more than a declaration of intent either). `commit` is ABSENT rather than
     // null, because nothing was committed and a null commit invites a reader to
     // believe one failed.
+    // GATE A, at the door (the freeze, 2026-08-25). `dir` says where the record
+    // will sit, and after the freeze that is a fact rather than a declaration of
+    // intent — nothing moves it afterwards. A mark already filed keeps its
+    // filing, so the answer has to consult the fossil manifest, or an amend of
+    // any pre-freeze mark would show the author a move that will not happen.
+    // One JSON read at `main`, memoized on the sha; no tree walk on this path.
+    const filedPathOf = filedPathOfAt(WORLD_CLONE, String(mainRef(WORLD_CLONE)));
     const willLandAt = pathFor({ ...declaration, id }, {
+      publishedPathOf: filedPathOf,
       parentPathOf: (pid) => {
+        const filed = filedPathOf(pid);
+        if (filed) return filed.replace(/\/mark\.md$/, "");
         const p = liveById.get(pid) ?? canon.byId.get(pid);
         return p ? pathFor({ ...p, id: pid }).replace(/\/mark\.md$/, "") : null;
       },
