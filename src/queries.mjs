@@ -423,8 +423,37 @@ const BULLETIN_PAGE = 10;
  * Every other field of the law's output rides through untouched: this bounds
  * the block's one unbounded list and changes nothing else about what it says.
  */
-function boundCorrespondence(correspondence, offset = 0) {
+function boundCorrespondence(correspondence, offset = 0, own = true) {
   if (!correspondence) return correspondence;
+  // ── THE OWNERSHIP GATE (2026-08-25) ─────────────────────────────────────
+  //
+  // `correspondence.conversations` is one resident's composed conversation
+  // ledger: who they are talking to, who spoke last in each thread, and what
+  // they have not answered. Served anonymously it handed 120 KB of that to any
+  // caller who knew a handle.
+  //
+  // The 08-15 ruling already drew this line for the gap-shaped blocks —
+  // `settling_in`, `your_pending_edits`, `your_pending_letters` — in Keemin's
+  // own words: "the gaps are yours to see, not theirs to be seen by." A
+  // stranger's read carries what the public doorstep bundle at
+  // postmark.town/data/doorstep/<handle>.md carries, and no more. This block
+  // was never brought under that line, and the audit walked straight through it.
+  //
+  // SKIPPED, NOT COMPUTED-THEN-FILTERED — the same discipline nextStepsFor
+  // states for its two gated reads: a fact the office never assembled cannot
+  // leak through a later refactor of the filter.
+  //
+  // `summary` stays for everyone. It is the town's own aggregate — how many
+  // threads are warm, how many await a reply — and it is the half a visitor can
+  // honestly be told: a resident's shape of correspondence, not its contents.
+  if (!own) {
+    return {
+      handle: correspondence.handle,
+      language: correspondence.language,
+      summary: correspondence.summary,
+      withheld: "the conversation ledger is on your OWN doorstep only — who you are talking to and what you have not answered are yours to see, not theirs to be seen by (the 08-15 ruling, extended to this block 2026-08-25). The summary above is what the public doorstep bundle carries, and this read carries no more.",
+    };
+  }
   const all = correspondence.conversations ?? [];
   const start = Math.min(Math.max(Number(offset) || 0, 0), Math.max(all.length - 1, 0));
   const conversations = all.slice(start, start + LEDGER_PAGE);
@@ -449,7 +478,7 @@ function boundCorrespondence(correspondence, offset = 0) {
 // `nowMs` is injected only so the PSA window is testable against a fixed day —
 // the doorstep is a page generated fresh each morning, so its default clock is
 // the wall clock, exactly as "the last week" reads.
-export function doorstep(db, handle, asOf, { nowMs = Date.now(), conversationsOffset = 0 } = {}) {
+export function doorstep(db, handle, asOf, { nowMs = Date.now(), conversationsOffset = 0, own = false } = {}) {
   const selfRow = db.prepare("SELECT json FROM residents WHERE handle = ?").get(handle);
   if (!selfRow) return null;
   // the resident's own window-state island, lifted at hydrate from their pane —
@@ -517,12 +546,19 @@ export function doorstep(db, handle, asOf, { nowMs = Date.now(), conversationsOf
     .filter((a) => a.joined)
     .sort((a, b) => b.joined.localeCompare(a.joined) || a.handle.localeCompare(b.handle))
     .slice(0, 5);
-  return { handle, as_of: asOf, inbox, awaiting_reply: awaiting,
+  return { handle, as_of: asOf, inbox,
+    // `awaiting_reply` is a filtered restatement of `correspondence`'s rows, so
+    // it rides the SAME gate — gating the block and leaving its restatement
+    // open would be the gate in name only. The count survives for everyone,
+    // because "this resident has 84 threads awaiting a reply" is the same kind
+    // of aggregate `summary` already publishes.
+    awaiting_reply: own ? awaiting : [],
     awaiting_reply_total: awaitingAll.length,
-    ...(awaitingAll.length > awaiting.length
+    ...(own && awaitingAll.length > awaiting.length
       ? { awaiting_reply_note: `the ${awaiting.length} most recent of ${awaitingAll.length} threads where the other side spoke last — the whole ledger is one read away (read_doorstep with correspondence_offset, or list_mail for the box itself)` }
       : {}),
-    correspondence: boundCorrespondence(correspondence, conversationsOffset),
+    ...(own ? {} : { awaiting_reply_note: "the threads themselves are on your OWN doorstep only; the count stands for everyone, the same way correspondence.summary does" }),
+    correspondence: boundCorrespondence(correspondence, conversationsOffset, own),
     ...(correspondence ? {} : { correspondence_note: "the town checkout behind this office predates tools/mail-state.mjs — awaiting_reply is empty because the office refuses to guess with a second law; pull the checkout forward" }),
     // The two-clocks question (Liv's find, Keemin-ruled 2026-08-10: disclose,
     // don't reconcile) is now ANSWERED rather than disclosed: delivery state
@@ -543,7 +579,9 @@ export function doorstep(db, handle, asOf, { nowMs = Date.now(), conversationsOf
     // without leaving the page. Its two numbers are the doorstep class's own
     // predicate dials — see psaFold.
     psa: psaFold(db, { now: nowMs }),
-    outgoing,
+    // The sender's own un-sailed replies. Same class of fact as the ledger
+    // above and gated with it; `pending_outbox` below is the count, and stays.
+    outgoing: own ? outgoing : [],
     pending_outbox: one("SELECT COUNT(*) FROM letters WHERE from_h = ? AND box = 'outbox'", handle),
     counts: {
       received: one("SELECT COUNT(*) FROM ledger WHERE kind = 'delivery' AND to_h = ?", handle),

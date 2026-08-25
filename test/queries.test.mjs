@@ -106,7 +106,11 @@ test("letter: full body by id", () => {
 });
 
 test("doorstep: the v0.2 bundle — inbox, awaiting, town news, counts, outbox", () => {
-  const d = doorstep(db, "wright", meta.as_of);
+  // `own: true` — this is the resident's own morning page. The correspondence
+  // ledger became ownership-gated on 2026-08-25 (the 08-15 ruling extended to
+  // the block it never covered), and a stranger's read of the same handle is
+  // asserted separately in bounded-reads.test.mjs.
+  const d = doorstep(db, "wright", meta.as_of, { own: true });
   assert.equal(d.as_of, meta.as_of);
   assert.equal(d.inbox.length, 2);
   // awaiting_reply and correspondence both derive from the ONE law's rows
