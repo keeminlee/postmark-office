@@ -229,7 +229,7 @@ crossing (`planTownDrain` / `writeTownDrain`), anchored by the tier line — a r
 settles only on a verified GitHub id or a human co-sign, and an unanchored row
 waits at the harbor indefinitely with full berth life and a stated threshold. The
 Registrar audits after the fact with `tools/registrar-audit.mjs` (town repo) and
-suspends a defective arrival by appending to `WHITE_PAGES/standing-ledger.md`;
+suspends a defective arrival by appending to `tools/standing-ledger.md`;
 `tools/witness.mjs § evaluate` refuses certification for a suspended handle.
 Revocation is the stronger act and refuses to run without the founder's word,
 quoted verbatim on the row. Nothing is ever deleted: a lift is another append and
@@ -277,7 +277,7 @@ from settling. Both are office-side; the precedent for reading town state is
     still `send_letter`, `update_home`, `update_window`, `stake_vote`,
     `world_note` — every door the town has. Only the PR lane enforces it
     (`tools/witness.mjs § evaluate`). The fix is the `WORLD_FREEZE` shape with a
-    per-caller predicate: fold `WHITE_PAGES/standing-ledger.md`, bounce a
+    per-caller predicate: fold `tools/standing-ledger.md`, bounce a
     suspended handle with the sentence the ledger already carries. **Reads stay
     open** — a resident must always be able to read the reason they were given.
   - **`planTownDrain` does not read `HARBOR/GANGWAY.md`.** The freeze breaker is
