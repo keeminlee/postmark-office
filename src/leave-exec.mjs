@@ -159,16 +159,22 @@ async function main() {
         `parcel claiming is capped at ${cap} per household (ruled ${PARCEL_CAP_LAW_DATE ?? "2026-07-30"}; prior holdings stand) — new ground for this household is the founder's word, not the door's`);
   }
 
-  // decide the directory. sited/parcel drafts land on open ground at the ROOT,
-  // always (Keemin-ruled 2026-08-22): no geometry at this door, and no declared
-  // parent either — asking residents to name their parent is extra work for
-  // them and helps nothing, because the Settlement's own sweep re-homes every
-  // draft by geometry at the save regardless of where the file sits.
+  // decide the directory. sited/parcel file BY IDENTITY — `WORLD/marks/<by>/
+  // <slug>/` (the freeze, founder-ruled 2026-08-25; LOGOS/state-and-time.md:
+  // "New marks are filed by identity"). They used to land on open ground at the
+  // ROOT on the reasoning that "the Settlement's own sweep re-homes every draft
+  // by geometry at the save regardless of where the file sits" — the freeze
+  // DELETED that mover, so where this door files is where the mark lives.
   // predicated/naming take the directory of the mark they describe (parent_id).
+  //
+  // ⚠ THIS DOOR IS CONDEMNED. It is the git-era write path, superseded by the
+  // journal door (world-journal.mjs `pathFor`), and it dies with the sweep-era
+  // deletion. This is the one-line minimum that keeps it from writing a filing
+  // the world's own gate B would refuse; nothing else here was brought forward.
   let parentDir, parentId;
   if (p.kind === "sited" || p.kind === "parcel") {
     parentId = null;
-    parentDir = ROOT_DIR;
+    parentDir = join(MARKS_DIR, p.by);
   } else {
     parentId = p.parent_id;
     const parent = byId.get(parentId);
