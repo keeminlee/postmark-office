@@ -157,6 +157,54 @@ if (!marks.length) {
 }
 gatePresent("marks-readable", MARKS_DIR, `${marks.length} marks loaded by the world's own loadMarks`);
 
+// ── the containment map · what contains what, after the freeze ───────────────
+//
+// THE LAW (founder-ruled 2026-08-25; LOGOS/state-and-time.md § "The freeze —
+// filing is static, and the tree is a fossil"):
+//
+//   "Filing is frozen as of 2026-08-25. A mark's directory is its historical
+//    filing: it carries no claim, and it never moves again."
+//
+//   "'The tree is the map' moves to where derived views live: the fold emits the
+//    containment map beside `world-state.json` every settlement. The browsable
+//    truth is generated; the source files rest."
+//
+// So the office may no longer ASK the directories what contains what. It reads
+// the artifact the world's own fold emits — `WORLD/containment.json`, thrown
+// away and rebuilt at every settlement, which is what keeps it from rotting the
+// way a stored path does. Rows are `{ id, parent, chain }`; `parent: null`
+// belongs to the world root alone, and `chain` is the spine outermost-LAST
+// (nearest ancestor first).
+//
+// THE FALLBACK IS DELIBERATE AND LOUD. A clone from before the freeze carries no
+// such file, and refusing to hydrate it would take the office down for an
+// artifact that did not exist last week. So the absence falls back to the old
+// directory derivation and SAYS SO — an ABSENT gate, a warning line, and
+// `containment_source: "directory-nesting"` in the report. A silent fallback
+// would be the freeze quietly not applying, which is the one failure this
+// re-key exists to prevent.
+const CONTAINMENT_PATH = join(TREE, "WORLD", "containment.json");
+const containmentParent = new Map();   // id -> parent id, or null for the root
+const containmentChain = new Map();    // id -> ancestor ids, nearest first
+let containmentSource = "directory-nesting";
+try {
+  const cm = JSON.parse(readFileSync(CONTAINMENT_PATH, "utf8"));
+  const rows = Array.isArray(cm?.marks) ? cm.marks : [];
+  if (!rows.length) throw new Error("no marks[] rows");
+  for (const r of rows) {
+    if (!r?.id) continue;
+    containmentParent.set(r.id, r.parent ?? null);
+    containmentChain.set(r.id, Array.isArray(r.chain) ? r.chain : []);
+  }
+  containmentSource = "containment-map";
+  gatePresent("containment-map", "WORLD/containment.json", `${containmentParent.size} marks, derived at the fold (the freeze, 2026-08-25)`);
+} catch (e) {
+  gateAbsent("containment-map", "WORLD/containment.json",
+    `unreadable at this sha (${String(e.message).split("\n")[0]}) — containment falls back to directory nesting, which the freeze repealed. A clone from before 2026-08-25 has no map; a clone after it that lost one has a settlement that did not fold.`,
+    []);
+  console.error(`\n⚠ containment-map ABSENT at ${CONTAINMENT_PATH} — \`contains\` edges and the keeping-works gate fall back to directory nesting (pre-freeze behaviour).`);
+}
+
 // ── what the AUTHOR wrote, kept apart from what the loader supplied ──────────
 //
 // `loadMarks` composes: it defaults `tier` to "market", synthesizes `slug`,
@@ -270,6 +318,27 @@ if (markStanding) {
 const relPath = (d) => relative(TREE, d).replace(/\\/g, "/");
 const GEOMETRIC = (m) => m?.kind === "sited" || m?.kind === "parcel";
 
+// THE POSITION CLAUSE, asked of containment rather than of the path (the freeze).
+//
+// "Standing in the Keeping Works" (LOGOS/classes.md § Instantiation, ruled
+// 2026-08-17) used to be the substring `/the-keeping-works/` in a mark's
+// directory — a sound test only while the directory made a claim. Under the
+// freeze it is not: a class mark filed at `WORLD/marks/<by>/<slug>/` would be
+// standing in the works and silently declaring nothing, because the path test
+// alone decides whether a mark may mint a VERB. Membership is now the
+// containment CHAIN passing through the works.
+//
+// The works' own mark is NOT in the works, which matches the substring test it
+// replaces: `%/the-keeping-works/%` never matched the works' own directory.
+//
+// Measured before it was written, over the freeze-day tree: chain-membership and
+// path-membership select the SAME 330 marks, zero either way. The re-key changes
+// nothing about the world as filed; it changes what happens to what is filed next.
+const KEEPING_WORKS_ID = "the-town/the-keeping-works";
+const standsInWorks = (m) => containmentSource === "containment-map"
+  ? (containmentChain.get(m.id) ?? []).includes(KEEPING_WORKS_ID)
+  : relPath(m._dir).includes("/the-keeping-works/");
+
 const oddFrontmatter = [];
 for (const m of marks) {
   const problems = [];
@@ -299,6 +368,12 @@ for (const m of marks) {
     extent_w: m.extent?.w ?? null, extent_h: m.extent?.h ?? null,
     props: {
       slug: m.slug, path: relPath(m._dir), date: m.date ?? null, body: m.body ?? "",
+      // The position clause as DATA (the freeze — see § the position clause).
+      // Stamped on every mark so the class gate can be one question asked of the
+      // store, in SQL and in JS alike, instead of a substring test on a path the
+      // freeze stripped of meaning. A store hydrated before this stamp existed
+      // carries no key at all, and the gate falls back to the path there.
+      in_works: standsInWorks(m),
       slot: m.slot ?? null, value: m.value ?? null,
       far: m.far === true || m.far === "true" || null,
       feature: m.feature ?? null, mechanic: m.mechanic ?? null, timetable: m.timetable ?? null,
@@ -325,7 +400,7 @@ for (const m of marks) {
       // WORKS_PATH gates read the same clause). Derived here once so every
       // reader downstream — the lints, the payload, the site lens — reads the
       // fact instead of re-deriving it. Emitted only when true.
-      declares: (m.class !== undefined && relPath(m._dir).includes("/the-keeping-works/")) || undefined,
+      declares: (m.class !== undefined && standsInWorks(m)) || undefined,
       class_version: Number.isFinite(Number(m.version)) ? Number(m.version) : null,
       extends: m.extends ?? null,
       dials: (m.dials && typeof m.dials === "object" && !Array.isArray(m.dials)) ? m.dials : null,
@@ -365,44 +440,99 @@ for (const m of marks) {
   });
 }
 
-// ── containment: the tree's claim, then geometry's verdict ───────────────────
-// One edge per directory-nesting step. The TYPE differs by what the record
-// actually claims: a nested sited/parcel mark claims to sit geometrically inside
-// its parent (`contains`); a nested predicated/naming mark claims to DESCRIBE
-// its parent and inherits its extent whole (SCHEMA.md's continuation law), which
-// is not containment at all.
+// ── containment: the fold's map, then geometry's verdict ─────────────────────
+//
+// TWO KINDS OF EDGE, and after the freeze they come from two different places.
+//
+//   `contains` — GROUND. "A mark's directory is its historical filing: it
+//     carries no claim" (the freeze, 2026-08-25), so this edge can no longer be
+//     read off directory nesting. It comes from `WORLD/containment.json`, the
+//     artifact the world's own fold emits every settlement, whose sited/parcel
+//     rows are `placementParent` over the ground — the same function the write
+//     door places by.
+//
+//   `describes` — PREDICATION, and the freeze does not touch it. A predicated or
+//     naming mark is its parent CONTINUED (SCHEMA.md's continuation law): it has
+//     no footprint to be contained by anything and takes its subject from the
+//     mark it is nested inside. That nesting is AUTHORSHIP, not a claim about
+//     ground, so it stays directory-derived. (The world's mark-lint gate B draws
+//     the same line and flags it at §6 as the gate's reading of a sentence the
+//     law states without the qualification.)
 const geomAncestor = (m) => {
   let p = m._parentMarkId ? byId.get(m._parentMarkId) : null;
   while (p && !(GEOMETRIC(p) && p.at)) p = p._parentMarkId ? byId.get(p._parentMarkId) : null;
   return p ?? null;
 };
 
-const roots = marks.filter((m) => !m._parentMarkId);
-if (roots.length !== 1) note(`expected one root mark, found ${roots.length}: ${roots.map((r) => r.id).join(", ")}`);
-const ROOT_ID = roots[0]?.id ?? null;
+// The root, from the map when there is one. A tree-derived root is "the mark
+// with no mark.md above it", and after the freeze that is TRUE OF EVERY MARK
+// FILED AT ITS ID — `WORLD/marks/<by>/<slug>/` has no parent directory record —
+// so the old derivation starts reporting a dozen roots the day the first
+// id-filed mark lands. The map says it in one row: `parent: null` belongs to the
+// world root alone.
+const mapRoots = [...containmentParent.entries()].filter(([, p]) => p == null).map(([id]) => id);
+const treeRoots = marks.filter((m) => !m._parentMarkId).map((m) => m.id);
+const roots = containmentSource === "containment-map" ? mapRoots : treeRoots;
+if (roots.length !== 1) note(`expected one root mark, found ${roots.length}: ${roots.join(", ")} (containment source: ${containmentSource})`);
+const ROOT_ID = roots[0] ?? null;
+
+/** The mark that contains `m`, asked of the map, or of the tree on the fallback. */
+const containerOf = (m) => containmentSource === "containment-map"
+  ? (containmentParent.get(m.id) ?? null)
+  : (m._parentMarkId ?? null);
 
 const geometryDisagreements = [];
 const placementDisagreements = [];
 const sitedUnderPredicate = [];
+const markNotInMap = [];
 let containsEdges = 0, describesEdges = 0;
 for (const m of marks) {
-  const parentId = m._parentMarkId;
-  if (!parentId) continue;
-  const parent = byId.get(parentId) ?? null;
   const born = typeof m.date === "string" ? m.date : null;
 
+  // ── predication: unchanged, and still the directory's to say ───────────────
   if (!GEOMETRIC(m)) {
+    const parentId = m._parentMarkId;
+    if (!parentId) continue;
     edge(parentId, m.id, "describes", { direction: "parent-is-described-by-child", child_kind: m.kind ?? null, nesting: "directory" }, born);
     describesEdges++;
     continue;
   }
 
-  const props = { nesting: "directory", child_kind: m.kind };
-  if (parent && !GEOMETRIC(parent)) {
-    props.parent_kind = parent.kind ?? null;
-    sitedUnderPredicate.push({ child: m.id, parent: parentId, parent_kind: parent.kind, path: relPath(m._dir) });
+  // ── containment: the map's answer ─────────────────────────────────────────
+  //
+  // A mark the map has never heard of is the one way this could lose an edge in
+  // silence: the map is emitted at the fold, so a record committed to main
+  // without one has a directory and no containment answer, and dropping it here
+  // would take it off every spine with nothing to read. It is COUNTED, not
+  // guessed at — a fabricated parent is worse than a disclosed hole.
+  if (containmentSource === "containment-map" && !containmentParent.has(m.id)) {
+    markNotInMap.push({ id: m.id, path: relPath(m._dir) });
+    continue;
   }
-  const g = geomAncestor(m);
+  const parentId = containerOf(m);
+  if (!parentId) continue;                       // the world root contains nothing above it
+  const parent = byId.get(parentId) ?? null;
+
+  const props = { nesting: containmentSource === "containment-map" ? "containment-map" : "directory", child_kind: m.kind };
+
+  // A geometric mark whose FILING sits under a predicate. Read off the tree on
+  // purpose even when the map is the source: it is an observation about the
+  // fossil, and the fossil is the only thing that can still say it.
+  const filedUnder = m._parentMarkId ? byId.get(m._parentMarkId) : null;
+  if (filedUnder && !GEOMETRIC(filedUnder)) {
+    props.parent_kind = filedUnder.kind ?? null;
+    sitedUnderPredicate.push({ child: m.id, parent: m._parentMarkId, parent_kind: filedUnder.kind, path: relPath(m._dir) });
+  }
+
+  // Under the map the container IS a positioned sited/parcel mark by
+  // construction (`placementParent` returns nothing else), so `geometry_via`
+  // never fires and `geometry_ok`/`placement_ok` are true wherever they are
+  // computable. They are computed anyway, and cheaply: they stop being a
+  // reconciliation of a stored path against the ground — the freeze made that
+  // question meaningless — and become a MACHINERY CHECK of the world's emitted
+  // map against the office's own recompute of the same geometry. A `false` here
+  // used to be a filing defect; it is now a finding about the fold.
+  const g = containmentSource === "containment-map" ? (GEOMETRIC(parent) && parent?.at ? parent : null) : geomAncestor(m);
   if (g && g.id !== parentId) props.geometry_via = g.id;
 
   if (m.far === true || m.far === "true") {
@@ -697,7 +827,10 @@ const PARCEL_CLASS = "the-town/parcel";
 // `class:<value>` — the dangle is the finding, never dropped.
 const declOfClass = new Map();
 for (const m of marks)
-  if (m.class !== undefined && relPath(m._dir).includes("/the-keeping-works/") && !declOfClass.has(String(m.class)))
+  // Position by containment, not by path — the same clause `declares:` is
+  // stamped from (§ the position clause). A declaration filed at its id after
+  // the freeze must still be the one this rail points every instance at.
+  if (m.class !== undefined && standsInWorks(m) && !declOfClass.has(String(m.class)))
     declOfClass.set(String(m.class), m.id);
 
 const danglingMechanics = [];
@@ -944,11 +1077,19 @@ const counts = {
   geometry_versioned_marks: new Set(geometryVersions.map((g) => g.mark_id)).size,
   geometry_marks_with_history: geometryVersions.filter((g) => g.change !== "birth").length,
   edge_types_registered: rows("SELECT COUNT(*) c FROM edge_type_registry")[0].c,
+  // Which question the `contains` edges and the keeping-works gate were asked of
+  // (the freeze, 2026-08-25). "directory-nesting" means the map was absent and
+  // this hydration ran pre-freeze law — it is a fallback, never a default.
+  containment_source: containmentSource,
+  marks_in_the_keeping_works: rows("SELECT COUNT(*) c FROM nodes WHERE kind='mark' AND json_extract(props,'$.in_works') = 1")[0].c,
 };
 const anomalies = {
   geometry_disagreements: geometryDisagreements.length,
   placement_disagreements: placementDisagreements.length,
   sited_or_parcel_under_predicate: sitedUnderPredicate.length,
+  // A geometric mark in the tree that the fold's containment map does not
+  // name. Zero on a world whose last settlement folded what it committed.
+  geometric_marks_absent_from_the_containment_map: markNotInMap.length,
   dangling_stop_or_vessel: danglingStops.length,
   dangling_mechanic_pointers: danglingMechanics.length,
   unparseable_ledger_lines: badLedgerLines.length,
@@ -963,6 +1104,7 @@ putMeta.run("counts", JSON.stringify(counts));
 putMeta.run("anomalies", JSON.stringify(anomalies));
 putMeta.run("anomaly_detail", JSON.stringify({
   geometry: geometryDisagreements, placement: placementDisagreements, sited_under_predicate: sitedUnderPredicate,
+  absent_from_containment_map: markNotInMap,
   dangling_stops: danglingStops, dangling_mechanics: danglingMechanics, bad_ledger_lines: badLedgerLines,
   frontmatter: oddFrontmatter, imports_out_of_scan: outOfScanImports, missing_surfaces: missingSurfaces,
   geometry_history: geometryAnomalies, identity_drift: identityDrift, warnings: warn,
@@ -1045,7 +1187,7 @@ if (JSON_OUT) {
   console.log(`  edges ${counts.edges_total} ${JSON.stringify(counts.edges_by_type)}`);
   console.log(`  events ${counts.events_total} departures (${badLedgerLines.length} lines unparseable)`);
   console.log(`  geometry: ${counts.geometry_versions_total} versions over ${counts.geometry_versioned_marks} marks · ${counts.geometry_versions_total - counts.geometry_versioned_marks} later revisions`);
-  console.log(`  containment: ${containsEdges} contains · ${describesEdges} describes (predicate nesting)`);
+  console.log(`  containment: ${containsEdges} contains from ${containmentSource} · ${describesEdges} describes (predicate nesting) · ${counts.marks_in_the_keeping_works} in the Keeping Works${markNotInMap.length ? ` · ⚠ ${markNotInMap.length} geometric mark(s) the map does not name` : ""}`);
   console.log(`  services: ${services} timetable-carrying mark(s) · ${stopEdges} stop-of · ${implementsEdges} implements · ${instanceOf} instance-of · ${doctrineNodes} doctrine (${doctrineEdges} describes)`);
   console.log(`  code: ${codeFiles.length} modules · ${importEdges} imports · ${readEdges} reads · ${builtinImports} node: and ${bareImports} bare specifiers skipped`);
   console.log(`  anomalies ${JSON.stringify(anomalies)}`);

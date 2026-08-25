@@ -171,6 +171,10 @@ export function planDrain(rows, { publishedPathOf = null, toFileFrame = null } =
     const d = declared.get(id);
     if (!d) return typeof publishedPathOf === "function" ? publishedPathOf(id) : null;
     return pathFor({ ...(d.payload ?? {}), id }, {
+      // GATE A before GATE B (the freeze, 2026-08-25): "it never moves again".
+      // A mark main already holds keeps its filing; only a mark with no filing
+      // yet lands at its id.
+      publishedPathOf,
       parentPathOf: (pid) => {
         const p = declared.get(pid);
         const pp = p ? pathFor({ ...(p.payload ?? {}), id: pid })
@@ -378,11 +382,29 @@ export function writeDownHousehold(repo, { household, upserts, removals }, { whe
   const tree = withIndex(repo, (env) => {
     git(repo, ["read-tree", base], { env: { ...process.env, ...env } });
     for (const u of upserts) {
+      // ── NOTHING MOVES (the freeze, founder-ruled 2026-08-25) ──────────────
+      //
+      //   "A mark's directory is its historical filing: it carries no claim, and
+      //    it never moves again."
+      //
+      // The plan computes a path for a DECLARATION. This is the only place that
+      // can see whether the mark already has a FILE — the base is the household's
+      // sketchbook, built on main, so one lookup answers for a published mark and
+      // an undrained draft alike. Where it does, that path wins.
+      //
+      // Without this, the first amend after the door started filing by identity
+      // would write a second file at the new path and leave the old one standing:
+      // two files, one id — the publish+re-home wedge (#1862), which is exactly
+      // what the freeze deleted the mover to prevent. It is not hypothetical:
+      // in-flight drafts written before the door changed sit at fossil paths, and
+      // an amend is the ordinary next thing to happen to a draft.
+      const filed = findMarkPath(repo, base, paths, { by: u.by, slug: u.slug });
+      const path = filed ?? u.path;
       const bytes = markRecord(u.fileRec, u.body);
       const blob = execFileSync("git", ["-C", repo, "hash-object", "-w", "--stdin"],
         { input: bytes, encoding: "utf8", env: { ...process.env, ...env } }).trim();
-      git(repo, ["update-index", "--add", "--cacheinfo", `100644,${blob},${u.path}`], { env: { ...process.env, ...env } });
-      touched.push({ op: "write", id: u.id, path: u.path, blob });
+      git(repo, ["update-index", "--add", "--cacheinfo", `100644,${blob},${path}`], { env: { ...process.env, ...env } });
+      touched.push({ op: "write", id: u.id, path, blob, ...(filed && filed !== u.path ? { kept_filing: filed, planned: u.path } : {}) });
     }
     for (const r of removals) {
       const path = findMarkPath(repo, base, paths, r);

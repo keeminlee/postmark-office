@@ -34,7 +34,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { statSync } from "node:fs";
 
-import { CLASS_ROSTER_GATE_SQL } from "./world-store.mjs";
+import { CLASS_ROSTER_GATE_SQL, worksClause } from "./world-store.mjs";
 import { storeDbPath } from "./world-serve.mjs";
 
 // THE FLOOR, not the law. Every name here is also in the record; this list is
@@ -172,19 +172,26 @@ export function departurePace({ worldDb = null } = {}) {
 // Values arrive as TEXT (a predicated mark's `value:` is a string), so numeric
 // dials are coerced at the reading edge — `dialNumber` below is that edge, and
 // nothing downstream should re-parse.
-// The roster gate again, spelled against the `c` alias. Written out rather than
-// derived from CLASS_ROSTER_GATE_SQL by string surgery: that string carries
-// WORKS_PATH_SQL inside it, and a blind s/props/c.props/ would rewrite the path
-// clause too — a transform over text nobody read is how the wrong query looks
-// exactly like the right one. The four clauses are the same four; if that gate
-// grows a fifth, this grows it too, and CLASS_GATE_PARITY in the test file is
-// what makes the omission fail out loud instead of narrowing the read.
-const CLASS_GATE_C = `
+// The roster gate again, spelled against the `c` alias.
+//
+// THE HAND-COPY IS DEAD (the freeze re-key, 2026-08-25). The position clause
+// used to be written out here rather than derived from CLASS_ROSTER_GATE_SQL,
+// because that string carried a bare `props` and a blind s/props/c.props/ would
+// have rewritten the path clause too. The fix was never to copy the clause; it
+// was to make the clause take its alias — `worksClause(alias)` in world-store —
+// so this is now the SAME implementation, not a twin of it. When the freeze
+// re-keyed position off the path, one edit moved both readers, which is what a
+// security boundary with two copies could not do.
+//
+// The other four clauses are still spelled out; if the roster gate grows a
+// fifth, this grows it too, and CLASS_GATE_PARITY in the test file is what makes
+// the omission fail out loud instead of narrowing the read.
+export const CLASS_GATE_C = `
      c.kind = 'mark'
      AND c.by   = 'the-town'
      AND c.tier = 'constitution'
      AND json_extract(c.props, '$.class') IS NOT NULL
-     AND json_extract(c.props, '$.path') LIKE '%/the-keeping-works/%'`;
+     AND ${worksClause("c")}`;
 
 const DIAL_PREDICATE_SQL = `
   SELECT json_extract(p.props, '$.slot') AS slot,

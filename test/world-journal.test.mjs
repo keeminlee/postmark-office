@@ -466,8 +466,8 @@ test("the §1c contract — a journal mark carries the same keys the git delta c
     assert.ok(key in logMark, `the journal's mark carries "${key}", as the git delta's does`);
   assert.equal(logMark.tier, "market",
     "tier is 'market' on both sides — the door refuses tier: as a field, so no record written since 2026-08-13 carries one");
-  assert.equal(logMark.path, "WORLD/marks/let-there-be-light/from-the-log/mark.md",
-    "and the path is where the drain will land it: open ground at the root, because a draft costs nothing and the settlement re-homes by geometry");
+  assert.equal(logMark.path, "WORLD/marks/alpha/from-the-log/mark.md",
+    "and the path is where the drain will land it: at the mark's id — \"New marks are filed by identity\" (the freeze, 2026-08-25), and nothing moves it after");
 });
 
 test("the §1c contract — a nested declaration's path follows the mark it describes", () => {
@@ -478,11 +478,11 @@ test("the §1c contract — a nested declaration's path follows the mark it desc
   });
   const byId = Object.fromEntries(replayDrafts(rows, { publishedIds }).marks.map((m) => [m.id, m]));
   assert.equal(byId["alpha/lamp-colour"].path,
-    "WORLD/marks/let-there-be-light/the-lamp/lamp-colour/mark.md",
-    "predicated/naming take the directory of the mark they describe — leave-exec's own rule, unchanged");
+    "WORLD/marks/alpha/the-lamp/lamp-colour/mark.md",
+    "predicated/naming take the directory of the mark they describe, and follow it to the mark's NEW home at its id — the freeze moved the subject, not the rule");
   assert.equal(pathFor({ slug: "orphan", kind: "predicated", parent_id: "nobody/nothing" }),
     "WORLD/marks/let-there-be-light/orphan/mark.md",
-    "and an unresolvable parent falls back to open ground, which the settlement can re-home");
+    "and an unresolvable parent still falls back to the root — a predicate filed at its own id would describe nothing");
 });
 
 // ── the door guards, as store lookups ────────────────────────────────────────
@@ -593,8 +593,8 @@ test("THE DOOR, flag on — leave_mark is ONE INSERT: no lease, no lock, no chec
   assert.equal(result.log, "journal", "the answer names the pen that wrote it");
   assert.equal(result.seq, 1, "and its receipt is the line, where it used to be a commit");
   assert.equal(result.commit, undefined, "there is no commit, because nothing was committed — absent, not null, which would invite a reader to think one failed");
-  assert.equal(result.dir, "let-there-be-light/through-the-door",
-    "and the answer shape holds across the flag: `dir` still names where the record will sit");
+  assert.equal(result.dir, "alpha/through-the-door",
+    "and the answer shape holds across the flag: `dir` still names where the record will sit — at its id, since the freeze");
   assert.equal(result.branch, "draft/alpha", "and `branch` still names the sketchbook the drain will write it to");
 
   // the git ceremony this slice retires, asserted as absent
@@ -656,7 +656,7 @@ test("THE DOOR, flag off — the same call still spends a commit on the sketchbo
   assert.equal(result.branch, "draft/alpha", "the git lane, untouched");
   assert.ok(result.commit, "with a commit for a receipt");
   assert.equal(result.log, undefined, "and no mention of a journal it never used");
-  assert.match(git("show", "draft/alpha:WORLD/marks/let-there-be-light/the-old-way/mark.md"), /written the way today writes/);
+  assert.match(git("show", "draft/alpha:WORLD/marks/alpha/the-old-way/mark.md"), /written the way today writes/);
   assert.equal(withDb((db) => journalHead(db)), 0,
     "not one row — flag off, the log is not merely ignored at the read, it is never written");
 });

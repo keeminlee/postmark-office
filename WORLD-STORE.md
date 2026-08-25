@@ -96,6 +96,33 @@ reached no reader and the running office kept its own copy of every constant.
 They are additive props; the serving projection does not read them and the
 shadow is unchanged (EMPTY DIFF at `2fcaff0`).
 
+### `in_works` — position, after the freeze (2026-08-25)
+
+> "Filing is frozen as of 2026-08-25. A mark's directory is its historical
+> filing: it carries no claim, and it never moves again. New marks are filed by
+> identity — `WORLD/marks/<household>/<slug>/` — and containment lives only in
+> the derived fold, emitted as an artifact each settlement."
+> — LOGOS/state-and-time.md § *The freeze — filing is static, and the tree is a fossil*
+
+Whether a mark may MINT A VERB has one position clause: it must stand in the
+Keeping Works. That used to be the substring `/the-keeping-works/` in the mark's
+stored path — sound only while a directory made a claim. Under the freeze it
+fails QUIETLY: a class mark filed at its id stands in the works by containment,
+misses the substring, and declares nothing, with no refusal and no log line.
+
+So the hydrator stamps **`props.in_works`** on every mark, from the containment
+CHAIN in `WORLD/containment.json`, and `worksClause()` in `src/world-store.mjs`
+reads that stamp. The path arm survives as the fallback for a store hydrated
+before the stamp existed; an explicit `false` refuses. One implementation, taken
+by an alias, so the joined query in `src/world-classes.mjs` shares it instead of
+copying it. `props.declares` and the `instance-of` rails re-key with it.
+
+Measured over the freeze-day tree before the change was written: chain-membership
+and the path substring select the **same 330 marks**, zero either way. The re-key
+changes nothing about the world as filed — only what happens to what is filed
+next. `report.counts.containment_source` names which question a hydration
+actually asked.
+
 ## The deriver's gate law
 
 Every deriver refuses or discloses its absent inputs; no silent empty tables,
@@ -166,6 +193,22 @@ Hydration green on the real clone (`G:/postmark/postmark-world`) at main, 7.8s.
 | containment spine | walk up the `contains` edges written from directory nesting | the world's own `placementParent` at the same sha | **0** |
 | fan-up weight | marks hanging under each, from the store's parent links | same, from the engine's | **0** |
 | geometry verdict | each `contains` edge's stored `geometry_ok` | recomputed with the world's own `contains()` | **0** (307 checked) |
+
+> **⚠ Two of these three axes went VACUOUS on 2026-08-25, and the table above is
+> the last run where they were not.** The freeze re-keyed `contains` off
+> directory nesting and onto `WORLD/containment.json` — whose sited/parcel rows
+> ARE `placementParent` — so the store side and the engine side of *containment
+> spine* and *fan-up weight* are now the same derivation compared with itself. An
+> empty diff there no longer means the tree and the ground agree; it means
+> arithmetic is deterministic. The **geometry verdict** row still measures
+> something real: it checks the map the settlement EMITTED against the office's
+> own recompute of the same geometry, which is a machinery check on the fold.
+>
+> Rebuilding the first two axes into an honest comparison is unbuilt and
+> deliberately not attempted here — flagged rather than quietly left reading like
+> a receipt. (`tools/world-shadow.mjs` did get one real fix in the same pass: its
+> root was "the mark with no mark.md above it", which after the freeze is true of
+> every mark filed at its id.)
 
 The engine is imported the way `src/world.mjs` imports it — from a subtree
 materialised at a ref, never the working tree. The one deliberate difference:

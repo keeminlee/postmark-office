@@ -126,6 +126,28 @@ const MARK_ACTIONS = new Set([ACTION_LEAVE, ACTION_AMEND, ACTION_WITHDRAW]);
 
 const ROOT_PREFIX = "WORLD/marks/let-there-be-light";
 
+// THE FREEZE (founder-ruled 2026-08-25; LOGOS/state-and-time.md § "The freeze —
+// filing is static, and the tree is a fossil"):
+//
+//   "New marks are filed by identity — WORLD/marks/<household>/<slug>/ — and
+//    containment lives only in the derived fold, emitted as an artifact each
+//    settlement."
+//
+// The id IS `<household>/<slug>`, so the path is the id and nothing has to be
+// looked up to know it. The office's slug grammar is `^[a-z0-9][a-z0-9-]*$`
+// (world.mjs), so an id is exactly two segments and this join is unambiguous.
+const MARKS_PREFIX = "WORLD/marks";
+
+/** `<by>/<slug>` for a record, whichever half it carries. */
+const idPartsOf = (record) => {
+  const id = String(record?.id ?? "");
+  const [idBy, ...idRest] = id.split("/");
+  return {
+    by: record?.by ?? (idBy || null),
+    slug: record?.slug ?? (idRest.length ? idRest.join("/") : null),
+  };
+};
+
 // ── the anchor ───────────────────────────────────────────────────────────────
 
 /**
@@ -345,18 +367,66 @@ export function journalHead(db) {
  * The path the drain WILL write this declaration to.
  *
  * §1c's contract carries `path`, and the viewer half is untouched by this slice
- * — so the journal must answer it. The rule is leave-exec's own, unchanged:
- * sited/parcel land on open ground at the root (draft-costs-nothing, and the
- * settlement re-homes by geometry regardless of where the file sits);
- * predicated/naming take the directory of the mark they describe.
+ * — so the journal must answer it.
+ *
+ * ── THE FREEZE, 2026-08-25 ───────────────────────────────────────────────────
+ *
+ * A sited/parcel record used to land on open ground at the root
+ * (`ROOT_PREFIX/<slug>/`) on the reasoning that the settlement re-homed it by
+ * geometry afterwards anyway. The freeze DELETED the re-home pass — "The
+ * settlement writes a mark once; nothing moves it after" — so where this door
+ * files is now where the mark lives forever, and the law says where that is:
+ *
+ *   "New marks are filed by identity — WORLD/marks/<household>/<slug>/"
+ *
+ * Predicated/naming still take the directory of the mark they describe. That
+ * nesting is AUTHORSHIP — a predicate is its parent continued (the continuation
+ * law) — never a claim about ground, so the freeze does not touch it. The
+ * world's own gate B draws the same line and flags it at mark-lint §6 as its
+ * reading of a sentence the law states without the qualification.
+ *
+ * The two frames agree by construction, which is what makes this a filing change
+ * and not a geometry change: `WORLD/marks/<by>/<slug>/` has no mark.md above it,
+ * so the loader frames it on the world origin; `ROOT_PREFIX/<slug>/` is framed on
+ * the root mark's centre, and the root's centre IS the world origin
+ * (`at: { x: 0, y: 0 }` in WORLD/marks/let-there-be-light/mark.md). Same digits.
+ *
+ * ── GATE A BEFORE GATE B, and this is the half that is easy to miss ─────────
+ *
+ *   "A mark's directory is its historical filing: it carries no claim, and it
+ *    NEVER MOVES AGAIN."
+ *
+ * Filing by identity is the rule for a mark that does not have a filing yet. A
+ * mark that HAS one keeps it, and an amend is a new declaration rather than a
+ * move — so `publishedPathOf` is consulted first, and its answer wins. Without
+ * that, amending any mark filed before the freeze would send the record to a new
+ * directory while the old file stood: two files, one id, and the world's own
+ * gate A refusing the result. That is the publish+re-home wedge (#1862) in a new
+ * coat, and the freeze exists partly to kill it.
+ *
+ * The caller supplies the lookup because only the caller can see a tree. Where
+ * one is not supplied — the resident-facing `dir`, whose door cannot cheaply
+ * resolve a published mark's directory — the answer is the id path, and
+ * `writeDownHousehold` is the backstop that keeps the file where it already is.
  *
  * A nested record whose parent is not itself in the journal takes the root-level
  * fallback, which is exactly what the git path does when the parent is a
  * published mark whose directory this door cannot cheaply resolve.
  */
-export function pathFor(record, { parentPathOf = null } = {}) {
-  const slug = record?.slug ?? String(record?.id ?? "").split("/").slice(1).join("/");
+export function pathFor(record, { parentPathOf = null, publishedPathOf = null } = {}) {
+  const { by, slug } = idPartsOf(record);
   if (!slug) return null;
+
+  if (record?.kind === "sited" || record?.kind === "parcel") {
+    // GATE A: an existing filing never moves.
+    const filed = record?.id && typeof publishedPathOf === "function" ? publishedPathOf(record.id) : null;
+    if (filed) return filed;
+    // GATE B: a new mark files at its id. A record with no `by` and no id to
+    // read one from cannot — it takes the root fallback rather than landing at
+    // `WORLD/marks/undefined/`.
+    if (by) return `${MARKS_PREFIX}/${by}/${slug}/mark.md`;
+  }
+
   const parentDir = record?.parent_id && typeof parentPathOf === "function"
     ? parentPathOf(record.parent_id) : null;
   return `${parentDir ?? ROOT_PREFIX}/${slug}/mark.md`;
@@ -400,6 +470,7 @@ export function replayDrafts(rows, { publishedIds = new Set(), publishedPathOf =
   for (const [id, row] of latest) {
     if (row.action === ACTION_WITHDRAW) continue;
     pathOfDraft.set(id, pathFor({ ...(row.payload ?? {}), id }, {
+      publishedPathOf,   // gate A: a mark canon already holds keeps its filing
       parentPathOf: (pid) => {
         const p = latest.get(pid);
         const ppath = p && p.action !== ACTION_WITHDRAW
@@ -422,8 +493,13 @@ export function replayDrafts(rows, { publishedIds = new Set(), publishedPathOf =
       // its own last declaration first, then canon's — a withdraw row can
       // describe nothing, and the overlay has a mark to draw either way.
       const canon = typeof publishedMarkOf === "function" ? publishedMarkOf(id) : null;
+      // The last-resort guess when canon cannot say where the file sits. It is
+      // handed the mark's own last declaration so `kind` reaches pathFor: after
+      // the freeze a sited/parcel mark's path IS its id, and a guess that
+      // ignored kind would name the pre-freeze root fallback for every one.
+      const guessFrom = { ...(declared.get(id)?.payload ?? canon ?? {}), id };
       marks.push({
-        status: "deleted", path: path ?? pathFor({ id, slug: id.split("/").slice(1).join("/") }),
+        status: "deleted", path: path ?? pathFor(guessFrom),
         ...markShape(id, declared.get(id) ?? row, canon),
       });
       continue;

@@ -213,10 +213,10 @@ test("ruling 9 scopes reads by household and every write lands off main", async 
   // path (seeding/manifest.json, the engine fallback) has always wanted from it.
   assert.equal(git("branch", "--show-current").trim(), "main");
   assert.equal(git("rev-parse", "draft/house-b").trim(), result.commit);
-  assert.equal(git("ls-tree", "--name-only", "main", "--", "WORLD/marks/let-there-be-light/new-sketch/mark.md").trim(), "");
-  assert.match(git("show", "draft/house-b:WORLD/marks/let-there-be-light/new-sketch/mark.md"), /a second household sketch/);
+  assert.equal(git("ls-tree", "--name-only", "main", "--", "WORLD/marks/beta/new-sketch/mark.md").trim(), "");
+  assert.match(git("show", "draft/house-b:WORLD/marks/beta/new-sketch/mark.md"), /a second household sketch/);
   assert.equal(git("diff-tree", "--no-commit-id", "--name-only", "-r", result.commit).trim(),
-    "WORLD/marks/let-there-be-light/new-sketch/mark.md",
+    "WORLD/marks/beta/new-sketch/mark.md",
     "draft write commits only the mark record, never main's derived canon files");
 });
 
@@ -229,7 +229,7 @@ test("world_leave_mark defaults by on a solo key without changing its author con
     body: "the solo key chose its only resident",
   }, houseA);
   assert.equal(result.id, "alpha/solo-default");
-  assert.match(git("show", "draft/house-a:WORLD/marks/let-there-be-light/solo-default/mark.md"), /^by: alpha$/m);
+  assert.match(git("show", "draft/house-a:WORLD/marks/alpha/solo-default/mark.md"), /^by: alpha$/m);
 });
 
 test("world_open_your_eyes defaults to telling + compact objects and preserves diagnostics", async () => {
