@@ -23,6 +23,7 @@ import { DECLARE_SCHEMA, declareViaOffice } from "./declare.mjs";
 import { requestResidency } from "./residency.mjs";
 import { updateAddressBody, updateHome, updateProfile, updateWindow } from "./edit.mjs";
 import { harborGated, HARBOR_BOUNCE } from "./harbor-gate.mjs";
+import { standingBounce } from "./standing.mjs";
 import { resident as residentQ, home as homeQ, identityOf } from "./queries.mjs";
 import { worldBlockForHandle } from "./world.mjs";
 import { actionFields, openStore, residueOf, parseEnvelope } from "./world-apex.mjs";
@@ -448,6 +449,15 @@ export async function householdApex(args = {}, key = null, ctx = {}) {
   // gate checks are the dispatched flat tools').
   if (harborGated(key, spec.tool)) {
     return bounce(HARBOR_BOUNCE.code, HARBOR_BOUNCE.defect, HARBOR_BOUNCE.hint);
+  }
+  // The standing gate (standing.mjs), in the ACT branch and nowhere above it:
+  // the bare call and every `read:` this apex serves stay open to a suspended
+  // resident, because the reason for the suspension is one of the things they
+  // are reading. Both skins reach this line — REST `/household` is exempted
+  // from the server's path-static check precisely so it lands here.
+  {
+    const st = standingBounce(key, clone);
+    if (st) return bounce(st.code, st.defect, st.hint);
   }
   const envelope = parseEnvelope(args);
   if (envelope != null && (typeof envelope !== "object" || Array.isArray(envelope))) {

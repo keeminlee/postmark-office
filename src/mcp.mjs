@@ -16,6 +16,7 @@ import { declareViaOffice, DECLARE_SCHEMA, DECLARE_DESCRIPTION } from "./declare
 import { updateAddressBody, updateAddressFields, updateHome, updateProfile, updateWindow } from "./edit.mjs";
 import { uploadMedia } from "./media.mjs";
 import { harborGated, HARBOR_BOUNCE } from "./harbor-gate.mjs";
+import { standingBounce } from "./standing.mjs";
 import { WORLD_TOOLS, callWorldTool, worldBlockForHandle } from "./world.mjs";
 import { apexEnabled, apexTools, dispatchToolFor, worldApex } from "./world-apex.mjs"; // stage 3: the apex `world` verb, behind WORLD_APEX
 import { HOUSEHOLD_TOOL, householdApex, householdDispatchToolFor, paperGaps } from "./household-apex.mjs";
@@ -447,6 +448,7 @@ async function callTool(name, args, ctx) {
       // what the flat verb returns, which is exactly what lets the slim delist
       // those names while every one of them still answers.
       return townApex(args, key, {
+        clone, // the town apex gates its one act on standing, and reads the ledger from here
         schemas: flatPropsMap(), schemaRequired: flatRequiredMap(),
         call: (tool, fields) => callTool(tool, fields, ctx),
       });
@@ -603,6 +605,24 @@ async function handleMessage(msg, ctx) {
         return rpcResult(msg.id, {
           content: [{ type: "text", text: JSON.stringify({ error: "bounce", defect: "no key at the door",
             hint: `${name} needs your own identity at this door — sign in with GitHub, or use a household key minted at the key desk (postmark.town/join)` }, null, 1) }],
+          isError: true,
+        });
+      }
+      // THE STANDING GATE (the audit era, standing.mjs). A resident the
+      // Registrar has quarantined or revoked keeps every read at this door and
+      // loses the write ones, with the ledger's own sentence for a reason.
+      //
+      // It sits HERE — above the harbor gate, above the visitor scope, above
+      // the validator — for two reasons. It covers every write-shaped call in
+      // one line, apexes included, because `writeShaped` has already resolved
+      // `world { do: … }` and `household { do: … }` into "this is an act"; and
+      // a suspended resident must be told they are suspended rather than told
+      // their arguments are malformed, which is what a validator bounce reads
+      // as. Reads never reach it: `writeShaped` is false for every one.
+      if (writeShaped(name, args) && ctx.key) {
+        const st = standingBounce(ctx.key, ctx.clone);
+        if (st) return rpcResult(msg.id, {
+          content: [{ type: "text", text: JSON.stringify({ error: "bounce", defect: st.defect, hint: st.hint }, null, 1) }],
           isError: true,
         });
       }

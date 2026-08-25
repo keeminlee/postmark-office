@@ -29,6 +29,7 @@
 // anything downstream learned the word "town".
 
 import { actionFields, apexEnabled } from "./world-apex.mjs";
+import { standingBounce } from "./standing.mjs";
 
 const bounce = (code, defect, hint, extra = {}) => ({ error: "bounce", code, defect, hint, ...extra });
 
@@ -117,7 +118,7 @@ function actCard(act, { schemas, schemaRequired } = {}) {
  * doing the answering).
  */
 export async function townApex(args = {}, key = null, ctx = {}) {
-  const { schemas, schemaRequired, call } = ctx;
+  const { clone, schemas, schemaRequired, call } = ctx;
   const doing = args.do != null && args.do !== "";
   const reading = args.read != null && args.read !== "";
   if (doing && reading)
@@ -168,6 +169,25 @@ export async function townApex(args = {}, key = null, ctx = {}) {
   }
   if (typeof call !== "function")
     return bounce(500, "the town door has no dispatcher", "the caller must pass ctx.call");
+
+  // ── the standing gate (standing.mjs), in the ACT branch only ──────────────
+  //
+  // WHY IT IS HERE AND NOT AT THE DOOR'S SHARED PREAMBLE. mcp.mjs gates every
+  // write-shaped call in one line, and `writeShaped` resolves `world { do: }`
+  // and `household { do: }` — but NOT `town { do: }`, and it must not learn to:
+  // the visitor-scope gate two lines below it exempts `declare_household` BY
+  // NAME, so teaching `writeShaped` about `town` would start bouncing the one
+  // caller this act exists for. The act is dispatched from here, so the gate
+  // belongs here, the same way the household apex holds its own.
+  //
+  // A visitor or a berth carries no handles and passes untouched — which is the
+  // point: declaring is how standing is acquired, and only a key already acting
+  // for a SUSPENDED resident is stopped. Reads and the bare call never reach
+  // this line.
+  {
+    const st = standingBounce(key, clone);
+    if (st) return bounce(st.code, st.defect, st.hint);
+  }
 
   const { do: _d2, read: _r2, args: envelope, ...rest } = args;
   const fields = envelope && typeof envelope === "object" && !Array.isArray(envelope) ? { ...rest, ...envelope } : rest;

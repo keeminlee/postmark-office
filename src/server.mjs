@@ -29,6 +29,7 @@ import { requestResidency } from "./residency.mjs";
 import { declareViaOffice } from "./declare.mjs";
 import { uploadMedia } from "./media.mjs";
 import { harborGated, HARBOR_BOUNCE } from "./harbor-gate.mjs";
+import { standingBounce } from "./standing.mjs";
 import { arrivalPage } from "./arrival.mjs";
 import { townSummary, residentList, resident, mailList, letter, doorstep, search, bulletinList, bulletinEntry, stampsRoster, stampsFor, stampsDetail, questBoardFor, nextStepsFor, metricsMail, letterList, regionList, home, identityOf, repoLog } from "./queries.mjs";
 import { householdOf } from "./households.mjs";
@@ -552,6 +553,29 @@ const server = createServer((req, res) => {
         && path !== "/world/apex"
         && harborGated(key, worldVerb ?? path))
       return bounce(res, HARBOR_BOUNCE.code, HARBOR_BOUNCE.defect, HARBOR_BOUNCE.hint);
+
+    // THE STANDING GATE, REST face (standing.mjs). A quarantined or revoked
+    // resident's WRITE acts bounce with the ledger's own sentence; every read
+    // this door serves is untouched, which is the law the ledger is built on —
+    // a suspension the resident cannot read is a deletion the town will not
+    // admit to.
+    //
+    // ONE PATH-STATIC CHECK PLUS APEX-INTERNAL ONES, mirroring the harbor gate
+    // directly above. `/household` and `/world/apex` are exempted HERE and gate
+    // themselves inside, and that exemption is load-bearing rather than tidy:
+    // both are POST routes whose bare or `read:` body is a READ, so refusing
+    // them by method would suspend reading. They resolve the act from the body
+    // and call the gate there.
+    //
+    // The arrival lane is NOT exempt, unlike the harbor's. A harbor household
+    // is exempted because arriving is the one thing it is entitled to do; a
+    // suspended resident adding another resident to their house, or minting a
+    // fresh key, is the act the audit exists to hold. A visitor or a berth
+    // carries no handles, so the gate never fires on the genuinely arriving.
+    if (req.method !== "GET" && path !== "/household" && path !== "/world/apex") {
+      const st = standingBounce(key, TOWN_CLONE);
+      if (st) return bounce(res, st.code, st.defect, st.hint);
+    }
   }
 
   // MCP skin — same verbs, JSON-RPC dress (P3). The MCP door REQUIRES a
@@ -1238,6 +1262,11 @@ const server = createServer((req, res) => {
             const limited = bouncer.checkHouseholdWorldWrite({ household: key.household, verb });
             if (limited) return rateResponse(res, limited);
             if (harborGated(key, verb)) return bounce(res, HARBOR_BOUNCE.code, HARBOR_BOUNCE.defect, HARBOR_BOUNCE.hint);
+            // and the standing gate, inside the `do:` branch for the same
+            // reason the harbor's is: the bare and `read:` shapes of this route
+            // are reads, and reads are never suspended.
+            const st = standingBounce(key, TOWN_CLONE);
+            if (st) return bounce(res, st.code, st.defect, st.hint);
           }
           // The SAME validator the MCP door runs, against the SAME tool schema —
           // charge-then-validate in the MCP door's own order. Unknown top-level
