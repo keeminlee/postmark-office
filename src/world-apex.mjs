@@ -50,6 +50,7 @@ import {
   placeWords,
   residentStandpoint,
   walkViaOffice,
+  walkersAround,
   witnessStamp,
   worldEyes,
   worldNoteViaOffice,
@@ -415,12 +416,46 @@ function fullPropsFor(toolName) {
   return _fullProps.get(toolName) ?? null;
 }
 
+// A registry-length enum is a READ of its own, not a field annotation.
+//
+// `leave-mark`'s `class` field carries `enum:` with every class name the town's
+// record knows — 129 of them, 2,013 bytes — and the apex hangs `fields` on the
+// action's CARD, so that list rode every `world` bare read and every
+// `read: "leave-mark"` whether or not the caller was leaving a mark. It grows
+// with the class registry, forever, on reads about something else entirely.
+//
+// Folded HERE and only here: on the CARD. The flat tool's own inputSchema is
+// untouched, so `tools/list` still advertises the exact set the runtime
+// accepts. That symmetry is not incidental — the comment on the enum's getter
+// records the defect it was written to prevent ("a schema that promises a
+// smaller world than the runtime accepts is the same defect as one that
+// promises a larger"), and a card is documentation while a schema is a
+// contract. The count and the door to the list stand in the enum's place, so
+// nothing about the field becomes unknowable — only unrepeated.
+const ENUM_FOLD_AT = 12;
+// Exported for its own falsifier: the live class roster is read from the world
+// store, so a test that went through `fieldsFor` would assert nothing in an
+// environment with no store hydrated — exactly the environment CI runs in.
+export function foldLongEnums(props) {
+  let touched = false;
+  const out = {};
+  for (const [name, spec] of Object.entries(props)) {
+    if (Array.isArray(spec?.enum) && spec.enum.length > ENUM_FOLD_AT) {
+      touched = true;
+      const { enum: values, ...rest } = spec;
+      out[name] = { ...rest, enum_count: values.length,
+        enum_note: `${values.length} values, read from the town's own record and named in this act's own schema — world { read: "leave-mark" } carries the card, and the full list rides the ${name} field of the flat tool's schema in tools/list` };
+    } else out[name] = spec;
+  }
+  return touched ? out : props;
+}
+
 /** The fields an action takes, from the tool it dispatches to. A class
  *  that declares its own `fields:` keeps them — law outranks the office. */
 export function fieldsFor(action, declared = null) {
   if (declared && typeof declared === "object" && Object.keys(declared).length) return declared;
   const tool = DISPATCH[action]?.tool;
-  const fields = tool ? (flatSchemas().get(tool) ?? {}) : {};
+  const fields = foldLongEnums(tool ? (flatSchemas().get(tool) ?? {}) : {});
   const map = aliasesFor(action);
   if (!map) return fields;
   // outward: the flat tool's name becomes the apex's, so the card names what a
@@ -537,6 +572,37 @@ function entriesFrom(row, db = null) {
     });
   }
   return out;
+}
+
+/**
+ * `actions`, at the size the caller asked for. THE DEFAULT IS UNCHANGED.
+ *
+ * The bare world read is 21 KB and 74% of it is the twelve action cards — the
+ * documented price of "the world is its own documentation", paid on every
+ * orientation read including the repeats where nothing moved. That price buys
+ * something real: the cards are what a resident reads to learn an act, and the
+ * prototype's prefill grammar rides the full `fields`. So this is a DIAL, not a
+ * trim: `cards: "names"` is a caller saying "I have read them, tell me what is
+ * open", and every other call gets exactly what it got yesterday.
+ *
+ * `granted` is computed upstream from the full entries, so the roll of what is
+ * open here is identical under either shape — the dial changes how much is
+ * said about each act, never which acts are afforded. A budget decides how much
+ * gets said; it must not decide what is true.
+ */
+function cardsBlock(actions, cards) {
+  if (cards !== "names") return { actions };
+  return {
+    actions: actions.map((e) => ({
+      action: e.action,
+      // The blurb's first sentence-or-line, which is the part that says what
+      // the act IS; the rest of the card is what it takes and what it costs.
+      blurb: String(e.blurb ?? "").split(/\r?\n/).find((l) => l.trim())?.slice(0, 160) ?? "",
+      via: e.via,
+    })),
+    cards: "names",
+    cards_note: `names and one line each, because you asked with cards: "names" — the full card for any one act (its fields, its dials, the class that grants it, and the terms that would bind it) is one read away: world { read: "<action>" }. Omit cards: for the full set, which is the default and is unchanged.`,
+  };
 }
 
 /**
@@ -886,7 +952,7 @@ async function apexRead(args, key) {
     ...(oriented.present ? { present: oriented.present } : {}),
     ...(happened ? { happened } : {}),
     ...(focus ? { focus } : {}),
-    actions,
+    ...cardsBlock(actions, args.cards),
     granted,
     law: store.unavailable
       ? { unavailable: store.unavailable, actions: "none can be read — the class layer lives in the world store" }
@@ -1056,12 +1122,31 @@ async function readDomainFor(action, fields, key, oriented, ctx = {}) {
       if (fields?.text) return { error: "bounce", code: 422, defect: "a read never performs", hint: `to speak, use do: — world { do: "say", args: { text: … } }. read: "say" only listens.` };
       return { heard: await call("world_say", {}) };
     }
-    case "walk":
-      return { standpoint: oriented.standpoint, walkers: await call("world_walkers", {}) };
+    case "walk": {
+      // BOUND BY RADIUS, NOT BY TRUNCATING THE ROLL. This read was 33 KB
+      // because it answered "what road am I on" with the whole town roll and
+      // its positions. The roll injection above is deliberate — it is what
+      // closed #1864 — so it stays whole and the RENDER gets a radius: the
+      // walkers who stand near this standpoint, with the count of who else
+      // qualified, how many the radius set aside, and the roll's own size.
+      // The whole roll with positions is still one read away at
+      // GET /world/walkers, which is the door the town's map draws from and
+      // which is therefore never cut.
+      const answer = await call("world_walkers", {});
+      const at = oriented?.standpoint;
+      if (answer?.error || !Array.isArray(answer?.walkers) || !Number.isFinite(at?.x) || !Number.isFinite(at?.y)) {
+        return { standpoint: oriented.standpoint, walkers: answer };
+      }
+      return {
+        standpoint: oriented.standpoint,
+        walkers: { at: answer.at, ...walkersAround(answer.walkers, { x: at.x, y: at.y }),
+          ...(answer.disclosed ? { disclosed: answer.disclosed } : {}) },
+      };
+    }
     case "leave-mark":
       return fields?.mark
         ? { mark: await call("world_investigate", { mark: fields.mark, ...(fields.depth != null ? { depth: fields.depth } : {}) }) }
-        : { marks: await call("world_my_marks", {}) };
+        : { marks: await call("world_my_marks", { ...(fields?.offset != null ? { offset: fields.offset } : {}) }) };
     case "stake":
     case "unstake":
       return fields?.mark
@@ -1194,6 +1279,7 @@ export const APEX_TOOL = {
     with_image: { type: "boolean", description: "with mark:, also bring that mark's picture back as image bytes if it has one and it fits under the inline cap. The url rides in the answer either way; this only decides whether the office spends the bytes." },
     handle: { type: "string", description: "which of YOUR residents acts (omit if your key holds one; a multi-resident key must name one)" },
     telling: { type: "boolean", description: "true adds the prose telling of what you see; omit for the cheap structural read" },
+    cards: { type: "string", enum: ["names"], description: "cards: \"names\" shrinks `actions` to each act's name, one line, and how it reached you — for a repeat read by a caller who has already learnt the acts. Which acts are afforded is identical either way; only how much is said about each changes. Omit for the full cards, which is the default and carries the fields a caller needs to compose an act." },
   },
   // CLOSED, still (issue #7 §3): an unknown TOP-LEVEL parameter is refused by
   // name, so the schema and the runtime keep telling the same story. The act's
