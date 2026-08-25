@@ -26,7 +26,10 @@ import {
   dailyFingerprint,
   normalizeText,
   latestDecisiveRunPerWorkflow,
+  classifyWatcher,
+  readWatcherStamp,
   classifyWorkflows,
+  CONFIG,
   transition,
   composeMessage,
   composeBoard,
@@ -431,6 +434,29 @@ const GREEN_TABLE = {
   "https://dev.postmark.town/": { status: 302, headers: { location: "https://x.cloudflareaccess.com/cdn-cgi/access/login/dev.postmark.town" }, body: "" },
 };
 
+/**
+ * A staged box modelled on TODAY'S box: every installed watcher's directory
+ * present with a freshly written artifact, and `/srv/postmark-stripe` absent,
+ * because stripe-watch does not exist yet. `dead` freezes or removes an
+ * artifact; `missingDirs` uninstalls a watcher entirely.
+ *
+ * The stripe default is not cosmetic — the first version of this fixture made
+ * every directory exist, so it quietly asserted a watcher that has never been
+ * built was installed and healthy, and the INFO branch went untested.
+ */
+const stubBox = ({ dead = {}, missingDirs = ["/srv/postmark-stripe"] } = {}) => ({
+  statImpl: (p) => {
+    if (missingDirs.some((d) => p === d || p.startsWith(d + "/"))) throw new Error("ENOENT");
+    if (/\.(json|db)$/.test(p)) {
+      const frozen = Object.entries(dead).find(([path]) => p === path);
+      if (frozen && frozen[1] === "missing") throw new Error("ENOENT");
+      return { mtimeMs: frozen ? frozen[1] : T0 - MINUTE, isDirectory: () => false };
+    }
+    return { isDirectory: () => true, mtimeMs: 0 };
+  },
+  readImpl: () => { throw new Error("no json field"); }, // force the mtime path
+});
+
 // git ls-remote, stubbed: main tip, then the release tag list.
 const stubExec = ({ siteTip = "sitetip0000", townTip = "towntip0000", relSha = "relsha00000" } = {}) =>
   (_bin, args) => {
@@ -440,7 +466,7 @@ const stubExec = ({ siteTip = "sitetip0000", townTip = "towntip0000", relSha = "
   };
 
 test("a healthy tick is entirely green and says nothing", async () => {
-  const { probes, alerts } = await tick({ fetchImpl: stubFetch(GREEN_TABLE), exec: stubExec(), state: {}, nowMs: T0 });
+  const { probes, alerts } = await tick({ fetchImpl: stubFetch(GREEN_TABLE), exec: stubExec(), ...stubBox(), state: {}, nowMs: T0 });
   const bad = probes.filter((p) => p.verdict !== "OK" && p.verdict !== "INFO");
   assert.deepEqual(bad.map((p) => `${p.key}:${p.verdict} ${p.reason}`), [], "a green town must produce no findings");
   assert.equal(alerts.length, 0, "and therefore nothing to say");
@@ -455,7 +481,7 @@ test("LOUDLY BE NOTIFIED: an outage and a frozen index both surface from one tic
     "https://postmark.town/api/": { status: 200, headers: { "x-postmark-as-of": "frozen00000" }, body: "{}" },
   };
   const state = { probes: {}, stamps: { office_as_of: { value: "frozen00000", first_seen_at: T0 - 2 * HOUR } } };
-  const { probes, alerts } = await tick({ fetchImpl: stubFetch(broken), exec: stubExec(), state, nowMs: T0 });
+  const { probes, alerts } = await tick({ fetchImpl: stubFetch(broken), exec: stubExec(), ...stubBox(), state, nowMs: T0 });
 
   const daily = probes.find((p) => p.key === "site_daily");
   assert.equal(daily.verdict, "DOWN");
@@ -478,6 +504,7 @@ test("env-missing degrades LOUDLY: every reading is still taken, the board is st
     env: {},                       // no SENTINEL_DISCORD_WEBHOOK, no token file
     fetchImpl: stubFetch({ ...GREEN_TABLE, "https://postmark.town/daily/": { status: 502, body: "" } }),
     exec: stubExec(),
+    ...stubBox(),
     nowMs: T0,
     log: () => {},
     errLog: (m) => errs.push(String(m)),
@@ -510,10 +537,54 @@ test("alertingStatus is data, not a side effect", () => {
   assert.equal(alertingStatus({ SENTINEL_DISCORD_WEBHOOK: "" }).status.configured, false, "an empty string is not a channel");
 });
 
+test("the hold is set from the SAME env file as the webhook, and garbage falls back to 0 rather than to silence", () => {
+  // The founder's whole review is "read the runbook, choose this number, paste
+  // one URL". Splitting those across a file and a source edit would break that.
+  assert.equal(alertingStatus({ SENTINEL_PING_AFTER_MINUTES: "45" }).pingAfterMs, 45 * MINUTE);
+  assert.equal(alertingStatus({}).pingAfterMs, 0);
+
+  // A typo must never buy silence. Every unusable value lands on 0, which is
+  // "ring immediately" — the failure mode of a bad config is a LOUDER sentinel,
+  // never a quieter one.
+  for (const bad of ["", "soon", "-5", "NaN", undefined]) {
+    assert.equal(alertingStatus({ SENTINEL_PING_AFTER_MINUTES: bad }).pingAfterMs, 0, `"${bad}" must fall back to ringing immediately`);
+  }
+
+  // And the board answers the founder's question without anyone reading code.
+  const ladder = alertingStatus({}).status.ladder;
+  assert.equal(ladder.edge_triggered, true);
+  assert.match(ladder.pings_per_tick, /^never/);
+});
+
+test("the env-set hold reaches a whole run: the board shows DOWN while the doorbell stays silent", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "sentinel-hold-"));
+  const outPath = join(dir, "status.json");
+  const posted = [];
+
+  const { board, message } = await run({
+    argv: ["node", "site-sentinel.mjs", "--state", join(dir, "state.json"), "--out", outPath],
+    env: { SENTINEL_DISCORD_WEBHOOK: "https://discord.com/api/webhooks/x", SENTINEL_PING_AFTER_MINUTES: "30" },
+    fetchImpl: async (url, opts) => {
+      if (String(url).startsWith("https://discord.com/")) { posted.push(opts); return { ok: true, status: 204, headers: { get: () => null }, text: async () => "", json: async () => ({}) }; }
+      return stubFetch({ ...GREEN_TABLE, "https://postmark.town/daily/": { status: 502, body: "" } })(url, opts);
+    },
+    exec: stubExec(),
+    ...stubBox(),
+    nowMs: T0,
+    log: () => {}, errLog: () => {},
+  });
+
+  assert.equal(board.status, "DOWN", "the board shows the problem from the first tick");
+  assert.equal(board.alerting.ladder.ping_after_minutes, 30);
+  assert.equal(message, null, "and the doorbell stays silent inside the hold");
+  assert.equal(posted.length, 0, "nothing was POSTed to the webhook");
+  assert.equal(JSON.parse(readFileSync(outPath, "utf8")).status, "DOWN");
+});
+
 test("no /build.json means UNKNOWN and a note naming the fix — never a green site-freshness verdict", async () => {
   const noStamp = { ...GREEN_TABLE };
   delete noStamp["https://postmark.town/build.json"];
-  const { probes, notes } = await tick({ fetchImpl: stubFetch(noStamp), exec: stubExec(), state: {}, nowMs: T0 });
+  const { probes, notes } = await tick({ fetchImpl: stubFetch(noStamp), exec: stubExec(), ...stubBox(), state: {}, nowMs: T0 });
   assert.equal(probes.find((p) => p.key === "site_code").verdict, "UNKNOWN");
   assert.equal(probes.find((p) => p.key === "site_town_data").verdict, "UNKNOWN");
   assert.ok(notes.some((n) => /build-stamp\.mjs/.test(n)), "the note must name where the fix lives");
@@ -530,7 +601,7 @@ test("prod's code is compared against the RELEASE TAG, not main — lagging main
     site_code: { value: "relsha00000", first_seen_at: T0 - 5 * HOUR },
     site_town_data: { value: "sitetip0000", first_seen_at: T0 - 5 * HOUR },
   } };
-  const { probes } = await tick({ fetchImpl: stubFetch(GREEN_TABLE), exec, state, nowMs: T0 });
+  const { probes } = await tick({ fetchImpl: stubFetch(GREEN_TABLE), exec, ...stubBox(), state, nowMs: T0 });
 
   const code = probes.find((p) => p.key === "site_code");
   assert.equal(code.verdict, "OK", "code pinned to the newest release tag is correct, however far main has run ahead");
@@ -559,4 +630,207 @@ test("lsRemote and newestReleaseTag read the wire protocol, and answer null rath
   const boom = () => { throw new Error("no network"); };
   assert.equal(lsRemote("https://x/y.git", "main", { exec: boom }), null, "an unreachable remote is UNKNOWN upstream, not a crash");
   assert.equal(newestReleaseTag("https://x/y.git", { exec: boom }), null);
+});
+
+// ── §6 the watchers, watched ────────────────────────────────────────────────
+
+test("classifyWatcher separates 'not installed' from 'installed and never ran' from 'ran once and stopped'", () => {
+  const base = { nowMs: T0, cadenceMs: 15 * MINUTE, multiple: 3, path: "/srv/x/state.json" };
+
+  // Ran recently — and one late run is a jittered timer, not a finding.
+  assert.equal(classifyWatcher({ ...base, dirExists: true, fileExists: true, stampMs: T0 - 5 * MINUTE }).verdict, "OK");
+  assert.equal(classifyWatcher({ ...base, dirExists: true, fileExists: true, stampMs: T0 - 40 * MINUTE }).verdict, "OK", "under 3x cadence is a slip, not a stop");
+
+  // Past three cadences it has stopped rather than slipped.
+  const dead = classifyWatcher({ ...base, dirExists: true, fileExists: true, stampMs: T0 - 3 * HOUR });
+  assert.equal(dead.verdict, "STALE");
+  assert.match(dead.reason, /missed at least 12 runs/);
+
+  // Installed and has never produced anything — a real finding, and one an age
+  // check alone could never make, because there is no age to check.
+  const never = classifyWatcher({ ...base, dirExists: true, fileExists: false });
+  assert.equal(never.verdict, "STALE");
+  assert.match(never.reason, /has never written/);
+
+  // Not this box (or not installed): UNKNOWN, never DOWN. Alarming here would
+  // make every dev-machine run red.
+  assert.equal(classifyWatcher({ ...base, dirExists: false, fileExists: false }).verdict, "UNKNOWN");
+
+  // Declared but not built yet (stripe-watch today): INFO, so it is watched the
+  // day it exists without alarming about an absence nobody promised.
+  assert.equal(classifyWatcher({ ...base, dirExists: false, fileExists: false, optional: true }).verdict, "INFO");
+
+  // Present but undateable is UNKNOWN, never green.
+  assert.equal(classifyWatcher({ ...base, dirExists: true, fileExists: true, stampMs: null }).verdict, "UNKNOWN");
+});
+
+test("readWatcherStamp prefers the artifact's own field and falls back to mtime, never the reverse", () => {
+  const stat = (p) => (/\.(json|db)$/.test(p) ? { mtimeMs: T0 - MINUTE, isDirectory: () => false } : { isDirectory: () => true, mtimeMs: 0 });
+
+  // A named field wins: the job's own word about when it last ran.
+  const named = readWatcherStamp(
+    { dir: "/srv/x", path: "/srv/x/state.json", stamp: "last_run" },
+    { statSync: stat, readFileSync: () => JSON.stringify({ last_run: "2026-08-25T11:00:00Z" }) },
+  );
+  assert.equal(named.stampMs, Date.parse("2026-08-25T11:00:00Z"));
+
+  // No field to name: the rehydrate tick writes no state of its own, but
+  // office-tick.sh renames office.db over itself every run, so mtime IS the
+  // last-ran stamp — and unlike the as-of header it moves on a quiet town too.
+  const mtimeOnly = readWatcherStamp(
+    { dir: "/srv/postmark-office", path: "/srv/postmark-office/office.db", stamp: "mtime" },
+    { statSync: stat, readFileSync: () => { throw new Error("not json"); } },
+  );
+  assert.equal(mtimeOnly.stampMs, T0 - MINUTE);
+
+  // Unparseable content falls back rather than giving up: a file being
+  // rewritten is running, whatever it says inside.
+  const garbage = readWatcherStamp(
+    { dir: "/srv/x", path: "/srv/x/state.json", stamp: "last_run" },
+    { statSync: stat, readFileSync: () => "not json at all" },
+  );
+  assert.equal(garbage.stampMs, T0 - MINUTE);
+
+  // A missing directory short-circuits before any read is attempted.
+  const gone = readWatcherStamp(
+    { dir: "/srv/nope", path: "/srv/nope/state.json", stamp: "last_run" },
+    { statSync: () => { throw new Error("ENOENT"); }, readFileSync: () => { throw new Error("never"); } },
+  );
+  assert.deepEqual(gone, { dirExists: false, fileExists: false, stampMs: null });
+});
+
+// ── the escalation ladder ───────────────────────────────────────────────────
+
+test("ping_after_minutes holds the doorbell while the board shows the problem from the first tick", () => {
+  // The founder may let a problem stand N minutes before being woken. The board
+  // is NOT gated by this — only the doorbell is.
+  const hold = 30 * MINUTE;
+
+  const t0 = transition({ prev: null, next: { verdict: "DOWN", reason: "HTTP 502" }, nowMs: T0, pingAfterMs: hold });
+  assert.equal(t0.alert, null, "no ping on the tick it breaks when a hold is configured");
+  assert.equal(t0.state.verdict, "DOWN", "but the state — and therefore the board — says DOWN immediately");
+  assert.equal(t0.state.since, T0);
+  assert.equal(t0.state.last_alert_at, null, "nothing has been announced yet");
+
+  const t29 = transition({ prev: t0.state, next: { verdict: "DOWN", reason: "HTTP 502" }, nowMs: T0 + 29 * MINUTE, pingAfterMs: hold });
+  assert.equal(t29.alert, null);
+
+  const t30 = transition({ prev: t29.state, next: { verdict: "DOWN", reason: "HTTP 502" }, nowMs: T0 + hold, pingAfterMs: hold });
+  assert.equal(t30.alert.kind, "onset");
+  assert.equal(t30.alert.heldFor, hold, "the ping says how long it stood before ringing");
+  assert.equal(t30.state.last_alert_at, T0 + hold);
+});
+
+test("a fault that clears inside the hold never pings at all — not even a recovery", () => {
+  // Recovery is announced only if the problem was. Taking back something nobody
+  // was told about is a second unwanted ping, not courtesy.
+  const hold = 30 * MINUTE;
+  const bad = transition({ prev: null, next: { verdict: "DOWN", reason: "HTTP 502" }, nowMs: T0, pingAfterMs: hold });
+  assert.equal(bad.alert, null);
+
+  const back = transition({ prev: bad.state, next: { verdict: "OK", reason: "HTTP 200" }, nowMs: T0 + 20 * MINUTE, pingAfterMs: hold });
+  assert.equal(back.alert, null, "silence in, silence out");
+  assert.equal(back.state.verdict, "OK");
+});
+
+test("the default hold is 0 — the doorbell rides the transition, and that is the shipped behaviour", () => {
+  // "how can we LOUDLY BE NOTIFIED when something is down on the site?" — the
+  // hold is an option the founder may take, never one taken for them.
+  assert.equal(CONFIG.pingAfterMs, 0);
+  const t = transition({ prev: null, next: { verdict: "DOWN", reason: "HTTP 502" }, nowMs: T0 });
+  assert.equal(t.alert.kind, "onset");
+  assert.equal(t.alert.heldFor, 0);
+});
+
+test("an already-announced problem that CHANGES shape rings immediately, hold or no hold", () => {
+  // The reader is awake to this probe already; serving them another 30-minute
+  // hold would delay news they are actively waiting on.
+  const announced = { verdict: "DOWN", reason: "HTTP 502", since: T0, last_alert_at: T0 };
+  const changed = transition({ prev: announced, next: { verdict: "STALE", reason: "index frozen" }, nowMs: T0 + MINUTE, pingAfterMs: 30 * MINUTE });
+  assert.equal(changed.alert.kind, "changed");
+  assert.equal(changed.alert.from, "DOWN");
+
+  // But a change while still HELD just keeps holding — nobody is awake yet.
+  const held = { verdict: "DOWN", reason: "HTTP 502", since: T0, last_alert_at: null };
+  const stillHeld = transition({ prev: held, next: { verdict: "STALE", reason: "index frozen" }, nowMs: T0 + MINUTE, pingAfterMs: 30 * MINUTE });
+  assert.equal(stillHeld.alert, null);
+  assert.equal(stillHeld.state.since, T0 + MINUTE, "a different failure starts its own clock");
+});
+
+// ── the anti-weight contract ────────────────────────────────────────────────
+
+test("the board carries a heartbeat for an off-box watcher, and says plainly what it cannot do", () => {
+  const board = composeBoard({ probes: [{ verdict: "OK" }], nowIso: "2026-08-25T12:00:00Z", alerting: {}, expectedEverySeconds: 600 });
+  assert.equal(board.heartbeat.generated_at, "2026-08-25T12:00:00Z");
+  assert.equal(board.heartbeat.expected_every_seconds, 600);
+  // The trap worth stating out loud: a STATIC copy of this file still says OK,
+  // so keyword-matching on it does not detect a dead box.
+  assert.match(board.heartbeat.note, /stale copy of this board still reads OK/i);
+  assert.match(board.heartbeat.note, /postmark\.town/);
+});
+
+test("LOUDLY BE NOTIFIED: a dead rehydrate tick alarms from a whole tick, on a site answering 200 everywhere", async () => {
+  // "how can we LOUDLY BE NOTIFIED when something is down on the site?"
+  //
+  // This is the case with NO error code anywhere: every door 200s, the daily is
+  // current, both workflows are green — and the box's rehydrate timer has been
+  // dead for three hours. Nothing watched the watchers before this probe, so
+  // this failure was previously invisible from every angle at once.
+  const { probes, alerts } = await tick({
+    fetchImpl: stubFetch(GREEN_TABLE),
+    exec: stubExec(),
+    ...stubBox({ dead: { "/srv/postmark-office/office.db": T0 - 3 * HOUR } }),
+    state: {},
+    nowMs: T0,
+  });
+
+  const tickProbe = probes.find((p) => p.key === "watch_rehydrate");
+  assert.equal(tickProbe.verdict, "STALE");
+  assert.match(tickProbe.reason, /has stopped rather than slipped/);
+
+  // The control: its siblings stay green, and every network probe stays green.
+  assert.equal(probes.find((p) => p.key === "watch_usdc").verdict, "OK");
+  assert.equal(probes.find((p) => p.key === "site_home").verdict, "OK");
+  assert.equal(probes.find((p) => p.key === "office_as_of").verdict, "OK");
+
+  assert.deepEqual(alerts.map((a) => a.key), ["watch_rehydrate"], "exactly one alert, and it names the dead timer");
+
+  // And stripe-watch, which does not exist yet, is INFO and silent.
+  assert.equal(probes.find((p) => p.key === "watch_stripe").verdict, "INFO");
+});
+
+test("a watcher installed but never run is loud, and the not-installed case beside it stays quiet", async () => {
+  const { probes, alerts } = await tick({
+    fetchImpl: stubFetch(GREEN_TABLE),
+    exec: stubExec(),
+    ...stubBox({ dead: { "/srv/postmark-usdc/state.json": "missing" } }),
+    state: {},
+    nowMs: T0,
+  });
+  const usdc = probes.find((p) => p.key === "watch_usdc");
+  assert.equal(usdc.verdict, "STALE");
+  assert.match(usdc.reason, /scheduled and has produced nothing/);
+  assert.deepEqual(alerts.map((a) => a.key), ["watch_usdc"]);
+});
+
+test("ANTI-WEIGHT: the state file is disposable — deleting it changes no verdict, only alert history", async () => {
+  // The contract handed back to the founder says this keeps no state worth
+  // migrating. That is a checkable claim, so it is checked: the same world read
+  // with a full state and with NO state must produce identical verdicts.
+  const table = { ...GREEN_TABLE, "https://postmark.town/daily/": { status: 502, body: "" } };
+  const opts = { fetchImpl: stubFetch(table), exec: stubExec(), ...stubBox(), nowMs: T0 };
+
+  const cold = await tick({ ...opts, state: {} });
+  const warm = await tick({ ...opts, state: { probes: { site_daily: { verdict: "DOWN", reason: "HTTP 502", since: T0 - HOUR, last_alert_at: T0 - HOUR } } } });
+
+  assert.deepEqual(
+    cold.probes.map((p) => `${p.key}:${p.verdict}`),
+    warm.probes.map((p) => `${p.key}:${p.verdict}`),
+    "verdicts must not depend on remembered state",
+  );
+  // The only difference: the warm run already announced this one, so it stays
+  // quiet until the 12h reminder. Losing the state file costs exactly one
+  // duplicate alert, which is what "no state worth migrating" means.
+  assert.ok(cold.alerts.some((a) => a.key === "site_daily"));
+  assert.ok(!warm.alerts.some((a) => a.key === "site_daily"));
 });
