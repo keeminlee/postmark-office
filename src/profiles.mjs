@@ -59,14 +59,16 @@
 // template's own output is not a reader.
 
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 
-// Same clone resolution as households.mjs, deliberately — that module is the
-// other read-time clone-coupling on this row, and two different answers to
-// "where is the town checkout" is exactly the drift worth not inventing.
-const HERE = dirname(fileURLToPath(import.meta.url));
-const TOWN_CLONE = process.env.TOWN_CLONE ?? resolve(HERE, "..", "town-clone");
+// THIS MODULE NO LONGER READS THE ENVIRONMENT (2026-08-25). It used to resolve
+// a TOWN_CLONE the same way households.mjs does, for `profileOf` — see that
+// export's tombstone at the foot of this file. With `profileOf` gone the module
+// is a pure reader: every function here takes the checkout it should read.
+// households.mjs still binds the ambient clone at module load, and that one is
+// NOT the same shape — it imports the town's own stamp-mint engine from the
+// checkout, so its clone is fixed when the module loads rather than when a
+// caller asks. Worth knowing before assuming this row has one answer.
 
 // Upstream's PROFILE_STRING_FIELDS, verbatim. Deliberately NOT edit.mjs's
 // PROFILE_FIELDS (the writable four) and deliberately not shared with it:
@@ -182,12 +184,28 @@ export function readProfile(clone, handle) {
   } catch { return null; }
 }
 
-// The read-time form, shaped exactly like householdOf(handle) next door: the
-// caller names a handle, this module owns where the checkout is.
+// ── `profileOf(handle)` WAS HERE, AND IS DELETED (2026-08-25) ───────────────
 //
-// Why a read-time read exists at all, when hydrate already indexes this: the
-// index on the box is already built, so a fix that lands only at hydration
+// It was `readProfile(TOWN_CLONE, handle)` — the same reader with the ambient
+// checkout bound in. Its one caller was the resident card's profile bubble, and
+// the freshness ladder gave that caller a clone of its own: `resident()` now
+// resolves ONE checkout for the whole read and hands it to every reader,
+// including this one.
+//
+// Deleted rather than left standing, because a zero-caller ambient binding is
+// how this class comes back. What it cost while it existed (Wright's review,
+// same day): the card was filled from `process.env.TOWN_CLONE` while the
+// compose read the injected clone, so the two disagreed and the field was
+// stamped `written` — a tense manufactured by a shell variable — and worse, a
+// SUSPENDED handle's live profile came in through it stamped `settled` while
+// the standing gate withheld everything else.
+//
+// Verified inert before removing: `profileOf` had no remaining callers in src/,
+// test/ or tools/. `readProfile(clone, handle)` above is the reader and stays.
+// The rule this module now keeps whole: the read path takes the clone; only the
+// outermost door binds the ambient value.
+//
+// Why a read-time profile read exists at all, when hydrate already indexes it:
+// the index on the box is already built, so a fix that lands only at hydration
 // waits on the next rehydrate to take effect — the same reasoning queries.mjs
-// already spells out for the `_archived` handle filter, applied to the same
-// row. One reader, two call sites, so there is nothing to drift.
-export const profileOf = (handle) => readProfile(TOWN_CLONE, handle);
+// spells out for the `_archived` handle filter, applied to the same row.

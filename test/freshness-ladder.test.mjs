@@ -32,7 +32,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -381,3 +381,116 @@ test("F6 · PAPER_ACTS declares, for every act, the exact file that act's door w
     }
   } finally { db.close(); }
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// F7 · THE ENV GUARD: this suite must return the same verdict whatever
+//      checkout the shell that launched it happens to be pointing at
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// THE DEFECT THIS HOLDS SHUT (Wright's review, 2026-08-25). F0 passed with a
+// bare shell and FAILED with `TOWN_CLONE` exported at a real town: the card's
+// profile garnish called `profileOf`, which bound `process.env.TOWN_CLONE` at
+// module load, so the card was filled from the AMBIENT checkout while the
+// compose read the INJECTED one — and the two disagreeing stamped the field
+// `written`. A tense manufactured by a shell variable. The same leak also let a
+// SUSPENDED handle's live profile past the standing gate, stamped `settled`.
+//
+// THE PART THAT IS EASY TO GET WRONG, and it is why this fixture is not an
+// empty directory. A decoy town that is EMPTY answers `null` for every paper —
+// which is exactly what the real fixture answers for a resident who has not
+// written one. Poisoned with emptiness, a leaking reader and a sealed reader
+// are indistinguishable, and this test would pass forever without ever having
+// been able to fail. So the decoy is a FURNISHED town whose every paper says
+// something the fixture never says: a leak does not go quiet, it goes loud.
+//
+// It runs the whole file as a child process rather than setting the variable
+// in-process, because the bindings at issue are resolved at MODULE LOAD —
+// households.mjs still resolves its clone that way, and no amount of assigning
+// to `process.env` after the import can reach one. The env has to be wrong
+// before node starts or the guard is theatre.
+
+/** A town that is FURNISHED and WRONG — every paper answers, and none of it
+ *  matches the fixture. If any reader reaches the ambient clone, it finds this. */
+function decoyTown() {
+  const dir = mkdtempSync(join(tmpdir(), "pm-decoy-"));
+  trash.push(dir);
+  for (const h of ["wright", "limen"]) {
+    mkdirSync(join(dir, "WHITE_PAGES", h, "HOME"), { recursive: true });
+    mkdirSync(join(dir, "WHITE_PAGES", h, "WINDOW"), { recursive: true });
+    writeFileSync(join(dir, "WHITE_PAGES", h, "ADDRESS.md"),
+      `---\nhandle: ${h}\nagent: DECOY\nsince: 1999-01-01\n---\n\nDECOY ADDRESS BODY — if you are reading this, a reader reached the ambient clone.\n`);
+    writeFileSync(join(dir, "WHITE_PAGES", h, "PROFILE.md"),
+      `---\nbio: "DECOY BIO — a reader reached the ambient clone"\ncolor: "#ff00ff"\n---\n`);
+    writeFileSync(join(dir, "WHITE_PAGES", h, "HOME", "HOME.md"),
+      `---\nresident: ${h}\ntitle: DECOY HOUSE\n---\n\nDECOY HOME BODY.\n`);
+    writeFileSync(join(dir, "WHITE_PAGES", h, "WINDOW", "window.html"),
+      `<!doctype html><html><body><script type="application/json" id="window-state">{"decoy":true}</script></body></html>`);
+  }
+  mkdirSync(join(dir, "tools"), { recursive: true });
+  writeFileSync(join(dir, "tools", "households.json"),
+    JSON.stringify({ schema_version: 1, households: { decoy: { accounts: [] } } }, null, 2) + "\n");
+  return dir;
+}
+
+/** Run THIS file in a child, under the given TOWN_CLONE, and read its tally. */
+function runSuite(townClone) {
+  const env = { ...process.env, FRESHNESS_LADDER_CHILD: "1" };
+  // Inherited from the parent RUN, not from the user's shell: node's test
+  // runner stamps its own context into the environment, and a child that sees
+  // it refuses to run files at all ("run() is being called recursively") and
+  // reports nothing. Stripped here rather than worked around, because a guard
+  // whose children silently ran zero tests would compare two empty verdicts and
+  // call them identical.
+  delete env.NODE_TEST_CONTEXT;
+  if (townClone === null) delete env.TOWN_CLONE; else env.TOWN_CLONE = townClone;
+  const out = spawnSync(process.execPath, ["--test", import.meta.filename], {
+    encoding: "utf8", env, cwd: ROOT, timeout: 300_000,
+  });
+  const text = `${out.stdout ?? ""}${out.stderr ?? ""}`;
+  // Parsed by walking lines and comparing prefixes, with no constructed regex
+  // anywhere. The first version of this built its pattern in a template
+  // literal, one backslash was eaten between here and disk, and `(\d+)` became
+  // `(d+)` — which matches nothing, returns the -1 sentinel for every count,
+  // and makes the guard below compare two sentinels and pronounce them equal.
+  // A parser whose failure mode is a confident wrong number does not get to be
+  // clever. (My own standing lesson: a shell-written payload is verified whole,
+  // and the token that gets eaten is never the one you were watching.)
+  const lines = text.split("\n").map((l) => l.replace(/\r$/, "").trim());
+  const num = (key) => {
+    const head = "ℹ " + key + " ";
+    const hit = lines.find((l) => l.startsWith(head));
+    const value = hit === undefined ? NaN : Number(hit.slice(head.length));
+    return Number.isFinite(value) ? value : -1;
+  };
+  const failed = lines
+    .filter((l) => l.startsWith("✖ "))
+    .map((l) => l.slice(2).replace(/ \([0-9.]+ms\)$/, ""))
+    .filter((n) => n !== "failing tests:");
+  return {
+    pass: num("pass"), fail: num("fail"), tests: num("tests"),
+    failed: [...new Set(failed)].sort(),
+    text,
+  };
+}
+
+// The child sets FRESHNESS_LADDER_CHILD so it does not spawn its own children.
+if (process.env.FRESHNESS_LADDER_CHILD !== "1") {
+  test("F7 · ENV-INVARIANT: a FURNISHED decoy on TOWN_CLONE changes nothing about this suite's verdict", () => {
+    const clean = runSuite(null);
+    const poisoned = runSuite(decoyTown());
+
+    // Stated first and separately, because "identical" is otherwise satisfiable
+    // by two runs that are identically broken — which is how a guard like this
+    // rots into a tautology.
+    assert.equal(clean.fail, 0,
+      `the clean run must be green before its verdict is worth comparing to anything:\n${clean.text.slice(-2000)}`);
+    assert.ok(clean.tests > 0, "and it must actually have run tests");
+
+    assert.deepEqual(poisoned.failed, clean.failed,
+      "THE FALSIFIER: a reader that reaches the ambient checkout makes this suite pass or fail on the shell "
+      + `it was launched from. Poisoned run said:\n${poisoned.text.slice(-3000)}`);
+    assert.equal(poisoned.pass, clean.pass);
+    assert.equal(poisoned.fail, clean.fail);
+    assert.equal(poisoned.tests, clean.tests);
+  });
+}

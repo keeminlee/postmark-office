@@ -4,7 +4,6 @@
 import { join } from "node:path";
 import { isPrincipal } from "./ops.mjs";
 import { householdOf } from "./households.mjs";
-import { profileOf } from "./profiles.mjs";
 import { HOLO_CAPTION, TEACH, postingsWithoutPots } from "./funding.mjs";
 import { isResidentHandle } from "./residency.mjs"; // the door's own admission grammar — one definition of what a handle is
 import { dialNumber } from "./world-classes.mjs"; // the doorstep's own dials, read off the record — never held here
@@ -150,12 +149,25 @@ export const CARD_MAIL = 5;
 // garnish does: every door — the flat MCP tools, the two apexes that dispatch
 // to them, and the REST twins — inherits one implementation rather than each
 // growing its own copy of a compose that a reviewer would then have to diff.
+//
+// ⚠ IT DELIBERATELY DOES NOT FALL BACK TO `process.env.TOWN_CLONE` (2026-08-25,
+// Wright's review). Every one of the five production call sites passes a clone
+// explicitly — the flats, both apexes, and the two REST twins — so an ambient
+// default would be dead in production and alive only in tests, where it is the
+// exact thing that makes a suite pass or fail on the shell it was launched
+// from. The rule this module now keeps is profiles.mjs's own: the READ PATH
+// takes the clone; only the outermost door binds the ambient value.
 const withFresh = (db, handle, fresh) =>
   freshnessFor(handle, { ...fresh, asOf: fresh?.asOf ?? indexAsOf(db) });
 
 export function resident(db, handle, fresh = null) {
   const row = db.prepare("SELECT json FROM residents WHERE handle = ?").get(handle);
   if (!row) return null;
+  // Built FIRST, not last, and that ordering is the fix rather than a tidy-up.
+  // The garnishes below read a checkout, and until this line existed they read
+  // the AMBIENT one while the compose read the injected one — see the profile
+  // bubble's own note for what that cost.
+  const ctx = withFresh(db, handle, fresh);
   const d = JSON.parse(row.json);
   const out = { ...d, is_office: isOffice(d) };
   // ── THE MAIL BOUND (2026-08-25) ─────────────────────────────────────────
@@ -197,27 +209,55 @@ export function resident(db, handle, fresh = null) {
   // the town's own vocabulary via households.mjs, present only when the registry
   // view exists. The one deliberate clone-coupling in this db-shaped module;
   // every door (REST + MCP) inherits it here.
+  //
+  // ⚠ AND IT IS STILL AMBIENT, deliberately left so (2026-08-25). Unlike the
+  // profile bubble below, `householdOf` cannot simply be handed `ctx.clone`:
+  // households.mjs resolves `process.env.TOWN_CLONE` at MODULE LOAD in order to
+  // import the town's own stamp-mint engine from that checkout, and caches
+  // against that one clone's mtimes. Making it per-call means re-importing an
+  // engine per clone, which is a real design change and not a test-hygiene fix.
+  // It is named here rather than quietly tolerated because it is the one
+  // remaining reader on this row that answers to the environment — and because
+  // it is genuinely harmless today: `household` is not a composable field, so
+  // no freshness stamp can be manufactured by it. If it ever becomes one, this
+  // is the line that has to move first.
   try { const hh = householdOf(handle); if (hh) out.household = hh; } catch { /* garnish only */ }
-  // The profile bubble, read at the door as well as at the index — same reason
-  // the `_archived` filter above is applied both sides: the index on the box is
-  // already hydrated without this field, and a fix that only lands at hydration
-  // waits on the next rehydrate to take effect. Same reader both sides
-  // (profiles.mjs), so there is nothing to drift. Garnish: a checkout that is
-  // missing or unreadable leaves the indexed value standing and never 500s.
-  // Always assigned, never merely omitted: the hydrated path writes an explicit
-  // `profile: null` for a resident without one, so the door must too, or the
-  // same resident answers `null` after a rehydrate and no key at all before it.
-  if (out.profile == null) {
-    let p = null;
-    try { p = profileOf(handle); } catch { /* garnish only */ }
-    out.profile = p;
-  }
+  // ── THE PROFILE BUBBLE'S READ-TIME GARNISH IS GONE (2026-08-25) ───────────
+  //
+  // It was `if (out.profile == null) out.profile = profileOf(handle)` — a
+  // read-time re-read of PROFILE.md, here because the index on the box is
+  // already built and a fix that lands only at hydration waits for the next
+  // rehydrate. The freshness ladder does that same job one step further down,
+  // from a NAMED clone and with a tense attached, so keeping both was not
+  // belt-and-braces; the two actively fought.
+  //
+  // WHAT IT COST, found in Wright's review and then again by this suite's own
+  // F1b when I first tried to fix it by injecting the clone rather than by
+  // deleting the line:
+  //   · `profileOf` binds `process.env.TOWN_CLONE` at module load, so the card
+  //     was filled from whatever checkout the PROCESS was pointed at while the
+  //     compose read the INJECTED one. The two disagreed and the field was
+  //     stamped `written` — a tense manufactured by a shell variable.
+  //   · A SUSPENDED handle's live profile came in through here anyway, past the
+  //     standing gate that was withholding everything else, and arrived stamped
+  //     `settled`. That is the exact lie the stamp exists to make impossible.
+  //   · And injecting the clone instead of deleting the line traded those for a
+  //     third: the garnish overwrote the INDEXED value before the compose could
+  //     compare against it, so `profile` could never read anything but
+  //     `settled` — a comparison against the answer it had just written.
+  //
+  // What remains is the one thing the garnish also did and the compose does not
+  // need a clone for: guaranteeing the key exists. The hydrated path writes an
+  // explicit `profile: null` for a resident without one, so the door must too,
+  // or the same resident answers `null` after a rehydrate and no key at all
+  // before it.
+  if (out.profile === undefined) out.profile = null;
   // The ladder rides last, so it stamps the card the caller is actually handed
   // — including the two garnishes above, whose whole point is that they are
   // fresher than the index. Before this the profile bubble substituted a
   // fresher value with nothing said about it; now the field it writes is named
   // and dated like every other.
-  return composeResidentCard(out, withFresh(db, handle, fresh));
+  return composeResidentCard(out, ctx);
 }
 
 // The page `list_mail` serves when the caller names no size. Unchanged from the
