@@ -249,7 +249,15 @@ test("GET /doorstep/{h} serves the v0.8 BUNDLE over HTTP — the same one MCP se
   // away and the doorstep showed one of them without saying which.
   assert.equal(d.stamps.serves, "town.stamps");
   assert.equal(d.stamps.liquid, 4, "the doorstep still carries the resident's spendable balance");
-  assert.deepEqual(d.segments, ["mail", "awaiting", "stamps", "bulletin", "town_pulse", "window"]);
+  assert.deepEqual(d.segments, ["mail", "awaiting", "stamps", "bulletin", "town_pulse", "window", "stances"]);
+  // The seventh reaches BOTH skins from the one implementation. Its content
+  // depends on a world engine this fixture has no checkout of, so what is
+  // asserted here is that it is PRESENT and names its read — a segment that
+  // quietly vanished when the world was unreadable would tell a resident that
+  // nothing awaits their word, which is the silence it exists to end.
+  assert.equal(d.stances.serves, "household.stances");
+  assert.ok("stances_awaiting" in d.stances || d.stances.unavailable,
+    "either it counted, or it said why it could not");
 });
 
 test("GET /stamps roster + GET /stamps/{h}; zero for a stampless handle", async () => {

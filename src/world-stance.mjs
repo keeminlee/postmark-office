@@ -73,6 +73,7 @@
 // canon-only rather than failing.
 
 import { openDynamic, singleLogEnabled } from "./dynamic-store.mjs";
+import { WORLD_CLONE } from "./world-store.mjs"; // the standing-scoped inbox door defaults to the office's own world checkout
 import { worldFreezeBounce } from "./freeze.mjs";
 import { appendJournal, liveMarks, readJournal } from "./world-journal.mjs";
 import { mainRef, materializeAtRef, publishedState, resolvedWorldHousehold } from "./world-branches.mjs";
@@ -375,6 +376,52 @@ export async function stanceShadow(repo, key, { cursor = null, limit = PAGE_SIZE
     ground: inbox.mine,
     law: "A stance is a revisable word on an edge — welcomed or opposed, latest wins; neutral is never stored, it is absence. The ground's holder speaks.",
   };
+}
+
+// ── the fourth tier · the inbox WITHOUT a standpoint ─────────────────────────
+//
+// THE PROBLEM THE FOUNDER NAMED (2026-08-25): the shadow above is pull-only and
+// STANDPOINT-DISCOVERED. `declare-stance-on` is granted by the `household`
+// class node (WORLD/marks/…/entity/household), so the apex serves its read only
+// where that grant is in your spine or reach — and measured against the live
+// store, `world { read: "declare-stance-on", handle: "wright" }` bounces 422,
+// "not an action anywhere in your view — nothing to read", while
+// `stanceInbox` for that same resident holds NINETEEN candidates awaiting their
+// word. Nothing tells them. A consent law nobody is told they are party to is
+// a law with no door, which is the shape the town has ruled against before.
+//
+// SO THE INBOX GETS A STANDING-SCOPED DOOR, and this is the round-2 precedent
+// applied, not a new idea: mail folded under `household` because a letter needs
+// STANDING, never a standpoint. What awaits your word is the same shape — it is
+// derived from what you HOLD (`stanceInbox` keys on `key.handles` and nothing
+// else), never from where your feet are. The world's read is unchanged and
+// stays what it is: what you find when standing on your own ground.
+//
+// ONE DERIVATION, TWO DOORS. This wraps `stanceShadow` and never re-implements
+// it, exactly as the town apex names a flat verb rather than copying it.
+//
+// AND IT NEVER THROWS. The doorstep is the recommended first read of the day;
+// a morning page that 500s because the world engine is mid-write would be a
+// courtesy bought with the door itself. The catch lives HERE, in the one
+// function both doors call, so the two can never disagree about what a
+// degraded world looks like.
+export async function stancesForHandles(handles, { cursor = null, limit = PAGE_SIZE, repo = null, dbPath = null } = {}) {
+  const set = new Set([...(handles ?? [])].filter(Boolean));
+  try {
+    const answer = await stanceShadow(repo ?? WORLD_CLONE, { handles: set }, { cursor, limit, dbPath });
+    // An honest empty, said out loud rather than left as a bare zero — psaFold's
+    // manners: "no entry landed inside the window" is a real state and not a
+    // failure to read. A resident with nothing awaiting must be able to tell
+    // that from a door that did not answer.
+    if (!answer.unavailable && (answer.stances_awaiting ?? 0) === 0)
+      return { ...answer, note: "nothing awaits your word — no mark has been laid over ground you hold since you last spoke. This is an ordinary state, not a quiet failure." };
+    return answer;
+  } catch (e) {
+    return {
+      unavailable: `the consent inbox could not be read (${String(e?.message ?? e).slice(0, 160)})`,
+      awaiting: [], standing: [],
+    };
+  }
 }
 
 /**

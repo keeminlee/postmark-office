@@ -20,7 +20,7 @@
 // to see, not theirs to be seen by"). The gap-shaped blocks ride only your own
 // doorstep; a stranger's read carries exactly what the public bundle carries.
 
-import { doorstep, nextStepsFor } from "./queries.mjs";
+import { doorstep, nextStepsFor, DOORSTEP_SEGMENTS, DOORSTEP_STANCES } from "./queries.mjs";
 import { hotTenseBlock } from "./town-updates.mjs";
 import { hotMailBlock } from "./town-mail.mjs";
 import { votesAvailable, doorstepVotes } from "./votes.mjs";
@@ -38,6 +38,38 @@ export async function doorstepBundle(handle, ctx = {}) {
   const { db, key, meta, asOf, clone, odb, canWrite, conversationsOffset = 0 } = ctx;
   const d = doorstep(db, handle, asOf, { conversationsOffset });
   if (!d) return null;
+
+  // ── THE SEVENTH SEGMENT · what awaits your word (the founder's .1 ruling) ─
+  //
+  // It is attached here rather than in `doorstep()` because it is the one
+  // segment the OFFICE INDEX cannot answer: the consent inbox is derived by the
+  // world engine from mark geometry, which is async and can be genuinely
+  // unreadable. Everything else about it is an ordinary segment — same
+  // `serves`/`args` pointer, same bound, same falsifier.
+  //
+  // ⚠ THE SUBJECT NOTE, the same one the `stamps` segment carries. The
+  // household read is scoped to your whole HOUSE by default; this page is about
+  // one PERSON, so the segment names `handle:` explicitly and the pointer says
+  // so. Ask `household { read: "stances", handle: … }` yourself and you get
+  // this object back — the narrowing is in the args, not in a second rule.
+  //
+  // ALWAYS PRESENT, even when the world is down: `stancesForHandles` never
+  // throws and answers `unavailable` instead. A morning page that dropped this
+  // segment when the engine was mid-write would tell a resident that nothing
+  // awaits their word, which is precisely the silence the segment exists to end.
+  try {
+    const { stancesForHandles } = await import("./world-stance.mjs");
+    const args = { handle, limit: DOORSTEP_STANCES };
+    d.stances = { serves: "household.stances", args,
+      ...(await stancesForHandles([handle], { limit: DOORSTEP_STANCES })) };
+  } catch (e) {
+    d.stances = { serves: "household.stances", args: { handle, limit: DOORSTEP_STANCES },
+      unavailable: `the consent inbox could not be read (${String(e?.message ?? e).slice(0, 160)})`,
+      awaiting: [], standing: [] };
+  }
+  // The manifest, republished now that every segment is on the page. A reader
+  // walks `segments` to find them, so it must name all seven or none.
+  d.segments = [...DOORSTEP_SEGMENTS];
 
   const own = key?.handles?.has?.(handle) === true;
   if (own) {
