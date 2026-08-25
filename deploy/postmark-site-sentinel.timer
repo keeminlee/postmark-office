@@ -1,0 +1,24 @@
+[Unit]
+Description=site-sentinel every 10 minutes — the town's own doors are read on a clock, not on memory
+
+[Timer]
+# A plain ten minutes, the same cadence as postmark-usdc-watch.
+#
+# Deliberately NOT offset around the rehydrate timer (*:07,22,37,52). An offset
+# was drafted and dropped: reading a door mid-rehydrate is harmless — the office
+# swaps its read handle in place and X-Postmark-As-Of is always a coherent sha,
+# never a torn one — and the freshness thresholds are measured in tens of
+# minutes, so which side of a 15-minute tick a read lands on cannot change a
+# verdict. An offset here would be a rule with no failure behind it.
+OnCalendar=*:0/10
+# Jittered: the GitHub REST budget is per-IP and shared with the hourly ops
+# dashboards, so arriving on the same second as one of them is the one avoidable
+# way to spend the allowance twice.
+RandomizedDelaySec=45
+# A box that was down catches up on the next boot rather than skipping the gap —
+# and the first tick after a gap is exactly the one that should find whatever
+# broke while nobody was looking.
+Persistent=true
+
+[Install]
+WantedBy=timers.target
