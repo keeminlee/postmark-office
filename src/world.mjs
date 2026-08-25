@@ -60,16 +60,12 @@ export const WORLD_CLONE = process.env.WORLD_CLONE
   ?? join(ROOT, "world-clone");
 
 // ── the crossing number (RATIFIED derivation — Keemin, 2026-07-29) ──────────
-// Fog is the crossing's weather and seeds from the crossing number (ENGINE.md).
-// The ruling: crossings run 00:00 / 12:00 UTC (the ferry's clock), counted from
-// the mail-ledger's first delivery day (2026-06-12). This derivation IS the town
-// clock; raw ferry-run counts (which include off-timetable catch-up boats) are
-// operational history, not the calendar. Crossing 100 lands 2026-08-01 00:00 UTC.
-const CROSSING_EPOCH_UTC = Date.UTC(2026, 5, 12); // 2026-06-12T00:00Z
-const CROSSING_DERIVATION = "12h crossings (00:00/12:00 UTC) since the ledger's first delivery day 2026-06-12";
-export function currentCrossing(now = Date.now()) {
-  return Math.max(0, Math.floor((now - CROSSING_EPOCH_UTC) / (12 * 3600 * 1000)));
-}
+// The ruling itself now lives in src/crossings.mjs, unchanged, because a tool
+// that needs only the clock cannot import this file (it opens a store, resolves
+// a clone, and pulls in graphology). Re-exported here so every caller that has
+// always read `currentCrossing` from `world.mjs` still does.
+export { currentCrossing, CROSSING_DERIVATION } from "./crossings.mjs";
+import { CROSSING_DERIVATION, currentCrossing } from "./crossings.mjs";
 
 // ── engine + world cache ─────────────────────────────────────────────────────
 let _mods = null;         // { verbs, build }
