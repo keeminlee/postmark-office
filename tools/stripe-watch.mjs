@@ -116,6 +116,11 @@
 //                   which is what the founder's own dashboard shows. Pinning a
 //                   version the box cannot verify 400s the whole watcher, so
 //                   the default here is "do not pin".
+//      STRIPE_API   optional base URL. Unset means Stripe. It exists so the
+//                   CLI itself — env to reader to pages to journal to state —
+//                   can be driven end to end by a falsifier against a local
+//                   server, because everything else in this file is pure and
+//                   the glue is the part that has to actually run on the box.
 //      plus fund-exec's own: TOWN_CLONE, STAMP_KEY, TOWN_PUSH, BOT_NAME,
 //                   BOT_EMAIL, TOWN_TZ, TOWN_LOCK.
 
@@ -443,6 +448,7 @@ async function main() {
   const stripe = stripeReader({
     key: process.env.STRIPE_KEY,
     apiVersion: process.env.STRIPE_API_VERSION ?? null,
+    api: process.env.STRIPE_API || STRIPE_API,
   });
 
   const state = readState(statePath);
