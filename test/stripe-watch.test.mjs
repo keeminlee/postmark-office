@@ -402,6 +402,44 @@ test("the ref is stripe:<session id>, and it is the only ref this rail can ever 
   assert.ok(!/\s|·/.test(d.receipt_ref), "the town CLI refuses a ref carrying whitespace or the field separator");
 });
 
+test("NO DOOR IN THE TOWN CAN MINT A `stripe:` REF — the premise the whole auto-witness rests on", async () => {
+  // LAW (the fund page, the card rail's step 2, verbatim): "There is nothing
+  //     for you to paste. The hash form belongs to the USDC rail — it reads
+  //     Base directly and cannot see a card payment."
+  //
+  // usdc-watch may not auto-witness because a patron's own paste could be
+  // front-run and the ref's one mint chance spent under the wrong name. That
+  // objection only exists if there IS a claim to front-run. Here there is not,
+  // and this is that claim tested rather than asserted: the only ref-minting
+  // door in the office is fundVerify, and every ref it can produce is
+  // `usdc:base:<hash>` by construction — a hash it will not even look at unless
+  // it matches TXHASH_RE, which a Stripe session id never can.
+  const { TXHASH_RE } = await import("../src/usdc-witness.mjs");
+  const { fundVerify } = await import("../src/fund.mjs");
+  const town = seamTown();
+
+  assert.ok(!TXHASH_RE.test(CS_A), "a checkout session id is not a tx hash");
+  const e = await (async () => { try {
+    await fundVerify(town.repo, { txhash: CS_A, pot: "keep", handle: "paz" }, { engine: ENGINE, record: cliRecorder(town) });
+  } catch (err) { return err; } })();
+  assert.ok(e, "the door refuses a session id outright");
+  assert.equal(e.code, 422);
+  assert.match(e.defect, /that is not a transaction hash/);
+
+  // and the ref the door DOES mint is prefixed by its own rail, so the two
+  // namespaces can never meet
+  const { verifyUsdcPayment, USDC, TRANSFER_TOPIC, MIN_CONF } = await import("../src/usdc-witness.mjs");
+  const hash = "0x" + "a1".repeat(32);
+  const pad = (a) => "0x" + "0".repeat(24) + String(a).replace(/^0x/, "").toLowerCase();
+  const w = await verifyUsdcPayment({
+    txhash: hash,
+    rpc: async (m) => m === "eth_blockNumber" ? "0x" + (1000 + MIN_CONF).toString(16)
+      : { status: "0x1", blockNumber: "0x3e8", logs: [{ address: USDC, topics: [TRANSFER_TOPIC, pad("0x1"), pad((await import("../src/usdc-witness.mjs")).INTAKE)], data: "0x1e8480" }] },
+  });
+  assert.ok(w.receipt_ref.startsWith("usdc:base:"), "the door's own refs live under its own rail");
+  assert.ok(!w.receipt_ref.startsWith(`${RAIL}:`));
+});
+
 test("the payer's email is journalled for the operator and never reaches a ledger row", async () => {
   // The journal is a private operator surface; the ledger is public forever.
   const town = seamTown();
