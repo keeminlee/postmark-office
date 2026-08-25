@@ -185,9 +185,19 @@ test("an arrival nobody has claimed is reported as unclaimed, and never as a rec
   assert.equal(report.unclaimed[0].usd, 40);
   assert.equal(report.witnessed.length, 0);
 
-  // the ledger is byte-identical: the watch reads and reports, and writes nothing
+  // the ledger is byte-identical: for an UNREGISTERED payer the watch reads and
+  // reports, and writes nothing
   assert.equal(readFileSync(join(town.repo, "WHITE_PAGES", "stamp-ledger.md"), "utf8"), before);
-  assert.match(report.posture, /never records a receipt/);
+  // ⚠ AMENDED 2026-08-25, and the amendment is the finding, not a fix-up. This
+  // line read `/never records a receipt/` while the watch recorded nothing at
+  // all. It now records exactly one shape — a registered wallet at an address
+  // that names a single pot — so the old sentence would have been a false
+  // posture on a passing test. The scenario asserted here is unchanged and is
+  // the one still forbidden: an unknown payer. The strong assertion above (the
+  // ledger did not move) is what actually carries the claim; the posture line
+  // is checked for the clause that governs THIS arrival.
+  assert.match(report.posture, /Everything else it reads and reports only/);
+  assert.match(report.posture, /consume that hash's one mint chance and cost the patron their deed forever/);
 });
 
 test("once the patron pastes, the SAME arrival reports as witnessed — the watch is idempotent", async () => {
