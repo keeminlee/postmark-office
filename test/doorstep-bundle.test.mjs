@@ -29,7 +29,8 @@ import { tmpdir } from "node:os";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { SCHEMA } from "../src/schema.mjs";
-import { doorstep, DOORSTEP_SEGMENTS, SEGMENT_META, BUNDLE_LAW, mailAwaiting, windowRead } from "../src/queries.mjs";
+import { doorstep, DOORSTEP_SEGMENTS, INDEX_SEGMENTS, SEGMENT_META, BUNDLE_LAW, mailAwaiting, windowRead } from "../src/queries.mjs";
+import { doorstepBundle } from "../src/doorstep-bundle.mjs";
 import { callTool } from "../src/mcp.mjs";
 import { TOWN_READABLE } from "../src/town-apex.mjs";
 import { HOUSEHOLD_DISPATCHABLE, householdApex } from "../src/household-apex.mjs";
@@ -132,8 +133,13 @@ async function ask(serves, args) {
 // ── the falsifier ───────────────────────────────────────────────────────────
 
 test("THE BUNDLE: every segment deep-equals the answer of the read its `serves` names", async () => {
-  const d = doorstep(db, HANDLE, AS_OF);
+  // THE FINISHED bundle, not the sync core: the seventh segment (`stances`) is
+  // the world engine's and is attached by doorstepBundle, so a falsifier that
+  // walked `doorstep()` alone would silently never check it — the exact way a
+  // falsifier goes vacuous after a restructure.
+  const d = await doorstepBundle(HANDLE, ctx);
   assert.deepEqual(d.segments, [...DOORSTEP_SEGMENTS], "the manifest lists its own segments");
+  assert.equal(d.segments.length, 7, "seven — a manifest that shrank would be hiding one");
   for (const name of DOORSTEP_SEGMENTS) {
     const seg = d[name];
     assert.ok(seg && typeof seg === "object", `segment "${name}" is missing from the bundle`);
@@ -156,9 +162,19 @@ test("THE FLIP: the falsifier above can fail — a tampered segment is caught", 
     "the bundle comparison must be able to reject a segment that stopped being its read");
 });
 
+test("the sync core declares only what it fills; the finished bundle declares all seven", async () => {
+  // The split is the world/index boundary said out loud rather than left to be
+  // inferred: `doorstep()` answers from the hydrated office index, and the
+  // consent inbox is derived by the world engine. Each names exactly what it
+  // has.
+  assert.deepEqual(doorstep(db, HANDLE, AS_OF).segments, [...INDEX_SEGMENTS]);
+  assert.equal(doorstep(db, HANDLE, AS_OF).stances, undefined, "the sync core does not pretend to the seventh");
+  assert.deepEqual((await doorstepBundle(HANDLE, ctx)).segments, [...DOORSTEP_SEGMENTS]);
+});
+
 test("the two metadata keys are the ONLY things stripped — no segment answer owns them", () => {
   const d = doorstep(db, HANDLE, AS_OF);
-  for (const name of DOORSTEP_SEGMENTS) {
+  for (const name of INDEX_SEGMENTS) {
     // `serves` and `args` are metadata ABOUT the segment. If a read ever
     // answered with a field of either name, the strip above would silently eat
     // real data and the deep-equal would start comparing the wrong objects.

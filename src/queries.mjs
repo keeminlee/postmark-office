@@ -541,9 +541,26 @@ const DOORSTEP_INBOX = 20;
 const DOORSTEP_BULLETIN = 3;
 const DOORSTEP_PULSE_DAYS = 7;
 
+/** The six the OFFICE INDEX answers, synchronously, from the checkout it has
+ *  already hydrated. `doorstep()` fills these. */
+export const INDEX_SEGMENTS = Object.freeze(["mail", "awaiting", "stamps", "bulletin", "town_pulse", "window"]);
+
 /** The bundle's own segment order — the reading order of a morning, and the
- *  stable key set the next wave's subscriptions will name. */
-export const DOORSTEP_SEGMENTS = Object.freeze(["mail", "awaiting", "stamps", "bulletin", "town_pulse", "window"]);
+ *  stable key set the next wave's subscriptions will name.
+ *
+ *  `stances` is the seventh and it is not like the other six: it is derived by
+ *  the WORLD engine, not by the office index, so it is async and it can be
+ *  genuinely unavailable. `doorstepBundle` attaches it. It is declared here
+ *  anyway, and it is ALWAYS present on a finished bundle — carrying
+ *  `unavailable` when the world cannot be read — because a manifest that
+ *  quietly drops a segment when a dependency is down teaches a reader that
+ *  nothing awaits their word, which is the one thing it must never do. */
+export const DOORSTEP_SEGMENTS = Object.freeze([...INDEX_SEGMENTS, "stances"]);
+
+/** How many awaiting candidates the morning page shows. A teaser: the shadow
+ *  underneath pages properly, `stances_awaiting` is the true total, and the
+ *  `serves` pointer names the read that walks the rest. */
+export const DOORSTEP_STANCES = 5;
 
 export const BUNDLE_LAW =
   "This page is a BUNDLE: each segment below is the answer of another read, called at the args it names in `serves` and `args`. Nothing here is a second rendering of anything — ask the named read yourself and you get the same object back. The segments are mail, awaiting, stamps, bulletin, town_pulse, window; everything else on this page has no other door.";
@@ -576,7 +593,9 @@ export function doorstep(db, handle, asOf, { nowMs = Date.now(), conversationsOf
   return {
     handle, as_of: asOf,
     the_bundle: BUNDLE_LAW,
-    segments: [...DOORSTEP_SEGMENTS],
+    // The six this function fills. `doorstepBundle` attaches the seventh
+    // (`stances`, the world engine's) and republishes the whole manifest.
+    segments: [...INDEX_SEGMENTS],
 
     // ── the segments ────────────────────────────────────────────────────────
     mail: segment("household.mail", { handle, view: "inbox", limit: DOORSTEP_INBOX },
