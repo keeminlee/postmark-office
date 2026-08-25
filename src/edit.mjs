@@ -21,6 +21,12 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFile
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { penCommit } from "./write.mjs";
+// THE PAPER DOORS LOG THEMSELVES (POS-44, the paper seam). Wave 2 logged in
+// mcp.mjs's flat-tool switch, which two of the three skins never pass through;
+// the log now rides the door, beside the pen commit, so no skin can skip it.
+// town-updates.mjs owns the rule and this file owns the doors — no import cycle,
+// because town-updates never reaches back for a pen.
+import { paperDoor } from "./town-updates.mjs";
 
 const MAX_BODY = 50_000;     // a face, not an archive
 const MAX_WINDOW = 150_000;  // a pane, not an app — and Ferry reads every pane
@@ -116,7 +122,7 @@ function editBody(fileRel, { handle, body }, key, clone, message, whatMissing) {
   return { updated: handle, file: fileRel(handle).join("/"), commit, pushed: process.env.TOWN_PUSH === "1" };
 }
 
-export function updateAddressBody(args, key, db, clone) {
+function updateAddressBodyUnlogged(args, key, db, clone) {
   return editBody(
     (h) => ["WHITE_PAGES", h, "ADDRESS.md"], args, key, clone,
     (h, k) => `${h}: address note updated (via postmark-office, key household ${k.household})`,
@@ -161,7 +167,7 @@ const CLEARED = "(unstated)";
  * an empty line — a blank `architecture:` reads as a field somebody forgot,
  * while "(unstated)" reads as a resident who has not said, which is the truth.
  */
-export function updateAddressFields(args, key, db, clone) {
+function updateAddressFieldsUnlogged(args, key, db, clone) {
   const { handle } = args ?? {};
   scope(handle, key);
 
@@ -315,7 +321,7 @@ function patchAssetsLine(fm, names) {
   return out.join(eol);
 }
 
-export function updateHome(args, key, db, clone) {
+function updateHomeUnlogged(args, key, db, clone) {
   const { handle, body } = args;
   scope(handle, key);
   const hasBody = Object.prototype.hasOwnProperty.call(args, "body");
@@ -424,7 +430,7 @@ function patchProfileFrontmatter(frontmatter, eol, values, fields = PROFILE_FIEL
   return out.join(eol);
 }
 
-export function updateProfile(args, key, db, clone) {
+function updateProfileUnlogged(args, key, db, clone) {
   const { handle } = args;
   scope(handle, key);
   const values = Object.fromEntries(PROFILE_FIELDS.map((field) => [field, profileValue(args, field)]));
@@ -690,7 +696,7 @@ export function updateProfileAvatar(args, key, db, clone) {
 // enforced mechanically here since no Postmaster reads an office write at a PR
 // door (the pane still renders sandboxed on panes.postmark.town either way).
 
-export function updateWindow(args, key, db, clone) {
+function updateWindowUnlogged(args, key, db, clone) {
   const { handle, html, blueprint } = args;
   scope(handle, key);
   if (typeof html !== "string" || !html.trim())
@@ -798,3 +804,33 @@ export function updateHomeImage(args, key, db, clone) {
     pushed: process.env.TOWN_PUSH === "1",
   };
 }
+
+// ── THE FIVE PAPER DOORS, AS THE OFFICE OFFERS THEM ─────────────────────────
+//
+// Each is its implementation above plus the town log, in that order and never
+// the other way round: the pen commit happens first, and only a call that
+// returned rather than threw is ever written down.
+//
+// WHY THE WRAPPER AND NOT A LINE IN EACH BODY. Every one of these
+// implementations has three or four return points — the founding case, the
+// ordinary case, and the `unchanged: true` case where penCommit found an empty
+// diff. Logging at each of them would be five functions' worth of the same four
+// lines, and the wave-2 defect this commit repairs was ALREADY a
+// forgot-one-call-site bug. One wrapper is one place to be wrong.
+//
+// The fifth parameter is the log handle, and a caller without one writes no row
+// — see town-updates.mjs § paperDoor for why the drain's replay depends on that
+// being true. The exported names and their first four arguments are unchanged,
+// so every existing caller keeps working and flag-off every one of these is
+// byte-for-byte the function it was.
+//
+// NOT WRAPPED, and deliberately: updateProfileAvatar and updateHomeImage. They
+// are image doors rather than paper acts — PAPER_ACTS names five, and these are
+// not among them — so wrapping them would invent a sixth and seventh class of
+// row that no drain has a replay for. Whether the image doors should log is a
+// real question and it is wave 2's to answer, not this repair's.
+export const updateAddressBody = paperDoor("address-body", updateAddressBodyUnlogged);
+export const updateAddressFields = paperDoor("address-fields", updateAddressFieldsUnlogged);
+export const updateHome = paperDoor("home", updateHomeUnlogged);
+export const updateProfile = paperDoor("profile", updateProfileUnlogged);
+export const updateWindow = paperDoor("window", updateWindowUnlogged);
