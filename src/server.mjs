@@ -854,6 +854,7 @@ const server = createServer((req, res) => {
           since: p.get("since") ?? undefined,
           until: p.get("until") ?? undefined,
           excludeOffice: p.get("exclude-office") === "1",
+          full: p.get("full") === "1",
           limit: p.get("limit") ?? undefined,
           offset: p.get("offset") ?? undefined,
         }));
@@ -865,6 +866,8 @@ const server = createServer((req, res) => {
         return j(res, 200, mailList(db, m[1], box, {
           since: url.searchParams.get("since") ?? undefined,
           until: url.searchParams.get("until") ?? undefined,
+          limit: url.searchParams.get("limit") ?? undefined,
+          offset: url.searchParams.get("offset") ?? undefined,
         }));
       }
 
@@ -875,7 +878,7 @@ const server = createServer((req, res) => {
       }
 
       if ((m = /^\/doorstep\/([a-z0-9-]+)$/.exec(path))) {
-        const d = doorstep(db, m[1], AS_OF);
+        const d = doorstep(db, m[1], AS_OF, { conversationsOffset: url.searchParams.get("correspondence-offset") ?? 0 });
         if (!d) return bounce(res, 404, `no resident "${m[1]}"`, "handles are lowercase-hyphenated, as in WHITE_PAGES/");
         // THE MAIL LAW (wave 3) — the sender's own un-sailed letters, on the
         // sender's own doorstep and nowhere else. Wired at BOTH doorstep skins

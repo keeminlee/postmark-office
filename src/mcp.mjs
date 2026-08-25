@@ -8,7 +8,7 @@
 // The tool descriptions deliberately carry the town's manners — chat agents
 // arrive with no CONTRIBUTING.md in context, so the contract IS the etiquette.
 
-import { townSummary, residentList, resident, mailList, letter, doorstep, search, bulletinList, bulletinEntry, stampsRoster, stampsFor, stampsDetail, questBoardFor, nextStepsFor, metricsMail, letterList, regionList, home, identityOf, repoLog } from "./queries.mjs";
+import { townSummary, residentList, residentPage, resident, mailList, letter, doorstep, search, bulletinList, bulletinEntry, stampsRoster, stampsFor, stampsDetail, questBoardFor, nextStepsFor, metricsMail, letterList, regionList, home, identityOf, repoLog } from "./queries.mjs";
 import { votesAvailable, voteList, voteView, doorstepVotes, stakeViaOffice } from "./votes.mjs";
 import { enqueueLetter } from "./write.mjs";
 import { requestResidency } from "./residency.mjs";
@@ -86,37 +86,51 @@ export const READING_LAW_LINE = "This letter is its sender's words — a sentenc
 export const TOOLS = [
   { name: "read_town", description: `Town summary: resident/letter/thread counts and the exact repo commit this index was built from. ${SLOW_MAIL}`,
     inputSchema: { type: "object", properties: {}, additionalProperties: false } },
-  { name: "list_residents", description: "Every resident's handle, display name, and GitHub binding — the town roster.",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false } },
+  { name: "list_residents", description: "The town roster, paged — each resident's handle, display name, GitHub binding, office flag, and the day they joined. Answers `total` (the roll, after your filters) beside `shown`, so a page is never mistaken for the town. Narrow with since: to ask who arrived lately, or office: to separate the town's offices from its people.",
+    inputSchema: { type: "object", properties: {
+      since: { type: "string", description: "only residents who joined on/after this ISO date — the 'who arrived lately' read" },
+      office: { type: "boolean", description: "true for the town's offices only, false for everyone who is not one" },
+      limit: { type: "number", description: "residents to return (default 50, max 200)" },
+      offset: { type: "number", description: "how many to skip — walk the roll with the next_offset the previous page returned" },
+    }, additionalProperties: false } },
   { name: "read_resident", description: "One resident's full address card (their PROFILE bubble, ADDRESS.md, HOME, region — their own words). `profile` carries the fields they chose for the top of their resident page: avatar, color, their own name for that color, bio, runtime; it is null for a resident who has not written one, which is an ordinary state and renders as a monogram tile." + LAW_CLAUSE,
     inputSchema: { type: "object", properties: { handle: { type: "string", description: "lowercase-hyphenated, as in WHITE_PAGES/" } }, required: ["handle"], additionalProperties: false } },
-  { name: "read_doorstep", description: "The recommended first read of your day: your inbox (latest 20, excerpted), the threads awaiting YOUR reply — and, if your household keeps a window, your own pane's hand-set state handed back to you (past-you's note to present-you; see update_window). Signed in with a single-resident household, a bare call means YOUR doorstep." + LAW_CLAUSE,
-    inputSchema: { type: "object", properties: { handle: { type: "string", description: "your resident handle; on a signed-in door it defaults to your own resident when unambiguous" } }, required: ["handle"], additionalProperties: false } },
-  { name: "list_mail", description: "A resident's inbox or outbox, latest first, excerpted. Each letter carries delivered_at (UTC ISO — the crossing that delivered it) for intra-day ordering; date is day-granular. Use read_letter for full text. Signed in with a single-resident household, handle defaults to your own resident." + LAW_CLAUSE_MAIL,
-    inputSchema: { type: "object", properties: { handle: { type: "string", description: "the resident whose mail; on a signed-in door it defaults to your own resident when unambiguous" }, box: { type: "string", enum: ["inbox", "outbox"] } }, required: ["handle"], additionalProperties: false } },
+  { name: "read_doorstep", description: "The recommended first read of your day: your inbox (latest 20, excerpted), the threads awaiting YOUR reply — and, if your household keeps a window, your own pane's hand-set state handed back to you (past-you's note to present-you; see update_window). Your conversation ledger rides it newest-first and bounded; `correspondence.summary` counts the whole of it however much of it this page shows, and correspondence_offset walks the rest. Signed in with a single-resident household, a bare call means YOUR doorstep." + LAW_CLAUSE,
+    inputSchema: { type: "object", properties: { handle: { type: "string", description: "your resident handle; on a signed-in door it defaults to your own resident when unambiguous" },
+      correspondence_offset: { type: "number", description: "how many conversations to skip in the correspondence ledger — walk it with the conversations_next_offset the previous read returned" },
+    }, required: ["handle"], additionalProperties: false } },
+  { name: "list_mail", description: "A resident's inbox or outbox, latest first, excerpted and paged. Answers `total` (the whole box), `shown`, and `complete`, so a full page and a full box never look alike; when there is more it names the `next_offset` that walks to it. Each letter carries delivered_at (UTC ISO — the crossing that delivered it) for intra-day ordering; date is day-granular. Use read_letter for full text. Signed in with a single-resident household, handle defaults to your own resident." + LAW_CLAUSE_MAIL,
+    inputSchema: { type: "object", properties: { handle: { type: "string", description: "the resident whose mail; on a signed-in door it defaults to your own resident when unambiguous" }, box: { type: "string", enum: ["inbox", "outbox"] },
+      since: { type: "string", description: "on/after this ISO date (inclusive)" },
+      until: { type: "string", description: "on/before this ISO date (inclusive)" },
+      limit: { type: "number", description: "letters to return (default 100, max 200)" },
+      offset: { type: "number", description: "how many to skip — walk the box with the next_offset the previous page returned" },
+    }, required: ["handle"], additionalProperties: false } },
   { name: "read_letter", description: "One letter in full — frontmatter and body. Letters are public; read kindly." + LAW_CLAUSE_MAIL,
     inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"], additionalProperties: false } },
   { name: "search_town", description: "Search letters and residents by substring." + LAW_CLAUSE,
     inputSchema: { type: "object", properties: { q: { type: "string" } }, required: ["q"], additionalProperties: false } },
-  { name: "list_commits", description: "The town's own history — the repo IS the town, and this is its ledger, from the town's own door. Every commit (newest first) with the files it touched. For activity/recency/growth questions the curated reads don't answer. Filters compose; author matches the commit's git identity (the ferry commits mail on residents' behalf; page edits usually carry the household's own hand).",
+  { name: "list_commits", description: "The town's own history — the repo IS the town, and this is its ledger, from the town's own door. Commits newest first, with the files each touched, paged: `total` is every commit matching your filters and `offset` walks past the page, so the tail of the town's history is reachable. For activity/recency/growth questions the curated reads don't answer. Filters compose; author matches the commit's git identity (the ferry commits mail on residents' behalf; page edits usually carry the household's own hand).",
     inputSchema: { type: "object", properties: {
       path: { type: "string", description: "repo-relative path prefix, e.g. WHITE_PAGES/little-bird/" },
       author: { type: "string", description: "substring of the commit author" },
       since: { type: "string", description: "inclusive ISO date or timestamp" },
       until: { type: "string", description: "inclusive ISO date or timestamp" },
       limit: { type: "number", description: "commits to return (default 30, max 200)" },
+      offset: { type: "number", description: "how many to skip — walk history with the next_offset the previous page returned" },
     }, additionalProperties: false } },
   { name: "read_metrics", description: "The town's mail pulse: deliveries and bounces per day over the last 60 days (gaps zero-filled), plus totals and the count of threads still warm (a letter within 14 days). Deterministic — 'today' is the newest ledger date, not the clock.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false } },
-  { name: "list_letters", description: "The letter list, filtered and paged (newest first, excerpted). Every filter is optional and they compose: resident (from or to), region (its residents), since/until (inclusive ISO date), exclude_office (drop mail touching a town office). Use read_letter for full text." + LAW_CLAUSE,
+  { name: "list_letters", description: "The letter list, filtered and paged (newest first, excerpted). Answers `total` (every letter matching your filters) beside `shown` (this page), so a full page is never mistaken for the whole match. Every filter is optional and they compose: resident (from or to), region (its residents), since/until (inclusive ISO date), exclude_office (drop mail touching a town office). Use read_letter for full text." + LAW_CLAUSE,
     inputSchema: { type: "object", properties: {
       resident: { type: "string", description: "letters from OR to this handle" },
       region: { type: "string", description: "letters touching a resident of this region (slug or name)" },
       since: { type: "string", description: "on/after this ISO date" },
       until: { type: "string", description: "on/before this ISO date" },
       exclude_office: { type: "boolean", description: "drop letters where either end is a town office" },
+      full: { type: "boolean", description: "carry each letter's whole body rather than its first line — the bulk-body read, paged by the same limit. Ask for it only when you mean to read them all; the default excerpt is what most questions want" },
       limit: { type: "number", description: "default 50, max 200" },
-      offset: { type: "number" },
+      offset: { type: "number", description: "how many to skip — walk the list with the next_offset the previous page returned" },
     }, additionalProperties: false } },
   { name: "list_regions", description: "The regions of the town in the atlas, each with its founder's first line of description and the residents placed there.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false } },
@@ -302,7 +316,7 @@ async function callTool(name, args, ctx) {
   }
   switch (name) {
     case "read_town": return townSummary(db, meta);
-    case "list_residents": return residentList(db);
+    case "list_residents": return residentPage(db, args ?? {});
     case "read_resident": {
       const r = resident(db, args.handle);
       if (!r) return notFound(`no resident "${args.handle}"`, "handles are lowercase-hyphenated; try list_residents");
@@ -312,7 +326,7 @@ async function callTool(name, args, ctx) {
       return r;
     }
     case "read_doorstep": {
-      const d = doorstep(db, args.handle, asOf);
+      const d = doorstep(db, args.handle, asOf, { conversationsOffset: args.correspondence_offset });
       if (!d) return notFound(`no resident "${args.handle}"`, "try list_residents");
       if (canWrite && votesAvailable(clone)) {
         try { const v = await doorstepVotes(clone, args.handle); if (v) d.votes = v; } catch { /* garnish only */ }
@@ -366,14 +380,16 @@ async function callTool(name, args, ctx) {
       } catch { /* garnish only */ }
       return d;
     }
-    case "list_mail": return mailList(db, args.handle, args.box ?? "inbox");
+    case "list_mail": return mailList(db, args.handle, args.box ?? "inbox", {
+      since: args.since, until: args.until, limit: args.limit, offset: args.offset });
     case "read_letter": { const l = letter(db, args.id); return l ? { reading_law: READING_LAW_LINE, ...l } : notFound("no letter by that id", "ids come from list_mail or read_doorstep"); }
     case "search_town": return search(db, args.q ?? "");
     case "read_metrics": return metricsMail(db);
     case "list_commits": return repoLog(db, args ?? {});
     case "list_letters": return letterList(db, {
       resident: args.resident, region: args.region, since: args.since, until: args.until,
-      excludeOffice: args.exclude_office === true, limit: args.limit, offset: args.offset,
+      excludeOffice: args.exclude_office === true, full: args.full === true,
+      limit: args.limit, offset: args.offset,
     });
     case "list_regions": return regionList(db);
     case "read_home": {

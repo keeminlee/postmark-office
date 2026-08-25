@@ -211,9 +211,23 @@ test("GET /letters filters: resident, since/until, region, exclude-office, combi
   assert.equal(paged.limit, 2);
 });
 
-test("GET /mail/{handle} honors since/until", async () => {
+test("GET /mail/{handle} honors since/until, and pages", async () => {
   const win = await (await get("/mail/wright?since=2026-07-03")).json();
-  assert.ok(win.every((l) => l.date >= "2026-07-03"));
+  assert.ok(win.letters.every((l) => l.date >= "2026-07-03"));
+  // THE COUNT MUST BE ABLE TO DISAGREE WITH THE LIST. A page of one out of a
+  // box of two is the only shape that proves `total` is a total and not the
+  // list length wearing its name — assert both halves, or the assertion
+  // passes just as happily against the defect.
+  const page = await (await get("/mail/wright?limit=1")).json();
+  assert.equal(page.letters.length, 1);
+  assert.equal(page.shown, 1);
+  assert.equal(page.total, 2);
+  assert.equal(page.complete, false);
+  assert.equal(page.next_offset, 1);
+  const rest = await (await get(`/mail/wright?limit=1&offset=${page.next_offset}`)).json();
+  assert.equal(rest.letters.length, 1);
+  assert.equal(rest.complete, true, "the second page finishes the box");
+  assert.notEqual(rest.letters[0].id, page.letters[0].id, "offset walked, it did not repeat");
 });
 
 test("GET /doorstep/{h} serves the v0.2 bundle over HTTP", async () => {
