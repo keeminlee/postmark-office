@@ -114,17 +114,30 @@ test("classDials keeps its old meaning — frontmatter only, predicates are thei
 
 test("CLASS_GATE_PARITY: the aliased gate in world-classes carries the roster gate's every clause", async () => {
   // world-classes.mjs spells the roster gate a second time against the `c`
-  // alias, because deriving it by string surgery would have rewritten
-  // WORKS_PATH_SQL along with it. A second spelling is a second thing to
-  // forget, so the two are compared here clause by clause: if the roster gate
-  // grows a fifth condition, this goes red instead of the read going narrow.
+  // alias. It used to spell the POSITION clause a second time too, by hand,
+  // because deriving it by string surgery would have rewritten a bare `props`.
+  // The freeze re-key (2026-08-25) killed that copy: `worksClause(alias)` takes
+  // its alias, so both readers now run the SAME implementation of "standing in
+  // the Keeping Works". The four remaining clauses are still spelled twice, so
+  // they are still compared here: if the roster gate grows a fifth condition,
+  // this goes red instead of the read going narrow.
+  const { CLASS_GATE_C } = await import("../src/world-classes.mjs");
+  const norm = (s) => s.replace(/\bc\./g, "").replace(/\s+/g, " ").trim();
+  assert.equal(norm(CLASS_GATE_C), norm(CLASS_ROSTER_GATE_SQL),
+    "the aliased gate and CLASS_ROSTER_GATE_SQL have drifted — one of them is now reading a different set of class marks");
+});
+
+test("CLASS_GATE_PARITY: the position clause is SHARED, not hand-copied (the freeze re-key)", async () => {
+  // The bite this closes: two copies of a security boundary, and only one of
+  // them re-keyed when the law moved. "A mark's directory is its historical
+  // filing: it carries no claim" — so a hand-written path substring anywhere in
+  // the class gates is the pre-freeze law surviving in a second file.
   const { readFileSync } = await import("node:fs");
   const src = readFileSync(new URL("../src/world-classes.mjs", import.meta.url), "utf8");
-  const aliased = /const CLASS_GATE_C = `([\s\S]*?)`;/.exec(src)?.[1];
-  assert.ok(aliased, "CLASS_GATE_C not found — did the aliased gate move?");
-  const norm = (s) => s.replace(/\bc\./g, "").replace(/\s+/g, " ").trim();
-  const want = norm(CLASS_ROSTER_GATE_SQL.replace(
-    /\$\{WORKS_PATH_SQL\}/, `json_extract(props, '$.path') LIKE '%/the-keeping-works/%'`));
-  assert.equal(norm(aliased), want,
-    "the aliased gate and CLASS_ROSTER_GATE_SQL have drifted — one of them is now reading a different set of class marks");
+  const gate = /export const CLASS_GATE_C = `([\s\S]*?)`;/.exec(src)?.[1];
+  assert.ok(gate, "CLASS_GATE_C not found — did the aliased gate move?");
+  assert.match(gate, /\$\{worksClause\("c"\)\}/,
+    "the aliased gate must interpolate the shared worksClause, not spell the position clause itself");
+  assert.doesNotMatch(gate, /the-keeping-works/,
+    "a literal '/the-keeping-works/' in the aliased gate is the hand-copy come back — the freeze re-keyed position off the path");
 });

@@ -32,7 +32,7 @@ import { openDynamic } from "../src/dynamic-store.mjs";
 import { markRecord } from "../src/mark-record.mjs";
 import {
   ACTION_AMEND, ACTION_LEAVE, ACTION_WITHDRAW, CLASS_FRAME, CLASS_MARK, WORLD_ANCHOR,
-  appendJournal, journalHead, readJournal,
+  appendJournal, filedPathOfAt, journalHead, pathFor, readJournal, resetPathIndex,
 } from "../src/world-journal.mjs";
 import { DRAIN_CURSOR, drain, drainStatus, fileFramer, logLine, planDrain, writeJournalWindow } from "../src/world-drain.mjs";
 
@@ -286,13 +286,13 @@ test("the cursor is the law — a row written DURING a drain is not truncated wi
   assert.equal(racer, 2, "the late row got the next seq");
   assert.deepEqual(s.store.rows, [2], "and survived the truncate — the drain destroyed only what it had read");
   assert.equal(s.store.cursor, 1, "the cursor names what was actually drained, not what happens to be in the table");
-  assert.equal(w.git("cat-file", "-t", `draft/alpha:WORLD/marks/let-there-be-light/early/mark.md`).trim(), "blob");
-  assert.throws(() => w.git("cat-file", "-t", "draft/alpha:WORLD/marks/let-there-be-light/late/mark.md"),
+  assert.equal(w.git("cat-file", "-t", `draft/alpha:WORLD/marks/alpha/early/mark.md`).trim(), "blob");
+  assert.throws(() => w.git("cat-file", "-t", "draft/alpha:WORLD/marks/alpha/late/mark.md"),
     "the late mark is not written down yet — it was never read");
 
   const next = await drain({ repo: w.repo, dbPath: w.dbPath, at: Date.parse(DRAIN_ISO) });
   assert.equal(next.drained, 1, "and the next drain picks it up");
-  assert.match(w.git("show", "draft/alpha:WORLD/marks/let-there-be-light/late/mark.md"), /arrived mid-drain/);
+  assert.match(w.git("show", "draft/alpha:WORLD/marks/alpha/late/mark.md"), /arrived mid-drain/);
 });
 
 test("idempotence — an unchanged write-down produces NO commit at all, because the tree decides", async () => {
@@ -324,7 +324,7 @@ test("the write-down — a drained record is BYTE-IDENTICAL to what the git door
   withDb(w.dbPath, (db) => leave(db, { id: "alpha/exact", body: "the exact words", at: { x: 7, y: -3 }, extent: { w: 6, h: 6 } }));
   await drain({ repo: w.repo, dbPath: w.dbPath, at: Date.parse(DRAIN_ISO) });
 
-  const onBranch = w.git("show", "draft/alpha:WORLD/marks/let-there-be-light/exact/mark.md");
+  const onBranch = w.git("show", "draft/alpha:WORLD/marks/alpha/exact/mark.md");
 
   // THE REFERENCE IS A LITERAL, not another call to `markRecord`. Comparing the
   // drain's output to the same function that produced it is an identity, and it
@@ -355,21 +355,151 @@ test("the write-down — supersession lands the LATEST declaration, once, at the
   seedJournal(w.dbPath);
   await drain({ repo: w.repo, dbPath: w.dbPath, at: Date.parse(DRAIN_ISO) });
 
-  const body = w.git("show", "draft/alpha:WORLD/marks/let-there-be-light/first-draft/mark.md");
+  const body = w.git("show", "draft/alpha:WORLD/marks/alpha/first-draft/mark.md");
   assert.match(body, /said better on reflection/, "three rows, one file, the last word");
   assert.equal(/the first thing alpha said/.test(body), false);
 
   const files = w.git("ls-tree", "-r", "--name-only", "draft/alpha", "--", "WORLD/marks").trim().split("\n");
   assert.equal(files.filter((f) => f.includes("/first-draft/")).length, 1, "one copy, ever");
   assert.equal(files.some((f) => f.includes("/their-draft/")), false, "and beta's draft is not in alpha's sketchbook");
-  assert.match(w.git("show", "draft/beta:WORLD/marks/let-there-be-light/their-draft/mark.md"), /beta said a thing too/);
+  assert.match(w.git("show", "draft/beta:WORLD/marks/beta/their-draft/mark.md"), /beta said a thing too/);
+});
+
+test("THE FREEZE, gate A — an amend of a mark ALREADY FILED lands at its filing, and there is still ONE file", async () => {
+  // THE LAW (LOGOS/state-and-time.md § "The freeze — filing is static, and the
+  // tree is a fossil", founder-ruled 2026-08-25):
+  //
+  //   "A mark's directory is its historical filing: it carries no claim, and it
+  //    NEVER MOVES AGAIN."
+  //
+  // Filing by identity is gate B — the rule for a mark with no filing yet. The
+  // fixture's `alpha/published-note` is a pre-freeze fossil on main. Amending it
+  // must not write a second file at `WORLD/marks/alpha/published-note/`: two
+  // files under one id is the publish+re-home wedge (#1862), which the freeze
+  // deleted the mover to prevent, and the world's own gate A refuses the result.
+  const w = makeWorld("gate-a-published");
+  withDb(w.dbPath, (db) => leave(db, { id: "alpha/published-note", body: "amended after the freeze" }));
+  await drain({ repo: w.repo, dbPath: w.dbPath, at: Date.parse(DRAIN_ISO) });
+
+  const files = w.git("ls-tree", "-r", "--name-only", "draft/alpha", "--", "WORLD/marks").trim().split("\n");
+  const mine = files.filter((f) => f.includes("/published-note/"));
+  assert.deepEqual(mine, ["WORLD/marks/let-there-be-light/published-note/mark.md"],
+    "one file, at the filing it already had — never a second copy at the id path");
+  assert.match(w.git("show", "draft/alpha:WORLD/marks/let-there-be-light/published-note/mark.md"),
+    /amended after the freeze/, "and it carries the new declaration, so the amend was not simply dropped");
+});
+
+test("THE FREEZE, gate A — an UNDRAINED draft at a fossil path keeps that path too (the in-flight cohort)", async () => {
+  // The drafts written between the freeze and the door's fix sit at fossil paths
+  // in their households' sketchbooks and NOT on main, so `publishedPathOf` — which
+  // reads main — cannot see them. `writeDownHousehold` can: its base IS the
+  // sketchbook. This is the case that makes the write-down the backstop rather
+  // than a belt on top of a working brace.
+  const w = makeWorld("gate-a-inflight");
+
+  // Plant one, exactly as the pre-freeze door would have: on draft/alpha, at the
+  // fossil root, never published.
+  const fossil = "WORLD/marks/let-there-be-light/in-flight/mark.md";
+  const main = w.git("rev-parse", "main").trim();
+  const blob = execFileSync("git", ["-C", w.repo, "hash-object", "-w", "--stdin"],
+    { input: seedRecord("alpha", "written before the door was fixed"), encoding: "utf8" }).trim();
+  const idx = join(w.root, "idx-in-flight");
+  const env = { ...process.env, ...SEED_ENV, GIT_INDEX_FILE: idx };
+  execFileSync("git", ["-C", w.repo, "read-tree", main], { env });
+  execFileSync("git", ["-C", w.repo, "update-index", "--add", "--cacheinfo", `100644,${blob},${fossil}`], { env });
+  const tree = execFileSync("git", ["-C", w.repo, "write-tree"], { encoding: "utf8", env }).trim();
+  const commit = execFileSync("git", ["-C", w.repo, "commit-tree", tree, "-p", main, "-m", "a draft from before the fix"],
+    { encoding: "utf8", env: { ...process.env, ...SEED_ENV } }).trim();
+  execFileSync("git", ["-C", w.repo, "update-ref", "refs/heads/draft/alpha", commit], { env: { ...process.env, ...SEED_ENV } });
+
+  withDb(w.dbPath, (db) => leave(db, { id: "alpha/in-flight", body: "amended after the door was fixed" }));
+  await drain({ repo: w.repo, dbPath: w.dbPath, at: Date.parse(DRAIN_ISO) });
+
+  const files = w.git("ls-tree", "-r", "--name-only", "draft/alpha", "--", "WORLD/marks").trim().split("\n");
+  assert.deepEqual(files.filter((f) => f.includes("/in-flight/")), [fossil],
+    "the in-flight draft stays where it was filed — one file, and no duplicate at the id path");
+  assert.match(w.git("show", `draft/alpha:${fossil}`), /amended after the door was fixed/);
+});
+
+test("THE FOSSIL MANIFEST answers where the slug index cannot — an ambiguous slug is why it had to come first", async () => {
+  // THE LAW (the freeze, 2026-08-25): "A mark's directory is its historical
+  // filing: it carries no claim, and it never moves again."
+  //
+  // The tree index is keyed by leaf SLUG, and a slug is unique per AUTHOR, not
+  // per tree. Its old comment reasoned that an ambiguous slug could safely
+  // resolve to nothing because "the drain re-homes by geometry at the save
+  // regardless" — the freeze deleted that re-homer, so the fallback path would
+  // now stand forever and gate A would refuse it. The manifest is keyed by id.
+  const w = makeWorld("frozen-manifest");
+  const fossil = "WORLD/marks/let-there-be-light/town-square/the-lamp";
+  const rival = "WORLD/marks/let-there-be-light/published-note/the-lamp";  // same SLUG, other household
+  const put = (rel, text) => {
+    const f = join(w.repo, rel, "mark.md");
+    mkdirSync(dirname(f), { recursive: true });
+    writeFileSync(f, text);
+  };
+  put(fossil, seedRecord("alpha", "the fossil lamp"));
+  put(rival, seedRecord("beta", "beta's lamp, same slug"));
+  writeFileSync(join(w.repo, "WORLD", "filing-freeze.json"), JSON.stringify({
+    law: "Filing is frozen as of 2026-08-25.",
+    frozen_at: "2026-08-25",
+    marks: { "alpha/the-lamp": fossil },
+  }));
+  execFileSync("git", ["-C", w.repo, "add", "-A"], { env: { ...process.env, ...SEED_ENV } });
+  execFileSync("git", ["-C", w.repo, "commit", "-qm", "two lamps and a manifest"], { env: { ...process.env, ...SEED_ENV } });
+
+  resetPathIndex();
+  const sha = w.git("rev-parse", "HEAD").trim();
+  const filed = filedPathOfAt(w.repo, sha);
+
+  assert.equal(filed("alpha/the-lamp"), `${fossil}/mark.md`,
+    "the manifest names it by id, so the shared slug cannot make it ambiguous");
+  assert.equal(pathFor({ id: "alpha/the-lamp", slug: "the-lamp", by: "alpha", kind: "sited" }, { publishedPathOf: filed }),
+    `${fossil}/mark.md`, "and gate A keeps the record there");
+
+  // THE FLIP, in the same fixture so it cannot pass by accident: a mark the
+  // manifest does not name, and whose slug is not in the tree, is a NEW mark.
+  assert.equal(filed("alpha/never-filed"), null);
+  assert.equal(pathFor({ id: "alpha/never-filed", slug: "never-filed", by: "alpha", kind: "sited" }, { publishedPathOf: filed }),
+    "WORLD/marks/alpha/never-filed/mark.md");
+  resetPathIndex();
+});
+
+test("a mark filed at its id is found by ID, never by the ambiguous slug map", async () => {
+  const w = makeWorld("id-keyed-index");
+  const put = (rel, text) => {
+    const f = join(w.repo, rel, "mark.md");
+    mkdirSync(dirname(f), { recursive: true });
+    writeFileSync(f, text);
+  };
+  put("WORLD/marks/alpha/the-lamp", seedRecord("alpha", "alpha's, filed at its id"));
+  put("WORLD/marks/beta/the-lamp", seedRecord("beta", "beta's, filed at its id"));
+  execFileSync("git", ["-C", w.repo, "add", "-A"], { env: { ...process.env, ...SEED_ENV } });
+  execFileSync("git", ["-C", w.repo, "commit", "-qm", "two id-filed lamps"], { env: { ...process.env, ...SEED_ENV } });
+
+  resetPathIndex();
+  const filed = filedPathOfAt(w.repo, w.git("rev-parse", "HEAD").trim());
+  assert.equal(filed("alpha/the-lamp"), "WORLD/marks/alpha/the-lamp/mark.md");
+  assert.equal(filed("beta/the-lamp"), "WORLD/marks/beta/the-lamp/mark.md",
+    "two households sharing a slug must not collapse into one answer or none");
+  resetPathIndex();
+});
+
+test("THE FLIP — a mark with NO existing filing anywhere still lands at its id", async () => {
+  // Without this the two above would pass on a write-down that had quietly gone
+  // back to filing everything at the fossil root.
+  const w = makeWorld("gate-b-new");
+  withDb(w.dbPath, (db) => leave(db, { id: "alpha/brand-new", body: "nothing filed this before" }));
+  await drain({ repo: w.repo, dbPath: w.dbPath, at: Date.parse(DRAIN_ISO) });
+  const files = w.git("ls-tree", "-r", "--name-only", "draft/alpha", "--", "WORLD/marks").trim().split("\n");
+  assert.deepEqual(files.filter((f) => f.includes("/brand-new/")), ["WORLD/marks/alpha/brand-new/mark.md"]);
 });
 
 test("the write-down — a withdrawal removes the file an EARLIER drain wrote, found by author not by slug", async () => {
   const w = makeWorld("withdraw");
   withDb(w.dbPath, (db) => leave(db, { id: "alpha/goes-away", body: "here for now" }));
   await drain({ repo: w.repo, dbPath: w.dbPath, at: Date.parse(DRAIN_ISO) });
-  assert.match(w.git("show", "draft/alpha:WORLD/marks/let-there-be-light/goes-away/mark.md"), /here for now/);
+  assert.match(w.git("show", "draft/alpha:WORLD/marks/alpha/goes-away/mark.md"), /here for now/);
 
   withDb(w.dbPath, (db) => leave(db, { id: "alpha/goes-away", action: ACTION_WITHDRAW }));
   await drain({ repo: w.repo, dbPath: w.dbPath, at: Date.parse(DRAIN_ISO) });
@@ -518,13 +648,21 @@ test("convert ONCE — the file frame is applied at write-down and nowhere else"
   // "doing it twice is how the two eras would disagree about where a mark is."
   // This is the one conversion, and it is injected so it can be falsified
   // without a relative-coords world.
+  //
+  // The record is spelled `predicated` so that `pathFor` NESTS it, which is what
+  // puts the conversion in play. Predicates carry no geometry in the door's
+  // grammar; the payload is synthetic on purpose, because the subject here is
+  // the converter, not the grammar. See the sited case below for why this test
+  // can no longer be written with a sited record.
   const rows = [{
     seq: 1, crossing: 145, actor: "alpha", action: ACTION_LEAVE, object: "alpha/child",
     class: CLASS_MARK, household: "alpha", written_at: "2026-08-23T12:00:00.000Z",
     at: { anchor: WORLD_ANCHOR, dx: 0, dy: 0 }, witnesses: null, effect: null,
-    payload: { slug: "child", by: "alpha", kind: "sited", at: { x: 110, y: 105 }, extent: { w: 2, h: 2 }, body: "inside", parent_id: "the-town/town-square" },
+    payload: { slug: "child", by: "alpha", kind: "predicated", at: { x: 110, y: 105 }, extent: { w: 2, h: 2 }, body: "inside", parent_id: "the-town/town-square" },
   }];
-  const nestedPath = (id) => `WORLD/marks/let-there-be-light/town-square/${String(id).split("/")[1]}/mark.md`;
+  // `publishedPathOf` answers where the mark WITH THAT ID sits. The parent here
+  // is `the-town/town-square`, a pre-freeze fossil one level under the root.
+  const nestedPath = (id) => `WORLD/marks/let-there-be-light/${String(id).split("/")[1]}/mark.md`;
 
   const converted = planDrain(rows, {
     publishedPathOf: nestedPath,
@@ -532,10 +670,47 @@ test("convert ONCE — the file frame is applied at write-down and nowhere else"
   });
   const plain = planDrain(rows, { publishedPathOf: nestedPath });
 
+  assert.equal(converted.households[0].upserts[0].path, "WORLD/marks/let-there-be-light/town-square/child/mark.md",
+    "the record has to actually land nested, or the conversion this test asserts was never in play");
   assert.deepEqual(converted.households[0].upserts[0].fileRec.at, { x: 10, y: 5 },
     "the file speaks the parent's frame — the offset from the square's centre");
   assert.deepEqual(plain.households[0].upserts[0].fileRec.at, { x: 110, y: 105 },
     "and with no framer the world coordinates go down unshifted, because a converted-by-guesswork mark is in the wrong place forever");
+});
+
+test("THE FREEZE — a sited draft is never nested, so the write-down's frame conversion has no live caller at this door", async () => {
+  // THE LAW (LOGOS/state-and-time.md § "The freeze — filing is static, and the
+  // tree is a fossil", founder-ruled 2026-08-25):
+  //
+  //   "New marks are filed by identity — WORLD/marks/<household>/<slug>/"
+  //
+  // The conversion above exists because "a NESTED record's at/points are offsets
+  // from its parent's centre". After the freeze the only kinds that nest are the
+  // ones that carry no geometry, so the sited/parcel arm is now STRUCTURALLY
+  // unreachable rather than merely unexercised — the drain's own comment already
+  // said it was "currently identity for every row shape the door can produce".
+  //
+  // The conversion is kept, not deleted: the pre-freeze fossils in the tree are
+  // still nested and still relative-framed, and a future re-reading of one goes
+  // through here. This test is the receipt that the office knows which of those
+  // two things is true, so nobody re-derives it from the code later.
+  const sited = [{
+    seq: 1, crossing: 145, actor: "alpha", action: ACTION_LEAVE, object: "alpha/child",
+    class: CLASS_MARK, household: "alpha", written_at: "2026-08-23T12:00:00.000Z",
+    at: { anchor: WORLD_ANCHOR, dx: 0, dy: 0 }, witnesses: null, effect: null,
+    payload: { slug: "child", by: "alpha", kind: "sited", at: { x: 110, y: 105 }, extent: { w: 2, h: 2 }, body: "inside", parent_id: "the-town/town-square" },
+  }];
+  const plan = planDrain(sited, {
+    // Answers for the PARENT only. `alpha/child` has no filing anywhere, so gate
+    // B decides it — which is the case under test. (Gate A, where a filing does
+    // exist, has its own three falsifiers above.)
+    publishedPathOf: (id) => id === "the-town/town-square" ? "WORLD/marks/let-there-be-light/town-square/mark.md" : null,
+    toFileFrame: () => { throw new Error("the framer must not be reached for a sited record after the freeze"); },
+  });
+  assert.equal(plan.households[0].upserts[0].path, "WORLD/marks/alpha/child/mark.md",
+    "it files at its id even with a parent_id in the payload — identity, not the tree");
+  assert.deepEqual(plan.households[0].upserts[0].fileRec.at, { x: 110, y: 105 },
+    "and its numbers reach the file unshifted, because WORLD/marks/<by>/<slug>/ is framed on the world");
 });
 
 test("the framer answers NULL on an absolute tree and a function on a relative one — refuse or disclose, never quietly shift", async () => {
@@ -571,7 +746,7 @@ test("the framer answers NULL on an absolute tree and a function on a relative o
   // end to end: a root-level draft's numbers reach the file unshifted
   withDb(absolute.dbPath, (db) => leave(db, { id: "alpha/root-level", at: { x: 42, y: -7 }, body: "on open ground" }));
   await drain({ repo: absolute.repo, dbPath: absolute.dbPath, at: Date.parse(DRAIN_ISO) });
-  assert.match(absolute.git("show", "draft/alpha:WORLD/marks/let-there-be-light/root-level/mark.md"),
+  assert.match(absolute.git("show", "draft/alpha:WORLD/marks/alpha/root-level/mark.md"),
     /^at: \{ x: 42, y: -7 \}$/m, "the numbers the resident spoke, unshifted");
 });
 
@@ -694,7 +869,7 @@ test("the sketchbook base — with only origin's branch, the drain builds ON IT 
   assert.equal(r.households[0].base, pushed);
   assert.match(w.git("show", `draft/alpha:WORLD/marks/let-there-be-light/${markSlug}/mark.md`), /pushed before the cutover/,
     "the already-pushed draft is still there — the drain built on the sketchbook rather than over it");
-  assert.match(w.git("show", "draft/alpha:WORLD/marks/let-there-be-light/newly-declared/mark.md"), /written after the cutover/);
+  assert.match(w.git("show", "draft/alpha:WORLD/marks/alpha/newly-declared/mark.md"), /written after the cutover/);
 });
 
 test("the sketchbook base — a local head merely BEHIND origin fast-forwards to it", async () => {

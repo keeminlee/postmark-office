@@ -49,13 +49,21 @@ const sha = meta.as_of_world;
 if (!sha) { console.error("FATAL: the store carries no as_of_world — nothing to shadow against."); process.exit(2); }
 
 const TREE = materializeWorldAtSha(meta.world_path, sha, ["WORLD", "tools"]);
-const { loadMarks, placementParent, rect, contains } = await import(pathToFileURL(join(TREE, "tools", "marks-fold.mjs")));
+const { loadMarks, placementParent, rect, contains, WORLD_ROOT_SLUG, worldRootOf } = await import(pathToFileURL(join(TREE, "tools", "marks-fold.mjs")));
 
 // ── the engine side ──────────────────────────────────────────────────────────
 const marks = loadMarks(join(TREE, "WORLD", "marks"));
 const GEOMETRIC = (m) => m?.kind === "sited" || m?.kind === "parcel";
 const isFar = (m) => m?.far === true || m?.far === "true";
-const ROOT_ID = marks.find((m) => !m._parentMarkId)?.id ?? null;
+// THE ROOT, BY NAME, NOT BY "HAS NO DIRECTORY PARENT" (the freeze, 2026-08-25).
+// A mark filed at its id — `WORLD/marks/<by>/<slug>/` — has no mark.md above it
+// either, so the old derivation picks whichever of them readdir reaches first
+// and every spine below is measured against the wrong frame. The world root has
+// a name; use it, and fall back to the old walk only if the fold stops
+// exporting one.
+const ROOT_ID = (typeof worldRootOf === "function" ? worldRootOf(marks)?.id : null)
+  ?? (WORLD_ROOT_SLUG ? marks.find((m) => m.slug === WORLD_ROOT_SLUG)?.id : null)
+  ?? marks.find((m) => !m._parentMarkId)?.id ?? null;
 const byId = new Map(marks.map((m) => [m.id, m]));
 
 const geometric = marks.filter((m) => GEOMETRIC(m) && m.at);

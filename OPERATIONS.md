@@ -235,12 +235,14 @@ Revocation is the stronger act and refuses to run without the founder's word,
 quoted verbatim on the row. Nothing is ever deleted: a lift is another append and
 both lines stand. `HARBOR/GANGWAY.md` remains the circuit breaker, unchanged.
 
-**⚠ Known gap, named 2026-08-24, not yet wired** (also carried in § Known gaps
-and printed by `node tools/registrar-audit.mjs seams` in the town repo): the MCP
-write doors do not consult standing, and `planTownDrain` does not read
-`HARBOR/GANGWAY.md` — so under the new engine a freeze does not stop a crossing
-from settling. Both are office-side; the precedent for reading town state is
-`src/residency.mjs § gangwayState`.
+**✅ Both seams wired the same night they were named (2026-08-24, the cutover):**
+the MCP write doors consult standing (`src/standing.mjs`; falsifiers
+`test/standing-doors.test.mjs`) and `planTownDrain` reads `HARBOR/GANGWAY.md`
+(frozen routes every row to `waiting`, cursor unmoved; falsifiers
+`test/gangway-drain.test.mjs`, flipped both directions). A freeze is
+self-enforcing under the new engine. The one seam still open is **provenance**
+(a drained join's `seq`/`channel`/door-instant don't survive into the town
+record) — tracked on postmark#2040.
 
 ## Intentional redundancies (not drift — designed backstops)
 - **Double PR watch:** Ferry's open-loops board (primary) + Wright's operator
@@ -265,30 +267,18 @@ from settling. Both are office-side; the precedent for reading town state is
 
   One command, if a timer is not wanted yet:
   `TOWN_CLONE=… WORLD_CLONE=… node tools/economy-report.mjs`
-- **⚑ THE AUDIT ERA'S TWO UNWIRED SEAMS (2026-08-24).** Both office-side, both
-  discovered building the Registrar's audit tooling; neither blocks the town
-  today, and both become live gaps the moment `TOWN_SINGLE_LOG` is on. The
-  precedent for both fixes is `src/residency.mjs § gangwayState` — the
-  office already reads town-side state files out of `TOWN_CLONE`, so none of this
-  opens a new coupling direction. `node tools/registrar-audit.mjs seams` (town
-  repo) prints the current text of all of it, and that tool's falsifiers assert
-  the gaps stay named until they are closed.
-  - **The MCP write doors do not consult standing.** A quarantined resident can
-    still `send_letter`, `update_home`, `update_window`, `stake_vote`,
-    `world_note` — every door the town has. Only the PR lane enforces it
-    (`tools/witness.mjs § evaluate`). The fix is the `WORLD_FREEZE` shape with a
-    per-caller predicate: fold `tools/standing-ledger.md`, bounce a
-    suspended handle with the sentence the ledger already carries. **Reads stay
-    open** — a resident must always be able to read the reason they were given.
-  - **`planTownDrain` does not read `HARBOR/GANGWAY.md`.** The freeze breaker is
-    wired to `tools/settle.mjs`, the lane the pivot retires, and not to the lane
-    replacing it — so with the flag on, **a frozen gangway would not stop a
-    crossing from settling rows.** Fix: `gangwayState(clone) !== "open"` routes
-    every pending row to `waiting` (not `skipped` — waiting is already the pile
-    that means "not yet, and nothing is lost") and leaves the cursor untouched.
-    Falsifier: a frozen crossing settles zero rows and advances no cursor; the
-    same crossing open settles them. Until it is wired, **a freeze under the new
-    engine must be enforced by stopping the drain by hand.**
+- **✅ THE AUDIT ERA'S SEAMS — two wired 2026-08-24 (the same night), one open.**
+  The `doors` seam (write doors consult standing — `src/standing.mjs`) and the
+  `gangway` seam (`planTownDrain` reads `HARBOR/GANGWAY.md`; frozen → every row
+  to `waiting`, cursor unmoved) both shipped with the cutover, falsified in
+  `test/standing-doors.test.mjs` and `test/gangway-drain.test.mjs`.
+  `node tools/registrar-audit.mjs seams` (town repo) now prints the built record.
+  **Still open — provenance (postmark#2040):** a drained join's `seq`, `channel`
+  and door-instant do not survive into the town record, so `registrar-audit list`
+  needs a hand-supplied `--journal` dump (the first live audit had to SSH-read
+  `oauth.db`). Fix shape (the tool's own words): one more appended line — or a
+  `drained:` ADDRESS frontmatter field — carrying `seq` + `channel` across at
+  `writeTownDrain`, or a supported journal read plus an audit cursor.
 
 ## Drift protocol
 A rule found in two homes, or contradicting its home, is a **class** finding: fix

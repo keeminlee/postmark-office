@@ -393,3 +393,69 @@ test("an unreadable or unlawful pace dial derives null — the legacy constant's
   const bad = storeWith([{ id: "the-town/resident", props: { class: "resident", class_version: 8, dials: { pace_km_per_crossing: 0 } } }], { file: "bad-pace.db" });
   assert.equal(departurePace({ worldDb: bad }), null, "a zero stride is unlawful, not slow");
 });
+
+// ── the holdings bound (2026-08-25) ─────────────────────────────────────────
+
+test("world_holdings: `count` is what you hold, `shown` is what was listed", async () => {
+  // Small today — the audit measured this whole answer at 52 bytes, because
+  // wright holds nothing. That is exactly when to land the shape: nothing caps
+  // how many things one resident can pick up, and this read is the shadow of
+  // give, drop AND take, so it rides three of the world's actions.
+  //
+  // `count` was already here and already the true number; what it lacked was a
+  // bound to be a count AGAINST.
+  const path = join(TMP, "holdings-bound.db");
+  rmSync(path, { force: true });
+  const db = openDynamic(path);
+  for (let i = 0; i < 60; i++) {
+    declareHolding({ db, thing: `alpha/thing-${String(i).padStart(3, "0")}`, actor: "alpha" });
+  }
+  db.close();
+
+  const previous = process.env.WORLD_DYNAMIC_DB;
+  process.env.WORLD_DYNAMIC_DB = path;
+  try {
+    const { callHoldTool } = await import("../src/world-hold.mjs");
+    const key = { handles: new Set(["alpha"]) };
+
+    const page = await callHoldTool("world_holdings", {}, key);
+    assert.equal(page.count, 60, "everything in your hands");
+    assert.equal(page.shown, 50, "everything this read listed");
+    assert.equal(page.holding.length, 50);
+    assert.notEqual(page.count, page.shown,
+      "THE FALSIFIER: bound < count, and the count still true");
+    assert.equal(page.complete, false);
+    assert.equal(page.next_offset, 50);
+
+    const rest = await callHoldTool("world_holdings", { offset: 50 }, key);
+    assert.equal(rest.holding.length, 10);
+    assert.equal(rest.complete, true);
+    assert.equal(rest.count, 60, "the total does not shrink as you walk");
+    assert.equal(rest.next_offset, undefined, "no cursor pointing past the end");
+
+    // the pages tile what you hold
+    const seen = [...page.holding, ...rest.holding].map((h) => h.thing);
+    assert.equal(new Set(seen).size, 60);
+  } finally {
+    if (previous === undefined) delete process.env.WORLD_DYNAMIC_DB;
+    else process.env.WORLD_DYNAMIC_DB = previous;
+  }
+});
+
+test("world_holdings: empty hands are complete, not capped", async () => {
+  const path = join(TMP, "holdings-empty.db");
+  rmSync(path, { force: true });
+  openDynamic(path).close();
+  const previous = process.env.WORLD_DYNAMIC_DB;
+  process.env.WORLD_DYNAMIC_DB = path;
+  try {
+    const { callHoldTool } = await import("../src/world-hold.mjs");
+    const r = await callHoldTool("world_holdings", {}, { handles: new Set(["alpha"]) });
+    assert.equal(r.count, 0);
+    assert.equal(r.complete, true);
+    assert.equal(r.more_note, undefined, "empty hands and cut hands must not look alike");
+  } finally {
+    if (previous === undefined) delete process.env.WORLD_DYNAMIC_DB;
+    else process.env.WORLD_DYNAMIC_DB = previous;
+  }
+});

@@ -106,7 +106,7 @@ export const SCHEMA = `
 // the note says which and why, so the taxonomy can be read without reading the
 // hydrator.
 export const EDGE_TYPES = [
-  ["contains", "spatial containment. Asserted by directory nesting in WORLD/marks, then verified against tools/geometry.mjs `contains`. Disagreements are recorded on the edge (geometry_ok:false), never repaired."],
+  ["contains", "spatial containment. Read from WORLD/containment.json — the map the world's own fold emits every settlement — since the freeze (2026-08-25) made a mark's directory historical filing that claims nothing. A clone with no map falls back to directory nesting and says so (report.containment_source). geometry_ok/placement_ok are still recomputed against tools/geometry.mjs, now as a check of the emitted map against the office's own arithmetic; disagreements are recorded on the edge, never repaired."],
   ["attached-to", "a thing riding another thing (a passenger aboard a vessel, a lamp on a post). DECIDED, and NOT emitted here: Stage 2 put attachments in dynamic.db's own table, because an edge in this store is deleted and rebuilt every hydration and a declared attachment must not be."],
   ["emitted-by", "an emission and its source (a voice and the resident who spoke it). DECIDED, and NOT emitted here: Stage 2 put emissions in dynamic.db, where `source` is a column rather than an edge. Kept in the taxonomy because the relation is real and a later reader will look for it."],
   ["instance-of", "a token and its type. Emitted for parcels -> the synthesized parcel class."],
@@ -139,13 +139,56 @@ export const EDGE_TYPES = [
 // § Instantiation, ruled 2026-08-17: classes are declared "constitution-tier,
 // standing in the Keeping Works"). Position is what tells a DECLARATION from
 // an INSTANCE that happens to be town-authored — the three harbor charters
-// carry `class: town` and declare nothing. The path test is ancestry by
-// construction: the marks tree nests a mark's directory under its parent's,
-// so `/the-keeping-works/` in the path IS "standing in the works", nested
-// declarations (household/human) included. Mirrors the world's own
-// mark-lint CLASS_ROSTER, same clause, same commit.
-export const WORKS_PATH_SQL = `json_extract(props, '$.path') LIKE '%/the-keeping-works/%'`;
-export const standsInTheWorks = (attr) => String(attr?.props?.path ?? "").includes("/the-keeping-works/");
+// carry `class: town` and declare nothing.
+//
+// ── RE-KEYED BY THE FREEZE, 2026-08-25 ──────────────────────────────────────
+//
+// This used to be the substring `/the-keeping-works/` in a mark's stored path,
+// on the reasoning that "the marks tree nests a mark's directory under its
+// parent's, so `/the-keeping-works/` in the path IS standing in the works". The
+// freeze repealed the premise:
+//
+//   "Filing is frozen as of 2026-08-25. A mark's directory is its historical
+//    filing: it carries no claim, and it never moves again. New marks are filed
+//    by identity — WORLD/marks/<household>/<slug>/ — and containment lives only
+//    in the derived fold, emitted as an artifact each settlement."
+//                    (LOGOS/state-and-time.md § "The freeze", founder-ruled)
+//
+// A path test under that law is a QUIET failure, not a loud one: a class mark
+// filed at `WORLD/marks/<by>/<slug>/` stands in the works by containment, fails
+// the substring, and mints no verb — the door it declares simply is not there,
+// with nothing refused and nothing logged.
+//
+// So position is now asked of containment. `world-hydrate.mjs` stamps
+// `props.in_works` on every mark from the fold's own `WORLD/containment.json`
+// chain, and this clause reads that stamp. The path arm survives as the FALLBACK
+// for a store hydrated before the stamp existed — where the key is absent, and
+// only there, the old substring answers. An explicit `false` refuses.
+//
+// One definition, taken by an alias so a joined query can spell it against its
+// own table without a hand-copy. (The copy in world-classes.mjs was written out
+// by hand precisely because this string carried a bare `props`; parameterising
+// the alias is what lets that copy die.)
+//
+// ── AND IT CLOSES A DIVERGENCE THAT WAS NEVER ONLY A COPY ────────────────────
+//
+// The comment this replaces claimed the office "mirrors the world's own
+// mark-lint CLASS_ROSTER, same clause, same commit". That was false at the
+// level that matters: the world's lint walked `_parentMarkId` ANCESTRY, while
+// the office matched a PATH SUBSTRING. On the pre-freeze tree the two agreed
+// because nesting and path were the same fact — so the divergence was invisible
+// and would have surfaced only as a class mark that mints on one side of the
+// town and not the other. Both now ask CONTAINMENT, which is one mechanism
+// rather than two that happen to coincide.
+export const worksClause = (alias = "") => {
+  const p = alias ? `${alias}.props` : "props";
+  return `(json_extract(${p}, '$.in_works') = 1
+      OR (json_extract(${p}, '$.in_works') IS NULL
+          AND json_extract(${p}, '$.path') LIKE '%/the-keeping-works/%'))`;
+};
+export const WORKS_PATH_SQL = worksClause();
+export const standsInTheWorks = (attr) => attr?.props?.in_works === true
+  || (attr?.props?.in_works == null && String(attr?.props?.path ?? "").includes("/the-keeping-works/"));
 
 export const CLASS_MARK_GATE_SQL = `
      kind = 'mark'

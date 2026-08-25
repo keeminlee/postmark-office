@@ -106,7 +106,11 @@ const unsited = async () => ({ mark_id: null, x: null, y: null, sited: false });
 const unreadable = async () => ({ mark_id: null, x: null, y: null, sited: false,
   unreadable: true, unreadable_reason: "the office cannot read the world right now (test)" });
 
-const db = { prepare: () => ({ get: () => ({ json: JSON.stringify({}) }) }) };
+// `n` leads and `json` follows on purpose: this one stub answers every query
+// the standing walks, and `resident()` now also asks the letters table for a
+// COUNT (the address card's mail bound, 2026-08-25), which it reads
+// positionally as Object.values(row)[0]. The resident row is read by NAME.
+const db = { prepare: () => ({ get: () => ({ n: 0, json: JSON.stringify({}) }), all: () => [] }) };
 const ctx = (worldBlock) => ({ db: null, clone: null, worldBlock });
 
 test("B1: the gap FIRES for a genuinely unsited home — it has never once fired in production", async () => {

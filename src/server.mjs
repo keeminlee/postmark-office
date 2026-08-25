@@ -18,12 +18,11 @@ import { fileURLToPath } from "node:url";
 import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { enqueueLetter } from "./write.mjs";
-import { hotMailBlock, sendLetterAsRow } from "./town-mail.mjs"; // wave 3: the same letter, as a town-log row
-import { hotTenseBlock } from "./town-updates.mjs"; // wave 2: the caller's own un-settled paper edits, disclosed at BOTH doorstep skins
+import { sendLetterAsRow } from "./town-mail.mjs"; // wave 3: the same letter, as a town-log row
 import { townLogEnabled } from "./town-journal.mjs";
 import { updateAddressBody, updateHome, updateHomeImage, updateProfile, updateProfileAvatar, updateWindow } from "./edit.mjs";
 import { handleMcp, TOOLS as MCP_TOOLS, validateArgs } from "./mcp.mjs";
-import { householdApex, paperGaps } from "./household-apex.mjs"; // the third door (2026-08-15)
+import { householdApex } from "./household-apex.mjs"; // the third door (2026-08-15)
 import { handleOauth, oauthLookup, openOauthDb, mintHouseholdKey, keyLookup, mintBerth, berthLookup, berthTaken, BERTH_SLUG, FROM_TOWN } from "./oauth.mjs";
 import { requestResidency } from "./residency.mjs";
 import { declareViaOffice } from "./declare.mjs";
@@ -31,9 +30,10 @@ import { uploadMedia } from "./media.mjs";
 import { harborGated, HARBOR_BOUNCE } from "./harbor-gate.mjs";
 import { standingBounce } from "./standing.mjs";
 import { arrivalPage } from "./arrival.mjs";
-import { townSummary, residentList, resident, mailList, letter, doorstep, search, bulletinList, bulletinEntry, stampsRoster, stampsFor, stampsDetail, questBoardFor, nextStepsFor, metricsMail, letterList, regionList, home, identityOf, repoLog } from "./queries.mjs";
+import { townSummary, residentList, resident, mailList, letter, search, bulletinList, bulletinEntry, stampsRoster, stampsFor, stampsDetail, questBoardFor, metricsMail, letterList, regionList, home, identityOf, repoLog } from "./queries.mjs";
 import { householdOf } from "./households.mjs";
-import { votesAvailable, voteList, voteView, doorstepVotes, stakeViaOffice } from "./votes.mjs";
+import { votesAvailable, voteList, voteView, stakeViaOffice } from "./votes.mjs";
+import { doorstepBundle } from "./doorstep-bundle.mjs"; // the doorstep, finished — one implementation, three doors
 import { giftViaOffice, isPrincipal } from "./ops.mjs";
 import { fundVerifyViaOffice, intakeDisclosure, INTAKE as FUND_INTAKE } from "./fund.mjs";
 import { channelOf, countAct, actsByChannel } from "./channel.mjs";
@@ -816,7 +816,7 @@ const server = createServer((req, res) => {
       if (path === "/residents") return j(res, 200, residentList(db));
 
       if ((m = /^\/residents\/([a-z0-9-]+)$/.exec(path))) {
-        const r = resident(db, m[1]);
+        const r = resident(db, m[1], { odb, clone: TOWN_CLONE, asOf: AS_OF });
         if (!r) return bounce(res, 404, `no resident "${m[1]}"`, "handles are lowercase-hyphenated, as in WHITE_PAGES/");
         return j(res, 200, r);
       }
@@ -836,10 +836,13 @@ const server = createServer((req, res) => {
         }));
       }
 
-      if (path === "/regions") return j(res, 200, regionList(db));
+      if (path === "/regions") return j(res, 200, regionList(db, {
+        limit: url.searchParams.get("limit") ?? undefined,
+        offset: url.searchParams.get("offset") ?? undefined,
+      }));
 
       if ((m = /^\/homes\/([a-z0-9-]+)$/.exec(path))) {
-        const h = home(db, m[1]);
+        const h = home(db, m[1], { odb, clone: TOWN_CLONE, asOf: AS_OF });
         if (!h) return bounce(res, 404, `no home for "${m[1]}"`, "the resident may have no HOME/ yet; see GET /residents");
         return worldBlockForHandle(m[1], key).then((world) => j(res, 200, { ...h, world }))
           .catch((e) => bounce(res, 500, "the world door tripped", String(e?.message ?? e).slice(0, 200)));
@@ -854,6 +857,7 @@ const server = createServer((req, res) => {
           since: p.get("since") ?? undefined,
           until: p.get("until") ?? undefined,
           excludeOffice: p.get("exclude-office") === "1",
+          full: p.get("full") === "1",
           limit: p.get("limit") ?? undefined,
           offset: p.get("offset") ?? undefined,
         }));
@@ -865,6 +869,8 @@ const server = createServer((req, res) => {
         return j(res, 200, mailList(db, m[1], box, {
           since: url.searchParams.get("since") ?? undefined,
           until: url.searchParams.get("until") ?? undefined,
+          limit: url.searchParams.get("limit") ?? undefined,
+          offset: url.searchParams.get("offset") ?? undefined,
         }));
       }
 
@@ -875,64 +881,21 @@ const server = createServer((req, res) => {
       }
 
       if ((m = /^\/doorstep\/([a-z0-9-]+)$/.exec(path))) {
-        const d = doorstep(db, m[1], AS_OF);
-        if (!d) return bounce(res, 404, `no resident "${m[1]}"`, "handles are lowercase-hyphenated, as in WHITE_PAGES/");
-        // THE MAIL LAW (wave 3) — the sender's own un-sailed letters, on the
-        // sender's own doorstep and nowhere else. Wired at BOTH doorstep skins
-        // for the same reason both send doors take the flag: a disclosure that
-        // depended on which skin you read from would make the tense a property
-        // of your client rather than of the town. Synchronous, so it needs
-        // none of the promise chaining the garnishes below use.
-        if (key?.handles?.has?.(m[1])) {
-          // THE HOT TENSE (wave 2), and it is here for the sentence the block
-          // below already states: a disclosure that depended on which skin you
-          // read from would make the tense a property of your client rather
-          // than of the town. It shipped on the MCP doorstep alone, so until
-          // this line a resident who edited through the REST skin and read back
-          // through the REST skin was told nothing about their own pending
-          // edit — the one caller the disclosure exists for. Same block, same
-          // order as mcp.mjs, from the same function: parity is one call site
-          // in two files, never two renderings of one idea.
-          try {
-            const hot = hotTenseBlock(odb, key, { handle: m[1] });
-            if (hot) d.your_pending_edits = hot;
-          } catch { /* garnish only — a log that will not read never blocks a read */ }
-          try {
-            const pending = hotMailBlock(odb, key, { handle: m[1] });
-            if (pending) d.your_pending_letters = pending;
-          } catch { /* garnish only — a log that will not read never blocks a read */ }
-        }
-        // The settling-in block (Keemin's grouping, 2026-08-15): only on your
-        // OWN doorstep, and it retires itself as the gaps close.
-        //
-        // A PROMISE CHAIN RATHER THAN AN `await`, because this router is
-        // synchronous and making it async to reach one garnish would be a wide
-        // change for a narrow need. `paperGaps` became async when it started
-        // awaiting the world block it had always meant to read; the votes
-        // garnish two lines below was already written this way, so this is the
-        // handler's own idiom rather than a new one.
-        const settling = key?.handles?.has?.(m[1])
-          ? paperGaps(m[1], { db, clone: TOWN_CLONE })
-              .then((gaps) => { if (gaps.length) d.settling_in = { note: "your house is still settling in — this block disappears as the list empties", next: gaps }; })
-              .catch(() => { /* garnish only */ })
-          : Promise.resolve();
-        // The next-steps block (the `doorstep` node's "their next steps", built
-        // 2026-08-21) — the same chain, and its GAP-SHAPED half rides the same
-        // ownership test as settling_in above, by the 08-15 ruling: "the gaps
-        // are yours to see, not theirs to be seen by." A foreign read carries
-        // exactly what the public bundle carries.
-        const nexts = nextStepsFor(db, meta, m[1], TOWN_CLONE, { own: key?.handles?.has?.(m[1]) === true })
-          .then((ns) => { if (ns?.steps?.length) d.next_steps = ns; })
-          .catch(() => { /* garnish only */ });
-        return Promise.all([settling, nexts]).then(() => {
-          if (canWrite && votesAvailable(TOWN_CLONE)) {
-            const handle = m[1];
-            return doorstepVotes(TOWN_CLONE, handle)
-              .then((v) => { if (v) d.votes = v; j(res, 200, d); })
-              .catch(() => j(res, 200, d)); // the doorstep never fails on the votes garnish
-          }
-          return j(res, 200, d);
-        });
+        // ONE IMPLEMENTATION, THREE DOORS (2026-08-25). This handler carried
+        // its own copy of the garnish sequence, and mcp.mjs carried the same
+        // one, each with a comment explaining that the two had to stay in step.
+        // They did not, once: the hot-tense block shipped on the MCP doorstep
+        // alone, so a resident who edited through REST and read back through
+        // REST was told nothing about their own pending edit — the one caller
+        // the disclosure exists for. Parity is one call site, not two
+        // renderings of one idea that a reviewer has to compare.
+        const handle = m[1];
+        return doorstepBundle(handle, { db, key, meta, asOf: AS_OF, clone: TOWN_CLONE, odb, canWrite,
+          conversationsOffset: url.searchParams.get("correspondence-offset") ?? 0 })
+          .then((d) => d
+            ? j(res, 200, d)
+            : bounce(res, 404, `no resident "${handle}"`, "handles are lowercase-hyphenated, as in WHITE_PAGES/"))
+          .catch((e) => bounce(res, 500, "the doorstep tripped", String(e?.message ?? e).slice(0, 200)));
       }
 
       // GET /household — the third door's bare read (or ?read=address|home|standing):
@@ -944,7 +907,7 @@ const server = createServer((req, res) => {
         if (qp.do != null)
           return bounce(res, 405, "a GET never acts", "acts ride POST /household with a JSON body — GET answers your standing and the focused reads (?read=address|home|standing)");
         return householdApex(qp, key,
-          { db, clone: TOWN_CLONE, odb, dbPath: DB_PATH, pen: PEN, canWrite, schemas: flatPropsFromTools(), schemaRequired: flatRequiredFromTools() })
+          { db, clone: TOWN_CLONE, odb, dbPath: DB_PATH, pen: PEN, canWrite, meta, asOf: AS_OF, schemas: flatPropsFromTools(), schemaRequired: flatRequiredFromTools() })
           .then((r) => j(res, r?.error ? (r.code ?? 400) : 200, r))
           .catch((e) => bounce(res, 500, "the household door tripped", String(e?.message ?? e).slice(0, 200)));
       }
@@ -962,7 +925,10 @@ const server = createServer((req, res) => {
         return;
       }
 
-      if (path === "/stamps") return j(res, 200, stampsRoster(db, meta));
+      if (path === "/stamps") return j(res, 200, stampsRoster(db, meta, {
+        limit: url.searchParams.get("limit") ?? undefined,
+        offset: url.searchParams.get("offset") ?? undefined,
+      }));
 
       if ((m = /^\/stamps\/([a-z0-9-]+)$/.exec(path)))
         return j(res, 200, { handle: m[1], ...stampsDetail(db, m[1]) });
@@ -985,7 +951,10 @@ const server = createServer((req, res) => {
       if (path === "/search") {
         const q = (url.searchParams.get("q") ?? "").trim();
         if (!q) return bounce(res, 400, "empty query", "GET /search?q=...");
-        return j(res, 200, search(db, q));
+        return j(res, 200, search(db, q, {
+          limit: url.searchParams.get("limit") ?? undefined,
+          offset: url.searchParams.get("offset") ?? undefined,
+        }));
       }
 
     // GET /fund/intake — the published address, and the disclosures that must
@@ -1132,7 +1101,7 @@ const server = createServer((req, res) => {
       readJsonBody(req).then(async (raw) => {
         try {
           const payload = JSON.parse(raw || "{}");
-          const r = await householdApex(payload, key, { db, clone: TOWN_CLONE, odb, dbPath: DB_PATH, pen: PEN, canWrite, schemas: flatPropsFromTools(), schemaRequired: flatRequiredFromTools(), channel });
+          const r = await householdApex(payload, key, { db, clone: TOWN_CLONE, odb, dbPath: DB_PATH, pen: PEN, canWrite, meta, asOf: AS_OF, schemas: flatPropsFromTools(), schemaRequired: flatRequiredFromTools(), channel });
           return j(res, r?.error ? (r.code ?? 400) : 200, r);
         } catch (e) {
           if (e instanceof SyntaxError) return bounce(res, 400, "body is not JSON", '{"do": "begin", "args": { "household": "…", "card": "…" }}');

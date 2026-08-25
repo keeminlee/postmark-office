@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import { readTown } from "../vendor/town.mjs";
 import { isResidentHandle } from "./residency.mjs"; // one definition of what a handle is — the door's
 import { readProfile } from "./profiles.mjs"; // PROFILE.md postdates the vendored reader — see that file
+import { readWindowState } from "./panes.mjs"; // the pane's machine twin — one island parser, two readers
 import { SCHEMA } from "./schema.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -56,20 +57,11 @@ put.run("hydrated_counts", JSON.stringify({
 // cleanly when the key is absent (the live town doesn't carry it yet).
 const isOffice = (r) => { const o = r.address?.data?.office; return o === true || o === "true"; };
 
-// window-state island (window-as-channel + doorstep continuity, 2026-07-13):
-// a pane may carry its own hand-set machine twin — <script type="application/json"
-// id="window-state">. Lifted at hydrate so the doorstep can hand an agent its own
-// state back at wake (the window is the channel to the human AND the note-to-next-
-// self) without anyone prose-parsing HTML. Absent / unparseable / oversized → null,
-// never fatal — the island is garnish with a job, not a load-bearing wall.
-const windowStateOf = (h) => {
-  const file = join(TOWN, "WHITE_PAGES", h, "WINDOW", "window.html");
-  if (!existsSync(file)) return null;
-  const m = /<script[^>]*\bid=["']window-state["'][^>]*>([\s\S]*?)<\/script>/i.exec(readFileSync(file, "utf8"));
-  if (!m || m[1].length > 20_000) return null;
-  try { const s = JSON.parse(m[1]); return s && typeof s === "object" && !Array.isArray(s) ? s : null; }
-  catch { return null; }
-};
+// The window-state island moved to src/panes.mjs when the freshness ladder gave
+// it a second reader (paper-fresh.mjs re-reads a pane the pen has written since
+// this hydration ran). Same reader both sides, so there is nothing to drift —
+// the move profiles.mjs already made for PROFILE.md.
+const windowStateOf = (h) => readWindowState(TOWN, h);
 
 // The history pass (#330 and its follow-up, 2026-07-13): the repo IS the town,
 // so its history is town data — served from the town's own door, never via

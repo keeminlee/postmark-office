@@ -656,24 +656,57 @@ test("PRE-FLIGHT, THE REAL LAW: a door bounce and a crossing bounce say the same
 
 // ── THE LEDGERS ─────────────────────────────────────────────────────────────
 
-test("send_letter stays a LISTED flat — a letter is your pen, and no apex absorbs it", async () => {
+// ── A RULING REVERSED, AND BOTH STATES SHOWN ────────────────────────────────
+//
+// THIS TEST USED TO ASSERT THE OPPOSITE, and the earlier state is kept in words
+// because a reviewer meeting the new assertion deserves to know it is a
+// reversal rather than a fresh idea. It read:
+//
+//   "send_letter stays a LISTED flat — a letter is your pen, and no apex
+//    absorbs it … the household apex is your house's family; a letter is an act
+//    of your own pen, so the flat door stands."
+//
+// The founder ruled the other way on 2026-08-25: MAIL FOLDS UNDER HOUSEHOLD,
+// and on the same grounds the old comment argued from. "A letter is an act of
+// your own pen" is exactly the register law's sentence — "your pen lives at
+// household" — so the premise never changed; what changed is which conclusion
+// it supports. The proposal that day recommended a fourth apex for mail and the
+// founder overrode it: household already owns your pen, and a fourth door would
+// have split the pen from the standing it writes with.
+//
+// What did NOT change is the boundary the old test was really guarding. The
+// world's law still rules "MAIL IS NOT HERE AND NEVER WILL BE"; household is
+// global exactly as town is — standing-scoped, never standpoint-scoped — so the
+// fold keeps that promise rather than bending it. And the PUBLIC letter record
+// (letters, letter, search) stays at town: mail is your correspondence, town is
+// what everyone can read. Both halves are asserted below.
+test("send_letter FOLDS UNDER household — your pen lives where your standing does", async () => {
   const { TOOLS } = await import("../src/mcp.mjs");
+  const { HOUSEHOLD_DISPATCHABLE, householdDispatchToolFor } = await import("../src/household-apex.mjs");
+  const { TOWN_READABLE } = await import("../src/town-apex.mjs");
   const names = TOOLS.map((t) => t.name);
   assert.ok(names.includes("send_letter"),
-    "the household apex is your house's family; a letter is an act of your own pen, so the flat door stands");
-  assert.equal(names.length, 43, "this round adds no tool — the flag-off listing is untouched");
+    "the DEFINITION stands — a delist is listing-only, and a cached client still calls this name");
+  assert.equal(names.length, 43, "no tool was added or removed; the flag-off listing is untouched");
 
-  // AND APEX-ON, which is the half that could actually have moved: the slim is
-  // conditioned on the apex, so a delist only shows up in this listing. Both
-  // counts are pinned because a delist that leaked into the flag-off world
-  // would move one number without the other.
+  assert.ok(HOUSEHOLD_DISPATCHABLE.includes("send"), "household do: \"send\" is the letter's apex verb");
+  assert.equal(householdDispatchToolFor("send"), "send_letter",
+    "and it is CHARGED as send_letter at the bouncer — an apex act is never a second, uncounted door");
+  assert.ok(TOWN_READABLE.includes("letters"),
+    "the public letter index stays at town: mail is your correspondence, town is the public record");
+
+  // AND APEX-ON, which is the half that actually moved: the slim is conditioned
+  // on the apex, so a delist only shows up in this listing. Both counts are
+  // pinned because a delist that leaked into the flag-off world would move one
+  // number without the other.
   const clone = mailClone();
   try {
     await office(clone, { TOWN_SINGLE_LOG: "1", WORLD_APEX: "1" }, async ({ list }) => {
       const apexNames = (await list()).map((t) => t.name);
-      assert.ok(apexNames.includes("send_letter"),
-        "no apex took the mail door: the town apex takes roster acts, household takes your house's papers, and a letter is neither");
-      assert.equal(apexNames.length, 21, "apex-on count unmoved — this round adds no tool and absorbs none");
+      assert.ok(!apexNames.includes("send_letter"),
+        "delisted apex-on: household serves it, so the listing stops carrying the flat name");
+      assert.deepEqual(apexNames.sort(), ["household", "town", "upload_media", "world", "world_investigate", "world_note"],
+        "the fourth round's whole listing: three apexes and three deliberate flats");
     });
   } finally { rmSync(clone, { recursive: true, force: true }); }
 });

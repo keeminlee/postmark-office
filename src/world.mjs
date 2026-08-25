@@ -35,7 +35,7 @@ import {
   readAtRef,
   readJsonAtRef,
 } from "./world-branches.mjs";
-import { ACTION_AMEND, ACTION_LEAVE, ACTION_WITHDRAW, CLASS_MARK, anchorAt, appendJournal, draftsForKey, liveChildrenOf, liveMarks, pathFor, pinWitnesses, singleLogEnabled } from "./world-journal.mjs"; // POS-5 slice 1: the one append-only log
+import { ACTION_AMEND, ACTION_LEAVE, ACTION_WITHDRAW, CLASS_MARK, anchorAt, appendJournal, draftsForKey, filedPathOfAt, liveChildrenOf, liveMarks, pathFor, pinWitnesses, singleLogEnabled } from "./world-journal.mjs"; // POS-5 slice 1: the one append-only log
 import { WORLD_STAKE_TOOLS, callWorldStakeTool, worldPortfolioStakeSlice } from "./world-stake.mjs"; // P3 draft, append-shaped
 import { classNames, classRoster, classDials, departurePace, RESIDENT_INSTANTIABLE, residentMayInstantiate } from "./world-classes.mjs"; // which classes exist — read from the record, never held
 import { HOLD_TOOLS, callHoldTool } from "./world-hold.mjs"; // the object primitive: who holds what
@@ -48,7 +48,7 @@ import { declareMovement } from "./dynamic-entities.mjs"; // stage D: the pen af
 import { emissionFromVoice } from "./dynamic-emissions.mjs"; // stage 2: speech also becomes an emission instance
 import { VESSEL_HANDLE, ridesTheVessel } from "./dynamic-entities.mjs"; // the aboard test, one home for two readers
 import { carriersFrom, carriersWithDisclosure, carrierReader, heardFromV2, inRect, movementStandpoint, movementV2Enabled, recordsAcrossEras, roadTerms, storedDepartures, storedRecordsFor, vesselPositionAt as vesselFromTimetable, vesselServiceFrom } from "./world-movement.mjs"; // stage D: carriers carry, frames compose
-import { byBand, presenceEnabled, presentNear, near as presenceNear, everyone as presenceEveryone } from "./dynamic-presence.mjs"; // stage 2: residents revealed to each other
+import { byBand, presenceEnabled, presentNear, near as presenceNear, everyone as presenceEveryone, PRESENCE_DIALS } from "./dynamic-presence.mjs"; // stage 2: residents revealed to each other
 import { MEDIA_BASE, mediaUrlOk } from "./media.mjs"; // the mark door's image allowlist: only the town's own media hangs on marks
 import { imageFormat, MEDIA_FORMATS } from "./edit.mjs"; // the bytes decide the type, never the filename (with_image, below)
 import { everyonePlaced, withFrames } from "./positions.mjs"; // where is everyone: walk records ∪ parcel households, one derivation — plus Stage D's frame overlay
@@ -911,6 +911,57 @@ function presenceTelling(present) {
   return L.join("\n");
 }
 
+/**
+ * The diagnostic eye, with its one duplication turned into a reference.
+ *
+ * `diagnostic: true` was 21,570 b — four times its own default form (5,405 b)
+ * — and the bulk was `radial.byBearing`: a fan of lists keyed by bearing and
+ * then by distance band, each holding the SAME object rows that `fov.carried`
+ * and `fov.far` already carry. Verified before touching it, at three
+ * standpoints: same ids, same keys, same values, no row in one that is not in
+ * the other. It is the only place on the surface where the NUMBER OF LISTS
+ * multiplies rather than one list growing — six bearings today, up to sixteen,
+ * each with up to five bands.
+ *
+ * What `radial` uniquely contributes is the ORGANISATION — which bearing, which
+ * band, in what order. So the organisation stays, in full, and the object
+ * bodies become ids pointing at `fov`, where they already were. Each band also
+ * gains its own `count`, which it never had: nine uncounted lists in one block
+ * is the `capped` lesson unlearned nine times over.
+ *
+ * Nothing becomes unknowable — every id resolves inside the same answer. This
+ * is a reference replacing a restatement, not a bound cutting a list, so there
+ * is nothing here a reader has to go fetch.
+ *
+ * Exported for its own falsifier: the dedupe is the part that can quietly rot
+ * if the engine ever grows a radial field `fov` does not carry, and a test that
+ * could only reach it through a hydrated world store would not run in CI.
+ */
+export function diagnosticEyes(full) {
+  const bearings = full?.radial?.byBearing;
+  if (!bearings || typeof bearings !== "object") return full;
+  const byBearing = {};
+  let restated = 0;
+  for (const [bearing, bands] of Object.entries(bearings)) {
+    if (!bands || typeof bands !== "object") { byBearing[bearing] = bands; continue; }
+    const out = {};
+    for (const [band, rows] of Object.entries(bands)) {
+      if (!Array.isArray(rows)) { out[band] = rows; continue; }
+      restated += rows.length;
+      out[band] = { count: rows.length, ids: rows.map((o) => o.id) };
+    }
+    byBearing[bearing] = out;
+  }
+  return {
+    ...full,
+    radial: {
+      ...full.radial,
+      byBearing,
+      byBearing_note: `each band names its objects by id and says how many it holds; the rows themselves stand in fov.carried and fov.far, which this block restated verbatim until 2026-08-25 (${restated} duplicate row${restated === 1 ? "" : "s"} in this answer). The organisation — bearing, then band, in order — is what this block is for.`,
+    },
+  };
+}
+
 export async function worldEyes(args = {}, key = null) {
   const choice = chooseStandpoint(args, key);
   if (choice.bounce) return choice.bounce;
@@ -940,7 +991,7 @@ export async function worldEyes(args = {}, key = null) {
     standpoint: { ...at, stance: choice.stance }, crossing: { n: crossing, derivation: CROSSING_DERIVATION },
     telling, ...rest, ...(present ? { present } : {}),
   };
-  if (args.diagnostic === true) return full;
+  if (args.diagnostic === true) return diagnosticEyes(full);
 
   const markById = new Map((w.marks ?? []).map((mark) => [mark.id, mark]));
   const objects = [...(r.fov?.carried ?? []), ...(r.fov?.far ?? [])].map((object) => {
@@ -1125,7 +1176,32 @@ export async function worldInvestigate(args = {}, key = null) {
 export async function worldStateRaw() { return (await world())._raw.worldState; }
 export async function worldSkeletonRaw() { return (await world())._raw.skeleton; }
 export function worldMyDrafts(key = null) { return draftsForKey(WORLD_CLONE, key); }
-export async function worldMyMarks(key = null) {
+
+// How many of your own marks this read renders per list. ✎ A proposal, no
+// history behind it. The rest are not dropped — they are NAMED, as ids, which
+// is what makes this a rendering bound rather than a claim about what you own.
+const MARKS_PAGE = 20;
+
+/**
+ * One list of your marks: the page, and the ids of everything the page withheld.
+ *
+ * `investigate`'s discipline, ported. That read refuses to expand 42 children
+ * and hands back twelve ids instead — "a read that refuses to recurse and
+ * instead names what it withheld." The same applies to a mark history that
+ * grows forever: your 85th mark should cost you an id in the answer, not a
+ * 280-byte row on every orientation read for the rest of the town's life.
+ *
+ * The caller can therefore still reach everything: each withheld id is exactly
+ * what `world { read: "leave-mark", args: { mark: <id> } }` takes.
+ */
+export function markPage(rows, offset = 0) {
+  const start = Math.min(Math.max(Number(offset) || 0, 0), Math.max(rows.length - 1, 0));
+  const page = rows.slice(start, start + MARKS_PAGE);
+  const rest = [...rows.slice(0, start), ...rows.slice(start + page.length)].map((m) => m.id);
+  return { page, rest, offset: start, complete: rest.length === 0 };
+}
+
+export async function worldMyMarks(key = null, { offset = 0 } = {}) {
   const delta = draftsForKey(WORLD_CLONE, key);
   if (delta?.error) return delta;
 
@@ -1164,19 +1240,49 @@ export async function worldMyMarks(key = null) {
     }))
     .sort((a, b) => a.id.localeCompare(b.id));
 
+  // ── THE COUNTS TRAP, CLOSED (2026-08-25) ────────────────────────────────
+  //
+  // `counts` has always carried these three numbers and they have always been
+  // the list lengths — they could not differ from them, because nothing was
+  // bounded. That is not a total; it is the list length in a total's costume,
+  // and it is why this read grew to 29 KB while looking well-behaved.
+  //
+  // The numbers below are UNCHANGED: they are still computed from the full
+  // sets. What changes is that the lists beside them are now cut, so the
+  // counts finally say something the lists cannot. A bound and its count are
+  // one change, never two — and this is the half that was missing.
+  //
+  // COUNT FIRST, SLICE AFTER. The lengths are taken from `drafts`,
+  // `published` and `stake.backed` before `markPage` touches them.
+  const counts = {
+    drafts: drafts.length,
+    published: published.length,
+    backed: stake.backed.length,
+  };
+  const d = markPage(drafts, offset);
+  const p = markPage(published, offset);
+  const b = markPage(stake.backed, offset);
+  const withheld = d.rest.length + p.rest.length + b.rest.length;
   return {
     household: delta.household,
     branch: delta.branch,
     main: delta.main,
     draft: delta.draft,
-    drafts,
-    published,
-    backed: stake.backed,
-    counts: {
-      drafts: drafts.length,
-      published: published.length,
-      backed: stake.backed.length,
-    },
+    drafts: d.page,
+    published: p.page,
+    backed: b.page,
+    counts,
+    shown: { drafts: d.page.length, published: p.page.length, backed: b.page.length },
+    complete: withheld === 0,
+    // Named, not dropped — the ids of every mark this page did not expand.
+    // Each one is exactly what read: "leave-mark", args: { mark: <id> } takes.
+    ...(withheld === 0 ? {} : {
+      offset: p.offset,
+      withheld: { ...(d.rest.length ? { drafts: d.rest } : {}),
+        ...(p.rest.length ? { published: p.rest } : {}),
+        ...(b.rest.length ? { backed: b.rest } : {}) },
+      withheld_note: `${withheld} of your marks are named above by id rather than shown in full — counts is the whole of what you own, and world { read: "leave-mark", args: { mark: "<by>/<slug>" } } opens any one of them`,
+    }),
   };
 }
 
@@ -1463,8 +1569,18 @@ async function journalLeaveMark(clean, { crossing = currentCrossing() } = {}) {
     // more than a declaration of intent either). `commit` is ABSENT rather than
     // null, because nothing was committed and a null commit invites a reader to
     // believe one failed.
+    // GATE A, at the door (the freeze, 2026-08-25). `dir` says where the record
+    // will sit, and after the freeze that is a fact rather than a declaration of
+    // intent — nothing moves it afterwards. A mark already filed keeps its
+    // filing, so the answer has to consult the fossil manifest, or an amend of
+    // any pre-freeze mark would show the author a move that will not happen.
+    // One JSON read at `main`, memoized on the sha; no tree walk on this path.
+    const filedPathOf = filedPathOfAt(WORLD_CLONE, String(mainRef(WORLD_CLONE)));
     const willLandAt = pathFor({ ...declaration, id }, {
+      publishedPathOf: filedPathOf,
       parentPathOf: (pid) => {
+        const filed = filedPathOf(pid);
+        if (filed) return filed.replace(/\/mark\.md$/, "");
         const p = liveById.get(pid) ?? canon.byId.get(pid);
         return p ? pathFor({ ...p, id: pid }).replace(/\/mark\.md$/, "") : null;
       },
@@ -2395,6 +2511,46 @@ async function walkersInFrames(walkers, w, departures, atMs = Date.now()) {
  * difference between this defect recurring visibly and recurring the way it did
  * the first time.
  */
+/**
+ * The walkers a standpoint can see — bounded BY RADIUS, never by truncation.
+ *
+ * THE BOUND HAS TO BE A RADIUS. `world read: "walk"` was 33 KB because it
+ * answered "what road am I on" with the entire town roll and its positions —
+ * 132 rows, one more per join, forever. The obvious cheap fix is to hand back
+ * fewer rows, and it is the wrong one: the roll injection that makes this
+ * answer complete is exactly what CLOSED issue #1864 (twenty-seven residents
+ * served at a berth they had left, because the door read only the ledger).
+ * Cutting the roll would reopen that bug wearing a performance costume.
+ *
+ * So the roll stays whole and the RENDER gets a radius: everyone is still
+ * derived, and what is said is what stands near you. `count` is everyone who
+ * qualified inside the radius, `shown` is everyone rendered, `capped` says
+ * whether the two differ, and `beyond_radius` says how many of the roll the
+ * radius itself set aside — the whole roll remains countable from the answer,
+ * which is what keeps this a rendering decision rather than a claim about who
+ * exists. (presentNear's shape, and its lesson: a cap is a rendering decision
+ * and a reader must be able to tell it from an empty room.)
+ */
+export function walkersAround(walkers, { x, y, radiusM = PRESENCE_DIALS.near_radius_m, limit = PRESENCE_DIALS.near_cap } = {}) {
+  const d = (w) => Math.round(Math.hypot((w.x ?? 0) - x, (w.y ?? 0) - y));
+  const hits = walkers
+    .map((w) => ({ ...w, distance_m: d(w) }))
+    .filter((w) => w.distance_m <= radiusM)
+    .sort((a, b) => a.distance_m - b.distance_m || (a.handle < b.handle ? -1 : 1));
+  const shown = hits.slice(0, limit);
+  return {
+    standing_at: { x, y },
+    radius_m: radiusM,
+    count: hits.length,
+    shown: shown.length,
+    capped: hits.length > shown.length,
+    beyond_radius: walkers.length - hits.length,
+    roll: walkers.length,
+    note: `who stands within ${radiusM} m of you, nearest first — ${walkers.length - hits.length} of the town's ${walkers.length} placed residents are further off than that, and are set aside by the radius rather than missing from the roll. The whole roll with positions is one read away: GET /world/walkers, the door the town's own map draws from.`,
+    walkers: shown,
+  };
+}
+
 export async function worldWalkers(worldClone, key = null, { roll = null } = {}) {
   // publicWalkers is the single writer of the walker vocabulary — the spectator
   // publishes the same shape from the same function, so the two cannot drift.
@@ -2498,8 +2654,10 @@ export const WORLD_TOOLS = [
       with_image: { type: "boolean", description: "true also brings the mark's picture back as image bytes, if it has one and it fits under the inline cap. Omit for the cheap read: the image URL rides in the answer either way, and this only decides whether the office spends the bytes fetching it for you. Over the cap, or if the media door does not answer, the answer says so in `image_note` and the url still stands." },
     }, required: ["mark"], additionalProperties: false } },
   { name: "world_my_marks",
-    description: "Your household portfolio in three disjoint shelves: drafts (the draft/<household> delta), published marks authored by your household's residents, and open escrow positions you back. A self-authored backed mark says yours: true. Household is the exposure grain; resident remains the action/author grain. THREE DIFFERENT BACKING NUMBERS, deliberately named apart: a published mark's `stamps` is its raw escrow and its `weight` is the effective ✦ including everything fanning up, while a backed position's `holder_weight` is only that one holder's row — your own stake, never the mark's standing. A published mark's `weight_parts` breaks its ✦ down; null there means nothing to explain (zero escrow, zero weight), never unknown, except beside a nonzero `weight`, which means the world was folded before the breakdown existed.",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false } },
+    description: "Your household portfolio in three disjoint shelves: drafts (the draft/<household> delta), published marks authored by your household's residents, and open escrow positions you back. A self-authored backed mark says yours: true. Household is the exposure grain; resident remains the action/author grain. THREE DIFFERENT BACKING NUMBERS, deliberately named apart: a published mark's `stamps` is its raw escrow and its `weight` is the effective ✦ including everything fanning up, while a backed position's `holder_weight` is only that one holder's row — your own stake, never the mark's standing. A published mark's `weight_parts` breaks its ✦ down; null there means nothing to explain (zero escrow, zero weight), never unknown, except beside a nonzero `weight`, which means the world was folded before the breakdown existed. Each shelf renders up to 20 marks at a time; `counts` is always the WHOLE of what you own, and every mark a page did not expand is named by id under `withheld` — each one ready for read: \"leave-mark\", args: { mark }.",
+    inputSchema: { type: "object", properties: {
+      offset: { type: "number", description: "how many marks to skip in each shelf — the shelves are long-lived and this walks them" },
+    }, additionalProperties: false } },
   { name: "world_leave_mark",
     description: "Leave one mark in your household's private draft branch. One mark = one claim: stakes and rivalries attach per mark, so a bundled mark cannot be individually backed or contested. Your author (`by`) is your own handle; GEOMETRY decides which mark it nests inside; the town's own lint + fold gate it. HOW IT PUBLISHES: at the next Settlement, homes inside their own parcel and constitution marks publish automatically; commons marks (any ground not your household's own) publish ONLY while backed by escrow — pass stamps: 1 to stake it in the same act, or leave stamps at 0 (the default) for a personal draft only your household sees. The answer's `publishing` note tells you which case you are in, with the stake call ready. Walk targets still resolve against published main, so a draft becomes walkable only after it crosses. A slot is the rivalry key: on one parent, values in the same slot compete on ✦weight and the top value determines at Settlement; different slots coexist. Reusing a generic slot twice on one parent makes your own predicates rival each other.",
     inputSchema: { type: "object", properties: {
@@ -2629,7 +2787,7 @@ export async function callWorldTool(name, args = {}, key = null, ctx = {}) {
     case "world_orient": return worldOrient(args, key);
     case "world_open_your_eyes": return worldEyes(args, key);
     case "world_investigate": return worldInvestigate(args, key);
-    case "world_my_marks": return worldMyMarks(key);
+    case "world_my_marks": return worldMyMarks(key, { offset: args?.offset });
     case "world_leave_mark": return leaveMarkViaOffice(WORLD_CLONE, args, key);
     case "world_withdraw_mark": return withdrawMarkViaOffice(WORLD_CLONE, args, key);
     case "world_note": return worldNoteViaOffice(WORLD_CLONE, args, key);

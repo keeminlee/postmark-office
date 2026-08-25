@@ -4,7 +4,8 @@
 // in `flock -w 30 town.lock` — a mark write can never race a crossing or another
 // write). Does the whole critical section in one process against the WORLD clone
 // (postmark-world), which is separate from the town clone: pull, write the mark
-// on open ground at the root (the Settlement re-homes by geometry at the save),
+// at its filing (its frozen path if the manifest names it, else its id — the
+// freeze, 2026-08-25; the Settlement no longer re-homes anything),
 // select/lazy-create draft/<household>, write the mark.md into that branch's
 // tree, commit the record only, and push best-effort (a 403 is logged once and
 // reported push-pending, never thrown). Prints one JSON line.
@@ -44,6 +45,23 @@ const SHARED = process.env.WORLD_SHARED_CLONE ?? null;
 const MARKS_DIR = join(CLONE, "WORLD", "marks");
 const ROOT_DIR = join(MARKS_DIR, "let-there-be-light");
 
+// THE FOSSIL MANIFEST (the freeze, founder-ruled 2026-08-25). `filing-freeze.json`
+// maps every mark alive on the freeze date to the path it was filed at, keyed by
+// full id, minted once and never regenerated. It is the exact answer to "where
+// does this mark already live", and the only marks it does not name are the ones
+// born after the freeze — which file at their id.
+let _frozenDirs;
+const frozenDirOf = (id) => {
+  if (_frozenDirs === undefined) {
+    try {
+      const raw = JSON.parse(readFileSync(join(CLONE, "WORLD", "filing-freeze.json"), "utf8"));
+      _frozenDirs = new Map(Object.entries(raw?.marks ?? {}));
+    } catch { _frozenDirs = null; }   // no manifest → a tree that declares no freeze
+  }
+  const rel = _frozenDirs?.get(String(id));
+  return rel ? join(CLONE, ...String(rel).split("/")) : null;
+};
+
 const answer = (obj) => { console.log(JSON.stringify(obj)); process.exit(0); };
 const err = (code, defect, hint) => answer({ error: { code, defect, hint } });
 
@@ -66,7 +84,7 @@ async function main() {
 
   const tools = join(CLONE, "tools");
   const tEngine = performance.now();
-  const { loadMarks, marksContain, PARCEL_CLAIM_CAP, PARCEL_CAP_LAW_DATE, PARCEL_EXTENT_M,
+  const { loadMarks, marksContain, containmentParents, PARCEL_CLAIM_CAP, PARCEL_CAP_LAW_DATE, PARCEL_EXTENT_M,
           worldToFile, ringToFile, COORDS_FIELD, COORDS_RELATIVE } =
     await import(pathToFileURL(join(tools, "marks-fold.mjs")));
   phases.push(`engine=${Math.round(performance.now() - tEngine)}ms`);
@@ -82,10 +100,39 @@ async function main() {
   const id = `${p.by}/${p.slug}`;
 
   // helpers the revision family shares (founder-ruled 2026-08-19, edit-law's
-  // second family finally at the door): does a mark's directory hold children,
-  // and does published main hold this path.
-  const holdsChildren = (d) => readdirSync(d, { withFileTypes: true })
-    .some((e) => e.isDirectory() && existsSync(join(d, e.name, "mark.md")));
+  // second family finally at the door): does anything stand on this mark, and
+  // does published main hold this path.
+
+  // ── WHAT STANDS ON THIS MARK (re-keyed by the freeze, 2026-08-25) ─────────
+  //
+  //   "A mark's directory is its historical filing: it carries no claim."
+  //
+  // This used to read the mark's CHILD DIRECTORIES. Under filing by identity a
+  // mark's children are not underneath it on disk, so the directory read returns
+  // false forever and BOTH guards below — the withdraw guard at the `withdraw`
+  // arm and the amend-move guard — silently stop protecting. Nothing errors; the
+  // stranding just happens.
+  //
+  // Asked of the ground instead, through the world's own fold. Two edges count,
+  // because both can be stranded: CONTAINMENT (what stands geometrically inside
+  // it, `containmentParents` — the same derivation the settlement folds) and
+  // PREDICATION (what describes it, the authored nesting edge the freeze leaves
+  // alone). This mirrors the store-side read the journal door already performs
+  // in world.mjs's `journalWithdraw`, which counts live children and canon's.
+  //
+  // A fold too old to export `containmentParents` falls back to the directory
+  // read rather than to no guard at all: a stale guard beats an absent one, and
+  // the old behaviour is exactly what a pre-freeze tree wants.
+  const containedBy = typeof containmentParents === "function"
+    ? containmentParents(marks).parent : null;
+  const holdsChildren = (d, markId = null) => {
+    if (containedBy && markId) {
+      for (const [child, parent] of containedBy) if (parent === markId && child !== markId) return true;
+      return marks.some((m) => m._parentMarkId === markId);
+    }
+    return readdirSync(d, { withFileTypes: true })
+      .some((e) => e.isDirectory() && existsSync(join(d, e.name, "mark.md")));
+  };
   const onMain = (absFile) => {
     try { execFileSync("git", ["-C", CLONE, "cat-file", "-e", `main:${relative(CLONE, absFile).replace(/\\/g, "/")}`]); return true; }
     catch { return false; }
@@ -100,7 +147,7 @@ async function main() {
     const rec = byId.get(id);
     if (!rec) return err(404, `no mark "${id}" in your world`, "ids are <by>/<slug> — you can withdraw your drafts and your published marks; check world_my_marks");
     const dir0 = rec._dir;
-    if (holdsChildren(dir0)) return err(409, `"${id}" still holds marks inside it`,
+    if (holdsChildren(dir0, id)) return err(409, `"${id}" still holds marks inside it`,
       "withdraw or move the children first — a withdrawal may not strand what stands on it");
     const oldFile = join(dir0, "mark.md");
     const oldRecord = readFileSync(oldFile, "utf8");
@@ -159,16 +206,29 @@ async function main() {
         `parcel claiming is capped at ${cap} per household (ruled ${PARCEL_CAP_LAW_DATE ?? "2026-07-30"}; prior holdings stand) — new ground for this household is the founder's word, not the door's`);
   }
 
-  // decide the directory. sited/parcel drafts land on open ground at the ROOT,
-  // always (Keemin-ruled 2026-08-22): no geometry at this door, and no declared
-  // parent either — asking residents to name their parent is extra work for
-  // them and helps nothing, because the Settlement's own sweep re-homes every
-  // draft by geometry at the save regardless of where the file sits.
+  // decide the directory. sited/parcel file BY IDENTITY — `WORLD/marks/<by>/
+  // <slug>/` (the freeze, founder-ruled 2026-08-25; LOGOS/state-and-time.md:
+  // "New marks are filed by identity"). They used to land on open ground at the
+  // ROOT on the reasoning that "the Settlement's own sweep re-homes every draft
+  // by geometry at the save regardless of where the file sits" — the freeze
+  // DELETED that mover, so where this door files is where the mark lives.
   // predicated/naming take the directory of the mark they describe (parent_id).
-  let parentDir, parentId;
+  //
+  // ⚠ THIS DOOR IS CONDEMNED. It is the git-era write path, superseded by the
+  // journal door (world-journal.mjs `pathFor`), and it dies with the sweep-era
+  // deletion. This is the one-line minimum that keeps it from writing a filing
+  // the world's own gate B would refuse; nothing else here was brought forward.
+  let parentDir, parentId, fossilDir = null;
   if (p.kind === "sited" || p.kind === "parcel") {
     parentId = null;
-    parentDir = ROOT_DIR;
+    // GATE A BEFORE GATE B. A mark's path is wherever it was born, forever: if
+    // this id is in the frozen manifest, its filing is the manifest's and this
+    // door must not compute a new one — gate A refuses a move at the next lint.
+    // Only a mark the manifest does not name files at its id. The manifest is
+    // read from the clone's own tree; absent, every mark is a new mark, which is
+    // the right reading for a tree that declares no freeze.
+    fossilDir = frozenDirOf(id);
+    parentDir = fossilDir ? dirname(fossilDir) : join(MARKS_DIR, p.by);
   } else {
     parentId = p.parent_id;
     const parent = byId.get(parentId);
@@ -177,7 +237,10 @@ async function main() {
     parentDir = parent._dir;
   }
 
-  const dir = join(parentDir, p.slug);
+  // The fossil's own directory, verbatim — never recomposed from parent+slug,
+  // because the manifest names the whole path and a fossil slug need not equal
+  // its leaf directory for the join to be safe.
+  const dir = fossilDir ?? join(parentDir, p.slug);
 
   // The amend's move law: in place (same computed directory) is always fine;
   // a MOVE is fine for a draft-only mark, refused when the mark holds children
@@ -191,7 +254,7 @@ async function main() {
     oldRecord = readFileSync(oldFile, "utf8");
     amendMoves = resolve(dir) !== resolve(oldDir);
     if (amendMoves) {
-      if (holdsChildren(oldDir)) return err(409, "an amend that would move a mark holding others",
+      if (holdsChildren(oldDir, id)) return err(409, "an amend that would move a mark holding others",
         "marks stand inside this one — keep at/extent so it stays on its ground, or move the children first");
       if (onMain(oldFile)) return err(409, "a published mark cannot MOVE by amend yet",
         "the publish+re-home seam (#1862) is unfixed — amend in place (same ground), or withdraw and leave it anew");

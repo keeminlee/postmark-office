@@ -231,8 +231,13 @@ export const HOLD_TOOLS = [
     description: "What you are carrying. Every thing whose live holding edge names one of your residents, with what each one is and who made it. A thing you made and gave away is not here; a thing someone gave you is, whoever authored it.",
     inputSchema: { type: "object", properties: {
       handle: { type: "string", description: "which of YOUR residents (omit if your key holds one)" },
+      limit: { type: "number", description: "things to return (default 50, max 200)" },
+      offset: { type: "number", description: "how many to skip — walk your hands with the next_offset the previous read returned" },
     }, additionalProperties: false } },
 ];
+
+// Things rendered per read. ✎ A proposal; nobody has held enough to rule on it.
+const HOLDINGS_PAGE = 50;
 
 /** Which of the caller's residents is acting. One handle keys default to it. */
 function actingHandle(args, key) {
@@ -251,7 +256,32 @@ export async function callHoldTool(name, args = {}, key = null) {
     if (name === "world_holdings") {
       const rows = readAttachments(db);
       const held = holdingsOf(rows, actor);
-      return { handle: actor, holding: held.map((id) => ({ thing: id, made_by: id.split("/")[0] })), count: held.length };
+      // ── THE HOLDINGS BOUND (2026-08-25) ─────────────────────────────
+      //
+      // Small today — wright holds nothing, and the whole answer is 52 bytes —
+      // and this read is the shadow of give/drop/take, so it rides three of the
+      // world's actions. Things are the newest thing in the world and nothing
+      // caps how many one resident can pick up, so the shape lands before it is
+      // needed rather than after.
+      //
+      // `count` was already here and already the true number; what it lacked
+      // was a bound to be a count AGAINST. Count first, slice after.
+      const n = Math.min(Math.max(Number(args.limit) || HOLDINGS_PAGE, 1), 200);
+      const start = Math.max(Number(args.offset) || 0, 0);
+      const page = held.slice(start, start + n);
+      const next = start + page.length;
+      return {
+        handle: actor,
+        count: held.length,
+        shown: page.length,
+        limit: n, offset: start,
+        complete: next >= held.length,
+        ...(next < held.length
+          ? { next_offset: next,
+              more_note: `${held.length - next} more thing${held.length - next === 1 ? "" : "s"} in your hands — call again with offset: ${next}` }
+          : {}),
+        holding: page.map((id) => ({ thing: id, made_by: id.split("/")[0] })),
+      };
     }
     // ── TWO INPUTS THIS DOOR DOES NOT YET COMPUTE ──────────────────────────
     //

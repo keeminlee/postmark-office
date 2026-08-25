@@ -404,7 +404,7 @@ test("flag off: the verb itself refuses too, in case something calls past the li
   assert.match(r.hint, /WORLD_APEX=1/);
 });
 
-test("the slim: the town apex absorbs eleven more; world_note and world_investigate stand, by ruling", async () => {
+test("the slim: rounds three and four take the listing to six; world_note and world_investigate stand, by ruling", async () => {
   on();
   await withOffice({ WORLD_APEX: "1" }, async () => {
     const { body } = await rpc("tools/list");
@@ -455,8 +455,30 @@ test("the slim: the town apex absorbs eleven more; world_note and world_investig
     // by any apex: the town apex takes roster acts, and amending your own card
     // is your pen, which lives at household. A door nobody can find is not a
     // door, so it lists.
-    assert.ok(names.includes("update_address_fields"), "the fields door is listed — the four optional fields were unfixable-after without it");
-    assert.equal(names.length, 21);
+    //
+    // ── THE SLIM, FOURTH ROUND (POS-54, 2026-08-25) ───────────────────
+    //
+    // 21 → 6, and `update_address_fields` is one of the thirteen that left —
+    // which REVERSES the paragraph directly above it, so both states stand
+    // here rather than one quietly replacing the other. Wave 2's reasoning was
+    // "amending your own card is your pen, which lives at household", and it
+    // was right about where the act belongs and wrong about the conclusion: the
+    // founder ruled that the act should therefore BE a household act
+    // (`do: "address-fields"`, a separate act from `address` because the fields
+    // flat has its own identity fence), rather than a flat listed beside the
+    // door it belongs behind. Same premise, opposite conclusion, one ruling
+    // apart. The flat still answers.
+    const gone = ["update_address_body", "update_home", "update_profile", "update_window",
+      "request_residency", "read_quests", "send_letter", "list_mail", "read_doorstep",
+      "read_resident", "read_home", "read_votes", "read_stamps", "stake_vote",
+      "update_address_fields"];
+    for (const g of gone) assert.ok(!names.includes(g), `${g} is still listed — an apex verb serves it now`);
+    // The survivors are a DECISION, not a remainder: the three apexes, plus a
+    // transport door with no register semantics and two world flats that have
+    // no apex twin yet (the standing ruling: a delist must never hide a
+    // capability with no other door).
+    assert.deepEqual([...names].sort(), ["household", "town", "upload_media", "world", "world_investigate", "world_note"]);
+    assert.equal(names.length, 6);
   });
 });
 

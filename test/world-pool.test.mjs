@@ -172,7 +172,10 @@ const shown = (ref, path) => git("show", `${ref}:${path}`);
 const has = (ref, path) => {
   try { git("cat-file", "-e", `${ref}:${path}`); return true; } catch { return false; }
 };
-const markPath = (slug) => `WORLD/marks/let-there-be-light/${slug}/mark.md`;
+// Filed by identity since the freeze (2026-08-25): "New marks are filed by
+// identity - WORLD/marks/<household>/<slug>/". The argument is the mark's ID,
+// `<by>/<slug>`, because that IS the path.
+const markPath = (id) => `WORLD/marks/${id}/mark.md`;
 
 // ── the lock composition, on any platform ────────────────────────────────────
 
@@ -215,12 +218,12 @@ test("two households' marks are in flight at the same time and land on their own
 
   assert.equal(a.branch, "draft/house-a");
   assert.equal(b.branch, "draft/house-b");
-  assert.match(shown("draft/house-a", markPath("mark-a")), /house a was here/);
-  assert.match(shown("draft/house-b", markPath("mark-b")), /house b was here/);
+  assert.match(shown("draft/house-a", markPath("alpha/mark-a")), /house a was here/);
+  assert.match(shown("draft/house-b", markPath("beta/mark-b")), /house b was here/);
   // isolation: neither household's sketch bled into the other's branch or main
-  assert.equal(has("draft/house-a", markPath("mark-b")), false);
-  assert.equal(has("draft/house-b", markPath("mark-a")), false);
-  assert.equal(has("main", markPath("mark-a")), false);
+  assert.equal(has("draft/house-a", markPath("beta/mark-b")), false);
+  assert.equal(has("draft/house-b", markPath("alpha/mark-a")), false);
+  assert.equal(has("main", markPath("alpha/mark-a")), false);
 
   const stats = poolStats(repo);
   assert.equal(stats.maxInFlight, 2, "the two writes overlapped — the whole point of tier 1");
@@ -241,7 +244,7 @@ test("the pool is a cap, not a promise: four households at once run two at a tim
   assert.deepEqual(results.map((r) => r.branch),
     ["draft/house-a", "draft/house-b", "draft/house-c", "draft/house-d"]);
   for (const [i, household] of ["a", "b", "c", "d"].entries())
-    assert.ok(has(`draft/house-${household}`, markPath(`four-${household}`)), `four-${household} missing on its branch (${results[i].commit})`);
+    assert.ok(has(`draft/house-${household}`, markPath(`${["alpha", "beta", "gamma", "delta"][i]}/four-${household}`)), `four-${household} missing on its branch (${results[i].commit})`);
 
   const stats = poolStats(repo);
   assert.equal(stats.leases, before + 4);
@@ -286,10 +289,13 @@ test("a dirtied worktree heals at its next lease, not at the last one's exit", a
 
   const healed = await leaveMarkViaOffice(repo, sited("after-the-crash", "the tree came back clean", { x: 50, y: 50 }, "alpha"), houseA);
   assert.equal(healed.branch, "draft/house-a");
-  assert.ok(has("draft/house-a", markPath("after-the-crash")));
+  assert.ok(has("draft/house-a", markPath("alpha/after-the-crash")));
   assert.equal(existsSync(junk), false, "the abandoned mark was cleaned, not committed");
   assert.ok(existsSync(join(slot.dir, "WORLD", "skeleton.json")), "the deleted tracked file was restored");
-  assert.equal(has("draft/house-a", markPath("half-written")), false,
+  // The path the GHOST was planted at, not an identity path — the ghost was
+  // never written by the door, so asking after `ghost/half-written` would be
+  // asking whether a file nobody ever created is absent.
+  assert.equal(has("draft/house-a", "WORLD/marks/let-there-be-light/half-written/mark.md"), false,
     "and the ghost never reached the household's branch");
 });
 
@@ -334,7 +340,7 @@ test("WORLD_POOL=0 falls back to the shared checkout and still answers the same 
     const result = await leaveMarkViaOffice(repo, sited("no-pool", "the tier-0 lane still works", { x: 60, y: 60 }), houseB);
     assert.equal(result.branch, "draft/house-b");
     assert.equal(result.pushed, false);
-    assert.ok(has("draft/house-b", markPath("no-pool")));
+    assert.ok(has("draft/house-b", markPath("beta/no-pool")));
     assert.equal(poolStats(repo).leases, before, "no lease was taken");
     // the tier-0 pen owns the shared clone's checkout, and leaves it where it wrote
     assert.equal(git("branch", "--show-current").trim(), "draft/house-b");

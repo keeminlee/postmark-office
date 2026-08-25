@@ -71,8 +71,13 @@ test("NAMED, NOT BUILT: deregistration is named, does not dispatch, and says why
 });
 
 // ── the reads ───────────────────────────────────────────────────────────────
-test("THE COMMONS' READS: nine, and each one SERVES a flat verb rather than reimplementing it", async () => {
-  assert.equal(TOWN_READABLE.length, 9);
+// NINE → THIRTEEN (POS-54, the founder's round-2 ruling, 2026-08-25). The four
+// added are the roster's siblings — resident, home, votes, stamps — and the
+// property this test asserts is unchanged by the growth: the apex reimplements
+// nothing, it names a flat verb and hands the call back. That is what keeps the
+// slim honest, so it is asserted over the WHOLE table rather than a fixed nine.
+test("THE COMMONS' READS: thirteen, and each one SERVES a flat verb rather than reimplementing it", async () => {
+  assert.equal(TOWN_READABLE.length, 13);
   for (const r of TOWN_READABLE) {
     const { calls, call } = spy();
     const out = await townApex({ read: r }, key(), ctx({ call }));
@@ -91,7 +96,7 @@ test("…and a read's own fields ride through, from args: or from the top level"
   assert.deepEqual(b.calls[0].fields, { q: "lanterns" });
 });
 
-test("an unknown read bounces naming the nine", async () => {
+test("an unknown read bounces naming every read the door serves", async () => {
   const r = await townApex({ read: "everything" }, key(), ctx({ call: spy().call }));
   assert.equal(r.code, 422);
   for (const name of TOWN_READABLE) assert.ok(r.hint.includes(name), `the hint names ${name}`);
@@ -100,28 +105,30 @@ test("an unknown read bounces naming the nine", async () => {
 // ── the grammar, for the third time ─────────────────────────────────────────
 //
 // The prototype's affordance is gated on a SHAPE (ops/mcp-prototype § collect-
-// Actions): an array named `actions` whose entries carry `action` and `fields`,
-// on a tool whose schema declares the do:/args: envelope. The town door should
-// pass it without anything downstream learning the word "town".
-test("THE GRAMMAR: the bare call speaks the actions shape the other two apexes speak", async () => {
+// Actions): an array named `acts` whose entries carry `act` and `fields`, on
+// a tool whose schema declares the do:/args: envelope. The town door should
+// pass it without anything downstream learning the word "town". (`actions`
+// stays the WORLD's spelling — class-granted where you stand; a door's own
+// fixed verbs are `acts`. Keemin-ruled 2026-08-25.)
+test("THE GRAMMAR: the bare call speaks the acts shape the household apex speaks", async () => {
   const answer = await townApex({}, key(), ctx({ call: spy().call }));
-  assert.ok(Array.isArray(answer.actions), "an array named actions");
-  for (const e of answer.actions) {
-    assert.equal(typeof e.action, "string");
-    assert.ok(e.action.length > 0);
+  assert.ok(Array.isArray(answer.acts), "an array named acts");
+  for (const e of answer.acts) {
+    assert.equal(typeof e.act, "string");
+    assert.ok(e.act.length > 0);
     assert.equal(typeof e.fields, "object");
     assert.equal(Array.isArray(e.fields), false);
   }
   // the envelope, on the tool's own schema
   assert.equal(TOWN_TOOL.inputSchema.properties.do?.type, "string");
   assert.equal(TOWN_TOOL.inputSchema.properties.args?.type, "object");
-  // the alias the other apexes keep
-  assert.deepEqual(answer.acts.map((e) => e.act), answer.actions.map((e) => e.action));
+  // the alias era is over: one key, and the duplicate stays dead
+  assert.equal("actions" in answer, false, "the `actions` duplicate must not ride the town answer");
 });
 
 test("…and the fields come from the world apex's own generator, not a third copy", async () => {
   const answer = await townApex({}, key(), ctx({ call: spy().call }));
-  const declare = answer.actions.find((e) => e.action === "declare-household");
+  const declare = answer.acts.find((e) => e.act === "declare-household");
   const expected = actionFields(schemas.declare_household, schemaRequired.declare_household, { strip: new Set() });
   assert.deepEqual(declare.fields, expected,
     "third caller of one implementation — a third copy is how three doors start disagreeing about one schema");
@@ -141,7 +148,8 @@ test("THE ONE ACT dispatches declare_household, and does not reimplement it", as
   assert.deepEqual(calls[0].fields, { household: "H", handle: "h", card: "c" });
   assert.equal(r.did, "declare-household");
   assert.equal(r.dispatched_to, "declare_household");
-  assert.equal(r.card.action, "declare-household");
+  assert.equal(r.card.act, "declare-household");
+  assert.equal("action" in r.card, false, "the alias-era key is retired from the card");
 });
 
 test("THE PRE-CREDENTIAL ASYMMETRY: the one act is callable with no standing at all", async () => {

@@ -102,11 +102,17 @@ test("POST /letters with no credential → 401 + www-authenticate (the OAuth dan
 });
 
 test("GET /regions → slug, name, first-line description, residents", async () => {
-  const regions = await (await get("/regions")).json();
-  const terrace = regions.find((r) => r.slug === "the-terrace");
+  // The answer became an OBJECT on 2026-08-25 (paged, with a total); the region
+  // rows are unchanged and moved one level in, and each now carries
+  // residents_total beside its listed names.
+  const atlas = await (await get("/regions")).json();
+  const terrace = atlas.regions.find((r) => r.slug === "the-terrace");
   assert.equal(terrace.name, "the Trueing Terrace");
   assert.match(terrace.description, /High ground above the quay/);
   assert.deepEqual(terrace.residents, ["wright"]);
+  assert.equal(terrace.residents_total, 1, "a region's whole roll, beside the names this read listed");
+  assert.equal(atlas.total, atlas.shown, "this fixture atlas fits inside the page");
+  assert.equal(atlas.complete, true);
 });
 
 test("GET /homes/{handle} → body, region, image paths, world block; 404 for none", async () => {
@@ -211,17 +217,47 @@ test("GET /letters filters: resident, since/until, region, exclude-office, combi
   assert.equal(paged.limit, 2);
 });
 
-test("GET /mail/{handle} honors since/until", async () => {
+test("GET /mail/{handle} honors since/until, and pages", async () => {
   const win = await (await get("/mail/wright?since=2026-07-03")).json();
-  assert.ok(win.every((l) => l.date >= "2026-07-03"));
+  assert.ok(win.letters.every((l) => l.date >= "2026-07-03"));
+  // THE COUNT MUST BE ABLE TO DISAGREE WITH THE LIST. A page of one out of a
+  // box of two is the only shape that proves `total` is a total and not the
+  // list length wearing its name — assert both halves, or the assertion
+  // passes just as happily against the defect.
+  const page = await (await get("/mail/wright?limit=1")).json();
+  assert.equal(page.letters.length, 1);
+  assert.equal(page.shown, 1);
+  assert.equal(page.total, 2);
+  assert.equal(page.complete, false);
+  assert.equal(page.next_offset, 1);
+  const rest = await (await get(`/mail/wright?limit=1&offset=${page.next_offset}`)).json();
+  assert.equal(rest.letters.length, 1);
+  assert.equal(rest.complete, true, "the second page finishes the box");
+  assert.notEqual(rest.letters[0].id, page.letters[0].id, "offset walked, it did not repeat");
 });
 
-test("GET /doorstep/{h} serves the v0.2 bundle over HTTP", async () => {
+test("GET /doorstep/{h} serves the v0.8 BUNDLE over HTTP — the same one MCP serves", async () => {
   const d = await (await get("/doorstep/wright")).json();
   assert.equal(d.pending_outbox, 1);
   assert.equal(d.town.deliveries, 3);
-  assert.equal(d.prs, null);
-  assert.equal(d.stamps, 4, "doorstep carries the resident's stamp balance");
+  // `prs` retired with the bundle refactor: it was always null here, because
+  // the office never calls GitHub. A cached reader gets the pointer, not silence.
+  assert.equal(d.prs, undefined);
+  assert.match(d.moved.prs, /static doorstep bundle/);
+  // The stamps SEGMENT — the resident's public record, and it names the read it
+  // is. It used to be a bare balance integer; the four tenses were one call
+  // away and the doorstep showed one of them without saying which.
+  assert.equal(d.stamps.serves, "town.stamps");
+  assert.equal(d.stamps.liquid, 4, "the doorstep still carries the resident's spendable balance");
+  assert.deepEqual(d.segments, ["mail", "awaiting", "stamps", "bulletin", "town_pulse", "window", "stances"]);
+  // The seventh reaches BOTH skins from the one implementation. Its content
+  // depends on a world engine this fixture has no checkout of, so what is
+  // asserted here is that it is PRESENT and names its read — a segment that
+  // quietly vanished when the world was unreadable would tell a resident that
+  // nothing awaits their word, which is the silence it exists to end.
+  assert.equal(d.stances.serves, "household.stances");
+  assert.ok("stances_awaiting" in d.stances || d.stances.unavailable,
+    "either it counted, or it said why it could not");
 });
 
 test("GET /stamps roster + GET /stamps/{h}; zero for a stampless handle", async () => {
@@ -474,8 +510,10 @@ test("MCP whoami mirrors GET /me", async () => {
 test("MCP list_letters / list_regions / read_home mirror the REST reads", async () => {
   const letters = JSON.parse((await rpc("tools/call", { name: "list_letters", arguments: { resident: "postmaster", exclude_office: true } })).body.result.content[0].text);
   assert.equal(letters.count, 0);
-  const regions = JSON.parse((await rpc("tools/call", { name: "list_regions", arguments: {} })).body.result.content[0].text);
-  assert.ok(regions.some((r) => r.slug === "the-terrace"));
+  const atlas = JSON.parse((await rpc("tools/call", { name: "list_regions", arguments: {} })).body.result.content[0].text);
+  assert.ok(atlas.regions.some((r) => r.slug === "the-terrace"));
+  // the mirror is the point of this test: both doors serve one shape
+  assert.deepEqual(atlas, await (await get("/regions")).json());
   const homeRes = await rpc("tools/call", { name: "read_home", arguments: { handle: "wright" } });
   assert.equal(JSON.parse(homeRes.body.result.content[0].text).region, "the-terrace");
 });

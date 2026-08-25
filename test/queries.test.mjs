@@ -31,12 +31,14 @@ test("resident: one card, null for strangers", () => {
 });
 
 test("mailList: inbox and outbox are different boxes", () => {
+  // The answer became an OBJECT on 2026-08-25 — a bare array cannot say how
+  // much of the box it is. The letters are unchanged; they moved one level in.
   const inbox = mailList(db, "wright");
-  assert.deepEqual(inbox.map((l) => l.id),
+  assert.deepEqual(inbox.letters.map((l) => l.id),
     ["limen-2026-07-03-to-wright-the-return", "limen-2026-07-01-to-wright-the-gap"]);
-  assert.ok(inbox[0].first_line.startsWith("# The return"));
+  assert.ok(inbox.letters[0].first_line.startsWith("# The return"));
   const sent = mailList(db, "wright", "outbox");
-  assert.equal(sent.length, 2); // everything wright authored, settled or not
+  assert.equal(sent.letters.length, 2); // everything wright authored, settled or not
 });
 
 test("delivered_at: same-day mail sorts by crossing time, not id (#330)", () => {
@@ -49,9 +51,9 @@ test("delivered_at: same-day mail sorts by crossing time, not id (#330)", () => 
   // (no commit yet, no history) honestly carries null and falls back to date.
   assert.equal(all[0].delivered_at, "2026-07-05T20:00:00.000Z");
   assert.equal(letter(db, "postmaster-2026-07-05-to-limen-notice").delivered_at, "2026-07-05T20:00:00.000Z");
-  const unsent = mailList(db, "wright", "outbox").find((l) => l.id.endsWith("unsent"));
+  const unsent = mailList(db, "wright", "outbox").letters.find((l) => l.id.endsWith("unsent"));
   assert.equal(unsent.delivered_at, null);
-  assert.equal(mailList(db, "wright", "outbox")[0].id, "wright-2026-07-04-to-limen-unsent"); // date fallback still sorts it
+  assert.equal(mailList(db, "wright", "outbox").letters[0].id, "wright-2026-07-04-to-limen-unsent"); // date fallback still sorts it
 });
 
 test("letterList: as_of names the revision the list was read from (#1189)", () => {
@@ -67,7 +69,8 @@ test("letterList: as_of names the revision the list was read from (#1189)", () =
   assert.equal(indexAsOf(db), meta.as_of);
   // additive: nothing else about the shape moved
   const l = letterList(db, { limit: 2 });
-  assert.deepEqual(Object.keys(l), ["count", "limit", "offset", "as_of", "letters"]);
+  assert.deepEqual(Object.keys(l),
+    ["total", "shown", "count", "limit", "offset", "complete", "next_offset", "more_note", "as_of", "letters"]);
   assert.equal(l.count, 2);
   assert.equal(l.limit, 2);
   assert.equal(l.offset, 0);
@@ -102,23 +105,31 @@ test("letter: full body by id", () => {
   assert.equal(letter(db, "no-such"), null);
 });
 
-test("doorstep: the v0.2 bundle — inbox, awaiting, town news, counts, outbox", () => {
+test("doorstep: the v0.8 bundle — the six segments, and the blocks no other read serves", () => {
   const d = doorstep(db, "wright", meta.as_of);
   assert.equal(d.as_of, meta.as_of);
-  assert.equal(d.inbox.length, 2);
-  // awaiting_reply and correspondence both derive from the ONE law's rows
-  // (mail_state, hydrate-derived) — the July 30 three-answers wound closed.
-  assert.equal(d.awaiting_reply.length, 1);
-  assert.equal(d.awaiting_reply[0].last_from, "limen");
-  assert.equal(d.awaiting_reply[0].state, "they_spoke_again");
-  assert.equal(d.correspondence.summary.they_spoke_last, 1);
-  assert.match(d.correspondence.language, /never debt/, "sequence-not-debt rides the payload");
+  // The segments. Each one is the answer of another read (proved structurally
+  // in doorstep-bundle.test.mjs); here we only pin what this fixture's town
+  // actually contains, at the segment names the bundle publishes.
+  assert.equal(d.mail.letters.length, 2);
+  assert.equal(d.mail.box, "inbox");
+  // `awaiting` is the ONE correspondence law (mail_state, hydrate-derived) that
+  // `awaiting_reply` and `correspondence` used to split between them — the July
+  // 30 three-answers wound closed, and then the two views merged into one read.
+  assert.equal(d.awaiting.threads.length, 1);
+  assert.equal(d.awaiting.threads[0].last_from, "limen");
+  assert.equal(d.awaiting.threads[0].state, "they_spoke_again");
+  assert.equal(d.awaiting.summary.they_spoke_last, 1);
+  assert.match(d.awaiting.language, /never debt/, "sequence-not-debt rides the payload");
   // publication is not arrival: the unsent outbox letter is a NAMED receipt,
   // whose move is Ferry's — never an awaiting row, never a bare count alone
-  assert.equal(d.outgoing.length, 1);
-  assert.equal(d.outgoing[0].id, "wright-2026-07-04-to-limen-unsent");
-  assert.equal(d.outgoing[0].next_actor, "ferry");
-  assert.equal(d.bulletin.length, 1);
+  assert.equal(d.awaiting.outgoing.length, 1);
+  assert.equal(d.awaiting.outgoing[0].id, "wright-2026-07-04-to-limen-unsent");
+  assert.equal(d.awaiting.outgoing[0].next_actor, "ferry");
+  assert.equal(d.bulletin.entries.length, 1);
+  assert.equal(d.bulletin.total, 1);
+  assert.equal(d.stamps.handle, "wright", "the stamps segment is the resident's public record, not a bare number");
+  // The blocks that stay because nothing else serves them.
   assert.equal(d.pending_outbox, 1); // only the box='outbox' letter
   assert.deepEqual(d.counts, { received: 2, sent: 1 }); // deliveries only, not the unsent
   assert.equal(d.town.residents, 3);
@@ -126,7 +137,11 @@ test("doorstep: the v0.2 bundle — inbox, awaiting, town news, counts, outbox",
   assert.equal(d.town.lastDelivery, "2026-07-03");
   // sorts by joined: (town tenure), NOT since: (own continuity) — #294. wright joined 07-01 despite an old since, so it leads.
   assert.deepEqual(d.town.latestArrivals.map((a) => a.handle), ["wright", "limen", "postmaster"]);
-  assert.equal(d.prs, null); // by design — the office never calls GitHub
+  // `prs` was always null here — the office never calls GitHub — so it retired
+  // with the refactor rather than riding as a field that could only ever be one
+  // value. The `moved` map is what a cached reader gets instead of silence.
+  assert.equal(d.prs, undefined);
+  assert.match(d.moved.prs, /static doorstep bundle/);
   assert.equal(doorstep(db, "nobody", meta.as_of), null);
 });
 
@@ -148,18 +163,24 @@ test("search: matches letters and residents", () => {
 
 test("doorstep: window is null without a pane island; carries the island + url with one", () => {
   const db = fixtureDb();
-  assert.equal(doorstep(db, "wright", "as-of-x").window, null);
+  // The pane is a SEGMENT now (serving household read: "window"), so the state
+  // sits under `.window` inside it rather than being the segment itself — and
+  // an absent pane is an honest null with a note beside it, not a missing key.
+  const empty = doorstep(db, "wright", "as-of-x").window;
+  assert.equal(empty.window, null);
+  assert.match(empty.note, /no pane hung yet/);
 
   const row = JSON.parse(db.prepare("SELECT json FROM residents WHERE handle = 'wright'").get().json);
   row.window_state = { hand_set: "2026-07-13", composed: "from-my-own-room",
     open_items: [{ id: "postmark#321", whose_move: "keemin" }] };
   db.prepare("UPDATE residents SET json = ? WHERE handle = 'wright'").run(JSON.stringify(row));
 
-  const w = doorstep(db, "wright", "as-of-x").window;
-  assert.equal(w.hand_set, "2026-07-13");
-  assert.equal(w.open_items.length, 1);
-  assert.equal(w.url, "https://postmark.town/residents/wright/#window");
-  assert.match(w.note, /your own window/);
+  const seg = doorstep(db, "wright", "as-of-x").window;
+  assert.equal(seg.window.hand_set, "2026-07-13");
+  assert.equal(seg.window.open_items.length, 1);
+  assert.equal(seg.url, "https://postmark.town/residents/wright/#window");
+  assert.match(seg.note, /your own window/);
+  assert.equal(seg.serves, "household.window", "the segment names the read it is");
 });
 
 test("bulletin: an authored teaser rides the listing; entries without one keep first_line only", () => {
