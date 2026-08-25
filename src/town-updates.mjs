@@ -25,6 +25,16 @@
 // their OWN act and be left wondering whether the door worked. It is scoped to
 // the caller's own handles for exactly that reason: it is not a preview of the
 // town, it is your own pen not lying to you.
+//
+// ⚠ HALF OF THAT LAST SENTENCE WAS OVERTURNED (the founder, 2026-08-25). The
+// public reads of a resident's paper now compose the pending edit for EVERYONE,
+// each field carrying a stamp saying which tense it is in — the freshness
+// ladder, src/paper-fresh.mjs. Both states are left standing above rather than
+// tidied into one, because the reasoning that made the hot tense caller-scoped
+// is still exactly the reasoning behind `hotTenseBlock`, which is unchanged: a
+// DISCLOSURE to the owner, never a substitution. What is new is that the town
+// gets a STAMPED compose as well, and the stamp is what keeps a compose from
+// being a substitution nobody was told about. `pendingPaperRows` is its feed.
 
 import { appendTownJournal, pendingRows, townLogEnabled } from "./town-journal.mjs";
 
@@ -32,7 +42,15 @@ import { appendTownJournal, pendingRows, townLogEnabled } from "./town-journal.m
 export const PAPER_ACTS = Object.freeze({
   "address-body": { tool: "update_address_body", file: (h) => `WHITE_PAGES/${h}/ADDRESS.md` },
   "address-fields": { tool: "update_address_fields", file: (h) => `WHITE_PAGES/${h}/ADDRESS.md` },
-  home: { tool: "update_home", file: (h) => `WHITE_PAGES/${h}/HOME.md` },
+  // ⚠ `HOME/HOME.md`, not `HOME.md` — corrected 2026-08-25. The door has always
+  // written `WHITE_PAGES/<h>/HOME/HOME.md` (edit.mjs § updateHomeUnlogged: `const
+  // rel = ["WHITE_PAGES", handle, "HOME", "HOME.md"]`), and this line named a
+  // path no town has ever had, so `your_pending_edits` told a resident with a
+  // pending home edit to look at a file that does not exist. The old falsifier
+  // asserted `typeof file === "string"` — a probe that could not have caught a
+  // wrong path if it tried. The one below it now compares this table against
+  // what the doors return, which closes the class rather than this instance.
+  home: { tool: "update_home", file: (h) => `WHITE_PAGES/${h}/HOME/HOME.md` },
   profile: { tool: "update_profile", file: (h) => `WHITE_PAGES/${h}/PROFILE.md` },
   window: { tool: "update_window", file: (h) => `WHITE_PAGES/${h}/WINDOW/window.html` },
 });
@@ -124,6 +142,29 @@ export function hotPaperActs(odb, key, { handle = null } = {}) {
   if (handle) { if (!mine.has(handle)) return []; }
   return pendingRows(odb).filter((r) => r.cls === "update" && r.handle && mine.has(r.handle)
     && (!handle || r.handle === handle));
+}
+
+/**
+ * THE PUBLIC HALF: the un-drained paper rows for ONE handle, whoever is asking.
+ *
+ * `hotPaperActs` above is scoped to the caller's own handles and its own note
+ * says why — "it is not a preview of the town, it is your own pen not lying to
+ * you." That was the whole of the rule until 2026-08-25, when the founder ruled
+ * the other half in: the public reads of a resident's paper compose the pending
+ * edit too, stamped with its tense, for everyone. Both statements are true of
+ * their own function. The owner's block is a DISCLOSURE and is unchanged; this
+ * one feeds a stamped COMPOSE (paper-fresh.mjs), and the stamp is what keeps
+ * the compose from being a substitution nobody was told about.
+ *
+ * No key, deliberately. The caller's identity has no bearing on whether a town
+ * read is fresh, and taking one here would invite a scope check that reads like
+ * a privacy guard while guarding nothing. The gate that DOES apply — a
+ * suspended handle gets no overlay — is standing's, and it lives at the
+ * composer beside the reasoning for it.
+ */
+export function pendingPaperRows(odb, handle) {
+  if (!odb || !townLogEnabled() || !handle) return [];
+  return pendingRows(odb).filter((r) => r.cls === "update" && r.handle === handle);
 }
 
 /**

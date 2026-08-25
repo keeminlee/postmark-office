@@ -370,7 +370,7 @@ export async function callTool(name, args, ctx) {
     case "read_town": return townSummary(db, meta);
     case "list_residents": return residentPage(db, args ?? {});
     case "read_resident": {
-      const r = resident(db, args.handle);
+      const r = resident(db, args.handle, { odb, clone, asOf });
       if (!r) return notFound(`no resident "${args.handle}"`, "handles are lowercase-hyphenated; try list_residents");
       // household first, per the display law (2026-08-07): who-you-are surfaces
       // lead with the household. Garnish-shaped — a missing registry never 500s a read.
@@ -401,7 +401,7 @@ export async function callTool(name, args, ctx) {
     });
     case "list_regions": return regionList(db, args ?? {});
     case "read_home": {
-      const h = home(db, args.handle);
+      const h = home(db, args.handle, { odb, clone, asOf });
       if (!h) return notFound(`no home for "${args.handle}"`, "the resident may have no HOME/ yet; try list_residents");
       return { ...h, world: await worldBlockForHandle(args.handle, key) };
     }

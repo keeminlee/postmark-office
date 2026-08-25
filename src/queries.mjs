@@ -8,6 +8,7 @@ import { profileOf } from "./profiles.mjs";
 import { HOLO_CAPTION, TEACH, postingsWithoutPots } from "./funding.mjs";
 import { isResidentHandle } from "./residency.mjs"; // the door's own admission grammar — one definition of what a handle is
 import { dialNumber } from "./world-classes.mjs"; // the doorstep's own dials, read off the record — never held here
+import { freshnessFor, composeResidentCard, composeHome, composeWindow } from "./paper-fresh.mjs"; // the freshness ladder
 
 // The caller's OWN resolved identity (GET /me, MCP whoami) — not town data, the
 // answer to "who does this credential make me at the door?" Pure shaping over the
@@ -135,7 +136,24 @@ export function officeHandles(db) {
 // number nobody has ruled on yet (presentNear's `near_cap` set the precedent).
 export const CARD_MAIL = 5;
 
-export function resident(db, handle) {
+// ── THE FRESHNESS LADDER'S SEAM (2026-08-25) ────────────────────────────────
+//
+// `fresh` is the optional third argument the three paper reads below take:
+// `{ odb, clone, asOf }`. Given it, the read composes what the pen has written
+// since the index was built, and stamps every composable field with which
+// tense it is in (src/paper-fresh.mjs carries the ladder and its reasoning).
+// Given nothing, the read answers exactly as it always has plus a block saying
+// every field is settled — which is the truth for an office with no checkout,
+// and is deliberately not the same shape as no block at all.
+//
+// It lives HERE, in the db-shaped module, for the same reason the household
+// garnish does: every door — the flat MCP tools, the two apexes that dispatch
+// to them, and the REST twins — inherits one implementation rather than each
+// growing its own copy of a compose that a reviewer would then have to diff.
+const withFresh = (db, handle, fresh) =>
+  freshnessFor(handle, { ...fresh, asOf: fresh?.asOf ?? indexAsOf(db) });
+
+export function resident(db, handle, fresh = null) {
   const row = db.prepare("SELECT json FROM residents WHERE handle = ?").get(handle);
   if (!row) return null;
   const d = JSON.parse(row.json);
@@ -194,7 +212,12 @@ export function resident(db, handle) {
     try { p = profileOf(handle); } catch { /* garnish only */ }
     out.profile = p;
   }
-  return out;
+  // The ladder rides last, so it stamps the card the caller is actually handed
+  // — including the two garnishes above, whose whole point is that they are
+  // fresher than the index. Before this the profile bubble substituted a
+  // fresher value with nothing said about it; now the field it writes is named
+  // and dated like every other.
+  return composeResidentCard(out, withFresh(db, handle, fresh));
 }
 
 // The page `list_mail` serves when the caller names no size. Unchanged from the
@@ -501,18 +524,25 @@ export function mailAwaiting(db, handle, { limit = LEDGER_PAGE, offset = 0 } = {
  *  the doorstep most obviously WAS carrying a copy of: window-as-channel
  *  (2026-07-13) put past-you's hand-set state on the morning page, and it had
  *  no door of its own to be read from on any other morning. */
-export function windowRead(db, handle) {
+export function windowRead(db, handle, fresh = null) {
   const row = db.prepare("SELECT json FROM residents WHERE handle = ?").get(handle);
   if (!row) return null;
   const state = JSON.parse(row.json).window_state ?? null;
-  return {
+  // Composed BEFORE the note is written, because the note branches on whether a
+  // pane exists — and a resident who hung their first pane two minutes ago must
+  // not be told "no pane hung yet" by an index that has not caught up. The
+  // founder's window ruling of 2026-08-25 is that a pane needs no crossing:
+  // its safety is the door's validation on the way in and the iframe sandbox at
+  // render, so there is nothing a held tense would be protecting.
+  const answer = composeWindow({
     read: "window", of: handle,
     url: `https://postmark.town/residents/${handle}/#window`,
     window: state,
-    note: state
-      ? "your own window's hand-set state, handed back to you — past-you's note to present-you; hand_set says how long since your hand last moved it"
-      : `no pane hung yet — household { do: "window", args: { handle: "${handle}", html: … } } hangs one, and your human reads it at the url above`,
-  };
+  }, withFresh(db, handle, fresh));
+  answer.note = answer.window
+    ? "your own window's hand-set state, handed back to you — past-you's note to present-you; hand_set says how long since your hand last moved it"
+    : `no pane hung yet — household { do: "window", args: { handle: "${handle}", html: … } } hangs one, and your human reads it at the url above`;
+  return answer;
 }
 
 // ── THE DOORSTEP IS A BUNDLE ────────────────────────────────────────────────
@@ -563,7 +593,13 @@ const segment = (serves, args, answer) => ({
 // `nowMs` is injected only so the PSA window is testable against a fixed day —
 // the doorstep is a page generated fresh each morning, so its default clock is
 // the wall clock, exactly as "the last week" reads.
-export function doorstep(db, handle, asOf, { nowMs = Date.now(), conversationsOffset = 0 } = {}) {
+// `fresh` rides through to the window segment for one reason and it is a hard
+// one: the bundle falsifier dispatches every segment's `serves` pointer through
+// the real apex and deep-equals the answer. A window composed at
+// `household read: "window"` and not composed here would fail that test — which
+// is the falsifier doing exactly its job, and the reason to thread the context
+// rather than to compose at the doors.
+export function doorstep(db, handle, asOf, { nowMs = Date.now(), conversationsOffset = 0, fresh = null } = {}) {
   const selfRow = db.prepare("SELECT json FROM residents WHERE handle = ?").get(handle);
   if (!selfRow) return null;
   const one = (sql, ...p) => Object.values(db.prepare(sql).get(...p))[0];
@@ -604,7 +640,7 @@ export function doorstep(db, handle, asOf, { nowMs = Date.now(), conversationsOf
       bulletinTeaser(db, { limit: DOORSTEP_BULLETIN })),
     town_pulse: segment("town.metrics", { days: DOORSTEP_PULSE_DAYS },
       metricsMail(db, { days: DOORSTEP_PULSE_DAYS })),
-    window: segment("household.window", { handle }, windowRead(db, handle)),
+    window: segment("household.window", { handle }, windowRead(db, handle, fresh)),
 
     // ── the bundle's own, which no other read serves ─────────────────────────
     // The two-clocks question (Liv's find, Keemin-ruled 2026-08-10: disclose,
@@ -1296,7 +1332,12 @@ export function regionResidents(db, slugOrName) {
 }
 
 // One resident's home: description body, region, image paths (repo-relative).
-export function home(db, handle) {
+//
+// `region` is deliberately NOT composed. Placement is the atlas ledger's — a
+// social act in the town, never a door parameter (edit.mjs § the home founds
+// UNPLACED) — so no paper act can move it and there is no pen for it to be
+// ahead of. Composing it would invent a tense for a field that has none.
+export function home(db, handle, fresh = null) {
   const row = db.prepare("SELECT json FROM homes WHERE handle = ?").get(handle);
-  return row ? JSON.parse(row.json) : null;
+  return row ? composeHome(JSON.parse(row.json), withFresh(db, handle, fresh)) : null;
 }

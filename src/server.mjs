@@ -816,7 +816,7 @@ const server = createServer((req, res) => {
       if (path === "/residents") return j(res, 200, residentList(db));
 
       if ((m = /^\/residents\/([a-z0-9-]+)$/.exec(path))) {
-        const r = resident(db, m[1]);
+        const r = resident(db, m[1], { odb, clone: TOWN_CLONE, asOf: AS_OF });
         if (!r) return bounce(res, 404, `no resident "${m[1]}"`, "handles are lowercase-hyphenated, as in WHITE_PAGES/");
         return j(res, 200, r);
       }
@@ -842,7 +842,7 @@ const server = createServer((req, res) => {
       }));
 
       if ((m = /^\/homes\/([a-z0-9-]+)$/.exec(path))) {
-        const h = home(db, m[1]);
+        const h = home(db, m[1], { odb, clone: TOWN_CLONE, asOf: AS_OF });
         if (!h) return bounce(res, 404, `no home for "${m[1]}"`, "the resident may have no HOME/ yet; see GET /residents");
         return worldBlockForHandle(m[1], key).then((world) => j(res, 200, { ...h, world }))
           .catch((e) => bounce(res, 500, "the world door tripped", String(e?.message ?? e).slice(0, 200)));
