@@ -338,6 +338,28 @@ export function writeState(p, state) {
 }
 
 /**
+ * The shape EVERY report has, including the quiet one. One shape means one
+ * reader; the posture is said on every report and not only when there is
+ * something unclaimed, because the boundary is the design.
+ */
+function emptyReport({ now, intake, minConf, graceMs, sink }) {
+  return {
+    generated_at: new Date(now).toISOString(),
+    intake: Array.isArray(intake) ? intake : [intake],
+    head: null,
+    safe_head: null,
+    min_confirmations: minConf,
+    scanned: null,
+    arrivals: 0,
+    witnessed: [], dust: [], witness: [], hold: [], needs_pot: [], over_cap: [], unclaimed: [], sink: [],
+    sink_enabled: sink,
+    sink_rule: SINK_RULE,
+    grace: `one crossing (${graceMs / 3_600_000}h) after the block was mined`,
+    posture: "this watch records exactly one thing: an arrival from an address a household has REGISTERED, at an address that names a single pot, MIN_CONF deep and a crossing old. Everything else it reads and reports only. The chain cannot say which pot an unmapped address meant, and a receipt recorded under a placeholder would consume that hash's one mint chance and cost the patron their deed forever.",
+  };
+}
+
+/**
  * One tick.
  *
  * Returns { report, cursor, todo } and NEVER writes: the caller persists and
@@ -381,8 +403,14 @@ export async function watch({
 
   if (safeHead < from) {
     // nothing has settled since the last tick — not an error, and not a reason
-    // to move the cursor forward over blocks that were never read
-    return { report: { head, safe_head: safeHead, scanned: null, witnessed: [], unclaimed: [], dust: [], witness: [], hold: [], needs_pot: [], over_cap: [], sink: [] }, cursor, todo: [] };
+    // to move the cursor forward over blocks that were never read.
+    //
+    // It carries the SAME KEYS as a full report, deliberately: the quiet branch
+    // used to drop `intake`, `generated_at` and the posture, so the CLI's very
+    // first line (`report.intake.join`) threw on the commonest tick there is —
+    // an empty ten minutes. A degraded shape is a second shape, and every
+    // reader of the first one has to learn about it the hard way.
+    return { report: { ...emptyReport({ now, intake, minConf, graceMs, sink }), head, safe_head: safeHead }, cursor, todo: [] };
   }
 
   const to = Math.min(safeHead, from + maxCatchup - 1);
@@ -402,22 +430,14 @@ export async function watch({
 
   return {
     report: {
-      generated_at: new Date(now).toISOString(),
-      intake: Array.isArray(intake) ? intake : [intake],
+      ...emptyReport({ now, intake, minConf, graceMs, sink }),
       head,
       safe_head: safeHead,
-      min_confirmations: minConf,
       scanned: { from, to },
       arrivals: arrivals.length,
       witnessed: split.witnessed,
       dust: split.dust,
       ...rules,
-      sink_enabled: sink,
-      sink_rule: SINK_RULE,
-      grace: `one crossing (${graceMs / 3_600_000}h) after the block was mined`,
-      // said on every report, not only when there is something unclaimed: the
-      // boundary is the design, and a reader of this file should meet it here
-      posture: "this watch records exactly one thing: an arrival from an address a household has REGISTERED, at an address that names a single pot, MIN_CONF deep and a crossing old. Everything else it reads and reports only. The chain cannot say which pot an unmapped address meant, and a receipt recorded under a placeholder would consume that hash's one mint chance and cost the patron their deed forever.",
     },
     cursor: to,
     todo: rules.witness,

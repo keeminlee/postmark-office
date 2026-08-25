@@ -187,7 +187,14 @@ export function stripeReader({ key, api = STRIPE_API, apiVersion = null, fetchIm
 export async function listCompleteSessions({ stripe, createdGte, limit = PAGE_LIMIT, maxPages = MAX_PAGES }) {
   const out = [];
   let startingAfter = null;
-  for (let page = 0; page < maxPages; page++) {
+  let exhausted = false;
+  for (let page = 0; ; page++) {
+    // The page cap exists so a runaway cannot hammer Stripe. It must never
+    // become a silent truncation: a watcher that quietly stopped reading would
+    // report a clean tick while sessions it never saw sat unwitnessed, which is
+    // the same lie as an empty report from a blind watcher. Loud, and the
+    // cursor stays where it was.
+    if (page >= maxPages) { exhausted = true; break; }
     const res = await stripe("/checkout/sessions", {
       limit,
       status: "complete",
@@ -199,6 +206,8 @@ export async function listCompleteSessions({ stripe, createdGte, limit = PAGE_LI
     if (!res?.has_more || data.length === 0) break;
     startingAfter = data.at(-1).id;
   }
+  if (exhausted)
+    throw new Error(`stripe-watch stopped after ${maxPages} pages (${out.length} sessions) and Stripe still had more — nothing was decided from a partial read. Sweep the backlog with a later --since, then let the timer resume.`);
   // Stripe lists newest-first; the ledger's order is arrival order.
   out.sort((a, b) => a.created - b.created || String(a.id).localeCompare(String(b.id)));
   return out;
@@ -258,7 +267,7 @@ export function resolveSession(s, { engine, entries, clone, households, now = Da
   const prior = receipts.find((r) => String(r.ref) === s.receipt_ref);
   if (prior) return { disposition: "already", ...s, pot: prior.pot, from: prior.from, date: prior.date, usd_recorded: prior.usd };
 
-  if (!s.session) return anomaly("malformed", "the session carries no id, so it has no ref", "a receipt's ref is its identity", "nothing — this is a bug in the reader or an unrecognised payload");
+  if (!s.session) return { ...s, ...anomaly("malformed", "the session carries no id, so it has no ref", "a receipt's ref is its identity", "nothing — this is a bug in the reader or an unrecognised payload") };
   if (!allowTestmode && !s.livemode)
     return { ...s, ...anomaly("testmode", "this is a TEST-MODE session", "a test payment must never become a real ledger row", "nothing — test money stays test money; if this is unexpected the box is holding a test key") };
   if (s.payment_status !== "paid")

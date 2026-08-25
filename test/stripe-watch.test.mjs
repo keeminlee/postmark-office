@@ -365,6 +365,24 @@ test("the cursor is INCLUSIVE, so two sessions in the same second cannot fall th
   assert.equal(acct.calls[0].params["created[gte]"], created);
 });
 
+test("the page cap REFUSES rather than truncating — a partial read decides nothing", async () => {
+  // LAW (tools/usdc-watch.mjs, on an unreachable chain, verbatim): "a silent
+  //     empty report from a blind watcher is indistinguishable from a quiet day,
+  //     and the second one is a lie." A watcher that quietly stopped paginating
+  //     tells the same lie about the sessions it never reached.
+  const created = 1_700_000_000;
+  const rows = [];
+  for (let i = 0; i < 20; i++) rows.push(sess({ id: `cs_test_${String(i).padStart(24, "0")}`, created: created + i }));
+  const acct = stripeAccount({ sessions: rows });
+  await assert.rejects(
+    () => listCompleteSessions({ stripe: acct.stripe, createdGte: created, limit: 2, maxPages: 3 }),
+    /stopped after 3 pages .* and Stripe still had more/,
+  );
+  // and the cap is not hit when the pages genuinely end
+  const all = await listCompleteSessions({ stripe: acct.stripe, createdGte: created, limit: 2, maxPages: 50 });
+  assert.equal(all.length, 20);
+});
+
 test("a Stripe read that fails throws, and no key means no reader at all", async () => {
   // Same law as usdc-watch's unreachable chain: "a silent empty report from a
   // blind watcher is indistinguishable from a quiet day, and the second one is

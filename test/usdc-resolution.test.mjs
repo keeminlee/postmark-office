@@ -390,6 +390,23 @@ test("a young unclaimed arrival is never sink-eligible, flag or no flag", async 
 // THE WHOLE TICK STILL WRITES NOTHING
 // ════════════════════════════════════════════════════════════════════════════
 
+test("a quiet tick answers in the SAME SHAPE as a busy one — the commonest tick is not a degraded report", async () => {
+  // A degraded shape is a second shape, and every reader of the first has to
+  // learn about it the hard way. The quiet branch once dropped `intake`,
+  // `generated_at` and the posture, and the CLI's very first line threw on the
+  // commonest tick there is: an empty ten minutes.
+  const town = seamTown();
+  const now = 2_000_000_000_000;
+  const head = 5000;
+  const c = chain({ head, logs: [] });
+  const quiet = await watch({ rpc: c.rpc, entries: entriesOf(town.repo), engine: ENGINE, clone: town.repo, cursor: head - MIN_CONF, now });
+  const busy = await watch({ rpc: chain({ head, logs: [transfer({ txhash: HASH_A, block: 100, usd: 40 })], blockTs: () => now }).rpc, entries: entriesOf(town.repo), engine: ENGINE, clone: town.repo, cursor: 99, now });
+  assert.deepEqual(Object.keys(quiet.report).sort(), Object.keys(busy.report).sort());
+  assert.deepEqual(quiet.report.intake, [INTAKE], "and it still says which address it was watching");
+  assert.equal(quiet.report.scanned, null);
+  assert.equal(quiet.cursor, head - MIN_CONF, "unchanged");
+});
+
 test("watch() decides and records nothing — the caller is the only thing that can write", async () => {
   const town = seamTown({ wallets: { paz: walletFile("paz", PAZ_WALLET) } });
   const now = 2_000_000_000_000;
