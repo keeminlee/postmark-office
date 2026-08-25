@@ -37,7 +37,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import {
-  buildJoinFiles, planRegistryJoin, serializeRegistry, REGISTRY_PATH,
+  buildJoinFiles, gangwayState, planRegistryJoin, serializeRegistry, REGISTRY_PATH,
 } from "./residency.mjs";
 import {
   ensureTownJournal, pendingRows, rowIsSettleable, townDrainCursor, TOWN_DRAIN_CURSOR, SETTLE_THRESHOLD,
@@ -46,6 +46,37 @@ import {
 const readJson = (clone, rel) => {
   try { return JSON.parse(readFileSync(join(clone, rel), "utf8")); } catch { return null; }
 };
+
+// ── THE GANGWAY REACHES THE SETTLEMENT ROAD ────────────────────────────────
+//
+// HARBOR/GANGWAY.md is the town's circuit breaker on ARRIVALS, and until this
+// it was wired only to the lane the cutover retires. tools/settle.mjs refuses
+// unless `state: open`, residency.mjs § requestResidency boards a berth instead
+// of joining while frozen — and this planner, the road that replaces both under
+// TOWN_SINGLE_LOG, never opened the file. So a founder could raise the gangway
+// and a crossing would settle join rows straight past it. The breaker was on
+// the old pipe.
+//
+// It is read from the SAME place, the same way, live per crossing: no cache, so
+// a founder commit flipping the state costs a pull and not a restart. Absent
+// file = open, which is residency.mjs's own answer — a town with no HARBOR has
+// no freeze.
+//
+// JOINS ONLY, AND THAT IS A CHOICE. The gangway is the ARRIVALS breaker: its
+// own law is about who comes ashore, and mail and paper have their own controls
+// (WORLD_FREEZE for ground acts, the standing ledger for a suspended resident,
+// the ferry's own envelope law for a letter). A frozen gangway that also
+// stopped the town's mail would be a second, undeclared policy hiding inside a
+// one-word file. So letters and paper acts drain through a raised gangway
+// exactly as they did.
+//
+// `waiting`, NEVER `skipped`. The two piles mean different things and the
+// difference is the whole fix: skipped rows are JUDGED AND DONE, waiting rows
+// are "not yet, and nothing is lost" (the tier line built that pile). A frozen
+// crossing is precisely the second one — the row is lawful, its household is
+// real, and the only thing wrong with it is the hour.
+export const GANGWAY_HELD = (state) =>
+  `the gangway is ${state} (HARBOR/GANGWAY.md) — the town is not taking arrivals, so this row settles when it lowers; nothing about it expires and nothing is lost by waiting`;
 
 /**
  * What this crossing WOULD settle, decided before anything is written.
@@ -58,13 +89,21 @@ const readJson = (clone, rel) => {
 export function planTownDrain(odb, clone, { date }) {
   const rows = pendingRows(odb);
   const registry = readJson(clone, REGISTRY_PATH) ?? { schema_version: 1, households: {} };
+  const gangway = gangwayState(clone);
+  const gangwayOpen = gangway === "open";
 
   const settle = [], waiting = [], skipped = [];
   const claimed = new Set();
+  let held = 0;
 
   for (const row of rows) {
     if (row.act !== "declare-household" && row.act !== "request-residency") { skipped.push({ row, why: `not a settling act: ${row.act}` }); continue; }
     if (!row.handle) { skipped.push({ row, why: "no handle on the row" }); continue; }
+
+    // THE BREAKER, before every other judgment about this row — a raised
+    // gangway is not a fact about the row, it is a fact about the town, and a
+    // row held by it should say so rather than say something truer of itself.
+    if (!gangwayOpen) { held += 1; waiting.push({ row, why: GANGWAY_HELD(gangway) }); continue; }
 
     // THE TIER LINE (the founder, 2026-08-24): auto-settle drains ONLY rows
     // anchored to a verified GitHub identity — the immutable id — or a human
@@ -101,7 +140,15 @@ export function planTownDrain(odb, clone, { date }) {
     if (plan?.registry) working = plan.registry;
   }
 
-  return { settle, waiting, skipped, plans, registry: working, head: rows.length ? rows[rows.length - 1].seq : townDrainCursor(odb) };
+  // `gangway.held` is a COUNT and not the state, because it is the count the
+  // cursor hangs off: a raised gangway over a crossing carrying no join rows
+  // holds nothing, and stalling the cursor there would stop the town's mail
+  // from ever being marked drained for the length of a freeze.
+  return {
+    settle, waiting, skipped, plans, registry: working,
+    gangway: { state: gangway, held },
+    head: rows.length ? rows[rows.length - 1].seq : townDrainCursor(odb),
+  };
 }
 
 /** The dated ledger line an appended registry row carries. APPEND ONLY. */

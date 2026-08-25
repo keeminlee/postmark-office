@@ -168,6 +168,7 @@ const utcDate = (ms) => new Date(ms).toISOString().slice(0, 10);
 export const drainLine = (r) =>
   `[town-drain] ${r.ran ? `date=${r.date} joins=${r.counts.join} updates=${r.counts.update} letters=${r.counts.letter}`
     + ` head=${r.head} cursor=${r.cursor} commit=${r.commit ?? "none"}`
+    + (r.gangway_held ? ` GANGWAY=${r.gangway}(${r.gangway_held} held, cursor still)` : "")
     + (r.bounced ? ` BOUNCED=${r.bounced}` : "")
     + (r.refused ? ` REFUSED=${r.refused}` : "")
     : `skipped — ${r.skipped}`} took=${r.took_ms}ms`;
@@ -247,9 +248,43 @@ export function runTownDrain(odb, {
   if (plan.head !== head)
     throw new Error(`the town log moved during the drain: the invoker read head ${head}, the join plan read ${plan.head} — the cursor is set from this and must not be guessed`);
 
+  // ── THE GANGWAY HOLDS THE CURSOR, NOT JUST THE ROWS ──────────────────────
+  //
+  // planTownDrain now reads HARBOR/GANGWAY.md and files every join row under
+  // `waiting` while the gangway is up (see its § the gangway reaches the
+  // settlement road). That is half the fix. The other half is here, and without
+  // it the first half is worse than nothing: `waiting` is a pile in a REPORT,
+  // and this function advances the cursor to `head` — the last PENDING row —
+  // regardless of which pile a row landed in. A held join would be reported as
+  // waiting and then walked past forever, which is losing a household while
+  // printing the word that promises you did not.
+  //
+  // So while the gangway holds at least one join row, the cursor does not move
+  // at all. The rows stay pending, and the crossing after the gangway lowers
+  // settles them in their own order, off the same log.
+  //
+  // WHAT THAT COSTS, stated because the next person to touch this needs it.
+  // Letters and paper acts on the same crossing still drain (the scope call —
+  // the gangway is the arrivals breaker), and with the cursor held they are
+  // read again on the next crossing. Paper acts replay to the same bytes and
+  // penCommit returns null for an empty diff. A letter whose outbox file still
+  // stands is caught by the resume check below (`already`). A letter the ferry
+  // has ALREADY DELIVERED is the one that is not: its outbox file is gone, so
+  // the drain writes it again — and the FERRY bounces it, because dedupe is
+  // rebuilt from WHITE_PAGES/mail-ledger.md at every crossing and `classify`
+  // answers "duplicate id". Bounced, never delivered twice. That is a backstop
+  // and not a design: the clean fix is per-row settlement rather than one
+  // scalar cursor, which is a bigger change than a breaker deserved, and the
+  // same shape as the tier line's own unfixed gap (a `waiting` row with no
+  // gangway raised IS still walked past today — named here, not fixed here).
+  const gangwayHold = plan.gangway.held > 0;
+  const gangwayFields = gangwayHold
+    ? { gangway: plan.gangway.state, gangway_held: plan.gangway.held }
+    : {};
+
   if (dryRun)
     return done({ ran: true, dry_run: true, date: stamp, drained: 0, counts, head,
-      cursor: townDrainCursor(odb), commit: null,
+      cursor: townDrainCursor(odb), commit: null, ...gangwayFields,
       settled: plan.settle.map((r) => r.handle), waiting: plan.waiting.map(({ row, why }) => ({ seq: row.seq, handle: row.handle, why })),
       skipped_rows: plan.skipped.filter(({ row }) => row.cls === "join").map(({ row, why }) => ({ seq: row.seq, handle: row.handle, why })),
       updates: [], letters: [], remaining: rows.length });
@@ -323,12 +358,12 @@ export function runTownDrain(odb, {
     letters.push({ seq: row.seq, id, file, ...entry });
   }
 
-  // ── the cursor, LAST ─────────────────────────────────────────────────────
-  advanceTownCursor(odb, head);
+  // ── the cursor, LAST — and not at all while the gangway holds a row ──────
+  if (!gangwayHold) advanceTownCursor(odb, head);
 
   return done({
     ran: true, date: stamp, drained: rows.length, counts, head,
-    cursor: townDrainCursor(odb), commit,
+    cursor: townDrainCursor(odb), commit, ...gangwayFields,
     settled: plan.plans.map(({ row }) => row.handle),
     waiting: plan.waiting.map(({ row, why }) => ({ seq: row.seq, handle: row.handle, why })),
     // JOIN ROWS ONLY. planTownDrain reads the WHOLE pending log and files every
@@ -341,6 +376,11 @@ export function runTownDrain(odb, {
       .filter(({ row }) => row.cls === "join")
       .map(({ row, why }) => ({ seq: row.seq, handle: row.handle, why })),
     updates, letters, bounced,
-    remaining: Math.max(0, townJournalHead(odb) - head),
+    // FROM THE CURSOR, NOT FROM `head`. The two are the same integer on every
+    // crossing that advances, and they part company on one that does not: a
+    // held crossing leaves rows at or below `head` still pending, and counting
+    // from `head` would report `remaining: 0` over three joins that are still
+    // sitting there.
+    remaining: Math.max(0, townJournalHead(odb) - townDrainCursor(odb)),
   });
 }
