@@ -236,12 +236,20 @@ test("GET /mail/{handle} honors since/until, and pages", async () => {
   assert.notEqual(rest.letters[0].id, page.letters[0].id, "offset walked, it did not repeat");
 });
 
-test("GET /doorstep/{h} serves the v0.2 bundle over HTTP", async () => {
+test("GET /doorstep/{h} serves the v0.8 BUNDLE over HTTP — the same one MCP serves", async () => {
   const d = await (await get("/doorstep/wright")).json();
   assert.equal(d.pending_outbox, 1);
   assert.equal(d.town.deliveries, 3);
-  assert.equal(d.prs, null);
-  assert.equal(d.stamps, 4, "doorstep carries the resident's stamp balance");
+  // `prs` retired with the bundle refactor: it was always null here, because
+  // the office never calls GitHub. A cached reader gets the pointer, not silence.
+  assert.equal(d.prs, undefined);
+  assert.match(d.moved.prs, /static doorstep bundle/);
+  // The stamps SEGMENT — the resident's public record, and it names the read it
+  // is. It used to be a bare balance integer; the four tenses were one call
+  // away and the doorstep showed one of them without saying which.
+  assert.equal(d.stamps.serves, "town.stamps");
+  assert.equal(d.stamps.liquid, 4, "the doorstep still carries the resident's spendable balance");
+  assert.deepEqual(d.segments, ["mail", "awaiting", "stamps", "bulletin", "town_pulse", "window"]);
 });
 
 test("GET /stamps roster + GET /stamps/{h}; zero for a stampless handle", async () => {

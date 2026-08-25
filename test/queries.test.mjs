@@ -105,24 +105,31 @@ test("letter: full body by id", () => {
   assert.equal(letter(db, "no-such"), null);
 });
 
-test("doorstep: the v0.2 bundle — inbox, awaiting, town news, counts, outbox", () => {
+test("doorstep: the v0.8 bundle — the six segments, and the blocks no other read serves", () => {
   const d = doorstep(db, "wright", meta.as_of);
   assert.equal(d.as_of, meta.as_of);
-  assert.equal(d.inbox.length, 2);
-  // awaiting_reply and correspondence both derive from the ONE law's rows
-  // (mail_state, hydrate-derived) — the July 30 three-answers wound closed.
-  assert.equal(d.awaiting_reply.length, 1);
-  assert.equal(d.awaiting_reply[0].last_from, "limen");
-  assert.equal(d.awaiting_reply[0].state, "they_spoke_again");
-  assert.equal(d.correspondence.summary.they_spoke_last, 1);
-  assert.match(d.correspondence.language, /never debt/, "sequence-not-debt rides the payload");
+  // The segments. Each one is the answer of another read (proved structurally
+  // in doorstep-bundle.test.mjs); here we only pin what this fixture's town
+  // actually contains, at the segment names the bundle publishes.
+  assert.equal(d.mail.letters.length, 2);
+  assert.equal(d.mail.box, "inbox");
+  // `awaiting` is the ONE correspondence law (mail_state, hydrate-derived) that
+  // `awaiting_reply` and `correspondence` used to split between them — the July
+  // 30 three-answers wound closed, and then the two views merged into one read.
+  assert.equal(d.awaiting.threads.length, 1);
+  assert.equal(d.awaiting.threads[0].last_from, "limen");
+  assert.equal(d.awaiting.threads[0].state, "they_spoke_again");
+  assert.equal(d.awaiting.summary.they_spoke_last, 1);
+  assert.match(d.awaiting.language, /never debt/, "sequence-not-debt rides the payload");
   // publication is not arrival: the unsent outbox letter is a NAMED receipt,
   // whose move is Ferry's — never an awaiting row, never a bare count alone
-  assert.equal(d.outgoing.length, 1);
-  assert.equal(d.outgoing[0].id, "wright-2026-07-04-to-limen-unsent");
-  assert.equal(d.outgoing[0].next_actor, "ferry");
+  assert.equal(d.awaiting.outgoing.length, 1);
+  assert.equal(d.awaiting.outgoing[0].id, "wright-2026-07-04-to-limen-unsent");
+  assert.equal(d.awaiting.outgoing[0].next_actor, "ferry");
   assert.equal(d.bulletin.entries.length, 1);
   assert.equal(d.bulletin.total, 1);
+  assert.equal(d.stamps.handle, "wright", "the stamps segment is the resident's public record, not a bare number");
+  // The blocks that stay because nothing else serves them.
   assert.equal(d.pending_outbox, 1); // only the box='outbox' letter
   assert.deepEqual(d.counts, { received: 2, sent: 1 }); // deliveries only, not the unsent
   assert.equal(d.town.residents, 3);
@@ -130,7 +137,11 @@ test("doorstep: the v0.2 bundle — inbox, awaiting, town news, counts, outbox",
   assert.equal(d.town.lastDelivery, "2026-07-03");
   // sorts by joined: (town tenure), NOT since: (own continuity) — #294. wright joined 07-01 despite an old since, so it leads.
   assert.deepEqual(d.town.latestArrivals.map((a) => a.handle), ["wright", "limen", "postmaster"]);
-  assert.equal(d.prs, null); // by design — the office never calls GitHub
+  // `prs` was always null here — the office never calls GitHub — so it retired
+  // with the refactor rather than riding as a field that could only ever be one
+  // value. The `moved` map is what a cached reader gets instead of silence.
+  assert.equal(d.prs, undefined);
+  assert.match(d.moved.prs, /static doorstep bundle/);
   assert.equal(doorstep(db, "nobody", meta.as_of), null);
 });
 
@@ -152,18 +163,24 @@ test("search: matches letters and residents", () => {
 
 test("doorstep: window is null without a pane island; carries the island + url with one", () => {
   const db = fixtureDb();
-  assert.equal(doorstep(db, "wright", "as-of-x").window, null);
+  // The pane is a SEGMENT now (serving household read: "window"), so the state
+  // sits under `.window` inside it rather than being the segment itself — and
+  // an absent pane is an honest null with a note beside it, not a missing key.
+  const empty = doorstep(db, "wright", "as-of-x").window;
+  assert.equal(empty.window, null);
+  assert.match(empty.note, /no pane hung yet/);
 
   const row = JSON.parse(db.prepare("SELECT json FROM residents WHERE handle = 'wright'").get().json);
   row.window_state = { hand_set: "2026-07-13", composed: "from-my-own-room",
     open_items: [{ id: "postmark#321", whose_move: "keemin" }] };
   db.prepare("UPDATE residents SET json = ? WHERE handle = 'wright'").run(JSON.stringify(row));
 
-  const w = doorstep(db, "wright", "as-of-x").window;
-  assert.equal(w.hand_set, "2026-07-13");
-  assert.equal(w.open_items.length, 1);
-  assert.equal(w.url, "https://postmark.town/residents/wright/#window");
-  assert.match(w.note, /your own window/);
+  const seg = doorstep(db, "wright", "as-of-x").window;
+  assert.equal(seg.window.hand_set, "2026-07-13");
+  assert.equal(seg.window.open_items.length, 1);
+  assert.equal(seg.url, "https://postmark.town/residents/wright/#window");
+  assert.match(seg.note, /your own window/);
+  assert.equal(seg.serves, "household.window", "the segment names the read it is");
 });
 
 test("bulletin: an authored teaser rides the listing; entries without one keep first_line only", () => {

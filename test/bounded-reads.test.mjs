@@ -273,51 +273,75 @@ test("residentList stays WHOLE — the bound lives at the door, not in the deriv
 
 // ── the doorstep ────────────────────────────────────────────────────────────
 
+// THE BLOCK NAMES MOVED, THE LAWS DID NOT (2026-08-25, the bundle refactor).
+// `correspondence` and `awaiting_reply` were two views of one ledger; they are
+// one read now — `household read: "mail", view: "awaiting"` — and the doorstep
+// carries it as its `awaiting` segment. Each assertion below is the same
+// assertion at the new address; the bundle's own structural falsifier lives in
+// test/doorstep-bundle.test.mjs.
 test("doorstep: the conversation ledger is bounded and the summary counts the whole of it", () => {
   const d = doorstep(db, "r000", AS_OF);
-  assert.equal(d.correspondence.conversations.length, 20);
-  assert.equal(d.correspondence.conversations_total, 30);
-  assert.notEqual(d.correspondence.conversations_total, d.correspondence.conversations.length,
+  assert.equal(d.awaiting.conversations.length, 20);
+  assert.equal(d.awaiting.conversations_total, 30);
+  assert.notEqual(d.awaiting.conversations_total, d.awaiting.conversations.length,
     "THE FALSIFIER: the summary beside an uncut list was decoration; beside a cut one it is information");
-  assert.equal(d.correspondence.conversations_complete, false);
-  assert.equal(d.correspondence.conversations_next_offset, 20);
+  assert.equal(d.awaiting.conversations_complete, false);
+  assert.equal(d.awaiting.conversations_next_offset, 20);
   // the law's own numbers ride through untouched
-  assert.equal(d.correspondence.summary.last_word_yours, 25);
-  assert.match(d.correspondence.language, /sequence, never debt/);
+  assert.equal(d.awaiting.summary.last_word_yours, 25);
+  assert.match(d.awaiting.language, /sequence, never debt/);
 });
 
-test("doorstep: awaiting_reply is DERIVED FROM THE WHOLE LEDGER, then bounded", () => {
+test("doorstep: the awaiting threads are DERIVED FROM THE WHOLE LEDGER, then bounded", () => {
   // The five threads awaiting a reply sit at conversation indices 25–29 —
   // beyond the 20-row render bound. Deriving from the slice would answer "no
   // threads awaiting your reply" to someone with five of them. That is the
   // children-reported-as-neighbours bug in a new mouth:
   // "A budget decides how much gets said; it must not decide what is true."
   const d = doorstep(db, "r000", AS_OF);
-  assert.equal(d.awaiting_reply_total, 5);
-  assert.equal(d.awaiting_reply.length, 5);
-  assert.ok(d.awaiting_reply.every((a) => a.state === "new_inbound"));
-  const rendered = new Set(d.correspondence.conversations.map((c) => c.conversation));
-  assert.ok(d.awaiting_reply.every((a) => !rendered.has(a.thread_of)),
+  assert.equal(d.awaiting.threads_total, 5);
+  assert.equal(d.awaiting.threads.length, 5);
+  assert.ok(d.awaiting.threads.every((a) => a.state === "new_inbound"));
+  const rendered = new Set(d.awaiting.conversations.map((c) => c.conversation));
+  assert.ok(d.awaiting.threads.every((a) => !rendered.has(a.thread_of)),
     "every awaiting thread is OUTSIDE the rendered page — which is the whole point of this test");
 });
 
 test("doorstep: the correspondence cursor walks to the end and stops", () => {
   const d = doorstep(db, "r000", AS_OF, { conversationsOffset: 20 });
-  assert.equal(d.correspondence.conversations.length, 10);
-  assert.equal(d.correspondence.conversations_offset, 20);
-  assert.equal(d.correspondence.conversations_complete, true);
-  assert.equal(d.correspondence.conversations_next_offset, undefined);
-  assert.equal(d.correspondence.conversations_total, 30, "the total does not shrink as you walk");
+  assert.equal(d.awaiting.conversations.length, 10);
+  assert.equal(d.awaiting.conversations_offset, 20);
+  assert.equal(d.awaiting.conversations_complete, true);
+  assert.equal(d.awaiting.conversations_next_offset, undefined);
+  assert.equal(d.awaiting.conversations_total, 30, "the total does not shrink as you walk");
 });
 
 test("doorstep: the bulletin is a teaser with a total, newest first", () => {
   const d = doorstep(db, "r000", AS_OF);
-  assert.equal(d.bulletin.entries.length, 10);
+  // Three on the morning page now, not ten: the bundle's bulletin segment IS
+  // `town read: "bulletin", limit: 3` — a teaser and a pointer, per the
+  // refactor. `read_bulletin` with no arguments still answers the whole board.
+  assert.equal(d.bulletin.entries.length, 3);
   assert.equal(d.bulletin.total, 15);
   assert.notEqual(d.bulletin.total, d.bulletin.entries.length);
-  assert.equal(d.bulletin.more, 5);
+  assert.equal(d.bulletin.more, 12);
   assert.match(d.bulletin.more_note, /read_bulletin/);
   assert.equal(d.bulletin.entries[0].slug, "2026-07-15-notice-14", "newest first — the tail is what a teaser drops");
+});
+
+test("bulletinTeaser: the offset the more_note names actually walks the board", () => {
+  // "A cap must be visible" has a sibling: a read-more a caller cannot take is
+  // a pointer at a door that does not open. The note said the whole listing was
+  // one read away and meant fetching all fifteen; now it names an offset.
+  const first = bulletinTeaser(db, { limit: 3 });
+  assert.equal(first.next_offset, 3);
+  const second = bulletinTeaser(db, { limit: 3, offset: first.next_offset });
+  assert.equal(second.offset, 3);
+  assert.equal(second.total, 15, "the total does not shrink as you walk");
+  assert.notEqual(second.entries[0].slug, first.entries[0].slug, "the second page is a different page");
+  const last = bulletinTeaser(db, { limit: 3, offset: 12 });
+  assert.equal(last.complete, true);
+  assert.equal(last.next_offset, undefined, "a cursor is null exactly when there is nothing more");
 });
 
 test("bulletinTeaser: a board shorter than the bound reports itself complete", () => {

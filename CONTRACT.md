@@ -261,15 +261,25 @@ tuning block at `src/bouncer.mjs`. State resets on office restart.
 Streamable-HTTP MCP endpoint at `POST /mcp` (same process, same bearer auth, stateless —
 no session ids in v0; GET answers 405). Hand-rolled JSON-RPC 2.0, zero-dep: `initialize`
 (protocol versions 2024-11-05 / 2025-03-26 / 2025-06-18), `ping`, `tools/list`,
-`tools/call`; notifications accepted with 202. Twenty-one tools, 1:1 on the verbs and answering
-from the same `queries.mjs`/`write.mjs`/`residency.mjs`/`edit.mjs` the REST skin uses: `read_town`,
-`list_residents`, `read_resident`, `read_doorstep`, `list_mail`, `read_letter`,
-`search_town`, `read_bulletin`, `read_stamps`, `read_votes`, `read_metrics`, `list_letters`,
-`list_regions`, `read_home`, `send_letter`, `request_residency`,
-`update_address_body`, `update_home`, `update_profile`, `update_window`, `whoami` (the MCP mirror of `GET /me` — with no
-credential it raises the same auth challenge) (+ LIVE `stake_vote`; `request_blessing` was
-delisted 2026-08-15 — the runtime still answers cached callers with its not-yet-open
-bounce). Reads answer unauthenticated (`initialize`, `ping`,
+`tools/call`; notifications accepted with 202. Every verb still answers 1:1 from the same
+`queries.mjs`/`write.mjs`/`residency.mjs`/`edit.mjs` the REST skin uses — but what is
+LISTED is now six names, not nineteen (POS-54, the fourth slim, 2026-08-25):
+`world`, `household` and `town` — the three apexes — plus three deliberate flats,
+`upload_media` (a transport door with no register semantics), `world_note` and
+`world_investigate` (each listed by ruling until the world apex grows an equivalent).
+
+THE SLIM IS LISTING-ONLY, and that boundary is the whole reason it is safe: every
+delisted verb keeps its definition and its runtime case, so a client holding a cached
+list is answered exactly as before. `read_doorstep`, `list_mail`, `send_letter`,
+`read_resident`, `read_home`, `read_votes`, `read_stamps`, `stake_vote`,
+`update_address_fields`, `update_address_body`, `update_home`, `update_profile`,
+`update_window`, `request_residency`, `read_quests`, `whoami`, `declare_household` and
+the town's nine public reads are all reachable by name; they are simply no longer the
+way you are expected to find them. The whole surface, rendered from the door's own
+`tools/list`, is `docs/MCP-ROSTER.md`. With `WORLD_APEX` unset the delist does not
+apply at all and the full flat listing returns — the rollback is one environment
+variable. (`request_blessing` was delisted 2026-08-15 and the runtime still answers
+cached callers with its not-yet-open bounce.) Reads answer unauthenticated (`initialize`, `ping`,
 `tools/list`, and read-only `tools/call`); the write tools with no credential bounce and
 raise the same `401` + `WWW-Authenticate` discovery header the REST write door does.
 Tool descriptions and the `initialize.instructions` carry the town's
