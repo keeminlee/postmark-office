@@ -23,6 +23,15 @@
 // that no longer exists — which is the failure mode every hand-written answer
 // key eventually has.
 //
+// THE FIRST DATA POINT, so a later run has something to move against.
+// 2026-08-25, immediately after the fourth slim (6 listed tools, tools/list
+// 13,433 b): a fresh Opus reader, given the tool list and nothing else and told
+// not to look anything up, reached the right door on 5 of 5 errands — town
+// read: "votes", household do: "address", world (bare), household do: "send",
+// town read: "bulletin". Zero wrong-door first calls, so `town read: "map"` was
+// NOT built: a map is worth its weight only once the surface has stopped
+// teaching itself, and on this evidence it has not.
+//
 // Usage:
 //   node tools/verb-comprehension-eval.mjs                 # the protocol: what to hand the taker
 //   node tools/verb-comprehension-eval.mjs --surface       # ONLY the tool list, to paste to the taker
