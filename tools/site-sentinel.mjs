@@ -87,6 +87,26 @@
 //                 health: these two workflows cancel each other by concurrency
 //                 group all day, and the first version of this probe called that
 //                 green and reported the 08-25 fire itself as fine.
+//  6. WATCHERS   — the box's own timers are still running, read off the last-ran
+//                 artifact each one leaves behind. Nothing watched the watchers
+//                 before this. Note that the rehydrate tick is watched by
+//                 office.db's MTIME and not by the as-of header: the header
+//                 legitimately holds still on a quiet town, so it cannot tell a
+//                 dead tick from a quiet one, and the mtime can.
+//
+// ── THE ESCALATION LADDER ───────────────────────────────────────────────────
+//
+// The board is written EVERY tick, always, whatever the verdicts. The doorbell
+// is separate and gated: `pingAfterMs` lets a problem stand — fully visible on
+// the board the whole time — before the founder's webhook fires, so a fault
+// that clears itself inside the window never wakes anyone. Default 0, which is
+// "ring on the transition".
+//
+// The founder's question was "do I get pinged every 10 minutes while asleep?"
+// and the answer is no, for a reason independent of that knob: alerting is
+// EDGE-triggered. One ping when a probe goes bad, one reminder every twelve
+// hours if it stays bad, one message when it recovers. There is no code path
+// that pings per tick.
 //
 // ── THE STALENESS CLOCK, AND WHY IT IS ANCHORED WHERE IT IS ─────────────────
 //
@@ -109,7 +129,7 @@
 //   node tools/site-sentinel.mjs [--state <state.json>] [--out <status.json>]
 //                                [--json] [--dry-run] [--now <iso>]
 
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -160,11 +180,52 @@ export const CONFIG = {
   },
   dailySlack: 90 * MINUTE,
 
+  // ── the watchers, watched ───────────────────────────────────────────────
+  //
+  // Nothing watched the watchers until now. Each of these box timers leaves a
+  // LAST-RAN artifact behind, and an artifact that has stopped moving is the
+  // only honest evidence that a scheduled job is still scheduled.
+  //
+  // `stamp: "mtime"` vs a JSON field is per-artifact, not a preference: the
+  // rehydrate tick writes no state file of its own, but office-tick.sh builds
+  // `office.db.new` and renames it over `office.db` on EVERY tick, so that
+  // file's mtime is a true last-ran stamp. It is also strictly better than the
+  // as-of header for this question — the header legitimately holds still when
+  // the town has not changed, so it cannot tell "the tick is dead" from "the
+  // town is quiet". The mtime can.
+  //
+  // `optional` means "not installed yet is not a finding" — stripe-watch does
+  // not exist today, and a watch that alarms about an absence nobody promised
+  // is the noise that gets a channel muted.
+  watchers: [
+    { key: "watch_rehydrate", label: "the office rehydrate tick", dir: "/srv/postmark-office", path: "/srv/postmark-office/office.db", stamp: "mtime", cadenceMs: 15 * MINUTE },
+    { key: "watch_usdc", label: "usdc-watch", dir: "/srv/postmark-usdc", path: "/srv/postmark-usdc/state.json", stamp: "last_run", cadenceMs: 10 * MINUTE },
+    { key: "watch_harbor", label: "harbor-watch", dir: "/srv/postmark-harbor", path: "/srv/postmark-harbor/harbor-snapshot.json", stamp: "generated_at", cadenceMs: 15 * MINUTE },
+    { key: "watch_stripe", label: "stripe-watch", dir: "/srv/postmark-stripe", path: "/srv/postmark-stripe/state.json", stamp: "last_run", cadenceMs: 10 * MINUTE, optional: true },
+  ],
+  // A watcher gets three of its own cadences before it is called stale — one
+  // missed run is a jittered timer or a slow network, three is a pattern.
+  watcherStaleMultiple: 3,
+
   requestTimeoutMs: 20_000,
   // One reminder every twelve hours while a probe stays bad. Not per tick —
   // a channel that pings every ten minutes is a channel the reader mutes, and a
   // muted channel is exactly the silent failure this file exists to end.
   reminderMs: 12 * HOUR,
+  // ── the escalation ladder ───────────────────────────────────────────────
+  //
+  // How long a problem may STAND, visible on the board the whole time, before
+  // the founder's webhook fires. Zero means the ping rides the transition, which
+  // is the behaviour built first and the default kept.
+  //
+  // This is the knob behind the founder's actual question — "do I get pinged
+  // every 10 minutes while asleep?" — and the answer has two independent halves,
+  // both of which must stay true: NO, because alerting is edge-triggered (one
+  // ping per transition, a reminder only every 12h, one recovery message); and
+  // separately, raising this above zero means a problem that fixes itself inside
+  // the window never pings at all, while still having been on the board from the
+  // first tick. The board is not gated by this. Only the doorbell is.
+  pingAfterMs: 0,
   userAgent: "postmark-site-sentinel",
 };
 
@@ -330,6 +391,75 @@ export function classifyDaily({ fingerprint, servedHtml, sourceCommittedAtMs = n
   };
 }
 
+// ── §6 the watchers, watched ────────────────────────────────────────────────
+
+/**
+ * Is a scheduled job still running on its schedule?
+ *
+ * The three states are deliberately distinguished, because collapsing them is
+ * how this probe would lie in either direction:
+ *
+ *   dir missing      — this is not the box, or the watch was never installed.
+ *                      UNKNOWN, or INFO for one declared `optional`. Alarming
+ *                      here would make every dev-machine run red and would
+ *                      alarm about an absence nobody promised.
+ *   dir, no artifact — the watch is INSTALLED and has never produced anything.
+ *                      That is a real finding and it is loud.
+ *   artifact, old    — it ran once and stopped. The finding this probe exists
+ *                      for, and the one nothing on the box could see before.
+ *
+ * The dir/file split is what makes the first two separable at all, and it costs
+ * one extra stat.
+ */
+export function classifyWatcher({ dirExists, fileExists, stampMs = null, nowMs, cadenceMs, multiple = 3, optional = false, path, cadenceLabel = null }) {
+  const every = cadenceLabel ?? humanDuration(cadenceMs);
+  if (!dirExists) {
+    return optional
+      ? { verdict: "INFO", reason: `not installed on this box (no ${path}) — declared here so it is watched the day it exists, not alarmed about until then` }
+      : { verdict: "UNKNOWN", reason: `no ${path} and no directory for it — either this is not the box or the watch is not installed` };
+  }
+  if (!fileExists) {
+    return { verdict: "STALE", reason: `installed but has never written ${path} — it is scheduled and has produced nothing` };
+  }
+  if (stampMs == null) {
+    return { verdict: "UNKNOWN", reason: `${path} exists but carries no readable timestamp, so its last run cannot be dated` };
+  }
+  const age = nowMs - stampMs;
+  const limit = cadenceMs * multiple;
+  if (age <= limit) return { verdict: "OK", reason: `last ran ${humanDuration(age)} ago (runs every ${every})` };
+  return {
+    verdict: "STALE",
+    reason: `last ran ${humanDuration(age)} ago but runs every ${every} — it has missed at least ${Math.floor(age / cadenceMs)} runs, so the job has stopped rather than slipped`,
+  };
+}
+
+/**
+ * The last-ran instant from an artifact: a named JSON field, or the file's own
+ * mtime when the job writes no timestamp of its own.
+ *
+ * Falls back to mtime when a named field is absent or unparseable rather than
+ * giving up — a file that is being rewritten is running, whatever it says
+ * inside — but never the other way round: an artifact with a field that says it
+ * is old is old, even if something else touched the file.
+ */
+export function readWatcherStamp(w, { statSync, readFileSync: read } = {}) {
+  let dirExists = false, fileExists = false, stampMs = null;
+  try { dirExists = statSync(w.dir).isDirectory(); } catch { dirExists = false; }
+  if (!dirExists) return { dirExists, fileExists, stampMs };
+
+  let mtimeMs = null;
+  try { mtimeMs = statSync(w.path).mtimeMs; fileExists = true; } catch { return { dirExists, fileExists: false, stampMs: null }; }
+
+  if (w.stamp && w.stamp !== "mtime") {
+    try {
+      const v = JSON.parse(read(w.path, "utf8"))?.[w.stamp];
+      const parsed = v == null ? NaN : Date.parse(v);
+      if (Number.isFinite(parsed)) return { dirExists, fileExists, stampMs: parsed };
+    } catch { /* fall through to mtime */ }
+  }
+  return { dirExists, fileExists, stampMs: mtimeMs };
+}
+
 // ── §5 the workflows: the second opinion ────────────────────────────────────
 
 // Conclusions that carry no verdict about the workflow's health. `cancelled`
@@ -430,27 +560,39 @@ export const BAD = new Set(["DOWN", "STALE"]);
  * are not site outages, and alarming on them teaches the reader to ignore the
  * channel.
  */
-export function transition({ prev = null, next, nowMs, reminderMs = CONFIG.reminderMs }) {
-  const alertable = BAD.has(next.verdict);
+export function transition({ prev = null, next, nowMs, reminderMs = CONFIG.reminderMs, pingAfterMs = CONFIG.pingAfterMs }) {
   const wasBad = prev != null && BAD.has(prev.verdict);
-  const since = wasBad && prev.verdict === next.verdict ? prev.since : nowMs;
+  const sameBad = wasBad && prev.verdict === next.verdict;
+  // A DIFFERENT failure is a new problem and has not been announced, so its
+  // clock and its announced-flag both start over.
+  const since = sameBad ? prev.since : nowMs;
+  const lastAlertAt = sameBad ? (prev.last_alert_at ?? null) : null;
+  const wasAnnounced = wasBad && prev.last_alert_at != null;
 
   let alert = null;
-  if (alertable) {
-    if (!wasBad) alert = { kind: "onset", verdict: next.verdict, reason: next.reason, since };
-    else if (prev.verdict !== next.verdict) alert = { kind: "changed", verdict: next.verdict, reason: next.reason, since, from: prev.verdict };
-    else if (nowMs - (prev.last_alert_at ?? 0) >= reminderMs) alert = { kind: "reminder", verdict: next.verdict, reason: next.reason, since };
-  } else if (wasBad && next.verdict === "OK") {
+  if (BAD.has(next.verdict)) {
+    if (!sameBad && wasAnnounced) {
+      // The reader is already awake to this probe; a change of failure reaches
+      // them immediately rather than serving another hold.
+      alert = { kind: "changed", verdict: next.verdict, reason: next.reason, since, from: prev.verdict };
+    } else if (lastAlertAt == null) {
+      // Held, and visible on the board the whole time. With pingAfterMs at its
+      // default of 0 this fires on the very tick the probe goes bad.
+      const heldFor = nowMs - since;
+      if (heldFor >= pingAfterMs) alert = { kind: "onset", verdict: next.verdict, reason: next.reason, since, heldFor };
+    } else if (nowMs - lastAlertAt >= reminderMs) {
+      alert = { kind: "reminder", verdict: next.verdict, reason: next.reason, since };
+    }
+  } else if (wasBad && next.verdict === "OK" && wasAnnounced) {
+    // Recovery is announced only if the problem was. Taking back something
+    // nobody was told about is a second unwanted ping, not courtesy.
     alert = { kind: "recovered", verdict: "OK", reason: next.reason, since: prev.since, downFor: nowMs - prev.since };
   }
 
-  const state = {
-    verdict: next.verdict,
-    reason: next.reason,
-    since,
-    last_alert_at: alert ? nowMs : (alertable && wasBad ? prev.last_alert_at ?? null : null),
+  return {
+    alert,
+    state: { verdict: next.verdict, reason: next.reason, since, last_alert_at: alert ? nowMs : lastAlertAt },
   };
-  return { alert, state };
 }
 
 // ── the message ─────────────────────────────────────────────────────────────
@@ -473,6 +615,7 @@ export function composeMessage({ alerts, board, nowIso }) {
   for (const { label, alert } of bad) {
     const tail = alert.kind === "reminder" ? ` Still bad after ${humanDuration(Date.parse(nowIso) - alert.since)}; this is the twelve-hourly reminder.`
       : alert.kind === "changed" ? ` (it was ${alert.from} before this)`
+      : alert.heldFor > 0 ? ` It has stood for ${humanDuration(alert.heldFor)}, which is the configured wait before the doorbell rings.`
       : "";
     lines.push(`${alert.verdict} — ${label}: ${alert.reason}.${tail}`);
   }
@@ -487,7 +630,7 @@ export function composeMessage({ alerts, board, nowIso }) {
 
 // ── the board ───────────────────────────────────────────────────────────────
 
-export function composeBoard({ probes, nowIso, alerting }) {
+export function composeBoard({ probes, nowIso, alerting, expectedEverySeconds = 600 }) {
   const counts = { OK: 0, DOWN: 0, STALE: 0, INFO: 0, UNKNOWN: 0 };
   for (const p of probes) counts[p.verdict] = (counts[p.verdict] ?? 0) + 1;
   const worst = counts.DOWN ? "DOWN" : counts.STALE ? "STALE" : counts.UNKNOWN ? "DEGRADED" : "OK";
@@ -503,6 +646,21 @@ export function composeBoard({ probes, nowIso, alerting }) {
     // The one line the operator round reads. Kept as its own field so a reader
     // never has to reduce the array themselves and get a different answer.
     headline: `${worst} · ${summary} (${nowIso})`,
+    // For an OFF-BOX watcher of this watcher. The sentinel rides the same box
+    // as the site, so host death is silent to it — see the runbook. A service
+    // that can compare a timestamp reads `generated_at` against
+    // `expected_every_seconds` and knows whether the sentinel itself has
+    // stopped.
+    //
+    // Said plainly because it is the easiest thing to get wrong: a STATIC COPY
+    // OF THIS FILE STILL SAYS `"status": "OK"`. Keyword-matching on it does not
+    // detect a dead box. The uptime check that does is an off-box GET of
+    // https://postmark.town/ expecting 200, which needs nothing from this file.
+    heartbeat: {
+      generated_at: nowIso,
+      expected_every_seconds: expectedEverySeconds,
+      note: "if generated_at is older than a few multiples of expected_every_seconds, the sentinel itself has stopped. A stale copy of this board still reads OK — for host death, probe https://postmark.town/ directly from off the box.",
+    },
     alerting,
     counts,
     probes,
@@ -590,6 +748,11 @@ export async function postDiscord(webhook, content, { fetchImpl = fetch } = {}) 
 export async function tick({
   fetchImpl = fetch,
   exec = execFileSync,
+  // The watcher section is the one that reads the BOX rather than the network,
+  // so its two filesystem calls are injectable like everything else — a
+  // falsifier can stage a dead timer without owning /srv.
+  statImpl = statSync,
+  readImpl = readFileSync,
   state = {},
   nowMs = Date.now(),
   config = CONFIG,
@@ -681,12 +844,21 @@ export async function tick({
     probes.push({ key: "workflow_read", label: "the site's workflow conclusions", kind: "workflow", verdict: "UNKNOWN", reason: `GitHub did not answer: ${e.message}` });
   }
 
+  // §6 — the watchers, watched. Local files, so this is the one section that
+  // reads the box rather than the network; off-box it reports UNKNOWN by
+  // design rather than inventing an outage.
+  for (const w of config.watchers ?? []) {
+    const read = readWatcherStamp(w, { statSync: statImpl, readFileSync: readImpl });
+    const v = classifyWatcher({ ...read, nowMs, cadenceMs: w.cadenceMs, multiple: config.watcherStaleMultiple, optional: w.optional, path: w.path });
+    probes.push({ key: w.key, label: w.label, kind: "watcher", verdict: v.verdict, reason: v.reason });
+  }
+
   // the edges
   const prevProbes = state.probes ?? {};
   const nextProbes = {};
   const alerts = [];
   for (const p of probes) {
-    const { alert, state: st } = transition({ prev: prevProbes[p.key] ?? null, next: p, nowMs, reminderMs: config.reminderMs });
+    const { alert, state: st } = transition({ prev: prevProbes[p.key] ?? null, next: p, nowMs, reminderMs: config.reminderMs, pingAfterMs: config.pingAfterMs });
     nextProbes[p.key] = st;
     if (alert) alerts.push({ key: p.key, label: p.label, alert });
   }
@@ -724,14 +896,29 @@ export function writeJson(p, o) { mkdirSync(dirname(p), { recursive: true }); wr
  */
 export function alertingStatus(env = process.env) {
   const webhook = env.SENTINEL_DISCORD_WEBHOOK || null;
+  // The hold lives in the SAME env file as the webhook on purpose: the founder's
+  // whole review is "read the runbook, choose this number, paste one URL", and
+  // splitting those two across a file and a source edit would break that.
+  const raw = Number(env.SENTINEL_PING_AFTER_MINUTES);
+  const pingAfterMinutes = Number.isFinite(raw) && raw > 0 ? raw : 0;
+  const pingAfterMs = pingAfterMinutes * MINUTE;
+  const ladder = {
+    edge_triggered: true,
+    ping_after_minutes: pingAfterMinutes,
+    // Answers the founder's question on the board itself, so it is checkable
+    // without reading any code: "do I get pinged every 10 minutes while asleep?"
+    pings_per_tick: "never — one ping when a probe goes bad, one reminder every 12h while it stays bad, one when it recovers",
+  };
   return webhook
-    ? { webhook, status: { channel: "discord", configured: true } }
+    ? { webhook, pingAfterMs, status: { channel: "discord", configured: true, ladder } }
     : {
       webhook: null,
+      pingAfterMs,
       status: {
         channel: "discord",
         configured: false,
-        note: "SENTINEL_DISCORD_WEBHOOK is unset — every reading on this board was taken and NOTHING WAS SENT. Set it in /etc/postmark-sentinel.env (deploy/DEPLOY.md § the sentinel).",
+        ladder,
+        note: "SENTINEL_DISCORD_WEBHOOK is unset — every reading on this board was taken and NOTHING WAS SENT. Set it in /etc/postmark-sentinel.env (deploy/DEPLOY.md § The site sentinel — RUNBOOK).",
       },
     };
 }
@@ -746,6 +933,8 @@ export async function run({
   env = process.env,
   fetchImpl = fetch,
   exec = execFileSync,
+  statImpl = statSync,
+  readImpl = readFileSync,
   nowMs = null,
   log = console.log,
   errLog = console.error,
@@ -759,7 +948,7 @@ export async function run({
   const dryRun = argv.includes("--dry-run");
   const at = nowMs ?? (a("now") ? Date.parse(a("now")) : Date.now());
 
-  const { webhook, status: alerting } = alertingStatus(env);
+  const { webhook, pingAfterMs, status: alerting } = alertingStatus(env);
   if (!webhook) errLog("site-sentinel: LOUD DEGRADATION — SENTINEL_DISCORD_WEBHOOK is unset; probes ran, the board was written, and no alert could be delivered.");
 
   // Optional. Both repos are public, so the watch works keyless at 60 REST/hour
@@ -768,7 +957,11 @@ export async function run({
   let token = null;
   try { token = readFileSync(env.SENTINEL_GITHUB_TOKEN_FILE ?? "/srv/postmark-office/git-metrics-token", "utf8").trim() || null; } catch { token = null; }
 
-  const { probes, alerts, notes, nextState, nowIso } = await tick({ fetchImpl, exec, state: readState(statePath), nowMs: at, token });
+  const { probes, alerts, notes, nextState, nowIso } = await tick({
+    fetchImpl, exec, statImpl, readImpl, token,
+    state: readState(statePath), nowMs: at,
+    config: { ...CONFIG, pingAfterMs },
+  });
   const board = composeBoard({ probes, nowIso, alerting: { ...alerting, notes } });
   if (outPath) { board.published_at = outPath; writeJson(outPath, board); }
 

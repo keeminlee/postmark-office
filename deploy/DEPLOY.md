@@ -177,75 +177,63 @@ household branch the old pen left it on and back to `main`, once, and says so:
 `[world-pool] shared clone moved off draft/<x> → main`. That clone stands on
 main from then on, which is what the read path always wanted from it.
 
-## The site sentinel (loud notice when the town is down or stale, 2026-08-25)
+## The site sentinel — RUNBOOK (2026-08-25)
 
-`tools/site-sentinel.mjs`, every 10 min via `postmark-site-sentinel.timer`.
-Built the day the site's half-hourly "Sync Postmark atlas" failed on every run
-for a day beside a green "Deploy" and nobody was told, in answer to the
-founder's question: *"how can we LOUDLY BE NOTIFIED when something is down on
-the site?"*
+**What.** `tools/site-sentinel.mjs`, every 10 min via `postmark-site-sentinel.timer`.
+Answers *"how can we LOUDLY BE NOTIFIED when something is down on the site?"* by
+watching **outcomes, not pipelines**: the doors answer; the served build stamp,
+the office index and the deployed Ferry's Daily are current; the box's own
+timers are still running; the two site workflows are read as a second opinion.
+Reads and reports only — no pen, no clone, no `town.lock`.
 
-It watches **outcomes, not pipelines** — the doors answer, the served build
-stamp is current, the office's index is current, the deployed Ferry's Daily is
-the town's current one — because an outcome probe catches causes nobody
-predicted. The workflow conclusions are read too, as a second opinion: a red
-pipeline beside green outcomes is a finding, and a green pipeline beside a red
-outcome is a lie.
+**Where.** Board + state: `/srv/postmark-sentinel/`. Webhook:
+`/etc/postmark-sentinel.env` (`SENTINEL_DISCORD_WEBHOOK`, never in a repo).
+Optionally published at `/ops/sentinel.json` — block in
+`deploy/nginx-sentinel.conf.snippet`; **read the live vhost first**.
 
-It records nothing and repairs nothing. No pen, no clone, no `town.lock` —
-same posture as `postmark-harbor-watch` and `postmark-usdc-watch`.
+**Do you get pinged every 10 minutes?** No. Alerting is edge-triggered: one ping
+when a probe goes bad, one reminder every 12h if it stays bad, one on recovery.
+No code path pings per tick. Optionally set `pingAfterMs` (CONFIG) so a problem
+must stand N minutes before the doorbell rings — it is on the board from the
+first tick either way, and a fault that clears inside N never pings at all.
+Default 0 = ring on the transition.
 
-**Install (all of it is Wright's hand; nothing here is installed):**
+**Off switch.** `sudo systemctl disable --now postmark-site-sentinel.timer`.
+That is the whole rollback: nothing else on the box reads its files or depends
+on it. `rm -rf /srv/postmark-sentinel` if you want the disk back — the state is
+disposable, and losing it costs exactly one duplicate alert.
+
+**What goes dark if you disable it.** Only notification. No page, no API, no
+build, no cron changes behaviour. You return to today: failures still happen,
+nobody is told.
+
+**What it CANNOT see: its own death.** It rides the same box as the site, so
+host death is silent to it. The fix is one external uptime probe (~5 min to
+provision) doing `GET https://postmark.town/` expecting 200. Note a stale copy
+of the board still reads `"status": "OK"`, so keyword-matching the JSON does
+**not** detect a dead box; `heartbeat.generated_at` is there for a checker that
+can compare timestamps.
+
+**Install.**
 
 ```sh
 sudo cp deploy/postmark-site-sentinel.{service,timer} /etc/systemd/system/
 sudo mkdir -p /srv/postmark-sentinel && sudo chown meepo /srv/postmark-sentinel
-
-# the alert channel — NEVER in either repo
 sudo tee /etc/postmark-sentinel.env >/dev/null <<'EOF'
 SENTINEL_DISCORD_WEBHOOK=https://discord.com/api/webhooks/<id>/<token>
+# Optional: let a problem stand this long, visible on the board the whole time,
+# before the doorbell rings. Omit or 0 = ring on the transition.
+SENTINEL_PING_AFTER_MINUTES=0
 EOF
 sudo chmod 600 /etc/postmark-sentinel.env
-
-sudo systemctl daemon-reload
-sudo systemctl enable --now postmark-site-sentinel.timer
-
-# see the board once before the timer owns it
-sudo -u meepo systemctl start postmark-site-sentinel
-journalctl -u postmark-site-sentinel -n 30 --no-pager
-cat /srv/postmark-sentinel/status.json | head -40
+sudo systemctl daemon-reload && sudo systemctl enable --now postmark-site-sentinel.timer
+sudo -u meepo systemctl start postmark-site-sentinel   # see one board before the timer owns it
 ```
 
-- **The webhook is one URL the founder creates** in whichever Discord channel
-  should ring. Without it the watch still runs every probe and still writes the
-  board — it says so on stderr and on the board itself (`alerting.configured:
-  false`). That visible degradation is deliberate: a sentinel that falls silent
-  is indistinguishable from a healthy town.
-- **GitHub auth is optional.** Both repos are public, so it works keyless
-  inside the anonymous 60-per-hour budget; it spends at most **2 REST calls per
-  tick** (12/hour) because every SHA comes from `git ls-remote` (git wire
-  protocol, no REST budget) and all workflow conclusions come from one combined
-  `/actions/runs` read. The unit points `SENTINEL_GITHUB_TOKEN_FILE` at the
-  box's existing read-only `/srv/postmark-office/git-metrics-token`, which
-  simply raises the ceiling. *(Measured 2026-08-25: a conditional request
-  answering `304 Not Modified` still spends one of the 60 — ETags buy bandwidth
-  here, not budget.)*
-- **Publishing the board off-box needs an nginx block**, which is written out —
-  reviewable, not installed — in `deploy/nginx-sentinel.conf.snippet`. The
-  sentinel does not need it; the alert reaches Discord over an outbound POST
-  either way. It only makes `/ops/sentinel.json` readable so the operator round
-  can poll it the way it already polls the harbor snapshot.
-- **Alerting is edge-triggered:** once on OK→bad, one reminder every 12h while
-  it stays bad, once more on recovery. Never one ping per tick — a channel that
-  pings every ten minutes is a channel the reader mutes, and a muted channel
-  reproduces the original silence exactly.
-- **Depends on `/build.json`**, which the site repo emits at build time
-  (`postmark-site/tools/build-stamp.mjs`). Until that ships, the two
-  site-freshness probes report `UNKNOWN` — never green — and say where the fix
-  lives.
-- **Known gap, named not papered over:** the sentinel cannot see its own death.
-  If this box is down or the timer is masked, nothing here alarms. That needs an
-  off-box heartbeat and is deliberately out of scope.
+Without the webhook it still runs every probe and writes the board, saying on
+stderr and on the board that nothing was sent. GitHub auth is optional (both
+repos public; 2 REST calls/tick). Depends on `/build.json` from postmark-site —
+until that ships, the two site-freshness probes read `UNKNOWN`, never green.
 
 ## The operator dashboards (`/ops/`, hub generated since 2026-08-11)
 
