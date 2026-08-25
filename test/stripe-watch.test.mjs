@@ -142,6 +142,14 @@ test("the pot comes from the session's own client_reference_id, and a session wi
   assert.equal(bare.anomaly, "needs-pot");
   assert.match(bare.rule, /a receipt needs the pot it pays/);
   assert.equal(bare.pot, undefined, "no pot was invented for it");
+  // WHICH ARM answered, and the flip is why this line exists: deleting the
+  // missing-reference guard left the suite GREEN, because the pot GATE below it
+  // then refused `no pot named "null"` and the disposition came out the same.
+  // Two guards can both be right and only one can be the one that speaks to the
+  // operator — the reference-shaped defect must say so in its own words, or the
+  // queue tells the founder to go open a pot called "null".
+  assert.match(bare.why, /names no pot \(no client_reference_id\)/);
+  assert.match(bare.resolves, /Sessions created after site main b2260e7a carry the pot automatically/);
 
   // a pot the town posts but has not opened is refused the same way
   const draft = resolveSession(decodeSession(sess({ id: CS_C, created: old, pot: "shut", handle: "paz" })), { ...ctx(town), now });
