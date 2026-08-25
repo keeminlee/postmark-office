@@ -102,6 +102,27 @@ export async function verifyUsdcPayment({
   const from = "0x" + hits[0].topics[1].slice(-40);
   const block = Number(receipt.blockNumber);
 
+  // THE REF IS THE IDENTITY OF THE DOLLAR, so it is normalised HERE — at the
+  // one place a ref is ever minted — and nowhere else.
+  //
+  // A tx hash is hex, and hex has two spellings. TXHASH_RE admits both cases,
+  // Base answers eth_getTransactionReceipt for either, and the ledger's
+  // uniqueness check (`receipts.find((r) => r.ref === ref)`, in the door AND in
+  // the town's own epoch-close) is an exact string compare. Composed, those
+  // three facts defeated the law they were built to keep: "ref is unique
+  // forever: one dollar, one mint chance, a re-recorded receipt bounces".
+  // Pasting 0xab… and then 0xAB… recorded ONE $50 payment TWICE — two receipts,
+  // two patron-deeds, two holo mints, $100 witnessed against the pot for $50 of
+  // real money. Reproduced against the town's own CLI, 2026-08-24, on a ledger
+  // that (checked) holds no receipt rows yet, which is why normalising here
+  // orphans nothing.
+  //
+  // Lowercase is the chain's own spelling — it is what eth_getLogs returns — so
+  // a ref minted here and a ref derived from a log are the same string, which
+  // is what lets any watcher of the intake address recognise an arrival the
+  // door has already witnessed.
+  const canonical = String(txhash).toLowerCase();
+
   return {
     verified: true,
     txhash,
@@ -111,7 +132,7 @@ export async function verifyUsdcPayment({
     token: "USDC (Base native)",
     block,
     confirmations: conf,
-    receipt_ref: `usdc:base:${txhash}`,
+    receipt_ref: `usdc:base:${canonical}`,
     cannot_see: "which pot was meant, the payer's household, or whether this ref was already recorded — those are the ledger's to hold",
   };
 }
