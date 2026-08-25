@@ -58,7 +58,21 @@ export const townLogEnabled = () => process.env.TOWN_SINGLE_LOG === "1";
 /** This log's own cursor key — never the world's `journal_drained_through`. */
 export const TOWN_DRAIN_CURSOR = "town_journal_drained_through";
 
+// THE CURSOR'S OWN TABLE RIDES THE SCHEMA (wave 4). `meta` is where
+// TOWN_DRAIN_CURSOR is kept, and until the bridge nothing had ever written it
+// on a live box — every caller was a test whose fixture created `meta` by hand.
+// The log lives in the office's oauth.db, which openOauthDb builds with five
+// tables and no `meta`, so `townDrainCursor` read 0 through its own catch (a
+// missing table looking exactly like an undrained log) and `advanceTownCursor`
+// would have thrown "no such table: meta" at the end of the first real
+// crossing — after the record was written and pushed, at the one step whose
+// whole job is to stop those rows being replayed forever.
+//
+// A log and the cursor that reads it are one shape, so one function ensures
+// both. Idempotent DDL: an office that already has `meta` (dynamic.db does) is
+// unchanged, and flag-off nothing calls this at all.
 export const TOWN_JOURNAL_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
   CREATE TABLE IF NOT EXISTS town_journal (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
     class TEXT NOT NULL,

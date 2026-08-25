@@ -73,6 +73,7 @@
 // canon-only rather than failing.
 
 import { openDynamic, singleLogEnabled } from "./dynamic-store.mjs";
+import { worldFreezeBounce } from "./freeze.mjs";
 import { appendJournal, liveMarks, readJournal } from "./world-journal.mjs";
 import { mainRef, materializeAtRef, publishedState, resolvedWorldHousehold } from "./world-branches.mjs";
 import { join } from "node:path";
@@ -407,6 +408,21 @@ export function readNeverPerforms(fields) {
  * It writes the word down with its witnesses and gets out of the way.
  */
 export async function declareStanceViaOffice(repo, args = {}, key = null, { dbPath = null, witnessStamp = null, crossing = null } = {}) {
+  // THE WORLD-FREEZE GATE (the engine cutover, 2026-08-24). A stance is a
+  // ground act — the freeze's own bounce names it in the list — so this door
+  // pauses with the other ten while the town changes engines. It is FIRST,
+  // ahead of the log check below, because a frozen world's answer must not
+  // depend on which office you asked: a box running without WORLD_SINGLE_LOG
+  // would otherwise answer 501 "no pen here" to a question the freeze has
+  // already settled with a 503.
+  //
+  // RETURNED, NOT THROWN, against this module's own throw-a-bounce grammar —
+  // freeze.mjs § the returned shape: "every write entry this gates propagates a
+  // returned { error: "bounce" } shape through both skins, while throw
+  // conventions vary by module". The apex hands a run()'s return value straight
+  // back, so a returned bounce reaches the caller unaltered; matching the gate's
+  // one shape across all eleven doors is worth the local inconsistency.
+  { const fz = worldFreezeBounce(); if (fz) return fz; }
   if (!singleLogEnabled())
     throw bounce(501, "the consent door has no pen at this office",
       "a stance is a row in the single log, and the log is switched off here — the operator runs it behind WORLD_SINGLE_LOG=1");

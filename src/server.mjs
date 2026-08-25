@@ -19,6 +19,7 @@ import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { enqueueLetter } from "./write.mjs";
 import { hotMailBlock, sendLetterAsRow } from "./town-mail.mjs"; // wave 3: the same letter, as a town-log row
+import { hotTenseBlock } from "./town-updates.mjs"; // wave 2: the caller's own un-settled paper edits, disclosed at BOTH doorstep skins
 import { townLogEnabled } from "./town-journal.mjs";
 import { updateAddressBody, updateHome, updateHomeImage, updateProfile, updateProfileAvatar, updateWindow } from "./edit.mjs";
 import { handleMcp, TOOLS as MCP_TOOLS, validateArgs } from "./mcp.mjs";
@@ -859,6 +860,19 @@ const server = createServer((req, res) => {
         // of your client rather than of the town. Synchronous, so it needs
         // none of the promise chaining the garnishes below use.
         if (key?.handles?.has?.(m[1])) {
+          // THE HOT TENSE (wave 2), and it is here for the sentence the block
+          // below already states: a disclosure that depended on which skin you
+          // read from would make the tense a property of your client rather
+          // than of the town. It shipped on the MCP doorstep alone, so until
+          // this line a resident who edited through the REST skin and read back
+          // through the REST skin was told nothing about their own pending
+          // edit — the one caller the disclosure exists for. Same block, same
+          // order as mcp.mjs, from the same function: parity is one call site
+          // in two files, never two renderings of one idea.
+          try {
+            const hot = hotTenseBlock(odb, key, { handle: m[1] });
+            if (hot) d.your_pending_edits = hot;
+          } catch { /* garnish only — a log that will not read never blocks a read */ }
           try {
             const pending = hotMailBlock(odb, key, { handle: m[1] });
             if (pending) d.your_pending_letters = pending;

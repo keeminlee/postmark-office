@@ -40,7 +40,7 @@ import {
   buildJoinFiles, planRegistryJoin, serializeRegistry, REGISTRY_PATH,
 } from "./residency.mjs";
 import {
-  pendingRows, rowIsSettleable, townDrainCursor, TOWN_DRAIN_CURSOR, SETTLE_THRESHOLD,
+  ensureTownJournal, pendingRows, rowIsSettleable, townDrainCursor, TOWN_DRAIN_CURSOR, SETTLE_THRESHOLD,
 } from "./town-journal.mjs";
 
 const readJson = (clone, rel) => {
@@ -155,7 +155,17 @@ export function writeTownDrain(clone, plan, { date }) {
   return touched;
 }
 
-/** Advance the cursor — the ferry calls this AFTER its commit and push. */
+/**
+ * Advance the cursor — the ferry calls this AFTER its commit and push.
+ *
+ * It ensures its own table first. That is not belt-and-braces: `meta` is not
+ * part of the office's oauth.db, which is where the town log actually lives, so
+ * before wave 4 every caller of this function was a test whose fixture had
+ * created `meta` by hand and the live path would have thrown here — at the last
+ * step of a crossing, with the record already written and pushed. A function
+ * that writes a cursor is the right owner of the table the cursor sits in.
+ */
 export function advanceTownCursor(odb, head) {
+  ensureTownJournal(odb);
   odb.prepare("INSERT OR REPLACE INTO meta VALUES (?, ?)").run(TOWN_DRAIN_CURSOR, String(head));
 }

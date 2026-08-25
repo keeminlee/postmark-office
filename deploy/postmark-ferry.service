@@ -43,9 +43,36 @@ WorkingDirectory=/srv/postmark-office
 # a mail-less crossing diffs clean and commits nothing. Same mint discipline:
 # only a green verify commits; a seal failure exits loud but sits AFTER the
 # mint block, so mail + stamps are never held hostage by it.
+# THE TOWN-LOG DRAIN RIDES FIRST (POS-44 wave 4, the ferry bridge). Flag-on,
+# a join, a paper edit and a sent letter are ROWS in the office's town log, and
+# this is the step that turns them into the record. Three things pin it to this
+# exact slot, and all three are load-bearing (src/town-bridge.mjs § where it
+# runs states them in full):
+#
+#   · BEFORE tools/ferry.mjs, or a letter drained after the sweep waits a whole
+#     extra crossing and the row's promise to its sender ("it sails at the next
+#     crossing") stops being true.
+#   · AFTER the reset/clean pair above, which would otherwise throw away
+#     everything the drain just wrote.
+#   · INSIDE this flock, which is why the drain takes no lock of its own — a
+#     nested flock on the same path would deadlock against this line. The bridge
+#     CHECKS that the lock is held and refuses if it is not, so running it
+#     outside a unit like this one fails loudly instead of racing the pen.
+#
+# Flag-off (TOWN_SINGLE_LOG unset, which is the state on the box today) this is
+# a no-op that prints one line saying so and exits 0 — the crossing is
+# byte-identical to what it was. A refusal exits 1 and holds the rest of the
+# chain on purpose: the office not understanding its own log is not a condition
+# to deliver mail on top of.
+#
+# TOWN_PUSH=1 must be in /etc/postmark-office.env for the pen's commits to reach
+# origin (the office service already needs it); the explicit push below is the
+# belt, and is a no-op when the drain committed nothing.
 ExecStart=/usr/bin/flock -w 300 /srv/postmark-office/town.lock /bin/sh -c ' \
   git -C "$TOWN_CLONE" reset --hard -q HEAD && \
   git -C "$TOWN_CLONE" clean -fdq -- WHITE_PAGES && \
+  /usr/bin/node /srv/postmark-office/tools/town-drain-run.mjs && \
+  git -C "$TOWN_CLONE" push -q && \
   cd "$TOWN_CLONE" && node tools/ferry.mjs && \
   node tools/stamp-mint.mjs --append --key /srv/postmark-office/stamp-key.pem && \
   node tools/stamp-verify.mjs && \

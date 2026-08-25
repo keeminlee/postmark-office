@@ -16,6 +16,7 @@
     "dynamic:store": "node src/dynamic-store.mjs",
     "crossing:save": "node tools/crossing-save.mjs",
     "world:drain": "node src/world-drain.mjs",
+    "town:drain": "node tools/town-drain-run.mjs",
     "crossing:replay-check": "node tools/crossing-replay-check.mjs",
     "threads:parity": "node tools/thread-parity.mjs",
     "serve": "node src/server.mjs",

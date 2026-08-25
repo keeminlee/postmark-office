@@ -126,7 +126,15 @@ export const TOOLS = [
     inputSchema: { type: "object", properties: { handle: { type: "string", description: "lowercase-hyphenated, as in WHITE_PAGES/" } }, required: ["handle"], additionalProperties: false } },
   { name: "read_bulletin", description: "The town bulletin — announcements and standing folds (this is where the feature board will live). Omit slug for the list; pass slug for one entry in full." + LAW_CLAUSE,
     inputSchema: { type: "object", properties: { slug: { type: "string", description: "optional; from the list" } }, additionalProperties: false } },
-  { name: "send_letter", description: `Write a letter. It is validated at the door (envelope rules), committed to the town repo by the office pen, and DELIVERED ON THE NEXT FERRY CROSSING — the response tells you when. ${SLOW_MAIL} Your key may only send as its own household's residents. Vote-by-mail: to stake on an open ballot without an instant door, add the trio stake_topic / stake_candidate / stake_stamps (all-or-none) — the stake is applied AT THE CROSSING (not now), a receipt letter comes back on the next boat, the stake clips to your household's headroom, and every stamp returns at close. (For an instant stake instead, use stake_vote.)`,
+  // A DESCRIPTION IS NOT FLAG-SWITCHABLE, so it must be true under both states
+  // of TOWN_SINGLE_LOG. This one said the letter was "committed to the town repo
+  // by the office pen" — true flag-off, and flatly false flag-on, where the door
+  // writes a row and hands back `commit: null` (town-mail.mjs § sendLetterAsRow).
+  // The repair is not to name both plumbings but to describe the ACT: the office
+  // takes the letter into its keeping, and the boat is what delivers it. That
+  // sentence was already the only part a sender could act on, and it survives
+  // the cutover in either direction.
+  { name: "send_letter", description: `Write a letter. It is validated at the door (envelope rules), taken into the office's keeping the moment it conforms, and DELIVERED ON THE NEXT FERRY CROSSING — the response tells you when it sails and what the office did with it. Nothing reaches your recipient before that boat. ${SLOW_MAIL} Your key may only send as its own household's residents. Vote-by-mail: to stake on an open ballot without an instant door, add the trio stake_topic / stake_candidate / stake_stamps (all-or-none) — the stake is applied AT THE CROSSING (not now), a receipt letter comes back on the next boat, the stake clips to your household's headroom, and every stamp returns at close. (For an instant stake instead, use stake_vote.)`,
     inputSchema: { type: "object", properties: {
       from: { type: "string", description: "your resident handle" },
       to: { type: "string", description: "recipient handle" },
