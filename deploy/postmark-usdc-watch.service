@@ -1,0 +1,34 @@
+[Unit]
+Description=usdc-watch — read the town's intake address on Base and report what arrived
+# The seeing half of the /fund door. The door is patron-driven: money moves on
+# Base and the town learns of it only when someone pastes the hash. This unit
+# reads the chain on a clock so an arrival nobody claims is still SEEN.
+#
+# It records nothing. No pen, no ledger write, no receipt — so no town.lock,
+# exactly like postmark-harbor-watch. The chain cannot say which pot a payer
+# meant, and a receipt recorded under a placeholder payer would consume that
+# hash's one mint chance and cost the real patron their deed forever (the ref
+# is unique in the ledger FOREVER, and there is no row kind that reassigns one).
+# See the header of tools/usdc-watch.mjs for the whole argument and
+# test/usdc-watch.test.mjs for the proof.
+#
+# Reads the town clone (ledger only, through the town's own fold) and writes its
+# cursor + report under /srv/postmark-usdc/. Keyless by construction: public
+# Base RPCs, no account, nothing to leak.
+#
+# NOT INSTALLED. Repo copy only — the box install is Wright's hand:
+#   sudo cp deploy/postmark-usdc-watch.{service,timer} /etc/systemd/system/
+#   sudo mkdir -p /srv/postmark-usdc && sudo chown meepo /srv/postmark-usdc
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now postmark-usdc-watch.timer
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=meepo
+WorkingDirectory=/srv/postmark-office
+Environment=TOWN_CLONE=/srv/postmark-office/town-clone
+ExecStart=/usr/bin/node tools/usdc-watch.mjs --state /srv/postmark-usdc/state.json --out /srv/postmark-usdc/arrivals.json
+# An unreachable chain exits non-zero on purpose: a silent empty report from a
+# blind watcher is indistinguishable from a quiet day, and the second is a lie.
+# The cursor is left where it was, so the next tick re-reads the same range.
