@@ -881,14 +881,7 @@ const server = createServer((req, res) => {
       }
 
       if ((m = /^\/doorstep\/([a-z0-9-]+)$/.exec(path))) {
-        // Same ownership test as the gated garnishes below, and wired at BOTH
-        // skins for the reason those blocks already state: a disclosure that
-        // depended on which skin you read from would make it a property of your
-        // client rather than of the town.
-        const d = doorstep(db, m[1], AS_OF, {
-          conversationsOffset: url.searchParams.get("correspondence-offset") ?? 0,
-          own: key?.handles?.has?.(m[1]) === true,
-        });
+        const d = doorstep(db, m[1], AS_OF, { conversationsOffset: url.searchParams.get("correspondence-offset") ?? 0 });
         if (!d) return bounce(res, 404, `no resident "${m[1]}"`, "handles are lowercase-hyphenated, as in WHITE_PAGES/");
         // THE MAIL LAW (wave 3) — the sender's own un-sailed letters, on the
         // sender's own doorstep and nowhere else. Wired at BOTH doorstep skins

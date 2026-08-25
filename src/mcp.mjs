@@ -332,13 +332,7 @@ async function callTool(name, args, ctx) {
       return r;
     }
     case "read_doorstep": {
-      // The ownership test is the SAME EXPRESSION the settling-in and
-      // hot-tense gates below already use, deliberately: one definition of
-      // "this is your own doorstep", not two that can drift apart.
-      const d = doorstep(db, args.handle, asOf, {
-        conversationsOffset: args.correspondence_offset,
-        own: key?.handles?.has?.(args.handle) === true,
-      });
+      const d = doorstep(db, args.handle, asOf, { conversationsOffset: args.correspondence_offset });
       if (!d) return notFound(`no resident "${args.handle}"`, "try list_residents");
       if (canWrite && votesAvailable(clone)) {
         try { const v = await doorstepVotes(clone, args.handle); if (v) d.votes = v; } catch { /* garnish only */ }

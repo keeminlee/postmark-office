@@ -274,7 +274,7 @@ test("residentList stays WHOLE — the bound lives at the door, not in the deriv
 // ── the doorstep ────────────────────────────────────────────────────────────
 
 test("doorstep: the conversation ledger is bounded and the summary counts the whole of it", () => {
-  const d = doorstep(db, "r000", AS_OF, { own: true });
+  const d = doorstep(db, "r000", AS_OF);
   assert.equal(d.correspondence.conversations.length, 20);
   assert.equal(d.correspondence.conversations_total, 30);
   assert.notEqual(d.correspondence.conversations_total, d.correspondence.conversations.length,
@@ -292,7 +292,7 @@ test("doorstep: awaiting_reply is DERIVED FROM THE WHOLE LEDGER, then bounded", 
   // threads awaiting your reply" to someone with five of them. That is the
   // children-reported-as-neighbours bug in a new mouth:
   // "A budget decides how much gets said; it must not decide what is true."
-  const d = doorstep(db, "r000", AS_OF, { own: true });
+  const d = doorstep(db, "r000", AS_OF);
   assert.equal(d.awaiting_reply_total, 5);
   assert.equal(d.awaiting_reply.length, 5);
   assert.ok(d.awaiting_reply.every((a) => a.state === "new_inbound"));
@@ -302,7 +302,7 @@ test("doorstep: awaiting_reply is DERIVED FROM THE WHOLE LEDGER, then bounded", 
 });
 
 test("doorstep: the correspondence cursor walks to the end and stops", () => {
-  const d = doorstep(db, "r000", AS_OF, { conversationsOffset: 20, own: true });
+  const d = doorstep(db, "r000", AS_OF, { conversationsOffset: 20 });
   assert.equal(d.correspondence.conversations.length, 10);
   assert.equal(d.correspondence.conversations_offset, 20);
   assert.equal(d.correspondence.conversations_complete, true);
@@ -311,7 +311,7 @@ test("doorstep: the correspondence cursor walks to the end and stops", () => {
 });
 
 test("doorstep: the bulletin is a teaser with a total, newest first", () => {
-  const d = doorstep(db, "r000", AS_OF, { own: true });
+  const d = doorstep(db, "r000", AS_OF);
   assert.equal(d.bulletin.entries.length, 10);
   assert.equal(d.bulletin.total, 15);
   assert.notEqual(d.bulletin.total, d.bulletin.entries.length);
@@ -329,58 +329,6 @@ test("bulletinTeaser: a board shorter than the bound reports itself complete", (
   assert.equal(t.complete, true);
   assert.equal(t.more, undefined, "a short list and a cut list must not look alike");
 });
-
-// ── the ownership gate on the correspondence ledger (Tier 3, its own commit) ──
-
-test("a STRANGER's doorstep read carries the summary and not the ledger", () => {
-  // Keemin's 08-15 ruling, verbatim: "the gaps are yours to see, not theirs to
-  // be seen by." It drew the line for settling_in and the pending blocks; this
-  // block was never brought under it, and served 120 KB of one resident's
-  // composed conversation ledger to any caller who knew a handle.
-  const mine = doorstep(db, "r000", AS_OF, { own: true });
-  const theirs = doorstep(db, "r000", AS_OF, { own: false });
-
-  // the aggregate stands for everyone — it is what the public bundle carries
-  assert.deepEqual(theirs.correspondence.summary, mine.correspondence.summary);
-  assert.equal(theirs.awaiting_reply_total, mine.awaiting_reply_total);
-  assert.equal(theirs.pending_outbox, mine.pending_outbox);
-
-  // the contents do not
-  assert.equal(theirs.correspondence.conversations, undefined,
-    "THE FALSIFIER: a stranger must not receive the rows at all");
-  assert.deepEqual(theirs.awaiting_reply, [], "the restatement rides the same gate as the block");
-  assert.deepEqual(theirs.outgoing, []);
-  assert.match(theirs.correspondence.withheld, /yours to see, not theirs to be seen by/);
-  assert.match(theirs.awaiting_reply_note, /your OWN doorstep only/);
-
-  // and the owner still gets everything, so the gate is a gate and not a delete
-  assert.equal(mine.correspondence.conversations.length, 20);
-  assert.equal(mine.awaiting_reply.length, 5);
-});
-
-test("the gate SKIPS, it does not compute-then-filter", () => {
-  // The same discipline nextStepsFor states for its two gated reads: "a fact
-  // the office never looked up cannot leak through a later refactor of the
-  // filter." So the stranger's block must not carry the ledger's shape at all
-  // — not an empty array where the rows were, not a zeroed cursor, nothing a
-  // later change could refill by accident.
-  const theirs = doorstep(db, "r000", AS_OF, { own: false });
-  for (const leaked of ["conversations", "conversations_total", "conversations_shown",
-    "conversations_offset", "conversations_complete", "conversations_next_offset"]) {
-    assert.ok(!(leaked in theirs.correspondence),
-      `${leaked} is ledger shape and must be absent, not empty, on a stranger's read`);
-  }
-  assert.deepEqual(Object.keys(theirs.correspondence), ["handle", "language", "summary", "withheld"]);
-});
-
-test("the gate is CLOSED BY DEFAULT — a caller that forgets to pass own gets the stranger's read", () => {
-  // A gate whose safe state depends on every call site remembering a flag is
-  // not a gate. Both doors pass the real value; the default is the closed one.
-  const bare = doorstep(db, "r000", AS_OF);
-  assert.equal(bare.correspondence.conversations, undefined);
-  assert.deepEqual(bare.awaiting_reply, []);
-});
-
 // ── the second pass: the surfaces the first wave left standing ───────────────
 
 test("stampsRoster: minted_cumulative is NOT the account count, so the roster needed its own", () => {

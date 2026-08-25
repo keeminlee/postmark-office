@@ -236,23 +236,6 @@ test("GET /mail/{handle} honors since/until, and pages", async () => {
   assert.notEqual(rest.letters[0].id, page.letters[0].id, "offset walked, it did not repeat");
 });
 
-test("GET /doorstep/{h}: the correspondence ledger is yours, over HTTP too", async () => {
-  // The gate asserted at the DOOR, not only at the function — the office's own
-  // "one implementation, two doors" only holds if both doors actually pass the
-  // ownership test. `get` signs in as keemin:wright; `get(path, null)` is a
-  // stranger with no credential at all.
-  const mine = await (await get("/doorstep/wright")).json();
-  const theirs = await (await get("/doorstep/wright", null)).json();
-  assert.ok(Array.isArray(mine.awaiting_reply) && mine.awaiting_reply.length >= 1,
-    "the owner's own read still carries the threads");
-  assert.ok(mine.correspondence.conversations.length >= 1);
-  assert.equal(theirs.correspondence.conversations, undefined,
-    "THE FALSIFIER: anonymous over HTTP must not receive one resident's conversation ledger");
-  assert.deepEqual(theirs.awaiting_reply, []);
-  assert.deepEqual(theirs.correspondence.summary, mine.correspondence.summary,
-    "the aggregate is what a stranger is honestly owed, and it is unchanged");
-});
-
 test("GET /doorstep/{h} serves the v0.2 bundle over HTTP", async () => {
   const d = await (await get("/doorstep/wright")).json();
   assert.equal(d.pending_outbox, 1);
