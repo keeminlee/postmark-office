@@ -226,9 +226,15 @@ export async function fundVerify(clone, body, {
 // The gift lane's ceremony exactly (ops.mjs → execUnderTownLock → *-exec.mjs).
 // `date` is server-derived from the town clock, never from the body: a patron
 // does not get to choose what day their dollar arrived.
-export function penRecorder(clone, { execUnderTownLock, lockTimedOut, LOCK_BUSY, townDay, execPath }) {
+//
+// `rail` and `via` default to the /fund door's own pair, so every existing
+// caller reads exactly as it did. They exist because tools/stripe-watch.mjs
+// records the SAME row on a different rail, and one ledger writer serving two
+// rails is the whole point — a second exec that also shelled
+// `epoch-close --receipt` would be a second copy of the recording law.
+export function penRecorder(clone, { execUnderTownLock, lockTimedOut, LOCK_BUSY, townDay, execPath, rail = "usdc", via = "the /fund door" }) {
   return async ({ pot, usd, from, ref }) => {
-    const payload = JSON.stringify({ pot, usd, from, ref, date: townDay() });
+    const payload = JSON.stringify({ pot, usd, from, ref, date: townDay(), rail, via });
     let out;
     try {
       out = await execUnderTownLock(execPath, payload, { ...process.env, TOWN_CLONE: clone });
