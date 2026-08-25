@@ -109,7 +109,7 @@ import { markRecord } from "./mark-record.mjs";
 import { WORLD_CLONE } from "./world-store.mjs";
 import { draftBranch, mainRef, materializeAtRef, readAtRef, refExists } from "./world-branches.mjs";
 import {
-  ACTION_WITHDRAW, CLASS_MARK, journalHead, pathFor, readJournal,
+  ACTION_WITHDRAW, CLASS_MARK, frozenFilingAt, journalHead, pathFor, readJournal,
 } from "./world-journal.mjs";
 
 /** The cursor slice 1 reserved on the health surface and left unwritten. This is what writes it. */
@@ -721,6 +721,12 @@ export async function drain({
     let mainPaths = null;
     const publishedPathOf = (id) => {
       if (!mainSha) return null;
+      // THE FOSSIL MANIFEST FIRST (the freeze, 2026-08-25). `filing-freeze.json`
+      // is keyed by full id and never regenerated, so for the 960 marks alive on
+      // the freeze date it is the exact answer to "where is this already filed"
+      // — and it costs one JSON read instead of a walk over the whole tree.
+      const frozen = frozenFilingAt(repo, mainSha).get(String(id));
+      if (frozen) return frozen;
       mainPaths ??= treePaths(repo, mainSha);
       return findMarkPath(repo, mainSha, mainPaths, {
         by: String(id).split("/")[0],

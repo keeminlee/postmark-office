@@ -184,12 +184,20 @@ test("THE FLIP — a clone with NO map falls back to directory nesting, and says
 
       // This is the BEFORE picture, and it is why the re-key was needed: the
       // id-filed marks are orphaned (no directory parent, so no edge at all),
-      // they read as extra world roots, and the law standing in the works mints
-      // nothing because its path does not carry the substring.
+      // and the law standing in the works mints nothing because its path does
+      // not carry the substring.
       assert.equal(containsEdges.find((e) => e.child === "the-town/a-new-law"), undefined);
-      assert.match(out, /expected one root mark, found 3/);
       assert.equal(marks["the-town/a-new-law"].in_works, 0);
       assert.deepEqual(minting, []);
+
+      // THE ROOT IS NAMED, NOT INFERRED — and it holds even here, where there is
+      // no map to read it from. "The mark with no mark.md above it" is true of
+      // every id-filed mark, so the inferred derivation would report THREE roots
+      // in this fixture and alphabetical order could crown `the-town/a-far-law`
+      // as the world root — which is the placement fallback for every mark below
+      // it. The fold exports `worldRootOf`; the hydrator asks it by name.
+      assert.doesNotMatch(out, /expected one root mark/,
+        "two marks filed at their ids must not read as two extra world roots, map or no map");
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 

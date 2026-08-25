@@ -95,7 +95,19 @@ export function loadMarks(dir) {
       const text = readFileSync(join(at, "mark.md"), "utf8");
       const by = text.match(/^by:\s*(.+)$/m)?.[1]?.trim();
       const kind = text.match(/^kind:\s*(.+)$/m)?.[1]?.trim() ?? "sited";
-      out.push({ by, household: by, kind, slug: basename(at), id: by + "/" + basename(at), _dir: at });
+      // DOUBLE EVERY BACKSLASH IN THIS MODULE. It is written out through an
+      // untagged TEMPLATE LITERAL, which eats one level of escaping: a
+      // whitespace class typed with a single backslash arrives here as a bare
+      // letter and the regex silently stops matching — no error, just a mark
+      // that loads with no geometry. (The by:/kind: patterns above survive on
+      // an accident: their mangled form still matches zero characters where a
+      // space was optional. A numeric pattern gets no such luck.)
+      const num = (re) => { const m = text.match(re); return m ? Number(m[1]) : null; };
+      const ax = num(/^at:\\s*\\{\\s*x:\\s*(-?[0-9.]+)/m), ay = num(/^at:.*?y:\\s*(-?[0-9.]+)/m);
+      const ew = num(/^extent:\\s*\\{\\s*w:\\s*(-?[0-9.]+)/m), eh = num(/^extent:.*?h:\\s*(-?[0-9.]+)/m);
+      out.push({ by, household: by, kind, slug: basename(at), id: by + "/" + basename(at), _dir: at,
+        ...(ax !== null && ay !== null ? { at: { x: ax, y: ay } } : {}),
+        ...(ew !== null && eh !== null ? { extent: { w: ew, h: eh } } : {}) });
     }
     for (const e of entries) {
       const next = join(at, e);
@@ -112,6 +124,33 @@ export function marksContain(outer, inner) {
   return Math.abs(inner.at.x - outer.at.x) <= outer.extent.w / 2
       && Math.abs(inner.at.y - outer.at.y) <= outer.extent.h / 2;
 }
+export const WORLD_ROOT_SLUG = "let-there-be-light";
+export const worldRootOf = (marks) => marks.find((m) => m.slug === WORLD_ROOT_SLUG) ?? null;
+export function placementParent(claim, marks) {
+  const area = (m) => (m?.extent?.w ?? 0) * (m?.extent?.h ?? 0);
+  const mine = area(claim);
+  let best = null;
+  for (const m of marks) {
+    if (m.id === claim.id || !m.at || !m.extent) continue;
+    if (m.slug === WORLD_ROOT_SLUG) continue;
+    if (area(m) <= mine) continue;
+    if (marksContain(m, claim) && (!best || area(m) < area(best))) best = m;
+  }
+  return best ? best.id : null;
+}
+// The freeze's containment answer, in the shape the live fold exports:
+// { parent: Map<id, parentId|null>, rootId }. The office's guards read this
+// instead of directory nesting, so the stub has to speak it or the fixture
+// silently exercises the pre-freeze fallback and proves nothing.
+export function containmentParents(marks) {
+  const root = worldRootOf(marks);
+  const parent = new Map();
+  for (const m of marks) {
+    if (m === root) { parent.set(m.id, null); continue; }
+    parent.set(m.id, placementParent(m, marks) ?? root?.id ?? null);
+  }
+  return { parent, rootId: root?.id ?? null };
+}
 `);
 put("seeding/manifest.json", JSON.stringify({ homes: [] }));
 put("WORLD/households.json", JSON.stringify({ households: { alpha: "gh:1", beta: "gh:2" } }));
@@ -120,6 +159,21 @@ put("WORLD/marks/let-there-be-light/town-square/mark.md", record("the-town", "th
 put("WORLD/marks/let-there-be-light/published-note/mark.md", record("alpha", "alpha published this"));
 put("WORLD/skeleton.json", JSON.stringify({ features: [], physics_registry: {} }));
 put("WORLD/world-state.json", JSON.stringify({ tick: 0, dials: {}, marks: PUBLISHED, parcels: [{ id: "alpha/alpha-parcel", household: "alpha", at: { x: 110, y: 105 }, extent: { w: 25, h: 25 } }], determined: {}, vague: [], rivalries: [], portfolios: {}, terrain_weight: {}, errors: [] }));
+
+// THE FROZEN FILING MANIFEST (the freeze, 2026-08-25) — seeded on MAIN, before
+// any sketchbook branch exists, because that is where the real one lives and
+// every draft branch has to inherit it. It names the two pre-freeze filings this
+// fixture seeds; every other mark here is born after the freeze and files at its
+// id, which is what makes the two rules distinguishable in one repo.
+put("WORLD/filing-freeze.json", JSON.stringify({
+  law: "Filing is frozen as of 2026-08-25. A mark's directory is its historical filing: it carries no claim, and it never moves again.",
+  source: "LOGOS/state-and-time.md, the-town/the-frozen-filing",
+  frozen_at: "2026-08-25",
+  marks: {
+    "alpha/sketchbook-draft": "WORLD/marks/let-there-be-light/sketchbook-draft",
+    "alpha/published-note": "WORLD/marks/let-there-be-light/published-note",
+  },
+}));
 git("init", "-q", "-b", "main");
 git("config", "user.email", "test@postmark.town");
 git("config", "user.name", "journal falsifier");
@@ -642,6 +696,96 @@ test("THE DOOR, flag on — the slug guard is a STORE lookup, and amend/withdraw
     "three declarations, three lines, none of them an edit of another");
   assert.equal(draftsForKey(repo, houseA).marks.some((m) => m.id === "alpha/twice"), false,
     "and the withdrawn draft never crossed, so the overlay has nothing to draw");
+});
+
+test("THE DOOR, flag off — a mark named in the FROZEN MANIFEST amends in place, and a new one lands at its id", async () => {
+  // THE RULE (the freeze, founder-ruled 2026-08-25): a mark's path is wherever
+  // it was born, forever.
+  //
+  //   "A mark's directory is its historical filing: it carries no claim, and it
+  //    NEVER MOVES AGAIN."
+  //
+  // `WORLD/marks/let-there-be-light/sketchbook-draft/` is a pre-freeze filing in
+  // this fixture. Naming it in the manifest makes it a fossil, and an amend must
+  // compute THAT path — not `WORLD/marks/alpha/sketchbook-draft/`. Computing the
+  // id path would move it, and gate A refuses a move at the next lint.
+  assert.equal(process.env.WORLD_SINGLE_LOG, undefined);
+  const fossil = "WORLD/marks/let-there-be-light/sketchbook-draft";
+
+  const { leaveMarkViaOffice } = await import("../src/world.mjs");
+  const amended = await leaveMarkViaOffice(repo, {
+    slug: "sketchbook-draft", kind: "sited", at: { x: 12, y: 12 }, extent: { w: 2, h: 2 },
+    body: "amended after the freeze", amend: true,
+  }, houseA);
+  assert.equal(amended.id, "alpha/sketchbook-draft");
+
+  const files = git("ls-tree", "-r", "--name-only", "draft/alpha", "--", "WORLD/marks").trim().split("\n");
+  assert.deepEqual(files.filter((f) => f.includes("/sketchbook-draft/")), [`${fossil}/mark.md`],
+    "one file, at the filing it was born with — never a second copy at the id path");
+  assert.match(git("show", `draft/alpha:${fossil}/mark.md`), /amended after the freeze/,
+    "and it carries the new declaration, so the amend was not simply dropped");
+
+  // THE FLIP, same door, same run: a mark the manifest does not name is a NEW
+  // mark and files at its id.
+  await leaveMarkViaOffice(repo, {
+    slug: "born-after-the-freeze", kind: "sited", at: { x: 400, y: 400 }, extent: { w: 2, h: 2 },
+    body: "the manifest never heard of me",
+  }, houseA);
+  assert.match(git("show", "draft/alpha:WORLD/marks/alpha/born-after-the-freeze/mark.md"),
+    /the manifest never heard of me/);
+});
+
+test("THE DOOR, flag off — the withdraw guard reads CONTAINMENT, so an id-filed child still blocks it", async () => {
+  // THE LAW (the freeze, 2026-08-25): "A mark's directory is its historical
+  // filing: it carries no claim."
+  //
+  // `holdsChildren` used to read the mark's CHILD DIRECTORIES. Under filing by
+  // identity a mark's children are not underneath it on disk, so that read
+  // returns false forever and the guard — "a withdrawal may not strand what
+  // stands on it" — silently stops protecting. Nothing errors; the stranding
+  // just happens. The guard now asks the ground, through the world's own fold.
+  //
+  // THE CALL GRAPH, checked rather than assumed: `leave-exec.mjs` is spawned
+  // only from world.mjs's two `else` branches of `if (singleLogEnabled())`. The
+  // drain never replays through it. So this door is live exactly when the flag
+  // is off, which is what this test runs under.
+  assert.equal(process.env.WORLD_SINGLE_LOG, undefined);
+  const { leaveMarkViaOffice, withdrawMarkViaOffice } = await import("../src/world.mjs");
+
+  // A big mark, then a small one standing geometrically inside it. Both file at
+  // their ids — neither is inside the other's DIRECTORY.
+  await leaveMarkViaOffice(repo, {
+    slug: "the-yard", kind: "sited", at: { x: 300, y: 300 }, extent: { w: 40, h: 40 }, body: "a yard",
+  }, houseA);
+  await leaveMarkViaOffice(repo, {
+    slug: "the-shed", kind: "sited", at: { x: 300, y: 300 }, extent: { w: 2, h: 2 }, body: "a shed in the yard",
+  }, houseA);
+
+  const yard = git("show", "draft/alpha:WORLD/marks/alpha/the-yard/mark.md");
+  assert.match(yard, /a yard/, "both marks filed at their ids…");
+  assert.match(git("show", "draft/alpha:WORLD/marks/alpha/the-shed/mark.md"), /a shed in the yard/,
+    "…so the shed is NOT inside the yard's directory, which is the whole point");
+
+  await assert.rejects(
+    withdrawMarkViaOffice(repo, { mark: "alpha/the-yard" }, houseA),
+    (e) => {
+      assert.equal(e.code, 409);
+      assert.match(e.defect, /still holds marks inside it/);
+      return true;
+    },
+    "the shed stands in the yard by CONTAINMENT — withdrawing the yard would strand it");
+});
+
+test("THE FLIP, flag off — a mark with nothing standing in it still withdraws", async () => {
+  // Or the guard above would be a guard that refuses everything, which proves
+  // nothing about containment.
+  assert.equal(process.env.WORLD_SINGLE_LOG, undefined);
+  const { leaveMarkViaOffice, withdrawMarkViaOffice } = await import("../src/world.mjs");
+  await leaveMarkViaOffice(repo, {
+    slug: "the-lone-post", kind: "sited", at: { x: 900, y: 900 }, extent: { w: 1, h: 1 }, body: "nothing stands on it",
+  }, houseA);
+  const gone = await withdrawMarkViaOffice(repo, { mark: "alpha/the-lone-post" }, houseA);
+  assert.equal(gone.withdrawn, true);
 });
 
 test("THE DOOR, flag off — the same call still spends a commit on the sketchbook, and the log stays empty", async () => {
