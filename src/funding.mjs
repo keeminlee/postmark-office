@@ -465,7 +465,16 @@ const POT_MONEY_FIELDS = ["status", "epoch_cadence", "received_usd"];
 // with NO target and NO close word is still refused, and that refusal is the
 // original law doing its remaining job: nothing in the record says how it could
 // ever close, so nothing should quote it a funded fraction.
-const CLOSE_WORDS = new Set(["elastic", "none"]);
+//
+// `epoch` is the third, added 2026-08-25 when the keeping pot's record finally
+// SPOKE the word it had always ruled in prose (pot-keeping-ec2.json § _close:
+// "the word made explicit 2026-08-25 at the founder's word, and it rules
+// NOTHING NEW"). This set is an ALLOWLIST — a word it does not hold is dropped
+// to null, which reads downstream as "the record has not said". So leaving
+// `epoch` out would have made this reader answer the exact falsehood the
+// trueing exists to kill, on the exact pot it was written for, while the pot
+// went on reading fine because it posts a target.
+const CLOSE_WORDS = new Set(["elastic", "none", "epoch"]);
 const closeWordOf = (d) =>
   typeof d?.close === "string" && CLOSE_WORDS.has(d.close.trim()) ? d.close.trim() : null;
 // The ceremony's floor, in whole dollars. § _min_close: "Owner of the number:
