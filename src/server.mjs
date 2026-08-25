@@ -18,6 +18,9 @@ import { fileURLToPath } from "node:url";
 import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { enqueueLetter } from "./write.mjs";
+import { hotMailBlock, sendLetterAsRow } from "./town-mail.mjs"; // wave 3: the same letter, as a town-log row
+import { hotTenseBlock } from "./town-updates.mjs"; // wave 2: the caller's own un-settled paper edits, disclosed at BOTH doorstep skins
+import { townLogEnabled } from "./town-journal.mjs";
 import { updateAddressBody, updateHome, updateHomeImage, updateProfile, updateProfileAvatar, updateWindow } from "./edit.mjs";
 import { handleMcp, TOOLS as MCP_TOOLS, validateArgs } from "./mcp.mjs";
 import { householdApex, paperGaps } from "./household-apex.mjs"; // the third door (2026-08-15)
@@ -26,12 +29,14 @@ import { requestResidency } from "./residency.mjs";
 import { declareViaOffice } from "./declare.mjs";
 import { uploadMedia } from "./media.mjs";
 import { harborGated, HARBOR_BOUNCE } from "./harbor-gate.mjs";
+import { standingBounce } from "./standing.mjs";
 import { arrivalPage } from "./arrival.mjs";
 import { townSummary, residentList, resident, mailList, letter, doorstep, search, bulletinList, bulletinEntry, stampsRoster, stampsFor, stampsDetail, questBoardFor, nextStepsFor, metricsMail, letterList, regionList, home, identityOf, repoLog } from "./queries.mjs";
 import { householdOf } from "./households.mjs";
 import { votesAvailable, voteList, voteView, doorstepVotes, stakeViaOffice } from "./votes.mjs";
 import { giftViaOffice, isPrincipal } from "./ops.mjs";
-import { fundVerifyViaOffice, INTAKE as FUND_INTAKE } from "./fund.mjs";
+import { fundVerifyViaOffice, intakeDisclosure, INTAKE as FUND_INTAKE } from "./fund.mjs";
+import { channelOf, countAct, actsByChannel } from "./channel.mjs";
 import { logAccess } from "./telemetry.mjs";
 import { settlements } from "./settlements.mjs";
 import { worldSummary, worldOrient, worldEyes, worldInvestigate, worldStateRaw, worldSkeletonRaw, worldMyMarks, leaveMarkViaOffice, walkViaOffice, worldNoteViaOffice, worldWalkers, worldPresent, worldConversations, worldSay, worldSayHuman, whoami, worldBlockForHandle, resetPlaceWordsCache, WORLD_CLONE } from "./world.mjs";
@@ -225,6 +230,17 @@ const flatPropsFromTools = () => {
   return _flatPropsTools;
 };
 
+// The required lists beside them — read by the household apex's actions
+// grammar, kept a separate map for the reason mcp.mjs names at its twin.
+let _flatRequiredTools = null;
+const flatRequiredFromTools = () => {
+  if (!_flatRequiredTools) {
+    _flatRequiredTools = {};
+    for (const t of MCP_TOOLS) _flatRequiredTools[t.name] = t.inputSchema?.required ?? [];
+  }
+  return _flatRequiredTools;
+};
+
 // The berth mint's own slow cap: 5 mints per IP per hour, in-memory (a restart
 // forgiving it is an acceptable failure for an ephemeral-identity door).
 const berthHits = new Map();
@@ -323,6 +339,11 @@ const server = createServer((req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   const path = url.pathname.replace(/\/+$/, "") || "/";
 
+  // THE CHANNEL SEAM. Read once, here, where the transport is known and
+  // the whole handler is in scope. Absent means agent, so every existing
+  // caller is unchanged by construction.
+  const channel = channelOf(req.headers);
+
   // ── the index this request borrows. Routes read `db` at call time, so a swap
   // between two awaits simply means later statements run against the newer
   // index — fine. What is not fine is a handler that took the handle as an
@@ -363,7 +384,11 @@ const server = createServer((req, res) => {
   if (req.method === "OPTIONS") {
     res.writeHead(204, {
       "Access-Control-Allow-Methods": "GET, HEAD, POST, PATCH, OPTIONS",
-      "Access-Control-Allow-Headers": "authorization, content-type, accept",
+      // x-postmark-channel joins the list because the comment above blesses
+      // cross-origin windows as first-class callers, and a header the
+      // preflight does not name is a header the browser strips — silently,
+      // and from exactly those callers. Same-origin callers never needed it.
+      "Access-Control-Allow-Headers": "authorization, content-type, accept, x-postmark-channel",
       "Access-Control-Max-Age": "86400",
     });
     return res.end();
@@ -528,6 +553,29 @@ const server = createServer((req, res) => {
         && path !== "/world/apex"
         && harborGated(key, worldVerb ?? path))
       return bounce(res, HARBOR_BOUNCE.code, HARBOR_BOUNCE.defect, HARBOR_BOUNCE.hint);
+
+    // THE STANDING GATE, REST face (standing.mjs). A quarantined or revoked
+    // resident's WRITE acts bounce with the ledger's own sentence; every read
+    // this door serves is untouched, which is the law the ledger is built on —
+    // a suspension the resident cannot read is a deletion the town will not
+    // admit to.
+    //
+    // ONE PATH-STATIC CHECK PLUS APEX-INTERNAL ONES, mirroring the harbor gate
+    // directly above. `/household` and `/world/apex` are exempted HERE and gate
+    // themselves inside, and that exemption is load-bearing rather than tidy:
+    // both are POST routes whose bare or `read:` body is a READ, so refusing
+    // them by method would suspend reading. They resolve the act from the body
+    // and call the gate there.
+    //
+    // The arrival lane is NOT exempt, unlike the harbor's. A harbor household
+    // is exempted because arriving is the one thing it is entitled to do; a
+    // suspended resident adding another resident to their house, or minting a
+    // fresh key, is the act the audit exists to hold. A visitor or a berth
+    // carries no handles, so the gate never fires on the genuinely arriving.
+    if (req.method !== "GET" && path !== "/household" && path !== "/world/apex") {
+      const st = standingBounce(key, TOWN_CLONE);
+      if (st) return bounce(res, st.code, st.defect, st.hint);
+    }
   }
 
   // MCP skin — same verbs, JSON-RPC dress (P3). The MCP door REQUIRES a
@@ -752,7 +800,14 @@ const server = createServer((req, res) => {
       // on a crossing-save. Keyless like the rest of the world's read tier:
       // counts, shas, and the town's own published dials.
       if (path === "/world/dynamic") {
-        try { return j(res, 200, dynamicHealth({ repo: WORLD_CLONE })); }
+        // acts_by_channel rides here, and only when something has been counted:
+        // an absent block says "no acts this process", which is true, where a
+        // block of zeroes would imply the counter had watched something.
+        try {
+          const health = dynamicHealth({ repo: WORLD_CLONE });
+          const byChannel = actsByChannel();
+          return j(res, 200, byChannel ? { ...health, acts_by_channel: byChannel } : health);
+        }
         catch (e) { return bounce(res, 500, "the world door tripped", String(e?.message ?? e).slice(0, 200)); }
       }
       // keyless identity probe — read-side: powers the viewer's dev-dials gate + stand-at filter
@@ -822,6 +877,31 @@ const server = createServer((req, res) => {
       if ((m = /^\/doorstep\/([a-z0-9-]+)$/.exec(path))) {
         const d = doorstep(db, m[1], AS_OF);
         if (!d) return bounce(res, 404, `no resident "${m[1]}"`, "handles are lowercase-hyphenated, as in WHITE_PAGES/");
+        // THE MAIL LAW (wave 3) — the sender's own un-sailed letters, on the
+        // sender's own doorstep and nowhere else. Wired at BOTH doorstep skins
+        // for the same reason both send doors take the flag: a disclosure that
+        // depended on which skin you read from would make the tense a property
+        // of your client rather than of the town. Synchronous, so it needs
+        // none of the promise chaining the garnishes below use.
+        if (key?.handles?.has?.(m[1])) {
+          // THE HOT TENSE (wave 2), and it is here for the sentence the block
+          // below already states: a disclosure that depended on which skin you
+          // read from would make the tense a property of your client rather
+          // than of the town. It shipped on the MCP doorstep alone, so until
+          // this line a resident who edited through the REST skin and read back
+          // through the REST skin was told nothing about their own pending
+          // edit — the one caller the disclosure exists for. Same block, same
+          // order as mcp.mjs, from the same function: parity is one call site
+          // in two files, never two renderings of one idea.
+          try {
+            const hot = hotTenseBlock(odb, key, { handle: m[1] });
+            if (hot) d.your_pending_edits = hot;
+          } catch { /* garnish only — a log that will not read never blocks a read */ }
+          try {
+            const pending = hotMailBlock(odb, key, { handle: m[1] });
+            if (pending) d.your_pending_letters = pending;
+          } catch { /* garnish only — a log that will not read never blocks a read */ }
+        }
         // The settling-in block (Keemin's grouping, 2026-08-15): only on your
         // OWN doorstep, and it retires itself as the gaps close.
         //
@@ -864,7 +944,7 @@ const server = createServer((req, res) => {
         if (qp.do != null)
           return bounce(res, 405, "a GET never acts", "acts ride POST /household with a JSON body — GET answers your standing and the focused reads (?read=address|home|standing)");
         return householdApex(qp, key,
-          { db, clone: TOWN_CLONE, odb, dbPath: DB_PATH, pen: PEN, canWrite, schemas: flatPropsFromTools() })
+          { db, clone: TOWN_CLONE, odb, dbPath: DB_PATH, pen: PEN, canWrite, schemas: flatPropsFromTools(), schemaRequired: flatRequiredFromTools() })
           .then((r) => j(res, r?.error ? (r.code ?? 400) : 200, r))
           .catch((e) => bounce(res, 500, "the household door tripped", String(e?.message ?? e).slice(0, 200)));
       }
@@ -912,17 +992,9 @@ const server = createServer((req, res) => {
     // travel with it. The site's /fund page reads this rather than hard-coding
     // an address: one place the town's money door is written down.
     if (req.method === "GET" && path === "/fund/intake") {
-      return j(res, 200, {
-        address: FUND_INTAKE,
-        network: "Base",
-        token: "USDC (Base native) only",
-        min_confirmations: 12,
-        whole_dollars: "the ledger records whole dollars; cents that arrive are money the town holds that priced nothing",
-        recovery: "a wrong-network or wrong-token send is not recoverable by the town — best effort only, never a promise",
-        caption: "a record of contribution, not a promise of profit",
-        what_this_buys: "this buys ownership and memory, never voice, and converts to real value only if the town someday does",
-        verify: "POST /fund/verify { txhash, pot, handle }",
-      });
+      // one home for these words — the household door's money moment serves
+      // the same object, so a §10 disclosure cannot drift between two surfaces
+      return j(res, 200, intakeDisclosure());
     }
 
       // The door list names the apex only where the apex actually answers — a
@@ -931,7 +1003,12 @@ const server = createServer((req, res) => {
       return bounce(res, 404, "no such door", `GET /town /residents /residents/{h} /mail/{h} /letters[?filters] /letters/{id} /doorstep/{h} /metrics/mail /repo/log[?path=&author=&since=&until=&limit=] /regions /homes/{h} /stamps /stamps/{h} /quests/{h} /world/settlements /world/store /world/dynamic /world/present /world/graph[?kinds=&types=] /world/graph.gexf[?view=static]${apexEnabled() ? " /world/apex?x=&y=" : ""} /votes /votes/{topic} /bulletin /fund/intake /search?q=`);
     }
 
-    // ── write tier: a valid credential required ───────────────────────────
+    // Every act that reaches the write tier is counted by the channel it
+  // arrived on. Reads are not counted: the question this answers is "is
+  // anyone driving from a browser", and a read is not driving.
+  countAct(channel);
+
+  // ── write tier: a valid credential required ───────────────────────────
     if (!key) {
       setWwwAuth(res);
       return bounce(res, 401, "no key at the door", "Authorization: Bearer <household-key or signed-in token>; connectors sign in with GitHub, shell agents use a household key minted at the key desk (postmark.town/join)");
@@ -962,7 +1039,14 @@ const server = createServer((req, res) => {
       readJsonBody(req, cap).then((raw) => {
         try {
           const payload = JSON.parse(raw || "{}");
-          const result = verb({ ...payload, handle }, key, db, TOWN_CLONE);
+          // `odb` is the town log, and passing it is what makes this skin log
+          // at all (POS-44, the paper seam). Until it was added, a resident who
+          // edited through REST and read back through REST was told nothing
+          // about their own pending edit — the door wrote the pen commit and no
+          // row, while `your_pending_edits` reported a hot tense it could not
+          // see. The avatar and home-image doors take it too and simply ignore
+          // it: they are image doors, not paper acts, so they log nothing.
+          const result = verb({ ...payload, handle }, key, db, TOWN_CLONE, odb);
           return j(res, 200, result); // 200: an edit is a pen commit, done now (no ferry)
         } catch (e) {
           if (e.code) return bounce(res, e.code, e.defect, e.hint);
@@ -1048,7 +1132,7 @@ const server = createServer((req, res) => {
       readJsonBody(req).then(async (raw) => {
         try {
           const payload = JSON.parse(raw || "{}");
-          const r = await householdApex(payload, key, { db, clone: TOWN_CLONE, odb, dbPath: DB_PATH, pen: PEN, canWrite, schemas: flatPropsFromTools() });
+          const r = await householdApex(payload, key, { db, clone: TOWN_CLONE, odb, dbPath: DB_PATH, pen: PEN, canWrite, schemas: flatPropsFromTools(), schemaRequired: flatRequiredFromTools(), channel });
           return j(res, r?.error ? (r.code ?? 400) : 200, r);
         } catch (e) {
           if (e instanceof SyntaxError) return bounce(res, 400, "body is not JSON", '{"do": "begin", "args": { "household": "…", "card": "…" }}');
@@ -1070,10 +1154,18 @@ const server = createServer((req, res) => {
         return bounce(res, 409, "not-yet-open", "the office has no town clone configured; send by PR meanwhile");
       let raw = "";
       req.on("data", (c) => { raw += c; if (raw.length > 200_000) req.destroy(); });
-      req.on("end", () => {
+      req.on("end", async () => {
         try {
           const payload = JSON.parse(raw || "{}");
-          const result = enqueueLetter(payload, key, db, TOWN_CLONE);
+          // TWO DOORS, ONE LANE (wave 3). The MCP `send_letter` verb and this
+          // one are the same act in two skins, so they take the same flag: if
+          // only one became a town-log row, flag-on a sender could put mail in
+          // front of a recipient early just by choosing the other skin, and the
+          // slow-mail law would be structural at one door and a promise at the
+          // other. Flag-off both are byte-identical to what they were.
+          const result = townLogEnabled() && odb
+            ? await sendLetterAsRow(payload, key, db, TOWN_CLONE, odb)
+            : enqueueLetter(payload, key, db, TOWN_CLONE);
           return j(res, 202, result); // 202, never 201: accepted for the next crossing
         } catch (e) {
           if (e.code) return bounce(res, e.code, e.defect, e.hint);
@@ -1130,7 +1222,7 @@ const server = createServer((req, res) => {
       return;
     }
 
-    // POST /media — the media shelf (2026-08-15): one image in (base64), one
+    // POST /media — the media door (2026-08-15): one image in (base64), one
     // permanent https://media.postmark.town/… URL out — the URL a mark's image:
     // field accepts. Same handler as the upload_media tool; byte validation is
     // the avatar door's; the 3 MB body cap fits a 1.5 MB image's base64
@@ -1170,6 +1262,11 @@ const server = createServer((req, res) => {
             const limited = bouncer.checkHouseholdWorldWrite({ household: key.household, verb });
             if (limited) return rateResponse(res, limited);
             if (harborGated(key, verb)) return bounce(res, HARBOR_BOUNCE.code, HARBOR_BOUNCE.defect, HARBOR_BOUNCE.hint);
+            // and the standing gate, inside the `do:` branch for the same
+            // reason the harbor's is: the bare and `read:` shapes of this route
+            // are reads, and reads are never suspended.
+            const st = standingBounce(key, TOWN_CLONE);
+            if (st) return bounce(res, st.code, st.defect, st.hint);
           }
           // The SAME validator the MCP door runs, against the SAME tool schema —
           // charge-then-validate in the MCP door's own order. Unknown top-level

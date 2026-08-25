@@ -1,0 +1,617 @@
+// world-journal.mjs — THE SINGLE LOG. Every world mutation, one append-only row.
+//
+// ── WHAT THIS IS ─────────────────────────────────────────────────────────────
+//
+// POS-5 slice 1 of the world-runtime ladder (§2, and §8's storage ruling (b)).
+// Today a `world_leave_mark` is a git ceremony: lease a worktree out of the
+// pool, take the town lock plus a household lock, check out `draft/<household>`,
+// write a file, commit, push. The ceremony's only job was ever to let git absorb
+// writes it does not need before the save. Behind `WORLD_SINGLE_LOG=1` a mark is
+// ONE INSERT into the table below, and the drain (slice 2) is what git hears
+// about.
+//
+// The plan's own words for the thing this file is: "Source 3 — the live journal.
+// The dynamic DB's single append-only log: everything declared since the last
+// save. SUBJECT · ACTION · optional OBJECT · EFFECT. Truncated at the save after
+// write-down. The ONLY thing that moves between saves."
+//
+// ── THE TWO LAWS THIS FILE ANSWERS ───────────────────────────────────────────
+//
+// `the-witnessed-line` (world main, tier constitution) — a deliberate RED
+// planted 2026-08-22 for this slice to flip:
+//
+//   "Every line of the log carries its witnesses at write time — an anchor and
+//    an offset: where the actor stood, relative to what, at that instant."
+//
+// `the-anchor` (same planting) says what an anchor may be:
+//
+//   "An anchor is a mark, an entity, or the world — a held thing rides its
+//    holder as a rider rides the deck; what may anchor where is class contract."
+//
+// So `at_anchor/at_dx/at_dy` is not a coordinate pair with extra steps. A raw
+// world x,y is a photograph: it cannot survive the thing it was measured against
+// moving, which is the whole failure §8 catalogues four times over (the rider,
+// the held thing, the emission on the deck, the stale occupancy). An anchor plus
+// an offset survives it, because the anchor moves and the offset does not.
+//
+// ── WHY ONE SCHEMA FOR BOTH LAWS ─────────────────────────────────────────────
+//
+// Keemin ruled §8 storage as (b): frame-transition events ride THIS log, not a
+// frame column on dynamic.db entities. That is why `class` exists as a column
+// and why a row's `at` is already anchor-relative — a reparenting is a row whose
+// EFFECT is "the anchor changed", and it needs no shape this file does not
+// already have. Slice 1 builds the corridor and proves a frame row replays; it
+// does NOT re-point walk/enter/exit, because that is the position-core rewrite
+// §8 explicitly defers ("NOT a land-it-today job").
+//
+// ── THE COLUMNS, AND WHICH ARE RULED ─────────────────────────────────────────
+//
+// Ruled (the row schema, 2026-08-23): seq · crossing · actor · at (anchor +
+// offset) · witnesses · class · payload.
+//
+// Three more come straight from §2's own grammar — the log is SUBJECT · ACTION ·
+// OBJECT? · EFFECT?, and `actor` is only the SUBJECT of it: `action`, `object`,
+// `effect`. Two more are operational and named here rather than smuggled:
+// `household` (the drain's scoping key — §3 writes drafts down to
+// `draft/<household>`, and the read's exposure scope is the same word) and
+// `written_at` (the wall clock, beside `crossing`'s town clock, because a
+// replay that cannot say when is a replay that cannot be checked).
+//
+// ── REPLAYABLE IN PRINCIPLE, TODAY ───────────────────────────────────────────
+//
+// `readJournal` + `replayDrafts` are written in this slice even though the drain
+// that will consume them is slice 2's. A write path whose reader does not exist
+// yet is a write path nobody has proven can be read back, and the whole point of
+// an append-only log is that the log is the truth. `replayDrafts` is pure: rows
+// in, the §1c delta shape out, no store and no git.
+//
+// Env: WORLD_SINGLE_LOG=1 — the write path becomes the journal. OFF is
+// byte-identical to today, which is a falsifier, not a hope.
+
+import { execFileSync } from "node:child_process";
+
+import { openDynamic, dynamicDbPath, singleLogEnabled } from "./dynamic-store.mjs";
+import { draftDeltaForKey, mainRef, publishedState, resolvedWorldHousehold } from "./world-branches.mjs";
+
+export { singleLogEnabled };
+
+// The world frame. §8: "the frame chain to `the-town/let-there-be-light` (which
+// IS the world frame; 'world coords' = the let-there-be-light reference frame,
+// nothing more)". Its own centre is the origin, so an offset from it IS a world
+// coordinate — which is why this is a named anchor and not a null.
+export const WORLD_ANCHOR = "the-town/let-there-be-light";
+
+// The row classes. `mark` is a declaration about the world's static record;
+// `frame` is a reparenting (§8's ruling (b)). Both ride one table, and the drain
+// sorts them by this column: marks to the sketchbook, frames to STATE/log.
+import { TOWN_CLASSES } from "./town-journal.mjs";
+
+export const CLASS_MARK = "mark";
+export const CLASS_FRAME = "frame";
+// `move` is a walk — an entity's own declared departure. It is not a `frame`
+// row: a walk moves you WITHIN a frame, and §8 is explicit that a frame changes
+// only at a boundary you stand on. enter/exit are the reparentings and keep
+// `frame`; walk gets its own word so the log does not have to be read twice to
+// tell them apart.
+export const CLASS_MOVE = "move";
+
+// ── THE LEDGER CONTRACT (POS-5 §3's finisher) ───────────────────────────────
+//
+// The two PUBLIC ledgers — `WORLD/walk-ledger.md` and
+// `WORLD/threshold-ledger.md` — took one git commit on main PER ACT. Ruled
+// 2026-08-22: "walks + enter-exit should settle at the save, not per-act to git
+// main."
+//
+// A row that owes lines to a public ledger carries them VERBATIM:
+//
+//   payload.ledger   the repo-relative path the lines belong in
+//   payload.lines    the exact lines, already formatted by the act's own pen
+//
+// THE LINE ITSELF, not the ingredients to rebuild it. That is the whole
+// equivalence argument: the save appends what the act already wrote rather than
+// re-deriving it, so "the record carries the same lines the per-act commits
+// would have" is true by construction instead of by a second formatter agreeing
+// with the first. Slice 2 learned this the expensive way — one home for a
+// serialization, or two eras disagree in a way that still parses.
+export const LEDGER_PAYLOAD = "payload.ledger + payload.lines — the act's own formatted lines, carried verbatim";
+
+// The mark verbs, as the door speaks them. `amend` and `withdraw` are LATER
+// ENTRIES, never edits — supersession-by-latest is the whole revision family
+// (edit-law), and it costs this table nothing because nothing is ever updated.
+export const ACTION_LEAVE = "leave-mark";
+export const ACTION_AMEND = "amend";
+export const ACTION_WITHDRAW = "withdraw";
+
+const MARK_ACTIONS = new Set([ACTION_LEAVE, ACTION_AMEND, ACTION_WITHDRAW]);
+
+const ROOT_PREFIX = "WORLD/marks/let-there-be-light";
+
+// ── the anchor ───────────────────────────────────────────────────────────────
+
+/**
+ * Where the actor stood, RELATIVE TO WHAT — the-witnessed-line's "an anchor and
+ * an offset".
+ *
+ * `chain` is the containment spine at the point, outermost first, exactly as the
+ * engine's `containmentChain` yields it; `centreOf` resolves a mark id to its
+ * composed world centre. The innermost containing mark is the anchor, because it
+ * is the frame the actor is actually standing in; when nothing contains the
+ * point, the anchor is the world and the offset is the world coordinate itself.
+ *
+ * PURE — no store, no engine, no clone. The caller derives the spine (which
+ * needs both) and hands it over, the way `positions.mjs` takes its frames.
+ *
+ * A point that cannot be read at all returns the world anchor with a null
+ * offset rather than a zero one: `{x:0,y:0}` is Ferry's crossing, a real place
+ * somebody could be standing, and a deriver that substitutes it for "unknown" is
+ * the exact quiet substitution the customs-house law forbids.
+ */
+export function anchorAt(point, { chain = [], centreOf = null } = {}) {
+  const x = Number(point?.x), y = Number(point?.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y))
+    return { anchor: WORLD_ANCHOR, dx: null, dy: null, unplaced: true };
+
+  const inner = Array.isArray(chain) && chain.length ? chain[chain.length - 1] : null;
+  const id = inner?.id ?? null;
+  const centre = id && typeof centreOf === "function" ? centreOf(id) : null;
+  if (!id || !centre || !Number.isFinite(Number(centre.x)) || !Number.isFinite(Number(centre.y)))
+    return { anchor: WORLD_ANCHOR, dx: x, dy: y };
+
+  return { anchor: id, dx: x - Number(centre.x), dy: y - Number(centre.y) };
+}
+
+/** The inverse: an anchor+offset back to world coordinates. What every reader of a row needs, and the reason the pair is stored rather than the point. */
+export function composeAnchor({ anchor, dx, dy }, centreOf = null) {
+  // `dx == null` FIRST, and not folded into the isFinite check: Number(null) is
+  // 0, not NaN, so an unplaced actor's null offset would compose to {0,0} —
+  // Ferry's crossing, a real place somebody could be standing. That is the
+  // quiet substitution the whole anchor pair exists to prevent, and it is the
+  // defect the-anchor's own falsifier caught here.
+  if (dx == null || dy == null) return null;
+  if (!Number.isFinite(Number(dx)) || !Number.isFinite(Number(dy))) return null;
+  if (!anchor || anchor === WORLD_ANCHOR) return { x: Number(dx), y: Number(dy) };
+  const centre = typeof centreOf === "function" ? centreOf(anchor) : null;
+  if (!centre || !Number.isFinite(Number(centre.x)) || !Number.isFinite(Number(centre.y))) return null;
+  return { x: Number(centre.x) + Number(dx), y: Number(centre.y) + Number(dy) };
+}
+
+// ── the witnesses ────────────────────────────────────────────────────────────
+
+/**
+ * Who was there, EACH PINNED at the write instant — the-witnessed-line's plural.
+ *
+ * A witness is not a handle. A handle is a pointer to wherever that resident is
+ * NOW, and "now" is the one instant a log line is never read at. So each witness
+ * carries their own anchor and offset, frozen: the line says where everyone
+ * stood when it was written, and stays true when they all walk away.
+ *
+ * DISCLOSURE, NOT AN EMPTY LIST. Presence is its own flag (`WORLD_PRESENCE`) and
+ * its own read that can fail. "Nobody was within earshot" and "this office could
+ * not see who was within earshot" are different facts, and a bare `[]` for both
+ * is the deriver's law broken in the quietest possible way — the same class as
+ * the homeless-vs-unreadable bug `HOME_BLOCK_UNREADABLE` exists to end. So the
+ * column holds `{ source, list }`, and `source` is `presence` or a named reason.
+ */
+export function pinWitnesses({ residents = null, unread = null, centreOf = null, chainAt = null } = {}) {
+  if (unread || !Array.isArray(residents)) return { source: "unread", reason: String(unread ?? "presence-not-read"), list: [] };
+  const list = [];
+  for (const r of residents) {
+    const handle = r?.handle;
+    if (!handle) continue;
+    const point = { x: Number(r?.at?.x ?? r?.x), y: Number(r?.at?.y ?? r?.y) };
+    const chain = typeof chainAt === "function" ? chainAt(point) : [];
+    const { anchor, dx, dy } = anchorAt(point, { chain, centreOf });
+    list.push({ handle, anchor, dx, dy });
+  }
+  list.sort((a, b) => (a.handle < b.handle ? -1 : a.handle > b.handle ? 1 : 0));
+  return { source: "presence", list };
+}
+
+// ── the write ────────────────────────────────────────────────────────────────
+
+const ROW_COLUMNS = "crossing, actor, action, object, at_anchor, at_dx, at_dy, witnesses, class, payload, effect, household, written_at";
+
+/**
+ * One row. The whole write path, for every verb.
+ *
+ * Nothing here validates the world — a draft costs nothing (Keemin, 2026-08-22),
+ * and the door above has already spoken every refusal a resident is owed. This
+ * is the pen, not the gate.
+ *
+ * Returns the row as stored, `seq` included, because the seq is the answer's
+ * receipt: a caller that cannot name the line it wrote cannot prove it wrote.
+ */
+export function appendJournal(db, entry = {}) {
+  const {
+    crossing = null, actor, action, object = null,
+    at = null, witnesses = null, cls = CLASS_MARK,
+    payload = null, effect = null, household = null,
+    writtenAt = new Date().toISOString(),
+  } = entry;
+
+  if (!actor) throw new Error("a journal line needs an actor — every mutation has a SUBJECT");
+  // ── THE TRIPWIRE: no row that belongs to ANOTHER log may land here ─────
+  //
+  // Added with the town log (town-journal.mjs, 2026-08-24). The two logs live
+  // in separate tables precisely so a join row cannot be deleted undrained by
+  // the world drain's class-blind truncate — but separate tables only help if
+  // rows land in the right one, and nothing about `appendJournal(db, { cls })`
+  // stops a caller aiming a join here. So it bounces at WRITE time: a stack
+  // trace on the line that wrote it, instead of somebody's household vanishing
+  // twelve hours later with nothing left to read.
+  //
+  // STATED AS A DENYLIST OF THE TOWN'S CLASSES, NOT AN ALLOWLIST OF THE
+  // WORLD'S, and the first draft got that backwards. An allowlist has to be a
+  // complete census of every class this log will ever hold — and those
+  // constants do not all live here: CLASS_STANCE is declared in
+  // world-stance.mjs, so the allowlist silently refused every stance row and
+  // took eight live tests down with it. A guard that must be updated from
+  // another file each time the world grows is a guard that will be wrong
+  // again. This one only has to know what the OTHER log owns, which is a
+  // closed set by construction, imported from the file that defines it.
+  if (TOWN_CLASSES.has(String(cls)))
+    throw new Error(
+      `"${cls}" is the town log's class, not the world's — `
+      + `a town act belongs in town_journal via appendTownJournal; writing it here would put it under a drain that does not read it`);
+  if (!action) throw new Error("a journal line needs an action — every mutation has an ACTION");
+
+  const row = {
+    crossing: crossing == null ? null : Number(crossing),
+    actor: String(actor),
+    action: String(action),
+    object: object == null ? null : String(object),
+    at_anchor: at?.anchor ?? null,
+    // `== null` FIRST, the third instance of the same trap in this file:
+    // Number(null) is 0 and 0 is finite, so an UNPLACED actor's null offset
+    // would be stored as {0,0} — Ferry's crossing, a real place, written onto a
+    // constitutional line as where somebody stood. A null offset beside a real
+    // anchor says "the world, position unknown", which is the truth.
+    at_dx: at?.dx == null || !Number.isFinite(Number(at.dx)) ? null : Number(at.dx),
+    at_dy: at?.dy == null || !Number.isFinite(Number(at.dy)) ? null : Number(at.dy),
+    witnesses: witnesses == null ? null : JSON.stringify(witnesses),
+    class: String(cls),
+    payload: payload == null ? null : JSON.stringify(payload),
+    effect: effect == null ? null : String(effect),
+    household: household == null ? null : String(household),
+    written_at: String(writtenAt),
+  };
+
+  const stmt = db.prepare(
+    `INSERT INTO journal (${ROW_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  const res = stmt.run(
+    row.crossing, row.actor, row.action, row.object,
+    row.at_anchor, row.at_dx, row.at_dy,
+    row.witnesses, row.class, row.payload, row.effect,
+    row.household, row.written_at);
+
+  return { seq: Number(res.lastInsertRowid), ...row };
+}
+
+// ── the replay reader ────────────────────────────────────────────────────────
+
+const parse = (text, fallback = null) => {
+  if (text == null) return fallback;
+  try { return JSON.parse(text); } catch { return fallback; }
+};
+
+/**
+ * THE READER. Rows back out in write order, hydrated — the JSON columns parsed,
+ * the `at` triple re-assembled into the one field the ruling named.
+ *
+ * `sinceSeq` is the replay cursor: the drain truncates at the save, so recovery
+ * is "newest snapshot + everything after it" (logos/the-save), and that is this
+ * argument. Nothing consumes it yet; it exists because a log you have never read
+ * back is a log you have not proven is a log.
+ */
+export function readJournal(db, { household = null, cls = null, sinceSeq = 0, limit = null } = {}) {
+  const where = ["seq > ?"];
+  const args = [Number(sinceSeq) || 0];
+  if (household) { where.push("household = ?"); args.push(String(household)); }
+  if (cls) { where.push("class = ?"); args.push(String(cls)); }
+  const sql = `SELECT seq, ${ROW_COLUMNS} FROM journal WHERE ${where.join(" AND ")} ORDER BY seq`
+    // `limit != null` FIRST, for the same reason composeAnchor checks it: a
+    // default of null becomes Number(null) === 0, which is finite, which silently
+    // clamped every unlimited read to LIMIT 1. The replay falsifier caught it.
+    + (limit != null && Number.isFinite(Number(limit)) ? ` LIMIT ${Math.max(1, Math.floor(Number(limit)))}` : "");
+  return db.prepare(sql).all(...args).map(hydrateRow);
+}
+
+/** One stored row, in the vocabulary the ruling used. Exported so a test can hydrate a row it built by hand. */
+export function hydrateRow(r) {
+  return {
+    seq: Number(r.seq),
+    crossing: r.crossing == null ? null : Number(r.crossing),
+    actor: r.actor,
+    action: r.action,
+    object: r.object ?? null,
+    at: { anchor: r.at_anchor ?? null, dx: r.at_dx ?? null, dy: r.at_dy ?? null },
+    witnesses: parse(r.witnesses, null),
+    class: r.class,
+    payload: parse(r.payload, null),
+    effect: r.effect ?? null,
+    household: r.household ?? null,
+    written_at: r.written_at,
+  };
+}
+
+/** The highest seq written, or 0 — the drain's cursor, and the truncate's high-water mark. */
+export function journalHead(db) {
+  return Number(db.prepare("SELECT MAX(seq) s FROM journal").get()?.s ?? 0);
+}
+
+// ── the fold: rows → the §1c delta ───────────────────────────────────────────
+
+/**
+ * The path the drain WILL write this declaration to.
+ *
+ * §1c's contract carries `path`, and the viewer half is untouched by this slice
+ * — so the journal must answer it. The rule is leave-exec's own, unchanged:
+ * sited/parcel land on open ground at the root (draft-costs-nothing, and the
+ * settlement re-homes by geometry regardless of where the file sits);
+ * predicated/naming take the directory of the mark they describe.
+ *
+ * A nested record whose parent is not itself in the journal takes the root-level
+ * fallback, which is exactly what the git path does when the parent is a
+ * published mark whose directory this door cannot cheaply resolve.
+ */
+export function pathFor(record, { parentPathOf = null } = {}) {
+  const slug = record?.slug ?? String(record?.id ?? "").split("/").slice(1).join("/");
+  if (!slug) return null;
+  const parentDir = record?.parent_id && typeof parentPathOf === "function"
+    ? parentPathOf(record.parent_id) : null;
+  return `${parentDir ?? ROOT_PREFIX}/${slug}/mark.md`;
+}
+
+/**
+ * SUPERSESSION-BY-LATEST, folded to the shape §1c already speaks.
+ *
+ * Pure: rows in, `{ marks, counts }` out. No store, no git, no clone — which is
+ * what lets a falsifier assert the fold without building a repo.
+ *
+ * `publishedIds` is the set of ids canon already holds, and it decides the ONE
+ * thing the rows cannot: whether a declaration is an addition to main or a
+ * modification of it, and whether a withdrawal leaves a deletion behind or
+ * simply never happened. That mirrors the git path exactly — a three-dot diff
+ * from the merge-base shows an added-then-withdrawn draft as nothing at all,
+ * because the file appeared and vanished on the same branch.
+ *
+ * `publishedPathOf` and `publishedMarkOf` answer where canon keeps a mark and
+ * what it says, for the one row type that cannot know: a WITHDRAWAL. A withdraw
+ * row's payload is `{by, slug, was_published}` and nothing more — it is a
+ * declaration that something ended, not a description of it. The git path has
+ * no such gap, because it reads the deleted record at the merge-base, so the
+ * overlay gets a real body, kind and footprint for a mark being taken away.
+ * Without these two the journal would hand the viewer an empty grey rectangle
+ * where the git path hands it the mark the resident is removing.
+ */
+export function replayDrafts(rows, { publishedIds = new Set(), publishedPathOf = null, publishedMarkOf = null } = {}) {
+  // latest-wins, in seq order — the log's own order is the supersession order.
+  // `declared` keeps the last row that actually DESCRIBED the mark, which is
+  // what a withdrawal's shape falls back to before canon does.
+  const latest = new Map();
+  const declared = new Map();
+  for (const row of rows) {
+    if (row.class !== CLASS_MARK || !MARK_ACTIONS.has(row.action) || !row.object) continue;
+    if (row.action !== ACTION_WITHDRAW) declared.set(row.object, row);
+    latest.set(row.object, row);
+  }
+
+  const pathOfDraft = new Map();
+  for (const [id, row] of latest) {
+    if (row.action === ACTION_WITHDRAW) continue;
+    pathOfDraft.set(id, pathFor({ ...(row.payload ?? {}), id }, {
+      parentPathOf: (pid) => {
+        const p = latest.get(pid);
+        const ppath = p && p.action !== ACTION_WITHDRAW
+          ? pathFor({ ...(p.payload ?? {}), id: pid })
+          : (typeof publishedPathOf === "function" ? publishedPathOf(pid) : null);
+        return ppath ? ppath.replace(/\/mark\.md$/, "") : null;
+      },
+    }));
+  }
+
+  const marks = [];
+  for (const [id, row] of latest) {
+    const published = publishedIds.has(id);
+    if (row.action === ACTION_WITHDRAW) {
+      // Never crossed → the sketchbook and canon both end with nothing to show,
+      // and the delta is silent. Published → main still holds it, so the
+      // household IS proposing a deletion, and the delta must say so.
+      if (!published) continue;
+      const path = typeof publishedPathOf === "function" ? publishedPathOf(id) : null;
+      // its own last declaration first, then canon's — a withdraw row can
+      // describe nothing, and the overlay has a mark to draw either way.
+      const canon = typeof publishedMarkOf === "function" ? publishedMarkOf(id) : null;
+      marks.push({
+        status: "deleted", path: path ?? pathFor({ id, slug: id.split("/").slice(1).join("/") }),
+        ...markShape(id, declared.get(id) ?? row, canon),
+      });
+      continue;
+    }
+    marks.push({
+      status: published ? "modified" : "added",
+      path: pathOfDraft.get(id),
+      ...markShape(id, row),
+    });
+  }
+
+  marks.sort((a, b) => String(a.path).localeCompare(String(b.path)));
+  return {
+    marks,
+    counts: {
+      added: marks.filter((m) => m.status === "added").length,
+      modified: marks.filter((m) => m.status === "modified").length,
+      deleted: marks.filter((m) => m.status === "deleted").length,
+    },
+  };
+}
+
+/**
+ * One journal row as §1c's viewer reads a mark.
+ *
+ * `tier: "market"` is not a default invented here — it is what the git path
+ * yields for every mark written since 2026-08-13, because the door refuses
+ * `tier:` as a field ("standing is derived from the ground your mark stands on")
+ * and `parseDeltaRecord` falls back to "market" when the frontmatter carries
+ * none. The journal holds no tier for the same reason, and reports the same word,
+ * so the overlay renders identically across the flag.
+ */
+function markShape(id, row, canon = null) {
+  const p = row.payload ?? {};
+  const points = p.points ?? canon?.points ?? null;
+  return {
+    id,
+    by: p.by ?? canon?.by ?? String(id).split("/")[0] ?? null,
+    kind: p.kind ?? canon?.kind ?? null,
+    tier: "market",
+    body: String(p.body ?? canon?.body ?? "").trim(),
+    date: p.date ?? row.written_at ?? null,
+    at: p.at ?? canon?.at ?? null,
+    extent: p.extent ?? canon?.extent ?? null,
+    ...(points ? { points } : {}),
+  };
+}
+
+// ── the door guards, as store lookups ────────────────────────────────────────
+
+/**
+ * The household's LIVE marks — everything it has declared since the last save
+ * that has not been withdrawn — in the record vocabulary the door's guards read.
+ *
+ * §2: "Door guards that read the tree today (slug collision, parcel cap) become
+ * DB lookups." This is that lookup. Under the flag there is no checked-out draft
+ * branch to `loadMarks` over, and there must not be one — the checkout is the
+ * thing being retired.
+ *
+ * Scoped to the household by default because that is what a sketchbook is: your
+ * own unpublished declarations, nobody else's. Pass `household: null` for the
+ * whole live layer (what the drain wants).
+ */
+export function liveMarks(db, { household = undefined } = {}) {
+  const rows = readJournal(db, { cls: CLASS_MARK, ...(household === undefined ? {} : { household }) });
+  const latest = new Map();
+  for (const row of rows) if (row.object && MARK_ACTIONS.has(row.action)) latest.set(row.object, row);
+  const out = [];
+  for (const [id, row] of latest) {
+    if (row.action === ACTION_WITHDRAW) continue;
+    const p = row.payload ?? {};
+    out.push({ id, ...p, by: p.by ?? String(id).split("/")[0], household: row.household ?? null, seq: row.seq });
+  }
+  return out;
+}
+
+/** Whether the household's live layer holds a mark that names `id` as its parent — the store's answer to `holdsChildren`, which used to be a directory listing. */
+export function liveChildrenOf(db, id, { household = undefined } = {}) {
+  return liveMarks(db, { household }).filter((m) => m.parent_id === id);
+}
+
+// ── the §1c door ─────────────────────────────────────────────────────────────
+
+// Where canon keeps a mark, for the one row that needs it: a withdrawal of a
+// PUBLISHED mark, whose path lives on main and not in the log. Built from one
+// `ls-tree` at the sha and cached on it — the tree is immutable at a commit, so
+// a cache nobody can invalidate is impossible here.
+//
+// The index is keyed by leaf SLUG, and a slug is unique per AUTHOR, not per
+// tree: two households may both keep a `the-lamp`. An ambiguous slug therefore
+// resolves to nothing and the row falls back to the root-level path — the same
+// place a draft-costs-nothing declaration would land, and the drain re-homes by
+// geometry at the save regardless. Wrong-but-plausible is not on the table: the
+// fallback is a path the settlement is already equipped to move.
+let _pathIndex = null;
+function publishedPathIndex(repo, sha) {
+  if (_pathIndex?.repo === repo && _pathIndex.sha === sha) return _pathIndex.bySlug;
+  const bySlug = new Map();
+  try {
+    const out = execFileSync("git", ["-C", repo, "ls-tree", "-r", "--name-only", sha, "--", "WORLD/marks"],
+      { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+    for (const line of out.split("\n")) {
+      const path = line.trim();
+      if (!path.endsWith("/mark.md")) continue;
+      const slug = path.slice(0, -"/mark.md".length).split("/").pop();
+      if (!slug) continue;
+      bySlug.set(slug, bySlug.has(slug) ? null : path);   // null = ambiguous
+    }
+  } catch { /* no tree at this sha → every published path is unknown, and says so by being absent */ }
+  _pathIndex = { repo, sha, bySlug };
+  return bySlug;
+}
+
+/** Drop the cached path index — for tests that rewrite a repo in place at the same sha. */
+export function resetPathIndex() { _pathIndex = null; }
+
+/**
+ * THE §1c CONTRACT, over whichever store holds the drafts.
+ *
+ * Flag OFF: `draftDeltaForKey` verbatim, byte for byte — this function adds
+ * nothing to that path, which is what makes the flag-off falsifier meaningful.
+ *
+ * Flag ON: the git delta UNIONED with the journal's replay, journal winning on
+ * a shared id. Both halves, not one — §0's model has three sources and the
+ * cutover retires none of them:
+ *
+ *   canon        published main (the caller's own read; the ids come from here)
+ *   sketchbook   `draft/<household>`, still holding every draft written BEFORE
+ *                the flag flipped. Dropping it would make a resident's existing
+ *                work vanish from their overlay on the day of the cutover.
+ *   journal      everything declared since, which is the only thing that moves
+ *                between saves once the drain lands.
+ *
+ * The journal wins a collision because it is later by construction: a
+ * declaration in the log was made after the sketchbook was last written to.
+ *
+ * The shape is unchanged, key for key, because the viewer half is untouched.
+ * `draft` is the sketchbook's commit sha and stays exactly that — it does not
+ * quietly start meaning something else when the flag is on. What the journal
+ * contributes is disclosed in its own `log` block rather than smuggled into a
+ * field that already means a commit.
+ */
+export function draftsForKey(repo, key) {
+  const gitDelta = draftDeltaForKey(repo, key);
+  if (!singleLogEnabled() || gitDelta?.error) return gitDelta;
+
+  const household = resolvedWorldHousehold(key);
+  let head = 0, replayed = { marks: [], counts: { added: 0, modified: 0, deleted: 0 } };
+  try {
+    const state = publishedState(repo).state ?? {};
+    const publishedIds = new Set((state.marks ?? []).map((m) => m.id));
+    // LAZY, and that is the point of this whole ladder: the index costs an
+    // `ls-tree` over ~900 mark paths, and the only row that needs it is a
+    // withdrawal of a PUBLISHED mark — rare, and absent from the overwhelming
+    // majority of reads. Building it eagerly would put whole-tree work back on
+    // the request path, which is the class §0 exists to keep off it.
+    const sha = String(gitDelta.main ?? mainRef(repo));
+    const publishedPathOf = (id) =>
+      publishedPathIndex(repo, sha).get(String(id).split("/").slice(1).join("/")) ?? null;
+    const canonById = new Map((state.marks ?? []).map((m) => [m.id, m]));
+    const publishedMarkOf = (id) => canonById.get(id) ?? null;
+
+    const db = openDynamic(dynamicDbPath(), { readOnly: true });
+    try {
+      head = journalHead(db);
+      replayed = replayDrafts(readJournal(db, { household, cls: CLASS_MARK }), { publishedIds, publishedPathOf, publishedMarkOf });
+    } finally { try { db.close(); } catch { /* already gone */ } }
+  } catch (e) {
+    // A live layer this door cannot read is a fact the caller must be told, not
+    // an empty overlay. The sketchbook half still answers; the block says what
+    // is missing from it.
+    return { ...gitDelta, log: { readable: false, reason: String(e?.message ?? e).slice(0, 200) } };
+  }
+
+  const byId = new Map();
+  for (const m of gitDelta.marks ?? []) if (m.id) byId.set(m.id, m);
+  for (const m of replayed.marks) if (m.id) byId.set(m.id, m);
+  const marks = [...byId.values()].sort((a, b) => String(a.path).localeCompare(String(b.path)));
+
+  return {
+    ...gitDelta,
+    exists: gitDelta.exists || marks.length > 0,
+    marks,
+    counts: {
+      added: marks.filter((m) => m.status === "added").length,
+      modified: marks.filter((m) => m.status === "modified").length,
+      deleted: marks.filter((m) => m.status === "deleted").length,
+    },
+    log: { readable: true, head, marks: replayed.marks.length },
+  };
+}

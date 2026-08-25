@@ -24,6 +24,9 @@
 // can be held against the law; a finding that quotes a section number cannot.
 // L0 keeps the citation honest — it reads the eight marks' own dials off the
 // world tree and goes RED on a drifted pairing rather than skipping quietly.
+// As of 2026-08-23 the last §2.10 pointers are gone from the store, the
+// hydrator and this file: each is re-anchored to the invariant it was really
+// reaching for. This header's own mention above is the record of what they said.
 //
 //   node src/world-lints.mjs            # human report, from the built store
 //   node src/world-lints.mjs --json     # machine rows
@@ -209,6 +212,15 @@ export async function runLints({ dbPath = DEFAULT_DB, sources = null, engineText
   //       NOT evidence: the spike's first pass let one comment about
   //       off-timetable ferry catch-up runs turn the known-red timetable GREEN.
   //       Name hits are context only and can never produce a green.
+  //
+  // TIGHTENED 2026-08-23 (Keemin): the verdict is PER NAME. It used to go red
+  // only when a mechanic declared a module the office never loads, or when
+  // EVERY mark-carried mechanic was underivable — so one derivable-and-running
+  // mechanic among six that reach nothing read as GREEN. The mark does not
+  // grade on a curve: "Every mechanic names running code and the name resolves
+  // — a rule whose mechanic reaches nothing is ink." Each name that reaches
+  // nothing is its own piece of ink, and one that reaches is no defence for the
+  // rest.
   {
     const engineLines = engine ? engine.split(/\r?\n/) : [];
     const sectionText = (startLine) => {
@@ -250,21 +262,29 @@ export async function runLints({ dbPath = DEFAULT_DB, sources = null, engineText
     const claimed = rows.filter((r) => r.carried_by.length);
     const broken = claimed.filter((r) => r.verdict === RED);
     const underivable = claimed.filter((r) => r.verdict === "UNDERIVABLE");
+    // Per name: a mechanic reaches running declared code, or it does not. Both
+    // ways of not reaching — declaring a module nobody loads, and declaring no
+    // module at all — leave the same hole where running code was promised.
+    const unreached = claimed.filter((r) => r.verdict !== GREEN);
     add({
       id: "L1", name: "every `mechanic:` reaches running code",
-      verdict: broken.length || underivable.length === claimed.length ? RED : GREEN,
-      headline: broken.length
-        ? `${broken.map((b) => b.mechanic).join(", ")} declares an implementing module the running office never loads; ${underivable.length} of ${claimed.length} mark-carried mechanics declare no implementing module at all`
+      verdict: unreached.length ? RED : GREEN,
+      headline: unreached.length
+        ? `${unreached.length} of ${claimed.length} mark-carried mechanics reach no running declared code — ` + [
+            broken.length ? `${broken.length} declare an implementing module the running office never loads (${broken.map((b) => b.mechanic).join(", ")})` : null,
+            underivable.length ? `${underivable.length} declare no implementing module at all (${underivable.map((u) => u.mechanic).join(", ")})` : null,
+          ].filter(Boolean).join("; ")
         : `all ${claimed.length} mark-carried mechanics reach a running declared module`,
-      method: "mark -> implements -> mechanic class -> implementing module -> reachable from office/src/server.mjs over imports+reads (reads carries the office's dynamic imports into the world clone's tools). The implementing module is taken from the ENGINE.md section that names the mechanic — the town's own declaration. Word-boundary name hits in source are reported as context and cannot produce a green.",
-      limits: "The mechanic->code hop is DERIVED because nothing declares it: skeleton.json's physics_registry carries an honored flag and a receipt, no path. Exactly one mechanic (timetable) has an ENGINE.md section naming its module; the rest are UNDERIVABLE, which this lint reports rather than passes. The right fix is an implementing-module field on the registry, at which point this becomes a pure edge query.",
+      method: "mark -> implements -> mechanic class -> implementing module -> reachable from office/src/server.mjs over imports+reads (reads carries the office's dynamic imports into the world clone's tools). The implementing module is taken from the ENGINE.md section that names the mechanic — the town's own declaration. Word-boundary name hits in source are reported as context and cannot produce a green. The verdict is PER NAME: every mechanic that reaches no running declared module is red on its own, and a sibling that reaches does not cover for it.",
+      limits: "The mechanic->code hop is DERIVED because nothing declares it: skeleton.json's physics_registry carries an honored flag and a receipt, no path. Exactly one mechanic (timetable) has an ENGINE.md section naming its module, so most rows are UNDERIVABLE — and since 2026-08-23 that is a RED per name rather than a reported aside, which is why the red count here reads high: the town is asking for the declarations, not reporting a new breakage. The right fix is an implementing-module field on the registry, at which point this becomes a pure edge query and the underivable rows resolve one way or the other. Mechanics no mark carries are listed as `unclaimed` and are not ruled on: this question is about rules whose mechanic reaches nothing, and an unclaimed mechanic is no rule's.",
       rows,
       evidence: [
         ...broken.map((b) => {
           const importers = b.declared_modules.flatMap((m) => inbound(graph, m, "imports").concat(inbound(graph, m, "reads")).map((e) => e.src.replace("code:", "")));
           return `${b.mechanic}: declared by ENGINE.md as ${b.declared_modules.map((m) => m.replace("code:", "")).join(", ")}; carried by ${b.carried_by.join(", ")}; NOT reachable from server.mjs — everything that imports it: ${[...new Set(importers)].join(", ") || "(nothing)"}`;
         }),
-        `underivable (no declared module): ${underivable.map((u) => u.mechanic).join(", ") || "none"}`,
+        ...underivable.map((u) =>
+          `${u.mechanic}: carried by ${u.carried_by.join(", ")}; no ENGINE.md section names an implementing module for it, so nothing declares where it runs${u.name_hits_running?.length ? ` — modules merely NAMING it that are running: ${u.name_hits_running.map((m) => m.replace("code:", "")).join(", ")} (context, never a green)` : ""}`),
       ],
     });
   }
@@ -413,7 +433,7 @@ export async function runLints({ dbPath = DEFAULT_DB, sources = null, engineText
       verdict: totalOrphans ? RED : GREEN,
       headline: `${totalOrphans} source files carry a watched class constant as a bare literal with no link to its owner — ${inContext} of them on a line that also names the constant's own domain (${rows.map((r) => `${r.value}: ${r.orphan_files_in_context}/${r.orphan_files}`).join(", ")})`,
       method: `Word-boundary numeric scan over the scanned source set (${codeNodes.length} .mjs across office/src and world/tools), absolved by: defining the constant, importing the defining module and naming its export, or a \`reads\` edge into the owning mark's directory.`,
-      limits: "A text scan with no context: HTTP status 405 is matched by the pace-405 watch, and the parcel dial 25 matches every unrelated 25 in the corpus. Every row carries its source line for adjudication. Structurally: the store has NO code->mark edge type, so absolution by 'reads the owning mark' can only fire on a file that quotes a mark's path literally — which no file does today. And since Stage 1 moved the lints into office/src, this module's own watch list is inside the scanned corpus and counts as an orphan of every constant it watches (rows marked is_watchlist) — true by the lint's own definition, and left in rather than exempted. This lint points; it does not rule.",
+      limits: "THE WATCH LIST IS CLOSED, and it is three constants long: pace 405, the parcel dial 25, and walking pace 15. The mark says every constant in the machinery; this asks after those three, so a green here is a green about three numbers and silence about every other number in the corpus. The narrowing is named rather than hidden, and the list grows by being edited — the CONSTS table above is the whole of it. Within those three: a text scan with no context, so HTTP status 405 is matched by the pace-405 watch and the parcel dial 25 matches every unrelated 25. Every row carries its source line for adjudication. Structurally: the store has NO code->mark edge type, so absolution by 'reads the owning mark' can only fire on a file that quotes a mark's path literally — which no file does today. And since Stage 1 moved the lints into office/src, this module's own watch list is inside the scanned corpus and counts as an orphan of every constant it watches (rows marked is_watchlist) — true by the lint's own definition, and left in rather than exempted. This lint points; it does not rule.",
       rows,
       evidence: rows.flatMap((r) => r.hits.filter((h) => !h.absolved && h.plausible).slice(0, 5).map((h) =>
         `${r.value} in ${h.file.replace("code:", "")} x${h.occurrences} (owner ${r.owner})${h.is_watchlist ? " [this lint's own watch list]" : ""} — L${h.lines[0].line}: ${h.lines[0].text}`))
@@ -450,7 +470,7 @@ export async function runLints({ dbPath = DEFAULT_DB, sources = null, engineText
           : `; every one carries \`pre: true\` — seeded prior estate, which the class law explicitly grandfathers, so the door has never written an off-dial parcel`)
         : `all ${rows.length} parcels are ${dial}x${dial} or extent-absent (dial inherited)`,
       method: "nodes kind=mark subkind=parcel, extent read from the node's own extent_w/extent_h, compared against the parcel class node's extent (PARCEL_EXTENT_M). Extent-absent counts as conforming: the door fills the dial in. The `pre:` flag is reported per row, not applied as a filter.",
-      limits: "§2.10 asks for conformance to the class's CURRENT VERSION, and the prior-estate clause lives in a code comment in tools/marks-fold.mjs — so this lint answers the strict question and hands a human the `pre:` column. The instances now stand on real instance-of rails to the works' own parcel mark (the synthesized class node retired at the step-1 promotion, 2026-08-18), but the extent dial itself still lives in code (PARCEL_EXTENT_M) until the params explosion seats it on the mark — so this remains a one-class check, generalizing as classes carry their params.",
+      limits: "THE CHECKED SET IS CLOSED, and it is one class: the parcel. The mark says every instance conforms to its class; this reads one class's contract against its records, because the parcel's extent is the only class param that lives anywhere a machine can reach — so a green here is a green about parcels and silence about every other class's instances. The narrowing is named rather than hidden, and the set grows as the params explosion seats each class's dials on its mark. Within the parcel: the class law asks for conformance to the CURRENT contract, and the prior-estate clause that grandfathers seeded estate lives in a code comment in tools/marks-fold.mjs rather than on the mark — so this lint answers the strict question and hands a human the `pre:` column instead of applying a filter it cannot cite. The instances stand on real instance-of rails to the works' own parcel mark (the synthesized class node retired at the step-1 promotion, 2026-08-18), but the extent dial itself still lives in code (PARCEL_EXTENT_M).",
       rows,
       evidence: [
         ...bad.map((b) => `${b.parcel} ${b.w}x${b.h} · pre:${b.pre} · dated ${b.date} (${b.path})`),
@@ -608,21 +628,41 @@ export async function runLints({ dbPath = DEFAULT_DB, sources = null, engineText
   // A tree we cannot reach is DISCLOSED, never counted as drift: the unreadable
   // list is already the loud part, and calling a swept cache a constitutional
   // disagreement would be this lint laundering its own noise floor.
+  //
+  // GIVEN A VOICE 2026-08-23 (Keemin): L0 used to speak only when it had a
+  // complaint, which left a clean run and a run where L0 never happened looking
+  // exactly alike — an absence nobody can read is the noise floor hidden in the
+  // one place the lint that exists to expose noise floors cannot see. Its own
+  // mechanic mark says `src/world-lints.mjs — L0 at every hydration`, so it now
+  // emits at every hydration: the verdict set is eight rows, always, and a
+  // MISSING L0 row is itself the finding. The red conditions are unchanged, and
+  // a tree it could not reach is still never dressed up as drift — but it is
+  // not dressed up as a green either. A clone-less run checked no citations, so
+  // it says N/A and asserts nothing, exactly as its limits always claimed.
   const lawCheck = readLawPairing(TREE);
-  if (unreadable.length || lawCheck.drift.length) add({
+  const lawRead = lawCheck.status === "read";
+  add({
     id: "L0", name: "the lints could read their own inputs, and their law citations match the marks",
-    verdict: RED,
-    headline: [
-      unreadable.length ? `${unreadable.length} source files named by the store could not be read — every text-scanning lint above is running on a partial corpus` : null,
-      lawCheck.drift.length ? `${lawCheck.drift.length} law citation(s) no longer match the invariant marks — the findings above are quoting law the town did not write` : null,
-    ].filter(Boolean).join("; "),
-    method: `each code node's path resolved against meta.office_path / meta.world_tree_path and read. Separately, the eight id↔Lx pairs and the eight quoted claims in this module's LAW table are read back off the marks themselves — ${LAW_ROOT}/<slug>/mark.md, the \`lint\` dial from the frontmatter and the one-claim body from the rest — and any dial or claim that disagrees is drift.`,
-    limits: `The materialised world tree lives in a temp cache keyed by sha; a swept cache produces exactly this. The citation check needs that same tree: with no tree it reports \`unavailable\` (this run: ${lawCheck.status}${lawCheck.status === "read" ? `, ${lawCheck.checked} of ${Object.keys(LAW).length} marks read` : ""}) and asserts nothing, so a clone-less run proves nothing about the citations. It compares this file's table to the marks; it cannot tell which of the two is the one that moved. Rehydrate to restore the tree.`,
+    verdict: unreadable.length || lawCheck.drift.length ? RED : lawRead ? GREEN : NA,
+    headline: unreadable.length || lawCheck.drift.length
+      ? [
+          unreadable.length ? `${unreadable.length} source files named by the store could not be read — every text-scanning lint above is running on a partial corpus` : null,
+          lawCheck.drift.length ? `${lawCheck.drift.length} law citation(s) no longer match the invariant marks — the findings above are quoting law the town did not write` : null,
+        ].filter(Boolean).join("; ")
+      : lawRead
+        ? `every source file the scans above reached for was read, and all ${lawCheck.checked} of ${Object.keys(LAW).length} law citations match the invariant marks verbatim`
+        : `every source file the scans above reached for was read, but the invariant family was not reachable in the world tree (${lawCheck.status}) — the citations went unchecked this run, so this asserts nothing about them`,
+    method: `each code node's path resolved against meta.office_path / meta.world_tree_path and read. Separately, the eight id↔Lx pairs and the eight quoted claims in this module's LAW table are read back off the marks themselves — ${LAW_ROOT}/<slug>/mark.md, the \`lint\` dial from the frontmatter and the one-claim body from the rest — and any dial or claim that disagrees is drift. GREEN needs both halves: nothing unread and the family read clean.`,
+    limits: `This sees only the files the lints above actually reached for — a node no scan touched is neither read nor unread here. The materialised world tree lives in a temp cache keyed by sha; a swept cache produces an unreadable corpus. The citation check needs that same tree: with no tree it reports \`unavailable\` (this run: ${lawCheck.status}${lawRead ? `, ${lawCheck.checked} of ${Object.keys(LAW).length} marks read` : ""}) and the verdict is N/A rather than green, because a clone-less run proves nothing about the citations either way. When it does read, it compares this file's table to the marks; it cannot tell which of the two is the one that moved. Rehydrate to restore the tree.`,
     rows: unreadable.slice(0, 40),
     law_check: lawCheck,
     evidence: [
       ...unreadable.slice(0, 10),
       ...lawCheck.drift.map((d) => `${d.lint} · ${d.why} at ${d.at} — this module says ${JSON.stringify(d.expected)}, the mark says ${JSON.stringify(d.found)}`),
+      ...(unreadable.length ? [] : ["no source file the scans above reached for failed to read"]),
+      lawRead
+        ? `law citations: ${lawCheck.checked} of ${Object.keys(LAW).length} marks read at ${lawCheck.root}, ${lawCheck.drift.length} drifted`
+        : `law citations: not checked — no invariant family at ${lawCheck.root ?? "(no tree path)"}`,
     ],
   });
 

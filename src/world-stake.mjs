@@ -26,7 +26,8 @@ import { worldFreezeBounce } from "./freeze.mjs";
 import { existsSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
-import { publishedState, draftDeltaForKey } from "./world-branches.mjs";
+import { publishedState } from "./world-branches.mjs";
+import { draftsForKey } from "./world-journal.mjs"; // the §1c delta, over the sketchbook and the journal both (POS-5 slice 1)
 import { forecastForMark } from "./world-forecast.mjs";
 import { execUnderTownLock, lockTimedOut, LOCK_BUSY } from "./town-lock.mjs";
 
@@ -77,7 +78,7 @@ export function markExists(mark, key = null) {
     // then the delta (a git diff plus a few file reads, O(k), no fold), which
     // only ever shows the caller their OWN sketchbook.
     if (key) {
-      const delta = draftDeltaForKey(WORLD_CLONE, key);
+      const delta = draftsForKey(WORLD_CLONE, key);
       if (!delta?.error && (delta?.marks ?? []).some((m) => m.id === mark && m.status !== "deleted"))
         return { known: true, exists: true };
     }

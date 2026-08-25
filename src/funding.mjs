@@ -369,9 +369,20 @@ export function foldFunding(entries) {
   const deedsByPot = new Map();    // pot -> [{patron, date, usd, receipt, holo}]
   const receiptsByPot = new Map(); // pot -> [{date, rail, usd, from, receipt}]
   const potEscrow = new Map();     // pot -> open staked stamps
+  // WHOSE escrow, not just how much. The pot total is what a pot's own card
+  // needs; a resident deciding whether to stake needs to know what their OWN
+  // stamps are already holding, and one integer per pot cannot say. Same rows,
+  // same three drains — only the key differs, so the two can never disagree.
+  const potEscrowByHandle = new Map(); // handle -> Map(pot -> open staked)
   const invalid = [];
   const push = (map, key, v) => { if (!map.has(key)) map.set(key, []); map.get(key).push(v); };
-  const escrow = (pot, delta) => potEscrow.set(pot, (potEscrow.get(pot) ?? 0) + delta);
+  const escrow = (pot, delta, handle) => {
+    potEscrow.set(pot, (potEscrow.get(pot) ?? 0) + delta);
+    if (!handle) return;
+    if (!potEscrowByHandle.has(handle)) potEscrowByHandle.set(handle, new Map());
+    const mine = potEscrowByHandle.get(handle);
+    mine.set(pot, (mine.get(pot) ?? 0) + delta);
+  };
 
   for (const e of entries) {
     const row = classifyFundingRow(e.canonical);
@@ -381,9 +392,11 @@ export function foldFunding(entries) {
       // escrow in, and the two ways it leaves: an unmatched stake returns whole,
       // a dollar-matched stake burns. Both drain the pot — the burn is not a
       // separate kind of row that leaves the escrow standing.
-      case "pot-stake": escrow(row.pot, row.n); break;
-      case "pot-return": escrow(row.pot, -row.n); break;
-      case "keeping-burn": escrow(row.pot, -row.n); break;
+      case "pot-stake": escrow(row.pot, row.n, row.handle); break;
+      case "pot-return": escrow(row.pot, -row.n, row.handle); break;
+      // the burn names its staker in `staker:`, which the classifier hands back
+      // as the row's handle — so a burned stake leaves the right books
+      case "keeping-burn": escrow(row.pot, -row.n, row.handle); break;
       case "holo":
         push(holoByParty, row.handle, { date: row.date, pot: row.pot, holo: row.n, epoch: row.epoch, receipt: row.ref });
         break;
@@ -403,7 +416,11 @@ export function foldFunding(entries) {
     }
   }
   for (const [k, v] of potEscrow) if (v === 0) potEscrow.delete(k); // absent == zero, one representation
-  return { holoByParty, keepingByParty, deedsByParty, deedsByPot, receiptsByPot, potEscrow, invalid };
+  for (const [h, m] of potEscrowByHandle) {
+    for (const [pot, v] of m) if (v === 0) m.delete(pot);
+    if (m.size === 0) potEscrowByHandle.delete(h);
+  }
+  return { holoByParty, keepingByParty, deedsByParty, deedsByPot, receiptsByPot, potEscrow, potEscrowByHandle, invalid };
 }
 
 // ── pot files (the bounty files on the quest board) ─────────────────────────
@@ -417,7 +434,44 @@ export function foldFunding(entries) {
 // yet, and the town's own close refuses to run until one is named. Requiring a
 // non-null keeper here would have surfaced the town's only real pot as
 // malformed — a reader calling a lawful draft forged.
-const POT_MONEY_FIELDS = ["status", "target_usd_per_epoch", "epoch_cadence", "received_usd"];
+// `target_usd_per_epoch` must be PRESENT but may be null — see THE ELASTIC
+// AMENDMENT below. `status`, `epoch_cadence` and `received_usd` are still
+// required outright: a pot that cannot say whether it is open, how often it
+// closes, or what it has taken is not a smaller pot, it is not a pot.
+const POT_MONEY_FIELDS = ["status", "epoch_cadence", "received_usd"];
+
+// ── THE ELASTIC AMENDMENT (town main, 2026-08-23) ───────────────────────────
+// This reader used to refuse every targetless pot, quoting a law that has since
+// been amended. pot-keeping-ec2.json § _target now reads, verbatim:
+//
+//   "target_usd_per_epoch is the posted need, and it is the ONLY thing dollars
+//    are priced against — the funded fraction is min(1, non-treasury dollars /
+//    target). A pot with no target cannot close — UNLESS ITS OWN CLOSE WORD
+//    SAYS ELASTIC (the DARKO ruling, 2026-08-23): then the need is whatever
+//    arrived, floored by its min_close_usd."
+//
+// And pot-darko-fund.json § _close spells what elastic does:
+//
+//   "a month's close runs only if the accumulated roll — carried dollars plus
+//    this month's — totals at least min_close_usd; otherwise dollars and stakes
+//    both stand and ride to the next month … Nothing is ever refused at intake."
+//
+// So a targetless pot is lawful when it says why, and the reader's job is to
+// carry the word rather than to refuse the pot. Until this changed, the MCP
+// literally dropped the DARKO box: the town posted a need, and every door
+// answered as though it did not exist.
+//
+// `none` is the other lawful word — the standing box that never closes. A pot
+// with NO target and NO close word is still refused, and that refusal is the
+// original law doing its remaining job: nothing in the record says how it could
+// ever close, so nothing should quote it a funded fraction.
+const CLOSE_WORDS = new Set(["elastic", "none"]);
+const closeWordOf = (d) =>
+  typeof d?.close === "string" && CLOSE_WORDS.has(d.close.trim()) ? d.close.trim() : null;
+// The ceremony's floor, in whole dollars. § _min_close: "Owner of the number:
+// this file; every surface reads it." Absent is null, never a default — a
+// surface that cannot name the floor says so rather than inventing one.
+const wholeFloor = (v) => (Number.isInteger(v) && v > 0 ? v : null);
 // The posted need must be a whole number of dollars. It is the ONLY thing the
 // town prices dollars against (funded = min(1, non-treasury dollars ÷ target)),
 // and the town's own close refuses a pot without it — so a pot carrying a
@@ -441,11 +495,20 @@ export function readPots(townDir) {
     const missing = POT_MONEY_FIELDS.filter((f) => d[f] == null);
     if (!Object.hasOwn(d, "beneficiary")) missing.push("beneficiary");
     if (missing.length) { bad(name, `pot file missing ${missing.join(", ")}`); continue; }
-    if (!wholeTarget(d.target_usd_per_epoch)) {
-      bad(name, `pot posts target_usd_per_epoch ${JSON.stringify(d.target_usd_per_epoch)} — the posted need must be a positive whole number of dollars; it is what the funded fraction is priced against, and a pot without one cannot close`);
+    if (!Object.hasOwn(d, "target_usd_per_epoch")) { bad(name, "pot file missing target_usd_per_epoch"); continue; }
+    const close = closeWordOf(d);
+    const targetless = d.target_usd_per_epoch == null;
+    if (targetless && !close) {
+      bad(name, `pot posts no target_usd_per_epoch and names no close word — a pot with no target cannot close unless its own close word says elastic (the DARKO ruling, 2026-08-23); with neither, nothing in the record says how this pot could ever close`);
       continue;
     }
-    pots.push({ id, data: d });
+    if (!targetless && !wholeTarget(d.target_usd_per_epoch)) {
+      bad(name, `pot posts target_usd_per_epoch ${JSON.stringify(d.target_usd_per_epoch)} — the posted need must be a positive whole number of dollars; it is what the funded fraction is priced against`);
+      continue;
+    }
+    // The word and its floor ride WITH the pot from here on. Every surface
+    // downstream branches on them, and none of them may re-derive the law.
+    pots.push({ id, data: d, close, min_close_usd: wholeFloor(d.min_close_usd) });
   }
   return { pots, invalid };
 }

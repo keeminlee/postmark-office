@@ -29,6 +29,7 @@ import { join, resolve, dirname, relative } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { penCommit } from "./write.mjs";
+import { markRecord } from "./mark-record.mjs";
 import { ensureDraftCheckout } from "./world-branches.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -45,11 +46,6 @@ const ROOT_DIR = join(MARKS_DIR, "let-there-be-light");
 
 const answer = (obj) => { console.log(JSON.stringify(obj)); process.exit(0); };
 const err = (code, defect, hint) => answer({ error: { code, defect, hint } });
-
-// serialize a value the parser reads back the same way (inline object / array / scalar)
-const fmtVal = (v) => Array.isArray(v) ? JSON.stringify(v)
-  : (v && typeof v === "object") ? `{ ${Object.entries(v).map(([k, n]) => `${k}: ${n}`).join(", ")} }`
-  : String(v);
 
 // phase stamps for the one [timing] stderr line printed on the success path —
 // the write-path decomposition (lock wait lives in the parent's total).
@@ -247,13 +243,14 @@ async function main() {
   // class/ask/reward/status: the bounty grammar (founder-ruled 2026-08-11) — the
   // door validated them; here they only need to reach the record, or the board's
   // reader can never see a resident's notice.
-  // image: the media-shelf pointer (2026-08-15) — the door validated the URL's
+  // image: the media pointer (2026-08-15) — the door validated the URL's
   // host; here it only needs to reach the record, or investigate can never
   // return it and the site can never render it.
-  const fm = ["kind", "by", "date", "at", "extent", "points", "slot", "value", "class", "ask", "reward", "status", "image"]
-    .filter((k) => fileRec[k] !== undefined && fileRec[k] !== null && fileRec[k] !== "")
-    .map((k) => `${k}: ${fmtVal(fileRec[k])}`).join("\n");
-  const record = `---\n${fm}\n---\n\n${String(p.body).trim()}\n`;
+  // The grammar moved to src/mark-record.mjs when the drain became its second
+  // writer (POS-5 slice 2). Same bytes, one home — two copies of a
+  // serialization is how two eras come to disagree about the same declaration
+  // in a way that still parses.
+  const record = markRecord(fileRec, p.body);
 
   if (amending && amendMoves) rmSync(oldDir, { recursive: true, force: true }); // one copy, ever
   mkdirSync(dir, { recursive: true });

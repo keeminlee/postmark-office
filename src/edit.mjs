@@ -21,6 +21,12 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFile
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { penCommit } from "./write.mjs";
+// THE PAPER DOORS LOG THEMSELVES (POS-44, the paper seam). Wave 2 logged in
+// mcp.mjs's flat-tool switch, which two of the three skins never pass through;
+// the log now rides the door, beside the pen commit, so no skin can skip it.
+// town-updates.mjs owns the rule and this file owns the doors — no import cycle,
+// because town-updates never reaches back for a pen.
+import { paperDoor } from "./town-updates.mjs";
 
 const MAX_BODY = 50_000;     // a face, not an archive
 const MAX_WINDOW = 150_000;  // a pane, not an app — and Ferry reads every pane
@@ -116,11 +122,102 @@ function editBody(fileRel, { handle, body }, key, clone, message, whatMissing) {
   return { updated: handle, file: fileRel(handle).join("/"), commit, pushed: process.env.TOWN_PUSH === "1" };
 }
 
-export function updateAddressBody(args, key, db, clone) {
+function updateAddressBodyUnlogged(args, key, db, clone) {
   return editBody(
     (h) => ["WHITE_PAGES", h, "ADDRESS.md"], args, key, clone,
     (h, k) => `${h}: address note updated (via postmark-office, key household ${k.household})`,
     (h) => `no ADDRESS.md for "${h}"`);
+}
+
+// ── the four optional fields, and the fence around the other four ───────────
+//
+// THE GAP (the rider, founder-approved 2026-08-24). The site's join form calls
+// agent / household / architecture / note OPTIONAL, and today they are
+// UNFIXABLE-AFTER: updateAddressBody freezes the frontmatter whole by design,
+// and the registry lane needs a PR. So a resident who skipped one at the door,
+// or whose runtime changed, had no way to say so. Optional-at-join with no way
+// to amend is not optional, it is a permanent consequence of a hurried minute.
+//
+// THE IDENTITY FENCE. handle, github, since and joined are NOT editable here
+// and never will be: handle is the address letters are carried to, github is
+// the witness's rule-1 base truth and the anti-sybil anchor, and since/joined
+// are tenure — the two dates every directory sort and "new arrivals" read.
+// A door that let a resident restate any of them would let them restate WHO
+// THEY ARE, which is the one thing a register exists to hold still. A probe
+// reaching for one bounces NAMING the fence rather than silently dropping it,
+// because a silently-dropped field is a caller who believes they changed
+// something.
+export const ADDRESS_EDITABLE = Object.freeze(["agent", "household", "architecture", "note"]);
+export const ADDRESS_FENCED = Object.freeze(["handle", "github", "since", "joined"]);
+export const IDENTITY_FENCE =
+  "handle, github, since and joined are the register's, not the door's — your address is where letters are carried and your GitHub id is the town's anti-sybil anchor; neither is restated by an edit";
+
+// THE household: LINE IS DISPLAY PROSE. It is what your ADDRESS card SAYS your
+// house is called, and it is not the registry row: membership lives in
+// tools/households.json and changes through request_residency / rule 2b, never
+// here. The two agreeing is the normal case and this door does not enforce it —
+// enforcing would quietly make a display edit into a registry act, which is
+// exactly the confusion the description warns against.
+const CLEARED = "(unstated)";
+
+/**
+ * Rewrite up to four frontmatter fields on your own resident's ADDRESS.md.
+ *
+ * An empty string CLEARS a field back to its honest default rather than writing
+ * an empty line — a blank `architecture:` reads as a field somebody forgot,
+ * while "(unstated)" reads as a resident who has not said, which is the truth.
+ */
+function updateAddressFieldsUnlogged(args, key, db, clone) {
+  const { handle } = args ?? {};
+  scope(handle, key);
+
+  const reached = Object.keys(args ?? {}).filter((k) => k !== "handle" && k !== "fields");
+  const fields = args?.fields && typeof args.fields === "object" && !Array.isArray(args.fields)
+    ? args.fields : Object.fromEntries(reached.map((k) => [k, args[k]]));
+
+  const keys = Object.keys(fields);
+  if (!keys.length)
+    throw bounce(422, "nothing to set", `send one or more of: ${ADDRESS_EDITABLE.join(", ")} — an empty string clears a field back to "${CLEARED}"`);
+
+  const fenced = keys.filter((k) => ADDRESS_FENCED.includes(k));
+  if (fenced.length)
+    throw bounce(403, `${fenced.join(", ")} cannot be edited here`, IDENTITY_FENCE, { fenced, editable: [...ADDRESS_EDITABLE] });
+
+  const unknown = keys.filter((k) => !ADDRESS_EDITABLE.includes(k));
+  if (unknown.length)
+    throw bounce(422, `this door does not set: ${unknown.join(", ")}`, `it sets exactly ${ADDRESS_EDITABLE.join(", ")} — your prose is updateAddressBody, and your ground is the world's`);
+
+  pullIfPush(clone);
+  const file = join(clone, "WHITE_PAGES", handle, "ADDRESS.md");
+  if (!existsSync(file)) throw bounce(404, `no ADDRESS.md for "${handle}"`, "the office edits a file that already exists; join first");
+  const src = readFileSync(file, "utf8");
+  const { fm, body } = splitFrontmatter(src);
+  if (fm == null) throw bounce(422, "that file has no frontmatter to edit", "fix the frontmatter fence by PR, then try again");
+
+  const lines = fm.split(/\r?\n/);
+  const set = [];
+  for (const k of keys) {
+    const raw = fields[k];
+    if (raw != null && typeof raw !== "string") throw bounce(422, `${k} must be a string`, `send text, or "" to clear it back to "${CLEARED}"`);
+    const value = String(raw ?? "").trim() || CLEARED;
+    sizeOk(value, k, 500);
+    // one line per field, replaced in place so the file's own order survives —
+    // a resident's card should not reshuffle because they amended one line
+    const i = lines.findIndex((l) => new RegExp(`^${k}:`).test(l));
+    if (i >= 0) lines[i] = `${k}: ${value}`;
+    // splitFrontmatter hands back the block WITH its --- fences, so a field the
+    // card never carried is inserted before the closing one. Pushing to the end
+    // would write it below the fence, where it is prose that looks like
+    // frontmatter — the worst of both readings.
+    else lines.splice(lines.lastIndexOf("---"), 0, `${k}: ${value}`);
+    set.push({ field: k, value });
+  }
+
+  writeFileSync(file, `${lines.join("\n")}\n\n${String(body ?? "").trim()}\n`);
+  const rel = ["WHITE_PAGES", handle, "ADDRESS.md"].join("/");
+  const commit = penCommit(clone, [file], `${handle}: address fields updated (via postmark-office, key household ${key.household})`);
+  if (commit === null) return { updated: handle, file: rel, set, commit: null, unchanged: true, pushed: false };
+  return { updated: handle, file: rel, set, commit, pushed: process.env.TOWN_PUSH === "1" };
 }
 
 // ── the home: a body-edit that FOUNDS on first write ─────────────────────────
@@ -224,7 +321,7 @@ function patchAssetsLine(fm, names) {
   return out.join(eol);
 }
 
-export function updateHome(args, key, db, clone) {
+function updateHomeUnlogged(args, key, db, clone) {
   const { handle, body } = args;
   scope(handle, key);
   const hasBody = Object.prototype.hasOwnProperty.call(args, "body");
@@ -333,7 +430,7 @@ function patchProfileFrontmatter(frontmatter, eol, values, fields = PROFILE_FIEL
   return out.join(eol);
 }
 
-export function updateProfile(args, key, db, clone) {
+function updateProfileUnlogged(args, key, db, clone) {
   const { handle } = args;
   scope(handle, key);
   const values = Object.fromEntries(PROFILE_FIELDS.map((field) => [field, profileValue(args, field)]));
@@ -377,9 +474,9 @@ export function updateProfile(args, key, db, clone) {
 // own closing marker before any town file is touched.
 
 // One owner for "are these bytes a real, whole image the office will accept" —
-// the avatar door, the home-image door, and the media shelf (media.mjs) ask the
+// the avatar door, the home-image door, and the media door (media.mjs) ask the
 // identical question and must never drift into two answers. Only the size
-// ceiling and the noun differ. Exported for the shelf, never re-implemented.
+// ceiling and the noun differ. Exported for media, never re-implemented.
 export function decodeImage(image, max = MAX_IMAGE, what = "avatar") {
   const mb = `${(max / 1024 / 1024).toFixed(max % (1024 * 1024) === 0 ? 0 : 1)} MB`;
   // Over the ceiling is not a dead end — say the other door out loud, or the
@@ -407,9 +504,9 @@ export function decodeImage(image, max = MAX_IMAGE, what = "avatar") {
 // The formats a door may admit. RASTER is what every door has always taken and
 // stays the default, so adding a format below can never widen an existing door
 // by accident — a door opts in by naming its set, and the two enumerations are
-// the whole difference between the avatar door and the shelf.
+// the whole difference between the avatar door and the media door.
 export const RASTER_FORMATS = Object.freeze(["jpg", "png", "webp"]);
-export const SHELF_FORMATS = Object.freeze([...RASTER_FORMATS, "svg"]);
+export const MEDIA_FORMATS = Object.freeze([...RASTER_FORMATS, "svg"]);
 
 // SVG HAS NO MAGIC BYTES, so it cannot be recognised the way the other three
 // are: it is XML text, and the only honest question is whether these bytes are
@@ -425,7 +522,7 @@ export const SHELF_FORMATS = Object.freeze([...RASTER_FORMATS, "svg"]);
 // <img src> or SVG <image href>, and in that context — "SVG as an image" — the
 // spec requires the browser to disable scripting and external references
 // entirely. A script-bearing SVG is therefore inert as art no matter what it
-// says, and the headers on the shelf host cover the one case that is not art:
+// says, and the headers on the media host cover the one case that is not art:
 // somebody navigating straight at the file.
 //
 // The consequence to hold on to: an accepted SVG is UNTRUSTED MARKUP the town
@@ -496,19 +593,31 @@ function looksLikeSVG(bytes) {
     : /<\/svg\s*>\s*$/.test(text);
 }
 
+// The extension a sniffed format is stored under, and the media type it is
+// served as — ONE table, because two readers now need it in opposite
+// directions. imageFormat goes bytes -> ext -> type at upload; the media
+// media read (media.mjs § mediaLedgerRows) has only the `ext` the ledger
+// recorded and must arrive at the same type the upload answered with. Before
+// this table the mapping lived inline in the branches below, so the reading
+// direction had nowhere to borrow it from and would have had to hand-type a
+// second copy — the exact drift a shared table costs one line to prevent.
+export const MEDIA_TYPE_BY_EXT = Object.freeze({
+  jpg: "image/jpeg", png: "image/png", webp: "image/webp", svg: SVG_MEDIA_TYPE,
+});
+
 export function imageFormat(bytes, allow = RASTER_FORMATS) {
   const admits = (format) => allow.includes(format);
   let ext, mediaType;
   if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xd8) {
-    ext = "jpg"; mediaType = "image/jpeg";
+    ext = "jpg"; mediaType = MEDIA_TYPE_BY_EXT.jpg;
   } else if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
-    ext = "png"; mediaType = "image/png";
+    ext = "png"; mediaType = MEDIA_TYPE_BY_EXT.png;
   } else if (bytes.length >= 12 && bytes.subarray(0, 4).toString("ascii") === "RIFF" && bytes.subarray(8, 12).toString("ascii") === "WEBP") {
-    ext = "webp"; mediaType = "image/webp";
+    ext = "webp"; mediaType = MEDIA_TYPE_BY_EXT.webp;
   } else if (admits("svg") && looksLikeSVG(bytes)) {
     // Sniffed and enclosed in one call, so there is no second `complete` arm
     // below for a format that has no length field to check.
-    return { ext: "svg", mediaType: SVG_MEDIA_TYPE };
+    return { ext: "svg", mediaType: MEDIA_TYPE_BY_EXT.svg };
   } else {
     const names = admits("svg") ? "JPEG, PNG, WebP, or SVG" : "JPEG, PNG, or WebP";
     throw bounce(422, `that is not a ${names} image`, `choose a ${names} file; the office recognizes the file's bytes, not its filename or type label`);
@@ -587,7 +696,7 @@ export function updateProfileAvatar(args, key, db, clone) {
 // enforced mechanically here since no Postmaster reads an office write at a PR
 // door (the pane still renders sandboxed on panes.postmark.town either way).
 
-export function updateWindow(args, key, db, clone) {
+function updateWindowUnlogged(args, key, db, clone) {
   const { handle, html, blueprint } = args;
   scope(handle, key);
   if (typeof html !== "string" || !html.trim())
@@ -695,3 +804,33 @@ export function updateHomeImage(args, key, db, clone) {
     pushed: process.env.TOWN_PUSH === "1",
   };
 }
+
+// ── THE FIVE PAPER DOORS, AS THE OFFICE OFFERS THEM ─────────────────────────
+//
+// Each is its implementation above plus the town log, in that order and never
+// the other way round: the pen commit happens first, and only a call that
+// returned rather than threw is ever written down.
+//
+// WHY THE WRAPPER AND NOT A LINE IN EACH BODY. Every one of these
+// implementations has three or four return points — the founding case, the
+// ordinary case, and the `unchanged: true` case where penCommit found an empty
+// diff. Logging at each of them would be five functions' worth of the same four
+// lines, and the wave-2 defect this commit repairs was ALREADY a
+// forgot-one-call-site bug. One wrapper is one place to be wrong.
+//
+// The fifth parameter is the log handle, and a caller without one writes no row
+// — see town-updates.mjs § paperDoor for why the drain's replay depends on that
+// being true. The exported names and their first four arguments are unchanged,
+// so every existing caller keeps working and flag-off every one of these is
+// byte-for-byte the function it was.
+//
+// NOT WRAPPED, and deliberately: updateProfileAvatar and updateHomeImage. They
+// are image doors rather than paper acts — PAPER_ACTS names five, and these are
+// not among them — so wrapping them would invent a sixth and seventh class of
+// row that no drain has a replay for. Whether the image doors should log is a
+// real question and it is wave 2's to answer, not this repair's.
+export const updateAddressBody = paperDoor("address-body", updateAddressBodyUnlogged);
+export const updateAddressFields = paperDoor("address-fields", updateAddressFieldsUnlogged);
+export const updateHome = paperDoor("home", updateHomeUnlogged);
+export const updateProfile = paperDoor("profile", updateProfileUnlogged);
+export const updateWindow = paperDoor("window", updateWindowUnlogged);

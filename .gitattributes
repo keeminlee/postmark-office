@@ -1,4 +1,5 @@
-# Shell scripts must land on the box with LF — a CRLF shebang is /bin/sh^M, "bad interpreter".
-# (The 08-19 /ops/world triage found three deploy scripts sitting CRLF in a Windows checkout.)
-*.sh text eol=lf
+# The CRLF/NUL guard (the world repo's 304890d2 lesson, office copy — Keemin yes 2026-08-23):
+# a stray CR or NUL in a source file must not flip git into binary-sniffing a
+# .mjs/.md diff into a Bin sweep. Text, LF, always.
 *.mjs text eol=lf
+*.md text eol=lf

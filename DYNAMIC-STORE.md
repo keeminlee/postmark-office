@@ -17,11 +17,15 @@ npm run dynamic:rebuild                 # re-derive entities from the ledger; re
 npm run dynamic:store                   # the flag's instrument panel (= GET /world/dynamic)
 npm run crossing:save                   # crystallize the live layer into the world repo's STATE/
 npm run crossing:replay-check           # THE FALSIFIER — rebuild from STATE/ alone and diff
+npm run world:drain                     # POS-5: empty the journal into the record, then truncate (WORLD_SINGLE_LOG=1)
 npm run threads:parity                  # the store's threads vs the shipped clusterVoices
 node --test test/dynamic-presence.test.mjs
 node --test test/dynamic-store.test.mjs
 node --test test/dynamic-emissions.test.mjs
 node --test test/crossing-save.test.mjs
+node --test test/world-journal.test.mjs
+node --test test/world-drain.test.mjs
+node --test test/settle-at-save.test.mjs
 ```
 
 ## The files
@@ -32,6 +36,9 @@ node --test test/crossing-save.test.mjs
 | `src/dynamic-entities.mjs` | the walk-ledger derivation: events → governing departure → position, and the attachment writer |
 | `src/dynamic-emissions.mjs` | recording an emission, presence as a query, threads as a query, the gated prune |
 | `src/dynamic-presence.mjs` | who is near whom: `near`, `everyone`, and the section the doors hang off |
+| `src/world-journal.mjs` | **the single log** (POS-5 slice 1): the journal's row schema, the anchor+offset witness stamp, the replay reader, and the §1c read door |
+| `src/world-drain.mjs` | **the drain** (POS-5 slice 2): journal → sketchbooks + `STATE/log/<N>.journal.jsonl` → truncate, as one act; and the two public ledgers, materialized at the save |
+| `tools/state-to-r2.mjs` | the cold archive — wired AT THE SAVE by the drain (§5), never on a timer of its own |
 | `tools/crossing-save.mjs` | the save tick: `STATE/snapshot/<N>/entities.json` + `STATE/log/<N>.jsonl`, committed with the pen |
 | `tools/crossing-replay-check.mjs` | rebuild from `STATE/` alone; EQUAL or the save does not save the world |
 | `tools/thread-parity.mjs` | store threads vs `voices.mjs`'s shipped `clusterVoices`, as a partition |
@@ -373,3 +380,46 @@ boarding verb (the `attachments` table and its writer ship; the door that calls
 them does not), no resident-visible read served from `dynamic.db`, no site
 change, and no deployment. The flag ships off, and `crossing:replay-check`
 reading EQUAL is the gate anything here has to pass first.
+
+## The single log, and what settles at the save (POS-5)
+
+`WORLD_SINGLE_LOG=1` adds a fourth table — `journal` — and moves every world
+mutation into it as one append-only row. Off, it is byte-identical to not having
+it, which is a falsifier in `test/world-journal.test.mjs` rather than a promise.
+
+| flag | what it turns on |
+|---|---|
+| `WORLD_EMISSIONS=1` | speech also becomes an emission row |
+| `WORLD_MOVEMENT_V2=1` | Stage D's `movements` table, after the walk ledger's freeze |
+| `WORLD_SINGLE_LOG=1` | the journal: marks, crossings and walks declare into one log and the **save** gives the record their lines |
+
+**What the journal receives.** A mark (`class: mark`) — leave, amend, withdraw,
+as later entries, supersession-by-latest. A crossing (`class: frame`) — §8's
+storage ruling (b): a reparenting is a row, not a column on an entity. A walk
+(`class: move`) — a walk moves you WITHIN a frame, so it is not a `frame` row.
+Every row carries `the-witnessed-line`'s anchor and offset: where the actor
+stood, relative to what, at that instant.
+
+**What settles at the save, and why it used to not.** Every walk and every
+crossing spent ONE GIT COMMIT on world main, per act. Ruled 2026-08-22: *"walks
++ enter-exit should settle at the save, not per-act to git main."* Under the flag
+the act writes its ledger line into the journal — **verbatim**, so the save
+appends exactly what the act's own pen formatted rather than re-deriving it — and
+`materializeLedgers` gives `WORLD/walk-ledger.md` and
+`WORLD/threshold-ledger.md` their lines once, in seq order, idempotently. The
+record that results is byte-identical to what the per-act commits would have
+written; `test/settle-at-save.test.mjs` runs the real pen down both lanes and
+compares the file.
+
+**Where the drain puts things.** Marks go to `draft/<household>` sketchbooks
+(proto-canon). EVERY row — mark rows included — is crystallized into
+`STATE/log/<N>.journal.jsonl`, because the sketchbook holds a mark's final state
+while the amend chain and the pinned witnesses are history, and dropping them
+would evaporate a constitutional record every twelve hours. Then the journal
+truncates, in one SQLite transaction with the cursor advance
+(`the-atomic-drain`).
+
+**The cold archive.** `tools/state-to-r2.mjs` is wired at the save and nowhere
+else (§5's own condition). A failed upload is DISCLOSED and never blocks: the
+record is git-truth and it is already written; R2 is a mirror, and a mirror that
+is behind is a thing to retry, not a reason to refuse a settlement.

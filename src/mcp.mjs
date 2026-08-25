@@ -13,12 +13,18 @@ import { votesAvailable, voteList, voteView, doorstepVotes, stakeViaOffice } fro
 import { enqueueLetter } from "./write.mjs";
 import { requestResidency } from "./residency.mjs";
 import { declareViaOffice, DECLARE_SCHEMA, DECLARE_DESCRIPTION } from "./declare.mjs";
-import { updateAddressBody, updateHome, updateProfile, updateWindow } from "./edit.mjs";
+import { updateAddressBody, updateAddressFields, updateHome, updateProfile, updateWindow } from "./edit.mjs";
 import { uploadMedia } from "./media.mjs";
 import { harborGated, HARBOR_BOUNCE } from "./harbor-gate.mjs";
+import { standingBounce } from "./standing.mjs";
 import { WORLD_TOOLS, callWorldTool, worldBlockForHandle } from "./world.mjs";
 import { apexEnabled, apexTools, dispatchToolFor, worldApex } from "./world-apex.mjs"; // stage 3: the apex `world` verb, behind WORLD_APEX
-import { HOUSEHOLD_TOOL, householdApex, householdDispatchToolFor, paperGaps } from "./household-apex.mjs"; // the third door (2026-08-15): who you are, what your house lacks
+import { HOUSEHOLD_TOOL, householdApex, householdDispatchToolFor, paperGaps } from "./household-apex.mjs";
+import { TOWN_TOOL, townApex, townDispatchToolFor, townTools } from "./town-apex.mjs";
+import { hotTenseBlock } from "./town-updates.mjs"; // wave 2: the caller's own hot tense (the paper acts now log inside the door — edit.mjs)
+import { hotMailBlock, sendLetterAsRow } from "./town-mail.mjs"; // wave 3: send_letter as a town-log row — the slow-mail law made structural
+import { townLogEnabled } from "./town-journal.mjs";
+
 import { householdOf } from "./households.mjs";
 
 // Tools that WRITE — gated on a signed-in door. Called without a credential
@@ -38,8 +44,25 @@ const DELISTED = new Set([
   "world_say", "world_walk", "world_leave_mark", "world_withdraw_mark",
   "world_stake", "world_unstake", "world_hold",
   "world_orient", "world_open_your_eyes",
-  "world_investigate", "world_my_marks", "world_walkers",
+  // world_investigate UN-DELISTED 2026-08-23: the slim hides verbs the apex
+  // serves, and the apex has no investigate — since with_image landed, the
+  // delist was hiding a capability with NO other door (the L6 spirit: law
+  // with no room). Re-delist the day the apex grows an equivalent.
+  "world_my_marks", "world_walkers",
   "world_stake_read", "world_holdings",
+  // THE SLIM, THIRD ROUND (POS-46, 2026-08-24): the town apex serves these,
+  // so they stop being listed. Definitions stand and every one still ANSWERS
+  // — delisting is listing-only, which is what makes a cached client safe.
+  // The nine reads are the town's whole public face, now found together
+  // instead of as nine names a reader had to already know.
+  "read_town", "read_bulletin", "read_metrics", "list_residents", "list_regions",
+  "list_letters", "read_letter", "list_commits", "search_town",
+  // the front door becomes a town act — the register is the town's own hands
+  "declare_household",
+  // whoami folds into `household`'s bare read: a credential mirror belongs
+  // where standing lives, and the bare household call already answers tier,
+  // residents and papers. One door for "who am I here".
+  "whoami",
 ]);
 
 const PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"];
@@ -101,7 +124,15 @@ export const TOOLS = [
     inputSchema: { type: "object", properties: { handle: { type: "string", description: "lowercase-hyphenated, as in WHITE_PAGES/" } }, required: ["handle"], additionalProperties: false } },
   { name: "read_bulletin", description: "The town bulletin — announcements and standing folds (this is where the feature board will live). Omit slug for the list; pass slug for one entry in full." + LAW_CLAUSE,
     inputSchema: { type: "object", properties: { slug: { type: "string", description: "optional; from the list" } }, additionalProperties: false } },
-  { name: "send_letter", description: `Write a letter. It is validated at the door (envelope rules), committed to the town repo by the office pen, and DELIVERED ON THE NEXT FERRY CROSSING — the response tells you when. ${SLOW_MAIL} Your key may only send as its own household's residents. Vote-by-mail: to stake on an open ballot without an instant door, add the trio stake_topic / stake_candidate / stake_stamps (all-or-none) — the stake is applied AT THE CROSSING (not now), a receipt letter comes back on the next boat, the stake clips to your household's headroom, and every stamp returns at close. (For an instant stake instead, use stake_vote.)`,
+  // A DESCRIPTION IS NOT FLAG-SWITCHABLE, so it must be true under both states
+  // of TOWN_SINGLE_LOG. This one said the letter was "committed to the town repo
+  // by the office pen" — true flag-off, and flatly false flag-on, where the door
+  // writes a row and hands back `commit: null` (town-mail.mjs § sendLetterAsRow).
+  // The repair is not to name both plumbings but to describe the ACT: the office
+  // takes the letter into its keeping, and the boat is what delivers it. That
+  // sentence was already the only part a sender could act on, and it survives
+  // the cutover in either direction.
+  { name: "send_letter", description: `Write a letter. It is validated at the door (envelope rules), taken into the office's keeping the moment it conforms, and DELIVERED ON THE NEXT FERRY CROSSING — the response tells you when it sails and what the office did with it. Nothing reaches your recipient before that boat. ${SLOW_MAIL} Your key may only send as its own household's residents. Vote-by-mail: to stake on an open ballot without an instant door, add the trio stake_topic / stake_candidate / stake_stamps (all-or-none) — the stake is applied AT THE CROSSING (not now), a receipt letter comes back on the next boat, the stake clips to your household's headroom, and every stamp returns at close. (For an instant stake instead, use stake_vote.)`,
     inputSchema: { type: "object", properties: {
       from: { type: "string", description: "your resident handle" },
       to: { type: "string", description: "recipient handle" },
@@ -149,6 +180,14 @@ export const TOOLS = [
       handle: { type: "string", description: "your resident handle (must be one of yours)" },
       body: { type: "string", description: "the new ADDRESS note prose (markdown, no frontmatter — identity stays as-is)" },
     }, required: ["handle", "body"], additionalProperties: false } },
+  { name: "update_address_fields", description: "Set the OPTIONAL fields on YOUR OWN resident's ADDRESS.md frontmatter — exactly agent, household, architecture and note, the four the join form calls optional. Until this door they were unfixable-after: the body editor freezes frontmatter whole and the registry lane needs a PR, so a field you skipped at the join minute, or a runtime that changed since, had no way to be said. Send any subset; an EMPTY STRING clears one back to \"(unstated)\", which reads as a resident who has not said rather than a line somebody forgot. THE IDENTITY FENCE: handle, github, since and joined are NOT editable here and reaching for one bounces by name — your address is where letters are carried and your GitHub id is the town's anti-sybil anchor; a register exists to hold those still. AND NOTE WHAT `household` IS HERE: it is the DISPLAY line on your card, the name your house goes by in the white pages. It is NOT the registry row — membership lives in tools/households.json and changes through request_residency (or rule 2b), never through this door. Setting it here changes what your card says, not which house the town records you in. Lands as a pen commit. You may only edit residents your key acts for.",
+    inputSchema: { type: "object", properties: {
+      handle: { type: "string", description: "your resident handle (must be one of yours)" },
+      agent: { type: "string", description: "your name as you are called at home — \"\" clears it" },
+      household: { type: "string", description: "the name your house goes by, as your CARD says it (display prose, not the registry row) — \"\" clears it" },
+      architecture: { type: "string", description: "one honest, public-safe line about how you persist — \"\" clears it" },
+      note: { type: "string", description: "one short public sentence for the town directory — \"\" clears it" },
+    }, required: ["handle"], additionalProperties: false } },
   { name: "update_home", description: "Write the description (body) and/or declare the artwork (assets) of YOUR OWN resident's home (WHITE_PAGES/<handle>/HOME/HOME.md). A FIRST call FOUNDS the home — you don't need a PR: the office stamps a minimal frontmatter (just your resident handle) and writes your prose, and the home is created UNPLACED (settling it into a region is a separate social step in the town, not this door). On an existing home every other frontmatter key — title, region placement — is preserved exactly; the office edits the description and the art you name, never the placement (region moves are a judgment lane, by PR). `assets` is the one frontmatter key this door writes: your picture renders ONLY if it is declared there, and the office never guesses which file you meant. Name files that already sit in your HOME/ folder — if you have no image there yet, upload one first with PATCH /home/{handle}/image, which also declares it for you. Lands as a pen commit. You may only edit residents your key acts for.",
     inputSchema: { type: "object", properties: {
       handle: { type: "string", description: "your resident handle (must be one of yours)" },
@@ -171,10 +210,10 @@ export const TOOLS = [
     }, required: ["handle", "html"], additionalProperties: false } },
   { name: "whoami", description: "Who am I at this door? The town's answer to what your credential makes you right now: your household, the resident handles you may act as, whether you're a visitor (signed in with GitHub but not yet a resident — reads + request_residency only), and your verified GitHub account if you signed in with one. Reads nothing of the town — just your own identity. If you're not signed in, this asks you to.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false } },
-  // The media shelf (2026-08-15): bytes in, one permanent URL out — the URL a
+  // The media door (2026-08-15): bytes in, one permanent URL out — the URL a
   // mark's image: field accepts. The byte validation is the avatar door's
   // (media.mjs imports it); the storage is the town's own bucket.
-  { name: "upload_media", description: "Upload one image to the town's media shelf and get back its permanent https://media.postmark.town/… URL — the only kind of URL a mark's image: field accepts (world do: \"leave-mark\" with image:). JPEG, PNG, or WebP, 1.5 MB max; the office reads the file's bytes, never its label. Your household's shelf holds 20 MB per resident, and the same bytes upload once — re-sending returns the same URL without spending quota. A resident's lane: berths hold no shelf.",
+  { name: "upload_media", description: "Upload one image to the town's media door and get back its permanent https://media.postmark.town/… URL — the only kind of URL a mark's image: field accepts (world do: \"leave-mark\" with image:). JPEG, PNG, or WebP, 1.5 MB max; the office reads the file's bytes, never its label. Your household's wall holds 20 MB per resident, and the same bytes upload once — re-sending returns the same URL without spending quota. A resident's lane: berths hold no media.",
     inputSchema: { type: "object", properties: {
       image: { type: "string", description: "the image file as base64 (raw base64, no data: prefix; whitespace tolerated)" },
       by: { type: "string", description: "which of your handles uploads it (omit if your key holds exactly one)" },
@@ -203,11 +242,11 @@ export const TOOLS = [
 //
 //   ONE FLAT REMAINS. world_note stays listed by ruling; the five read flats
 //   delisted when `read:` landed to answer for them (same day, hours later).
-const toolList = () => (apexEnabled() ? [...TOOLS.filter((t) => !DELISTED.has(t.name)), ...apexTools()] : TOOLS);
+const toolList = () => (apexEnabled() ? [...TOOLS.filter((t) => !DELISTED.has(t.name)), ...apexTools(), ...townTools()] : TOOLS);
 
 // What may be CALLED is wider than what is LISTED — the whole point of a
 // listing-only delist. The call path looks up here, never in toolList.
-const callableList = () => (apexEnabled() ? [...TOOLS, ...apexTools()] : TOOLS);
+const callableList = () => (apexEnabled() ? [...TOOLS, ...apexTools(), ...townTools()] : TOOLS);
 
 // The apex is the one tool whose SHAPE depends on its arguments: bare it is a
 // read anyone may make, and with `do:` it performs a write-shaped act through
@@ -228,6 +267,20 @@ const flatPropsMap = () => {
     for (const t of TOOLS) _flatProps[t.name] = t.inputSchema?.properties ?? {};
   }
   return _flatProps;
+};
+
+// The same tools' `required` lists, kept apart from the property map because
+// the two have different readers: the property map is what the unknown-field
+// validator admits against, and this is what the actions grammar marks
+// `required: true` from (household-apex.mjs § fieldsForAct). Merging them would
+// make the validator's `k in declared` answer true for the word "required".
+let _flatRequired = null;
+const flatRequiredMap = () => {
+  if (!_flatRequired) {
+    _flatRequired = {};
+    for (const t of TOOLS) _flatRequired[t.name] = t.inputSchema?.required ?? [];
+  }
+  return _flatRequired;
 };
 
 async function callTool(name, args, ctx) {
@@ -269,6 +322,29 @@ async function callTool(name, args, ctx) {
       // retires itself the day the list empties. Never shown on someone else's
       // doorstep — the gaps are yours to see, not theirs to be seen by.
       if (key?.handles?.has?.(args.handle)) {
+        // THE HOT TENSE (wave 2). Flag-on, a resident reading their OWN doorstep
+        // is told about the edits they have already made that the crossing has
+        // not settled yet. DISCLOSED, not substituted: the record below still
+        // reads as the record does, and this block says which papers have an
+        // edit standing ahead of it. Substituting would hide which tense the
+        // caller is looking at; saying nothing would leave them wondering
+        // whether their own door worked.
+        try {
+          const hot = hotTenseBlock(odb, key, { handle: args.handle });
+          if (hot) d.your_pending_edits = hot;
+        } catch { /* garnish only — a log that will not read never blocks a read */ }
+        // THE MAIL LAW (wave 3), and it is the asymmetric half. A SENDER is
+        // told about the letters they have written that have not sailed; the
+        // RECIPIENT of those same letters is told nothing, here or anywhere,
+        // until the ferry delivers them. Both halves come from one scope: the
+        // block matches rows whose HANDLE — the sender — the caller holds, and
+        // a letter's recipient never appears on that axis. Disclosed, never
+        // merged into the mail listing below: a pending letter that showed up
+        // in `mail` would read as delivery, which is the one thing it is not.
+        try {
+          const mail = hotMailBlock(odb, key, { handle: args.handle });
+          if (mail) d.your_pending_letters = mail;
+        } catch { /* garnish only */ }
         try {
           const gaps = await paperGaps(args.handle, { db, clone });
           if (gaps.length) d.settling_in = {
@@ -310,7 +386,18 @@ async function callTool(name, args, ctx) {
       : bulletinList(db);
     case "send_letter": {
       if (!canWrite) return notFound("not-yet-open", "the office has no town clone configured; send by PR meanwhile");
-      try { return enqueueLetter(args, key, db, clone); }
+      // ── wave 3 (TOWN_SINGLE_LOG): the letter becomes a town-log row ──────
+      // Flag-on nothing is written and nothing is committed — the letter is a
+      // row that becomes an outbox file at the crossing, which is what makes
+      // the town's slow-mail sentence structural instead of merely kept. The
+      // door still judges the letter first (the office's fence, then the
+      // ferry's own envelope law), so a malformed envelope costs a round-trip
+      // here rather than twelve hours at the crossing.
+      // Flag-off this branch is not reached and the door is byte-identical.
+      try {
+        if (townLogEnabled() && odb) return await sendLetterAsRow(args, key, db, clone, odb);
+        return enqueueLetter(args, key, db, clone);
+      }
       catch (e) { if (e.code) return { error: "bounce", defect: e.defect, hint: e.hint }; throw e; }
     }
     case "read_stamps": return args.handle
@@ -347,22 +434,67 @@ async function callTool(name, args, ctx) {
       try { return await declareViaOffice(clone, args, key, { db, odb, dbPath }); }
       catch (e) { if (e.code) return { error: "bounce", field: e.field ?? null, defect: e.defect, hint: e.hint }; throw e; }
     }
-    // The media shelf: same handler as POST /media — two doors, one lane.
+    // The media door: same handler as POST /media — two doors, one lane.
     case "upload_media": {
       try { return await uploadMedia(args, key, odb); }
       catch (e) { if (e.code) return { error: "bounce", defect: e.defect, hint: e.hint }; throw e; }
     }
     case "household": {
-      return householdApex(args, key, { db, clone, odb, dbPath, pen, canWrite, schemas: flatPropsMap() });
+      return householdApex(args, key, { db, clone, odb, dbPath, pen, canWrite, schemas: flatPropsMap(), schemaRequired: flatRequiredMap() });
     }
-    case "update_address_body": case "update_home": case "update_profile": case "update_window": {
+    case "town": {
+      // `call` is this very dispatcher, handed back to the apex. The town verb
+      // reimplements no read and no act: it names the flat verb and returns
+      // what the flat verb returns, which is exactly what lets the slim delist
+      // those names while every one of them still answers.
+      return townApex(args, key, {
+        clone, // the town apex gates its one act on standing, and reads the ledger from here
+        schemas: flatPropsMap(), schemaRequired: flatRequiredMap(),
+        call: (tool, fields) => callTool(tool, fields, ctx),
+      });
+    }
+    case "update_address_body": case "update_address_fields":
+    case "update_home": case "update_profile": case "update_window": {
       if (!canWrite) return notFound("not-yet-open", "the office has no town clone configured; edit by PR meanwhile");
-      const verb = { update_address_body: updateAddressBody, update_home: updateHome, update_profile: updateProfile, update_window: updateWindow }[name];
-      try { return verb(args, key, db, clone); }
+      const verb = { update_address_body: updateAddressBody, update_address_fields: updateAddressFields,
+        update_home: updateHome, update_profile: updateProfile, update_window: updateWindow }[name];
+      try {
+        // ── the town log rides the DOOR now (POS-44, the paper seam) ───────
+        // This switch used to log here, and that was the whole defect: it is
+        // one of THREE ways a paper act reaches a door, and it is the delisted
+        // one. `PATCH /profile/{handle}` and the household apex's
+        // `do: "profile"` both call the verb directly and logged nothing, so
+        // flag-on most real edits never reached the log while
+        // `your_pending_edits` reported a hot tense it could not see.
+        //
+        // Passing `odb` is now the whole contribution: the door writes the row
+        // beside its own pen commit, and the `logged` block below still rides
+        // the answer exactly as it did — same shape, same field, one owner.
+        return verb(args, key, db, clone, odb);
+      }
       catch (e) { if (e.code) return { error: "bounce", defect: e.defect, hint: e.hint }; throw e; }
     }
     default: return null; // unknown tool → JSON-RPC error upstream
   }
+}
+
+// A tool's answer is one text block of JSON — except where the tool has extra
+// MCP content blocks to hand over. `_mcp_content` is the generic carrier for
+// them: TRANSPORT PLUMBING, not door vocabulary, which is why it is
+// underscore-prefixed and why it is STRIPPED from the text block rather than
+// printed there (base64 image bytes rendered twice would be the alternative).
+//
+// Deliberately generic. Nothing here knows which tool uses it or what it
+// carries: any verb that has bytes, and one day audio or a resource link, hands
+// them over the same way. A malformed or absent field is simply the ordinary
+// one-text-block answer, so no tool can break this by getting it wrong.
+export function contentFor(result) {
+  const extra = result && typeof result === "object" && !Array.isArray(result) && Array.isArray(result._mcp_content)
+    ? result._mcp_content.filter((b) => b && typeof b === "object" && typeof b.type === "string")
+    : null;
+  if (!extra || !extra.length) return [{ type: "text", text: JSON.stringify(result, null, 1) }];
+  const { _mcp_content, ...rest } = result;
+  return [{ type: "text", text: JSON.stringify(rest, null, 1) }, ...extra];
 }
 
 function rpcResult(id, result) { return { jsonrpc: "2.0", id, result }; }
@@ -476,13 +608,33 @@ async function handleMessage(msg, ctx) {
           isError: true,
         });
       }
+      // THE STANDING GATE (the audit era, standing.mjs). A resident the
+      // Registrar has quarantined or revoked keeps every read at this door and
+      // loses the write ones, with the ledger's own sentence for a reason.
+      //
+      // It sits HERE — above the harbor gate, above the visitor scope, above
+      // the validator — for two reasons. It covers every write-shaped call in
+      // one line, apexes included, because `writeShaped` has already resolved
+      // `world { do: … }` and `household { do: … }` into "this is an act"; and
+      // a suspended resident must be told they are suspended rather than told
+      // their arguments are malformed, which is what a validator bounce reads
+      // as. Reads never reach it: `writeShaped` is false for every one.
+      if (writeShaped(name, args) && ctx.key) {
+        const st = standingBounce(ctx.key, ctx.clone);
+        if (st) return rpcResult(msg.id, {
+          content: [{ type: "text", text: JSON.stringify({ error: "bounce", defect: st.defect, hint: st.hint }, null, 1) }],
+          isError: true,
+        });
+      }
       // The harbor write gate (Keemin-ruled 2026-08-16, harbor-gate.mjs): an
       // unsettled household reads everything and keeps only the ephemeral
       // voice. The `household` verb is exempt HERE because householdApex gates
       // its own paper acts — its arrival acts (begin/declare/add-resident)
       // must keep answering.
       if (writeShaped(name, args) && ctx.key && name !== "household") {
-        const gatedVerb = name === "world" ? (dispatchToolFor(args?.do) ?? "world") : name;
+        const gatedVerb = name === "world" ? (dispatchToolFor(args?.do) ?? "world")
+          : name === "town" ? (townDispatchToolFor(args?.do) ?? "town")
+          : name;
         if (harborGated(ctx.key, gatedVerb)) {
           return rpcResult(msg.id, {
             content: [{ type: "text", text: JSON.stringify({ error: "bounce", defect: HARBOR_BOUNCE.defect, hint: HARBOR_BOUNCE.hint }, null, 1) }],
@@ -512,7 +664,7 @@ async function handleMessage(msg, ctx) {
         const result = await callTool(name, args, ctx);
         const isBounce = result && typeof result === "object" && result.error === "bounce";
         return rpcResult(msg.id, {
-          content: [{ type: "text", text: JSON.stringify(result, null, 1) }],
+          content: contentFor(result),
           isError: Boolean(isBounce),
         });
       } catch (e) {
@@ -542,7 +694,7 @@ export function handleMcp(req, res, ctx) {
   // 3 MB: sized for upload_media's base64 enclosure (1.5 MB of image pads to
   // ~2 MB, JSON-RPC framing on top) — the same arithmetic as the REST image
   // doors' caps. Every other call remains a fraction of this; byte validation
-  // in media.mjs owns the real image ceiling. Was 500 KB before the shelf.
+  // in media.mjs owns the real image ceiling. Was 500 KB before the media door.
   req.on("data", (c) => { raw += c; if (raw.length > 3_000_000) req.destroy(); });
   req.on("end", async () => {
     let parsed;
@@ -568,7 +720,12 @@ export function handleMcp(req, res, ctx) {
           ? (dispatchToolFor(message?.params?.arguments?.do) ?? named)
           : named === "household" && write
             ? (householdDispatchToolFor(message?.params?.arguments?.do) ?? named)
-            : named;
+            // the town apex charges as the verb it becomes, same contract: a
+            // declare through the town door and a declare through the flat door
+            // are one act on one ledger, never two doors counted apart.
+            : named === "town" && write
+              ? (townDispatchToolFor(message?.params?.arguments?.do) ?? named)
+              : named;
         const limited = ctx.rateLimit({ verb, write });
         if (limited) return ctx.rateResponse(res, limited);
       }

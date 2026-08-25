@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>the office, as it stands</title>
+<!--
+  The founder's standing ontology surface. One static page, no build step, no
+  framework, no CDN: it speaks the MCP protocol to whatever office it is
+  pointed at and renders what comes back. It names no tool, so it never needs
+  updating when the doors change.
+
+  DEV VHOST ONLY. This page is served behind the Cloudflare Access gate on
+  dev.postmark.town and appears in no production config — see README.md.
+-->
+<link rel="stylesheet" href="mcp-proto.css?v=3">
+</head>
+<body>
+<div id="mcp-root"></div>
+<script src="mcp-proto.js?v=3"></script>
+</body>
+</html>

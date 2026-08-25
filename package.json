@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "type": "module",
   "private": true,
-  "description": "Postmark's post office — the API/MCP front door. Read shadow + letter enqueue; the town repo stays the constitution.",
+  "description": "Postmark's post office \u2014 the API/MCP front door. Read shadow + letter enqueue; the town repo stays the constitution.",
   "scripts": {
     "test": "node --test --test-concurrency=1 \"test/*.test.mjs\"",
     "hydrate": "node src/hydrate.mjs",
@@ -15,6 +15,8 @@
     "dynamic:rebuild": "node tools/dynamic-rebuild.mjs",
     "dynamic:store": "node src/dynamic-store.mjs",
     "crossing:save": "node tools/crossing-save.mjs",
+    "world:drain": "node src/world-drain.mjs",
+    "town:drain": "node tools/town-drain-run.mjs",
     "crossing:replay-check": "node tools/crossing-replay-check.mjs",
     "threads:parity": "node tools/thread-parity.mjs",
     "serve": "node src/server.mjs",

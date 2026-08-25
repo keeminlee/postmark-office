@@ -404,7 +404,7 @@ test("flag off: the verb itself refuses too, in case something calls past the li
   assert.match(r.hint, /WORLD_APEX=1/);
 });
 
-test("the slim: thirteen flats are DELISTED; world_note alone stands, by ruling", async () => {
+test("the slim: the town apex absorbs eleven more; world_note and world_investigate stand, by ruling", async () => {
   on();
   await withOffice({ WORLD_APEX: "1" }, async () => {
     const { body } = await rpc("tools/list");
@@ -414,17 +414,49 @@ test("the slim: thirteen flats are DELISTED; world_note alone stands, by ruling"
     // reads (read:) all of these, field-verified the same day. Listing-only —
     // the runtime test below still calls a delisted name and is answered.
     for (const gone of ["world_say", "world_walk", "world_leave_mark", "world_stake", "world_unstake", "world_hold", "world_orient", "world_open_your_eyes",
-      "world_investigate", "world_my_marks", "world_walkers", "world_stake_read", "world_holdings"])
+      "world_my_marks", "world_walkers", "world_stake_read", "world_holdings"])
       assert.ok(!names.includes(gone), `${gone} is still listed — the slim delisted it`);
     assert.ok(names.includes("world_note"), "world_note stays flat by ruling");
+    // world_investigate UN-DELISTED 2026-08-23: the slim hides apex-served
+    // verbs, and the apex has no investigate — with_image made the delist a
+    // door with no room (mcp.mjs carries the same comment). Re-delist the day
+    // the apex grows an equivalent.
+    assert.ok(names.includes("world_investigate"), "world_investigate stands while the apex lacks an equivalent");
     // The apex-on total: 27 legacy tools + `world` + `household` (the third
-    // door, unconditional). 28 → 29: upload_media (the media shelf,
-    // 2026-08-15) — listed, unconditional. The flag-off twin (41, nothing
-    // delisted) lives in server.test.mjs — together they pin the
+    // door, unconditional). 28 → 29: upload_media (the media door,
+    // 2026-08-15) — listed, unconditional. 29 -> 30: world_investigate
+    // un-delisted (2026-08-23, the with_image ruling). The flag-off twin (42,
+    // nothing delisted) lives in server.test.mjs — together they pin the
     // apex-conditioning from both sides.
     assert.ok(names.includes("household"), "the third door rides beside the world verb");
-    assert.ok(names.includes("upload_media"), "the media shelf is listed — a capability nobody can find is not one");
-    assert.equal(names.length, 29);
+    assert.ok(names.includes("upload_media"), "the media door is listed — a capability nobody can find is not one");
+    // ── THE SLIM, THIRD ROUND (POS-46, 2026-08-24) ────────────────────
+    //
+    // 30 → 20. The town apex joins (+1) and absorbs eleven flats (−11): the
+    // nine reads that are the town's public face — read_town, read_bulletin,
+    // read_metrics, list_residents, list_regions, list_letters, read_letter,
+    // list_commits, search_town — plus declare_household, which becomes the
+    // register's own act, plus whoami, which folds into `household`'s bare
+    // read where the standing it mirrors already lives.
+    //
+    // Every one of them still ANSWERS; the slim is listing-only, which is what
+    // makes a client holding a cached list safe. The flag-off twin in
+    // server.test.mjs is unchanged at 42, because flag-off nothing is delisted
+    // and no apex is listed — together the two pin the conditioning from both
+    // sides, and a delist that leaked into the flag-off world would move one
+    // number without the other.
+    for (const absorbed of ["read_town", "read_bulletin", "read_metrics", "list_residents",
+      "list_regions", "list_letters", "read_letter", "list_commits", "search_town",
+      "declare_household", "whoami"])
+      assert.ok(!names.includes(absorbed), `${absorbed} is still listed — the town apex serves it now`);
+    assert.ok(names.includes("town"), "the third apex rides beside the world and household verbs");
+    // WAVE 2 (2026-08-24): 20 -> 21. update_address_fields joins as a LISTED
+    // flat — the scoped frontmatter door the rider asked for. It is not absorbed
+    // by any apex: the town apex takes roster acts, and amending your own card
+    // is your pen, which lives at household. A door nobody can find is not a
+    // door, so it lists.
+    assert.ok(names.includes("update_address_fields"), "the fields door is listed — the four optional fields were unfixable-after without it");
+    assert.equal(names.length, 21);
   });
 });
 
@@ -605,9 +637,15 @@ test("dispatch: an ambient action is never unaffordable, so it never reaches the
 
 test("dispatch: the verb's own refusal stays a refusal — with the terms still shown", async () => {
   on();
-  // a spectator standing where `say` is afforded: the affordance is real, the
-  // body is not, and world_say's own bounce is what the caller gets back
-  const r = await worldApex({ ...A, do: "say" }, null);
+  // A keyless caller where `say` is afforded: the affordance is real, the body
+  // is not, and world_say's own bounce is what the caller gets back.
+  //
+  // The coordinates this case used to carry were dropped in the walk round —
+  // the apex went embodied-only and a do: with top-level x/y is now refused
+  // before it dispatches (its own falsifier is below). The PROPERTY under test
+  // is untouched and is the point: a verb's own refusal survives the apex as a
+  // refusal, with the terms it was shown at the door still attached.
+  const r = await worldApex({ do: "say" }, null);
   assert.equal(r.error, "bounce");
   assert.match(r.defect, /a voice comes from a body/);
   assert.equal(r.did, "say");
@@ -945,12 +983,14 @@ test("lint L6: the world as it stands is GREEN — one action exposed, and it di
   assert.deepEqual(l6.rows, [{ action: "say", for: "resident", from: ["the-town/sound"], handled: true }]);
 });
 
-test("lint L6: an actor-kind the law names with no resolution at the door is RED, and named (the act-as-human red)", async () => {
+test("lint L6: the act-as-human red FLIPPED GREEN — the door resolves the human kind (2026-08-23, tenant 5)", async () => {
   on();
-  // The TDD-board method's first deliberate red: a constitutional mark minting
-  // an action FOR an actor kind the door cannot resolve. The action itself has
-  // a handler (say dispatches) — the gap is WHO may perform it, which is
-  // exactly the gap the actor seam exists to close.
+  // The TDD-board method's first deliberate red, planted 08-17, flipped 08-23:
+  // the constitutional mark mints say for:human, and RESOLVED_ACTOR_KINDS now
+  // carries "human", so the row the board once held open as THE ASK is
+  // answered. This test is the same fixture with the verdict inverted — a
+  // retired red keeps its test so a regression that drops the resolution
+  // re-reds loudly, with the history attached.
   const humanLaw = [
     { id: "the-town/human", by: "the-town", kind: "sited", tier: "constitution", at: { x: -900, y: -760 }, extent: { w: 10, h: 10 },
       body: "The household's human, standing beside their resident.",
@@ -961,12 +1001,11 @@ test("lint L6: an actor-kind the law names with no resolution at the door is RED
   const { runLints } = await import("../src/world-lints.mjs");
   const { lints } = await runLints({ dbPath: path, treePath: repo });
   const l6 = lints.find((l) => l.id === "L6");
-  assert.equal(l6.verdict, "RED");
-  assert.match(l6.headline, /say for human \(the-town\/human\)/, "the ask must name both the action and the actor kind");
+  assert.equal(l6.verdict, "GREEN", "the human kind resolves at the door now — a RED here means the resolution was dropped");
   const humanRow = l6.rows.find((r) => r.action === "say" && r.for === "human");
-  assert.equal(humanRow.handled, false, "the door has no human resolution yet — this row IS the ask");
+  assert.equal(humanRow.handled, true, "say for:human has a live resolution — the 08-17 ask is answered");
   const residentRow = l6.rows.find((r) => r.action === "say" && r.for === "resident");
-  assert.equal(residentRow.handled, true, "the resident's own say must not be dragged red by the human ask");
+  assert.equal(residentRow.handled, true, "the resident's own say stands as it always did");
 });
 
 test("lint L6: an action law exposes with no handler behind it is RED, and named", async () => {

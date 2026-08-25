@@ -1,0 +1,13 @@
+[Unit]
+Description=usdc-watch every 10 minutes — the town's own intake address is read on a clock, not on memory
+
+[Timer]
+OnCalendar=*:0/10
+# the three public Base RPCs are shared infrastructure; a jittered start keeps
+# a fleet of towns from arriving on the same second
+RandomizedDelaySec=45
+# a box that was down catches up on the next boot rather than skipping the gap
+Persistent=true
+
+[Install]
+WantedBy=timers.target

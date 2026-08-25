@@ -34,6 +34,11 @@
 //
 // Env:
 //   WORLD_EMISSIONS=1   world/say dual-writes an emission beside the voices log
+//   WORLD_MOVEMENT_V2=1 Stage D: the movement record, after the ledger's freeze
+//   WORLD_SINGLE_LOG=1  POS-5 slice 1: every world mutation enters the journal
+//                       (one INSERT) instead of the per-write git checkout. OFF
+//                       is byte-identical to the git lane — a falsifier, not a
+//                       hope (test/world-journal.test.mjs § FLAG OFF).
 //   WORLD_DYNAMIC_DB    the file (default: dynamic.db beside world.db)
 
 import { DatabaseSync } from "node:sqlite";
@@ -62,6 +67,15 @@ export const emissionsEnabled = () => process.env.WORLD_EMISSIONS === "1";
 // thing that reads the store. `world-movement.mjs` re-exports it, so callers
 // still find it under the name that describes what it does.
 export const movementV2Enabled = () => process.env.WORLD_MOVEMENT_V2 === "1";
+
+// POS-5 slice 1's switch, beside the other two for the same reason: the table it
+// governs is declared in the DDL below, so the flag and the store it turns on
+// live in one file. `world-journal.mjs` re-exports it under its own name.
+//
+// ON: every world mutation enters the journal — one INSERT, no lease, no lock,
+// no checkout. OFF: the git write path runs untouched, byte for byte, and that
+// is asserted rather than assumed (test/world-journal.test.mjs § flag-off).
+export const singleLogEnabled = () => process.env.WORLD_SINGLE_LOG === "1";
 
 export const DEFAULT_DYNAMIC_DB = join(OFFICE_ROOT, "dynamic.db");
 export const dynamicDbPath = () => process.env.WORLD_DYNAMIC_DB ?? DEFAULT_DYNAMIC_DB;
@@ -168,6 +182,44 @@ export const DYNAMIC_SCHEMA = `
   CREATE INDEX IF NOT EXISTS emissions_expires ON emissions (ttl_expires_at);
   CREATE INDEX IF NOT EXISTS emissions_source ON emissions (source, born_at);
   CREATE INDEX IF NOT EXISTS emissions_class ON emissions (class, born_at);
+
+  -- THE JOURNAL (store-canon-durable until the drain). POS-5 slice 1: the one
+  -- append-only log every world mutation enters. See world-journal.mjs for what
+  -- each column is and which of them the 2026-08-23 ruling named.
+  --
+  -- APPEND-ONLY IS THE WHOLE DESIGN, and it is why amend and withdraw are rows
+  -- rather than an UPDATE and a DELETE: supersession-by-latest costs this table
+  -- nothing, and a log that is ever rewritten cannot be replayed. Nothing in the
+  -- office issues an UPDATE or a DELETE against it; only the drain's truncate
+  -- (slice 2), after the write-down, as one act with it (the-atomic-drain).
+  --
+  -- ADDITIVE, so DYNAMIC_SCHEMA_VERSION does not move — the rule two paragraphs
+  -- up says the number goes when a column is removed, a column's meaning
+  -- changes, or a table's rows are reinterpreted. A new table is none of those,
+  -- and every live store on the box grows it on the next open.
+  --
+  -- \`at_anchor/at_dx/at_dy\` is ONE field, the-witnessed-line's "an anchor and an
+  -- offset: where the actor stood, relative to what, at that instant". Three
+  -- columns rather than a JSON blob because the drain and the frame graph both
+  -- query it, and because a raw world x,y is a photograph of a moving thing —
+  -- exactly what §8's four bugs were made of.
+  CREATE TABLE IF NOT EXISTS journal (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    crossing REAL,
+    actor TEXT NOT NULL,
+    action TEXT NOT NULL,
+    object TEXT,
+    at_anchor TEXT, at_dx REAL, at_dy REAL,
+    witnesses TEXT,
+    class TEXT NOT NULL,
+    payload TEXT,
+    effect TEXT,
+    household TEXT,
+    written_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS journal_household ON journal (household, seq);
+  CREATE INDEX IF NOT EXISTS journal_object ON journal (object, seq);
+  CREATE INDEX IF NOT EXISTS journal_class ON journal (class, seq);
 `;
 
 /**
@@ -373,6 +425,7 @@ export function dynamicHealth({ repo = WORLD_CLONE } = {}) {
     flags: {
       WORLD_EMISSIONS: process.env.WORLD_EMISSIONS ?? null,
       WORLD_MOVEMENT_V2: process.env.WORLD_MOVEMENT_V2 ?? null,
+      WORLD_SINGLE_LOG: process.env.WORLD_SINGLE_LOG ?? null,
     },
     db: { path, present: existsSync(path) },
     sound_class: {
@@ -409,6 +462,18 @@ export function dynamicHealth({ repo = WORLD_CLONE } = {}) {
         ? { movements: one("SELECT COUNT(*) c FROM movements").c,
             movements_latest: one("SELECT MAX(at) a FROM movements").a ?? null }
         : { movements: null, movements_latest: null }),
+      // THE JOURNAL, feature-detected for the same reason `movements` is: a
+      // read-only open of a store predating this slice cannot create the table,
+      // and flag-off must never require the new schema. The operator's first
+      // question after the cutover is whether the one pen is receiving, and the
+      // answer is only legible beside the drain's cursor — so the head seq and
+      // the last-drained seq ride together.
+      ...(one("SELECT name n FROM sqlite_master WHERE type='table' AND name='journal'")
+        ? { journal: one("SELECT COUNT(*) c FROM journal").c,
+            journal_head: one("SELECT MAX(seq) s FROM journal").s ?? 0,
+            journal_latest: one("SELECT MAX(written_at) a FROM journal").a ?? null,
+            journal_drained_through: getMeta(db, "journal_drained_through") }
+        : { journal: null, journal_head: null, journal_latest: null, journal_drained_through: null }),
       ledger_frozen_at: getMeta(db, "ledger_frozen_at"),
       emissions_total: one("SELECT COUNT(*) c FROM emissions").c,
       emissions_present: one("SELECT COUNT(*) c FROM emissions WHERE born_at <= ? AND ttl_expires_at > ?", now, now).c,

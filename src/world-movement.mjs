@@ -103,6 +103,36 @@ export async function vesselServiceFrom(worldState, { repo = WORLD_CLONE, vessel
 /** Drop the memoized services — for tests that rebuild a world in place. */
 export function resetServiceCache() { /* WeakMap: entries die with their marks array */ }
 
+// ── the stop answers ─────────────────────────────────────────────────────────
+//
+// The law (the-stop-answers, child of the timetable class, planted 2026-08-23):
+// "A stop answers the published word: a read at a landing carries the vessel's
+// next departures, derived at the read's instant, never stored." This is the
+// shore side of the frame block — aboard, `frame.moves_next` already says when
+// she moves; this answers the same derivation to feet still on the quay, so an
+// agent at Pando Landing no longer needs to know which mark hides the schedule.
+export const STOP_EARSHOT_M = 25; // beside the wharf still hears the bell — within a stride of a landing counts as standing at it
+
+export async function stopDepartures(worldState, standpoint, { repo = WORLD_CLONE, now = Date.now(), count = 2 } = {}) {
+  if (!movementV2Enabled()) return null;
+  const x = Number(standpoint?.x), y = Number(standpoint?.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  const { service, mod } = await vesselServiceFrom(worldState, { repo });
+  if (!service || !mod) return null;
+  const atStop = (s) =>
+    (s.extent && inRect({ x, y }, { x: s.at.x, y: s.at.y, w: s.extent.w, h: s.extent.h })) ||
+    Math.hypot(x - s.at.x, y - s.at.y) <= STOP_EARSHOT_M;
+  const stop = service.stops.find(atStop);
+  if (!stop) return null;
+  const next = mod.nextDepartures(service, mod.fractionalCrossing(now), count, { from: stop.markId });
+  return {
+    at_stop: stop.markId,
+    vessel: service.vessel.markId,
+    next: next.map((s) => ({ at: new Date(mod.instantOf(s.departFc)).toISOString(), toward: s.to.markId, crossing: s.departFc })),
+    terms: "the published word, derived at the read's instant, never stored — the timetable class's the-stop-answers",
+  };
+}
+
 /**
  * A carrier-state reader bound to one world and one clock source, memoized.
  *
