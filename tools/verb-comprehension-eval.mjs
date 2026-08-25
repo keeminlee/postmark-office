@@ -25,12 +25,23 @@
 //
 // THE FIRST DATA POINT, so a later run has something to move against.
 // 2026-08-25, immediately after the fourth slim (6 listed tools, tools/list
-// 13,433 b): a fresh Opus reader, given the tool list and nothing else and told
-// not to look anything up, reached the right door on 5 of 5 errands — town
-// read: "votes", household do: "address", world (bare), household do: "send",
-// town read: "bulletin". Zero wrong-door first calls, so `town read: "map"` was
-// NOT built: a map is worth its weight only once the surface has stopped
-// teaching itself, and on this evidence it has not.
+// 13,433 b): TWO fresh Opus readers, each given the tool list and nothing else
+// and told not to look anything up, independently reached the right door on 5
+// of 5 — town read: "votes", household do: "address", world (bare), household
+// do: "send", town read: "bulletin". Ten of ten, zero wrong-door first calls,
+// so `town read: "map"` was NOT built: a map is worth its weight only once the
+// surface has stopped teaching itself, and on this evidence it has not.
+//
+// AND THE RUN PAID FOR ITSELF ON ITS FIRST OUTING, which is the argument for
+// keeping it rerunnable. The two readers agreed on every door and DIFFERED on
+// arguments — one wrote `household { do: "address", args: { body } }`, the
+// natural call, with no `handle:`, exactly as the act's own card instructs
+// (`handle` is stripped from `fields` for the standpoint acts). That call was
+// answered `422 no handle`: the grammar told the caller not to pass it and the
+// door then demanded it, on all five standpoint acts. Fixed in
+// household-apex.mjs § the act branch, with its own falsifier. A door-finding
+// eval found a door-USING defect, because a stranger makes the call a
+// maintainer has long since stopped making.
 //
 // Usage:
 //   node tools/verb-comprehension-eval.mjs                 # the protocol: what to hand the taker
