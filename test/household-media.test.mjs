@@ -485,3 +485,59 @@ test("the door's quote block carries what lawOf actually read", async () => {
   assert.ok(missing.unresolved, "and must say that it could not be read");
   store.close();
 });
+
+// ── the uploads bound (2026-08-25) ──────────────────────────────────────────
+
+test("the uploads list is bounded, and `count` is the whole ledger — not the page", async () => {
+  // The quota bounds BYTES, never ROWS: a household of thumbnails can hold
+  // hundreds of files well inside 20 MB, and this read listed every one of them
+  // on every call. `count` was already here and already correct, which is
+  // exactly why it said nothing — it was also the list length, so it could
+  // never disagree with the list. The bound is what turns it into information.
+  //
+  // Rows are seeded straight into the ledger rather than uploaded, because the
+  // fixture's ceiling is 400 bytes per resident on purpose and thirty real
+  // uploads cannot fit under it. The read reads the table either way.
+  const db = odb();
+  const { ensureMediaTable } = await import("../src/media.mjs");
+  ensureMediaTable(db);
+  const ins = db.prepare("INSERT INTO media (household, sha, ext, bytes, by_handle, created) VALUES (?, ?, ?, ?, ?, ?)");
+  for (let i = 0; i < 30; i++) {
+    ins.run("testers", String(i).padStart(64, "a"), "png", 10, "tester", `2026-08-${String((i % 28) + 1).padStart(2, "0")}T00:00:00.000Z`);
+  }
+  const none = async () => ({ hits: new Set(), unreadable: [] });
+
+  const page = await mediaRead(key(), { odb: db, embedded: none });
+  assert.equal(page.uploads.length, 25, "the page");
+  assert.equal(page.count, 30, "the whole ledger");
+  assert.notEqual(page.count, page.uploads.length,
+    "THE FALSIFIER: a count that cannot disagree with its own list is the list length wearing a total's name");
+  assert.equal(page.shown, 25);
+  assert.equal(page.complete, false);
+  assert.equal(page.next_offset, 25);
+  assert.match(page.more_note, /measured in BYTES/, "the quota counts every file, listed or not");
+
+  const rest = await mediaRead(key(), { odb: db, embedded: none, offset: 25 });
+  assert.equal(rest.uploads.length, 5);
+  assert.equal(rest.complete, true);
+  assert.equal(rest.next_offset, undefined);
+  assert.equal(rest.count, 30, "the total does not shrink as you walk");
+
+  // the pages tile the ledger: no file served twice, none missed
+  const seen = [...page.uploads, ...rest.uploads].map((u) => u.url);
+  assert.equal(new Set(seen).size, 30);
+
+  // AND THE QUOTA IS COMPUTED OVER THE WHOLE LEDGER, not the page. A budget
+  // decides how much gets said; it must not decide what is true — and a quota
+  // that only counted the rows this read happened to render would tell a
+  // household it had room it does not have.
+  assert.equal(page.quota.used, 300, "30 files x 10 bytes, all of them");
+  assert.equal(page.quota.used, rest.quota.used, "and the same on any page");
+});
+
+test("a ledger that fits inside the bound reports itself complete", async () => {
+  const r = await mediaRead(key(), { odb: odb(), embedded: async () => ({ hits: new Set(), unreadable: [] }) });
+  assert.equal(r.count, 0);
+  assert.equal(r.complete, true);
+  assert.equal(r.more_note, undefined, "an empty shelf and a cut one must not look alike");
+});

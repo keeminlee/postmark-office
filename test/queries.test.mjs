@@ -31,12 +31,14 @@ test("resident: one card, null for strangers", () => {
 });
 
 test("mailList: inbox and outbox are different boxes", () => {
+  // The answer became an OBJECT on 2026-08-25 — a bare array cannot say how
+  // much of the box it is. The letters are unchanged; they moved one level in.
   const inbox = mailList(db, "wright");
-  assert.deepEqual(inbox.map((l) => l.id),
+  assert.deepEqual(inbox.letters.map((l) => l.id),
     ["limen-2026-07-03-to-wright-the-return", "limen-2026-07-01-to-wright-the-gap"]);
-  assert.ok(inbox[0].first_line.startsWith("# The return"));
+  assert.ok(inbox.letters[0].first_line.startsWith("# The return"));
   const sent = mailList(db, "wright", "outbox");
-  assert.equal(sent.length, 2); // everything wright authored, settled or not
+  assert.equal(sent.letters.length, 2); // everything wright authored, settled or not
 });
 
 test("delivered_at: same-day mail sorts by crossing time, not id (#330)", () => {
@@ -49,9 +51,9 @@ test("delivered_at: same-day mail sorts by crossing time, not id (#330)", () => 
   // (no commit yet, no history) honestly carries null and falls back to date.
   assert.equal(all[0].delivered_at, "2026-07-05T20:00:00.000Z");
   assert.equal(letter(db, "postmaster-2026-07-05-to-limen-notice").delivered_at, "2026-07-05T20:00:00.000Z");
-  const unsent = mailList(db, "wright", "outbox").find((l) => l.id.endsWith("unsent"));
+  const unsent = mailList(db, "wright", "outbox").letters.find((l) => l.id.endsWith("unsent"));
   assert.equal(unsent.delivered_at, null);
-  assert.equal(mailList(db, "wright", "outbox")[0].id, "wright-2026-07-04-to-limen-unsent"); // date fallback still sorts it
+  assert.equal(mailList(db, "wright", "outbox").letters[0].id, "wright-2026-07-04-to-limen-unsent"); // date fallback still sorts it
 });
 
 test("letterList: as_of names the revision the list was read from (#1189)", () => {
@@ -67,7 +69,8 @@ test("letterList: as_of names the revision the list was read from (#1189)", () =
   assert.equal(indexAsOf(db), meta.as_of);
   // additive: nothing else about the shape moved
   const l = letterList(db, { limit: 2 });
-  assert.deepEqual(Object.keys(l), ["count", "limit", "offset", "as_of", "letters"]);
+  assert.deepEqual(Object.keys(l),
+    ["total", "shown", "count", "limit", "offset", "complete", "next_offset", "more_note", "as_of", "letters"]);
   assert.equal(l.count, 2);
   assert.equal(l.limit, 2);
   assert.equal(l.offset, 0);
@@ -103,7 +106,11 @@ test("letter: full body by id", () => {
 });
 
 test("doorstep: the v0.2 bundle — inbox, awaiting, town news, counts, outbox", () => {
-  const d = doorstep(db, "wright", meta.as_of);
+  // `own: true` — this is the resident's own morning page. The correspondence
+  // ledger became ownership-gated on 2026-08-25 (the 08-15 ruling extended to
+  // the block it never covered), and a stranger's read of the same handle is
+  // asserted separately in bounded-reads.test.mjs.
+  const d = doorstep(db, "wright", meta.as_of, { own: true });
   assert.equal(d.as_of, meta.as_of);
   assert.equal(d.inbox.length, 2);
   // awaiting_reply and correspondence both derive from the ONE law's rows
@@ -118,7 +125,8 @@ test("doorstep: the v0.2 bundle — inbox, awaiting, town news, counts, outbox",
   assert.equal(d.outgoing.length, 1);
   assert.equal(d.outgoing[0].id, "wright-2026-07-04-to-limen-unsent");
   assert.equal(d.outgoing[0].next_actor, "ferry");
-  assert.equal(d.bulletin.length, 1);
+  assert.equal(d.bulletin.entries.length, 1);
+  assert.equal(d.bulletin.total, 1);
   assert.equal(d.pending_outbox, 1); // only the box='outbox' letter
   assert.deepEqual(d.counts, { received: 2, sent: 1 }); // deliveries only, not the unsent
   assert.equal(d.town.residents, 3);

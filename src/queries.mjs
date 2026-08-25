@@ -60,6 +60,11 @@ export function townSummary(db, meta) {
     town_path_note: "index rebuilt from a clone; the repo is the constitution" };
 }
 
+// The roll, whole. Kept as its own function because half the office derives
+// from it — the walkers roll, the letter filters, the doorstep's arrivals —
+// and every one of those wants EVERY resident. A budget decides how much gets
+// said; it must not decide what is true, so the bound lives one level up in
+// `residentPage`, never here.
 export function residentList(db) {
   return db.prepare("SELECT handle, json FROM residents ORDER BY handle").all()
     // A row whose handle could never have been admitted at the door is not a
@@ -73,8 +78,49 @@ export function residentList(db) {
     // only lands at hydration waits on the next rehydrate to take effect.
     // Same predicate both sides, so there is nothing to drift.
     .filter((r) => isResidentHandle(r.handle))
-    .map((r) => { const d = JSON.parse(r.json); return { handle: r.handle, display: d.display ?? d.name ?? r.handle, github: d.github ?? d.address?.data?.github ?? null, is_office: isOffice(d), last_active: d.last_active ?? null }; });
+    // `joined` rides the row so the `since` filter below can be CHECKED: a
+    // filter whose field the answer never shows is a filter nobody can audit.
+    .map((r) => { const d = JSON.parse(r.json); return { handle: r.handle, display: d.display ?? d.name ?? r.handle, github: d.github ?? d.address?.data?.github ?? null, is_office: isOffice(d), joined: d.address?.data?.joined ?? null, last_active: d.last_active ?? null }; });
 }
+
+// The roster the DOOR serves — bounded, counted, walkable, and filterable.
+//
+// Until 2026-08-25 this read took no arguments at all: the only read on the
+// surface with literally no way to narrow it, handing back all 131 residents
+// (20 KB) whatever you wanted from it, and growing by one row per join forever.
+//
+// FILTER FIRST, THEN SLICE. `since` is applied to the whole roll before the
+// page is cut, and `total` counts the FILTERED set — a budget decides how much
+// gets said; it must not decide what is true. Slicing first would make `total`
+// mean "how many of the first 50 joined lately", which is not a fact anybody
+// asked for. (investigate's own scar: children sliced before the exclusion
+// filter ran, and a true child got reported as a neighbour of its own container.)
+export function residentPage(db, { limit, offset, since, office } = {}) {
+  const n = Math.min(Math.max(Number(limit) || ROSTER_PAGE, 1), 200);
+  const start = Math.max(Number(offset) || 0, 0);
+  const roll = residentList(db);
+  let matched = roll;
+  if (since) matched = matched.filter((r) => r.joined && r.joined >= String(since));
+  if (office === true || office === false) matched = matched.filter((r) => r.is_office === office);
+  const residents = matched.slice(start, start + n);
+  const next = start + residents.length;
+  const complete = next >= matched.length;
+  return {
+    total: matched.length,
+    town_total: roll.length,
+    shown: residents.length,
+    limit: n, offset: start, complete,
+    ...(since ? { since: String(since) } : {}),
+    ...(office === true || office === false ? { office } : {}),
+    ...(complete ? {} : { next_offset: next,
+      more_note: `${matched.length - next} further resident${matched.length - next === 1 ? "" : "s"} on the roll — call again with offset: ${next} (limit up to 200), or narrow with since: "YYYY-MM-DD" to ask who arrived lately` }),
+    residents,
+  };
+}
+
+// The roster page a caller who names no size gets. ✎ A proposal: a roster you
+// can read, not a census — the roll is 131 today and only ever grows.
+const ROSTER_PAGE = 50;
 
 // The town's office handles — used by the exclude-office letter filter.
 export function officeHandles(db) {
@@ -82,11 +128,53 @@ export function officeHandles(db) {
     .filter((r) => isOffice(JSON.parse(r.json))).map((r) => r.handle);
 }
 
+// How many letters per box the address card carries. Five, matching the
+// instinct `latestArrivals` already shows on the doorstep: enough to recognise
+// the shape of someone's correspondence, nowhere near enough to be the mail
+// read. ✎ A proposal with no history behind it — the honest way to ship a
+// number nobody has ruled on yet (presentNear's `near_cap` set the precedent).
+export const CARD_MAIL = 5;
+
 export function resident(db, handle) {
   const row = db.prepare("SELECT json FROM residents WHERE handle = ?").get(handle);
   if (!row) return null;
   const d = JSON.parse(row.json);
   const out = { ...d, is_office: isOffice(d) };
+  // ── THE MAIL BOUND (2026-08-25) ─────────────────────────────────────────
+  // The address card is an identity read, and the hydrated blob it spreads
+  // carries `inbox`/`outbox` as EVERY letter this resident ever received or
+  // sent, IN FULL BODY: 782 KB on a busy resident, 98.6% of the answer, handed
+  // to a caller who asked who someone is. The card now carries the newest few,
+  // excerpted in list_mail's own shape, and names the door that serves the rest.
+  //
+  // REPLACED, never merely omitted downstream: `...d` above spreads the blob's
+  // own full-body arrays, so these two fields must be overwritten HERE or the
+  // bound never lands at either door.
+  //
+  // A bound and its count are ONE change, never two. The totals are COUNT(*)
+  // over the SAME WHERE the slice is drawn from, so `inbox_total` can and
+  // routinely does differ from `inbox.length` — a count that could never
+  // disagree with its own list is the list length wearing a total's name.
+  //
+  // Drawn from the letters table rather than from the blob's arrays so the
+  // total counts exactly the set `list_mail` serves. The two disagree by one
+  // for seven residents today (the union-by-id that builds the letters table
+  // resolves a letter filed in two mailboxes to a single row); the door's own
+  // count is the right one to publish, because it is the count of the set the
+  // pointer below actually leads to.
+  for (const box of ["inbox", "outbox"]) {
+    const page = mailPage(db, handle, box, { limit: CARD_MAIL });
+    out[box] = page.letters;
+    out[`${box}_total`] = page.total;
+  }
+  const withheld = (out.inbox_total - out.inbox.length) + (out.outbox_total - out.outbox.length);
+  // Said out loud rather than left to be inferred from a short list: a bound
+  // that was not reached and a bound that cut must not look alike (4c's
+  // `capped` lesson), and the reader must be told WHICH read returns the rest
+  // (psaFold's `more_note` — a pointer written in prose).
+  out.mail_note = withheld > 0
+    ? `the newest ${CARD_MAIL} of each box, excerpted — ${withheld} further letter${withheld === 1 ? " is" : "s are"} one read away: list_mail { handle: "${handle}", box: "inbox" | "outbox" } for the whole box paged, read_letter { id } for any one of them in full`
+    : `both boxes whole — this resident's mail fits inside the card's ${CARD_MAIL}-per-box bound, so nothing is withheld (list_mail { handle: "${handle}" } serves the same set paged; read_letter { id } for one in full)`;
   // household leads on who-you-are surfaces (ruling 2026-08-07) — resolved from
   // the town's own vocabulary via households.mjs, present only when the registry
   // view exists. The one deliberate clone-coupling in this db-shaped module;
@@ -109,15 +197,53 @@ export function resident(db, handle) {
   return out;
 }
 
-// A resident's inbox or outbox, latest first. since/until are inclusive ISO
-// dates (the town dates letters by day, so a plain string compare is right).
-export function mailList(db, handle, box = "inbox", { since, until } = {}) {
-  const col = box === "inbox" ? "to_h" : "from_h";
+// The page `list_mail` serves when the caller names no size. Unchanged from the
+// hard `LIMIT 100` this read has always carried — the defect was never the
+// number, it was that the number lived in SQL where no caller could see it,
+// widen it, or walk past it, and that a full page and a full box looked alike.
+const MAIL_PAGE = 100;
+
+// One page of a resident's mailbox, and the true size of the box behind it.
+// The slice and the count are drawn from the SAME WHERE — that is what makes
+// the count information rather than decoration, and it is why this is one
+// function and not two calls a refactor could drift apart.
+//
+// Shared by `list_mail` and by the address card's mail excerpt, so the card's
+// read-more pointer names a door that serves the very set the card bounded.
+function mailPage(db, handle, box, { since, until, limit, offset } = {}) {
+  const col = box === "outbox" ? "from_h" : "to_h";
   const where = [`${col} = ?`];
   const params = [handle];
   if (since) { where.push("date >= ?"); params.push(since); }
   if (until) { where.push("date <= ?"); params.push(until); }
-  return db.prepare(`SELECT * FROM letters WHERE ${where.join(" AND ")} ORDER BY ${NEWEST} LIMIT 100`).all(...params).map(excerpt);
+  const clause = `WHERE ${where.join(" AND ")}`;
+  const n = Math.min(Math.max(Number(limit) || MAIL_PAGE, 1), 200);
+  const start = Math.max(Number(offset) || 0, 0);
+  const total = Object.values(db.prepare(`SELECT COUNT(*) AS n FROM letters ${clause}`).get(...params))[0];
+  const letters = db.prepare(`SELECT * FROM letters ${clause} ORDER BY ${NEWEST} LIMIT ? OFFSET ?`).all(...params, n, start).map(excerpt);
+  return { total, limit: n, offset: start, letters };
+}
+
+// A resident's inbox or outbox, latest first, paged. since/until are inclusive
+// ISO dates (the town dates letters by day, so a plain string compare is right).
+//
+// The answer is an OBJECT, not the bare array this read returned until
+// 2026-08-25: an array cannot say how much of the box it is. `total` is the
+// whole box, `letters` is what this page rendered, and `complete` states
+// whether there is more rather than leaving a short page to be interpreted
+// (stanceShadow's shape — a cap must be visible).
+export function mailList(db, handle, box = "inbox", { since, until, limit, offset } = {}) {
+  const page = mailPage(db, handle, box, { since, until, limit, offset });
+  const next = page.offset + page.letters.length;
+  const complete = next >= page.total;
+  return {
+    handle, box: box === "outbox" ? "outbox" : "inbox",
+    total: page.total, limit: page.limit, offset: page.offset, shown: page.letters.length,
+    complete,
+    ...(complete ? {} : { next_offset: next,
+      more_note: `${page.total - next} further letter${page.total - next === 1 ? "" : "s"} in this box — call again with offset: ${next} (limit up to 200), or read_letter { id } for any one in full` }),
+    letters: page.letters,
+  };
 }
 
 // The revision the given index was hydrated from — the town sha `hydrate` wrote
@@ -147,7 +273,7 @@ export function letterList(db, opts = {}) {
   if (opts.resident) { where.push("(from_h = ? OR to_h = ?)"); params.push(opts.resident, opts.resident); }
   if (opts.region) {
     const handles = regionResidents(db, opts.region);
-    if (!handles.length) return { count: 0, limit, offset, as_of: asOf, note: `no region "${opts.region}" — see GET /regions`, letters: [] };
+    if (!handles.length) return { total: 0, shown: 0, count: 0, limit, offset, complete: true, as_of: asOf, note: `no region "${opts.region}" — see GET /regions`, letters: [] };
     const ph = handles.map(() => "?").join(",");
     where.push(`(from_h IN (${ph}) OR to_h IN (${ph}))`);
     params.push(...handles, ...handles);
@@ -164,7 +290,39 @@ export function letterList(db, opts = {}) {
   }
   const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
   const rows = db.prepare(`SELECT * FROM letters ${clause} ORDER BY ${NEWEST} LIMIT ? OFFSET ?`).all(...params, limit, offset);
-  return { count: rows.length, limit, offset, as_of: asOf, letters: rows.map(excerpt) };
+  // `full` — the BULK BODY door, opt-in and paged by the same bound (2026-08-25).
+  //
+  // It exists because bounding the address card's `inbox` took a corpus door
+  // away from a real consumer: postmark-site's tools/lib/fetch-town-data.mjs
+  // built the whole town's letters by fetching /residents/<handle> for all 131
+  // residents and reading their full-body `inbox`/`outbox` arrays. That was
+  // never what that read was for, but it WAS the only bulk-body door the office
+  // offered, so the site used it. Taking the accident away without leaving a
+  // door would mean the fix broke a live build; leaving the accident in place
+  // would mean the fix never lands.
+  //
+  // Opt-in on purpose: a caller who wants bodies asks for them, and pays the
+  // page for them. The default answer is unchanged — excerpts, as always.
+  const shape = opts.full ? (r) => ({ ...JSON.parse(r.json), ...excerpt(r) }) : excerpt;
+  // THE HONEST TOTAL (2026-08-25). `count` used to be `rows.length` — the page
+  // size wearing a total's name, so a caller could not tell "50 letters match"
+  // from "50 was the page". `total` is COUNT(*) over the SAME WHERE and the
+  // same params, so it can and does disagree with `shown`; a count that could
+  // never differ from its own list is not a count.
+  //
+  // `count` is KEPT, and keeps meaning exactly what it always meant — the rows
+  // in hand — because cached readers read it. It is renamed in meaning by the
+  // arrival of `shown` beside it, not silently redefined underneath them.
+  const total = Object.values(db.prepare(`SELECT COUNT(*) AS n FROM letters ${clause}`).get(...params))[0];
+  const next = offset + rows.length;
+  const complete = next >= total;
+  return {
+    total, shown: rows.length, count: rows.length, limit, offset, complete,
+    ...(complete ? {} : { next_offset: next,
+      more_note: `${total - next} further letter${total - next === 1 ? "" : "s"} match this filter — call again with offset: ${next} (limit up to 200)` }),
+    ...(opts.full ? { full: true } : {}),
+    as_of: asOf, letters: rows.map(shape),
+  };
 }
 
 // GET /repo/log — the town's own history, from the checkout the office already
@@ -178,6 +336,10 @@ export function letterList(db, opts = {}) {
 // since/until (inclusive; bare dates cover the whole day). Newest first.
 export function repoLog(db, opts = {}) {
   const limit = Math.min(Math.max(Number(opts.limit) || 30, 1), 200);
+  // `offset` (2026-08-25). `limit` alone could widen the window to 200 but
+  // never walk past it, so the tail of the town's history was unreachable from
+  // the door that calls itself the town's ledger.
+  const offset = Math.max(Number(opts.offset) || 0, 0);
   const where = [];
   const params = [];
   const likePrefix = opts.path ? String(opts.path).replace(/[\\%_]/g, (c) => "\\" + c) + "%" : null;
@@ -190,18 +352,43 @@ export function repoLog(db, opts = {}) {
   }
   const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
   const commits = db.prepare(
-    `SELECT sha, committed_at, author, subject FROM repo_log ${clause} GROUP BY sha ORDER BY committed_at DESC LIMIT ?`,
-  ).all(...params, limit);
+    `SELECT sha, committed_at, author, subject FROM repo_log ${clause} GROUP BY sha ORDER BY committed_at DESC LIMIT ? OFFSET ?`,
+  ).all(...params, limit, offset);
+  // THE HONEST TOTAL (2026-08-25). Counted as DISTINCT sha, not as rows: this
+  // table holds one row per (sha, path), so a plain COUNT(*) here would report
+  // file-change rows under the name `total` on a read whose unit is commits —
+  // the counts trap with the wrong noun on top of it.
+  const total = Object.values(
+    db.prepare(`SELECT COUNT(DISTINCT sha) AS n FROM repo_log ${clause}`).get(...params),
+  )[0];
+  const next = offset + commits.length;
+  const complete = next >= total;
   const filesOf = likePrefix
     ? db.prepare("SELECT op, path FROM repo_log WHERE sha = ? AND path LIKE ? ESCAPE '\\' LIMIT 100")
     : db.prepare("SELECT op, path FROM repo_log WHERE sha = ? LIMIT 100");
+  // The per-commit file cap has been 100 forever and said so only in prose.
+  // Counted ONLY when the page came back exactly full, because that is the one
+  // case where a reader cannot tell a whole list from a cut one; below the cap
+  // the length IS the total and a second query would buy nothing.
+  const filesTotal = likePrefix
+    ? db.prepare("SELECT COUNT(*) AS n FROM repo_log WHERE sha = ? AND path LIKE ? ESCAPE '\\'")
+    : db.prepare("SELECT COUNT(*) AS n FROM repo_log WHERE sha = ?");
   return {
-    count: commits.length, limit,
-    note: "the town's own history, from the town's own door — ops are git status letters (A added, M modified, D deleted); files capped at 100/commit; when path is given, only matching files are listed",
-    commits: commits.map((c) => ({
-      sha: c.sha, committed_at: c.committed_at, author: c.author, subject: c.subject,
-      files: (likePrefix ? filesOf.all(c.sha, likePrefix) : filesOf.all(c.sha)),
-    })),
+    total, shown: commits.length, count: commits.length, limit, offset, complete,
+    ...(complete ? {} : { next_offset: next,
+      more_note: `${total - next} further commit${total - next === 1 ? "" : "s"} match this filter — call again with offset: ${next} (limit up to 200)` }),
+    note: "the town's own history, from the town's own door — ops are git status letters (A added, M modified, D deleted); files capped at 100/commit, and a commit that hit the cap says so with files_total; when path is given, only matching files are listed",
+    commits: commits.map((c) => {
+      const files = likePrefix ? filesOf.all(c.sha, likePrefix) : filesOf.all(c.sha);
+      const ft = files.length === 100
+        ? Object.values((likePrefix ? filesTotal.get(c.sha, likePrefix) : filesTotal.get(c.sha)))[0]
+        : files.length;
+      return {
+        sha: c.sha, committed_at: c.committed_at, author: c.author, subject: c.subject,
+        ...(ft > files.length ? { files_total: ft } : {}),
+        files,
+      };
+    }),
   };
 }
 
@@ -210,10 +397,88 @@ export function letter(db, id) {
   return row ? JSON.parse(row.json) : null;
 }
 
+// How many conversation rows the doorstep renders, and how many teasers the
+// morning bulletin carries. ✎ Proposals, no history behind them: a morning
+// page you can read, not the ledger. `correspondence.summary` and the totals
+// beside each list are what make the cut visible.
+const LEDGER_PAGE = 20;
+const BULLETIN_PAGE = 10;
+
+/**
+ * The correspondence block, bounded — the doorstep's largest single cost.
+ *
+ * The COUNT HALF WAS ALREADY BUILT: `summary` has carried they_spoke_last /
+ * new_inbound / they_spoke_again / reply_queued / last_word_yours / bounced
+ * since the mail-state law landed. What was missing was the bound, and a bound
+ * and its count are ONE change, never two — a `summary` beside an uncut list is
+ * decoration, because nothing about the list could ever disagree with it.
+ * With the cut in place the summary becomes information: it describes 325
+ * conversations while `conversations` shows 20 of them.
+ *
+ * `conversations_total` is added beside the summary because no combination of
+ * the summary's six numbers is the row count — the states overlap
+ * (`they_spoke_last` is the parent of `new_inbound` + `they_spoke_again`), and
+ * a total a reader has to derive by guessing at the overlap is not a total.
+ *
+ * Every other field of the law's output rides through untouched: this bounds
+ * the block's one unbounded list and changes nothing else about what it says.
+ */
+function boundCorrespondence(correspondence, offset = 0, own = true) {
+  if (!correspondence) return correspondence;
+  // ── THE OWNERSHIP GATE (2026-08-25) ─────────────────────────────────────
+  //
+  // `correspondence.conversations` is one resident's composed conversation
+  // ledger: who they are talking to, who spoke last in each thread, and what
+  // they have not answered. Served anonymously it handed 120 KB of that to any
+  // caller who knew a handle.
+  //
+  // The 08-15 ruling already drew this line for the gap-shaped blocks —
+  // `settling_in`, `your_pending_edits`, `your_pending_letters` — in Keemin's
+  // own words: "the gaps are yours to see, not theirs to be seen by." A
+  // stranger's read carries what the public doorstep bundle at
+  // postmark.town/data/doorstep/<handle>.md carries, and no more. This block
+  // was never brought under that line, and the audit walked straight through it.
+  //
+  // SKIPPED, NOT COMPUTED-THEN-FILTERED — the same discipline nextStepsFor
+  // states for its two gated reads: a fact the office never assembled cannot
+  // leak through a later refactor of the filter.
+  //
+  // `summary` stays for everyone. It is the town's own aggregate — how many
+  // threads are warm, how many await a reply — and it is the half a visitor can
+  // honestly be told: a resident's shape of correspondence, not its contents.
+  if (!own) {
+    return {
+      handle: correspondence.handle,
+      language: correspondence.language,
+      summary: correspondence.summary,
+      withheld: "the conversation ledger is on your OWN doorstep only — who you are talking to and what you have not answered are yours to see, not theirs to be seen by (the 08-15 ruling, extended to this block 2026-08-25). The summary above is what the public doorstep bundle carries, and this read carries no more.",
+    };
+  }
+  const all = correspondence.conversations ?? [];
+  const start = Math.min(Math.max(Number(offset) || 0, 0), Math.max(all.length - 1, 0));
+  const conversations = all.slice(start, start + LEDGER_PAGE);
+  const next = start + conversations.length;
+  const complete = next >= all.length;
+  return {
+    ...correspondence,
+    conversations_total: all.length,
+    conversations_shown: conversations.length,
+    conversations_offset: start,
+    // Said out loud rather than left to be inferred from a short list: a
+    // resident with exactly twenty conversations and a resident with three
+    // hundred must not read the same (presentNear's `capped`, stanceShadow's
+    // `complete`).
+    conversations_complete: complete,
+    ...(complete ? {} : { conversations_next_offset: next,
+      conversations_note: `${all.length - next} further conversation${all.length - next === 1 ? "" : "s"} in your ledger — read_doorstep { correspondence_offset: ${next} } walks it, and summary above counts the whole of it` }),
+    conversations,
+  };
+}
+
 // `nowMs` is injected only so the PSA window is testable against a fixed day —
 // the doorstep is a page generated fresh each morning, so its default clock is
 // the wall clock, exactly as "the last week" reads.
-export function doorstep(db, handle, asOf, { nowMs = Date.now() } = {}) {
+export function doorstep(db, handle, asOf, { nowMs = Date.now(), conversationsOffset = 0, own = false } = {}) {
   const selfRow = db.prepare("SELECT json FROM residents WHERE handle = ?").get(handle);
   if (!selfRow) return null;
   // the resident's own window-state island, lifted at hydrate from their pane —
@@ -239,21 +504,61 @@ export function doorstep(db, handle, asOf, { nowMs = Date.now() } = {}) {
       return row ? JSON.parse(row.json) : null;
     } catch { return null; }
   })();
-  const awaiting = (correspondence?.conversations ?? [])
+  // ── THE DOORSTEP BOUNDS (2026-08-25) ────────────────────────────────────
+  //
+  // The doorstep was the town's second-heaviest read (149 KB for wright, 218 KB
+  // for postmaster) and three quarters of it was one block: the town's whole
+  // conversation ledger, verbatim, on a page that calls itself a morning read.
+  // The law that derives it (tools/mail-state.mjs) applies no cap, so the block
+  // grew by one row per conversation, forever.
+  //
+  // FILTER AND DERIVE FIRST, SLICE LAST. `awaiting` and `outgoing` are derived
+  // from the WHOLE conversation set below and bounded independently afterwards.
+  // Deriving them from a 20-row slice would have answered "no threads awaiting
+  // your reply" to a resident with twenty of them sitting at row 40 — the exact
+  // shape of the bug the world engine already paid for once (children sliced
+  // before the exclusion filter ran, then reported as neighbours of their own
+  // container). A budget decides how much gets said; it must not decide what is
+  // true.
+  //
+  // No re-sort: the town's own law already emits conversations newest-first by
+  // `latest_event.ordinal` (verified on the live index, 200 rows for wright and
+  // 325 for postmaster, both strictly descending). The bound therefore keeps
+  // the newest, which is the only cut a morning page can defend.
+  const allConversations = correspondence?.conversations ?? [];
+  const awaitingAll = allConversations
     .filter((c) => c.attention_state === "new_inbound" || c.attention_state === "they_spoke_again")
     .map((c) => ({ thread_of: c.conversation, last_from: c.latest_delivered_from, last_id: c.latest_delivered_id,
       last_date: c.latest_event?.date ?? null, state: c.attention_state }));
-  const outgoing = (correspondence?.conversations ?? [])
+  const outgoing = allConversations
     .filter((c) => c.queued_reply_id)
     .map((c) => ({ id: c.queued_reply_id, conversation: c.conversation, state: "merged_waiting_crossing", next_actor: "ferry" }));
+  // `awaiting_reply` keeps its name and its truthful meaning for cached readers
+  // — it is still the conversations where the other side spoke last — but it is
+  // now a bounded view of them, with the true count beside it. It restates rows
+  // that `correspondence.conversations` also carries, so it is bounded at the
+  // same N: two views of one ledger should not disagree about how much of it
+  // they are showing.
+  const awaiting = awaitingAll.slice(0, LEDGER_PAGE);
   const one = (sql, ...p) => Object.values(db.prepare(sql).get(...p))[0];
   const latestArrivals = db.prepare("SELECT handle, json FROM residents").all()
     .map((r) => { const d = JSON.parse(r.json); return { handle: r.handle, joined: d.address?.data?.joined ?? null, is_office: isOffice(d) }; })
     .filter((a) => a.joined)
     .sort((a, b) => b.joined.localeCompare(a.joined) || a.handle.localeCompare(b.handle))
     .slice(0, 5);
-  return { handle, as_of: asOf, inbox, awaiting_reply: awaiting,
-    correspondence,
+  return { handle, as_of: asOf, inbox,
+    // `awaiting_reply` is a filtered restatement of `correspondence`'s rows, so
+    // it rides the SAME gate — gating the block and leaving its restatement
+    // open would be the gate in name only. The count survives for everyone,
+    // because "this resident has 84 threads awaiting a reply" is the same kind
+    // of aggregate `summary` already publishes.
+    awaiting_reply: own ? awaiting : [],
+    awaiting_reply_total: awaitingAll.length,
+    ...(own && awaitingAll.length > awaiting.length
+      ? { awaiting_reply_note: `the ${awaiting.length} most recent of ${awaitingAll.length} threads where the other side spoke last — the whole ledger is one read away (read_doorstep with correspondence_offset, or list_mail for the box itself)` }
+      : {}),
+    ...(own ? {} : { awaiting_reply_note: "the threads themselves are on your OWN doorstep only; the count stands for everyone, the same way correspondence.summary does" }),
+    correspondence: boundCorrespondence(correspondence, conversationsOffset, own),
     ...(correspondence ? {} : { correspondence_note: "the town checkout behind this office predates tools/mail-state.mjs — awaiting_reply is empty because the office refuses to guess with a second law; pull the checkout forward" }),
     // The two-clocks question (Liv's find, Keemin-ruled 2026-08-10: disclose,
     // don't reconcile) is now ANSWERED rather than disclosed: delivery state
@@ -262,13 +567,21 @@ export function doorstep(db, handle, asOf, { nowMs = Date.now() } = {}) {
     // wears the other's noun. (HAL: publication is not arrival.)
     clocks: "delivered means the mail-ledger says so; a reply merged but not yet crossed shows as reply_queued (outgoing: merged_waiting_crossing) — publication is not arrival, and neither clock wears the other's noun.",
     stamps: stampsFor(db, handle),
-    bulletin: bulletinList(db),
+    // THE MORNING TEASER (2026-08-25). The doorstep embedded the whole bulletin
+    // listing — every entry the town has ever posted, growing forever on a page
+    // read every morning. It is a listing of teasers, so the cut costs a reader
+    // nothing but the tail; `bulletin_total` says how long the tail is and the
+    // note names the read that serves it. `read_bulletin` without a slug still
+    // answers the whole list, and with one still answers an entry in full.
+    bulletin: bulletinTeaser(db),
     // The registrar's week, as text (Keemin 2026-08-22). `bulletin` above stays
     // the listing it has always been; this is the half a resident can act on
     // without leaving the page. Its two numbers are the doorstep class's own
     // predicate dials — see psaFold.
     psa: psaFold(db, { now: nowMs }),
-    outgoing,
+    // The sender's own un-sailed replies. Same class of fact as the ledger
+    // above and gated with it; `pending_outbox` below is the count, and stays.
+    outgoing: own ? outgoing : [],
     pending_outbox: one("SELECT COUNT(*) FROM letters WHERE from_h = ? AND box = 'outbox'", handle),
     counts: {
       received: one("SELECT COUNT(*) FROM ledger WHERE kind = 'delivery' AND to_h = ?", handle),
@@ -350,10 +663,31 @@ export async function nextStepsFor(db, meta, handle, clone, { own = false, world
   } catch { return null; }
 }
 
-export function stampsRoster(db, meta) {
+// The roster page. ✎ A proposal: the top of the table is what a roster read is
+// for, and the whole table is 256 rows today (more than the town's 131 people,
+// because escrow accounts are rows too) and grows with every household.
+const STAMPS_PAGE = 50;
+
+export function stampsRoster(db, meta, { limit, offset } = {}) {
+  const n = Math.min(Math.max(Number(limit) || STAMPS_PAGE, 1), 200);
+  const start = Math.max(Number(offset) || 0, 0);
+  // COUNT(*) over the same table the page is drawn from. `minted_cumulative` is
+  // NOT that number and never was — it is the town's minted total, a different
+  // fact in a different unit, which is exactly why the roster still needed a
+  // count of its own: a total in stamps cannot tell a reader how many accounts
+  // the list stopped short of.
+  const accounts = Object.values(db.prepare("SELECT COUNT(*) AS n FROM stamps").get())[0];
+  const balances = db.prepare("SELECT handle, balance FROM stamps ORDER BY balance DESC, handle LIMIT ? OFFSET ?").all(n, start);
+  const next = start + balances.length;
+  const complete = next >= accounts;
   return {
     minted_cumulative: Number(meta.stamps_minted ?? 0),
-    balances: db.prepare("SELECT handle, balance FROM stamps ORDER BY balance DESC, handle").all(),
+    accounts,
+    shown: balances.length,
+    limit: n, offset: start, complete,
+    ...(complete ? {} : { next_offset: next,
+      more_note: `${accounts - next} further account${accounts - next === 1 ? "" : "s"} hold stamps — call again with offset: ${next} (limit up to 200). Accounts outnumber residents because escrow (stake:*) accounts are rows too.` }),
+    balances,
     note: "balances are a pure fold over the signed stamp-ledger (WHITE_PAGES/stamp-ledger.md); verify any time: node tools/stamp-verify.mjs — you can't forge a stamp without forging the mail",
   };
 }
@@ -459,6 +793,11 @@ export function stampsDetail(db, handle) {
 // are being told different things. `beneficiary` is null while a pot is a
 // draft: the keeper is named at opening, and the town's close refuses to run
 // until then.
+// Rows per pot sublist. ✎ A proposal. The NEWEST are kept (`slice(-N)`) because
+// both lists are stored oldest-first and recent money is what a reader of an
+// open pot is asking about.
+const POT_ROWS = 20;
+
 export function potBoard(db, extraInvalid = []) {
   const pots = db.prepare("SELECT id, json FROM pots ORDER BY id").all().map((r) => {
     const d = JSON.parse(r.json);
@@ -482,14 +821,36 @@ export function potBoard(db, extraInvalid = []) {
       close: d.close ?? null,
       min_close_usd: d.min_close_usd ?? null,
       teach: TEACH.pot,
+      // BOUND THE SUBLISTS, NOT THE POTS. There are two pots and there will not
+      // suddenly be two hundred; what grows without limit is INSIDE each one —
+      // a patron roll that gains a row per deed and a receipt list that gains
+      // one per witnessed dollar, both forever, on a read that rides the
+      // household's own books and the quest board. Bounded before the pot count
+      // ever matters.
+      //
+      // AND THE SUMS ARE TAKEN FIRST. `sum_usd` and the `funding` block below
+      // are computed from the FULL receipt list; slicing before summing would
+      // have made a pot's funded fraction a function of how many receipts this
+      // read happened to render, which is a budget deciding what is true about
+      // money. `roll` likewise stays whole for the `deeded` set in `funding`.
       patrons: {
         teach: TEACH.patrons,
-        roll: roll.map((x) => ({ patron: x.patron, dollars: x.usd, date: x.date, receipt: x.receipt, holo_minted: x.holo })),
+        total: roll.length,
+        shown: Math.min(roll.length, POT_ROWS),
+        ...(roll.length > POT_ROWS
+          ? { more_note: `${roll.length - POT_ROWS} earlier patron${roll.length - POT_ROWS === 1 ? "" : "s"} are not listed here — the roll is the pot's own file in the town repo, and the total above counts all of them` }
+          : {}),
+        roll: roll.slice(-POT_ROWS).map((x) => ({ patron: x.patron, dollars: x.usd, date: x.date, receipt: x.receipt, holo_minted: x.holo })),
       },
       receipts: {
         teach: TEACH.receipts,
         sum_usd: receipts.reduce((n, x) => n + x.usd, 0),
-        list: receipts,
+        total: receipts.length,
+        shown: Math.min(receipts.length, POT_ROWS),
+        ...(receipts.length > POT_ROWS
+          ? { more_note: `${receipts.length - POT_ROWS} earlier receipt${receipts.length - POT_ROWS === 1 ? "" : "s"} are not listed here; sum_usd above is the sum of ALL of them, not of the rows shown` }
+          : {}),
+        list: receipts.slice(-POT_ROWS),
       },
       // How funded the OPEN epoch is, priced the way the town's close prices it:
       // the dollars no deed has claimed yet, over the posted need, capped at 1.
@@ -581,6 +942,35 @@ export function bulletinList(db) {
   // without one.
   return db.prepare("SELECT slug, json FROM bulletin ORDER BY slug").all()
     .map((r) => { const d = JSON.parse(r.json); return { slug: r.slug, title: d.data?.title ?? r.slug, human_gated: isHumanGated(d) || undefined, teaser: d.data?.teaser || undefined, first_line: (d.body ?? "").split(/\r?\n/).find((l) => l.trim())?.slice(0, 160) ?? "" }; });
+}
+
+/**
+ * The bulletin as the doorstep carries it — the newest few, and how many more.
+ *
+ * `bulletinList` stays exactly what it is: the whole listing, which is the
+ * right answer at `read_bulletin`'s own door. This is the morning page's view
+ * of it. The entries are already teasers (title + the author's listing line, or
+ * a 160-character first line), so the only thing missing was the bound and the
+ * count of what the bound withheld.
+ *
+ * Newest first by slug: the town's bulletin slugs are date-led, so the string
+ * order is the time order — the same reason letters sort on a bare `date`.
+ * `bulletinList` itself sorts ascending by slug, so the reverse is taken here
+ * rather than at the door that serves the whole list unchanged.
+ */
+export function bulletinTeaser(db, { limit = BULLETIN_PAGE } = {}) {
+  const all = bulletinList(db);
+  const entries = [...all].reverse().slice(0, Math.max(Number(limit) || BULLETIN_PAGE, 1));
+  return {
+    total: all.length,
+    shown: entries.length,
+    complete: entries.length >= all.length,
+    ...(all.length > entries.length
+      ? { more: all.length - entries.length,
+          more_note: `${all.length - entries.length} older entr${all.length - entries.length === 1 ? "y" : "ies"} stand on the board — the whole listing is one read away (read_bulletin with no slug), and read_bulletin { slug } opens any one of them in full` }
+      : {}),
+    entries,
+  };
 }
 
 // ── THE REGISTRAR'S WEEK — the PSA fold that rides every doorstep ───────────
@@ -704,12 +1094,43 @@ export function bulletinEntry(db, slug) {
   return entry;
 }
 
-export function search(db, q) {
+// A search that silently truncates at 25 and says nothing is the `capped`
+// lesson unlearned. ✎ Proposals, unchanged from the numbers already in the SQL.
+const SEARCH_LETTERS = 25;
+const SEARCH_RESIDENTS = 10;
+
+export function search(db, q, { limit, offset } = {}) {
   const like = `%${q}%`;
+  const n = Math.min(Math.max(Number(limit) || SEARCH_LETTERS, 1), 200);
+  const start = Math.max(Number(offset) || 0, 0);
+  // THE TOTALS ARE PER BUCKET, over the SAME WHERE each bucket searches, and
+  // they were the whole thing missing here: this read has always cut at 25 and
+  // 10 and has never once said that it did, so "no more results" and "the first
+  // 25 of four hundred" have been the same answer to a reader.
+  const one = (sql, ...p) => Object.values(db.prepare(sql).get(...p))[0];
+  const lettersTotal = one("SELECT COUNT(*) AS n FROM letters WHERE id LIKE ? OR json LIKE ?", like, like);
+  const residentsTotal = one("SELECT COUNT(*) AS n FROM residents WHERE handle LIKE ? OR json LIKE ?", like, like);
+  const residents = db.prepare("SELECT handle FROM residents WHERE handle LIKE ? OR json LIKE ? LIMIT ?")
+    .all(like, like, SEARCH_RESIDENTS).map((r) => r.handle);
+  const letters = db.prepare(`SELECT * FROM letters WHERE id LIKE ? OR json LIKE ? ORDER BY ${NEWEST} LIMIT ? OFFSET ?`)
+    .all(like, like, n, start).map(excerpt);
+  const next = start + letters.length;
+  const complete = next >= lettersTotal;
   return {
     q,
-    residents: db.prepare("SELECT handle FROM residents WHERE handle LIKE ? OR json LIKE ? LIMIT 10").all(like, like).map((r) => r.handle),
-    letters: db.prepare(`SELECT * FROM letters WHERE id LIKE ? OR json LIKE ? ORDER BY ${NEWEST} LIMIT 25`).all(like, like).map(excerpt),
+    matches: { letters: lettersTotal, residents: residentsTotal },
+    shown: { letters: letters.length, residents: residents.length },
+    // A cap must be visible, per bucket: the two buckets cut at different
+    // sizes and can be capped independently.
+    capped: { letters: !complete, residents: residentsTotal > residents.length },
+    limit: n, offset: start, complete,
+    ...(complete ? {} : { next_offset: next,
+      more_note: `${lettersTotal - next} further letter${lettersTotal - next === 1 ? "" : "s"} match "${q}" — call again with offset: ${next} (limit up to 200)` }),
+    ...(residentsTotal > residents.length
+      ? { residents_note: `${residentsTotal - residents.length} further resident${residentsTotal - residents.length === 1 ? "" : "s"} match — narrow the term, or read the roll with list_residents` }
+      : {}),
+    residents,
+    letters,
   };
 }
 
@@ -766,13 +1187,41 @@ export function metricsMail(db) {
 
 // The regions of the town, from the atlas judgment ledger (hydrated into the
 // regions table). description is the region body's first real line.
-export function regionList(db) {
-  return db.prepare("SELECT id, name, json FROM regions ORDER BY id").all().map((r) => {
+// The atlas is a closed founders-legacy surface — 13 regions today, and it is
+// not going to run away. The bound is here for the same reason the others are:
+// the per-region `residents` roll grows with the town whether the region count
+// does or not, and this read is the one that carries thirteen of them at once.
+const REGIONS_PAGE = 25;
+const REGION_RESIDENTS = 25;
+
+export function regionList(db, { limit, offset } = {}) {
+  const n = Math.min(Math.max(Number(limit) || REGIONS_PAGE, 1), 200);
+  const start = Math.max(Number(offset) || 0, 0);
+  const total = Object.values(db.prepare("SELECT COUNT(*) AS n FROM regions").get())[0];
+  const regions = db.prepare("SELECT id, name, json FROM regions ORDER BY id LIMIT ? OFFSET ?").all(n, start).map((r) => {
     const d = JSON.parse(r.json);
     const description = (d.body ?? "").split(/\r?\n/)
       .find((l) => { const t = l.trim(); return t && !t.startsWith("#") && !t.startsWith("!["); })?.slice(0, 200) ?? "";
-    return { slug: r.id, name: r.name, description, residents: d.residents ?? [] };
+    const all = d.residents ?? [];
+    const shown = all.slice(0, REGION_RESIDENTS);
+    return { slug: r.id, name: r.name, description,
+      // Count first, slice after: `residents_total` is the region's whole roll,
+      // which is the number a reader asking "how big is this region" wants —
+      // never the number that survived this read's own budget.
+      residents_total: all.length,
+      ...(all.length > shown.length
+        ? { residents_note: `${all.length - shown.length} more live here — read_home or list_residents names them all` }
+        : {}),
+      residents: shown };
   });
+  const next = start + regions.length;
+  const complete = next >= total;
+  return {
+    total, shown: regions.length, limit: n, offset: start, complete,
+    ...(complete ? {} : { next_offset: next,
+      more_note: `${total - next} further region${total - next === 1 ? "" : "s"} in the atlas — call again with offset: ${next}` }),
+    regions,
+  };
 }
 
 // The residents of a region (by slug or display name) — the region= filter.

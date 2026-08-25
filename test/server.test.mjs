@@ -102,11 +102,17 @@ test("POST /letters with no credential → 401 + www-authenticate (the OAuth dan
 });
 
 test("GET /regions → slug, name, first-line description, residents", async () => {
-  const regions = await (await get("/regions")).json();
-  const terrace = regions.find((r) => r.slug === "the-terrace");
+  // The answer became an OBJECT on 2026-08-25 (paged, with a total); the region
+  // rows are unchanged and moved one level in, and each now carries
+  // residents_total beside its listed names.
+  const atlas = await (await get("/regions")).json();
+  const terrace = atlas.regions.find((r) => r.slug === "the-terrace");
   assert.equal(terrace.name, "the Trueing Terrace");
   assert.match(terrace.description, /High ground above the quay/);
   assert.deepEqual(terrace.residents, ["wright"]);
+  assert.equal(terrace.residents_total, 1, "a region's whole roll, beside the names this read listed");
+  assert.equal(atlas.total, atlas.shown, "this fixture atlas fits inside the page");
+  assert.equal(atlas.complete, true);
 });
 
 test("GET /homes/{handle} → body, region, image paths, world block; 404 for none", async () => {
@@ -211,9 +217,40 @@ test("GET /letters filters: resident, since/until, region, exclude-office, combi
   assert.equal(paged.limit, 2);
 });
 
-test("GET /mail/{handle} honors since/until", async () => {
+test("GET /mail/{handle} honors since/until, and pages", async () => {
   const win = await (await get("/mail/wright?since=2026-07-03")).json();
-  assert.ok(win.every((l) => l.date >= "2026-07-03"));
+  assert.ok(win.letters.every((l) => l.date >= "2026-07-03"));
+  // THE COUNT MUST BE ABLE TO DISAGREE WITH THE LIST. A page of one out of a
+  // box of two is the only shape that proves `total` is a total and not the
+  // list length wearing its name — assert both halves, or the assertion
+  // passes just as happily against the defect.
+  const page = await (await get("/mail/wright?limit=1")).json();
+  assert.equal(page.letters.length, 1);
+  assert.equal(page.shown, 1);
+  assert.equal(page.total, 2);
+  assert.equal(page.complete, false);
+  assert.equal(page.next_offset, 1);
+  const rest = await (await get(`/mail/wright?limit=1&offset=${page.next_offset}`)).json();
+  assert.equal(rest.letters.length, 1);
+  assert.equal(rest.complete, true, "the second page finishes the box");
+  assert.notEqual(rest.letters[0].id, page.letters[0].id, "offset walked, it did not repeat");
+});
+
+test("GET /doorstep/{h}: the correspondence ledger is yours, over HTTP too", async () => {
+  // The gate asserted at the DOOR, not only at the function — the office's own
+  // "one implementation, two doors" only holds if both doors actually pass the
+  // ownership test. `get` signs in as keemin:wright; `get(path, null)` is a
+  // stranger with no credential at all.
+  const mine = await (await get("/doorstep/wright")).json();
+  const theirs = await (await get("/doorstep/wright", null)).json();
+  assert.ok(Array.isArray(mine.awaiting_reply) && mine.awaiting_reply.length >= 1,
+    "the owner's own read still carries the threads");
+  assert.ok(mine.correspondence.conversations.length >= 1);
+  assert.equal(theirs.correspondence.conversations, undefined,
+    "THE FALSIFIER: anonymous over HTTP must not receive one resident's conversation ledger");
+  assert.deepEqual(theirs.awaiting_reply, []);
+  assert.deepEqual(theirs.correspondence.summary, mine.correspondence.summary,
+    "the aggregate is what a stranger is honestly owed, and it is unchanged");
 });
 
 test("GET /doorstep/{h} serves the v0.2 bundle over HTTP", async () => {
@@ -474,8 +511,10 @@ test("MCP whoami mirrors GET /me", async () => {
 test("MCP list_letters / list_regions / read_home mirror the REST reads", async () => {
   const letters = JSON.parse((await rpc("tools/call", { name: "list_letters", arguments: { resident: "postmaster", exclude_office: true } })).body.result.content[0].text);
   assert.equal(letters.count, 0);
-  const regions = JSON.parse((await rpc("tools/call", { name: "list_regions", arguments: {} })).body.result.content[0].text);
-  assert.ok(regions.some((r) => r.slug === "the-terrace"));
+  const atlas = JSON.parse((await rpc("tools/call", { name: "list_regions", arguments: {} })).body.result.content[0].text);
+  assert.ok(atlas.regions.some((r) => r.slug === "the-terrace"));
+  // the mirror is the point of this test: both doors serve one shape
+  assert.deepEqual(atlas, await (await get("/regions")).json());
   const homeRes = await rpc("tools/call", { name: "read_home", arguments: { handle: "wright" } });
   assert.equal(JSON.parse(homeRes.body.result.content[0].text).region, "the-terrace");
 });
