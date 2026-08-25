@@ -1,0 +1,501 @@
+// stripe-watch — the card rail, closed at both ends by rule.
+//
+// usdc-watch sees and does not witness, and its header is a long argument for
+// why that boundary is correct THERE. This file is the other answer, and the
+// difference is not appetite — it is that the two facts which forbid
+// auto-witnessing on Base are both ABSENT on the card rail. They were checked,
+// not assumed:
+//
+// 1. THE SESSION SAYS WHICH POT. An ERC-20 transfer carries no memo, so a
+//    watcher of the intake address is guessing at a stranger's intent. A Stripe
+//    checkout session carries `client_reference_id`, and since site main
+//    b2260e7a the town's own fund page sets it: the "Pay by card" link is
+//    `${STRIPE}?client_reference_id=${pot.pot}`. Nobody types it; the PAGE the
+//    payer stood on writes it. A session that does not carry one is not guessed
+//    at — it is journalled as `needs-pot` and the report says so by name.
+//
+// 2. THERE IS NO PAYER PASTE-PATH TO FRONT-RUN. The theft this whole class of
+//    watcher risks is consuming a ref's one mint chance before the patron
+//    claims it (usdc-watch.mjs: "ref is unique forever: one dollar, one mint
+//    chance, a re-recorded receipt bounces", and the ledger has no row kind that
+//    reassigns a payer). On Base the patron HAS a paste-path, so the watcher can
+//    beat them to it. On the card rail the town's own page says, in its own
+//    words: "Step 2 — there isn't one … There is nothing for you to paste. The
+//    hash form belongs to the USDC rail — it reads Base directly and cannot see
+//    a card payment." A ref of the form `stripe:<session_id>` can therefore be
+//    minted by exactly one thing in the whole town, and it is this file. There
+//    is no honest claim to front-run.
+//
+// So the ruling law of this lane — no payment waits on a person; every arrival
+// resolves by rule, and only anomalies surface — is buildable here, and this is
+// where it is built.
+//
+// ── HOW ONE SESSION RESOLVES ────────────────────────────────────────────────
+//
+//   pot   `client_reference_id`, if it names a pot the town posts AND that pot
+//         is open (potGate, the /fund door's own gate). Anything else —
+//         missing, unknown, draft, closed — journals as `needs-pot`. The first
+//         real $10 (2026-08-25) predates the parameter and lands here; every
+//         session after b2260e7a carries one, so this queue should approach
+//         zero and a rising count is a signal about the page, not the watcher.
+//
+//   hand  the session's custom field `handle`, if it EXACTLY names a registered
+//         household (the town's own `householdKeys`, the same set the /fund
+//         door's guard 3 asks). Absent, misspelled, or not in town → the
+//         receipt's payer is `outside:stripe` and the dollars count toward the
+//         pot with no deed for anyone. That is not a new rule; it is the
+//         already-published one, from the card rail's own warning on the fund
+//         page: "a payment the office cannot attach to a hand can still be a
+//         gift, but it cannot be your deed."
+//
+//         WHY THAT SPELLING. `from:` in the pot-receipt grammar is `(\S+)`, so
+//         it will take anything without a space. `outside:stripe` is chosen
+//         because a handle can never look like it: `isResidentHandle` admits
+//         only `[a-z0-9-]`, so a colon makes the string unmintable as a name.
+//         A future reader can therefore tell an unattached gift from an
+//         attached one by shape alone, with no list to consult. The town's own
+//         close already knows what to do with it — deriveEpochClose resolves a
+//         payer that is not a household to "deed alone", holo 0, in its own
+//         words: "An outside patron (the founding family grant) resolves to
+//         neither and lands as deed alone."
+//
+//   when  one full crossing after the session was created. THE GRACE IS THE
+//         POINT: while a session is held, the intake journal shows the operator
+//         round the typed handle and the resolution it is ABOUT to get, so a
+//         payer who typed `jetto-of-starfoge` can be fixed before the one-shot
+//         ref is spent. After the window the rule runs and nothing waits.
+//
+//         An interpretive call, made in the open: "≥1 crossing old" could mean
+//         "a crossing boundary has passed" (the town's usual sense — a letter
+//         sails on the next boat) or "its age is at least one crossing". Those
+//         differ sharply: the boundary reading gives a payment made at 11:59 UTC
+//         a grace window of ONE MINUTE, which is not a window at all, and the
+//         window is the stated reason the delay exists. So this implements
+//         ELAPSED AGE ≥ CROSSING_MS — always at least twelve hours, never less.
+//         The clock is the town's own ratified derivation (src/crossings.mjs),
+//         not a number typed here.
+//
+//   cap   the town's own `intakeCheck`, through the /fund door's own
+//         `fundGuards`, so D5 ("intake refuses dollars past a pot's posted
+//         target, mechanically … except pots explicitly marked uncapped") is
+//         one copy of one rule. An over-target arrival journals `over-cap` and
+//         is NOT witnessed — the pot's headroom is real money law, and a watcher
+//         is the last thing that should be allowed to walk around it.
+//
+//   again idempotency is the LEDGER's, not the journal's: every tick asks
+//         `foldPotReceipts` whether `stripe:<id>` is already a receipt, exactly
+//         as usdc-watch's `witnessed` bucket does. The journal remembers what
+//         was SEEN; the ledger decides what was DONE. A journal lost to a wiped
+//         disk therefore cannot cause a double-witness — it costs the operator
+//         their window, and nothing else.
+//
+// ── WHAT THIS DOES NOT SEE, said out loud ───────────────────────────────────
+//
+// A REFUND AFTER THE FACT. A session is read once, at `status=complete` and
+// `payment_status=paid`. If the founder refunds a card payment later, the
+// receipt stands — the ledger is append-only and signature-linked and has no
+// row kind that unwitnesses a dollar. Inside the grace window a refund is
+// catchable by the operator round, which is one more reason the window is a
+// full crossing rather than a boundary. After it, this is a known and accepted
+// hole, and the honest place to fix it is the ledger's grammar, which is
+// founder-only. The journal records `payment_intent` so any such dollar can be
+// traced back to the charge by hand.
+//
+// TEST-MODE MONEY. A test-mode key returns test sessions that look exactly like
+// real ones. A test payment must never become a real ledger row, so
+// `livemode: false` is an anomaly (`testmode`), never a witness.
+//
+// Usage: node tools/stripe-watch.mjs [--state <state.json>] [--journal <j.jsonl>]
+//                                    [--out <report.json>] [--clone <town-clone>]
+//                                    [--since <ISO|unix>] [--dry-run] [--json]
+//
+// Env: STRIPE_KEY   a RESTRICTED, READ-ONLY Stripe key (rk_…) with read
+//                   permission on Checkout Sessions and nothing else. It lives
+//                   in an env file the unit references and is never committed.
+//      STRIPE_API_VERSION  optional; unset means the account's default version,
+//                   which is what the founder's own dashboard shows. Pinning a
+//                   version the box cannot verify 400s the whole watcher, so
+//                   the default here is "do not pin".
+//      plus fund-exec's own: TOWN_CLONE, STAMP_KEY, TOWN_PUSH, BOT_NAME,
+//                   BOT_EMAIL, TOWN_TZ, TOWN_LOCK.
+
+import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { pathToFileURL, fileURLToPath } from "node:url";
+
+import { CROSSING_MS } from "../src/crossings.mjs";
+import { fundGuards, penRecorder } from "../src/fund.mjs";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+
+export const STRIPE_API = "https://api.stripe.com/v1";
+export const RAIL = "stripe";
+// The one spelling for a card dollar nobody claimed. See WHY THAT SPELLING.
+export const OUTSIDE_FROM = "outside:stripe";
+// The custom field's key on the Stripe payment link, as the founder configures
+// it in the console. A field with any other key is not read — a watcher that
+// scanned every custom field for something handle-shaped would be guessing.
+export const HANDLE_FIELD = "handle";
+// "the ledger records whole dollars, so a payment under $1 cannot be witnessed
+// as a receipt" — the /fund door's own floor, quoted rather than re-derived.
+export const MIN_USD = 1;
+// A cold start reads a bounded window and SAYS SO, rather than paginating the
+// account's whole history or silently starting from now. `--since` sweeps back
+// further when the operator wants a one-off catch-up.
+export const COLDSTART_DAYS = 30;
+export const PAGE_LIMIT = 100;
+export const MAX_PAGES = 50;
+
+const iso = (unixSeconds) => new Date(unixSeconds * 1000).toISOString();
+
+// ── the Stripe read ─────────────────────────────────────────────────────────
+// Injected as `stripe` everywhere below, so a falsifier drives an account that
+// does not exist — the same shape usdc-watch injects `rpc`.
+
+export function stripeReader({ key, api = STRIPE_API, apiVersion = null, fetchImpl = fetch, timeoutMs = 20_000 }) {
+  if (!key) throw new Error("stripe-watch has no STRIPE_KEY — a read-only restricted key is the whole credential, and there is no default");
+  return async (path, params = {}) => {
+    const u = new URL(api + path);
+    for (const [k, v] of Object.entries(params)) if (v != null) u.searchParams.set(k, String(v));
+    const r = await fetchImpl(u.toString(), {
+      headers: {
+        authorization: `Bearer ${key}`,
+        ...(apiVersion ? { "stripe-version": apiVersion } : {}),
+      },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    const j = await r.json().catch(() => null);
+    if (!r.ok) {
+      // Stripe's own message is the useful one; keep it verbatim and bounded.
+      const msg = j?.error?.message ?? `HTTP ${r.status}`;
+      throw new Error(`Stripe refused the read (${r.status}): ${String(msg).slice(0, 200)}`);
+    }
+    return j;
+  };
+}
+
+/**
+ * Every COMPLETED checkout session created at or after `createdGte`, oldest
+ * first, followed across pages.
+ *
+ * `created[gte]` is INCLUSIVE and the cursor stores a `created` we have already
+ * seen, so the boundary second is re-read on every tick. That is deliberate:
+ * two sessions can share a second, and a `gt` cursor would drop the sibling.
+ * Re-reading is free because the journal dedupes on session id and the ledger
+ * dedupes on ref.
+ */
+export async function listCompleteSessions({ stripe, createdGte, limit = PAGE_LIMIT, maxPages = MAX_PAGES }) {
+  const out = [];
+  let startingAfter = null;
+  for (let page = 0; page < maxPages; page++) {
+    const res = await stripe("/checkout/sessions", {
+      limit,
+      status: "complete",
+      "created[gte]": createdGte,
+      ...(startingAfter ? { starting_after: startingAfter } : {}),
+    });
+    const data = res?.data ?? [];
+    out.push(...data);
+    if (!res?.has_more || data.length === 0) break;
+    startingAfter = data.at(-1).id;
+  }
+  // Stripe lists newest-first; the ledger's order is arrival order.
+  out.sort((a, b) => a.created - b.created || String(a.id).localeCompare(String(b.id)));
+  return out;
+}
+
+/**
+ * One session, decoded to the fields the rule reads and nothing else.
+ *
+ * The email is decoded because the OPERATOR needs it to write to a payer whose
+ * handle did not resolve — it belongs in the journal, which is a private
+ * operator surface, and NEVER in a ledger row, which is public forever.
+ */
+export function decodeSession(s) {
+  const fields = Array.isArray(s?.custom_fields) ? s.custom_fields : [];
+  const f = fields.find((x) => x?.key === HANDLE_FIELD);
+  // Stripe types a custom field as text | numeric | dropdown; the handle field
+  // is text, but read whichever value is present rather than assuming, so a
+  // console change to a dropdown of handles keeps working.
+  const typed = f?.text?.value ?? f?.dropdown?.value ?? f?.numeric?.value ?? null;
+  return {
+    session: String(s?.id ?? ""),
+    receipt_ref: `${RAIL}:${String(s?.id ?? "")}`,
+    created: Number(s?.created ?? 0),
+    created_at: s?.created ? iso(Number(s.created)) : null,
+    amount_total: Number(s?.amount_total ?? 0),
+    currency: String(s?.currency ?? "").toLowerCase(),
+    client_reference_id: s?.client_reference_id ?? null,
+    handle_typed: typed == null ? null : String(typed).trim(),
+    email: s?.customer_details?.email ?? null,
+    payment_status: String(s?.payment_status ?? ""),
+    livemode: s?.livemode === true,
+    payment_intent: typeof s?.payment_intent === "string" ? s.payment_intent : (s?.payment_intent?.id ?? null),
+  };
+}
+
+// ── the rule ────────────────────────────────────────────────────────────────
+
+const anomaly = (kind, why, rule, resolves) => ({ disposition: "anomaly", anomaly: kind, why, rule, resolves });
+
+/**
+ * What happens to ONE decoded session, given the ledger, the town, and the
+ * clock. Pure: no network, no filesystem writes, no clock of its own.
+ *
+ * Returns one of
+ *   { disposition: "already", … }  the ref is a receipt; nothing to do
+ *   { disposition: "hold",    … }  inside the grace window, carrying the PLAN
+ *   { disposition: "witness", … }  the row to write
+ *   { disposition: "anomaly", … }  named, with the rule and what resolves it
+ *
+ * A HELD session carries its provisional resolution, not just "wait". That is
+ * the whole value of the window: the operator round must be able to read "this
+ * will file to darko-fund as an outside gift because `jetto-of-starfoge` is not
+ * a household" and fix it, rather than learning after the ref is spent.
+ */
+export function resolveSession(s, { engine, entries, clone, households, now = Date.now(), graceMs = CROSSING_MS, minUsd = MIN_USD, allowTestmode = false }) {
+  const { receipts } = engine.foldPotReceipts(entries);
+  const prior = receipts.find((r) => String(r.ref) === s.receipt_ref);
+  if (prior) return { disposition: "already", ...s, pot: prior.pot, from: prior.from, date: prior.date, usd_recorded: prior.usd };
+
+  if (!s.session) return anomaly("malformed", "the session carries no id, so it has no ref", "a receipt's ref is its identity", "nothing — this is a bug in the reader or an unrecognised payload");
+  if (!allowTestmode && !s.livemode)
+    return { ...s, ...anomaly("testmode", "this is a TEST-MODE session", "a test payment must never become a real ledger row", "nothing — test money stays test money; if this is unexpected the box is holding a test key") };
+  if (s.payment_status !== "paid")
+    return { ...s, ...anomaly("unpaid", `payment_status is "${s.payment_status}", not "paid"`, "a receipt witnesses a payment that was actually made", "Stripe, when the payment settles — the next tick re-reads it") };
+  if (s.currency !== "usd")
+    return { ...s, ...anomaly("not-usd", `this session is in ${s.currency.toUpperCase()}, and the ledger records dollars`, "the pot-receipt grammar's `usd:` is a whole number of US dollars", "the founder, by hand — there is no rate anywhere in the town to convert it") };
+
+  const usdTotal = s.amount_total / 100;
+  const whole = Math.floor(usdTotal);
+  const cents = Number((usdTotal - whole).toFixed(2));
+  if (whole < minUsd)
+    return { ...s, usd_total: usdTotal, ...anomaly("under-a-dollar", `$${usdTotal.toFixed(2)} is less than a dollar`, "the ledger records whole dollars, so a payment under $1 cannot be witnessed as a receipt. It reached the town and it is not lost", "nothing mechanical — it is a gift the ledger has no row for") };
+
+  // THE POT. `client_reference_id` or nothing — never a guess, and never a
+  // default. A watcher that fell back to "the only open pot" would be choosing
+  // where a stranger's money goes on the day a second pot opens.
+  const named = s.client_reference_id == null ? null : String(s.client_reference_id).trim();
+  if (!named)
+    return { ...s, usd_total: usdTotal, usd: whole, ...anomaly("needs-pot", "the session names no pot (no client_reference_id)", "\"a receipt needs the pot it pays\" — tools/epoch-close.mjs, on refusing a receipt with no pot file behind it", "the founder, by hand: record it against the pot the payer meant. Sessions created after site main b2260e7a carry the pot automatically, so this queue should approach zero") };
+
+  const gate = potGateOf(engine, clone, named);
+  if (!gate.ok)
+    return { ...s, usd_total: usdTotal, usd: whole, pot_named: named, ...anomaly("needs-pot", gate.defect, "\"a receipt needs the pot it pays\" — a draft or closed pot takes no dollars", "the founder: open the pot, or record the dollars against the pot the payer meant. The next tick re-reads it") };
+
+  // THE HAND. Exactly matches a registered household, or it is a gift.
+  const typed = s.handle_typed || null;
+  const attributed = typed != null && households.has(typed);
+  const from = attributed ? typed : OUTSIDE_FROM;
+
+  // THE CAP, through the /fund door's own guards so D5 is one copy of one rule.
+  const g = fundGuards({ engine, entries, clone, pot: named, handle: from, usd: whole, receiptRef: s.receipt_ref });
+  if (!g.ok)
+    return {
+      ...s, usd_total: usdTotal, usd: whole, pot: named, from,
+      ...anomaly("over-cap", g.defect, "D5 (Keemin, 2026-08-21): \"intake refuses dollars past a pot's posted target, mechanically (recording tool / door bounce), except pots explicitly marked uncapped\"", g.hint ?? "the next epoch opens fresh"),
+    };
+
+  const plan = {
+    pot: named,
+    from,
+    usd: whole,
+    rail: RAIL,
+    ref: s.receipt_ref,
+    attributed,
+    handle_typed: typed,
+    ...(cents > 0 ? {
+      cents_note: `$${usdTotal.toFixed(2)} arrived; the ledger records whole dollars, so $${whole} is witnessed against the pot and the remaining $${cents.toFixed(2)} is money the town holds that priced nothing.`,
+    } : {}),
+    ...(attributed ? {} : {
+      gift_note: typed
+        ? `"${typed}" is not a household the town knows, so these dollars are witnessed as a gift under ${OUTSIDE_FROM} and earn no deed. A payment the office cannot attach to a hand can still be a gift, but it cannot be your deed.`
+        : `no handle was given, so these dollars are witnessed as a gift under ${OUTSIDE_FROM} and earn no deed.`,
+    }),
+  };
+
+  const witnessAt = s.created * 1000 + graceMs;
+  if (now < witnessAt)
+    return { ...s, disposition: "hold", usd_total: usdTotal, plan, witnesses_after: new Date(witnessAt).toISOString() };
+
+  return { ...s, disposition: "witness", usd_total: usdTotal, ...plan };
+}
+
+// potGate lives in fund.mjs and takes the engine; wrapped here only so a
+// falsifier can hand in an engine whose potFile is a fixture.
+function potGateOf(engine, clone, pot) {
+  const meta = engine.potFile(clone, pot);
+  if (!meta) return { ok: false, defect: `no pot named "${pot}"` };
+  if (meta.status && meta.status !== "open") return { ok: false, defect: `pot "${pot}" is ${meta.status}, not open` };
+  return { ok: true, meta };
+}
+
+/**
+ * One tick, decided and NOT performed.
+ *
+ * Returns { report, cursor, todo } and writes nothing — the caller records and
+ * persists, so a falsifier can run the whole tick and prove no ledger row was
+ * written. `todo` is the ordered list of witnesses to perform.
+ */
+export function decide({ sessions, engine, entries, clone, households, now = Date.now(), graceMs = CROSSING_MS, minUsd = MIN_USD, allowTestmode = false, cursor = null }) {
+  const decoded = sessions.map(decodeSession);
+  const buckets = { already: [], hold: [], witness: [], anomaly: [] };
+  for (const s of decoded) {
+    const r = resolveSession(s, { engine, entries, clone, households, now, graceMs, minUsd, allowTestmode });
+    buckets[r.disposition].push(r);
+  }
+  const maxCreated = decoded.reduce((a, s) => Math.max(a, s.created), cursor ?? 0);
+  return {
+    report: {
+      generated_at: new Date(now).toISOString(),
+      rail: RAIL,
+      read_from: cursor == null ? null : iso(cursor),
+      sessions: decoded.length,
+      grace: `one crossing (${graceMs / 3_600_000}h) after the session was created`,
+      witnessed_now: buckets.witness.length,
+      holding: buckets.hold.length,
+      anomalies: buckets.anomaly.length,
+      hold: buckets.hold,
+      witness: buckets.witness,
+      anomaly: buckets.anomaly,
+      already: buckets.already.map((a) => ({ session: a.session, pot: a.pot, from: a.from, usd_recorded: a.usd_recorded, date: a.date })),
+      posture: "every card payment resolves by rule: the pot comes from the session's own client_reference_id, the hand from its `handle` field matched against the town's registry, and an unmatched hand is a gift rather than a guess. Only the anomaly list waits on a person.",
+    },
+    todo: buckets.witness,
+    cursor: maxCreated || null,
+  };
+}
+
+// ── the journal (append-only, operator-facing, never public) ─────────────────
+// The window the grace exists to open. It holds the typed handle and the payer
+// email — neither of which may ever reach a ledger row — so the operator round
+// can catch a typo while the ref is still unspent.
+
+export function readJournal(p) {
+  if (!existsSync(p)) return [];
+  return readFileSync(p, "utf8").split("\n").filter(Boolean).map((l) => {
+    try { return JSON.parse(l); } catch { return { malformed: l.slice(0, 200) }; }
+  });
+}
+
+export function appendJournal(p, rows) {
+  if (!rows.length) return;
+  mkdirSync(dirname(p), { recursive: true });
+  appendFileSync(p, rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
+}
+
+export const readState = (p) => { try { return JSON.parse(readFileSync(p, "utf8")); } catch { return {}; } };
+export function writeState(p, state) {
+  mkdirSync(dirname(p), { recursive: true });
+  writeFileSync(p, JSON.stringify(state, null, 2) + "\n");
+}
+
+export async function townEngine(clone) {
+  const mint = join(clone, "tools", "stamp-mint.mjs");
+  if (!existsSync(mint)) return null;
+  const m = await import(pathToFileURL(mint));
+  const needs = ["foldPotReceipts", "parseStampLedger", "potFile", "keepingDial", "intakeCheck", "householdKeys"];
+  return needs.every((k) => typeof m[k] === "function") ? m : null;
+}
+
+export function ledgerEntries(clone, engine) {
+  const p = join(clone, "WHITE_PAGES", "stamp-ledger.md");
+  return existsSync(p) ? engine.parseStampLedger(readFileSync(p, "utf8")) : [];
+}
+
+// ── the CLI ─────────────────────────────────────────────────────────────────
+
+function arg(name, dflt = null) {
+  const i = process.argv.indexOf(`--${name}`);
+  return i > -1 && process.argv[i + 1] && !process.argv[i + 1].startsWith("--") ? process.argv[i + 1] : dflt;
+}
+
+const sinceUnix = (v) => {
+  if (v == null) return null;
+  const n = Number(v);
+  if (Number.isFinite(n) && n > 1_000_000_000) return Math.floor(n);
+  const t = Date.parse(v);
+  return Number.isFinite(t) ? Math.floor(t / 1000) : null;
+};
+
+async function main() {
+  const clone = arg("clone", process.env.TOWN_CLONE ?? resolve(HERE, "..", "town-clone"));
+  const statePath = arg("state", join(HERE, "..", ".stripe-watch-state.json"));
+  const journalPath = arg("journal", join(dirname(statePath), "stripe-intake.jsonl"));
+  const outPath = arg("out", null);
+  const dryRun = process.argv.includes("--dry-run");
+
+  const engine = await townEngine(clone);
+  if (!engine) {
+    console.error(`FATAL: no town clone with the funding seam at ${clone} — the watch reads the ledger through the town's own fold, never its own parse`);
+    process.exit(1);
+  }
+
+  const stripe = stripeReader({
+    key: process.env.STRIPE_KEY,
+    apiVersion: process.env.STRIPE_API_VERSION ?? null,
+  });
+
+  const state = readState(statePath);
+  const explicit = sinceUnix(arg("since", null));
+  const coldFloor = Math.floor(Date.now() / 1000) - COLDSTART_DAYS * 86_400;
+  const cursor = explicit ?? state.cursor ?? coldFloor;
+  const coldStart = explicit == null && state.cursor == null;
+
+  const sessions = await listCompleteSessions({ stripe, createdGte: cursor });
+
+  const entries = ledgerEntries(clone, engine);
+  const households = engine.householdKeys(clone);
+  const { report, todo, cursor: next } = decide({ sessions, engine, entries, clone, households, cursor });
+  if (coldStart) report.coldstart = `no cursor: this run read only the last ${COLDSTART_DAYS} days. A session older than ${iso(coldFloor)} was NOT read — sweep it with --since.`;
+
+  // journal every session not already known, plus every disposition this tick
+  const known = new Set(readJournal(journalPath).filter((r) => r.kind === "seen").map((r) => r.session));
+  const seenRows = sessions.map(decodeSession)
+    .filter((s) => !known.has(s.session))
+    .map((s) => ({ kind: "seen", at: report.generated_at, ...s }));
+  appendJournal(journalPath, seenRows);
+
+  const written = [];
+  if (!dryRun && todo.length) {
+    const { execUnderTownLock, lockTimedOut, LOCK_BUSY } = await import("../src/town-lock.mjs");
+    const { townDay } = await import("../src/ops.mjs");
+    const record = penRecorder(clone, {
+      execUnderTownLock, lockTimedOut, LOCK_BUSY, townDay,
+      execPath: join(HERE, "..", "src", "fund-exec.mjs"),
+      rail: RAIL, via: "stripe-watch",
+    });
+    for (const w of todo) {
+      try {
+        const out = await record({ pot: w.pot, usd: w.usd, from: w.from, ref: w.ref });
+        written.push({ kind: "witnessed", at: new Date().toISOString(), session: w.session, ref: w.ref, pot: w.pot, from: w.from, usd: w.usd, attributed: w.attributed, handle_typed: w.handle_typed, line: out?.line ?? null, commit: out?.commit ?? null });
+      } catch (e) {
+        // A refusal is an answer, not a crash: journal it and keep going, so one
+        // bad session cannot hold up the queue behind it. The ref is unspent,
+        // so the next tick tries again.
+        written.push({ kind: "refused", at: new Date().toISOString(), session: w.session, ref: w.ref, pot: w.pot, from: w.from, usd: w.usd, code: e?.code ?? null, defect: e?.defect ?? String(e?.message ?? e).slice(0, 200), hint: e?.hint ?? null });
+      }
+    }
+    appendJournal(journalPath, written);
+  }
+  report.written = written;
+
+  writeState(statePath, { ...state, cursor: next ?? cursor, last_run: report.generated_at });
+  if (outPath) { mkdirSync(dirname(outPath), { recursive: true }); writeFileSync(outPath, JSON.stringify(report, null, 2) + "\n"); }
+
+  if (process.argv.includes("--json")) { console.log(JSON.stringify(report, null, 2)); return; }
+
+  console.log(`stripe-watch · ${report.sessions} completed session(s) since ${report.read_from ?? "the cold-start floor"}`);
+  if (report.coldstart) console.log(`  ${report.coldstart}`);
+  console.log(`  witnessed now: ${written.filter((w) => w.kind === "witnessed").length}   holding: ${report.holding}   already on the ledger: ${report.already.length}   anomalies: ${report.anomalies}`);
+  for (const h of report.hold)
+    console.log(`  HOLD   ${h.session}  $${h.plan.usd} → ${h.plan.pot}  as ${h.plan.from}${h.plan.attributed ? "" : `  (typed: ${h.plan.handle_typed ?? "—"}${h.email ? `, ${h.email}` : ""})`}  witnesses after ${h.witnesses_after}`);
+  for (const a of report.anomaly)
+    console.log(`  ${a.anomaly.toUpperCase().padEnd(14)} ${a.session}  ${a.why}\n                 rule: ${a.rule}\n                 resolves: ${a.resolves}`);
+  for (const w of written)
+    console.log(`  ${w.kind === "witnessed" ? "WITNESSED" : "REFUSED  "} ${w.session}  $${w.usd} → ${w.pot}  as ${w.from}${w.defect ? `  — ${w.defect}` : ""}`);
+}
+
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+  main().catch((e) => { console.error(`FATAL: ${e.message ?? e}`); process.exit(1); });
+}

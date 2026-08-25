@@ -1,0 +1,63 @@
+[Unit]
+Description=stripe-watch — resolve completed card payments to a pot and a hand, by rule
+# The card rail's other half. usdc-watch SEES and does not witness, because on
+# Base the chain cannot say which pot a payer meant and a watcher would consume
+# a hash's one mint chance ahead of the patron's own paste. Neither is true here:
+# a Stripe checkout session carries client_reference_id (the town's own fund page
+# sets it — site main b2260e7a), and the card rail has no payer paste-path at all
+# ("Step 2 — there isn't one"), so `stripe:<session_id>` is a ref only this unit
+# can ever mint. The whole argument, with the quotes, is the header of
+# tools/stripe-watch.mjs.
+#
+# UNLIKE usdc-watch AND harbor-watch, THIS UNIT WRITES. It records witnessed
+# receipts through src/fund-exec.mjs — the /fund door's own recorder, the town's
+# own `epoch-close.mjs --receipt`, under the ferry's flock on town.lock. There is
+# no second ledger writer. It therefore needs the pen: /etc/postmark-office.env
+# carries TOWN_CLONE, STAMP_KEY, TOWN_PUSH, BOT_NAME/BOT_EMAIL exactly as the
+# office and the ferry read them, and the flock keeps it out of the crossing's way.
+#
+# A session is held for ONE FULL CROSSING (12h) before it becomes a receipt. That
+# window is the point: the intake journal at /srv/postmark-stripe/stripe-intake.jsonl
+# shows the operator round the typed handle and the resolution the session is
+# ABOUT to get, so a mistyped handle is fixable while the ref is still unspent.
+# After the window the rule runs and nothing waits on a person.
+#
+# THE CREDENTIAL. STRIPE_KEY is a RESTRICTED, READ-ONLY Stripe key (rk_…) with
+# read permission on Checkout Sessions and nothing else — it can list payments
+# and can move no money. It lives ONLY in the env file below, mode 600, and never
+# in either repo. Create it at
+#   Stripe Dashboard → Developers → API keys → Restricted keys → + Create
+#   permissions: Checkout Sessions = Read. Everything else = None.
+#
+# NOT INSTALLED. Repo copy only — the box install is Wright's hand:
+#   sudo mkdir -p /srv/postmark-office/secrets
+#   sudo tee /srv/postmark-office/secrets/stripe-watch.env >/dev/null <<'EOF'
+#   STRIPE_KEY=rk_live_…
+#   # STRIPE_API_VERSION=      # optional; unset = the account's default version
+#   EOF
+#   sudo chmod 600 /srv/postmark-office/secrets/stripe-watch.env
+#   sudo chown meepo /srv/postmark-office/secrets/stripe-watch.env
+#   sudo mkdir -p /srv/postmark-stripe && sudo chown meepo /srv/postmark-stripe
+#   sudo cp deploy/postmark-stripe-watch.{service,timer} /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now postmark-stripe-watch.timer
+#
+# FIRST RUN, supervised: run it once with --dry-run and read the report before
+# the timer is ever enabled. A dry run decides everything and records nothing.
+#   sudo -u meepo env $(cat /srv/postmark-office/secrets/stripe-watch.env | xargs) \
+#     node tools/stripe-watch.mjs --dry-run --json --state /srv/postmark-stripe/state.json
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=meepo
+WorkingDirectory=/srv/postmark-office
+EnvironmentFile=/etc/postmark-office.env
+EnvironmentFile=/srv/postmark-office/secrets/stripe-watch.env
+ExecStart=/usr/bin/node tools/stripe-watch.mjs \
+  --state /srv/postmark-stripe/state.json \
+  --journal /srv/postmark-stripe/stripe-intake.jsonl \
+  --out /srv/postmark-stripe/report.json
+# A Stripe read that fails exits non-zero on purpose, and the cursor is left
+# where it was: a silent empty report from a watcher that could not see the
+# account is indistinguishable from a quiet day, and the second one is a lie.
