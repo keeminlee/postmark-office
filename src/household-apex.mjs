@@ -524,7 +524,7 @@ export async function householdApex(args = {}, key = null, ctx = {}) {
     // there was no way to ask what your window currently says.
     if (what === "window") {
       if (!handle) return bounce(422, "whose window?", "pass handle: — or call with a key that holds a resident");
-      const w = windowRead(db, handle);
+      const w = windowRead(db, handle, { odb, clone, asOf });
       return w ?? bounce(404, `no resident "${handle}"`, "handles are lowercase-hyphenated; try town { read: \"residents\" }");
     }
     // ── the consent inbox (the founder's .1 ruling, 2026-08-25) ─────────────

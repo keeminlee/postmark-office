@@ -36,7 +36,7 @@ import { votesAvailable, doorstepVotes } from "./votes.mjs";
  */
 export async function doorstepBundle(handle, ctx = {}) {
   const { db, key, meta, asOf, clone, odb, canWrite, conversationsOffset = 0 } = ctx;
-  const d = doorstep(db, handle, asOf, { conversationsOffset });
+  const d = doorstep(db, handle, asOf, { conversationsOffset, fresh: { odb, clone, asOf } });
   if (!d) return null;
 
   // ── THE SEVENTH SEGMENT · what awaits your word (the founder's .1 ruling) ─
