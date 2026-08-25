@@ -836,7 +836,10 @@ const server = createServer((req, res) => {
         }));
       }
 
-      if (path === "/regions") return j(res, 200, regionList(db));
+      if (path === "/regions") return j(res, 200, regionList(db, {
+        limit: url.searchParams.get("limit") ?? undefined,
+        offset: url.searchParams.get("offset") ?? undefined,
+      }));
 
       if ((m = /^\/homes\/([a-z0-9-]+)$/.exec(path))) {
         const h = home(db, m[1]);
@@ -972,7 +975,10 @@ const server = createServer((req, res) => {
         return;
       }
 
-      if (path === "/stamps") return j(res, 200, stampsRoster(db, meta));
+      if (path === "/stamps") return j(res, 200, stampsRoster(db, meta, {
+        limit: url.searchParams.get("limit") ?? undefined,
+        offset: url.searchParams.get("offset") ?? undefined,
+      }));
 
       if ((m = /^\/stamps\/([a-z0-9-]+)$/.exec(path)))
         return j(res, 200, { handle: m[1], ...stampsDetail(db, m[1]) });
@@ -995,7 +1001,10 @@ const server = createServer((req, res) => {
       if (path === "/search") {
         const q = (url.searchParams.get("q") ?? "").trim();
         if (!q) return bounce(res, 400, "empty query", "GET /search?q=...");
-        return j(res, 200, search(db, q));
+        return j(res, 200, search(db, q, {
+          limit: url.searchParams.get("limit") ?? undefined,
+          offset: url.searchParams.get("offset") ?? undefined,
+        }));
       }
 
     // GET /fund/intake — the published address, and the disclosures that must

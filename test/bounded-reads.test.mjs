@@ -22,7 +22,7 @@ import { DatabaseSync } from "node:sqlite";
 import { SCHEMA } from "../src/schema.mjs";
 import {
   resident, mailList, letterList, repoLog, residentPage, residentList,
-  doorstep, bulletinTeaser, CARD_MAIL,
+  doorstep, bulletinTeaser, stampsRoster, search, regionList, CARD_MAIL,
 } from "../src/queries.mjs";
 
 const AS_OF = "bigfixture00000000000000000000000000000";
@@ -379,4 +379,85 @@ test("the gate is CLOSED BY DEFAULT — a caller that forgets to pass own gets t
   const bare = doorstep(db, "r000", AS_OF);
   assert.equal(bare.correspondence.conversations, undefined);
   assert.deepEqual(bare.awaiting_reply, []);
+});
+
+// ── the second pass: the surfaces the first wave left standing ───────────────
+
+test("stampsRoster: minted_cumulative is NOT the account count, so the roster needed its own", () => {
+  // The trap this closes is subtler than the others: this read always carried a
+  // total — `minted_cumulative` — and it is a total of STAMPS, in a different
+  // unit from the list beside it. A reader could not learn from it how many
+  // accounts the roster stopped short of, which is the only question a bounded
+  // roster raises.
+  const small = new DatabaseSync(":memory:");
+  small.exec(SCHEMA);
+  const insS = small.prepare("INSERT INTO stamps (handle, balance, mint_count, staked) VALUES (?, ?, ?, ?)");
+  for (let i = 0; i < 70; i++) insS.run(`h${String(i).padStart(3, "0")}`, 100 - i, 100 - i, 0);
+  const r = stampsRoster(small, { stamps_minted: "9999" }, {});
+  assert.equal(r.balances.length, 50);
+  assert.equal(r.accounts, 70);
+  assert.equal(r.minted_cumulative, 9999);
+  assert.notEqual(r.accounts, r.balances.length, "THE FALSIFIER: bound < accounts, count still true");
+  assert.notEqual(r.accounts, r.minted_cumulative, "and the two totals are different facts in different units");
+  assert.equal(r.complete, false);
+  assert.equal(r.next_offset, 50);
+  // sorted by balance descending, so the page is the top of the table
+  assert.equal(r.balances[0].balance, 100);
+  const tail = stampsRoster(small, { stamps_minted: "9999" }, { offset: 50 });
+  assert.equal(tail.balances.length, 20);
+  assert.equal(tail.complete, true);
+  assert.equal(tail.accounts, 70, "the total does not shrink as you walk");
+});
+
+test("search: a truncated search SAYS it truncated, per bucket", () => {
+  // "A search that silently truncates at 25 and says nothing is the `capped`
+  // lesson unlearned." The two buckets cut at different sizes and are capped
+  // independently, so one flag for both would be a lie half the time.
+  const hits = search(db, "letter", {});
+  assert.equal(hits.letters.length, 25);
+  assert.equal(hits.matches.letters, 40);
+  assert.notEqual(hits.matches.letters, hits.letters.length,
+    "THE FALSIFIER: bound < matches, count still true");
+  assert.equal(hits.capped.letters, true);
+  assert.equal(hits.capped.residents, false, "no resident matches 'letter' — an honest false, not a copied flag");
+  assert.equal(hits.next_offset, 25);
+  const rest = search(db, "letter", { offset: 25 });
+  assert.equal(rest.letters.length, 15);
+  assert.equal(rest.complete, true);
+  assert.equal(rest.matches.letters, 40);
+});
+
+test("search: a term that fits reports capped false in both buckets", () => {
+  // "out2" hits exactly one letter id and no resident — a search whose answer
+  // is genuinely the whole answer, which must not read like a page of one.
+  const hits = search(db, "out2", {});
+  assert.equal(hits.matches.letters, 1);
+  assert.equal(hits.letters.length, 1);
+  assert.equal(hits.capped.letters, false);
+  assert.equal(hits.capped.residents, false);
+  assert.equal(hits.complete, true);
+  assert.equal(hits.next_offset, undefined, "no cursor that points past the end");
+});
+
+test("regionList: the region page and the per-region roll are counted separately", () => {
+  const small = new DatabaseSync(":memory:");
+  small.exec(SCHEMA);
+  const insReg = small.prepare("INSERT INTO regions VALUES (?, ?, ?)");
+  for (let i = 0; i < 30; i++) {
+    const residents = Array.from({ length: i === 0 ? 40 : 2 }, (_, k) => `r${k}`);
+    insReg.run(`reg-${String(i).padStart(2, "0")}`, `Region ${i}`, JSON.stringify({ body: `Description ${i}`, residents }));
+  }
+  const a = regionList(small, {});
+  assert.equal(a.shown, 25);
+  assert.equal(a.total, 30);
+  assert.notEqual(a.total, a.shown, "THE FALSIFIER: the atlas page is not the atlas");
+  // and the roll INSIDE a region is its own bound with its own total
+  const big = a.regions.find((r) => r.slug === "reg-00");
+  assert.equal(big.residents.length, 25);
+  assert.equal(big.residents_total, 40);
+  assert.notEqual(big.residents_total, big.residents.length,
+    "a region's roll grows with the town even when the atlas does not");
+  const small2 = a.regions.find((r) => r.slug === "reg-01");
+  assert.equal(small2.residents_total, 2);
+  assert.equal(small2.residents_note, undefined, "a roll that fits says nothing");
 });

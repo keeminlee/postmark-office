@@ -126,7 +126,12 @@ export async function embeddedScan({ handles, db, clone, urls }) {
  * `household:` argument and that absence is the design — no caller can name
  * someone else's media, so there is no gate to get wrong.
  */
-export async function mediaRead(key, { odb, db, clone, embedded = embeddedScan } = {}) {
+// Uploads rendered per read. The 20 MB/household quota bounds BYTES, never
+// rows: a household of thumbnails can hold hundreds of files inside it. ✎ A
+// proposal.
+const MEDIA_PAGE = 25;
+
+export async function mediaRead(key, { odb, db, clone, embedded = embeddedScan, limit, offset } = {}) {
   const store = openStore();
   try {
     const quoted = (mark) => quoteLaw(store.db, mark);
@@ -152,6 +157,10 @@ export async function mediaRead(key, { odb, db, clone, embedded = embeddedScan }
     // function, sized off the residents this key acts for.
     const quota = mediaQuota(odb, household, handles.length);
     const rows = mediaLedgerRows(odb, household);
+    const mediaN = Math.min(Math.max(Number(limit) || MEDIA_PAGE, 1), 200);
+    const mediaStart = Math.max(Number(offset) || 0, 0);
+    const page = rows.slice(mediaStart, mediaStart + mediaN);
+    const mediaNext = mediaStart + page.length;
 
     const urls = new Set(rows.map((r) => r.url));
     const { hits, unreadable } = await embedded({ handles, db, clone, urls });
@@ -164,14 +173,25 @@ export async function mediaRead(key, { odb, db, clone, embedded = embeddedScan }
       read: "media",
       household,
       residents: handles,
+      // `count` was already here and already correct — and it was also the
+      // list length, so it could not disagree with the list and said nothing.
+      // The bound below is what turns it into information. Count first, slice
+      // after: this is the whole ledger's size, not the page's.
       count: rows.length,
+      shown: page.length,
+      limit: mediaN, offset: mediaStart,
+      complete: mediaNext >= rows.length,
       // The law this whole door serves, quoted from the record rather than
       // restated here.
       law: quoted(MEDIA_LAW),
       // The wall, and the mark that says what a wall is for. the-byte-accounting
       // is why these numbers live here and not in the town's own prose.
       quota: { ...quota, law: quoted(BYTE_ACCOUNTING_LAW) },
-      uploads: rows.map((r) => ({ ...r, embedded: hint(r.url) })),
+      ...(mediaNext < rows.length
+        ? { next_offset: mediaNext,
+            more_note: `${rows.length - mediaNext} further upload${rows.length - mediaNext === 1 ? "" : "s"} in your ledger — call again with offset: ${mediaNext}. Your quota above is measured in BYTES and counts every one of them, listed or not.` }
+        : {}),
+      uploads: page.map((r) => ({ ...r, embedded: hint(r.url) })),
       embedded_check: {
         surfaces: [...EMBED_SURFACES],
         not_covered: [...EMBED_NOT_COVERED],

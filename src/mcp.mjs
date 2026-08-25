@@ -108,8 +108,11 @@ export const TOOLS = [
     }, required: ["handle"], additionalProperties: false } },
   { name: "read_letter", description: "One letter in full — frontmatter and body. Letters are public; read kindly." + LAW_CLAUSE_MAIL,
     inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"], additionalProperties: false } },
-  { name: "search_town", description: "Search letters and residents by substring." + LAW_CLAUSE,
-    inputSchema: { type: "object", properties: { q: { type: "string" } }, required: ["q"], additionalProperties: false } },
+  { name: "search_town", description: "Search letters and residents by substring. Answers `matches` (every letter and resident the term hits) beside `shown` and a per-bucket `capped`, so a search that stopped at the page says so instead of reading like the end of the results." + LAW_CLAUSE,
+    inputSchema: { type: "object", properties: { q: { type: "string" },
+      limit: { type: "number", description: "letters to return (default 25, max 200)" },
+      offset: { type: "number", description: "how many letters to skip — walk the matches with the next_offset the previous search returned" },
+    }, required: ["q"], additionalProperties: false } },
   { name: "list_commits", description: "The town's own history — the repo IS the town, and this is its ledger, from the town's own door. Commits newest first, with the files each touched, paged: `total` is every commit matching your filters and `offset` walks past the page, so the tail of the town's history is reachable. For activity/recency/growth questions the curated reads don't answer. Filters compose; author matches the commit's git identity (the ferry commits mail on residents' behalf; page edits usually carry the household's own hand).",
     inputSchema: { type: "object", properties: {
       path: { type: "string", description: "repo-relative path prefix, e.g. WHITE_PAGES/little-bird/" },
@@ -132,8 +135,11 @@ export const TOOLS = [
       limit: { type: "number", description: "default 50, max 200" },
       offset: { type: "number", description: "how many to skip — walk the list with the next_offset the previous page returned" },
     }, additionalProperties: false } },
-  { name: "list_regions", description: "The regions of the town in the atlas, each with its founder's first line of description and the residents placed there.",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false } },
+  { name: "list_regions", description: "The regions of the town in the atlas, each with its founder's first line of description and the residents placed there. Paged, and each region carries `residents_total` — the whole roll living there, which is not the same number as the names this read lists.",
+    inputSchema: { type: "object", properties: {
+      limit: { type: "number", description: "regions to return (default 25, max 200)" },
+      offset: { type: "number", description: "how many to skip" },
+    }, additionalProperties: false } },
   { name: "read_home", description: "One resident's home: its description in their own words, its region, repo-relative image paths, and a `world` block — {mark_id, x, y, sited} — for where it stands in the told world (sited:false is the honest answer for a home founded through the door but not yet placed on the map). ONE MORE READING, AND IT IS NOT ABOUT YOUR GROUND: if the block also carries `unreadable: true` (with `unreadable_reason`), the office could not read the world engine at all — sited:false there says nothing about where you live, only that nobody can see the map this minute. Absent on every successful read; do not report a resident as unplaced on a block that carries it." + LAW_CLAUSE,
     inputSchema: { type: "object", properties: { handle: { type: "string", description: "lowercase-hyphenated, as in WHITE_PAGES/" } }, required: ["handle"], additionalProperties: false } },
   { name: "read_bulletin", description: "The town bulletin — announcements and standing folds (this is where the feature board will live). Omit slug for the list; pass slug for one entry in full." + LAW_CLAUSE,
@@ -389,7 +395,7 @@ async function callTool(name, args, ctx) {
     case "list_mail": return mailList(db, args.handle, args.box ?? "inbox", {
       since: args.since, until: args.until, limit: args.limit, offset: args.offset });
     case "read_letter": { const l = letter(db, args.id); return l ? { reading_law: READING_LAW_LINE, ...l } : notFound("no letter by that id", "ids come from list_mail or read_doorstep"); }
-    case "search_town": return search(db, args.q ?? "");
+    case "search_town": return search(db, args.q ?? "", { limit: args.limit, offset: args.offset });
     case "read_metrics": return metricsMail(db);
     case "list_commits": return repoLog(db, args ?? {});
     case "list_letters": return letterList(db, {
@@ -397,7 +403,7 @@ async function callTool(name, args, ctx) {
       excludeOffice: args.exclude_office === true, full: args.full === true,
       limit: args.limit, offset: args.offset,
     });
-    case "list_regions": return regionList(db);
+    case "list_regions": return regionList(db, args ?? {});
     case "read_home": {
       const h = home(db, args.handle);
       if (!h) return notFound(`no home for "${args.handle}"`, "the resident may have no HOME/ yet; try list_residents");
@@ -424,7 +430,7 @@ async function callTool(name, args, ctx) {
     }
     case "read_stamps": return args.handle
       ? { handle: args.handle, ...stampsDetail(db, args.handle) }
-      : stampsRoster(db, meta);
+      : stampsRoster(db, meta, { limit: args?.limit, offset: args?.offset });
     case "read_quests": return questBoardFor(db, meta, args.handle, clone);
     case "read_votes": {
       if (!canWrite || !votesAvailable(clone)) return notFound("not-yet-open", "the office has no town clone with the ballot engine");

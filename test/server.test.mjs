@@ -102,11 +102,17 @@ test("POST /letters with no credential → 401 + www-authenticate (the OAuth dan
 });
 
 test("GET /regions → slug, name, first-line description, residents", async () => {
-  const regions = await (await get("/regions")).json();
-  const terrace = regions.find((r) => r.slug === "the-terrace");
+  // The answer became an OBJECT on 2026-08-25 (paged, with a total); the region
+  // rows are unchanged and moved one level in, and each now carries
+  // residents_total beside its listed names.
+  const atlas = await (await get("/regions")).json();
+  const terrace = atlas.regions.find((r) => r.slug === "the-terrace");
   assert.equal(terrace.name, "the Trueing Terrace");
   assert.match(terrace.description, /High ground above the quay/);
   assert.deepEqual(terrace.residents, ["wright"]);
+  assert.equal(terrace.residents_total, 1, "a region's whole roll, beside the names this read listed");
+  assert.equal(atlas.total, atlas.shown, "this fixture atlas fits inside the page");
+  assert.equal(atlas.complete, true);
 });
 
 test("GET /homes/{handle} → body, region, image paths, world block; 404 for none", async () => {
@@ -505,8 +511,10 @@ test("MCP whoami mirrors GET /me", async () => {
 test("MCP list_letters / list_regions / read_home mirror the REST reads", async () => {
   const letters = JSON.parse((await rpc("tools/call", { name: "list_letters", arguments: { resident: "postmaster", exclude_office: true } })).body.result.content[0].text);
   assert.equal(letters.count, 0);
-  const regions = JSON.parse((await rpc("tools/call", { name: "list_regions", arguments: {} })).body.result.content[0].text);
-  assert.ok(regions.some((r) => r.slug === "the-terrace"));
+  const atlas = JSON.parse((await rpc("tools/call", { name: "list_regions", arguments: {} })).body.result.content[0].text);
+  assert.ok(atlas.regions.some((r) => r.slug === "the-terrace"));
+  // the mirror is the point of this test: both doors serve one shape
+  assert.deepEqual(atlas, await (await get("/regions")).json());
   const homeRes = await rpc("tools/call", { name: "read_home", arguments: { handle: "wright" } });
   assert.equal(JSON.parse(homeRes.body.result.content[0].text).region, "the-terrace");
 });

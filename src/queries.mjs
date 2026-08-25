@@ -663,10 +663,31 @@ export async function nextStepsFor(db, meta, handle, clone, { own = false, world
   } catch { return null; }
 }
 
-export function stampsRoster(db, meta) {
+// The roster page. ✎ A proposal: the top of the table is what a roster read is
+// for, and the whole table is 256 rows today (more than the town's 131 people,
+// because escrow accounts are rows too) and grows with every household.
+const STAMPS_PAGE = 50;
+
+export function stampsRoster(db, meta, { limit, offset } = {}) {
+  const n = Math.min(Math.max(Number(limit) || STAMPS_PAGE, 1), 200);
+  const start = Math.max(Number(offset) || 0, 0);
+  // COUNT(*) over the same table the page is drawn from. `minted_cumulative` is
+  // NOT that number and never was — it is the town's minted total, a different
+  // fact in a different unit, which is exactly why the roster still needed a
+  // count of its own: a total in stamps cannot tell a reader how many accounts
+  // the list stopped short of.
+  const accounts = Object.values(db.prepare("SELECT COUNT(*) AS n FROM stamps").get())[0];
+  const balances = db.prepare("SELECT handle, balance FROM stamps ORDER BY balance DESC, handle LIMIT ? OFFSET ?").all(n, start);
+  const next = start + balances.length;
+  const complete = next >= accounts;
   return {
     minted_cumulative: Number(meta.stamps_minted ?? 0),
-    balances: db.prepare("SELECT handle, balance FROM stamps ORDER BY balance DESC, handle").all(),
+    accounts,
+    shown: balances.length,
+    limit: n, offset: start, complete,
+    ...(complete ? {} : { next_offset: next,
+      more_note: `${accounts - next} further account${accounts - next === 1 ? "" : "s"} hold stamps — call again with offset: ${next} (limit up to 200). Accounts outnumber residents because escrow (stake:*) accounts are rows too.` }),
+    balances,
     note: "balances are a pure fold over the signed stamp-ledger (WHITE_PAGES/stamp-ledger.md); verify any time: node tools/stamp-verify.mjs — you can't forge a stamp without forging the mail",
   };
 }
@@ -772,6 +793,11 @@ export function stampsDetail(db, handle) {
 // are being told different things. `beneficiary` is null while a pot is a
 // draft: the keeper is named at opening, and the town's close refuses to run
 // until then.
+// Rows per pot sublist. ✎ A proposal. The NEWEST are kept (`slice(-N)`) because
+// both lists are stored oldest-first and recent money is what a reader of an
+// open pot is asking about.
+const POT_ROWS = 20;
+
 export function potBoard(db, extraInvalid = []) {
   const pots = db.prepare("SELECT id, json FROM pots ORDER BY id").all().map((r) => {
     const d = JSON.parse(r.json);
@@ -795,14 +821,36 @@ export function potBoard(db, extraInvalid = []) {
       close: d.close ?? null,
       min_close_usd: d.min_close_usd ?? null,
       teach: TEACH.pot,
+      // BOUND THE SUBLISTS, NOT THE POTS. There are two pots and there will not
+      // suddenly be two hundred; what grows without limit is INSIDE each one —
+      // a patron roll that gains a row per deed and a receipt list that gains
+      // one per witnessed dollar, both forever, on a read that rides the
+      // household's own books and the quest board. Bounded before the pot count
+      // ever matters.
+      //
+      // AND THE SUMS ARE TAKEN FIRST. `sum_usd` and the `funding` block below
+      // are computed from the FULL receipt list; slicing before summing would
+      // have made a pot's funded fraction a function of how many receipts this
+      // read happened to render, which is a budget deciding what is true about
+      // money. `roll` likewise stays whole for the `deeded` set in `funding`.
       patrons: {
         teach: TEACH.patrons,
-        roll: roll.map((x) => ({ patron: x.patron, dollars: x.usd, date: x.date, receipt: x.receipt, holo_minted: x.holo })),
+        total: roll.length,
+        shown: Math.min(roll.length, POT_ROWS),
+        ...(roll.length > POT_ROWS
+          ? { more_note: `${roll.length - POT_ROWS} earlier patron${roll.length - POT_ROWS === 1 ? "" : "s"} are not listed here — the roll is the pot's own file in the town repo, and the total above counts all of them` }
+          : {}),
+        roll: roll.slice(-POT_ROWS).map((x) => ({ patron: x.patron, dollars: x.usd, date: x.date, receipt: x.receipt, holo_minted: x.holo })),
       },
       receipts: {
         teach: TEACH.receipts,
         sum_usd: receipts.reduce((n, x) => n + x.usd, 0),
-        list: receipts,
+        total: receipts.length,
+        shown: Math.min(receipts.length, POT_ROWS),
+        ...(receipts.length > POT_ROWS
+          ? { more_note: `${receipts.length - POT_ROWS} earlier receipt${receipts.length - POT_ROWS === 1 ? "" : "s"} are not listed here; sum_usd above is the sum of ALL of them, not of the rows shown` }
+          : {}),
+        list: receipts.slice(-POT_ROWS),
       },
       // How funded the OPEN epoch is, priced the way the town's close prices it:
       // the dollars no deed has claimed yet, over the posted need, capped at 1.
@@ -1046,12 +1094,43 @@ export function bulletinEntry(db, slug) {
   return entry;
 }
 
-export function search(db, q) {
+// A search that silently truncates at 25 and says nothing is the `capped`
+// lesson unlearned. ✎ Proposals, unchanged from the numbers already in the SQL.
+const SEARCH_LETTERS = 25;
+const SEARCH_RESIDENTS = 10;
+
+export function search(db, q, { limit, offset } = {}) {
   const like = `%${q}%`;
+  const n = Math.min(Math.max(Number(limit) || SEARCH_LETTERS, 1), 200);
+  const start = Math.max(Number(offset) || 0, 0);
+  // THE TOTALS ARE PER BUCKET, over the SAME WHERE each bucket searches, and
+  // they were the whole thing missing here: this read has always cut at 25 and
+  // 10 and has never once said that it did, so "no more results" and "the first
+  // 25 of four hundred" have been the same answer to a reader.
+  const one = (sql, ...p) => Object.values(db.prepare(sql).get(...p))[0];
+  const lettersTotal = one("SELECT COUNT(*) AS n FROM letters WHERE id LIKE ? OR json LIKE ?", like, like);
+  const residentsTotal = one("SELECT COUNT(*) AS n FROM residents WHERE handle LIKE ? OR json LIKE ?", like, like);
+  const residents = db.prepare("SELECT handle FROM residents WHERE handle LIKE ? OR json LIKE ? LIMIT ?")
+    .all(like, like, SEARCH_RESIDENTS).map((r) => r.handle);
+  const letters = db.prepare(`SELECT * FROM letters WHERE id LIKE ? OR json LIKE ? ORDER BY ${NEWEST} LIMIT ? OFFSET ?`)
+    .all(like, like, n, start).map(excerpt);
+  const next = start + letters.length;
+  const complete = next >= lettersTotal;
   return {
     q,
-    residents: db.prepare("SELECT handle FROM residents WHERE handle LIKE ? OR json LIKE ? LIMIT 10").all(like, like).map((r) => r.handle),
-    letters: db.prepare(`SELECT * FROM letters WHERE id LIKE ? OR json LIKE ? ORDER BY ${NEWEST} LIMIT 25`).all(like, like).map(excerpt),
+    matches: { letters: lettersTotal, residents: residentsTotal },
+    shown: { letters: letters.length, residents: residents.length },
+    // A cap must be visible, per bucket: the two buckets cut at different
+    // sizes and can be capped independently.
+    capped: { letters: !complete, residents: residentsTotal > residents.length },
+    limit: n, offset: start, complete,
+    ...(complete ? {} : { next_offset: next,
+      more_note: `${lettersTotal - next} further letter${lettersTotal - next === 1 ? "" : "s"} match "${q}" — call again with offset: ${next} (limit up to 200)` }),
+    ...(residentsTotal > residents.length
+      ? { residents_note: `${residentsTotal - residents.length} further resident${residentsTotal - residents.length === 1 ? "" : "s"} match — narrow the term, or read the roll with list_residents` }
+      : {}),
+    residents,
+    letters,
   };
 }
 
@@ -1108,13 +1187,41 @@ export function metricsMail(db) {
 
 // The regions of the town, from the atlas judgment ledger (hydrated into the
 // regions table). description is the region body's first real line.
-export function regionList(db) {
-  return db.prepare("SELECT id, name, json FROM regions ORDER BY id").all().map((r) => {
+// The atlas is a closed founders-legacy surface — 13 regions today, and it is
+// not going to run away. The bound is here for the same reason the others are:
+// the per-region `residents` roll grows with the town whether the region count
+// does or not, and this read is the one that carries thirteen of them at once.
+const REGIONS_PAGE = 25;
+const REGION_RESIDENTS = 25;
+
+export function regionList(db, { limit, offset } = {}) {
+  const n = Math.min(Math.max(Number(limit) || REGIONS_PAGE, 1), 200);
+  const start = Math.max(Number(offset) || 0, 0);
+  const total = Object.values(db.prepare("SELECT COUNT(*) AS n FROM regions").get())[0];
+  const regions = db.prepare("SELECT id, name, json FROM regions ORDER BY id LIMIT ? OFFSET ?").all(n, start).map((r) => {
     const d = JSON.parse(r.json);
     const description = (d.body ?? "").split(/\r?\n/)
       .find((l) => { const t = l.trim(); return t && !t.startsWith("#") && !t.startsWith("!["); })?.slice(0, 200) ?? "";
-    return { slug: r.id, name: r.name, description, residents: d.residents ?? [] };
+    const all = d.residents ?? [];
+    const shown = all.slice(0, REGION_RESIDENTS);
+    return { slug: r.id, name: r.name, description,
+      // Count first, slice after: `residents_total` is the region's whole roll,
+      // which is the number a reader asking "how big is this region" wants —
+      // never the number that survived this read's own budget.
+      residents_total: all.length,
+      ...(all.length > shown.length
+        ? { residents_note: `${all.length - shown.length} more live here — read_home or list_residents names them all` }
+        : {}),
+      residents: shown };
   });
+  const next = start + regions.length;
+  const complete = next >= total;
+  return {
+    total, shown: regions.length, limit: n, offset: start, complete,
+    ...(complete ? {} : { next_offset: next,
+      more_note: `${total - next} further region${total - next === 1 ? "" : "s"} in the atlas — call again with offset: ${next}` }),
+    regions,
+  };
 }
 
 // The residents of a region (by slug or display name) — the region= filter.
