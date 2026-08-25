@@ -177,6 +177,76 @@ household branch the old pen left it on and back to `main`, once, and says so:
 `[world-pool] shared clone moved off draft/<x> → main`. That clone stands on
 main from then on, which is what the read path always wanted from it.
 
+## The site sentinel (loud notice when the town is down or stale, 2026-08-25)
+
+`tools/site-sentinel.mjs`, every 10 min via `postmark-site-sentinel.timer`.
+Built the day the site's half-hourly "Sync Postmark atlas" failed on every run
+for a day beside a green "Deploy" and nobody was told, in answer to the
+founder's question: *"how can we LOUDLY BE NOTIFIED when something is down on
+the site?"*
+
+It watches **outcomes, not pipelines** — the doors answer, the served build
+stamp is current, the office's index is current, the deployed Ferry's Daily is
+the town's current one — because an outcome probe catches causes nobody
+predicted. The workflow conclusions are read too, as a second opinion: a red
+pipeline beside green outcomes is a finding, and a green pipeline beside a red
+outcome is a lie.
+
+It records nothing and repairs nothing. No pen, no clone, no `town.lock` —
+same posture as `postmark-harbor-watch` and `postmark-usdc-watch`.
+
+**Install (all of it is Wright's hand; nothing here is installed):**
+
+```sh
+sudo cp deploy/postmark-site-sentinel.{service,timer} /etc/systemd/system/
+sudo mkdir -p /srv/postmark-sentinel && sudo chown meepo /srv/postmark-sentinel
+
+# the alert channel — NEVER in either repo
+sudo tee /etc/postmark-sentinel.env >/dev/null <<'EOF'
+SENTINEL_DISCORD_WEBHOOK=https://discord.com/api/webhooks/<id>/<token>
+EOF
+sudo chmod 600 /etc/postmark-sentinel.env
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now postmark-site-sentinel.timer
+
+# see the board once before the timer owns it
+sudo -u meepo systemctl start postmark-site-sentinel
+journalctl -u postmark-site-sentinel -n 30 --no-pager
+cat /srv/postmark-sentinel/status.json | head -40
+```
+
+- **The webhook is one URL the founder creates** in whichever Discord channel
+  should ring. Without it the watch still runs every probe and still writes the
+  board — it says so on stderr and on the board itself (`alerting.configured:
+  false`). That visible degradation is deliberate: a sentinel that falls silent
+  is indistinguishable from a healthy town.
+- **GitHub auth is optional.** Both repos are public, so it works keyless
+  inside the anonymous 60-per-hour budget; it spends at most **2 REST calls per
+  tick** (12/hour) because every SHA comes from `git ls-remote` (git wire
+  protocol, no REST budget) and all workflow conclusions come from one combined
+  `/actions/runs` read. The unit points `SENTINEL_GITHUB_TOKEN_FILE` at the
+  box's existing read-only `/srv/postmark-office/git-metrics-token`, which
+  simply raises the ceiling. *(Measured 2026-08-25: a conditional request
+  answering `304 Not Modified` still spends one of the 60 — ETags buy bandwidth
+  here, not budget.)*
+- **Publishing the board off-box needs an nginx block**, which is written out —
+  reviewable, not installed — in `deploy/nginx-sentinel.conf.snippet`. The
+  sentinel does not need it; the alert reaches Discord over an outbound POST
+  either way. It only makes `/ops/sentinel.json` readable so the operator round
+  can poll it the way it already polls the harbor snapshot.
+- **Alerting is edge-triggered:** once on OK→bad, one reminder every 12h while
+  it stays bad, once more on recovery. Never one ping per tick — a channel that
+  pings every ten minutes is a channel the reader mutes, and a muted channel
+  reproduces the original silence exactly.
+- **Depends on `/build.json`**, which the site repo emits at build time
+  (`postmark-site/tools/build-stamp.mjs`). Until that ships, the two
+  site-freshness probes report `UNKNOWN` — never green — and say where the fix
+  lives.
+- **Known gap, named not papered over:** the sentinel cannot see its own death.
+  If this box is down or the timer is masked, nothing here alarms. That needs an
+  off-box heartbeat and is deliberately out of scope.
+
 ## The operator dashboards (`/ops/`, hub generated since 2026-08-11)
 
 Five static surfaces under `/ops/`, all written to `/var/www/postmark-ops/`

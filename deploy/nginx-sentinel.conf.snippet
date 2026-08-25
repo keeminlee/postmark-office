@@ -1,0 +1,55 @@
+# PROPOSED, NOT INSTALLED — the sentinel's status board as a published address.
+#
+# This is a snippet, not a served config. Nothing reads it where it sits. It
+# exists as a file so the block can be reviewed as text before anyone edits the
+# live vhost, because the box's nginx has drifted from the repo copies before
+# (deploy/DEPLOY.md says so twice, in two different sections).
+#
+# ── HOW TO INSTALL IT, AND THE ONE RULE THAT MATTERS ────────────────────────
+#
+# Paste the location block below into the postmark.town server{} stanza of
+# /etc/nginx/sites-available/postmark-town, beside the two /harbor/data/ blocks
+# it is modelled on. Then:
+#
+#     sudo nginx -t && sudo systemctl reload nginx
+#     curl -si https://postmark.town/ops/sentinel.json | head -20
+#
+# READ THE LIVE FILE FIRST AND BACKPORT ANYTHING IT HAS THAT THE REPO COPY DOES
+# NOT, before writing over it. The repo's nginx-postmark-town.conf is not
+# guaranteed to be what is serving; the live file is truth and the repo copy is
+# a record that has fallen behind at least twice.
+#
+# ── WHY A NEW EXACT-MATCH LOCATION IS NEEDED AT ALL ─────────────────────────
+#
+# Checked rather than assumed: there is no existing location that would already
+# serve a sibling file. `/ops/` is an EXACT match (`location = /ops/`) with
+# `root /var/www`, so it serves only the hub's own index and not /ops/anything.
+# The four dashboards each carry their own prefix alias, and the two harbor JSON
+# addresses are each their own exact-match alias. So a published file gets a
+# published address, one block per file — which is the pattern here, not a
+# workaround.
+#
+# ── WHETHER TO INSTALL IT AT ALL ────────────────────────────────────────────
+#
+# The sentinel does NOT need this to work. It writes
+# /srv/postmark-sentinel/status.json unconditionally, and the alert reaches
+# Discord over an outbound POST, so the loud half is complete without nginx.
+# This block only makes the board readable from off-box — which is what the
+# operator round wants (it reads the harbor snapshot over HTTPS the same way,
+# and reading a board over ssh is a step the round will skip).
+#
+# Deliberately noindexed and CORS-open, exactly like the settlement receipt: it
+# is machine-readable operational state, not a page, and it names no secret —
+# the probes' URLs, verdicts and reasons are all facts a visitor could gather by
+# loading the same public pages themselves.
+
+    # The site sentinel's board (site-sentinel.mjs, every 10 min via
+    # postmark-site-sentinel.timer). One file to poll for "is the town up and
+    # is it fresh"; `headline` is the single line, `probes` is the detail.
+    location = /ops/sentinel.json {
+        alias /srv/postmark-sentinel/status.json;
+        default_type application/json;
+        add_header Access-Control-Allow-Origin * always;
+        add_header Cache-Control "no-cache" always;
+        add_header X-Robots-Tag "noindex, nofollow" always;
+    }

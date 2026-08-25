@@ -1,0 +1,59 @@
+[Unit]
+Description=site-sentinel — is the town UP, and is it FRESH; say so loudly when it is not
+# The answer to the founder's question of 2026-08-25, after the site's
+# half-hourly atlas sync failed on every run for a day beside a green Deploy and
+# nobody was told: "how can we LOUDLY BE NOTIFIED when something is down on the
+# site?"
+#
+# Watches OUTCOMES, not pipelines — the doors answer, the served build stamp is
+# current, the office's index is current, the deployed Ferry's Daily is the
+# town's current Ferry's Daily — because an outcome probe catches causes nobody
+# predicted. It reads the two workflows too, as a second opinion.
+#
+# It records nothing and repairs nothing. No pen, no ledger write, no clone
+# touched, so no town.lock — exactly like postmark-harbor-watch and
+# postmark-usdc-watch. Its only writes are its own state, its own status board,
+# and an HTTPS POST to a Discord webhook.
+#
+# It cannot see its own death: if this box is down, nothing here alarms. That
+# needs an off-box heartbeat and is deliberately NOT solved here — see the
+# header of tools/site-sentinel.mjs.
+#
+# NOT INSTALLED. Repo copy only — the box install is Wright's hand:
+#   sudo cp deploy/postmark-site-sentinel.{service,timer} /etc/systemd/system/
+#   sudo mkdir -p /srv/postmark-sentinel && sudo chown meepo /srv/postmark-sentinel
+#   # the webhook, and NEVER in either repo:
+#   sudo tee /etc/postmark-sentinel.env >/dev/null <<'EOF'
+#   SENTINEL_DISCORD_WEBHOOK=https://discord.com/api/webhooks/<id>/<token>
+#   EOF
+#   sudo chmod 600 /etc/postmark-sentinel.env
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now postmark-site-sentinel.timer
+#   # first run by hand, to see the board before the timer owns it:
+#   sudo -u meepo systemctl start postmark-site-sentinel && \
+#     journalctl -u postmark-site-sentinel -n 30 --no-pager
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=meepo
+WorkingDirectory=/srv/postmark-office
+# Optional and separate from the alert channel: with no env file at all the
+# watch still runs every probe and still writes its board — it just says, on
+# stderr and on the board itself, that it had nowhere to send the alert. That
+# visible degradation is deliberate; a sentinel that falls silent is
+# indistinguishable from a healthy town.
+EnvironmentFile=-/etc/postmark-sentinel.env
+# The box's existing read-only GitHub token (tools/git-report.mjs already reads
+# it). Optional: both repos are public, so the watch works keyless at GitHub's
+# 60-requests-per-hour anonymous budget and merely spends less of the box's
+# shared allowance when the token is present.
+Environment=SENTINEL_GITHUB_TOKEN_FILE=/srv/postmark-office/git-metrics-token
+ExecStart=/usr/bin/node tools/site-sentinel.mjs \
+  --state /srv/postmark-sentinel/state.json \
+  --out /srv/postmark-sentinel/status.json
+# Exit 0 even when probes are red. A red probe is a REPORT that was delivered,
+# not a failure of this unit — failing the unit would make `systemctl status`
+# permanently red for as long as the site is, and would bury an actual crash of
+# the watch itself inside the noise. The watch's own failure is the non-zero
+# exit; the town's failure is the Discord message.
