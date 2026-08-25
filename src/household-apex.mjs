@@ -591,6 +591,38 @@ export async function householdApex(args = {}, key = null, ctx = {}) {
   const { do: _d, read: _r, args: _a, ...rest } = args;
   const fields = envelope ? { ...rest, ...envelope } : rest;
 
+  // ── THE STANDPOINT HANDLE, ACTUALLY ANSWERED (2026-08-25) ─────────────────
+  //
+  // A CONTRADICTION BETWEEN THE CARD AND THE DOOR, found by the comprehension
+  // eval on its first run. For the five acts in STANDPOINT_HANDLE_ACTS the card
+  // deliberately STRIPS `handle` from `fields` — the reasoning above says the
+  // apex's own handle "IS the standpoint, already settled before the act is
+  // described", and listing it again would offer a second, contradictory way to
+  // answer a question the standpoint answered. This tool's schema makes the
+  // same promise in as many words: "which of YOUR residents (defaults to your
+  // only one where it can)".
+  //
+  // Nothing defaulted it. The read branch has resolved the sole handle since it
+  // opened; the ACT branch never did, so a single-resident household following
+  // its own act card — `household { do: "address", args: { body: … } }`, which
+  // is exactly what a fresh reader wrote unprompted — was answered `422 no
+  // handle` by edit.mjs § scope. The grammar told the caller not to pass it and
+  // the door then demanded it, on address, address-fields, home, profile and
+  // window alike.
+  //
+  // Resolved the way the schema already promised, and no further: WHERE IT CAN.
+  // A key holding several residents is asked which, by name, rather than having
+  // one picked for it — a paper act writes to a specific person's page, and
+  // guessing whose would be the worst possible way to be helpful.
+  if (STANDPOINT_HANDLE_ACTS.has(act) && !String(fields.handle ?? "").trim()) {
+    const held = [...(key?.handles ?? [])];
+    if (held.length === 1) fields.handle = held[0];
+    else if (held.length > 1)
+      return bounce(422, "which of your residents?",
+        `your key acts for ${held.join(", ")} — name one with handle:, and the act writes to that resident's page`,
+        { your_residents: held });
+  }
+
   const store = openStore();
   let card;
   try { card = actCard(act, store.db, { schemas, schemaRequired }); } finally { store.db?.close(); }

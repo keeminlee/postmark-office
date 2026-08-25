@@ -22,7 +22,10 @@
 //
 //   node --test test/doorstep-bundle.test.mjs
 
-import test from "node:test";
+import test, { after } from "node:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { SCHEMA } from "../src/schema.mjs";
@@ -104,6 +107,11 @@ function bundleDb() {
 }
 
 const db = bundleDb();
+// A real (empty) directory rather than a path that does not exist: the paper
+// acts that FOUND a page will happily mkdir their way toward one, and a
+// throwaway temp dir keeps that off the filesystem the developer lives on.
+const scratch = mkdtempSync(join(tmpdir(), "postmark-bundle-"));
+after(() => rmSync(scratch, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
 const meta = { as_of: AS_OF, quest_registry: JSON.stringify({ quests: [] }) };
 // canWrite false and clone null: no town checkout in a unit fixture, so the
 // garnishes that need one simply do not attach. The segments need none of them.
@@ -317,4 +325,50 @@ test("the household's three new acts are dispatchable and name the flats they ch
   const bare = await householdApex({}, null, { db });
   const names = bare.acts.map((c) => c.act);
   for (const a of ["send", "stake-vote", "address-fields"]) assert.ok(names.includes(a), `${a} carries a card on the bare read`);
+});
+
+// ── the standpoint handle, on the ACT side ──────────────────────────────────
+
+test("a paper act follows its OWN card: handle strips from `fields`, so the door must default it", async () => {
+  // THE CONTRADICTION THIS CLOSES, found by the comprehension eval's first run.
+  // The act card for the five STANDPOINT_HANDLE_ACTS strips `handle` from
+  // `fields` — the standpoint answered it — and this tool's schema promises
+  // "which of YOUR residents (defaults to your only one where it can)". Nothing
+  // defaulted it on the act branch, so a single-resident household making
+  // exactly the call its card describes was answered `422 no handle`.
+  //
+  // The falsifier is written so it CAN fail: it asserts the bounce is no longer
+  // the handle bounce, rather than asserting success — this fixture has no town
+  // clone, so the act cannot land, and a test that demanded a happy answer here
+  // would be testing the fixture rather than the door.
+  const key = { household: "h", handles: new Set([HANDLE]) };
+  const ctx2 = { db, clone: scratch, odb: null, dbPath: null, pen: null, canWrite: true };
+  for (const act of ["address", "address-fields", "home", "profile", "window"]) {
+    // A THROW COUNTS AS PASSING THE GATE. With no real town checkout some of
+    // these reach their writer and die on git; what is being proven is that
+    // they got PAST the standpoint gate, not that they landed.
+    let r;
+    try { r = await householdApex({ do: act, args: { body: "prose", html: "<p>x</p>" } }, key, ctx2); }
+    catch { continue; }
+    assert.notEqual(r.defect, "no handle",
+      `do: "${act}" demanded a handle its own card told the caller not to pass`);
+  }
+});
+
+test("…but a key holding several residents is ASKED which, never guessed for", async () => {
+  // "Where it can" is the whole promise, and no further: a paper act writes to
+  // one named person's page, and picking whose would be the worst possible way
+  // to be helpful.
+  const key = { household: "h", handles: new Set([HANDLE, "r001"]) };
+  const ctx2 = { db, clone: scratch, odb: null, dbPath: null, pen: null, canWrite: true };
+  const r = await householdApex({ do: "address", args: { body: "prose" } }, key, ctx2);
+  assert.equal(r.code, 422);
+  assert.match(r.defect, /which of your residents/);
+  assert.deepEqual([...r.your_residents].sort(), [HANDLE, "r001"].sort());
+});
+
+test("the READ side already defaulted, and still does — the two branches now agree", async () => {
+  const key = { household: "h", handles: new Set([HANDLE]) };
+  const r = await householdApex({ read: "address" }, key, { db });
+  assert.equal(r.of, HANDLE, "a sole resident is the standpoint on reads, as it has always been");
 });
