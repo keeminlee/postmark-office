@@ -62,6 +62,57 @@ export function logPaperAct(odb, { act, handle, household, args, key }) {
 }
 
 /**
+ * THE DOOR THAT LOGS ITSELF — one seam, and the reason it moved here.
+ *
+ * Wave 2 put the logging in mcp.mjs's FLAT-TOOL switch, one call site beside
+ * one of the three ways a paper act reaches a door. The dev rehearsal found the
+ * other two: `PATCH /profile/{handle}` calls the verb directly in server.mjs,
+ * and the household apex's `do: "profile"` calls it directly in
+ * household-apex.mjs. Both skipped the log entirely — and since the flats are
+ * the DELISTED path, flag-on in production most paper edits would never have
+ * reached the log at all, while `your_pending_edits` went on reporting a hot
+ * tense it could not see. A disclosure that lies by omission is worse than one
+ * that is missing, because it reads as an answer.
+ *
+ * So the log now lives where the pen commit lives. A skin cannot forget it,
+ * because a skin no longer has the option: there is nothing to remember.
+ *
+ * THE LOG HANDLE IS THE FIFTH ARGUMENT, and that is load-bearing rather than
+ * plumbing. `replayPaperAct` calls the door with FOUR — `door(args, asKey, db,
+ * clone)` — so the drain physically cannot pass one, and a replay therefore
+ * cannot write a row for the row it is draining. That is the same structural
+ * guard wave 4 gave the mail door by binding `send_letter` to the flag-off pen:
+ * the drain's safety is a shape, not a flag anybody has to check.
+ */
+export function paperDoor(act, impl) {
+  return function paperDoorCall(args, key, db, clone, odb = null) {
+    const out = impl(args, key, db, clone);
+    // AFTER success only. A bounce throws out of `impl` and never reaches this
+    // line, so no row can ever claim an edit that did not happen.
+    if (!odb || out?.error) return out;
+    let seq = null;
+    try {
+      seq = logPaperAct(odb, { act, handle: args?.handle, household: key?.household, args, key });
+    } catch (e) {
+      // THE EDIT LANDED — the pen commit is already in the town clone, so
+      // failing the call here would tell the caller a true thing about the log
+      // by telling them a false thing about their edit. But it does not vanish
+      // either, which is what the old seam did: flag-on, a log that will not
+      // write means the crossing will not settle this act and the hot tense is
+      // blind to it, and nobody would ever know. It is loud on stderr, in the
+      // office's own instrumentation grammar, and the answer still carries the
+      // edit.
+      console.error(`[town-log] paper act "${act}" for ${args?.handle ?? "(no handle)"} did NOT reach the log: ${String(e?.message ?? e)}`);
+      return out;
+    }
+    return seq == null ? out : { ...out, logged: { seq, settles_at: SETTLES_AT } };
+  };
+}
+
+/** What a caller is told about when their logged edit becomes the record. */
+export const SETTLES_AT = "the next ferry crossing (00:00 / 12:00 UTC)";
+
+/**
  * THE HOT TENSE: the un-drained paper acts belonging to THIS caller.
  *
  * Newest-last, so a caller who edited twice sees the second edit — the log is
@@ -105,7 +156,7 @@ export function hotTenseBlock(odb, key, { handle = null } = {}) {
       handle: r.handle, act: r.act, file: PAPER_ACTS[r.act]?.file(r.handle) ?? null,
       written_at: r.writtenAt, seq: r.seq,
     })),
-    settles_at: "the next ferry crossing (00:00 / 12:00 UTC)",
+    settles_at: SETTLES_AT,
     note: "your own edits, already made and not yet settled into the record — the town's copy still reads as it did until the crossing",
   };
 }

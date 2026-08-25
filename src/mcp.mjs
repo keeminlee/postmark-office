@@ -20,13 +20,10 @@ import { WORLD_TOOLS, callWorldTool, worldBlockForHandle } from "./world.mjs";
 import { apexEnabled, apexTools, dispatchToolFor, worldApex } from "./world-apex.mjs"; // stage 3: the apex `world` verb, behind WORLD_APEX
 import { HOUSEHOLD_TOOL, householdApex, householdDispatchToolFor, paperGaps } from "./household-apex.mjs";
 import { TOWN_TOOL, townApex, townDispatchToolFor, townTools } from "./town-apex.mjs";
-import { hotTenseBlock, logPaperAct, PAPER_ACTS } from "./town-updates.mjs"; // wave 2: paper acts as town-log rows, and the caller's own hot tense
+import { hotTenseBlock } from "./town-updates.mjs"; // wave 2: the caller's own hot tense (the paper acts now log inside the door — edit.mjs)
 import { hotMailBlock, sendLetterAsRow } from "./town-mail.mjs"; // wave 3: send_letter as a town-log row — the slow-mail law made structural
 import { townLogEnabled } from "./town-journal.mjs";
 
-// the door name a paper act is logged under — derived from PAPER_ACTS so the two
-// can never name different sets.
-const PAPER_ACT_FOR = Object.fromEntries(Object.entries(PAPER_ACTS).map(([act, spec]) => [spec.tool, act])); // the third apex (POS-46): the commons' reads, the register's writes // the third door (2026-08-15): who you are, what your house lacks
 import { householdOf } from "./households.mjs";
 
 // Tools that WRITE — gated on a signed-in door. Called without a credential
@@ -460,19 +457,18 @@ async function callTool(name, args, ctx) {
       const verb = { update_address_body: updateAddressBody, update_address_fields: updateAddressFields,
         update_home: updateHome, update_profile: updateProfile, update_window: updateWindow }[name];
       try {
-        const out = verb(args, key, db, clone);
-        // ── wave 2: the act is written to the town log (TOWN_SINGLE_LOG) ───
-        // AFTER the door has done its work and only if it succeeded, so a
-        // bounce never leaves a row claiming an edit that did not happen.
-        // Flag-off this is not reached and the door is byte-identical.
-        const act = PAPER_ACT_FOR[name];
-        if (act && odb && !out?.error) {
-          try {
-            const seq = logPaperAct(odb, { act, handle: args?.handle, household: key?.household, args, key });
-            if (seq != null) return { ...out, logged: { seq, settles_at: "the next ferry crossing (00:00 / 12:00 UTC)" } };
-          } catch { /* the edit landed; a log that will not write is not a reason to tell the caller it did not */ }
-        }
-        return out;
+        // ── the town log rides the DOOR now (POS-44, the paper seam) ───────
+        // This switch used to log here, and that was the whole defect: it is
+        // one of THREE ways a paper act reaches a door, and it is the delisted
+        // one. `PATCH /profile/{handle}` and the household apex's
+        // `do: "profile"` both call the verb directly and logged nothing, so
+        // flag-on most real edits never reached the log while
+        // `your_pending_edits` reported a hot tense it could not see.
+        //
+        // Passing `odb` is now the whole contribution: the door writes the row
+        // beside its own pen commit, and the `logged` block below still rides
+        // the answer exactly as it did — same shape, same field, one owner.
+        return verb(args, key, db, clone, odb);
       }
       catch (e) { if (e.code) return { error: "bounce", defect: e.defect, hint: e.hint }; throw e; }
     }

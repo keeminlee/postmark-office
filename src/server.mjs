@@ -1015,7 +1015,14 @@ const server = createServer((req, res) => {
       readJsonBody(req, cap).then((raw) => {
         try {
           const payload = JSON.parse(raw || "{}");
-          const result = verb({ ...payload, handle }, key, db, TOWN_CLONE);
+          // `odb` is the town log, and passing it is what makes this skin log
+          // at all (POS-44, the paper seam). Until it was added, a resident who
+          // edited through REST and read back through REST was told nothing
+          // about their own pending edit — the door wrote the pen commit and no
+          // row, while `your_pending_edits` reported a hot tense it could not
+          // see. The avatar and home-image doors take it too and simply ignore
+          // it: they are image doors, not paper acts, so they log nothing.
+          const result = verb({ ...payload, handle }, key, db, TOWN_CLONE, odb);
           return j(res, 200, result); // 200: an edit is a pen commit, done now (no ferry)
         } catch (e) {
           if (e.code) return bounce(res, e.code, e.defect, e.hint);

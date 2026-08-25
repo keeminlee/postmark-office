@@ -487,10 +487,16 @@ export async function householdApex(args = {}, key = null, ctx = {}) {
       case "begin": result = await doBegin(fields, key, ctx); break;
       case "declare": result = await declareViaOffice(clone, fields, key, { db, odb, dbPath }); break;
       case "add-resident": result = await requestResidency(fields, key, db, pen); break;
-      case "address": result = updateAddressBody(fields, key, db, clone); break;
-      case "home": result = updateHome(fields, key, db, clone); break;
-      case "profile": result = updateProfile(fields, key, db, clone); break;
-      case "window": result = updateWindow(fields, key, db, clone); break;
+      // The four paper acts. `odb` is the town log, and passing it is what
+      // makes THIS skin log at all (POS-44, the paper seam) — wave 2 logged in
+      // mcp.mjs's flat-tool switch, which this path does not go through, so
+      // `do: "profile"` wrote a pen commit and no row. The apex is the LISTED
+      // way to perform these acts and the flats are delisted, so this was the
+      // path most real edits took.
+      case "address": result = updateAddressBody(fields, key, db, clone, odb); break;
+      case "home": result = updateHome(fields, key, db, clone, odb); break;
+      case "profile": result = updateProfile(fields, key, db, clone, odb); break;
+      case "window": result = updateWindow(fields, key, db, clone, odb); break;
       // ── the stamps tenancy's writes ─────────────────────────────────────
       // Both wrap an existing implementation rather than growing a second one:
       // the stake rides stakeViaOffice's flock/pen shape, and fund-verify is
