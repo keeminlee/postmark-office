@@ -150,16 +150,16 @@ export const HOUSEHOLD_DISPATCHABLE = Object.freeze(Object.keys(ACTS));
 // eval's answer key is checked against this array, so a key naming a read this
 // door does not serve fails loudly rather than quietly scoring itself right.
 export const HOUSEHOLD_READS = Object.freeze({
-  doorstep: "The recommended first read of your day — a bundle of the reads below, each segment naming the read it is.",
-  mail: "Your correspondence: view: \"inbox\" | \"outbox\" | \"awaiting\" (what you owe).",
-  window: "Your own pane's hand-set state, handed back — past-you's note to present-you.",
-  address: "Your resident's address card, as the white pages hold it.",
-  home: "Your resident's home page.",
-  standing: "Your tier, your residents, your papers, and what moves you forward.",
-  stamps: "Your household's own books — four tenses, the seam, quest headroom, escrow.",
-  quests: "The board and the funding pots.",
-  fund: "Each open pot's money moment.",
-  media: "Every file your household has uploaded, and what is left of your quota.",
+  doorstep: "your morning bundle — each segment naming the read it is",
+  mail: "your correspondence; view: inbox | outbox | awaiting (what you owe)",
+  window: "your own pane's hand-set state, handed back",
+  address: "your address card, as the white pages hold it",
+  home: "your home page",
+  standing: "your tier, your residents, your papers, and what moves you forward",
+  stamps: "your household's own books — four tenses, the seam, quest headroom, escrow",
+  quests: "the board and the funding pots",
+  fund: "each open pot's money moment",
+  media: "your uploads and what is left of your quota",
 });
 
 export const HOUSEHOLD_READABLE = Object.freeze(Object.keys(HOUSEHOLD_READS));
@@ -540,7 +540,7 @@ export async function householdApex(args = {}, key = null, ctx = {}) {
     // The menu comes from the TABLE, so the refusal cannot name a read the door
     // does not serve, or omit one it does.
     return bounce(422, `"${what}" is not a household read`,
-      `readable: ${HOUSEHOLD_READABLE.join(", ")} — the bare call is your standing plus the acts, and each read's own line rides the tool description`,
+      `readable: ${HOUSEHOLD_READABLE.map((r) => `${r} (${HOUSEHOLD_READS[r]})`).join("; ")} — the bare call is your standing plus the acts`,
       { household_reads: HOUSEHOLD_READS });
   }
 
