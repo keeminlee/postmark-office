@@ -964,6 +964,11 @@ export function potBoard(db, extraInvalid = []) {
       // answer and must not be read as "never closes".
       close: d.close ?? null,
       min_close_usd: d.min_close_usd ?? null,
+      // WHEN THE FIRST CLOSE RUNS, when the pot names it. Carried for the same
+      // reason the two above are: the file states it and a door that drops it
+      // makes every consumer either guess the date or go without one. § _first_close:
+      // "Surfaces render the epoch from this field, not from the posting date."
+      first_close: d.first_close ?? null,
       teach: TEACH.pot,
       // BOUND THE SUBLISTS, NOT THE POTS. There are two pots and there will not
       // suddenly be two hundred; what grows without limit is INSIDE each one —

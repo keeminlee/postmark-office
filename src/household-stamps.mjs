@@ -229,6 +229,39 @@ export async function potStakeViaOffice(clone, { from, pot, stamps }, key, { cha
   };
 }
 
+// ── the published close, in the pot file's own word ──────────────────────────
+// THE WORD IS PRIMARY, and a pot that has not said one must never be read as
+// though it had. Three cases here and no fourth:
+//
+//   "epoch"  the monthly pot. Its stakes burn at each epoch close and split by
+//            the keeping law, and the door says so in the pot's own sentence
+//            rather than leaving the caller to derive it from the cadence and
+//            the target. The word was made EXPLICIT in the record on
+//            2026-08-25 at the founder's word, after a resident found the
+//            public stamps page and this very read deriving the same silent
+//            pot in opposite directions — the page promising an epoch close,
+//            the door warning that nothing said one. Both readers key on the
+//            word now; neither derives it.
+//   any other word  said, and passed through as said. The door does not invent
+//            copy for a word the law has not spelled here.
+//   null     GENUINELY UNSTATED — and the warning below stays exactly as it
+//            was written. That honesty was never the bug: one pot's record was
+//            silent, and the reader that said so was the one telling the
+//            truth. A pot that still names no word must still get this.
+//
+// The sentence is the pot file's, quoted: pot-keeping-ec2.json § source.
+export const EPOCH_CLOSE_SAYS =
+  "at each month's close, the share of every stake that the month's dollars funded burns and splits between the stakers themselves and the payers per the keeping law (ECONOMY-DIALS.json law_side.keeping)";
+
+export const CLOSE_UNSTATED =
+  "this pot's file names no close word — nothing in the record says when, or whether, a stake on it would burn";
+
+export function publishedClose(p) {
+  if (!p?.close) return { word: null, floor_usd: null, unstated: CLOSE_UNSTATED };
+  const said = { word: p.close, floor_usd: p.min_close_usd };
+  return p.close === "epoch" ? { ...said, says: EPOCH_CLOSE_SAYS } : said;
+}
+
 // ── tenant 4a · the money moment, read ───────────────────────────────────────
 // THE PUBLICATION LAW (the USDC runbook, R9): "The address publishes ONLY
 // beside a pot (the money moment carries the disclosure, per §10's second
@@ -251,6 +284,13 @@ export function fundRead(_key, { db, stripeUrl = process.env.FUND_STRIPE_URL ?? 
       beneficiary: p.beneficiary,
       close: p.close,
       min_close_usd: p.min_close_usd,
+      // WHEN THE FIRST CLOSE ACTUALLY RUNS, for every pot that names it — not
+      // only the epoch ones. A caller consenting to a burn is owed the date the
+      // first one lands, and until now this read carried the cadence and the
+      // target and never the day. § _first_close: "Surfaces render the epoch
+      // from this field, not from the posting date." Null on a pot that has not
+      // named one, which is a real answer and not a missing field.
+      first_close: p.first_close,
       target_usd_per_epoch: p.target_usd_per_epoch,
       received_usd: p.received_usd,
       escrow: p.escrow?.staked ?? 0,
@@ -264,9 +304,7 @@ export function fundRead(_key, { db, stripeUrl = process.env.FUND_STRIPE_URL ?? 
         mark: POT_STAKEABLE_SLOT,
         says: POT_STAKEABLE_BODY,
         mode: { mark: STAKE_POT_MARK, says: STAKE_POT_BODY },
-        published_close: p.close
-          ? { word: p.close, floor_usd: p.min_close_usd }
-          : { word: null, floor_usd: null, unstated: "this pot's file names no close word — nothing in the record says when, or whether, a stake on it would burn" },
+        published_close: publishedClose(p),
       },
       ...(open
         ? {

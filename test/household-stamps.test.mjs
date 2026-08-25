@@ -27,14 +27,27 @@ function tempTown(pots) {
   }
   return dir;
 }
+// The keeping pot AS THE RECORD NOW READS IT. Its `close` word was made
+// explicit on 2026-08-25; this fixture carried the pre-trueing silent shape,
+// and a fixture that lags the record is a green suite asserting a world that
+// no longer exists.
 const EPOCH_POT = {
   pot: "keeping-ec2", status: "open", title: "Keep the lights on",
   target_usd_per_epoch: 150, epoch_cadence: "monthly", received_usd: 0, beneficiary: "keeminlee",
+  close: "epoch", first_close: "2026-09-30",
 };
 const ELASTIC_POT = {
   pot: "darko-fund", status: "open", title: "The DARKO fund",
   target_usd_per_epoch: null, epoch_cadence: "monthly", received_usd: 0, beneficiary: "keeminlee",
-  close: "elastic", min_close_usd: 5,
+  close: "elastic", min_close_usd: 5, first_close: "2026-09-30",
+};
+// THE DECOY. A pot that posts a target and names no close word at all — the
+// genuinely-silent case, which must keep getting the humble answer. It exists
+// so that teaching the doors the word `epoch` cannot quietly delete the path
+// for a pot that never said one.
+const SILENT_POT = {
+  pot: "hushed", status: "open", title: "A pot that has not said how it closes",
+  target_usd_per_epoch: 40, epoch_cadence: "monthly", received_usd: 0, beneficiary: "keeminlee",
 };
 
 // ── the amendment: a targetless pot is lawful when it says why ──────────────
@@ -48,15 +61,21 @@ test("a targetless pot with an elastic close word is READ, not refused", () => {
   // Until this reader carried that amendment the MCP literally dropped the
   // DARKO box: the town posted a need, and every door answered as though the
   // pot did not exist.
-  const { pots, invalid } = readPots(tempTown({ "darko-fund": ELASTIC_POT, "keeping-ec2": EPOCH_POT }));
-  assert.deepEqual(invalid, [], "neither pot is malformed");
+  const { pots, invalid } = readPots(tempTown({ "darko-fund": ELASTIC_POT, "keeping-ec2": EPOCH_POT, hushed: SILENT_POT }));
+  assert.deepEqual(invalid, [], "no pot here is malformed");
   const darko = pots.find((p) => p.id === "darko-fund");
   assert.ok(darko, "the elastic pot must survive the read");
   assert.equal(darko.close, "elastic", "and carry its own word");
   assert.equal(darko.min_close_usd, 5, "and its floor");
   const ec2 = pots.find((p) => p.id === "keeping-ec2");
-  assert.equal(ec2.close, null, "a pot that names no word carries null — not a guess");
-  assert.equal(ec2.min_close_usd, null);
+  assert.equal(ec2.close, "epoch", "the keeping pot carries the word its record now speaks");
+  assert.equal(ec2.min_close_usd, null, "and no floor, because it posts a target instead");
+  // THE DECOY, and the claim it protects: the reader's close word is an
+  // ALLOWLIST, so a word it does not hold reads as null — "the record has not
+  // said". A pot that genuinely has not said must land there, and only a pot
+  // that genuinely has not said.
+  const hushed = pots.find((p) => p.id === "hushed");
+  assert.equal(hushed.close, null, "a pot that names no word carries null — not a guess");
 });
 
 test("a standing box is lawful too, and a targetless pot with NO word is still refused", () => {
@@ -181,6 +200,102 @@ test("the address rides only beside an OPEN pot, never bare in the envelope", ()
   assert.match(answer.publication_law, /never bare/);
 });
 
+// ── the published close word ────────────────────────────────────────────────
+//
+// A db that serves potBoard exactly the pot files handed to it, and nothing
+// else — no deeds, no receipts, no escrow. The fund read is a read OF the pot
+// files; the rest of the seam is another test's subject.
+const potDb = (files) => ({
+  prepare: (sql) => ({
+    all: () => (/FROM pots\b/.test(sql) ? files.map((f) => ({ id: f.pot, json: JSON.stringify(f) })) : []),
+    get: () => undefined,
+  }),
+});
+const potIn = (answer, id) => answer.pots.find((p) => p.pot === id);
+
+test("a pot whose word is `epoch` gets the contract stated, in the pot file's own sentence", () => {
+  // THE LAW THIS ASSERTS — WHITE_PAGES/pot-keeping-ec2.json § source, quoted
+  // verbatim, and the founder's explicit-word ruling of 2026-08-25 that made
+  // the `close` field say out loud what this sentence had always ruled:
+  //
+  //   "at each month's close, the share of every stake that the month's dollars
+  //    funded burns and splits between the stakers themselves and the payers
+  //    per the keeping law (ECONOMY-DIALS.json law_side.keeping)"
+  //
+  // A caller consenting to a burn is owed the contract in the record's words.
+  // Before the trueing this door gave the keeping pot the UNSTATED warning
+  // while the public stamps page promised an epoch close — the same pot, two
+  // readers, opposite answers, because each was deriving a word nobody spoke.
+  const answer = fundRead(null, { db: potDb([EPOCH_POT]) });
+  const ec2 = potIn(answer, "keeping-ec2");
+  const pc = ec2.stakeable.published_close;
+  assert.equal(pc.word, "epoch", "the door says the word the record speaks");
+  assert.equal(pc.says,
+    "at each month's close, the share of every stake that the month's dollars funded burns and splits between the stakers themselves and the payers per the keeping law (ECONOMY-DIALS.json law_side.keeping)",
+    "and states the contract in the pot file's own sentence, never a paraphrase of it");
+  // and the warning for a silent record is GONE from this pot, which is the
+  // whole of what the resident found
+  assert.equal("unstated" in pc, false,
+    "a pot whose record speaks must not also be described as silent");
+});
+
+test("the WHOLE point: the humble path survives, for a pot that genuinely has not said", () => {
+  // THE HONESTY THAT WAS NEVER THE BUG. household-stamps.mjs § CLOSE_UNSTATED,
+  // quoted, and it must keep answering for a pot whose file names no word:
+  //
+  //   "this pot's file names no close word — nothing in the record says when,
+  //    or whether, a stake on it would burn"
+  //
+  // The defect was one pot's SILENT RECORD, not the reader that said so. This
+  // decoy is here so that teaching the door `epoch` cannot quietly delete the
+  // path a wordless pot still needs.
+  const answer = fundRead(null, { db: potDb([EPOCH_POT, SILENT_POT]) });
+  const hushed = potIn(answer, "hushed").stakeable.published_close;
+  assert.equal(hushed.word, null, "no word is a real answer, not a missing field");
+  assert.equal(hushed.floor_usd, null);
+  assert.equal(hushed.unstated,
+    "this pot's file names no close word — nothing in the record says when, or whether, a stake on it would burn",
+    "the humble sentence stands exactly as written");
+  assert.equal("says" in hushed, false,
+    "and no contract is stated for a pot that stated none");
+  // the two pots in one answer: the epoch pot did NOT drag the silent one with it
+  assert.equal(potIn(answer, "keeping-ec2").stakeable.published_close.word, "epoch");
+});
+
+test("a word the law spells elsewhere is passed through as said, with no invented copy", () => {
+  // `elastic` and `none` are the other two words the law spells
+  // (pot-darko-fund.json § _close). The door carries them and does not write
+  // prose for them here — the elastic contract lives in the pot's own file, and
+  // a second copy on this door is a second thing that can drift.
+  const answer = fundRead(null, { db: potDb([ELASTIC_POT]) });
+  const pc = potIn(answer, "darko-fund").stakeable.published_close;
+  assert.equal(pc.word, "elastic");
+  assert.equal(pc.floor_usd, 5, "and the floor rides with the word");
+  assert.equal("unstated" in pc, false, "a said word is not a silence");
+  assert.equal("says" in pc, false, "and the door invents no contract sentence for it");
+});
+
+test("the fund read names WHEN the first close runs, for every pot that has one", () => {
+  // THE LAW — pot-keeping-ec2.json § _first_close, quoted (founder's ruling,
+  // 2026-08-25 beta-launch sitting):
+  //
+  //   "the pots opened in late August with $0 received, so the first epoch
+  //    ROUNDS FORWARD — the first month closes at the END of September; dollars
+  //    arriving before then all belong to the 2026-09 epoch. Surfaces render
+  //    the epoch from this field, not from the posting date."
+  //
+  // This read carried the cadence and the target and never the day, on the one
+  // surface where a caller is deciding whether to send money.
+  const answer = fundRead(null, { db: potDb([EPOCH_POT, ELASTIC_POT, SILENT_POT]) });
+  assert.equal(potIn(answer, "keeping-ec2").first_close, "2026-09-30");
+  // NOT only the epoch pots — the elastic box names one too, and a read that
+  // surfaced the date for one kind of pot and not the other would have made the
+  // field look like a property of the word rather than of the pot.
+  assert.equal(potIn(answer, "darko-fund").first_close, "2026-09-30");
+  // and null, not absent, on a pot that names none
+  assert.equal(potIn(answer, "hushed").first_close, null);
+});
+
 test("the disclosure has ONE home, and it carries both mandated sentences", () => {
   // Extracted when this door was built: GET /fund/intake and the household
   // money moment serve the same object, because two copies of a §10 consent
@@ -300,8 +415,10 @@ test("the stake answer and the fund read carry the menu and the mode, not a summ
   assert.ok(menuAt > 0, "the fund read must carry the menu at all");
   assert.ok(moneyAt > 0 && menuAt < moneyAt,
     "the menu a caller is consenting to must come before the address they act on");
-  // anchored: a renamed key still contains the old name as a substring
-  assert.match(fundRead, /\bpublished_close: p\.close/);
+  // anchored: a renamed key still contains the old name as a substring. The
+  // shape moved into publishedClose() when the door learned the `epoch` word —
+  // the claim is unchanged, only where the object is built.
+  assert.match(fundRead, /\bpublished_close: publishedClose\(p\)/);
 });
 
 test("the stake's fields, read off the door: from, pot, stamps — and no mode", async () => {
