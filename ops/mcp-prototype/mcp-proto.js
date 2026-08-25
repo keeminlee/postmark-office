@@ -683,22 +683,34 @@
 
   // ── the one grammar-aware affordance ──────────────────────────────────────
   //
-  // Walk any payload for arrays named `actions` whose entries carry both an
-  // `action` name and a `fields` block. That pair IS the grammar; no action
-  // name, tool name or door is known here.
+  // Walk any payload for arrays named `actions` OR `acts` whose entries carry
+  // both a name and a `fields` block. That pair IS the grammar; no action
+  // name, tool name or door is known here. TWO SPELLINGS, ONE GRAMMAR
+  // (Keemin-ruled 2026-08-25): the world speaks `actions`/`action` — the
+  // class-mark key, what the ground grants where you stand — while household
+  // and town speak `acts`/`act`, the door's own fixed verbs. The distinction
+  // is the town's vocabulary, so the walker honors both instead of forcing
+  // one door to wear the other's word. Entries normalize to `.action` here so
+  // everything downstream keeps reading one key.
 
   function collectActions(root) {
     var out = [], seen = {};
+    function take(e, nameKey) {
+      var name = e && typeof e === "object" ? e[nameKey] : null;
+      if (typeof name === "string" && name
+          && e.fields && typeof e.fields === "object" && !Array.isArray(e.fields)
+          && !seen[name]) {
+        seen[name] = 1;
+        out.push(e.action === name ? e : Object.assign({}, e, { action: name }));
+      }
+    }
     (function walk(v, d) {
       if (!v || typeof v !== "object" || d > 8) return;
       if (Array.isArray(v)) { v.forEach(function (x) { walk(x, d + 1); }); return; }
       Object.keys(v).forEach(function (k) {
         var x = v[k];
-        if (k === "actions" && Array.isArray(x)) x.forEach(function (e) {
-          if (e && typeof e === "object" && typeof e.action === "string" && e.action
-              && e.fields && typeof e.fields === "object" && !Array.isArray(e.fields)
-              && !seen[e.action]) { seen[e.action] = 1; out.push(e); }
-        });
+        if (k === "actions" && Array.isArray(x)) x.forEach(function (e) { take(e, "action"); });
+        if (k === "acts" && Array.isArray(x)) x.forEach(function (e) { take(e, "act"); });
         walk(x, d + 1);
       });
     })(root, 0);
@@ -907,7 +919,7 @@
     payloads.forEach(function (p) { if (p.parsed) acts = acts.concat(collectActions(p.parsed)); });
     if (acts.length && state.cards[entry.tool]) {
       var strip = el("div", { class: "afford" }, [
-        el("div", { class: "ahead", text: "actions in this answer — one click prefills a call" }),
+        el("div", { class: "ahead", text: "acts in this answer — one click prefills a call" }),
       ]);
       var btns = el("div", { class: "abtns" });
       acts.forEach(function (a) {

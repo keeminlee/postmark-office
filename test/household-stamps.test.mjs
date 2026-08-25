@@ -313,7 +313,7 @@ test("the stake's fields, read off the door: from, pot, stamps — and no mode",
   const { householdApex } = await import("../src/household-apex.mjs");
   const answer = await householdApex({}, { household: "testers", handles: new Set(["tester"]) },
     { db: null, schemas: {}, schemaRequired: {} });
-  const stake = answer.actions.find((a) => a.action === "stake");
+  const stake = answer.acts.find((a) => a.act === "stake");
   assert.ok(stake, "the stake must be among the acts the door publishes");
   assert.deepEqual(Object.keys(stake.fields).sort(), ["from", "pot", "stamps"]);
   assert.equal("mode" in stake.fields, false, "a mode argument would contradict the taxonomy");

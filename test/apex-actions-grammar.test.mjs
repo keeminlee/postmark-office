@@ -6,13 +6,16 @@
 // name, tool name or door is known downstream. The gate is three conditions
 // (ops/mcp-prototype/mcp-proto.js) —
 //
-//   1. an array named `actions`, anywhere in the payload
-//   2. whose entries carry `action` (a non-empty string) and `fields` (a plain
-//      object)
+//   1. an array named `actions` OR `acts`, anywhere in the payload
+//   2. whose entries carry the matching name key (`action` / `act`, a
+//      non-empty string) and `fields` (a plain object)
 //   3. on a tool whose own inputSchema declares the do: + args: envelope
 //
-// — and the household apex answered a dialect of it until now, so no prefill
-// ever fired on the third door.
+// TWO SPELLINGS, ONE GRAMMAR (Keemin-ruled 2026-08-25): the world speaks
+// `actions` — class-granted, read where you stand — while household and town
+// speak `acts`, the door's own fixed verbs. For one release the household and
+// town answers carried both keys as aliases; the walker learned `acts` and
+// the duplicate retired.
 //
 // THESE FALSIFIERS RUN THE PROTOTYPE'S OWN CODE. `collectActions` and
 // `apexEnvelope` are lifted out of mcp-proto.js by source slice and evaluated
@@ -85,13 +88,13 @@ test("the bare household answer passes the prototype's own affordance gate", asy
 test("the three conditions, named literally, so a dialect drift says which one broke", async () => {
   const answer = await bare();
 
-  // 1 — an array NAMED actions.
-  assert.ok(Array.isArray(answer.actions), "condition 1: `actions` must be an array on the answer");
+  // 1 — an array NAMED acts (the door's own word; `actions` is the world's).
+  assert.ok(Array.isArray(answer.acts), "condition 1: `acts` must be an array on the answer");
 
-  // 2 — entries carrying action + fields, in the prototype's exact terms.
-  for (const e of answer.actions) {
-    assert.equal(typeof e.action, "string", "condition 2: `action` is a string");
-    assert.ok(e.action.length > 0, "condition 2: `action` is non-empty");
+  // 2 — entries carrying act + fields, in the walker's exact terms.
+  for (const e of answer.acts) {
+    assert.equal(typeof e.act, "string", "condition 2: `act` is a string");
+    assert.ok(e.act.length > 0, "condition 2: `act` is non-empty");
     assert.equal(typeof e.fields, "object", "condition 2: `fields` is an object");
     assert.notEqual(e.fields, null, "condition 2: `fields` is not null");
     assert.equal(Array.isArray(e.fields), false, "condition 2: `fields` is not an array");
@@ -103,22 +106,33 @@ test("the three conditions, named literally, so a dialect drift says which one b
   assert.equal(p.args?.type, "object", "condition 3: an args:-shaped object property");
 });
 
-test("a dialect answer is REFUSED by the same gate — the probe can tell them apart", () => {
-  // The shape this door spoke until today: `act`, and no fields. If the gate
-  // accepted this, everything above would be vacuous.
-  const dialect = { acts: [{ act: "home", blurb: "…" }] };
-  assert.equal(collectActions(dialect).length, 0, "the old shape must not pass, or the gate proves nothing");
-  // And an `actions` array whose entries are half-shaped is refused too.
+test("both spellings pass the gate; half-shapes are still REFUSED", () => {
+  // The two lawful grammars (Keemin-ruled 2026-08-25): the world's
+  // `actions`/`action` and the door's `acts`/`act`. Both collect, and both
+  // normalize to `.action` so downstream keeps one key.
+  const world = collectActions({ actions: [{ action: "walk", fields: { to: {} } }] });
+  assert.equal(world.length, 1);
+  assert.equal(world[0].action, "walk");
+  const door = collectActions({ acts: [{ act: "home", fields: { body: {} } }] });
+  assert.equal(door.length, 1);
+  assert.equal(door[0].action, "home", "an `acts` entry normalizes to `.action` for the strip");
+  // The TRULY old shape — fields missing — must still not pass, or the gate
+  // proves nothing. Half-shapes refused under either spelling.
+  assert.equal(collectActions({ acts: [{ act: "home", blurb: "…" }] }).length, 0, "act without fields");
   assert.equal(collectActions({ actions: [{ action: "home" }] }).length, 0, "action without fields");
-  assert.equal(collectActions({ actions: [{ fields: {} }] }).length, 0, "fields without action");
+  assert.equal(collectActions({ actions: [{ fields: {} }] }).length, 0, "fields without a name");
+  assert.equal(collectActions({ acts: [{ fields: {} }] }).length, 0, "fields without a name, acts spelling");
   assert.equal(collectActions({ actions: [{ action: "home", fields: [] }] }).length, 0, "fields must not be an array");
+  assert.equal(collectActions({ acts: [{ act: "home", fields: [] }] }).length, 0, "fields must not be an array, acts spelling");
+  // And an entry does not pass by wearing the OTHER spelling's name key.
+  assert.equal(collectActions({ acts: [{ action: "home", fields: {} }] }).length, 0, "an acts array is read by `act`, never `action`");
 });
 
 // ── the fields are real, and come from the world apex's own path ────────────
 
 test("every act's fields are generated, never empty-by-accident", async () => {
   const answer = await bare();
-  const at = (a) => answer.actions.find((e) => e.action === a);
+  const at = (a) => answer.acts.find((e) => e.act === a);
 
   // begin/declare read DECLARE_SCHEMA, and its three required fields must be
   // marked — an unmarked required field is the prefill offering a form that
@@ -162,7 +176,7 @@ test("every act's fields are generated, never empty-by-accident", async () => {
 
 test("the standpoint handle is stripped where the standpoint answers it — and ONLY there", async () => {
   const answer = await bare();
-  const at = (a) => answer.actions.find((e) => e.action === a);
+  const at = (a) => answer.acts.find((e) => e.act === a);
 
   // The four paper acts: `handle` is "which of YOUR residents", already settled
   // by the apex's own top-level parameter.
@@ -200,30 +214,30 @@ test("the fields come from the world apex's actionFields, not a second copy", ()
 
 test("the teaching prose survives the grammar, beside the quoted law", async () => {
   const answer = await bare();
-  const home = answer.actions.find((e) => e.action === "home");
+  const home = answer.acts.find((e) => e.act === "home");
   assert.match(home.teaches, /Tend your HOME page/,
     "the office's own how-to sentence must ride every entry — it used to appear only when the residue failed to resolve");
   assert.ok(home.blurb.length > 0, "and the blurb is still there");
   assert.equal(home.dispatches_to, "update_home", "and the target it becomes");
 });
 
-test("`acts` still answers, aliasing the same entries", async () => {
+test("the duplicate is dead: `actions` no longer rides the household answer", async () => {
   const answer = await bare();
-  assert.ok(Array.isArray(answer.acts), "the pre-grammar key is kept rather than renamed away");
-  assert.deepEqual(answer.acts.map((e) => e.act), answer.actions.map((e) => e.action));
-  // And the alias must not be double-counted by the walker: it is not named
-  // `actions`, so the strip shows each act once.
+  assert.equal("actions" in answer, false,
+    "one key, `acts` — the alias era lasted one release and is over");
+  // The walker still finds every act exactly once, through the acts spelling.
   const seen = collectActions(answer).map((e) => e.action);
+  assert.equal(seen.length, HOUSEHOLD_DISPATCHABLE.length, "every act collected through `acts`");
   assert.equal(new Set(seen).size, seen.length, "no act appears twice in the strip");
 });
 
-test("the act ANSWER's card speaks the same grammar, and keeps its old key", async () => {
+test("the act ANSWER's card speaks the same grammar, one key", async () => {
   const r = await householdApex({ do: "declare", args: { household: "H", handle: "h", card: "c" } }, key(),
     { ...ctx, clone: null, canWrite: false });
   // The act itself fails here (no clone) — the card rides the answer either way,
   // which is the point: the law is shown at the door whatever the outcome.
-  assert.equal(r.card.act, "declare", "the pre-grammar key survives on the card");
-  assert.equal(r.card.action, "declare", "and the grammar's key is there too");
+  assert.equal(r.card.act, "declare", "the door's own key, and the only one");
+  assert.equal("action" in r.card, false, "the alias-era `action` key is retired from the card");
   assert.equal(typeof r.card.fields, "object");
   assert.equal(r.card.fields.household.required, true);
 
@@ -232,7 +246,7 @@ test("the act ANSWER's card speaks the same grammar, and keeps its old key", asy
   // right here, because declare carries its own schema and hides the omission.
   const paper = await householdApex({ do: "home", args: { body: "x" } }, key(),
     { ...ctx, clone: null, canWrite: false });
-  assert.equal(paper.card.action, "home");
+  assert.equal(paper.card.act, "home");
   assert.ok("body" in paper.card.fields,
     "the card's fields must come through the same context the bare read uses");
 });

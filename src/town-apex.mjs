@@ -23,8 +23,10 @@
 // rule; the acts simply sit at the two ends of a household's life.
 //
 // The grammar is the world apex's, wholesale, for the third time: do: + args:
-// envelope, read: shadows, an `actions` array whose entries carry `action` and
-// `fields` through world-apex's own actionFields. The prototype's affordance
+// envelope, read: shadows, an `acts` array whose entries carry `act` and
+// `fields` through world-apex's own actionFields (the spelling is the
+// distinction — the world's `actions` are class-granted where you stand; a
+// door's own fixed verbs are `acts`). The prototype's affordance
 // fires on this door for free because the shape is the shape, not because
 // anything downstream learned the word "town".
 
@@ -96,8 +98,11 @@ function actCard(act, { schemas, schemaRequired } = {}) {
   const spec = TOWN_ACTS[act];
   if (!spec) return null;
   return {
-    action: act,
-    act,                                  // the alias the other apexes keep
+    // `act`, not `action` (Keemin-ruled 2026-08-25): the door's own fixed
+    // verbs are acts; `actions` is the WORLD's word — class-granted, read
+    // where you stand. Two spellings, one grammar; the prototype's walker
+    // honors both.
+    act,
     blurb: spec.inline,
     teaches: spec.inline,
     // The world apex's own field generation — third caller, still one
@@ -129,8 +134,9 @@ export async function townApex(args = {}, key = null, ctx = {}) {
     return {
       town: "Postmark",
       reading: TOWN_READABLE.map((r) => ({ read: r, blurb: TOWN_READS[r].blurb, serves: TOWN_READS[r].tool })),
-      actions: TOWN_DISPATCHABLE.map((a) => actCard(a, { schemas, schemaRequired })).filter(Boolean),
-      // The alias the other two apexes carry, same objects.
+      // `acts` — the household apex's key, and now the one key. (This line
+      // briefly rode as `actions` + `acts` computing the SAME cards twice;
+      // the duplicate retired with the rename.)
       acts: TOWN_DISPATCHABLE.map((a) => actCard(a, { schemas, schemaRequired })).filter(Boolean),
       the_register_law: REGISTER_LAW,
       named_not_built: NAMED_NOT_BUILT,

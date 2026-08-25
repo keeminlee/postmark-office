@@ -319,27 +319,27 @@ function fieldsForAct(act, { schemas, schemaRequired } = {}) {
 }
 
 /**
- * One act, as an entry in the WORLD APEX'S actions grammar — the array named
- * `actions`, whose entries carry `action` and `fields`. That pair is the whole
- * grammar the site's procedural affordance is gated on
- * (ops/mcp-prototype/mcp-proto.js § collectActions): no action name, tool name
- * or door is known downstream, only the shape. This door already passed the
- * other half of the gate — its tool schema declares the do:/args: envelope,
- * because its grammar is the world apex's wholesale — but its answer spoke a
- * dialect (`act`, and no fields at all), so the prefill never fired. One
- * grammar, two apexes.
+ * One act, as an entry in the acts grammar — the array named `acts`, whose
+ * entries carry `act` and `fields`. That pair is the whole grammar the site's
+ * procedural affordance is gated on (ops/mcp-prototype/mcp-proto.js
+ * § collectActions): no act name, tool name or door is known downstream, only
+ * the shape. This door already passed the other half of the gate — its tool
+ * schema declares the do:/args: envelope, because its grammar is the world
+ * apex's wholesale.
  *
- * `act` rides alongside `action` as an alias rather than being replaced: the
- * act ANSWER has carried a `card` with that key since this door opened, and a
- * rename would be a break for the sake of tidiness. Same object, both keys.
+ * TWO SPELLINGS, ONE GRAMMAR (Keemin-ruled 2026-08-25). The world speaks
+ * `actions`/`action` — the class-mark key, what the ground grants where you
+ * stand. Household and town speak `acts`/`act` — the door's own fixed verbs,
+ * this door's pre-grammar key since it opened. For one release the answer
+ * carried both keys as aliases; the walker learned `acts` and the duplicate
+ * was retired the same week it appeared, before anyone outside coded to it.
  */
 function actCard(act, db, ctx = {}) {
   const spec = ACTS[act];
   if (!spec) return null;
   const means = db ? residueOf(db, spec.residue) : null;
   return {
-    action: act,
-    act, // alias — the pre-grammar key, kept so nothing reading `card.act` breaks
+    act,
     blurb: means ? means.text.slice(0, 150) : spec.inline,
     ...(means ? { blurb_from: means.from } : {}),
     ...(means?.dials && Object.keys(means.dials).length ? { dials: means.dials } : {}),
@@ -371,21 +371,18 @@ export async function householdApex(args = {}, key = null, ctx = {}) {
     const standing = await householdStanding(key, ctx);
     const store = openStore();
     try {
-      const actions = HOUSEHOLD_DISPATCHABLE
+      const acts = HOUSEHOLD_DISPATCHABLE
         .map((a) => actCard(a, store.db, { schemas, schemaRequired }))
         .filter(Boolean);
       return {
         ...standing,
-        // THE GRAMMAR, named as the world apex names it. A consumer walking any
-        // answer for arrays called `actions` whose entries carry action+fields
-        // finds this one, and the do:/args: envelope on this tool's own schema
-        // completes the gate.
-        actions,
-        // The alias, same objects. Nothing in this repo read `acts` off the bare
-        // answer when the grammar landed (only the act answer's `card`, which
-        // keeps its key), but an outside reader might, and a rename is not worth
-        // a break.
-        acts: actions,
+        // THE GRAMMAR — the door's own word for its own verbs. A consumer
+        // walking any answer for arrays called `acts` whose entries carry
+        // act+fields finds this one, and the do:/args: envelope on this
+        // tool's own schema completes the gate. (`actions` stays the WORLD's
+        // key — class-granted, standpoint-read; the two spellings are the
+        // distinction, not a drift.)
+        acts,
         // ── whoami, folded in (POS-46) ───────────────────────────────────
         // The credential mirror lives where standing lives. whoami answered
         // "who am I at this door" and this call already answers tier, residents
