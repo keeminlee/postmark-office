@@ -59,7 +59,7 @@ import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { DatabaseSync } from "node:sqlite";
 
@@ -70,7 +70,7 @@ import {
 } from "../src/household-apex.mjs";
 import { hotMailBlock, outboxTense, replayLetter, sendLetterAsRow, MAIL_DOOR } from "../src/town-mail.mjs";
 import { pendingRows } from "../src/town-journal.mjs";
-import { enqueueLetter, outboxRelPath } from "../src/write.mjs";
+import { enqueueLetter } from "../src/write.mjs";
 import { outboxSettled } from "../src/queries.mjs";
 
 delete process.env.TOWN_PUSH; // nothing here may leave the machine
@@ -160,8 +160,16 @@ test("F2 · a shrink that loses a verb is not a shrink — the index names every
 test('F3 · Hal: "act/read names" — the read names ride the bare answer too, and the page teaches how to open a card', async () => {
   const bare = await householdApex({}, KEY, ctx({ slim: true }));
   assert.deepEqual(bare.reads, HOUSEHOLD_READS, "the read menu is the door's own table, not a second list");
-  assert.equal(bare.cards, CARD_TEACH);
-  assert.match(bare.cards, /card: "send"/, "the teaching sentence carries the literal call, not a description of it");
+  assert.equal(bare.abridged, CARD_TEACH);
+  assert.match(bare.abridged, /card: "send"/, "the teaching sentence carries the literal call, not a description of it");
+  // ONE WORD, ONE THING. `cards` is the request field and the card answer's
+  // payload key — both arrays. A third `cards` here holding a sentence would
+  // hand a caller who cached `answer.cards` a string on this read and an array
+  // on the next, which is the shape trap the doorstep's `conversations` rename
+  // was fought over.
+  assert.equal("cards" in bare, false, "the teaching sentence rides `abridged`; `cards` stays the array it is everywhere else");
+  const card = await householdApex({ card: "send" }, KEY, ctx({ slim: true }));
+  assert.ok(Array.isArray(card.cards), "and on the answer that has cards, `cards` is the cards");
 });
 
 test("F4 · the identity half is UNTOUCHED by the shrink — tier, household, residents, papers, next, credential all say what the unabridged answer says", async () => {
@@ -382,9 +390,11 @@ test("F12d · THE DRAIN CANNOT TRIP ON THE NONCE — the replay lane's door is e
     const out = replayLetter(row, { doors: { [MAIL_DOOR]: enqueueLetter }, db, clone });
     assert.equal(out.skipped, undefined);
     assert.equal(out.result.letter_id, sent.letter_id);
-    const file = join(clone, outboxRelPath("wright", row.payload.args.date ?? out.result.letter_id.split("-").slice(1, 4).join("-"), "limen", "a-fine-hat"));
-    assert.ok(readdirSync(join(clone, "WHITE_PAGES", "wright", "outbox")).length === 1,
-      `the letter materialized (${file}); a nonce check inside the replay lane would have found this row's own pending self and refused`);
+    // The receipt that could only exist if the replay actually wrote: the file
+    // the row itself named, on disk. A nonce check inside the replay lane would
+    // have found this row's own still-pending self and skipped, and the outbox
+    // would be empty.
+    assert.deepEqual(readdirSync(join(clone, "WHITE_PAGES", "wright", "outbox")), [basename(row.payload.file)]);
     odb.close();
   });
 });
