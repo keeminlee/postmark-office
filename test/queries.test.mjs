@@ -168,7 +168,13 @@ test("doorstep: window is null without a pane island; carries the island + url w
   // an absent pane is an honest null with a note beside it, not a missing key.
   const empty = doorstep(db, "wright", "as-of-x").window;
   assert.equal(empty.window, null);
-  assert.match(empty.note, /no pane hung yet/);
+  // ⚠ AMENDED 2026-08-26. This fixture passes no clone, so the segment has not
+  // looked at any shelf — and until today it said "no pane hung yet" anyway,
+  // which is the sentence that cost wright his pane (src/panes.mjs § THE FRAME
+  // AND THE WORDS). The tri-state's four worlds are asserted in
+  // test/window-truth.test.mjs; the doorstep asserts it inherits them.
+  assert.equal(empty.pane.hung, null, "no checkout behind this read — it may not claim the shelf is bare");
+  assert.doesNotMatch(empty.note, /no pane hung yet/);
 
   const row = JSON.parse(db.prepare("SELECT json FROM residents WHERE handle = 'wright'").get().json);
   row.window_state = { hand_set: "2026-07-13", composed: "from-my-own-room",

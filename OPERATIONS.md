@@ -110,7 +110,7 @@ sandbox seed.
 | Repo | How code reaches prod | Dev / rehearsal | Notes |
 |---|---|---|---|
 | **site** | feature → `train/2026-wNN` → dev.postmark.town (auto) → founder walk → train→main squash (subject names the train) → auto-tag → prod | dev channel, auto on train push | the complete pipeline; the model |
-| **office** | feature → train → main (train-named subject) → `release-train.yml` cuts the tag → **hand-carried FROM THE TAG** (`deploy/DEPLOY.md` — scp changed src + restart + a probe only the new code passes) | the dev office runs train code against the sandbox seed | auto-deploy workflow = known gap, POS-60 |
+| **office** | feature → train → main (train-named subject) → `release-train.yml` cuts the tag **and deploys it** (rsync the tag's tree → restart → poll `GET /release` until it names that tag) | the dev office runs train code against the sandbox seed; `workflow_dispatch` → `target: dev` rehearses a tag there | auto-deploy landed POS-60 (`deploy/DEPLOY.md § The auto-deploy`); the record/machinery paths manifest is still open |
 | **town** | not deployed — it IS the data axis. Main is live by nature (witness/pen); "deploy" = the ferry's own crossings | its dev form is the `sandbox/seed` tag | machinery in `tools/` reaches rehearsal via the sandbox |
 | **world** | settlements ARE the pipeline (keeper blesses; suite-red publishes nothing); the site's world pin rides site releases | its dev form is the `sandbox/seed` tag | engine changes rehearse via the machinery overlay below |
 

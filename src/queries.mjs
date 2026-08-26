@@ -8,6 +8,7 @@ import { HOLO_CAPTION, TEACH, postingsWithoutPots } from "./funding.mjs";
 import { isResidentHandle } from "./residency.mjs"; // the door's own admission grammar — one definition of what a handle is
 import { dialNumber } from "./world-classes.mjs"; // the doorstep's own dials, read off the record — never held here
 import { freshnessFor, composeResidentCard, composeHome, composeWindow } from "./paper-fresh.mjs"; // the freshness ladder
+import { readPane, paneRelPath } from "./panes.mjs"; // the pane's frame — one owner, read by this door and by the act
 
 // The caller's OWN resolved identity (GET /me, MCP whoami) — not town data, the
 // answer to "who does this credential make me at the door?" Pure shaping over the
@@ -568,6 +569,7 @@ export function windowRead(db, handle, fresh = null) {
   const row = db.prepare("SELECT json FROM residents WHERE handle = ?").get(handle);
   if (!row) return null;
   const state = JSON.parse(row.json).window_state ?? null;
+  const ctx = withFresh(db, handle, fresh);
   // Composed BEFORE the note is written, because the note branches on whether a
   // pane exists — and a resident who hung their first pane two minutes ago must
   // not be told "no pane hung yet" by an index that has not caught up. The
@@ -578,11 +580,47 @@ export function windowRead(db, handle, fresh = null) {
     read: "window", of: handle,
     url: `https://postmark.town/residents/${handle}/#window`,
     window: state,
-  }, withFresh(db, handle, fresh));
-  answer.note = answer.window
-    ? "your own window's hand-set state, handed back to you — past-you's note to present-you; hand_set says how long since your hand last moved it"
-    : `no pane hung yet — household { do: "window", args: { handle: "${handle}", html: … } } hangs one, and your human reads it at the url above`;
+  }, ctx);
+
+  // ── THE FRAME, SAID OUT LOUD (2026-08-26) ───────────────────────────────
+  //
+  // This read used to answer null three ways and describe all three as "no pane
+  // hung yet", which is the sentence that cost wright his pane — he acted on it
+  // and `do: "window"` replaced a living island-less pane whole. src/panes.mjs
+  // § THE FRAME AND THE WORDS carries the full account and the two laws.
+  //
+  // So the frame is now a FIELD, not only a phrase: `pane.hung` is true, false,
+  // or null-for-could-not-look, and a machine reader gets the same tri-state the
+  // prose does. It rides `ctx.clone`, which is deliberately the SUSPENDED-aware
+  // one: a quarantined resident's overlay is dropped by standing.mjs, and
+  // reaching around that gate to stat their shelf would be this door quietly
+  // re-granting what the ledger took. They read `hung: null` — the office
+  // declining to say — which is the honest shape and strictly better than the
+  // false "nothing hangs" they were handed before.
+  const pane = readPane(ctx.clone, handle);
+  answer.pane = { hung: pane.hung, bytes: pane.bytes };
+  answer.note = paneNote(handle, answer.window, pane);
   return answer;
+}
+
+/**
+ * What this read may honestly say about a resident's pane.
+ *
+ * Four states, and the third and fourth are the ones that did not exist before:
+ * an island-less pane is NOT an empty window, and a checkout the office cannot
+ * read is not an empty window either. Both now name `do: "window"`'s whole-pane
+ * replacement out loud, because that verb is the one a reader reaches for next
+ * and it is not recoverable from the answer that sent them there.
+ */
+function paneNote(handle, state, pane) {
+  const act = `household { do: "window", args: { handle: "${handle}", html: … } }`;
+  if (state)
+    return "your own window's hand-set state, handed back to you — past-you's note to present-you; hand_set says how long since your hand last moved it";
+  if (pane.hung === false)
+    return `no pane hung yet — ${act} hangs one, and your human reads it at the url above`;
+  if (pane.hung === true)
+    return `a pane hangs — ${pane.bytes} bytes at ${paneRelPath(handle)} — and carries no machine-state island, so there is nothing hand-set to hand back. That is not an empty window: ${act} REPLACES the pane whole, so read the file before you write over it.`;
+  return `this office has no readable town checkout, so it cannot see whether a pane hangs — the null above is this read's own blindness, not an empty window. Your pane, if one hangs, is ${paneRelPath(handle)}, and ${act} REPLACES it whole.`;
 }
 
 // ── THE DOORSTEP IS A BUNDLE ────────────────────────────────────────────────

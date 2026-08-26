@@ -1,34 +1,99 @@
-name: Release train (approved merge cuts the tag)
+name: Release train (approved merge cuts the tag, then deploys it)
 
 # THE WEEKLY TRAIN (Keemin, 2026-08-23 pre-dawn) — the office's half of the
 # model the site's deploy.yml carries in full: feature branches merge into
 # train/2026-wNN; the dev office runs the train branch; ~weekly the train PRs
 # into main and the founder's Approve is the merge word. This workflow cuts
-# release/2026-wNN[.n] at the approved merge commit. The office has no
-# auto-deploy lane by design — prod deploy stays a hand-carried copy FROM THE
-# TAG with receipts (deploy/DEPLOY.md), because the box's office is a file
-# copy, not a checkout. A main push with no train name in its subject cuts
-# nothing.
+# release/2026-wNN[.n] at the approved merge commit — and, since POS-60,
+# deploys that tag to the box instead of leaving it for a hand-carry.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# WHAT POS-60 CHANGED, and the one thing it did NOT change.
+#
+# This file used to say, in its own header:
+#
+#   "The office has no auto-deploy lane by design — prod deploy stays a
+#    hand-carried copy FROM THE TAG with receipts (deploy/DEPLOY.md), because
+#    the box's office is a file copy, not a checkout."
+#
+# The premise in that sentence is true and still is: /srv/postmark-office is a
+# plain file copy. The CONCLUSION did not follow — a file copy is exactly what
+# rsync does, and doing it from a runner is not harder than doing it from a
+# laptop, only more repeatable. OPERATIONS.md § Deploys named the gap as POS-60.
+# What is mechanized here is the hand-carry, step for step, not a new procedure:
+#
+#   scp the changed code FROM THE TAG  ->  rsync the tag's tree
+#   sudo systemctl restart             ->  the same, over ssh
+#   probe a route only the new code    ->  GET /release, polled until it names
+#     produces                             this run's tag and sha, or the run
+#                                          goes red
+#
+# WHAT DID NOT CHANGE: prod code still only moves when the founder approves a
+# train PR. This workflow deploys the tag that approval cuts. It never deploys
+# main's tip, never a feature branch, and a main push with no train name in its
+# subject still cuts nothing and deploys nothing.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# WHY THE DEPLOY LIVES IN THIS FILE AND NOT A SEPARATE tag-triggered WORKFLOW.
+#
+# Because a separate one would never fire. The tag below is pushed with
+# GITHUB_TOKEN, and GitHub deliberately does not trigger workflows from pushes
+# made with that token — so `on: push: tags: [release/*]` in another file would
+# sit silent forever after every train merge, which is the most expensive kind of
+# broken: a pipeline that looks installed. The site's deploy.yml solved this the
+# same way, by chaining its deploy job onto its own tag-cutting job in one run.
+#
+# `on: push: tags` is still declared below, because it is the redeploy lane: a
+# tag pushed BY HAND (a founder's PAT, a re-cut) does trigger, and should.
 
 on:
   push:
     branches: [main]
+    tags: ["release/*"]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "which office to deploy (dev = the sandbox rehearsal; prod = the town's front door)"
+        required: true
+        default: dev
+        type: choice
+        options: [dev, prod]
+      tag:
+        description: "release/* tag to deploy (blank = the newest one)"
+        required: false
+        type: string
+
+# NOT cancel-in-progress, unlike the site's deploy.yml — and the difference is
+# deliberate. The site deploys by replacing a webroot: cancel it halfway and the
+# next run overwrites the mess. This deploys code and then bounces a service, so
+# a run cancelled between the rsync and the restart leaves NEW CODE ON DISK UNDER
+# THE OLD PROCESS — a box that looks deployed, serves something else, and has no
+# red run to say so. Queue them instead.
+concurrency:
+  group: office-deploy-${{ github.event.inputs.target || 'prod' }}
+  cancel-in-progress: false
 
 jobs:
   cut-release-tag:
+    # Only a push to main cuts. A hand-pushed tag is already a tag, and a
+    # workflow_dispatch is a redeploy of something already cut.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    outputs:
+      tag: ${{ steps.cut.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - name: Derive and cut the tag
+        id: cut
         run: |
           SUBJECT=$(git log -1 --format=%s)
           WEEK=$(printf '%s' "$SUBJECT" | grep -oE 'train/2026-w[0-9]+' | head -1 | sed 's|train/||') || true
           if [ -z "$WEEK" ]; then
-            echo "no train name in merge subject — no tag cut"
+            echo "no train name in merge subject — no tag cut, and nothing deploys"
             exit 0
           fi
           BASE="release/$WEEK"
@@ -42,3 +107,366 @@ jobs:
           git tag -a "$TAG" -m "cut by the release train from: $SUBJECT"
           git push origin "refs/tags/$TAG"
           echo "cut $TAG at $(git rev-parse --short HEAD)"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    needs: cut-release-tag
+    if: ${{ !cancelled() && (needs.cut-release-tag.result == 'success' || needs.cut-release-tag.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    steps:
+      # ── which tag, onto which office ────────────────────────────────────────
+      - name: Decide the lane
+        id: lane
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+          CUT_TAG: ${{ needs.cut-release-tag.outputs.tag }}
+          IN_TARGET: ${{ github.event.inputs.target }}
+          IN_TAG: ${{ github.event.inputs.tag }}
+          AUTODEPLOY: ${{ vars.OFFICE_AUTODEPLOY }}
+        run: |
+          set -euo pipefail
+          TARGET=prod
+          TAG=""
+          case "$EVENT" in
+            workflow_dispatch)
+              TARGET="$IN_TARGET"
+              TAG="$IN_TAG"
+              ;;
+            *)
+              case "$REF" in
+                refs/tags/release/*) TAG="$REF_NAME" ;;
+                refs/heads/main)     TAG="$CUT_TAG" ;;
+              esac
+              ;;
+          esac
+
+          if [ "$EVENT" = "push" ] && [ "$REF" = "refs/heads/main" ] && [ -z "$TAG" ]; then
+            echo "the merge cut no tag, so there is no blessed code to deploy — standing down"
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            echo "reason=no tag was cut by this push" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # ── THE ADOPTION GATE ──────────────────────────────────────────────
+          # Merging this workflow must not, by itself, change what happens to
+          # prod. Until the repository variable OFFICE_AUTODEPLOY is set to
+          # `on`, an automatic trigger cuts the tag exactly as it always did and
+          # then stops here — today's behaviour, unchanged, with the hand-carry
+          # still the way code reaches the box.
+          #
+          # This is deliberate and it is the shape DEPLOY.md's funding-machine
+          # section already argues for: "Merging Stage A gives you a command you
+          # may run." The reason it matters HERE is specific and awkward:
+          # workflow_dispatch does not appear in the Actions UI until the file
+          # is on the default branch, so this cannot be rehearsed BEFORE it is
+          # merged. Without a gate, the first thing this machinery ever did in
+          # anger would be deploying prod, unrehearsed, the moment a train
+          # landed. With it, the order is: merge (nothing changes) -> dispatch
+          # against dev -> dispatch against prod -> then flip the variable.
+          #
+          #   adopt:  gh variable set OFFICE_AUTODEPLOY --body on  -R keeminlee/postmark-office
+          #   revert: gh variable set OFFICE_AUTODEPLOY --body off -R keeminlee/postmark-office
+          #
+          # workflow_dispatch is never gated: it is a human deliberately asking
+          # for this deploy, on a target they picked, which is the whole point.
+          if [ "$EVENT" != "workflow_dispatch" ] && [ "$AUTODEPLOY" != "on" ]; then
+            echo "OFFICE_AUTODEPLOY is not 'on' (it is '${AUTODEPLOY:-unset}') — the tag is cut, the deploy stands down."
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            echo "reason=OFFICE_AUTODEPLOY is not on; ${TAG:-the tag} was cut but not deployed. Carry it by hand (deploy/DEPLOY.md), or run this workflow from the Actions tab." >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          case "$TARGET" in
+            prod) ROOT=/srv/postmark-office;     SERVICE=postmark-office;     PORT=4380 ;;
+            dev)  ROOT=/srv/postmark-office-dev; SERVICE=postmark-office-dev; PORT=4381 ;;
+            *)    echo "::error::unknown target '$TARGET'"; exit 1 ;;
+          esac
+
+          echo "deploy=true"        >> "$GITHUB_OUTPUT"
+          echo "target=$TARGET"     >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG"           >> "$GITHUB_OUTPUT"
+          echo "root=$ROOT"         >> "$GITHUB_OUTPUT"
+          echo "service=$SERVICE"   >> "$GITHUB_OUTPUT"
+          echo "port=$PORT"         >> "$GITHUB_OUTPUT"
+          echo "lane: $TARGET  tag: ${TAG:-<newest>}  root: $ROOT"
+
+      - uses: actions/checkout@v4
+        if: steps.lane.outputs.deploy == 'true'
+        with:
+          fetch-depth: 0
+
+      # A blank dispatch tag means "the newest release". Resolved here rather
+      # than in the step above because it needs the repo's tags in hand.
+      - name: Resolve the tag and its commit
+        id: pin
+        if: steps.lane.outputs.deploy == 'true'
+        env:
+          WANTED: ${{ steps.lane.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git fetch --tags -q origin
+          TAG="$WANTED"
+          if [ -z "$TAG" ]; then
+            TAG=$(git tag -l 'release/*' --sort=-creatordate | head -1)
+            [ -n "$TAG" ] || { echo "::error::no release/* tag exists yet — there is nothing blessed to deploy"; exit 1; }
+            echo "no tag given; newest is $TAG"
+          fi
+          git rev-parse -q --verify "refs/tags/$TAG" >/dev/null \
+            || { echo "::error::$TAG is not a tag in this repo"; exit 1; }
+          case "$TAG" in
+            release/*) : ;;
+            *) echo "::error::$TAG is not a release/* tag. OPERATIONS.md: branches are train/*, tags are release/* — prod deploys FROM THE TAG, never from a branch."; exit 1 ;;
+          esac
+          SHA=$(git rev-parse "refs/tags/$TAG^{commit}")
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "deploying $TAG @ $SHA"
+
+      # ── the payload: exactly the tag's tracked tree ─────────────────────────
+      # `git archive` rather than the checked-out working tree, so nothing the
+      # runner happened to create can ride along. This is the "FROM THE TAG"
+      # half of the standing law, made literal.
+      - name: Stage the tag's tree
+        id: stage
+        if: steps.lane.outputs.deploy == 'true'
+        env:
+          TAG: ${{ steps.pin.outputs.tag }}
+          SHA: ${{ steps.pin.outputs.sha }}
+          TARGET: ${{ steps.lane.outputs.target }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p stage
+          git archive "refs/tags/$TAG" | tar -x -C stage
+
+          # The deploy receipt travels WITH the code, in the same rsync, so the
+          # two can never be out of step. src/release.mjs reads it once at boot;
+          # the probe reads it back off the running door.
+          node -e '
+            const { writeFileSync } = require("node:fs");
+            writeFileSync("stage/release.json", JSON.stringify({
+              tag: process.env.TAG,
+              sha: process.env.SHA,
+              deployed_at: new Date().toISOString(),
+              target: process.env.TARGET,
+              run: process.env.RUN_URL,
+            }, null, 2) + "\n");
+          '
+          cat stage/release.json
+
+          # Every top-level directory the tag carries is repo-owned and gets a
+          # --delete sync, so a file deleted in the release is deleted on the box.
+          # Deriving the list from the tag rather than hardcoding it means a new
+          # directory deploys itself; a hardcoded list would silently skip it.
+          #
+          # TWO EXCEPTIONS, both earned:
+          #
+          #  telemetry/ — a MIXED directory, and the trap in this whole design.
+          #    It is tracked (telemetry/github/*.json, the daily gh snapshots)
+          #    AND box-written: tools/traffic-report.mjs reads
+          #    "/srv/postmark-office/telemetry/access-*.jsonl", and the hourly
+          #    cron writes fresh github/*.json that are committed back later.
+          #    Syncing it from a tag would delete the live access logs and roll
+          #    the snapshots backwards to whenever the train was cut. The box is
+          #    the writer here; the repo is the archive. Never deploy it.
+          #
+          #  .github/ — CI configuration. Nothing on the box reads it, and
+          #    shipping workflow files into a runtime directory only invites a
+          #    later reader to think the box runs them.
+          #
+          # Everything else (src cli deploy dev docs ops test tools vendor) was
+          # confirmed pure-repo: `git status --ignored` over them in a working
+          # clone returns nothing.
+          find stage -maxdepth 1 -mindepth 1 -type d -printf '%f\n' \
+            | grep -vx -e telemetry -e .github \
+            | sort > dirs.txt
+          echo "directories to sync:"; sed 's/^/  /' dirs.txt
+
+      # ── the deploy machinery comes from main, not from the tag ──────────────
+      # The same third tense the site's deploy.yml names in its world-pin step:
+      # "Deploy machinery travels with the lane, not with the release." Without
+      # this, redeploying a tag cut before POS-60 would run a script that tag has
+      # never heard of — or rather, would not run one at all. Unlike the site's
+      # soft bootstraps this fails LOUD, because it is not an enhancement to the
+      # deploy, it IS the deploy.
+      - name: Take the box-side deploy script from main
+        if: steps.lane.outputs.deploy == 'true'
+        run: |
+          set -euo pipefail
+          # Fetch into an explicit ref rather than trusting that actions/checkout
+          # left a refs/remotes/origin/main behind — on a tag-triggered run it
+          # does not have to have.
+          git fetch -q origin '+refs/heads/main:refs/remotes/origin/main'
+          git show refs/remotes/origin/main:deploy/remote-deploy.sh > remote-deploy.sh \
+            || { echo "::error::deploy/remote-deploy.sh is missing on origin/main — the deploy has no box-side half."; exit 1; }
+          [ -s remote-deploy.sh ] || { echo "::error::deploy/remote-deploy.sh on origin/main is empty."; exit 1; }
+          chmod +x remote-deploy.sh
+          echo "machinery from origin/main @ $(git rev-parse --short refs/remotes/origin/main)"
+
+      - name: Open the door to the box
+        if: steps.lane.outputs.deploy == 'true'
+        env:
+          SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          HOST: ${{ secrets.EC2_HOST }}
+          USER: ${{ secrets.EC2_USER }}
+        run: |
+          set -euo pipefail
+          for v in SSH_KEY HOST USER; do
+            [ -n "${!v}" ] || { echo "::error::secret EC2_$v is not set on this repository. The office repo needs EC2_HOST, EC2_USER and EC2_SSH_KEY — the same three the site repo already holds."; exit 1; }
+          done
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      # ── preflight BEFORE a single byte moves ────────────────────────────────
+      # Every permissions failure is knowable now. Finding out after the rsync is
+      # how you get new code on disk under the old process.
+      - name: Preflight the box
+        if: steps.lane.outputs.deploy == 'true'
+        env:
+          HOST: ${{ secrets.EC2_HOST }}
+          USER: ${{ secrets.EC2_USER }}
+          ROOT: ${{ steps.lane.outputs.root }}
+          SERVICE: ${{ steps.lane.outputs.service }}
+          PORT: ${{ steps.lane.outputs.port }}
+        run: |
+          set -euo pipefail
+          # Run-unique path: dev and prod live in DIFFERENT concurrency groups and
+          # can therefore be in flight at the same time. A fixed /tmp name would
+          # let one run's script be overwritten under the other's feet.
+          REMOTE="/tmp/postmark-remote-deploy.${{ github.run_id }}.sh"
+          echo "REMOTE_SCRIPT=$REMOTE" >> "$GITHUB_ENV"
+          SSH="ssh -i $HOME/.ssh/deploy_key -o BatchMode=yes"
+          scp -i ~/.ssh/deploy_key -o BatchMode=yes remote-deploy.sh "$USER@$HOST:$REMOTE"
+          $SSH "$USER@$HOST" "chmod +x '$REMOTE' && '$REMOTE' preflight '$ROOT' '$SERVICE' '$PORT'"
+
+      # ── the copy ────────────────────────────────────────────────────────────
+      # As the deploy user, never through sudo. deploy/DEPLOY.md § The one-hand
+      # rule: "meepo is the only hand that touches /srv/postmark-office. Root
+      # never writes there — not a file, and NEVER git." and "A deploy scp that
+      # bounces on permissions is fixed by chown, never by escalating the deploy
+      # to sudo." So there is no --rsync-path="sudo rsync" here, and there must
+      # never be one; the preflight fails with the chown to run instead.
+      #
+      # Root-level FILES sync without --delete. The office root is a shared
+      # directory — it holds town-clone/, world-clone*/, draft-locks/, town.lock,
+      # office.db, oauth.db, .git-credentials, git-metrics-token, node_modules/
+      # and the dev box's own sandbox-reset.sh, none of which the repo knows
+      # about. This is the site's rsync --delete gotcha with the polarity
+      # reversed: the site's target is a webroot the workflow solely owns, and
+      # this one is emphatically not.
+      - name: Copy the release onto the box
+        if: steps.lane.outputs.deploy == 'true'
+        env:
+          HOST: ${{ secrets.EC2_HOST }}
+          USER: ${{ secrets.EC2_USER }}
+          ROOT: ${{ steps.lane.outputs.root }}
+        run: |
+          set -euo pipefail
+          RSH="ssh -i $HOME/.ssh/deploy_key -o BatchMode=yes"
+
+          echo "== root files (no --delete: the office root is shared with the box's own state) =="
+          rsync -az --exclude='/*/' -e "$RSH" stage/ "$USER@$HOST:$ROOT/"
+
+          echo "== repo-owned directories (--delete, so a file dropped in the release is dropped on the box) =="
+          while read -r d; do
+            [ -n "$d" ] || continue
+            echo "-- $d/"
+            rsync -az --delete -e "$RSH" "stage/$d/" "$USER@$HOST:$ROOT/$d/"
+          done < dirs.txt
+
+      - name: Restart and probe
+        id: apply
+        if: steps.lane.outputs.deploy == 'true'
+        env:
+          HOST: ${{ secrets.EC2_HOST }}
+          USER: ${{ secrets.EC2_USER }}
+          ROOT: ${{ steps.lane.outputs.root }}
+          SERVICE: ${{ steps.lane.outputs.service }}
+          PORT: ${{ steps.lane.outputs.port }}
+          TAG: ${{ steps.pin.outputs.tag }}
+          SHA: ${{ steps.pin.outputs.sha }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -o BatchMode=yes "$USER@$HOST" \
+            "'$REMOTE_SCRIPT' apply '$ROOT' '$SERVICE' '$PORT' '$TAG' '$SHA'"
+
+      - name: Probe the public door (prod)
+        if: steps.lane.outputs.deploy == 'true' && steps.lane.outputs.target == 'prod'
+        env:
+          TAG: ${{ steps.pin.outputs.tag }}
+          SHA: ${{ steps.pin.outputs.sha }}
+        run: |
+          set -euo pipefail
+          BASE=https://postmark.town/api
+          for i in 1 2 3 4 5 6; do
+            if body=$(curl -fsS --max-time 10 "$BASE/release"); then
+              if printf '%s' "$body" | TAG="$TAG" SHA="$SHA" node -e '
+                let raw=""; process.stdin.on("data",d=>raw+=d);
+                process.stdin.on("end",()=>{ let s; try{s=JSON.parse(raw);}catch{process.exit(1);}
+                  process.exit(s.deployed===true && s.tag===process.env.TAG && s.sha===process.env.SHA ? 0 : 1); });
+              '; then
+                echo "public door serves $TAG"
+                curl -fsS --max-time 10 "$BASE/town" >/dev/null && echo "public GET /town answers"
+                exit 0
+              fi
+            fi
+            echo "attempt $i: the public door is not yet serving $TAG"
+            sleep 5
+          done
+          echo "::error::the office is serving $TAG on loopback but https://postmark.town/api/release is not. The code deployed; the public route did not follow. Check nginx (deploy/nginx-api.conf is included from the postmark.town vhost) before assuming the deploy failed."
+          exit 1
+
+      - name: Sweep the box-side script
+        if: always() && env.REMOTE_SCRIPT != ''
+        env:
+          HOST: ${{ secrets.EC2_HOST }}
+          USER: ${{ secrets.EC2_USER }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -o BatchMode=yes "$USER@$HOST" "rm -f '$REMOTE_SCRIPT'" || true
+
+      # ── the public door, prod only ──────────────────────────────────────────
+      # The loopback probe proved the process. This proves nginx still routes to
+      # it — a different failure, and the one a resident would actually meet.
+      #
+      # DEV IS NOT PROBED FROM HERE, and cannot be: dev.postmark.town is behind
+      # Cloudflare Access (nginx-postmark-dev.conf: `if ($cf_edge = 0) { return
+      # 403; }` and a missing Access JWT is another 403), so an unauthenticated
+      # runner gets a 403 whether dev is healthy or not. The loopback probe above
+      # is the only receipt a dev rehearsal can produce, and it is a real one.
+      - name: Say what happened
+        if: always() && steps.lane.outputs.deploy == 'true'
+        env:
+          TAG: ${{ steps.pin.outputs.tag }}
+          SHA: ${{ steps.pin.outputs.sha }}
+          TARGET: ${{ steps.lane.outputs.target }}
+          SERVICE: ${{ steps.lane.outputs.service }}
+          OUTCOME: ${{ steps.apply.outcome }}
+        run: |
+          {
+            echo "## Office deploy — $TARGET"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| tag | \`${TAG:-<none>}\` |"
+            echo "| commit | \`${SHA:-<none>}\` |"
+            echo "| unit | \`$SERVICE\` |"
+            echo "| restart+probe | $OUTCOME |"
+            echo ""
+            echo "Receipt: \`GET /release\` on the deployed office answers with this tag and sha."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Nothing to deploy
+        if: steps.lane.outputs.deploy != 'true'
+        env:
+          REASON: ${{ steps.lane.outputs.reason }}
+        run: |
+          {
+            echo "## Office deploy — stood down"
+            echo ""
+            echo "$REASON"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "$REASON"

@@ -48,6 +48,7 @@ import { resetGraphCache, worldGraphView, NODE_KINDS, gexfPath } from "./world-g
 import { resetClassFieldsCache } from "./world-frames.mjs"; // the frame law's class read, dropped on a world.db swap
 import { dynamicHealth, resetClassCache } from "./dynamic-store.mjs"; // stage 2: the dynamic layer's instrument panel
 import { Bouncer, keyIdForToken, worldWriteVerbForRest } from "./bouncer.mjs";
+import { readReleaseStamp } from "./release.mjs"; // POS-60: the deploy receipt the auto-deploy probes
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, "..");
@@ -65,6 +66,15 @@ const TOWN_CLONE = process.env.TOWN_CLONE ?? resolve(ROOT, "town-clone");
 // It is also NOT hot-reloaded below: nothing rewrites this file underneath us,
 // the office is its only writer, and a swapped handle would drop live sessions.
 const odb = openOauthDb(resolve(ROOT, arg("--oauth-db", "oauth.db")));
+
+// POS-60 — the deploy receipt. Read ONCE, at boot, deliberately: the stamp's whole
+// value is that serving it proves the process restarted AFTER the deploy wrote it.
+// A hot re-read would answer with the new tag while the old code was still running,
+// which is precisely the lie deploy/DEPLOY.md means by "a restart alone proves
+// nothing". `--release-root` exists so the falsifier can point at a temp dir; the
+// box never passes it.
+const RELEASE = readReleaseStamp(resolve(ROOT, arg("--release-root", ".")));
+const STARTED_AT = new Date().toISOString();
 const canWrite = existsSync(join(TOWN_CLONE, "WHITE_PAGES"));
 if (!canWrite) console.warn(`WARN: no town clone at ${TOWN_CLONE} — POST /letters will answer not-yet-open.`);
 
@@ -428,7 +438,8 @@ const server = createServer((req, res) => {
       reads: ["/town", "/residents", "/residents/{handle}", "/mail/{handle}", "/letters", "/letters/{id}",
         "/doorstep/{handle}", "/metrics/mail", "/repo/log", "/regions", "/homes/{handle}", "/stamps",
         "/stamps/{handle}", "/quests/{handle}", "/votes", "/votes/{topic}", "/bulletin", "/search?q=",
-        "/world/settlements", "/world/store", "/world/present", "/world/holdings", "/household"],
+        "/world/settlements", "/world/store", "/world/present", "/world/holdings", "/household",
+        "/release"],
       writes: ["POST /letters", "POST /votes/stake", "POST /residency", "POST /households", "POST /berth",
         "POST /media", "POST /household", "POST /world/marks", "POST /world/walks", "POST /world/say",
         "POST /world/stake", "POST /world/unstake", "POST /world/notes", "POST /world/hold",
@@ -436,6 +447,17 @@ const server = createServer((req, res) => {
       mcp: { endpoint: "POST /mcp", note: "the same verbs as tools; tools/list is the live contract" },
       prose: { joining: "https://postmark.town/join/", agents: "https://postmark.town/llms.txt", mail_law: "MAIL.md in the town repo" },
     });
+  }
+
+  // GET /release — the deploy receipt (POS-60). Public by nature: it names a
+  // public tag in a public repo, and a door that will not say what it is running
+  // makes every operator a guesser.
+  //
+  // `as_of` is the DATA tense and moves every rehydrate tick; this is the CODE
+  // tense and moves only when a release is deployed. The office has two clocks
+  // and this is the one nobody could read before.
+  if (path === "/release" && req.method === "GET") {
+    return j(res, 200, { ...RELEASE, started_at: STARTED_AT, as_of: borrowed.asOf });
   }
 
   // OAuth + discovery routes are unauthenticated by nature (the dance IS the
