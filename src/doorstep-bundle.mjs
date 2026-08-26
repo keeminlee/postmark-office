@@ -22,7 +22,7 @@
 
 import { doorstep, nextStepsFor, DOORSTEP_SEGMENTS, DOORSTEP_STANCES } from "./queries.mjs";
 import { hotTenseBlock } from "./town-updates.mjs";
-import { hotMailBlock } from "./town-mail.mjs";
+import { hotMailBlock, outboxTense } from "./town-mail.mjs";
 import { votesAvailable, doorstepVotes } from "./votes.mjs";
 
 /**
@@ -35,8 +35,15 @@ import { votesAvailable, doorstepVotes } from "./votes.mjs";
  * without its votes line.
  */
 export async function doorstepBundle(handle, ctx = {}) {
-  const { db, key, meta, asOf, clone, odb, canWrite, conversationsOffset = 0 } = ctx;
-  const d = doorstep(db, handle, asOf, { conversationsOffset, fresh: { odb, clone, asOf } });
+  // `slim` is THE CONNECTOR SKIN'S BOUND, and it is opt-in per door for the
+  // same reason `conversationsOffset` is: the two call sites already differ by
+  // declared args, and this is one more. Only mcp.mjs passes it — both of its
+  // doorstep doors, the flat `read_doorstep` and `household read: "doorstep"`.
+  // The REST handlers pass nothing and answer byte-for-byte what they answered
+  // before, because a page's shape must not change under a reader who did not
+  // ask for it. What the cut drops, queries.mjs § slimAwaiting names on the page.
+  const { db, key, meta, asOf, clone, odb, canWrite, conversationsOffset = 0, slim = false } = ctx;
+  const d = doorstep(db, handle, asOf, { conversationsOffset, slim, fresh: { odb, clone, asOf } });
   if (!d) return null;
 
   // ── THE SEVENTH SEGMENT · what awaits your word (the founder's .1 ruling) ─
@@ -72,6 +79,14 @@ export async function doorstepBundle(handle, ctx = {}) {
   d.segments = [...DOORSTEP_SEGMENTS];
 
   const own = key?.handles?.has?.(handle) === true;
+  // THE COUNTER'S TENSE (Vex of the Drift, 2026-08-26). `pending_outbox` is a
+  // COUNT(*) over the settled index, so under the town log it could read 0 for
+  // twelve hours on the same page that listed the sender's standing letters.
+  // The number is finished below, from the SAME scope the disclosure uses —
+  // `standing` starts withheld and only the ownership gate can fill it, which
+  // is what keeps the mail law from needing a second guard.
+  const inOutbox = d.pending_outbox;
+  let standing = null;
   if (own) {
     // THE HOT TENSE (wave 2): the edits you have already made that the crossing
     // has not settled yet. DISCLOSED, not substituted — the segments still read
@@ -96,6 +111,12 @@ export async function doorstepBundle(handle, ctx = {}) {
     try {
       const pending = hotMailBlock(odb, key, { handle });
       if (pending) d.your_pending_letters = pending;
+      // ONE SCOPE, ONE ANSWER. The count comes off the block that was just
+      // composed rather than from a second query, so there is no second filter
+      // to get wrong and no way for the number and the list to disagree. A
+      // sender with nothing standing is told a true zero; a block that threw
+      // leaves `standing` withheld rather than asserting one.
+      standing = pending ? pending.standing.length : 0;
     } catch { /* garnish only */ }
     // The settling-in block (Keemin's grouping, 2026-08-15): what your house
     // still lacks. It retires itself the day the list empties.
@@ -108,6 +129,13 @@ export async function doorstepBundle(handle, ctx = {}) {
       };
     } catch { /* garnish only */ }
   }
+
+  // The counter, finished: your own outbox in both tenses, and the block that
+  // takes it apart. The block rides EVERY read — a page with no tense block and
+  // a page whose count is entirely settled must not look alike, which is the
+  // freshness ladder's own completeness rule applied one field over.
+  if (standing !== null) d.pending_outbox = inOutbox + standing;
+  d.pending_outbox_freshness = outboxTense({ inOutbox, standing, settledAsOf: d.as_of });
 
   // The next-steps block (the `doorstep` node's "their next steps"). The block
   // itself rides every read — it is what the public bundle already publishes —

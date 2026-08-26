@@ -385,7 +385,7 @@ export async function callTool(name, args, ctx) {
     // bundle's `serves:` pointers do for the segments one level down.
     case "read_doorstep": {
       const d = await doorstepBundle(args.handle, { db, key, meta, asOf, clone, odb, canWrite,
-        conversationsOffset: args.correspondence_offset });
+        conversationsOffset: args.correspondence_offset, slim: true });
       return d ?? notFound(`no resident "${args.handle}"`, "try town { read: \"residents\" }");
     }
     case "list_mail": return mailList(db, args.handle, args.box ?? "inbox", {
@@ -472,7 +472,11 @@ export async function callTool(name, args, ctx) {
       catch (e) { if (e.code) return { error: "bounce", defect: e.defect, hint: e.hint }; throw e; }
     }
     case "household": {
-      return householdApex(args, key, { db, clone, odb, dbPath, pen, canWrite, meta, asOf, schemas: flatPropsMap(), schemaRequired: flatRequiredMap() });
+      // `slim: true` is THE CONNECTOR SKIN saying so out loud. It reaches
+      // exactly one read inside the apex — `doorstep`, which forwards it to the
+      // bundle — and the REST call site at server.mjs § GET /household passes
+      // no such thing, so the third door answers what it always answered.
+      return householdApex(args, key, { db, clone, odb, dbPath, pen, canWrite, meta, asOf, slim: true, schemas: flatPropsMap(), schemaRequired: flatRequiredMap() });
     }
     case "town": {
       // `call` is this very dispatcher, handed back to the apex. The town verb
