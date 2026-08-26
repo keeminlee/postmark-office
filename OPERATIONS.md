@@ -100,6 +100,62 @@ Two furniture rules, boring on purpose (founders set; anyone maintains under the
 
 ---
 
+## Deploys — the four-repo standing rules (founder-ruled 2026-08-26)
+
+One two-axis rule under all four repos: **code moves on trains; the record is
+never promoted — it is either alive (prod) or certified-frozen (dev).** Prod
+runs blessed code against the living record; dev runs train code against the
+sandbox seed.
+
+| Repo | How code reaches prod | Dev / rehearsal | Notes |
+|---|---|---|---|
+| **site** | feature → `train/2026-wNN` → dev.postmark.town (auto) → founder walk → train→main squash (subject names the train) → auto-tag → prod | dev channel, auto on train push | the complete pipeline; the model |
+| **office** | feature → train → main (train-named subject) → `release-train.yml` cuts the tag → **hand-carried FROM THE TAG** (`deploy/DEPLOY.md` — scp changed src + restart + a probe only the new code passes) | the dev office runs train code against the sandbox seed | auto-deploy workflow = known gap, POS-60 |
+| **town** | not deployed — it IS the data axis. Main is live by nature (witness/pen); "deploy" = the ferry's own crossings | its dev form is the `sandbox/seed` tag | machinery in `tools/` reaches rehearsal via the sandbox |
+| **world** | settlements ARE the pipeline (keeper blesses; suite-red publishes nothing); the site's world pin rides site releases | its dev form is the `sandbox/seed` tag | engine changes rehearse via the machinery overlay below |
+
+**The hotfix rule (the one sanctioned bypass):** hotfix = site-down,
+money-wrong, or actively-misleading surface. Discipline: suite green before
+deploy → deploy → same-hour backport to repo main → receipted commit → PSA
+when town-visible. Everything else rides the lane above.
+
+**Breaking-change rules (the window-panes lesson, 2026-08-26):** a public
+HTTP response **shape** is a contract (panes in the wild freeze it in carved
+JS); a **path** in a hybrid record+machinery repo is an API. Changing either
+ships with a PSA — or does not ship. The REST and MCP skins may deliberately
+hold different promises (REST: stable/simple for frozen consumers; MCP:
+renegotiated per session) — one implementation, two contracts, both pinned by
+tests.
+
+## The dev sandbox (founder-ruled 2026-08-26)
+
+The dev office's default state is a **declared settlement snapshot**: the
+`sandbox/seed` tag PAIR — town + world, first pair S47's certified
+`830a6996` / `52c281b8`, taken from the keeper's own receipt. A settlement is
+the natural quiesce point (log drained, custody certified, derived state
+reproducible).
+
+- **Writes are ON and fenced:** every act runs the full pen path into the dev
+  clones as LOCAL commits; `TOWN_PUSH=0` means they physically cannot leave.
+- **Forget:** `/srv/postmark-office-dev/sandbox-reset.sh` (clones → seed,
+  derived DBs rebuilt, service bounced; `oauth.db` survives — sign-ins are box
+  state). Nightly 08:10Z the freshen timer does the same automatically.
+- **Advance the default:** retag `sandbox/seed` in both repos (founder's
+  word), run the reset. Nothing else ever moves it.
+- **You own the clock:** no ferry/settlement timers in dev — crossings run by
+  hand in the sandbox clones, so rehearsal is a deliberate step-through.
+- **Machinery overlay (for engine/town-tool changes):** check out the
+  candidate ref, then lay the seed's RECORD paths over it
+  (`git checkout sandbox/seed -- <record paths>`) — machinery from the
+  candidate, record from the seed; the site deploy's two-tense trick,
+  inverted. The record/machinery path split per repo is the paths-manifest
+  work (POS-60).
+
+Kit copies of record: `deploy/sandbox-reset.sh`,
+`deploy/postmark-dev-freshen.sh`, `deploy/postmark-dev-freshen.timer-dropin.conf`.
+
+---
+
 ## Assignments
 
 Pointer key: **PM** = `repo:MEEPS/SKILLS/postmaster-round.md` · **IL** =
