@@ -109,7 +109,7 @@
 //   node tools/site-sentinel.mjs [--state <state.json>] [--out <status.json>]
 //                                [--json] [--dry-run] [--now <iso>]
 
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, statSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -159,6 +159,17 @@ export const CONFIG = {
     office_as_of: 45 * MINUTE,
   },
   dailySlack: 90 * MINUTE,
+
+  // §6 — the box's own watchers. The sentinel runs beside them, so their
+  // state files are local facts. A watcher whose state is ABSENT while its
+  // timer stands enabled is DOWN, never UNKNOWN: on 2026-08-26 usdc-watch
+  // crash-looped on EACCES for 22 hours behind an all-green board, because
+  // nothing asked whether the watchers themselves were alive.
+  watchers: [
+    { key: "usdc_watch", label: "the usdc-watch timer", state: "/srv/postmark-usdc/state.json", cadenceMs: 10 * MINUTE },
+    { key: "stripe_watch", label: "the stripe-watch timer", state: "/srv/postmark-stripe/state.json", cadenceMs: 10 * MINUTE,
+      adoptedWhen: "/srv/postmark-stripe" }, // Stage B: parked until adopted — absence of the DIR is INFO, not DOWN
+  ],
 
   requestTimeoutMs: 20_000,
   // One reminder every twelve hours while a probe stays bad. Not per tick —
@@ -379,6 +390,18 @@ export function latestDecisiveRunPerWorkflow(runs) {
  * Reads the last DECISIVE run (see above) — cancellations are looked through,
  * never counted as health.
  */
+// §6 — a watcher's own pulse, from its state file's mtime. Pure so the
+// falsifiers can drive every branch. The law, from the night that earned it:
+// "a rail that has not ticked is not a quiet rail" — and a watcher with no
+// state at all is the loudest kind of not-ticking there is.
+export function classifyWatcher({ adopted = true, exists, mtimeMs = null, nowMs, cadenceMs, label }) {
+  if (!adopted) return { verdict: "INFO", reason: `${label} is not adopted (Stage B parked) — nothing to watch yet` };
+  if (!exists) return { verdict: "DOWN", reason: `${label} has no state file — it has never run or cannot write (an enabled timer with no state is a crashloop, not a quiet rail)` };
+  const age = nowMs - mtimeMs;
+  if (age > 3 * cadenceMs) return { verdict: "STALE", reason: `${label} last wrote its state ${Math.round(age / 60000)} min ago against a ${Math.round(cadenceMs / 60000)}-min cadence` };
+  return { verdict: "OK", reason: `ticked ${Math.round(age / 60000)} min ago` };
+}
+
 export function classifyWorkflows(latest, { watch = ["Sync Postmark atlas", "Deploy"] } = {}) {
   const rows = [];
   for (const wanted of watch) {
@@ -679,6 +702,15 @@ export async function tick({
   } catch (e) {
     notes.push(`workflow conclusions unread: ${e.message}`);
     probes.push({ key: "workflow_read", label: "the site's workflow conclusions", kind: "workflow", verdict: "UNKNOWN", reason: `GitHub did not answer: ${e.message}` });
+  }
+
+  // §6 — the watchers themselves. Local stat, no network, no budget.
+  for (const w of config.watchers ?? []) {
+    const adopted = w.adoptedWhen ? existsSync(w.adoptedWhen) : true;
+    const exists = adopted && existsSync(w.state);
+    const mtimeMs = exists ? statSync(w.state).mtimeMs : null;
+    const { verdict, reason } = classifyWatcher({ adopted, exists, mtimeMs, nowMs, cadenceMs: w.cadenceMs, label: w.label });
+    probes.push({ key: w.key, label: w.label, kind: "watcher", verdict, reason });
   }
 
   // the edges

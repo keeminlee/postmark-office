@@ -439,8 +439,26 @@ const stubExec = ({ siteTip = "sitetip0000", townTip = "towntip0000", relSha = "
     return repo.includes("postmark-site") ? `${siteTip}\trefs/heads/main\n` : `${townTip}\trefs/heads/main\n`;
   };
 
+// §6 fixture: a real temp state file with a fresh mtime, so the healthy tick
+// exercises the watcher probe instead of skipping it, and a config that points
+// the sentinel at it rather than at the box's /srv paths.
+import { writeFileSync as _wf } from "node:fs";
+import { CONFIG as _CFG } from "../tools/site-sentinel.mjs";
+const _wdir = mkdtempSync(join(tmpdir(), "sentinel-watcher-"));
+const _wstate = join(_wdir, "state.json");
+_wf(_wstate, "{}");
+import { utimesSync as _ut } from "node:fs";
+// pin the mtime relative to the tests' fixed clock, so the probe's verdict is
+// deterministic instead of riding the wall clock the rest of the suite avoids
+_ut(_wstate, new Date((T0 - 5 * 60_000)), new Date((T0 - 5 * 60_000)));
+const FIXTURE_CONFIG = { ..._CFG, watchers: [{ key: "usdc_watch", label: "the usdc-watch timer", state: _wstate, cadenceMs: 6 * 60 * 60_000 }] };
+// cadence is 6h IN THE FIXTURE ONLY: the LOUDLY test advances its clock ~1h to
+// exercise held-alert semantics, and the watcher must stay inside its window
+// across that whole timeline — its own verdicts are covered by the four
+// classifyWatcher tests above, not by riding along here.
+
 test("a healthy tick is entirely green and says nothing", async () => {
-  const { probes, alerts } = await tick({ fetchImpl: stubFetch(GREEN_TABLE), exec: stubExec(), state: {}, nowMs: T0 });
+  const { probes, alerts } = await tick({ fetchImpl: stubFetch(GREEN_TABLE), exec: stubExec(), state: {}, nowMs: T0, config: FIXTURE_CONFIG });
   const bad = probes.filter((p) => p.verdict !== "OK" && p.verdict !== "INFO");
   assert.deepEqual(bad.map((p) => `${p.key}:${p.verdict} ${p.reason}`), [], "a green town must produce no findings");
   assert.equal(alerts.length, 0, "and therefore nothing to say");
@@ -455,7 +473,7 @@ test("LOUDLY BE NOTIFIED: an outage and a frozen index both surface from one tic
     "https://postmark.town/api/": { status: 200, headers: { "x-postmark-as-of": "frozen00000" }, body: "{}" },
   };
   const state = { probes: {}, stamps: { office_as_of: { value: "frozen00000", first_seen_at: T0 - 2 * HOUR } } };
-  const { probes, alerts } = await tick({ fetchImpl: stubFetch(broken), exec: stubExec(), state, nowMs: T0 });
+  const { probes, alerts } = await tick({ fetchImpl: stubFetch(broken), exec: stubExec(), state, nowMs: T0, config: FIXTURE_CONFIG });
 
   const daily = probes.find((p) => p.key === "site_daily");
   assert.equal(daily.verdict, "DOWN");
@@ -559,4 +577,34 @@ test("lsRemote and newestReleaseTag read the wire protocol, and answer null rath
   const boom = () => { throw new Error("no network"); };
   assert.equal(lsRemote("https://x/y.git", "main", { exec: boom }), null, "an unreachable remote is UNKNOWN upstream, not a crash");
   assert.equal(newestReleaseTag("https://x/y.git", { exec: boom }), null);
+});
+
+// ── §6: the watchers' own pulse (added 2026-08-26 after the EACCES crashloop) ──
+// The founder's sentence, which these assert: "how can we LOUDLY BE NOTIFIED
+// when something is down" — and on 2026-08-26 usdc-watch crash-looped on
+// EACCES for 22 hours behind an all-green board, because no probe asked
+// whether the watchers themselves were alive.
+import { classifyWatcher } from "../tools/site-sentinel.mjs";
+
+test("an enabled watcher with NO state file is DOWN — a crashloop, never a quiet rail", () => {
+  const r = classifyWatcher({ exists: false, nowMs: 1000, cadenceMs: 600_000, label: "the usdc-watch timer" });
+  assert.equal(r.verdict, "DOWN");
+  assert.match(r.reason, /never run or cannot write/);
+});
+
+test("a watcher silent past 3x its cadence is STALE", () => {
+  const now = 10_000_000;
+  const r = classifyWatcher({ exists: true, mtimeMs: now - 31 * 60_000, nowMs: now, cadenceMs: 600_000, label: "the usdc-watch timer" });
+  assert.equal(r.verdict, "STALE");
+});
+
+test("a watcher inside its cadence window is OK", () => {
+  const now = 10_000_000;
+  const r = classifyWatcher({ exists: true, mtimeMs: now - 8 * 60_000, nowMs: now, cadenceMs: 600_000, label: "the usdc-watch timer" });
+  assert.equal(r.verdict, "OK");
+});
+
+test("an UNADOPTED Stage-B watcher is INFO — parked is not broken", () => {
+  const r = classifyWatcher({ adopted: false, exists: false, nowMs: 1000, cadenceMs: 600_000, label: "the stripe-watch timer" });
+  assert.equal(r.verdict, "INFO");
 });
