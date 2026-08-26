@@ -142,7 +142,12 @@ export const OUTSIDE_FROM = "outside:stripe";
 // The custom field's key on the Stripe payment link, as the founder configures
 // it in the console. A field with any other key is not read — a watcher that
 // scanned every custom field for something handle-shaped would be guessing.
-export const HANDLE_FIELD = "handle";
+// The dashboard assigned this key when the founder created the field
+// (2026-08-25, label "Your Postmark handle, if you keep house here") and the
+// dashboard offers no way to rename it. Read off the live payment link via the
+// API, not guessed. If the field is ever recreated with a saner key, this one
+// constant is the whole change.
+export const HANDLE_FIELD = "description";
 // "the ledger records whole dollars, so a payment under $1 cannot be witnessed
 // as a receipt" — the /fund door's own floor, quoted rather than re-derived.
 export const MIN_USD = 1;

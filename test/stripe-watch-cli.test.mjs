@@ -18,6 +18,7 @@ import { generateKeyPairSync } from "node:crypto";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { HANDLE_FIELD } from "../tools/stripe-watch.mjs";
 import { tmpdir } from "node:os";
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
@@ -70,7 +71,10 @@ const session = (over = {}) => ({
   id: CS, object: "checkout.session", status: "complete", payment_status: "paid", livemode: true,
   created: Math.floor(Date.now() / 1000) - 60, amount_total: 1000, currency: "usd",
   client_reference_id: "keep", customer_details: { email: "cli@example.test" },
-  custom_fields: [{ key: "handle", type: "text", text: { value: "paz" } }],
+  // key mirrors the LIVE payment link's field (dashboard-assigned "description",
+  // read off the API 2026-08-25) — the fixture must speak the key reality speaks,
+  // and HANDLE_FIELD is imported below so this cannot silently diverge again.
+  custom_fields: [{ key: HANDLE_FIELD, type: "text", text: { value: "paz" } }],
   payment_intent: "pi_cli", ...over,
 });
 
