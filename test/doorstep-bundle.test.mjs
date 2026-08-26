@@ -388,3 +388,23 @@ test("the READ side already defaulted, and still does — the two branches now a
   const r = await householdApex({ read: "address" }, key, { db });
   assert.equal(r.of, HANDLE, "a sole resident is the standpoint on reads, as it has always been");
 });
+
+test("a multi-resident key's READS ask which, never guess — the write side's law, both sides now", async () => {
+  // Found LIVE 2026-08-26: the read branch fell back to the key's FIRST handle,
+  // so the founders' six-resident key asked read:"window" and was handed the
+  // alphabetically luckiest resident's pane as if it were its own. The act
+  // side's own comment rules it: "guessing whose would be the worst possible
+  // way to be helpful" — a read that answers the wrong person's window, mail
+  // or doorstep is the same wrong, delivered more quietly.
+  const key = { household: "h", handles: new Set([HANDLE, "r001"]) };
+  for (const read of ["address", "home", "mail", "window", "doorstep"]) {
+    const r = await householdApex({ read }, key, { db });
+    assert.equal(r.code, 422, `read: "${read}" on a several-resident key must ask, not answer`);
+    assert.match(r.defect, /this key holds several residents/, `read: "${read}" must say why it asks`);
+    assert.deepEqual([...r.your_residents].sort(), [HANDLE, "r001"].sort(),
+      `read: "${read}" must name the residents to choose from`);
+  }
+  // and naming one still answers exactly that one
+  const named = await householdApex({ read: "address", handle: HANDLE }, key, { db });
+  assert.equal(named.of, HANDLE, "an explicit handle: is honoured unchanged");
+});

@@ -470,14 +470,28 @@ export async function householdApex(args = {}, key = null, ctx = {}) {
     const env = parseEnvelope(args);
     const { do: _rd, read: _rr, args: _ra, ...restRead } = args;
     const f = env && typeof env === "object" && !Array.isArray(env) ? { ...restRead, ...env } : restRead;
-    const handle = String(f.handle ?? "").trim() || [...(key?.handles ?? [])][0] || null;
+    // ASK, DON'T GUESS (2026-08-26). This line used to fall back to the key's
+    // FIRST handle, so a key holding several residents read the alphabetically
+    // luckiest one's window/mail/doorstep as if it were the caller's own —
+    // found live when the founders' six-resident key answered read:"window"
+    // with a resident nobody asked about. The ACT side already holds the law
+    // (its own words: "guessing whose would be the worst possible way to be
+    // helpful"); the read side now holds the same one. A single-resident key
+    // still infers, exactly as the schema promises: "defaults to your only one
+    // where it can."
+    const held = [...(key?.handles ?? [])];
+    const handle = String(f.handle ?? "").trim() || (held.length === 1 ? held[0] : null);
+    const whichResident = (noun) => held.length > 1
+      ? bounce(422, `whose ${noun}? this key holds several residents`,
+          `name one with handle: — this key acts for ${held.join(", ")}`, { your_residents: held })
+      : bounce(422, `whose ${noun}?`, "pass handle: — or call with a key that holds a resident");
     if (what === "address") {
-      if (!handle) return bounce(422, "whose address?", "pass handle: — or call with a key that holds a resident");
+      if (!handle) return whichResident("address");
       let r = null; try { r = residentQ(db, handle); } catch { r = null; }
       return r ? { read: "address", of: handle, address: r } : bounce(404, `no settled address for "${handle}"`, "a harbor resident has no white-pages address yet — that comes with settling");
     }
     if (what === "home") {
-      if (!handle) return bounce(422, "whose home?", "pass handle: — or call with a key that holds a resident");
+      if (!handle) return whichResident("home");
       let h = null; try { h = homeQ(db, handle); } catch { h = null; }
       return h ? { read: "home", of: handle, home: h } : bounce(404, `no home page for "${handle}"`, "tend one — household { do: \"home\" }");
     }
@@ -510,7 +524,7 @@ export async function householdApex(args = {}, key = null, ctx = {}) {
     // view existed only as two overlapping blocks on the doorstep and could be
     // read nowhere else.
     if (what === "mail") {
-      if (!handle) return bounce(422, "whose mail?", "pass handle: — or call with a key that holds a resident");
+      if (!handle) return whichResident("mail");
       const view = String(f.view ?? "inbox").trim();
       if (view === "inbox" || view === "outbox")
         return mailList(db, handle, view, { since: f.since, until: f.until, limit: f.limit, offset: f.offset });
@@ -523,7 +537,7 @@ export async function householdApex(args = {}, key = null, ctx = {}) {
     // had no door of its own, so on any morning you did not read your doorstep
     // there was no way to ask what your window currently says.
     if (what === "window") {
-      if (!handle) return bounce(422, "whose window?", "pass handle: — or call with a key that holds a resident");
+      if (!handle) return whichResident("window");
       const w = windowRead(db, handle, { odb, clone, asOf });
       return w ?? bounce(404, `no resident "${handle}"`, "handles are lowercase-hyphenated; try town { read: \"residents\" }");
     }
@@ -562,7 +576,7 @@ export async function householdApex(args = {}, key = null, ctx = {}) {
     // point back at the reads above: `mail` is household read: "mail", and so
     // on down the manifest.
     if (what === "doorstep") {
-      if (!handle) return bounce(422, "whose doorstep?", "pass handle: — or call with a key that holds a resident");
+      if (!handle) return whichResident("doorstep");
       const d = await doorstepBundle(handle, { db, key, meta, asOf, clone, odb, canWrite,
         conversationsOffset: f.correspondence_offset ?? f.offset ?? 0 });
       return d ?? bounce(404, `no resident "${handle}"`, "handles are lowercase-hyphenated; try town { read: \"residents\" }");
