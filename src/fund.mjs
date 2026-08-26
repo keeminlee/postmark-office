@@ -13,10 +13,10 @@
 //
 //   1. shape        — is this a tx hash, a pot name, a handle at all
 //   2. the pot      — does the town post this need? (`treasury` is refused here:
-//                     it takes deeds, never a fund page)
+//                     it takes direct-to-town receipts, never a fund page)
 //   3. the resident — holo only ever mints to a town household (§ 8); an
-//                     outsider's dollars land as a deed, and that is the
-//                     operator's lane, not this door's
+//                     outsider's dollars are still recorded, but by the
+//                     operator's hand, not at this door
 //   4. the witness  — the four on-chain checks, and the confession of what they
 //                     cannot see
 //   5. whole dollars — see THE CENTS below
@@ -57,7 +57,7 @@ import { isResidentHandle } from "./residency.mjs";
 // copies stood here until the household door was built — the exact drift
 // the single home exists to prevent, on the surface that can least afford it.
 import { HOLO_CAPTION } from "./funding.mjs";
-import { TREASURY_POT } from "./funding.mjs";
+import { TREASURY_POT, classifyFundingRow } from "./funding.mjs";
 
 export const POT_RE = /^[a-z0-9][a-z0-9-]*$/;
 
@@ -98,6 +98,22 @@ export function potGate({ engine, clone, pot }) {
   return { ok: true, potMeta };
 }
 
+/**
+ * The receipt refs a close has already settled. A holo row names the receipt it
+ * settles in `ref:`, and the close writes one per receipt whether it minted
+ * anything or not — so this set is the whole of "which payments have been
+ * counted", zero-holo ones included. Reported by the guards; nothing branches
+ * on it, and the town's own CLI and stamp-verify are what enforce it.
+ */
+export function settledRefs(entries) {
+  const refs = new Set();
+  for (const e of entries) {
+    const row = classifyFundingRow(e.canonical);
+    if (row?.kind === "holo") refs.add(row.ref);
+  }
+  return refs;
+}
+
 export function fundGuards({ engine, entries, clone, pot, handle, usd, receiptRef, households = null }) {
   const gate = potGate({ engine, clone, pot });
   if (!gate.ok) return gate;
@@ -105,7 +121,13 @@ export function fundGuards({ engine, entries, clone, pot, handle, usd, receiptRe
 
   // "one dollar, one mint chance — a re-recorded receipt bounces." Checked here
   // for the sentence; enforced by the town's CLI and by stamp-verify regardless.
-  const { receipts, deeded } = engine.foldPotReceipts(entries);
+  //
+  // ONLY `receipts` is taken from the town's fold. The set of refs a close has
+  // already settled is counted office-side, from the office's own reader, so
+  // this door does not depend on the NAME the town's return happens to give
+  // that set — a rename there would otherwise turn `settled` into `undefined`
+  // here and this guard's count into a crash, silently, on a key nobody greps.
+  const { receipts } = engine.foldPotReceipts(entries);
   const prior = receipts.find((r) => r.ref === receiptRef);
   if (prior) {
     return {
@@ -130,7 +152,7 @@ export function fundGuards({ engine, entries, clone, pot, handle, usd, receiptRe
       headroom: intake.headroom,
     };
   }
-  return { ok: true, potMeta, headroom: intake.headroom, capped: intake.capped, deeded: deeded.size };
+  return { ok: true, potMeta, headroom: intake.headroom, capped: intake.capped, receipts_settled: settledRefs(entries).size };
 }
 
 /**
@@ -157,7 +179,7 @@ export async function fundVerify(clone, body, {
   if (!POT_RE.test(String(pot)))
     throw bounce(422, "that is not a pot name", "pot names are lowercase letters, digits and single hyphens — e.g. keeping-ec2");
   if (String(pot) === TREASURY_POT)
-    throw bounce(422, `"${TREASURY_POT}" is the town's own direct line, not a pot`, "it takes deeds recorded by the founder's hand, never a funding page — pick a posted need from /board/");
+    throw bounce(422, `"${TREASURY_POT}" is the town's own direct line, not a pot`, "it takes direct-to-town receipts recorded by the founder's hand, never a funding page — pick a posted need from /board/");
   if (!isResidentHandle(String(handle)))
     throw bounce(422, "that is not a handle", "lowercase letters, digits and single hyphens — the name you keep house under in town");
 
@@ -174,11 +196,11 @@ export async function fundVerify(clone, body, {
   if (!gate.ok) throw bounce(gate.code, gate.defect, gate.hint);
 
   // 3 · the resident. § 8's holo law is household-shaped: a payer earns holo
-  // only as a town household. An outsider's dollars are still welcome and still
-  // deeded — but that is a deed the founder records, not a mint this door can make.
+  // only as a town household. An outsider's dollars are still welcome and are
+  // still recorded — but by the founder's hand, not by a mint this door makes.
   const households = householdKeys(clone);
   if (!households.has(String(handle)))
-    throw bounce(404, `no resident named "${handle}"`, "holo mints to a town household, so this door needs a handle the town knows. Not in town yet? Join first — or write to the postmaster and your dollars will be deeded by hand.");
+    throw bounce(404, `no resident named "${handle}"`, "holo mints to a town household, so this door needs a handle the town knows. Not in town yet? Join first — or write to the postmaster and your dollars will be recorded by hand.");
 
   // 4 · the witness
   const addressMap = potMap ?? readIntakeMap().map;

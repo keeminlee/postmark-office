@@ -7,7 +7,7 @@ Description=usdc-watch — read the town's intake address on Base and report wha
 # It records nothing. No pen, no ledger write, no receipt — so no town.lock,
 # exactly like postmark-harbor-watch. The chain cannot say which pot a payer
 # meant, and a receipt recorded under a placeholder payer would consume that
-# hash's one mint chance and cost the real patron their deed forever (the ref
+# hash's one mint chance and cost the real patron their holo forever (the ref
 # is unique in the ledger FOREVER, and there is no row kind that reassigns one).
 # See the header of tools/usdc-watch.mjs for the whole argument and
 # test/usdc-watch.test.mjs for the proof.

@@ -8,17 +8,24 @@
 // arrow precisely so no fold that moves money can ever see them.
 //
 // The fixture is one coherent epoch close on the town's own pot, in the town's
-// canonical close-block order (pot-return, keeping-burn, keeping mint, holo,
-// patron-deed), so the numbers mean something: the $150 posted need is fully
-// met, wright's 4 burns whole at funded_fraction 1, σ=0.5 → 2 minted for keeping
-// home to wright HIMSELF (not to the pot's beneficiary), and
-// floor((1−σ)·4 · 100/150) = 1 holo to the $100 payer, 0 to the $50 payer, with
-// deeds for both either way.
+// canonical close-block order (pot-return, keeping-burn, keeping mint, holo),
+// so the numbers mean something: the $150 posted need is fully met, wright's 4
+// burns whole at funded_fraction 1, σ=0.5 → 2 minted for keeping home to wright
+// HIMSELF (not to the pot's beneficiary), and floor((1−σ)·4 · 100/150) = 1 holo
+// to the $100 payer, 0 to the $50 payer — and a row for BOTH, because the close
+// writes one per receipt whether it mints anything or not.
+//
+// THE FOUNDER'S RULING, 2026-08-26. The 2026-08-24 proposal for a second money
+// row was ideation and never shipped. holo stays, there is no replacement noun,
+// and `pot-receipt` remains the only money row. What the proposed row used to
+// carry — the mark that a receipt's ref had been consumed — now rides the holo
+// row, which is why its count is `(\d+)` and 0 is lawful.
 //
 // The laws these tests pin:
 //   - holo is soulbound: it never sums into assets, and the caption is exact
 //   - a zero-holo household reads a WELL-FORMED empty section, not an absence
-//   - a pot's contributor roll carries every patron-deed on it
+//   - a pot's contributor roll carries every holo row on it, joined to the
+//     pot-receipt that row's `ref:` names
 //   - a keeping burn drains the escrow it burned — a matched stake does not
 //     sit in the pot forever looking like support that will come back
 //   - a row written in the grammar the office GUESSED before the town landed
@@ -26,7 +33,11 @@
 //   - R12's σ leg IS mint, source-tagged, with no liquid coin — so it is inside
 //     the ownership read and outside every tense
 //   - D1's ownership is a READ, not a fifth tense, and shows its own parts
-//   - the reserved `treasury` pot takes deeds only, and its deeds mint nothing
+//   - the reserved `treasury` pot takes direct-to-town receipts only, and they
+//     mint nothing — and are still settled, with a holo row of 0
+//   - A ZERO-HOLO RECEIPT IS STILL SETTLED. Without that, every grant, treasury
+//     dollar, outside payment, ρ-capped household and sole staker would be
+//     re-counted and re-minted at every future close
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -35,7 +46,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { DatabaseSync } from "node:sqlite";
 import { SCHEMA } from "../src/schema.mjs";
-import { parseLedgerText, foldFunding, classifyFundingRow, readPots, HOLO_CAPTION } from "../src/funding.mjs";
+import { parseLedgerText, foldFunding, classifyFundingRow, readPots, HOLO_CAPTION, HOLO_EXPANSION, TEACH } from "../src/funding.mjs";
 import { stampsDetail, potBoard, questBoardFor } from "../src/queries.mjs";
 
 // ── the landed grammar, one row of every kind ────────────────────────────────
@@ -52,10 +63,9 @@ const LEDGER = `# stamp-ledger — fixture
 - 2026-08-31 · stake:pot/keeping-ec2 → BURN · 4 · for: keeping:2026-08 · staker: wright · sig: sigH
 - 2026-08-31 · minted · wright · 2 · for: keeping:keeping-ec2 · epoch:2026-08 · sig: sigI
 - 2026-08-31 · holo · keemin · 1 · pot:keeping-ec2 · epoch:2026-08 · ref: ch_1QxTest · sig: sigJ
-- 2026-08-31 · patron-deed · pot:keeping-ec2 · patron: keemin · usd: 100 · epoch:2026-08 · ref: ch_1QxTest · holo: 1 · sig: sigK
-- 2026-08-31 · patron-deed · pot:keeping-ec2 · patron: marbinner · usd: 50 · epoch:2026-08 · ref: 0xdeadbeef · holo: 0 · sig: sigL
+- 2026-08-31 · holo · marbinner · 0 · pot:keeping-ec2 · epoch:2026-08 · ref: 0xdeadbeef · sig: sigL
 - 2026-08-20 · pot-receipt · pot:treasury · rail: grant · usd: 10000 · from: keemins-dad · ref: grant-2026-08 · sig: sigM
-- 2026-08-20 · patron-deed · pot:treasury · patron: keemins-dad · usd: 10000 · epoch:2026-08 · ref: grant-2026-08 · holo: 0 · sig: sigN
+- 2026-08-20 · holo · keemins-dad · 0 · pot:treasury · epoch:2026-08 · ref: grant-2026-08 · sig: sigN
 `;
 
 // Rows the office's PRE-LANDING guess would have folded as good. Every one of
@@ -83,25 +93,26 @@ const RETIRED = `- 2026-08-31 · MINT → meepo · 2 · for: keeper-equity:keepi
 `;
 
 // Complete in every field and wrong in exactly one byte: the loose colon the
-// office used to write. These are what keep the tight-colon pin honest — a
-// reason string can be asserted without the regex actually holding, so each of
-// these rows is ALSO checked for its absence from the folds below.
+// office used to write, on all three ARROW-FREE kinds (receipt, holo, keeping
+// mint). These are what keep the tight-colon pin honest — a reason string can
+// be asserted without the regex actually holding, so each of these rows is ALSO
+// checked for its absence from the folds below.
 const LOOSE = `- 2026-08-21 · pot-receipt · pot: keeping-ec2 · rail: stripe · usd: 25 · from: mallory · ref: ch_loose · sig: sigX
 - 2026-08-21 · holo · mallory · 7 · pot: keeping-ec2 · epoch: 2026-08 · ref: ch_loose · sig: sigY
-- 2026-08-21 · patron-deed · pot: keeping-ec2 · patron: mallory · usd: 25 · epoch: 2026-08 · ref: ch_loose · holo: 7 · sig: sigZ
+- 2026-08-21 · minted · mallory · 3 · for: keeping:keeping-ec2 · epoch: 2026-08 · sig: sigZ
 `;
 
 // Malformed under the landed grammar itself.
 const FORGED = `- 2026-08-21 · pot-receipt · pot:keeping-ec2 · rail: paypal · usd: 25 · from: mallory · ref: x1 · sig: sigT
 - 2026-08-21 · pot-receipt · pot:keeping-ec2 · rail: stripe · usd: 10.5 · from: mallory · ref: x2 · sig: sigU
 - 2026-08-21 · mallory → stake:pot/treasury · 5 · via: api · sig: sigV
-- 2026-08-21 · patron-deed · pot:treasury · patron: mallory · usd: 5 · epoch:2026-08 · ref: x3 · holo: 5 · sig: sigW
+- 2026-08-21 · holo · mallory · 5 · pot:treasury · epoch:2026-08 · ref: x3 · sig: sigW
 `;
 
 const fold = () => foldFunding(parseLedgerText(LEDGER + GUESSED + RETIRED + LOOSE + FORGED));
 const reasonFor = (f, needle) => f.invalid.find((i) => i.line.includes(needle))?.reason ?? "";
 
-test("the fold reads every landed row kind: receipts, escrow, burn, holo, deeds", () => {
+test("the fold reads every landed row kind: receipts, escrow, burn, holo, and the roll it joins", () => {
   const f = fold();
 
   const receipts = f.receiptsByPot.get("keeping-ec2") ?? [];
@@ -123,14 +134,25 @@ test("the fold reads every landed row kind: receipts, escrow, burn, holo, deeds"
   assert.deepEqual({ pot: keeping[0].pot, epoch: keeping[0].epoch }, { pot: "keeping-ec2", epoch: "2026-08" });
   assert.equal(f.keepingByParty.has("meepo"), false, "and not to the pot's beneficiary — that was the corrected law");
 
-  const roll = f.deedsByPot.get("keeping-ec2") ?? [];
-  assert.equal(roll.length, 2, "a pot with two patrons rolls both deeds");
+  // THE JOIN: attribution is the pot-receipt's (`from:`, `usd:`, its date), and
+  // the holo row names the receipt it settles. Neither half is duplicated.
+  const roll = f.rollByPot.get("keeping-ec2") ?? [];
+  assert.equal(roll.length, 2, "a pot with two patrons rolls both of them");
   assert.deepEqual(roll.map((d) => d.patron).sort(), ["keemin", "marbinner"]);
-  assert.equal(roll.find((d) => d.patron === "marbinner").holo, 0, "dollars are deeded even when they mint nothing");
+  assert.equal(roll.find((d) => d.patron === "marbinner").holo, 0, "a payment is recorded even when it mints nothing");
+  assert.equal(roll.find((d) => d.patron === "marbinner").usd, 50,
+    "and the dollars come off the receipt — the only money row there is");
+  assert.deepEqual(
+    roll.find((d) => d.patron === "keemin"),
+    { patron: "keemin", date: "2026-08-02", pot: "keeping-ec2", usd: 100, receipt: "ch_1QxTest", holo: 1 },
+    "join holo→receipt on ref and (patron, dollars, date, receipt, holo) all come back");
+  assert.deepEqual((f.rollByParty.get("keemin") ?? []).map((x) => x.receipt), ["ch_1QxTest"],
+    "the same rows, keyed by payer, for the household's own read");
 
-  const town = f.deedsByPot.get("treasury") ?? [];
-  assert.equal(town.length, 1, "direct-to-town dollars land as a deed on the reserved pot");
+  const town = f.rollByPot.get("treasury") ?? [];
+  assert.equal(town.length, 1, "direct-to-town dollars roll on the reserved pot too");
   assert.equal(town[0].holo, 0);
+  assert.equal(town[0].usd, 10000);
 });
 
 test("the grammar the office guessed before the town landed its own is now invalid", () => {
@@ -146,7 +168,7 @@ test("the grammar the office guessed before the town landed its own is now inval
 
   // and none of them bought their way into the folds
   assert.equal(f.holoByParty.has("mallory"), false, "a forged holo mints nothing");
-  assert.equal((f.deedsByPot.get("keeping-ec2") ?? []).some((d) => d.patron === "mallory"), false);
+  assert.equal((f.rollByPot.get("keeping-ec2") ?? []).some((d) => d.patron === "mallory"), false);
   assert.equal(f.potEscrow.get("keeping-ec2"), 6, "the malformed unstake moved no escrow");
 });
 
@@ -191,7 +213,7 @@ test("the σ leg reads in R12's own vocabulary, and the arrow is the enforcement
 
   const f = fold();
   assert.equal(f.invalid.some((i) => i.line.includes("· minted · wright")), false, "a lawful σ row is not called forged");
-  assert.equal((f.deedsByParty.get("wright") ?? []).length, 0, "it is not a deed");
+  assert.equal((f.rollByParty.get("wright") ?? []).length, 0, "a keeping mint is not a funding act — it rolls for nobody");
 
   // the arrow is the enforcement, exactly as it is for holo
   const moved = classifyFundingRow("- 2026-08-31 · minted → wright · 2 · for: keeping:keeping-ec2 · epoch:2026-08");
@@ -204,25 +226,80 @@ test("a row that is complete but writes the loose colon is refused by the fold, 
   const f = fold();
   // Asserting the REASON alone would pass even if the regex quietly loosened —
   // the diagnoser is a separate code path. So this pins the numbers instead:
-  // if `pot: ` ever parsed, ch_loose would add $25 to the receipts, a fourth
-  // deed to the roll, and 7 holo to a household that paid for none of it.
+  // if `pot: ` ever parsed, ch_loose would add $25 to the receipts, a third row
+  // to the roll, and 7 holo to a household that paid for none of it; if
+  // `epoch: ` ever parsed, mallory would hold 3 minted for keeping she never
+  // staked for.
   assert.equal((f.receiptsByPot.get("keeping-ec2") ?? []).reduce((n, r) => n + r.usd, 0), 150,
     "the loose-colon receipt adds no dollars");
   assert.equal((f.receiptsByPot.get("keeping-ec2") ?? []).some((r) => r.receipt === "ch_loose"), false);
-  assert.equal((f.deedsByPot.get("keeping-ec2") ?? []).length, 2, "the loose-colon deed is not on the roll");
+  assert.equal((f.rollByPot.get("keeping-ec2") ?? []).length, 2, "the loose-colon holo is not on the roll");
   assert.equal(f.holoByParty.has("mallory"), false, "the loose-colon holo mints nothing");
+  assert.equal(f.keepingByParty.has("mallory"), false, "and the loose-colon keeping mint mints nothing either");
   // all three are named, so the refusal is disclosed rather than silent
-  assert.equal(f.invalid.filter((i) => i.line.includes("ch_loose")).length, 3);
+  assert.equal(f.invalid.filter((i) => i.line.includes("ch_loose")).length, 2);
+  assert.match(reasonFor(f, "minted · mallory · 3"), /NO space after the colon/,
+    "the third arrow-free kind is held to the same tight colon");
 });
 
 test("rows malformed under the landed grammar are surfaced by name", () => {
   const f = fold();
   assert.match(reasonFor(f, "paypal"), /stripe\|usdc\|grant/, "the paypal rail is refused by name");
   assert.match(reasonFor(f, "10.5"), /WHOLE number/, "fractional dollars are not a smaller payment, they are not a row");
-  assert.match(reasonFor(f, "stake:pot/treasury"), /takes deeds, never stakes/);
-  assert.match(reasonFor(f, "usd: 5 · epoch:2026-08 · ref: x3 · holo: 5"), /mint nothing/,
-    "a treasury deed that claims holo is refused — nothing burned, so nothing minted");
+  assert.match(reasonFor(f, "stake:pot/treasury"), /takes direct-to-town receipts, never stakes/);
+  assert.match(reasonFor(f, "holo · mallory · 5 · pot:treasury"), /mint no holo/,
+    "a treasury holo row that claims a mint is refused — nothing burned, so nothing minted");
+  assert.equal((f.rollByPot.get("treasury") ?? []).some((x) => x.patron === "mallory"), false,
+    "and the refused row rolls nothing");
   assert.equal(f.potEscrow.has("treasury"), false, "the refused treasury stake escrows nothing");
+});
+
+// ── THE ZERO-HOLO RECEIPT (the founder's ruling, 2026-08-26) ────────────────
+//
+// This is the regression the whole change turns on, so it is written to be able
+// to FAIL: the same fold runs twice, once on a ledger that settles the $50
+// receipt with a holo row of 0 and once on a ledger missing that one row, and
+// the two answers must differ. If they ever agree, the zero-holo row has
+// stopped being the mark of a settled payment and every future close will count
+// that $50 again.
+//
+// The rows that mint 0 are not a corner: a grant, a treasury dollar, an outside
+// payer, a ρ-capped household and a sole staker all land here.
+const WITHOUT_THE_ZERO_ROW = LEDGER.replace(
+  "- 2026-08-31 · holo · marbinner · 0 · pot:keeping-ec2 · epoch:2026-08 · ref: 0xdeadbeef · sig: sigL\n", "");
+
+test("a receipt that minted ZERO holo is still settled — and a second close cannot count it again", () => {
+  // 1 · a holo row of 0 is a lawful row. `([1-9]\d*)` would have refused it.
+  const zero = classifyFundingRow("- 2026-08-31 · holo · marbinner · 0 · pot:keeping-ec2 · epoch:2026-08 · ref: 0xdeadbeef");
+  assert.equal(zero.kind, "holo", "0 is a real answer, not a malformed row");
+  assert.equal(zero.n, 0);
+  assert.equal(zero.ref, "0xdeadbeef", "and it names the receipt it settles");
+
+  // 2 · so the $50 receipt is on the roll, at holo 0, with its dollars intact
+  const f = foldFunding(parseLedgerText(LEDGER));
+  const settled = new Set((f.rollByPot.get("keeping-ec2") ?? []).map((x) => x.receipt));
+  assert.equal(settled.has("0xdeadbeef"), true, "the zero-holo row is what marks the payment counted");
+  assert.equal(settled.has("ch_1QxTest"), true);
+
+  // 3 · and the pot's OPEN dollars are 0 — nothing is left for a next close to
+  //     take, which is the whole point
+  const pot = potBoard(fundingDb()).list[0];
+  assert.equal(pot.funding.dollars_open, 0, "a settled epoch's dollars do not fund the next one");
+
+  // 4 · THE FLIP. Delete that one row and the same $50 comes back as open
+  //     money — re-counted, and re-mintable, forever.
+  const g = foldFunding(parseLedgerText(WITHOUT_THE_ZERO_ROW));
+  const gSettled = new Set((g.rollByPot.get("keeping-ec2") ?? []).map((x) => x.receipt));
+  assert.equal(gSettled.has("0xdeadbeef"), false, "with no holo row, nothing says the payment was counted");
+  const openDollars = (g.receiptsByPot.get("keeping-ec2") ?? [])
+    .filter((r) => !gSettled.has(r.receipt)).reduce((n, r) => n + r.usd, 0);
+  assert.equal(openDollars, 50, "and $50 of already-settled money reads as unfunded need again");
+  assert.notEqual(openDollars, 0, "the probe can fail — this is the bug the zero row prevents");
+
+  // 5 · the treasury receipt is the same case: it mints nothing by law, and it
+  //     is settled by a row of 0 exactly like any other payment
+  assert.deepEqual((f.rollByPot.get("treasury") ?? []).map((x) => [x.receipt, x.holo]),
+    [["grant-2026-08", 0]], "direct-to-town dollars mint nothing and are still marked counted");
 });
 
 test("rows of the existing grammar pass through untouched (not funding, not invalid)", () => {
@@ -293,8 +370,8 @@ function fundingDb() {
   for (const [party, ms] of f.holoByParty) for (const m of ms) insHolo.run(party, m.pot, m.holo, m.epoch, m.date, m.receipt);
   const insKeep = db.prepare("INSERT INTO funding_keeping_mint (party, pot, n, epoch, date) VALUES (?,?,?,?,?)");
   for (const [party, rs] of f.keepingByParty) for (const r of rs) insKeep.run(party, r.pot, r.n, r.epoch, r.date);
-  const insDeed = db.prepare("INSERT INTO funding_deeds (patron, pot, usd, date, receipt, holo) VALUES (?,?,?,?,?,?)");
-  for (const [pot, ds] of f.deedsByPot) for (const d of ds) insDeed.run(d.patron, pot, d.usd, d.date, d.receipt, d.holo);
+  const insRoll = db.prepare("INSERT INTO funding_roll (patron, pot, usd, date, receipt, holo) VALUES (?,?,?,?,?,?)");
+  for (const [pot, rs] of f.rollByPot) for (const r of rs) insRoll.run(r.patron, pot, r.usd, r.date, r.receipt, r.holo);
   const insRcpt = db.prepare("INSERT INTO pot_receipts (pot, rail, usd, date, receipt, payer) VALUES (?,?,?,?,?,?)");
   for (const [pot, rs] of f.receiptsByPot) for (const r of rs) insRcpt.run(pot, r.rail, r.usd, r.date, r.receipt, r.from);
   for (const [pot, n] of f.potEscrow) db.prepare("INSERT INTO pot_escrow (pot, staked) VALUES (?,?)").run(pot, n);
@@ -315,9 +392,22 @@ test("a household with holo reads four tenses that sum sanely — and holo is ne
   assert.equal(d.holo.caption, "a record of contribution, not a promise of profit", "the caption is law, byte for byte");
   assert.equal(d.holo.caption, HOLO_CAPTION);
   assert.equal(d.holo.total, 1);
-  assert.equal(d.deeds.list.length, 1);
-  assert.deepEqual(d.deeds.list[0], { pot: "keeping-ec2", dollars: 100, date: "2026-08-31", receipt: "ch_1QxTest", holo_minted: 1 });
-  assert.ok(d.tenses.teach && d.holo.teach && d.deeds.teach, "every new section teaches at the point of contact");
+  // The funding act rides the holo row itself — which pot, when, how many
+  // dollars, the receipt that witnessed them, and the holo minted for it. There
+  // is no second register beside it (the founder's 2026-08-26 ruling).
+  assert.equal(d.holo.mints.length, 1);
+  assert.deepEqual(d.holo.mints[0],
+    { pot: "keeping-ec2", holo: 1, dollars: 100, epoch: "2026-08", date: "2026-08-31", receipt: "ch_1QxTest" });
+  // THE WHOLE SHAPE, pinned. The 2026-08-24 proposal for a second register
+  // beside `holo` was ideation and never shipped; the founder ruled on
+  // 2026-08-26 that holo stays and there is no replacement noun. Listing the
+  // keys is how this test notices a second register growing back under ANY
+  // name, which asserting one key's absence could not.
+  assert.deepEqual(Object.keys(d).sort(),
+    ["assets", "holo", "keeping_mint", "liquid", "mint_count", "moved", "ownership", "staked", "stamps", "tenses"],
+    "one register for the funding facts, not two");
+  assert.match(d.moved, /holo\.mints/, "and the read says where those facts live instead of changing shape in silence");
+  assert.ok(d.tenses.teach && d.holo.teach, "every new section teaches at the point of contact");
   assert.match(d.tenses.teach, /BURNS/, "the staked tense says out loud that a dollar-matched keeping stake burns rather than returns");
 });
 
@@ -380,14 +470,13 @@ test("a household with zero holo reads a well-formed empty section, not an absen
   const d = stampsDetail(fundingDb(), "limen");
   assert.equal(d.holo.total, 0);
   assert.deepEqual(d.holo.mints, []);
-  assert.deepEqual(d.deeds.list, []);
   assert.equal(d.holo.caption, HOLO_CAPTION, "the caption stands even at zero");
   assert.equal(d.stamps, 3, "the old numbers are untouched");
 });
 
 test("the pot board carries the landed pot file's own fields, the roll, and the escrow", () => {
   const b = potBoard(fundingDb());
-  assert.equal(b.list.length, 1, "the reserved treasury pot has deeds but no file — it is not a board row");
+  assert.equal(b.list.length, 1, "the reserved treasury pot has receipts but no file — it is not a board row");
   const pot = b.list[0];
   assert.equal(pot.target_usd_per_epoch, 150, "the target is per epoch, not a lifetime total");
   assert.equal(pot.epoch_cadence, "monthly", "a cadence, not an epoch id — the door does not rename one into the other");
@@ -395,11 +484,12 @@ test("the pot board carries the landed pot file's own fields, the roll, and the 
   assert.equal(pot.beneficiary, null, "a draft pot shows no keeper rather than inventing one");
   assert.equal(pot.received_usd, 0);
   assert.equal(pot.receipts.sum_usd, 150, "the receipts' own sum is disclosed beside the file's received — two clocks, both shown");
-  // both receipts are deeded (the epoch closed), so the OPEN epoch is unfunded —
-  // summing every receipt ever would report this pot fully funded on the
-  // strength of a month that already closed
+  // both receipts are SETTLED (the epoch closed — each has a holo row naming its
+  // ref, the $50 one at holo 0), so the OPEN epoch is unfunded; summing every
+  // receipt ever would report this pot fully funded on the strength of a month
+  // that already closed
   assert.equal(pot.funding.target_usd_per_epoch, 150);
-  assert.equal(pot.funding.dollars_undeeded, 0);
+  assert.equal(pot.funding.dollars_open, 0);
   assert.equal(pot.funding.funded_fraction, 0, "a closed epoch's dollars do not fund the next one");
   assert.ok(pot.funding.teach);
   assert.notEqual(pot.received_usd, pot.receipts.sum_usd, "and the fixture is one where they disagree, so the disclosure is doing work");
@@ -443,4 +533,23 @@ test("a bounty posting with no pot file behind it is surfaced, not dropped betwe
   const ghost = b.pots.invalid_rows.list.find((i) => i.row_kind === "pot-posting");
   assert.ok(ghost, "a posting with nothing behind it is named");
   assert.match(ghost.reason, /no WHITE_PAGES\/pot-ghost-pot\.json/);
+});
+
+test("the holo teach says what holo is short for, once, from the one constant", () => {
+  // The founder, 2026-08-26: holo is short for HOLOGRAPHIC STAMPS, and the
+  // office should say so once. The site ships the same sentence as its own
+  // constant, so the wording is law — this asserts the words themselves, not
+  // just that some expansion exists, because a paraphrase would drift the two
+  // surfaces apart silently.
+  assert.equal(
+    HOLO_EXPANSION,
+    "short for holographic stamp — the collector's shiny kind, kept in the album and shown, never spent as postage.",
+    "the expansion is law, byte for byte",
+  );
+  assert.ok(TEACH.holo.includes(HOLO_EXPANSION), "the holo teach composes the constant, never a retyped copy");
+
+  // FIRST MENTION ONLY: every other teach line stays bare "holo", so the
+  // expansion teaches once instead of becoming boilerplate.
+  const carriers = Object.entries(TEACH).filter(([, v]) => v.includes(HOLO_EXPANSION)).map(([k]) => k);
+  assert.deepEqual(carriers, ["holo"], "exactly one teach line carries the expansion");
 });

@@ -267,7 +267,7 @@ test("a pot marked uncapped is D5's own exception — a standing box takes what 
 
 test("the door refuses an unknown pot, a stranger, and the treasury — before touching the chain", async () => {
   // LAW § 8: a payer earns holo "only as a town household"; and the reserved
-  //     `treasury` pot "takes deeds, never stakes or closes".
+  //     `treasury` pot "takes direct-to-town receipts, never stakes or closes".
   const town = seamTown({ pots: { ec2: {} }, gifts: [{ handle: "paz", n: 10 }] });
   let consulted = 0;
   const verify = async () => { consulted++; return { verified: true, usd: 10, txhash: HASH, receipt_ref: "x" }; };
@@ -279,7 +279,7 @@ test("the door refuses an unknown pot, a stranger, and the treasury — before t
   const stranger = await caught(() => call(town, { txhash: HASH, pot: "ec2", handle: "mallory" }, { verify, record: cliRecorder(town) }));
   assert.equal(stranger.code, 404);
   assert.match(stranger.defect, /no resident named "mallory"/);
-  assert.match(stranger.hint, /deeded by hand/, "a stranger's dollars are still welcome — by another route");
+  assert.match(stranger.hint, /recorded by hand/, "a stranger's dollars are still welcome — by another route");
 
   const town2 = await caught(() => call(town, { txhash: HASH, pot: "treasury", handle: "paz" }, { verify, record: cliRecorder(town) }));
   assert.equal(town2.code, 422);
@@ -385,8 +385,8 @@ test("a tx paying TWO town intake addresses is refused, not resolved in favour o
   // LAW `the-town/the-disclosure`: refuse or disclose absent inputs, never
   //     quietly substitute. Two of the town's addresses paid in one tx is two
   //     different answers to "which pot did you mean", and choosing between
-  //     them would cost the payer a deed on a pot they did not name — which the
-  //     ledger has no row kind to undo.
+  //     them would cost the payer a witnessed payment on a pot they did not
+  //     name — which the ledger has no row kind to undo.
   const both = await verifyUsdcPayment({
     txhash: HASH, potMap: MAP,
     rpc: chain({ logs: [transferLog({ to: POT_ADDRESS, usd: 10 }), transferLog({ to: INTAKE, usd: 10 })] }),

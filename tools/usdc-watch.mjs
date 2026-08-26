@@ -23,14 +23,14 @@
 //             disappears rather than being made.
 //
 //   the hand  witnessing under a placeholder payer permanently destroys the
-//             real patron's deed, because "ref is unique forever: one dollar,
+//             real patron's holo, because "ref is unique forever: one dollar,
 //             one mint chance, a re-recorded receipt bounces" and the ledger
 //             has no row kind that attaches, corrects, or reassigns a payer.
 //             That is still exactly true of an UNKNOWN payer. It is NOT true of
 //             a REGISTERED one: the OFFICE-SIDE registry (src/wallet-registry.mjs,
 //             box-side and never in the town repo — founder-ruled 2026-08-25)
 //             says whose address this is, so the claim the watch "front-runs"
-//             would have named the same hand. There is no deed to lose.
+//             would have named the same hand. There is no holo to lose.
 //
 // Both must hold for one arrival before it is witnessed, and it waits MIN_CONF
 // deep AND one full crossing besides. test/usdc-watch.test.mjs still proves the
@@ -242,7 +242,7 @@ export const NEEDS_POT_LETTER = (a, handle) =>
   `Your $${Math.floor(a.usd)} reached the town on ${a.txhash} and we can see it is yours — but the town has one intake address serving more than one pot, so the chain cannot tell us WHICH need you meant to fund. Reply with the pot (or witness it yourself from that pot's own /fund/ page) and it files immediately; nothing is lost while it waits.`;
 
 export const UNREGISTERED =
-  "no household has registered this address with the office, so the town cannot say whose dollar this is. Witnessing it under a placeholder would spend the ref's one mint chance and cost the real patron their deed forever — this arrival waits for their paste, or for the sink rule.";
+  "no household has registered this address with the office, so the town cannot say whose dollar this is. Witnessing it under a placeholder would spend the ref's one mint chance and cost the real patron their holo forever — this arrival waits for their paste, or for the sink rule.";
 
 /**
  * The rule, applied to what the ledger has not already claimed. Pure: no
@@ -336,7 +336,7 @@ function emptyReport({ now, intake, minConf, graceMs, sink }) {
     sink_enabled: sink,
     sink_rule: SINK_RULE,
     grace: `one crossing (${graceMs / 3_600_000}h) after the block was mined`,
-    posture: "this watch records exactly one thing: an arrival from an address a household has REGISTERED, at an address that names a single pot, MIN_CONF deep and a crossing old. Everything else it reads and reports only. The chain cannot say which pot an unmapped address meant, and a receipt recorded under a placeholder would consume that hash's one mint chance and cost the patron their deed forever.",
+    posture: "this watch records exactly one thing: an arrival from an address a household has REGISTERED, at an address that names a single pot, MIN_CONF deep and a crossing old. Everything else it reads and reports only. The chain cannot say which pot an unmapped address meant, and a receipt recorded under a placeholder would consume that hash's one mint chance and cost the patron their holo forever.",
   };
 }
 

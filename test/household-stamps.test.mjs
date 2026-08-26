@@ -204,7 +204,7 @@ test("the address rides only beside an OPEN pot, never bare in the envelope", ()
 // ── the published close word ────────────────────────────────────────────────
 //
 // A db that serves potBoard exactly the pot files handed to it, and nothing
-// else — no deeds, no receipts, no escrow. The fund read is a read OF the pot
+// else — no roll, no receipts, no escrow. The fund read is a read OF the pot
 // files; the rest of the seam is another test's subject.
 const potDb = (files) => ({
   prepare: (sql) => ({

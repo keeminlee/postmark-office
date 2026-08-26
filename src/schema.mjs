@@ -38,15 +38,21 @@ export const SCHEMA = `
   CREATE TABLE regions (id TEXT PRIMARY KEY, name TEXT, json TEXT);
   CREATE TABLE homes (handle TEXT PRIMARY KEY, region TEXT, json TEXT);
   -- The funding seam (2026-08-21): pots are bounty files on the quest board;
-  -- deeds / holo / receipts / escrow fold from the stamp-ledger's funding rows
+  -- holo / receipts / escrow fold from the stamp-ledger's funding rows
   -- (src/funding.mjs). holo is SOULBOUND — indexed apart from stamps so no
   -- read can ever sum it into a balance by accident. funding_invalid holds the
   -- rows that claimed a funding kind and failed its field law: surfaced at the
   -- door, never silently rendered.
   CREATE TABLE pots (id TEXT PRIMARY KEY, json TEXT);
-  CREATE TABLE funding_deeds (seq INTEGER PRIMARY KEY AUTOINCREMENT, patron TEXT, pot TEXT, usd REAL, date TEXT, receipt TEXT, holo INTEGER);
-  CREATE INDEX funding_deeds_patron ON funding_deeds (patron);
-  CREATE INDEX funding_deeds_pot ON funding_deeds (pot);
+  -- funding_roll is the JOIN, materialized: each holo row against the
+  -- pot-receipt its ref names, so a patron page can read who paid, how many
+  -- dollars, when, and the holo minted for it without a second money row in the
+  -- ledger. usd is NULL when no receipt in this ledger carries that ref --
+  -- absent, never guessed. Nothing persists: the whole index rebuilds from the
+  -- sealed ledger at every tick, so this table has no migration and no history.
+  CREATE TABLE funding_roll (seq INTEGER PRIMARY KEY AUTOINCREMENT, patron TEXT, pot TEXT, usd REAL, date TEXT, receipt TEXT, holo INTEGER);
+  CREATE INDEX funding_roll_patron ON funding_roll (patron);
+  CREATE INDEX funding_roll_pot ON funding_roll (pot);
   CREATE TABLE funding_holo (seq INTEGER PRIMARY KEY AUTOINCREMENT, party TEXT, pot TEXT, holo INTEGER, epoch TEXT, date TEXT, receipt TEXT);
   CREATE INDEX funding_holo_party ON funding_holo (party);
   -- The sigma leg (R12, 2026-08-21): ordinary mint, source-tagged to the pot,
@@ -55,10 +61,9 @@ export const SCHEMA = `
   -- The ownership read counts it deliberately; no tense does.
   CREATE TABLE funding_keeping_mint (seq INTEGER PRIMARY KEY AUTOINCREMENT, party TEXT, pot TEXT, n INTEGER, epoch TEXT, date TEXT);
   CREATE INDEX funding_keeping_mint_party ON funding_keeping_mint (party);
-  -- payer is the receipt's own from: field — between a payment and the epoch
-  -- close that witnesses it, the receipt is the ONLY record of who paid (deeds
-  -- are written at close), so the board would otherwise show anonymous dollars
-  -- for most of an epoch.
+  -- payer is the receipt's own from: field, and it is the ONE place attribution
+  -- lives: who paid, how many dollars, when. Everything downstream that names a
+  -- patron reads it from here, through funding_roll's join on the receipt ref.
   CREATE TABLE pot_receipts (seq INTEGER PRIMARY KEY AUTOINCREMENT, pot TEXT, rail TEXT, usd REAL, date TEXT, receipt TEXT, payer TEXT);
   CREATE INDEX pot_receipts_pot ON pot_receipts (pot);
   CREATE TABLE pot_escrow (pot TEXT PRIMARY KEY, staked INTEGER);

@@ -117,7 +117,7 @@ const APEX_ONLY_FIELDS = {
     properties: {
       txhash: { type: "string", description: "the USDC transaction hash to witness" },
       pot: { type: "string", description: "the pot the payment was made against" },
-      handle: { type: "string", description: "the patron's handle — whose deed this becomes" },
+      handle: { type: "string", description: "the patron's handle — whose holo this mints" },
     },
     required: ["txhash", "pot"],
   },

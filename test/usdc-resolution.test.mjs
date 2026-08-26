@@ -6,7 +6,7 @@
 //
 // The companion file test/usdc-watch.test.mjs still proves the theft this watch
 // refuses to commit — an arrival recorded under a placeholder payer destroys the
-// real patron's deed forever, against the town's own CLI. Nothing here weakens
+// real patron's holo forever, against the town's own CLI. Nothing here weakens
 // that. What is asserted here is the narrow shape for which its two premises are
 // FALSE: an address a household has registered, at an address that names one
 // pot. Everything outside that shape must still come out unclaimed, and several
@@ -191,11 +191,11 @@ test("A HANDLE THE TOWN DOES NOT KNOW IS REFUSED — the hole the relocation ope
   // guarantees it, and a receipt witnessed under a non-household handle is
   // treated as an OUTSIDE PATRON at the close — deriveEpochClose, verbatim: "An
   // outside patron (the founding family grant) resolves to neither and lands as
-  // deed alone." The resident's deed would be quietly lost. So the fold checks.
+  // gift, holo 0. The resident's own holo would be quietly lost. So the fold checks.
   const { byAddress, invalid } = foldRegistry(reg("not-a-resident", PAZ_WALLET), { households: HH });
   assert.equal(byAddress.size, 0);
   assert.match(invalid[0].reason, /is not a household the town knows/);
-  assert.match(invalid[0].reason, /quietly cost that resident their deed/);
+  assert.match(invalid[0].reason, /quietly cost that resident their holo/);
   assert.equal(foldRegistry(reg("paz", PAZ_WALLET), { households: HH }).byAddress.size, 1);
 });
 
