@@ -574,6 +574,19 @@ test("lsRemote and newestReleaseTag read the wire protocol, and answer null rath
   const newest = newestReleaseTag("https://x/y.git", { exec: tags });
   assert.equal(newest.tag, "release/2026-w35.1", "numeric-aware sort, so w35.1 beats w35 and w34");
 
+  // THE ANNOTATED-TAG CASE (2026-08-26, caught live): the wire lists the tag
+  // object AND its peeled commit; the deploy checks out the COMMIT, so the
+  // probe must answer the peeled sha or it calls a current site stale — which
+  // it did, for 9 hours, the morning after release/2026-w35.3 shipped.
+  const annotated = () => [
+    "tagobj35_3\trefs/tags/release/2026-w35.3",
+    "commit35_3\trefs/tags/release/2026-w35.3^{}",
+    "s2\trefs/tags/release/2026-w35.1",
+  ].join("\n") + "\n";
+  const peeled = newestReleaseTag("https://x/y.git", { exec: annotated });
+  assert.equal(peeled.tag, "release/2026-w35.3", "the peeled line must not create a phantom second tag");
+  assert.equal(peeled.sha, "commit35_3", "an annotated tag answers its PEELED commit, never the tag object");
+
   const boom = () => { throw new Error("no network"); };
   assert.equal(lsRemote("https://x/y.git", "main", { exec: boom }), null, "an unreachable remote is UNKNOWN upstream, not a crash");
   assert.equal(newestReleaseTag("https://x/y.git", { exec: boom }), null);

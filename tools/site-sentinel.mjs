@@ -568,11 +568,24 @@ export function lsRemote(repoUrl, ref, { exec = execFileSync } = {}) {
 /** The newest release/* tag's name, by version-ish sort over the tag list. */
 export function newestReleaseTag(repoUrl, { exec = execFileSync } = {}) {
   try {
-    const out = String(exec("git", ["ls-remote", "--tags", "--refs", repoUrl, "release/*"], { encoding: "utf8", timeout: CONFIG.requestTimeoutMs }));
-    const rows = out.split("\n").filter(Boolean).map((l) => {
+    // NO --refs, on purpose (2026-08-26). An ANNOTATED tag lists twice on the
+    // wire: `refs/tags/X` (the tag OBJECT's sha) and `refs/tags/X^{}` (the
+    // peeled COMMIT the deploy actually checks out). `--refs` strips the
+    // peeled lines, so this probe compared the deployed build against the tag
+    // object and called a perfectly current site STALE for 9 hours. The
+    // peeled sha wins whenever it exists; a lightweight tag has no ^{} line
+    // and its ref sha IS the commit, unchanged.
+    const out = String(exec("git", ["ls-remote", "--tags", repoUrl, "release/*"], { encoding: "utf8", timeout: CONFIG.requestTimeoutMs }));
+    const byTag = new Map();
+    for (const l of out.split("\n").filter(Boolean)) {
       const [sha, ref] = l.split(/\s+/);
-      return { sha, tag: String(ref).replace("refs/tags/", "") };
-    });
+      const peeled = /\^\{\}$/.test(ref);
+      const tag = String(ref).replace("refs/tags/", "").replace(/\^\{\}$/, "");
+      const row = byTag.get(tag) ?? { tag, sha: null };
+      if (peeled || row.sha === null) row.sha = sha;
+      byTag.set(tag, row);
+    }
+    const rows = [...byTag.values()];
     if (!rows.length) return null;
     rows.sort((a, b) => a.tag.localeCompare(b.tag, undefined, { numeric: true }));
     return rows[rows.length - 1];
