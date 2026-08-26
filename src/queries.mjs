@@ -670,7 +670,13 @@ const segment = (serves, args, answer) => ({
  *  the per-row prose (`reason`, `reduction`), the letter-by-letter
  *  `broken_thread` array, and `unreplied_leaves`: all of it is real, none of it
  *  is readable twenty rows at a time, and every byte of it is one call away at
- *  `household read: "mail" view: "awaiting"`. */
+ *  `household read: "mail" view: "awaiting"`.
+ *
+ *  ⚠ THE ROW'S OWN `conversation` KEY IS NOT RENAMED. It is the TOWN's field —
+ *  tools/mail-state.mjs emits it — and the `letter_threads` rename below is
+ *  scoped to this view's array and its counters. Renaming a town-emitted key
+ *  here would make the slim row diverge from the record's row shape in a second
+ *  way; the deep rename lane owns that one. */
 const AWAITING_SLIM_ROW = Object.freeze(["conversation", "attention_state", "latest_delivered_id",
   "latest_delivered_from", "next_actor", "others", "letters", "queued_reply_id", "latest_event"]);
 
@@ -683,14 +689,31 @@ const AWAITING_SLIM_ROW = Object.freeze(["conversation", "attention_state", "lat
  *  `doorstep-bundle.test.mjs` exists to refuse. The falsifier still runs
  *  against the unslimmed bundle, which is still exactly what REST serves.
  *
- *  `threads` goes entirely: every row in it is a restatement of a conversation
+ *  `threads` goes entirely: every row in it is a restatement of a letter thread
  *  the same object already carries, which is the `awaiting_reply` defect the
  *  bundle refactor retired — it simply grew back on a second axis. The counts
- *  it carried are kept, because a total is not a restatement. */
+ *  it carried are kept, because a total is not a restatement.
+ *
+ *  THE NOUN (the founder, 2026-08-26). "conversations" is overloaded: the WORLD
+ *  derives ephemeral say-conversations at the quay, and the mail ledger's rows
+ *  are a different thing with a different lifetime. The mail noun is
+ *  `letter_threads`, and it is spelled that way HERE ONLY — on this view, which
+ *  has never been released, so the rename is free. The fat bundle,
+ *  tools/mail-state.mjs, and the standalone `household read: "mail" view:
+ *  "awaiting"` all keep the old spelling until the breaking-change lane does the
+ *  deep rename deliberately. `moved` carries old spelling → new for anyone who
+ *  read this branch's shape early.
+ *
+ *  ⚠ EVERY counter is re-emitted below, including the two that used to ride
+ *  through on `...rest` (`conversations_total`, `conversations_offset`). A
+ *  rename that renamed only the keys it happened to mention would leave those
+ *  two behind under the old spelling, and the block would answer in both nouns
+ *  at once. */
 function slimAwaiting(a) {
   const {
     threads: _t, threads_shown: _ts, threads_complete: _tc, threads_note: _tn,
-    conversations, conversations_shown: _cs, conversations_complete: _cc,
+    conversations, conversations_total: _ct, conversations_shown: _cs,
+    conversations_offset: _co, conversations_complete: _cc,
     conversations_next_offset: _cn, conversations_note: _cnote, ...rest
   } = a;
   const rows = (conversations ?? []).slice(0, DOORSTEP_AWAITING_SLIM)
@@ -709,14 +732,16 @@ function slimAwaiting(a) {
     ...rest,
     // The bound and its count are ONE change, never two: these describe the cut
     // that actually happened here, not the one `mailAwaiting` made upstream.
-    conversations_shown: rows.length,
-    conversations_complete: next >= total,
+    letter_threads_total: total,
+    letter_threads_shown: rows.length,
+    letter_threads_offset: start,
+    letter_threads_complete: next >= total,
     ...(next >= total ? {} : {
-      conversations_next_offset: next,
-      conversations_note: `${total - next} further conversation${total - next === 1 ? "" : "s"} in your ledger — the whole of it, with each row's full reasoning, is at household read: "mail" view: "awaiting" (offset: ${next}); summary above counts all of it`,
+      letter_threads_next_offset: next,
+      letter_threads_note: `${total - next} further letter thread${total - next === 1 ? "" : "s"} in your ledger — the whole of it, with each row's full reasoning, is at household read: "mail" view: "awaiting" (offset: ${next}), where they are still spelled \`conversations\`; summary above counts all of it`,
     }),
-    conversations: rows,
-    abridged: `the connector skin shows the ${rows.length} newest conversations without their per-row reasoning, and drops the \`threads\` block (every row of it restated a conversation above it) — household read: "mail" view: "awaiting" answers whole, and \`threads_total\` above is still the true count`,
+    letter_threads: rows,
+    abridged: `the connector skin shows the ${rows.length} newest letter threads without their per-row reasoning, and drops the \`threads\` block (every row of it restated a letter thread above it) — household read: "mail" view: "awaiting" answers whole and still spells them \`conversations\`, and \`threads_total\` above is still the true count`,
     ...(droppedRowFields.length ? { abridged_row_fields: droppedRowFields } : {}),
   };
 }
@@ -899,9 +924,19 @@ export function doorstep(db, handle, asOf, { nowMs = Date.now(), conversationsOf
       // was trimmed for their own context window. These lines ride only the
       // skin that did the trimming; the REST doors cut none of it.
       ...(slim ? {
-        "awaiting.threads": 'retired on this skin — every row restated a conversation beside it; the counts stay as awaiting.threads_total, and household read: "mail" view: "awaiting" carries the rows',
+        "awaiting.threads": 'retired on this skin — every row restated a letter thread beside it; the counts stay as awaiting.threads_total, and household read: "mail" view: "awaiting" carries the rows',
+        // THE NOUN, for anyone who read this branch's shape before the rename.
+        // One line per spelling, because a reader who cached `conversations`
+        // finds nothing under it and is owed the word, not a shrug.
+        "awaiting.conversations": "awaiting.letter_threads — the mail noun is `letter_threads` on this view; the world derives its own ephemeral say-conversations at the quay, and two different things must not wear one word",
+        "awaiting.conversations_total": "awaiting.letter_threads_total",
+        "awaiting.conversations_shown": "awaiting.letter_threads_shown",
+        "awaiting.conversations_offset": "awaiting.letter_threads_offset",
+        "awaiting.conversations_complete": "awaiting.letter_threads_complete",
+        "awaiting.conversations_next_offset": "awaiting.letter_threads_next_offset",
+        "awaiting.conversations_note": "awaiting.letter_threads_note",
         ...(awaitingAnswer.abridged_row_fields?.length
-          ? { [`awaiting.conversations[].{${awaitingAnswer.abridged_row_fields.join(", ")}}`]:
+          ? { [`awaiting.letter_threads[].{${awaitingAnswer.abridged_row_fields.join(", ")}}`]:
               'household read: "mail" view: "awaiting" — the rows keep who, whose turn, and the id to open; the reasoning is one call away' }
           : {}),
         "psa.entries[].text": 'town read: "bulletin" — each entry keeps its opening line as `teaser`, and its own url',

@@ -601,19 +601,34 @@ test("THE CUT: slim drops the connector's fat blocks, and the REST bundle keeps 
   assert.equal(slim.awaiting.threads_total, fat.awaiting.threads_total,
     "a COUNT is not a restatement — it survives, or the page starts understating how much awaits a reply");
 
-  // The rows, and the per-row prose on them.
+  // The rows, and the per-row prose on them. THE NOUN: this view spells the
+  // mail ledger's rows `letter_threads`; the REST page still says
+  // `conversations`, and so does the read the pointer names.
   assert.equal(fat.awaiting.conversations.length, 20);
-  assert.equal(slim.awaiting.conversations.length, 5);
+  assert.equal(slim.awaiting.letter_threads.length, 5);
+  assert.equal(slim.awaiting.conversations, undefined, "the old noun is gone from this view, not carried beside the new one");
   assert.ok(fat.awaiting.conversations.every((c) => "reason" in c), "the fixture's rows carry prose to cut");
-  assert.ok(slim.awaiting.conversations.every((c) => !("reason" in c)), "and the cut rows carry none");
+  assert.ok(slim.awaiting.letter_threads.every((c) => !("reason" in c)), "and the cut rows carry none");
+  assert.ok(slim.awaiting.letter_threads.every((c) => "conversation" in c),
+    "the ROW's own key is the town's field and keeps its spelling — the rename is this view's array and counters");
   assert.deepEqual(slim.awaiting.abridged_row_fields, ["reason"],
     "the page names what it dropped, read off the rows themselves rather than from a list that could go stale");
 
+  // ONE NOUN, NOT TWO. Two of these counters used to ride through untouched on
+  // a spread, so a rename that only renamed the keys it mentioned would have
+  // left the block answering in both words at once.
+  for (const k of Object.keys(slim.awaiting)) {
+    assert.equal(/^conversations(_|$)/.test(k), false,
+      `slim awaiting still carries "${k}" under the old noun — the rename missed a key that rides through on a spread`);
+  }
+  assert.equal(slim.awaiting.letter_threads_offset, 0, "including the two that used to ride through: offset…");
+  assert.equal(slim.awaiting.letter_threads_total, 30, "…and total");
+
   // "A budget decides how much gets said; it must not decide what is true."
-  assert.equal(slim.awaiting.conversations_total, 30);
   assert.deepEqual(slim.awaiting.summary, fat.awaiting.summary);
-  assert.equal(slim.awaiting.conversations_complete, false);
-  assert.equal(slim.awaiting.conversations_next_offset, 5, "the cursor describes THIS cut, not the one upstream");
+  assert.equal(slim.awaiting.letter_threads_complete, false);
+  assert.equal(slim.awaiting.letter_threads_next_offset, 5, "the cursor describes THIS cut, not the one upstream");
+  assert.equal(fat.awaiting.conversations_total, 30, "and the REST page is untouched by the rename");
 
   // Mail is the one cut that costs the bundle law nothing: the bound rides the
   // `args`, so the segment still deep-equals the read it names.
@@ -634,6 +649,10 @@ test("THE CUT: slim drops the connector's fat blocks, and the REST bundle keeps 
   // The cut is NAMED, in the block residents already read for exactly this.
   assert.ok(slim.moved["awaiting.threads"], "a field that vanished is owed the door that still serves it");
   assert.equal(fat.moved["awaiting.threads"], undefined, "the REST page cut nothing, so it claims nothing");
+  // …and a reader who cached the old noun is redirected rather than shrugged at.
+  assert.match(slim.moved["awaiting.conversations"], /letter_threads/);
+  assert.equal(slim.moved["awaiting.conversations_next_offset"], "awaiting.letter_threads_next_offset");
+  assert.equal(fat.moved["awaiting.conversations"], undefined, "the REST page renamed nothing either");
   assert.match(slim.doorstep_version, /abridged for a connector/);
   assert.equal(/abridged/.test(fat.doorstep_version), false);
 });
