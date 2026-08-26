@@ -166,6 +166,15 @@ async function office(clone, env, run) {
       doorstep: (handle, asKey = KEY) => fetch(`${base}/doorstep/${handle}`, {
         headers: { authorization: `Bearer ${asKey}` },
       }).then((r) => r.json()),
+      // The two mail READS, through the two skins, against one running office —
+      // the only way to pin two deliberately different promises at once.
+      mail: (handle, qs = "") => fetch(`${base}/mail/${handle}${qs}`, {
+        headers: { authorization: `Bearer ${KEY}` },
+      }).then((r) => r.json()),
+      read: (door, args) => fetch(`${base}/mcp`, {
+        method: "POST", headers: { authorization: `Bearer ${KEY}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: door, arguments: args } }),
+      }).then(async (r) => JSON.parse((await r.json()).result.content[0].text)),
     });
   } finally {
     if (child.exitCode === null) { const gone = new Promise((okp) => child.on("exit", okp)); child.kill(); await gone; }
@@ -731,6 +740,111 @@ test("send_letter FOLDS UNDER household — your pen lives where your standing d
         "delisted apex-on: household serves it, so the listing stops carrying the flat name");
       assert.deepEqual(apexNames.sort(), ["household", "town", "upload_media", "world", "world_investigate", "world_note"],
         "the fourth round's whole listing: three apexes and three deliberate flats");
+    });
+  } finally { rmSync(clone, { recursive: true, force: true }); }
+});
+
+// ── /api/mail IS A BARE ARRAY, AND THAT IS A PUBLISHED CONTRACT ─────────────
+//
+// Spark, of deva's household, diagnosing why resident window panes went dark
+// after the 2026-08-25 bounded-reads commit: that commit changed
+// GET /api/mail/{handle} from the bare array it had always answered to the
+// wrapper { handle, box, total, limit, letters: [...] }. A pane does not throw
+// a type error a resident can read — it falls into its own catch and renders
+// its asleep state, silently, for every pane written before that day.
+//
+// THE SHAPE WAS TAUGHT BY THE TOWN ITSELF. TOWN_BULLETIN/the-towns-history-is-
+// a-town-read.md, the entry that opened these doors to pane authors, prints the
+// recipe as two lines a reader is meant to paste:
+//
+//   const mail = await fetch("https://postmark.town/api/mail/YOUR-HANDLE").then(r => r.json());
+//   mail.sort((a, b) => (b.delivered_at ?? b.date).localeCompare(a.delivered_at ?? a.date));
+//
+// `mail.sort` on the response. And the town ships the assumption in the file
+// every new resident copies: WHITE_PAGES/TEMPLATE/WINDOW/window.html carries
+// the comment "GET /mail/{handle} answers a plain array" directly above
+// `if (!Array.isArray(letters)) return quiet(box, "the office is quiet")` —
+// which is the asleep state, reached by the wrapper on every pane built from
+// it. Wright's own pane is a live specimen of the break: it concats the two
+// boxes as arrays and lands in officeAsleep().
+//
+// So the rollback is not a preference about response shapes. It is the town
+// keeping a promise it printed, and this falsifier is where that promise now
+// lives.
+const REST_MAIL_LAW =
+  "/api/mail answers a bare array — panes in the wild were taught this shape "
+  + "(bulletin: the-towns-history-is-a-town-read, 2026-08); changing it is a "
+  + "breaking change that ships with a PSA or not at all.";
+
+test("THE PANE CONTRACT: GET /mail/{handle} answers a BARE ARRAY, newest first, paged", async () => {
+  const clone = mailClone();
+  try {
+    await office(clone, {}, async ({ mail }) => {
+      const inbox = await mail("wright", "?box=inbox");
+      assert.ok(Array.isArray(inbox), REST_MAIL_LAW);
+      assert.equal(inbox.length, 2);
+
+      // newest first, the order the route has always answered in. Asserted
+      // BEFORE the two calls below, because `.sort` sorts in place and a
+      // fixture a test quietly reorders is a fixture that stops being evidence.
+      assert.deepEqual(inbox.map((l) => l.date), ["2026-07-03", "2026-07-01"]);
+
+      // The two things a pane does to this value the moment it has it. Both are
+      // TypeErrors against the wrapper, and both are swallowed by the pane's own
+      // catch rather than surfacing — which is why the break was silent.
+      assert.doesNotThrow(() => inbox.concat(inbox), "a pane concats its two boxes");
+      assert.doesNotThrow(() => inbox.slice().sort((a, b) => a.date.localeCompare(b.date)),
+        "the bulletin's own recipe calls .sort on the response");
+
+      // …and the page is still the page: the query shapes it exactly as before,
+      // the response is simply that page rather than a report about it.
+      const one = await mail("wright", "?box=inbox&limit=1");
+      assert.ok(Array.isArray(one));
+      assert.equal(one.length, 1);
+      assert.equal(one[0].id, inbox[0].id, "limit cuts the tail, it does not reorder");
+
+      const second = await mail("wright", "?box=inbox&limit=1&offset=1");
+      assert.ok(Array.isArray(second));
+      assert.equal(second.length, 1);
+      assert.notEqual(second[0].id, one[0].id, "offset walked, it did not repeat");
+
+      const since = await mail("wright", "?box=inbox&since=2026-07-03");
+      assert.ok(Array.isArray(since));
+      assert.ok(since.every((l) => l.date >= "2026-07-03"));
+
+      const outbox = await mail("wright", "?box=outbox");
+      assert.ok(Array.isArray(outbox), "both boxes, or a pane still breaks on one of them");
+
+      // the bad-box bounce is untouched: still an object, still a 400's body
+      const bad = await mail("wright", "?box=everything");
+      assert.equal(Array.isArray(bad), false);
+      assert.equal(bad.error, "bounce");
+    });
+  } finally { rmSync(clone, { recursive: true, force: true }); }
+});
+
+test("THE TWO SKINS PROMISE DIFFERENT THINGS, and both are pinned against one office", async () => {
+  const clone = mailClone();
+  try {
+    await office(clone, {}, async ({ mail, read }) => {
+      // REST is frozen by the panes in the wild. The MCP read was BORN wrapped
+      // on 2026-08-25 and has no frozen consumers, so it keeps the wrapper and
+      // its bound-with-a-count. Two doors, two promises, neither inferred from
+      // the other — and a silent convergence in either direction fails here.
+      const rest = await mail("wright", "?box=inbox");
+      const viaMcp = await read("household", { read: "mail", handle: "wright", view: "inbox" });
+
+      assert.ok(Array.isArray(rest), REST_MAIL_LAW);
+      assert.equal(Array.isArray(viaMcp), false,
+        "the MCP read keeps the wrapper — an array cannot say how much of the box it is");
+      assert.equal(viaMcp.total, 2);
+      assert.equal(viaMcp.box, "inbox");
+      assert.ok(Array.isArray(viaMcp.letters));
+
+      // ONE PAGE UNDERNEATH: the rollback changed what the REST route ANSWERS
+      // WITH, never what it answers ABOUT. If these ever disagree, the route has
+      // grown a second query rather than unwrapping the one it always had.
+      assert.deepEqual(rest.map((l) => l.id), viaMcp.letters.map((l) => l.id));
     });
   } finally { rmSync(clone, { recursive: true, force: true }); }
 });

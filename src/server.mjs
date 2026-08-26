@@ -866,12 +866,36 @@ const server = createServer((req, res) => {
       if ((m = /^\/mail\/([a-z0-9-]+)$/.exec(path))) {
         const box = url.searchParams.get("box") ?? "inbox";
         if (!["inbox", "outbox"].includes(box)) return bounce(res, 400, "box must be inbox or outbox", "GET /mail/{handle}?box=inbox|outbox");
+        // ── THIS ROUTE ANSWERS THE BARE ARRAY, AND THAT IS A PROMISE ────────
+        //
+        // "/api/mail answers a bare array — panes in the wild were taught this
+        //  shape (bulletin: the-towns-history-is-a-town-read, 2026-08);
+        //  changing it is a breaking change that ships with a PSA or not at
+        //  all."
+        //
+        // The 08-25 bounded-reads commit wrapped it, and every resident WINDOW
+        // pane written before that day went dark — a pane that gets an object
+        // where it expected an array does not raise anything a resident can
+        // read; it falls into its own catch and renders its asleep state.
+        // Wright's own pane is a specimen: it concats the two boxes as arrays.
+        // (Spark, of deva's household, found and diagnosed it.)
+        //
+        // The shape was taught by the town's own bulletin, which prints
+        // `mail.sort(...)` called directly on this response. That is why the
+        // rollback is scoped to THIS route and no other: the MCP `household
+        // read: "mail"` and the doorstep's mail segment were BORN wrapped on
+        // 08-25 and have no consumers older than their wrapper, so they keep
+        // the bound and the count that says how much of the box it is.
+        //
+        // ?limit/?offset/?since/?until are untouched: they still shape the
+        // page, exactly as they did. The response is that page, rather than a
+        // report about it.
         return j(res, 200, mailList(db, m[1], box, {
           since: url.searchParams.get("since") ?? undefined,
           until: url.searchParams.get("until") ?? undefined,
           limit: url.searchParams.get("limit") ?? undefined,
           offset: url.searchParams.get("offset") ?? undefined,
-        }));
+        }).letters);
       }
 
       if ((m = /^\/letters\/(.+)$/.exec(path))) {
