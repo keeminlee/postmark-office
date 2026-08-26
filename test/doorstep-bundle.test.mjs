@@ -264,7 +264,16 @@ test("the window segment is a read of its own now, not a copy the doorstep alone
 test("a resident with no pane reads an honest empty, not a missing field", async () => {
   const w = await householdApex({ read: "window", handle: "r001" }, null, { db });
   assert.equal(w.window, null);
-  assert.match(w.note, /no pane hung yet/, "a cap and an empty room must not look alike — nor must an absent pane and a broken read");
+  // ⚠ AMENDED 2026-08-26. This test's own message named the distinction the
+  // read was not making, and then asserted the collapse: with no clone, this
+  // door has not looked at any shelf, so "no pane hung yet" was a broken read
+  // wearing an absent pane's grammar (`the-town/the-disclosure` — "An answer
+  // given without its inputs must never wear the grammar of an answer that had
+  // them"). It cost wright his pane. test/window-truth.test.mjs holds the four
+  // worlds; here the bundle asserts only that this one is said as itself.
+  assert.equal(w.pane.hung, null, "a cap and an empty room must not look alike — nor must an absent pane and a broken read");
+  assert.doesNotMatch(w.note, /no pane hung yet/, "this door had no checkout to look at, and may not speak as though it had one");
+  assert.match(w.note, /cannot see whether a pane hangs/);
 });
 
 // ── what the retired keys became ────────────────────────────────────────────
