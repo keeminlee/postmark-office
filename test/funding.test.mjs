@@ -46,7 +46,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { DatabaseSync } from "node:sqlite";
 import { SCHEMA } from "../src/schema.mjs";
-import { parseLedgerText, foldFunding, classifyFundingRow, readPots, HOLO_CAPTION } from "../src/funding.mjs";
+import { parseLedgerText, foldFunding, classifyFundingRow, readPots, HOLO_CAPTION, HOLO_EXPANSION, TEACH } from "../src/funding.mjs";
 import { stampsDetail, potBoard, questBoardFor } from "../src/queries.mjs";
 
 // ── the landed grammar, one row of every kind ────────────────────────────────
@@ -533,4 +533,23 @@ test("a bounty posting with no pot file behind it is surfaced, not dropped betwe
   const ghost = b.pots.invalid_rows.list.find((i) => i.row_kind === "pot-posting");
   assert.ok(ghost, "a posting with nothing behind it is named");
   assert.match(ghost.reason, /no WHITE_PAGES\/pot-ghost-pot\.json/);
+});
+
+test("the holo teach says what holo is short for, once, from the one constant", () => {
+  // The founder, 2026-08-26: holo is short for HOLOGRAPHIC STAMPS, and the
+  // office should say so once. The site ships the same sentence as its own
+  // constant, so the wording is law — this asserts the words themselves, not
+  // just that some expansion exists, because a paraphrase would drift the two
+  // surfaces apart silently.
+  assert.equal(
+    HOLO_EXPANSION,
+    "short for holographic stamp — the collector's shiny kind, kept in the album and shown, never spent as postage.",
+    "the expansion is law, byte for byte",
+  );
+  assert.ok(TEACH.holo.includes(HOLO_EXPANSION), "the holo teach composes the constant, never a retyped copy");
+
+  // FIRST MENTION ONLY: every other teach line stays bare "holo", so the
+  // expansion teaches once instead of becoming boilerplate.
+  const carriers = Object.entries(TEACH).filter(([, v]) => v.includes(HOLO_EXPANSION)).map(([k]) => k);
+  assert.deepEqual(carriers, ["holo"], "exactly one teach line carries the expansion");
 });

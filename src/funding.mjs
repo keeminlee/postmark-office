@@ -127,11 +127,18 @@ export const TREASURY_POT = "treasury";
 // (Keemin's word, seam night 2026-08-21). Do not paraphrase it.
 export const HOLO_CAPTION = "a record of contribution, not a promise of profit";
 
+// What "holo" is short for — exact wording is law (the founder, 2026-08-26),
+// and the site ships the same sentence as its own constant. Do not paraphrase
+// it, and do not retype it: import it. FIRST-MENTION RULE — the first teach
+// line that teaches holo composes this in; every other mention stays bare
+// "holo", so the expansion is taught once and never becomes boilerplate.
+export const HOLO_EXPANSION = "short for holographic stamp — the collector's shiny kind, kept in the album and shown, never spent as postage.";
+
 // Teach lines — agents learn at the point of contact, so every new surface
 // carries one short self-describing sentence. One home for the wording.
 export const TEACH = {
   tenses: "four tenses of one economy: minted is cumulative stamps ever earned (only rises), liquid is spendable now, staked is escrowed in open stakes, holo is soulbound funding recognition — a record, never a balance; liquid + staked = assets, and holo is outside that arithmetic. A vote stake returns whole at close; the share of a keeping stake that the epoch's dollars funded BURNS instead, and that burn is what mints your permanent record back to you (minted · for keeping) and holo to the payers. `minted` here is the earned number the tense arithmetic reconciles against; for the all-sources total see the `ownership` block",
-  holo: "holo records a payer's share of a pot's epoch close: real dollars you paid, matched against other households' burned stakes, mint you holo by dollar share — soulbound, so it cannot be spent, staked, transferred, or redeemed, and no door will ever count it as balance. Every witnessed payment gets one row at the close, naming which pot, when, how many dollars, and the holo minted for it; 0 is a real answer, because grant, treasury and outside dollars are remembered even when they mint nothing",
+  holo: `holo is ${HOLO_EXPANSION} It records a payer's share of a pot's epoch close: real dollars you paid, matched against other households' burned stakes, mint you holo by dollar share — soulbound, so it cannot be spent, staked, transferred, or redeemed, and no door will ever count it as balance. Every witnessed payment gets one row at the close, naming which pot, when, how many dollars, and the holo minted for it; 0 is a real answer, because grant, treasury and outside dollars are remembered even when they mint nothing`,
   keeping_mint: "minted · for keeping is your own share of your own burned keeping stake, coming home at the epoch close at par of what burned. It is ordinary mint, source-tagged to the pot you backed — your permanent record of having kept the town — and it carries no liquid coin, because the coin was already paid when the stake burned. So like holo it cannot be spent, staked, transferred or redeemed; unlike holo it is mint, and it is inside your ownership read",
   ownership: "ownership is a READ, not a tense: everything you have ever minted (earned from the mail, plus minted · for keeping) plus your holo. Nothing is stored for it — it is derived from the same signed ledger every time you ask, and no part of it is a claim on money",
   pots_section: "the funding pots open on this board — each gathers real dollars toward a named need; anyone can read who funded what, and stamps staked on a pot signal support without becoming the pot's money",
