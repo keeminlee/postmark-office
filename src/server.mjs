@@ -47,6 +47,7 @@ import { resetStoreSnapshot, storeDbPath, storeEngaged, storeSnapshot, worldStor
 import { resetGraphCache, worldGraphView, NODE_KINDS, gexfPath } from "./world-graph.mjs"; // stage E: the window
 import { resetClassFieldsCache } from "./world-frames.mjs"; // the frame law's class read, dropped on a world.db swap
 import { dynamicHealth, resetClassCache } from "./dynamic-store.mjs"; // stage 2: the dynamic layer's instrument panel
+import { servedEnterExitLedger, DEPRECATED_DOOR } from "./enter-exit-ledger.mjs"; // the passages, derived from the frozen era + the journal (2026-08-26)
 import { Bouncer, keyIdForToken, worldWriteVerbForRest } from "./bouncer.mjs";
 import { readReleaseStamp } from "./release.mjs"; // POS-60: the deploy receipt the auto-deploy probes
 
@@ -684,31 +685,37 @@ const server = createServer((req, res) => {
           .catch((e) => bounce(res, 500, "the world door tripped", String(e?.message ?? e).slice(0, 200)));
       }
       if (path === "/world/state") return worldStateRaw().then((r) => j(res, 200, r)).catch((e) => bounce(res, 500, "the world door tripped", String(e?.message ?? e).slice(0, 200)));
-      // GET /world/threshold-ledger — THE CROSSINGS, LIVE.
+      // GET /world/enter-exit-ledger — THE PASSAGES, DERIVED.
       //
-      // The site stages WORLD/threshold-ledger.md as a build artifact, pinned to
-      // whichever world sha the site was built from. Crossings land continuously,
-      // so that copy is stale the moment anybody walks through a door — a resident
-      // could enter a mark, refresh, and be told they were still outside, because
-      // the page was reading a photograph of the ledger rather than the ledger.
+      // The site stages the ledger as a build artifact, pinned to whichever world
+      // sha the site was built from. Passages land continuously, so that copy is
+      // stale the moment anybody walks through a door — a resident could enter a
+      // mark, refresh, and be told they were still outside, because the page was
+      // reading a photograph of the ledger rather than the ledger.
       //
-      // This is the same move /world/state already makes for the marks: the office
-      // reads the clone it actually has. Occupancy stays DERIVED IN THE READER —
-      // the text goes over the wire and the client folds it, exactly as before,
-      // because who computes the rooms is a constitutional question and this is
-      // only a question of which bytes.
+      // READING THE FILE WAS NOT ENOUGH, and that is the two-day bug this door
+      // now closes. Since the 2026-08-24 cutover the acts go into the journal and
+      // the file stopped growing; an office that reads the file serves a fossil
+      // no matter how fresh its clone is. So the answer is DERIVED here, from the
+      // frozen era plus the journal's own rows — see src/enter-exit-ledger.mjs.
       //
-      // Keyless, like the walk ledger it sits beside: the crossings are as public
+      // Occupancy stays DERIVED IN THE READER — the text goes over the wire and
+      // the client folds it, exactly as before, because who computes the rooms is
+      // a constitutional question and this is only a question of which bytes.
+      //
+      // Keyless, like the walk ledger it sits beside: the passages are as public
       // as the occupancy they derive.
-      if (path === "/world/threshold-ledger") {
-        try {
-          const p = join(WORLD_CLONE, "WORLD", "threshold-ledger.md");
-          const text = existsSync(p) ? readFileSync(p, "utf8") : "";
-          return j(res, 200, { ledger: text, bytes: text.length,
-            source: "the office's own world clone" });
-        } catch (e) {
-          return bounce(res, 500, "the crossings could not be read", String(e?.message ?? e).slice(0, 200));
-        }
+      //
+      // BOTH NAMES ANSWER, for one grace window. The office ships on the train
+      // and the world package rides a blessing, so a viewer bundle asking the
+      // retired name is live in real browsers for days after this lands. The old
+      // path answers the same bytes and says, in the answer itself, that it is
+      // going.
+      if (path === "/world/enter-exit-ledger" || path === "/world/threshold-ledger") {
+        const deprecated = path === "/world/threshold-ledger";
+        return servedEnterExitLedger(WORLD_CLONE)
+          .then((answer) => j(res, 200, deprecated ? { ...answer, ...DEPRECATED_DOOR } : answer))
+          .catch((e) => bounce(res, 500, "the passages could not be read", String(e?.message ?? e).slice(0, 200)));
       }
       // keyless: escrow is as public as the ✦weight it produces (P3 draft)
       if (path === "/world/stake") {

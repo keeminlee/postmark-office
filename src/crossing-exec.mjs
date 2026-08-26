@@ -35,7 +35,11 @@ import { CLASS_FRAME, appendJournal } from "./world-journal.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CLONE = process.env.WORLD_CLONE ?? resolve(HERE, "..", "world-clone");
-export const LEDGER_NAME = join("WORLD", "threshold-ledger.md");
+// THE LEDGER THIS PEN'S LINES BELONG TO. The row carries this path so the
+// deriver can find its lines again; the deriver reads the retired name too, so
+// rows written by an office that predates the rename are not orphaned by it.
+export const LEDGER_NAME = join("WORLD", "enter-exit-ledger.md");
+export const LEGACY_LEDGER_NAME = join("WORLD", "threshold-ledger.md");
 
 const answer = (obj) => { console.log(JSON.stringify(obj)); process.exit(0); };
 const err = (code, defect, hint) => answer({ error: { code, defect, hint } });
@@ -43,13 +47,23 @@ const err = (code, defect, hint) => answer({ error: { code, defect, hint } });
 async function main() {
   const p = JSON.parse(process.argv[2] ?? "{}");
   if (!existsSync(join(CLONE, "WORLD"))) return err(409, "not-yet-open", "the office has no world clone");
-  const LEDGER = join(CLONE, LEDGER_NAME);
+  // The git lane (flag off) appends to whichever ledger this clone actually
+  // keeps, so a pre-rename clone is not forked into two records.
+  const LEDGER = existsSync(join(CLONE, LEDGER_NAME)) || !existsSync(join(CLONE, LEGACY_LEDGER_NAME))
+    ? join(CLONE, LEDGER_NAME)
+    : join(CLONE, LEGACY_LEDGER_NAME);
 
-  const thresholds = await import(pathToFileURL(join(CLONE, "tools", "thresholds.mjs")))
+  // BOTH MODULE NAMES, for the window in which this office and its world clone
+  // are on different sides of the `thresholds.mjs` → `enter-exit.mjs` rename.
+  // A pen that cannot read a clone one pull behind refuses every passage in the
+  // town for the length of that gap.
+  const law = await import(pathToFileURL(join(CLONE, "tools", "enter-exit.mjs")))
+    .catch(() => import(pathToFileURL(join(CLONE, "tools", "thresholds.mjs"))))
     .catch(() => null);
-  if (!thresholds) return err(501, "this world clone has no crossing grammar",
-    "tools/thresholds.mjs is the enter/exit pair's record law and it travels with the clone — a clone without it cannot be crossed into");
-  const { parseThresholdLedger, occupancyAt, LEDGER_HEADER } = thresholds;
+  if (!law) return err(501, "this world clone has no enter/exit grammar",
+    "tools/enter-exit.mjs (or the retired tools/thresholds.mjs) is the pair's record law and it travels with the clone — a clone without it cannot be entered");
+  const { occupancyAt, LEDGER_HEADER } = law;
+  const parseEnterExitLedger = law.parseEnterExitLedger ?? law.parseThresholdLedger;
 
   if (!Array.isArray(p.lines) || !p.lines.length) return err(422, "no crossing to record", "the door fills these in; this exec is not a public surface");
   if (!p.handle) return err(422, "missing handle", "the door fills these in; this exec is not a public surface");
@@ -72,7 +86,7 @@ async function main() {
   const prevJ = existsSync(LEDGER) ? readFileSync(LEDGER, "utf8") : LEDGER_HEADER;
   if (singleLogEnabled()) {
     const sepJ = prevJ.endsWith("\n") ? "" : "\n";
-    const { acts: actsJ, unrecognized: unrecJ } = parseThresholdLedger(`${prevJ}${sepJ}${p.lines.join("\n")}\n`);
+    const { acts: actsJ, unrecognized: unrecJ } = parseEnterExitLedger(`${prevJ}${sepJ}${p.lines.join("\n")}\n`);
     const db = openDynamic();
     let seq = null;
     try {
@@ -103,7 +117,7 @@ async function main() {
   const sep = prev.endsWith("\n") ? "" : "\n";
   writeFileSync(LEDGER, `${prev}${sep}${p.lines.join("\n")}\n`, "utf8");
 
-  const { acts, unrecognized } = parseThresholdLedger(readFileSync(LEDGER, "utf8"));
+  const { acts, unrecognized } = parseEnterExitLedger(readFileSync(LEDGER, "utf8"));
   const within = occupancyAt(acts, p.at).get(p.handle) ?? [];
 
   const what = p.lines.length === 1 ? p.summary : `${p.summary} (${p.lines.length} crossings)`;
