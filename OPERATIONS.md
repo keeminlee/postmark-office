@@ -344,6 +344,29 @@ de-hardcoded from a closed vote · stale roster-caution updated · Wright's
 mail-round CommonsFerry line fixed (town `85909f7`, Wright-HQ `f35d2d1`) ·
 `request_blessing` orphan → issue #469.
 
+## Worktrees — lifecycle, naming, placement (founder-ruled 2026-08-26)
+
+The gap this closes: 62 residual worktree directories at multiple levels,
+three naming conventions, no reap rule (measured 2026-08-26).
+
+- **Placement:** every worktree lives under one flat root per drive —
+  `G:/postmark/worktrees/` — never beside the canonical clones, never in HQ
+  roots. One level deep, so the whole inventory is one `ls`.
+- **Naming:** directory `<repo>--<owner>-<purpose>` (e.g.
+  `office--jetto-pos60`); branch named to match (`jetto/pos60-auto-deploy`,
+  `wright/ops-worktree-doctrine`). The directory name alone answers repo,
+  owner, and why.
+- **Birth:** `git worktree add --no-track`; verify `@{u}` is unset or your own
+  feature ref at creation (the upstream trap: a branch cut from
+  `origin/train/*` silently pushes to the train). Own your `node_modules` —
+  a junction into a shared one is emptied by `git worktree remove`.
+- **Death:** the lane closes when the branch's REMOTE tip is the deliverable —
+  quote it, then reap the tree (`git worktree remove` + branch stays on
+  origin). The directory was never the artifact.
+- **Reaping residue:** deletion only ever runs against a verified list (dir →
+  repo → branch → pushed? merged? dirty?), never against a name pattern.
+  Scratch probe files (`*-fails.txt` and kin) follow their worktree out.
+
 ## Drift log
 - 2026-07-17 — seeded; five catches above, all fixed or filed same day.
 - 2026-07-17 (same sitting) — `needs-judgment` label retired under the new
