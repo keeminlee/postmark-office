@@ -217,23 +217,39 @@ test("GET /letters filters: resident, since/until, region, exclude-office, combi
   assert.equal(paged.limit, 2);
 });
 
-test("GET /mail/{handle} honors since/until, and pages", async () => {
+test("GET /mail/{handle} answers a BARE ARRAY, honors since/until, and pages", async () => {
+  // TRUED TO THE PANE CONTRACT, 2026-08-26, not deleted. This test asserted the
+  // wrapper the 08-25 bounded-reads commit introduced, and that wrapper is what
+  // put every resident window pane to sleep — so the assertions move to the
+  // shape the route promised the town, and the count discipline they were
+  // written to hold moves with the wrapper to the MCP read (below). The law:
+  //
+  //   "/api/mail answers a bare array — panes in the wild were taught this
+  //    shape (bulletin: the-towns-history-is-a-town-read, 2026-08); changing it
+  //    is a breaking change that ships with a PSA or not at all."
   const win = await (await get("/mail/wright?since=2026-07-03")).json();
-  assert.ok(win.letters.every((l) => l.date >= "2026-07-03"));
-  // THE COUNT MUST BE ABLE TO DISAGREE WITH THE LIST. A page of one out of a
-  // box of two is the only shape that proves `total` is a total and not the
-  // list length wearing its name — assert both halves, or the assertion
-  // passes just as happily against the defect.
+  assert.ok(Array.isArray(win), "a pane calls .sort and .concat on this value");
+  assert.ok(win.every((l) => l.date >= "2026-07-03"));
+
   const page = await (await get("/mail/wright?limit=1")).json();
-  assert.equal(page.letters.length, 1);
-  assert.equal(page.shown, 1);
-  assert.equal(page.total, 2);
-  assert.equal(page.complete, false);
-  assert.equal(page.next_offset, 1);
-  const rest = await (await get(`/mail/wright?limit=1&offset=${page.next_offset}`)).json();
-  assert.equal(rest.letters.length, 1);
-  assert.equal(rest.complete, true, "the second page finishes the box");
-  assert.notEqual(rest.letters[0].id, page.letters[0].id, "offset walked, it did not repeat");
+  assert.ok(Array.isArray(page));
+  assert.equal(page.length, 1, "limit still shapes the page — only the envelope went away");
+  const rest = await (await get("/mail/wright?limit=1&offset=1")).json();
+  assert.equal(rest.length, 1);
+  assert.notEqual(rest[0].id, page[0].id, "offset walked, it did not repeat");
+
+  // THE COUNT MUST BE ABLE TO DISAGREE WITH THE LIST — the assertion this test
+  // was built around, kept, on the door that still carries a count. A page of
+  // one out of a box of two is the only shape that proves `total` is a total
+  // and not the list length wearing its name.
+  const wrapped = JSON.parse((await rpc("tools/call",
+    { name: "household", arguments: { read: "mail", handle: "wright", view: "inbox", args: { limit: 1 } } }))
+    .body.result.content[0].text);
+  assert.equal(wrapped.letters.length, 1);
+  assert.equal(wrapped.shown, 1);
+  assert.equal(wrapped.total, 2);
+  assert.equal(wrapped.complete, false);
+  assert.equal(wrapped.next_offset, 1);
 });
 
 test("GET /doorstep/{h} serves the v0.8 BUNDLE over HTTP — the same one MCP serves", async () => {
