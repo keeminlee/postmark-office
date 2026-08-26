@@ -124,6 +124,7 @@ jobs:
           CUT_TAG: ${{ needs.cut-release-tag.outputs.tag }}
           IN_TARGET: ${{ github.event.inputs.target }}
           IN_TAG: ${{ github.event.inputs.tag }}
+          AUTODEPLOY: ${{ vars.OFFICE_AUTODEPLOY }}
         run: |
           set -euo pipefail
           TARGET=prod
@@ -144,6 +145,36 @@ jobs:
           if [ "$EVENT" = "push" ] && [ "$REF" = "refs/heads/main" ] && [ -z "$TAG" ]; then
             echo "the merge cut no tag, so there is no blessed code to deploy — standing down"
             echo "deploy=false" >> "$GITHUB_OUTPUT"
+            echo "reason=no tag was cut by this push" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # ── THE ADOPTION GATE ──────────────────────────────────────────────
+          # Merging this workflow must not, by itself, change what happens to
+          # prod. Until the repository variable OFFICE_AUTODEPLOY is set to
+          # `on`, an automatic trigger cuts the tag exactly as it always did and
+          # then stops here — today's behaviour, unchanged, with the hand-carry
+          # still the way code reaches the box.
+          #
+          # This is deliberate and it is the shape DEPLOY.md's funding-machine
+          # section already argues for: "Merging Stage A gives you a command you
+          # may run." The reason it matters HERE is specific and awkward:
+          # workflow_dispatch does not appear in the Actions UI until the file
+          # is on the default branch, so this cannot be rehearsed BEFORE it is
+          # merged. Without a gate, the first thing this machinery ever did in
+          # anger would be deploying prod, unrehearsed, the moment a train
+          # landed. With it, the order is: merge (nothing changes) -> dispatch
+          # against dev -> dispatch against prod -> then flip the variable.
+          #
+          #   adopt:  gh variable set OFFICE_AUTODEPLOY --body on  -R keeminlee/postmark-office
+          #   revert: gh variable set OFFICE_AUTODEPLOY --body off -R keeminlee/postmark-office
+          #
+          # workflow_dispatch is never gated: it is a human deliberately asking
+          # for this deploy, on a target they picked, which is the whole point.
+          if [ "$EVENT" != "workflow_dispatch" ] && [ "$AUTODEPLOY" != "on" ]; then
+            echo "OFFICE_AUTODEPLOY is not 'on' (it is '${AUTODEPLOY:-unset}') — the tag is cut, the deploy stands down."
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            echo "reason=OFFICE_AUTODEPLOY is not on; ${TAG:-the tag} was cut but not deployed. Carry it by hand (deploy/DEPLOY.md), or run this workflow from the Actions tab." >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -430,4 +461,12 @@ jobs:
 
       - name: Nothing to deploy
         if: steps.lane.outputs.deploy != 'true'
-        run: echo "no tag was cut by this push — prod stays where it is." >> "$GITHUB_STEP_SUMMARY"
+        env:
+          REASON: ${{ steps.lane.outputs.reason }}
+        run: |
+          {
+            echo "## Office deploy — stood down"
+            echo ""
+            echo "$REASON"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "$REASON"

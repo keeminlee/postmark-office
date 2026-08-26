@@ -40,6 +40,31 @@ order, and goes red if any of them cannot be proven:
 workflow deploys the tag that approval cuts. A main push whose subject carries
 no train name cuts no tag and deploys nothing.
 
+### The adoption gate — merging this changes nothing
+
+Until the repo variable `OFFICE_AUTODEPLOY` is `on`, an automatic trigger cuts
+the tag exactly as it always did **and stops**. Today's behaviour, unchanged;
+the hand-carry stays the way code reaches the box.
+
+```sh
+gh variable set OFFICE_AUTODEPLOY --body on  -R keeminlee/postmark-office   # adopt
+gh variable set OFFICE_AUTODEPLOY --body off -R keeminlee/postmark-office   # back to hand-carry
+```
+
+The gate exists because of an awkward, specific fact: **`workflow_dispatch` does
+not appear in the Actions tab until the file is on the default branch**, so this
+cannot be rehearsed before it is merged. Without the gate, the first thing the
+machinery ever did in anger would be deploying prod, unrehearsed, the moment a
+train landed. With it, the order is:
+
+1. merge — nothing changes, the tag cuts as before;
+2. dispatch against **dev**, walk the sandbox;
+3. dispatch against **prod** with the standing tag — a redeploy of what is
+   already running, so a failure costs a restart, not a release;
+4. then set `OFFICE_AUTODEPLOY=on`, and train merges carry themselves.
+
+`workflow_dispatch` is never gated — it is a human deliberately asking.
+
 ### The receipt: `GET /release`
 
 The office now serves its own deploy stamp. The workflow writes `release.json`
@@ -60,9 +85,12 @@ to a probe.
 
 The office root is a shared directory, unlike the site's webroot. Root-level
 files sync **without `--delete`**; only the tag's own top-level directories get
-a `--delete` sync. So `town-clone/`, `world-clone/`, `world-clone-pool/`,
-`draft-locks/`, `town.lock`, `office.db`, `oauth.db`, `dynamic.db`,
-`.git-credentials`, `git-metrics-token` and `node_modules/` are never in reach.
+a `--delete` sync. Since the tag has no such directories, everything the box
+keeps under `/srv/postmark-office` that the repo does not know about is out of
+reach by construction: `town-clone/`, `world-clone/`, `world-clone-pool/`,
+`settlement-clone/`, `shadow-clone/`, `draft-locks/`, `node_modules/`, and the
+root-level `town.lock`, `office.db`, `oauth.db`, `dynamic.db`,
+`.git-credentials`, `git-metrics-token`, `stamp-key.pem`.
 
 Two directories are excluded by name:
 
