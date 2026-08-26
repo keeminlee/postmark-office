@@ -661,7 +661,19 @@ export async function householdApex(args = {}, key = null, ctx = {}) {
           return bounce(403, `"${handle}" is not one of your residents`,
             "a letter that has not sailed is its SENDER's alone to see — not the office's to report, and not the recipient's to learn early. Read your own: pass a handle your key acts for",
             { your_residents: [...(key?.handles ?? [])] });
-        if (!odb) return bounce(503, "this office keeps no town log", "there is no standing-mail tense here — a letter is committed the moment it conforms. Your sent mail: view: \"outbox\"");
+        // ⚠ THE FOURTH STATE, and I nearly shipped it. `hotLetters` answers []
+        // for a missing log AND for a log the flag has turned off — and an
+        // office with the flag off HAS NO STANDING TENSE AT ALL: a letter is a
+        // committed file the moment it conforms. So "nothing of yours is
+        // standing" would be true there in the way a stopped clock is right:
+        // the sentence a caller would read as "you are all caught up" would
+        // actually mean "this door cannot answer that question here." Same
+        // shape as the window read's three worlds, closed this morning. The
+        // refusal names which world it is in.
+        const { townLogEnabled } = await import("./town-journal.mjs");
+        if (!odb || !townLogEnabled())
+          return bounce(503, "this office keeps no standing-mail tense",
+            "a letter here is a committed file the moment it conforms, so nothing is ever standing between the door and the record — there is no pending half to read. Your sent mail: household { read: \"mail\", view: \"outbox\" }");
         const { hotMailBlock, outboxTense } = await import("./town-mail.mjs");
         const { nextCrossing } = await import("./write.mjs");
         const block = hotMailBlock(odb, key, { handle });

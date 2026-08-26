@@ -306,6 +306,22 @@ test("F10b · and a sender with nothing standing is told a true zero, which must
   });
 });
 
+test('F10d · flag-OFF, "nothing standing" would be true the way a stopped clock is right — so the view REFUSES instead', async () => {
+  // No flagOn wrapper: this is an office where a letter is a committed file the
+  // moment it conforms, so there is no pending half to read. `hotLetters`
+  // answers [] here exactly as it does for a sender with an empty queue, and
+  // rendering that as a true zero would wear the grammar of an answer that had
+  // looked. `the-town/the-disclosure`, one door over from where it was applied
+  // to the window read this morning.
+  const odb = logDb();
+  const r = await householdApex({ read: "mail", view: "pending", handle: "wright" }, KEY, ctx({ odb, slim: true }));
+  assert.equal(r.error, "bounce");
+  assert.equal(r.code, 503);
+  assert.equal(r.total, undefined, "no count — the question does not apply in this world");
+  assert.match(r.hint, /outbox/, "and it names the read that DOES answer here");
+  odb.close();
+});
+
 test("F10c · a view the door does not serve still bounces, and the menu it prints names pending", async () => {
   const r = await householdApex({ read: "mail", view: "sideways", handle: "wright" }, KEY, ctx({ slim: true }));
   assert.equal(r.code, 422);
