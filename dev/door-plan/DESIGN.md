@@ -37,7 +37,7 @@ holds the identity papers: `begin` · `declare` · `add-resident` · `address` �
 ## Household: the fold-in tenants (the founder's ruling, 08-23 — stamps sets the precedent)
 
 - **`household { read: "stamps" }`** — the ESTATE view: the four tenses across
-  your residents, the funding seam (holo, keeping mint, deeds), quest headroom
+  your residents, the funding seam (holo and keeping mint), quest headroom
   left today, stakes in escrow. `read_stamps` STAYS as the public roster read —
   the split is public-record vs. your-books.
 - **`household { do: "stake" }`** — the pot-mode stake door: the `via: api`

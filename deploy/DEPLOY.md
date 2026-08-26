@@ -495,7 +495,7 @@ than an object **so the follow-up owes no migration**: the authenticated
 `household do: "register-wallet"` door act appends the identical line.
 
 *The honest consequence, stated because the founder ruled with it in front of
-him:* a **claimed** deed already publishes wallet↔handle — the receipt's ref is
+him:* a **claimed** payment already publishes wallet↔handle — the receipt's ref is
 `usdc:base:<txhash>`, the ledger is public, and the chain shows the from-address.
 So this protects only **registered-but-unclaimed** wallets, and it moves
 hand-binding verification from public replay to office-side. Accepted trade.
