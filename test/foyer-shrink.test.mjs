@@ -57,7 +57,7 @@
 
 import test, { after } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
@@ -68,7 +68,7 @@ import {
   CARD_TEACH, HOUSEHOLD_DISPATCHABLE, HOUSEHOLD_READS, READING_LAW,
   capabilityIndex, householdApex,
 } from "../src/household-apex.mjs";
-import { hotMailBlock, outboxTense, replayLetter, sendLetterAsRow, MAIL_DOOR } from "../src/town-mail.mjs";
+import { hotMailBlock, outboxTense, replayLetter, sendLetterAsRow, MAIL_DOOR, NONCE_MAX } from "../src/town-mail.mjs";
 import { pendingRows } from "../src/town-journal.mjs";
 import { enqueueLetter } from "../src/write.mjs";
 import { outboxSettled } from "../src/queries.mjs";
@@ -139,13 +139,50 @@ test('F1 · Hal: "Bare household {} should return only identity/authority and a 
   const bare = await householdApex({}, KEY, ctx({ slim: true }));
   assert.ok(Array.isArray(bare.acts), "the capability index is still an array named `acts`");
   for (const entry of bare.acts)
-    assert.deepEqual(Object.keys(entry).sort(), ["act", "teaches"],
-      `the index carries one line per act and nothing else; "${entry.act}" carried ${Object.keys(entry).join("+")}`);
-  // and no `fields` object survives ANYWHERE on the page — the check is over the
-  // whole serialized answer rather than over `acts`, because a schema moved one
-  // key sideways is the same enormous answer under a new name.
-  assert.equal(/"fields"\s*:/.test(JSON.stringify(bare)), false,
-    "a field schema anywhere on the bare answer is the thing Hal was reading when he wrote that sentence");
+    assert.deepEqual(Object.keys(entry).sort(), ["act", "fields", "teaches"],
+      `the index carries an act, its line, and its field NAMES — nothing else; "${entry.act}" carried ${Object.keys(entry).join("+")}`);
+  // ⚠ THE LAW IS ABOUT SCHEMAS, NOT ABOUT A KEY NAMED `fields`. Hal's sentence
+  // is "returning every act's fields on every identity check", and what he was
+  // reading when he wrote it was every field's TYPE and its paragraph of prose.
+  // Field names are an index; types and descriptions are the manual. So this
+  // asserts the manual is absent — checked over the whole serialized answer,
+  // because a schema moved one key sideways is the same enormous page renamed.
+  assert.equal(/"(type|description)"\s*:/.test(JSON.stringify(bare)), false,
+    "a field's type or prose anywhere on the bare answer is the thing Hal was reading when he wrote that sentence");
+  // and the names are the CARD's names, so the index cannot drift from it
+  const card = await householdApex({ card: "send" }, KEY, ctx({ slim: true }));
+  assert.deepEqual(
+    Object.keys(bare.acts.find((a) => a.act === "send").fields),
+    Object.keys(card.cards[0].fields),
+    "the index names exactly the fields the card describes");
+});
+
+test("F1b · the connector's affordance buttons survive the shrink — every act still passes the prototype's own gate", async () => {
+  // THE GATE, verbatim from ops/mcp-prototype/mcp-proto.js § collectActions:
+  //
+  //     e.fields && typeof e.fields === "object" && !Array.isArray(e.fields)
+  //
+  // Wright's fix round asked for `required: [names]`, which does NOT satisfy
+  // it — an array is not the object the gate wants, and an entry without
+  // `fields` at all mints no button. That is why the index carries a name-only
+  // `fields` map instead. Asserted here rather than trusted, AND the quoted
+  // line is checked against the prototype file below, so if that gate is ever
+  // rewritten this test goes red instead of quietly asserting a dead rule.
+  const gate = (e) => Boolean(typeof e.act === "string" && e.act
+    && e.fields && typeof e.fields === "object" && !Array.isArray(e.fields));
+
+  const src = readFileSync(join(import.meta.dirname, "..", "ops", "mcp-prototype", "mcp-proto.js"), "utf8");
+  assert.ok(src.includes('e.fields && typeof e.fields === "object" && !Array.isArray(e.fields)'),
+    "the gate this test replicates has moved — re-read collectActions before trusting the line above");
+
+  const bare = await householdApex({}, KEY, ctx({ slim: true }));
+  const passing = bare.acts.filter(gate);
+  assert.equal(passing.length, bare.acts.length,
+    `every act must mint a button; ${bare.acts.length - passing.length} did not`);
+  // the shape that was asked for, proven insufficient — so the deviation is
+  // recorded as a fact rather than as a preference
+  assert.equal(gate({ act: "send", teaches: "x", required: ["from", "to"] }), false,
+    "`required: [names]` alone mints no button — this is why the index carries `fields`");
 });
 
 test("F2 · a shrink that loses a verb is not a shrink — the index names every act the door dispatches", async () => {
@@ -443,6 +480,148 @@ test("F13b · and a send with NO nonce is byte-for-byte the receipt it always wa
       "a caller who passed no nonce is told nothing about nonces");
     odb.close();
   });
+});
+
+// ── (7b) THE RACE · the half no sequential test can reach ───────────────────
+//
+// Wright's fix round, 2026-08-26. The seam I shipped first was
+// `read the log → await the envelope pre-flight → write`, and two calls with
+// one nonce arriving together both passed the read before either wrote. I found
+// it by reading, not by testing, and the reason is written into F15b below:
+// every falsifier I had called the door, waited, and called again.
+//
+// PROVEN REACHABLE BEFORE IT WAS FIXED, not assumed: two overlapping calls
+// through the unfixed body wrote TWO rows carrying ONE letter id (seq 1 and
+// seq 2). The flip harness reds F15 by removing the in-flight map, which is the
+// same defect installed the same way.
+
+test("F15 · TWO CALLS AT ONCE, one nonce: exactly ONE letter is written, and the loser gets the winner's receipt", async () => {
+  await flagOn(async () => {
+    const odb = logDb();
+    const clone = mailClone();
+    const args = letter({ nonce: "race-1" });
+    // Promise.all, not await-then-await: both calls must be in flight together,
+    // which is the whole condition under test.
+    const [a, b] = await Promise.all([
+      sendLetterAsRow(args, KEY, db, clone, odb),
+      sendLetterAsRow(args, KEY, db, clone, odb),
+    ]);
+    assert.equal(pendingRows(odb).length, 1,
+      "two overlapping calls wrote two letters — the seam is a sequence, not a seam");
+    assert.equal(a.letter_id, b.letter_id, "one letter, so one id");
+    assert.equal(a.logged.seq, b.logged.seq, "and one row, so one seq");
+    assert.equal([a.duplicate, b.duplicate].filter(Boolean).length, 1,
+      "exactly one of the two is the duplicate — not both, and not neither");
+  });
+});
+
+test("F15b · and it holds at five — the map is a gate, not a two-caller special case", async () => {
+  await flagOn(async () => {
+    const odb = logDb();
+    const clone = mailClone();
+    const args = letter({ nonce: "race-5" });
+    const out = await Promise.all([1, 2, 3, 4, 5].map(() => sendLetterAsRow(args, KEY, db, clone, odb)));
+    assert.equal(pendingRows(odb).length, 1);
+    assert.equal(out.filter((r) => r.duplicate).length, 4);
+    assert.equal(new Set(out.map((r) => r.letter_id)).size, 1, "all five hold the same letter");
+  });
+});
+
+test("F15c · a first call that BOUNCES spends no nonce — the waiter tries honestly rather than inheriting a failure", async () => {
+  await flagOn(async () => {
+    const odb = logDb();
+    const clone = mailClone();
+    // `to` names nobody, so the first call throws inside the fence. A waiter
+    // that treated a throw as "already spent" would refuse a letter that was
+    // never written, which is the opposite of the seam's promise.
+    const doomed = letter({ to: "nobody-here", nonce: "bounce-1" });
+    const results = await Promise.allSettled([
+      sendLetterAsRow(doomed, KEY, db, clone, odb),
+      sendLetterAsRow(doomed, KEY, db, clone, odb),
+    ]);
+    assert.equal(results.filter((r) => r.status === "rejected").length, 2,
+      "both are refused, and neither is handed a duplicate receipt for a letter that does not exist");
+    assert.equal(pendingRows(odb).length, 0, "and nothing was written");
+    // the nonce is not burned: a good letter carrying it still goes
+    const ok = await sendLetterAsRow(letter({ nonce: "bounce-1" }), KEY, db, clone, odb);
+    assert.equal(ok.duplicate, undefined);
+    assert.equal(pendingRows(odb).length, 1);
+  });
+});
+
+test("F16 · an over-long nonce is REFUSED, never trimmed — two nonces cut to one prefix would become one key", async () => {
+  await flagOn(async () => {
+    const odb = logDb();
+    const clone = mailClone();
+    await assert.rejects(
+      () => sendLetterAsRow(letter({ nonce: "x".repeat(NONCE_MAX + 1) }), KEY, db, clone, odb),
+      (e) => e.code === 422 && /nonce must be under/.test(e.defect),
+      "a nonce past the cap bounces by name");
+    assert.equal(pendingRows(odb).length, 0, "and writes nothing on the way out");
+    // exactly at the cap still goes
+    const ok = await sendLetterAsRow(letter({ nonce: "y".repeat(NONCE_MAX) }), KEY, db, clone, odb);
+    assert.equal(ok.letter_id, "wright-" + ok.letter_id.split("-").slice(1).join("-"));
+    assert.equal(pendingRows(odb).length, 1, "the cap is a bound, not an off-by-one");
+  });
+});
+
+// ── (9) THE ROSTER GENERATOR'S FLOOR GUARD ─────────────────────────────────
+//
+// Wright's fix round: "the rendered roster can never silently present the
+// fallback as the live enum."
+//
+// `world-classes.mjs § classRoster` already tells the truth — it returns
+// `source: "floor"` and a `disclosed` sentence when the world store cannot be
+// read. `classNames()` drops that sentence, and the doc generator rendered the
+// two-name floor into docs/MCP-ROSTER.md as if it were the ~130-name live enum.
+// The door disclosed; the renderer did not.
+
+const ROSTER_TOOL = join(import.meta.dirname, "..", "tools", "mcp-roster.mjs");
+const runRoster = (env, args = []) => spawnSync(process.execPath, [ROSTER_TOOL, ...args],
+  { encoding: "utf8", env: { ...process.env, ...env } });
+
+/** A world store the roster gate accepts: constitution-tier town marks in the works. */
+function goodWorldStore() {
+  const p = join(mkdtempSync(join(tmpdir(), "pm-foyer-world-")), "world.db");
+  trash.push(join(p, ".."));
+  const d = new DatabaseSync(p);
+  d.exec("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT); CREATE TABLE nodes (id TEXT PRIMARY KEY, kind TEXT, subkind TEXT, tier TEXT, by TEXT, at_x REAL, at_y REAL, extent_w REAL, extent_h REAL, props TEXT);");
+  d.prepare("INSERT INTO meta VALUES ('hydration_status','OK')").run();
+  const ins = d.prepare("INSERT INTO nodes (id, kind, tier, by, props) VALUES (?, 'mark', 'constitution', 'the-town', ?)");
+  for (const c of ["parcel", "letter", "window", "resident"])
+    ins.run(`the-town/${c}`, JSON.stringify({ class: c, in_works: true, path: `WORLD/marks/the-town/the-keeping-works/${c}/mark.md` }));
+  d.close();
+  return p;
+}
+
+test("F17 · a FLOOR roster refuses to render — nothing is written and the exit code says so", () => {
+  const outFile = join(mkdtempSync(join(tmpdir(), "pm-foyer-roster-")), "OUT.md");
+  trash.push(join(outFile, ".."));
+  const r = runRoster({ WORLD_STORE_DB: join(tmpdir(), "pm-foyer-no-such-world-store.db") }, ["--out", outFile]);
+  assert.equal(r.status, 1, "a doc build that cannot see the record must fail loudly, not publish a smaller truth");
+  assert.match(r.stderr, /REFUSING TO WRITE/);
+  assert.match(r.stderr, /standing on its floor/, "and it repeats the door's own disclosure rather than inventing one");
+  assert.equal(existsSync(outFile), false, "nothing was written");
+});
+
+test("F17b · --allow-floor renders, but the page itself carries the disclosure — the fallback is never presented as the live enum", () => {
+  const outFile = join(mkdtempSync(join(tmpdir(), "pm-foyer-roster-")), "OUT.md");
+  trash.push(join(outFile, ".."));
+  const r = runRoster({ WORLD_STORE_DB: join(tmpdir(), "pm-foyer-no-such-world-store.db") }, ["--out", outFile, "--allow-floor"]);
+  assert.equal(r.status, 0);
+  const page = readFileSync(outFile, "utf8");
+  assert.match(page, /is NOT the live roster/, "a reader of the artifact learns what the generator knew");
+  assert.match(page, /standing on its floor/);
+});
+
+test("F17c · a GOOD store renders with NO warning — the stamp is a disclosure, not decoration", () => {
+  const outFile = join(mkdtempSync(join(tmpdir(), "pm-foyer-roster-")), "OUT.md");
+  trash.push(join(outFile, ".."));
+  const r = runRoster({ WORLD_STORE_DB: goodWorldStore() }, ["--out", outFile]);
+  assert.equal(r.status, 0, "a readable store renders without the flag");
+  const page = readFileSync(outFile, "utf8");
+  assert.equal(/is NOT the live roster/.test(page), false, "a page that always warned would be a page nobody reads the warning on");
+  assert.match(page, /`parcel`/, "and the classes it renders are the store's own");
 });
 
 // ── the index's own honesty ────────────────────────────────────────────────

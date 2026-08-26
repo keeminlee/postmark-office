@@ -343,6 +343,53 @@ export function spentNonce(odb, key, { from, nonce }) {
 }
 
 /**
+ * A nonce is a retry KEY, not an archive — and it is bounded like every field
+ * beside it (a card is capped at 50,000 bytes; the address fields are sliced).
+ *
+ * ⚠ IT BOUNCES RATHER THAN TRUNCATING, and that is the whole reason the cap is
+ * written here instead of as a `.slice()`. Truncating two different long nonces
+ * to the same prefix would make them ONE key — the seam would then refuse a
+ * second, genuinely different letter and hand back the wrong receipt for it.
+ * A silent trim is the one thing an idempotency key must never suffer.
+ */
+export const NONCE_MAX = 200;
+
+/**
+ * ── THE IN-FLIGHT MAP · the race the journal lookup cannot see ─────────────
+ *
+ * `spentNonce` reads the log, and between that read and the row being written
+ * this function AWAITS the envelope pre-flight. Two calls carrying one nonce
+ * that arrive close enough together therefore both pass the read before either
+ * writes, and the town gets two letters — the exact failure the seam exists to
+ * prevent, under the exact conditions that produce retries. Node's single
+ * thread is not a defence; the `await` is precisely where the runtime hands the
+ * turn to the second caller.
+ *
+ * So the seam gets a second register. The journal answers "was this nonce spent
+ * BEFORE?"; this map answers "is it being spent RIGHT NOW?", and a call that
+ * finds its nonce in flight waits for the first to finish and returns THAT
+ * call's receipt rather than starting a write of its own.
+ *
+ * ⚠ WHAT THIS DOES AND DOES NOT PROMISE. It is memory-local, so it holds for
+ * one office process — which is what the office is. It would NOT hold across
+ * two processes serving one town; that wants a real column and a unique index
+ * on the journal, which is a schema change and a larger conversation. The gap
+ * is named here rather than left for a reader to discover from behaviour.
+ *
+ * ⚠ A BOUNCE IS NOT A SPENT NONCE. If the first call throws — a malformed
+ * envelope, an unknown recipient — the waiter does not inherit its failure as a
+ * duplicate receipt. It falls through and makes its own honest attempt, because
+ * nothing was written and the nonce was therefore never spent.
+ *
+ * Entries are deleted in a `finally`, so the map holds only calls actually in
+ * flight and cannot grow.
+ */
+const inFlight = new Map();
+
+const inFlightSlot = (key, from, nonce) =>
+  `${String(key?.household ?? "")} ${String(from ?? "")} ${nonce}`;
+
+/**
  * THE ORIGINAL RECEIPT, handed back — not a new one, and not a bare refusal.
  *
  * Hal's phrasing is exact: "duplicate refusal returning the original receipt."
@@ -375,11 +422,41 @@ export function duplicateReceipt(row, nonce) {
  * arm and a bounce reads identically whichever side of the flag produced it.
  */
 export async function sendLetterAsRow(args, key, db, clone, odb) {
+  const nonce = String(args?.nonce ?? "").trim() || null;
+  if (nonce && Buffer.byteLength(nonce, "utf8") > NONCE_MAX) {
+    const e = new Error(`nonce must be under ${NONCE_MAX} bytes`);
+    Object.assign(e, { code: 422, defect: `nonce must be under ${NONCE_MAX} bytes`,
+      hint: "a nonce is a retry key, not a payload — anything you can repeat exactly will do. It is refused rather than trimmed, because two long nonces cut to the same prefix would become one key and the second letter would get the first one's receipt." });
+    throw e;
+  }
+  // NO NONCE, NO SEAM. A caller who offered none takes the path they always
+  // took, with no map entry and no lookup — the receipt they get back is
+  // byte-for-byte the one they got before any of this existed.
+  if (!nonce) return sendRow(args, key, db, clone, odb, null);
+
+  const slot = inFlightSlot(key, args?.from, nonce);
+  const running = inFlight.get(slot);
+  if (running) {
+    // THIS NONCE IS MID-WRITE RIGHT NOW. Wait for that call rather than racing
+    // it, and hand its receipt back. `catch` rather than `await` bare: a first
+    // call that BOUNCED spent no nonce, so its failure must not become this
+    // caller's duplicate — they fall through and try honestly below.
+    const first = await running.catch(() => null);
+    if (first) return { ...first, duplicate: true, nonce,
+      note: "this nonce was already in flight when your call arrived — a letter carrying it was mid-write, and this is that letter's receipt. NOTHING WAS WRITTEN A SECOND TIME. Two calls that overlap are the case the log alone cannot see, because neither has become a row yet when the other reads.",
+    };
+  }
+  const running2 = sendRow(args, key, db, clone, odb, nonce);
+  inFlight.set(slot, running2);
+  try { return await running2; } finally { inFlight.delete(slot); }
+}
+
+/** The write itself, once the nonce question is settled. */
+async function sendRow(args, key, db, clone, odb, nonce) {
   // BEFORE THE FENCE, on purpose. A retry must end where the first call ended,
   // and the first call is what put the town in the state a second validation
   // would now be judging. The lookup is key-scoped, so an unvalidated `from`
   // buys nothing: a handle this key does not hold matches no row.
-  const nonce = String(args?.nonce ?? "").trim() || null;
   const spent = spentNonce(odb, key, { from: args?.from, nonce });
   if (spent) return duplicateReceipt(spent, nonce);
 
