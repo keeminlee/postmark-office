@@ -93,6 +93,24 @@ if [ "$MODE" = "preflight" ]; then
     || die "$SERVICE is not active right now. Deploying onto a stopped office would make the probe's failure ambiguous — start it, or fix why it is down, first."
   say "$SERVICE is active"
 
+  # DEPLOY.md's live-truth note (2026-07-19) says the box's office "is a plain
+  # file copy, NOT the git clone step 1 below describes". If a .git turns up
+  # here, that premise has stopped holding for this root and an rsync will leave
+  # the checkout dirty — recoverable, not destructive, but nobody should find out
+  # by surprise. Warn rather than fail: the copy is still safe, and refusing
+  # would strand a deploy over a condition the operator may already know about.
+  #
+  # This fires loudest for /srv/postmark-office-dev, whose code-update mechanism
+  # is documented NOWHERE in this repo — DEPLOY.md says only "deploy dev src from
+  # the train tip" without saying how, so whether dev is a copy or a checkout is
+  # genuinely unknown until this line answers it.
+  if [ -e "$ROOT/.git" ]; then
+    echo "  WARNING: $ROOT is a git checkout, not a plain file copy."
+    echo "           The deploy will rsync over it and leave the working tree dirty."
+    echo "           Nothing is destroyed; \`git -C $ROOT status\` will show the drift."
+    echo "           If this root is meant to be updated by git, this deploy is the wrong hand for it."
+  fi
+
   if [ -f "$ROOT/release.json" ]; then
     say "currently deployed: $(node -e 'const s=require(process.argv[1]);console.log(`${s.tag} @ ${String(s.sha).slice(0,12)} (${s.target||"?"}, ${s.deployed_at||"?"})`)' "$ROOT/release.json" 2>/dev/null || echo "release.json present but unreadable")"
   else
