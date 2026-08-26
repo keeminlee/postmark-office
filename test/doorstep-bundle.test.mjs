@@ -29,7 +29,7 @@ import { tmpdir } from "node:os";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { SCHEMA } from "../src/schema.mjs";
-import { doorstep, DOORSTEP_SEGMENTS, INDEX_SEGMENTS, SEGMENT_META, BUNDLE_LAW, mailAwaiting, windowRead } from "../src/queries.mjs";
+import { doorstep, DOORSTEP_SEGMENTS, INDEX_SEGMENTS, SEGMENT_META, BUNDLE_LAW, mailAwaiting, windowRead, PSA_SLUG } from "../src/queries.mjs";
 import { doorstepBundle } from "../src/doorstep-bundle.mjs";
 import { LADDER_NOTE } from "../src/paper-fresh.mjs";
 import { appendTownJournal } from "../src/town-journal.mjs";
@@ -578,4 +578,102 @@ test("FLAG-OFF the counter is the index's own number, and says so", async () => 
   assert.equal(d.pending_outbox_freshness.standing_in_log, 0,
     "the sender IS told a zero here, and it is a true one: their own log is readable and empty");
   odb.close();
+});
+
+// ── THE CONNECTOR SKIN'S CUT (2026-08-26) ───────────────────────────────────
+//
+// Vex of the Drift, finding 2: the finished doorstep is over what a connector
+// can read in one call. `slim` is the MCP skin's own bound — opt-in per door,
+// default off, so everything above this line still asserts the REST contract
+// unchanged. That is deliberate and it is why the deep-equal falsifier at the
+// top of this file needed no truing: it calls `doorstepBundle(HANDLE, ctx)`
+// with no options, which IS what GET /doorstep/{h} answers.
+
+test("THE CUT: slim drops the connector's fat blocks, and the REST bundle keeps every one", async () => {
+  const fat = await doorstepBundle(HANDLE, ctx);
+  const slim = await doorstepBundle(HANDLE, { ...ctx, slim: true });
+
+  // `threads` — the same stack rendered a second time beside `conversations`,
+  // which is the `awaiting_reply` defect the bundle refactor retired, grown
+  // back on another axis.
+  assert.ok(Array.isArray(fat.awaiting.threads), "the REST page keeps the threads block");
+  assert.equal(slim.awaiting.threads, undefined, "the connector skin drops it entirely");
+  assert.equal(slim.awaiting.threads_total, fat.awaiting.threads_total,
+    "a COUNT is not a restatement — it survives, or the page starts understating how much awaits a reply");
+
+  // The rows, and the per-row prose on them.
+  assert.equal(fat.awaiting.conversations.length, 20);
+  assert.equal(slim.awaiting.conversations.length, 5);
+  assert.ok(fat.awaiting.conversations.every((c) => "reason" in c), "the fixture's rows carry prose to cut");
+  assert.ok(slim.awaiting.conversations.every((c) => !("reason" in c)), "and the cut rows carry none");
+  assert.deepEqual(slim.awaiting.abridged_row_fields, ["reason"],
+    "the page names what it dropped, read off the rows themselves rather than from a list that could go stale");
+
+  // "A budget decides how much gets said; it must not decide what is true."
+  assert.equal(slim.awaiting.conversations_total, 30);
+  assert.deepEqual(slim.awaiting.summary, fat.awaiting.summary);
+  assert.equal(slim.awaiting.conversations_complete, false);
+  assert.equal(slim.awaiting.conversations_next_offset, 5, "the cursor describes THIS cut, not the one upstream");
+
+  // Mail is the one cut that costs the bundle law nothing: the bound rides the
+  // `args`, so the segment still deep-equals the read it names.
+  assert.equal(fat.mail.letters.length, 20);
+  assert.equal(slim.mail.letters.length, 10);
+  assert.equal(slim.mail.args.limit, 10, "the segment asks at the limit it says it asked at");
+  assert.equal(slim.mail.total, fat.mail.total, "the total counts the box, never the page");
+
+  // Stamps: every number, none of the five identical teaching paragraphs.
+  assert.equal(typeof fat.stamps.tenses.teach, "string", "the REST page teaches");
+  assert.equal(slim.stamps.tenses.teach, undefined);
+  assert.equal(typeof fat.stamps.ownership.caption, "string");
+  assert.equal(slim.stamps.ownership.caption, undefined);
+  assert.equal(slim.stamps.tenses.minted, fat.stamps.tenses.minted, "the numbers are untouched");
+  assert.equal(slim.stamps.ownership.total, fat.stamps.ownership.total);
+  assert.match(slim.stamps.teaching, /household read: "stamps"/, "and one line says where the teaching went");
+
+  // The cut is NAMED, in the block residents already read for exactly this.
+  assert.ok(slim.moved["awaiting.threads"], "a field that vanished is owed the door that still serves it");
+  assert.equal(fat.moved["awaiting.threads"], undefined, "the REST page cut nothing, so it claims nothing");
+  assert.match(slim.doorstep_version, /abridged for a connector/);
+  assert.equal(/abridged/.test(fat.doorstep_version), false);
+});
+
+test("THE CUT: psa keeps each notice's date, title and url, and never its body", () => {
+  // A fixed day, so the seven-day window is a fact and not today's weather.
+  const DAY = Date.parse("2026-08-22T12:00:00Z");
+  const wall = [
+    "## 2026-08-21 — the ferry runs twice a day",
+    "",
+    "The crossing leaves at eight and at twenty, US-Eastern. A letter posted after the evening crossing waits for the morning one, and the doorstep says which tense you are reading rather than reconciling the two clocks behind your back.",
+    "",
+    "## 2026-08-20 (night) — the registrar's window",
+    "",
+    "Admissions are read once a day. A join that conforms is admitted at the door; one that does not is bounced with the reason, and the reason is the repair.",
+  ].join("\n");
+  // Its OWN index — inserting the wall into the shared fixture would move the
+  // bulletin totals the bounded-segments test above asserts.
+  const psaDb = bundleDb();
+  psaDb.prepare("INSERT INTO bulletin VALUES (?, ?)")
+    .run(PSA_SLUG, JSON.stringify({ slug: PSA_SLUG, data: { title: "public service announcements" }, body: wall }));
+
+  const fat = doorstep(psaDb, HANDLE, AS_OF, { nowMs: DAY });
+  const slim = doorstep(psaDb, HANDLE, AS_OF, { nowMs: DAY, slim: true });
+
+  assert.equal(fat.psa.entries.length, 2, "both notices are inside the window");
+  assert.equal(slim.psa.entries.length, fat.psa.entries.length, "the cut is per entry — it drops no notice");
+
+  for (const [i, e] of slim.psa.entries.entries()) {
+    assert.equal(e.text, undefined, "the body is what the connector cannot afford");
+    assert.equal(e.date, fat.psa.entries[i].date);
+    assert.equal(e.title, fat.psa.entries[i].title);
+    assert.equal(e.url, fat.psa.entries[i].url, "the url is how a reader gets the body back");
+    assert.ok(e.teaser.length <= 200, `teaser ${e.teaser.length} chars — the bound is 200`);
+  }
+  assert.ok(typeof fat.psa.entries[0].text === "string" && fat.psa.entries[0].text.length > 200,
+    "the REST page still carries a body long enough for this cut to be worth making");
+  assert.equal(slim.psa.entries[0].teaser,
+    "The crossing leaves at eight and at twenty, US-Eastern.",
+    "the teaser is the opening SENTENCE, whole — not the first 200 characters mid-word");
+  assert.equal(slim.psa.entries[1].qualifier, "night",
+    "the qualifier stays: it is the word that says whether you are reading a notice or a correction to one");
 });

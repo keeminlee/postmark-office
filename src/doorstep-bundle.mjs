@@ -35,8 +35,15 @@ import { votesAvailable, doorstepVotes } from "./votes.mjs";
  * without its votes line.
  */
 export async function doorstepBundle(handle, ctx = {}) {
-  const { db, key, meta, asOf, clone, odb, canWrite, conversationsOffset = 0 } = ctx;
-  const d = doorstep(db, handle, asOf, { conversationsOffset, fresh: { odb, clone, asOf } });
+  // `slim` is THE CONNECTOR SKIN'S BOUND, and it is opt-in per door for the
+  // same reason `conversationsOffset` is: the two call sites already differ by
+  // declared args, and this is one more. Only mcp.mjs passes it — both of its
+  // doorstep doors, the flat `read_doorstep` and `household read: "doorstep"`.
+  // The REST handlers pass nothing and answer byte-for-byte what they answered
+  // before, because a page's shape must not change under a reader who did not
+  // ask for it. What the cut drops, queries.mjs § slimAwaiting names on the page.
+  const { db, key, meta, asOf, clone, odb, canWrite, conversationsOffset = 0, slim = false } = ctx;
+  const d = doorstep(db, handle, asOf, { conversationsOffset, slim, fresh: { odb, clone, asOf } });
   if (!d) return null;
 
   // ── THE SEVENTH SEGMENT · what awaits your word (the founder's .1 ruling) ─

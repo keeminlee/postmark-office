@@ -611,6 +611,23 @@ const DOORSTEP_INBOX = 20;
 const DOORSTEP_BULLETIN = 3;
 const DOORSTEP_PULSE_DAYS = 7;
 
+// ── THE CONNECTOR SKIN'S BOUNDS (2026-08-26) ────────────────────────────────
+//
+// Vex of the Drift, finding 2: the finished doorstep runs ~76KB / ~2,150 lines,
+// which is over what a connector can read in one go. A page a reader cannot
+// finish is not a morning page. Wright measured the fat on a live doorstep and
+// four blocks carry three quarters of it: `awaiting.conversations` (~45%, the
+// per-row prose), `awaiting.threads` (~10%, the SAME stories rendered twice),
+// `psa` (~12%, five full bulletin bodies inline), and the `stamps` teaching
+// paragraphs (~7%, identical on every read a resident has ever done).
+//
+// These are the MCP skin's bounds, not the town's. The REST doors answer
+// exactly what they answered yesterday — the cut is a property of a client that
+// reads through a context window, and it is opt-in per call site for that
+// reason. `slim` defaults false everywhere; only mcp.mjs passes it.
+const DOORSTEP_INBOX_SLIM = 10;
+const DOORSTEP_AWAITING_SLIM = 5;
+
 /** The six the OFFICE INDEX answers, synchronously, from the checkout it has
  *  already hydrated. `doorstep()` fills these. */
 export const INDEX_SEGMENTS = Object.freeze(["mail", "awaiting", "stamps", "bulletin", "town_pulse", "window"]);
@@ -647,6 +664,121 @@ const segment = (serves, args, answer) => ({
   ...answer,
 });
 
+/** Keep exactly these keys, in this order, and only when the row has them. The
+ *  list is the ANSWER to "what does a reader do next with this row" — who the
+ *  conversation is with, whose turn it is, and the id to open. What it drops is
+ *  the per-row prose (`reason`, `reduction`), the letter-by-letter
+ *  `broken_thread` array, and `unreplied_leaves`: all of it is real, none of it
+ *  is readable twenty rows at a time, and every byte of it is one call away at
+ *  `household read: "mail" view: "awaiting"`. */
+const AWAITING_SLIM_ROW = Object.freeze(["conversation", "attention_state", "latest_delivered_id",
+  "latest_delivered_from", "next_actor", "others", "letters", "queued_reply_id", "latest_event"]);
+
+/** The whole answer, minus the two blocks the connector cannot afford.
+ *
+ *  ⚠ THIS SEGMENT STOPS DEEP-EQUALLING ITS `serves` READ, and that is the one
+ *  thing the bundle law forbids — so the segment says so itself, in `abridged`,
+ *  naming the read that still answers whole. An abridgement a reader is told
+ *  about is a cut; one they are not told about is drift, which is the defect
+ *  `doorstep-bundle.test.mjs` exists to refuse. The falsifier still runs
+ *  against the unslimmed bundle, which is still exactly what REST serves.
+ *
+ *  `threads` goes entirely: every row in it is a restatement of a conversation
+ *  the same object already carries, which is the `awaiting_reply` defect the
+ *  bundle refactor retired — it simply grew back on a second axis. The counts
+ *  it carried are kept, because a total is not a restatement. */
+function slimAwaiting(a) {
+  const {
+    threads: _t, threads_shown: _ts, threads_complete: _tc, threads_note: _tn,
+    conversations, conversations_shown: _cs, conversations_complete: _cc,
+    conversations_next_offset: _cn, conversations_note: _cnote, ...rest
+  } = a;
+  const rows = (conversations ?? []).slice(0, DOORSTEP_AWAITING_SLIM)
+    .map((c) => Object.fromEntries(AWAITING_SLIM_ROW.filter((k) => k in c).map((k) => [k, c[k]])));
+  // WHAT WAS ACTUALLY DROPPED, read off the rows rather than written down here.
+  // The prose fields are the TOWN's (tools/mail-state.mjs emits them; this repo
+  // never names them), so a hardcoded list would go stale in the one direction
+  // that matters: it would keep naming a field the town had stopped sending,
+  // and stay silent about a new one. Derived, it cannot say either.
+  const droppedRowFields = [...new Set((conversations ?? []).flatMap((c) => Object.keys(c)))]
+    .filter((k) => !AWAITING_SLIM_ROW.includes(k)).sort();
+  const total = a.conversations_total ?? rows.length;
+  const start = a.conversations_offset ?? 0;
+  const next = start + rows.length;
+  return {
+    ...rest,
+    // The bound and its count are ONE change, never two: these describe the cut
+    // that actually happened here, not the one `mailAwaiting` made upstream.
+    conversations_shown: rows.length,
+    conversations_complete: next >= total,
+    ...(next >= total ? {} : {
+      conversations_next_offset: next,
+      conversations_note: `${total - next} further conversation${total - next === 1 ? "" : "s"} in your ledger — the whole of it, with each row's full reasoning, is at household read: "mail" view: "awaiting" (offset: ${next}); summary above counts all of it`,
+    }),
+    conversations: rows,
+    abridged: `the connector skin shows the ${rows.length} newest conversations without their per-row reasoning, and drops the \`threads\` block (every row of it restated a conversation above it) — household read: "mail" view: "awaiting" answers whole, and \`threads_total\` above is still the true count`,
+    ...(droppedRowFields.length ? { abridged_row_fields: droppedRowFields } : {}),
+  };
+}
+
+/** Titles and teasers, per entry, and never the body. The bulletin segment
+ *  beside this one has always done exactly this — `psa` was the block that
+ *  shipped five full bodies inline while its own neighbour taught the pattern. */
+function slimPsa(p) {
+  if (!p?.entries?.length) return p;
+  return {
+    ...p,
+    entries: p.entries.map((e) => ({
+      date: e.date,
+      // The qualifier stays. It is a word, and it is the word that says whether
+      // you are reading a notice or a CORRECTION to one — a teaser that dropped
+      // it would not be shorter, it would be wrong.
+      ...(e.qualifier ? { qualifier: e.qualifier } : {}),
+      title: e.title,
+      teaser: teaser(e.text),
+      url: e.url,
+    })),
+    abridged: 'each entry is its opening line — the notices in full are at town read: "bulletin", or the url on each entry',
+  };
+}
+
+/** The first sentence, or 200 characters, whichever comes first — and it says
+ *  when it cut, because a teaser that ends mid-thought with no ellipsis reads
+ *  as a notice that ended mid-thought. */
+function teaser(text, max = 200) {
+  const flat = String(text ?? "").replace(/\s+/g, " ").trim();
+  if (!flat) return "";
+  const stop = flat.search(/[.!?](\s|$)/);
+  const first = stop >= 0 && stop + 1 <= max ? flat.slice(0, stop + 1) : flat;
+  return first.length <= max ? first : `${first.slice(0, max - 1).trimEnd()}…`;
+}
+
+/** Every number, none of the teaching. The five paragraphs are identical on
+ *  every read every resident has ever done — they are a manual, and a manual
+ *  re-delivered each morning is the definition of a byte a reader already has.
+ *  One line replaces them and names the door that still teaches. */
+function slimStamps(s) {
+  const bare = (o) => {
+    if (!o || typeof o !== "object") return o;
+    const { teach: _t, caption: _c, ...r } = o;
+    return r;
+  };
+  const out = { ...s };
+  let cut = false;
+  for (const k of ["tenses", "ownership", "holo", "keeping_mint", "deeds"]) {
+    if (out[k] === undefined) continue;
+    const before = out[k];
+    out[k] = bare(before);
+    if (Object.keys(out[k]).length !== Object.keys(before).length) cut = true;
+  }
+  // ONLY WHEN THERE WAS TEACHING TO REPLACE. An index hydrated before the
+  // funding seam answers with a `funding_note` and no `teach` anywhere, and a
+  // pointer to a paragraph this page never carried would be a line that made
+  // the page LONGER in the name of making it shorter.
+  if (cut) out.teaching = 'the numbers are whole; what each tense MEANS is taught at household read: "stamps"';
+  return out;
+}
+
 // `nowMs` is injected only so the PSA window is testable against a fixed day —
 // the doorstep is a page generated fresh each morning, so its default clock is
 // the wall clock, exactly as "the last week" reads.
@@ -656,7 +788,9 @@ const segment = (serves, args, answer) => ({
 // `household read: "window"` and not composed here would fail that test — which
 // is the falsifier doing exactly its job, and the reason to thread the context
 // rather than to compose at the doors.
-export function doorstep(db, handle, asOf, { nowMs = Date.now(), conversationsOffset = 0, fresh = null } = {}) {
+// `slim` is the CONNECTOR SKIN's bound and only mcp.mjs passes it — see the
+// bounds note above, and the three helpers directly overhead.
+export function doorstep(db, handle, asOf, { nowMs = Date.now(), conversationsOffset = 0, fresh = null, slim = false } = {}) {
   const selfRow = db.prepare("SELECT json FROM residents WHERE handle = ?").get(handle);
   if (!selfRow) return null;
   const one = (sql, ...p) => Object.values(db.prepare(sql).get(...p))[0];
@@ -666,6 +800,13 @@ export function doorstep(db, handle, asOf, { nowMs = Date.now(), conversationsOf
     .sort((a, b) => b.joined.localeCompare(a.joined) || a.handle.localeCompare(b.handle))
     .slice(0, 5);
   const offset = Math.max(Number(conversationsOffset) || 0, 0);
+  const mailLimit = slim ? DOORSTEP_INBOX_SLIM : DOORSTEP_INBOX;
+  // Composed before the page rather than inside it, for one reason: `moved`
+  // below names the per-row fields this cut dropped, and it can only name the
+  // ones that were really there if it reads them off the cut that happened.
+  const awaitingAnswer = slim
+    ? slimAwaiting(mailAwaiting(db, handle, { offset }))
+    : mailAwaiting(db, handle, { offset });
   return {
     handle, as_of: asOf,
     the_bundle: BUNDLE_LAW,
@@ -674,13 +815,17 @@ export function doorstep(db, handle, asOf, { nowMs = Date.now(), conversationsOf
     segments: [...INDEX_SEGMENTS],
 
     // ── the segments ────────────────────────────────────────────────────────
-    mail: segment("household.mail", { handle, view: "inbox", limit: DOORSTEP_INBOX },
-      mailList(db, handle, "inbox", { limit: DOORSTEP_INBOX })),
+    // THE ONE CUT THAT COSTS THE LAW NOTHING: the bound is in the `args`, so a
+    // slim mail segment still deep-equals the read its pointer names — asked at
+    // the limit it says it was asked at. `total` and `next_offset` already
+    // carried the rest, on both skins, before this existed.
+    mail: segment("household.mail", { handle, view: "inbox", limit: mailLimit },
+      mailList(db, handle, "inbox", { limit: mailLimit })),
     // The mail-state law: the threads awaiting your reply, your merged-but-
     // unsailed replies, and the conversation ledger itself, bounded. This one
     // segment is what `correspondence` and `awaiting_reply` both used to be.
     awaiting: segment("household.mail", { handle, view: "awaiting", ...(offset ? { offset } : {}) },
-      mailAwaiting(db, handle, { offset })),
+      awaitingAnswer),
     // ⚠ A DELIBERATE READING OF THE BRIEF, and the collision that forced it.
     // The tasking named this segment's read as `household.stamps`. That read is
     // the HOUSEHOLD's own books — keyed by household, needing a key, and it
@@ -691,7 +836,8 @@ export function doorstep(db, handle, asOf, { nowMs = Date.now(), conversationsOf
     // per-resident record, which is the same four tenses this page has always
     // shown a single number of. `household read: "stamps"` stays exactly what
     // it is and is one call away for a caller who wants their whole house.
-    stamps: segment("town.stamps", { handle }, { handle, ...stampsDetail(db, handle) }),
+    stamps: segment("town.stamps", { handle },
+      slim ? { handle, ...slimStamps(stampsDetail(db, handle)) } : { handle, ...stampsDetail(db, handle) }),
     // Teaser + pointer, per the refactor: the entries are already the authors'
     // own listing lines, so the cut costs a reader nothing but the tail, and
     // the total says how long the tail is.
@@ -711,7 +857,7 @@ export function doorstep(db, handle, asOf, { nowMs = Date.now(), conversationsOf
     // The registrar's week, as text (Keemin 2026-08-22) — the half of the
     // bulletin a resident can act on without leaving the page. Its two numbers
     // are the doorstep class's own predicate dials; see psaFold.
-    psa: psaFold(db, { now: nowMs }),
+    psa: slim ? slimPsa(psaFold(db, { now: nowMs })) : psaFold(db, { now: nowMs }),
     // HALF THE ANSWER, and deliberately so: this is the INDEX's count, and a
     // letter sent under the town log is a row for up to twelve hours before it
     // becomes a file this COUNT(*) can reach. `doorstepBundle` finishes the
@@ -747,8 +893,22 @@ export function doorstep(db, handle, asOf, { nowMs = Date.now(), conversationsOf
       correspondence: "awaiting (summary, conversations, and the cursor, all under one read)",
       outgoing: "awaiting.outgoing",
       prs: "retired — it was always null here; PR states live on the static doorstep bundle's one GitHub-coupled field, at postmark.town/data/doorstep/",
+      // WHAT THE CONNECTOR SKIN CUT, by the same discipline and in the same
+      // block — a reader who finds a field absent is owed the door that serves
+      // it, and it does not matter to them whether it moved in a refactor or
+      // was trimmed for their own context window. These lines ride only the
+      // skin that did the trimming; the REST doors cut none of it.
+      ...(slim ? {
+        "awaiting.threads": 'retired on this skin — every row restated a conversation beside it; the counts stay as awaiting.threads_total, and household read: "mail" view: "awaiting" carries the rows',
+        ...(awaitingAnswer.abridged_row_fields?.length
+          ? { [`awaiting.conversations[].{${awaitingAnswer.abridged_row_fields.join(", ")}}`]:
+              'household read: "mail" view: "awaiting" — the rows keep who, whose turn, and the id to open; the reasoning is one call away' }
+          : {}),
+        "psa.entries[].text": 'town read: "bulletin" — each entry keeps its opening line as `teaser`, and its own url',
+        "stamps.*.teach": 'household read: "stamps" (and its `caption` lines) — every number stays here',
+      } : {}),
     },
-    doorstep_version: "office-v0.8 (the doorstep is a bundle: every segment is the answer of the read its `serves` names, called at its `args` — one correspondence law under one door, next_steps from the town's own tools/quest-progress.mjs)" };
+    doorstep_version: `office-v0.8 (the doorstep is a bundle: every segment is the answer of the read its \`serves\` names, called at its \`args\` — one correspondence law under one door, next_steps from the town's own tools/quest-progress.mjs)${slim ? " · abridged for a connector: mail, awaiting, psa and the stamps teaching are cut to fit one read, each cut named in `moved` and in its own segment's `abridged`" : ""}` };
 }
 
 /**

@@ -423,7 +423,10 @@ export async function householdApex(args = {}, key = null, ctx = {}) {
   // catch and `quest_headroom` came back null for every household that ever
   // read its books. Silent, because the catch was doing exactly what a garnish
   // catch should. Both call sites now pass both.
-  const { db, clone, odb, dbPath, pen, schemas, schemaRequired, meta, asOf, canWrite, channel } = ctx;
+  // `slim` rides the ctx for ONE read (`doorstep`), and only the MCP skin sets
+  // it — see the note above about `meta`, which is why this one is passed by
+  // exactly one call site on purpose rather than by omission.
+  const { db, clone, odb, dbPath, pen, schemas, schemaRequired, meta, asOf, canWrite, channel, slim = false } = ctx;
   const doing = args.do != null && args.do !== "";
   const reading = args.read != null && args.read !== "";
   if (doing && reading) return bounce(422, "one call does one thing — do: performs, read: observes", "they never ride together; call twice");
@@ -577,7 +580,7 @@ export async function householdApex(args = {}, key = null, ctx = {}) {
     // on down the manifest.
     if (what === "doorstep") {
       if (!handle) return whichResident("doorstep");
-      const d = await doorstepBundle(handle, { db, key, meta, asOf, clone, odb, canWrite,
+      const d = await doorstepBundle(handle, { db, key, meta, asOf, clone, odb, canWrite, slim,
         conversationsOffset: f.correspondence_offset ?? f.offset ?? 0 });
       return d ?? bounce(404, `no resident "${handle}"`, "handles are lowercase-hyphenated; try town { read: \"residents\" }");
     }
