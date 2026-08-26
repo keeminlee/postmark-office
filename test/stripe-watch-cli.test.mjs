@@ -1,0 +1,162 @@
+// stripe-watch-cli.test.mjs — the glue, run for real.
+//
+// Everything the rule does is pure and has its own falsifiers in
+// test/stripe-watch.test.mjs. This file exists because none of that is what the
+// box runs: the box runs `node tools/stripe-watch.mjs` with an env file, and the
+// path from environment to reader to pages to journal to state has no test at
+// all unless the CLI is actually executed. A green suite over a pure core and an
+// unrun main is a suite that proves the arithmetic and not the machine.
+//
+// So Stripe here is a REAL HTTP SERVER on a real port, and the watcher is a real
+// child process reading a real env. It records what the request carried, which
+// is how the auth-header assertion below can mean anything.
+
+import test from "node:test";
+import assert from "node:assert/strict";
+import http from "node:http";
+import { generateKeyPairSync } from "node:crypto";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { tmpdir } from "node:os";
+import { execFile, execFileSync } from "node:child_process";
+import { promisify } from "node:util";
+
+// execFileSync BLOCKS THE EVENT LOOP, so the in-process fake Stripe below could
+// never accept the child's connection and every run died on the fetch timeout.
+// The test's own apparatus needed its own falsifier: the first version of this
+// file hung for twenty seconds per case and proved nothing about the CLI.
+const run = promisify(execFile);
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const CLI = join(HERE, "..", "tools", "stripe-watch.mjs");
+const TOWN = [resolve(HERE, "..", "town-clone"), "G:/postmark/seam-overnight/town-clone"]
+  .find((p) => existsSync(join(p, "tools", "stamp-mint.mjs")));
+
+const KEY = "rk_test_thisisnotarealkey";
+const CS = "cs_test_cli111111111111111111111";
+
+function fakeStripe(sessions) {
+  const seen = [];
+  const server = http.createServer((req, res) => {
+    seen.push({ url: req.url, auth: req.headers.authorization });
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify({ object: "list", data: sessions, has_more: false }));
+  });
+  return new Promise((done) => server.listen(0, "127.0.0.1", () => done({ server, seen, port: server.address().port })));
+}
+
+function seamTown() {
+  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+  const repo = mkdtempSync(join(tmpdir(), "stripe-cli-"));
+  mkdirSync(join(repo, "tools"), { recursive: true });
+  mkdirSync(join(repo, "WHITE_PAGES"), { recursive: true });
+  writeFileSync(join(repo, "tools", "github-ids.json"), JSON.stringify({ paz: { login: "p", id: 2 } }));
+  writeFileSync(join(repo, "WHITE_PAGES", "mail-ledger.md"), "# ledger\n\n- 2026-06-12 · m-1 · paz → paz · thread: new\n");
+  writeFileSync(join(repo, "tools", "stamp-pubkey.pem"), publicKey.export({ type: "spki", format: "pem" }));
+  writeFileSync(join(repo, "ECONOMY-DIALS.json"), JSON.stringify({
+    law_side: { town_issuance: { treasury_handle: "the-town", once_purposes: [] }, keeping: { sigma: 0.5, rho: 0.5, rho_constitutional_ceiling: 0.5 } },
+  }));
+  writeFileSync(join(repo, "WHITE_PAGES", "pot-keep.json"), JSON.stringify({ pot: "keep", status: "open", beneficiary: "keeper", target_usd_per_epoch: 1000, epoch_cadence: "monthly", received_usd: 0 }));
+  const keyFile = join(repo, "stamp-key.pem");
+  writeFileSync(keyFile, privateKey.export({ type: "pkcs8", format: "pem" }));
+  // the town's own tools, so the CLI's townEngine() finds a real seam
+  for (const f of ["stamp-mint.mjs", "epoch-close.mjs"])
+    writeFileSync(join(repo, "tools", f), readFileSync(join(TOWN, "tools", f)));
+  return { repo, keyFile };
+}
+
+const session = (over = {}) => ({
+  id: CS, object: "checkout.session", status: "complete", payment_status: "paid", livemode: true,
+  created: Math.floor(Date.now() / 1000) - 60, amount_total: 1000, currency: "usd",
+  client_reference_id: "keep", customer_details: { email: "cli@example.test" },
+  custom_fields: [{ key: "handle", type: "text", text: { value: "paz" } }],
+  payment_intent: "pi_cli", ...over,
+});
+
+test("the CLI runs end to end: env → reader → pages → journal → state, and writes no ledger row", async () => {
+  const { server, seen, port } = await fakeStripe([session()]);
+  const town = seamTown();
+  const state = join(town.repo, "state.json");
+  const journal = join(town.repo, "intake.jsonl");
+  const ledger = join(town.repo, "WHITE_PAGES", "stamp-ledger.md");
+  execFileSync(process.execPath, [join(TOWN, "tools", "stamp-mint.mjs"), "--append", "--key", town.keyFile, "--repo", town.repo], { encoding: "utf8" });
+  const before = readFileSync(ledger, "utf8");
+
+  const { stdout: out } = await run(process.execPath, [
+    CLI, "--dry-run", "--json", "--clone", town.repo, "--state", state, "--journal", journal,
+  ], {
+    encoding: "utf8", maxBuffer: 8 * 1024 * 1024,
+    env: { ...process.env, STRIPE_KEY: KEY, STRIPE_API: `http://127.0.0.1:${port}/v1`, TOWN_CLONE: "" },
+  });
+  server.close();
+
+  const report = JSON.parse(out);
+  assert.equal(report.sessions, 1);
+  // the session is a minute old, so it is HELD — and the held row carries the
+  // plan, which is the operator's whole window
+  assert.equal(report.holding, 1);
+  assert.equal(report.hold[0].plan.pot, "keep");
+  assert.equal(report.hold[0].plan.from, "paz");
+
+  // THE AUTH HEADER ACTUALLY WENT. A watcher that forgot it would 401 on the box
+  // and there would be nothing in this suite to notice.
+  assert.equal(seen[0].auth, `Bearer ${KEY}`);
+  assert.match(seen[0].url, /status=complete/);
+  assert.match(seen[0].url, /created%5Bgte%5D=/);
+
+  // the journal is real, append-only, and holds what the operator needs
+  const rows = readFileSync(journal, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].kind, "seen");
+  assert.equal(rows[0].session, CS);
+  assert.equal(rows[0].email, "cli@example.test");
+  assert.equal(rows[0].handle_typed, "paz");
+
+  // the cursor advanced, and the ledger did not move
+  assert.equal(JSON.parse(readFileSync(state, "utf8")).cursor, session().created);
+  assert.equal(readFileSync(ledger, "utf8"), before);
+});
+
+test("a second run journals the SAME session once — the journal is append-only, not append-again", async () => {
+  const { server, port } = await fakeStripe([session()]);
+  const town = seamTown();
+  const state = join(town.repo, "state.json");
+  const journal = join(town.repo, "intake.jsonl");
+  execFileSync(process.execPath, [join(TOWN, "tools", "stamp-mint.mjs"), "--append", "--key", town.keyFile, "--repo", town.repo], { encoding: "utf8" });
+  const env = { ...process.env, STRIPE_KEY: KEY, STRIPE_API: `http://127.0.0.1:${port}/v1`, TOWN_CLONE: "" };
+  const args = [CLI, "--dry-run", "--json", "--clone", town.repo, "--state", state, "--journal", journal];
+
+  await run(process.execPath, args, { encoding: "utf8", env });
+  await run(process.execPath, args, { encoding: "utf8", env });
+  server.close();
+
+  const rows = readFileSync(journal, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+  assert.equal(rows.filter((r) => r.kind === "seen").length, 1, "the boundary second is re-read and the session is re-seen, but journalled once");
+});
+
+test("no key is a loud refusal, not a quiet empty tick", async () => {
+  const town = seamTown();
+  execFileSync(process.execPath, [join(TOWN, "tools", "stamp-mint.mjs"), "--append", "--key", town.keyFile, "--repo", town.repo], { encoding: "utf8" });
+  let err = null;
+  try {
+    await run(process.execPath, [CLI, "--dry-run", "--clone", town.repo, "--state", join(town.repo, "s.json")], {
+      encoding: "utf8", env: { ...process.env, STRIPE_KEY: "", TOWN_CLONE: "" },
+    });
+  } catch (e) { err = e; }
+  assert.ok(err, "it exits non-zero");
+  assert.match(String(err.stderr), /no STRIPE_KEY/);
+});
+
+test("no town clone with the funding seam is a loud refusal too", async () => {
+  const bare = mkdtempSync(join(tmpdir(), "no-seam-"));
+  let err = null;
+  try {
+    await run(process.execPath, [CLI, "--dry-run", "--clone", bare, "--state", join(bare, "s.json")], {
+      encoding: "utf8", env: { ...process.env, STRIPE_KEY: KEY, TOWN_CLONE: "" },
+    });
+  } catch (e) { err = e; }
+  assert.ok(err);
+  assert.match(String(err.stderr), /no town clone with the funding seam/);
+  assert.match(String(err.stderr), /never its own parse/);
+});

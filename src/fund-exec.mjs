@@ -8,7 +8,21 @@
 //
 // Env: TOWN_CLONE, STAMP_KEY (path to the pen's ed25519 pem), TOWN_PUSH=1,
 //      BOT_NAME/BOT_EMAIL (penCommit's), TOWN_TZ.
-// argv[2]: JSON { pot, usd, from, ref, date }.
+// argv[2]: JSON { pot, usd, from, ref, date, rail?, via? }.
+//
+// THE RAIL IS A PARAMETER, and it defaults to `usdc` (2026-08-25). It was
+// hardcoded while this exec had exactly one caller — the /fund door, which is
+// the USDC rail's second step and nothing else's. tools/stripe-watch.mjs is the
+// second caller: same ledger row, same town CLI, same flock, a different rail
+// word. The alternative was a second exec that also shells epoch-close --receipt,
+// which is a second ledger writer, which is the thing the seam's own note calls
+// "the one that drifts is the one nobody rereads". `via` is the phrase the
+// commit message names the door by, for the same reason.
+//
+// The rail set is the TOWN's (`stripe|usdc|grant`, KEEPING_RAILS in
+// stamp-mint.mjs and `rail: (stripe|usdc|grant)` in the pot-receipt grammar).
+// Checked here only so a bad rail is a bounce with a sentence instead of a
+// subprocess FATAL — the CLI refuses it regardless, and that is the enforcer.
 //
 // Exit 0 with { line, pot, usd, from, ref, date, commit } or
 // { error: { code, defect, hint } } (a bounce is an answer); exit 1 only when
@@ -44,8 +58,14 @@ function classifyFatal(stderr) {
   return { code: 500, defect: "the receipt refused", hint: (s.split("\n").find(Boolean) ?? "unknown").slice(0, 200) };
 }
 
+// The town's own rail set (stamp-mint.mjs KEEPING_RAILS / the pot-receipt
+// grammar's `rail: (stripe|usdc|grant)`). One word per rail, and no fourth.
+const RAILS = ["stripe", "usdc", "grant"];
+
 async function main() {
-  const { pot, usd, from, ref, date } = JSON.parse(process.argv[2] ?? "{}");
+  const { pot, usd, from, ref, date, rail = "usdc", via = "the /fund door" } = JSON.parse(process.argv[2] ?? "{}");
+  if (!RAILS.includes(rail))
+    return err(422, `"${rail}" is not a rail`, `a pot receipt rides one of ${RAILS.join(", ")} — the town's own grammar has no fourth`);
   if (!existsSync(KEY_PATH))
     return err(409, "not-yet-open", "the office has no pen key configured for the stamp-ledger");
   const mint = join(CLONE, "tools", "stamp-mint.mjs");
@@ -61,7 +81,7 @@ async function main() {
     execFileSync(process.execPath, [mint, "--append", "--key", KEY_PATH, "--repo", CLONE], { encoding: "utf8" });
     execFileSync(process.execPath, [
       close, "--receipt",
-      "--pot", String(pot), "--rail", "usdc", "--usd", String(usd),
+      "--pot", String(pot), "--rail", String(rail), "--usd", String(usd),
       "--from", String(from), "--ref", String(ref), "--date", String(date),
       "--key", KEY_PATH, "--repo", CLONE,
     ], { encoding: "utf8" });
@@ -73,13 +93,13 @@ async function main() {
   const commit = penCommit(CLONE, [
     join(CLONE, "WHITE_PAGES", "stamp-ledger.md"),
     join(CLONE, "WHITE_PAGES", `pot-${pot}.json`),
-  ], `fund: $${usd} witnessed for ${from} → pot ${pot} (usdc rail, via the /fund door)`);
+  ], `fund: $${usd} witnessed for ${from} → pot ${pot} (${rail} rail, via ${via})`);
 
   const { parseStampLedger } = await import(pathToFileURL(mint));
   const entries = parseStampLedger(readFileSync(join(CLONE, "WHITE_PAGES", "stamp-ledger.md"), "utf8"));
   const line = entries.at(-1)?.raw ?? "";
 
-  answer({ line, pot, usd, from, ref, date, commit });
+  answer({ line, pot, usd, from, ref, date, rail, commit });
 }
 
 main().catch((e) => { console.error(String(e?.stack ?? e)); process.exit(1); });

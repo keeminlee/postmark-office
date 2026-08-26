@@ -1,0 +1,19 @@
+[Unit]
+Description=stripe-watch every 15 minutes — card payments resolve on a clock, not on an operator's evening
+# STAGE B. Enabling this timer IS the adoption; disabling it returns the town
+# to Stage A (funding-report + one pasted line per payment) with nothing
+# stranded. See deploy/DEPLOY.md § stripe-watch for the half-page runbook.
+
+[Timer]
+# Offset from usdc-watch's *:0/10 so the two funding watchers never contend for
+# town.lock on the same second. Cadence is not the grace window: a session is
+# held one full crossing regardless, so this only decides how fresh the operator
+# journal is.
+OnCalendar=*:7/15
+RandomizedDelaySec=45
+# a box that was down catches up on the next boot rather than skipping the gap;
+# the ledger's ref uniqueness is what makes a catch-up run safe to repeat
+Persistent=true
+
+[Install]
+WantedBy=timers.target

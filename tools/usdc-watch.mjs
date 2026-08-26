@@ -1,4 +1,4 @@
-// usdc-watch — the town's eye on its own intake address.
+// usdc-watch — the town's eye on its own intake address, and its rules.
 //
 // The /fund door is patron-driven: money moves on Base, and the town learns of
 // it only when the patron comes back and pastes the hash. Until they do, the
@@ -6,54 +6,72 @@
 // — it reads Base on a clock and reports every USDC arrival at the intake
 // address, whether or not anyone has claimed it.
 //
-// It closes the seeing half and NOT the witnessing half, and that boundary is
-// the whole design. harbor-watch's posture, verbatim, is the posture here:
-// "This script only reads and reports — it never writes to any world."
+// ── WHAT CHANGED, 2026-08-25: SEEING BECAME RESOLVING ───────────────────────
 //
-// ── WHY THIS CANNOT AUTO-WITNESS, AND THE RECEIPT FOR THAT ──────────────────
+// The argument below (why a watcher may not simply witness what it sees) is
+// unchanged and still governs. What changed is that its two premises are now
+// FALSIFIABLE PER ARRIVAL instead of true by default, so the arrivals for which
+// neither holds resolve by rule and only the rest surface:
 //
-// The obvious next step — witness each arrival straight through fundVerify so
-// the paste becomes unnecessary — is not merely unbuilt here. It would take
-// money from the patrons it was meant to serve, for two independent reasons,
-// and both were checked rather than assumed.
+//   the pot   an ERC-20 transfer carries no memo, so a watcher choosing a pot
+//             would be guessing at a stranger's intent with their money. It
+//             still would — UNLESS the address itself names the pot.
+//             deploy/intake-addresses.json is that map. Today it is empty of
+//             pots on purpose: one intake address, two open pots behind it, so
+//             every arrival is pot-ambiguous and stays so. When the founder
+//             mints a per-pot address, the chain names the pot and the guess
+//             disappears rather than being made.
 //
-// 1. THE CHAIN DOES NOT SAY WHICH POT. usdc-witness.mjs names this itself, in
-//    the field it returns on every successful witness: the witness "cannot see"
-//    "which pot was meant, the payer's household, or whether this ref was
-//    already recorded — those are the LEDGER's to hold". An ERC-20 transfer has
-//    no memo, the QR on the fund page encodes the bare address (`qrSvg(INTAKE)`
-//    — no amount, no tag), and as of 2026-08-24 TWO pots are open at once
-//    (darko-fund and keeping-ec2) behind that ONE address. A watcher choosing a
-//    pot would be guessing at a stranger's intent with their money, and
-//    epoch-close refuses a receipt without one: "a receipt needs the pot it pays".
+//   the hand  witnessing under a placeholder payer permanently destroys the
+//             real patron's deed, because "ref is unique forever: one dollar,
+//             one mint chance, a re-recorded receipt bounces" and the ledger
+//             has no row kind that attaches, corrects, or reassigns a payer.
+//             That is still exactly true of an UNKNOWN payer. It is NOT true of
+//             a REGISTERED one: the OFFICE-SIDE registry (src/wallet-registry.mjs,
+//             box-side and never in the town repo — founder-ruled 2026-08-25)
+//             says whose address this is, so the claim the watch "front-runs"
+//             would have named the same hand. There is no deed to lose.
 //
-// 2. WITNESSING WOULD PERMANENTLY DESTROY THE PATRON'S DEED. The receipt ref is
-//    `usdc:base:<txhash>` and the ledger's grammar says of it: "ref is unique
-//    forever: one dollar, one mint chance, a re-recorded receipt bounces." So a
-//    watcher that recorded an arrival under some placeholder payer would consume
-//    that hash's one chance. The patron who pastes their hash ten minutes later
-//    — the ordinary, honest case — meets guard 6: "this transaction is already
-//    recorded". Their deed and their holo are then unreachable FOREVER, because
-//    the ledger is append-only and signature-linked (every sig binds the whole
-//    prefix), and it has no row kind that attaches, corrects, or reassigns a
-//    payer on an existing pot-receipt. The brief's "attach the handle later"
-//    path is not a small extension of the door; it is a new ledger row kind,
-//    which is a ledger-law change no build lane may make (fund.mjs says so of
-//    the cents question in the same breath). test/usdc-watch.test.mjs proves the
-//    theft against the town's own CLI rather than asserting it.
+// Both must hold for one arrival before it is witnessed, and it waits MIN_CONF
+// deep AND one full crossing besides. test/usdc-watch.test.mjs still proves the
+// theft against the town's own CLI for the placeholder case, because that case
+// is still forbidden.
 //
-// So the honest thing an automatic watcher CAN do is see, and say. An arrival
-// nobody has claimed is exactly what the fund page already tells a card payer:
-// "a payment the office cannot attach to a hand can still be a gift, but it
-// cannot be your deed." This watch is how the office finds out there is one.
+// THE ONE LIBERTY AUTO-WITNESS TAKES, named rather than buried: the /fund door
+// lets a resident witness a payment under ANY handle they choose — a household
+// may fund on someone else's behalf. Auto-witness files it under the wallet's
+// own household. The crossing-long grace is what makes that safe to live with:
+// a resident who wants a different attribution has a full crossing to use the
+// door first, and their paste wins outright, because the door consumes the ref
+// and the next tick reads it back as already witnessed.
+//
+// AND THE ASYMMETRY WITH THE CARD RAIL, which is deliberate. tools/stripe-watch.mjs
+// witnesses an unattributable card payment as an outside gift (`outside:stripe`)
+// because that rail has no payer paste-path to front-run — the fund page says so
+// in its own words: "Step 2 — there isn't one". Base HAS one. So an arrival from
+// an unregistered address is NEVER witnessed as a gift here, however clearly the
+// address names its pot: doing so would spend the ref of a patron who is about
+// to paste. It stays unclaimed, and the sink rule below is the eventual answer.
+//
+// ── THE SINK RULE (PROPOSED — NOT ENABLED) ──────────────────────────────────
+//
+// An unclaimed arrival from an unregistered address, older than SINK_AGE_DAYS,
+// would witness as an outside gift to the DARKO fund — the donation box is the
+// natural home for money nobody claimed, and its own file says "Nothing is ever
+// refused at intake." This is IMPLEMENTED AND OFF. It runs only when the
+// environment sets USDC_SINK_UNCLAIMED=1, which is the founder's flip and
+// nobody else's. Every report lists what the rule WOULD take and states that it
+// is off, so the decision is made on real numbers rather than in the abstract.
 //
 // WHAT IT REPORTS, per run:
 //   witnessed   — arrivals whose ref is already a pot-receipt in the ledger.
-//                 The patron pasted; nothing to do.
-//   unclaimed   — arrivals >= $1 with no receipt. Real money the town holds and
-//                 nobody has attached to a hand. The operator's queue.
-//   dust        — arrivals under $1, carrying the door's own sentence for why
-//                 they are not receipts.
+//   witness     — arrivals resolved fully by rule and recorded this tick.
+//   hold        — resolved, but not yet a crossing old; carries the plan.
+//   needs_pot   — a registered payer at an address that names no single pot.
+//   over_cap    — resolved, but past the pot's posted target (D5).
+//   unclaimed   — real money nobody has attached to a hand. The operator's queue.
+//   sink        — what the (disabled) sink rule would take, and that it is off.
+//   dust        — arrivals under $1, carrying the door's own sentence.
 //
 // THE CURSOR is a block number, and it only ever advances over blocks that are
 // MIN_CONF deep — the same depth the door demands ("confirmations >= MIN_CONF;
@@ -62,13 +80,17 @@
 // the next run re-reads the same range rather than stepping over it.
 //
 // Usage: node tools/usdc-watch.mjs [--state <state.json>] [--out <report.json>]
-//                                  [--clone <town-clone>] [--from <block>] [--json]
+//                                  [--clone <town-clone>] [--from <block>]
+//                                  [--dry-run] [--json]
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 
 import { baseRpc, INTAKE, USDC, TRANSFER_TOPIC, MIN_CONF } from "../src/usdc-witness.mjs";
+import { readWalletRegistry, handleForAddress } from "../src/wallet-registry.mjs";
+import { CROSSING_MS } from "../src/crossings.mjs";
+import { fundGuards, penRecorder } from "../src/fund.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -86,12 +108,60 @@ export const MAX_CATCHUP = 43_200;
 export const MIN_USD = 1;
 export const UNDER_A_DOLLAR =
   "the ledger records whole dollars, so a payment under $1 cannot be witnessed as a receipt. It reached the town and it is not lost — write to the postmaster.";
+export const RAIL = "usdc";
+// The same spelling law as the card rail's: a handle is `[a-z0-9-]` only, so a
+// colon makes this string unmintable as a name and an unattached gift is legible
+// by shape with no list to consult.
+export const OUTSIDE_FROM = "outside:usdc";
+export const INTAKE_MAP_FILE = join(HERE, "..", "deploy", "intake-addresses.json");
+
+// ── the sink rule: implemented, and OFF ─────────────────────────────────────
+export const SINK_FLAG = "USDC_SINK_UNCLAIMED";
+export const SINK_POT = "darko-fund";
+export const SINK_AGE_DAYS = 7;
+export const SINK_RULE =
+  `an unclaimed arrival from an unregistered address, older than ${SINK_AGE_DAYS} days, is witnessed as an outside gift to the ${SINK_POT} pot — the donation box is the natural home for money nobody claimed. PROPOSED, NOT ENABLED: it runs only when ${SINK_FLAG}=1 is set on the unit, which is the founder's flip.`;
+/** OFF unless the environment says otherwise, and the default is the law. */
+export const sinkEnabled = (env = process.env) => env[SINK_FLAG] === "1";
 
 const pad32 = (addr) => "0x" + "0".repeat(24) + String(addr).replace(/^0x/, "").toLowerCase();
 const hexOf = (n) => "0x" + BigInt(n).toString(16);
+const lower = (a) => String(a).toLowerCase();
+
+// ── which pot an address names ──────────────────────────────────────────────
 
 /**
- * One USDC Transfer log to the intake address, read the way the witness reads
+ * deploy/intake-addresses.json, read into a Map(lowercased address -> pot).
+ *
+ * A file that will not parse is SURFACED, not silently treated as empty: an
+ * empty map and a broken map produce identical behaviour (everything ambiguous)
+ * and only one of them is a bug.
+ */
+export function readIntakeMap(file = INTAKE_MAP_FILE) {
+  const map = new Map();
+  const invalid = [];
+  if (!existsSync(file)) return { map, invalid };
+  let d;
+  try { d = JSON.parse(readFileSync(file, "utf8")); }
+  catch (e) {
+    invalid.push({ kind: "invalid", row_kind: "intake-map", line: "deploy/intake-addresses.json", reason: `unparseable JSON: ${String(e?.message ?? e).slice(0, 80)} — every arrival stays pot-ambiguous until this parses` });
+    return { map, invalid };
+  }
+  for (const [addr, pot] of Object.entries(d?.addresses ?? {})) {
+    if (!/^0x[0-9a-fA-F]{40}$/.test(addr)) { invalid.push({ kind: "invalid", row_kind: "intake-map", line: `addresses["${addr.slice(0, 60)}"]`, reason: "not a Base address (0x + 40 hex)" }); continue; }
+    if (!/^[a-z0-9][a-z0-9-]*$/.test(String(pot))) { invalid.push({ kind: "invalid", row_kind: "intake-map", line: `addresses["${addr}"]`, reason: `"${pot}" is not a pot id (lowercase letters, digits, hyphens)` }); continue; }
+    map.set(lower(addr), String(pot));
+  }
+  return { map, invalid };
+}
+
+/** Every address the watch should scan: the standing intake plus every mapped one. */
+export function intakeAddresses(map, standing = INTAKE) {
+  return [...new Set([lower(standing), ...map.keys()])];
+}
+
+/**
+ * One USDC Transfer log to an intake address, read the way the witness reads
  * it — same topic layout, same 6 decimals, same lowercase spelling — so a ref
  * derived here is character-identical to the ref the door mints.
  */
@@ -101,6 +171,10 @@ export function decodeArrival(log) {
     txhash,
     block: Number(log.blockNumber),
     from_address: "0x" + String(log.topics[1]).slice(-40),
+    // WHICH intake address it landed on — the only thing on an ERC-20 transfer
+    // that can ever name a pot. Read off the recipient topic rather than
+    // remembered from the filter, so a multi-address scan cannot mislabel one.
+    to_address: "0x" + String(log.topics[2] ?? "").slice(-40),
     usd: Number(BigInt(log.data)) / 1e6,
     // the SAME string usdc-witness.mjs builds — see its ref-normalisation note
     receipt_ref: `usdc:base:${txhash}`,
@@ -115,14 +189,19 @@ export function decodeArrival(log) {
  * wrong-token transfer never matches `address`; a transfer to somebody else
  * never matches topic[2]; a non-transfer never matches topic[0]. The chain does
  * the refusing, so nothing irrelevant is ever decoded.
+ *
+ * `intake` may be one address or several. Several go in the recipient slot as
+ * an array, which is that slot's own OR — one request, not one per address, and
+ * still no widening of what is asked for.
  */
 export async function scanRange({ rpc = baseRpc, intake = INTAKE, usdcToken = USDC, from, to, maxSpan = MAX_SPAN }) {
   const out = [];
+  const recipients = Array.isArray(intake) ? intake.map(pad32) : pad32(intake);
   for (let lo = BigInt(from); lo <= BigInt(to); lo += BigInt(maxSpan)) {
     const hi = (lo + BigInt(maxSpan) - 1n) > BigInt(to) ? BigInt(to) : lo + BigInt(maxSpan) - 1n;
     const logs = await rpc("eth_getLogs", [{
       address: usdcToken,
-      topics: [TRANSFER_TOPIC, null, pad32(intake)],
+      topics: [TRANSFER_TOPIC, null, recipients],
       fromBlock: hexOf(lo),
       toBlock: hexOf(hi),
     }]);
@@ -131,6 +210,29 @@ export async function scanRange({ rpc = baseRpc, intake = INTAKE, usdcToken = US
   // ledger order is block order; ties broken by hash so a re-run of the same
   // range reports the same sequence on any machine
   out.sort((a, b) => a.block - b.block || a.txhash.localeCompare(b.txhash));
+  return out;
+}
+
+/**
+ * When each of these blocks was mined, best effort.
+ *
+ * SWALLOWING THE ERROR IS THE CONSERVATIVE DIRECTION and that is the whole
+ * reason it is allowed here: an arrival whose age is unknown can never be
+ * witnessed (the grace cannot be shown to have passed) and can never be swept
+ * by the sink (the age cannot be shown to have passed). An unreadable timestamp
+ * therefore costs the town a resolution, never a wrong one. Contrast the head
+ * read in `watch`, which throws — being blind about WHETHER there was money is
+ * a lie, being blind about WHEN is a delay.
+ */
+export async function blockTimes({ rpc, blocks }) {
+  const out = new Map();
+  for (const b of new Set(blocks)) {
+    try {
+      const blk = await rpc("eth_getBlockByNumber", [hexOf(b), false]);
+      const ts = blk?.timestamp == null ? null : Number(BigInt(blk.timestamp)) * 1000;
+      out.set(b, Number.isFinite(ts) ? ts : null);
+    } catch { out.set(b, null); }
+  }
   return out;
 }
 
@@ -156,6 +258,64 @@ export function reconcile({ arrivals, entries, engine, minUsd = MIN_USD }) {
   return { witnessed, unclaimed, dust };
 }
 
+export const NEEDS_POT_LETTER = (a, handle) =>
+  `Your $${Math.floor(a.usd)} reached the town on ${a.txhash} and we can see it is yours — but the town has one intake address serving more than one pot, so the chain cannot tell us WHICH need you meant to fund. Reply with the pot (or witness it yourself from that pot's own /fund/ page) and it files immediately; nothing is lost while it waits.`;
+
+export const UNREGISTERED =
+  "no household has registered this address with the office, so the town cannot say whose dollar this is. Witnessing it under a placeholder would spend the ref's one mint chance and cost the real patron their deed forever — this arrival waits for their paste, or for the sink rule.";
+
+/**
+ * The rule, applied to what the ledger has not already claimed. Pure: no
+ * network, no writes, no clock of its own.
+ *
+ * Arrivals must already carry `ts` (block time in ms) where it is known;
+ * `ts == null` means the age is unknown, which can only hold an arrival back.
+ */
+export function resolveArrivals({
+  arrivals, entries, engine, clone, potFor, handleFor,
+  now = Date.now(), graceMs = CROSSING_MS, sink = false, sinkAgeDays = SINK_AGE_DAYS,
+}) {
+  const witness = [], hold = [], needs_pot = [], over_cap = [], unclaimed = [], sinkable = [];
+  const sinkAgeMs = sinkAgeDays * 86_400_000;
+
+  for (const a of arrivals) {
+    const handle = handleFor(a.from_address);
+    const whole = Math.floor(a.usd);
+    const cents = Number((a.usd - whole).toFixed(6));
+
+    if (!handle) {
+      const age = a.ts == null ? null : now - a.ts;
+      const old = age != null && age >= sinkAgeMs;
+      const row = { ...a, why: UNREGISTERED, age_days: age == null ? null : Math.floor(age / 86_400_000) };
+      if (!old) { unclaimed.push(row); continue; }
+      // Old enough for the sink. Whether it MOVES is the flag's business.
+      if (!sink) { sinkable.push({ ...row, sink_would: `witness as an outside gift (${OUTSIDE_FROM}) to pot ${SINK_POT}`, sink_rule: SINK_RULE, sink_enabled: false }); unclaimed.push(row); continue; }
+      const g = fundGuards({ engine, entries, clone, pot: SINK_POT, handle: OUTSIDE_FROM, usd: whole, receiptRef: a.receipt_ref });
+      if (!g.ok) { over_cap.push({ ...a, pot: SINK_POT, from: OUTSIDE_FROM, usd: whole, why: g.defect, hint: g.hint ?? null }); continue; }
+      witness.push({ ...a, pot: SINK_POT, from: OUTSIDE_FROM, usd: whole, rail: RAIL, ref: a.receipt_ref, attributed: false, via: "the sink rule" });
+      continue;
+    }
+
+    const pot = potFor(a.to_address);
+    if (!pot) { needs_pot.push({ ...a, handle, why: `the address ${a.to_address} serves more than one open pot, so the chain does not name one`, letter: NEEDS_POT_LETTER(a, handle) }); continue; }
+
+    const g = fundGuards({ engine, entries, clone, pot, handle, usd: whole, receiptRef: a.receipt_ref });
+    if (!g.ok) { over_cap.push({ ...a, pot, from: handle, usd: whole, why: g.defect, hint: g.hint ?? null }); continue; }
+
+    const plan = {
+      pot, from: handle, usd: whole, rail: RAIL, ref: a.receipt_ref, attributed: true,
+      ...(cents > 0 ? { cents_note: `$${a.usd} arrived; the ledger records whole dollars, so $${whole} is witnessed and the remaining $${cents.toFixed(2)} is money the town holds that priced nothing.` } : {}),
+    };
+    // Unknown age holds, never witnesses: the grace cannot be shown to have run.
+    if (a.ts == null) { hold.push({ ...a, plan, witnesses_after: null, why: "the block's timestamp could not be read, so the grace window cannot be shown to have passed" }); continue; }
+    const witnessAt = a.ts + graceMs;
+    if (now < witnessAt) { hold.push({ ...a, plan, witnesses_after: new Date(witnessAt).toISOString() }); continue; }
+    witness.push({ ...a, ...plan });
+  }
+
+  return { witness, hold, needs_pot, over_cap, unclaimed, sink: sinkable };
+}
+
 /** The town's ledger entries, through the town's own parser. */
 export function ledgerEntries(clone, engine) {
   const p = join(clone, "WHITE_PAGES", "stamp-ledger.md");
@@ -179,13 +339,35 @@ export function writeState(p, state) {
 }
 
 /**
+ * The shape EVERY report has, including the quiet one. One shape means one
+ * reader; the posture is said on every report and not only when there is
+ * something unclaimed, because the boundary is the design.
+ */
+function emptyReport({ now, intake, minConf, graceMs, sink }) {
+  return {
+    generated_at: new Date(now).toISOString(),
+    intake: Array.isArray(intake) ? intake : [intake],
+    head: null,
+    safe_head: null,
+    min_confirmations: minConf,
+    scanned: null,
+    arrivals: 0,
+    witnessed: [], dust: [], witness: [], hold: [], needs_pot: [], over_cap: [], unclaimed: [], sink: [],
+    sink_enabled: sink,
+    sink_rule: SINK_RULE,
+    grace: `one crossing (${graceMs / 3_600_000}h) after the block was mined`,
+    posture: "this watch records exactly one thing: an arrival from an address a household has REGISTERED, at an address that names a single pot, MIN_CONF deep and a crossing old. Everything else it reads and reports only. The chain cannot say which pot an unmapped address meant, and a receipt recorded under a placeholder would consume that hash's one mint chance and cost the patron their deed forever.",
+  };
+}
+
+/**
  * One tick.
  *
- * Returns { report, cursor } and NEVER writes: the caller persists, so a
- * falsifier can run the whole tick and prove the cursor did not move without
- * owning a filesystem. Throws when the chain is unreadable — loudly, because a
- * silent empty report from a blind watcher is indistinguishable from a quiet
- * day, and the second one is a lie.
+ * Returns { report, cursor, todo } and NEVER writes: the caller persists and
+ * records, so a falsifier can run the whole tick and prove the cursor did not
+ * move and the ledger did not grow. Throws when the chain is unreadable —
+ * loudly, because a silent empty report from a blind watcher is
+ * indistinguishable from a quiet day, and the second one is a lie.
  */
 export async function watch({
   rpc = baseRpc,
@@ -193,11 +375,17 @@ export async function watch({
   usdcToken = USDC,
   entries,
   engine,
+  clone = null,
   cursor = null,
   minConf = MIN_CONF,
   minUsd = MIN_USD,
   maxSpan = MAX_SPAN,
   maxCatchup = MAX_CATCHUP,
+  potMap = new Map(),
+  wallets = new Map(),
+  now = Date.now(),
+  graceMs = CROSSING_MS,
+  sink = false,
 } = {}) {
   let head;
   try {
@@ -216,29 +404,44 @@ export async function watch({
 
   if (safeHead < from) {
     // nothing has settled since the last tick — not an error, and not a reason
-    // to move the cursor forward over blocks that were never read
-    return { report: { head, safe_head: safeHead, scanned: null, witnessed: [], unclaimed: [], dust: [] }, cursor };
+    // to move the cursor forward over blocks that were never read.
+    //
+    // It carries the SAME KEYS as a full report, deliberately: the quiet branch
+    // used to drop `intake`, `generated_at` and the posture, so the CLI's very
+    // first line (`report.intake.join`) threw on the commonest tick there is —
+    // an empty ten minutes. A degraded shape is a second shape, and every
+    // reader of the first one has to learn about it the hard way.
+    return { report: { ...emptyReport({ now, intake, minConf, graceMs, sink }), head, safe_head: safeHead }, cursor, todo: [] };
   }
 
   const to = Math.min(safeHead, from + maxCatchup - 1);
   const arrivals = await scanRange({ rpc, intake, usdcToken, from, to, maxSpan });
   const split = reconcile({ arrivals, entries, engine, minUsd });
 
+  // Ages, best effort, only for what the ledger has not already claimed.
+  const times = split.unclaimed.length ? await blockTimes({ rpc, blocks: split.unclaimed.map((a) => a.block) }) : new Map();
+  const aged = split.unclaimed.map((a) => ({ ...a, ts: times.get(a.block) ?? null }));
+
+  const rules = resolveArrivals({
+    arrivals: aged, entries, engine, clone,
+    potFor: (addr) => potMap.get(lower(addr)) ?? null,
+    handleFor: (addr) => handleForAddress(wallets, addr),
+    now, graceMs, sink,
+  });
+
   return {
     report: {
-      generated_at: new Date().toISOString(),
-      intake,
+      ...emptyReport({ now, intake, minConf, graceMs, sink }),
       head,
       safe_head: safeHead,
-      min_confirmations: minConf,
       scanned: { from, to },
       arrivals: arrivals.length,
-      ...split,
-      // said on every report, not only when there is something unclaimed: the
-      // boundary is the design, and a reader of this file should meet it here
-      posture: "this watch reads and reports only — it never records a receipt. The chain cannot say which pot a payer meant, and a receipt recorded under a placeholder would consume that hash's one mint chance and cost the patron their deed forever.",
+      witnessed: split.witnessed,
+      dust: split.dust,
+      ...rules,
     },
     cursor: to,
+    todo: rules.witness,
   };
 }
 
@@ -253,6 +456,7 @@ async function main() {
   const clone = arg("clone", process.env.TOWN_CLONE ?? resolve(HERE, "..", "town-clone"));
   const statePath = arg("state", join(HERE, "..", ".usdc-watch-state.json"));
   const outPath = arg("out", null);
+  const dryRun = process.argv.includes("--dry-run");
 
   const engine = await townEngine(clone);
   if (!engine) {
@@ -264,25 +468,71 @@ async function main() {
   const from = arg("from", null);
   const cursor = from != null ? Number(from) - 1 : (state.cursor ?? null);
 
-  const { report, cursor: next } = await watch({
+  const { map: potMap, invalid: mapInvalid } = readIntakeMap();
+  const households = typeof engine.householdKeys === "function" ? engine.householdKeys(clone) : null;
+  const { byAddress: wallets, invalid: walletInvalid, path: registryPath, present: registryPresent } = readWalletRegistry(undefined, { households });
+
+  const { report, cursor: next, todo } = await watch({
     entries: ledgerEntries(clone, engine),
     engine,
+    clone,
     cursor,
+    intake: intakeAddresses(potMap),
+    potMap,
+    wallets,
+    sink: sinkEnabled(),
   });
+  report.registry = { path: registryPath, present: registryPresent, addresses: wallets.size, mapped_pots: potMap.size };
+  report.invalid = [...mapInvalid, ...walletInvalid];
+
+  const written = [];
+  if (!dryRun && todo.length) {
+    const { execUnderTownLock, lockTimedOut, LOCK_BUSY } = await import("../src/town-lock.mjs");
+    const { townDay } = await import("../src/ops.mjs");
+    const record = penRecorder(clone, {
+      execUnderTownLock, lockTimedOut, LOCK_BUSY, townDay,
+      execPath: join(HERE, "..", "src", "fund-exec.mjs"),
+      rail: RAIL, via: "usdc-watch",
+    });
+    for (const w of todo) {
+      try {
+        const out = await record({ pot: w.pot, usd: w.usd, from: w.from, ref: w.ref });
+        written.push({ kind: "witnessed", txhash: w.txhash, ref: w.ref, pot: w.pot, from: w.from, usd: w.usd, line: out?.line ?? null, commit: out?.commit ?? null });
+      } catch (e) {
+        // A refusal is an answer, not a crash: report it and keep going. The ref
+        // is unspent, so the next tick tries again.
+        written.push({ kind: "refused", txhash: w.txhash, ref: w.ref, pot: w.pot, from: w.from, usd: w.usd, code: e?.code ?? null, defect: e?.defect ?? String(e?.message ?? e).slice(0, 200) });
+      }
+    }
+  }
+  report.written = written;
 
   writeState(statePath, { ...state, cursor: next, last_run: new Date().toISOString(), last_head: report.head });
   if (outPath) { mkdirSync(dirname(outPath), { recursive: true }); writeFileSync(outPath, JSON.stringify(report, null, 2) + "\n"); }
 
   if (process.argv.includes("--json")) { console.log(JSON.stringify(report, null, 2)); return; }
 
-  const { witnessed, unclaimed, dust, scanned } = report;
-  console.log(`usdc-watch · intake ${report.intake}`);
+  const { witnessed, unclaimed, dust, hold, needs_pot, over_cap, scanned } = report;
+  console.log(`usdc-watch · intake ${report.intake.join(", ")}`);
   console.log(scanned ? `blocks ${scanned.from}–${scanned.to} (head ${report.head}, ${report.min_confirmations} deep)` : `nothing settled since the last tick (head ${report.head})`);
-  console.log(`  witnessed: ${witnessed.length}   unclaimed: ${unclaimed.length}   under $1: ${dust.length}`);
+  console.log(`  registry: ${report.registry.present ? `${report.registry.addresses} address(es)` : "ABSENT"} at ${report.registry.path}; ${report.registry.mapped_pots} pot address(es) mapped`);
+  console.log(`  witnessed: ${witnessed.length}   recorded now: ${written.filter((w) => w.kind === "witnessed").length}   holding: ${hold.length}   needs-pot: ${needs_pot.length}   over-cap: ${over_cap.length}   unclaimed: ${unclaimed.length}   under $1: ${dust.length}`);
+  for (const h of hold)
+    console.log(`  HOLD       $${h.plan.usd}  ${h.txhash}  → ${h.plan.pot} as ${h.plan.from}${h.witnesses_after ? `  after ${h.witnesses_after}` : `  (${h.why})`}`);
+  for (const n of needs_pot)
+    console.log(`  NEEDS-POT  $${n.usd}  ${n.txhash}  from ${n.handle} — ${n.why}\n             letter: ${n.letter}`);
+  for (const o of over_cap)
+    console.log(`  OVER-CAP   $${o.usd}  ${o.txhash}  → ${o.pot} — ${o.why}`);
   for (const u of unclaimed)
-    console.log(`  UNCLAIMED  $${u.usd}  ${u.txhash}  block ${u.block}  from ${u.from_address}`);
+    console.log(`  UNCLAIMED  $${u.usd}  ${u.txhash}  block ${u.block}  from ${u.from_address}${u.age_days == null ? "" : `  (${u.age_days}d old)`}`);
+  if (report.sink.length)
+    console.log(`  SINK (OFF, ${report.sink.length} eligible): ${SINK_RULE}`);
   for (const d of dust)
     console.log(`  under $1   $${d.usd}  ${d.txhash} — ${d.why}`);
+  for (const w of written)
+    console.log(`  ${w.kind === "witnessed" ? "RECORDED" : "REFUSED "}  $${w.usd} → ${w.pot} as ${w.from}${w.defect ? ` — ${w.defect}` : ""}`);
+  for (const i of report.invalid)
+    console.log(`  INVALID    ${i.line} — ${i.reason}`);
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
