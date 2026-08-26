@@ -15,7 +15,8 @@ import { tmpdir } from "node:os";
 import { readPots, foldFunding, parseLedgerText } from "../src/funding.mjs";
 import { escrowDetail, fundRead, KEEPING_STAKE_MARK, STAKE_POT_BODY, POT_STAKEABLE_BODY } from "../src/household-stamps.mjs";
 import { clipPotStake } from "../src/pot-stake-exec.mjs";
-import { intakeDisclosure } from "../src/fund.mjs";
+import { intakeDisclosure, INTAKE } from "../src/fund.mjs";
+import { readIntakeMap } from "../src/intake-map.mjs";
 import { HOUSEHOLD_DISPATCHABLE, householdDispatchToolFor } from "../src/household-apex.mjs";
 
 // A town whose WHITE_PAGES holds exactly the pot shapes the law now allows.
@@ -305,9 +306,17 @@ test("the disclosure has ONE home, and it carries both mandated sentences", () =
   assert.equal(d.what_this_buys,
     "this buys ownership and memory, never voice, and converts to real value only if the town someday does");
   assert.match(d.address, /^0x[0-9a-fA-F]{40}$/);
+  // Aimed at the CLAIM, not the spelling: the route must hand back
+  // intakeDisclosure's own object and never assemble a second one. It grew a
+  // ?pot argument on 2026-08-25, which changed the call and nothing about the
+  // claim — a probe pinned to `intakeDisclosure()` would have gone red for a
+  // change that was exactly what it wanted.
   const server = readFileSync(new URL("../src/server.mjs", import.meta.url), "utf8");
-  assert.match(server, /return j\(res, 200, intakeDisclosure\(\)\);/,
+  assert.match(server, /return j\(res, 200, intakeDisclosure\([^)]*\)\);/,
     "the REST route serves the shared object rather than its own copy");
+  const route = server.slice(server.indexOf('path === "/fund/intake"'), server.indexOf('path === "/fund/intake"') + 900);
+  assert.equal(/address:|caption:|what_this_buys:/.test(route), false,
+    "and it composes none of the disclosure's fields itself");
 });
 
 test("the card rail is handed to a human, never executed by the agent", () => {
@@ -441,4 +450,53 @@ test("the primary residue is the mode class, with keeping law still citable", ()
   assert.match(apex, /stake: \{ tool: null, residue: "the-town\/stake-pot"/,
     "stake-pot is the primary residue now");
   assert.equal(KEEPING_STAKE_MARK, "the-town/keeping-stake", "and the keeping law stays citable");
+});
+
+test("the money moment carries the POT'S OWN address, from the shipped map", () => {
+  // LAW (deploy/intake-addresses.json, verbatim): "WHICH POT A USDC ARRIVAL
+  //     PAYS, read off the address it landed on. An ERC-20 transfer carries no
+  //     memo, so the ONLY way the chain can name a pot is for the pot to have
+  //     its own intake address."
+  //
+  // Read against the SHIPPED map rather than a fixture, because what this
+  // asserts is that the door and the map agree about the town as it actually
+  // stands today: keeping-ec2 has an address of its own (minted 2026-08-25),
+  // darko-fund does not and keeps the standing shared intake.
+  const { map } = readIntakeMap();
+  const answer = fundRead(null, { db: potDb([EPOCH_POT, ELASTIC_POT]) });
+
+  const keeping = potIn(answer, "keeping-ec2").money_moment;
+  const darko = potIn(answer, "darko-fund").money_moment;
+  assert.ok(keeping && darko, "both pots are open, so both carry a money moment");
+
+  assert.equal(keeping.address, map.get(keeping.address.toLowerCase()) ? keeping.address : null,
+    "the address keeping-ec2 publishes is one the map knows");
+  assert.equal(map.get(keeping.address), "keeping-ec2",
+    "and the map says it names keeping-ec2 — the chain can name the pot without a claim");
+  assert.equal(darko.address, INTAKE,
+    "a pot with no address of its own publishes the standing shared intake");
+  assert.notEqual(keeping.address, darko.address,
+    "two pots, two addresses — which is the whole point of minting one");
+
+  // each says which pot it is for, so a caller holding one cannot lose track
+  assert.equal(keeping.pot, "keeping-ec2");
+  assert.equal(darko.pot, "darko-fund");
+
+  // and every OTHER word of the §10 disclosure is still the one shared copy
+  for (const k of ["network", "token", "min_confirmations", "whole_dollars", "recovery", "caption", "what_this_buys"])
+    assert.equal(keeping[k], darko[k], `${k} did not fork when the address did`);
+});
+
+test("a pot that is not open publishes no address, per-pot map or not", () => {
+  // THE PUBLICATION LAW (the USDC runbook R9): "The address publishes ONLY
+  //     beside a pot" — and a pot the town has not opened is not a named need
+  //     it can take a dollar for. Minting keeping-ec2 an address of its own
+  //     must not become a way around that gate.
+  const closed = { ...EPOCH_POT, status: "closed" };
+  const answer = fundRead(null, { db: potDb([closed]) });
+  const row = potIn(answer, "keeping-ec2");
+  assert.equal(row.money_moment, null);
+  assert.match(row.why, /cannot take a dollar/);
+  assert.equal(/0x[0-9a-fA-F]{40}/.test(JSON.stringify(row)), false,
+    "not even its own minted address leaks from a pot that is not open");
 });

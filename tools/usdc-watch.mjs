@@ -91,6 +91,7 @@ import { baseRpc, INTAKE, USDC, TRANSFER_TOPIC, MIN_CONF } from "../src/usdc-wit
 import { readWalletRegistry, handleForAddress } from "../src/wallet-registry.mjs";
 import { CROSSING_MS } from "../src/crossings.mjs";
 import { fundGuards, penRecorder } from "../src/fund.mjs";
+import { readIntakeMap, intakeAddresses } from "../src/intake-map.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -113,7 +114,7 @@ export const RAIL = "usdc";
 // colon makes this string unmintable as a name and an unattached gift is legible
 // by shape with no list to consult.
 export const OUTSIDE_FROM = "outside:usdc";
-export const INTAKE_MAP_FILE = join(HERE, "..", "deploy", "intake-addresses.json");
+
 
 // ── the sink rule: implemented, and OFF ─────────────────────────────────────
 export const SINK_FLAG = "USDC_SINK_UNCLAIMED";
@@ -128,37 +129,16 @@ const pad32 = (addr) => "0x" + "0".repeat(24) + String(addr).replace(/^0x/, "").
 const hexOf = (n) => "0x" + BigInt(n).toString(16);
 const lower = (a) => String(a).toLowerCase();
 
-// ── which pot an address names ──────────────────────────────────────────────
-
-/**
- * deploy/intake-addresses.json, read into a Map(lowercased address -> pot).
- *
- * A file that will not parse is SURFACED, not silently treated as empty: an
- * empty map and a broken map produce identical behaviour (everything ambiguous)
- * and only one of them is a bug.
- */
-export function readIntakeMap(file = INTAKE_MAP_FILE) {
-  const map = new Map();
-  const invalid = [];
-  if (!existsSync(file)) return { map, invalid };
-  let d;
-  try { d = JSON.parse(readFileSync(file, "utf8")); }
-  catch (e) {
-    invalid.push({ kind: "invalid", row_kind: "intake-map", line: "deploy/intake-addresses.json", reason: `unparseable JSON: ${String(e?.message ?? e).slice(0, 80)} — every arrival stays pot-ambiguous until this parses` });
-    return { map, invalid };
-  }
-  for (const [addr, pot] of Object.entries(d?.addresses ?? {})) {
-    if (!/^0x[0-9a-fA-F]{40}$/.test(addr)) { invalid.push({ kind: "invalid", row_kind: "intake-map", line: `addresses["${addr.slice(0, 60)}"]`, reason: "not a Base address (0x + 40 hex)" }); continue; }
-    if (!/^[a-z0-9][a-z0-9-]*$/.test(String(pot))) { invalid.push({ kind: "invalid", row_kind: "intake-map", line: `addresses["${addr}"]`, reason: `"${pot}" is not a pot id (lowercase letters, digits, hyphens)` }); continue; }
-    map.set(lower(addr), String(pot));
-  }
-  return { map, invalid };
-}
-
-/** Every address the watch should scan: the standing intake plus every mapped one. */
-export function intakeAddresses(map, standing = INTAKE) {
-  return [...new Set([lower(standing), ...map.keys()])];
-}
+// ── which pot an address names ─────────────────────────────────────
+//
+// MOVED to src/intake-map.mjs, 2026-08-25, and re-exported here so every
+// existing caller and falsifier reads exactly as it did. The map was born in
+// this file because the watch was the only thing that needed it; the /fund door
+// needs it too now — to accept a payment at a pot's own address and to publish
+// that address in the pot's money moment — and a door and a watch that each
+// parse the same file are two things that can disagree about where a stranger's
+// money went. One function, two callers, one answer.
+export { INTAKE_MAP_FILE, readIntakeMap, intakeAddresses } from "../src/intake-map.mjs";
 
 /**
  * One USDC Transfer log to an intake address, read the way the witness reads

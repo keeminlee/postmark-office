@@ -27,6 +27,7 @@
 
 import { stampsDetail, questBoardFor, potBoard } from "./queries.mjs";
 import { intakeDisclosure } from "./fund.mjs";
+import { readIntakeMap } from "./intake-map.mjs";
 
 const bounce = (code, defect, hint, extra = {}) => ({ error: "bounce", code, defect, hint, ...extra });
 
@@ -274,7 +275,12 @@ export function publishedClose(p) {
 export function fundRead(_key, { db, stripeUrl = process.env.FUND_STRIPE_URL ?? null } = {}) {
   let list = [];
   try { list = potBoard(db)?.list ?? []; } catch { list = []; }
-  const disclosure = intakeDisclosure();
+  // THE MAP IS READ ONCE, THE DISCLOSURE PER POT. Since 2026-08-25 the address
+  // is no longer one string for the whole answer: a pot with its own mapped
+  // intake publishes ITS address here, so the money moment a caller reads
+  // beside a named need is the address that names that need on the chain. Every
+  // other word in the disclosure is still the single shared copy.
+  const { map: potMap } = readIntakeMap();
   const pots = list.map((p) => {
     const open = p.status === "open";
     return {
@@ -309,7 +315,7 @@ export function fundRead(_key, { db, stripeUrl = process.env.FUND_STRIPE_URL ?? 
       ...(open
         ? {
             money_moment: {
-              ...disclosure,
+              ...intakeDisclosure(p.id, { map: potMap }),
               // Cards are human instruments: the door hands an agent a link to
               // give its human, and never executes a card payment itself
               // (DESIGN.md — "agent-MEDIATED, never agent-executed").

@@ -51,6 +51,7 @@ import { pathToFileURL } from "node:url";
 import { existsSync } from "node:fs";
 
 import { verifyUsdcPayment, INTAKE, TXHASH_RE } from "./usdc-witness.mjs";
+import { readIntakeMap, addressForPot } from "./intake-map.mjs";
 import { isResidentHandle } from "./residency.mjs";
 // The caption is LAW, and funding.mjs is where it lives. Two hand-typed
 // copies stood here until the household door was built — the exact drift
@@ -58,7 +59,7 @@ import { isResidentHandle } from "./residency.mjs";
 import { HOLO_CAPTION } from "./funding.mjs";
 import { TREASURY_POT } from "./funding.mjs";
 
-const POT_RE = /^[a-z0-9][a-z0-9-]*$/;
+export const POT_RE = /^[a-z0-9][a-z0-9-]*$/;
 
 export const bounce = (code, defect, hint) => {
   const e = new Error(defect);
@@ -141,6 +142,10 @@ export async function fundVerify(clone, body, {
   verify = verifyUsdcPayment,
   record = null,
   engine = null,
+  // Map(lowercased address -> pot), injected so a falsifier can drive a town
+  // with per-pot addresses the shipped deploy/intake-addresses.json does not
+  // have. Null reads the shipped file, which is what production does.
+  potMap = null,
 } = {}) {
   const { txhash, pot, handle } = body ?? {};
 
@@ -176,11 +181,49 @@ export async function fundVerify(clone, body, {
     throw bounce(404, `no resident named "${handle}"`, "holo mints to a town household, so this door needs a handle the town knows. Not in town yet? Join first — or write to the postmaster and your dollars will be deeded by hand.");
 
   // 4 · the witness
-  const w = await verify({ txhash: String(txhash) });
+  const addressMap = potMap ?? readIntakeMap().map;
+  const w = await verify({ txhash: String(txhash), potMap: addressMap });
   if (!w.verified) {
     // An unreadable chain is a 503, not a refusal: the payment may be perfect.
     if (w.unreadable) throw bounce(503, "the town cannot see Base right now", w.refused);
     throw bounce(422, w.refused, "nothing was recorded, and nothing was lost — if you believe this is wrong, send the hash to the postmaster and it will be looked at by hand");
+  }
+
+  // ── 4a · THE CHAIN NAMED A POT ────────────────────────────────────────────
+  // Two answers to "which need did this dollar mean" now exist: the claim in
+  // the body, and — since the founder minted keeping-ec2 its own intake address
+  // — the recipient address itself. When both spoke, they must agree.
+  //
+  // THE GRANDFATHER RULE, stated here in full because it is the half a reader
+  // will assume is a bug:
+  //
+  //   A claim naming pot P verifies against P's own mapped address AND against
+  //   the standing shared intake, because the shared address was the published
+  //   answer for every pot up to the moment P's own address was minted.
+  //   Refusing a tx that paid the shared address would strand an honest payer
+  //   who followed yesterday's instructions, and yesterday's instructions were
+  //   the town's own.
+  //
+  // So a shared-address payment (`to_pot === null`) passes for ANY pot, exactly
+  // as it did before per-pot addresses existed, and will keep passing for as
+  // long as any surface still shows the shared address — which is precisely
+  // what deploy/intake-addresses.json's `_never` keeps true by refusing to map
+  // it: "Do NOT map the shared intake address to a pot to make the queue go
+  // away. That would make the office decide where a stranger's money went,
+  // which is the one judgement this whole lane refuses to make."
+  //
+  // The union is NOT symmetric. Paying P's address while claiming Q is not
+  // grandfathered: no published instruction ever pointed a Q-payer at P's
+  // address, so the mismatch is a real disagreement and is bounced by name
+  // rather than resolved in favour of either side. The claim is not silently
+  // corrected to P — a payer may have paid the wrong address, or typed the
+  // wrong pot, and the town does not know which.
+  if (w.to_pot && w.to_pot !== String(pot)) {
+    throw bounce(
+      422,
+      `the address you paid names a different pot — this transaction paid ${w.to}, which is pot "${w.to_pot}"'s own intake address, but the claim says pot "${pot}"`,
+      `nothing was recorded and nothing was lost. Send it again naming "${w.to_pot}", or — if you truly meant "${pot}" — write to the postmaster, because the town will not move a dollar to a need its payer did not name.`,
+    );
   }
 
   // 5 · whole dollars (see THE CENTS above)
@@ -210,6 +253,11 @@ export async function fundVerify(clone, body, {
     } : {}),
     from_address: w.from_address,
     to: w.to,
+    // WHICH ADDRESS CARRIED THE CLAIM, recorded in the answer rather than left
+    // implicit. Null means the payer used the standing shared intake and the
+    // claim is the only thing naming the pot; a pot id means the chain named it
+    // too, and agreed.
+    to_pot: w.to_pot ?? null,
     block: w.block,
     confirmations: w.confirmations,
     receipt_ref: w.receipt_ref,
@@ -269,9 +317,32 @@ export async function fundVerifyViaOffice(clone, body) {
 // two things that can drift, and the one that drifts is the one nobody reread.
 //
 // The two sentences every money surface carries, verbatim, are inside it.
-export function intakeDisclosure() {
+//
+// ── PER-POT, 2026-08-25 ─────────────────────────────────────────────────────
+// `pot` is optional and it changes exactly one field: the address. A pot with
+// its own mapped intake publishes THAT, so a patron reading its money moment
+// pays an address that names the pot on the chain and needs no claim to be
+// believed. A pot with none publishes the standing shared intake, which is
+// where its patrons have always been sent.
+//
+// Derived from the map every time rather than remembered anywhere: the new
+// address exists in deploy/intake-addresses.json and nowhere else in this
+// repo's source, which is what makes minting the next one a one-file act.
+//
+// A pot the map somehow names twice publishes NO address (addressForPot returns
+// null) rather than a guessed one — refuse or disclose, never quietly
+// substitute, on the surface where substituting is money gone.
+export function intakeDisclosure(pot = null, { map = null } = {}) {
+  const potMap = map ?? readIntakeMap().map;
+  const address = pot == null ? INTAKE : addressForPot(String(pot), potMap);
   return {
-    address: INTAKE,
+    ...(address
+      ? { address }
+      : {
+          address: null,
+          why: `the town's intake map names more than one address for pot "${pot}" — it will not choose between them, so this pot publishes no address until the map does. Write to the postmaster.`,
+        }),
+    ...(pot == null ? {} : { pot: String(pot) }),
     network: "Base",
     token: "USDC (Base native) only",
     min_confirmations: 12,
