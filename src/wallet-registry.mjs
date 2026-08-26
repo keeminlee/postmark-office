@@ -12,7 +12,7 @@
 // Keeping the registry off the public record protects LESS than it looks like
 // it protects, and the founder ruled with that in front of him:
 //
-//   A CLAIMED DEED ALREADY PUBLISHES THE LINKAGE. A pot-receipt's ref is
+//   A WITNESSED PAYMENT ALREADY PUBLISHES THE LINKAGE. A pot-receipt's ref is
 //   `usdc:base:<txhash>`, that ref is in the public signed ledger, and anyone
 //   can read the transaction on Base and see the from-address. So the moment a
 //   household's dollar is witnessed with their handle on it, wallet↔handle is
@@ -77,7 +77,7 @@ const norm = (a) => String(a).toLowerCase();
  * because the folder name was a household by construction; off the town repo
  * nothing guarantees it, and a receipt witnessed under a non-household handle
  * would be silently treated as an outside gift at the close — the resident's
- * deed quietly lost. The relocation created that hole; this closes it.
+ * holo quietly lost. The relocation created that hole; this closes it.
  */
 export function foldRegistry(text, { households = null } = {}) {
   const byAddress = new Map(); // address -> { handle, at }
@@ -109,7 +109,7 @@ export function foldRegistry(text, { households = null } = {}) {
     const handle = String(r?.handle ?? "");
     if (!handle) { bad(raw, `line ${n}: registration names no handle`); continue; }
     if (households && !households.has(handle)) {
-      bad(raw, `line ${n}: "${handle}" is not a household the town knows — the registry is office-side, so nothing else checks this, and a receipt witnessed under a non-household handle would be treated as an outside gift at the close and quietly cost that resident their deed`);
+      bad(raw, `line ${n}: "${handle}" is not a household the town knows — the registry is office-side, so nothing else checks this, and a receipt witnessed under a non-household handle would be treated as an outside gift at the close and quietly cost that resident their holo`);
       continue;
     }
     if (!claims.has(addr)) claims.set(addr, new Set());

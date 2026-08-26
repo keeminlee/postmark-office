@@ -161,11 +161,11 @@ test("the pot comes from the session's own client_reference_id, and a session wi
 // THE HAND — a match, or a gift; never a near-match
 // ════════════════════════════════════════════════════════════════════════════
 
-test("an exactly-matching handle becomes the payer, and anything else becomes a gift with no deed", async () => {
+test("an exactly-matching handle becomes the payer, and anything else becomes a gift that mints no holo", async () => {
   // LAW (the fund page, the card rail's own warning, verbatim): "Tell the town
   //     which handle it was for when you pay, or write and say so — a payment
   //     the office cannot attach to a hand can still be a gift, but it cannot
-  //     be your deed."
+  //     mint your holo."
   const town = seamTown();
   const now = 2_000_000_000_000;
   const old = Math.floor(now / 1000) - 86_400;
@@ -183,7 +183,7 @@ test("an exactly-matching handle becomes the payer, and anything else becomes a 
   assert.equal(typo.from, OUTSIDE_FROM);
   assert.equal(typo.attributed, false);
   assert.match(typo.gift_note, /"pazz" is not a household the town knows/);
-  assert.match(typo.gift_note, /can still be a gift, but it cannot be your deed/);
+  assert.match(typo.gift_note, /can still be a gift, but it cannot mint your holo/);
 
   const none = at(CS_C, null);
   assert.equal(none.from, OUTSIDE_FROM);
@@ -226,7 +226,7 @@ test("a session younger than one crossing is HELD, and the hold carries the plan
   const young = resolveSession(decodeSession(sess({ id: CS_A, created, handle: "pazz" })), { ...ctx(town), now: born + CROSSING_MS - 1 });
   assert.equal(young.disposition, "hold");
   assert.equal(young.plan.pot, "keep");
-  assert.equal(young.plan.from, OUTSIDE_FROM, "the hold already knows the typo will cost the deed");
+  assert.equal(young.plan.from, OUTSIDE_FROM, "the hold already knows the typo will cost the holo");
   assert.equal(young.plan.handle_typed, "pazz");
   assert.equal(young.email, "patron@example.test", "the operator can reach the payer inside the window");
   assert.equal(young.witnesses_after, new Date(born + CROSSING_MS).toISOString());

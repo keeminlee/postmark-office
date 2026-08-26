@@ -43,10 +43,10 @@
 //         household (the town's own `householdKeys`, the same set the /fund
 //         door's guard 3 asks). Absent, misspelled, or not in town → the
 //         receipt's payer is `outside:stripe` and the dollars count toward the
-//         pot with no deed for anyone. That is not a new rule; it is the
+//         pot without minting holo for anyone. That is not a new rule; it is the
 //         already-published one, from the card rail's own warning on the fund
 //         page: "a payment the office cannot attach to a hand can still be a
-//         gift, but it cannot be your deed."
+//         gift, but it cannot mint your holo."
 //
 //         WHY THAT SPELLING. `from:` in the pot-receipt grammar is `(\S+)`, so
 //         it will take anything without a space. `outside:stripe` is chosen
@@ -55,9 +55,9 @@
 //         A future reader can therefore tell an unattached gift from an
 //         attached one by shape alone, with no list to consult. The town's own
 //         close already knows what to do with it — deriveEpochClose resolves a
-//         payer that is not a household to "deed alone", holo 0, in its own
-//         words: "An outside patron (the founding family grant) resolves to
-//         neither and lands as deed alone."
+//         payer that is not a household to holo 0 — the payment is recorded
+//         and settled, and it mints nothing, exactly as the founding family
+//         grant does.
 //
 //   when  one full crossing after the session was created. THE GRACE IS THE
 //         POINT: while a session is held, the intake journal shows the operator
@@ -330,8 +330,8 @@ export function resolveSession(s, { engine, entries, clone, households, now = Da
     } : {}),
     ...(attributed ? {} : {
       gift_note: typed
-        ? `"${typed}" is not a household the town knows, so these dollars are witnessed as a gift under ${OUTSIDE_FROM} and earn no deed. A payment the office cannot attach to a hand can still be a gift, but it cannot be your deed.`
-        : `no handle was given, so these dollars are witnessed as a gift under ${OUTSIDE_FROM} and earn no deed.`,
+        ? `"${typed}" is not a household the town knows, so these dollars are witnessed as a gift under ${OUTSIDE_FROM} and mint no holo. A payment the office cannot attach to a hand can still be a gift, but it cannot mint your holo.`
+        : `no handle was given, so these dollars are witnessed as a gift under ${OUTSIDE_FROM} and mint no holo.`,
     }),
   };
 

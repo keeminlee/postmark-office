@@ -112,7 +112,8 @@ export async function verifyUsdcPayment({
   // once carries two different answers to "which pot did you mean", and this
   // file's whole posture is that it does not choose between a payer's meanings.
   // Refusing here costs the payer a letter to the postmaster; guessing costs
-  // them a deed on a pot they did not name, which the ledger cannot undo.
+  // them a witnessed payment on a pot they did not name, which the ledger
+  // cannot undo.
   const paidTo = [...new Set(landed.map(recipientOf))];
   if (paidTo.length > 1)
     return refuse(`this transaction paid ${paidTo.length} different town intake addresses (${paidTo.join(", ")}) — the town cannot tell which pot you meant, so it will not choose. Send the hash to the postmaster and it will be recorded by hand`);
@@ -145,7 +146,7 @@ export async function verifyUsdcPayment({
   // three facts defeated the law they were built to keep: "ref is unique
   // forever: one dollar, one mint chance, a re-recorded receipt bounces".
   // Pasting 0xab… and then 0xAB… recorded ONE $50 payment TWICE — two receipts,
-  // two patron-deeds, two holo mints, $100 witnessed against the pot for $50 of
+  // two holo rows, twice the mint, $100 witnessed against the pot for $50 of
   // real money. Reproduced against the town's own CLI, 2026-08-24, on a ledger
   // that (checked) holds no receipt rows yet, which is why normalising here
   // orphans nothing.

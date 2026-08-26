@@ -188,7 +188,7 @@ test("the pot file's received_usd and the ledger's rows are disclosed SIDE BY SI
     rails: [railHealth("x", { last_run: minsAgo(1) }, { now: NOW })],
     stripe: { hold: [] }, usdcReport: null, registry: { addresses: 0, wallet_files: 0, mapped_pots: 0 },
   });
-  assert.match(md, /witnessed this epoch \(undeeded receipts\): \*\*\$10\*\*/);
+  assert.match(md, /witnessed this epoch \(receipts no close has settled\): \*\*\$10\*\*/);
   assert.match(md, new RegExp(`the pot file's \`received_usd\` says \\$${potJson.received_usd}`));
   assert.match(md, /`stripe:cs_x`/, "the ref that makes the dollar unique is on the page");
   assert.match(md, /\| 2026-08-01 \| stripe \| paz \| \$10 \|/);
@@ -225,7 +225,7 @@ test("a card payment in the grace window is shown with the typo the operator mus
   });
   assert.match(md, /after it, the ref is spent forever/);
   assert.match(md, /pazz/, "the handle they actually typed");
-  assert.match(md, /gift, no deed/);
+  assert.match(md, /gift, no holo/);
   assert.match(md, /patron@example\.test/, "and how to reach them inside the window");
 });
 

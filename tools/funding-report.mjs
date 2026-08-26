@@ -210,8 +210,8 @@ export function render({ now, pots, potsInvalid, fold, rails, anomalyRows, strip
     p(`Each line below records one payment through the office's own recorder — the same \`fund-exec\` the /fund door uses, shelling the town's own \`epoch-close --receipt\`, which enforces ref-uniqueness and the pot cap itself. Paste and run from \`${OFFICE_DIR}\`. Re-running one is safe: the ledger refuses a ref it already holds.`);
     p();
     for (const r of ready) {
-      p(`**${usd(r.usd)} → \`${r.pot}\` as ${r.attributed === false ? `_${r.from}_ (gift, no deed)` : `**${r.from}**`}** · ${r.rail} · \`${r.session ?? r.txhash}\`${r.fresh ? " · ⏱ recent" : ""}`);
-      if (r.handle_typed != null && r.attributed === false) p(`  <br/>typed \`${r.handle_typed}\`${r.email ? ` · ${r.email}` : ""} — not a household, so this files as a gift with no deed.`);
+      p(`**${usd(r.usd)} → \`${r.pot}\` as ${r.attributed === false ? `_${r.from}_ (gift, no holo)` : `**${r.from}**`}** · ${r.rail} · \`${r.session ?? r.txhash}\`${r.fresh ? " · ⏱ recent" : ""}`);
+      if (r.handle_typed != null && r.attributed === false) p(`  <br/>typed \`${r.handle_typed}\`${r.email ? ` · ${r.email}` : ""} — not a household, so this files as a gift and mints no holo.`);
       if (r.note) p(`  <br/>${r.note}`);
       p();
       p("```sh");
@@ -256,7 +256,7 @@ export function render({ now, pots, potsInvalid, fold, rails, anomalyRows, strip
     p(`| session | amount | files to | as | typed | email | witnesses after |`);
     p(`|---|---|---|---|---|---|---|`);
     for (const h of stripe.hold)
-      p(`| \`${h.session}\` | ${usd((h.amount_total ?? 0) / 100)} | ${h.plan.pot} | ${h.plan.attributed ? `**${h.plan.from}**` : `_${h.plan.from}_ (gift, no deed)`} | ${h.plan.handle_typed ?? "—"} | ${h.email ?? "—"} | ${h.witnesses_after} |`);
+      p(`| \`${h.session}\` | ${usd((h.amount_total ?? 0) / 100)} | ${h.plan.pot} | ${h.plan.attributed ? `**${h.plan.from}**` : `_${h.plan.from}_ (gift, no holo)`} | ${h.plan.handle_typed ?? "—"} | ${h.email ?? "—"} | ${h.witnesses_after} |`);
     p();
   }
 
@@ -266,9 +266,9 @@ export function render({ now, pots, potsInvalid, fold, rails, anomalyRows, strip
   for (const pot of pots) {
     const d = pot.data;
     const receipts = fold.receiptsByPot.get(pot.id) ?? [];
-    const deeds = fold.deedsByPot.get(pot.id) ?? [];
-    const deededRefs = new Set(deeds.map((x) => x.receipt));
-    const open = receipts.filter((r) => !deededRefs.has(r.receipt));
+    const roll = fold.rollByPot.get(pot.id) ?? [];
+    const settledRefs = new Set(roll.map((x) => x.receipt));
+    const open = receipts.filter((r) => !settledRefs.has(r.receipt));
     const received = open.reduce((a, r) => a + r.usd, 0);
     const target = d.target_usd_per_epoch;
     const escrow = fold.potEscrow.get(pot.id) ?? 0;
@@ -277,21 +277,21 @@ export function render({ now, pots, potsInvalid, fold, rails, anomalyRows, strip
     p();
     p(`- status **${d.status}**${pot.close ? ` · close word **${pot.close}**${pot.min_close_usd ? ` (floor ${usd(pot.min_close_usd)})` : ""}` : ""}${d.first_close ? ` · first close ${d.first_close}` : ""}`);
     p(`- posted need: ${target == null ? `_none — ${pot.close === "elastic" ? "elastic: the need is whatever arrived" : "no target"}_` : `${usd(target)} per ${d.epoch_cadence ?? "epoch"}`}`);
-    p(`- witnessed this epoch (undeeded receipts): **${usd(received)}**${target != null ? ` — ${Math.min(100, Math.round((received / target) * 100))}% of the posted need` : ""}`);
+    p(`- witnessed this epoch (receipts no close has settled): **${usd(received)}**${target != null ? ` — ${Math.min(100, Math.round((received / target) * 100))}% of the posted need` : ""}`);
     p(`- the pot file's \`received_usd\` says ${usd(d.received_usd ?? 0)}. ${d.received_usd === received ? "The two clocks agree." : "**The two clocks differ** — the ledger's rows are authoritative; the file is display and is refreshed by the recording tool."}`);
     p(`- stamps escrowed on this pot: **${escrow}**`);
     p();
     if (receipts.length) {
-      p(`| date | rail | from | usd | ref | deeded |`);
+      p(`| date | rail | from | usd | ref | settled |`);
       p(`|---|---|---|---|---|---|`);
-      for (const r of receipts) p(`| ${r.date} | ${r.rail} | ${r.from} | ${usd(r.usd)} | \`${r.receipt}\` | ${deededRefs.has(r.receipt) ? "yes" : "—"} |`);
+      for (const r of receipts) p(`| ${r.date} | ${r.rail} | ${r.from} | ${usd(r.usd)} | \`${r.receipt}\` | ${settledRefs.has(r.receipt) ? "yes" : "—"} |`);
       p();
     } else {
       p(`_No receipts yet._`);
       p();
     }
-    if (deeds.length) {
-      p(`Patron deeds: ${deeds.map((x) => `${x.patron} ${usd(x.usd)} (holo ${x.holo})`).join(" · ")}`);
+    if (roll.length) {
+      p(`Patron roll: ${roll.map((x) => `${x.patron} ${x.usd == null ? "$?" : usd(x.usd)} (holo ${x.holo})`).join(" · ")}`);
       p();
     }
   }
@@ -308,7 +308,7 @@ export function render({ now, pots, potsInvalid, fold, rails, anomalyRows, strip
   if (tRec.length) {
     p(`### \`${TREASURY_POT}\` — the reserved direct-to-town line`);
     p();
-    p(`_Deeds only; no file, no stakes, no close, and its deeds carry holo 0._`);
+    p(`_Direct-to-town receipts only; no file, no stakes, no close, and each one settles with holo 0._`);
     p();
     p(`| date | rail | from | usd | ref |`);
     p(`|---|---|---|---|---|`);

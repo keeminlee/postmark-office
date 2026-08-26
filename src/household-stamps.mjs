@@ -134,7 +134,9 @@ export async function estateRead(key, { db, meta, clone }) {
       ownership: detail.ownership ?? null,
       holo: detail.holo ?? null,
       keeping_mint: detail.keeping_mint ?? null,
-      deeds: detail.deeds ?? null,
+      // What this resident funded rides on the holo rows above, per the
+      // founder's 2026-08-26 ruling — one register, not two.
+      moved: detail.moved ?? null,
       quest_headroom: quests,
       escrow: escrowDetail({ total: detail.staked ?? 0, byHandle, handle }),
     });

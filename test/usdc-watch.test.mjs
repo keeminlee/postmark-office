@@ -173,7 +173,7 @@ test("a payment under a dollar is set aside with the door's own sentence", async
 
 test("an arrival nobody has claimed is reported as unclaimed, and never as a receipt", async () => {
   // LAW (the fund page, the card rail's second warning): "a payment the office
-  //     cannot attach to a hand can still be a gift, but it cannot be your deed."
+  //     cannot attach to a hand can still be a gift, but it cannot mint your holo."
   //     Unclaimed money is a thing the office must SEE; it is not a thing the
   //     watch may record.
   const town = seamTown();
@@ -197,7 +197,7 @@ test("an arrival nobody has claimed is reported as unclaimed, and never as a rec
   // ledger did not move) is what actually carries the claim; the posture line
   // is checked for the clause that governs THIS arrival.
   assert.match(report.posture, /Everything else it reads and reports only/);
-  assert.match(report.posture, /consume that hash's one mint chance and cost the patron their deed forever/);
+  assert.match(report.posture, /consume that hash's one mint chance and cost the patron their holo forever/);
 });
 
 test("once the patron pastes, the SAME arrival reports as witnessed — the watch is idempotent", async () => {
@@ -310,7 +310,7 @@ test("a long catch-up is read in bounded chunks, not one enormous request", asyn
 // THE RECEIPT FOR WHAT WAS *NOT* BUILT
 // ════════════════════════════════════════════════════════════════════════════
 
-test("AUTO-WITNESSING WOULD DESTROY THE PATRON'S DEED — the reason this watch only reads", async () => {
+test("AUTO-WITNESSING WOULD DESTROY THE PATRON'S HOLO — the reason this watch only reads", async () => {
   // LAW (stamp-mint.mjs, the pot-receipt grammar, verbatim): "ref is unique
   //     forever: one dollar, one mint chance, a re-recorded receipt bounces."
   //
@@ -339,7 +339,7 @@ test("AUTO-WITNESSING WOULD DESTROY THE PATRON'S DEED — the reason this watch 
   assert.equal(e.code, 409);
   assert.match(e.defect, /already recorded/);
 
-  // and their deed is gone for good: the receipt names the placeholder, and the
+  // and their holo is gone for good: the receipt names the placeholder, and the
   // ledger holds no row kind that could ever reassign it
   const ledger = readFileSync(join(town.repo, "WHITE_PAGES", "stamp-ledger.md"), "utf8");
   assert.match(ledger, /pot-receipt · pot:keep · rail: usdc · usd: 40 · from: unattributed/);
@@ -359,7 +359,7 @@ test("one dollar cannot become two by respelling its hash", async () => {
   // A tx hash is hex and hex has two spellings; TXHASH_RE admits both and the
   // ledger's uniqueness check is an exact string compare. Before the ref was
   // normalised at the point it is minted, pasting 0xab… and then 0xAB… recorded
-  // ONE payment TWICE — two receipts, two deeds, $80 witnessed for $40 of real
+  // ONE payment TWICE — two receipts, twice the mint, $80 witnessed for $40 of real
   // money. This is the flip that proves the fix can still fail.
   const town = seamTown();
   const record = cliRecorder(town);

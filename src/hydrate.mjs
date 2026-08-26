@@ -197,7 +197,8 @@ if (existsSync(stampTool) && existsSync(stampLedger)) {
   put.run("stamps_minted", String(-(bal.get("MINT") ?? 0)));
 }
 
-// The funding seam (2026-08-21): pots + deeds + holo + receipts + escrow.
+// The funding seam (2026-08-21): pots + holo + receipts + escrow, plus the
+// patron roll that is holo joined to the receipt each row's `ref:` names.
 // Folded OFFICE-SIDE for now (src/funding.mjs — field-labeled, tolerant of
 // segment order) because the town lane lands the concrete grammar in the same
 // window this reader ships; when tools/stamp-mint.mjs grows its own funding
@@ -213,10 +214,11 @@ if (existsSync(stampTool) && existsSync(stampLedger)) {
     for (const [party, mints] of f.holoByParty) for (const m of mints) insHolo.run(party, m.pot, m.holo, m.epoch, m.date, m.receipt);
     const insKeeping = db.prepare("INSERT INTO funding_keeping_mint (party, pot, n, epoch, date) VALUES (?,?,?,?,?)");
     for (const [party, rows] of f.keepingByParty) for (const r of rows) insKeeping.run(party, r.pot, r.n, r.epoch, r.date);
-    // one insert per deed — deedsByPot carries every deed (deedsByParty is the
-    // same rows keyed the other way, for the pure-fold consumers)
-    const insDeed = db.prepare("INSERT INTO funding_deeds (patron, pot, usd, date, receipt, holo) VALUES (?,?,?,?,?,?)");
-    for (const [pot, deeds] of f.deedsByPot) for (const d of deeds) insDeed.run(d.patron, pot, d.usd, d.date, d.receipt, d.holo);
+    // one insert per rolled row — rollByPot carries every one of them
+    // (rollByParty is the same rows keyed the other way, for the pure-fold
+    // consumers)
+    const insRoll = db.prepare("INSERT INTO funding_roll (patron, pot, usd, date, receipt, holo) VALUES (?,?,?,?,?,?)");
+    for (const [pot, rows] of f.rollByPot) for (const r of rows) insRoll.run(r.patron, pot, r.usd, r.date, r.receipt, r.holo);
     const insRcpt = db.prepare("INSERT INTO pot_receipts (pot, rail, usd, date, receipt, payer) VALUES (?,?,?,?,?,?)");
     for (const [pot, rs] of f.receiptsByPot) for (const r of rs) insRcpt.run(pot, r.rail, r.usd, r.date, r.receipt, r.from);
     const insEsc = db.prepare("INSERT INTO pot_escrow (pot, staked) VALUES (?, ?)");

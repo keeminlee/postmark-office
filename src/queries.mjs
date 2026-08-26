@@ -790,7 +790,7 @@ function slimStamps(s) {
   };
   const out = { ...s };
   let cut = false;
-  for (const k of ["tenses", "ownership", "holo", "keeping_mint", "deeds"]) {
+  for (const k of ["tenses", "ownership", "holo", "keeping_mint"]) {
     if (out[k] === undefined) continue;
     const before = out[k];
     out[k] = bare(before);
@@ -1047,11 +1047,13 @@ export function stampsFor(db, handle) {
 // the cumulative equity number. `stamps` is kept as an alias of liquid for
 // back-compat (the resident page + read_stamps have always read it).
 //
-// The funding seam (2026-08-21) grows this read a fourth tense and the deeds:
-// `tenses` names minted/liquid/staked/holo side by side, `holo` is the
-// household's soulbound record of contribution (NEVER a balance — it lives
-// outside assets, and the caption on the section is law), `deeds` is what the
-// household funded, when, for how many dollars, and the holo minted for it.
+// The funding seam (2026-08-21) grows this read a fourth tense: `tenses` names
+// minted/liquid/staked/holo side by side, and `holo` is the household's
+// soulbound record of contribution (NEVER a balance — it lives outside assets,
+// and the caption on the section is law). Each of its rows carries what the
+// household funded and how many dollars it paid, read off the pot-receipt the
+// row's `ref:` names — the founder's 2026-08-26 ruling keeps `pot-receipt` the
+// only money row, so this read joins rather than duplicating.
 // Household-keyed rows answer to the declared slug when the registry resolves it
 // AND to the handle itself (fixtures, named outsiders, pre-registry rows).
 //
@@ -1070,8 +1072,15 @@ export function stampsDetail(db, handle) {
     let parties = [handle];
     try { const hh = householdOf(handle); if (hh?.slug && hh.slug !== handle) parties.push(hh.slug); } catch { /* garnish only */ }
     const ph = parties.map(() => "?").join(",");
-    const holoRows = db.prepare(`SELECT party, pot, holo, epoch, date, receipt FROM funding_holo WHERE party IN (${ph}) ORDER BY date, seq`).all(...parties);
-    const deedRows = db.prepare(`SELECT pot, usd, date, receipt, holo FROM funding_deeds WHERE patron IN (${ph}) ORDER BY date, seq`).all(...parties);
+    // THE JOIN, IN THE OPEN. `pot-receipt` is the only money row (the founder's
+    // 2026-08-26 ruling), so the dollars behind a holo row are read off the
+    // receipt its `ref:` names rather than restated on a second row. LEFT, so a
+    // holo row whose receipt this index does not hold still appears, with
+    // `dollars` null — absent, never guessed.
+    const holoRows = db.prepare(`
+      SELECT h.party, h.pot, h.holo, h.epoch, h.date, h.receipt, r.usd AS usd
+      FROM funding_holo h LEFT JOIN pot_receipts r ON r.receipt = h.receipt
+      WHERE h.party IN (${ph}) ORDER BY h.date, h.seq`).all(...parties);
     const keepingRows = db.prepare(`SELECT pot, n, epoch, date FROM funding_keeping_mint WHERE party IN (${ph}) ORDER BY date, seq`).all(...parties);
     const holo = holoRows.reduce((n, r) => n + r.holo, 0);
     const keeping_total = keepingRows.reduce((n, r) => n + r.n, 0);
@@ -1098,7 +1107,12 @@ export function stampsDetail(db, handle) {
         total: holo,
         caption: HOLO_CAPTION,
         teach: TEACH.holo,
-        mints: holoRows.map((r) => ({ pot: r.pot, holo: r.holo, epoch: r.epoch, date: r.date, receipt: r.receipt })),
+        // One row per witnessed payment this household made, and it carries the
+        // whole of the funding act: which pot, when, how many dollars, the
+        // receipt that witnessed them, and the holo minted for it — 0 included,
+        // because a payment that minted nothing is still a payment the town
+        // remembers.
+        mints: holoRows.map((r) => ({ pot: r.pot, holo: r.holo, dollars: r.usd ?? null, epoch: r.epoch, date: r.date, receipt: r.receipt })),
       },
       keeping_mint: {
         total: keeping_total,
@@ -1109,23 +1123,26 @@ export function stampsDetail(db, handle) {
         counted_in: "ownership",
         rows: keepingRows.map((r) => ({ pot: r.pot, minted: r.n, epoch: r.epoch, date: r.date })),
       },
-      deeds: {
-        teach: TEACH.deeds,
-        list: deedRows.map((r) => ({ pot: r.pot, dollars: r.usd, date: r.date, receipt: r.receipt, holo_minted: r.holo })),
-      },
+      // WHERE THE FUNDING FACTS LIVE NOW. This read used to carry a second
+      // register beside `holo` for the record of dollars; the founder ruled on
+      // 2026-08-26 that there is one, and it is holo. Nothing was dropped —
+      // every fact that register carried is on the rows above — so the pointer
+      // is here rather than a silent shape change.
+      moved: "what this household funded — which pot, when, how many dollars, and the receipt that witnessed them — rides on each row of `holo.mints`, beside the holo minted for it. The dollars themselves are the ledger's `pot-receipt` rows, which the pot board serves whole.",
     };
   } catch {
     // an index hydrated before the funding seam has no funding tables — serve
     // the honest note rather than a guessed-empty section (the mail_state
     // precedent: this window closes at the next rehydrate)
-    return { ...base, funding_note: "this index predates the funding seam — holo and deeds are not indexed here yet; they appear at the next rehydrate" };
+    return { ...base, funding_note: "this index predates the funding seam — holo is not indexed here yet; it appears at the next rehydrate" };
   }
 }
 
 // The pot board (funding seam, 2026-08-21): every pot — a funding bounty file
 // on the quest board — with its file's own target/received/cadence/beneficiary/
-// status, the contributor roll from the ledger's patron-deed rows, the witnessed
-// receipts behind its dollars, and the stamps currently staked on it (escrow).
+// status, the contributor roll (each holo row joined to the pot-receipt its
+// `ref:` names), the witnessed receipts behind its dollars, and the stamps
+// currently staked on it (escrow).
 // The file's `received_usd` and the receipts' sum are two clocks: both disclosed,
 // never silently reconciled (the 2026-08-10 ruling's shape). Invalid funding
 // rows surface HERE, on the community read, by name — an auditor's first stop.
@@ -1145,7 +1162,7 @@ const POT_ROWS = 20;
 export function potBoard(db, extraInvalid = []) {
   const pots = db.prepare("SELECT id, json FROM pots ORDER BY id").all().map((r) => {
     const d = JSON.parse(r.json);
-    const roll = db.prepare("SELECT patron, usd, date, receipt, holo FROM funding_deeds WHERE pot = ? ORDER BY date, seq").all(r.id);
+    const roll = db.prepare("SELECT patron, usd, date, receipt, holo FROM funding_roll WHERE pot = ? ORDER BY date, seq").all(r.id);
     const receipts = db.prepare("SELECT rail, usd, date, receipt, payer FROM pot_receipts WHERE pot = ? ORDER BY date, seq").all(r.id);
     const staked = db.prepare("SELECT staked FROM pot_escrow WHERE pot = ?").get(r.id)?.staked ?? 0;
     return {
@@ -1172,8 +1189,8 @@ export function potBoard(db, extraInvalid = []) {
       teach: TEACH.pot,
       // BOUND THE SUBLISTS, NOT THE POTS. There are two pots and there will not
       // suddenly be two hundred; what grows without limit is INSIDE each one —
-      // a patron roll that gains a row per deed and a receipt list that gains
-      // one per witnessed dollar, both forever, on a read that rides the
+      // a patron roll that gains a row per settled receipt and a receipt list
+      // that gains one per witnessed dollar, both forever, on a read that rides the
       // household's own books and the quest board. Bounded before the pot count
       // ever matters.
       //
@@ -1181,7 +1198,7 @@ export function potBoard(db, extraInvalid = []) {
       // are computed from the FULL receipt list; slicing before summing would
       // have made a pot's funded fraction a function of how many receipts this
       // read happened to render, which is a budget deciding what is true about
-      // money. `roll` likewise stays whole for the `deeded` set in `funding`.
+      // money. `roll` likewise stays whole for the settled-refs set in `funding`.
       patrons: {
         teach: TEACH.patrons,
         total: roll.length,
@@ -1202,19 +1219,24 @@ export function potBoard(db, extraInvalid = []) {
         list: receipts.slice(-POT_ROWS),
       },
       // How funded the OPEN epoch is, priced the way the town's close prices it:
-      // the dollars no deed has claimed yet, over the posted need, capped at 1.
-      // Deeded dollars belong to epochs already closed, so summing every receipt
-      // ever would report a pot as fully funded on the strength of last month's
-      // money. There is no dollar-to-stamp rate here and there is not meant to
-      // be one — this fraction is the whole of how dollars are priced.
+      // the dollars no close has settled yet, over the posted need, capped at 1.
+      // Settled dollars belong to epochs already closed, so summing every
+      // receipt ever would report a pot as fully funded on the strength of last
+      // month's money. There is no dollar-to-stamp rate here and there is not
+      // meant to be one — this fraction is the whole of how dollars are priced.
+      //
+      // A receipt is SETTLED when a holo row names its ref. That includes the
+      // rows that minted 0 — a grant, a treasury dollar, an outside payer, a
+      // ρ-capped household, a sole staker — and it has to, or those receipts
+      // would sit here unsettled forever and every close would count them again.
       funding: (() => {
-        const deeded = new Set(roll.map((x) => x.receipt));
-        const open = receipts.filter((x) => !deeded.has(x.receipt)).reduce((n, x) => n + x.usd, 0);
+        const settled = new Set(roll.map((x) => x.receipt));
+        const open = receipts.filter((x) => !settled.has(x.receipt)).reduce((n, x) => n + x.usd, 0);
         const target = d.target_usd_per_epoch;
         return {
           teach: TEACH.funding,
           target_usd_per_epoch: target,
-          dollars_undeeded: open,
+          dollars_open: open,
           funded_fraction: target > 0 ? Math.min(1, open / target) : null,
         };
       })(),

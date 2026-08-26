@@ -3,9 +3,9 @@
 // PINNED to the grammar the town lane landed (tools/stamp-mint.mjs § THE
 // FUNDING SEAM, branch seam/ledger-legs-aligned @ 3668881b — re-pinned when the
 // σ leg became R12's source-tagged mint). Every pattern below was diffed
-// mechanically against that tip, not eyeballed: all nine (the seven row kinds
-// plus POT_ID_CLASS and EPOCH_CLASS) are byte-identical to the town's. The seven
-// row kinds, exactly as the town writes them:
+// mechanically against that tip, not eyeballed: POT_ID_CLASS and EPOCH_CLASS are
+// byte-identical to the town's, and so is every row kind below. The six row
+// kinds, exactly as the town writes them:
 //
 //   - <date> · pot-receipt · pot:<pot> · rail: <stripe|usdc|grant> · usd: <n> · from: <payer> · ref: <ref>
 //   - <date> · <handle> → stake:pot/<pot> · <n> · via: <api|mail:letter-id>
@@ -13,7 +13,32 @@
 //   - <date> · stake:pot/<pot> → BURN · <n> · for: keeping:<epoch> · staker: <handle>
 //   - <date> · minted · <staker> · <n> · for: keeping:<pot> · epoch:<epoch>
 //   - <date> · holo · <payer> · <n> · pot:<pot> · epoch:<epoch> · ref: <ref>
-//   - <date> · patron-deed · pot:<pot> · patron: <payer> · usd: <n> · epoch:<epoch> · ref: <ref> · holo: <h>
+//
+// THE FOUNDER'S RULING, 2026-08-26. A seventh row kind was proposed on
+// 2026-08-24 to carry a record of dollars alongside holo. It was IDEATION and it
+// NEVER SHIPPED: no such row was ever minted, the sealed ledger holds none, and
+// the founder ruled that holo stays and there is no replacement noun. So there
+// is no second money row and no second register. `pot-receipt` is the ONLY money
+// row in this grammar; the record-of-dollars idea survives here as plain prose
+// and as a JOIN, never as a name.
+//
+// WHAT THAT MOVES, and it is the whole of the change: the proposed row used to
+// be the only marker that a receipt's ref had been consumed by a close. That
+// marker now lives on the HOLO ROW, which the close emits ONCE PER RECEIPT,
+// ALWAYS — and its count MAY BE 0. So the holo count is `(\d+)`, not
+// `([1-9]\d*)`: a grant, a treasury dollar, an outside payer, a ρ-capped
+// household and a sole staker all mint nothing, and every one of them still
+// gets its row. Without that, a zero-holo receipt would carry no mark of having
+// been settled and every future close would count and mint against it again.
+// Widening a count from "positive" to "non-negative" only ever ACCEPTS more, so
+// no row that parsed before stops parsing: the widening is replay-safe.
+//
+// ATTRIBUTION LIVES ON THE RECEIPT. Who paid is the receipt's `from:`, how many
+// dollars is its `usd:`, when is its date; a holo row names the receipt it
+// settles in `ref:`. Nothing is duplicated and nothing is lost — join holo→
+// receipt on `ref` and (payer, dollars, date, receipt, holo) all come back.
+// `foldFunding` does exactly that join and returns it as `rollByParty` /
+// `rollByPot`.
 //
 // The regexes below are copied byte-for-byte from that file, and the records
 // this module returns carry the town's OWN kind strings and field names
@@ -24,10 +49,10 @@
 //
 // Two shapes to hold on to, because guessing them wrong is how a reader lies:
 //   - `pot:` and `epoch:` are TIGHT (no space after the colon); `rail: `,
-//     `usd: `, `from: `, `patron: `, `ref: `, `holo: `, `staker: `, `via: `
-//     and `for: ` are LOOSE. A tolerant field reader that demands a space drops
-//     the pot off every receipt, holo and deed in the ledger.
-//   - the holo row and the pot-receipt and the patron-deed are ARROW-FREE. For
+//     `usd: `, `from: `, `ref: `, `staker: `, `via: ` and `for: ` are LOOSE. A
+//     tolerant field reader that demands a space drops the pot off every
+//     receipt and every holo row in the ledger.
+//   - the holo row and the pot-receipt are both ARROW-FREE. For
 //     holo that is the enforcement, not a formatting choice: holo has no verbs,
 //     so it must never wear the movement shape that balance/mint/stake folds
 //     read. A movement-shaped holo row is not holo, and this module says so.
@@ -86,15 +111,16 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 // The town's kind strings (classifyEntry), in its own order.
-export const FUNDING_KINDS = ["pot-stake", "pot-return", "keeping-burn", "keeping-mint", "pot-receipt", "holo", "patron-deed"];
+export const FUNDING_KINDS = ["pot-stake", "pot-return", "keeping-burn", "keeping-mint", "pot-receipt", "holo"];
 // Claimed so they can be refused by name, never parsed as good — see the σ-leg
 // note above. A retired shape that reads as silence is indistinguishable from a
 // row the door failed to notice.
 export const RETIRED_KINDS = ["keeper-equity", "keeping-equity", "keeping-mint-arrowed"];
 export const RAILS = new Set(["stripe", "usdc", "grant"]);
-// The reserved direct-to-town pot: deeds (and their receipts) only — no file,
-// no stakes, no close, and its deeds carry holo 0 (nothing burned, nothing
-// minted; the town never receives from its own seam).
+// The reserved direct-to-town pot: receipts only — no file, no stakes, no
+// close, and its holo rows carry 0 (nothing burned, nothing minted; the town
+// never receives from its own seam). The zero row still gets written, because
+// it is what says the receipt has been settled.
 export const TREASURY_POT = "treasury";
 
 // The caption the door carries on every holo section — exact wording is law
@@ -105,15 +131,14 @@ export const HOLO_CAPTION = "a record of contribution, not a promise of profit";
 // carries one short self-describing sentence. One home for the wording.
 export const TEACH = {
   tenses: "four tenses of one economy: minted is cumulative stamps ever earned (only rises), liquid is spendable now, staked is escrowed in open stakes, holo is soulbound funding recognition — a record, never a balance; liquid + staked = assets, and holo is outside that arithmetic. A vote stake returns whole at close; the share of a keeping stake that the epoch's dollars funded BURNS instead, and that burn is what mints your permanent record back to you (minted · for keeping) and holo to the payers. `minted` here is the earned number the tense arithmetic reconciles against; for the all-sources total see the `ownership` block",
-  holo: "holo records a payer's share of a pot's epoch close: real dollars you paid, matched against other households' burned stakes, mint you holo by dollar share — soulbound, so it cannot be spent, staked, transferred, or redeemed, and no door will ever count it as balance",
+  holo: "holo records a payer's share of a pot's epoch close: real dollars you paid, matched against other households' burned stakes, mint you holo by dollar share — soulbound, so it cannot be spent, staked, transferred, or redeemed, and no door will ever count it as balance. Every witnessed payment gets one row at the close, naming which pot, when, how many dollars, and the holo minted for it; 0 is a real answer, because grant, treasury and outside dollars are remembered even when they mint nothing",
   keeping_mint: "minted · for keeping is your own share of your own burned keeping stake, coming home at the epoch close at par of what burned. It is ordinary mint, source-tagged to the pot you backed — your permanent record of having kept the town — and it carries no liquid coin, because the coin was already paid when the stake burned. So like holo it cannot be spent, staked, transferred or redeemed; unlike holo it is mint, and it is inside your ownership read",
   ownership: "ownership is a READ, not a tense: everything you have ever minted (earned from the mail, plus minted · for keeping) plus your holo. Nothing is stored for it — it is derived from the same signed ledger every time you ask, and no part of it is a claim on money",
-  deeds: "a deed is the public record of one funding act: which pot this household funded, when, how many dollars, and the holo minted for it — 0 is a real answer, because grant, treasury and outside dollars are remembered even when they mint nothing",
   pots_section: "the funding pots open on this board — each gathers real dollars toward a named need; anyone can read who funded what, and stamps staked on a pot signal support without becoming the pot's money",
   pot: "a pot is a funding bounty on the quest board: real dollars gathered toward a named need for a named keeper, epoch by epoch; status says where it stands, and a draft pot may not name its keeper yet",
-  patrons: "the patrons who funded this pot, from the ledger's patron-deed rows: who, how many dollars, when, and the holo minted to them for it",
+  patrons: "the patrons who funded this pot — each of the ledger's holo rows joined to the pot-receipt its `ref:` names: who paid, how many dollars, when, and the holo minted to them for it",
   escrow: "stamps residents currently have staked on this pot — a stake signals that the need matters to you and never becomes the pot's dollars; at the epoch close the share of every stake that the epoch's dollars funded BURNS (fund the whole posted need and every stake converts, fund half and half of each does), and every unfunded remainder returns whole to its staker. The burn is what mints the stakers' own permanent record back to them (minted · for keeping) and holo to the payers",
-  funding: "how much of this pot's posted need the payers have actually met — dollars the ledger has witnessed and no deed has yet claimed, over the pot's per-epoch target. This fraction is the ONLY thing dollars are priced against: there is no dollar-to-stamp rate anywhere in the town, so how much a pot matters is measured by how much the community stakes on it, not by what the money says it is worth",
+  funding: "how much of this pot's posted need the payers have actually met — dollars the ledger has witnessed that no close has settled yet, over the pot's per-epoch target. This fraction is the ONLY thing dollars are priced against: there is no dollar-to-stamp rate anywhere in the town, so how much a pot matters is measured by how much the community stakes on it, not by what the money says it is worth",
   receipts: "the witnessed payments behind this pot's dollars — rail (stripe, usdc, or grant), whole dollars, and the receipt ref that is unique forever; the pot file's received and this sum are two clocks, disclosed side by side, never silently reconciled",
   invalid: "rows that claim a funding kind but fail its field law — surfaced here by name rather than rendered as if they were good; a forged row cannot buy legitimacy by being listed",
 };
@@ -143,8 +168,13 @@ const POT_STAKE_RE = new RegExp(String.raw`^- (\d{4}-\d{2}-\d{2}) · (\S+) → s
 const POT_RETURN_RE = new RegExp(String.raw`^- (\d{4}-\d{2}-\d{2}) · stake:pot\/(${POT_ID_CLASS}) → (\S+) · ([1-9]\d*) · for: pot-return:(${EPOCH_CLASS})$`);
 const KEEPING_BURN_RE = new RegExp(String.raw`^- (\d{4}-\d{2}-\d{2}) · stake:pot\/(${POT_ID_CLASS}) → BURN · ([1-9]\d*) · for: keeping:(${EPOCH_CLASS}) · staker: (\S+)$`);
 const KEEPING_MINT_RE = new RegExp(String.raw`^- (\d{4}-\d{2}-\d{2}) · minted · (\S+) · ([1-9]\d*) · for: keeping:(${POT_ID_CLASS}) · epoch:(${EPOCH_CLASS})$`);
-const HOLO_MINT_RE = new RegExp(String.raw`^- (\d{4}-\d{2}-\d{2}) · holo · (\S+) · ([1-9]\d*) · pot:(${POT_ID_CLASS}) · epoch:(${EPOCH_CLASS}) · ref: (\S+)$`);
-const PATRON_DEED_RE = new RegExp(String.raw`^- (\d{4}-\d{2}-\d{2}) · patron-deed · pot:(${POT_ID_CLASS}) · patron: (\S+) · usd: ([1-9]\d*) · epoch:(${EPOCH_CLASS}) · ref: (\S+) · holo: (\d+)$`);
+// The count is `(\d+)`, NOT `([1-9]\d*)`, and that one character is load-bearing
+// — see THE FOUNDER'S RULING at the top. The close writes one holo row per
+// receipt whether or not it mints anything, and the zero rows are what mark a
+// grant, a treasury dollar, an outside payer, a ρ-capped household and a sole
+// staker as SETTLED. Refuse them and every one of those receipts stays
+// unconsumed forever, to be counted and minted against at every future close.
+const HOLO_MINT_RE = new RegExp(String.raw`^- (\d{4}-\d{2}-\d{2}) · holo · (\S+) · (\d+) · pot:(${POT_ID_CLASS}) · epoch:(${EPOCH_CLASS}) · ref: (\S+)$`);
 
 // ── claiming ────────────────────────────────────────────────────────────────
 // Which kind is this line TRYING to be? Cheap tokens, so a near-miss is
@@ -163,9 +193,10 @@ export function fundingKindOf(canonical) {
     return "pot-stake"; // arrow-free: a keeping stake that forgot it is a movement
   }
   if (/ · pot-receipt( |·|$)/.test(canonical)) return "pot-receipt";
-  if (/ · patron-deed( |·|$)/.test(canonical)) return "patron-deed";
   // ` · holo · ` (the row) and ` · holo-mint → ` (the shape holo must never
-  // wear) both claim holo; ` · holo: 0` (the deed's field) claims nothing.
+  // wear) both claim holo. A trailing `holo:` FIELD claims nothing — no landed
+  // row carries one, and the test demands a space or end-of-line after the
+  // word, so a stray `· holo: 0` segment is not mistaken for the row.
   if (/ · holo(-mint)?( |$)/.test(canonical)) return "holo";
   // R12's row: `minted` leads and `for: keeping:<pot>` tags it. Claimed before
   // the burn's `for: keeping:` test below, which would otherwise swallow it.
@@ -205,12 +236,15 @@ function loose(canonical) {
 const isPot = (v) => v != null && new RegExp(`^${POT_ID_CLASS}$`).test(v);
 const isEpoch = (v) => v != null && new RegExp(`^${EPOCH_CLASS}$`).test(v);
 const isCount = (v) => v != null && /^[1-9]\d*$/.test(v);
+// Holo alone counts from zero: the close writes a row per receipt whether or
+// not it mints, so 0 is a lawful amount there and nowhere else.
+const isHoloCount = (v) => v != null && /^\d+$/.test(v);
 const isHandle = (v) => v != null && /^\S+$/.test(v);
 
 const NO_DATE = "no leading YYYY-MM-DD date segment";
 const potReason = (kind) => `${kind} names no readable pot — the segment reads \`pot:<id>\` with NO space after the colon (id: lowercase letters, digits and hyphens)`;
 const usdReason = (kind, got) => `${kind} usd must be a positive WHOLE number of dollars, got ${JSON.stringify(got)} — the landed grammar has no fractional dollars`;
-const epochReason = (kind) => `${kind} names no readable epoch — the segment reads \`epoch:YYYY-MM\` (tight) on holo and deeds, \`for: keeping:YYYY-MM\` on a burn`;
+const epochReason = (kind) => `${kind} names no readable epoch — the segment reads \`epoch:YYYY-MM\` (tight) on holo and keeping mint, \`for: keeping:YYYY-MM\` on a burn`;
 
 // Each diagnoser returns a named reason, or a last-resort shape complaint.
 function diagnose(kind, canonical) {
@@ -230,7 +264,7 @@ function diagnose(kind, canonical) {
   // in the path (`stake:pot/<id>`) or the cause (`keeper-equity:<pot>/<epoch>`)
   // — so for those a stray one is evidence of the wrong shape, and the shape
   // checks below get to say so instead.
-  if (kind === "pot-receipt" || kind === "holo" || kind === "patron-deed" || kind === "keeping-mint") {
+  if (kind === "pot-receipt" || kind === "holo" || kind === "keeping-mint") {
     const dialect = /(?:^|· )(pot|epoch): /.exec(canonical);
     if (dialect) return `${kind} writes \`${dialect[1]}: \` with a space after the colon; the landed grammar writes \`${dialect[1]}:<value>\` with NO space after the colon — a space there is why no reader can find the ${dialect[1]}`;
   }
@@ -247,20 +281,11 @@ function diagnose(kind, canonical) {
     case "holo": {
       const payer = L.segs[2];
       if (!isHandle(payer)) return "holo names no payer — the row reads `· holo · <payer> · <n> ·`";
-      if (!isCount(L.segs[3])) return `holo carries no positive whole amount, got ${JSON.stringify(L.segs[3] ?? null)}`;
+      if (!isHoloCount(L.segs[3])) return `holo carries no whole amount, got ${JSON.stringify(L.segs[3] ?? null)} — 0 is legal (grant, treasury and outside dollars mint nothing and are still recorded), absence is not`;
       if (!isPot(L.get("pot"))) return potReason("holo");
       if (!isEpoch(L.get("epoch"))) return epochReason("holo");
-      if (!isHandle(L.get("ref"))) return "holo carries no `ref:` — holo only mints against a witnessed payment";
+      if (!isHandle(L.get("ref"))) return "holo carries no `ref:` — a holo row names the witnessed payment it settles, and that ref is the only thing that says the payment has been counted";
       return "holo has every field but not the landed order: `- <date> · holo · <payer> · <n> · pot:<pot> · epoch:<epoch> · ref: <ref>`";
-    }
-    case "patron-deed": {
-      if (!isPot(L.get("pot"))) return potReason("patron-deed");
-      if (!isHandle(L.get("patron"))) return "patron-deed names no patron — the payer rides `patron:`";
-      if (!isCount(L.get("usd"))) return usdReason("patron-deed", L.get("usd"));
-      if (!isEpoch(L.get("epoch"))) return epochReason("patron-deed");
-      if (!isHandle(L.get("ref"))) return "patron-deed carries no `ref:` — the deed restates the receipt it remembers";
-      if (!/^\d+$/.test(L.get("holo") ?? "")) return "patron-deed carries no holo count — 0 is legal (grant, treasury and outside dollars mint nothing), absence is not";
-      return "patron-deed has every field but not the landed order: `- <date> · patron-deed · pot:<pot> · patron: <payer> · usd: <n> · epoch:<epoch> · ref: <ref> · holo: <h>`";
     }
     case "pot-stake": {
       const m = /(\S+) → stake:pot\/(\S+)/.exec(canonical);
@@ -321,7 +346,7 @@ export function classifyFundingRow(canonical) {
     return { kind: "pot-receipt", date: m[1], pot: m[2], rail: m[3], usd: Number(m[4]), from: m[5], ref: m[6] };
 
   if (claimed === "pot-stake" && (m = POT_STAKE_RE.exec(canonical))) {
-    if (m[3] === TREASURY_POT) return bad(`"${TREASURY_POT}" is the reserved direct-to-town pot; it takes deeds, never stakes`);
+    if (m[3] === TREASURY_POT) return bad(`"${TREASURY_POT}" is the reserved direct-to-town pot; it takes direct-to-town receipts, never stakes`);
     return { kind: "pot-stake", date: m[1], handle: m[2], pot: m[3], n: Number(m[4]), via: m[5] };
   }
 
@@ -331,7 +356,7 @@ export function classifyFundingRow(canonical) {
   }
 
   if (claimed === "keeping-burn" && (m = KEEPING_BURN_RE.exec(canonical))) {
-    if (m[2] === TREASURY_POT) return bad(`"${TREASURY_POT}" is the reserved direct-to-town pot; it takes deeds, never stakes or closes`);
+    if (m[2] === TREASURY_POT) return bad(`"${TREASURY_POT}" is the reserved direct-to-town pot; it takes direct-to-town receipts, never stakes or closes`);
     return { kind: "keeping-burn", date: m[1], pot: m[2], n: Number(m[3]), epoch: m[4], handle: m[5] };
   }
 
@@ -341,14 +366,13 @@ export function classifyFundingRow(canonical) {
   }
 
   if (claimed === "holo" && (m = HOLO_MINT_RE.exec(canonical))) {
-    if (m[4] === TREASURY_POT) return bad(`"${TREASURY_POT}" dollars mint no holo — direct-to-town dollars land as deed alone`);
-    return { kind: "holo", date: m[1], handle: m[2], n: Number(m[3]), pot: m[4], epoch: m[5], ref: m[6] };
-  }
-
-  if (claimed === "patron-deed" && (m = PATRON_DEED_RE.exec(canonical))) {
-    const holo = Number(m[7]);
-    if (m[2] === TREASURY_POT && holo !== 0) return bad(`treasury deed carries holo ${holo}; direct-to-town dollars mint nothing`);
-    return { kind: "patron-deed", date: m[1], pot: m[2], patron: m[3], usd: Number(m[4]), epoch: m[5], ref: m[6], holo };
+    const n = Number(m[3]);
+    // The treasury law is UNCHANGED — direct-to-town dollars mint nothing — but
+    // it now rides the holo row, because the holo row is what marks a receipt
+    // settled. A treasury row of 0 is therefore lawful and REQUIRED; only a
+    // treasury row that claims holo is refused.
+    if (m[4] === TREASURY_POT && n !== 0) return bad(`"${TREASURY_POT}" dollars mint no holo, and this row claims ${n}; the town never receives from its own seam, so a direct-to-town receipt is settled with a row of 0`);
+    return { kind: "holo", date: m[1], handle: m[2], n, pot: m[4], epoch: m[5], ref: m[6] };
   }
 
   return bad(diagnose(claimed, canonical));
@@ -365,8 +389,8 @@ export function classifyFundingRow(canonical) {
 export function foldFunding(entries) {
   const holoByParty = new Map();   // payer handle -> [{date, pot, holo, epoch, receipt}]
   const keepingByParty = new Map(); // staker handle -> [{date, pot, n, epoch}] — R12's minted-for-keeping rows
-  const deedsByParty = new Map();  // patron -> [{date, pot, usd, receipt, holo}]
-  const deedsByPot = new Map();    // pot -> [{patron, date, usd, receipt, holo}]
+  const rollByParty = new Map();   // patron -> [{date, pot, usd, receipt, holo}]  ← holo ⋈ receipt on ref
+  const rollByPot = new Map();     // pot -> [{patron, date, usd, receipt, holo}]  ← the same rows, keyed the other way
   const receiptsByPot = new Map(); // pot -> [{date, rail, usd, from, receipt}]
   const potEscrow = new Map();     // pot -> open staked stamps
   // WHOSE escrow, not just how much. The pot total is what a pot's own card
@@ -375,6 +399,10 @@ export function foldFunding(entries) {
   // same three drains — only the key differs, so the two can never disagree.
   const potEscrowByHandle = new Map(); // handle -> Map(pot -> open staked)
   const invalid = [];
+  // The two sides of the join, collected in one pass and joined after it, so a
+  // holo row is not required to arrive after the receipt it settles.
+  const holoRows = [];
+  const byRef = new Map();         // receipt ref -> the pot-receipt row
   const push = (map, key, v) => { if (!map.has(key)) map.set(key, []); map.get(key).push(v); };
   const escrow = (pot, delta, handle) => {
     potEscrow.set(pot, (potEscrow.get(pot) ?? 0) + delta);
@@ -399,13 +427,11 @@ export function foldFunding(entries) {
       case "keeping-burn": escrow(row.pot, -row.n, row.handle); break;
       case "holo":
         push(holoByParty, row.handle, { date: row.date, pot: row.pot, holo: row.n, epoch: row.epoch, receipt: row.ref });
-        break;
-      case "patron-deed":
-        push(deedsByParty, row.patron, { date: row.date, pot: row.pot, usd: row.usd, receipt: row.ref, holo: row.holo });
-        push(deedsByPot, row.pot, { patron: row.patron, date: row.date, usd: row.usd, receipt: row.ref, holo: row.holo });
+        holoRows.push(row);
         break;
       case "pot-receipt":
         push(receiptsByPot, row.pot, { date: row.date, rail: row.rail, usd: row.usd, from: row.from, receipt: row.ref });
+        byRef.set(row.ref, row);
         break;
       // The σ leg (R12: mint, source-tagged, no liquid coin). Its own map, so
       // the ownership read can count it deliberately and no tense can catch it
@@ -415,12 +441,33 @@ export function foldFunding(entries) {
         break;
     }
   }
+  // THE JOIN. Attribution lives on the pot-receipt — who paid (`from:`), how
+  // many dollars (`usd:`), when (its date) — and a holo row names the receipt
+  // it settles in `ref:`. So the roll a patron page reads is holo ⋈ receipt on
+  // ref, computed here rather than stored twice. A holo row whose ref no
+  // receipt in this ledger carries still rolls, under its own payer with the
+  // dollars unknown: whole-ledger law (ref uniqueness, one holo row per
+  // receipt) is tools/stamp-verify.mjs's, and dropping the row here would hide
+  // from the roll exactly the case an auditor came to see.
+  for (const h of holoRows) {
+    const r = byRef.get(h.ref);
+    const entry = {
+      patron: r?.from ?? h.handle,
+      date: r?.date ?? h.date,
+      pot: h.pot,
+      usd: r?.usd ?? null,
+      receipt: h.ref,
+      holo: h.n,
+    };
+    push(rollByParty, entry.patron, { date: entry.date, pot: entry.pot, usd: entry.usd, receipt: entry.receipt, holo: entry.holo });
+    push(rollByPot, h.pot, entry);
+  }
   for (const [k, v] of potEscrow) if (v === 0) potEscrow.delete(k); // absent == zero, one representation
   for (const [h, m] of potEscrowByHandle) {
     for (const [pot, v] of m) if (v === 0) m.delete(pot);
     if (m.size === 0) potEscrowByHandle.delete(h);
   }
-  return { holoByParty, keepingByParty, deedsByParty, deedsByPot, receiptsByPot, potEscrow, potEscrowByHandle, invalid };
+  return { holoByParty, keepingByParty, rollByParty, rollByPot, receiptsByPot, potEscrow, potEscrowByHandle, invalid };
 }
 
 // ── pot files (the bounty files on the quest board) ─────────────────────────
@@ -500,7 +547,7 @@ export function readPots(townDir) {
     try { d = JSON.parse(readFileSync(join(dir, name), "utf8")); }
     catch (e) { bad(name, `unparseable JSON: ${String(e?.message ?? e).slice(0, 80)}`); continue; }
     const id = d.pot ?? idFromName;
-    if (id === TREASURY_POT) { bad(name, `"${TREASURY_POT}" is the reserved direct-to-town pot — it takes deeds only and has no pot file`); continue; }
+    if (id === TREASURY_POT) { bad(name, `"${TREASURY_POT}" is the reserved direct-to-town pot — it takes direct-to-town receipts only and has no pot file`); continue; }
     const missing = POT_MONEY_FIELDS.filter((f) => d[f] == null);
     if (!Object.hasOwn(d, "beneficiary")) missing.push("beneficiary");
     if (missing.length) { bad(name, `pot file missing ${missing.join(", ")}`); continue; }
