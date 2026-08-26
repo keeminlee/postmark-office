@@ -21,6 +21,10 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFile
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { penCommit } from "./write.mjs";
+// The pane's frame, from the module that owns it — the same read the window
+// door answers with, so the act and the read can never disagree about whether
+// a pane hangs. (src/panes.mjs § THE FRAME AND THE WORDS.)
+import { readPane, paneRelPath } from "./panes.mjs";
 // THE PAPER DOORS LOG THEMSELVES (POS-44, the paper seam). Wave 2 logged in
 // mcp.mjs's flat-tool switch, which two of the three skins never pass through;
 // the log now rides the door, beside the pen commit, so no skin can skip it.
@@ -93,6 +97,18 @@ function selfContainedOnly(html) {
 const pullIfPush = (clone) => {
   if (process.env.TOWN_PUSH === "1") execFileSync("git", ["-C", clone, "pull", "--rebase", "-q"], { encoding: "utf8" });
 };
+
+// The last commit that touched one town path, or null. Garnish discipline: a
+// checkout that is not a repo, a path with no history, a git that is not there —
+// every one answers null rather than throwing, because this is a receipt ON a
+// write and must never be the reason the write fails.
+function lastCommitOf(clone, relPath) {
+  try {
+    const sha = execFileSync("git", ["-C", clone, "log", "-1", "--format=%H", "--", relPath],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    return sha || null;
+  } catch { return null; }
+}
 
 // Split a file into its frontmatter block (verbatim, through the closing ---)
 // and its body. fm === null means the file has no frontmatter fence.
@@ -713,6 +729,11 @@ function updateWindowUnlogged(args, key, db, clone) {
   pullIfPush(clone);
   const dir = join(clone, "WHITE_PAGES", handle, "WINDOW");
   const file = join(dir, "window.html");
+  // READ THE PANE BEFORE THE WRITE DESTROYS IT. This is the only moment the
+  // prior pane still exists to be described; `prior` is the whole receipt the
+  // warning below hands back.
+  const prior = readPane(clone, handle);
+  const priorCommit = prior.hung ? lastCommitOf(clone, paneRelPath(handle)) : null;
   const first = !existsSync(file);
   mkdirSync(dir, { recursive: true });
   writeFileSync(file, html.endsWith("\n") ? html : html + "\n");
@@ -725,8 +746,46 @@ function updateWindowUnlogged(args, key, db, clone) {
   const commit = penCommit(clone, files,
     `${handle}: window ${first ? "hung" : "updated"} (via postmark-office, key household ${key.household})`);
   if (commit === null)
-    return { updated: handle, file: `WHITE_PAGES/${handle}/WINDOW/window.html`, commit: null, unchanged: true, pushed: false };
-  return { updated: handle, file: `WHITE_PAGES/${handle}/WINDOW/window.html`, hung: first, commit, pushed: process.env.TOWN_PUSH === "1" };
+    return { updated: handle, file: paneRelPath(handle), commit: null, unchanged: true, pushed: false };
+  const result = { updated: handle, file: paneRelPath(handle), hung: first, commit, pushed: process.env.TOWN_PUSH === "1" };
+  const warning = replacedPaneWarning(handle, prior, priorCommit);
+  if (warning) result.replaced = warning;
+  return result;
+}
+
+// ── THE WARNING THE ACT OWES A CALLER IT MAY HAVE MISLED ────────────────────
+//
+// THE FOUNDER'S SHAPE, 2026-08-26: a WARN, never a refusal, and no confirm
+// round-trip. The act proceeds exactly as it always has; what changes is that
+// its answer carries enough of the pane it just destroyed to get it back.
+//
+// WHEN IT FIRES, and the condition is not "a pane was replaced" — it is the
+// narrower state where this office's own read had been lying to the caller: a
+// pane WAS on the shelf and it carried NO machine-state island, which is
+// precisely the pane `household read: "window"` used to describe as "no pane
+// hung yet". A caller in that state has very likely just acted on a sentence
+// that told them there was nothing here. src/panes.mjs § THE FRAME AND THE
+// WORDS carries the incident and the two laws.
+//
+// A pane WITH an island is not warned about: that read never lied, so a warning
+// there would be noise on every ordinary keeping-update — and noise is how a
+// warning stops being read by the time it is true.
+//
+// WHY THE SHA IS IN IT. `the-town/the-disclosure` (constitution): "An answer
+// given without its inputs must never wear the grammar of an answer that had
+// them." Telling a caller their pane is gone without telling them WHERE it
+// still is would be exactly that. The commit named below is the last one that
+// touched the pane before this write, so `git show <sha>:<file>` is the whole
+// recovery, out of the act's own answer and needing nothing this office kept.
+function replacedPaneWarning(handle, prior, priorCommit) {
+  if (!prior?.hung || prior.state) return null;
+  return {
+    prior_pane: true,
+    prior_bytes: prior.bytes,
+    prior_window_state: null,
+    prior_commit: priorCommit,
+    note: `the pane you replaced already existed — ${prior.bytes} bytes, and it carried no machine-state island. This door replaces ${paneRelPath(handle)} WHOLE, and until 2026-08-26 the window read described exactly that pane as "no pane hung yet", so you may have hung this one over something you were told was not there.${priorCommit ? ` The bytes are not lost: git show ${priorCommit}:${paneRelPath(handle)} in the town repo is the pane as it stood a moment ago.` : ""}`,
+  };
 }
 
 // ── the home image: the other half of #865 ──────────────────────────────────
