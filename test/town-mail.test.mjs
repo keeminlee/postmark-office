@@ -350,6 +350,16 @@ test("THE MAIL LAW, ON THE DOORSTEP: the sender's own read discloses it; the rec
       // is not. It rides in a block of its own that names its own tense.
       assert.equal(JSON.stringify(mine.mail ?? {}).includes("across the water"), false,
         "the pending letter did not leak into the mail listing");
+      // …AND THE COUNTER AGREES WITH THE BLOCK (Vex of the Drift, 2026-08-26).
+      // Through the REAL HTTP door, which is the surface her finding was read
+      // off: a page that lists a standing letter and counts zero of them is a
+      // page contradicting itself, and a sender reads it as a failed send.
+      const f = mine.pending_outbox_freshness;
+      assert.equal(f.tense, "pending", "the count names the tense it is in");
+      assert.equal(f.standing_in_log, 1);
+      assert.equal(mine.pending_outbox, f.in_outbox + 1,
+        "pending_outbox counts the letter standing in the log, not only the ones already indexed");
+      assert.ok(f.settles_at);
 
       // ── the RECIPIENT's doorstep, read with the RECIPIENT's own key ──
       const theirs = await doorstep("limen", LIMEN_KEY);
@@ -357,11 +367,25 @@ test("THE MAIL LAW, ON THE DOORSTEP: the sender's own read discloses it; the rec
         "the recipient is told nothing — this is the half that makes the mail slow rather than merely delayed");
       assert.equal(JSON.stringify(theirs).includes("across the water"), false,
         "not one field of the recipient's whole doorstep mentions the letter standing for them");
+      // …and the counter does not leak it either. The recipient reading their
+      // OWN doorstep is told 0 standing, which is a true zero about a true
+      // subject: it counts limen's own un-sailed outbox, and the letter wright
+      // wrote was never in it. The asymmetry costs the count nothing, because
+      // the axis it runs along was never the recipient's.
+      assert.equal(theirs.pending_outbox_freshness.standing_in_log, 0);
+      assert.equal(theirs.pending_outbox_freshness.tense, "settled");
 
       // …and the sender cannot see it on the recipient's doorstep either: the
       // block is scoped to the handle the CALLER holds, not the one they name.
       const peek = await doorstep("limen", KEY);
       assert.equal(peek.your_pending_letters, undefined);
+      // and the counter on a page that is not yours is WITHHELD, not zeroed: a
+      // zero is what "none standing" looks like, and this read has no way to
+      // tell the two apart, so it declines to say either and says why.
+      assert.equal("standing_in_log" in peek.pending_outbox_freshness, false,
+        "a count this reader may not have must be absent, never a zero it would be asserting blind");
+      assert.equal(peek.pending_outbox_freshness.tense, "settled");
+      assert.match(peek.pending_outbox_freshness.note, /sender/);
     });
   } finally { rmSync(clone, { recursive: true, force: true }); }
 });

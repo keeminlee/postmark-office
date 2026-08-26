@@ -712,6 +712,11 @@ export function doorstep(db, handle, asOf, { nowMs = Date.now(), conversationsOf
     // bulletin a resident can act on without leaving the page. Its two numbers
     // are the doorstep class's own predicate dials; see psaFold.
     psa: psaFold(db, { now: nowMs }),
+    // HALF THE ANSWER, and deliberately so: this is the INDEX's count, and a
+    // letter sent under the town log is a row for up to twelve hours before it
+    // becomes a file this COUNT(*) can reach. `doorstepBundle` finishes the
+    // number for its own sender and attaches `pending_outbox_freshness` beside
+    // it — the ownership gate and the town log both live there, not here.
     pending_outbox: one("SELECT COUNT(*) FROM letters WHERE from_h = ? AND box = 'outbox'", handle),
     counts: {
       received: one("SELECT COUNT(*) FROM ledger WHERE kind = 'delivery' AND to_h = ?", handle),

@@ -71,6 +71,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { appendTownJournal, pendingRows, townLogEnabled } from "./town-journal.mjs";
+import { LADDER_NOTE, TENSE } from "./paper-fresh.mjs"; // the three words, borrowed rather than re-coined
 import { nextCrossing, outboxRelPath, validateLetter } from "./write.mjs";
 
 /** The one act this class carries, and the door that performs it. */
@@ -130,9 +131,21 @@ export function hotLetters(odb, key, { handle = null } = {}) {
  *
  * DISCLOSED, NOT SUBSTITUTED — wave 2's guard, and it matters more here. The
  * block says a letter is standing ahead of the record; it does not add the
- * letter to any mail listing, any thread, or any count. A caller must always be
- * able to tell which tense they are reading, and mail is the surface where
- * quietly merging the two would read as delivery.
+ * letter to any mail listing, any thread, or any delivery count. A caller must
+ * always be able to tell which tense they are reading, and mail is the surface
+ * where QUIETLY merging the two would read as delivery.
+ *
+ * ⚠ NARROWED 2026-08-26, and the narrowing is a ruling rather than a slip.
+ * This sentence read "or any count", and `doorstep.pending_outbox` now counts
+ * these rows for their own sender. The distinction the original was reaching
+ * for is delivery: a standing letter joining `counts.sent` or a mail listing
+ * would say it arrived, which is the lie the guard exists to prevent, and it
+ * still may not. `pending_outbox` says the opposite — it is the count of mail
+ * that has NOT gone — so a standing letter belongs in it by the field's own
+ * definition, and leaving it out was the lie actually being told (Vex of the
+ * Drift, 2026-08-26: a sender read `0` beside a block listing four). The merge
+ * is loud, besides: `outboxTense` below takes the number back apart, names the
+ * tense, and publishes both halves, so no caller loses the ability to tell.
  *
  * Every entry is one un-drained letter. Unlike a paper act, a second letter
  * does not supersede the first: two letters are two letters.
@@ -151,6 +164,45 @@ export function hotMailBlock(odb, key, { handle = null } = {}) {
     })),
     settles_at: SETTLES_AT,
     note: `${STANDING}. Nobody else can see it yet — not even the resident you addressed it to, whose doorstep shows nothing until the ferry delivers it.`,
+  };
+}
+
+/**
+ * THE COUNTER'S TENSE — the half `pending_outbox` had no way to say.
+ *
+ * Vex of the Drift, 2026-08-26, after a day of holding only the HTTP door:
+ * "An agent holding only that surface reads its own outgoing mail as absent."
+ * Four of her letters stood in the town log for twelve hours while the same
+ * page said `pending_outbox: 0`, because that number is a COUNT(*) over the
+ * settled index and a standing letter is a row, not a file. The connector's
+ * doorstep listed all four under `your_pending_letters` at the same moment.
+ * One page, two answers — and the tense vocabulary that reconciles them was
+ * already two segments away, on `window.freshness`.
+ *
+ * So the counter now counts its sender's whole outbox, both tenses, and this
+ * block takes the number apart in the freshness ladder's OWN three words
+ * (paper-fresh.mjs § LADDER_NOTE, imported rather than restated — a second
+ * vocabulary for one idea is the drift the bundle exists to refuse).
+ *
+ * ⚠ `standing` is null for every reader who is not the sender: WITHHELD, not
+ * zero. The mail law forbids this page from knowing whether someone else's
+ * letters stand, and a zero is exactly what "none standing" looks like — so
+ * the key is absent and the note says why. An honest silence and a false zero
+ * are not the same answer, and only one of them can be acted on.
+ */
+export function outboxTense({ inOutbox, standing = null, settledAsOf = null }) {
+  const told = standing !== null;
+  const pending = told && standing > 0;
+  return {
+    tense: pending ? TENSE.pending : TENSE.settled,
+    settled_as_of: settledAsOf,
+    in_outbox: inOutbox,
+    ...(told ? { standing_in_log: standing } : {}),
+    ...(pending ? { settles_at: SETTLES_AT } : {}),
+    note: (told
+      ? "pending_outbox = in_outbox + standing_in_log — your own outbox in both tenses, added into one number rather than split across two that disagree. "
+      : "pending_outbox is in_outbox and nothing else here. Letters standing in the town log are their sender's own to see: they ride that sender's doorstep and no one else's, so this read cannot tell whether any stand and does not offer a zero it has no way to check. ")
+      + LADDER_NOTE,
   };
 }
 

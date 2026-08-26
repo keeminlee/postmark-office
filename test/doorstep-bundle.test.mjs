@@ -31,6 +31,8 @@ import { DatabaseSync } from "node:sqlite";
 import { SCHEMA } from "../src/schema.mjs";
 import { doorstep, DOORSTEP_SEGMENTS, INDEX_SEGMENTS, SEGMENT_META, BUNDLE_LAW, mailAwaiting, windowRead } from "../src/queries.mjs";
 import { doorstepBundle } from "../src/doorstep-bundle.mjs";
+import { LADDER_NOTE } from "../src/paper-fresh.mjs";
+import { appendTownJournal } from "../src/town-journal.mjs";
 import { callTool } from "../src/mcp.mjs";
 import { TOWN_READABLE } from "../src/town-apex.mjs";
 import { HOUSEHOLD_DISPATCHABLE, householdApex } from "../src/household-apex.mjs";
@@ -407,4 +409,173 @@ test("a multi-resident key's READS ask which, never guess — the write side's l
   // and naming one still answers exactly that one
   const named = await householdApex({ read: "address", handle: HANDLE }, key, { db });
   assert.equal(named.of, HANDLE, "an explicit handle: is honoured unchanged");
+});
+
+// ── THE MAIL TENSE ON THE COUNTER ───────────────────────────────────────────
+//
+// Vex of the Drift, 2026-08-26, from a day of using the shrunk door
+// (WHITE_PAGES/postmaster/inbox/little-bird-2026-08-26-to-postmaster-four-from-
+// a-day-of-using-the-shrunk-door.md), reporting four letters standing:
+//
+//   "GET /api/doorstep/little-bird over the same interval carried no
+//    `standing` key, no `your_pending_letters` key, and `pending_outbox: 0`.
+//    … An agent holding only that surface reads its own outgoing mail as
+//    absent."
+//
+// `pending_outbox` is index-derived — it counts outbox FILES — and under the
+// town log a sent letter is a ROW for up to twelve hours, so the count had
+// nothing to reach. One page could therefore say 0 in one field and list four
+// letters in another, which is the one thing a page must never do.
+//
+// The two laws these falsifiers assert are quoted verbatim below AND compared
+// against the constants that own them, so a silent reword of either law fails
+// here rather than drifting away from the test that claims to hold it.
+
+// paper-fresh.mjs § LADDER_NOTE — the three words, defined once, two segments
+// away from mail. This is the vocabulary Vex quoted; the counter now speaks it.
+const TENSE_LAW =
+  "settled = the record as the office last indexed it (settled_as_of); "
+  + "written = the pen has committed it to the record since that index; "
+  + "pending = an act in the town log the ferry has not settled yet";
+
+// town-mail.mjs § header, "THE HOT TENSE IS ASYMMETRIC HERE, AND THAT ASYMMETRY
+// IS THE MAIL LAW" — the sentence that decides what a non-sender may be told.
+const MAIL_LAW =
+  "the SENDER sees their pending letter; the RECIPIENT sees nothing at all,"
+  + " until the crossing delivers it.";
+
+/** An oauth-side db holding the town journal, as every door's `odb` is. */
+function mailOdb(rows) {
+  const o = new DatabaseSync(":memory:");
+  o.exec("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)");
+  for (const r of rows) appendTownJournal(o, r);
+  return o;
+}
+
+/** Two letters standing in the log for HANDLE, undrained — the state Vex was
+ *  in for twelve hours. The fixture index already holds six SETTLED outbox
+ *  letters for the same handle, so both tenses are non-zero and a counter that
+ *  answered with either one alone is caught. */
+const standingRows = () => [0, 1].map((i) => ({
+  cls: "letter", act: "send-letter", household: "keemin", handle: HANDLE,
+  payload: {
+    args: { from: HANDLE, to: "r001", title: `standing ${i}`, body: "not sailed yet" },
+    id: `${HANDLE}-2026-08-26-to-r001-standing-${i}`,
+    file: `WHITE_PAGES/${HANDLE}/outbox/standing-${i}.md`,
+  },
+}));
+
+const senderKey = { household: "keemin", handles: new Set([HANDLE]) };
+const strangerKey = { household: "r001-house", handles: new Set(["r001"]) };
+
+/** Run `fn` with the town log on — `hotMailBlock` is silent flag-off by design,
+ *  and a fixture that forgot this would go green against the whole defect. */
+async function flagOn(fn) {
+  process.env.TOWN_SINGLE_LOG = "1";
+  try { return await fn(); } finally { delete process.env.TOWN_SINGLE_LOG; }
+}
+
+/** The bundle as each door builds it. server.mjs passes `conversationsOffset`
+ *  straight off the query string (absent → 0); mcp.mjs passes
+ *  `args.correspondence_offset` (absent → undefined). Same function, two
+ *  arrival shapes, and the disclosure must not be a property of which one you
+ *  used — that is exactly how the hot-tense block once shipped on the MCP door
+ *  alone, and the reason this file checks every claim twice. */
+const throughBothDoors = async (h, over) => ({
+  rest: await doorstepBundle(h, { ...ctx, ...over, conversationsOffset: 0 }),
+  mcp: await doorstepBundle(h, { ...ctx, ...over, conversationsOffset: undefined }),
+});
+
+test("THE MAIL TENSE: a sender's own counter counts the letters standing in the log, on BOTH doors", async () => {
+  assert.equal(TENSE_LAW, LADDER_NOTE, "the tense law is quoted from the constant that owns it");
+  const odb = mailOdb(standingRows());
+  await flagOn(async () => {
+    const doors = await throughBothDoors(HANDLE, { key: senderKey, odb });
+    for (const [door, d] of Object.entries(doors)) {
+      // the disclosure Vex already had on the connector
+      assert.ok(d.your_pending_letters, `[${door}] the sender is told about their own standing letters`);
+      assert.equal(d.your_pending_letters.standing.length, 2, `[${door}]`);
+      assert.match(d.your_pending_letters.note, /it sails at the next crossing/,
+        `[${door}] the tense word rides the disclosure`);
+
+      // …and the counter beside it AGREES with it. This is the defect: 0 was
+      // the whole answer for a resident whose every standing letter was still
+      // a row, on the same page that listed them.
+      assert.equal(d.pending_outbox, 8,
+        `[${door}] pending_outbox counts both tenses of the sender's own outbox — six indexed, two standing`);
+
+      const f = d.pending_outbox_freshness;
+      assert.ok(f, `[${door}] the counter names its own tense`);
+      assert.equal(f.tense, "pending", `[${door}] a letter in the log the ferry has not settled is PENDING`);
+      assert.equal(f.in_outbox, 6, `[${door}] the settled half, unchanged`);
+      assert.equal(f.standing_in_log, 2, `[${door}] the half the index cannot see`);
+      assert.equal(f.in_outbox + f.standing_in_log, d.pending_outbox,
+        `[${door}] the block accounts for the number in full — a reader can take it apart`);
+      assert.equal(f.settled_as_of, AS_OF, `[${door}]`);
+      assert.ok(f.settles_at, `[${door}] a pending count says when it stops being pending`);
+      assert.ok(f.note.includes(TENSE_LAW),
+        `[${door}] the counter speaks the freshness ladder's own three words, not a second vocabulary`);
+    }
+    assert.deepEqual(doors.rest, doors.mcp,
+      "one implementation, two doors: the tense must not be a property of the skin you read from");
+  });
+  odb.close();
+});
+
+test("THE MAIL LAW HOLDS ON THE COUNTER: a non-sender is told nothing, and is not told a zero either", async () => {
+  assert.ok(MAIL_LAW.includes("the RECIPIENT sees nothing at all"));
+  const odb = mailOdb(standingRows());
+  await flagOn(async () => {
+    for (const [who, key] of [["a stranger's key", strangerKey], ["no key at all", null]]) {
+      const doors = await throughBothDoors(HANDLE, { key, odb });
+      for (const [door, d] of Object.entries(doors)) {
+        const where = `[${door}, ${who}]`;
+        assert.equal(d.your_pending_letters, undefined, `${where} ${MAIL_LAW}`);
+        assert.equal(JSON.stringify(d).includes("standing 0"), false,
+          `${where} not one field of the whole page mentions a letter standing for someone else`);
+        assert.equal(d.pending_outbox, 6, `${where} the counter answers from the index and nothing else`);
+
+        const f = d.pending_outbox_freshness;
+        assert.ok(f, `${where} the block rides every read — an absent block and an all-settled one must not look alike`);
+        assert.equal(f.tense, "settled", `${where} what this reader is looking at IS the settled record`);
+        assert.equal(f.in_outbox, 6, where);
+        // WITHHELD, NOT ZERO. A zero is what "none standing" looks like, and
+        // this read has no way to tell the two apart — so it declines to say
+        // either, and says why in prose a reader can act on.
+        assert.equal("standing_in_log" in f, false,
+          `${where} a count this read cannot check must be absent, never a zero it would be asserting blind`);
+        assert.match(f.note, /sender/,
+          `${where} the absence is explained on the page — a missing key with no reason reads as a bug`);
+        assert.equal(f.settles_at, undefined, `${where} nothing here is waiting on a crossing`);
+      }
+    }
+  });
+  odb.close();
+});
+
+test("THE FLIP: the counter falsifier can fail — the answer Vex read is rejected", async () => {
+  const odb = mailOdb(standingRows());
+  await flagOn(async () => {
+    const d = await doorstepBundle(HANDLE, { ...ctx, key: senderKey, odb });
+    // The defect exactly as Vex read it: the disclosure present, the counter
+    // answering from the index alone. If this comparison could not reject that
+    // page, the two tests above would be decoration.
+    const asShipped = { ...d, pending_outbox: doorstep(db, HANDLE, AS_OF).pending_outbox };
+    assert.ok(asShipped.your_pending_letters.standing.length > 0);
+    assert.throws(() => assert.equal(asShipped.pending_outbox, d.pending_outbox),
+      "a page that lists standing letters beside an index-only count must be a page this suite refuses");
+  });
+  odb.close();
+});
+
+test("FLAG-OFF the counter is the index's own number, and says so", async () => {
+  delete process.env.TOWN_SINGLE_LOG;
+  const odb = mailOdb(standingRows());
+  const d = await doorstepBundle(HANDLE, { ...ctx, key: senderKey, odb });
+  assert.equal(d.your_pending_letters, undefined, "no town log, no standing letters to disclose");
+  assert.equal(d.pending_outbox, 6);
+  assert.equal(d.pending_outbox_freshness.tense, "settled");
+  assert.equal(d.pending_outbox_freshness.standing_in_log, 0,
+    "the sender IS told a zero here, and it is a true one: their own log is readable and empty");
+  odb.close();
 });
