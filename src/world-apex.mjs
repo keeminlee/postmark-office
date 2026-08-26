@@ -68,6 +68,7 @@ import { WORLD_STAKE_TOOLS, callWorldStakeTool } from "./world-stake.mjs";
 // DEMO SLICE (step 5) — the crossings. Imported for the dispatch table and the
 // `fields` lookup; unreachable in production because no class mark grants them.
 import { CROSSING_EXEC, CROSSING_TOOLS, enterViaOffice, exitViaOffice } from "./world-crossings.mjs";
+import { servedEnterExitLedger } from "./enter-exit-ledger.mjs";
 // POS-5's consent verb. STANCE_TOOLS ride the schema lookup without joining
 // the flat tool list, exactly as CROSSING_TOOLS do and for the same reason.
 import { ACTION_STANCE, STANCE_TOOLS, declareStanceViaOffice, readNeverPerforms, stanceShadow, stancesBlock } from "./world-stance.mjs";
@@ -101,10 +102,15 @@ export const apexEnabled = () => process.env.WORLD_APEX === "1";
 // the office reach the threshold ledger" — the drift this repo keeps closing.
 // world.mjs imports it lazily, so the edge back to the apex is not a cycle.
 export function crossingDeps() {
-  const ledgerPath = join(WORLD_CLONE, "WORLD", "threshold-ledger.md");
   return {
     world: async () => await worldStateRaw(),
-    ledger: async () => { try { return readFileSync(ledgerPath, "utf8"); } catch { return ""; } },
+    // THE DERIVED LEDGER, not the file. Reading the file here is what made
+    // every passage since the 2026-08-24 cutover invisible to the next one:
+    // the acts went into the journal, the file froze, and the verbs kept
+    // folding occupancy out of a fossil — so a resident who entered a room and
+    // entered again was adjudicated as though he had never been inside.
+    // src/enter-exit-ledger.mjs is the one deriver; this is one of its readers.
+    ledger: async () => { try { return (await servedEnterExitLedger(WORLD_CLONE)).ledger; } catch { return ""; } },
     standpointOf: async (who) => {
       const here = await residentStandpoint(who).catch(() => null);
       return here && Number.isFinite(here.x) ? { x: here.x, y: here.y, name: who } : { x: 0, y: 0, name: who };
