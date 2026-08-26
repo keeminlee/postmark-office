@@ -230,19 +230,30 @@ test("an absent registry is an empty registry, not an error — and it says it i
 // THE POT — which need did this address mean
 // ════════════════════════════════════════════════════════════════════════════
 
-test("the shipped intake map names NO pot today, so every arrival at the shared address stays ambiguous", () => {
-  // The state of the world, asserted so a later edit that quietly maps the
-  // shared address to a pot fails here. deploy/intake-addresses.json says why in
-  // its own `_never`: mapping it "would make the office decide where a
-  // stranger's money went, which is the one judgement this whole lane refuses
-  // to make."
+test("the shipped intake map never names the SHARED address, whatever else it maps", () => {
+  // WHAT THIS ASSERTS, and what it deliberately stopped asserting.
+  //
+  // Until 2026-08-25 this read `map.size === 0` — a snapshot of a world with no
+  // per-pot addresses in it. The founder minted keeping-ec2's address that day
+  // and the snapshot went red, having caught nothing: it was a fact about
+  // today, not a law, and the law it was standing in for is narrower and does
+  // not expire. deploy/intake-addresses.json states it in its own `_never`,
+  // quoted verbatim:
+  //
+  //   "Do NOT map the shared intake address to a pot to make the queue go away.
+  //    That would make the office decide where a stranger's money went, which
+  //    is the one judgement this whole lane refuses to make."
+  //
+  // So: mapping a NEW address to a pot is the founder's ordinary act and must
+  // not fail here. Mapping the SHARED one is the forbidden act, and does.
   const { map, invalid } = readIntakeMap();
   assert.deepEqual(invalid, [], "the shipped file parses");
-  assert.equal(map.size, 0, "no address names a pot yet");
-  assert.equal(map.get(INTAKE), undefined, "and least of all the shared one");
-  // and the scan still covers the standing intake, so shipping an empty map
-  // cannot make the watch blind
-  assert.deepEqual(intakeAddresses(map), [INTAKE]);
+  assert.equal(map.get(INTAKE), undefined, "the shared intake names no pot — `_never`");
+  // and the scan ALWAYS covers the standing intake, whatever the map holds, so
+  // neither an empty map nor a full one can make the watch blind to the address
+  // every published surface has pointed at since the rail opened
+  assert.ok(intakeAddresses(map).includes(INTAKE), "the standing intake is always scanned");
+  assert.deepEqual(intakeAddresses(new Map()), [INTAKE], "an empty map scans the standing address alone");
   assert.deepEqual(intakeAddresses(new Map([[POT_A_ADDRESS, "pot-a"]])), [INTAKE, POT_A_ADDRESS]);
 });
 

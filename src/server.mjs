@@ -35,7 +35,7 @@ import { householdOf } from "./households.mjs";
 import { votesAvailable, voteList, voteView, stakeViaOffice } from "./votes.mjs";
 import { doorstepBundle } from "./doorstep-bundle.mjs"; // the doorstep, finished — one implementation, three doors
 import { giftViaOffice, isPrincipal } from "./ops.mjs";
-import { fundVerifyViaOffice, intakeDisclosure, INTAKE as FUND_INTAKE } from "./fund.mjs";
+import { fundVerifyViaOffice, intakeDisclosure, POT_RE as FUND_POT_RE, INTAKE as FUND_INTAKE } from "./fund.mjs";
 import { channelOf, countAct, actsByChannel } from "./channel.mjs";
 import { logAccess } from "./telemetry.mjs";
 import { settlements } from "./settlements.mjs";
@@ -963,7 +963,18 @@ const server = createServer((req, res) => {
     if (req.method === "GET" && path === "/fund/intake") {
       // one home for these words — the household door's money moment serves
       // the same object, so a §10 disclosure cannot drift between two surfaces
-      return j(res, 200, intakeDisclosure());
+      //
+      // ?pot=<id> ANSWERS FOR ONE POT, and that is the only way a per-pot
+      // address is served here. Bare, this route answers exactly what it always
+      // answered: the standing shared intake. It deliberately does NOT publish
+      // the whole address map, because a pot's own address is a thing that
+      // publishes beside that pot's named need — and a bare list would hand out
+      // the address of a pot that has since closed, which is the one gate the
+      // household door's money moment keeps.
+      const pot = url.searchParams.get("pot");
+      if (pot != null && !FUND_POT_RE.test(pot))
+        return bounce(res, 422, "that is not a pot name", "pot names are lowercase letters, digits and single hyphens — e.g. keeping-ec2");
+      return j(res, 200, intakeDisclosure(pot));
     }
 
       // The door list names the apex only where the apex actually answers — a

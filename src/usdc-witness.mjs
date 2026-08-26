@@ -11,7 +11,7 @@
 //
 // THE SCOPE OF THE CHECK, and it is deliberately four things:
 //   1. the tx exists on Base and SUCCEEDED (status 0x1),
-//   2. it emits a USDC Transfer TO the town's intake address,
+//   2. it emits a USDC Transfer TO one of the town's intake addresses,
 //   3. the amount, read from the log (6 decimals),
 //   4. confirmations >= MIN_CONF (finality is a claim about depth, not existence).
 //
@@ -22,6 +22,18 @@
 // the LEDGER's to hold — "one dollar, one mint chance" lives in the ledger's
 // receipt-ref uniqueness, not here, and fund.mjs asks the ledger rather than
 // asking this file to grow a memory it has no business having.
+//
+// ── 2026-08-25: WHICH ADDRESS, NOT JUST WHETHER ─────────────────────────────
+// "which pot the payer meant" is still not this file's to decide. But since the
+// founder minted keeping-ec2 its own intake address, a payer can now SAY which
+// pot they meant with the only thing an ERC-20 transfer carries — the recipient
+// itself. So the witness gained one field, and only one: `to`, the address the
+// tx actually paid, plus `to_pot` when the map names it.
+//
+// It reports. It does not adjudicate. Whether a chain that says "keeping-ec2"
+// agrees with a claim that says "darko-fund" is the DOOR's judgement (fund.mjs
+// § THE CHAIN NAMED A POT), for the same reason the pot was never this file's
+// to choose: this file knows about Base, and the door knows about the town.
 
 export const INTAKE = "0x2a273b0e5D0648DfF9B9ED7a4A5041E6762b8C78".toLowerCase();
 export const USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913".toLowerCase(); // native USDC on Base
@@ -59,10 +71,18 @@ export async function verifyUsdcPayment({
   txhash,
   rpc = baseRpc,
   intake = INTAKE,
+  // Map(lowercased address -> pot id), from src/intake-map.mjs. Every address in
+  // it is a town intake address and is accepted here; which pot the CLAIM may
+  // name against it is the door's call, not this file's. Null means the town has
+  // no per-pot addresses, which was true until 2026-08-25 and is the shape every
+  // existing caller and falsifier still passes.
+  potMap = null,
   usdcToken = USDC,
   minConf = MIN_CONF,
 } = {}) {
   const refuse = (why) => ({ verified: false, refused: why, txhash });
+  const standing = String(intake).toLowerCase();
+  const accepted = new Set([standing, ...(potMap?.keys() ?? [])]);
   if (!TXHASH_RE.test(txhash ?? ""))
     return refuse("that is not a transaction hash — a Base tx hash is 0x followed by 64 hex characters");
 
@@ -78,14 +98,27 @@ export async function verifyUsdcPayment({
   if (!receipt) return refuse("no such transaction on Base (or not yet mined)");
   if (receipt.status !== "0x1") return refuse("transaction exists but FAILED (status != 1) — a failed tx moves nothing");
 
-  const hits = (receipt.logs ?? []).filter(
+  const recipientOf = (l) => ("0x" + (l.topics?.[2] ?? "").slice(-40)).toLowerCase();
+  const landed = (receipt.logs ?? []).filter(
     (l) =>
       (l.address ?? "").toLowerCase() === usdcToken &&
       l.topics?.[0] === TRANSFER_TOPIC &&
-      ("0x" + (l.topics?.[2] ?? "").slice(-40)).toLowerCase() === intake,
+      accepted.has(recipientOf(l)),
   );
-  if (!hits.length)
+  if (!landed.length)
     return refuse("no USDC Transfer to the town's intake address in this tx (wrong token, wrong recipient, or not a transfer)");
+
+  // ONE TX, ONE INTAKE ADDRESS. A tx that paid two of the town's addresses at
+  // once carries two different answers to "which pot did you mean", and this
+  // file's whole posture is that it does not choose between a payer's meanings.
+  // Refusing here costs the payer a letter to the postmaster; guessing costs
+  // them a deed on a pot they did not name, which the ledger cannot undo.
+  const paidTo = [...new Set(landed.map(recipientOf))];
+  if (paidTo.length > 1)
+    return refuse(`this transaction paid ${paidTo.length} different town intake addresses (${paidTo.join(", ")}) — the town cannot tell which pot you meant, so it will not choose. Send the hash to the postmaster and it will be recorded by hand`);
+
+  const to = paidTo[0];
+  const hits = landed;
 
   let head;
   try {
@@ -128,7 +161,15 @@ export async function verifyUsdcPayment({
     txhash,
     usd,
     from_address: from,
-    to: intake,
+    // The address the tx ACTUALLY paid, read off the recipient topic rather
+    // than echoed back from the parameter. Before per-pot addresses these were
+    // the same string; now they are not, and it is the difference that names
+    // the pot.
+    to,
+    // The pot that address names, or null for the standing shared intake —
+    // which is a real answer, not a missing field: it means the chain said
+    // nothing about the pot and the claim is all the town has.
+    to_pot: potMap?.get(to) ?? null,
     token: "USDC (Base native)",
     block,
     confirmations: conf,

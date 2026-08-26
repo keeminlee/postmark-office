@@ -17,13 +17,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 
 import { verifyUsdcPayment, INTAKE, USDC, TRANSFER_TOPIC, MIN_CONF } from "../src/usdc-witness.mjs";
-import { fundVerify, fundGuards } from "../src/fund.mjs";
+import { fundVerify, fundGuards, intakeDisclosure } from "../src/fund.mjs";
 
 // The aligned town engine — the same tip the door's parser is pinned to.
 const TOWN = "G:/postmark/seam-overnight/town-clone";
@@ -334,4 +334,183 @@ test("every answer this door gives carries the two sentences the money moment ow
   assert.equal(rec.caption, "a record of contribution, not a promise of profit");
   assert.equal(rec.what_this_buys,
     "this buys ownership and memory, never voice, and converts to real value only if the town someday does");
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// THE POT'S OWN ADDRESS — the chain names the need (2026-08-25)
+// ════════════════════════════════════════════════════════════════════════════
+//
+// The founder minted keeping-ec2 its own intake address, so a payer can now say
+// which pot they meant with the only thing an ERC-20 transfer carries: the
+// recipient. These drive a hand-built map rather than the shipped file, because
+// what is asserted is the RULE, not today's roster.
+
+const POT_ADDRESS = "0x182085453b5bc2c8cf4cd6f712102cc3dc485fca";
+const OTHER_POT_ADDRESS = "0xc0ffee0000000000000000000000000000000002";
+const MAP = new Map([[POT_ADDRESS, "ec2"], [OTHER_POT_ADDRESS, "soup"]]);
+
+test("the witness reports WHICH address a tx paid, and the pot that address names", async () => {
+  // LAW (deploy/intake-addresses.json, verbatim): "WHICH POT A USDC ARRIVAL
+  //     PAYS, read off the address it landed on. An ERC-20 transfer carries no
+  //     memo, so the ONLY way the chain can name a pot is for the pot to have
+  //     its own intake address."
+  const own = await verifyUsdcPayment({
+    txhash: HASH, potMap: MAP,
+    rpc: chain({ logs: [transferLog({ to: POT_ADDRESS, usd: 50 })] }),
+  });
+  assert.equal(own.verified, true, "a pot's own address is a town intake address");
+  assert.equal(own.to, POT_ADDRESS, "`to` is the address the tx actually paid, not the parameter echoed back");
+  assert.equal(own.to_pot, "ec2", "and the map names the pot");
+
+  // The shared address still verifies, and names NO pot — which is a real
+  // answer, not a missing field.
+  const shared = await verifyUsdcPayment({
+    txhash: HASH, potMap: MAP,
+    rpc: chain({ logs: [transferLog({ to: INTAKE, usd: 50 })] }),
+  });
+  assert.equal(shared.verified, true);
+  assert.equal(shared.to, INTAKE);
+  assert.equal(shared.to_pot, null, "the shared address names no pot, so the chain said nothing about the need");
+
+  // A stranger's address is still foreign, map or no map.
+  const foreign = await verifyUsdcPayment({
+    txhash: HASH, potMap: MAP,
+    rpc: chain({ logs: [transferLog({ to: "0xdeadbeef00000000000000000000000000000009" })] }),
+  });
+  assert.equal(foreign.verified, false);
+  assert.match(foreign.refused, /no USDC Transfer to the town's intake address/);
+});
+
+test("a tx paying TWO town intake addresses is refused, not resolved in favour of either", async () => {
+  // LAW `the-town/the-disclosure`: refuse or disclose absent inputs, never
+  //     quietly substitute. Two of the town's addresses paid in one tx is two
+  //     different answers to "which pot did you mean", and choosing between
+  //     them would cost the payer a deed on a pot they did not name — which the
+  //     ledger has no row kind to undo.
+  const both = await verifyUsdcPayment({
+    txhash: HASH, potMap: MAP,
+    rpc: chain({ logs: [transferLog({ to: POT_ADDRESS, usd: 10 }), transferLog({ to: INTAKE, usd: 10 })] }),
+  });
+  assert.equal(both.verified, false);
+  assert.match(both.refused, /paid 2 different town intake addresses/);
+  assert.match(both.refused, /it will not choose/);
+});
+
+test("THE GRANDFATHER RULE: a claim on a mapped pot still verifies against the SHARED address", async () => {
+  // LAW (deploy/intake-addresses.json `_never`, verbatim): "Do NOT map the
+  //     shared intake address to a pot to make the queue go away. That would
+  //     make the office decide where a stranger's money went, which is the one
+  //     judgement this whole lane refuses to make."
+  //
+  // The shared address stays unmapped, so it names no pot — and a payer who
+  // followed yesterday's published instructions paid it. The town published
+  // that address for keeping up to the moment the pot's own was minted;
+  // refusing it now would strand an honest payer for following the town's own
+  // word. So the accepted set for a claim naming pot P is P's own mapped
+  // address UNION the standing shared intake.
+  const town = seamTown({ pots: { ec2: {} }, gifts: [{ handle: "paz", n: 10 }] });
+  const rec = await call(town, { txhash: HASH, pot: "ec2", handle: "paz" }, {
+    potMap: MAP,
+    verify: (a) => verifyUsdcPayment({ ...a, rpc: chain({ logs: [transferLog({ to: INTAKE, usd: 10 })] }) }),
+    record: cliRecorder(town),
+  });
+  assert.equal(rec.recorded, true, "yesterday's instructions still work");
+  assert.equal(rec.to, INTAKE);
+  assert.equal(rec.to_pot, null, "the claim is the only thing naming the pot, and it is enough");
+
+  // and the pot's OWN address verifies for the same claim
+  const town2 = seamTown({ pots: { ec2: {} }, gifts: [{ handle: "paz", n: 10 }] });
+  const own = await call(town2, { txhash: HASH2, pot: "ec2", handle: "paz" }, {
+    potMap: MAP,
+    verify: (a) => verifyUsdcPayment({ ...a, rpc: chain({ logs: [transferLog({ to: POT_ADDRESS, usd: 10 })] }) }),
+    record: cliRecorder(town2),
+  });
+  assert.equal(own.recorded, true);
+  assert.equal(own.to, POT_ADDRESS);
+  assert.equal(own.to_pot, "ec2", "the chain named the pot, and it agreed with the claim");
+});
+
+test("THE CROSS CASE: paying pot A's address while claiming pot B bounces by name", async () => {
+  // LAW (deploy/intake-addresses.json, verbatim): "From that moment the chain
+  //     itself names the pot". The grandfather union is deliberately NOT
+  //     symmetric — no published instruction ever pointed a soup-payer at ec2's
+  //     address, so this is a real disagreement between two things that both
+  //     spoke, and the door names it rather than resolving it. It is not
+  //     silently corrected to the chain's answer either: the payer may have
+  //     paid the wrong address OR typed the wrong pot, and the town does not
+  //     know which.
+  const town = seamTown({ pots: { ec2: {}, soup: {} }, gifts: [{ handle: "paz", n: 10 }] });
+  const e = await caught(() => call(town, { txhash: HASH, pot: "soup", handle: "paz" }, {
+    potMap: MAP,
+    verify: (a) => verifyUsdcPayment({ ...a, rpc: chain({ logs: [transferLog({ to: POT_ADDRESS, usd: 10 })] }) }),
+    record: cliRecorder(town),
+  }));
+  assert.equal(e.code, 422);
+  assert.match(e.defect, /the address you paid names a different pot/);
+  assert.match(e.defect, /is pot "ec2"'s own intake address/, "the chain's answer is named");
+  assert.match(e.defect, /the claim says pot "soup"/, "and so is the claim's");
+  assert.match(e.hint, /nothing was recorded and nothing was lost/);
+  // and NOTHING reached the ledger
+  assert.equal(entriesOf(town.repo).filter((x) => /receipt/.test(x.raw ?? "")).length, 0,
+    "a bounced cross-claim writes no row");
+});
+
+test("the money moment publishes the POT'S address, derived from the map and hardcoded nowhere", async () => {
+  // LAW (deploy/intake-addresses.json `_how_to_use_it`, verbatim): "When the
+  //     founder mints a per-pot intake address, add one row per pot here (and
+  //     only then)."
+  //
+  // "and only then" is the half this asserts: the address exists in the map and
+  // in NO other source file, so minting the next one stays a one-file act.
+  assert.equal(intakeDisclosure("ec2", { map: MAP }).address, POT_ADDRESS, "a mapped pot shows its own");
+  assert.equal(intakeDisclosure("darko-fund", { map: MAP }).address, INTAKE, "an unmapped pot keeps the standing intake");
+  assert.equal(intakeDisclosure(null, { map: MAP }).address, INTAKE, "and no pot named at all is the standing intake");
+  assert.equal(intakeDisclosure("ec2", { map: MAP }).pot, "ec2", "the answer says which pot it is for");
+
+  // every other word of the §10 disclosure is the SAME single copy
+  const a = intakeDisclosure("ec2", { map: MAP });
+  const b = intakeDisclosure("darko-fund", { map: MAP });
+  for (const k of ["network", "token", "min_confirmations", "whole_dollars", "recovery", "caption", "what_this_buys", "verify"])
+    assert.equal(a[k], b[k], `${k} is one copy, not one per pot`);
+});
+
+test("a pot the map names TWICE publishes NO address — never a guessed one", () => {
+  // LAW `the-town/the-disclosure`: refuse or disclose absent inputs, never
+  //     quietly substitute. Two addresses for one pot cannot happen from the
+  //     file's own instructions ("add one row per pot here"), which is exactly
+  //     why picking between them would be the wrong answer if it ever did — on
+  //     the one surface where substituting is money gone.
+  const doubled = new Map([[POT_ADDRESS, "ec2"], [OTHER_POT_ADDRESS, "ec2"]]);
+  const d = intakeDisclosure("ec2", { map: doubled });
+  assert.equal(d.address, null, "no address at all");
+  assert.match(d.why, /names more than one address/);
+  assert.match(d.why, /it will not choose between them/);
+  // and the disclosures still ride along — a refusal is still a money surface
+  assert.equal(d.caption, "a record of contribution, not a promise of profit");
+});
+
+test("THE ADDRESS LIVES IN THE MAP AND NOWHERE ELSE in the office's source", () => {
+  // LAW (deploy/intake-addresses.json `_how_to_use_it`, verbatim): "add one row
+  //     per pot here (and only then)". A second copy of a per-pot address in a
+  //     source file is a second place that can drift, on the surface where
+  //     drift is a patron's money sent to nobody.
+  //
+  // The standing INTAKE is exempt: it is declared in src/usdc-witness.mjs by
+  // design and predates the map entirely.
+  const root = new URL("../", import.meta.url);
+  const hits = [];
+  const walk = (dir) => {
+    for (const ent of readdirSync(new URL(dir, root), { withFileTypes: true })) {
+      if (ent.name === "node_modules" || ent.name.startsWith(".")) continue;
+      const rel = `${dir}${ent.name}`;
+      if (ent.isDirectory()) { walk(`${rel}/`); continue; }
+      if (!/\.mjs$/.test(ent.name)) continue;
+      const text = readFileSync(new URL(rel, root), "utf8");
+      for (const m of text.match(/0x[0-9a-fA-F]{40}/g) ?? [])
+        if (m.toLowerCase() === POT_ADDRESS) hits.push(rel);
+    }
+  };
+  walk("src/");
+  walk("tools/");
+  assert.deepEqual(hits, [], "no per-pot address is hardcoded in src/ or tools/ — the map is the only home");
 });
