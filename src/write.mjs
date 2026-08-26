@@ -46,8 +46,28 @@ export function penCommit(clone, addPaths, message) {
   if (!git(clone, "status", "--porcelain", "--", ...addPaths)) return null;
   git(clone, "-c", `user.name=${name}`, "-c", `user.email=${email}`,
       "commit", "-q", "-m", message, "--author", `${name} <${email}>`);
-  const commit = git(clone, "rev-parse", "HEAD");
-  if (process.env.TOWN_PUSH === "1") git(clone, "push", "-q");
+  let commit = git(clone, "rev-parse", "HEAD");
+  if (process.env.TOWN_PUSH === "1") {
+    // THE PUSH IS NOT THE RECEIPT — THE REMOTE TIP IS. On 2026-08-26 a fund
+    // receipt's push lost a race with the town's own mail traffic, and this
+    // line's bare `push -q` left the signed row LOCAL-ONLY for 100 minutes
+    // while the exec had already answered success; every rehydrate tick then
+    // failed to fast-forward until a hand rebased it. So: push, FETCH, and
+    // require the commit to be an ancestor of origin/main before returning.
+    // On a lost race, rebase onto the fresh tip and try again — every pen
+    // commit is an append to town files, which is what makes the rebase safe.
+    for (let attempt = 1; ; attempt++) {
+      try { git(clone, "push", "-q"); } catch { /* verified below, not here */ }
+      git(clone, "fetch", "-q", "origin", "main");
+      try {
+        git(clone, "merge-base", "--is-ancestor", commit, "origin/main");
+        break; // landed — the only exit that returns
+      } catch { /* not on the remote yet */ }
+      if (attempt >= 3) throw new Error(`pen push did not land: ${commit} is not on origin/main after ${attempt} attempts — the write is local-only and this ceremony refuses to call that success`);
+      git(clone, "rebase", "-q", "origin/main");
+      commit = git(clone, "rev-parse", "HEAD");
+    }
+  }
   return commit;
 }
 
