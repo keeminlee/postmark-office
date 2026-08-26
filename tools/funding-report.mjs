@@ -1,5 +1,21 @@
 // funding-report — the whole funding state of the town, in one read.
 //
+// THIS IS STAGE A, and Stage A is the whole of what is meant to be adopted
+// today. It is ONE COMMAND, read-only: no timer, no daemon, no unit, no stored
+// state, nothing that can drift while nobody is looking. It reads Stripe live,
+// the chain through whatever the existing watch last wrote, and the ledger
+// through the town's own fold — then prints, for every payment it can resolve
+// by rule, the exact one-line command that witnesses it.
+//
+// So the founder's work is: run one command, read one page, paste one line per
+// payment. That is the whole of Stage A, and everything the timers in Stage B
+// would automate is already decided HERE — the rules are the same functions.
+// Stage B removes the paste, not the thinking.
+//
+// TURNING STAGE A OFF is not running it. There is no residue: it writes no
+// state, installs nothing, and the town behaves exactly as it does today
+// whether or not this file is ever executed.
+//
 // THE TEST THIS FILE IS BUILT AGAINST (the founder's, 2026-08-25): he should be
 // able to read this in sixty seconds and have ZERO matching work — only vetoes.
 // So the shape is: what needs a person FIRST, whether the machines are alive
@@ -34,9 +50,12 @@ import { dirname, join, resolve } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 
 import { foldFunding, readPots, parseLedgerText, TREASURY_POT } from "../src/funding.mjs";
-import { readWallets } from "../src/wallets.mjs";
+import { readWalletRegistry } from "../src/wallet-registry.mjs";
+// the town day, from the one place that owns it — a receipt's date is the
+// town's clock and never the operator's laptop's
+import { townDay } from "../src/ops.mjs";
 import { readIntakeMap, SINK_RULE } from "./usdc-watch.mjs";
-import { resolveSession, readJournal, readState } from "./stripe-watch.mjs";
+import { resolveSession, decodeSession, listCompleteSessions, stripeReader, readJournal, readState, COLDSTART_DAYS } from "./stripe-watch.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -47,6 +66,34 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 export const STALE_MINUTES = 60;
 
 const usd = (n) => "$" + Number(n).toLocaleString("en-US");
+
+// ── the one-command manual witness (STAGE A's whole write path) ─────────────
+// It is not a new tool. It is the SAME recorder the /fund door and both watchers
+// use — src/fund-exec.mjs shelling the town's own `epoch-close.mjs --receipt`,
+// which enforces ref-uniqueness and the D5 intake cap itself. The report decides
+// nothing here that the timers would decide differently; it just prints the line.
+//
+// The flock is not decoration: the ferry and the crossing take town.lock
+// exclusively, and a receipt appended underneath one of them is how a crossing
+// gets stranded. A pasted command has no office around it to take the lock, so
+// the lock is IN the command.
+export const TOWN_LOCK = "/srv/postmark-office/town.lock";
+export const OFFICE_DIR = "/srv/postmark-office";
+
+export function witnessCommand({ pot, usd: n, from, ref, rail, date, lock = TOWN_LOCK, office = OFFICE_DIR }) {
+  const payload = JSON.stringify({ pot, usd: n, from, ref, rail, date, via: "the operator by hand" });
+  // Single-quoted in the shell, so the JSON's double quotes ride free. A single
+  // quote anywhere in the payload would end the quoting and hand the rest of the
+  // line to the shell — it cannot happen for pots, handles, refs and dates, which
+  // are all [a-z0-9:.-].
+  //
+  // IT HAPPENED IMMEDIATELY, in the one field I wrote myself: `via` said "the
+  // operator's hand" and this guard refused to print a single command until the
+  // apostrophe came out. That is the whole argument for the guard — the unsafe
+  // character never comes from the data you were worried about.
+  if (payload.includes("'")) throw new Error(`refusing to print an unquotable command: ${payload}`);
+  return `flock -w 30 ${lock} node ${office}/src/fund-exec.mjs '${payload}'`;
+}
 const ago = (iso, now) => {
   const t = Date.parse(iso ?? "");
   if (!Number.isFinite(t)) return null;
@@ -96,12 +143,42 @@ export function anomalies({ fold, potsInvalid, stripe, usdcReport, walletInvalid
   for (const o of usdcReport?.over_cap ?? [])
     add("usdc", "over-cap", `${o.txhash} · ${usd(o.usd)} → ${o.pot}`, o.why, o.hint ?? "the next epoch opens fresh");
   for (const u of usdcReport?.unclaimed ?? [])
-    add("usdc", "unclaimed", `${u.txhash} · ${usd(u.usd)} · from ${u.from_address}${u.age_days == null ? "" : ` · ${u.age_days}d old`}`, u.why, `the patron pastes their hash at /fund/, or the household registers this address in WHITE_PAGES/<handle>/wallet.json. The sink rule would eventually take it — it is OFF: ${SINK_RULE}`);
+    add("usdc", "unclaimed", `${u.txhash} · ${usd(u.usd)} · from ${u.from_address}${u.age_days == null ? "" : ` · ${u.age_days}d old`}`, u.why, `the patron pastes their hash at /fund/, or the household's address is registered with the OFFICE (the box-side registry; never the town repo). The sink rule would eventually take it — it is OFF: ${SINK_RULE}`);
 
   return out;
 }
 
-/** Re-decide every journalled Stripe session the ledger has not claimed. */
+/**
+ * Every unwitnessed payment the rules already resolved, each with its command.
+ *
+ * STAGE A HAS NO TIMER, so it also has no grace window: a session nothing will
+ * ever witness automatically must not be hidden behind a clock. Both the ripe
+ * and the still-fresh ones are listed, and the fresh ones say so — because in
+ * Stage A the operator IS the typo window, and the window only helps if the
+ * thing waiting in it is on the page.
+ */
+export function readyToWitness({ stripe, usdcReport, date }) {
+  const out = [];
+  const add = (rail, plan, extra) => out.push({
+    rail, ...plan, ...extra,
+    command: witnessCommand({ pot: plan.pot, usd: plan.usd, from: plan.from, ref: plan.ref, rail, date }),
+  });
+  for (const w of stripe.witness ?? []) add("stripe", w, { session: w.session, fresh: false, handle_typed: w.handle_typed ?? null, email: w.email ?? null });
+  for (const h of stripe.hold ?? []) add("stripe", h.plan, { session: h.session, fresh: true, handle_typed: h.plan.handle_typed ?? null, email: h.email ?? null, note: "created recently — Stage B would hold this one to let a mistyped handle be caught. In Stage A you are that window: check the typed handle before pasting." });
+  for (const w of usdcReport?.witness ?? []) add("usdc", w, { txhash: w.txhash, fresh: false });
+  for (const h of usdcReport?.hold ?? []) add("usdc", h.plan, { txhash: h.txhash, fresh: true, note: "recent — check it before pasting." });
+  return out;
+}
+
+/**
+ * Re-decide every known Stripe session the ledger has not claimed, through the
+ * WATCHER'S OWN pure resolver — one copy of the rule, so this report and the
+ * tick that may later act on it cannot disagree.
+ *
+ * `journal` is either the live-read sessions (Stage A) or the watcher's journal
+ * rows (Stage B). They are the same shape by construction: the journal stores
+ * exactly what `decodeSession` produced.
+ */
 export function stripeQueue({ journal, engine, entries, clone, households, now }) {
   const seen = new Map();
   for (const r of journal) if (r.kind === "seen" && r.session) seen.set(r.session, r);
@@ -115,7 +192,7 @@ export function stripeQueue({ journal, engine, entries, clone, households, now }
 
 // ── the render ──────────────────────────────────────────────────────────────
 
-export function render({ now, pots, potsInvalid, fold, rails, anomalyRows, stripe, usdcReport, registry }) {
+export function render({ now, pots, potsInvalid, fold, rails, anomalyRows, stripe, usdcReport, registry, ready = [] }) {
   const L = [];
   const p = (s = "") => L.push(s);
 
@@ -124,7 +201,28 @@ export function render({ now, pots, potsInvalid, fold, rails, anomalyRows, strip
   p(`_Generated ${new Date(now).toISOString()}. Everything below is derived from the signed ledger, the pot files, and the two rail watchers' own state — nothing is stored for this report and nothing here was matched by hand._`);
   p();
 
-  // 1 · what needs a person
+  // 1 · the founder's actual work: paste one line per payment
+  p(`## Ready to witness — one command each`);
+  p();
+  if (!ready.length) {
+    p(`Nothing waiting. Every payment the rules could resolve is already on the ledger.`);
+  } else {
+    p(`Each line below records one payment through the office's own recorder — the same \`fund-exec\` the /fund door uses, shelling the town's own \`epoch-close --receipt\`, which enforces ref-uniqueness and the pot cap itself. Paste and run from \`${OFFICE_DIR}\`. Re-running one is safe: the ledger refuses a ref it already holds.`);
+    p();
+    for (const r of ready) {
+      p(`**${usd(r.usd)} → \`${r.pot}\` as ${r.attributed === false ? `_${r.from}_ (gift, no deed)` : `**${r.from}**`}** · ${r.rail} · \`${r.session ?? r.txhash}\`${r.fresh ? " · ⏱ recent" : ""}`);
+      if (r.handle_typed != null && r.attributed === false) p(`  <br/>typed \`${r.handle_typed}\`${r.email ? ` · ${r.email}` : ""} — not a household, so this files as a gift with no deed.`);
+      if (r.note) p(`  <br/>${r.note}`);
+      p();
+      p("```sh");
+      p(r.command);
+      p("```");
+      p();
+    }
+  }
+  p();
+
+  // 2 · what needs a judgement
   p(`## Needs a person`);
   p();
   if (!anomalyRows.length) {
@@ -146,7 +244,7 @@ export function render({ now, pots, potsInvalid, fold, rails, anomalyRows, strip
   if (rails.some((r) => !r.ok))
     p(`> ⚠ A rail that has not ticked is not a quiet rail. Every queue below is a claim about money the town has **seen**; while a watcher is down, an empty queue proves nothing.`);
   p();
-  p(`Registered wallets: **${registry.addresses}** address(es) across ${registry.wallet_files} household file(s). Intake addresses naming a pot: **${registry.mapped_pots}**.`);
+  p(`Registered wallets: **${registry.addresses}** address(es)${registry.present ? "" : " — _no registry file yet_"} at \`${registry.path}\` (office-side; never the town repo). Intake addresses naming a pot: **${registry.mapped_pots}**.`);
   if (registry.mapped_pots === 0)
     p(`> The town has one intake address serving more than one open pot, so the chain cannot name a pot for a USDC arrival and every one of them stays pot-ambiguous. Minting a per-pot address and listing it in \`deploy/intake-addresses.json\` is what closes that queue mechanically.`);
   p();
@@ -264,36 +362,59 @@ async function main() {
   const fold = foldFunding(entries);
   const { pots, invalid: potsInvalid } = readPots(clone);
 
-  const { byAddress, files: walletFiles, invalid: walletInvalid } = readWallets(clone);
+  const mint = join(clone, "tools", "stamp-mint.mjs");
+  const engine = existsSync(mint) ? await import(pathToFileURL(mint)) : null;
+  const households = engine ? engine.householdKeys(clone) : null;
+
+  const { byAddress, invalid: walletInvalid, path: registryPath, present: registryPresent } =
+    readWalletRegistry(arg("wallet-registry", undefined), { households });
   const { map, invalid: mapInvalid } = readIntakeMap();
 
-  const stripeState = readState(arg("stripe-state", join(HERE, "..", ".stripe-watch-state.json")));
   const usdcState = readState(arg("usdc-state", join(HERE, "..", ".usdc-watch-state.json")));
   const usdcReport = readJson(arg("usdc-report", "/srv/postmark-usdc/arrivals.json"));
 
-  // The stripe queue is re-decided from the journal through the watcher's own
-  // pure resolver — one copy of the rule, and a report that cannot disagree
-  // with the tick that will act on it.
+  // ── THE CARD RAIL, READ LIVE (this is what makes Stage A stateless) ────────
+  // With a key, the report asks Stripe itself: no cursor, no journal, nothing
+  // stored, nothing to go stale. Without one, it falls back to the Stage-B
+  // watcher's journal if that exists, and if neither is available it SAYS the
+  // rail is unread rather than showing an empty queue — an unread rail and a
+  // quiet rail are different answers and only one of them is good news.
   let stripe = { hold: [], witness: [], anomaly: [], already: [] };
+  let stripeRail = { rail: "stripe (live read)", ok: false, last_run: null, note: "no STRIPE_KEY in the environment and no watcher journal on disk — the card rail was NOT read, so nothing below is a claim about card payments" };
   const journalPath = arg("stripe-journal", "/srv/postmark-stripe/stripe-intake.jsonl");
-  const mint = join(clone, "tools", "stamp-mint.mjs");
-  if (existsSync(journalPath) && existsSync(mint)) {
-    const engine = await import(pathToFileURL(mint));
-    stripe = stripeQueue({
-      journal: readJournal(journalPath), engine, entries: engine.parseStampLedger(readFileSync(ledgerPath, "utf8")),
-      clone, households: engine.householdKeys(clone), now,
-    });
+  const decided = (sessions) => stripeQueue({ journal: sessions, engine, entries, clone, households, now });
+
+  if (engine && process.env.STRIPE_KEY) {
+    const days = Number(arg("days", COLDSTART_DAYS));
+    try {
+      const sessions = await listCompleteSessions({
+        stripe: stripeReader({
+          key: process.env.STRIPE_KEY,
+          apiVersion: process.env.STRIPE_API_VERSION ?? null,
+          api: process.env.STRIPE_API || undefined,
+        }),
+        createdGte: Math.floor(now / 1000) - days * 86_400,
+      });
+      stripe = decided(sessions.map(decodeSession).map((x) => ({ ...x, kind: "seen" })));
+      stripeRail = { rail: "stripe (live read)", ok: true, last_run: new Date(now).toISOString(), note: `read live just now — ${sessions.length} completed session(s) in the last ${days} days` };
+    } catch (e) {
+      // A read that failed is LOUD. Reporting an empty card queue because Stripe
+      // refused us is the same lie as a blind watcher reporting a quiet day.
+      stripeRail = { rail: "stripe (live read)", ok: false, last_run: null, note: `the live read FAILED (${String(e?.message ?? e).slice(0, 160)}) — the card rail was NOT read` };
+    }
+  } else if (engine && existsSync(journalPath)) {
+    stripe = decided(readJournal(journalPath).filter((r) => r.kind === "seen"));
+    const st = readState(arg("stripe-state", join(HERE, "..", ".stripe-watch-state.json")));
+    stripeRail = railHealth("stripe-watch (journal)", st, { now });
   }
 
-  const rails = [
-    railHealth("stripe-watch", stripeState, { now }),
-    railHealth("usdc-watch", usdcState, { now }),
-  ];
+  const rails = [stripeRail, railHealth("usdc-watch", usdcState, { now })];
   const anomalyRows = anomalies({ fold, potsInvalid, stripe, usdcReport, walletInvalid, mapInvalid });
+  const ready = readyToWitness({ stripe, usdcReport, date: townDay() });
 
   const md = render({
-    now, pots, potsInvalid, fold, rails, anomalyRows, stripe, usdcReport,
-    registry: { addresses: byAddress.size, wallet_files: walletFiles, mapped_pots: map.size },
+    now, pots, potsInvalid, fold, rails, anomalyRows, stripe, usdcReport, ready,
+    registry: { addresses: byAddress.size, path: registryPath, present: registryPresent, mapped_pots: map.size },
   });
 
   const outPath = arg("out", null);

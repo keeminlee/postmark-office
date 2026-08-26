@@ -299,3 +299,182 @@ letter found it before we did.
   world-report joined 2026-08-20).
 - `ubuntu` is the AMI's break-glass admin login only. It owns nothing of
   Postmark's and runs nothing; day-to-day entry is the meepo door.
+
+---
+
+# The funding machine — staged adoption
+
+Founder-driven restructure, 2026-08-25. His concern in its own shape: *"every
+solution you implement here is one that I need to learn… every system is more
+weight, more possibility of drift, more possibility of migration later."*
+
+So this is not a system that arrives. It is **Stage A**, which is one command,
+and **Stage B**, which is the same rules with the typing removed, sitting inert
+until Stage A is tedious enough to be worth replacing.
+
+## THE ANTI-WEIGHT CONTRACT
+
+Every piece below is **additive** and **severable**:
+
+- turning any piece off is one command, and the town then behaves **exactly as
+  it does today** — not approximately, not after a cleanup;
+- nothing a piece wrote is stranded by turning it off. Ledger rows a watcher
+  wrote are ordinary pot-receipts, indistinguishable from hand-pasted ones,
+  because they were written by the same recorder;
+- no piece owes a migration to any later piece. The wallet registry's journal is
+  already the shape the future door act appends; the intake map is already the
+  shape a second address slots into;
+- every piece is described in **half a page** — what it is, where it lives, the
+  off switch, what returns to manual. If a piece stops fitting in half a page,
+  that is a defect in the piece.
+
+Nothing here is installed by merging. Merging Stage A gives you a command you
+may run. Merging Stage B gives you files on disk that do nothing.
+
+---
+
+## STAGE A · `funding-report` — the default, and possibly the end of it
+
+**What it is.** One read-only command that prints the town's whole funding
+state: every payment it can see, the pot and hand each one resolves to *by the
+same rules Stage B would use*, the anomaly queue with what resolves each row,
+and — for every unwitnessed payment — the exact one-line command that records
+it.
+
+**Where it lives.** `tools/funding-report.mjs` in the office repo. It writes
+nothing, stores nothing, installs nothing. Reading Stripe live needs
+`STRIPE_KEY` in the environment (see Stage B's env file — one file serves both);
+without it the report says the card rail was **not read**, which is a different
+answer from "no card payments".
+
+```sh
+cd /srv/postmark-office
+sudo -u meepo env $(grep -h . /etc/postmark-office.env /etc/postmark-stripe-watch.env | xargs) \
+  node tools/funding-report.mjs --out /srv/postmark-office-reports/funding.md
+```
+
+Then paste one printed line per payment. Each is
+`flock … node …/src/fund-exec.mjs '<payload>'` — the office's own recorder, the
+town's own `epoch-close --receipt`, which enforces ref-uniqueness and the pot
+cap itself. **Re-running one is safe**: the ledger refuses a ref it already
+holds.
+
+**The off switch.** Do not run it. There is no residue.
+
+**What returns to manual.** Nothing — Stage A *is* the manual path, with the
+matching done for you.
+
+**The one thing to know.** Stage A has no timer, so it has no grace window. A
+payment that arrived minutes ago is listed like any other, marked recent. **You
+are the window**: check the typed handle on a recent row before pasting, because
+the ref is spent once and the ledger has no row kind that reassigns a payer.
+
+---
+
+## STAGE B · the pieces, each inert until adopted
+
+### `stripe-watch` — the card rail on a clock
+
+**What it is.** Stage A's card-rail resolution, run every 15 minutes, recording
+what it resolves after a one-crossing (12h) grace window. Same rules, same
+recorder, no paste.
+
+**Where it lives.** `tools/stripe-watch.mjs`; unit
+`deploy/postmark-stripe-watch.{service,timer}`; credential
+`/etc/postmark-stripe-watch.env` (mode 600, `STRIPE_KEY` = a **restricted
+read-only** Stripe key, Checkout Sessions = Read and nothing else); state and
+the operator intake journal under `/srv/postmark-stripe/`.
+
+**Adopt.** `sudo systemctl enable --now postmark-stripe-watch.timer`
+
+**Off switch.** `sudo systemctl disable --now postmark-stripe-watch.timer`
+
+**What returns to manual.** Stage A: read the report, paste a line per card
+payment. Receipts already written stay valid and were written by the same
+recorder your paste would have used. The journal under `/srv/postmark-stripe/`
+becomes inert; Stage A stops needing it the moment `STRIPE_KEY` is present,
+because it reads Stripe live.
+
+**Know before adopting.** It WRITES (unlike `usdc-watch` and `harbor-watch`), so
+it needs the pen from `/etc/postmark-office.env` and takes `town.lock`. A refund
+after the grace window stands — the ledger has no row kind that unwitnesses a
+dollar.
+
+### `usdc-watch` auto-witness + the wallet registry
+
+**What it is.** `usdc-watch` already sees arrivals and reports them. Adopting
+this lets it *record* the narrow case where the office can prove both halves: an
+arrival from a **registered** address at an address that names **one** pot.
+Everything else stays a report.
+
+**Where it lives.** `tools/usdc-watch.mjs`; the registry at
+`/srv/postmark-wallets/registrations.jsonl` (mode 600, owner `meepo`), read by
+`src/wallet-registry.mjs`.
+
+**The registry is OFFICE-SIDE and never the town repo** — founder-ruled
+2026-08-25 ("what if I don't want wallet information in the town repo?"). It is
+an append-only journal, one act per line:
+
+```json
+{"at":"2026-08-26T01:00:00Z","act":"register","handle":"jetto-of-starforge","chain":"base","address":"0x…","by":"operator-pen"}
+{"at":"2026-08-27T00:00:00Z","act":"revoke","address":"0x…","by":"operator-pen"}
+```
+
+Later acts win; a revoke is an append, never an edit. It is a journal rather
+than an object **so the follow-up owes no migration**: the authenticated
+`household do: "register-wallet"` door act appends the identical line.
+
+*The honest consequence, stated because the founder ruled with it in front of
+him:* a **claimed** deed already publishes wallet↔handle — the receipt's ref is
+`usdc:base:<txhash>`, the ledger is public, and the chain shows the from-address.
+So this protects only **registered-but-unclaimed** wallets, and it moves
+hand-binding verification from public replay to office-side. Accepted trade.
+
+**Adopt.** Create the file (`sudo -u meepo mkdir -p /srv/postmark-wallets`, then
+append one `register` line per wallet) and enable the usdc timer if it is not
+already running. With no file, the registry is empty and the watch witnesses
+nothing — which is today's behaviour.
+
+**Off switch.** Rename the registry aside (`registrations.jsonl` →
+`registrations.jsonl.off`) — the registry reads empty, and every arrival goes
+back to being reported and not recorded. Or disable the timer to stop reading
+the chain at all.
+
+**What returns to manual.** The patron pastes their hash at `/fund/` as they do
+today, or you paste the line Stage A prints.
+
+### `deploy/intake-addresses.json` — which address means which pot
+
+**What it is.** A map from a USDC intake address to the pot it funds. **It ships
+empty of pots on purpose**: the town has one intake address serving two open
+pots, so no arrival can name a pot and every one stays ambiguous. This is the
+mechanism waiting for a second address, not dead code.
+
+**Where it lives.** In the office repo, read by `tools/usdc-watch.mjs`.
+
+**Adopt.** Mint a per-pot intake address and add one row per pot. From that
+moment the chain itself names the pot.
+
+**Off switch.** Remove the rows. Every arrival returns to pot-ambiguous.
+
+**Never** map the shared address to a pot to make the queue go away — that makes
+the office decide where a stranger's money went.
+
+### The sink rule — unclaimed money after 7 days
+
+**What it is.** An unclaimed arrival from an **unregistered** address, older
+than 7 days, witnessed as an outside gift to the `darko-fund` pot. **Implemented
+and OFF.**
+
+**Where it lives.** `tools/usdc-watch.mjs`; the flag is `USDC_SINK_UNCLAIMED=1`
+in the usdc unit's environment.
+
+**Adopt.** Set the flag on the unit. Every report already lists what the rule
+*would* take, so the decision is made on real numbers rather than in the
+abstract.
+
+**Off switch.** Unset the flag. Nothing it already witnessed is affected — those
+are ordinary receipts.
+
+**What returns to manual.** Unclaimed money stays in the operator queue until
+the patron claims it or you decide by hand.

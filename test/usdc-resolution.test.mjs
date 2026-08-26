@@ -15,14 +15,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 
 import { INTAKE, USDC, TRANSFER_TOPIC, MIN_CONF } from "../src/usdc-witness.mjs";
-import { readWallets, handleForAddress } from "../src/wallets.mjs";
+import { foldRegistry, readWalletRegistry, handleForAddress, registrationLine, DEFAULT_REGISTRY } from "../src/wallet-registry.mjs";
 import { CROSSING_MS } from "../src/crossings.mjs";
 import {
   watch, resolveArrivals, decodeArrival, readIntakeMap, intakeAddresses,
@@ -96,10 +96,9 @@ function seamTown({ wallets = {}, pots = { "pot-a": 1000, "pot-b": 1000 } } = {}
   for (const [id, target] of Object.entries(pots))
     writeFileSync(join(repo, "WHITE_PAGES", `pot-${id}.json`), JSON.stringify({ pot: id, status: "open", beneficiary: "keeper", target_usd_per_epoch: target, epoch_cadence: "monthly", received_usd: 0 }));
   writeFileSync(join(repo, "WHITE_PAGES", `pot-${SINK_POT}.json`), JSON.stringify({ pot: SINK_POT, status: "open", beneficiary: "keeper", target_usd_per_epoch: null, epoch_cadence: "monthly", received_usd: 0, uncapped: true, close: "elastic", min_close_usd: 5 }));
-  for (const [handle, body] of Object.entries(wallets)) {
-    mkdirSync(join(repo, "WHITE_PAGES", handle), { recursive: true });
-    writeFileSync(join(repo, "WHITE_PAGES", handle, "wallet.json"), JSON.stringify(body, null, 2));
-  }
+  // Households the registry may name. NOTHING wallet-shaped is written into the
+  // town repo — founder-ruled 2026-08-25; the registry is office-side.
+  for (const handle of Object.keys(wallets)) mkdirSync(join(repo, "WHITE_PAGES", handle), { recursive: true });
   const keyFile = join(repo, "stamp-key.pem");
   writeFileSync(keyFile, privateKey.export({ type: "pkcs8", format: "pem" }));
   execFileSync(process.execPath, [join(TOWN, "tools", "stamp-mint.mjs"), "--append", "--key", keyFile, "--repo", repo], { encoding: "utf8" });
@@ -108,46 +107,96 @@ function seamTown({ wallets = {}, pots = { "pot-a": 1000, "pot-b": 1000 } } = {}
 
 const ledgerText = (repo) => readFileSync(join(repo, "WHITE_PAGES", "stamp-ledger.md"), "utf8");
 const entriesOf = (repo) => ENGINE.parseStampLedger(ledgerText(repo));
-const walletFile = (handle, address) => ({ handle, wallets: [{ chain: "base", address }] });
+// One line of the office-side registration journal, exactly as the operator's
+// pen writes it today and as the future `register-wallet` door act will append it.
+const reg = (handle, address, over = {}) => JSON.stringify({ at: "2026-08-26T00:00:00Z", act: "register", handle, chain: "base", address, by: "operator-pen", ...over });
+const HH = new Set(["paz", "stan"]);
 
 // ════════════════════════════════════════════════════════════════════════════
 // THE REGISTRY — whose address is this
 // ════════════════════════════════════════════════════════════════════════════
 
+test("THE REGISTRY IS OFFICE-SIDE — nothing wallet-shaped may ever appear in the town repo", () => {
+  // FOUNDER RULING, 2026-08-25: "what if I don't want wallet information in the
+  //     town repo?" An earlier draft of this lane put it at
+  //     WHITE_PAGES/<handle>/wallet.json. This test is what stops that returning:
+  //     it fails if any household folder grows a wallet file, and it fails if the
+  //     module's default path is anywhere inside a town clone.
+  const town = seamTown({ wallets: { paz: null } });
+  const stray = [];
+  for (const d of readdirSync(join(town.repo, "WHITE_PAGES"), { withFileTypes: true })) {
+    if (!d.isDirectory()) continue;
+    for (const f of readdirSync(join(town.repo, "WHITE_PAGES", d.name)))
+      if (/wallet/i.test(f)) stray.push(`${d.name}/${f}`);
+  }
+  assert.deepEqual(stray, [], "no household folder carries anything wallet-shaped");
+  assert.ok(!/WHITE_PAGES/.test(DEFAULT_REGISTRY), "the default registry path is not inside a town clone");
+  assert.match(DEFAULT_REGISTRY, /^\/srv\//, "it is a box-side state file");
+  // and it is not inside /srv/postmark-office either: that is a live git checkout
+  // the deploy pulls into, and the repo's own .gitignore note records what happens
+  // to untracked state that lives there — it waits "to be swept into a commit by
+  // `git add -A`". A wallet registry is the last thing that should be one careless
+  // add away from a public repo.
+  assert.ok(!DEFAULT_REGISTRY.startsWith("/srv/postmark-office"), "and not inside the office's own git checkout");
+});
+
 test("a registered address names its household, and case never matters", () => {
-  const town = seamTown({ wallets: { paz: walletFile("paz", PAZ_WALLET) } });
-  const { byAddress, files, invalid } = readWallets(town.repo);
-  assert.equal(files, 1);
+  const { byAddress, invalid } = foldRegistry(reg("paz", PAZ_WALLET), { households: HH });
   assert.deepEqual(invalid, []);
   assert.equal(handleForAddress(byAddress, PAZ_WALLET), "paz");
-  assert.equal(handleForAddress(byAddress, PAZ_WALLET.toUpperCase().replace("0X", "0x")), "paz", "the chain's own spelling and a wallet's are the same address");
+  assert.equal(handleForAddress(byAddress, PAZ_WALLET.toUpperCase().replace("0X", "0x")), "paz", "the chain's own spelling and a registration's are the same address");
   assert.equal(handleForAddress(byAddress, STRANGER_WALLET), null);
 });
 
-test("an address claimed by two households resolves to NOBODY, and both claims are surfaced", () => {
+test("THE JOURNAL SHAPE IS THE MIGRATION-FREE ONE: the operator's line and the door's future line are the same line", () => {
+  // The follow-up is an authenticated `household do: "register-wallet"` act that
+  // appends an office journal row which materializes into this store. That is
+  // WHY this is an append-only journal and not an object the operator edits: an
+  // object would need read-modify-write under a lock from the door, and the
+  // door's row would then differ in shape from the operator's — a migration.
+  const byPen = reg("paz", PAZ_WALLET, { by: "operator-pen" });
+  const byDoor = registrationLine({ handle: "paz", address: PAZ_WALLET, by: "door:register-wallet", at: "2026-08-26T00:00:00Z" });
+  assert.deepEqual(Object.keys(JSON.parse(byPen)).sort(), Object.keys(JSON.parse(byDoor)).sort(), "same fields");
+  const a = foldRegistry(byPen, { households: HH }), b = foldRegistry(byDoor, { households: HH });
+  assert.deepEqual([...a.byAddress], [...b.byAddress]);
+  assert.equal(JSON.parse(byDoor).by, "door:register-wallet", "and provenance is preserved, not flattened");
+});
+
+test("a revoke is an APPEND, never an edit — a lost wallet costs one line and no history", () => {
+  const journal = [reg("paz", PAZ_WALLET), JSON.stringify({ at: "2026-08-27T00:00:00Z", act: "revoke", address: PAZ_WALLET, by: "operator-pen" })].join("\n");
+  const { byAddress, invalid, rows } = foldRegistry(journal, { households: HH });
+  assert.deepEqual(invalid, []);
+  assert.equal(handleForAddress(byAddress, PAZ_WALLET), null, "the address no longer resolves");
+  assert.equal(rows.length, 2, "and both acts are still on the record");
+  const back = foldRegistry(journal + "\n" + reg("paz", PAZ_WALLET, { at: "2026-08-28T00:00:00Z" }), { households: HH });
+  assert.equal(handleForAddress(back.byAddress, PAZ_WALLET), "paz");
+});
+
+test("an address with live claims from two households resolves to NOBODY, and both are surfaced", () => {
   // LAW (src/usdc-witness.mjs, what the witness cannot see, verbatim): "which
   //     pot the payer meant, whose household the payer keeps, and whether this
   //     hash was already recorded. Those three are the LEDGER's to hold".
-  //     A registry that guessed between two claimants would be answering the
-  //     second question by coin-flip, on somebody's real money.
-  const town = seamTown({ wallets: {
-    paz: walletFile("paz", PAZ_WALLET),
-    stan: walletFile("stan", PAZ_WALLET),
-  } });
-  const { byAddress, invalid } = readWallets(town.repo);
+  //     A registry that guessed between two claimants would answer the second
+  //     question by coin-flip, on somebody's real money.
+  const { byAddress, invalid } = foldRegistry([reg("paz", PAZ_WALLET), reg("stan", PAZ_WALLET)].join("\n"), { households: HH });
   assert.equal(handleForAddress(byAddress, PAZ_WALLET), null, "it resolves to nobody");
-  assert.equal(invalid.length, 2, "both claimants are named, not one");
-  assert.ok(invalid.every((i) => /claimed by 2 households/.test(i.reason)));
+  assert.equal(invalid.length, 1);
+  assert.match(invalid[0].reason, /live claims from 2 households \(paz, stan\)/);
+  assert.match(invalid[0].reason, /Append a `revoke` for the wrong one/);
 });
 
-test("a wallet file that names a different handle than its folder is refused, not trusted", () => {
-  // The lint's own ADDRESS.md rule, mirrored (tools/lint.mjs): `handle "${fm.handle}"
-  // != folder "${f}"`. A file that names somebody else is a claim about
-  // somebody else's money.
-  const town = seamTown({ wallets: { paz: walletFile("stan", PAZ_WALLET) } });
-  const { byAddress, invalid } = readWallets(town.repo);
+test("A HANDLE THE TOWN DOES NOT KNOW IS REFUSED — the hole the relocation opened, closed", () => {
+  // While the registry lived in the town repo the handle was a household BY
+  // CONSTRUCTION: it was the folder's own name. Off the town repo nothing
+  // guarantees it, and a receipt witnessed under a non-household handle is
+  // treated as an OUTSIDE PATRON at the close — deriveEpochClose, verbatim: "An
+  // outside patron (the founding family grant) resolves to neither and lands as
+  // deed alone." The resident's deed would be quietly lost. So the fold checks.
+  const { byAddress, invalid } = foldRegistry(reg("not-a-resident", PAZ_WALLET), { households: HH });
   assert.equal(byAddress.size, 0);
-  assert.match(invalid[0].reason, /names handle "stan" but sits in paz\//);
+  assert.match(invalid[0].reason, /is not a household the town knows/);
+  assert.match(invalid[0].reason, /quietly cost that resident their deed/);
+  assert.equal(foldRegistry(reg("paz", PAZ_WALLET), { households: HH }).byAddress.size, 1);
 });
 
 test("a malformed registration is DISCLOSED rather than dropped", () => {
@@ -155,15 +204,26 @@ test("a malformed registration is DISCLOSED rather than dropped", () => {
   //     silently rendered or silently dropped … refuse or disclose, never
   //     quietly substitute." A household that thinks it registered and did not
   //     would otherwise wait forever for a witness that never comes.
-  const town = seamTown({ wallets: {
-    paz: { handle: "paz", wallets: [{ chain: "base", address: "not-an-address" }] },
-    stan: { handle: "stan", wallets: [{ chain: "ethereum", address: STRANGER_WALLET }] },
-  } });
-  const { byAddress, invalid } = readWallets(town.repo);
+  const journal = [
+    reg("paz", "not-an-address"),
+    reg("stan", STRANGER_WALLET, { chain: "ethereum" }),
+    "{ not json",
+    JSON.stringify({ at: "x", act: "consider", address: STRANGER_WALLET }),
+  ].join("\n");
+  const { byAddress, invalid } = foldRegistry(journal, { households: HH });
   assert.equal(byAddress.size, 0);
-  assert.equal(invalid.length, 2);
-  assert.match(invalid.find((i) => i.line.includes("/paz/")).reason, /is not an address/);
-  assert.match(invalid.find((i) => i.line.includes("/stan/")).reason, /the town's intake is on Base and reads no other chain/);
+  assert.equal(invalid.length, 4, "every bad line is named, none folded away");
+  assert.ok(invalid.some((i) => /is not an address/.test(i.reason)));
+  assert.ok(invalid.some((i) => /reads no other chain/.test(i.reason)));
+  assert.ok(invalid.some((i) => /unparseable JSON/.test(i.reason)));
+  assert.ok(invalid.some((i) => /is not one of register, revoke/.test(i.reason)));
+});
+
+test("an absent registry is an empty registry, not an error — and it says it is absent", () => {
+  const r = readWalletRegistry(join(tmpdir(), "no-such-registry-" + Date.now() + ".jsonl"));
+  assert.equal(r.present, false);
+  assert.equal(r.byAddress.size, 0);
+  assert.deepEqual(r.invalid, []);
 });
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -190,7 +250,7 @@ test("a registered payer at an address that names no single pot is HELD as needs
   // LAW (tools/epoch-close.mjs --receipt, verbatim): `no pot file
   //     WHITE_PAGES/pot-${pot}.json — a receipt needs the pot it pays`.
   //     Knowing WHOSE dollar it is does not tell the town WHICH need it meant.
-  const town = seamTown({ wallets: { paz: walletFile("paz", PAZ_WALLET) } });
+  const town = seamTown({ wallets: { paz: null } });
   const now = 2_000_000_000_000;
   const a = { ...decodeArrival(transfer({ txhash: HASH_A, block: 100, usd: 40 })), ts: now - CROSSING_MS * 2 };
   const r = resolveArrivals({
@@ -205,7 +265,7 @@ test("a registered payer at an address that names no single pot is HELD as needs
 });
 
 test("a mapped address names its pot, and the map is read off the RECIPIENT topic, never remembered from the filter", async () => {
-  const town = seamTown({ wallets: { paz: walletFile("paz", PAZ_WALLET) } });
+  const town = seamTown({ wallets: { paz: null } });
   const now = 2_000_000_000_000;
   const potMap = new Map([[POT_A_ADDRESS, "pot-a"], [POT_B_ADDRESS, "pot-b"]]);
   const logs = [
@@ -262,7 +322,7 @@ test("an UNREGISTERED payer is never witnessed, however clearly the address name
 // ════════════════════════════════════════════════════════════════════════════
 
 test("a registered arrival younger than one crossing is HELD, and one exactly a crossing old is witnessed", async () => {
-  const town = seamTown({ wallets: { paz: walletFile("paz", PAZ_WALLET) } });
+  const town = seamTown({ wallets: { paz: null } });
   const now = 2_000_000_000_000;
   const mk = (ts) => ({ ...decodeArrival(transfer({ txhash: HASH_A, block: 100, usd: 40, to: POT_A_ADDRESS })), ts });
   const args = { entries: entriesOf(town.repo), engine: ENGINE, clone: town.repo, potFor: () => "pot-a", handleFor: () => "paz", now };
@@ -280,7 +340,7 @@ test("an arrival whose block time cannot be read is HELD, never witnessed and ne
   // Swallowing the timestamp error is only defensible in the conservative
   // direction: an unknown age must not be able to satisfy a deadline. This is
   // that claim, made testable.
-  const town = seamTown({ wallets: { paz: walletFile("paz", PAZ_WALLET) } });
+  const town = seamTown({ wallets: { paz: null } });
   const now = 2_000_000_000_000;
   const c = chain({ head: 5000, logs: [transfer({ txhash: HASH_A, block: 100, usd: 40, to: POT_A_ADDRESS })], blockTs: null });
   const { report, todo } = await watch({
@@ -296,7 +356,7 @@ test("an arrival whose block time cannot be read is HELD, never witnessed and ne
 test("depth still governs: an arrival shallower than MIN_CONF is not even read, so it cannot be witnessed", async () => {
   // LAW (src/usdc-witness.mjs, check 4, verbatim): "confirmations >= MIN_CONF
   //     (finality is a claim about depth, not existence)".
-  const town = seamTown({ wallets: { paz: walletFile("paz", PAZ_WALLET) } });
+  const town = seamTown({ wallets: { paz: null } });
   const now = 2_000_000_000_000;
   const head = 5000;
   const c = chain({ head, logs: [transfer({ txhash: HASH_A, block: head - MIN_CONF + 1, usd: 40, to: POT_A_ADDRESS })], blockTs: () => now - CROSSING_MS * 2 });
@@ -317,7 +377,7 @@ test("a fully resolved arrival past the pot's posted target bounces to over-cap 
   // LAW (D5, Keemin 2026-08-21, verbatim): "intake refuses dollars past a pot's
   //     posted target, mechanically (recording tool / door bounce), except pots
   //     explicitly marked uncapped."
-  const town = seamTown({ wallets: { paz: walletFile("paz", PAZ_WALLET) }, pots: { "pot-a": 10 } });
+  const town = seamTown({ wallets: { paz: null }, pots: { "pot-a": 10 } });
   const now = 2_000_000_000_000;
   const a = { ...decodeArrival(transfer({ txhash: HASH_A, block: 100, usd: 40, to: POT_A_ADDRESS })), ts: now - CROSSING_MS * 2 };
   const r = resolveArrivals({
@@ -408,7 +468,7 @@ test("a quiet tick answers in the SAME SHAPE as a busy one — the commonest tic
 });
 
 test("watch() decides and records nothing — the caller is the only thing that can write", async () => {
-  const town = seamTown({ wallets: { paz: walletFile("paz", PAZ_WALLET) } });
+  const town = seamTown({ wallets: { paz: null } });
   const now = 2_000_000_000_000;
   const before = ledgerText(town.repo);
   const c = chain({ head: 5000, logs: [transfer({ txhash: HASH_A, block: 100, usd: 40, to: POT_A_ADDRESS })], blockTs: () => now - CROSSING_MS * 2 });

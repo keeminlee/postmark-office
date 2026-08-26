@@ -1,5 +1,8 @@
 [Unit]
 Description=stripe-watch every 15 minutes — card payments resolve on a clock, not on an operator's evening
+# STAGE B. Enabling this timer IS the adoption; disabling it returns the town
+# to Stage A (funding-report + one pasted line per payment) with nothing
+# stranded. See deploy/DEPLOY.md § stripe-watch for the half-page runbook.
 
 [Timer]
 # Offset from usdc-watch's *:0/10 so the two funding watchers never contend for

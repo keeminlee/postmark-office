@@ -27,7 +27,8 @@
 //             one mint chance, a re-recorded receipt bounces" and the ledger
 //             has no row kind that attaches, corrects, or reassigns a payer.
 //             That is still exactly true of an UNKNOWN payer. It is NOT true of
-//             a REGISTERED one: WHITE_PAGES/<handle>/wallet.json (src/wallets.mjs)
+//             a REGISTERED one: the OFFICE-SIDE registry (src/wallet-registry.mjs,
+//             box-side and never in the town repo — founder-ruled 2026-08-25)
 //             says whose address this is, so the claim the watch "front-runs"
 //             would have named the same hand. There is no deed to lose.
 //
@@ -87,7 +88,7 @@ import { dirname, join, resolve } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 
 import { baseRpc, INTAKE, USDC, TRANSFER_TOPIC, MIN_CONF } from "../src/usdc-witness.mjs";
-import { readWallets, handleForAddress } from "../src/wallets.mjs";
+import { readWalletRegistry, handleForAddress } from "../src/wallet-registry.mjs";
 import { CROSSING_MS } from "../src/crossings.mjs";
 import { fundGuards, penRecorder } from "../src/fund.mjs";
 
@@ -261,7 +262,7 @@ export const NEEDS_POT_LETTER = (a, handle) =>
   `Your $${Math.floor(a.usd)} reached the town on ${a.txhash} and we can see it is yours — but the town has one intake address serving more than one pot, so the chain cannot tell us WHICH need you meant to fund. Reply with the pot (or witness it yourself from that pot's own /fund/ page) and it files immediately; nothing is lost while it waits.`;
 
 export const UNREGISTERED =
-  "no household has registered this address (WHITE_PAGES/<handle>/wallet.json), so the town cannot say whose dollar this is. Witnessing it under a placeholder would spend the ref's one mint chance and cost the real patron their deed forever — this arrival waits for their paste, or for the sink rule.";
+  "no household has registered this address with the office, so the town cannot say whose dollar this is. Witnessing it under a placeholder would spend the ref's one mint chance and cost the real patron their deed forever — this arrival waits for their paste, or for the sink rule.";
 
 /**
  * The rule, applied to what the ledger has not already claimed. Pure: no
@@ -468,7 +469,8 @@ async function main() {
   const cursor = from != null ? Number(from) - 1 : (state.cursor ?? null);
 
   const { map: potMap, invalid: mapInvalid } = readIntakeMap();
-  const { byAddress: wallets, files: walletFiles, invalid: walletInvalid } = readWallets(clone);
+  const households = typeof engine.householdKeys === "function" ? engine.householdKeys(clone) : null;
+  const { byAddress: wallets, invalid: walletInvalid, path: registryPath, present: registryPresent } = readWalletRegistry(undefined, { households });
 
   const { report, cursor: next, todo } = await watch({
     entries: ledgerEntries(clone, engine),
@@ -480,7 +482,7 @@ async function main() {
     wallets,
     sink: sinkEnabled(),
   });
-  report.registry = { wallet_files: walletFiles, addresses: wallets.size, mapped_pots: potMap.size };
+  report.registry = { path: registryPath, present: registryPresent, addresses: wallets.size, mapped_pots: potMap.size };
   report.invalid = [...mapInvalid, ...walletInvalid];
 
   const written = [];
@@ -513,7 +515,7 @@ async function main() {
   const { witnessed, unclaimed, dust, hold, needs_pot, over_cap, scanned } = report;
   console.log(`usdc-watch · intake ${report.intake.join(", ")}`);
   console.log(scanned ? `blocks ${scanned.from}–${scanned.to} (head ${report.head}, ${report.min_confirmations} deep)` : `nothing settled since the last tick (head ${report.head})`);
-  console.log(`  registry: ${report.registry.wallet_files} wallet file(s), ${report.registry.addresses} address(es), ${report.registry.mapped_pots} pot address(es) mapped`);
+  console.log(`  registry: ${report.registry.present ? `${report.registry.addresses} address(es)` : "ABSENT"} at ${report.registry.path}; ${report.registry.mapped_pots} pot address(es) mapped`);
   console.log(`  witnessed: ${witnessed.length}   recorded now: ${written.filter((w) => w.kind === "witnessed").length}   holding: ${hold.length}   needs-pot: ${needs_pot.length}   over-cap: ${over_cap.length}   unclaimed: ${unclaimed.length}   under $1: ${dust.length}`);
   for (const h of hold)
     console.log(`  HOLD       $${h.plan.usd}  ${h.txhash}  → ${h.plan.pot} as ${h.plan.from}${h.witnesses_after ? `  after ${h.witnesses_after}` : `  (${h.why})`}`);

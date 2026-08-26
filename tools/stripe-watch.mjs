@@ -111,7 +111,9 @@
 //
 // Env: STRIPE_KEY   a RESTRICTED, READ-ONLY Stripe key (rk_…) with read
 //                   permission on Checkout Sessions and nothing else. It lives
-//                   in an env file the unit references and is never committed.
+//                   in /etc/postmark-stripe-watch.env (the box convention:
+//                   /etc/<unit>.env + systemd EnvironmentFile=, mode 600) and is
+//                   never committed.
 //      STRIPE_API_VERSION  optional; unset means the account's default version,
 //                   which is what the founder's own dashboard shows. Pinning a
 //                   version the box cannot verify 400s the whole watcher, so

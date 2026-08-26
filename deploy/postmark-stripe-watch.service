@@ -1,12 +1,33 @@
 [Unit]
 Description=stripe-watch — resolve completed card payments to a pot and a hand, by rule
-# The card rail's other half. usdc-watch SEES and does not witness, because on
-# Base the chain cannot say which pot a payer meant and a watcher would consume
-# a hash's one mint chance ahead of the patron's own paste. Neither is true here:
-# a Stripe checkout session carries client_reference_id (the town's own fund page
-# sets it — site main b2260e7a), and the card rail has no payer paste-path at all
-# ("Step 2 — there isn't one"), so `stripe:<session_id>` is a ref only this unit
-# can ever mint. The whole argument, with the quotes, is the header of
+#
+# ══ STAGE B. NOT INSTALLED, NOT ENABLED, INERT UNTIL ADOPTED. ═══════════════
+#
+# Stage A is `node tools/funding-report.mjs`: one read-only command that shows
+# every payment, its rule-derived resolution, and a one-line witness command per
+# payment. Stage A needs no unit, no timer and no state, and it is the default.
+#
+# THIS unit is the same rules with the paste removed. Adopt it when reading the
+# report and pasting a line per payment becomes tedious — not before. The
+# half-page runbook (what it is, where it lives, the off switch, what returns to
+# manual) is deploy/DEPLOY.md § stripe-watch.
+#
+# ADOPT (one command, after the env file exists — see DEPLOY.md):
+#   sudo systemctl enable --now postmark-stripe-watch.timer
+# TURN OFF (one command, and the town is exactly as it is today):
+#   sudo systemctl disable --now postmark-stripe-watch.timer
+# Nothing is stranded by turning it off: its state and journal are its own, the
+# ledger rows it wrote are ordinary receipts indistinguishable from hand-pasted
+# ones, and Stage A keeps working on the same rules.
+#
+# ── WHY THIS ONE MAY WITNESS AT ALL ─────────────────────────────────────────
+# usdc-watch SEES and does not witness, because on Base the chain cannot say
+# which pot a payer meant and a watcher would consume a hash's one mint chance
+# ahead of the patron's own paste. Neither is true here: a Stripe checkout
+# session carries client_reference_id (the town's own fund page sets it — site
+# main b2260e7a), and the card rail has no payer paste-path at all ("Step 2 —
+# there isn't one"), so `stripe:<session_id>` is a ref only this unit can ever
+# mint. The whole argument, with the quotes, is the header of
 # tools/stripe-watch.mjs.
 #
 # UNLIKE usdc-watch AND harbor-watch, THIS UNIT WRITES. It records witnessed
@@ -20,32 +41,38 @@ Description=stripe-watch — resolve completed card payments to a pot and a hand
 # window is the point: the intake journal at /srv/postmark-stripe/stripe-intake.jsonl
 # shows the operator round the typed handle and the resolution the session is
 # ABOUT to get, so a mistyped handle is fixable while the ref is still unspent.
-# After the window the rule runs and nothing waits on a person.
+# (In Stage A there is no window because there is no timer — the operator is the
+# window, and funding-report says so on every fresh row.)
 #
 # THE CREDENTIAL. STRIPE_KEY is a RESTRICTED, READ-ONLY Stripe key (rk_…) with
 # read permission on Checkout Sessions and nothing else — it can list payments
-# and can move no money. It lives ONLY in the env file below, mode 600, and never
-# in either repo. Create it at
+# and can move no money. Create it at
 #   Stripe Dashboard → Developers → API keys → Restricted keys → + Create
 #   permissions: Checkout Sessions = Read. Everything else = None.
+# It lives in /etc/postmark-stripe-watch.env, mode 600, never in either repo —
+# the box convention is /etc/<unit>.env read through EnvironmentFile=, the same
+# shape as /etc/postmark-office.env. Stage A's report reads the same key from the
+# environment, so one file serves both stages.
 #
-# NOT INSTALLED. Repo copy only — the box install is Wright's hand:
-#   sudo mkdir -p /srv/postmark-office/secrets
-#   sudo tee /srv/postmark-office/secrets/stripe-watch.env >/dev/null <<'EOF'
+# INSTALL (Wright's hand, after review — installing is not adopting):
+#   sudo tee /etc/postmark-stripe-watch.env >/dev/null <<'EOF'
 #   STRIPE_KEY=rk_live_…
 #   # STRIPE_API_VERSION=      # optional; unset = the account's default version
 #   EOF
-#   sudo chmod 600 /srv/postmark-office/secrets/stripe-watch.env
-#   sudo chown meepo /srv/postmark-office/secrets/stripe-watch.env
+#   sudo chmod 600 /etc/postmark-stripe-watch.env
 #   sudo mkdir -p /srv/postmark-stripe && sudo chown meepo /srv/postmark-stripe
 #   sudo cp deploy/postmark-stripe-watch.{service,timer} /etc/systemd/system/
 #   sudo systemctl daemon-reload
-#   sudo systemctl enable --now postmark-stripe-watch.timer
+#   # …and STOP. Do not enable the timer until Stage A is tedious.
 #
 # FIRST RUN, supervised: run it once with --dry-run and read the report before
 # the timer is ever enabled. A dry run decides everything and records nothing.
-#   sudo -u meepo env $(cat /srv/postmark-office/secrets/stripe-watch.env | xargs) \
-#     node tools/stripe-watch.mjs --dry-run --json --state /srv/postmark-stripe/state.json
+#   sudo -u meepo systemd-run --pipe --wait \
+#     -p EnvironmentFile=/etc/postmark-office.env \
+#     -p EnvironmentFile=/etc/postmark-stripe-watch.env \
+#     -p WorkingDirectory=/srv/postmark-office \
+#     /usr/bin/node tools/stripe-watch.mjs --dry-run --json \
+#       --state /srv/postmark-stripe/state.json
 After=network-online.target
 
 [Service]
@@ -53,7 +80,7 @@ Type=oneshot
 User=meepo
 WorkingDirectory=/srv/postmark-office
 EnvironmentFile=/etc/postmark-office.env
-EnvironmentFile=/srv/postmark-office/secrets/stripe-watch.env
+EnvironmentFile=/etc/postmark-stripe-watch.env
 ExecStart=/usr/bin/node tools/stripe-watch.mjs \
   --state /srv/postmark-stripe/state.json \
   --journal /srv/postmark-stripe/stripe-intake.jsonl \

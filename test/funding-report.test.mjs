@@ -19,7 +19,7 @@ import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 
 import { foldFunding, readPots, parseLedgerText } from "../src/funding.mjs";
-import { railHealth, anomalies, render, STALE_MINUTES } from "../tools/funding-report.mjs";
+import { railHealth, anomalies, render, readyToWitness, witnessCommand, STALE_MINUTES, TOWN_LOCK } from "../tools/funding-report.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TOWN = [resolve(HERE, "..", "town-clone"), "G:/postmark/seam-overnight/town-clone"]
@@ -46,6 +46,13 @@ function seamTown() {
   writeFileSync(join(repo, "WHITE_PAGES", "pot-keep.json"), JSON.stringify({ pot: "keep", status: "open", title: "Keep the lights on", beneficiary: "keeper", target_usd_per_epoch: 100, epoch_cadence: "monthly", received_usd: 0 }));
   const keyFile = join(repo, "stamp-key.pem");
   writeFileSync(keyFile, privateKey.export({ type: "pkcs8", format: "pem" }));
+  // a real git repo and the town's real tools, so the command this report PRINTS
+  // can be executed here exactly as the operator would paste it
+  for (const f of ["stamp-mint.mjs", "epoch-close.mjs"])
+    writeFileSync(join(repo, "tools", f), readFileSync(join(TOWN, "tools", f)));
+  execFileSync("git", ["init", "-q"], { cwd: repo, encoding: "utf8" });
+  execFileSync("git", ["add", "-A"], { cwd: repo, encoding: "utf8" });
+  execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "fixture"], { cwd: repo, encoding: "utf8" });
   execFileSync(process.execPath, [join(TOWN, "tools", "stamp-mint.mjs"), "--append", "--key", keyFile, "--repo", repo], { encoding: "utf8" });
   return { repo, keyFile };
 }
@@ -106,7 +113,7 @@ test("every anomaly, from every source, carries a rule AND what resolves it", ()
   const rows = anomalies({
     fold: { invalid: [{ row_kind: "pot-receipt", line: "- 2026-08-01 · pot-receipt · pot: keep · …", reason: "a space after the colon" }] },
     potsInvalid: [{ row_kind: "pot-file", line: "WHITE_PAGES/pot-x.json", reason: "unparseable JSON" }],
-    walletInvalid: [{ row_kind: "wallet-file", line: "WHITE_PAGES/paz/wallet.json", reason: "not an address" }],
+    walletInvalid: [{ row_kind: "wallet-registration", line: '{"act":"register","address":"0xnope"}', reason: "not an address" }],
     mapInvalid: [{ row_kind: "intake-map", line: "addresses[\"0xzz\"]", reason: "not a Base address" }],
     stripe: { anomaly: [{ anomaly: "needs-pot", session: "cs_1", amount_total: 1000, email: "a@b.test", why: "no client_reference_id", resolves: "the founder, by hand" }] },
     usdcReport: {
@@ -147,10 +154,11 @@ test("a clean town says so plainly, and the clean sentence is not reachable whil
   assert.match(stuck, /0xc/);
 });
 
-test("`Needs a person` is the first section, above the rails and above the books", () => {
+test("`Needs a person` sits above the rails and above the books", () => {
   // The founder's own test for this lane: read it in sixty seconds and have zero
   // matching work, only vetoes. A report you have to search for the broken thing
-  // fails that whether or not the broken thing is in it.
+  // fails that whether or not the broken thing is in it. (`Ready to witness` sits
+  // above all three — see its own test; this one pins the remaining order.)
   const md = render({
     now: NOW, pots: [], potsInvalid: [], fold: foldFunding([]), anomalyRows: [],
     rails: [railHealth("x", { last_run: minsAgo(1) }, { now: NOW })],
@@ -234,4 +242,124 @@ test("a table cell can never break the table, however the reason was worded", ()
   const row = md.split("\n").find((l) => l.includes("pot-x.json"));
   assert.match(row, /missing a \\\| b and a newline/, "the pipe is escaped and the newline flattened");
   assert.equal(row.split(/(?<!\\)\|/).length - 1, 6, "the row still has exactly the table's columns");
+});
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// STAGE A — one command per payment, and it must actually work
+// ════════════════════════════════════════════════════════════════════════════
+
+test("THE PRINTED COMMAND ACTUALLY RECORDS THE PAYMENT — run, not asserted", async () => {
+  // Stage A's entire write path is a line this report prints and a person pastes.
+  // A report that printed a plausible-looking command nobody had ever executed
+  // would be [[states-with-no-receipt]] in its purest form: the founder would
+  // find out at the moment he needed it to work.
+  //
+  // So: build the command the report would print, pull its payload back out, and
+  // run the SAME recorder the /fund door uses. The `flock` prefix is asserted
+  // textually (there is no flock on this machine); the recording is asserted by
+  // executing it.
+  const town = seamTown();
+  const cmd = witnessCommand({ pot: "keep", usd: 10, from: "paz", ref: "stripe:cs_stagea", rail: "stripe", date: "2026-08-01" });
+  assert.match(cmd, new RegExp(`^flock -w 30 ${TOWN_LOCK} node `), "the lock is IN the command — a pasted line has no office around it to take one");
+  assert.match(cmd, /src\/fund-exec\.mjs '/, "and it is the office's own recorder, not a new tool");
+
+  const payload = cmd.slice(cmd.indexOf("'") + 1, cmd.lastIndexOf("'"));
+  assert.deepEqual(JSON.parse(payload), {
+    pot: "keep", usd: 10, from: "paz", ref: "stripe:cs_stagea", rail: "stripe",
+    date: "2026-08-01", via: "the operator by hand",
+  });
+
+  const out = execFileSync(process.execPath, [join(HERE, "..", "src", "fund-exec.mjs"), payload], {
+    encoding: "utf8",
+    env: { ...process.env, TOWN_CLONE: town.repo, STAMP_KEY: town.keyFile, TOWN_PUSH: "", BOT_NAME: "t", BOT_EMAIL: "t@t" },
+  });
+  const result = JSON.parse(out.trim().split("\n").at(-1));
+  assert.equal(result.error, undefined, `the pasted command recorded cleanly: ${out}`);
+  assert.equal(result.rail, "stripe");
+
+  const ledger = readFileSync(join(town.repo, "WHITE_PAGES", "stamp-ledger.md"), "utf8");
+  assert.match(ledger, /pot-receipt · pot:keep · rail: stripe · usd: 10 · from: paz · ref: stripe:cs_stagea/);
+
+  // and pasting it TWICE is safe, because the ledger refuses a ref it holds —
+  // which is the sentence the report tells the operator
+  const again = execFileSync(process.execPath, [join(HERE, "..", "src", "fund-exec.mjs"), payload], {
+    encoding: "utf8",
+    env: { ...process.env, TOWN_CLONE: town.repo, STAMP_KEY: town.keyFile, TOWN_PUSH: "", BOT_NAME: "t", BOT_EMAIL: "t@t" },
+  });
+  const second = JSON.parse(again.trim().split("\n").at(-1));
+  assert.equal(second.error?.code, 409);
+  assert.match(second.error.defect, /already recorded/);
+  assert.equal(readFileSync(join(town.repo, "WHITE_PAGES", "stamp-ledger.md"), "utf8").split("pot-receipt").length - 1, 1, "one payment, one receipt");
+});
+
+test("a payload that could break out of its own quoting is REFUSED, never printed", () => {
+  // The command is single-quoted in the shell, so a single quote in the payload
+  // would end the quoting and hand the rest of the line to the shell. Pots,
+  // handles, refs and dates cannot contain one — and this says so rather than
+  // trusting it, because the day one can is the day this prints a shell injection
+  // into a document a human is told to paste.
+  assert.throws(() => witnessCommand({ pot: "keep", usd: 1, from: "it's-me", ref: "r", rail: "stripe", date: "2026-08-01" }),
+    /refusing to print an unquotable command/);
+});
+
+test("STAGE A HAS NO TIMER, so a fresh payment is listed anyway — and says the operator is the window", () => {
+  // The grace window is a STAGE B mechanism. In Stage A nothing will ever witness
+  // a held session later, so hiding it behind a clock would hide it forever. Both
+  // are listed; the fresh one carries what the window was for.
+  const ready = readyToWitness({
+    stripe: {
+      witness: [{ session: "cs_ripe", pot: "keep", usd: 10, from: "paz", ref: "stripe:cs_ripe", attributed: true }],
+      hold: [{ session: "cs_fresh", email: "p@example.test", plan: { pot: "keep", usd: 5, from: "outside:stripe", ref: "stripe:cs_fresh", attributed: false, handle_typed: "pazz" } }],
+    },
+    usdcReport: null,
+    date: "2026-08-01",
+  });
+  assert.equal(ready.length, 2, "nothing is hidden behind a clock that will never strike");
+  const fresh = ready.find((r) => r.session === "cs_fresh");
+  assert.equal(fresh.fresh, true);
+  assert.match(fresh.note, /In Stage A you are that window: check the typed handle before pasting/);
+  assert.equal(fresh.handle_typed, "pazz");
+  assert.ok(ready.every((r) => r.command.includes("fund-exec.mjs")));
+});
+
+test("`Ready to witness` is the first section — it is the founder's actual work", () => {
+  const md = render({
+    now: NOW, pots: [], potsInvalid: [], fold: foldFunding([]), anomalyRows: [],
+    rails: [railHealth("x", { last_run: minsAgo(1) }, { now: NOW })],
+    stripe: { hold: [] }, usdcReport: null, registry: { addresses: 0, path: "/srv/x", present: false, mapped_pots: 0 },
+    ready: readyToWitness({ stripe: { witness: [{ session: "cs_1", pot: "keep", usd: 10, from: "paz", ref: "stripe:cs_1", attributed: true }] }, usdcReport: null, date: "2026-08-01" }),
+  });
+  const order = ["## Ready to witness", "## Needs a person", "## The rails", "## The pots"].map((h) => md.indexOf(h));
+  assert.ok(order.every((i) => i > -1), "all four sections present");
+  assert.deepEqual(order, order.slice().sort((a, b) => a - b), "and in that order");
+  assert.match(md, /flock -w 30/, "the command is on the page, ready to paste");
+  assert.match(md, /Re-running one is safe/, "and it says so, because the operator will wonder");
+});
+
+test("an UNREAD card rail is never presented as a quiet one", () => {
+  // The Stage A live read can fail (no key, refused key, Stripe down). Reporting
+  // an empty card queue then is the same lie as a blind watcher reporting a quiet
+  // day — usdc-watch.mjs's own words: "indistinguishable from a quiet day, and
+  // the second one is a lie."
+  const unread = { rail: "stripe (live read)", ok: false, last_run: null, note: "the live read FAILED (401) — the card rail was NOT read" };
+  const md = render({
+    now: NOW, pots: [], potsInvalid: [], fold: foldFunding([]), anomalyRows: [],
+    rails: [unread, railHealth("usdc-watch", { last_run: minsAgo(1) }, { now: NOW })],
+    stripe: { hold: [] }, usdcReport: null, registry: { addresses: 0, path: "/srv/x", present: false, mapped_pots: 0 }, ready: [],
+  });
+  assert.match(md, /the card rail was NOT read/);
+  assert.match(md, /A rail that has not ticked is not a quiet rail/);
+});
+
+test("the report names the OFFICE-SIDE registry and never a town path", () => {
+  const md = render({
+    now: NOW, pots: [], potsInvalid: [], fold: foldFunding([]), anomalyRows: [],
+    rails: [railHealth("x", { last_run: minsAgo(1) }, { now: NOW })],
+    stripe: { hold: [] }, usdcReport: null, ready: [],
+    registry: { addresses: 2, path: "/srv/postmark-wallets/registrations.jsonl", present: true, mapped_pots: 0 },
+  });
+  assert.match(md, /office-side; never the town repo/);
+  assert.match(md, /\/srv\/postmark-wallets\/registrations\.jsonl/);
+  assert.ok(!/WHITE_PAGES\/[^/]*\/wallet/.test(md), "no town-repo wallet path anywhere on the page");
 });
