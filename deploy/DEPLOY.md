@@ -15,12 +15,104 @@ repo ~every 30 min for the site extractor. The office rides that rhythm.
 Feature branches merge into `train/2026-wNN`; the DEV office runs the train
 branch (deploy dev src from the train tip). ~Weekly the train PRs into `main`;
 the founder's Approve is the merge word; the merge cuts `release/2026-wNN[.n]`
-(`.github/workflows/release-train.yml`). PROD deploys are hand-carried FROM
-THE TAG (scp changed src + restart + a probe only the new code passes — the
-live-truth note below), never from main tip or a feature branch. Branches are
+(`.github/workflows/release-train.yml`). PROD deploys go FROM THE TAG — since
+POS-60 the same workflow carries them (§ below); before that they were
+hand-carried by the procedure in the live-truth note above, which remains the
+break-glass. Never from main tip or a feature branch. Branches are
 `train/*`, tags are `release/*` — the namespaces never collide. The record
 repos (world, town) are train-exempt: their main is live by nature; world
 ENGINE changes reach prod through the site's world pin riding the site train.
+
+## The auto-deploy (POS-60, 2026-08-26)
+
+`.github/workflows/release-train.yml` no longer only cuts the tag — it deploys
+it, in the same run. **Nothing about the procedure changed; only the hand did.**
+The workflow does the three steps the live-truth note above prescribes, in that
+order, and goes red if any of them cannot be proven:
+
+| the hand-carry | the workflow |
+|---|---|
+| `scp src/<changed>.mjs` from the tag | `git archive <tag>` → rsync onto the box |
+| `sudo systemctl restart postmark-office` | the same, over ssh, with `sudo -n` |
+| "probe a route whose response only the new code produces" | polls `GET /release` until it names this run's tag and sha |
+
+**Prod code still only moves when the founder approves a train PR.** The
+workflow deploys the tag that approval cuts. A main push whose subject carries
+no train name cuts no tag and deploys nothing.
+
+### The receipt: `GET /release`
+
+The office now serves its own deploy stamp. The workflow writes `release.json`
+into the tree it ships, and `src/release.mjs` reads it **once, at boot** — so an
+answer carrying this run's tag can only come from a process that started after
+this run's copy landed. That is what makes the probe a proof of restart rather
+than a proof of file-copy, and it is pinned by `test/release-door.test.mjs`.
+
+```sh
+curl -s https://postmark.town/api/release
+```
+
+An office placed by hand has no stamp and answers `deployed: false`. That is
+legal and silent — it boots exactly as it always did — but it never reads green
+to a probe.
+
+### What the deploy does NOT touch
+
+The office root is a shared directory, unlike the site's webroot. Root-level
+files sync **without `--delete`**; only the tag's own top-level directories get
+a `--delete` sync. So `town-clone/`, `world-clone/`, `world-clone-pool/`,
+`draft-locks/`, `town.lock`, `office.db`, `oauth.db`, `dynamic.db`,
+`.git-credentials`, `git-metrics-token` and `node_modules/` are never in reach.
+
+Two directories are excluded by name:
+
+- **`telemetry/`** — the trap. It is tracked (`telemetry/github/*.json`) *and*
+  box-written (`access-*.jsonl`, plus fresh gh snapshots the hourly cron writes
+  and commits back later). Deploying it from a tag would delete the live access
+  logs and roll the snapshots back to whenever the train was cut. The box is the
+  writer here; the repo is the archive.
+- **`.github/`** — CI config; nothing on the box reads it.
+
+**Nothing is installed into `/etc`.** `deploy/*.service`, `deploy/*.timer` and
+the nginx confs land in `/srv/postmark-office/deploy/` as ordinary files and go
+no further. Installing a unit or a vhost stays a hand step, deliberately: the
+live copies on the box have drifted from the repo copies before, so read the
+live file and backport it before ever installing over it.
+
+### Dependencies
+
+`npm ci --omit=dev` runs only when `package-lock.json`'s hash differs from the
+marker left by the last install. With no marker and an existing `node_modules`,
+the deploy **adopts** rather than reinstalls — this box has served the town for
+months, its install is correct by demonstration, and the first auto-deploy is
+the wrong moment to tear it down. If it is in fact wrong, the probe fails loudly.
+
+### Rehearsing, and the redeploy lane
+
+- **`workflow_dispatch` → target `dev`** deploys a tag to `/srv/postmark-office-dev`
+  (unit `postmark-office-dev`, port 4381). `dev` is the default on the dispatch
+  form on purpose. Note dev is behind Cloudflare Access, so only the loopback
+  probe can run there — a runner gets a 403 either way.
+- **`workflow_dispatch` → target `prod`**, blank tag, redeploys the newest
+  `release/*` tag. This is the "put it back" button.
+- **Pushing a `release/*` tag by hand** also deploys. The train's own tag push
+  cannot re-trigger a workflow (it is made with `GITHUB_TOKEN`), which is
+  precisely why the deploy job chains onto the tag-cutting job inside one run
+  rather than living in a separate tag-triggered file that would never fire.
+
+### Repo secrets it needs
+
+`EC2_HOST`, `EC2_USER`, `EC2_SSH_KEY` — the same three names the site repo
+already holds. Set them on `keeminlee/postmark-office`. The deploy user must own
+`/srv/postmark-office` outright and hold passwordless sudo for `systemctl` on
+the office units; the workflow's preflight checks both **before** copying a
+single byte, and says which `chown` to run if the tree is not writable. A
+permissions bounce is fixed by `chown`, never by escalating the copy to sudo.
+
+### Rollback
+
+`sudo systemctl stop postmark-office` (as below), or redeploy the previous tag
+by `workflow_dispatch` with `target: prod` and that tag's name.
 
 ## One-time setup
 

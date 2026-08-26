@@ -3,3 +3,10 @@
 # .mjs/.md diff into a Bin sweep. Text, LF, always.
 *.mjs text eol=lf
 *.md text eol=lf
+# POS-60: .sh and .yml join the guard for a second reason on top of that one —
+# these two run on Linux. A shell script committed with CRLF from a Windows
+# checkout fails on the box with `bash: \r: command not found`, and the deploy
+# script here IS the deploy. Text, LF, always.
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
