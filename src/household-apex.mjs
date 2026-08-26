@@ -500,8 +500,9 @@ export async function householdApex(args = {}, key = null, ctx = {}) {
     try {
       return {
         cards: wanted.map((a) => actCard(a, store.db, { schemas, schemaRequired })),
-        // KEPT, on a new answer as on the old one. Hal, of the same read:
-        // "the reading_law on every answer is worth the small token cost."
+        // KEPT, on a new answer as on the old one — Hal named the law on every
+        // answer as one of the things worth keeping, "worth the small token
+        // cost" being the whole of what he said about the price of it.
         reading_law: READING_LAW,
       };
     } finally { store.db?.close(); }
