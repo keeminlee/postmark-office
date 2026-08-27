@@ -100,6 +100,29 @@ export async function enterViaOffice(worldClone, payload = {}, key = null, deps 
   });
   if (answer.error) throw bounce(422, answer.error, "a mark you can step inside has a place and an extent; a point has no inside");
 
+  // A DOOR IS ENTERED FROM ITS DOORSTEP (founder-ruled 2026-08-27, option A of
+  // the R15 collision — found on the first dev walk: "you can enter things when
+  // you aren't even there"). The world's crossingPlan assumed a "bundled walk"
+  // that R15 forbids this office to perform, so entry-from-anywhere landed as
+  // occupancy with no presence. The ruling keeps R15 clean BOTH ways: no
+  // walking means no arriving. The measure is to the FIRST UNCROSSED LINK of
+  // the chain — entering a cellar from the house's own doorstep still works —
+  // and "at the door" is within its extent, or within EARSHOT_M (60, the
+  // town's own being-part-of-a-scene number) of its anchor. The refusal hands
+  // back the directions instead of the deed; a client that wants one-click
+  // convenience walks first, then knocks again.
+  const EARSHOT_M = 60;
+  const firstLink = answer.links?.length ? (w.marks ?? []).find((m) => m.id === answer.links[0]) : null;
+  if (firstLink && answer.walk) {
+    const within = typeof verbs.pointWithinMark === "function" && verbs.pointWithinMark(here, firstLink);
+    const dx = (firstLink.at?.x ?? 0) - (here?.x ?? 0), dy = (firstLink.at?.y ?? 0) - (here?.y ?? 0);
+    const m = Math.hypot(dx, dy);
+    if (!within && m > EARSHOT_M) {
+      throw bounce(409, `you are not at that door — ${firstLink.id} stands ~${Math.round(m)} m from where you stand`,
+        `a door is entered from its doorstep (founder-ruled 2026-08-27; R15 keeps walk and entry decoupled in both directions). Walk to (${firstLink.at?.x}, ${firstLink.at?.y}) and knock again; nothing was recorded`);
+    }
+  }
+
   // TERMS SHOWN, NOTHING WRITTEN. A door that declares a counter-edge is asking
   // for the walker's own word, and withholding it is not a refusal by the mark
   // — it is the walker declining to author the act. So it never reaches the

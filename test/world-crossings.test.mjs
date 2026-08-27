@@ -169,3 +169,29 @@ test("the dispatch table holds the pair, and the fields come from their own sche
   assert.equal(CROSSING_TOOLS.every((t) => t.inputSchema.additionalProperties === false), true,
     "closed schemas: an unknown field bounces by name");
 });
+
+// ── the doorstep law (founder-ruled 2026-08-27, option A of the R15 collision) ──
+
+test("a door is entered from its doorstep — entry from afar is refused with directions, and nothing reaches the pen", async () => {
+  // "You can enter things when you aren't even there" — the first dev walk's
+  // finding. The bundled walk the world's crossingPlan assumed is performed by
+  // nobody (R15: the office never writes a walk), so before this guard, entry
+  // from anywhere landed as occupancy with no presence. The ruling: at the
+  // door means within the first uncrossed link's extent or within 60 m of its
+  // anchor; farther is a 409 carrying the walk-to coordinates, not a deed.
+  const o = await officeWith({ standing: { x: 90000, y: 90000 } });
+  await assert.rejects(
+    () => enterViaOffice(CLONE, { mark: SHIP }, key("postmaster"), o.deps),
+    (e) => e.code === 409 && /not at that door/.test(e.defect) && /Walk to \(/.test(e.hint ?? e.resolves ?? ""),
+    "a caller ~127 km away must be refused with directions");
+  assert.equal(o.written.length, 0, "and nothing reached the pen — a refusal at the doorstep writes no crossing");
+});
+
+test("...and the doorstep itself still admits — within earshot of the first link is at the door", async () => {
+  // The default fixture standing is the one every chain falsifier above enters
+  // from; if this test reddens, the guard has started refusing the doorstep
+  // and every chain law above it is standing on a corpse.
+  const o = await officeWith();
+  const answer = await enterViaOffice(CLONE, { mark: SHIP, accept: true }, key("postmaster"), o.deps);
+  assert.ok((answer.entered ?? []).length > 0 || answer.already, "the doorstep entry must land (or already be within)");
+});
