@@ -133,9 +133,19 @@
 #   # 3. meepo must be able to swap the link in /var/www (it owns nothing there today)
 #   sudo chown meepo /var/www           # or: setfacl -m u:meepo:rwx /var/www
 #
+#   # 3b. the falsifiers, against a throwaway sandbox — they touch nothing real
+#   #     and take about a minute. They are how the three bugs in this script's
+#   #     first draft were found; run them before trusting a new copy of it.
+#   bash /srv/postmark-office/deploy/site-refresh-selftest.sh
+#
 #   # 4. FIRST RUN BY HAND, publishing nowhere — proves the build works before
 #   #    anything the public reads is touched. This writes a release dir and a
 #   #    report and swaps a link inside the sandbox root, not the real webroot.
+#   #
+#   #    EXPECT THIS ONE TO BE SLOW: it clones the town (large — images) and the
+#   #    site, runs two npm ci's, and builds every page. Ten to twenty minutes is
+#   #    normal for the FIRST run and says nothing about the steady state, which
+#   #    is a few fetches on a quiet tick. Watch it rather than backgrounding it.
 #   sudo -u meepo env SITE_WEBROOT=/srv/postmark-site-refresh/sandbox-webroot \
 #     /srv/postmark-office/deploy/site-refresh.sh
 #   ls -l /srv/postmark-site-refresh/sandbox-webroot   # -> a symlink into releases/
@@ -157,6 +167,13 @@
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable --now postmark-site-refresh.timer
 #   systemctl list-timers postmark-site-refresh --no-pager     # expect :10 and :40
+#
+#   #    EXPECT THE FIRST TIMER TICK TO SAY "quiet", AND THAT IS CORRECT: step 4
+#   #    already built this exact snapshot and wrote it into state.json, and step
+#   #    5 pointed prod at it. The first tick that does real work is the one
+#   #    after the town next moves — within thirty minutes, or at the next ferry.
+#   #    If you would rather watch a real build now, `sudo -u meepo systemctl
+#   #    start postmark-site-refresh` after any town commit lands.
 #
 #   # 7. ONLY AFTER a full ferry crossing has landed on the box timer and the
 #   #    site's own crossing disclosure agrees with the office: retire GitHub's
