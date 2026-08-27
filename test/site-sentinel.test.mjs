@@ -22,6 +22,7 @@ import { join } from "node:path";
 import {
   classifyUp,
   classifyStamp,
+  classifyCrossing,
   classifyDaily,
   dailyFingerprint,
   normalizeText,
@@ -38,6 +39,7 @@ import {
   run,
   MINUTE,
   HOUR,
+  CONFIG,
 } from "../tools/site-sentinel.mjs";
 
 const T0 = Date.parse("2026-08-25T12:00:00Z");
@@ -144,6 +146,108 @@ test("classifyStamp: a cold start is quiet, and an unreadable side is UNKNOWN ra
   // spot, and calling a blind spot healthy is the lie the whole file is against.
   assert.equal(classifyStamp({ served: null, reference: "b", seen: null, nowMs: T0, staleAfterMs: HOUR, what: "x", referenceName: "y" }).verdict, "UNKNOWN");
   assert.equal(classifyStamp({ served: "a", reference: null, seen: null, nowMs: T0, staleAfterMs: HOUR, what: "x", referenceName: "y" }).verdict, "UNKNOWN");
+});
+
+// ── §2b the crossing ────────────────────────────────────────────────────────
+//
+// THE LAW THESE ASSERT, verbatim from EPICS/POSTMARK/freshness-architecture.md
+// § the mushy middle:
+//
+//   "mushiness must be disclosed — the page states when it was generated and
+//    which ferry crossing it reflects, says 'a ferry has landed since this page
+//    was made' when true, and never prints a cadence promise it does not
+//    control."
+//
+// and, on why this probe exists at all beside the wall-clock ones:
+//
+//   "The crossing-aware watchdog: site-sentinel compares the site's crossing
+//    number to reality's, instead of (only) a wall-clock age threshold — a
+//    wall-clock threshold cannot see an event-shaped failure."
+//
+// THE DEFECT THEY CLOSE is the 2026-08-26 incident: prod's delivery stalled 97
+// minutes past a ferry crossing and 48 residents' doorstep pages served
+// yesterday's mail. Every wall-clock probe in this file was green throughout,
+// because the site HAD rebuilt recently — it had just rebuilt the wrong side of
+// a ferry. The first test below is that incident, to the minute.
+
+// The town clock, in the falsifiers' own hands, so a test can place itself at
+// an exact number of minutes past a crossing.
+const CROSSING_AT = (n) => Date.parse("2026-06-12T00:00:00Z") + n * 12 * 60 * 60_000;
+
+test("THE 08-26 INCIDENT: 97 minutes past a ferry with the site still on the old crossing is STALE, and says a ferry has landed", () => {
+  const stale = classifyCrossing({
+    servedCrossing: 148, officeCrossing: 149,
+    nowMs: CROSSING_AT(149) + 97 * MINUTE, graceMs: CONFIG.crossingGrace,
+  });
+  assert.equal(stale.verdict, "STALE");
+  assert.match(stale.reason, /a ferry has landed since the site was built/,
+    "the founder's own sentence, said in the alert a reader actually gets");
+  assert.match(stale.reason, /crossing 148/, "and it names the crossing the site is stuck on");
+  assert.match(stale.reason, /1h37m/, "and how long the town has been past it");
+});
+
+test("THE FLIP: the same probe against a FRESH site is OK — it must not fire on a healthy town", () => {
+  // caught up: the site baked the crossing the town is at
+  const level = classifyCrossing({
+    servedCrossing: 149, officeCrossing: 149,
+    nowMs: CROSSING_AT(149) + 97 * MINUTE, graceMs: CONFIG.crossingGrace,
+  });
+  assert.equal(level.verdict, "OK", "a site showing the current crossing is never a finding");
+
+  // and AHEAD is fine too: a build that straddled the ferry stamps the newer
+  // number honestly, because the town data it read was on the far side of it.
+  assert.equal(classifyCrossing({
+    servedCrossing: 150, officeCrossing: 149,
+    nowMs: CROSSING_AT(149) + 10 * MINUTE, graceMs: CONFIG.crossingGrace,
+  }).verdict, "OK");
+});
+
+test("the rebuild window is TWO TICKS wide — quiet at :40, loud once both ticks have had their turn", () => {
+  const one = (mins) => classifyCrossing({
+    servedCrossing: 148, officeCrossing: 149,
+    nowMs: CROSSING_AT(149) + mins * MINUTE, graceMs: CONFIG.crossingGrace,
+  });
+  // the :10 tick is still building
+  assert.equal(one(12).verdict, "OK");
+  assert.match(one(12).reason, /inside the 1h rebuild window/);
+  // the :40 tick's turn — still inside
+  assert.equal(one(45).verdict, "OK");
+  // an hour on, both ticks have had their chance and neither landed
+  assert.equal(one(61).verdict, "STALE");
+});
+
+test("two crossings behind is STALE whatever the clock says — no rebuild window excuses a whole missed ferry", () => {
+  // one minute past a crossing is the most forgiving instant there is, and it
+  // must still not forgive this: a full crossing came and went unseen.
+  const said = classifyCrossing({
+    servedCrossing: 147, officeCrossing: 149,
+    nowMs: CROSSING_AT(149) + 1 * MINUTE, graceMs: CONFIG.crossingGrace,
+  });
+  assert.equal(said.verdict, "STALE");
+  assert.match(said.reason, /2 ferries have landed/, "and it counts them, so the reader knows the size of the gap");
+});
+
+test("a crossing it cannot read is UNKNOWN and says which side went dark — never a green all-clear", () => {
+  // Three different unreadables, three different repairs, three sentences. A
+  // single "could not tell" would send the reader to the other probes to learn
+  // which one it was, at the hour they are least able to.
+  const noBuildJson = classifyCrossing({ haveStamp: false, servedCrossing: null, officeCrossing: 149, nowMs: CROSSING_AT(149), graceMs: CONFIG.crossingGrace });
+  assert.equal(noBuildJson.verdict, "UNKNOWN");
+  assert.match(noBuildJson.reason, /serves no \/build\.json at all/);
+
+  const noStamp = classifyCrossing({ servedCrossing: null, officeCrossing: 149, nowMs: CROSSING_AT(149), graceMs: CONFIG.crossingGrace });
+  assert.equal(noStamp.verdict, "UNKNOWN");
+  assert.match(noStamp.reason, /build stamp names no crossing/);
+  assert.notEqual(noStamp.reason, noBuildJson.reason,
+    "a stamp that exists without a crossing is a DIFFERENT fix from no stamp at all");
+
+  const noOffice = classifyCrossing({ servedCrossing: 149, officeCrossing: null, nowMs: CROSSING_AT(149), graceMs: CONFIG.crossingGrace });
+  assert.equal(noOffice.verdict, "UNKNOWN");
+  assert.match(noOffice.reason, /office did not serve a crossing number/);
+
+  // THE FALSIFIER: folding "cannot tell" into "nothing is wrong" is the failure
+  // that makes a sentinel worse than none — the reader is now trusting silence.
+  for (const said of [noBuildJson, noStamp, noOffice]) assert.notEqual(said.verdict, "OK");
 });
 
 test("humanDuration reads inside a sentence", () => {
@@ -415,8 +519,11 @@ function stubFetch(table) {
 }
 
 const GREEN_TABLE = {
-  "https://postmark.town/api/": { status: 200, headers: { "x-postmark-as-of": "towntip0000" }, body: "{}" },
-  "https://postmark.town/build.json": { status: 200, body: JSON.stringify({ channel: "release", code_sha: "relsha00000", town_data_sha: "sitetip0000" }) },
+  // T0 is 2026-08-25T12:00:00Z, which IS the start of crossing 149 (the town
+  // clock: 12h since 2026-06-12) — the same crossing DAILY_MD above names, so
+  // the whole green fixture describes one coherent moment in the town.
+  "https://postmark.town/api/": { status: 200, headers: { "x-postmark-as-of": "towntip0000" }, body: JSON.stringify({ crossing: { number: 149 } }) },
+  "https://postmark.town/build.json": { status: 200, body: JSON.stringify({ channel: "release", code_sha: "relsha00000", town_data_sha: "sitetip0000", crossing: 149 }) },
   "https://postmark.town/daily/ferrys-daily.html": { status: 200, body: `<h2>"An arithmetic that balances is not an arithmetic that agrees"</h2>` },
   "https://raw.githubusercontent.com/postmark-town/postmark/main/TOWN_BULLETIN/ferrys-daily.md": { status: 200, body: DAILY_MD },
   "https://api.github.com/repos/postmark-town/postmark/commits": { status: 200, body: JSON.stringify([{ commit: { committer: { date: "2026-08-25T06:00:00Z" } } }]) },
@@ -620,4 +727,81 @@ test("a watcher inside its cadence window is OK", () => {
 test("an UNADOPTED Stage-B watcher is INFO — parked is not broken", () => {
   const r = classifyWatcher({ adopted: false, exists: false, nowMs: 1000, cadenceMs: 600_000, label: "the stripe-watch timer" });
   assert.equal(r.verdict, "INFO");
+});
+
+
+// ── §6b: the watch's expectation must match the unit it watches ─────────────
+
+test("every watcher's expected cadence is the cadence its own shipped timer fires at", () => {
+  // LAW (tools/site-sentinel.mjs § classifyWatcher, verbatim): a watcher is
+  //     STALE when it "last wrote its state ${...} min ago against a ${...}-min
+  //     cadence". The sentence is only true if the number it quotes is the
+  //     number the unit actually uses.
+  //
+  // THE DRIFT THIS CAUGHT, live on this branch: stripe_watch was configured at
+  // a 10-minute cadence while deploy/postmark-stripe-watch.timer has always
+  // fired `OnCalendar=*:7/15`. The tolerance is 3× the cadence, so the watch
+  // allowed 30 minutes for a rail that ticks every 15 — ONE missed tick short
+  // of alarming, and the reason line it would print names a cadence the box
+  // does not run. A probe that cries wolf is a probe the reader mutes, and a
+  // muted channel is the silent failure this whole file exists to end.
+  //
+  // Reading the unit rather than a second constant is the point: these two
+  // numbers live in different files and nothing but this test makes them agree.
+  const OFFICE = new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
+  for (const w of _CFG.watchers ?? []) {
+    assert.ok(w.unit, `${w.key} names the unit it watches`);
+    const unitPath = join(OFFICE, "deploy", w.unit);
+    assert.ok(existsSync(unitPath), `${w.unit} is a unit this repo ships`);
+    const unit = readFileSync(unitPath, "utf8");
+    const m = unit.match(/^OnCalendar=\*:(\d+)\/(\d+)\s*$/m);
+    assert.ok(m, `${w.unit} declares an OnCalendar this test can read`);
+    const everyMin = Number(m[2]);
+    assert.equal(
+      w.cadenceMs, everyMin * 60_000,
+      `${w.key} expects ${Math.round(w.cadenceMs / 60_000)} min but ${w.unit} fires every ${everyMin} min`,
+    );
+  }
+});
+
+
+test("a probe PARKED BY DESIGN is admitted in the one line the operator reads", () => {
+  // LAW (tools/site-sentinel.mjs § the board, verbatim, on the summary field):
+  //     "The one line the operator round reads. Kept as its own field so a
+  //     reader never has to reduce the array themselves and get a different
+  //     answer."
+  //
+  // THE HOLE THIS CLOSES. `classifyWatcher` answers INFO for a Stage-B watcher
+  // that was never adopted — correctly, because parked-by-design is not a
+  // failure. But the summary said `All ${counts.OK} probes green.`, which
+  // counted only the OK ones while the word "All" claimed the whole board. So a
+  // rail that was built, shipped inert, and then forgotten reported as a clean
+  // all-green tick forever — which is precisely the "staged inert, silently, for
+  // good" failure the Stage-A/Stage-B split was designed to make impossible.
+  //
+  // A parked probe must never ALARM (that trains the reader to mute the
+  // channel) and must never be INVISIBLE either. Counted, not alarmed.
+  const probes = [
+    { key: "a", label: "a public door", verdict: "OK", reason: "200" },
+    { key: "stripe_watch", label: "the stripe-watch timer", verdict: "INFO", reason: "not adopted (Stage B parked) — nothing to watch yet" },
+  ];
+  const board = composeBoard({ probes, nowIso: "2026-08-27T12:00:00Z", alerting: {} });
+
+  assert.equal(board.status, "OK", "parked by design is not a failure");
+  assert.equal(board.counts.INFO, 1);
+  assert.doesNotMatch(board.summary, /^All /, "'All' may not describe a board it did not count");
+  assert.match(board.summary, /1 parked/, "the parked probe is named in the line that gets read");
+
+  // and with nothing parked, the old sentence is untouched
+  const clean = composeBoard({ probes: [{ key: "a", verdict: "OK" }], nowIso: "x", alerting: {} });
+  assert.match(clean.summary, /^All 1 probes green\./);
+});
+
+test("a hand-run sentinel prints the parked rails too, not only the broken ones", () => {
+  // Same hole, the other surface: the console loop skipped every verdict that
+  // was not OK-or-INFO, so an operator running this by hand saw nothing at all
+  // about a rail that had never been switched on. The board and the terminal
+  // must agree about what is worth saying.
+  const src = readFileSync(new URL("../tools/site-sentinel.mjs", import.meta.url), "utf8");
+  assert.match(src, /PARKED/, "the console names parked probes");
 });

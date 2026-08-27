@@ -357,8 +357,48 @@ test("slug + lookup: a house answers to its slug, its name, and its human", () =
   assert.equal(houseForName(reg, "Keemin"), "the-trueing-house", "the human's name finds the house too");
   assert.equal(houseForName(reg, "nobody's house"), null);
   assert.equal(houseForAccount(reg, 999, "keeminlee"), "the-trueing-house");
-  assert.equal(houseForAccount(reg, null, "CrowAndClock"), "the-rookery", "login match is case-blind");
   assert.equal(houseForAccount(reg, 424242, "some-stranger"), null);
+
+  // ⚑ THIS ASSERTION WAS CHANGED, AND THE CHANGE IS THE FIX.
+  // It used to read `houseForAccount(reg, null, "CrowAndClock") === "the-rookery"`
+  // with the note "login match is case-blind" — i.e. it asserted that a caller
+  // carrying NO verified id could reach a PINNED account (the-rookery's row is
+  // {login:"crowandclock", id:265401358}) by naming its login. That is the
+  // recycled-login hole, written down as a desired property. GitHub releases
+  // abandoned logins; the town's own witness.mjs § loadBindings already says a
+  // pinned resident is "deliberately NOT login-matchable". The lookup now obeys
+  // that, so the old expectation is false by design.
+  assert.equal(houseForAccount(reg, null, "CrowAndClock"), null,
+    "a pinned row is NOT login-matchable — an id is on record, so only an id may match it");
+  assert.equal(houseForAccount(reg, 265401358, "anything-at-all"), "the-rookery",
+    "the pinned row still answers to its id, whatever the caller is called today");
+});
+
+test("LOGIN FALLBACK SURVIVES where no id is on record — nothing unpinned regresses", () => {
+  // A legacy row: the registry allows an account with a login and no id, and
+  // for those the login is the only road there has ever been. Closing the hole
+  // must not close that road, or every unpinned household stops being found.
+  const legacy = {
+    schema_version: 1,
+    households: {
+      "old-house": { name: "Old House", accounts: [{ login: "unpinned-soul" }], residents: ["someone"] },
+    },
+  };
+  assert.equal(houseForAccount(legacy, null, "unpinned-soul"), "old-house");
+  assert.equal(houseForAccount(legacy, 12345, "UNPINNED-SOUL"), "old-house",
+    "still case-blind, and an id the row does not carry does not prevent the match");
+  assert.equal(houseForAccount(legacy, null, "someone-else"), null);
+});
+
+test("THE HOLE: a different id wearing a recycled login is refused where an id is on record", () => {
+  const reg = REGISTRY();
+  // the-trueing-house is {login:"keeminlee", id:999}. A stranger registers the
+  // abandoned login and arrives with their own, different, verified id.
+  assert.equal(houseForAccount(reg, 424242, "keeminlee"), null,
+    "an OR here would have handed a stranger the household by name alone");
+  // And the real owner is unaffected by whatever they are called now.
+  assert.equal(houseForAccount(reg, 999, "keemin-renamed"), "the-trueing-house",
+    "the owner keeps their house across their own rename — that is the same law's other half");
 });
 
 test("no household named and no known account → no registry diff at all", () => {

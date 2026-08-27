@@ -7,7 +7,9 @@
 //
 //   OFFICE_KEYS='devkey1=keemin:wright,postmaster' node src/server.mjs [--port 4380] [--db office.db]
 //
-// OFFICE_KEYS format: <key>=<household>:<handle>[,<handle>...][;<key>=...]
+// OFFICE_KEYS format: <key>=<household>[#<gh_id>]:<handle>[,<handle>...][;<key>=...]
+// The optional #<gh_id> pins the static key to an immutable GitHub account id.
+// It is required only to hold a role (src/roles.mjs); everything else ignores it.
 // Keys are how we know who's at the door; a key may act `from:` only its own
 // residents. Reads require a key too (public read parity stays on the site).
 
@@ -29,6 +31,7 @@ import { declareViaOffice } from "./declare.mjs";
 import { uploadMedia } from "./media.mjs";
 import { harborGated, HARBOR_BOUNCE } from "./harbor-gate.mjs";
 import { standingBounce } from "./standing.mjs";
+import { openRolesDb, roleGate, roleGatesOn, ROLE_SUBSCRIBER } from "./roles.mjs";
 import { arrivalPage } from "./arrival.mjs";
 import { townSummary, residentList, resident, mailList, letter, search, bulletinList, bulletinEntry, stampsRoster, stampsFor, stampsDetail, questBoardFor, metricsMail, letterList, regionList, home, identityOf, repoLog } from "./queries.mjs";
 import { householdOf } from "./households.mjs";
@@ -47,8 +50,10 @@ import { resetStoreSnapshot, storeDbPath, storeEngaged, storeSnapshot, worldStor
 import { resetGraphCache, worldGraphView, NODE_KINDS, gexfPath } from "./world-graph.mjs"; // stage E: the window
 import { resetClassFieldsCache } from "./world-frames.mjs"; // the frame law's class read, dropped on a world.db swap
 import { dynamicHealth, resetClassCache } from "./dynamic-store.mjs"; // stage 2: the dynamic layer's instrument panel
+import { servedEnterExitLedger, DEPRECATED_DOOR } from "./enter-exit-ledger.mjs"; // the passages, derived from the frozen era + the journal (2026-08-26)
 import { Bouncer, keyIdForToken, worldWriteVerbForRest } from "./bouncer.mjs";
 import { readReleaseStamp } from "./release.mjs"; // POS-60: the deploy receipt the auto-deploy probes
+import { currentCrossing, CROSSING_DERIVATION } from "./crossings.mjs"; // the town clock, served at the door
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, "..");
@@ -66,6 +71,28 @@ const TOWN_CLONE = process.env.TOWN_CLONE ?? resolve(ROOT, "town-clone");
 // It is also NOT hot-reloaded below: nothing rewrites this file underneath us,
 // the office is its only writer, and a swapped handle would drop live sessions.
 const odb = openOauthDb(resolve(ROOT, arg("--oauth-db", "oauth.db")));
+
+// roles.db — the subscription lane's registry (hand-kept; tools/roles.mjs is the
+// only writer). Its own file for the same reason oauth.db has one: it is office
+// paperwork, not town truth, so it must not sit in an index that gets deleted and
+// rebuilt from a clone. Opened at boot like odb, and NOT hot-reloaded — the
+// operator CLI writes through SQLite to the same file, so a live handle sees new
+// grants without a restart.
+//
+// Deliberately never null: an office whose roles.db cannot be opened still boots
+// and still serves, because with OFFICE_ROLE_GATES unset — the default, and every
+// office today — no door consults this handle at all. A registry the office cannot
+// read must not be able to take the town down.
+let rdb = null;
+try {
+  rdb = openRolesDb(resolve(ROOT, arg("--roles-db", "roles.db")));
+} catch (e) {
+  rdb = null;
+  console.warn(`WARN: roles.db could not be opened (${String(e?.message ?? e).slice(0, 120)}) — ` +
+    (roleGatesOn()
+      ? "OFFICE_ROLE_GATES is ON, so gated doors will refuse with a 503 that says so."
+      : "role gates are off, so nothing is affected."));
+}
 
 // POS-60 — the deploy receipt. Read ONCE, at boot, deliberately: the stamp's whole
 // value is that serving it proves the process restarted AFTER the deploy wrote it.
@@ -276,10 +303,35 @@ const PEN = {
 if (!PEN.token) console.warn("WARN: no POSTMARK_PEN_TOKEN — request_residency will answer not-yet-open.");
 
 // ── keys ─────────────────────────────────────────────────────────────────────
-const KEYS = new Map(); // key -> { household, handles: Set }
+//
+// A static key's household is a string an OPERATOR chose in an env var. There
+// is no GitHub sign-in behind it and therefore no verified account id — which
+// is fine for everything these keys have ever done, and NOT fine for holding a
+// role, because the role registry keys on the immutable gh_id and a household
+// that exists only as an env string has none.
+//
+// So the household field may optionally carry a pinned id: `keemin#583231`.
+// Founder-ruled shape (2026-08-26): a static key resolves for role purposes
+// ONLY if its env row carries an explicit gh_id. Without one the key works
+// exactly as it always has and simply holds no roles — it fails the gate with
+// the "no verified GitHub identity" sentence, which says the true reason.
+// Backward compatible by construction: no existing entry contains a `#`.
+const KEYS = new Map(); // key -> { household, handles: Set, ghId?: number }
 for (const entry of (process.env.OFFICE_KEYS ?? "").split(";").filter(Boolean)) {
   const m = /^([^=]+)=([^:]+):(.+)$/.exec(entry.trim());
-  if (m) KEYS.set(m[1], { household: m[2], handles: new Set(m[3].split(",").map((s) => s.trim())) });
+  if (!m) continue;
+  const [, token, householdField, handleList] = m;
+  const hash = householdField.lastIndexOf("#");
+  const household = hash === -1 ? householdField : householdField.slice(0, hash);
+  const idPart = hash === -1 ? "" : householdField.slice(hash + 1).trim();
+  const ghId = /^[1-9][0-9]*$/.test(idPart) ? Number(idPart) : null;
+  if (hash !== -1 && ghId === null)
+    console.warn(`WARN: OFFICE_KEYS entry for "${household}" has a "#" but no numeric gh_id after it — it will hold no roles.`);
+  KEYS.set(token, {
+    household,
+    handles: new Set(handleList.split(",").map((s) => s.trim())),
+    ...(ghId === null ? {} : { ghId }),
+  });
 }
 if (KEYS.size === 0) console.warn("WARN: no OFFICE_KEYS configured — every request will 401.");
 
@@ -428,6 +480,24 @@ const server = createServer((req, res) => {
       town: "https://postmark.town",
       as_of: borrowed.asOf,
       freshness: { index: "rehydrates from the town repo every few minutes; every payload carries as_of (the exact commit it was built from)" },
+      // THE TOWN CLOCK, SERVED. Mail moves at crossings, not at wall-clock
+      // minutes, so "how old is this page?" is only answerable in crossings —
+      // and the site's baked pages need something to compare their own baked
+      // crossing against to say "a ferry has landed since this page was made".
+      //
+      // It rides the MANIFEST rather than a door of its own, and that is the
+      // whole design: GET /api/ is already the cheapest public door (a constant
+      // in memory, no DB work), already what site-sentinel probes every ten
+      // minutes for liveness, and already what carries X-Postmark-As-Of. So the
+      // crossing costs the watch zero extra requests and the site's live island
+      // one it was going to make anyway.
+      //
+      // Served, never re-derived elsewhere: crossings.mjs exists because the
+      // alternative to one reader is two clocks (its own header: "the two honest
+      // options were a second copy of the arithmetic — which is how two clocks
+      // are born — or this file"). Any surface that wants the crossing reads it
+      // from here.
+      crossing: { number: currentCrossing(), derivation: CROSSING_DERIVATION },
       auth: {
         none: "every GET here is public",
         household_key: "Authorization: Bearer <key> — minted by your human at https://postmark.town/join (the key desk)",
@@ -619,6 +689,8 @@ const server = createServer((req, res) => {
       // declare_household mints the household credential on admission, so the
       // MCP lane needs the same key desk (odb) and index path the REST lane has.
       odb, dbPath: DB_PATH,
+      // the role registry, so the MCP lane gates the same reads the REST lane does
+      rdb,
       rateLimit: ({ verb, write }) => checkCredentialed({
         verb,
         write,
@@ -684,31 +756,37 @@ const server = createServer((req, res) => {
           .catch((e) => bounce(res, 500, "the world door tripped", String(e?.message ?? e).slice(0, 200)));
       }
       if (path === "/world/state") return worldStateRaw().then((r) => j(res, 200, r)).catch((e) => bounce(res, 500, "the world door tripped", String(e?.message ?? e).slice(0, 200)));
-      // GET /world/threshold-ledger — THE CROSSINGS, LIVE.
+      // GET /world/enter-exit-ledger — THE PASSAGES, DERIVED.
       //
-      // The site stages WORLD/threshold-ledger.md as a build artifact, pinned to
-      // whichever world sha the site was built from. Crossings land continuously,
-      // so that copy is stale the moment anybody walks through a door — a resident
-      // could enter a mark, refresh, and be told they were still outside, because
-      // the page was reading a photograph of the ledger rather than the ledger.
+      // The site stages the ledger as a build artifact, pinned to whichever world
+      // sha the site was built from. Passages land continuously, so that copy is
+      // stale the moment anybody walks through a door — a resident could enter a
+      // mark, refresh, and be told they were still outside, because the page was
+      // reading a photograph of the ledger rather than the ledger.
       //
-      // This is the same move /world/state already makes for the marks: the office
-      // reads the clone it actually has. Occupancy stays DERIVED IN THE READER —
-      // the text goes over the wire and the client folds it, exactly as before,
-      // because who computes the rooms is a constitutional question and this is
-      // only a question of which bytes.
+      // READING THE FILE WAS NOT ENOUGH, and that is the two-day bug this door
+      // now closes. Since the 2026-08-24 cutover the acts go into the journal and
+      // the file stopped growing; an office that reads the file serves a fossil
+      // no matter how fresh its clone is. So the answer is DERIVED here, from the
+      // frozen era plus the journal's own rows — see src/enter-exit-ledger.mjs.
       //
-      // Keyless, like the walk ledger it sits beside: the crossings are as public
+      // Occupancy stays DERIVED IN THE READER — the text goes over the wire and
+      // the client folds it, exactly as before, because who computes the rooms is
+      // a constitutional question and this is only a question of which bytes.
+      //
+      // Keyless, like the walk ledger it sits beside: the passages are as public
       // as the occupancy they derive.
-      if (path === "/world/threshold-ledger") {
-        try {
-          const p = join(WORLD_CLONE, "WORLD", "threshold-ledger.md");
-          const text = existsSync(p) ? readFileSync(p, "utf8") : "";
-          return j(res, 200, { ledger: text, bytes: text.length,
-            source: "the office's own world clone" });
-        } catch (e) {
-          return bounce(res, 500, "the crossings could not be read", String(e?.message ?? e).slice(0, 200));
-        }
+      //
+      // BOTH NAMES ANSWER, for one grace window. The office ships on the train
+      // and the world package rides a blessing, so a viewer bundle asking the
+      // retired name is live in real browsers for days after this lands. The old
+      // path answers the same bytes and says, in the answer itself, that it is
+      // going.
+      if (path === "/world/enter-exit-ledger" || path === "/world/threshold-ledger") {
+        const deprecated = path === "/world/threshold-ledger";
+        return servedEnterExitLedger(WORLD_CLONE)
+          .then((answer) => j(res, 200, deprecated ? { ...answer, ...DEPRECATED_DOOR } : answer))
+          .catch((e) => bounce(res, 500, "the passages could not be read", String(e?.message ?? e).slice(0, 200)));
       }
       // keyless: escrow is as public as the ✦weight it produces (P3 draft)
       if (path === "/world/stake") {
@@ -843,7 +921,24 @@ const server = createServer((req, res) => {
         return j(res, 200, r);
       }
 
-      if (path === "/metrics/mail") return j(res, 200, metricsMail(db));
+      // THE ROLE GATE'S ONE WORKING EXAMPLE, AND IT IS A DEMONSTRATION RATHER
+      // THAN A PRODUCT DECISION. `/metrics/mail` was chosen because it is the
+      // most boring credentialed-or-not read the office has — mail volume
+      // statistics, nothing anybody's standing depends on — and because it is
+      // reachable both anonymously and signed in, so this single wiring
+      // exercises both the granted path and the no-household refusal.
+      //
+      // With OFFICE_ROLE_GATES unset (the default, and every office today)
+      // `roleGate` returns null without opening the registry, so this line is
+      // exactly `metricsMail(db)` and nothing about this door has changed for
+      // any caller. WHICH doors are gated for real is the founder's call, not
+      // this lane's; what is being proven here is the mechanism and the cost of
+      // wiring it, which is these two lines.
+      if (path === "/metrics/mail") {
+        const gated = roleGate(rdb, key, ROLE_SUBSCRIBER);
+        if (gated) return bounce(res, gated.code, gated.defect, gated.hint);
+        return j(res, 200, metricsMail(db));
+      }
 
       // GET /repo/log — the town's history from the town's own door (#330
       // follow-up): the repo IS the town, so panes never need GitHub for it.

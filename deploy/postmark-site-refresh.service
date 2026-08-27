@@ -1,0 +1,45 @@
+[Unit]
+Description=Postmark site refresh — the town's data layer rebakes on the box, not on GitHub's clock
+# The mushy middle's timer (EPICS/POSTMARK/freshness-architecture.md, founder-ruled
+# 2026-08-26/27, after a ferry's mail sat 97 minutes behind a stalled GitHub cron
+# and 48 doorstep pages served yesterday). The full argument, the one-recipe rule,
+# and every box-side INSTALL step live in the script's own header:
+#   /srv/postmark-office/deploy/site-refresh.sh
+#
+# NOT INSTALLED by anything automatic. Repo copy only — the box install is
+# Wright's hand, per the script header's INSTALL block. Install it AFTER the
+# hand-run against a sandbox webroot has produced a release dir you have looked at.
+#
+# Exit 0 published / quiet / stood down behind the lock · 1 the build failed and
+# NOTHING was published (the standing symlink keeps serving the last good build).
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Same user as every other office lane: the clones, the release dirs and the
+# webroot symlink are all meepo's. See INSTALL step 3 — meepo needs write on
+# /var/www to swap the link, which it does not have by default.
+User=meepo
+
+# A full build is npm ci + astro over ~5,300 letters; it is minutes, not seconds,
+# and a build killed halfway leaves a half-written release dir that nothing ever
+# points at (the swap is the last thing that happens). The ceiling exists so a
+# wedged network fetch cannot hold the single-flight lock until the box reboots.
+TimeoutStartSec=45min
+
+# The office API is read for the crossing number; everything else is github.com.
+# No secrets: both repos are public. GH_TOKEN is OPTIONAL and only raises
+# extract-town.mjs's GitHub PR-state budget — without it those fields go null,
+# exactly as they do for an unauthenticated Actions run. The `-` means a missing
+# file is not a startup failure.
+EnvironmentFile=-/etc/postmark-site-refresh.env
+Environment=POSTMARK_API=https://postmark.town/api
+
+ExecStart=/usr/bin/env bash /srv/postmark-office/deploy/site-refresh.sh
+
+# Deliberately NO Restart=. A failed build is a finding, not a thing to retry
+# into the ground — the next timer tick is thirty minutes away and will try
+# again with whatever the world looks like then. Retrying a red build immediately
+# is how one bad release tag turns into a busy box, and it buys nothing: the
+# symlink already points at the last good build the whole time.

@@ -300,6 +300,86 @@ self-enforcing under the new engine. The one seam still open is **provenance**
 (a drained join's `seq`/`channel`/door-instant don't survive into the town
 record) — tracked on postmark#2040.
 
+## The role registry — hand-kept access, off by default (built 2026-08-26)
+
+The subscription lane's first primitive, and it sits **beside** the stamps/holo
+ownership economy without touching it. A role is a line in an operator-kept book
+saying a household may pass a door. `src/roles.mjs` is the store and the gate;
+`tools/roles.mjs` is the operator's desk.
+
+**Nothing is gated today, and merging this changes nothing.** The gate reads
+`OFFICE_ROLE_GATES` fresh on every call; unset — the default, and every office
+right now — every caller passes every gated door without the registry even being
+opened. *Which* doors get gated for real is a founder call. The one wired example
+is `GET /metrics/mail`, chosen because it is the most boring read the office has.
+
+**The subject is a HOUSEHOLD, identified by its immutable `gh_id`** — founder-
+ruled 2026-08-26: *"we should 100% use gh_id as primary key for everything."*
+One human subscribes and every resident of their house inherits it, so adding a
+resident never changes a household's standing.
+
+**Not the login.** `src/oauth.mjs § householdFor` answers
+`household: ghLogin ?? String(ghId)`, and a GitHub login is MUTABLE. Keying a
+paid role on it means a rename silently revokes what somebody paid for. This is
+not hypothetical: the town's own `tools/github-ids.json` carries
+`"renamed": "2026-07-31 (github login rename; id unchanged)"` for `alden` and
+`corwin` — they survived because they were pinned by id. The registry stores the
+login beside the id as a **display column**, refreshed whenever the owner is
+seen under a new one, and never read to decide anything.
+
+    node tools/roles.mjs list   [--role <name>] [--subject <who>] [--limit <n>] [--json]
+    node tools/roles.mjs grant  --subject <who> [--role <name>] [--note "<why>"] [--actor <who>]
+    node tools/roles.mjs revoke --subject <who> [--role <name>] [--note "<why>"] [--actor <who>]
+
+`--subject` takes a login **or** an id; a login is resolved to its id from the
+town clone's `tools/github-ids.json` and from `oauth.db`'s `tokens` table before
+anything is written. If it cannot be resolved the tool **refuses** rather than
+store a name — a name-keyed row grants nobody anything and looks identical to
+one that works. `--gh-id <n>` and `--login <name>` say which you mean; an
+all-digit string that is also a valid login is refused as ambiguous rather than
+guessed. `--db` points at the registry (default `roles.db` beside `office.db`);
+`--clone` at the town clone (default `TOWN_CLONE`).
+
+Every act names who ran it — `--actor`, else the OS user, and it refuses to write
+rather than record `unknown`. `list` prints the standing **and** the trail,
+because a revoked household is gone from the first and visible only in the
+second; it also flags any **stale** row keyed on a name rather than an id. Those
+are inert — the gate looks up by id and can never match them — but inert is not
+absent, and there is no automatic backfill because a name cannot be turned back
+into an id without asking GitHub.
+
+**A static `OFFICE_KEYS` row holds a role only if it pins an id.** The format
+grew an optional field — `<key>=<household>[#<gh_id>]:<handle>,...` — and without
+it the key works exactly as it always has and simply holds no roles, refusing
+with the sentence that names that case. Founder-ruled: a household that exists
+only as an env string cannot hold a role. Backward compatible by construction:
+no existing entry contains a `#`.
+
+Wiring one more door is two lines beside the handler:
+
+    const gated = roleGate(rdb, key, ROLE_SUBSCRIBER);
+    if (gated) return bounce(res, gated.code, gated.defect, gated.hint);
+
+**⚑ ONE FLAG LIGHTS EVERY WIRED DOOR AT ONCE — decide this before the second
+one.** `OFFICE_ROLE_GATES` is a single master switch, not per-door. That is the
+right shape while exactly one door is wired and nothing is gated; it becomes a
+sharp edge the moment doors accumulate dark. Wire three doors over three weeks,
+flip the flag, and all three go live simultaneously — only one of them ever
+rehearsed. This is the same class as POS-60's `workflow_dispatch` trap (a
+mechanism whose first execution in anger is also its first execution at all), and
+the fix there was an adoption gate. The options, none of which is a build
+decision to make casually: keep one switch and rehearse every wired door on dev
+before flipping prod; or let the flag name which doors it lights. Nobody has
+chosen yet, and the choice is cheap now and expensive later.
+
+**⚑ roles.db is NOT the durability class of its neighbours.** `office.db` and
+`world.db` are pure indexes rebuilt from a clone; `oauth.db`'s loss only forces
+re-sign-in; `dynamic.db` carries an explicit re-derivation covenant. This one has
+none — **a grant exists nowhere else**, no repo holds it, no fold recomputes it,
+and `*.db` is gitignored. Losing `roles.db` loses who paid. The `role_audit`
+table is append-only precisely so a restore has something to be rebuilt from; a
+backup for this one file is **owed and not yet wired** (see Known gaps).
+
 ## Intentional redundancies (not drift — designed backstops)
 - **Double PR watch:** Ferry's open-loops board (primary) + Wright's operator
   12-hour tripwire (backstop). Both on purpose; neither retires the other.
@@ -307,6 +387,15 @@ record) — tracked on postmark#2040.
   the office lane (WR § office-lane note). Dormant by design.
 
 ## Known gaps (named, not yet wired)
+- **🔑 `roles.db` HAS NO BACKUP (2026-08-26).** The role registry is the only
+  store in the office holding state that exists nowhere else — not in a repo,
+  not re-derivable from one, and gitignored like every other `*.db`. Today the
+  whitelist is short enough that rebuilding it by hand from memory is survivable;
+  the moment it is not, its loss is unrecoverable and silent. The `role_audit`
+  table is the restore source by design, which is only useful if the FILE
+  survives. Wanted: `roles.db` in whatever box-side backup the office grows, or
+  a periodic `tools/roles.mjs list --json` dump somewhere durable. Named here at
+  build time rather than discovered after a loss.
 - **Ferry's arrival report-after channel:** "tell Keemin about each joiner" exists
   as duty (PM §3) but its delivery surface is unwired; under the channel law it
   belongs on **his window's founders-desk panel**. One sentence in PM when the

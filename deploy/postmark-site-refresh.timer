@@ -1,0 +1,32 @@
+[Unit]
+Description=Postmark site refresh every 30 minutes, phase-aligned ten past the ferry — 00:10Z and 12:10Z land right behind the crossings
+
+[Timer]
+# PHASE, NOT JUST CADENCE. Half-hourly is the cadence the site already promised;
+# WHERE the two ticks fall in the hour is the part that was never chosen. Mail
+# moves at the crossings — 00:00Z and 12:00Z (src/crossings.mjs: "crossings run
+# 00:00 / 12:00 UTC (the ferry's clock)") — so minutes :10 and :40 put a rebuild
+# ten minutes after every crossing, every day, for free. The ten minutes are the
+# ferry's own run: the delivery job has to finish moving letters and land its
+# commit before there is anything new to bake, and a rebuild that starts at
+# :00 sharp reads the town one moment before it changes.
+#
+# The founder's ruling names this shape exactly: "a 30-minute timer, phase-aligned
+# ~:10 after the ferry crossings (the known moments mail actually moves)".
+OnCalendar=*:10,40
+
+# NO RandomizedDelaySec. Every other timer on this box is jittered to spread the
+# shared GitHub REST budget, and this one deliberately is not: the whole value of
+# the :10 tick is that it is ten minutes after the ferry, and a random 0-45s
+# would smear the one property the phase was chosen for. The budget argument does
+# not apply either — this lane spends git-wire fetches (ls-remote, fetch), which
+# cost no REST allowance at all, plus at most one optional PR-state read inside
+# extract-town.mjs.
+
+# A box that was down catches up on the next boot rather than skipping the gap.
+# The tick after an outage is exactly the one that should run: it is the one with
+# the most town to bake.
+Persistent=true
+
+[Install]
+WantedBy=timers.target
