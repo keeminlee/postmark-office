@@ -79,73 +79,105 @@ const FLIPS = [
     edit: (t) => t.replace('if (!requires || typeof requires !== "object") return { ok: true };',
                            'if (!requires || typeof requires !== "object") return { ok: false, why: "no" };') },
 
-  // ── the encounter ───────────────────────────────────────────────────────
-  { name: "a die roll enters the damage (the fight stops being replayable)",
+  // ── the encounter: the wheel, the dice, downed-not-dead ─────────
+  // REWRITTEN 2026-08-26 for the founder's turn+dice rulings. The cooldown
+  // flips are gone with the cooldowns; what replaced them is not fewer, and
+  // every one of them breaks a clause a falsifier quotes verbatim.
+  { name: "a die roll enters the damage from an UNWITNESSED source",
     file: ENC, catches: "no source of randomness exists in the module",
-    edit: (t) => t.replace("const dmg = (verb === \"strike\" ? D.strikeDmg : D.castDmg) + bonus;",
-                           "const dmg = (verb === \"strike\" ? D.strikeDmg : D.castDmg) + bonus + Math.random();") },
+    edit: (t) => t.replace("  const n = h.readUInt32BE(0);", "  const n = h.readUInt32BE(0) + Math.floor(Math.random() * 3);") },
 
   { name: "the module reads the wall clock",
     file: ENC, catches: "no source of randomness exists in the module",
-    edit: (t) => t.replace("const at = ms(r.written_at);", "const at = ms(r.written_at) ?? Date.now();") },
+    edit: (t) => t.replace("const ms = (iso) => {", "const ms = (iso) => { void Date.now();") },
+
+  { name: "the roll stops depending on the actor (two hands, one fate)",
+    file: ENC, catches: "every one of the three entropy terms actually changes the roll",
+    edit: (t) => t.replace("const key = `${at}|${actId}|${actor}|${salt}`;", "const key = `${at}|${actId}|${salt}`;") },
+
+  { name: "the roll stops depending on its position in the log",
+    file: ENC, catches: "every one of the three entropy terms actually changes the roll",
+    edit: (t) => t.replace("const key = `${at}|${actId}|${actor}|${salt}`;", "const key = `${actId}|${actor}|${salt}`;") },
+
+  { name: "the die stops being a die (one face, every time)",
+    file: ENC, catches: "a roll is WITNESSED",
+    edit: (t) => t.replace("return { value: (n % d) + 1,", "return { value: 1,") },
+
+  { name: "the wheel stops gating — anyone may act at any time",
+    file: ENC, catches: "an act out of turn is refused, and the refusal NAMES whose turn it is",
+    edit: (t) => t.replace("      if (w.turn && w.turn !== actor) {", "      if (false) {") },
+
+  { name: "the refusal stops naming whose turn it is",
+    file: ENC, catches: "an act out of turn is refused, and the refusal NAMES whose turn it is",
+    edit: (t) => t.replace("why: `it is ${w.turn}'s turn` });", "why: `not your turn` });") },
+
+  { name: "the wheel gates a room with no fight in it",
+    file: ENC, catches: "with no encounter live, nothing is gated",
+    edit: (t) => t.replace("    if (live && verb !== \"loot\") {", "    if (true) {") },
+
+  { name: "a latecomer is sorted in by initiative instead of appended",
+    file: ENC, catches: "a late joiner lands at the BOTTOM of the order",
+    edit: (t) => t.replace("  const active = [...order, ...late].filter((j) => !left.has(j.who));", "  const active = [...order, ...late].sort((a, b) => b.initiative - a.initiative).filter((j) => !left.has(j.who));") },
+
+  { name: "a leaver keeps their seat on the wheel (a jail)",
+    file: ENC, catches: "a leaver is skipped by the wheel",
+    edit: (t) => t.replace("  const active = [...order, ...late].filter((j) => !left.has(j.who));", "  const active = [...order, ...late];") },
+
+  { name: "the door heals you — re-entering restores full strength",
+    file: ENC, catches: "fleeing and re-entering keeps the HP you fled with",
+    edit: (t) => t.replace("      left.delete(actor);", "      left.delete(actor); hp.delete(actor);") },
+
+  { name: "the driver hands the door a turn when no fight is live",
+    file: ENC, catches: "nothing due when no encounter is live",
+    edit: (t) => t.replace("  if (!state?.encounter_live) return out;", "") },
+
+  { name: "a downed hand keeps acting",
+    file: ENC, catches: "at zero you are DOWN",
+    edit: (t) => t.replace("      if (downed.has(actor)) { ignored.push({ seq: r.seq, actor, why: `${actor} is down — someone has to lift you` }); continue; }", "") },
+
+  { name: "what you were holding stays in your hands when you go down",
+    file: ENC, catches: "at zero you are DOWN",
+    edit: (t) => t.replace("          const id = held.thing ?? held.id ?? String(held);", "          const id = null;") },
+
+  { name: "the lifted come back whole instead of partial",
+    file: ENC, catches: "an ally spends their WHOLE turn to lift",
+    edit: (t) => t.replace("hp.set(target, D.liftTo);", "hp.set(target, D.guestHp);") },
+
+  { name: "anyone may be lifted, down or not",
+    file: ENC, catches: "lifting someone who is not down is refused",
+    edit: (t) => t.replace("      if (!downed.has(target)) { ignored.push({ seq: r.seq, actor, why: `${target || \"nobody\"} is not down` }); continue; }", "") },
+
+  { name: "the wipe never fires — the room stays down forever",
+    file: ENC, catches: "when the whole room goes down: the wipe",
+    edit: (t) => t.replace("    if (hands.length && hands.every((j) => downed.has(j.who))) {", "    if (false) {") },
+
+  { name: "a full-room wipe leaves the adversary wounded",
+    file: ENC, catches: "when the whole room goes down: the wipe",
+    edit: (t) => t.replace("      bossHp = D.bossHpMax;", "      bossHp = Math.max(1, bossHp);") },
+
+  { name: "the timeout answers without being given an instant",
+    file: ENC, catches: "an absent hand's turn passes at the NEXT DOOR TOUCH",
+    edit: (t) => t.replace("  if (since == null || !Number.isFinite(Number(nowMs))) return { out: false, why: \"no instant to judge against\" };", "  if (false) return { out: false };") },
+
+  { name: "the timeout fires immediately, ignoring its dial",
+    file: ENC, catches: "an absent hand's turn passes at the NEXT DOOR TOUCH",
+    edit: (t) => t.replace("  const limit = Number(state.wheel.turn_timeout_s) * 1000;", "  const limit = 0;") },
+
+  { name: "a pass does not spend the turn",
+    file: ENC, catches: "a pass spends the turn and moves the wheel on",
+    edit: (t) => t.replace("    if (verb === \"pass\") { turnsTaken += 1;", "    if (verb === \"pass\") {") },
+
+  { name: "the fold starts speaking the world's vocabulary",
+    file: ENC, catches: "NOTHING the fold derives is a claim about the world outside the portal",
+    edit: (t) => t.replace("    derivation: \"no store holds any of this", "    tier: \"market\",\n    derivation: \"no store holds any of this") },
+
+  { name: "an initiative tie breaks on the sort's accident, not the log's order",
+    file: ENC, catches: "an initiative tie breaks on the log's own order",
+    edit: (t) => t.replace("    (b.initiative - a.initiative) || (a.seq - b.seq));", "    (b.initiative - a.initiative) || (b.seq - a.seq));") },
 
   { name: "a missing dial is substituted in silence",
     file: ENC, catches: "a dial the record does not carry is DISCLOSED",
     edit: (t) => t.replace("if (v === undefined || v === null) { missing.push(", "if (v === undefined || v === null) { ([]).push(") },
-
-  { name: "the weapon's bonus is read at the READ rather than at the row",
-    file: ENC, catches: "the weapon's bonus is read at the row, not at the read",
-    edit: (t) => t.replace("weaponHeldBy(actor, r.seq)", "weaponHeldBy(actor, rows[rows.length - 1]?.seq)") },
-
-  { name: "cooldowns stop holding (a hand may swing without pause)",
-    file: ENC, catches: "a verb still cooling is IGNORED with its reason",
-    edit: (t) => t.replace("if (left > 0) { ignored.push(", "if (false) { ignored.push(") },
-
-  // ⚠ THIS FLIP WAS WRONG ONCE, AND THE RUNNER CAUGHT IT RATHER THAN ME.
-  // The first draft was `.replace("`${actor}|${verb}`", …)` — and the FIRST
-  // occurrence of that literal in encounter.mjs is inside a COMMENT describing
-  // the map. So the mutation applied cleanly, changed nothing that runs, and
-  // the suite stayed green — which the runner reported as an apparatus failure
-  // exactly as designed. A flip that edits a comment is a flip that proves the
-  // test robust against nothing. `replaceAll` on the KEY PREFIX hits all three
-  // code sites (both `${verb}` uses and the guard's), which is what actually
-  // makes the cooldown global.
-  { name: "the cooldown becomes global rather than per hand and per verb",
-    file: ENC, catches: "two hands act in the same present",
-    edit: (t) => t.replaceAll("${actor}|", "everyone|") },
-
-  { name: "the boss answers the FIRST striker instead of the most recent",
-    file: ENC, catches: "the boss answers the MOST RECENT STRIKER",
-    edit: (t) => t.replace('if (verb === "strike") lastStriker = actor;',
-                           'if (verb === "strike" && !lastStriker) lastStriker = actor;') },
-
-  { name: "casting draws a counter (the longer cooldown buys nothing)",
-    file: ENC, catches: "casting draws no counter",
-    edit: (t) => t.replace("if (bossHp > 0 && lastStriker) {", "if (bossHp > 0) {\n      lastStriker = lastStriker ?? actor;") },
-
-  { name: "guard is never spent (one raise, permanent halving)",
-    file: ENC, catches: "guard halves the next hit against YOU, once",
-    edit: (t) => t.replace("if (halved) guarded.delete(target);", "") },
-
-  { name: "a guard protects everybody",
-    file: ENC, catches: "a guard protects only the hand that raised it",
-    edit: (t) => t.replace("guarded.has(target)", "guarded.size > 0") },
-
-  { name: "a hand at zero stays down forever",
-    file: ENC, catches: "a hand knocked to zero SITS DOWN and comes back whole",
-    edit: (t) => t.replace("hp.set(target, D.guestHp);          // back on their feet, not gone", "") },
-
-  { name: "the phase is not read off the boss",
-    file: ENC, catches: "the phase is derived from the boss's remaining hp",
-    edit: (t) => t.replace('const phase = bossHp > 0 ? "standing" : "spent";', 'const phase = "spent";') },
-
-  { name: "loot opens before the boss falls",
-    file: ENC, catches: "loot before the boss falls is ignored",
-    edit: (t) => t.replace('if (bossHp > 0) { ignored.push({ seq: r.seq, actor, why: "the loot was not open yet" }); continue; }', "") },
-
-  { name: "readiness answers without being given an instant",
-    file: ENC, catches: "readiness is a question about an instant",
-    edit: (t) => t.replace("if (!Number.isFinite(Number(nowMs)))", "if (false)") },
 
   // ── the embodiment fence ────────────────────────────────────────────────
   { name: "the fence is read off a corner instead of the centre",
