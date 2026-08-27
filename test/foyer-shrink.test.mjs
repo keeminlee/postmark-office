@@ -65,7 +65,8 @@ import { DatabaseSync } from "node:sqlite";
 
 import { fixtureDb } from "./fixture.mjs";
 import {
-  CARD_TEACH, HOUSEHOLD_DISPATCHABLE, HOUSEHOLD_READS, READING_LAW,
+  ACT_SHADOW_READS, CARD_TEACH, HOUSEHOLD_DISPATCHABLE, HOUSEHOLD_READS, READING_LAW,
+  assertEveryActIsReadable,
   capabilityIndex, householdApex,
 } from "../src/household-apex.mjs";
 import { hotMailBlock, outboxTense, replayLetter, sendLetterAsRow, MAIL_DOOR, NONCE_MAX } from "../src/town-mail.mjs";
@@ -130,6 +131,12 @@ const flagOn = async (fn) => {
   try { return await fn(); } finally { delete process.env.TOWN_SINGLE_LOG; }
 };
 
+// The live tool schemas, so a card read back here carries the same fields the
+// real door would put on it rather than an empty set.
+const { TOOLS } = await import("../src/mcp.mjs");
+const SCHEMAS = Object.fromEntries(TOOLS.map((t) => [t.name, t.inputSchema?.properties ?? {}]));
+const REQUIRED = Object.fromEntries(TOOLS.map((t) => [t.name, t.inputSchema?.required ?? []]));
+
 const ctx = (extra = {}) => ({ db, worldBlock, ...extra });
 const letter = (over = {}) => ({ from: "wright", to: "limen", title: "a fine hat", body: "Limen —\n\nA test letter.", ...over });
 
@@ -149,11 +156,16 @@ test('F1 · Hal: "Bare household {} should return only identity/authority and a 
   // because a schema moved one key sideways is the same enormous page renamed.
   assert.equal(/"(type|description)"\s*:/.test(JSON.stringify(bare)), false,
     "a field's type or prose anywhere on the bare answer is the thing Hal was reading when he wrote that sentence");
-  // and the names are the CARD's names, so the index cannot drift from it
-  const card = await householdApex({ card: "send" }, KEY, ctx({ slim: true }));
+  // and the names are the CARD's names, so the index cannot drift from it.
+  // BOTH sides are built with the live tool schemas: an index built without
+  // them renders empty fields, and comparing an empty set to a full one would
+  // fail for a reason that has nothing to do with the law being asserted.
+  const withSchemas = ctx({ slim: true, schemas: SCHEMAS, schemaRequired: REQUIRED });
+  const bareS = await householdApex({}, KEY, withSchemas);
+  const card = await householdApex({ read: "send" }, KEY, withSchemas);
   assert.deepEqual(
-    Object.keys(bare.acts.find((a) => a.act === "send").fields),
-    Object.keys(card.cards[0].fields),
+    Object.keys(bareS.acts.find((a) => a.act === "send").fields),
+    Object.keys(card.card.fields),
     "the index names exactly the fields the card describes");
 });
 
@@ -190,23 +202,22 @@ test("F2 · a shrink that loses a verb is not a shrink — the index names every
   assert.deepEqual(bare.acts.map((a) => a.act), [...HOUSEHOLD_DISPATCHABLE]);
   // the index is a PROJECTION of the card, so its line can never say something
   // the full card does not: same string, both places.
-  const card = await householdApex({ card: "send" }, KEY, ctx({ slim: true }));
-  assert.equal(bare.acts.find((a) => a.act === "send").teaches, card.cards[0].teaches);
+  const card = await householdApex({ read: "send" }, KEY, ctx({ slim: true, schemas: SCHEMAS, schemaRequired: REQUIRED }));
+  assert.equal(bare.acts.find((a) => a.act === "send").teaches, card.card.teaches);
 });
 
 test('F3 · Hal: "act/read names" — the read names ride the bare answer too, and the page teaches how to open a card', async () => {
   const bare = await householdApex({}, KEY, ctx({ slim: true }));
   assert.deepEqual(bare.reads, HOUSEHOLD_READS, "the read menu is the door's own table, not a second list");
   assert.equal(bare.abridged, CARD_TEACH);
-  assert.match(bare.abridged, /card: "send"/, "the teaching sentence carries the literal call, not a description of it");
-  // ONE WORD, ONE THING. `cards` is the request field and the card answer's
-  // payload key — both arrays. A third `cards` here holding a sentence would
-  // hand a caller who cached `answer.cards` a string on this read and an array
-  // on the next, which is the shape trap the doorstep's `conversations` rename
-  // was fought over.
-  assert.equal("cards" in bare, false, "the teaching sentence rides `abridged`; `cards` stays the array it is everywhere else");
-  const card = await householdApex({ card: "send" }, KEY, ctx({ slim: true }));
-  assert.ok(Array.isArray(card.cards), "and on the answer that has cards, `cards` is the cards");
+  assert.match(bare.abridged, /read: "send"/, "the teaching sentence carries the literal call, not a description of it");
+  // NO SECOND SPELLING SURVIVES. `card` and `cards` are not keys of this door
+  // at all any more — the card is fetched by the act's own name through
+  // `read:`, which is the world door's grammar and now this one's.
+  assert.equal("cards" in bare, false, "the teaching sentence rides `abridged`");
+  assert.equal("card" in bare, false);
+  const card = await householdApex({ read: "send" }, KEY, ctx({ slim: true, schemas: SCHEMAS, schemaRequired: REQUIRED }));
+  assert.equal(card.card.act, "send", "and the card comes back under `card`, singular, beside the `read` that named it");
 });
 
 test("F4 · the identity half is UNTOUCHED by the shrink — tier, household, residents, papers, next, credential all say what the unabridged answer says", async () => {
@@ -245,38 +256,92 @@ test("F5b · and the slim-only keys never leak onto it", async () => {
       `${entry.act} keeps its full card on REST — ops/mcp-prototype § collectActions is gated on act+fields`);
 });
 
-// ── (2) THE CARDS ───────────────────────────────────────────────────────────
+// ── (2) THE CARD, READ BACK BY THE ACT'S OWN NAME ────────────────────
+//
+// Hal asked for the full schemas to sit behind "an explicit card request". My
+// first build minted `card:` / `cards:` for it. The founder caught that as a
+// grammar divergence: the WORLD door already resolves an act's card through
+// `read:`, and says so in its own words —
+//
+//   "the full card for any one act (its fields, its dials, the class that
+//    grants it, and the terms that would bind it) is one read away:
+//    world { read: \"<action>\" }"
+//
+// — so a second spelling one door over is the `acts`/`actions` alias again,
+// which the town retired the week it appeared. `cards:` was the sharper error:
+// at the world door that key already means a TRIM DIAL (`cards: "names"`), so
+// one word would have named two different operations depending which door you
+// stood at. Dropped whole; nothing outside ever coded to it.
 
-test('F6 · Hal: \'Put full schemas behind an explicit card request — {"cards":["send"]} or {"card":"send"}\' — both spellings answer, and the card is the SAME card the unabridged answer carries', async () => {
+test("F6 · an ACT NAME is a read — household { read: \"send\" } answers that act's full card, in the world door's own shape", async () => {
   const full = await householdApex({}, KEY, ctx());
-  const one = await householdApex({ card: "send" }, KEY, ctx({ slim: true }));
-  const many = await householdApex({ cards: ["send", "stake"] }, KEY, ctx({ slim: true }));
-  assert.deepEqual(one.cards.map((c) => c.act), ["send"]);
-  assert.deepEqual(many.cards.map((c) => c.act), ["send", "stake"]);
-  assert.deepEqual(one.cards[0], full.acts.find((a) => a.act === "send"),
-    "the card behind the request is the card that used to ride the page — not a second rendering of it");
-  assert.equal(one.reading_law, READING_LAW, "every answer, Hal said, and this is an answer");
+  const r = await householdApex({ read: "send" }, KEY, ctx({ slim: true }));
+  assert.equal(r.read, "send", "the answer names what was read, exactly as world { read: <action> } does");
+  assert.deepEqual(r.card, full.acts.find((a) => a.act === "send"),
+    "the card read back is the card that used to ride the bare page — not a second rendering of it");
+  assert.equal(r.reading_law, READING_LAW, "every answer, Hal said, and this is an answer");
+  assert.deepEqual(Object.keys(r).sort(), ["card", "read", "reading_law"],
+    "and the shape is the world's, key for key");
 });
 
-test('F6b · a comma-joined string works too — curl parity, because `?cards=send,stake` arrives as one string', async () => {
-  const r = await householdApex({ cards: "send, stake" }, KEY, ctx({ slim: true }));
-  assert.deepEqual(r.cards.map((c) => c.act), ["send", "stake"]);
+test("F6b · the retired spellings are GONE, not aliased — `card:` and `cards:` resolve nothing", async () => {
+  // A deprecation cycle is what you owe a caller who coded to a key. Nothing
+  // outside ever did: this branch never merged. So the correction is total.
+  const withCard = await householdApex({ card: "send" }, KEY, ctx({ slim: true }));
+  const withCards = await householdApex({ cards: ["send"] }, KEY, ctx({ slim: true }));
+  for (const r of [withCard, withCards]) {
+    assert.equal(r.card, undefined, "no card comes back from the retired key");
+    assert.equal(r.cards, undefined);
+    assert.equal(r.tier, "resident", "an unknown top-level key is simply not a request — the bare read answers");
+  }
+  const tool = (await import("../src/household-apex.mjs")).HOUSEHOLD_TOOL;
+  assert.equal("card" in tool.inputSchema.properties, false, "and the schema no longer advertises them");
+  assert.equal("cards" in tool.inputSchema.properties, false);
 });
 
-test("F7 · an unknown card BOUNCES BY NAME, in the door's own grammar", async () => {
-  const r = await householdApex({ cards: ["send", "nope", "alsonope"] }, KEY, ctx({ slim: true }));
+test("F7 · an unknown read bounces naming BOTH namespaces — the reads and the act cards", async () => {
+  const r = await householdApex({ read: "nope" }, KEY, ctx({ slim: true }));
   assert.equal(r.error, "bounce");
   assert.equal(r.code, 422);
-  assert.match(r.defect, /nope/);
-  assert.match(r.defect, /alsonope/, "BY NAME means every name, not the first one it tripped on");
-  assert.deepEqual(r.unknown_cards, ["nope", "alsonope"]);
-  assert.deepEqual(r.acts, [...HOUSEHOLD_DISPATCHABLE], "and the refusal carries the menu it is refusing against");
+  assert.deepEqual(r.act_cards, [...HOUSEHOLD_DISPATCHABLE],
+    "a caller who guessed wrong is told that act names read too — the menu cannot omit half of what the door serves");
+  assert.deepEqual(r.household_reads, HOUSEHOLD_READS);
+  assert.match(r.hint, /reads back its own full card/);
 });
 
-test("F7b · a card never rides with do: or read: — one call does one thing", async () => {
-  const a = await householdApex({ card: "send", read: "standing" }, KEY, ctx({ slim: true }));
-  const b = await householdApex({ card: "send", do: "home" }, KEY, ctx({ slim: true }));
-  for (const r of [a, b]) { assert.equal(r.error, "bounce"); assert.equal(r.code, 422); }
+test("F7b · EVERY ACT IS READABLE BY ITS OWN NAME — the invariant that replaced 'the namespaces must be disjoint'", async () => {
+  // ⚠ THE FIX ROUND ASKED FOR A DISJOINTNESS GUARD. I wrote it, and IT FIRED
+  // ON THE LIVE DOOR: `address`, `home` and `window` have been both an act and
+  // a read since long before this branch. That is not a latent bug — it is the
+  // world door's own relationship arriving under a different spelling, because
+  // there `read:` is "every action's shadow". `read: "home"` IS what the home
+  // act wrote. So the invariant this door needs is REACHABILITY, not
+  // disjointness: every act's card must come back from `read: "<act>"`, whether
+  // it rides that act's shadow or stands alone as the answer.
+  assert.deepEqual([...ACT_SHADOW_READS], ["address", "home", "window"],
+    "the overlap is computed from the two tables, not listed — it cannot fall out of step with them");
+  for (const act of HOUSEHOLD_DISPATCHABLE) {
+    const r = await householdApex({ read: act, handle: "wright" }, KEY, ctx({ slim: true, schemas: SCHEMAS, schemaRequired: REQUIRED }));
+    assert.equal(r.error, undefined, `read: "${act}" bounced — an act nobody can read is an act nobody can learn`);
+    assert.equal(r.read, act);
+    assert.ok(r.card && r.card.act === act, `read: "${act}" came back without its card`);
+  }
+});
+
+test("F7c · a SHADOW read still answers its own payload — the card joins it, never replaces it", async () => {
+  const r = await householdApex({ read: "home", handle: "wright" }, KEY, ctx({ slim: true, schemas: SCHEMAS, schemaRequired: REQUIRED }));
+  assert.ok(r.home, "the home page is still the answer");
+  assert.equal(r.of, "wright");
+  assert.equal(r.card.act, "home", "and the act's card rides beside it, as world { read: <action> } carries both card and domain");
+});
+
+test("F7d · and the card rides the CONNECTOR SKIN ALONE — the three shadow reads answer REST byte-for-byte what they did", async () => {
+  for (const what of ACT_SHADOW_READS) {
+    const rest = await householdApex({ read: what, handle: "wright" }, KEY, ctx({ schemas: SCHEMAS, schemaRequired: REQUIRED }));
+    if (rest.error) continue; // a fixture without that paper — nothing to compare
+    assert.equal("card" in rest, false,
+      `REST read: "${what}" grew a key — these are bytes frozen consumers already hold`);
+  }
 });
 
 // ── (3) THE PENDING VIEW ────────────────────────────────────────────────────
