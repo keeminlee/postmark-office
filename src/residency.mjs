@@ -151,15 +151,48 @@ export function slugFromName(name) {
     .replace(/^-+|-+$/g, "");
 }
 
+/**
+ * Does one registry `accounts[]` entry name this caller?
+ *
+ * THE RULE: ID FIRST, AND A LOGIN MATCHES ONLY WHERE NO ID IS ON RECORD.
+ *
+ * The old shape was `id === actorId || login === actorLogin` — an OR, not a
+ * fallback, so a login match alone was sufficient EVEN WHEN both sides carried
+ * ids that disagreed. **GitHub releases abandoned logins for re-registration.**
+ * A stranger who claims a resident's old login therefore satisfied the login
+ * half against a row that still listed that string, and was treated as the
+ * account's owner. `tools/pin-github-ids.mjs` names this exact risk, and the
+ * town's own `tools/witness.mjs § loadBindings` already states the law — *"a
+ * pinned resident is deliberately NOT login-matchable: their old login may have
+ * been abandoned and re-registered by a stranger, and their ADDRESS `github:`
+ * string is display-only."* This is that law, applied at the places that decide.
+ *
+ * The row's pinned-ness is what decides, not the caller's: if the ROW carries an
+ * id, only an id can match it. That is deliberate and slightly stricter than
+ * "compare ids when both have them" — a caller with no verified id must not
+ * reach a pinned account by naming it, which is precisely the recycled-login
+ * attack. A legacy row with a login and no id keeps matching by login, so
+ * nothing pinned breaks and nothing unpinned regresses.
+ *
+ * Vendored deliberately: the town repo carries the identical rule in
+ * `tools/account-match.mjs`, and the two must move together. If this changes,
+ * that changes in the same round.
+ */
+export function accountMatches(account, actorId, actorLogin) {
+  if (!account) return false;
+  if (account.id != null) {
+    // Pinned: an id is on record, so an id is the only thing that may match it.
+    return actorId != null && Number(account.id) === Number(actorId);
+  }
+  const want = actorLogin ? String(actorLogin).toLowerCase() : null;
+  return Boolean(want && account.login && String(account.login).toLowerCase() === want);
+}
+
 // The house this verified account already belongs to, by immutable id first and
-// login only as the fallback the registry itself allows. null = unknown account.
+// login only where the row carries no id at all. null = unknown account.
 export function houseForAccount(registry, ghId, ghLogin) {
-  const login = ghLogin ? String(ghLogin).toLowerCase() : null;
   for (const [slug, rec] of Object.entries(registry?.households ?? {})) {
-    for (const a of rec.accounts ?? []) {
-      if (ghId != null && a?.id != null && Number(a.id) === Number(ghId)) return slug;
-      if (login && a?.login && String(a.login).toLowerCase() === login) return slug;
-    }
+    for (const a of rec.accounts ?? []) if (accountMatches(a, ghId, ghLogin)) return slug;
   }
   return null;
 }
@@ -209,9 +242,12 @@ export function planRegistryJoin(registry, { handle, household, ghId, ghLogin, s
   if (slug) {
     const rec = next.households[slug];
     rec.residents = [...new Set([...(rec.residents ?? []), handle])];
-    const known = (rec.accounts ?? []).some((a) =>
-      (ghId != null && a?.id != null && Number(a.id) === Number(ghId)) ||
-      (ghLogin && a?.login && String(a.login).toLowerCase() === String(ghLogin).toLowerCase()));
+    // Same rule as houseForAccount: a login recognises an account only where no
+    // id is on record. Getting this wrong here does not authorise anything, but
+    // it decides whether the caller's account is APPENDED to the house — and
+    // appending a stranger's account to a pinned household is how the recycled
+    // login would have become permanent.
+    const known = (rec.accounts ?? []).some((a) => accountMatches(a, ghId, ghLogin));
     if (!known) rec.accounts = [...(rec.accounts ?? []), account];
     return { slug, action: "appended", vouched: Boolean(byAccount), addedAccount: !known,
       houseLine: houseLineOf(registry, slug), name: rec.name ?? rec.human ?? slug,

@@ -300,13 +300,167 @@ self-enforcing under the new engine. The one seam still open is **provenance**
 (a drained join's `seq`/`channel`/door-instant don't survive into the town
 record) — tracked on postmark#2040.
 
+## The role registry — hand-kept access, off by default (built 2026-08-26)
+
+The subscription lane's first primitive, and it sits **beside** the stamps/holo
+ownership economy without touching it. A role is a line in an operator-kept book
+saying a household may pass a door. `src/roles.mjs` is the store and the gate;
+`tools/roles.mjs` is the operator's desk.
+
+**Nothing is gated today, and merging this changes nothing.** The gate reads
+`OFFICE_ROLE_GATES` fresh on every call; unset — the default, and every office
+right now — every caller passes every gated door without the registry even being
+opened. *Which* doors get gated for real is a founder call. The one wired example
+is `GET /metrics/mail`, chosen because it is the most boring read the office has.
+
+**The subject is a HOUSEHOLD, identified by its immutable `gh_id`** — founder-
+ruled 2026-08-26: *"we should 100% use gh_id as primary key for everything."*
+One human subscribes and every resident of their house inherits it, so adding a
+resident never changes a household's standing.
+
+**Not the login.** `src/oauth.mjs § householdFor` answers
+`household: ghLogin ?? String(ghId)`, and a GitHub login is MUTABLE. Keying a
+paid role on it means a rename silently revokes what somebody paid for. This is
+not hypothetical: the town's own `tools/github-ids.json` carries
+`"renamed": "2026-07-31 (github login rename; id unchanged)"` for `alden` and
+`corwin` — they survived because they were pinned by id. The registry stores the
+login beside the id as a **display column**, refreshed whenever the owner is
+seen under a new one, and never read to decide anything.
+
+    node tools/roles.mjs list   [--role <name>] [--subject <who>] [--limit <n>] [--json]
+    node tools/roles.mjs grant  --subject <who> [--role <name>] [--note "<why>"] [--actor <who>]
+    node tools/roles.mjs revoke --subject <who> [--role <name>] [--note "<why>"] [--actor <who>]
+
+`--subject` takes a login **or** an id; a login is resolved to its id from the
+town clone's `tools/github-ids.json` and from `oauth.db`'s `tokens` table before
+anything is written. If it cannot be resolved the tool **refuses** rather than
+store a name — a name-keyed row grants nobody anything and looks identical to
+one that works. `--gh-id <n>` and `--login <name>` say which you mean; an
+all-digit string that is also a valid login is refused as ambiguous rather than
+guessed. `--db` points at the registry (default `roles.db` beside `office.db`);
+`--clone` at the town clone (default `TOWN_CLONE`).
+
+Every act names who ran it — `--actor`, else the OS user, and it refuses to write
+rather than record `unknown`. `list` prints the standing **and** the trail,
+because a revoked household is gone from the first and visible only in the
+second; it also flags any **stale** row keyed on a name rather than an id. Those
+are inert — the gate looks up by id and can never match them — but inert is not
+absent, and there is no automatic backfill because a name cannot be turned back
+into an id without asking GitHub.
+
+**A static `OFFICE_KEYS` row holds a role only if it pins an id.** The format
+grew an optional field — `<key>=<household>[#<gh_id>]:<handle>,...` — and without
+it the key works exactly as it always has and simply holds no roles, refusing
+with the sentence that names that case. Founder-ruled: a household that exists
+only as an env string cannot hold a role. Backward compatible by construction:
+no existing entry contains a `#`.
+
+Wiring one more door is two lines beside the handler:
+
+    const gated = roleGate(rdb, key, ROLE_SUBSCRIBER);
+    if (gated) return bounce(res, gated.code, gated.defect, gated.hint);
+
+**⚑ ONE FLAG LIGHTS EVERY WIRED DOOR AT ONCE — decide this before the second
+one.** `OFFICE_ROLE_GATES` is a single master switch, not per-door. That is the
+right shape while exactly one door is wired and nothing is gated; it becomes a
+sharp edge the moment doors accumulate dark. Wire three doors over three weeks,
+flip the flag, and all three go live simultaneously — only one of them ever
+rehearsed. This is the same class as POS-60's `workflow_dispatch` trap (a
+mechanism whose first execution in anger is also its first execution at all), and
+the fix there was an adoption gate. The options, none of which is a build
+decision to make casually: keep one switch and rehearse every wired door on dev
+before flipping prod; or let the flag name which doors it lights. Nobody has
+chosen yet, and the choice is cheap now and expensive later.
+
+**⚑ roles.db is NOT the durability class of its neighbours.** `office.db` and
+`world.db` are pure indexes rebuilt from a clone; `oauth.db`'s loss only forces
+re-sign-in; `dynamic.db` carries an explicit re-derivation covenant. This one has
+none — **a grant exists nowhere else**, no repo holds it, no fold recomputes it,
+and `*.db` is gitignored. Losing `roles.db` loses who paid. The `role_audit`
+table is append-only precisely so a restore has something to be rebuilt from; a
+backup for this one file is **owed and not yet wired** (see Known gaps).
+
 ## Intentional redundancies (not drift — designed backstops)
 - **Double PR watch:** Ferry's open-loops board (primary) + Wright's operator
   12-hour tripwire (backstop). Both on purpose; neither retires the other.
 - **Ferry re-covers escape hatch:** if Ferry's runtime lapses, Wright re-covers
   the office lane (WR § office-lane note). Dormant by design.
 
+## "Built" is not "done" (founder-ruled 2026-08-27)
+
+**A mechanism folds only with its runner, its liveness check, and its activation
+owner named.** Three parts, all three or none:
+
+- **its runner** — the timer, workflow, cron, or round step that actually calls
+  it. A function with no caller is not a feature; it is a plan.
+- **its liveness check** — a row in `deploy/box-rollcall-manifest.json` saying
+  what heartbeat would prove it ran and past what age that heartbeat is old. A
+  mechanism nothing can tell has stopped, has already stopped, in every sense
+  that matters to the town.
+- **its activation owner named** — who decided it runs, in writing. Not for
+  blame: an alarm that cannot say whose call it was leaves the reader unable to
+  tell an oversight from a decision, and the safe response to that ambiguity is
+  always to do nothing.
+
+**The four instances that bought this rule, all live on the morning it was
+written.** They are listed because the rule reads like a truism and the receipts
+do not:
+
+1. **The world drain never had a runner** (postmark#1990). The function existed,
+   was correct, was tested — and nothing called it. Marks aged more than two days
+   in a journal nobody drained.
+2. **The settlement shadow was disabled and its verdict was rotting.**
+   `postmark-settlement-shadow.timer` sat `disabled` on the box while this repo's
+   own commit `998c5d1` said *"reactivated 2026-08-23 after the outage-day
+   disable"*. Its last verdict, on disk at
+   `/srv/postmark-harbor/settlement-shadow.json`, read `"status":"would-refuse"`
+   — the exact finding the shadow exists to raise, twelve hours ahead of the real
+   crossing — dated `2026-08-24T22:23:00Z` and unread — 2 days 8 hours old when it was measured at 2026-08-27T06:00Z, and older every hour since.
+   `settlement-shadow.sh`'s own header says that verdict is *"read on the
+   operator round"*; no step of the operator round read it. **The repo and the
+   box disagreed, and no surface anywhere could see it.**
+3. **The economy page's timer has been owed since 2026-08-10** — named in § Known
+   gaps below, correctly, for seventeen days, with nothing alarming about it.
+4. **The stripe watcher is the control, and it is why PARKED exists.** Built
+   2026-08-25, not installed, and that is *correct* — its unit says so in its own
+   header. A roll-call that omitted it would make a deliberate parking
+   indistinguishable from an oversight, which is the same blindness one layer up.
+   So a parked mechanism carries a row saying it is parked, why, and what would
+   adopt it — **visible forever**, never omitted.
+
+**How it is enforced.** `deploy/box-rollcall-manifest.json` is the roll-call:
+every unit that must run, its heartbeat, its allowance, its owner.
+`tools/box-rollcall.mjs` reads it on the box and prints one line per row —
+`OK` / `PARKED` / `ALARM-*` — exiting nonzero on any alarm.
+`deploy/box-rollcall.sh` is the one-line box-side entry, and its header carries
+the install steps. Wright's operator round runs it daily.
+
+Two properties worth knowing before trusting it:
+
+- **The unit is judged before the heartbeat, always.** A fresh state file proves
+  nothing about a rail with no runner — measured 2026-08-27, when
+  `.stripe-watch-state.json` read four minutes fresh from a hand-run while no
+  stripe unit existed on the box at all.
+- **The roll-call is two-directional.** A unit installed on the box with no row
+  in the manifest is `ALARM-unmanifested`. Without that, the roll-call would
+  quietly decay into a snapshot of the day it was written — which is the same
+  failure it exists to end.
+
+**What it does not cover, said out loud.** It runs on the box, so it cannot
+report the box being down. That is why it hangs off the operator round over ssh
+rather than off a timer: an unreachable box fails the ssh, in front of a person.
+An off-box dead-man's switch is the real fix and is a second machine.
+
 ## Known gaps (named, not yet wired)
+- **🔑 `roles.db` HAS NO BACKUP (2026-08-26).** The role registry is the only
+  store in the office holding state that exists nowhere else — not in a repo,
+  not re-derivable from one, and gitignored like every other `*.db`. Today the
+  whitelist is short enough that rebuilding it by hand from memory is survivable;
+  the moment it is not, its loss is unrecoverable and silent. The `role_audit`
+  table is the restore source by design, which is only useful if the FILE
+  survives. Wanted: `roles.db` in whatever box-side backup the office grows, or
+  a periodic `tools/roles.mjs list --json` dump somewhere durable. Named here at
+  build time rather than discovered after a loss.
 - **Ferry's arrival report-after channel:** "tell Keemin about each joiner" exists
   as duty (PM §3) but its delivery surface is unwired; under the channel law it
   belongs on **his window's founders-desk panel**. One sentence in PM when the

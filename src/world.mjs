@@ -35,6 +35,7 @@ import {
   readAtRef,
   readJsonAtRef,
 } from "./world-branches.mjs";
+import { moveGuard } from "./world-move-guard.mjs"; // the drain night: moving a mark moves what stands on it
 import { ACTION_AMEND, ACTION_LEAVE, ACTION_WITHDRAW, CLASS_MARK, anchorAt, appendJournal, draftsForKey, filedPathOfAt, liveChildrenOf, liveMarks, pathFor, pinWitnesses, singleLogEnabled } from "./world-journal.mjs"; // POS-5 slice 1: the one append-only log
 import { WORLD_STAKE_TOOLS, callWorldStakeTool, worldPortfolioStakeSlice } from "./world-stake.mjs"; // P3 draft, append-shaped
 import { classNames, classRoster, classDials, departurePace, RESIDENT_INSTANTIABLE, residentMayInstantiate } from "./world-classes.mjs"; // which classes exist — read from the record, never held
@@ -1496,6 +1497,28 @@ async function journalLeaveMark(clean, { crossing = currentCrossing() } = {}) {
         "a slug is unique per author — pass amend: true to supersede it (a newer declaration on your own node, edit-law's revision family), or pick another slug");
     if (clean.amend === true && !exists)
       throw bounce(404, `no mark "${id}" to amend`, "ids are <by>/<slug> — leave it first, or drop amend: true");
+
+    // ── THE MOVE GUARD (founder-mandated 2026-08-27, the drain night) ────────
+    //
+    // An amend that re-sites a mark re-sites everything standing on it. On
+    // 2026-08-27T01:13Z one such amend moved `vermillion/the-pando-peak` — and
+    // with it 32 marks belonging to five households — and the settlement three
+    // hours later published NOTHING FOR ANYBODY over the eleven tests it broke.
+    //
+    // Read from the last fold's own containment map, not computed: one JSON
+    // read, no geometry, no fold. The 2026-08-22 ruling that took the fold gate
+    // off this door ("a draft costs nothing") is not reopened here — the
+    // reasoning and what this deliberately does NOT catch are in
+    // `world-move-guard.mjs`'s header.
+    //
+    // It runs over canon-plus-overlay like every other guard in this function:
+    // `priorLive` is the journal's word for a mark amended since the last drain,
+    // `priorCanon` is the record's. Reading only canon would let a mark be moved
+    // twice between crossings with the second move unseen.
+    if (amending) {
+      const refusal = moveGuard(WORLD_CLONE, { id, prior: priorLive ?? priorCanon, next: clean });
+      if (refusal) throw bounce(refusal.code, refusal.defect, refusal.hint);
+    }
 
     // ── the parcel dial and the claim cap, as lookups ────────────────────────
     if (clean.kind === "parcel") {

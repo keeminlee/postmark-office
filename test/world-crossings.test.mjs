@@ -21,7 +21,13 @@ import { DISPATCHABLE, fieldsFor } from "../src/world-apex.mjs";
 // tests that need one say so instead of passing over an invented world.
 const CLONE = process.env.WORLD_CLONE
   ?? join(process.cwd(), "..", "postmark-world"); // was the demo worktree's path; the verbs merged to main 2026-08-20
-const HAVE_CLONE = existsSync(join(CLONE, "tools", "thresholds.mjs"));
+// The grammar module, by whichever name this clone carries it. BOTH, because
+// the office and its world clone deploy on separate clocks and this file is a
+// name-keyed reader exactly like the code it tests — it broke against a renamed
+// clone the first time it met one, which is the defect the fallbacks in
+// world-crossings.mjs and crossing-exec.mjs exist to prevent.
+const GRAMMAR = ["enter-exit.mjs", "thresholds.mjs"].find((n) => existsSync(join(CLONE, "tools", n)));
+const HAVE_CLONE = !!GRAMMAR;
 
 const key = (...handles) => ({ handles: new Set(handles) });
 const SHIP = "the-town/the-post-office";
@@ -33,7 +39,9 @@ const WHEELHOUSE = "the-town/the-wheelhouse";
 async function officeWith({ at = 200, standing = { x: -30, y: 40 }, ledger = "" } = {}) {
   const { readFileSync } = await import("node:fs");
   const worldState = JSON.parse(readFileSync(join(CLONE, "WORLD", "world-state.json"), "utf8"));
-  const thresholds = await import(`file:///${join(CLONE, "tools", "thresholds.mjs").replace(/\\/g, "/")}`);
+  const mod = await import(`file:///${join(CLONE, "tools", GRAMMAR).replace(/\\/g, "/")}`);
+  // one name for the parser, whichever era of the module answered
+  const thresholds = mod.parseEnterExitLedger ? mod : { ...mod, parseEnterExitLedger: mod.parseThresholdLedger };
   let text = ledger;
   const written = [];
   return {
@@ -47,7 +55,7 @@ async function officeWith({ at = 200, standing = { x: -30, y: 40 }, ledger = "" 
       record: async ({ lines, handle }) => {
         written.push(...lines);
         text += lines.join("\n") + "\n";
-        const acts = thresholds.parseThresholdLedger(text).acts;
+        const acts = thresholds.parseEnterExitLedger(text).acts;
         return { lines, within: thresholds.occupancyAt(acts, at).get(handle) ?? [], commit: "deadbeef", pushed: false };
       },
     },
@@ -85,11 +93,11 @@ test("exit with nothing to step out of refuses with a reason", async () => {
     (e) => e.code === 422 && /not within anything/.test(e.defect));
 });
 
-test("an office whose clone carries no crossing law says so by name", async () => {
+test("an office whose clone carries no enter/exit law says so by name", async () => {
   const o = await officeWith();
   await assert.rejects(
     () => enterViaOffice(join(CLONE, "no-such-clone"), { mark: SHIP }, key("postmaster"), o.deps),
-    (e) => e.code === 501 && /carries no crossing law/.test(e.defect));
+    (e) => e.code === 501 && /carries no enter\/exit law/.test(e.defect));
 });
 
 // ── the acts, against the real clone ────────────────────────────────────────
@@ -112,7 +120,9 @@ test("accepting the terms crosses the whole chain and the pen sees every link", 
   assert.ok(answer.entered.includes(SHIP));
   assert.deepEqual(answer.within.slice(-1), [SHIP], "the innermost thing she is within is the boat");
   assert.equal(o.written.length, answer.entered.length, "one row per link actually crossed");
-  assert.ok(o.written.every((l) => /· enters .+ · at \d+\.\d{4} · word (welcomed|neutral)$/.test(l)),
+  // BOTH SPELLINGS of the ferry field: the row is the clone's writer's, not this
+  // test's, and this clone may carry either era of the grammar.
+  assert.ok(o.written.every((l) => /· enters .+ · (?:ferry|at) \d+\.\d{4} · word (welcomed|neutral)$/.test(l)),
     "and each row stamps the mark's own word as it stood");
   assert.equal(answer.ledger.commit, "deadbeef");
 });

@@ -16,9 +16,11 @@
 // (founder hand or the keeper's crossing sweep — refresh belongs with pin churn,
 // not on a timer).
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
+
+import { householdsOf, loginKeys, readPins } from "../src/household-logins.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
@@ -32,24 +34,22 @@ const { currentHouseholds } = await import(pathToFileURL(join(TOWN, "tools", "st
 // the bare base made a ledger-only re-key invisible to the parcel cap
 // (caught 2026-08-07, the cadaeic.space unification).
 const map = currentHouseholds(TOWN);
-const households = {};
-for (const [handle, rec] of [...map.entries()].sort((a, b) => a[0].localeCompare(b[0])))
-  households[handle] = rec.key;
 
+// The two projections moved into src/household-logins.mjs on 2026-08-27, when
+// the card rail became the third reader of the twelve lines that used to live
+// here. Same derivation, same order, same last-wins — this file's emission does
+// not move, and a falsifier holds it to that. What it buys is that a login
+// means the same household on the World's fold, on the PR lane's wall, and on
+// the office's card rail, because there is now one place where that is decided.
+//
 // logins: lowercased GitHub login → household key. The PR lane's branch-name
 // binding (draft/<login> is WHOSE sketchbook?) and the Settlement sweep's
 // authorship wall both resolve through this — same pins, same resolver, one
 // more projection of the ONE vocabulary. Pinned handles contribute their pin's
 // login; login-keyed households bind their own name by construction.
-const logins = {};
-const pins = (() => {
-  try { return JSON.parse(readFileSync(join(TOWN, "tools", "github-ids.json"), "utf8")); }
-  catch { return {}; }
-})();
-for (const rec of Object.values(pins))
-  if (rec?.login && rec?.id) logins[rec.login.toLowerCase()] = `gh:${rec.id}`;
-for (const key of Object.values(households))
-  if (key.startsWith("login:")) logins[key.slice("login:".length).toLowerCase()] = key;
+const households = householdsOf(map);
+const pins = readPins(TOWN);
+const { logins } = loginKeys(pins, households);
 
 const out = {
   generated_at: new Date().toISOString(),
