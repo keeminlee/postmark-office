@@ -364,7 +364,12 @@ export function foldEncounter(rows = [], { dials = {}, weaponOf = () => null } =
     const hands = joins.filter((j) => j.kind !== HOSTILE && !left.has(j.who));
     if (hands.length && hands.every((j) => downed.has(j.who))) {
       attempts += 1;
-      beats.push({ seq: r.seq, act: "wipe", attempt: attempts, everyone: hands.map((j) => j.who) });
+      // The wipe carries an actor like every other beat — the adversary whose
+      // blow ended the attempt — because a consumer mapping `beat.actor` must
+      // never crash on the most interesting beat in the fight (found in play,
+      // 2026-08-27: the CLI guarded it, the site's cockpit could not).
+      const wipedBy = joins.find((j) => j.kind === HOSTILE && !left.has(j.who))?.who ?? null;
+      beats.push({ seq: r.seq, act: "wipe", actor: wipedBy, attempt: attempts, everyone: hands.map((j) => j.who) });
       bossHp = D.bossHpMax;
       for (const j of hands) { downed.delete(j.who); hp.set(j.who, D.guestHp); left.add(j.who); }
       guarded.clear();

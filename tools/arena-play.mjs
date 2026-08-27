@@ -165,8 +165,16 @@ try {
     const all = dyn.prepare("SELECT seq, payload FROM journal WHERE class = 'arena-act'").all();
     const mine = all.filter((r) => { try { return JSON.parse(r.payload)?.ground === place.ground; } catch { return false; } });
     for (const r of mine) dyn.prepare("DELETE FROM journal WHERE seq = ?").run(r.seq);
-    dyn.prepare("DELETE FROM attachments WHERE target IN (SELECT id FROM attachments)").run?.bind?.(null);
-    console.log(`  forgot ${mine.length} act(s) on ${place.ground}. The world record is untouched.`);
+    // Return the ground's things to the floor: drop any hold on them, so the
+    // next attempt finds the lighter where the record put it. (The first draft
+    // of this line bound run() instead of calling it and deleted nothing —
+    // found in play, 2026-08-27; the target of a hold is the THING's id.)
+    const things = looseIn(db, place.row).map((x) => x.thing);
+    if (things.length) {
+      const q = things.map(() => "?").join(",");
+      dyn.prepare(`DELETE FROM attachments WHERE target IN (${q})`).run(...things);
+    }
+    console.log(`  forgot ${mine.length} act(s) on ${place.ground}; ${things.length} thing(s) back on the floor. The world record is untouched.`);
     show();
   }
 
@@ -191,7 +199,13 @@ try {
     show();
     for (let i = 0; i < turns; i += 1) {
       const s = encounterOn(db, dyn, place);
-      if (s.phase === "spent") { console.log("\n  *** the cake is spent — the loot is open ***"); break; }
+      if (s.phase === "spent") {
+        // The win is a birthday, not a kill. Four hundred candles is the
+        // record's own count for the cake; the loot line stays load-bearing.
+        console.log("\n  *** the four hundred candles catch — all at once, tier over tier, and the vault");
+        console.log("      is suddenly the brightest room in the world. Happy birthday. The loot is open. ***");
+        break;
+      }
       const turn = s.wheel?.turn;
       const actor = !turn || String(turn).startsWith("the-town/") ? who : turn;
       try { report(await act(actor, "strike")); }

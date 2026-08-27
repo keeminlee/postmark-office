@@ -699,3 +699,29 @@ test("every verb the door dispatches publishes a schema the site can read", asyn
     assert.equal(t.inputSchema.additionalProperties, false, `${t.name} must refuse unknown fields BY NAME`);
   }
 });
+
+// ── the wipe carries an actor, like every beat ──────────────────────────────
+
+test("every beat carries a string actor — including the wipe, the most interesting beat in the fight", async () => {
+  // Found in play, 2026-08-27: the wipe beat shipped without an actor, so any
+  // consumer mapping `beat.actor` crashed on exactly the beat a spectator most
+  // wants to render. The wipe's actor is the adversary whose blow ended the
+  // attempt. One hand alone cannot win (the dials are a party's), so a solo
+  // room wipes within the cap or this test fails loudly rather than looping.
+  const b = bottle();
+  try {
+    let s = state(b);
+    for (let i = 0; i < 200 && !(s.attempts > 0); i += 1) {
+      const turn = s.wheel?.turn;
+      await act(b, turn && turn !== CAKE ? turn : "darko", "strike").catch(() => {});
+      s = state(b);
+    }
+    assert.ok(s.attempts > 0, "a solo room must wipe within the cap — if it stopped wiping, the dials moved and this fixture needs re-truing");
+    const wipes = s.beats.filter((x) => x.act === "wipe");
+    assert.ok(wipes.length > 0, "an attempt ended but no wipe beat was kept — the journal lost the most interesting beat");
+    for (const beat of s.beats) {
+      assert.equal(typeof beat.actor, "string",
+        `beat "${beat.act}" (seq ${beat.seq}) carries no string actor — a consumer mapping beat.actor crashes on it`);
+    }
+  } finally { b.close(); }
+});
