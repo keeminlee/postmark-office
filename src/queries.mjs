@@ -317,6 +317,18 @@ export function mailList(db, handle, box = "inbox", { since, until, limit, offse
 // revision stamp that can disagree with its own payload is worse than none.
 export const indexAsOf = (db) => db.prepare("SELECT value FROM meta WHERE key = 'as_of'").get()?.value ?? null;
 
+/**
+ * The SETTLED half of a sender's outbox — the count over the built index, which
+ * is what `doorstep.pending_outbox` starts as before the town log's standing
+ * rows are added to it.
+ *
+ * Exported 2026-08-26 because the pending mail view needs the same number to
+ * name the same ladder, and a second spelling of this WHERE is a second thing
+ * that can drift from the doorstep's. One query, two readers.
+ */
+export const outboxSettled = (db, handle) =>
+  Number(db.prepare("SELECT COUNT(*) AS n FROM letters WHERE from_h = ? AND box = 'outbox'").get(handle)?.n ?? 0);
+
 // The filtered letter list (GET /letters). Every filter is optional and they
 // compose; excerpts, newest first, paged. region resolves to its residents;
 // exclude-office drops any letter touching a town office.
@@ -926,7 +938,7 @@ export function doorstep(db, handle, asOf, { nowMs = Date.now(), conversationsOf
     // becomes a file this COUNT(*) can reach. `doorstepBundle` finishes the
     // number for its own sender and attaches `pending_outbox_freshness` beside
     // it — the ownership gate and the town log both live there, not here.
-    pending_outbox: one("SELECT COUNT(*) FROM letters WHERE from_h = ? AND box = 'outbox'", handle),
+    pending_outbox: outboxSettled(db, handle),
     counts: {
       received: one("SELECT COUNT(*) FROM ledger WHERE kind = 'delivery' AND to_h = ?", handle),
       sent: one("SELECT COUNT(*) FROM ledger WHERE kind = 'delivery' AND from_h = ?", handle),

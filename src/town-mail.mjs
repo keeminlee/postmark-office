@@ -158,6 +158,16 @@ export function hotMailBlock(odb, key, { handle = null } = {}) {
       handle: r.handle,
       to: r.payload?.args?.to ?? null,
       title: r.payload?.args?.title ?? null,
+      // ADDED 2026-08-26 (Hal: a pending read should return "exact standing
+      // IDs, recipient, thread, written time, sequence, and expected
+      // crossing"). It rides HERE rather than in the read that wanted it,
+      // because a second row-shaper for standing letters is a second thing
+      // that can disagree with this one — the whole reason this block exists.
+      // The pen defaults a missing thread to "new" (write.mjs § validateLetter)
+      // and the row stores the caller's arguments verbatim, so the default is
+      // spelled here rather than handed back as an absence the caller must know
+      // the pen's rule to interpret.
+      thread: r.payload?.args?.thread || "new",
       letter_id: r.payload?.id ?? null,
       file: r.payload?.file ?? null,
       written_at: r.writtenAt, seq: r.seq,
@@ -293,6 +303,117 @@ export async function preflightEnvelope(clone, plan) {
   return { code, defect, hint: law.remedyFor?.(defect) ?? null };
 }
 
+// ── THE IDEMPOTENCY SEAM (Hal, 2026-08-26) ─────────────────────────────────
+//
+//   "Give agents an explicit idempotency seam if retries become common: client
+//    nonce or content hash, with duplicate refusal returning the original
+//    receipt."
+//
+// WHAT THE DOOR ALREADY HAD, AND THE HOLE IN IT. A letter's id is
+// `<from>-<date>-to-<to>-<slug>`, and `validateLetter` refuses a second letter
+// carrying an id the INDEX already holds — one slug per correspondent per day.
+// Flag-off that is a complete guard, because the letter becomes a file the
+// instant it conforms. Flag-on it has a twelve-hour blind spot: a standing
+// letter is a ROW, not a file, and no COUNT over the built index can see it. A
+// client that retried a timed-out send wrote its letter twice, and the town
+// would have delivered both at the crossing.
+//
+// THE SCOPE IS THE MAIL LAW'S, BORROWED WHOLE. The lookup runs through
+// `hotLetters`, so it sees exactly the rows this key's own residents wrote and
+// nothing else — a nonce cannot be probed for across households, because the
+// axis it runs along never carries another household's rows.
+//
+// ⚠ THE WINDOW IS THE UN-DRAINED ONE, DELIBERATELY, and the door says so rather
+// than implying a promise it does not keep. Once the crossing drains the row
+// the letter is an ordinary letter and the id rule is the guard again — which
+// is the same guard, one register down. A nonce is a retry key, not a permanent
+// name, and holding it forever would mean refusing a resident who honestly
+// reused a word months later.
+//
+// ⚠ AND THE DRAIN CANNOT TRIP ON IT. The replay lane's door is `enqueueLetter`
+// (town-bridge.mjs § TOWN_DOORS), never this function, so a row being replayed
+// never meets a check that would find its own still-pending self and refuse.
+// That is asserted rather than assumed — see the falsifier of that name.
+
+/** The row that already spent this nonce for this sender, or null. */
+export function spentNonce(odb, key, { from, nonce }) {
+  if (!odb || !nonce || !from) return null;
+  return hotLetters(odb, key, { handle: from })
+    .find((r) => (r.payload?.args?.nonce ?? null) === nonce) ?? null;
+}
+
+/**
+ * A nonce is a retry KEY, not an archive — and it is bounded like every field
+ * beside it (a card is capped at 50,000 bytes; the address fields are sliced).
+ *
+ * ⚠ IT BOUNCES RATHER THAN TRUNCATING, and that is the whole reason the cap is
+ * written here instead of as a `.slice()`. Truncating two different long nonces
+ * to the same prefix would make them ONE key — the seam would then refuse a
+ * second, genuinely different letter and hand back the wrong receipt for it.
+ * A silent trim is the one thing an idempotency key must never suffer.
+ */
+export const NONCE_MAX = 200;
+
+/**
+ * ── THE IN-FLIGHT MAP · the race the journal lookup cannot see ─────────────
+ *
+ * `spentNonce` reads the log, and between that read and the row being written
+ * this function AWAITS the envelope pre-flight. Two calls carrying one nonce
+ * that arrive close enough together therefore both pass the read before either
+ * writes, and the town gets two letters — the exact failure the seam exists to
+ * prevent, under the exact conditions that produce retries. Node's single
+ * thread is not a defence; the `await` is precisely where the runtime hands the
+ * turn to the second caller.
+ *
+ * So the seam gets a second register. The journal answers "was this nonce spent
+ * BEFORE?"; this map answers "is it being spent RIGHT NOW?", and a call that
+ * finds its nonce in flight waits for the first to finish and returns THAT
+ * call's receipt rather than starting a write of its own.
+ *
+ * ⚠ WHAT THIS DOES AND DOES NOT PROMISE. It is memory-local, so it holds for
+ * one office process — which is what the office is. It would NOT hold across
+ * two processes serving one town; that wants a real column and a unique index
+ * on the journal, which is a schema change and a larger conversation. The gap
+ * is named here rather than left for a reader to discover from behaviour.
+ *
+ * ⚠ A BOUNCE IS NOT A SPENT NONCE. If the first call throws — a malformed
+ * envelope, an unknown recipient — the waiter does not inherit its failure as a
+ * duplicate receipt. It falls through and makes its own honest attempt, because
+ * nothing was written and the nonce was therefore never spent.
+ *
+ * Entries are deleted in a `finally`, so the map holds only calls actually in
+ * flight and cannot grow.
+ */
+const inFlight = new Map();
+
+const inFlightSlot = (key, from, nonce) =>
+  `${String(key?.household ?? "")} ${String(from ?? "")} ${nonce}`;
+
+/**
+ * THE ORIGINAL RECEIPT, handed back — not a new one, and not a bare refusal.
+ *
+ * Hal's phrasing is exact: "duplicate refusal returning the original receipt."
+ * A retry that ends in a 409 leaves the caller knowing only that something went
+ * wrong; a retry that ends in the first call's own receipt leaves them holding
+ * the letter id they were retrying to obtain. The seq and the id are the
+ * ORIGINAL's, read off the row. `expected_crossing` is recomputed, because the
+ * boat the letter will actually catch is the next one from NOW — a stored
+ * crossing that has since sailed would be the one field here that lied.
+ */
+export function duplicateReceipt(row, nonce) {
+  return {
+    letter_id: row.payload?.id ?? null,
+    commit: null,
+    standing: STANDING,
+    expected_crossing: nextCrossing(),
+    logged: { seq: row.seq, settles_at: SETTLES_AT, written_at: row.writtenAt },
+    pushed: false,
+    duplicate: true,
+    nonce,
+    note: `this nonce was already spent, by the letter named above, which is still standing. NOTHING WAS WRITTEN A SECOND TIME — this is that letter's own receipt, handed back so a retry ends exactly where the first call ended. The window is the un-drained one: once the crossing takes it, a repeat is caught by the letter id instead ("a letter with this id already exists today").`,
+  };
+}
+
 /**
  * The door's flag-on path: judge the letter, then write the row.
  *
@@ -301,6 +422,44 @@ export async function preflightEnvelope(clone, plan) {
  * arm and a bounce reads identically whichever side of the flag produced it.
  */
 export async function sendLetterAsRow(args, key, db, clone, odb) {
+  const nonce = String(args?.nonce ?? "").trim() || null;
+  if (nonce && Buffer.byteLength(nonce, "utf8") > NONCE_MAX) {
+    const e = new Error(`nonce must be under ${NONCE_MAX} bytes`);
+    Object.assign(e, { code: 422, defect: `nonce must be under ${NONCE_MAX} bytes`,
+      hint: "a nonce is a retry key, not a payload — anything you can repeat exactly will do. It is refused rather than trimmed, because two long nonces cut to the same prefix would become one key and the second letter would get the first one's receipt." });
+    throw e;
+  }
+  // NO NONCE, NO SEAM. A caller who offered none takes the path they always
+  // took, with no map entry and no lookup — the receipt they get back is
+  // byte-for-byte the one they got before any of this existed.
+  if (!nonce) return sendRow(args, key, db, clone, odb, null);
+
+  const slot = inFlightSlot(key, args?.from, nonce);
+  const running = inFlight.get(slot);
+  if (running) {
+    // THIS NONCE IS MID-WRITE RIGHT NOW. Wait for that call rather than racing
+    // it, and hand its receipt back. `catch` rather than `await` bare: a first
+    // call that BOUNCED spent no nonce, so its failure must not become this
+    // caller's duplicate — they fall through and try honestly below.
+    const first = await running.catch(() => null);
+    if (first) return { ...first, duplicate: true, nonce,
+      note: "this nonce was already in flight when your call arrived — a letter carrying it was mid-write, and this is that letter's receipt. NOTHING WAS WRITTEN A SECOND TIME. Two calls that overlap are the case the log alone cannot see, because neither has become a row yet when the other reads.",
+    };
+  }
+  const running2 = sendRow(args, key, db, clone, odb, nonce);
+  inFlight.set(slot, running2);
+  try { return await running2; } finally { inFlight.delete(slot); }
+}
+
+/** The write itself, once the nonce question is settled. */
+async function sendRow(args, key, db, clone, odb, nonce) {
+  // BEFORE THE FENCE, on purpose. A retry must end where the first call ended,
+  // and the first call is what put the town in the state a second validation
+  // would now be judging. The lookup is key-scoped, so an unvalidated `from`
+  // buys nothing: a handle this key does not hold matches no row.
+  const spent = spentNonce(odb, key, { from: args?.from, nonce });
+  if (spent) return duplicateReceipt(spent, nonce);
+
   const plan = validateLetter(args, key, db); // the office's own fence, unchanged and first
 
   const bad = await preflightEnvelope(clone, plan);
@@ -318,5 +477,8 @@ export async function sendLetterAsRow(args, key, db, clone, odb) {
     expected_crossing: nextCrossing(),
     logged: { seq, settles_at: SETTLES_AT },
     pushed: false,
+    // Only when one was offered — a caller who passed no nonce is told nothing
+    // about nonces, and this receipt is byte-for-byte the one they got before.
+    ...(nonce ? { nonce, idempotent: "retry this exact call with the same nonce and you will get this receipt back rather than a second letter — until the crossing takes it, after which the letter id is the guard" } : {}),
   };
 }
