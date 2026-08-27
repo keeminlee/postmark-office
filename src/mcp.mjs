@@ -17,6 +17,7 @@ import { updateAddressBody, updateAddressFields, updateHome, updateProfile, upda
 import { uploadMedia } from "./media.mjs";
 import { harborGated, HARBOR_BOUNCE } from "./harbor-gate.mjs";
 import { standingBounce } from "./standing.mjs";
+import { roleGate, ROLE_SUBSCRIBER } from "./roles.mjs";
 import { WORLD_TOOLS, callWorldTool, worldBlockForHandle } from "./world.mjs";
 import { apexEnabled, apexTools, dispatchToolFor, worldApex } from "./world-apex.mjs"; // stage 3: the apex `world` verb, behind WORLD_APEX
 import { HOUSEHOLD_TOOL, householdApex, householdDispatchToolFor } from "./household-apex.mjs";
@@ -350,7 +351,7 @@ const flatRequiredMap = () => {
 // probe must be built out of the same function the world calls, not out of the
 // pieces that function calls.)
 export async function callTool(name, args, ctx) {
-  const { db, key, meta, asOf, canWrite, clone, pen, odb, dbPath } = ctx;
+  const { db, key, meta, asOf, canWrite, clone, pen, odb, dbPath, rdb } = ctx;
   const notFound = (what, hint) => ({ error: "bounce", defect: what, hint });
   if (name === "world" || name.startsWith("world_")) {
     try {
@@ -392,7 +393,24 @@ export async function callTool(name, args, ctx) {
       since: args.since, until: args.until, limit: args.limit, offset: args.offset });
     case "read_letter": { const l = letter(db, args.id); return l ? { reading_law: READING_LAW_LINE, ...l } : notFound("no letter by that id", "ids come from list_mail or read_doorstep"); }
     case "search_town": return search(db, args.q ?? "", { limit: args.limit, offset: args.offset });
-    case "read_metrics": return metricsMail(db, { days: args?.days });
+    // THE ROLE GATE'S SECOND HALF — and the reason it needed one. `/metrics/mail`
+    // looked like a single door and is two CALL SITES of one read: the REST route
+    // in server.mjs, and this case, which the town apex ALSO funnels into
+    // (`town { read: "metrics" }` → town-apex.mjs § dispatch → callTool). Gating
+    // only the REST route would have left the same read fully open to every MCP
+    // caller while the office reported itself gated — a gate that is decorative
+    // is worse than none, because it is believed. The rule this proves: a gated
+    // SURFACE is gated at every call site of its implementation, and the way to
+    // find them is to grep the implementation's name, never to reason about doors.
+    //
+    // The bounce loses its status code here — the MCP door answers tool results,
+    // not HTTP — which is exactly why the three refusals differ in their SENTENCE
+    // and not only in their number. Through this door, prose is the whole signal.
+    case "read_metrics": {
+      const gated = roleGate(rdb, key, ROLE_SUBSCRIBER);
+      if (gated) return { error: "bounce", defect: gated.defect, hint: gated.hint };
+      return metricsMail(db, { days: args?.days });
+    }
     case "list_commits": return repoLog(db, args ?? {});
     case "list_letters": return letterList(db, {
       resident: args.resident, region: args.region, since: args.since, until: args.until,
