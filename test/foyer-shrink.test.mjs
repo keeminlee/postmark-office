@@ -65,8 +65,8 @@ import { DatabaseSync } from "node:sqlite";
 
 import { fixtureDb } from "./fixture.mjs";
 import {
-  ACT_SHADOW_READS, CARD_TEACH, HOUSEHOLD_DISPATCHABLE, HOUSEHOLD_READS, READING_LAW,
-  assertEveryActIsReadable,
+  CARD_TEACH, HOUSEHOLD_DISPATCHABLE, HOUSEHOLD_READS, READING_LAW,
+  ACT_SHADOW_READS, assertActCardsReachable,
   capabilityIndex, householdApex,
 } from "../src/household-apex.mjs";
 import { hotMailBlock, outboxTense, replayLetter, sendLetterAsRow, MAIL_DOOR, NONCE_MAX } from "../src/town-mail.mjs";
@@ -309,39 +309,43 @@ test("F7 · an unknown read bounces naming BOTH namespaces — the reads and the
   assert.match(r.hint, /reads back its own full card/);
 });
 
-test("F7b · EVERY ACT IS READABLE BY ITS OWN NAME — the invariant that replaced 'the namespaces must be disjoint'", async () => {
-  // ⚠ THE FIX ROUND ASKED FOR A DISJOINTNESS GUARD. I wrote it, and IT FIRED
-  // ON THE LIVE DOOR: `address`, `home` and `window` have been both an act and
-  // a read since long before this branch. That is not a latent bug — it is the
-  // world door's own relationship arriving under a different spelling, because
-  // there `read:` is "every action's shadow". `read: "home"` IS what the home
-  // act wrote. So the invariant this door needs is REACHABILITY, not
-  // disjointness: every act's card must come back from `read: "<act>"`, whether
-  // it rides that act's shadow or stands alone as the answer.
-  assert.deepEqual([...ACT_SHADOW_READS], ["address", "home", "window"],
-    "the overlap is computed from the two tables, not listed — it cannot fall out of step with them");
-  for (const act of HOUSEHOLD_DISPATCHABLE) {
-    const r = await householdApex({ read: act, handle: "wright" }, KEY, ctx({ slim: true, schemas: SCHEMAS, schemaRequired: REQUIRED }));
+test("F7b · the NINE acts that own their name answer their card; the THREE that are also reads keep their read", async () => {
+  // ⚠ THE ROUND ASKED FOR A DISJOINTNESS GUARD. It fired on the live door:
+  // `address`, `home` and `window` have been both an act and a read since long
+  // before this branch, because a read here IS that act's shadow. At the world
+  // door the shadow read carries the card too; I tried that and the doorstep
+  // bundle's falsifier refused it — a segment must BE the answer of the read it
+  // names, and the doorstep composes `window` itself. So the grammar is total
+  // for nine acts and not for three, and this asserts exactly that rather than
+  // a tidier sentence that is not true.
+  const { bare, shadowed } = assertActCardsReachable([...HOUSEHOLD_DISPATCHABLE], HOUSEHOLD_READS);
+  assert.deepEqual(shadowed, ["address", "home", "window"]);
+  assert.equal(bare.length, 9);
+  for (const act of bare) {
+    const r = await householdApex({ read: act }, KEY, ctx({ slim: true, schemas: SCHEMAS, schemaRequired: REQUIRED }));
     assert.equal(r.error, undefined, `read: "${act}" bounced — an act nobody can read is an act nobody can learn`);
     assert.equal(r.read, act);
     assert.ok(r.card && r.card.act === act, `read: "${act}" came back without its card`);
   }
 });
 
-test("F7c · a SHADOW read still answers its own payload — the card joins it, never replaces it", async () => {
-  const r = await householdApex({ read: "home", handle: "wright" }, KEY, ctx({ slim: true, schemas: SCHEMAS, schemaRequired: REQUIRED }));
-  assert.ok(r.home, "the home page is still the answer");
-  assert.equal(r.of, "wright");
-  assert.equal(r.card.act, "home", "and the act's card rides beside it, as world { read: <action> } carries both card and domain");
+test("F7c · a SHADOW read answers ITS OWN payload, unchanged — the doorstep bundle's law depends on it", async () => {
+  // "every segment IS the answer of the read its `serves` names" — the bundle
+  // composes `window` directly, so a key added to the read and not the segment
+  // is a drift the bundle's own falsifier catches. It caught mine.
+  for (const what of ACT_SHADOW_READS) {
+    for (const slim of [true, false]) {
+      const r = await householdApex({ read: what, handle: "wright" }, KEY, ctx({ slim, schemas: SCHEMAS, schemaRequired: REQUIRED }));
+      if (r.error) continue;
+      assert.equal("card" in r, false,
+        `read: "${what}" grew a card — the doorstep segment does not, and the bundle law is that they are the same answer`);
+    }
+  }
 });
 
-test("F7d · and the card rides the CONNECTOR SKIN ALONE — the three shadow reads answer REST byte-for-byte what they did", async () => {
-  for (const what of ACT_SHADOW_READS) {
-    const rest = await householdApex({ read: what, handle: "wright" }, KEY, ctx({ schemas: SCHEMAS, schemaRequired: REQUIRED }));
-    if (rest.error) continue; // a fixture without that paper — nothing to compare
-    assert.equal("card" in rest, false,
-      `REST read: "${what}" grew a key — these are bytes frozen consumers already hold`);
-  }
+test("F7d · and the REST bare answer is still byte-identical — nothing in this grammar reached a frozen consumer", async () => {
+  const full = await householdApex({}, KEY, ctx());
+  assert.equal(JSON.stringify(full), readFileSync(GOLDEN, "utf8"));
 });
 
 // ── (3) THE PENDING VIEW ────────────────────────────────────────────────────

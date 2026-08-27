@@ -166,47 +166,46 @@ export const HOUSEHOLD_READS = Object.freeze({
 export const HOUSEHOLD_READABLE = Object.freeze(Object.keys(HOUSEHOLD_READS));
 
 /**
- * ── ONE NAMESPACE, AND IT IS NOT DISJOINT — BY DESIGN, AS THE WORLD'S IS NOT
+ * ── THE NAMESPACE IS NOT DISJOINT, AND THREE ACTS PAY FOR IT ─────────────
  *
  * The fix round asked me to assert that no name is both an act and a read. I
- * wrote that guard, and IT FIRED ON THE LIVE DOOR: `address`, `home` and
- * `window` have been both since long before this branch. That is not a latent
- * bug someone should rename away — it is the same relationship the WORLD door
- * is built on, arriving here under a different spelling.
+ * wrote that guard and IT FIRED ON THE LIVE DOOR: `address`, `home` and
+ * `window` have been both since long before this branch, because a read here
+ * is already that act's shadow — `read: "home"` returns what `do: "home"`
+ * wrote. That is the world door's own relationship, where `read:` is "every
+ * action's shadow" and the two range over one set.
  *
- * At the world apex, `read:` is described in its own comment as "every action's
- * shadow … anything you can do, you can read". Reads and acts range over ONE
- * set there because a read IS an act's shadow. Household looked like it had two
- * separate tables — and then three of the names matched, which is the tell:
- * `read: "home"` returns the home page, and `do: "home"` writes it. The read is
- * already that act's shadow. Nothing collided; two halves of one relationship
- * had simply never been named as one.
+ * At the world door the shadow read CARRIES the card: `{read, card, ...domain}`.
+ * I tried that here and the doorstep bundle's falsifier refused it — the
+ * bundle's law is that a segment IS the answer of the read its `serves` names,
+ * and the doorstep composes `window` itself. Growing both the read and the
+ * morning page to match would tax the one surface this branch exists to
+ * lighten, and would move REST doorstep bytes.
  *
- * So the invariant this door actually needs is not disjointness. It is
- * REACHABILITY: every act's card must be readable by the act's own name. For an
- * act that also has a shadow read, the card rides that read's answer; for one
- * that does not, the card IS the answer. Either way `read: "<act>"` yields a
- * card, which is the promise a caller is making a call on.
+ * So the honest state, asserted rather than wished:
  *
- * Exported and called at load, so an act that becomes unreachable stops the
- * office rather than quietly answering something else.
+ *   • NINE acts have no read of their own; `read: "<act>"` answers their card.
+ *   • THREE (`ACT_SHADOW_READS`) already own their name as a read, and keep it
+ *     unchanged. Their cards ride the act's own answer and the bare index's
+ *     field names — not a bare `read:`.
+ *
+ * That asymmetry is real and it is the founder's to resolve, not mine: the
+ * choices are to let the shadow reads carry the card (and pay it on the
+ * doorstep), to rename three public reads, or to leave it as it stands. The
+ * guard below states what IS true so the next reader is not misled by a
+ * grammar that looks total and is not.
  */
 export const ACT_SHADOW_READS = Object.freeze(
   HOUSEHOLD_DISPATCHABLE.filter((a) => Object.prototype.hasOwnProperty.call(HOUSEHOLD_READS, a)));
 
-export function assertEveryActIsReadable(acts, reads) {
-  // An act is reachable if `read:` resolves it — either as its own card, or as
-  // a shadow read that carries the card. Both branches key off ACTS, so the
-  // only way to be unreachable is to not be an act at all.
-  const unreachable = acts.filter((a) => typeof a !== "string" || !a);
-  if (unreachable.length)
-    throw new Error(`household: ${unreachable.length} act(s) cannot be named in a read: — every act's card must be reachable as read: "<act>"`);
-  // and the shadow set is exactly the intersection, computed rather than listed,
-  // so it cannot fall out of step with either table
-  const shadows = acts.filter((a) => Object.prototype.hasOwnProperty.call(reads, a));
-  return { reachable: acts.length, shadows };
+export function assertActCardsReachable(acts, reads) {
+  const shadowed = acts.filter((a) => Object.prototype.hasOwnProperty.call(reads, a));
+  const bare = acts.filter((a) => !shadowed.includes(a));
+  if (!bare.length)
+    throw new Error("household: no act's card is reachable through read: — the grammar has been lost entirely");
+  return { bare, shadowed };
 }
-assertEveryActIsReadable(HOUSEHOLD_DISPATCHABLE, HOUSEHOLD_READS);
+assertActCardsReachable(HOUSEHOLD_DISPATCHABLE, HOUSEHOLD_READS);
 
 // ── THE FOYER · identity first, schemas on request (Hal, 2026-08-26) ─────────
 //
@@ -608,21 +607,22 @@ export async function householdApex(args = {}, key = null, ctx = {}) {
   // ── read shadows ──────────────────────────────────────────────────────────
   if (reading) {
     const what = String(args.read).trim();
-    // THE CARD RIDES ITS OWN SHADOW (the founder's grammar catch, 2026-08-26).
-    // `address`, `home` and `window` are acts AND reads, and the read is that
-    // act's shadow -- `read: "home"` is what the home act wrote. The world door
-    // answers a read-of-an-action as `{ read, card, ...domain }`; this gives the
-    // household reads the same shape by adding the card the world would carry.
+    // ⚠ THE CARD DOES NOT RIDE A SHADOW READ, AND THE SUITE IS WHY.
     //
-    // CONNECTOR SKIN ONLY: these three reads answer bytes REST callers already
-    // hold, and OPERATIONS' breaking-change rule protects those. The card joins
-    // the MCP answer; `GET /household?read=home` is untouched.
-    const withCard = (answer) => {
-      if (!slim || !answer || answer.error || !ACTS[what]) return answer;
-      const store = openStore();
-      try { return { ...answer, card: actCard(what, store.db, { schemas, schemaRequired }) }; }
-      finally { store.db?.close(); }
-    };
+    // I first attached each act's card to its shadow read, mirroring the world
+    // door's `{read, card, ...domain}`. The doorstep bundle's own falsifier
+    // caught it: "segment \"window\" drifted from household.window — the bundle
+    // is restating a read instead of carrying it". The bundle's law is that
+    // every segment IS the answer of the read its `serves` names, and the
+    // doorstep composes `window` from `windowRead` directly. Adding a key to
+    // the read and not to the segment breaks that law; adding it to BOTH grows
+    // the morning page, which is the surface this whole branch exists to make
+    // lighter, and changes REST doorstep bytes besides.
+    //
+    // So `read: "address" | "home" | "window"` answer exactly what they always
+    // answered. What that costs is honest and is named in the handback: the
+    // world's grammar transplants for the NINE acts whose name is not also a
+    // read, and the remaining three need a call I do not get to make alone.
     // A READ TAKES FIELDS TOO, through the same do:/args: envelope the acts use
     // (the town apex's read branch has merged them since it opened). Until the
     // mail read landed, `handle` was the only field any household read wanted,
@@ -650,12 +650,12 @@ export async function householdApex(args = {}, key = null, ctx = {}) {
     if (what === "address") {
       if (!handle) return whichResident("address");
       let r = null; try { r = residentQ(db, handle); } catch { r = null; }
-      return r ? withCard({ read: "address", of: handle, address: r }) : bounce(404, `no settled address for "${handle}"`, "a harbor resident has no white-pages address yet — that comes with settling");
+      return r ? { read: "address", of: handle, address: r } : bounce(404, `no settled address for "${handle}"`, "a harbor resident has no white-pages address yet — that comes with settling");
     }
     if (what === "home") {
       if (!handle) return whichResident("home");
       let h = null; try { h = homeQ(db, handle); } catch { h = null; }
-      return h ? withCard({ read: "home", of: handle, home: h }) : bounce(404, `no home page for "${handle}"`, "tend one — household { do: \"home\" }");
+      return h ? { read: "home", of: handle, home: h } : bounce(404, `no home page for "${handle}"`, "tend one — household { do: \"home\" }");
     }
     if (what === "standing") return householdStanding(key, ctx);
     // ── the stamps tenancy's reads ──────────────────────────────────────────
@@ -763,7 +763,7 @@ export async function householdApex(args = {}, key = null, ctx = {}) {
     if (what === "window") {
       if (!handle) return whichResident("window");
       const w = windowRead(db, handle, { odb, clone, asOf });
-      return w ? withCard(w) : bounce(404, `no resident "${handle}"`, "handles are lowercase-hyphenated; try town { read: \"residents\" }");
+      return w ?? bounce(404, `no resident "${handle}"`, "handles are lowercase-hyphenated; try town { read: \"residents\" }");
     }
     // ── the consent inbox (the founder's .1 ruling, 2026-08-25) ─────────────
     //
