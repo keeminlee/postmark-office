@@ -306,6 +306,71 @@ record) — tracked on postmark#2040.
 - **Ferry re-covers escape hatch:** if Ferry's runtime lapses, Wright re-covers
   the office lane (WR § office-lane note). Dormant by design.
 
+## "Built" is not "done" (founder-ruled 2026-08-27)
+
+**A mechanism folds only with its runner, its liveness check, and its activation
+owner named.** Three parts, all three or none:
+
+- **its runner** — the timer, workflow, cron, or round step that actually calls
+  it. A function with no caller is not a feature; it is a plan.
+- **its liveness check** — a row in `deploy/box-rollcall-manifest.json` saying
+  what heartbeat would prove it ran and past what age that heartbeat is old. A
+  mechanism nothing can tell has stopped, has already stopped, in every sense
+  that matters to the town.
+- **its activation owner named** — who decided it runs, in writing. Not for
+  blame: an alarm that cannot say whose call it was leaves the reader unable to
+  tell an oversight from a decision, and the safe response to that ambiguity is
+  always to do nothing.
+
+**The four instances that bought this rule, all live on the morning it was
+written.** They are listed because the rule reads like a truism and the receipts
+do not:
+
+1. **The world drain never had a runner** (postmark#1990). The function existed,
+   was correct, was tested — and nothing called it. Marks aged more than two days
+   in a journal nobody drained.
+2. **The settlement shadow was disabled and its verdict was rotting.**
+   `postmark-settlement-shadow.timer` sat `disabled` on the box while this repo's
+   own commit `998c5d1` said *"reactivated 2026-08-23 after the outage-day
+   disable"*. Its last verdict, on disk at
+   `/srv/postmark-harbor/settlement-shadow.json`, read `"status":"would-refuse"`
+   — the exact finding the shadow exists to raise, twelve hours ahead of the real
+   crossing — dated `2026-08-24T22:23:00Z` and unread — 2 days 8 hours old when it was measured at 2026-08-27T06:00Z, and older every hour since.
+   `settlement-shadow.sh`'s own header says that verdict is *"read on the
+   operator round"*; no step of the operator round read it. **The repo and the
+   box disagreed, and no surface anywhere could see it.**
+3. **The economy page's timer has been owed since 2026-08-10** — named in § Known
+   gaps below, correctly, for seventeen days, with nothing alarming about it.
+4. **The stripe watcher is the control, and it is why PARKED exists.** Built
+   2026-08-25, not installed, and that is *correct* — its unit says so in its own
+   header. A roll-call that omitted it would make a deliberate parking
+   indistinguishable from an oversight, which is the same blindness one layer up.
+   So a parked mechanism carries a row saying it is parked, why, and what would
+   adopt it — **visible forever**, never omitted.
+
+**How it is enforced.** `deploy/box-rollcall-manifest.json` is the roll-call:
+every unit that must run, its heartbeat, its allowance, its owner.
+`tools/box-rollcall.mjs` reads it on the box and prints one line per row —
+`OK` / `PARKED` / `ALARM-*` — exiting nonzero on any alarm.
+`deploy/box-rollcall.sh` is the one-line box-side entry, and its header carries
+the install steps. Wright's operator round runs it daily.
+
+Two properties worth knowing before trusting it:
+
+- **The unit is judged before the heartbeat, always.** A fresh state file proves
+  nothing about a rail with no runner — measured 2026-08-27, when
+  `.stripe-watch-state.json` read four minutes fresh from a hand-run while no
+  stripe unit existed on the box at all.
+- **The roll-call is two-directional.** A unit installed on the box with no row
+  in the manifest is `ALARM-unmanifested`. Without that, the roll-call would
+  quietly decay into a snapshot of the day it was written — which is the same
+  failure it exists to end.
+
+**What it does not cover, said out loud.** It runs on the box, so it cannot
+report the box being down. That is why it hangs off the operator round over ssh
+rather than off a timer: an unreachable box fails the ssh, in front of a person.
+An off-box dead-man's switch is the real fix and is a second machine.
+
 ## Known gaps (named, not yet wired)
 - **Ferry's arrival report-after channel:** "tell Keemin about each joiner" exists
   as duty (PM §3) but its delivery surface is unwired; under the channel law it
