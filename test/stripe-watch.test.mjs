@@ -26,6 +26,7 @@ import { execFileSync } from "node:child_process";
 
 import { isResidentHandle } from "../src/residency.mjs";
 import { CROSSING_MS } from "../src/crossings.mjs";
+import { townLoginHands } from "../src/household-logins.mjs";
 import {
   decide, decodeSession, resolveSession, listCompleteSessions, stripeReader,
   OUTSIDE_FROM, HANDLE_FIELD, RAIL, MIN_USD,
@@ -77,12 +78,17 @@ const sess = ({
 });
 
 // ── a throwaway town with a real, sealed ledger ─────────────────────────────
-function seamTown({ pots = { keep: 1000, small: 5 } } = {}) {
+// `pins` is the town's own tools/github-ids.json. The default is the two-handle
+// town every falsifier above this line was written against and must not move;
+// the login-pin falsifiers below hand in a richer one, because a login that
+// binds one hand and a login that binds six are the same file to the reader and
+// opposite answers to the rule.
+function seamTown({ pots = { keep: 1000, small: 5 }, pins = { paz: { login: "p", id: 2 }, stan: { login: "s", id: 1 } } } = {}) {
   const { publicKey, privateKey } = generateKeyPairSync("ed25519");
   const repo = mkdtempSync(join(tmpdir(), "stripe-town-"));
   mkdirSync(join(repo, "tools"), { recursive: true });
   mkdirSync(join(repo, "WHITE_PAGES"), { recursive: true });
-  writeFileSync(join(repo, "tools", "github-ids.json"), JSON.stringify({ paz: { login: "p", id: 2 }, stan: { login: "s", id: 1 } }));
+  writeFileSync(join(repo, "tools", "github-ids.json"), JSON.stringify(pins));
   writeFileSync(join(repo, "WHITE_PAGES", "mail-ledger.md"), "# ledger\n\n- 2026-06-12 · m-1 · stan → paz · thread: new\n");
   writeFileSync(join(repo, "tools", "stamp-pubkey.pem"), publicKey.export({ type: "spki", format: "pem" }));
   writeFileSync(join(repo, "ECONOMY-DIALS.json"), JSON.stringify({
@@ -104,6 +110,10 @@ const ctx = (town, over = {}) => ({
   entries: entriesOf(town.repo),
   clone: town.repo,
   households: ENGINE.householdKeys(town.repo),
+  // The SECOND channel, derived by the town's own resolver through the office's
+  // one projection. Handed in like everything else, so a falsifier can withhold
+  // it and watch the rule fall back to the published one.
+  loginHands: townLoginHands(town.repo, ENGINE),
   ...over,
 });
 
@@ -205,6 +215,204 @@ test("the gift spelling can never collide with a handle, and the ledger still ta
   assert.equal(rows.length, 1);
   assert.equal(rows[0].from, OUTSIDE_FROM);
   assert.match(ledgerText(town.repo), new RegExp(`pot-receipt · pot:keep · rail: ${RAIL} · usd: 7 · from: outside:stripe`));
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// THE HAND, SECOND CHANNEL — a login the town has ALREADY PINNED
+// ════════════════════════════════════════════════════════════════════════════
+//
+// THE LIVE CASE these were written from (2026-08-26, session cs_live_a1VF2VOB…,
+// $20 to darko-fund): the payer typed `herzfunke-martina`, which is not a
+// resident handle — it is their GITHUB LOGIN. The town's own pins bind that
+// login to household gh:305439322, whose one resident handle is
+// `sol-am-lichterfenster`. Filed as a gift, that dollar mints no holo, and
+// "one dollar, one mint chance, forever" means there is no second try.
+//
+// The rule these assert is NOT "look harder for a name". It is that the town
+// already wrote this binding down, under review, in its own pins file — so
+// reading it is reading the record, and the only thing being added is that the
+// office stops throwing away an answer it already has.
+
+test("a typed GitHub login the town has pinned to ONE household with ONE hand is the hand — attributed, not guessed", async () => {
+  // LAW (tools/world-households-export.mjs, verbatim): "logins: lowercased
+  //     GitHub login → household key … Pinned handles contribute their pin's
+  //     login; login-keyed households bind their own name by construction."
+  //     And the pins are "the town's own resolver — stamp-mint.mjs … never by a
+  //     second implementation."
+  //
+  // The fixture is the herzfunke shape exactly: `pazmartina` is nobody's handle,
+  // and it is the login pinned to `paz`, who is the only hand in gh:2.
+  const town = seamTown({ pins: { paz: { login: "pazmartina", id: 2 }, stan: { login: "s", id: 1 } } });
+  const now = 2_000_000_000_000;
+  const old = Math.floor(now / 1000) - 86_400;
+
+  const r = resolveSession(decodeSession(sess({ id: CS_A, created: old, handle: "pazmartina" })), { ...ctx(town), now });
+
+  assert.equal(r.disposition, "witness");
+  assert.equal(r.from, "paz", "the pinned hand, not the typed string and not a gift");
+  assert.equal(r.attributed, true);
+  assert.equal(r.attributed_via, "login-pin");
+  assert.equal(r.gift_note, undefined, "nothing about this hand was unknown, so nothing is disclosed as a gift");
+  assert.match(r.pin_note, /town's own verified pin is the hand — attributed, not guessed/);
+  assert.match(r.pin_note, /pazmartina/, "the note says which string was typed");
+  assert.match(r.pin_note, /paz/, "and which hand it resolved to");
+  // the typed string is kept verbatim beside the resolution, because the
+  // operator round's whole job is to be able to disagree with this
+  assert.equal(r.handle_typed, "pazmartina");
+});
+
+test("a login whose household holds SEVERAL hands is a household and not a hand, so it stays a gift that says why", async () => {
+  // LAW (tools/stripe-watch.mjs, the header, verbatim): "a payment the office
+  //     cannot attach to a hand can still be a gift, but it cannot mint your
+  //     holo." A pin that names six people names no one of them.
+  //
+  // This is the majority shape in the live town: 17 of 93 pinned logins today
+  // carry more than one hand (six behind `darkelf381` alone). Picking the first
+  // would be the office deciding whose deed grew, which is the exact thing the
+  // exact-match rule exists to refuse.
+  const town = seamTown({ pins: { stan: { login: "twohands", id: 7 }, wren: { login: "twohands", id: 7 } } });
+  const now = 2_000_000_000_000;
+  const old = Math.floor(now / 1000) - 86_400;
+
+  const r = resolveSession(decodeSession(sess({ id: CS_A, created: old, handle: "twohands" })), { ...ctx(town), now });
+
+  assert.equal(r.from, OUTSIDE_FROM);
+  assert.equal(r.attributed, false);
+  assert.equal(r.attributed_via, undefined);
+  assert.match(r.gift_note, /twohands/);
+  assert.match(r.gift_note, /household/, "the note says the reason is the household, not a misspelling");
+  assert.match(r.gift_note, /stan/);
+  assert.match(r.gift_note, /wren/, "and names the hands, so the operator can ask which one paid");
+  assert.match(r.gift_note, /cannot mint your holo/);
+});
+
+test("a resident handle OUTRANKS a login of the same spelling — the handle channel is asked first", async () => {
+  // LAW (tools/stripe-watch.mjs, the header, verbatim): the hand is "the
+  //     session's custom field `handle`, if it EXACTLY names a registered
+  //     household". Exact match is the first question and it keeps its
+  //     precedence; the pin channel only ever answers where that one is silent.
+  //
+  // NOT hypothetical: EIGHT logins in the live pins file are also somebody's
+  // resident handle today (`ethan-thorne`, `orion-by-the-fire`,
+  // `vertas-marginalia`, `qthedreaming`, …). If the pin channel went first,
+  // typing your own handle could pay a stranger's deed.
+  const town = seamTown({ pins: { stan: { login: "s", id: 1 }, fern: { login: "stan", id: 9 } } });
+  const now = 2_000_000_000_000;
+  const old = Math.floor(now / 1000) - 86_400;
+
+  // `stan` is a resident handle AND the login pinned to `fern`.
+  const r = resolveSession(decodeSession(sess({ id: CS_A, created: old, handle: "stan" })), { ...ctx(town), now });
+
+  assert.equal(r.from, "stan", "the handle wins; fern's deed is not touched");
+  assert.equal(r.attributed, true);
+  assert.equal(r.attributed_via, "handle");
+  assert.equal(r.pin_note, undefined, "nothing was resolved through a pin, so nothing claims it was");
+});
+
+test("the login channel is case-insensitive, because a login is not case-sensitive and a payer types what they remember", async () => {
+  // LAW (tools/world-households-export.mjs, verbatim): "logins: LOWERCASED
+  //     GitHub login → household key". The map is built lowercased, so the
+  //     lookup must be too, or the map's own spelling silently excludes the
+  //     capitalisation GitHub itself shows the payer on their profile.
+  const town = seamTown({ pins: { paz: { login: "PazMartina", id: 2 }, stan: { login: "s", id: 1 } } });
+  const now = 2_000_000_000_000;
+  const old = Math.floor(now / 1000) - 86_400;
+  const at = (id, handle) => resolveSession(decodeSession(sess({ id, created: old, handle })), { ...ctx(town), now });
+
+  for (const [id, typed] of [[CS_A, "PazMartina"], [CS_B, "pazmartina"], [CS_C, "PAZMARTINA"]]) {
+    const r = at(id, typed);
+    assert.equal(r.from, "paz", `${typed} resolves to the pinned hand`);
+    assert.equal(r.attributed_via, "login-pin");
+  }
+});
+
+test("a login TWO different accounts claim is ambiguous, and ambiguity is a gift rather than a winner", async () => {
+  // LAW (src/household-logins.mjs, verbatim): "A consumer that picks the first
+  //     of several is guessing with somebody's deed."
+  //
+  // The pins file is keyed by handle, so nothing in its shape stops two handles
+  // binding one login to two different accounts. Last-wins would pick a hand
+  // out of file order. There are zero such collisions in the live pins today —
+  // which is exactly when the guard is cheap to write and impossible to test
+  // later.
+  const town = seamTown({ pins: { rook: { login: "clash", id: 11 }, dove: { login: "clash", id: 12 } } });
+  const now = 2_000_000_000_000;
+  const old = Math.floor(now / 1000) - 86_400;
+
+  const r = resolveSession(decodeSession(sess({ id: CS_A, created: old, handle: "clash" })), { ...ctx(town), now });
+  assert.equal(r.from, OUTSIDE_FROM);
+  assert.equal(r.attributed, false);
+});
+
+test("an unknown string is still a gift, and the pin channel did not loosen the old rule", async () => {
+  // LAW (the fund page, the card rail's own warning, verbatim): "a payment the
+  //     office cannot attach to a hand can still be a gift, but it cannot mint
+  //     your holo."
+  //
+  // The regression this guards: a second channel that answers "close enough"
+  // for a string neither channel knows. `pazz` is a typo of a handle AND a typo
+  // of a login, and it must land exactly where it landed before this lane.
+  const town = seamTown({ pins: { paz: { login: "pazmartina", id: 2 }, stan: { login: "s", id: 1 } } });
+  const now = 2_000_000_000_000;
+  const old = Math.floor(now / 1000) - 86_400;
+  const at = (id, handle) => resolveSession(decodeSession(sess({ id, created: old, handle })), { ...ctx(town), now });
+
+  const typo = at(CS_A, "pazz");
+  assert.equal(typo.from, OUTSIDE_FROM);
+  assert.equal(typo.attributed, false);
+  assert.match(typo.gift_note, /"pazz" is not a household the town knows/);
+
+  const none = at(CS_B, null);
+  assert.equal(none.from, OUTSIDE_FROM);
+  assert.match(none.gift_note, /no handle was given/);
+});
+
+test("the disclosure rides the PLAN through decide(), so the held row the operator reads carries it too", async () => {
+  // LAW (tools/stripe-watch.mjs, the header, verbatim): "A HELD session carries
+  //     its provisional resolution, not just 'wait'. That is the whole value of
+  //     the window: the operator round must be able to read [the resolution]
+  //     and fix it, rather than learning after the ref is spent."
+  //
+  // A resolution the operator cannot SEE is not reviewable, and a login-pin
+  // attribution is precisely the one a human should be able to veto — it is the
+  // only channel that pays a hand the payer did not type.
+  const town = seamTown({ pins: { paz: { login: "pazmartina", id: 2 }, stan: { login: "s", id: 1 } } });
+  const now = 2_000_000_000_000;
+  const fresh = Math.floor(now / 1000) - 60; // inside the grace window
+
+  const { report, todo } = decide({
+    sessions: [sess({ id: CS_A, created: fresh, handle: "pazmartina" })],
+    ...ctx(town), now,
+  });
+
+  assert.equal(todo.length, 0, "nothing witnesses inside the window");
+  assert.equal(report.hold.length, 1);
+  const plan = report.hold[0].plan;
+  assert.equal(plan.from, "paz");
+  assert.equal(plan.attributed, true);
+  assert.equal(plan.attributed_via, "login-pin");
+  assert.equal(plan.handle_typed, "pazmartina", "what was typed, kept beside what it became");
+  assert.match(plan.pin_note, /attributed, not guessed/);
+});
+
+test("with NO pins map handed in, the rule is exactly the rule it was before this lane", async () => {
+  // LAW (src/household-logins.mjs, verbatim): "An engine without
+  //     `currentHouseholds` yields an EMPTY map, which is the honest answer: no
+  //     pins were read, so no login is a hand."
+  //
+  // The office is not the only caller shape, and a missing map must degrade to
+  // the published rule rather than throwing on a money path.
+  const town = seamTown({ pins: { paz: { login: "pazmartina", id: 2 }, stan: { login: "s", id: 1 } } });
+  const now = 2_000_000_000_000;
+  const old = Math.floor(now / 1000) - 86_400;
+  const bare = { engine: ENGINE, entries: entriesOf(town.repo), clone: town.repo, households: ENGINE.householdKeys(town.repo) };
+
+  const r = resolveSession(decodeSession(sess({ id: CS_A, created: old, handle: "pazmartina" })), { ...bare, now });
+  assert.equal(r.from, OUTSIDE_FROM, "no map, no second channel");
+  assert.equal(r.attributed, false);
+
+  const still = resolveSession(decodeSession(sess({ id: CS_B, created: old, handle: "paz" })), { ...bare, now });
+  assert.equal(still.from, "paz", "and the first channel is untouched");
 });
 
 // ════════════════════════════════════════════════════════════════════════════

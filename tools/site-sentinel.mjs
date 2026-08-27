@@ -166,8 +166,16 @@ export const CONFIG = {
   // crash-looped on EACCES for 22 hours behind an all-green board, because
   // nothing asked whether the watchers themselves were alive.
   watchers: [
-    { key: "usdc_watch", label: "the usdc-watch timer", state: "/srv/postmark-usdc/state.json", cadenceMs: 10 * MINUTE },
-    { key: "stripe_watch", label: "the stripe-watch timer", state: "/srv/postmark-stripe/state.json", cadenceMs: 10 * MINUTE,
+    // `unit` names the timer each cadence is copied FROM. It is not decoration:
+    // the two numbers live in different files, and test/site-sentinel.test.mjs
+    // reads the unit and refuses a cadence that does not match it. stripe_watch
+    // said 10 minutes here while its timer has always fired every 15 (caught
+    // 2026-08-27) — with a 3× tolerance that put a healthy rail one missed tick
+    // from STALE, under a reason line quoting a cadence the box does not run.
+    { key: "usdc_watch", label: "the usdc-watch timer", state: "/srv/postmark-usdc/state.json",
+      unit: "postmark-usdc-watch.timer", cadenceMs: 10 * MINUTE },
+    { key: "stripe_watch", label: "the stripe-watch timer", state: "/srv/postmark-stripe/state.json",
+      unit: "postmark-stripe-watch.timer", cadenceMs: 15 * MINUTE,
       adoptedWhen: "/srv/postmark-stripe" }, // Stage B: parked until adopted — absence of the DIR is INFO, not DOWN
   ],
 
@@ -514,10 +522,19 @@ export function composeBoard({ probes, nowIso, alerting }) {
   const counts = { OK: 0, DOWN: 0, STALE: 0, INFO: 0, UNKNOWN: 0 };
   for (const p of probes) counts[p.verdict] = (counts[p.verdict] ?? 0) + 1;
   const worst = counts.DOWN ? "DOWN" : counts.STALE ? "STALE" : counts.UNKNOWN ? "DEGRADED" : "OK";
+  // A PARKED PROBE IS COUNTED, NEVER ALARMED, AND NEVER SILENT. INFO is the
+  // right verdict for a Stage-B watcher nobody has adopted and for dev's
+  // healthy Access redirect — neither is a failure, and alarming on them trains
+  // the reader to mute the channel. But `All ${counts.OK} probes green` counted
+  // only the OK ones while the word "All" claimed the whole board, so a rail
+  // that was built, shipped inert and then forgotten read as a clean tick
+  // forever. That is the exact failure the Stage-A/Stage-B split exists to make
+  // impossible, and the board was quietly underwriting it.
+  const parked = counts.INFO ? ` ${counts.INFO} parked (see the board).` : "";
   const summary =
-    worst === "OK" ? `All ${counts.OK} probes green.`
-      : worst === "DEGRADED" ? `${counts.OK} green, ${counts.UNKNOWN} could not be read.`
-        : `${counts.DOWN} down, ${counts.STALE} stale, ${counts.OK} green.`;
+    worst === "OK" ? (counts.INFO ? `${counts.OK} green.${parked}` : `All ${counts.OK} probes green.`)
+      : worst === "DEGRADED" ? `${counts.OK} green, ${counts.UNKNOWN} could not be read.${parked}`
+        : `${counts.DOWN} down, ${counts.STALE} stale, ${counts.OK} green.${parked}`;
   return {
     schema: 1,
     generated_at: nowIso,
@@ -834,6 +851,11 @@ export async function run({
   if (argv.includes("--json")) { log(JSON.stringify(board, null, 2)); return { board, alerts, delivered, message }; }
   log(`site-sentinel: ${board.headline}`);
   for (const p of probes) if (p.verdict !== "OK" && p.verdict !== "INFO") log(`  ${p.verdict}  ${p.label} — ${p.reason}`);
+  // The terminal and the board must agree about what is worth saying. This loop
+  // used to skip INFO with everything else that was not broken, so an operator
+  // running the sentinel by hand saw NOTHING about a rail that had never been
+  // switched on. Printed last and named PARKED, not alarmed.
+  for (const p of probes) if (p.verdict === "INFO") log(`  PARKED  ${p.label} — ${p.reason}`);
   for (const n of notes) log(`  note: ${n}`);
   if (alerts.length) log(`  ${alerts.length} alert(s) ${delivered === true ? "delivered" : delivered === false ? "NOT delivered (webhook refused)" : "not sent"}`);
   return { board, alerts, delivered, message };

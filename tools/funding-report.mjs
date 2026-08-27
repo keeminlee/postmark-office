@@ -51,6 +51,7 @@ import { pathToFileURL, fileURLToPath } from "node:url";
 
 import { foldFunding, readPots, parseLedgerText, TREASURY_POT } from "../src/funding.mjs";
 import { readWalletRegistry } from "../src/wallet-registry.mjs";
+import { townLoginHands } from "../src/household-logins.mjs";
 // the town day, from the one place that owns it — a receipt's date is the
 // town's clock and never the operator's laptop's
 import { townDay } from "../src/ops.mjs";
@@ -179,12 +180,12 @@ export function readyToWitness({ stripe, usdcReport, date }) {
  * rows (Stage B). They are the same shape by construction: the journal stores
  * exactly what `decodeSession` produced.
  */
-export function stripeQueue({ journal, engine, entries, clone, households, now }) {
+export function stripeQueue({ journal, engine, entries, clone, households, loginHands = null, now }) {
   const seen = new Map();
   for (const r of journal) if (r.kind === "seen" && r.session) seen.set(r.session, r);
   const buckets = { hold: [], witness: [], anomaly: [], already: [] };
   for (const s of seen.values()) {
-    const r = resolveSession(s, { engine, entries, clone, households, now });
+    const r = resolveSession(s, { engine, entries, clone, households, loginHands, now });
     buckets[r.disposition].push(r);
   }
   return buckets;
@@ -365,6 +366,13 @@ async function main() {
   const mint = join(clone, "tools", "stamp-mint.mjs");
   const engine = existsSync(mint) ? await import(pathToFileURL(mint)) : null;
   const households = engine ? engine.householdKeys(clone) : null;
+  // THE SECOND CHANNEL, threaded HERE and not only in the watcher, on purpose.
+  // This report and the tick that may later act on it call the same pure
+  // resolver so they cannot disagree — but a resolver only answers what it was
+  // handed. Withhold this map here and Stage A prints "a gift" over the exact
+  // payment Stage B would witness to a hand: one rule, two answers, and the
+  // operator reading the report is the last to know.
+  const loginHands = engine ? townLoginHands(clone, engine) : null;
 
   const { byAddress, invalid: walletInvalid, path: registryPath, present: registryPresent } =
     readWalletRegistry(arg("wallet-registry", undefined), { households });
@@ -382,7 +390,7 @@ async function main() {
   let stripe = { hold: [], witness: [], anomaly: [], already: [] };
   let stripeRail = { rail: "stripe (live read)", ok: false, last_run: null, note: "no STRIPE_KEY in the environment and no watcher journal on disk — the card rail was NOT read, so nothing below is a claim about card payments" };
   const journalPath = arg("stripe-journal", "/srv/postmark-stripe/stripe-intake.jsonl");
-  const decided = (sessions) => stripeQueue({ journal: sessions, engine, entries, clone, households, now });
+  const decided = (sessions) => stripeQueue({ journal: sessions, engine, entries, clone, households, loginHands, now });
 
   if (engine && process.env.STRIPE_KEY) {
     const days = Number(arg("days", COLDSTART_DAYS));

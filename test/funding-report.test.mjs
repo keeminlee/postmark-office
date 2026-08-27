@@ -20,22 +20,30 @@ import { execFileSync } from "node:child_process";
 
 import { foldFunding, readPots, parseLedgerText } from "../src/funding.mjs";
 import { railHealth, anomalies, render, readyToWitness, witnessCommand, STALE_MINUTES, TOWN_LOCK } from "../tools/funding-report.mjs";
+import { stripeQueue } from "../tools/funding-report.mjs";
+import { decide, decodeSession, OUTSIDE_FROM, HANDLE_FIELD } from "../tools/stripe-watch.mjs";
+import { townLoginHands } from "../src/household-logins.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TOWN = [resolve(HERE, "..", "town-clone"), "G:/postmark/seam-overnight/town-clone"]
   .find((p) => existsSync(join(p, "tools", "stamp-mint.mjs")));
+
+// The town engine, imported once — the same one the fixture copies into each
+// throwaway repo, so the falsifiers below read households through the town s own
+// resolver rather than a second answer.
+const ENGINE = await import(`file:///${TOWN}/tools/stamp-mint.mjs`);
 
 const NOW = Date.UTC(2026, 7, 26, 12, 0, 0);
 const minsAgo = (m) => new Date(NOW - m * 60_000).toISOString();
 
 const EMPTY = { fold: { invalid: [] }, potsInvalid: [], stripe: { anomaly: [] }, usdcReport: null, walletInvalid: [], mapInvalid: [] };
 
-function seamTown() {
+function seamTown({ pins = { paz: { login: "p", id: 2 }, stan: { login: "s", id: 1 } } } = {}) {
   const { publicKey, privateKey } = generateKeyPairSync("ed25519");
   const repo = mkdtempSync(join(tmpdir(), "report-town-"));
   mkdirSync(join(repo, "tools"), { recursive: true });
   mkdirSync(join(repo, "WHITE_PAGES"), { recursive: true });
-  writeFileSync(join(repo, "tools", "github-ids.json"), JSON.stringify({ paz: { login: "p", id: 2 }, stan: { login: "s", id: 1 } }));
+  writeFileSync(join(repo, "tools", "github-ids.json"), JSON.stringify(pins));
   writeFileSync(join(repo, "WHITE_PAGES", "mail-ledger.md"), "# ledger\n\n- 2026-06-12 · m-1 · stan → paz · thread: new\n");
   writeFileSync(join(repo, "tools", "stamp-pubkey.pem"), publicKey.export({ type: "spki", format: "pem" }));
   writeFileSync(join(repo, "ECONOMY-DIALS.json"), JSON.stringify({
@@ -362,4 +370,48 @@ test("the report names the OFFICE-SIDE registry and never a town path", () => {
   assert.match(md, /office-side; never the town repo/);
   assert.match(md, /\/srv\/postmark-wallets\/registrations\.jsonl/);
   assert.ok(!/WHITE_PAGES\/[^/]*\/wallet/.test(md), "no town-repo wallet path anywhere on the page");
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// THE TWO STAGES MUST REACH THE SAME HAND
+// ════════════════════════════════════════════════════════════════════════════
+
+test("Stage A's report and Stage B's tick resolve the SAME payment to the SAME hand", () => {
+  // LAW (tools/funding-report.mjs, verbatim): the queue is decided "through the
+  //     WATCHER'S OWN pure resolver — one copy of the rule, so this report and
+  //     the tick that may later act on it cannot disagree."
+  //
+  // The trap this exists for, found while building the login-pin channel: one
+  // copy of the RULE is not one copy of the INPUTS. `resolveSession` only
+  // answers with what it was handed, so a second channel threaded into the
+  // watcher and not into the report gives the founder a page that says "an
+  // outside gift" over the exact payment the timer will witness to a household.
+  // Same function, same session, opposite answers, and nothing red anywhere.
+  const town = seamTown({ pins: { paz: { login: "pazmartina", id: 2 }, stan: { login: "s", id: 1 } } });
+  const engine = ENGINE;
+  const entries = parseLedgerText(readFileSync(join(town.repo, "WHITE_PAGES", "stamp-ledger.md"), "utf8"));
+  const loginHands = townLoginHands(town.repo, engine);
+  const now = 2_000_000_000_000;
+  const raw = {
+    id: "cs_live_shared0000000000000000", object: "checkout.session",
+    created: Math.floor(now / 1000) - 86_400, status: "complete", payment_status: "paid",
+    livemode: true, amount_total: 2000, currency: "usd", client_reference_id: "keep",
+    customer_details: { email: "payer@example.test" },
+    custom_fields: [{ key: HANDLE_FIELD, type: "text", text: { value: "pazmartina" } }],
+    payment_intent: "pi_shared",
+  };
+
+  // Stage B — the tick that would write the row
+  const { todo } = decide({ sessions: [raw], engine, entries, clone: town.repo, households: engine.householdKeys(town.repo), loginHands, now });
+
+  // Stage A — the report the founder reads, fed the journal shape
+  const journal = [{ kind: "seen", ...decodeSession(raw) }];
+  const buckets = stripeQueue({ journal, engine, entries, clone: town.repo, households: engine.householdKeys(town.repo), loginHands, now });
+
+  assert.equal(todo.length, 1, "Stage B would witness exactly this payment");
+  assert.equal(buckets.witness.length, 1, "and Stage A lists exactly this payment");
+  assert.equal(todo[0].from, "paz");
+  assert.equal(buckets.witness[0].from, todo[0].from, "the page and the timer name the same hand");
+  assert.equal(buckets.witness[0].attributed_via, "login-pin");
+  assert.notEqual(buckets.witness[0].from, OUTSIDE_FROM, "the report must not call a pinned hand a gift");
 });

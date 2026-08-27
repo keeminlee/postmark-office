@@ -39,14 +39,51 @@
 //         session after b2260e7a carries one, so this queue should approach
 //         zero and a rising count is a signal about the page, not the watcher.
 //
-//   hand  the session's custom field `handle`, if it EXACTLY names a registered
-//         household (the town's own `householdKeys`, the same set the /fund
-//         door's guard 3 asks). Absent, misspelled, or not in town → the
-//         receipt's payer is `outside:stripe` and the dollars count toward the
-//         pot without minting holo for anyone. That is not a new rule; it is the
-//         already-published one, from the card rail's own warning on the fund
-//         page: "a payment the office cannot attach to a hand can still be a
-//         gift, but it cannot mint your holo."
+//   hand  TWO CHANNELS, asked in order, and only a clean answer is a hand.
+//
+//         FIRST, the session's custom field `handle`, if it EXACTLY names a
+//         registered household (the town's own `householdKeys`, the same set
+//         the /fund door's guard 3 asks). Unchanged, and first ON PURPOSE:
+//         eight logins in the live pins file are also somebody's resident
+//         handle today, so a pin channel asked first would let a payer typing
+//         their OWN handle pay a stranger's deed.
+//
+//         SECOND, added 2026-08-27: a GitHub login THE TOWN HAS ALREADY PINNED
+//         to a household, in its own reviewed `tools/github-ids.json`, that
+//         resolves to exactly ONE current hand. The case that forced it was a
+//         real $20 to darko-fund whose payer typed `herzfunke-martina` — their
+//         GitHub login, bound by the town's own pins to the single-resident
+//         household of `sol-am-lichterfenster`. Filed as a gift, that dollar
+//         mints no holo, and the ref's one mint chance is spent forever.
+//
+//         This is NOT a loosening toward near-matches. A typo is still a gift;
+//         the exact-match rule refuses fuzzy names and still does. It is the
+//         office declining to discard a binding the town wrote down under
+//         review. A PIN NAMES A HOUSEHOLD, NOT A PERSON: where the household
+//         holds several hands (17 of 93 pinned logins today, six behind one of
+//         them) the pin cannot say which of them paid, and choosing would be
+//         the office deciding whose deed grew — so several hands is a gift, and
+//         the note says THAT rather than implying a misspelling, because the
+//         two are fixed by completely different acts.
+//
+//         The map is `src/household-logins.mjs`, which projects the town's own
+//         `currentHouseholds()` plus its own pins — the same one resolver
+//         `tools/world-households-export.mjs` publishes to the World, extracted
+//         so there is not a second copy to drift.
+//
+//         Anything else — absent, misspelled, unpinned, or a login two accounts
+//         claim — → the receipt's payer is `outside:stripe` and the dollars
+//         count toward the pot without minting holo for anyone. That is not a
+//         new rule; it is the already-published one, from the card rail's own
+//         warning on the fund page: "a payment the office cannot attach to a
+//         hand can still be a gift, but it cannot mint your holo."
+//
+//         AND IT SAYS SO ON THE ROW. The pin is the only channel that pays a
+//         hand the payer did not type, so a resolution through it carries
+//         `attributed_via: "login-pin"` and a note naming what was typed, what
+//         it became, and on whose authority — because the grace window exists
+//         for a person to veto a resolution, and one nobody can see is not
+//         reviewable.
 //
 //         WHY THAT SPELLING. `from:` in the pot-receipt grammar is `(\S+)`, so
 //         it will take anything without a space. `outside:stripe` is chosen
@@ -132,6 +169,7 @@ import { pathToFileURL, fileURLToPath } from "node:url";
 
 import { CROSSING_MS } from "../src/crossings.mjs";
 import { fundGuards, penRecorder } from "../src/fund.mjs";
+import { townLoginHands } from "../src/household-logins.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -274,7 +312,7 @@ const anomaly = (kind, why, rule, resolves) => ({ disposition: "anomaly", anomal
  * will file to darko-fund as an outside gift because `jetto-of-starfoge` is not
  * a household" and fix it, rather than learning after the ref is spent.
  */
-export function resolveSession(s, { engine, entries, clone, households, now = Date.now(), graceMs = CROSSING_MS, minUsd = MIN_USD, allowTestmode = false }) {
+export function resolveSession(s, { engine, entries, clone, households, loginHands = null, now = Date.now(), graceMs = CROSSING_MS, minUsd = MIN_USD, allowTestmode = false }) {
   const { receipts } = engine.foldPotReceipts(entries);
   const prior = receipts.find((r) => String(r.ref) === s.receipt_ref);
   if (prior) return { disposition: "already", ...s, pot: prior.pot, from: prior.from, date: prior.date, usd_recorded: prior.usd };
@@ -304,10 +342,10 @@ export function resolveSession(s, { engine, entries, clone, households, now = Da
   if (!gate.ok)
     return { ...s, usd_total: usdTotal, usd: whole, pot_named: named, ...anomaly("needs-pot", gate.defect, "\"a receipt needs the pot it pays\" — a draft or closed pot takes no dollars", "the founder: open the pot, or record the dollars against the pot the payer meant. The next tick re-reads it") };
 
-  // THE HAND. Exactly matches a registered household, or it is a gift.
+  // THE HAND. Two channels, asked in order; anything else is a gift.
   const typed = s.handle_typed || null;
-  const attributed = typed != null && households.has(typed);
-  const from = attributed ? typed : OUTSIDE_FROM;
+  const hand = resolveHand(typed, households, loginHands);
+  const { attributed, from } = hand;
 
   // THE CAP, through the /fund door's own guards so D5 is one copy of one rule.
   const g = fundGuards({ engine, entries, clone, pot: named, handle: from, usd: whole, receiptRef: s.receipt_ref });
@@ -324,15 +362,13 @@ export function resolveSession(s, { engine, entries, clone, households, now = Da
     rail: RAIL,
     ref: s.receipt_ref,
     attributed,
+    ...(hand.via ? { attributed_via: hand.via } : {}),
+    ...(hand.pin_note ? { pin_note: hand.pin_note } : {}),
     handle_typed: typed,
     ...(cents > 0 ? {
       cents_note: `$${usdTotal.toFixed(2)} arrived; the ledger records whole dollars, so $${whole} is witnessed against the pot and the remaining $${cents.toFixed(2)} is money the town holds that priced nothing.`,
     } : {}),
-    ...(attributed ? {} : {
-      gift_note: typed
-        ? `"${typed}" is not a household the town knows, so these dollars are witnessed as a gift under ${OUTSIDE_FROM} and mint no holo. A payment the office cannot attach to a hand can still be a gift, but it cannot mint your holo.`
-        : `no handle was given, so these dollars are witnessed as a gift under ${OUTSIDE_FROM} and mint no holo.`,
-    }),
+    ...(attributed ? {} : { gift_note: hand.gift_note }),
   };
 
   const witnessAt = s.created * 1000 + graceMs;
@@ -340,6 +376,67 @@ export function resolveSession(s, { engine, entries, clone, households, now = Da
     return { ...s, disposition: "hold", usd_total: usdTotal, plan, witnesses_after: new Date(witnessAt).toISOString() };
 
   return { ...s, disposition: "witness", usd_total: usdTotal, ...plan };
+}
+
+/**
+ * WHOSE DOLLAR THIS IS — two channels, asked in order, pure.
+ *
+ * 1. THE HANDLE. An exact match against the town's registered households, the
+ *    same set the /fund door's guard 3 asks. Unchanged, and it is asked FIRST
+ *    and keeps its precedence: eight logins in the live pins file are also
+ *    somebody's resident handle today, so if the pin channel went first, typing
+ *    your own handle could pay a stranger's deed.
+ *
+ * 2. THE PIN. A GitHub login the TOWN HAS ALREADY BOUND to a household, in its
+ *    own reviewed pins file, resolving to exactly one current hand. This is not
+ *    a fuzzy match and not a search for the nearest name — the exact-match rule
+ *    refuses those and still does. It is the office declining to throw away a
+ *    binding the town wrote down under review. The map is built by the town's
+ *    own resolver through src/household-logins.mjs, never a second one.
+ *
+ *    ONE HAND OR NO HAND. A pin names a HOUSEHOLD. Where that household holds
+ *    several hands — 17 of 93 pinned logins today, six behind one of them — the
+ *    pin cannot say which person paid, and choosing would be the office
+ *    deciding whose deed grew. Several hands is a gift, and the note says so in
+ *    those words rather than as a misspelling, because the two are fixed by
+ *    completely different acts.
+ *
+ * Anything else — a typo, an unpinned login, a stranger, a login two accounts
+ * claim — is a gift under OUTSIDE_FROM exactly as before. Every gift carries
+ * the sentence the fund page already published: a payment the office cannot
+ * attach to a hand can still be a gift, but it cannot mint your holo.
+ *
+ * WHY THE NOTE MATTERS AS MUCH AS THE RULE. This is the only channel that pays
+ * a hand the payer did not type. The grace window exists so a person can veto a
+ * resolution before the ref is spent, and a resolution nobody can see is not
+ * reviewable — so an attribution through the pin says, on the row itself, which
+ * string was typed, which hand it became, and on what authority.
+ */
+export function resolveHand(typed, households, loginHands = null) {
+  const gift = (why) => ({ attributed: false, from: OUTSIDE_FROM, via: null, gift_note: why });
+
+  if (typed != null && households?.has(typed))
+    return { attributed: true, from: typed, via: "handle" };
+
+  if (typed == null)
+    return gift(`no handle was given, so these dollars are witnessed as a gift under ${OUTSIDE_FROM} and mint no holo.`);
+
+  const pin = loginHands?.get?.(typed.toLowerCase()) ?? null;
+
+  if (pin && pin.hands.length === 1) {
+    const from = pin.hands[0];
+    return {
+      attributed: true,
+      from,
+      via: "login-pin",
+      pin_note: `"${typed}" is not a resident handle — it is the GitHub login the town's own pins bind to household ${pin.key}, whose one hand is ${from}. The town's own verified pin is the hand — attributed, not guessed.`,
+    };
+  }
+
+  if (pin && pin.hands.length > 1)
+    return gift(`"${typed}" is a GitHub login the town has pinned, but it names the household ${pin.key}, which holds ${pin.hands.length} hands (${pin.hands.join(", ")}) — a pin names a household and cannot say which of them paid. These dollars are witnessed as a gift under ${OUTSIDE_FROM} and mint no holo; a hand among them can be credited by the founder, by hand, while the ref is unspent. A payment the office cannot attach to a hand can still be a gift, but it cannot mint your holo.`);
+
+  return gift(`"${typed}" is not a household the town knows, so these dollars are witnessed as a gift under ${OUTSIDE_FROM} and mint no holo. A payment the office cannot attach to a hand can still be a gift, but it cannot mint your holo.`);
 }
 
 // potGate lives in fund.mjs and takes the engine; wrapped here only so a
@@ -358,11 +455,11 @@ function potGateOf(engine, clone, pot) {
  * persists, so a falsifier can run the whole tick and prove no ledger row was
  * written. `todo` is the ordered list of witnesses to perform.
  */
-export function decide({ sessions, engine, entries, clone, households, now = Date.now(), graceMs = CROSSING_MS, minUsd = MIN_USD, allowTestmode = false, cursor = null }) {
+export function decide({ sessions, engine, entries, clone, households, loginHands = null, now = Date.now(), graceMs = CROSSING_MS, minUsd = MIN_USD, allowTestmode = false, cursor = null }) {
   const decoded = sessions.map(decodeSession);
   const buckets = { already: [], hold: [], witness: [], anomaly: [] };
   for (const s of decoded) {
-    const r = resolveSession(s, { engine, entries, clone, households, now, graceMs, minUsd, allowTestmode });
+    const r = resolveSession(s, { engine, entries, clone, households, loginHands, now, graceMs, minUsd, allowTestmode });
     buckets[r.disposition].push(r);
   }
   const maxCreated = decoded.reduce((a, s) => Math.max(a, s.created), cursor ?? 0);
@@ -468,7 +565,10 @@ async function main() {
 
   const entries = ledgerEntries(clone, engine);
   const households = engine.householdKeys(clone);
-  const { report, todo, cursor: next } = decide({ sessions, engine, entries, clone, households, cursor });
+  // The second channel's map, derived by the town's own resolver. Built here
+  // and handed down so the rule stays pure and a falsifier can withhold it.
+  const loginHands = townLoginHands(clone, engine);
+  const { report, todo, cursor: next } = decide({ sessions, engine, entries, clone, households, loginHands, cursor });
   if (coldStart) report.coldstart = `no cursor: this run read only the last ${COLDSTART_DAYS} days. A session older than ${iso(coldFloor)} was NOT read — sweep it with --since.`;
 
   // journal every session not already known, plus every disposition this tick
