@@ -29,6 +29,7 @@ import { declareViaOffice } from "./declare.mjs";
 import { uploadMedia } from "./media.mjs";
 import { harborGated, HARBOR_BOUNCE } from "./harbor-gate.mjs";
 import { standingBounce } from "./standing.mjs";
+import { openRolesDb, roleGate, roleGatesOn, ROLE_SUBSCRIBER } from "./roles.mjs";
 import { arrivalPage } from "./arrival.mjs";
 import { townSummary, residentList, resident, mailList, letter, search, bulletinList, bulletinEntry, stampsRoster, stampsFor, stampsDetail, questBoardFor, metricsMail, letterList, regionList, home, identityOf, repoLog } from "./queries.mjs";
 import { householdOf } from "./households.mjs";
@@ -66,6 +67,28 @@ const TOWN_CLONE = process.env.TOWN_CLONE ?? resolve(ROOT, "town-clone");
 // It is also NOT hot-reloaded below: nothing rewrites this file underneath us,
 // the office is its only writer, and a swapped handle would drop live sessions.
 const odb = openOauthDb(resolve(ROOT, arg("--oauth-db", "oauth.db")));
+
+// roles.db — the subscription lane's registry (hand-kept; tools/roles.mjs is the
+// only writer). Its own file for the same reason oauth.db has one: it is office
+// paperwork, not town truth, so it must not sit in an index that gets deleted and
+// rebuilt from a clone. Opened at boot like odb, and NOT hot-reloaded — the
+// operator CLI writes through SQLite to the same file, so a live handle sees new
+// grants without a restart.
+//
+// Deliberately never null: an office whose roles.db cannot be opened still boots
+// and still serves, because with OFFICE_ROLE_GATES unset — the default, and every
+// office today — no door consults this handle at all. A registry the office cannot
+// read must not be able to take the town down.
+let rdb = null;
+try {
+  rdb = openRolesDb(resolve(ROOT, arg("--roles-db", "roles.db")));
+} catch (e) {
+  rdb = null;
+  console.warn(`WARN: roles.db could not be opened (${String(e?.message ?? e).slice(0, 120)}) — ` +
+    (roleGatesOn()
+      ? "OFFICE_ROLE_GATES is ON, so gated doors will refuse with a 503 that says so."
+      : "role gates are off, so nothing is affected."));
+}
 
 // POS-60 — the deploy receipt. Read ONCE, at boot, deliberately: the stamp's whole
 // value is that serving it proves the process restarted AFTER the deploy wrote it.
@@ -619,6 +642,8 @@ const server = createServer((req, res) => {
       // declare_household mints the household credential on admission, so the
       // MCP lane needs the same key desk (odb) and index path the REST lane has.
       odb, dbPath: DB_PATH,
+      // the role registry, so the MCP lane gates the same reads the REST lane does
+      rdb,
       rateLimit: ({ verb, write }) => checkCredentialed({
         verb,
         write,
@@ -843,7 +868,24 @@ const server = createServer((req, res) => {
         return j(res, 200, r);
       }
 
-      if (path === "/metrics/mail") return j(res, 200, metricsMail(db));
+      // THE ROLE GATE'S ONE WORKING EXAMPLE, AND IT IS A DEMONSTRATION RATHER
+      // THAN A PRODUCT DECISION. `/metrics/mail` was chosen because it is the
+      // most boring credentialed-or-not read the office has — mail volume
+      // statistics, nothing anybody's standing depends on — and because it is
+      // reachable both anonymously and signed in, so this single wiring
+      // exercises both the granted path and the no-household refusal.
+      //
+      // With OFFICE_ROLE_GATES unset (the default, and every office today)
+      // `roleGate` returns null without opening the registry, so this line is
+      // exactly `metricsMail(db)` and nothing about this door has changed for
+      // any caller. WHICH doors are gated for real is the founder's call, not
+      // this lane's; what is being proven here is the mechanism and the cost of
+      // wiring it, which is these two lines.
+      if (path === "/metrics/mail") {
+        const gated = roleGate(rdb, key, ROLE_SUBSCRIBER);
+        if (gated) return bounce(res, gated.code, gated.defect, gated.hint);
+        return j(res, 200, metricsMail(db));
+      }
 
       // GET /repo/log — the town's history from the town's own door (#330
       // follow-up): the repo IS the town, so panes never need GitHub for it.
