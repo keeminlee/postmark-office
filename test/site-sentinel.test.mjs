@@ -22,6 +22,7 @@ import { join } from "node:path";
 import {
   classifyUp,
   classifyStamp,
+  classifyCrossing,
   classifyDaily,
   dailyFingerprint,
   normalizeText,
@@ -38,6 +39,7 @@ import {
   run,
   MINUTE,
   HOUR,
+  CONFIG,
 } from "../tools/site-sentinel.mjs";
 
 const T0 = Date.parse("2026-08-25T12:00:00Z");
@@ -144,6 +146,99 @@ test("classifyStamp: a cold start is quiet, and an unreadable side is UNKNOWN ra
   // spot, and calling a blind spot healthy is the lie the whole file is against.
   assert.equal(classifyStamp({ served: null, reference: "b", seen: null, nowMs: T0, staleAfterMs: HOUR, what: "x", referenceName: "y" }).verdict, "UNKNOWN");
   assert.equal(classifyStamp({ served: "a", reference: null, seen: null, nowMs: T0, staleAfterMs: HOUR, what: "x", referenceName: "y" }).verdict, "UNKNOWN");
+});
+
+// ── §2b the crossing ────────────────────────────────────────────────────────
+//
+// THE LAW THESE ASSERT, verbatim from EPICS/POSTMARK/freshness-architecture.md
+// § the mushy middle:
+//
+//   "mushiness must be disclosed — the page states when it was generated and
+//    which ferry crossing it reflects, says 'a ferry has landed since this page
+//    was made' when true, and never prints a cadence promise it does not
+//    control."
+//
+// and, on why this probe exists at all beside the wall-clock ones:
+//
+//   "The crossing-aware watchdog: site-sentinel compares the site's crossing
+//    number to reality's, instead of (only) a wall-clock age threshold — a
+//    wall-clock threshold cannot see an event-shaped failure."
+//
+// THE DEFECT THEY CLOSE is the 2026-08-26 incident: prod's delivery stalled 97
+// minutes past a ferry crossing and 48 residents' doorstep pages served
+// yesterday's mail. Every wall-clock probe in this file was green throughout,
+// because the site HAD rebuilt recently — it had just rebuilt the wrong side of
+// a ferry. The first test below is that incident, to the minute.
+
+// The town clock, in the falsifiers' own hands, so a test can place itself at
+// an exact number of minutes past a crossing.
+const CROSSING_AT = (n) => Date.parse("2026-06-12T00:00:00Z") + n * 12 * 60 * 60_000;
+
+test("THE 08-26 INCIDENT: 97 minutes past a ferry with the site still on the old crossing is STALE, and says a ferry has landed", () => {
+  const stale = classifyCrossing({
+    servedCrossing: 148, officeCrossing: 149,
+    nowMs: CROSSING_AT(149) + 97 * MINUTE, graceMs: CONFIG.crossingGrace,
+  });
+  assert.equal(stale.verdict, "STALE");
+  assert.match(stale.reason, /a ferry has landed since the site was built/,
+    "the founder's own sentence, said in the alert a reader actually gets");
+  assert.match(stale.reason, /crossing 148/, "and it names the crossing the site is stuck on");
+  assert.match(stale.reason, /1h37m/, "and how long the town has been past it");
+});
+
+test("THE FLIP: the same probe against a FRESH site is OK — it must not fire on a healthy town", () => {
+  // caught up: the site baked the crossing the town is at
+  const level = classifyCrossing({
+    servedCrossing: 149, officeCrossing: 149,
+    nowMs: CROSSING_AT(149) + 97 * MINUTE, graceMs: CONFIG.crossingGrace,
+  });
+  assert.equal(level.verdict, "OK", "a site showing the current crossing is never a finding");
+
+  // and AHEAD is fine too: a build that straddled the ferry stamps the newer
+  // number honestly, because the town data it read was on the far side of it.
+  assert.equal(classifyCrossing({
+    servedCrossing: 150, officeCrossing: 149,
+    nowMs: CROSSING_AT(149) + 10 * MINUTE, graceMs: CONFIG.crossingGrace,
+  }).verdict, "OK");
+});
+
+test("the rebuild window is TWO TICKS wide — quiet at :40, loud once both ticks have had their turn", () => {
+  const one = (mins) => classifyCrossing({
+    servedCrossing: 148, officeCrossing: 149,
+    nowMs: CROSSING_AT(149) + mins * MINUTE, graceMs: CONFIG.crossingGrace,
+  });
+  // the :10 tick is still building
+  assert.equal(one(12).verdict, "OK");
+  assert.match(one(12).reason, /inside the 1h rebuild window/);
+  // the :40 tick's turn — still inside
+  assert.equal(one(45).verdict, "OK");
+  // an hour on, both ticks have had their chance and neither landed
+  assert.equal(one(61).verdict, "STALE");
+});
+
+test("two crossings behind is STALE whatever the clock says — no rebuild window excuses a whole missed ferry", () => {
+  // one minute past a crossing is the most forgiving instant there is, and it
+  // must still not forgive this: a full crossing came and went unseen.
+  const said = classifyCrossing({
+    servedCrossing: 147, officeCrossing: 149,
+    nowMs: CROSSING_AT(149) + 1 * MINUTE, graceMs: CONFIG.crossingGrace,
+  });
+  assert.equal(said.verdict, "STALE");
+  assert.match(said.reason, /2 ferries have landed/, "and it counts them, so the reader knows the size of the gap");
+});
+
+test("a crossing it cannot read is UNKNOWN and says which side went dark — never a green all-clear", () => {
+  const noStamp = classifyCrossing({ servedCrossing: null, officeCrossing: 149, nowMs: CROSSING_AT(149), graceMs: CONFIG.crossingGrace });
+  assert.equal(noStamp.verdict, "UNKNOWN");
+  assert.match(noStamp.reason, /build stamp names no crossing/);
+
+  const noOffice = classifyCrossing({ servedCrossing: 149, officeCrossing: null, nowMs: CROSSING_AT(149), graceMs: CONFIG.crossingGrace });
+  assert.equal(noOffice.verdict, "UNKNOWN");
+  assert.match(noOffice.reason, /office did not serve a crossing number/);
+
+  // THE FALSIFIER: folding "cannot tell" into "nothing is wrong" is the failure
+  // that makes a sentinel worse than none — the reader is now trusting silence.
+  for (const said of [noStamp, noOffice]) assert.notEqual(said.verdict, "OK");
 });
 
 test("humanDuration reads inside a sentence", () => {
@@ -415,8 +510,11 @@ function stubFetch(table) {
 }
 
 const GREEN_TABLE = {
-  "https://postmark.town/api/": { status: 200, headers: { "x-postmark-as-of": "towntip0000" }, body: "{}" },
-  "https://postmark.town/build.json": { status: 200, body: JSON.stringify({ channel: "release", code_sha: "relsha00000", town_data_sha: "sitetip0000" }) },
+  // T0 is 2026-08-25T12:00:00Z, which IS the start of crossing 149 (the town
+  // clock: 12h since 2026-06-12) — the same crossing DAILY_MD above names, so
+  // the whole green fixture describes one coherent moment in the town.
+  "https://postmark.town/api/": { status: 200, headers: { "x-postmark-as-of": "towntip0000" }, body: JSON.stringify({ crossing: { number: 149 } }) },
+  "https://postmark.town/build.json": { status: 200, body: JSON.stringify({ channel: "release", code_sha: "relsha00000", town_data_sha: "sitetip0000", crossing: 149 }) },
   "https://postmark.town/daily/ferrys-daily.html": { status: 200, body: `<h2>"An arithmetic that balances is not an arithmetic that agrees"</h2>` },
   "https://raw.githubusercontent.com/postmark-town/postmark/main/TOWN_BULLETIN/ferrys-daily.md": { status: 200, body: DAILY_MD },
   "https://api.github.com/repos/postmark-town/postmark/commits": { status: 200, body: JSON.stringify([{ commit: { committer: { date: "2026-08-25T06:00:00Z" } } }]) },
