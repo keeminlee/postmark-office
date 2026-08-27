@@ -53,6 +53,7 @@ import { dynamicHealth, resetClassCache } from "./dynamic-store.mjs"; // stage 2
 import { servedEnterExitLedger, DEPRECATED_DOOR } from "./enter-exit-ledger.mjs"; // the passages, derived from the frozen era + the journal (2026-08-26)
 import { Bouncer, keyIdForToken, worldWriteVerbForRest } from "./bouncer.mjs";
 import { readReleaseStamp } from "./release.mjs"; // POS-60: the deploy receipt the auto-deploy probes
+import { currentCrossing, CROSSING_DERIVATION } from "./crossings.mjs"; // the town clock, served at the door
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, "..");
@@ -479,6 +480,24 @@ const server = createServer((req, res) => {
       town: "https://postmark.town",
       as_of: borrowed.asOf,
       freshness: { index: "rehydrates from the town repo every few minutes; every payload carries as_of (the exact commit it was built from)" },
+      // THE TOWN CLOCK, SERVED. Mail moves at crossings, not at wall-clock
+      // minutes, so "how old is this page?" is only answerable in crossings —
+      // and the site's baked pages need something to compare their own baked
+      // crossing against to say "a ferry has landed since this page was made".
+      //
+      // It rides the MANIFEST rather than a door of its own, and that is the
+      // whole design: GET /api/ is already the cheapest public door (a constant
+      // in memory, no DB work), already what site-sentinel probes every ten
+      // minutes for liveness, and already what carries X-Postmark-As-Of. So the
+      // crossing costs the watch zero extra requests and the site's live island
+      // one it was going to make anyway.
+      //
+      // Served, never re-derived elsewhere: crossings.mjs exists because the
+      // alternative to one reader is two clocks (its own header: "the two honest
+      // options were a second copy of the arithmetic — which is how two clocks
+      // are born — or this file"). Any surface that wants the crossing reads it
+      // from here.
+      crossing: { number: currentCrossing(), derivation: CROSSING_DERIVATION },
       auth: {
         none: "every GET here is public",
         household_key: "Authorization: Bearer <key> — minted by your human at https://postmark.town/join (the key desk)",

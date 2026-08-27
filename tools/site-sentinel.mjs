@@ -73,6 +73,13 @@
 //                 ignore the channel.
 //  2. FRESH/SITE — /build.json's code_sha vs the newest release/* tag, and its
 //                 town_data_sha vs site main's tip. Time-anchored (below).
+// 2b. FRESH/CROSSING — /build.json's `crossing` vs the office's own crossing
+//                 number at GET /api/. THE EVENT-SHAPED QUESTION, added
+//                 2026-08-26 with the box refresh timer: mail moves at
+//                 crossings, not on a wall clock, so "has a ferry landed since
+//                 this page was built" is a question no duration threshold can
+//                 answer. Costs zero extra requests — it reads the body of the
+//                 manifest probe 1 already opens. Probe 2 stays as the floor.
 //  3. FRESH/DATA — the served X-Postmark-As-Of vs the town repo's main tip.
 //                 This is the probe that would have caught the stuck rehydrate
 //                 tick found BY HAND on 2026-08-25 (one distinct as-of across
@@ -113,6 +120,11 @@ import { readFileSync, writeFileSync, mkdirSync, statSync, existsSync } from "no
 import { dirname, join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
+// The town clock, imported rather than restated. crossings.mjs was split out of
+// world.mjs for exactly this: a small tool that needs "how many crossings old is
+// this?" gets the arithmetic without a second copy of it, and there stays
+// exactly one place the ruling lives.
+import { CROSSING_EPOCH_UTC, CROSSING_MS } from "../src/crossings.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -159,6 +171,18 @@ export const CONFIG = {
     office_as_of: 45 * MINUTE,
   },
   dailySlack: 90 * MINUTE,
+
+  // §2b — how long a crossing may stand un-rebaked before it is a finding.
+  //
+  // Sixty minutes is not a round number, it is TWO CHANCES. The box timer fires
+  // at :10 and :40 past the hour (postmark-site-refresh.timer); a crossing lands
+  // on the hour, so the :10 tick is the first attempt and the :40 tick is the
+  // recovery. An hour after a crossing, BOTH have had their turn and a site
+  // still showing the previous crossing is not a slow build — it is a broken
+  // one. Set it shorter and every ordinary build reports itself; set it longer
+  // and the 2026-08-26 incident (97 minutes behind a ferry) stays quiet for
+  // most of its life.
+  crossingGrace: 60 * MINUTE,
 
   // §6 — the box's own watchers. The sentinel runs beside them, so their
   // state files are local facts. A watcher whose state is ABSENT while its
@@ -264,6 +288,76 @@ export function classifyStamp({ served, reference, seen = null, nowMs, staleAfte
     verdict: "STALE",
     reason: `${what} has been ${shortS} for ${humanDuration(heldFor)} while ${referenceName} is at ${shortR} — the site has stopped changing and its source has not`,
     seen: nextSeen,
+  };
+}
+
+// ── §2b the crossing: the event-shaped freshness question ───────────────────
+
+/**
+ * Is the site showing the CURRENT ferry crossing?
+ *
+ * WHY A WALL-CLOCK THRESHOLD IS NOT ENOUGH, which is this probe's whole reason
+ * to exist. Every other freshness probe here asks "how long has the served value
+ * been frozen?" — a duration question. But mail does not move on a duration; it
+ * moves at crossings, 00:00 and 12:00 UTC, and everything a resident cares about
+ * changes in that one instant. A three-hour threshold measured from whenever the
+ * site last happened to change cannot see that: on 2026-08-26 the site had
+ * rebuilt recently enough to look healthy by the clock while the ferry that had
+ * landed 97 minutes earlier was nowhere on it, and 48 doorstep pages served
+ * yesterday's mail. The freshness architecture names the repair directly:
+ * "a wall-clock threshold cannot see an event-shaped failure."
+ *
+ * So this asks the event question instead: the site's build stamp carries the
+ * crossing it was baked at, the office serves the crossing it is now, and the
+ * gap between them is either zero or a finding. The wall-clock probes stay
+ * exactly as they were — they are the floor under this, and they catch the
+ * failures that have nothing to do with crossings.
+ *
+ * NO MEMORY. Every other freshness probe needs a `seen` record because it cannot
+ * know when its reference moved. This one can: a crossing is a pure function of
+ * time (src/crossings.mjs — 12h since 2026-06-12), so "how long has crossing N
+ * been the current one?" is arithmetic, not history. That is worth saying out
+ * loud, because a probe with no state cannot be wrong about its own past.
+ *
+ * @param {number|null} servedCrossing  from the site's /build.json
+ * @param {number|null} officeCrossing  from GET /api/'s crossing.number
+ */
+export function classifyCrossing({ servedCrossing, officeCrossing, nowMs, graceMs, haveStamp = true, epochMs = CROSSING_EPOCH_UTC, crossingMs = CROSSING_MS }) {
+  // The two ways the site's half can be unreadable are different repairs, so
+  // they are different sentences. "No stamp at all" is a deploy that did not
+  // emit one; "a stamp with no crossing" is an old stamper or a build that
+  // could not reach the office. A reader at 3am should not have to open the
+  // other probes to learn which.
+  if (!haveStamp)
+    return { verdict: "UNKNOWN", reason: "the deployed site serves no /build.json at all, so there is no baked crossing to compare" };
+  if (!Number.isInteger(servedCrossing))
+    return { verdict: "UNKNOWN", reason: "the site's build stamp names no crossing — an older build stamper, or a build that could not reach the office to ask" };
+  if (!Number.isInteger(officeCrossing))
+    return { verdict: "UNKNOWN", reason: "the office did not serve a crossing number to compare against (GET /api/ crossing.number)" };
+
+  const gap = officeCrossing - servedCrossing;
+  // Ahead is not a failure. A build that started before a crossing and finished
+  // after it stamps the newer number, which is honest — the town data it baked
+  // was read on the far side of the ferry.
+  if (gap <= 0) return { verdict: "OK", reason: `the site is baked at crossing ${servedCrossing} and the town is at ${officeCrossing}` };
+
+  // How long has the town been at this crossing? Not "how long has the site been
+  // frozen" — the question is how much of the current crossing the site has
+  // already missed.
+  const landedMs = nowMs - (epochMs + officeCrossing * crossingMs);
+
+  if (gap === 1 && landedMs < graceMs) {
+    return {
+      verdict: "OK",
+      reason: `crossing ${officeCrossing} landed ${humanDuration(landedMs)} ago and the site is still baked at ${servedCrossing} — inside the ${humanDuration(graceMs)} rebuild window`,
+    };
+  }
+  // Two or more behind is stale whatever the clock says: a whole crossing came
+  // and went without the site noticing, so no rebuild window can excuse it.
+  const behind = gap === 1 ? "a ferry has landed" : `${gap} ferries have landed`;
+  return {
+    verdict: "STALE",
+    reason: `${behind} since the site was built — the site is baked at crossing ${servedCrossing}, the town is at ${officeCrossing}, and crossing ${officeCrossing} landed ${humanDuration(landedMs)} ago`,
   };
 }
 
@@ -657,12 +751,27 @@ export async function tick({
   // as-of header rather than opening the door a second time.
   const doorResults = await Promise.all(config.doors.map((d) => probeUrl(d.url, { fetchImpl })));
   let servedAsOf = null;
+  let officeApiRes = null;
   config.doors.forEach((d, i) => {
     const r = doorResults[i];
     const { verdict, reason } = classifyUp(r);
     probes.push({ key: d.key, label: d.label, kind: "up", verdict, reason, url: d.url });
-    if (d.key === "office_api") servedAsOf = r.headers?.get?.("x-postmark-as-of") ?? null;
+    if (d.key === "office_api") {
+      servedAsOf = r.headers?.get?.("x-postmark-as-of") ?? null;
+      officeApiRes = r.res ?? null;
+    }
   });
+
+  // The crossing rides the manifest we ALREADY opened for §1 and §3 — the same
+  // response object, read for its body this time, so the event-shaped probe
+  // below costs the watch not one extra request. An office that answers without
+  // a crossing field (an older office) leaves this null, and classifyCrossing
+  // reads null as UNKNOWN, never as green.
+  let officeCrossing = null;
+  try {
+    const manifest = officeApiRes ? await officeApiRes.json() : null;
+    if (Number.isInteger(manifest?.crossing?.number)) officeCrossing = manifest.crossing.number;
+  } catch { /* a body that will not parse is an unread crossing, not a site outage */ }
 
   const devR = await probeUrl(config.devDoor.url, { fetchImpl });
   {
@@ -676,6 +785,17 @@ export async function tick({
   const stamp = await readJson(config.buildStamp, { fetchImpl });
   const siteMainTip = lsRemote(siteUrl, "main", { exec });
   const releaseTag = newestReleaseTag(siteUrl, { exec });
+
+  // §2b — THE CROSSING, and it is deliberately outside the `if (!stamp)` branch
+  // below: an absent stamp is exactly the condition this probe must still speak
+  // about, and classifyCrossing's own UNKNOWN says why in words a reader can act
+  // on, rather than being folded into a generic "no /build.json".
+  const cr = classifyCrossing({
+    haveStamp: Boolean(stamp),
+    servedCrossing: Number.isInteger(stamp?.crossing) ? stamp.crossing : null,
+    officeCrossing, nowMs, graceMs: config.crossingGrace,
+  });
+  probes.push({ key: "site_crossing", label: "the crossing the site is showing", kind: "fresh", verdict: cr.verdict, reason: cr.reason });
 
   if (!stamp) {
     notes.push(`no build stamp at ${config.buildStamp} — the site's own freshness cannot be read until the site repo emits one (see tools/build-stamp.mjs in postmark-site)`);
@@ -693,6 +813,16 @@ export async function tick({
     stamps.site_code = c.seen; probes.push({ key: "site_code", label: "the deployed site code", kind: "fresh", verdict: c.verdict, reason: c.reason });
 
     // The half that froze on 2026-08-24 while the code was correctly pinned.
+    //
+    // KEPT AS THE FLOOR, not replaced by §2b. Once the box timer owns prod's
+    // content and sync-atlas.yml's schedule is retired, site main stops moving
+    // every half hour — so this comparison spends most of its life served ===
+    // reference, which the file's own staleness-clock note already covers: "a
+    // quiet repo never alarms, because when nothing is pushed the served value
+    // equals the reference and the comparison never opens." It stays because it
+    // is the probe that still speaks when the crossing probe cannot: no office,
+    // no crossing field, an old stamper. Three hours of wall clock under an
+    // event-shaped hour.
     const t = classifyStamp({
       served: stamp.town_data_sha ?? null, reference: siteMainTip, seen: stamps.site_town_data, nowMs,
       staleAfterMs: config.staleAfter.site_town_data, what: "the deployed town data", referenceName: "site main's tip",
