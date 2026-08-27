@@ -51,6 +51,7 @@ import { pathToFileURL, fileURLToPath } from "node:url";
 
 import { foldFunding, readPots, parseLedgerText, TREASURY_POT } from "../src/funding.mjs";
 import { readWalletRegistry } from "../src/wallet-registry.mjs";
+import { townLoginHands } from "../src/household-logins.mjs";
 // the town day, from the one place that owns it — a receipt's date is the
 // town's clock and never the operator's laptop's
 import { townDay } from "../src/ops.mjs";
@@ -179,12 +180,12 @@ export function readyToWitness({ stripe, usdcReport, date }) {
  * rows (Stage B). They are the same shape by construction: the journal stores
  * exactly what `decodeSession` produced.
  */
-export function stripeQueue({ journal, engine, entries, clone, households, now }) {
+export function stripeQueue({ journal, engine, entries, clone, households, loginHands = null, now }) {
   const seen = new Map();
   for (const r of journal) if (r.kind === "seen" && r.session) seen.set(r.session, r);
   const buckets = { hold: [], witness: [], anomaly: [], already: [] };
   for (const s of seen.values()) {
-    const r = resolveSession(s, { engine, entries, clone, households, now });
+    const r = resolveSession(s, { engine, entries, clone, households, loginHands, now });
     buckets[r.disposition].push(r);
   }
   return buckets;
@@ -212,6 +213,11 @@ export function render({ now, pots, potsInvalid, fold, rails, anomalyRows, strip
     for (const r of ready) {
       p(`**${usd(r.usd)} → \`${r.pot}\` as ${r.attributed === false ? `_${r.from}_ (gift, no holo)` : `**${r.from}**`}** · ${r.rail} · \`${r.session ?? r.txhash}\`${r.fresh ? " · ⏱ recent" : ""}`);
       if (r.handle_typed != null && r.attributed === false) p(`  <br/>typed \`${r.handle_typed}\`${r.email ? ` · ${r.email}` : ""} — not a household, so this files as a gift and mints no holo.`);
+      // A PIN RESOLUTION PAYS A HAND THE PAYER DID NOT TYPE, so the row has to
+      // say so where a person will actually read it. Carrying the disclosure on
+      // the plan and never printing it would put the one resolution most worth a
+      // second look on the page looking exactly like a handle typed correctly.
+      if (r.attributed_via === "login-pin" && r.pin_note) p(`  <br/>${r.pin_note}`);
       if (r.note) p(`  <br/>${r.note}`);
       p();
       p("```sh");
@@ -258,6 +264,14 @@ export function render({ now, pots, potsInvalid, fold, rails, anomalyRows, strip
     for (const h of stripe.hold)
       p(`| \`${h.session}\` | ${usd((h.amount_total ?? 0) / 100)} | ${h.plan.pot} | ${h.plan.attributed ? `**${h.plan.from}**` : `_${h.plan.from}_ (gift, no holo)`} | ${h.plan.handle_typed ?? "—"} | ${h.email ?? "—"} | ${h.witnesses_after} |`);
     p();
+    // The table already shows "as" beside "typed", so a pin resolution is
+    // VISIBLE here — but two differing cells read like a defect unless the page
+    // says why they differ. This is the row a person is most likely to want to
+    // veto, and the window exists for exactly that.
+    if (stripe.hold.some((h) => h.plan?.attributed_via === "login-pin")) {
+      p(`_Where **as** differs from **typed**, the payment was resolved through the town's own GitHub pin: the typed string is a login the pins bind to one household holding one hand. That is a record the town already keeps under review, not a guess — and it is the one resolution worth a second look, because it pays a hand the payer did not type._`);
+      p();
+    }
   }
 
   // 3 · the books
@@ -365,6 +379,13 @@ async function main() {
   const mint = join(clone, "tools", "stamp-mint.mjs");
   const engine = existsSync(mint) ? await import(pathToFileURL(mint)) : null;
   const households = engine ? engine.householdKeys(clone) : null;
+  // THE SECOND CHANNEL, threaded HERE and not only in the watcher, on purpose.
+  // This report and the tick that may later act on it call the same pure
+  // resolver so they cannot disagree — but a resolver only answers what it was
+  // handed. Withhold this map here and Stage A prints "a gift" over the exact
+  // payment Stage B would witness to a hand: one rule, two answers, and the
+  // operator reading the report is the last to know.
+  const loginHands = engine ? townLoginHands(clone, engine) : null;
 
   const { byAddress, invalid: walletInvalid, path: registryPath, present: registryPresent } =
     readWalletRegistry(arg("wallet-registry", undefined), { households });
@@ -382,7 +403,7 @@ async function main() {
   let stripe = { hold: [], witness: [], anomaly: [], already: [] };
   let stripeRail = { rail: "stripe (live read)", ok: false, last_run: null, note: "no STRIPE_KEY in the environment and no watcher journal on disk — the card rail was NOT read, so nothing below is a claim about card payments" };
   const journalPath = arg("stripe-journal", "/srv/postmark-stripe/stripe-intake.jsonl");
-  const decided = (sessions) => stripeQueue({ journal: sessions, engine, entries, clone, households, now });
+  const decided = (sessions) => stripeQueue({ journal: sessions, engine, entries, clone, households, loginHands, now });
 
   if (engine && process.env.STRIPE_KEY) {
     const days = Number(arg("days", COLDSTART_DAYS));

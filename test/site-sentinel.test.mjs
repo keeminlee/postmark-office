@@ -621,3 +621,80 @@ test("an UNADOPTED Stage-B watcher is INFO — parked is not broken", () => {
   const r = classifyWatcher({ adopted: false, exists: false, nowMs: 1000, cadenceMs: 600_000, label: "the stripe-watch timer" });
   assert.equal(r.verdict, "INFO");
 });
+
+
+// ── §6b: the watch's expectation must match the unit it watches ─────────────
+
+test("every watcher's expected cadence is the cadence its own shipped timer fires at", () => {
+  // LAW (tools/site-sentinel.mjs § classifyWatcher, verbatim): a watcher is
+  //     STALE when it "last wrote its state ${...} min ago against a ${...}-min
+  //     cadence". The sentence is only true if the number it quotes is the
+  //     number the unit actually uses.
+  //
+  // THE DRIFT THIS CAUGHT, live on this branch: stripe_watch was configured at
+  // a 10-minute cadence while deploy/postmark-stripe-watch.timer has always
+  // fired `OnCalendar=*:7/15`. The tolerance is 3× the cadence, so the watch
+  // allowed 30 minutes for a rail that ticks every 15 — ONE missed tick short
+  // of alarming, and the reason line it would print names a cadence the box
+  // does not run. A probe that cries wolf is a probe the reader mutes, and a
+  // muted channel is the silent failure this whole file exists to end.
+  //
+  // Reading the unit rather than a second constant is the point: these two
+  // numbers live in different files and nothing but this test makes them agree.
+  const OFFICE = new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
+  for (const w of _CFG.watchers ?? []) {
+    assert.ok(w.unit, `${w.key} names the unit it watches`);
+    const unitPath = join(OFFICE, "deploy", w.unit);
+    assert.ok(existsSync(unitPath), `${w.unit} is a unit this repo ships`);
+    const unit = readFileSync(unitPath, "utf8");
+    const m = unit.match(/^OnCalendar=\*:(\d+)\/(\d+)\s*$/m);
+    assert.ok(m, `${w.unit} declares an OnCalendar this test can read`);
+    const everyMin = Number(m[2]);
+    assert.equal(
+      w.cadenceMs, everyMin * 60_000,
+      `${w.key} expects ${Math.round(w.cadenceMs / 60_000)} min but ${w.unit} fires every ${everyMin} min`,
+    );
+  }
+});
+
+
+test("a probe PARKED BY DESIGN is admitted in the one line the operator reads", () => {
+  // LAW (tools/site-sentinel.mjs § the board, verbatim, on the summary field):
+  //     "The one line the operator round reads. Kept as its own field so a
+  //     reader never has to reduce the array themselves and get a different
+  //     answer."
+  //
+  // THE HOLE THIS CLOSES. `classifyWatcher` answers INFO for a Stage-B watcher
+  // that was never adopted — correctly, because parked-by-design is not a
+  // failure. But the summary said `All ${counts.OK} probes green.`, which
+  // counted only the OK ones while the word "All" claimed the whole board. So a
+  // rail that was built, shipped inert, and then forgotten reported as a clean
+  // all-green tick forever — which is precisely the "staged inert, silently, for
+  // good" failure the Stage-A/Stage-B split was designed to make impossible.
+  //
+  // A parked probe must never ALARM (that trains the reader to mute the
+  // channel) and must never be INVISIBLE either. Counted, not alarmed.
+  const probes = [
+    { key: "a", label: "a public door", verdict: "OK", reason: "200" },
+    { key: "stripe_watch", label: "the stripe-watch timer", verdict: "INFO", reason: "not adopted (Stage B parked) — nothing to watch yet" },
+  ];
+  const board = composeBoard({ probes, nowIso: "2026-08-27T12:00:00Z", alerting: {} });
+
+  assert.equal(board.status, "OK", "parked by design is not a failure");
+  assert.equal(board.counts.INFO, 1);
+  assert.doesNotMatch(board.summary, /^All /, "'All' may not describe a board it did not count");
+  assert.match(board.summary, /1 parked/, "the parked probe is named in the line that gets read");
+
+  // and with nothing parked, the old sentence is untouched
+  const clean = composeBoard({ probes: [{ key: "a", verdict: "OK" }], nowIso: "x", alerting: {} });
+  assert.match(clean.summary, /^All 1 probes green\./);
+});
+
+test("a hand-run sentinel prints the parked rails too, not only the broken ones", () => {
+  // Same hole, the other surface: the console loop skipped every verdict that
+  // was not OK-or-INFO, so an operator running this by hand saw nothing at all
+  // about a rail that had never been switched on. The board and the terminal
+  // must agree about what is worth saying.
+  const src = readFileSync(new URL("../tools/site-sentinel.mjs", import.meta.url), "utf8");
+  assert.match(src, /PARKED/, "the console names parked probes");
+});
