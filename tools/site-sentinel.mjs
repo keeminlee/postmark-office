@@ -314,7 +314,14 @@ export function classifyStamp({ served, reference, seen = null, nowMs, staleAfte
  * @param {number|null} servedCrossing  from the site's /build.json
  * @param {number|null} officeCrossing  from GET /api/'s crossing.number
  */
-export function classifyCrossing({ servedCrossing, officeCrossing, nowMs, graceMs, epochMs = CROSSING_EPOCH_UTC, crossingMs = CROSSING_MS }) {
+export function classifyCrossing({ servedCrossing, officeCrossing, nowMs, graceMs, haveStamp = true, epochMs = CROSSING_EPOCH_UTC, crossingMs = CROSSING_MS }) {
+  // The two ways the site's half can be unreadable are different repairs, so
+  // they are different sentences. "No stamp at all" is a deploy that did not
+  // emit one; "a stamp with no crossing" is an old stamper or a build that
+  // could not reach the office. A reader at 3am should not have to open the
+  // other probes to learn which.
+  if (!haveStamp)
+    return { verdict: "UNKNOWN", reason: "the deployed site serves no /build.json at all, so there is no baked crossing to compare" };
   if (!Number.isInteger(servedCrossing))
     return { verdict: "UNKNOWN", reason: "the site's build stamp names no crossing — an older build stamper, or a build that could not reach the office to ask" };
   if (!Number.isInteger(officeCrossing))
@@ -767,6 +774,7 @@ export async function tick({
   // about, and classifyCrossing's own UNKNOWN says why in words a reader can act
   // on, rather than being folded into a generic "no /build.json".
   const cr = classifyCrossing({
+    haveStamp: Boolean(stamp),
     servedCrossing: Number.isInteger(stamp?.crossing) ? stamp.crossing : null,
     officeCrossing, nowMs, graceMs: config.crossingGrace,
   });

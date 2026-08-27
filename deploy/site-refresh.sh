@@ -130,10 +130,14 @@
 #   #    doorstep omits the claim, /build.json stamps null, and the sentinel says
 #   #    UNKNOWN rather than green. Nothing breaks — the feature is simply
 #   #    absent — but there is no reason to install the timer and then wonder.
-#   #    The falsifiable check, which only the new code can pass:
-#   curl -sS https://postmark.town/api/ | grep -o '"crossing":[^}]*}'
-#   #    -> {"number":152,"derivation":"12h crossings (00:00/12:00 UTC) since ..."}
-#   #    An empty result means the office has not shipped it yet.
+#   #    The falsifiable check, which only the new code can pass. Run against
+#   #    both sides before trusting it: it prints a number on the new office and
+#   #    says ABSENT on the standing one, which is what makes it a probe rather
+#   #    than a formality (verified both ways 2026-08-27 — 152 on the branch,
+#   #    ABSENT on prod). The manifest is pretty-printed, so a line-wise grep for
+#   #    "crossing" is NOT a substitute; it comes back empty either way.
+#   curl -sS https://postmark.town/api/ | node -e \
+#     'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).crossing?.number ?? "ABSENT — the office has not shipped it yet"))'
 #
 #   # 1. the service's own root, owned by the office user
 #   sudo mkdir -p /srv/postmark-site-refresh /srv/postmark-harbor

@@ -228,9 +228,18 @@ test("two crossings behind is STALE whatever the clock says — no rebuild windo
 });
 
 test("a crossing it cannot read is UNKNOWN and says which side went dark — never a green all-clear", () => {
+  // Three different unreadables, three different repairs, three sentences. A
+  // single "could not tell" would send the reader to the other probes to learn
+  // which one it was, at the hour they are least able to.
+  const noBuildJson = classifyCrossing({ haveStamp: false, servedCrossing: null, officeCrossing: 149, nowMs: CROSSING_AT(149), graceMs: CONFIG.crossingGrace });
+  assert.equal(noBuildJson.verdict, "UNKNOWN");
+  assert.match(noBuildJson.reason, /serves no \/build\.json at all/);
+
   const noStamp = classifyCrossing({ servedCrossing: null, officeCrossing: 149, nowMs: CROSSING_AT(149), graceMs: CONFIG.crossingGrace });
   assert.equal(noStamp.verdict, "UNKNOWN");
   assert.match(noStamp.reason, /build stamp names no crossing/);
+  assert.notEqual(noStamp.reason, noBuildJson.reason,
+    "a stamp that exists without a crossing is a DIFFERENT fix from no stamp at all");
 
   const noOffice = classifyCrossing({ servedCrossing: 149, officeCrossing: null, nowMs: CROSSING_AT(149), graceMs: CONFIG.crossingGrace });
   assert.equal(noOffice.verdict, "UNKNOWN");
@@ -238,7 +247,7 @@ test("a crossing it cannot read is UNKNOWN and says which side went dark — nev
 
   // THE FALSIFIER: folding "cannot tell" into "nothing is wrong" is the failure
   // that makes a sentinel worse than none — the reader is now trusting silence.
-  for (const said of [noStamp, noOffice]) assert.notEqual(said.verdict, "OK");
+  for (const said of [noBuildJson, noStamp, noOffice]) assert.notEqual(said.verdict, "OK");
 });
 
 test("humanDuration reads inside a sentence", () => {
