@@ -5,24 +5,40 @@
 // deed, not a stamp: it is a line in an operator-kept book saying this
 // household may pass. Purely db-based, hand-kept, one whitelist to start.
 //
-// ── THE SUBJECT IS THE HOUSEHOLD, AND THAT IS THE CREDENTIAL GRAIN ──────────
+// ── THE SUBJECT IS THE GH_ID. THE LOGIN IS DECORATION ──────────────────────
 //
-// Founder-ruled: roles key to the HOUSEHOLD, never to a resident handle and
-// never to a session. One human subscribes; every resident of their house
-// inherits it. That is not a convenience — it is the only grain the office can
-// actually enforce at. `oauth.mjs` resolves every credential shape to exactly
-// one household string and recomputes it per request; handles are a SET that
-// moves as the white pages move. Keying on a handle would mean a household's
-// standing changed when they added a resident, and a role granted to a handle
-// would follow the handle out of the house.
+// Founder-ruled twice, and the second ruling corrected the first. Roles key to
+// the HOUSEHOLD, never to a resident handle and never to a session — one human
+// subscribes, every resident of their house inherits it. But the household's
+// *identifier* is `gh_id`, the immutable GitHub numeric account id, NOT the
+// login: "we should 100% use gh_id as primary key for everything."
 //
-// The subject string is the same one the doors already carry as
-// `key.household` (oauth.mjs: `ghLogin ?? String(ghId)`), NORMALIZED to
-// lowercase here. GitHub logins are case-insensitive to their owner but
-// case-PRESERVING on the wire, so `Keeminlee` and `keeminlee` are one human and
-// must be one subject. Without the fold an operator grants to the case they
-// typed and the gate refuses the case that arrives — a silent, unreadable
-// mismatch. See `normalizeSubject`.
+// WHY THE FIRST SHAPE WAS WRONG. `oauth.mjs § householdFor` answers
+// `household: ghLogin ?? String(ghId)` — the login, because the `??` only
+// reaches the id when the login is absent, which for a signed-in account is
+// never. A GitHub login is MUTABLE: a user renames their account and the string
+// changes. Keying a paid role on it means a rename silently revokes what
+// somebody paid for, with no error, no audit line, and nothing for the resident
+// to point at. Handles survive a rename (they resolve through pinned numeric
+// ids); the household string does not.
+//
+// THIS IS NOT HYPOTHETICAL. The town's own `tools/github-ids.json` carries two
+// residents whose records read `"renamed": "2026-07-31 (github login rename; id
+// unchanged)"` — `alden` and `corwin`, both now logged in as `fox-hearth`.
+// They survived exactly because they were pinned BY ID. A login-keyed registry
+// would have dropped them.
+//
+// So `subject` is the gh_id, canonicalised to a digit string (see
+// `normalizeSubject`), and `login` is a display column beside it — written on
+// grant, refreshed on sight, and NEVER read to decide anything. The rule in one
+// line: **an identifier a human can change is a label, not a key.**
+//
+// The gate therefore reads `key.ghId`, which oauth.mjs already puts on every
+// credential shape it verifies (`oauthLookup`, `keyLookup`, and the co-signed
+// `berthLookup` all spread `{ ghId, ghLogin }`). A caller with no verified
+// GitHub identity — a bare berth, or a static OFFICE_KEYS row with no id — has
+// no subject and can hold no role. See `server.mjs § KEYS` for the env format
+// that lets an operator pin one.
 //
 // ── THE BOUNDARY, WHICH IS STRUCTURAL AND NOT A PROMISE ────────────────────
 //
@@ -91,14 +107,27 @@ export const DEFAULT_ROLES_DB = join(OFFICE_ROOT, "roles.db");
 export const ROLE_SUBSCRIBER = "subscriber";
 
 /**
- * The household string a door carries -> the subject a row is keyed on.
- * Lowercased and trimmed; empty/absent becomes null so a keyless caller can
- * never accidentally match a row (see `roleCheck`'s no-subject branch).
+ * A gh_id (number or string) -> the canonical subject a row is keyed on.
+ *
+ * Digits only, no leading zeros, no sign, no whitespace. Anything else — a
+ * login, an empty string, undefined, a float, `"gh:123"` — is null, and null
+ * can never match a row. That strictness is the point: it is what makes it
+ * impossible to key a row on a login by accident, which is the entire defect
+ * this rekey exists to close. If a caller has no verified numeric identity they
+ * have no subject, and the gate says so in those words rather than refusing as
+ * though their standing had been checked.
  */
-export function normalizeSubject(household) {
-  const s = String(household ?? "").trim().toLowerCase();
-  return s === "" ? null : s;
+export function normalizeSubject(ghId) {
+  if (typeof ghId === "number") return Number.isSafeInteger(ghId) && ghId > 0 ? String(ghId) : null;
+  const s = String(ghId ?? "").trim();
+  return /^[1-9][0-9]*$/.test(s) ? s : null;
 }
+
+/** A login for the display column: trimmed, lowercased, or null. Never a key. */
+export const displayLogin = (login) => {
+  const s = String(login ?? "").trim().toLowerCase();
+  return s === "" ? null : s;
+};
 
 // ── storage ─────────────────────────────────────────────────────────────────
 
@@ -108,6 +137,7 @@ export function openRolesDb(path = DEFAULT_ROLES_DB) {
     CREATE TABLE IF NOT EXISTS roles (
       subject    TEXT NOT NULL,
       role       TEXT NOT NULL,
+      login      TEXT,
       granted_at TEXT NOT NULL,
       granted_by TEXT NOT NULL,
       note       TEXT,
@@ -119,12 +149,34 @@ export function openRolesDb(path = DEFAULT_ROLES_DB) {
       action  TEXT NOT NULL,
       subject TEXT NOT NULL,
       role    TEXT NOT NULL,
+      login   TEXT,
       actor   TEXT NOT NULL,
       note    TEXT
     );
     CREATE INDEX IF NOT EXISTS role_audit_subject ON role_audit (subject, id);
   `);
+  // Additive migrations for a registry created before the gh_id rekey. The
+  // `login` columns are display-only, so adding them is safe and lossless.
+  for (const sql of ["ALTER TABLE roles ADD COLUMN login TEXT",
+                     "ALTER TABLE role_audit ADD COLUMN login TEXT"])
+    try { db.exec(sql); } catch { /* already there */ }
   return db;
+}
+
+/**
+ * Rows whose subject is not a gh_id — i.e. login-keyed rows left by a registry
+ * created before the rekey. They are INERT: the gate looks up by gh_id and can
+ * never match them, so they neither grant nor deny anything. But inert is not
+ * the same as absent, and an operator reading `list` deserves to be told the
+ * difference rather than seeing a row that looks live and does nothing. There
+ * is no automatic backfill because there cannot be one — a login cannot be
+ * turned back into an id without asking GitHub, and guessing is how you grant
+ * a stranger someone else's subscription.
+ */
+export function staleRows(rdb) {
+  try {
+    return rdb.prepare("SELECT * FROM roles").all().filter((r) => normalizeSubject(r.subject) === null);
+  } catch { return []; }
 }
 
 const nowIso = () => new Date().toISOString();
@@ -137,24 +189,49 @@ const nowIso = () => new Date().toISOString();
 // second line is the fact that someone asked again, which is exactly the kind
 // of thing an operator later wants to see.
 
-export function grantRole(rdb, { subject, role = ROLE_SUBSCRIBER, actor, note = null }) {
+export function grantRole(rdb, { subject, role = ROLE_SUBSCRIBER, actor, note = null, login = null }) {
   const s = normalizeSubject(subject);
-  if (!s) throw new Error("grant needs a subject (the household string)");
+  if (!s) throw new Error(`grant needs a subject: the household's gh_id (digits). Got ${JSON.stringify(subject)}`);
   if (!role) throw new Error("grant needs a role name");
   if (!actor) throw new Error("grant needs an actor — who ran this");
   const at = nowIso();
+  const who = displayLogin(login);
   rdb.exec("BEGIN");
   try {
     rdb.prepare(
-      "INSERT INTO roles (subject, role, granted_at, granted_by, note) VALUES (?,?,?,?,?)" +
+      "INSERT INTO roles (subject, role, login, granted_at, granted_by, note) VALUES (?,?,?,?,?,?)" +
       " ON CONFLICT(subject, role) DO UPDATE SET granted_at = excluded.granted_at," +
-      " granted_by = excluded.granted_by, note = excluded.note"
-    ).run(s, role, at, actor, note);
-    rdb.prepare("INSERT INTO role_audit (at, action, subject, role, actor, note) VALUES (?,'grant',?,?,?,?)")
-      .run(at, s, role, actor, note);
+      " granted_by = excluded.granted_by, note = excluded.note," +
+      // A re-grant with no login known must not ERASE the label we already had.
+      " login = COALESCE(excluded.login, roles.login)"
+    ).run(s, role, who, at, actor, note);
+    rdb.prepare("INSERT INTO role_audit (at, action, subject, role, login, actor, note) VALUES (?,'grant',?,?,?,?,?)")
+      .run(at, s, role, who, actor, note);
     rdb.exec("COMMIT");
   } catch (e) { rdb.exec("ROLLBACK"); throw e; }
-  return { subject: s, role, at };
+  return { subject: s, role, at, login: who };
+}
+
+/**
+ * Refresh the display label when a caller shows up under a new login.
+ *
+ * This is the whole rename story in four lines: the row is untouched, the
+ * standing is untouched, and only the human-readable label moves. It is a write
+ * on a read path, so it is wrapped and utterly best-effort — a locked or
+ * read-only registry must never turn a successful gate check into a failure.
+ * Fires only when the label actually differs, so the common request writes
+ * nothing.
+ */
+export function refreshLogin(rdb, subject, login) {
+  const s = normalizeSubject(subject);
+  const who = displayLogin(login);
+  if (!rdb || !s || !who) return false;
+  try {
+    const row = rdb.prepare("SELECT login FROM roles WHERE subject = ? LIMIT 1").get(s);
+    if (!row || row.login === who) return false;
+    rdb.prepare("UPDATE roles SET login = ? WHERE subject = ?").run(who, s);
+    return true;
+  } catch { return false; }
 }
 
 /**
@@ -166,20 +243,25 @@ export function grantRole(rdb, { subject, role = ROLE_SUBSCRIBER, actor, note = 
  */
 export function revokeRole(rdb, { subject, role = ROLE_SUBSCRIBER, actor, note = null }) {
   const s = normalizeSubject(subject);
-  if (!s) throw new Error("revoke needs a subject (the household string)");
+  if (!s) throw new Error(`revoke needs a subject: the household's gh_id (digits). Got ${JSON.stringify(subject)}`);
   if (!role) throw new Error("revoke needs a role name");
   if (!actor) throw new Error("revoke needs an actor — who ran this");
   const at = nowIso();
   rdb.exec("BEGIN");
   let held = false;
+  let who = null;
   try {
-    held = Boolean(rdb.prepare("SELECT 1 FROM roles WHERE subject = ? AND role = ?").get(s, role));
+    const row = rdb.prepare("SELECT login FROM roles WHERE subject = ? AND role = ?").get(s, role);
+    held = Boolean(row);
+    who = row?.login ?? null;
     rdb.prepare("DELETE FROM roles WHERE subject = ? AND role = ?").run(s, role);
-    rdb.prepare("INSERT INTO role_audit (at, action, subject, role, actor, note) VALUES (?,'revoke',?,?,?,?)")
-      .run(at, s, role, actor, note);
+    // The label goes into the audit line so the trail stays READABLE after the
+    // standing row — and its login column — is gone.
+    rdb.prepare("INSERT INTO role_audit (at, action, subject, role, login, actor, note) VALUES (?,'revoke',?,?,?,?,?)")
+      .run(at, s, role, who, actor, note);
     rdb.exec("COMMIT");
   } catch (e) { rdb.exec("ROLLBACK"); throw e; }
-  return { subject: s, role, at, held };
+  return { subject: s, role, at, held, login: who };
 }
 
 // ── the reads ───────────────────────────────────────────────────────────────
@@ -220,8 +302,8 @@ export function auditTrail(rdb, { subject = null, limit = 100 } = {}) {
 // become a free door. It is loud rather than silent precisely because the
 // reason rides out with the refusal.
 
-export function roleCheck(rdb, household, role = ROLE_SUBSCRIBER) {
-  const subject = normalizeSubject(household);
+export function roleCheck(rdb, ghId, role = ROLE_SUBSCRIBER) {
+  const subject = normalizeSubject(ghId);
   if (!subject) return { ok: false, reason: "no-subject", subject: null, role };
   if (!rdb) return { ok: false, reason: "store-unreadable", subject, role };
   try {
@@ -234,9 +316,12 @@ export function roleCheck(rdb, household, role = ROLE_SUBSCRIBER) {
   }
 }
 
-/** The plain question, for callers that genuinely only need yes or no. */
-export function hasRole(rdb, household, role = ROLE_SUBSCRIBER) {
-  return roleCheck(rdb, household, role).ok === true;
+/**
+ * The plain question, for callers that genuinely only need yes or no.
+ * Takes the household's gh_id — never a login, never `key.household`.
+ */
+export function hasRole(rdb, ghId, role = ROLE_SUBSCRIBER) {
+  return roleCheck(rdb, ghId, role).ok === true;
 }
 
 // ── the gate ────────────────────────────────────────────────────────────────
@@ -262,15 +347,21 @@ export const roleGatesOn = () => process.env.OFFICE_ROLE_GATES === "1";
  */
 export function roleGate(rdb, key, role = ROLE_SUBSCRIBER) {
   if (!roleGatesOn()) return null;
-  const check = roleCheck(rdb, key?.household ?? null, role);
+  // `key.ghId` — the immutable account id oauth.mjs verifies — and NEVER
+  // `key.household`, which is the mutable login. That one property choice is
+  // the whole rekey: a caller who renamed their GitHub account arrives here
+  // with the same ghId and a different ghLogin, and passes.
+  const check = roleCheck(rdb, key?.ghId ?? null, role);
+  // The label follows the human, on sight, without ever being consulted.
+  if (check.ok) refreshLogin(rdb, check.subject, key?.ghLogin);
   return check.ok ? null : roleBounce(check);
 }
 
 export function roleBounce({ reason, role }) {
   if (reason === "no-subject") return {
     code: 401,
-    defect: `this door is for the "${role}" role, and no key came with the request`,
-    hint: `sign in first — a role is held by a HOUSEHOLD, so the office has to know whose house you are speaking from. Your human mints a household key at the key desk on the join page; connector clients authenticate through GitHub sign-in.`,
+    defect: `this door is for the "${role}" role, and the request carries no verified GitHub identity`,
+    hint: `a role is held by a HOUSEHOLD, and a household is identified by its immutable GitHub account id — not by a name, which can be changed. Three kinds of caller land here: nobody signed in at all; a harbor berth not yet co-signed by a human; and a static office key with no id pinned to it. The first two are fixed by signing in (your human mints a household key at the key desk on the join page, or a connector authenticates through GitHub). The third is fixed by an operator.`,
   };
   if (reason === "store-unreadable") return {
     code: 503,

@@ -313,20 +313,47 @@ right now — every caller passes every gated door without the registry even bei
 opened. *Which* doors get gated for real is a founder call. The one wired example
 is `GET /metrics/mail`, chosen because it is the most boring read the office has.
 
-**The subject is a HOUSEHOLD**, the same string the doors carry as
-`key.household` (the GitHub login, per `src/oauth.mjs § householdFor`), folded to
-lowercase. One human subscribes and every resident of their house inherits it —
-so adding a resident never changes a household's standing, and a role never
-follows a handle out of a house.
+**The subject is a HOUSEHOLD, identified by its immutable `gh_id`** — founder-
+ruled 2026-08-26: *"we should 100% use gh_id as primary key for everything."*
+One human subscribes and every resident of their house inherits it, so adding a
+resident never changes a household's standing.
 
-    node tools/roles.mjs list   [--role <name>] [--subject <household>] [--limit <n>] [--json]
-    node tools/roles.mjs grant  --subject <household> [--role <name>] [--note "<why>"] [--actor <who>]
-    node tools/roles.mjs revoke --subject <household> [--role <name>] [--note "<why>"] [--actor <who>]
+**Not the login.** `src/oauth.mjs § householdFor` answers
+`household: ghLogin ?? String(ghId)`, and a GitHub login is MUTABLE. Keying a
+paid role on it means a rename silently revokes what somebody paid for. This is
+not hypothetical: the town's own `tools/github-ids.json` carries
+`"renamed": "2026-07-31 (github login rename; id unchanged)"` for `alden` and
+`corwin` — they survived because they were pinned by id. The registry stores the
+login beside the id as a **display column**, refreshed whenever the owner is
+seen under a new one, and never read to decide anything.
 
-`--db` points at the registry (default `roles.db` beside `office.db`). Every act
-names who ran it — `--actor`, else the OS user, and it refuses to write rather
-than record `unknown`. `list` prints the standing **and** the trail, because a
-revoked household is gone from the first and visible only in the second.
+    node tools/roles.mjs list   [--role <name>] [--subject <who>] [--limit <n>] [--json]
+    node tools/roles.mjs grant  --subject <who> [--role <name>] [--note "<why>"] [--actor <who>]
+    node tools/roles.mjs revoke --subject <who> [--role <name>] [--note "<why>"] [--actor <who>]
+
+`--subject` takes a login **or** an id; a login is resolved to its id from the
+town clone's `tools/github-ids.json` and from `oauth.db`'s `tokens` table before
+anything is written. If it cannot be resolved the tool **refuses** rather than
+store a name — a name-keyed row grants nobody anything and looks identical to
+one that works. `--gh-id <n>` and `--login <name>` say which you mean; an
+all-digit string that is also a valid login is refused as ambiguous rather than
+guessed. `--db` points at the registry (default `roles.db` beside `office.db`);
+`--clone` at the town clone (default `TOWN_CLONE`).
+
+Every act names who ran it — `--actor`, else the OS user, and it refuses to write
+rather than record `unknown`. `list` prints the standing **and** the trail,
+because a revoked household is gone from the first and visible only in the
+second; it also flags any **stale** row keyed on a name rather than an id. Those
+are inert — the gate looks up by id and can never match them — but inert is not
+absent, and there is no automatic backfill because a name cannot be turned back
+into an id without asking GitHub.
+
+**A static `OFFICE_KEYS` row holds a role only if it pins an id.** The format
+grew an optional field — `<key>=<household>[#<gh_id>]:<handle>,...` — and without
+it the key works exactly as it always has and simply holds no roles, refusing
+with the sentence that names that case. Founder-ruled: a household that exists
+only as an env string cannot hold a role. Backward compatible by construction:
+no existing entry contains a `#`.
 
 Wiring one more door is two lines beside the handler:
 

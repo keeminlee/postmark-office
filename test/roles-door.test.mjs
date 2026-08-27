@@ -25,6 +25,7 @@ import { openRolesDb, grantRole, revokeRole } from "../src/roles.mjs";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const KEY = "roles-door-test-key";
 const HOUSEHOLD = "keemin";
+const GH_ID = 583231;            // the pinned account id the static key carries
 
 /** One office, one registry, one flag state. Returns a stop() and a call(). */
 async function office({ port, gates }) {
@@ -42,7 +43,9 @@ async function office({ port, gates }) {
   ], {
     env: {
       ...process.env,
-      OFFICE_KEYS: `${KEY}=${HOUSEHOLD}:wright`,
+      // #<gh_id> pins the static key to an immutable account id — required to
+      // hold a role, ignored by everything else.
+      OFFICE_KEYS: `${KEY}=${HOUSEHOLD}#${GH_ID}:wright`,
       ...(gates ? { OFFICE_ROLE_GATES: "1" } : {}),
       TOWN_CLONE: join(tmp, "no-clone-here"),
       WORLD_CLONE: join(tmp, "no-world-clone"),
@@ -71,8 +74,8 @@ async function office({ port, gates }) {
       const text = env?.result?.content?.[0]?.text;
       try { return JSON.parse(text); } catch { return env; }
     },
-    grant: () => { const r = openRolesDb(rolesPath); grantRole(r, { subject: HOUSEHOLD, actor: "door-test" }); r.close(); },
-    revoke: () => { const r = openRolesDb(rolesPath); revokeRole(r, { subject: HOUSEHOLD, actor: "door-test" }); r.close(); },
+    grant: () => { const r = openRolesDb(rolesPath); grantRole(r, { subject: GH_ID, actor: "door-test", login: HOUSEHOLD }); r.close(); },
+    revoke: () => { const r = openRolesDb(rolesPath); revokeRole(r, { subject: GH_ID, actor: "door-test" }); r.close(); },
     async stop() {
       if (child.exitCode === null) { const gone = new Promise((ok) => child.on("exit", ok)); child.kill(); await gone; }
       rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
@@ -165,6 +168,50 @@ test("FLAG OFF — the MCP door is untouched as well", async () => {
   assert.ok("totals" in r || "days" in r);
 });
 
+test('AMBIGUITY #4, RULED: "a household that exists only as an env string cannot hold a role"', async () => {
+  const tmp = mkdtempSync(join(tmpdir(), "postmark-office-unpinned-"));
+  const dbPath = join(tmp, "fixture.db");
+  fixtureDb(dbPath).close();
+  const rolesPath = join(tmp, "roles.db");
+  // Grant to the household NAME, the way a pre-rekey operator might have.
+  // Nothing about that row can ever be reached, because names are not subjects.
+  const seed = openRolesDb(rolesPath);
+  try { grantRole(seed, { subject: GH_ID, actor: "seed", login: HOUSEHOLD }); } finally { seed.close(); }
+
+  const child = spawn(process.execPath, [
+    join(ROOT, "src", "server.mjs"),
+    "--port", "43875", "--db", dbPath, "--roles-db", rolesPath,
+  ], {
+    env: {
+      ...process.env,
+      // NO #<gh_id> — a static key with no verified identity behind it.
+      OFFICE_KEYS: `${KEY}=${HOUSEHOLD}:wright`,
+      OFFICE_ROLE_GATES: "1",
+      TOWN_CLONE: join(tmp, "no-clone-here"),
+      WORLD_CLONE: join(tmp, "no-world-clone"),
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  try {
+    await new Promise((ok, no) => {
+      const t = setTimeout(() => no(new Error("server never listened")), 15_000);
+      child.stdout.on("data", (d) => { if (String(d).includes("listening")) { clearTimeout(t); ok(); } });
+      child.on("exit", (c) => no(new Error(`server exited early (${c})`)));
+    });
+    const r = await fetch("http://127.0.0.1:43875/metrics/mail", { headers: { authorization: `Bearer ${KEY}` } });
+    assert.equal(r.status, 401,
+      "an unpinned static key holds no role even though a row exists for the household it names");
+    const b = await r.json();
+    assert.match(b.hint, /static office key with no id/,
+      "and the refusal names that case specifically, because only an operator can fix it");
+    assert.notEqual(r.status, 403,
+      "it must NOT read as a standing judgement — nothing about this caller's standing was checked");
+  } finally {
+    if (child.exitCode === null) { const gone = new Promise((ok) => child.on("exit", ok)); child.kill(); await gone; }
+    rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
+
 test("FLAG ON but registry missing — the door says so, and does not pretend it is a judgement about the caller", async () => {
   const tmp = mkdtempSync(join(tmpdir(), "postmark-office-noroles-"));
   const dbPath = join(tmp, "fixture.db");
@@ -178,7 +225,9 @@ test("FLAG ON but registry missing — the door says so, and does not pretend it
   ], {
     env: {
       ...process.env,
-      OFFICE_KEYS: `${KEY}=${HOUSEHOLD}:wright`,
+      // Pinned, so the caller HAS a subject — otherwise the no-subject 401
+      // would fire first and this test would never reach the 503 it exists for.
+      OFFICE_KEYS: `${KEY}=${HOUSEHOLD}#${GH_ID}:wright`,
       OFFICE_ROLE_GATES: "1",
       TOWN_CLONE: join(tmp, "no-clone-here"),
       WORLD_CLONE: join(tmp, "no-world-clone"),

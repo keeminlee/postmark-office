@@ -7,7 +7,9 @@
 //
 //   OFFICE_KEYS='devkey1=keemin:wright,postmaster' node src/server.mjs [--port 4380] [--db office.db]
 //
-// OFFICE_KEYS format: <key>=<household>:<handle>[,<handle>...][;<key>=...]
+// OFFICE_KEYS format: <key>=<household>[#<gh_id>]:<handle>[,<handle>...][;<key>=...]
+// The optional #<gh_id> pins the static key to an immutable GitHub account id.
+// It is required only to hold a role (src/roles.mjs); everything else ignores it.
 // Keys are how we know who's at the door; a key may act `from:` only its own
 // residents. Reads require a key too (public read parity stays on the site).
 
@@ -299,10 +301,35 @@ const PEN = {
 if (!PEN.token) console.warn("WARN: no POSTMARK_PEN_TOKEN — request_residency will answer not-yet-open.");
 
 // ── keys ─────────────────────────────────────────────────────────────────────
-const KEYS = new Map(); // key -> { household, handles: Set }
+//
+// A static key's household is a string an OPERATOR chose in an env var. There
+// is no GitHub sign-in behind it and therefore no verified account id — which
+// is fine for everything these keys have ever done, and NOT fine for holding a
+// role, because the role registry keys on the immutable gh_id and a household
+// that exists only as an env string has none.
+//
+// So the household field may optionally carry a pinned id: `keemin#583231`.
+// Founder-ruled shape (2026-08-26): a static key resolves for role purposes
+// ONLY if its env row carries an explicit gh_id. Without one the key works
+// exactly as it always has and simply holds no roles — it fails the gate with
+// the "no verified GitHub identity" sentence, which says the true reason.
+// Backward compatible by construction: no existing entry contains a `#`.
+const KEYS = new Map(); // key -> { household, handles: Set, ghId?: number }
 for (const entry of (process.env.OFFICE_KEYS ?? "").split(";").filter(Boolean)) {
   const m = /^([^=]+)=([^:]+):(.+)$/.exec(entry.trim());
-  if (m) KEYS.set(m[1], { household: m[2], handles: new Set(m[3].split(",").map((s) => s.trim())) });
+  if (!m) continue;
+  const [, token, householdField, handleList] = m;
+  const hash = householdField.lastIndexOf("#");
+  const household = hash === -1 ? householdField : householdField.slice(0, hash);
+  const idPart = hash === -1 ? "" : householdField.slice(hash + 1).trim();
+  const ghId = /^[1-9][0-9]*$/.test(idPart) ? Number(idPart) : null;
+  if (hash !== -1 && ghId === null)
+    console.warn(`WARN: OFFICE_KEYS entry for "${household}" has a "#" but no numeric gh_id after it — it will hold no roles.`);
+  KEYS.set(token, {
+    household,
+    handles: new Set(handleList.split(",").map((s) => s.trim())),
+    ...(ghId === null ? {} : { ghId }),
+  });
 }
 if (KEYS.size === 0) console.warn("WARN: no OFFICE_KEYS configured — every request will 401.");
 
