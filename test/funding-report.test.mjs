@@ -415,3 +415,69 @@ test("Stage A's report and Stage B's tick resolve the SAME payment to the SAME h
   assert.equal(buckets.witness[0].attributed_via, "login-pin");
   assert.notEqual(buckets.witness[0].from, OUTSIDE_FROM, "the report must not call a pinned hand a gift");
 });
+
+
+test("a payment resolved through a PIN says so on the page a person actually reads", () => {
+  // LAW (tools/stripe-watch.mjs, the header, verbatim): "AND IT SAYS SO ON THE
+  //     ROW. The pin is the only channel that pays a hand the payer did not
+  //     type, so a resolution through it carries `attributed_via: "login-pin"`
+  //     and a note naming what was typed, what it became, and on whose
+  //     authority — because the grace window exists for a person to veto a
+  //     resolution, and one nobody can see is not reviewable."
+  //
+  // A disclosure carried on an object and never printed is not a disclosure.
+  // Without this, a pin resolution renders on the founder's report identically
+  // to a handle that was simply typed correctly — and it is the ONE row where
+  // the office chose a hand the payer never wrote down.
+  const plan = {
+    pot: "keep", usd: 20, from: "paz", rail: "stripe", ref: "stripe:cs_pin",
+    attributed: true, attributed_via: "login-pin", handle_typed: "pazmartina",
+    pin_note: '"pazmartina" is not a resident handle — it is the GitHub login the town\'s own pins bind to household gh:2, whose one hand is paz. The town\'s own verified pin is the hand — attributed, not guessed.',
+  };
+  const ready = readyToWitness({ stripe: { witness: [{ ...plan, session: "cs_pin" }], hold: [] }, usdcReport: null, date: "2026-08-27" });
+  const md = render({
+    now: NOW, pots: [], potsInvalid: [], fold: foldFunding([]), anomalyRows: [],
+    rails: [railHealth('x', { last_run: minsAgo(1) }, { now: NOW })],
+    stripe: { hold: [] }, usdcReport: null, registry: { addresses: 0, wallet_files: 0, mapped_pots: 0 },
+    ready,
+  });
+
+  assert.match(md, /pazmartina/, "the string the payer typed reaches the page");
+  assert.match(md, /attributed, not guessed/, "and the authority it was resolved on");
+
+  // and a plain handle match says nothing extra — the disclosure belongs to the
+  // channel that earned it, not to every attributed row
+  const plainReady = readyToWitness({
+    stripe: { witness: [{ pot: "keep", usd: 5, from: "paz", rail: "stripe", ref: "stripe:cs_plain", attributed: true, attributed_via: "handle", handle_typed: "paz", session: "cs_plain" }], hold: [] },
+    usdcReport: null, date: "2026-08-27",
+  });
+  const plainMd = render({
+    now: NOW, pots: [], potsInvalid: [], fold: foldFunding([]), anomalyRows: [],
+    rails: [railHealth('x', { last_run: minsAgo(1) }, { now: NOW })],
+    stripe: { hold: [] }, usdcReport: null, registry: { addresses: 0, wallet_files: 0, mapped_pots: 0 },
+    ready: plainReady,
+  });
+  assert.doesNotMatch(plainMd, /attributed, not guessed/);
+
+  // THE HOLD TABLE, the other surface. It already shows "as" beside "typed", so
+  // a pin resolution is visible there — but two differing cells read like a
+  // DEFECT unless the page says why they differ, and this is the row a person is
+  // most likely to want to veto while the ref is still unspent.
+  const held = render({
+    now: NOW, pots: [], potsInvalid: [], fold: foldFunding([]), anomalyRows: [],
+    rails: [railHealth('x', { last_run: minsAgo(1) }, { now: NOW })],
+    usdcReport: null, registry: { addresses: 0, wallet_files: 0, mapped_pots: 0 }, ready: [],
+    stripe: { hold: [{ session: 'cs_h', amount_total: 2000, email: null, witnesses_after: '2026-08-28T00:00:00Z', plan: { ...plan } }] },
+  });
+  assert.match(held, /Where \*\*as\*\* differs from \*\*typed\*\*/, 'the table explains the difference it is showing');
+  assert.match(held, /pays a hand the payer did not type/);
+
+  // and a hold with no pin resolution gets no such footnote
+  const plainHeld = render({
+    now: NOW, pots: [], potsInvalid: [], fold: foldFunding([]), anomalyRows: [],
+    rails: [railHealth('x', { last_run: minsAgo(1) }, { now: NOW })],
+    usdcReport: null, registry: { addresses: 0, wallet_files: 0, mapped_pots: 0 }, ready: [],
+    stripe: { hold: [{ session: 'cs_p', amount_total: 500, email: null, witnesses_after: '2026-08-28T00:00:00Z', plan: { pot: 'keep', usd: 5, from: 'paz', attributed: true, attributed_via: 'handle', handle_typed: 'paz' } }] },
+  });
+  assert.doesNotMatch(plainHeld, /Where \*\*as\*\* differs from \*\*typed\*\*/);
+});

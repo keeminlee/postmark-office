@@ -213,6 +213,11 @@ export function render({ now, pots, potsInvalid, fold, rails, anomalyRows, strip
     for (const r of ready) {
       p(`**${usd(r.usd)} → \`${r.pot}\` as ${r.attributed === false ? `_${r.from}_ (gift, no holo)` : `**${r.from}**`}** · ${r.rail} · \`${r.session ?? r.txhash}\`${r.fresh ? " · ⏱ recent" : ""}`);
       if (r.handle_typed != null && r.attributed === false) p(`  <br/>typed \`${r.handle_typed}\`${r.email ? ` · ${r.email}` : ""} — not a household, so this files as a gift and mints no holo.`);
+      // A PIN RESOLUTION PAYS A HAND THE PAYER DID NOT TYPE, so the row has to
+      // say so where a person will actually read it. Carrying the disclosure on
+      // the plan and never printing it would put the one resolution most worth a
+      // second look on the page looking exactly like a handle typed correctly.
+      if (r.attributed_via === "login-pin" && r.pin_note) p(`  <br/>${r.pin_note}`);
       if (r.note) p(`  <br/>${r.note}`);
       p();
       p("```sh");
@@ -259,6 +264,14 @@ export function render({ now, pots, potsInvalid, fold, rails, anomalyRows, strip
     for (const h of stripe.hold)
       p(`| \`${h.session}\` | ${usd((h.amount_total ?? 0) / 100)} | ${h.plan.pot} | ${h.plan.attributed ? `**${h.plan.from}**` : `_${h.plan.from}_ (gift, no holo)`} | ${h.plan.handle_typed ?? "—"} | ${h.email ?? "—"} | ${h.witnesses_after} |`);
     p();
+    // The table already shows "as" beside "typed", so a pin resolution is
+    // VISIBLE here — but two differing cells read like a defect unless the page
+    // says why they differ. This is the row a person is most likely to want to
+    // veto, and the window exists for exactly that.
+    if (stripe.hold.some((h) => h.plan?.attributed_via === "login-pin")) {
+      p(`_Where **as** differs from **typed**, the payment was resolved through the town's own GitHub pin: the typed string is a login the pins bind to one household holding one hand. That is a record the town already keeps under review, not a guess — and it is the one resolution worth a second look, because it pays a hand the payer did not type._`);
+      p();
+    }
   }
 
   // 3 · the books
