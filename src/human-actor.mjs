@@ -179,3 +179,100 @@ export function resolveHumanActor({ action, as: kind, beside, key, fence = "ambi
     note: `${COMPANIONED}. The words land under the human's own hand; the resident lends the standing they are heard from.`,
   };
 }
+
+// ── the ACT-AS roster (2026-08-27) ──────────────────────────────────────────
+//
+// THE FOUNDER'S RULING: "abilities live at the CLASS level ('Act As' a class),
+// and 'Human' is one of the Act-As options — this is the bridge for
+// parcel-embodied humans."
+//
+// The roster is what a caller may act AS from where they are standing. It is a
+// DERIVED, not a table: the residents come from the key, and the human entry's
+// standing comes from the same channel test `resolveHumanActor` uses, so the
+// roster and the door can never disagree about whether the human has feet here.
+//
+// ⚑ WHY THE HUMAN ENTRY IS ALWAYS PRESENT AND SOMETIMES UNAVAILABLE, rather
+// than being absent when it cannot act. An absent option teaches nothing: a
+// player who never sees "Human" does not learn that embodiment exists, let
+// alone that it is fenced to their own parcel. A greyed one with a reason on it
+// is the door explaining itself, which is the same courtesy the out-of-turn
+// refusal pays.
+
+/** Where an embodied human's token image is looked for. A DIRECTORY, so the
+ *  operator configures a place and never a per-person path — one setting for a
+ *  household of any size. */
+export const HUMAN_TOKEN_DIR = () => process.env.POSTMARK_HUMAN_TOKENS ?? "/atelier/postmark/birthday";
+
+/**
+ * The token image for an embodied human, as a URL the site can draw.
+ *
+ * A SLOT, deliberately left empty of any particular person's picture. The
+ * founder's own token is staged locally and is not this office's to hold; what
+ * the office owes is a place for one and a rule for finding it. `token` on the
+ * human's own record wins outright (an explicit path is never second-guessed);
+ * otherwise it is `<dir>/<handle>-token.png` by convention.
+ *
+ * Returns null when there is no handle to name a file after — never a guessed
+ * default, because a token that silently resolves to somebody else's face is
+ * worse than no token at all.
+ */
+export function humanTokenUrl(handle, { token = null, dir = null } = {}) {
+  const explicit = token == null ? null : String(token).trim();
+  if (explicit) return explicit;
+  const who = String(handle ?? "").trim();
+  if (!who) return null;
+  const base = String(dir ?? HUMAN_TOKEN_DIR()).replace(/\/+$/, "");
+  return `${base}/${who}-token.png`;
+}
+
+/**
+ * The ACT-AS roster at this standpoint.
+ *
+ * `residents` — the handles this key acts for.
+ * `humanGrants` — the actions the calculus admitted for `for: human` HERE. Its
+ *   emptiness is the whole difference between "your human can play in this
+ *   room" and "your human is a voice through your resident": the record decides
+ *   it, and this function only reports what the record decided.
+ * `humanHandle` / `humanToken` — the household's human, if the office knows one.
+ */
+// ⚠ THE FIELD NAMES ARE THE SITE'S, NOT MINE — `kind`/`allowed`, not
+// `as`/`available`. The site declared this roster's shape on 2026-08-26 and
+// built its ACT-AS bar to it ("when `actors` is present this function returns
+// it untouched and the site stops deriving"), so the door adopting those names
+// is what makes the bar stop guessing. My first version invented its own two
+// spellings, which would have been returned untouched and rendered as a row of
+// faces with no labels and no permission — silently, because `actorsFor` does
+// not validate what it passes through.
+export function actorRoster({ residents = [], humanGrants = [], humanHandle = null, humanToken = null, tokenDir = null, acting = null } = {}) {
+  const roster = [...residents].filter(Boolean).map((h) => ({
+    kind: "resident",
+    handle: h,
+    label: h,
+    allowed: true,
+    reason: null,
+    selected: acting != null && h === acting,
+    says: "your resident, acting from their own standing",
+  }));
+  const embodied = humanGrants.length > 0;
+  roster.push({
+    kind: "human",
+    id: humanHandle ?? null,
+    handle: humanHandle ?? null,
+    label: humanHandle ?? "Human",
+    // ALWAYS PRESENT, SOMETIMES NOT ALLOWED. An absent option teaches nothing:
+    // a player who never sees "Human" cannot learn that embodiment exists, let
+    // alone that it is fenced to ground that grants it.
+    allowed: embodied,
+    reason: embodied ? null
+      : `A human is embodied only where a ground's class grants it, and this ground does not. ${ONE_GRANT_FENCE}.`,
+    // The site's own word for the embodied case, so the bar can style the two
+    // apart without re-deriving the rule.
+    stance: embodied ? "embodied-human" : "companioned-human",
+    token_url: humanTokenUrl(humanHandle, { token: humanToken, dir: tokenDir }),
+    grants: embodied ? [...humanGrants] : [...HUMAN_AMBIENT_GRANTS],
+    says: embodied
+      ? "your household's human, on ground that grants them feet — they act here, and only here"
+      : "your household's human, speaking beside one of your residents",
+  });
+  return roster;
+}
