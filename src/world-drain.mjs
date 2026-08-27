@@ -218,7 +218,12 @@ export function planDrain(rows, { publishedPathOf = null, toFileFrame = null } =
     // because "convert once, at write-down" is the rule and a rule with no code
     // behind it is a comment.
     const framed = nested && typeof toFileFrame === "function" && (p.at || p.points)
-      ? toFileFrame({ at: p.at ?? null, points: p.points ?? null, parent_id: p.parent_id ?? null })
+      // `path` rides along now, and it is the load-bearing argument: a SITED
+      // amend lands on a fossil filing (Gate A) with no `parent_id` in its
+      // payload, so a framer that could only read `parent_id` answered "no
+      // frame" and let the world coordinate into a relative-framed file raw.
+      // That is the 2026-08-27T01:13Z pando-peak defect — see `fileFramer`.
+      ? toFileFrame({ at: p.at ?? null, points: p.points ?? null, parent_id: p.parent_id ?? null, path })
       : null;
     const fileRec = { ...p, ...(framed ?? {}) };
     delete fileRec.slug; delete fileRec.body; delete fileRec.parent_id; delete fileRec.household;
@@ -630,6 +635,52 @@ export async function archiveToR2({ repo, stateDir, run = null } = {}) {
  * root-level record is exactly right, and a converted-by-guesswork nested one is
  * a mark in the wrong place forever.
  */
+/**
+ * ── THE FRAME BUG, AND WHY THIS FUNCTION GREW A SECOND WAY IN (2026-08-27) ────
+ *
+ * On 2026-08-27T01:13:12.971Z an amend of `vermillion/the-pando-peak` was
+ * drained, and the record that landed said:
+ *
+ *   at: { x: -95458, y: -95458 }        (was: at: { x: 0, y: 0 })
+ *
+ * at `WORLD/marks/let-there-be-light/pando-peak/the-pando-peak/mark.md` — a
+ * FOSSIL path, nested under the `pando-peak` region, whose composed centre IS
+ * (-95458, -95458). So the file's own frame added the offset a second time and
+ * the mountain composed to roughly (-190916, -190916), ~95km outside the world.
+ * Eleven vessel/timetable tests went red at 03:22:57Z — the landing stands on
+ * that peak — and the crossing published nothing for anybody until a human
+ * reverted it by hand at 03:50Z.
+ *
+ * THE RESIDENT MOVED NOTHING. They restated their mountain's true WORLD
+ * position, which is what the journal stores by design ("a declaration is stored
+ * in world coordinates as the resident spoke them"). The machinery moved it.
+ *
+ * The mechanism, exactly: `planDrain` DID decide the row was nested — Gate A
+ * hands an amend its frozen fossil filing, which is three segments deep — and
+ * DID call this framer. But the framer could only answer from `parent_id`, and a
+ * SITED mark carries no `parent_id` in the door's grammar; only predicated and
+ * naming marks do. So `origin` came back null, the conversion returned `{}`, and
+ * the world coordinate went into a relative-framed file raw.
+ *
+ * Which is why the sited/parcel arm was believed unreachable. The drain's own
+ * comment said "this is currently identity for every row shape the door can
+ * produce", and `world-drain.test.mjs` has a test whose name asserts the frame
+ * conversion "has no live caller at this door". Both were reasoning about a
+ * CREATE, where Gate B files at the id and the path really is root-level. Nobody
+ * re-checked them against an AMEND, where Gate A hands back a fossil. The
+ * premise was true when written, the freeze made it false on 2026-08-25, and the
+ * comment went on being read as current.
+ *
+ * THE FIX: the origin is resolved from the PATH THE RECORD IS ACTUALLY WRITTEN
+ * TO, and `parent_id` becomes the fallback rather than the only way in. The path
+ * is the honest source — it is what the fold will compose against — and it is
+ * available for free, because `filing-freeze.json` is a map of id → directory
+ * and inverting it gives directory → id.
+ *
+ * Null still means DO NOT CONVERT, and still for the same reason: an unconverted
+ * root-level record is exactly right, and a converted-by-guesswork nested one is
+ * a mark in the wrong place forever.
+ */
 export async function fileFramer(repo) {
   let fold, state, rootRecord;
   try {
@@ -652,8 +703,45 @@ export async function fileFramer(repo) {
   const relative = fold.COORDS_FIELD && declared === fold.COORDS_RELATIVE;
   if (!relative) return null;
   const centre = new Map((state?.marks ?? []).filter((m) => m?.id && m.at).map((m) => [m.id, m.at]));
-  return ({ at, points, parent_id }) => {
-    const origin = parent_id ? centre.get(parent_id) : null;
+
+  // DIRECTORY → the mark that owns it, inverted out of the fossil manifest. The
+  // manifest is keyed id → directory and is never regenerated, so this is exact
+  // for every mark alive on the freeze date and costs one read. A mark born
+  // AFTER the freeze is filed at `WORLD/marks/<household>/<slug>/`, is not
+  // nested, and needs no entry here — which is why an absent one is not a gap.
+  let mainSha = null;
+  try { mainSha = git(repo, ["rev-parse", mainRef(repo)]).trim(); } catch { /* named absent below */ }
+  const idOfMarkFile = new Map();
+  if (mainSha) for (const [id, file] of frozenFilingAt(repo, mainSha)) idOfMarkFile.set(String(file).replace(/\\/g, "/"), id);
+
+  /**
+   * The composed centre the FILE at `path` is framed on — the nearest enclosing
+   * mark, walking the path's own directory ancestors.
+   *
+   * The floor is `depth > 3`, which is the floor `settlement-sweep.mjs`'s
+   * `enclosingMarkId` walks to, and the two have to agree about what an ancestor
+   * IS or the drain frames against one parent and the fold composes against
+   * another. Segments: WORLD / marks / <first> / …dirs… / <slug> / mark.md, and
+   * that `<first>` segment is never a mark's parent — under the fossil tree it
+   * is the world root (which is the frame, so subtracting it is identity) and
+   * under the id-keyed layout it is a household namespace with no mark.md in it.
+   */
+  const originForPath = (path) => {
+    const parts = String(path).replace(/\\/g, "/").split("/");
+    for (let depth = parts.length - 2; depth > 3; depth--) {
+      const ancestor = `${parts.slice(0, depth).join("/")}/mark.md`;
+      const id = idOfMarkFile.get(ancestor);
+      const at = id ? centre.get(id) : null;
+      if (at) return at;
+    }
+    return null;
+  };
+
+  return ({ at, points, parent_id, path = null }) => {
+    // THE PATH FIRST. It is where the record is actually going, so it is what
+    // the fold will compose it against; `parent_id` is a claim the payload makes
+    // and only predicated/naming marks make it at all.
+    const origin = (path ? originForPath(path) : null) ?? (parent_id ? centre.get(parent_id) : null);
     if (!origin) return {};
     return {
       ...(at ? { at: fold.worldToFile(at, origin) } : {}),
