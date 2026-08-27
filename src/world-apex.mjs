@@ -71,10 +71,16 @@ import { CROSSING_EXEC, CROSSING_TOOLS, enterViaOffice, exitViaOffice } from "./
 // POS-5's consent verb. STANCE_TOOLS ride the schema lookup without joining
 // the flat tool list, exactly as CROSSING_TOOLS do and for the same reason.
 import { ACTION_STANCE, STANCE_TOOLS, declareStanceViaOffice, readNeverPerforms, stanceShadow, stancesBlock } from "./world-stance.mjs";
-import { callHoldTool } from "./world-hold.mjs";
+import { callHoldTool, holdingsOf } from "./world-hold.mjs";
+import { openDynamic } from "./dynamic-store.mjs";
+import { readAttachments } from "./dynamic-entities.mjs";
 import { storeDbPath } from "./world-serve.mjs";
 import { AMBIENT_REACH_SQL, CLASS_MARK_GATE_SQL } from "./world-store.mjs";
 import { resolveHumanActor } from "./human-actor.mjs";
+import {
+  classOfInstance, entriesOfClass, guardsPass, heldEntries, kindOf, resolveGrants,
+} from "./world-grants.mjs";
+import { exitAllowed, walkAllowed } from "./embodiment.mjs";
 
 export const apexEnabled = () => process.env.WORLD_APEX === "1";
 
@@ -248,6 +254,27 @@ export function lawOf(db, id) {
     const row = db.prepare(LAW_QUERY).get(String(id));
     if (!row) return null;
     return { from: row.id, slot: row.slot, value: row.value, text: String(row.body ?? "") };
+  } catch { return null; }
+}
+
+// ── the precondition a residue class puts in gate position ──────────────────
+//
+// Sibling of `residueOf` and `lawOf`, same authorship and tier gate. It reads
+// ONE field — `requires:` — off the class an action's residue names, because
+// the precondition belongs to the ACT, not to the ground that granted it. That
+// placement is what makes it hold no matter which channel opened the door: a
+// weapon carried out of a portal still calls `strike`, and `strike` still says
+// where it may be swung.
+const REQUIRES_QUERY = `SELECT id, json_extract(props, '$.requires') AS requires
+       FROM nodes
+      WHERE id = ? AND by = 'the-town' AND tier = 'constitution'
+        AND json_extract(props, '$.class') IS NOT NULL`;
+
+export function requiresOf(db, id) {
+  if (!db || !id) return null;
+  try {
+    const row = db.prepare(REQUIRES_QUERY).get(String(id));
+    return row ? parseJson(row.requires, null) : null;
   } catch { return null; }
 }
 
@@ -668,8 +695,171 @@ export function gatherActions(db, { spineIds = [], reachIds = [] } = {}) {
   const via = (id) => (spine.has(id) ? "within" : reach.has(id) ? "in reach" : "ambient");
   const entries = [];
   for (const row of rows) {
-    for (const e of entriesFrom(row, db)) entries.push({ ...e, via: via(row.id) });
+    for (const e of entriesFrom(row, db)) entries.push({ ...e, via: via(row.id), channel: "ambient" });
   }
+  return { entries, rows };
+}
+
+// ── seam 5 · THE GROUND-GRANTED CHANNEL (2026-08-26) ────────────────────────
+//
+// LOGOS/classes.md § Class-nodes, verbatim, since 2026-08-15:
+//
+//   "The resident class carries every resident's standing capabilities,
+//    world-wide by its own ambient declaration; A GROUND'S CLASS MAY GRANT MORE
+//    TO THOSE IT REACHES."
+//
+// `gatherActions` above implements the first clause and CANNOT implement the
+// second, and it is worth being exact about why rather than calling it a bug.
+// Its query asks for class marks whose id is on the spine or in reach. A class
+// mark is DE-SITED — "law has no where" (2026-08-18) — so it has no coordinates
+// and can never appear in a geometric spine. The clause therefore reached
+// nothing, for eleven days, and no test could have caught it because nothing
+// was wrong: the query answers its own question correctly.
+//
+// What was missing is the RESOLUTION STEP. A caller stands on Rei's parcel;
+// Rei's parcel is an INSTANCE of `the-town/parcel`; `the-town/parcel` is the
+// class mark carrying the contract. Instance → class name → class mark, and the
+// class mark passes the same gate every ambient one does. Nothing widens.
+const CLASS_BY_NAME = `SELECT ${GATE_COLUMNS} FROM nodes
+                        WHERE ${CLASS_MARK_GATE_SQL}
+                          AND json_extract(props, '$.class') IN (SELECT value FROM json_each(?))`;
+
+const INSTANCE_ROWS = `SELECT id, by,
+         json_extract(props, '$.class')    AS class,
+         json_extract(props, '$.declares') AS declares,
+         subkind
+       FROM nodes WHERE id IN (SELECT value FROM json_each(?))`;
+
+/**
+ * The classes a caller is standing in or within reach of, and which mark each
+ * came from — so a grant can be told which GROUND opened it, which is what the
+ * relation scope needs to check whose ground it is.
+ */
+export function groundClassesAt(db, ids = []) {
+  if (!db || !ids.length) return { byClass: new Map(), byId: new Map() };
+  const rows = db.prepare(INSTANCE_ROWS).all(JSON.stringify([...new Set(ids.filter(Boolean))]));
+  const byClass = new Map();
+  const byId = new Map();
+  for (const r of rows) {
+    byId.set(r.id, r);
+    const cls = classOfInstance({ ...r, declares: r.declares === 1 || r.declares === true });
+    if (!cls) continue;
+    if (!byClass.has(cls)) byClass.set(cls, []);
+    byClass.get(cls).push(r.id);
+  }
+  return { byClass, byId };
+}
+
+/** The ground channel's entries: every class contract reachable from here. */
+export function gatherGroundActions(db, { spineIds = [], reachIds = [] } = {}) {
+  const { byClass, byId } = groundClassesAt(db, [...spineIds, ...reachIds]);
+  if (!byClass.size) return { entries: [], classRows: [], byId, spineClasses: [] };
+  const classRows = db.prepare(CLASS_BY_NAME).all(JSON.stringify([...byClass.keys()]));
+  const spine = new Set(spineIds);
+  const entries = [];
+  for (const row of classRows) {
+    // ONE ENTRY PER GROUND, not one per class. Two parcels in your spine are
+    // two grounds and the relation scope must be asked of each — collapsing
+    // them would let a guest inherit their host's grant by standing on a
+    // nested parcel of their own somewhere in the same chain.
+    for (const groundId of byClass.get(row.class) ?? []) {
+      for (const e of entriesOfClass(row, { channel: "ground", ground: groundId, parse: (s) => parseJson(s, null) })) {
+        entries.push({ ...e, via: spine.has(groundId) ? "within" : "in reach",
+                       blurb: String(row.body ?? "").slice(0, BLURB_MAX), dials: parseJson(row.dials, null) ?? undefined });
+      }
+    }
+  }
+  const spineClasses = [...byClass.entries()].filter(([, ids]) => ids.some((i) => spine.has(i))).map(([c]) => c);
+  return { entries, classRows, byId, spineClasses };
+}
+
+// ── seam 6 · THE HELD CHANNEL ───────────────────────────────────────────────
+//
+// LOGOS § The three channels: "The grant lives on the OBJECT … and it is set
+// down with the object: pick it up and the door opens, drop it and the door
+// closes, with nothing to revoke because nothing was conferred."
+//
+// The custody gate is `by: the-town` and lives in world-grants.mjs, asked here
+// through `heldEntries` rather than re-spelled — a security boundary with two
+// copies is a security boundary with one bug.
+const HELD_ROWS = `SELECT id, by,
+         json_extract(props, '$.class')      AS class,
+         json_extract(props, '$.held_grant') AS held_grant,
+         json_extract(props, '$.body')       AS body
+       FROM nodes WHERE id IN (SELECT value FROM json_each(?))`;
+
+// ── the household grain, read from the world's own registry ─────────────────
+//
+// `WORLD/households.json` is the world clone's own pin registry — the same file
+// leave-exec reads for the fan-up grain. Used here for ONE question: whose
+// ground is this, and is the caller of that house? A handle with no registry
+// row is `solo:<handle>`, which is the grain the fold already assumes and is
+// why two accounts of one house compose here exactly as they do there.
+//
+// UNREADABLE IS NULL, NOT A GUESS. `scopeAdmits` refuses on a null household
+// rather than admitting, so a missing registry closes the relation-scoped doors
+// instead of opening them to everyone. That direction is the whole point.
+let _hh = null;
+export function worldHouseholdOf(handle, { repo = WORLD_CLONE } = {}) {
+  if (!handle) return null;
+  if (_hh === null) {
+    try { _hh = JSON.parse(readFileSync(join(repo, "WORLD", "households.json"), "utf8")).households ?? {}; }
+    catch { _hh = {}; }
+  }
+  return _hh[handle] ?? `solo:${handle}`;
+}
+export const resetHouseholdCache = () => { _hh = null; };
+
+/**
+ * The actor kind for this call. `as:` absent means resident — LOGOS § The human
+ * class, verbatim: "Absent means resident: the default that was always the
+ * intent, made explicit the day a second kind needed naming."
+ */
+export const actorKindOf = (args = {}) => {
+  const asked = String(args?.as ?? "").trim();
+  return asked || "resident";
+};
+
+/** Which of this key's residents is standing here — the walk door's own rule,
+ *  not a second one: one handle auto-resolves, several want naming. */
+export function standingHandle(args = {}, key = null) {
+  const named = String(args?.handle ?? "").trim();
+  if (named) return named;
+  const handles = [...(key?.handles ?? [])];
+  return handles.length === 1 ? handles[0] : null;
+}
+
+/**
+ * What this caller is carrying, from the attachments table and nowhere else.
+ *
+ * `holdingsOf` is imported rather than re-derived: latest-wins over the hold
+ * rows is one arithmetic with one home (world-hold.mjs), and a second copy here
+ * would be a second answer to "who holds what" — the split-brain this office
+ * keeps a museum of.
+ *
+ * An unreadable store returns NO HOLDINGS, which closes the held channel rather
+ * than opening it. A capability channel that fails open is not a channel.
+ */
+export function holdingsFor(args = {}, key = null) {
+  const who = standingHandle(args, key);
+  if (!who) return [];
+  let db = null;
+  try {
+    db = openDynamic();
+    return holdingsOf(readAttachments(db), who);
+  } catch { return []; }
+  finally { try { db?.close(); } catch { /* a reader that cannot close is still a reader that read */ } }
+}
+
+/** What the things in this caller's hands lend them. `holding` is the hold
+ *  table's answer, passed in: this file does not re-derive who holds what. */
+export function gatherHeldActions(db, holding = []) {
+  if (!db || !holding.length) return { entries: [], rows: [] };
+  const rows = db.prepare(HELD_ROWS).all(JSON.stringify([...new Set(holding.filter(Boolean))]));
+  const entries = [];
+  for (const row of rows)
+    for (const e of heldEntries(row, { parse: (s) => parseJson(s, null) }))
+      entries.push({ ...e, via: "in hand", blurb: String(row.body ?? "").slice(0, BLURB_MAX) });
   return { entries, rows };
 }
 
@@ -917,23 +1107,46 @@ async function apexRead(args, key) {
   const store = openStore();
   let actions = [];
   let rows = [];
+  let refusedGrants = [];
   try {
-    ({ entries: actions, rows } = gatherActions(store.db, {
-      spineIds: spine.map((m) => m.id),
-      reachIds: nearby.map((o) => o.id),
-    }));
+    // ── THE THREE CHANNELS (2026-08-26) ──────────────────────────────────────
+    //
+    // LOGOS § The three channels: ambient (what you ARE) ∪ ground (where you
+    // STAND) ∪ held (what you CARRY), filtered by actor kind, resolved by
+    // specificity. Before this the union had one member and the second clause
+    // of § Class-nodes reached nothing.
+    const spineIds = spine.map((m) => m.id);
+    const reachIds = nearby.map((o) => o.id);
+    const amb = gatherActions(store.db, { spineIds, reachIds });
+    rows = amb.rows;
+    const ground = gatherGroundActions(store.db, { spineIds, reachIds });
+    const held = gatherHeldActions(store.db, holdingsFor(args, key));
+    const resolved = resolveGrants([...held.entries, ...ground.entries, ...amb.entries], {
+      kind: actorKindOf(args),
+      actorHousehold: worldHouseholdOf(standingHandle(args, key)),
+      groundHouseholdOf: (id) => worldHouseholdOf(ground.byId?.get(id)?.by ?? null),
+    });
+    actions = resolved.entries;
+    refusedGrants = resolved.refused;
   } finally { store.db?.close(); }
 
   // ── Stage ② · whose grant opened each door ────────────────────────────────
   //
   // `yours` travels with what you are — the ocap grants on a class you are an
-  // instance of; `here` is the ground's and the reach's. v1 knows one actor
-  // class, resident; the berth class joins this rule when it lands.
+  // instance of; `here` is the ground's and the reach's; `in_hand` is the third
+  // channel, and it is its own word because "the place lends it to you" and
+  // "you brought it" are different facts a player needs to be able to tell
+  // apart — one of them survives walking out.
   const embodied = oriented.standpoint?.stance === "embodied";
-  for (const e of actions) e.grant = embodied && e.class === "resident" ? "yours" : "here";
+  for (const e of actions)
+    e.grant = e.channel === "held" ? "in_hand"
+            : e.channel === "ground" ? "here"
+            : embodied && e.class === "resident" ? "yours" : "here";
   const granted = {
     yours: actions.filter((e) => e.grant === "yours").map((e) => e.action),
     here: actions.filter((e) => e.grant === "here").map((e) => e.action),
+    ...(actions.some((e) => e.grant === "in_hand")
+      ? { in_hand: actions.filter((e) => e.grant === "in_hand").map((e) => e.action) } : {}),
   };
 
   // ── v2.2 §B: the contract at the boundary, and what happened ─────────────
@@ -995,6 +1208,13 @@ async function apexRead(args, key) {
     ...(focus ? { focus } : {}),
     ...cardsBlock(actions, args.cards),
     granted,
+    // A door that closed on you and said nothing is a door you cannot ask about.
+    // A guest's human standing on someone else's parcel gets no verbs from it —
+    // this is where they are told that, and told WHY, rather than left to infer
+    // it from an absence. (Only ever populated when something was refused.)
+    ...(refusedGrants.length
+      ? { not_yours: refusedGrants.map((e) => ({ action: e.action, from: e.from, ground: e.ground ?? null, because: e.refused })) }
+      : {}),
     law: store.unavailable
       ? { unavailable: store.unavailable, actions: "none can be read — the class layer lives in the world store" }
       : { as_of_world: store.meta?.as_of_world ?? null, hydrated_at: store.meta?.hydrated_at ?? null, source: "world.db", class_marks_in_reach: rows.length },
@@ -1013,7 +1233,12 @@ async function apexDo(args, key) {
   // whose standing is even being asked for. Absent `as:` returns null and
   // nothing below changes — the default was always resident, and this seam is
   // invisible to every call that does not ask for it.
-  const actor = resolveHumanActor({ action, as: args.as, beside: args.beside, key });
+  // `fence: "calculus"` — the apex GATHERS a standpoint, so the fence it must
+  // honour is the record's at that standpoint, not the ambient list. What is
+  // still asked here is what the calculus cannot answer: is this an actor kind
+  // the door resolves at all, and is the named companion actually this key's.
+  // Both are questions about WHO, and both are cheap enough to ask first.
+  const actor = resolveHumanActor({ action, as: args.as, beside: args.beside, key, fence: "calculus" });
   if (actor?.error) return actor;
 
   // The mail asymmetry, refused before anything else is computed — the answer
@@ -1036,11 +1261,83 @@ async function apexDo(args, key) {
     if (!store.db) {
       return bounce(503, "the law that binds this act cannot be read", `${store.unavailable}. No act dispatches without its terms — you cannot be bound by law you were not shown at the door.`);
     }
-    const { entries, rows } = gatherActions(store.db, {
-      spineIds: spine.map((m) => m.id),
-      reachIds: (seen.objects ?? []).map((o) => o.id),
-    });
+    // THE SAME THREE CHANNELS THE READ GATHERS, and it must be the same
+    // gathering: "read: is every action's shadow … anything you can do, you can
+    // read, and never the reverse." A door that admits an act the read did not
+    // show is precisely the reverse that law forbids.
+    const spineIds = spine.map((m) => m.id);
+    const reachIds = (seen.objects ?? []).map((o) => o.id);
+    const amb = gatherActions(store.db, { spineIds, reachIds });
+    const ground = gatherGroundActions(store.db, { spineIds, reachIds });
+    const held = gatherHeldActions(store.db, holdingsFor(args, key));
+    const kind = actorKindOf(args);
+    const { entries, refused: refusedGrants } = resolveGrants(
+      [...held.entries, ...ground.entries, ...amb.entries], {
+        kind,
+        actorHousehold: worldHouseholdOf(standingHandle(args, key)),
+        groundHouseholdOf: (id) => worldHouseholdOf(ground.byId?.get(id)?.by ?? null),
+      });
+    const rows = [...amb.rows, ...ground.classRows];
     const match = entries.find((e) => e.action === action);
+
+    // A RELATION-SCOPED REFUSAL IS ITS OWN ANSWER, and it comes BEFORE the warm
+    // "not here — there" bounce. That bounce sends a reader off to walk
+    // somewhere the act is afforded; for an own-ground grant there is nowhere to
+    // walk to, because what is wrong is WHOSE ground it is, not which ground.
+    // Telling a guest to go find another parcel would be a correct-shaped answer
+    // to a question they did not ask.
+    if (!match) {
+      const mine = refusedGrants.find((e) => e.action === action);
+      if (mine)
+        return bounce(403, `"${action}" is granted here, but not to you`,
+          `${mine.because}. This is not a place to walk to — it is a relation, and walking will not change it.`,
+          { from: mine.from, ground: mine.ground ?? null, actor_kind: kind });
+    }
+
+    // THE GUARD IN GATE POSITION, asked before the act and never after.
+    // LOGOS § The derived: "a verb or slot may name a derived and a required
+    // value as its precondition — that is the whole condition grammar." This is
+    // what keeps a held grant from opening its verb outside the ground the
+    // residue class fences it to.
+    if (match) {
+      const requires = requiresOf(store.db, match.residue);
+      const g = guardsPass(requires, { spineClasses: ground.spineClasses, phase: null });
+      if (!g.ok)
+        return bounce(422, `"${action}" is not performed here`, `${g.why}. The precondition is the residue class's own (${match.residue}), not this office's.`,
+          { requires, within: ground.spineClasses });
+
+      // ── THE EMBODIMENT FENCE ───────────────────────────────────────────────
+      //
+      // Asked only of a GROUND-granted act by a human, because that is exactly
+      // when the grant rests on the ground: an ambient act travels, a held one
+      // travels, and neither is fenced by whose garden you are in. The ground
+      // asked about is `match.ground` — the mark whose CLASS granted the verb —
+      // and not the innermost mark in the spine. Those differ the moment the
+      // garden has a flowerbed in it, and using the innermost would fence a
+      // human into whatever they last stepped onto instead of into their parcel.
+      if (kind === "human" && match.channel === "ground" && match.ground) {
+        const groundRow = store.db.prepare("SELECT id, at_x, at_y, extent_w, extent_h FROM nodes WHERE id = ?").get(match.ground);
+        if (action === "exit") {
+          const target = String(args.mark ?? parseEnvelope(args)?.mark ?? "").trim() || match.ground;
+          const e = exitAllowed({ ground: match.ground, target });
+          if (!e.ok) return bounce(403, e.why, e.hint, { law: e.law, ground: match.ground });
+        }
+        if (action === "walk") {
+          const env = parseEnvelope(args) ?? {};
+          const to = { x: Number(env.to_x ?? args.to_x ?? env.x ?? args.x), y: Number(env.to_y ?? args.to_y ?? env.y ?? args.y) };
+          // A step whose destination this door cannot read is NOT admitted on
+          // the assumption it is fine. The fence exists to be checked, and an
+          // uncheckable step is the one shape a fence must not wave through.
+          if (!Number.isFinite(to.x) || !Number.isFinite(to.y))
+            return bounce(422, "an embodied step needs a destination this door can read",
+              `Your walk here is ${match.ground}'s grant and is bounded by its fence, so the step has to be checked against it — and a destination that cannot be read cannot be checked. Name to_x and to_y.`,
+              { ground: match.ground });
+          const w = walkAllowed({ ground: match.ground, groundRow, to });
+          if (!w.ok) return bounce(403, w.why, w.hint, { law: w.law, fence: w.fence, asked: to, ground: match.ground });
+        }
+      }
+    }
+
     if (!match) {
       // The warm bounce: not "no", but "not here — there". TWO CONDITIONS, two
       // sentences (issue #7 §4): the defect used to say "where you stand" even
@@ -1111,18 +1408,35 @@ async function apexDo(args, key) {
     // that promise holds on the failing path too.
     const { do: _dropped, telling: _t, args: _envelope, ...rest } = args;
     const fields = toFlatFields(action, envelope ? { ...rest, ...envelope } : rest);
+    // WHICH STANDING THIS ACT IS TAKEN FROM is decided by the CHANNEL that
+    // granted it, and can only be asked once the match is known — the same
+    // `say` is companioned when the human class grants it ambiently and
+    // EMBODIED when the parcel grants it at the human's own gate. So the actor
+    // is re-resolved here with the channel in hand. The early call answered
+    // "is this a kind we resolve, and is that companion yours"; this one
+    // answers "and from whose feet".
+    const acting = actor
+      ? resolveHumanActor({ action, as: args.as, beside: args.beside, key, fence: "calculus", channel: match.channel })
+      : null;
     const done = { did: action, via: match.via, from: match.from, dispatched_to: handler.tool, terms,
-      ...(actor ? { actor: { kind: actor.kind, residue: actor.residue, says: actor.says, note: actor.note } } : {}) };
+      ...(match.channel && match.channel !== "ambient" ? { channel: match.channel, ...(match.ground ? { ground: match.ground } : {}), ...(match.held ? { in_hand: match.held } : {}) } : {}),
+      ...(acting ? { actor: { kind: acting.kind, standing: acting.standing, residue: acting.residue, says: acting.says, note: acting.note } } : {}) };
     let result;
     try {
-      // THE ACTOR SEAM'S ONE EFFECT ON DISPATCH. A human's say goes to the
-      // human's own handler, which has owned the speaker label, the companion
-      // choice and the record since 2026-08-08 — this only decides WHICH door,
-      // and never what happens behind it. `beside:` is the apex's word for that
-      // handler's `with:`.
-      result = actor?.route === "worldSayHuman"
-        ? await worldSayHuman({ ...fields, ...(actor.with ? { with: actor.with } : {}) }, key)
-        : await handler.run(fields, key);
+      // THE ACTOR SEAM'S ONE EFFECT ON DISPATCH. A human's COMPANIONED say goes
+      // to the human's own handler, which has owned the speaker label, the
+      // companion choice and the record since 2026-08-08 — this only decides
+      // WHICH door, and never what happens behind it. `beside:` is the apex's
+      // word for that handler's `with:`.
+      //
+      // AN EMBODIED act does NOT route there, and must not: that handler's whole
+      // job is to find a resident to be heard beside, and an embodied human has
+      // no companion to find. It goes to the act's own handler with the human
+      // named as the hand — which is the-own-hand honoured through a second
+      // door rather than a second implementation of it.
+      result = acting?.route === "worldSayHuman"
+        ? await worldSayHuman({ ...fields, ...(acting.with ? { with: acting.with } : {}) }, key)
+        : await handler.run(acting?.standing === "embodied" ? { ...fields, as_human: true } : fields, key);
     } catch (e) {
       if (!e?.code) throw e;
       return { ...bounce(e.code, e.defect, e.hint, e.choices ? { choices: e.choices } : {}), ...done };

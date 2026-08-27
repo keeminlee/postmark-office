@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { resolveHumanActor, HUMAN_GRANTS, HUMAN_RESIDUE, ONE_GRANT_FENCE, COMPANIONED } from "../src/human-actor.mjs";
+import { resolveHumanActor, HUMAN_AMBIENT_GRANTS, HUMAN_RESIDUE, ONE_GRANT_FENCE, COMPANIONED } from "../src/human-actor.mjs";
 import { RESOLVED_ACTOR_KINDS } from "../src/world-apex.mjs";
 
 const key = (...handles) => ({ handles: new Set(handles) });
@@ -46,7 +46,15 @@ test("a human's say resolves to the human's own handler, with the companion name
   assert.equal(a.with, "wright", "and the companion rides as the handler's own word");
   assert.equal(a.residue, HUMAN_RESIDUE);
   assert.equal(a.residue, "the-town/say", "the residue is the mark's, not classes.md's stale prose");
-  assert.match(a.says, /^The household's human, standing beside their resident\./);
+  // AMENDED 2026-08-26. This line used to pin a PREFIX of the class mark's
+  // body — a third copy of a sentence that already exists on the record and in
+  // the seam, and the one that broke first when the mark was amended. The
+  // verbatim property has its own test below, which reads the mark and compares
+  // the WHOLE body; a prefix regex here was the weaker of the two and guarded
+  // nothing the stronger one did not. What this test is actually about is the
+  // STANDING, so that is what it now pins.
+  assert.equal(a.standing, "companioned",
+    "an ambient say is heard from a resident's standing — the human speaks beside one of their household's");
 });
 
 test("the companion may be omitted — the house's own awake housemate answers", () => {
@@ -75,24 +83,68 @@ test("a companion outside the household bounces, naming the law", () => {
   assert.equal(b.law, "LOGOS/classes.md § The human class");
 });
 
-test("every verb but say bounces for a human, and the bounce IS the fence", () => {
-  // classes.md § The human class: "One grant, deliberately … The one-grant
-  // fence IS the scope fence: everything further waits for the
-  // humans-as-residents design, and arrives — if it arrives — as law here
-  // first." So this is not a gap to be filled by the next lane that wants it.
-  assert.deepEqual(HUMAN_GRANTS, ["say"]);
+test("every verb but say bounces for a human at a door with NO standpoint, and the bounce IS the ambient fence", () => {
+  // AMENDED 2026-08-26, and the replacement is STRICTER than what it replaced.
+  //
+  // The original asserted that a human may do exactly one thing, full stop. That
+  // stopped being the law when the parcel class began granting `walk` and `say`
+  // to the household's own human (LOGOS/classes.md § The three channels). The
+  // lazy repairs are deleting this test or loosening it to "say is granted";
+  // the honest one asserts the property the change actually establishes —
+  // THE FENCE IS NOW A FUNCTION OF WHERE YOU STAND, and a door that gathered no
+  // standpoint may only answer for the ambient half.
+  //
+  // So this now pins TWO things where it pinned one: the ambient set is still
+  // exactly say, AND the refusal must disclose that a ground may grant more.
+  // A future hand that quietly re-hardcodes the full fence here fails on the
+  // second clause even if it gets the first right.
+  //
+  // classes.md § The human class, still verbatim: "The one-grant fence IS the
+  // scope fence: everything further waits for the humans-as-residents design,
+  // and arrives — if it arrives — as law here first." The parcel grant IS that
+  // arrival, and it arrived as law first — which is why this sentence survives
+  // the amendment rather than being repealed by it.
+  assert.deepEqual(HUMAN_AMBIENT_GRANTS, ["say"]);
   assert.equal(ONE_GRANT_FENCE,
     "everything further waits for the humans-as-residents design, and arrives — if it arrives — as law here first",
     "the constant is classes.md's sentence, not a paraphrase of it");
   for (const verb of ["walk", "leave-mark", "stake", "give", "take", "note-to-self", "unstake"]) {
     const b = resolveHumanActor({ action: verb, as: "human", beside: "wright", key: key("wright") });
-    assert.equal(b.error, "bounce", `${verb} must bounce`);
+    assert.equal(b.error, "bounce", `${verb} must bounce at a standpoint-less door`);
     assert.equal(b.code, 403);
-    assert.match(b.defect, /the human class carries one grant, and it is say/);
-    // literal, for the same reason as above
+    assert.match(b.defect, /one ambient grant, and it is say/);
     assert.ok(b.hint.includes("everything further waits for the humans-as-residents design, and arrives — if it arrives — as law here first"),
       `${verb}'s refusal must quote the fence's own sentence verbatim`);
+    assert.match(b.hint, /A GROUND may grant a human more than that where it reaches them/,
+      `${verb}'s refusal must not present the ambient half as the whole law`);
   }
+});
+
+test("the calculus fence does NOT bounce a verb the record grants at a standpoint", () => {
+  // The other half, and the one the old test made impossible to write. Under
+  // `fence: "calculus"` the apex has already resolved the three channels
+  // against the record, so a second list here would be a second answer — and
+  // the one that is wrong more often, because it cannot see the ground.
+  //
+  // Without this leg, "the fence moved" would be indistinguishable from "the
+  // fence was deleted": every assertion above passes in a world where the
+  // calculus branch refuses everything too.
+  const a = resolveHumanActor({ action: "walk", as: "human", key: key("wright"), fence: "calculus", channel: "ground" });
+  assert.equal(a?.error, undefined, "the calculus owns this decision; the seam must not pre-empt it");
+  assert.equal(a.kind, "human");
+  assert.equal(a.standing, "embodied",
+    "a GROUND-granted act is taken from the human's own feet — there is no companion to borrow standing from");
+  assert.equal(a.route, null, "and it does not route to the companioned say handler");
+});
+
+test("an ambient-granted say is still COMPANIONED, whichever fence asked", () => {
+  // The discriminating pair for the line above: same verb, same human,
+  // different channel, different standing. If `standing` were inferred from the
+  // action name rather than from the channel, these two would collapse into one
+  // act — which is exactly the distinction § The three channels draws.
+  const a = resolveHumanActor({ action: "say", as: "human", key: key("wright"), fence: "calculus", channel: "ambient" });
+  assert.equal(a.standing, "companioned");
+  assert.equal(a.route, "worldSayHuman");
 });
 
 test("an unknown actor kind bounces rather than falling through to resident", () => {
@@ -117,10 +169,16 @@ test("the seam routes and never re-derives the hand", () => {
   assert.equal(/human-of-|githubLogin|householdOf\(/.test(src), false,
     "the seam must not compute the speaker label itself");
   const apex = readFileSync(new URL("../src/world-apex.mjs", import.meta.url), "utf8");
-  assert.match(apex, /result = actor\?\.route === "worldSayHuman"/,
-    "the apex routes to the human's own handler");
-  assert.match(apex, /: await handler\.run\(fields, key\);/,
-    "and every other call still takes the ordinary path");
+  // AMENDED 2026-08-26: the apex re-resolves the actor once the match is known,
+  // because WHICH STANDING an act is taken from depends on the channel that
+  // granted it and the channel is not known before the match. So the routing
+  // reads `acting`, not `actor`, and the ordinary path now carries the embodied
+  // flag. Both clauses still pin the same property the original did — the seam
+  // ROUTES and never re-derives the hand.
+  assert.match(apex, /result = acting\?\.route === "worldSayHuman"/,
+    "the apex routes a companioned say to the human's own handler");
+  assert.match(apex, /await handler\.run\(acting\?\.standing === "embodied"/,
+    "and every other call still takes the ordinary path, with the hand disclosed");
 });
 
 test("the class mark's own body is quoted verbatim, from the world record", () => {

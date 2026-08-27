@@ -49,8 +49,35 @@
 
 const bounce = (code, defect, hint, extra = {}) => ({ error: "bounce", code, defect, hint, ...extra });
 
-// The one grant, from the class mark's own `actions` entry.
-export const HUMAN_GRANTS = Object.freeze(["say"]);
+// ── AMENDED 2026-08-26 · THE FENCE STOPPED BEING A LIST ─────────────────────
+//
+// Everything above is still true and none of it loosens. What changed is WHERE
+// the fence is read from.
+//
+// This file held `["say"]` as a literal, and that was correct for exactly as
+// long as the human class was the only class that granted a human anything.
+// LOGOS/classes.md § The three channels ended that: the PARCEL class now grants
+// `walk` and `say` to the human of the household whose ground it is. So "what
+// may a human do" is no longer a property of the human — it is a property of
+// the human AND WHERE THEY ARE STANDING, and a hardcoded list cannot express
+// that. Keeping it would have made this file the second copy of a law the
+// record already carries, which is the drift `world-classes.mjs` exists to end:
+//
+//   "A door implementation is correct precisely insofar as it READS the class
+//    tree, and wrong wherever it hardcodes." (§ The apex is the class tree's
+//    shadow)
+//
+// So the fence moved to the permission calculus, which reads the record. What
+// stays here is what the calculus cannot do: the ROUTING (a human's say goes to
+// the human's own handler) and the COMPANIONED STANDING check, both of which
+// are about WHO is acting rather than about what is granted.
+//
+// The list below survives under a truer name. It is the AMBIENT set — what a
+// human may do anywhere, standing on nobody's ground in particular — and it is
+// still exactly one, because the ambient half of the fence did not move.
+export const HUMAN_AMBIENT_GRANTS = Object.freeze(["say"]);
+/** @deprecated the ambient half only — a human's full set depends on standpoint. */
+export const HUMAN_GRANTS = HUMAN_AMBIENT_GRANTS;
 export const HUMAN_RESIDUE = "the-town/say";
 // classes.md § The human class, verbatim — the sentence the fence is drawn with.
 export const ONE_GRANT_FENCE =
@@ -65,7 +92,7 @@ export const COMPANIONED =
  * always the intent ("Absent means resident"), and this seam must be invisible
  * to every call that does not ask for it.
  */
-export function resolveHumanActor({ action, as: kind, beside, key }) {
+export function resolveHumanActor({ action, as: kind, beside, key, fence = "ambient", channel = null }) {
   const asked = String(kind ?? "").trim();
   if (!asked) return null;                       // the default: resident
   if (asked === "resident") return null;         // named explicitly, same thing
@@ -75,11 +102,20 @@ export function resolveHumanActor({ action, as: kind, beside, key }) {
       "the kinds it resolves: resident (the default), berth, human — an action the law mints for a kind the door cannot resolve is law with no room behind it");
   }
 
-  // ── the one-grant fence ───────────────────────────────────────────────────
-  if (!HUMAN_GRANTS.includes(action)) {
-    return bounce(403, `a human may not "${action}" — the human class carries one grant, and it is say`,
-      `The class mark grants say and nothing else, deliberately: ${ONE_GRANT_FENCE}. This bounce is the fence, not a gap in the machinery.`,
-      { grants: HUMAN_GRANTS, law: "LOGOS/classes.md § The human class" });
+  // ── the fence, and WHO IS HOLDING IT ──────────────────────────────────────
+  //
+  // `fence: "ambient"` is the flat-door caller: no standpoint was gathered, so
+  // the only grants that can be checked are the ambient ones, and that is said
+  // plainly rather than presented as the whole law.
+  //
+  // `fence: "calculus"` is the apex: it has already resolved the three channels
+  // at this standpoint and refused anything the record does not grant, so a
+  // second list here would be a second answer — and the one that is wrong more
+  // often, because it cannot see where the caller is standing.
+  if (fence === "ambient" && !HUMAN_AMBIENT_GRANTS.includes(action)) {
+    return bounce(403, `a human may not "${action}" from here — the human class carries one ambient grant, and it is say`,
+      `The human class grants say and nothing else world-wide, deliberately: ${ONE_GRANT_FENCE}. A GROUND may grant a human more than that where it reaches them (LOGOS/classes.md § The three channels), but this door gathered no standpoint, so it can only answer for what a human carries everywhere. Ask through the apex, which reads the ground you are standing on.`,
+      { ambient_grants: HUMAN_AMBIENT_GRANTS, law: "LOGOS/classes.md § The human class · § The three channels" });
   }
 
   // ── companioned standing ──────────────────────────────────────────────────
@@ -96,13 +132,50 @@ export function resolveHumanActor({ action, as: kind, beside, key }) {
       { law: "LOGOS/classes.md § The human class" });
   }
 
+  // ── EMBODIED OR COMPANIONED, and the difference is the whole feature ──────
+  //
+  // A companioned act is heard from a RESIDENT's standing — the human speaks
+  // beside one of their household's, and `worldSayHuman` has owned that since
+  // 2026-08-08. An EMBODIED act is taken from the human's own feet on their own
+  // household's ground, and it has no companion at all: there is nobody to
+  // borrow standing from, because the ground granted it directly.
+  //
+  // Which one an act is, is decided by WHICH CHANNEL GRANTED IT, not by the
+  // verb — the same `say` is companioned when the human class grants it
+  // ambiently and embodied when the parcel grants it at your own gate. That is
+  // why `channel` is a parameter and not something inferred from the action
+  // name: inferring it would make the two acts one act again.
+  const embodied = String(channel ?? "") === "ground";
+  if (embodied) {
+    return {
+      kind: "human",
+      standing: "embodied",
+      route: null,                     // the act's own handler, with the human as actor
+      residue: null,
+      says: "The household's human, on their own household's ground, at a resident's pace.",
+      note: "This act is taken from the human's OWN feet, not beside a resident: the ground granted it to the household's human directly, so there is no companion to borrow standing from. It stops at the fence — LOGOS/classes.md § The three channels, 'Embodiment stands on the ground that grants it.'",
+    };
+  }
+
   return {
     kind: "human",
+    standing: "companioned",
     // The handler owns the hand and the standpoint; this names neither.
     route: "worldSayHuman",
     ...(companion ? { with: companion } : {}),
     residue: HUMAN_RESIDUE,
-    says: "The household's human, standing beside their resident. One action for now — a voice: to speak here is to speak with them.",
+    // ⚠ A HARDCODED COPY OF A MARK BODY, and it drifted the day the mark was
+    // amended — caught by this file's own verbatim test running against a
+    // world checkout that had not moved yet. The body below is the human
+    // class mark's, current as of world `proto/birthday`. It is a copy, and a
+    // copy is a paraphrase waiting to drift: LOGOS/classes.md § Class-nodes,
+    // "the door QUOTES it rather than keeping a copy that drifts."
+    // The apex already does the right thing for blurbs (`entriesFrom` reads the
+    // residue class's own body out of the store). This constant should follow
+    // it; that is a small lane of its own and is named here rather than
+    // silently left, because a stale copy that reads as law is worse than an
+    // honest note beside it.
+    says: "The household's human: a voice anywhere, beside their resident — and on their own household's ground, feet of their own, at a resident's pace.",
     note: `${COMPANIONED}. The words land under the human's own hand; the resident lends the standing they are heard from.`,
   };
 }
