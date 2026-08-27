@@ -123,6 +123,18 @@
 # Read the live copies before installing over them (the box-config drift law:
 # the box's file is the truth, the repo's is the intent).
 #
+#   # 0. THE OFFICE GOES FIRST. This branch also teaches GET /api/ to serve the
+#   #    town's crossing number, and both the page's disclosure and
+#   #    site-sentinel's crossing probe read it from there. Until the office
+#   #    carrying that change is deployed, every crossing is honestly null: the
+#   #    doorstep omits the claim, /build.json stamps null, and the sentinel says
+#   #    UNKNOWN rather than green. Nothing breaks — the feature is simply
+#   #    absent — but there is no reason to install the timer and then wonder.
+#   #    The falsifiable check, which only the new code can pass:
+#   curl -sS https://postmark.town/api/ | grep -o '"crossing":[^}]*}'
+#   #    -> {"number":152,"derivation":"12h crossings (00:00/12:00 UTC) since ..."}
+#   #    An empty result means the office has not shipped it yet.
+#
 #   # 1. the service's own root, owned by the office user
 #   sudo mkdir -p /srv/postmark-site-refresh /srv/postmark-harbor
 #   sudo chown meepo /srv/postmark-site-refresh /srv/postmark-harbor
