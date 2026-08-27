@@ -17,10 +17,15 @@ const root = join(here, "..");
 const GRANTS = "src/world-grants.mjs";
 const ENC = "src/encounter.mjs";
 const EMB = "src/embodiment.mjs";
+const APEX = "src/world-apex.mjs";
 const SUITES = {
   [GRANTS]: "test/world-grants.test.mjs",
   [ENC]: "test/encounter.test.mjs",
   [EMB]: "test/embodiment.test.mjs",
+  // The apex's own suite is in this runner for ONE reason: it is what caught
+  // the ground channel minting poorer entries than the ambient one, and a
+  // regression guard nobody has watched fail is a regression guard on trust.
+  [APEX]: "test/world-apex.test.mjs",
 };
 
 const FLIPS = [
@@ -176,6 +181,39 @@ const FLIPS = [
   { name: "an embodied human may exit nothing at all, not even their own shed",
     file: EMB, catches: "exit from something else inside the ground is not this rule's business",
     edit: (t) => t.replace('if (!ground || !target || String(target) !== String(ground)) return { ok: true };', "if (!ground) return { ok: true };") },
+
+  // ── the two defects the apex suite found in THIS lane's own code ─────────
+  // Kept as flips because both were live, both were mine, and both were caught
+  // by a test I did not write. A defect that was only ever found once is a
+  // defect nothing is watching for.
+  // ⚠ ONE FLIP, NOT TWO, AND THE RUNNER IS WHY.
+  //
+  // I first wrote these as two flips — one per defect — and BOTH came back
+  // green. That is the finding, not a nuisance:
+  //
+  //   · restoring only the poor-entry builder is invisible, because with the
+  //     works clause in place the fixture's class marks are correctly read as
+  //     DECLARATIONS, so the ground channel yields no entries there at all and
+  //     the builder has nothing to build. The guard cannot reach its subject.
+  //   · restoring only the stamp-only declaration test is invisible, because
+  //     the ground entries it wrongly conjures up are now RICH — built through
+  //     `entriesFrom` — so the four tests see the shape they expect.
+  //
+  // The defects were only ever JOINTLY visible, which is exactly how they got
+  // in: each looks harmless beside the other's correct half. So the flip
+  // applies both, and the honest statement of coverage is this — the apex suite
+  // guards the CONJUNCTION. The entry-shape property has no independent
+  // falsifier, because this fixture's class marks all stand in the works and it
+  // therefore cannot produce a ground-granted entry to inspect. A fixture with
+  // a classed instance OUTSIDE the works is what that guard needs, and it is
+  // named here rather than left for someone to assume exists.
+  { name: "the ground channel mints poor entries AND reads declarations as instances (both defects, as they shipped)",
+    file: APEX, catches: "fields: the say affordance names the fields the act actually takes",
+    edit: (t) => t
+      .replace("      for (const e of entriesFrom(row, db)) {",
+               "      for (const e of entriesOfClass(row, { channel: \"ground\", ground: groundId, parse: (s) => parseJson(s, null) })) {")
+      .replace("         ${WORKS_PATH_SQL}              AS declares,",
+               "         json_extract(props, '$.declares') AS declares,") },
 ];
 
 const suite = (file) => {

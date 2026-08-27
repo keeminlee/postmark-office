@@ -75,7 +75,7 @@ import { callHoldTool, holdingsOf } from "./world-hold.mjs";
 import { openDynamic } from "./dynamic-store.mjs";
 import { readAttachments } from "./dynamic-entities.mjs";
 import { storeDbPath } from "./world-serve.mjs";
-import { AMBIENT_REACH_SQL, CLASS_MARK_GATE_SQL } from "./world-store.mjs";
+import { AMBIENT_REACH_SQL, CLASS_MARK_GATE_SQL, WORKS_PATH_SQL } from "./world-store.mjs";
 import { resolveHumanActor } from "./human-actor.mjs";
 import {
   classOfInstance, entriesOfClass, guardsPass, heldEntries, kindOf, resolveGrants,
@@ -724,9 +724,18 @@ const CLASS_BY_NAME = `SELECT ${GATE_COLUMNS} FROM nodes
                         WHERE ${CLASS_MARK_GATE_SQL}
                           AND json_extract(props, '$.class') IN (SELECT value FROM json_each(?))`;
 
+// ⚠ THE DECLARATION TEST ASKS THE WORKS CLAUSE, NOT THE `declares` STAMP, and
+// the difference bit within the hour. `declares` is a convenience the hydrator
+// emits; `worksClause()` is what `CLASS_ROSTER_GATE_SQL` and the world's own
+// lint both ask, and it falls back to the path when the stamp is absent. A
+// store written without the stamp — a fixture, or anything hydrated before the
+// stamp existed — reads every class mark as an INSTANCE OF ITSELF under the
+// stamp-only test, so `the-town/resident` in reach would hand a caller the
+// resident contract as a GROUND grant. One question, asked the way the rest of
+// the office asks it.
 const INSTANCE_ROWS = `SELECT id, by,
-         json_extract(props, '$.class')    AS class,
-         json_extract(props, '$.declares') AS declares,
+         json_extract(props, '$.class') AS class,
+         ${WORKS_PATH_SQL}              AS declares,
          subkind
        FROM nodes WHERE id IN (SELECT value FROM json_each(?))`;
 
@@ -763,9 +772,29 @@ export function gatherGroundActions(db, { spineIds = [], reachIds = [] } = {}) {
     // them would let a guest inherit their host's grant by standing on a
     // nested parcel of their own somewhere in the same chain.
     for (const groundId of byClass.get(row.class) ?? []) {
-      for (const e of entriesOfClass(row, { channel: "ground", ground: groundId, parse: (s) => parseJson(s, null) })) {
-        entries.push({ ...e, via: spine.has(groundId) ? "within" : "in reach",
-                       blurb: String(row.body ?? "").slice(0, BLURB_MAX), dials: parseJson(row.dials, null) ?? undefined });
+      // ⚠ BUILT THROUGH `entriesFrom`, NOT BESIDE IT. My first version minted
+      // these itself and they came out POORER than the ambient ones: no
+      // `fields`, no `blurb_from`, no `dispatches_to`. Because a ground entry
+      // outranks an ambient one for the same verb, a resident standing beside
+      // any classed mark got a `say` card with no field grammar on it — and
+      // four apex tests found it, which is the only reason this is a comment
+      // and not a live defect. THE DOOR MUST ANSWER THE SAME SHAPE WHICHEVER
+      // CHANNEL OPENED IT; `entriesFrom` is that shape, and there is now one
+      // builder rather than two that agree until one of them is edited.
+      for (const e of entriesFrom(row, db)) {
+        // The kind and scope live on the DECLARED entry, which `entriesFrom`
+        // does not carry through, so they are lifted back on here from the same
+        // row it read. `entriesOfClass` is the one that knows the grant grammar.
+        const declared = entriesOfClass(row, { channel: "ground", ground: groundId, parse: (s) => parseJson(s, null) })
+          .find((d) => d.action === e.action);
+        entries.push({
+          ...e, ...(declared ?? {}),
+          channel: "ground", ground: groundId,
+          via: spine.has(groundId) ? "within" : "in reach",
+          fields: e.fields, blurb: e.blurb,
+          ...(e.blurb_from ? { blurb_from: e.blurb_from } : {}),
+          ...(e.dispatches_to ? { dispatches_to: e.dispatches_to } : {}),
+        });
       }
     }
   }
@@ -1552,10 +1581,25 @@ async function apexReadAction(args, key, ctx = {}) {
     if (!store.db) {
       return bounce(503, "the law behind this read cannot be opened", `${store.unavailable}. The card is the class layer's answer, and the class layer lives in the world store.`);
     }
-    const { entries, rows } = gatherActions(store.db, {
-      spineIds: spine.map((m) => m.id),
-      reachIds: (seen.objects ?? []).map((o) => o.id),
+    // THE SHADOW GATHERS THE SAME THREE CHANNELS, and it has to.
+    //
+    // "read: is every action's shadow … anything you can do, you can read, and
+    // never the reverse." An ambient-only gather here would have made an
+    // embodied human able to DO `walk` on their own ground and unable to READ
+    // it — the exact reverse that law forbids, and the one asymmetry nobody
+    // would have found until a human tried to read the card for the act they
+    // had just performed.
+    const spineIds = spine.map((m) => m.id);
+    const reachIds = (seen.objects ?? []).map((o) => o.id);
+    const amb = gatherActions(store.db, { spineIds, reachIds });
+    const ground = gatherGroundActions(store.db, { spineIds, reachIds });
+    const held = gatherHeldActions(store.db, holdingsFor(args, key));
+    const { entries } = resolveGrants([...held.entries, ...ground.entries, ...amb.entries], {
+      kind: actorKindOf(args),
+      actorHousehold: worldHouseholdOf(standingHandle(args, key)),
+      groundHouseholdOf: (id) => worldHouseholdOf(ground.byId?.get(id)?.by ?? null),
     });
+    const rows = [...amb.rows, ...ground.classRows];
     const match = entries.find((e) => e.action === action);
     if (!match) {
       const elsewhere = affordableAt(store.db, action);
