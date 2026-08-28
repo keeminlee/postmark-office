@@ -1026,10 +1026,17 @@ export async function canFailProof(client, derived) {
       await mangle(`parent of ${continued.slug} set to NULL (the continuation edge cut)`,
         "UPDATE marks SET parent = NULL WHERE slug = $1", [continued.slug]);
     }
-    if (desited) {
-      await mangle(`claims.data of ${desited.slug} set to NULL (marks upgraded, claims not)`,
-        "UPDATE claims SET data = NULL WHERE id = (SELECT id FROM marks WHERE slug = $1)", [desited.slug]);
-    }
+    // The two claims-side findings, mangled the only way the owner CAN mangle a
+    // claim. `claims_update_guard` refuses an owner UPDATE on a locked claim — the
+    // same guard that decided `--upgrade`'s shape — so neither of these is an
+    // `UPDATE claims`. INSERT is not guarded (the trigger is BEFORE UPDATE only),
+    // and `marks` is freely mutable by its owner, so each finding is provoked from
+    // the side that is reachable. A check that cannot be made to fire is a check
+    // nobody should trust, and working around the guard to fire it would be worse
+    // than not proving it.
+    await mangle("a claim in the genesis window carrying no data (the un-upgraded shape)",
+      `INSERT INTO claims (id, window_id, class, claimant, status, body, data)
+       VALUES (gen_random_uuid(), $1, 'sited', 'nobody', 'locked', '', NULL)`, [derived.window.id]);
   } catch (e) {
     try { await client.query("ROLLBACK"); } catch { /* already rolled back */ }
     throw e;
@@ -1115,7 +1122,10 @@ async function main() {
         const proof = await canFailProof(client, derived);
         for (const r of proof.results) {
           console.log(`${r.findings.length ? "RED  " : "GREEN"} after mangle: ${r.mangle} — ${r.findings.length} finding(s)`);
-          if (r.findings[0]) console.log(`  ${r.findings[0].split("\n").join("\n  ")}`);
+          // Up to three, not one: a single mangle can trip checks on both sides
+          // (cutting a mark's parent also makes its claim disagree), and showing
+          // only the first would hide that the claims-side check fired at all.
+          for (const f of r.findings.slice(0, 3)) console.log(`  ${f.split("\n").join("\n  ")}`);
         }
         console.log(proof.restored ? "GREEN after rollback — the mangles left no trace" : "RED after rollback — THE PROOF DID NOT CLEAN UP");
         const ok = proof.silent.length === 0 && proof.restored;
