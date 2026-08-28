@@ -19,6 +19,7 @@ import { join } from "node:path";
 
 import {
   deriveSeed, deriveActs, genesisWindow, assertRef, uuid5, boxOf, boxNumbers, canonicalJson,
+  resolveParent, orderByParent,
 } from "../world2/tools/seed-import.mjs";
 
 // A `loadMarks` with the world's own contract: world coordinates on `at`, `id` =
@@ -27,16 +28,27 @@ const FIXTURE_READER = `
 export function loadMarks() {
   return [
     { id: "wren/the-yard", slug: "the-yard", by: "wren", kind: "parcel", tier: "market",
-      at: { x: 10, y: 20 }, extent: { w: 4, h: 6 }, body: "A yard.", date: "2026-07-01" },
+      at: { x: 10, y: 20 }, extent: { w: 4, h: 6 }, body: "A yard.", date: "2026-07-01",
+      _parentMarkId: null, _explicitParent: undefined },
     { id: "wren/the-shed", slug: "the-shed", by: "wren", kind: "sited", tier: "market",
       at: { x: 0, y: 0 }, extent: { w: 2, h: 2 }, body: "A shed.", date: "2026-07-02",
-      points: [[-1, -1], [1, -1], [1, 1]], image: "shed.png" },
+      points: [[-1, -1], [1, -1], [1, 1]], image: "shed.png",
+      _parentMarkId: "wren/the-yard" },
     { id: "stranger/the-rock", slug: "the-rock", by: "stranger", kind: "sited",
       at: { x: -5, y: -5 }, extent: { w: 1, h: 1 }, body: "A rock.", date: "2026-07-03" },
     { id: "the-town/resident", slug: "resident", by: "the-town", kind: "class",
       tier: "constitution", class: "resident", body: "The class." },
     { id: "wren/the-light", slug: "the-light", by: "wren", kind: "predicated",
-      body: "The light shifts.", date: "2026-07-04" },
+      body: "The light shifts.", date: "2026-07-04", slot: "light",
+      parent: "wren/the-shed", _parentMarkId: "wren/the-shed" },
+    // a de-sited mark nested under another de-sited mark — the ordering case
+    { id: "wren/the-glow", slug: "the-glow", by: "wren", kind: "naming",
+      body: "They call it the glow.", value: "GLOW",
+      parent: "wren/the-light", _parentMarkId: "wren/the-light" },
+    // predicated on a CLASS mark: its parent lives in law_projection, not marks
+    { id: "the-town/resident-engine", slug: "resident-engine", by: "the-town",
+      kind: "predicated", tier: "constitution", slot: "engine", body: "The corridor.",
+      parent: "the-town/resident", _parentMarkId: "the-town/resident" },
   ];
 }
 `;
@@ -88,8 +100,8 @@ test("a geometric mark becomes one locked claim and one standing mark", async ()
   const f = fixture();
   try {
     const { claims, marks, window } = await seedOf(f);
-    assert.equal(marks.length, 3);
-    assert.equal(claims.length, 3);
+    assert.equal(marks.length, 6);      // every non-class record, placed or not (004)
+    assert.equal(claims.length, 6);
     const yard = marks.find((m) => m.slug === "wren/the-yard");
     assert.equal(yard.kind, "parcel");            // the constraint's WHERE reads this word
     assert.equal(yard.owner, "wren");
@@ -124,27 +136,113 @@ test("a `points:` ring rides in geometry; bbox stays the analytic rect", async (
   } finally { f.cleanup(); }
 });
 
-test("class marks are law and de-sited marks have no row shape — both reported, neither seeded", async () => {
+test("class marks are law and are the only records not seeded", async () => {
   const f = fixture();
   try {
     const { marks, census, notPlaced } = await seedOf(f);
     assert.ok(!marks.some((m) => m.kind === "class"), "no class mark is seeded into `marks`");
     assert.deepEqual(notPlaced.law, ["the-town/resident"]);
-    assert.deepEqual(notPlaced.ungeometric, [{ id: "wren/the-light", kind: "predicated" }]);
     assert.equal(census.not_carried.class_marks_are_law, 1);
-    assert.equal(census.not_carried.no_geometry_column, 1);
+    assert.equal(census.records, 7);
+    assert.equal(census.marks, 6);
   } finally { f.cleanup(); }
 });
 
-test("every frontmatter field with no column is counted, and `points` is not one of them", async () => {
+test("a de-sited mark is a row now: NULL geometry, NULL bbox, its parent as a uuid", async () => {
   const f = fixture();
   try {
-    const { census } = await seedOf(f);
-    const fields = census.not_carried.fields_with_no_column;
-    assert.equal(fields.date, 3);      // all three seeded marks carry one
-    assert.equal(fields.tier, 2);
-    assert.equal(fields.image, 1);
-    assert.equal(fields.points, undefined, "`points` IS carried, inside geometry");
+    const { marks, census } = await seedOf(f);
+    const light = marks.find((m) => m.slug === "wren/the-light");
+    assert.equal(light.kind, "predicated");
+    assert.equal(light.geometry, null, "sited_marks_have_a_where permits NULL for a predicated mark");
+    assert.equal(light.bbox, null);
+    assert.equal(light.parent, uuid5("wren/the-shed"), "parent is the uuid of the mark it continues");
+    assert.equal(light.data.slot, "light", "the remainder rides data");
+    assert.equal(census.placed, 3);
+    assert.equal(census.de_sited, 3);
+  } finally { f.cleanup(); }
+});
+
+test("a placed mark gets NO parent — its containment is geometry, and filing is frozen", async () => {
+  const f = fixture();
+  try {
+    const { marks } = await seedOf(f);
+    // the-shed IS nested under the-yard in the tree, and still carries no parent edge
+    const shed = marks.find((m) => m.slug === "wren/the-shed");
+    assert.equal(shed.data._parentMarkId, "wren/the-yard", "the tree's word is kept in data");
+    assert.equal(shed.parent, null, "but `parent` is the continuation edge, not containment");
+  } finally { f.cleanup(); }
+});
+
+test("a mark predicated on a CLASS mark keeps its edge in data, because the FK cannot hold it", async () => {
+  const f = fixture();
+  try {
+    const { marks, census, notPlaced, window } = await seedOf(f);
+    const engine = marks.find((m) => m.slug === "the-town/resident-engine");
+    assert.equal(engine.parent, null, "a class mark has no marks row for the FK to point at");
+    assert.equal(engine.data._parent_is_law, "the-town/resident", "the edge is kept, verbatim");
+    assert.equal(census.not_carried.parent_is_law, 1);
+    assert.deepEqual(notPlaced.parentIsLaw, [{ id: "the-town/resident-engine", parent: "the-town/resident" }]);
+    assert.deepEqual(window.receipts.parent_is_law, notPlaced.parentIsLaw);
+  } finally { f.cleanup(); }
+});
+
+test("parents are emitted before children, because marks.parent is a non-deferrable self-FK", async () => {
+  const f = fixture();
+  try {
+    const { marks } = await seedOf(f);
+    const seen = new Set();
+    for (const m of marks) {
+      if (m.parent) assert.ok(seen.has(m.parent), `${m.slug} was emitted before its parent`);
+      seen.add(m.id);
+    }
+    // the-glow continues the-light, which continues the-shed: a real chain
+    const order = marks.map((m) => m.slug);
+    assert.ok(order.indexOf("wren/the-light") < order.indexOf("wren/the-glow"));
+  } finally { f.cleanup(); }
+});
+
+test("orderByParent names a cycle instead of leaving Postgres to name one row of it", () => {
+  assert.throws(() => orderByParent([
+    { id: "a", slug: "a", parent: "b" },
+    { id: "b", slug: "b", parent: "a" },
+  ]), /form a cycle among 2 record\(s\)/);
+});
+
+test("a predicated mark whose parent the register cannot explain STOPS the seed", () => {
+  const byId = new Map([["wren/the-shed", { id: "wren/the-shed", kind: "sited" }]]);
+  assert.throws(() => resolveParent({ id: "x/y", kind: "predicated", parent: "nobody/nothing" }, byId),
+    /is predicated on 'nobody\/nothing', which is not in the marks register/);
+  assert.throws(() => resolveParent({ id: "x/y", kind: "predicated" }, byId),
+    /names no parent/);
+});
+
+test("since 004 NOTHING is dropped: the remainder rides `data`, and the loss census is empty", async () => {
+  const f = fixture();
+  try {
+    const { census, marks } = await seedOf(f);
+    assert.deepEqual(census.not_carried.fields_with_no_column, {},
+      "a non-empty loss census means the remainder rule was edited — it cannot mean the law grew a field");
+    assert.equal(census.fields_in_data.date, 4);   // the two records that state none are not counted
+    assert.equal(census.fields_in_data.image, 1);
+    assert.equal(census.fields_in_data.points, undefined, "`points` is carried inside geometry, not data");
+    const shed = marks.find((m) => m.slug === "wren/the-shed");
+    assert.equal(shed.data.image, "shed.png");
+    assert.equal(shed.data.date, "2026-07-02");
+    assert.equal(shed.data._dir, undefined, "`_dir` is the one field dropped — it differs between checkouts");
+    assert.equal(shed.data.at, undefined, "a column holds it, so it does not double into data");
+  } finally { f.cleanup(); }
+});
+
+test("a claim carries the same remainder and the same parent as its mark (004)", async () => {
+  const f = fixture();
+  try {
+    const { marks, claims } = await seedOf(f);
+    for (const m of marks) {
+      const c = claims.find((x) => x.id === m.id);
+      assert.deepEqual(c.data, m.data);
+      assert.equal(c.parent, m.parent);
+    }
   } finally { f.cleanup(); }
 });
 
@@ -155,7 +253,7 @@ test("the census and the loss list are written into windows.receipts", async () 
     assert.equal(window.receipts.note, "genesis seed");
     assert.equal(window.receipts.seeded_from.world_sha, f.sha);
     assert.equal(window.receipts.seeded_from.town_sha, "TOWNSHA");
-    assert.deepEqual(window.receipts.not_carried_ungeometric, [{ id: "wren/the-light", kind: "predicated" }]);
+    assert.equal(window.receipts.census.marks, 6);
   } finally { f.cleanup(); }
 });
 
