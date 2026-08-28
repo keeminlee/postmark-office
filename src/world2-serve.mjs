@@ -16,8 +16,31 @@
 //   /world2/marks?all=true -> the whole standing register incl. de-sited
 //   A de-sited mark IS standing; a consumer that wants a `where` on every row
 //   asks for the default.
+//
+// ── THE LIVE LANE (A/B gaps P-092 / P-093 / P-098 / P-036) ──────────────────
+//
+// /world2/walks · /world2/positions · /world2/present · /world2/say ·
+// /world2/occupancy answer the questions the apex read shadows still answer out
+// of sqlite. Every derivation is `world2/tools/live-reads.mjs` — 1.0's own law,
+// ported, and held to the original by `falsifier-live-equality.mjs`. Nothing in
+// THIS file derives anything: it queries, orders, and renders.
+//
+// Two shapes are load-bearing and easy to get wrong from here:
+//
+//   · the ORDER. Departure and passage reads MUST carry
+//     `live-reads.DEPARTURE_ORDER_SQL`. `ORDER BY id` is silently wrong — the
+//     backfill inserted the pre-journal era last, so 44 of 73 residents would
+//     be handed a governing leg from July. `departureRecords` asserts it.
+//   · the CLOCK. `?at=<ISO>` evaluates the whole answer at that instant; absent,
+//     it is now. Position is a function of (record, clock) and nothing between
+//     is stored, so any instant is answerable and none is cached.
+//
+// Keyless, like the rest of this tier and like 1.0's own equivalents:
+// `world_walkers` is in mcp.mjs's PUBLIC set, and server.mjs serves
+// GET /world/present keyless. These are public facts about a public town.
 
 import { readDraftClaims } from "./world2-claims.mjs";
+import * as live from "../world2/tools/live-reads.mjs";
 
 const state = { pool: null };
 
@@ -56,6 +79,39 @@ export async function world2MyDrafts(key) {
     household, count: drafts.length, drafts,
     privacy: "these stand on no docket, in no export, in no archive, and in no public answer. Submitting one is the act that makes it public, and it crosses once.",
   };
+}
+
+/**
+ * THE CLOCK, for every live-lane read. `?at=<ISO>` or now.
+ *
+ * A bad `at` BOUNCES rather than falling back to now. Silently answering a
+ * different question than the one asked is how a caller ends up trusting a
+ * timestamp nobody honoured — and the whole point of these doors is that any
+ * instant is answerable, so there is nothing to be forgiving about.
+ */
+function clockOf(searchParams) {
+  const raw = searchParams?.get("at");
+  if (!raw) return { ms: Date.now() };
+  const ms = Date.parse(raw);
+  if (!Number.isFinite(ms)) {
+    return { error: { code: 422, body: { error: "bounce", defect: `"${raw}" is not an instant`,
+      hint: "?at=<ISO-8601>, e.g. ?at=2026-08-27T12:00:00Z — omit it for now" } } };
+  }
+  return { ms };
+}
+
+/** `?x=&y=[&radius=][&limit=]` — the standpoint a read is taken from, or null. */
+function pointOf(searchParams) {
+  const xs = searchParams?.get("x"), ys = searchParams?.get("y");
+  if (xs == null && ys == null) return null;
+  const x = Number(xs), y = Number(ys);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return { error: { code: 422, body: { error: "bounce", defect: "x and y must both be numbers",
+      hint: "?x=<m>&y=<m> — the town's grid, metres from Ferry's crossing" } } };
+  }
+  const r = Number(searchParams.get("radius"));
+  const l = Number(searchParams.get("limit"));
+  return { x, y, radiusM: Number.isFinite(r) && r > 0 ? r : null, limit: Number.isFinite(l) && l > 0 ? l : null };
 }
 
 /**
@@ -135,6 +191,169 @@ export async function world2Serve(path, searchParams) {
       law_sha: head.sha, count: rows.length,
       filters: { kind: kind ?? null, key: key ?? null, kinds: "class · grant · threshold · skeleton · roster" },
       rows,
+    } };
+  }
+
+  // ── THE LIVE LANE ─────────────────────────────────────────────────────────
+
+  if (path === "/world2/walks") {
+    // THE LEDGER-SHAPED READ — "the site's one still-baked record". Every
+    // departure the town ever made, in the record's own append order, each row
+    // carrying the ledger LINE it was written as. A ledger-sourced or live act
+    // carries that line verbatim; a journal-sourced one never had one, so it is
+    // rendered with walk.mjs's own `formatDeparture` and SAYS SO (`line_derived`)
+    // rather than passing a reconstruction off as the record.
+    const at = clockOf(searchParams);
+    if (at.error) return at.error;
+    const { rows } = await p.query(
+      `SELECT id, at, crossing, actor, action, payload FROM acts
+        WHERE action = ANY($1) ${live.DEPARTURE_ORDER_SQL}`, [live.DEPARTURE_ACTIONS]);
+    let derived;
+    try { derived = live.departureRecords(rows); }
+    catch (e) { return { code: 500, body: { error: "bounce", defect: "a departure act matches no known era", hint: String(e.message).slice(0, 400) } }; }
+    const walks = derived.records.map((d) => ({
+      iso: d.iso, handle: d.handle,
+      from: d.from, toward: d.toward, at: d.at,
+      within: d.targetExtent, to: d.targetMarkId, pace: d.pace,
+      era: d.era, act_id: d.act_id,
+      line: d.line ?? live.formatDeparture({ ...d, iso: d.iso }),
+      ...(d.line ? {} : { line_derived: true }),
+    }));
+    return { code: 200, body: {
+      what: "every departure the record holds, oldest first — the walk ledger's grammar, served from acts",
+      order: "the record's own append order: the frozen ledger's era first (in file order), then the journal's. NOT by row id, and not by instant.",
+      count: walks.length, eras: derived.eras,
+      evaluated_at: new Date(at.ms).toISOString(),
+      walks,
+    } };
+  }
+
+  if (path === "/world2/positions") {
+    // Every resident WITH A RECORD, at one instant. 1.0's `positionsAt`: "Placed
+    // residents with no departure are not here: they have no record, so their
+    // position is their home" — which is /world2/present's question, not this
+    // one. Two doors because they are two questions, exactly as 1.0 has them.
+    const at = clockOf(searchParams);
+    if (at.error) return at.error;
+    const { rows } = await p.query(
+      `SELECT id, at, crossing, actor, action, payload FROM acts
+        WHERE action = ANY($1) ${live.DEPARTURE_ORDER_SQL}`, [live.DEPARTURE_ACTIONS]);
+    let derived;
+    try { derived = live.departureRecords(rows); }
+    catch (e) { return { code: 500, body: { error: "bounce", defect: "a departure act matches no known era", hint: String(e.message).slice(0, 400) } }; }
+    const fc = live.fractionalCrossing(at.ms);
+    return { code: 200, body: {
+      what: "every walker's derived position at one instant — position is a function of (record, clock); nothing en route is stored",
+      evaluated_at: new Date(at.ms).toISOString(), crossing: fc,
+      count: Object.keys(derived.records.length ? live.positionsAt(derived.records, fc) : {}).length,
+      walkers: live.publicWalkers(derived.records, fc),
+      eras: derived.eras,
+      disclosed: [live.DISCLOSURES.frames],
+    } };
+  }
+
+  if (path === "/world2/present") {
+    // THE UNION — walk records ∪ parcel households ∪ the town roll. Either of
+    // the first two alone is "a class of resident the answer cannot see"
+    // (positions.mjs): issue #7 §1 lost twenty-one placed residents, and #1864
+    // lost the twenty-eight who had done neither.
+    const at = clockOf(searchParams);
+    if (at.error) return at.error;
+    const near = pointOf(searchParams);
+    if (near?.error) return near.error;
+    const [{ rows: depRows }, { rows: markRows }, { rows: idRows }] = await Promise.all([
+      p.query(`SELECT id, at, crossing, actor, action, payload FROM acts
+                WHERE action = ANY($1) ${live.DEPARTURE_ORDER_SQL}`, [live.DEPARTURE_ACTIONS]),
+      p.query("SELECT slug, kind, owner, household, geometry, status, data FROM marks WHERE status = 'standing'"),
+      p.query("SELECT handle, household FROM identities"),
+    ]);
+    let derived;
+    try { derived = live.departureRecords(depRows); }
+    catch (e) { return { code: 500, body: { error: "bounce", defect: "a departure act matches no known era", hint: String(e.message).slice(0, 400) } }; }
+    const world = live.worldFromRows({ marks: markRows, identities: idRows });
+    const fc = live.fractionalCrossing(at.ms);
+    const roll = idRows.map((i) => i.handle);
+    const residents = live.everyonePlaced({ world, departures: derived.records, at: fc, roll });
+    const notes = live.admissionNotes({ marks: markRows, identities: idRows, departureRecords: derived.records, world });
+    const body = {
+      what: "every placed resident at one instant — a walk if they have one, else their ground, else the town's porch",
+      evaluated_at: new Date(at.ms).toISOString(), crossing: fc,
+      roster: { walk_records: new Set(derived.records.map((d) => d.handle)).size, parcels: world.parcels.length, roll: roll.length },
+      count: residents.length,
+      residents,
+      disclosed: [live.DISCLOSURES.frames, live.DISCLOSURES.no_staleness, ...notes],
+    };
+    if (near) {
+      // The RENDER gets the radius, never the roll (world.mjs § walkersAround).
+      return { code: 200, body: { ...body, count: residents.length,
+        near: live.walkersAround(residents, { x: near.x, y: near.y, ...(near.radiusM ? { radiusM: near.radiusM } : {}), ...(near.limit ? { limit: near.limit } : {}) }) } };
+    }
+    return { code: 200, body };
+  }
+
+  if (path === "/world2/say") {
+    // WHAT IS STILL IN THE AIR at a point. `presentEmissions` is a TTL QUERY,
+    // never a delete — "the row survives its own TTL because the occurrence has
+    // to reach a crossing log before it may be dropped; what expires is the
+    // ANSWER". Reading it out of an append-only acts table is that sentence's
+    // natural home.
+    const at = clockOf(searchParams);
+    if (at.error) return at.error;
+    const near = pointOf(searchParams);
+    if (near?.error) return near.error;
+    const mode = searchParams?.get("mode") === "current" ? "current" : "per-act";
+    const radiusM = near?.radiusM ?? null;
+    if (mode === "current" && !Number.isFinite(radiusM)) {
+      return { code: 422, body: { error: "bounce", defect: "mode=current needs a radius",
+        hint: "the current-dial reading takes ONE radius for the whole answer — pass ?radius=<m>. The default (mode=per-act) reads each emission's own stamped radius_m instead." } };
+    }
+    const { rows } = await p.query(
+      "SELECT id, at, actor, action, payload FROM acts WHERE action IN ('legacy:emission','emission') ORDER BY at, id");
+    const emissions = live.presentEmissionsAt(rows, at.ms);
+    const body = {
+      what: "the emissions still hanging in the air at this instant — presence is a query over born_at/ttl, never a delete",
+      evaluated_at: new Date(at.ms).toISOString(),
+      total_in_the_air: emissions.length,
+      earshot_rule: mode === "current"
+        ? `one radius for the whole answer (${radiusM} m), the way voices.mjs's live ear reads it`
+        : "each emission's OWN stamped radius_m — the law that instance was born under (a dial changed tomorrow does not re-govern what happened today)",
+      earshot_rule_is_unruled: "these two readings differ once the sound class's radius_m moves, and it has (class_version 1 -> 2 across the record). Pass ?mode=current&radius=<m> for the other one.",
+      disclosed: [live.DISCLOSURES.live_sound, live.DISCLOSURES.frames],
+    };
+    if (!near) return { code: 200, body: { ...body, emissions } };
+    return { code: 200, body: { ...body,
+      at: { x: near.x, y: near.y },
+      heard: live.earshotAt(emissions, near, { radiusM, mode }).sort((a, b) => a.distance_m - b.distance_m) } };
+  }
+
+  if (path === "/world2/occupancy") {
+    // The containment stack, folded from the crossings. P-036's door: the
+    // consent word rides every row, and a resident refused at a threshold is in
+    // the record without being inside the mark.
+    const at = clockOf(searchParams);
+    if (at.error) return at.error;
+    const { rows } = await p.query(
+      `SELECT id, at, crossing, actor, action, payload FROM acts
+        WHERE action = ANY($1) ${live.PASSAGE_ORDER_SQL}`, [live.PASSAGE_ACTIONS]);
+    let derived;
+    try { derived = live.passageRecords(rows); }
+    catch (e) { return { code: 500, body: { error: "bounce", defect: "a passage act matches no known era", hint: String(e.message).slice(0, 400) } }; }
+    const fc = live.fractionalCrossing(at.ms);
+    const occ = live.occupancyAt(derived.passages, fc);
+    const handle = searchParams?.get("handle");
+    if (handle) {
+      return { code: 200, body: {
+        what: `where ${handle} stands in the containment tree — root first, innermost last`,
+        evaluated_at: new Date(at.ms).toISOString(), crossing: fc,
+        handle, stack: occ.get(handle) ?? [], within: live.withinOf(occ, handle),
+      } };
+    }
+    return { code: 200, body: {
+      what: "the containment tree at one instant — a stack per walker, and who is inside each mark",
+      evaluated_at: new Date(at.ms).toISOString(), crossing: fc,
+      passages: derived.passages.length,
+      inside: Object.fromEntries([...occ].map(([h, s]) => [h, s])),
+      occupants: Object.fromEntries([...live.occupantsOf(occ)].map(([m, hs]) => [m, hs])),
     } };
   }
 
