@@ -1769,9 +1769,21 @@ async function apexDo(args, key) {
       // beside a borrowed standpoint is the closest true thing this office can
       // write, and it is disclosed by `standing_with` on the answer.
       const hand = acting?.standing === "embodied" ? humanHandFor([...(key?.handles ?? [])]) : null;
-      result = acting?.route === "worldSayHuman" || (hand && action === "say")
-        ? await worldSayHuman({ ...fields, ...(acting?.with ? { with: acting.with } : {}) }, key)
-        : await handler.run(hand ? { ...fields, as_human: hand } : fields, key, ctx);
+      if (acting?.route === "worldSayHuman" || (hand && action === "say")) {
+        // THE ORIENT HANDLE IS NOT A VOICE (2026-08-28, found live on the
+        // dungeon stage): the envelope's `handle:` chose whose standpoint
+        // oriented this act — a multi-resident key MUST name one to orient at
+        // all — but worldSayHuman owns the "one voice at a time" fence and
+        // refuses any handle it is handed. So the handle's duty ends here: it
+        // leaves the fields, surviving only as the housemate the human stands
+        // beside when `beside:` named nobody. The feet the standpoint borrowed
+        // and the feet the record names stay the same feet.
+        const { handle: orientingHandle, ...humanFields } = fields;
+        const withWhom = acting?.with ?? orientingHandle;
+        result = await worldSayHuman({ ...humanFields, ...(withWhom ? { with: withWhom } : {}) }, key);
+      } else {
+        result = await handler.run(hand ? { ...fields, as_human: hand } : fields, key, ctx);
+      }
     } catch (e) {
       if (!e?.code) throw e;
       return { ...bounce(e.code, e.defect, e.hint, e.choices ? { choices: e.choices } : {}), ...done };

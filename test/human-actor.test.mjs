@@ -178,8 +178,16 @@ test("the seam routes and never re-derives the hand", () => {
   // reads `acting`, not `actor`, and the ordinary path now carries the embodied
   // flag. Both clauses still pin the same property the original did — the seam
   // ROUTES and never re-derives the hand.
-  assert.match(apex, /result = acting\?\.route === "worldSayHuman"/,
+  // AMENDED 2026-08-28: the routing grew a body (the ternary became an if) when
+  // the orient-handle fix landed — worldSayHuman refuses any handle it is
+  // handed ("one voice at a time"), so the envelope's handle now leaves the
+  // fields at the routing boundary and survives only as `with:`. The pin
+  // follows the shape; the property pinned is unchanged: routing reads
+  // `acting`, and the human's door is chosen there and nowhere else.
+  assert.match(apex, /if \(acting\?\.route === "worldSayHuman"/,
     "the apex routes a companioned say to the human's own handler");
+  assert.match(apex, /const \{ handle: orientingHandle, \.\.\.humanFields \} = fields;/,
+    "the orient handle leaves the fields before the human's door — one voice at a time is the handler's fence, honoured by not testing it");
   // AMENDED 2026-08-27: THE FLAG BECAME THE HAND, and the amendment is the
   // whole of the own-hand fix. `as_human: true` could not be honoured even by a
   // willing handler — it says an act was a human's without saying WHICH human,
