@@ -22,7 +22,7 @@ import { join } from "node:path";
 
 import {
   erasBetween, commitOf, eraActs, eraClaims, eraWindow, authoredSubstance,
-  sixCountOf, amendId, assertReplayable, logCensus, SUBSTANCE_COLUMNS,
+  sixCountOf, amendId, assertReplayable, logCensus, doorWitness, SUBSTANCE_COLUMNS,
 } from "../world2/tools/replay-ingest.mjs";
 import { uuid5, deriveActs, LOG_FILE, compareMarks } from "../world2/tools/seed-import.mjs";
 
@@ -392,3 +392,17 @@ async function claimsFor(w, fromTag, toTag) {
     return await eraClaims({ fromDir: a.dir, toDir: b.dir, window });
   } finally { b.dispose(); a.dispose(); }
 }
+
+// ── the door's own witness ───────────────────────────────────────────────────
+
+test("a leave-mark act and the outcome-derived claim set are matched by slug, and drafts are named not counted", () => {
+  const acts = { rows: [
+    { action: "legacy:leave-mark", actor: "neth", at: "2026-08-27T15:24:32.334Z", payload: { object: "neth/little-free-library" } },
+    { action: "legacy:leave-mark", actor: "wren", at: "2026-08-27T16:00:00.000Z", payload: { object: "wren/a-draft-that-never-published" } },
+    { action: "legacy:departure", actor: "wren", at: "2026-08-27T16:01:00.000Z", payload: {} },
+  ] };
+  const w = doorWitness({ acts, claims: [{ slug: "neth/little-free-library" }, { slug: "fabel/garrison-bridge" }] });
+  assert.equal(w.total, 2, "only leave-mark acts are the door's witness about a claim");
+  assert.deepEqual(w.matched.map((m) => m.slug), ["neth/little-free-library"]);
+  assert.deepEqual(w.unmatched.map((m) => m.slug), ["wren/a-draft-that-never-published"]);
+});

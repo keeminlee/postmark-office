@@ -735,6 +735,28 @@ export async function writeSeed(client, { window, claims, marks, acts }) {
       [window.id, window.opens_at, window.closes_at, window.status,
         window.law_sha, window.town_sha, window.cleared_at, JSON.stringify(window.receipts)]);
 
+    // THE CANDLE IS NEVER LEFT UNLIT. The genesis window is CLOSED — it produced
+    // the register being seeded — and 005_candle_tiling.sql says what a store with
+    // no open window means, from the instance that taught it:
+    //
+    //   "window 150 closed 08-26 05:45Z, window 151 was hand-bootstrapped open at
+    //    08-28 16:40Z — a 58.9-hour hole with no open candle. An act that fell into
+    //    it reached `acts` with no claims row and NO REFUSAL … a hole neither
+    //    accepts nor refuses."
+    //
+    // That hole was the SEED's, and it was repaired by hand rather than at its
+    // source: seeding closed a window and opened nothing, so every seeded store
+    // began life with no candle until somebody noticed. The successor now opens in
+    // the same transaction, exactly where 005's trigger requires (at the
+    // predecessor's close) and for the cadence census decision 3 rules (12 hours),
+    // which is also what `clearing-job.mjs` does at every close after this one.
+    // A hand-bootstrapped window is a state with no receipt; this one has the
+    // seed's.
+    await client.query(
+      `INSERT INTO windows (id, opens_at, closes_at, status)
+       VALUES ($1, $2, $2::timestamptz + interval '12 hours', 'open')`,
+      [window.id + 1, window.closes_at]);
+
     await insertClaims(client, claims);
     await insertMarks(client, marks);
 
@@ -1020,6 +1042,15 @@ export async function verifySeed(client, { window, marks, claims }, { columns = 
     if (r.law_sha !== window.law_sha) findings.push(`windows ${window.id} law_sha: repo says ${window.law_sha}, DB says ${r.law_sha}`);
     if ((r.town_sha ?? null) !== (window.town_sha ?? null)) findings.push(`windows ${window.id} town_sha: repo says ${window.town_sha}, DB says ${r.town_sha}`);
   }
+
+  // The successor the seed opens (see `writeSeed`). A verifier that does not check
+  // what the seed wrote would let the 58.9-hour hole back in silently.
+  const nx = await client.query(
+    "SELECT id, opens_at, status FROM windows WHERE id = $1", [window.id + 1]);
+  if (!nx.rowCount) findings.push(`windows has no row ${window.id + 1} — the seed closed the genesis window and opened no candle (005_candle_tiling: "a hole neither accepts nor refuses")`);
+  else if (nx.rows[0].status !== "open") findings.push(`windows ${window.id + 1} is ${nx.rows[0].status}, not open — the successor the seed opens is the town's live candle`);
+  else if (new Date(nx.rows[0].opens_at).toISOString() !== new Date(window.closes_at).toISOString())
+    findings.push(`windows ${window.id + 1} opens at ${new Date(nx.rows[0].opens_at).toISOString()}, and ${window.id} closed at ${window.closes_at} — the candle must tile time`);
 
   const cq = await client.query("SELECT count(*)::int c FROM claims WHERE window_id = $1 AND status = 'locked'", [window.id]);
   if (cq.rows[0].c !== claims.length) findings.push(`claims locked in window ${window.id}: repo derives ${claims.length}, DB holds ${cq.rows[0].c}`);

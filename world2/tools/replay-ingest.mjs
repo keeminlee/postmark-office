@@ -109,6 +109,8 @@
 //   --town-repo <checkout>   run the stamp ingest as the clearing's first step
 //   --town-sha <sha>         the town half of the pin, when a receipt names one
 //   --continue               eras already in the store are VERIFIED, then skipped
+//   --can-fail-proof         mangle the replayed register inside a ROLLED-BACK
+//                            transaction and require the gate to go red for each
 //   --dry-run                derive and report; open no connection, write nothing
 //   --json                   machine-readable verdict
 //
@@ -436,6 +438,34 @@ export async function eraClaims({ fromDir, toDir, window }) {
   return { claims, added, amended, removed, registerAfter: after, registerBefore: before };
 }
 
+/**
+ * THE DOOR'S OWN WITNESS, held against the claim set derived from the settlement.
+ *
+ * The two halves of this replay come from places that know nothing about each
+ * other: the CLAIMS are derived from the settlement's outcome (what the register
+ * gained), and the ACTS are the town's journal (what a resident did at the door).
+ * Where the journal happens to carry a `leave-mark`, the two must name the same
+ * mark — an independent corroboration that the outcome-derived claim set is the
+ * set of things people actually submitted, not a shape we imposed on the diff.
+ *
+ * It is REPORTED, not gated, and the asymmetry is the reason. A `leave-mark` with
+ * no claim in this era is the six-count's `left_drafted` — a draft that stood in
+ * the live layer and did not publish, which is a normal outcome and is exactly
+ * what the act's own `effect` says ("a draft stands in the live layer; it enters
+ * canon at the next crossing that ratifies it"). And most eras carry NO
+ * leave-mark acts at all, because they lived in the office's sqlite journal and
+ * only reach the world repo when a window is hand-drained into it. So the honest
+ * statement is a coverage count with the unmatched named, not a verdict.
+ */
+export function doorWitness({ acts, claims }) {
+  const submitted = new Set(claims.map((c) => c.slug));
+  const marks = acts.rows.filter((a) => a.action === "legacy:leave-mark");
+  const named = marks.map((a) => ({ slug: a.payload?.object ?? null, actor: a.actor, at: a.at }));
+  const matched = named.filter((n) => n.slug && submitted.has(n.slug));
+  const unmatched = named.filter((n) => !n.slug || !submitted.has(n.slug));
+  return { total: named.length, matched, unmatched };
+}
+
 // ── the window ───────────────────────────────────────────────────────────────
 
 /**
@@ -482,22 +512,26 @@ export async function insertActs(client, rows) {
 /**
  * The pending docket for one window.
  *
- * `claims` has no `slug` column (001) and `clearing-job.mjs` reads the identity a
- * claim will materialize under out of `geometry->>'slug'`. So the slug rides
- * there, and the replay reports that as a finding rather than treating it as
- * normal: a mark's identity is not part of "the 1.0 mark frontmatter shape",
- * which is what the `geometry` column is documented to hold, and a de-sited claim
- * has no `geometry` at all to carry it in. See § THE FOUR GAPS in the run report.
+ * `slug` is a COLUMN (006), and this is the pen that asked for it. Before 006 the
+ * only place a claim could name the mark it was for was inside `geometry` —
+ * `clearing-job.mjs` read `geometry->>'slug'` — which put a mark's identity inside
+ * the column documented as "the 1.0 mark frontmatter shape" and gave a DE-SITED
+ * claim nowhere to put it at all. The first pass of this replay wrote the slug
+ * there because that was the only door, reported the 14 marks that came out
+ * carrying their own slug in their geometry, and reported the one predicated claim
+ * that locked and materialized nothing. 006 is the answer to both.
+ *
+ * `geometry` is now exactly what the checkout derived, so a materialized mark's
+ * geometry can be compared to 1.0's without anything of ours in it.
  */
 export async function insertClaims(client, claims) {
   for (const c of claims) {
-    const geometry = c.geometry ? { ...c.geometry, slug: c.slug } : null;
     await client.query(
-      `INSERT INTO claims (id, window_id, class, claimant, household, submitted_at, status,
+      `INSERT INTO claims (id, window_id, slug, class, claimant, household, submitted_at, status,
                            body, geometry, bbox, stake, data, parent, supersedes)
-       VALUES ($1,$2,$3,$4,$5,$6,'pending',$7,$8,$9,$10,$11,$12,$13)`,
-      [c.id, c.window_id, c.class, c.claimant, c.household, c.submitted_at,
-        c.body, geometry ? JSON.stringify(geometry) : null, c.bbox, c.stake,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,'pending',$8,$9,$10,$11,$12,$13,$14)`,
+      [c.id, c.window_id, c.slug, c.class, c.claimant, c.household, c.submitted_at,
+        c.body, c.geometry ? JSON.stringify(c.geometry) : null, c.bbox, c.stake,
         JSON.stringify(c.data), c.parent, c.supersedes]);
   }
 }
@@ -534,29 +568,46 @@ export async function parityFindings(client, { registerAfter }) {
   }));
   const substance = compareMarks(db, registerAfter.marks, { columns: SUBSTANCE_COLUMNS });
 
-  // Provenance: what 2.0's write path did not carry. Counted, named, never folded
-  // into the gate and never dropped.
+  // PROVENANCE — reported, never gated, never dropped. Three separate questions,
+  // kept separate because they have three different answers.
   const provenance = [];
   const bySlug = new Map(db.map((r) => [r.slug, r]));
-  const missingData = [], missingParent = [], slugInGeometry = [];
+  const noData = [], staleTier = [], otherData = [], missingParent = [];
   for (const m of registerAfter.marks) {
     const r = bySlug.get(m.slug);
     if (!r) continue;
-    if (r.data == null && m.data != null) missingData.push(m.slug);
-    else if (r.data != null && canonicalJson(r.data) !== canonicalJson(m.data)) missingData.push(m.slug);
     if (r.parent == null && m.parent != null) missingParent.push(m.slug);
+    if (r.data == null) { if (m.data != null) noData.push(m.slug); continue; }
+    if (canonicalJson(r.data) === canonicalJson(m.data)) continue;
+    // THE STALE-STANDING CLASS, isolated on purpose. `data.tier` is not a field of
+    // the record — it is what the FOLD says about the record after resolving the
+    // whole world (seed-import § foldOracle), and 1.0 recomputes it for all 960
+    // records at every settlement. 2.0 writes it once, at materialization, and
+    // never revisits it, so a mark's standing goes stale the moment a NEIGHBOUR's
+    // parcel lands. Anti-rebake rule 3 has the answer already — "derived is a
+    // VIEW" — and this is a derived value living in a source column.
+    const { tier: rt, ...rrest } = r.data;     // eslint-disable-line no-unused-vars
+    const { tier: mt, ...mrest } = m.data ?? {}; // eslint-disable-line no-unused-vars
+    if (canonicalJson(rrest) === canonicalJson(mrest)) staleTier.push(`${m.slug} (${rt} → ${mt})`);
+    else otherData.push(m.slug);
   }
-  const raw = (await client.query("SELECT slug, geometry FROM marks WHERE geometry ? 'slug'")).rows;
-  for (const r of raw) slugInGeometry.push(r.slug);
+  const slugInGeometry = (await client.query("SELECT slug FROM marks WHERE geometry ? 'slug'")).rows.map((r) => r.slug);
 
-  if (missingData.length)
-    provenance.push(`${missingData.length} mark(s) do not carry the record's \`data\` the checkout derives ` +
-      `(tier, date, and the rest of 004's remainder), e.g. ${missingData.slice(0, 4).join(", ")}`);
+  if (noData.length)
+    provenance.push(`${noData.length} mark(s) carry no \`data\` at all — the record's remainder (date, image, ` +
+      `slot, tier) that 004 gave marks a column for, e.g. ${noData.slice(0, 4).join(", ")}`);
+  if (otherData.length)
+    provenance.push(`${otherData.length} mark(s) carry a \`data\` that differs from the checkout's beyond tier, ` +
+      `e.g. ${otherData.slice(0, 4).join(", ")}`);
+  if (staleTier.length)
+    provenance.push(`${staleTier.length} mark(s) carry a STALE STANDING: 2.0 stores the fold's \`tier\` on the ` +
+      `mark row at materialization; 1.0 recomputes it for the whole register at every settlement, so a ` +
+      `neighbour's parcel moves it and nothing in 2.0 notices — ${staleTier.slice(0, 4).join(", ")}`);
   if (missingParent.length)
     provenance.push(`${missingParent.length} mark(s) lost the continuation edge \`parent\`, e.g. ${missingParent.slice(0, 4).join(", ")}`);
   if (slugInGeometry.length)
-    provenance.push(`${slugInGeometry.length} mark(s) carry their own slug inside \`geometry\` — the identity ` +
-      `the clearing job had nowhere else to read it from, e.g. ${slugInGeometry.slice(0, 4).join(", ")}`);
+    provenance.push(`${slugInGeometry.length} mark(s) carry their own slug inside \`geometry\` — the pre-006 ` +
+      `identity, which the clearing job had nowhere else to read from, e.g. ${slugInGeometry.slice(0, 4).join(", ")}`);
 
   return { substance, provenance };
 }
@@ -597,6 +648,73 @@ export async function actsCompleteness(client, toDir) {
     if (r !== d) findings.push(`crossing ${c}: the checkout holds ${r} log row(s), acts holds ${d}`);
   }
   return findings;
+}
+
+/**
+ * THE PROOF THAT THE GATE CAN FAIL.
+ *
+ * "A falsifier nobody has watched fail is not a falsifier" (world2/tools/README).
+ * A gate whose only observed state is GREEN has proved nothing: three green eras
+ * are three green eras only if red was reachable. So this mangles the replayed
+ * register in each of the shapes a replay can actually go wrong — a value moved,
+ * a mark that should stand gone, a mark standing that 1.0 never published, an act
+ * missing from its crossing — and requires the parity check to notice every one.
+ *
+ * INSIDE A TRANSACTION, ROLLED BACK, on the same connection, exactly as
+ * seed-import's `canFailProof` does and for its reason: `acts` is append-only for
+ * every pen, and `marks` past the floor belongs to `clearing_job`, so a committed
+ * mangle would leave the world wrong with no pen able to repair it.
+ *
+ * The victim is a mark this REPLAY put there (`locked_window > floor`), not a
+ * seeded one. A proof that only ever mangles genesis rows proves the seed's
+ * comparator, which was already proved; what is unproved here is that the gate
+ * sees the eras.
+ */
+export async function canFailProof(client, era, worldRepo) {
+  const clean = await parityFindings(client, era);
+  if (clean.substance.length) {
+    throw new Error(`cannot prove can-fail: parity is ALREADY red at ${era.to.tag} (${clean.substance.length} finding(s))\n  ${clean.substance[0]}`);
+  }
+  const replayed = (await client.query(
+    "SELECT slug FROM marks WHERE locked_window = $1 ORDER BY slug LIMIT 2", [era.window.id])).rows;
+  if (replayed.length < 2) throw new Error(`cannot prove can-fail: window ${era.window.id} materialized fewer than two marks`);
+  const [victim, gone] = replayed.map((r) => r.slug);
+
+  const results = [];
+  const mangle = async (label, sql, params = [], kind = "substance") => {
+    await client.query("BEGIN");
+    try {
+      await client.query(sql, params);
+      const p = await parityFindings(client, era);
+      const a = kind === "acts" ? await actsCompletenessFor(client, worldRepo, era.to.sha) : [];
+      results.push({ mangle: label, findings: [...p.substance, ...a] });
+    } finally { await client.query("ROLLBACK"); }
+  };
+
+  await mangle(`body of ${victim} (a value the era carried)`,
+    "UPDATE marks SET body = body || ' — MANGLED' WHERE slug = $1", [victim]);
+  await mangle(`geometry of ${victim} moved`,
+    `UPDATE marks SET geometry = jsonb_set(geometry, '{at,x}', '99999') WHERE slug = $1`, [victim]);
+  await mangle(`DELETE ${gone} (a mark the settlement published and the replay must have)`,
+    "DELETE FROM marks WHERE slug = $1", [gone]);
+  await mangle("INSERT forged/never-published (a mark 1.0 never had)",
+    `INSERT INTO marks (id, slug, kind, owner, household, body, geometry, bbox, status, locked_window, data)
+     VALUES (gen_random_uuid(), 'forged/never-published', 'sited', 'nobody', NULL, '',
+             '{"at":{"x":0,"y":0},"extent":{"w":1,"h":1}}'::jsonb, '((-0.5,-0.5),(0.5,0.5))'::box,
+             'standing', $1, '{}'::jsonb)`, [era.window.id]);
+  // The acts half. `acts` refuses UPDATE and DELETE from every pen (002's
+  // `acts_append_only` trigger), which is the law working — so the only shape of
+  // act drift the owner can provoke is an EXTRA row, and that is the one this
+  // asks about. A crossing short by one is unprovokable and unproved, and saying
+  // so is better than pretending otherwise.
+  await mangle(`an extra act at crossing ${era.acts.crossings[0] ?? era.window.id}`,
+    `INSERT INTO acts (at, crossing, actor, action, class, payload)
+     VALUES (now(), $1, 'nobody', 'legacy:forged', 'legacy', '{}'::jsonb)`,
+    [era.acts.crossings[0] ?? era.window.id], "acts");
+
+  const after = await parityFindings(client, era);
+  const silent = results.filter((r) => !r.findings.length);
+  return { results, restored: after.substance.length === 0, silent };
 }
 
 // ── the store's state, and the refusal ───────────────────────────────────────
@@ -701,7 +819,7 @@ const flag = (name) => process.argv.includes(name);
 const USAGE =
   "usage: replay-ingest.mjs --world-repo <full clone> --from-tag <ref> --to-tag <ref>\n" +
   "                        [--town-repo <checkout>] [--town-sha <sha>]\n" +
-  "                        [--continue] [--dry-run] [--json]";
+  "                        [--continue] [--can-fail-proof] [--dry-run] [--json]";
 
 async function main() {
   if (flag("--help")) { console.log(USAGE + "\n" + REFLOOR); process.exit(0); }
@@ -751,6 +869,11 @@ async function main() {
     console.log(`   claims ${String(e.claims.length).padStart(4)}  ${e.added.length} added · ${e.amended.length} amended`);
     if (e.amended.length) console.log(`          amended: ${e.amended.map((x) => x.mark.slug).join(", ")}`);
     console.log(`   receipt ${e.receipt.checked ? (e.receipt.ok ? `AGREES — the settlement's six-count says ${e.receipt.six.published} published` : `DISAGREES — ${e.receipt.why}`) : `UNCHECKABLE — ${e.receipt.why}`}`);
+    const w = doorWitness(e);
+    if (w.total) {
+      console.log(`   door    ${w.matched.length}/${w.total} leave-mark act(s) name a mark this era's claim set carries` +
+        (w.unmatched.length ? ` · unmatched (left drafted, or a slug the act spells differently): ${w.unmatched.map((u) => u.slug ?? "(no object)").join(", ")}` : ""));
+    }
     if (e.acts.vanished.length) console.log(`   ⚠ ${e.acts.vanished.length} log row(s) present at ${e.from.tag} and ABSENT at ${e.to.tag} — the log is append-only by law`);
   }
 
@@ -774,19 +897,58 @@ async function main() {
   const report = [];
   try {
     const state0 = await storeState(client);
+
+    if (flag("--can-fail-proof")) {
+      const closed = state0.windows.filter((w) => w.status === "closed").map((w) => w.id);
+      const at = Math.max(...closed);
+      const era = eras.find((e) => e.window.id === at);
+      if (!era) throw new Error(`--can-fail-proof needs the store to be AT one of this range's tags; its tip is window ${at}`);
+      const proof = await canFailProof(client, era, worldRepo);
+      for (const r of proof.results) {
+        console.log(`${r.findings.length ? "RED  " : "GREEN"} after mangle: ${r.mangle} — ${r.findings.length} finding(s)`);
+        for (const f of r.findings.slice(0, 2)) console.log(`  ${f.split("\n").join("\n  ")}`);
+      }
+      console.log(proof.restored ? "GREEN after rollback — the mangles left no trace" : "RED after rollback — THE PROOF DID NOT CLEAN UP");
+      const ok = proof.silent.length === 0 && proof.restored;
+      console.log(ok ? `\ncan-fail PROVEN at ${era.to.tag}: every mangle turned the gate red, and rollback restored green.`
+        : `\ncan-fail NOT PROVEN: ${proof.silent.length} mangle(s) the gate did not notice.`);
+      await client.end();
+      assertHeadUnmoved(worldRepo, headBefore);
+      process.exit(ok ? 0 : 1);
+    }
+
     const skip = assertReplayable(state0, { eras, cont });
+    // The last window the store actually closed — the only already-replayed era
+    // whose parity is still a question the register can answer.
+    const tip = Math.max(...state0.windows.filter((w) => w.status === "closed").map((w) => w.id), -Infinity);
 
     for (const e of eras) {
       const head = `${e.to.tag} · window ${e.window.id}`;
       console.log(`\n══ ${head} ══════════════════════════════════════════`);
 
       if (skip.has(e.window.id)) {
+        // ONLY THE STORE'S TIP CAN BE RE-CHECKED. A parity check asks "does the
+        // register say what 1.0's says at S(k)", and once S(k+1) has been replayed
+        // the register has moved on by design — every mark the later settlement
+        // published would read as EXTRA. Reporting that as a divergence would
+        // manufacture 14 findings out of the replay working, which is the shape of
+        // false alarm ab-compare paid for twice. An earlier era's parity was
+        // checked when it ran; it is not re-checkable now, and the report says
+        // that rather than reporting a pass.
+        if (e.window.id !== tip) {
+          console.log(`already replayed — the store has moved on to window ${tip}, so this tag's parity ` +
+            `cannot be re-checked (it was checked when the era ran)`);
+          report.push({ tag: e.to.tag, window: e.window.id, skipped: true, recheckable: false,
+            substance: [], provenance: [], acts: [], clearing: null });
+          continue;
+        }
         const parity = await parityFindings(client, e);
         const actsF = await actsCompletenessFor(client, worldRepo, e.to.sha);
-        console.log(`already replayed — VERIFIED, not re-ingested`);
-        report.push({ tag: e.to.tag, window: e.window.id, skipped: true,
+        console.log(`already replayed — VERIFIED at the store's tip, not re-ingested`);
+        report.push({ tag: e.to.tag, window: e.window.id, skipped: true, recheckable: true,
           substance: parity.substance, provenance: parity.provenance, acts: actsF, clearing: null });
-        for (const f of parity.substance) console.log(`  ✗ ${f}`);
+        for (const f of parity.substance) console.log(`  ✗ ${f.split("\n").join("\n    ")}`);
+        for (const p of parity.provenance) console.log(`  ⚑ ${p}`);
         continue;
       }
 
@@ -855,9 +1017,12 @@ async function main() {
   const red = report.filter((r) => r.substance.length || r.acts.length);
   console.log(`\n══ VERDICT ═══════════════════════════════════════════════`);
   for (const r of report) {
-    const v = r.substance.length || r.acts.length ? "RED " : "GREEN";
+    const v = r.skipped && r.recheckable === false ? "  — "
+      : r.substance.length || r.acts.length ? "RED " : "GREEN";
     console.log(`  ${v}  ${r.tag} (window ${r.window})` +
-      (r.skipped ? "  [verified, not re-ingested]" : `  ${r.acts_ingested} acts, ${r.claims_ingested} claims`) +
+      (r.skipped
+        ? (r.recheckable === false ? "  [replayed earlier; the store has moved past this tag]" : "  [verified at the tip, not re-ingested]")
+        : `  ${r.acts_ingested} acts, ${r.claims_ingested} claims`) +
       (r.refusals?.length ? `  · ${r.refusals.length} claim(s) not locked` : ""));
     for (const f of r.substance) console.log(`         ✗ ${f.split("\n")[0]}`);
     for (const f of r.acts) console.log(`         ✗ acts ${f}`);

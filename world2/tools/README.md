@@ -953,3 +953,202 @@ All ten KEPT as shipped. Named ones: (1) the certification's `archives`/`archive
 ## Merge rulings (Wright, 2026-08-28 — the backfill lane's 11 teed decisions)
 
 1/2/3 KEPT (acts mirror stays journal-spelled while the journal lives; locked claims' NULLs stand — the guard refusing its own operator is the law working; candle-proof's "darko" household stays as the honest receipt of the bug it records). 4 TEED TO KEEMIN: whether darko gets a households.json line (he appears as solo:darko while wright/rei fold to gh:67605380 — a roster call, 1.0 says the same). 5–8 ACCEPTED (the judge's three edits each reproved by self-test; the closure falsifier's (journal_seq, slug) identity fix was in-scope and right). 9: the ~43 leaked fixture acts are ACCEPTED as-is today; the sanctioned clean is the rebuild-and-reseed already planned as phase 5's first step (uuid5 determinism + all seeder fixes make it true from birth, closing decision 2's claims residual in the same stroke). 10/11 noted as standing items (POSIX-only path in settle-at-save.test; standardize the tools on WORLD2_PG_URL).
+
+## The replay-parity gate
+
+`replay-ingest.mjs` is phase 5 — the cutover gate. Gold `postmark-world-2.md` §4:
+*"World 2.0 must ingest the settlements/events that happened on prod in the
+meantime and reach the same output state."*
+
+It is INGEST-AND-REACH, not re-adjudicate. Per settlement S(k) it derives the
+era's acts and its claim set from the two checkouts, ingests both, runs the
+**real** `clearing-job.mjs` on the window, and holds the standing register
+against 1.0's at S(k) with `seed-import.mjs`'s own `compareMarks`.
+
+```sh
+git clone https://github.com/keeminlee/postmark-world.git ~/world-full   # FULL history
+
+export PGHOST=localhost PGDATABASE=world2_dev PGUSER=world2_owner PGPASSWORD=…
+export WORLD2_CLEARING_URL=postgres://clearing_job:…@localhost/world2_dev
+export WORLD2_INGEST_URL=postgres://law_ingester:…@localhost/world2_dev
+
+node world2/tools/replay-ingest.mjs \
+  --world-repo ~/world-full --from-tag settlement/S47 --to-tag settlement/S50 \
+  --town-repo ~/frozen-town
+```
+
+`--dry-run` derives and prints every era without opening a connection.
+`--continue` verifies an already-replayed store instead of refusing it (only the
+store's TIP is re-checkable — once S(k+1) has run, S(k)'s register has moved on
+by design). `--can-fail-proof` mangles the replayed register inside a rolled-back
+transaction and requires the gate to go red for each shape of drift.
+
+### Where the eras come from, and the two receipts that can fail
+
+The boundaries are facts of the record, not a hand-typed list: every
+`settlement/*` tag between `--from-tag` and `--to-tag`, in commit-date order. The
+window id is `genesisWindow`'s rule (the highest integer `STATE/log/<N>.jsonl`),
+`closes_at` is the settlement commit's date, and `opens_at` is whatever the
+store's open window already carries — 005's trigger owns it.
+
+**The era's acts are a MULTISET DIFFERENCE, not the new files.** 1.0 appends to a
+crossing's log *after* the settlement that precedes it: S48's tag sits on
+`crossing-save 151`, whose commit puts 34 rows into `150.jsonl`, a file that was
+already there at S47. Multiset for AB-P3's reason — the record genuinely repeats
+a row, and a Set would let a dropped copy hide.
+
+**The claim set comes from the settlement's own outcome** — the register diff at
+S(k-1) vs S(k), read by `deriveSeed` at each tag, so a claim and the mark it
+materializes are one record wearing two table names. Added → a claim; changed →
+a claim carrying `supersedes`; **removed → the replay STOPS**, because the
+six-count has no transition for a standing mark leaving (its
+"unpublished/quarantined" is a draft that never stood) and inventing one would
+make the verdict a statement about the invention.
+
+Two receipts hold the derivation to the town's own record, and one of them
+already earned its keep:
+
+| receipt | what it asks |
+|---|---|
+| the six-count | the era's claim count = the settlement commit's own `sweep N published` |
+| the door | every `leave-mark` act in the era names a mark the claim set carries |
+
+The six-count caught a phantom claim on the first run.
+`berthillon/le-petit-berthillon` changes between S48 and S49 in exactly one
+field — the FOLD's `tier`, `market → home`, because `berthillon/chez-antoine`
+(someone else's new parcel) gives the standing walk sovereign ground to stop at.
+Not a byte of its own record moved. Counting it would have submitted a claim that
+resident never made, and put the era at 15 against the town's receipt of 14. So
+`authoredSubstance` drops the two fields the fold answers (`tier`, `household`)
+and the amend detector reads the authored record only. The parity check still
+compares both — which is what turns the case from a miscount into finding 4 below.
+
+At S50 the door receipt reads 4/4: the office journal's four `leave-mark` acts at
+crossing 153 name `rook-of-garrison/vanguards-watchtower`,
+`little-m-of-garrison/little-ms-race-track`, `neth/little-free-library` and
+`berthillon/cone-peche-de-vigne-2026-08-27` — four of the five marks the
+settlement published, derived independently from the register diff and agreeing.
+The fifth, `fabel-of-garrison/garrison-bridge`, has no act because its window was
+never hand-drained into the world repo.
+
+### The 2026-08-28 run: what the gate found
+
+First pass, against the clearing job as it stood: **S48 green, S49 and S50 red**,
+with four gaps in 2.0's write path that only real canon could surface. The lab's
+probe claims had exercised none of them.
+
+1. **A claim had nowhere to name its mark.** `claims` carried no `slug`, so
+   `clearing-job.mjs` read the identity out of `geometry->>'slug'`. Two
+   consequences, both live: 14 materialized marks carried their own slug inside
+   their geometry, and a DE-SITED claim — no geometry at all — locked and
+   produced nothing. `callan-reeves/stance-on-the-high-ground` locked in window
+   152 and never became a mark, with no refusal and nothing to notice. 44% of
+   1.0's register is predicated or naming. → `006_claim_identity.sql`.
+2. **An amend was refused as a duplicate.** S49 published 14 claims, four of them
+   amendments of standing marks, and every one came back
+   `duplicate: a standing mark already carries this slug` — verbatim. 1.0
+   publishes amendments; a 2.0 that refuses them cannot reach 1.0's state.
+   `supersedes` was already the column for it (001, "#1697/#1862 class"); the
+   clearing job only ever read it *within* the window. → step 1 now exempts a
+   claim that supersedes the standing mark of that slug, step 4 exempts a parcel
+   from overlapping its own standing ground, and step 6 rewrites the mark it
+   continues rather than inserting a second row.
+3. **A mark that came through the candle was poorer than one the seed
+   imported.** Materialization wrote only the pre-004 columns, so 19 replayed
+   marks had NULL `data` — the whole frontmatter remainder — and NULL `parent`.
+   → step 6 carries both, and orders parents before children (`marks.parent` is a
+   non-deferrable self-FK, and a cycle would roll back the window).
+4. **Standing goes stale, and that one is not fixed.** `data.tier` is not a field
+   of the record — it is what the fold says after resolving the whole world, and
+   1.0 recomputes it for all 960 records at every settlement. 2.0 writes it once,
+   at materialization, and never revisits it. One mark in this range,
+   `berthillon/le-petit-berthillon`, is `market` in the store and `home` in 1.0.
+   Anti-rebake rule 3 already has the answer — *derived is a VIEW* — and a
+   derived value is living in a source column. **NEEDS A RULING.**
+
+Also found and not a 2.0 gap: **`settlement/S48` is not on a settlement commit.**
+It tags `crossing-save 151`. The sweep that closed that window published nothing
+and therefore committed nothing, so the ceremony tagged whatever HEAD was. That
+era has no six-count to check itself against, and the report says `UNCHECKABLE`
+rather than reporting a pass.
+
+Second pass, after 006 and the three clearing-job fixes, from a re-floored store:
+
+```
+GREEN  settlement/S48 (window 151)  34 acts, 0 claims
+GREEN  settlement/S49 (window 152)  10 acts, 14 claims
+GREEN  settlement/S50 (window 153)  22 acts, 5 claims
+       ⚑ 1 mark carries a stale standing (finding 4, unruled)
+```
+
+Zero refusals. Windows tile 150→154 with a law sha pinned per era. 846 marks,
+2,925 acts, 850 claims. `--can-fail-proof` green at S50 (five mangles, five
+reds, restored). Seed `--verify` and `--can-fail-proof` green, the roles
+falsifier green, projection equality green at both heads.
+
+`falsifier-acts-claims-closure.mjs` reports GREEN over 0 mark acts and its
+`--self-test` says `THE CHECK IS ASLEEP` — correctly. Every act the replay
+carries rides `class = 'legacy'` (seed-import's own convention), so the four
+`legacy:leave-mark` rows are outside the closure check's population. Nothing is
+wrong with the store; the closure guard simply has nothing to guard until the
+door writes live acts again. The door receipt above is what covers those four in
+the meantime.
+
+### The seed now lights the candle
+
+`writeSeed` opens window N+1 in the same transaction, at the genesis window's
+close, 12 hours wide. 005_candle_tiling repaired the 58.9-hour hole *by hand*
+("window 151 was hand-bootstrapped open at 08-28 16:40Z"); the hole was the
+SEED's, and a hand-bootstrapped window is a state with no receipt. `--verify`
+reds if the successor is missing, closed, or does not open where its predecessor
+closed.
+
+### Re-flooring
+
+The replay leaves the store past the floor, and `acts` is append-only for every
+pen, so there is no undo — only `--continue`, or a rebuild. `--help` prints the
+sequence; it is the seed's own sanctioned reset plus the two projections and the
+ledger backfill:
+
+```sh
+psql -c "DROP VIEW IF EXISTS docket, standing_marks CASCADE;
+         DROP TABLE IF EXISTS acts, claims, marks, windows, law_projection,
+              stamp_projection, projection_heads, identities, registry CASCADE;
+         DROP FUNCTION IF EXISTS forbid_mutation() CASCADE;
+         DROP FUNCTION IF EXISTS claims_update_guard() CASCADE;
+         DROP FUNCTION IF EXISTS windows_tile() CASCADE;"
+for f in 001_tables 002_grants 004_marks_data 005_candle_tiling 006_claim_identity; do
+  psql -f world2/schema/$f.sql; done
+git clone --depth 1 --branch sandbox/seed https://github.com/keeminlee/postmark-world.git ~/frozen-world
+node world2/tools/seed-import.mjs --world-repo ~/frozen-world --tag sandbox/seed \
+  --town-sha 830a69963d8e4801ad4ed8bb80da38e79fd3fdbf --with-acts
+WORLD2_PG_URL=…owner… node world2/tools/ledger-backfill.mjs --world-repo ~/frozen-world
+PGUSER=law_ingester PGPASSWORD=… node world2/tools/law-ingest.mjs \
+  --law-repo ~/frozen-world --sha 52c281b8312d0a1d36eb81d03fbd1a36840a4eb1
+WORLD2_PG_URL=…ingester… node world2/tools/stamp-ingest.mjs \
+  --town-repo ~/frozen-town --sha 830a69963d8e4801ad4ed8bb80da38e79fd3fdbf
+```
+
+DROP the objects, not the schema: `DROP SCHEMA public CASCADE` takes the schema's
+ACLs with it and the four roles come back with no USAGE. The floor that comes out
+is `831 marks · 2,859 acts · 831 claims · windows 150 closed + 151 open`, and
+because the ids are `uuid5` of the slug it is identical to the previous floor row
+for row — this is also merge-ruling 9's "sanctioned clean", so the lab's ~43
+leaked fixture acts and `wright/candle-proof` are gone.
+
+### Teed to Keemin
+
+1. **`006_claim_identity.sql` is law-tier DDL and is NOT merged** (anti-rebake
+   rule 4: schema DDL goes through REVIEW like a grant change). It was applied to
+   `world2_dev` because that is where the gate had to run. Recommendation: take
+   it — the alternative is a mark's identity living inside its geometry forever,
+   and 44% of the register having no way to materialize at all.
+2. **Finding 4, the stale standing, needs a ruling.** Recommendation: `tier`
+   becomes a VIEW over the fold's inputs rather than a stored key, per
+   anti-rebake rule 3. That is a phase-3 change and it is the last thing between
+   this range and a fully green gate.
+3. **The town half of every replayed window pins the FROZEN sha**
+   (`830a6996`). No settlement receipt in this range names a town commit, so
+   there was nothing to discover; no claim in these three eras carries a stake,
+   so the pinned stamp read is not load-bearing for the outcome. If settlements
+   should pin their town half, that is a 1.0 ceremony change.
