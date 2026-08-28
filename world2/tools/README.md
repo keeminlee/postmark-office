@@ -1169,6 +1169,10 @@ Phase 5.6, verbatim: *"drafts are deliberately EXCLUDED from the
 notary/archives (private things don't ride the public bucket), so they get a
 private durability lane (pg_dump) instead."*
 
+A draft is what an UNSTAKED `leave-mark` leaves behind (Keemin's ruling,
+2026-08-28: staking is what submits, so composing needs no new word). It stops
+being one the moment a stake puts it forward.
+
 **This is the ONE store surface the public repo cannot back up.** Everything
 else in World 2.0 survives because someone can clone the town: acts ride
 `archives/acts/<window>.jsonl`, marks ride `WORLD2/marks/**`, and both are
@@ -1183,7 +1187,10 @@ Two independent reasons a draft cannot reach the repo, so this is not a rule
 anyone has to remember:
 
 1. `snapshot-export.mjs` selects from `acts`, `marks` and `windows` — never from
-   `claims`. There is nothing for it to find.
+   `claims`. There is nothing for it to find. And an unstaked declaration is not
+   mirrored into `acts` at all (`world-journal.mjs` § the deferral): the draft
+   carries its own act on `data._deferred_act` until a stake releases it, so the
+   mark's BODY never reaches the exported log while it is private.
 2. Its credential is `snapshot_reader`, and 007's row policy makes a draft row
    unreturnable to it. `falsifier-draft-privacy.mjs --self-test` proves that
    half by opening the hole and watching the check go red.
