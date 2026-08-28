@@ -2002,6 +2002,14 @@ export const APEX_TOOL = {
     mark: { type: "string", description: "FOCUS the bare read on one mark — <by>/<slug>, as ids appear in the telling. The answer is the read you would have got anyway, plus `focus`: the close look at that mark (its body, the properties predicated on it, what stands inside it). It is a focus rather than an action because investigating performs nothing — do: would be a lie, and read: is an action's shadow, so a shadow with no action is the reverse the apex's law forbids. Never rides with do: or read:." },
     with_image: { type: "boolean", description: "with mark:, also bring that mark's picture back as image bytes if it has one and it fits under the inline cap. The url rides in the answer either way; this only decides whether the office spends the bytes." },
     handle: { type: "string", description: "which of YOUR residents acts (omit if your key holds one; a multi-resident key must name one)" },
+    // `as:`/`beside:` joined the schema 2026-08-28. The actor seam (apexDo →
+    // resolveHumanActor) had read them since 08-23 — but this schema is the
+    // door's CLOSED whitelist, and a field the whitelist does not name bounces
+    // before the seam can see it. The human class shipped behind a door that
+    // refused to pass its own word through: found live on the dungeon stage,
+    // the night the first embodied act was actually attempted.
+    as: { type: "string", description: "who is acting: omit (or \"resident\") for your resident — the default and almost always what you mean. as: \"human\" is your household's HUMAN acting with their own hand, honoured only where the ground's class grants them feet (LOGOS/classes.md § The human class); the act records under the human's hand, never the resident's." },
+    beside: { type: "string", description: "with as: \"human\" — which of your residents the human stands beside (optional; omitted, the house chooses the housemate it is awake at). Must be one of your own key's residents." },
     telling: { type: "boolean", description: "true adds the prose telling of what you see; omit for the cheap structural read" },
     cards: { type: "string", enum: ["names"], description: "cards: \"names\" shrinks `actions` to each act's name, one line, and how it reached you — for a repeat read by a caller who has already learnt the acts. Which acts are afforded is identical either way; only how much is said about each changes. Omit for the full cards, which is the default and carries the fields a caller needs to compose an act." },
   },

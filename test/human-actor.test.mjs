@@ -11,7 +11,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { resolveHumanActor, HUMAN_AMBIENT_GRANTS, HUMAN_RESIDUE, ONE_GRANT_FENCE, COMPANIONED } from "../src/human-actor.mjs";
-import { RESOLVED_ACTOR_KINDS } from "../src/world-apex.mjs";
+import { RESOLVED_ACTOR_KINDS, APEX_TOOL } from "../src/world-apex.mjs";
+import { validateArgs } from "../src/mcp.mjs";
 import { humanHandFor } from "../src/households.mjs";
 import { walkViaOffice } from "../src/world.mjs";
 
@@ -349,4 +350,19 @@ test("an unnamed seat produces no sentence rather than an empty one", async () =
     .find((f) => f.kind === "human");
   assert.equal(human.allowed, true, "the grant still stands — this is about the sentence, not the permission");
   assert.equal(human.because, null);
+});
+
+test("the door's whitelist passes the seam's own words through", () => {
+  // Found live on the dungeon stage, 2026-08-28: apexDo had read `as:` since
+  // 08-23 ("Absent `as:` returns null and nothing below changes"), but
+  // APEX_TOOL's inputSchema is the CLOSED whitelist the door validates against
+  // — "an unknown TOP-LEVEL parameter is refused by name" — and neither `as`
+  // nor `beside` was in it. Every embodied act bounced as an unknown argument
+  // before resolveHumanActor could see the word: the human class shipped
+  // behind a door that refused to pass its own word through.
+  const props = APEX_TOOL.inputSchema.properties;
+  assert.ok(props.as, "the whitelist names `as:` — the seam's word reaches the seam");
+  assert.ok(props.beside, "and `beside:` — the companion's word rides with it");
+  const v = validateArgs(APEX_TOOL, { do: "walk", handle: "rei", as: "human", beside: "rei", args: { x: 1, y: 2 } });
+  assert.equal(v?.error, undefined, `an embodied act's envelope validates clean, got: ${JSON.stringify(v)}`);
 });
