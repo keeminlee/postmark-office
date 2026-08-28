@@ -271,3 +271,82 @@ test("the class mark's own body is quoted verbatim, from the world record", () =
   assert.match(text, /"residue":\s*"the-town\/say"/,
     "the mark's actions entry names the residue this seam carries");
 });
+
+// ── THE ROSTER'S SHAPE IS THE SITE'S CONTRACT ───────────────────────────────
+
+test("the allowed human row carries the contract's own field names", async () => {
+  // THE CONTRACT, verbatim from the consumer that declared it (site
+  // src/lib/world-cockpit.mjs § actorsFor, branch bday-pin — unmerged, and named
+  // as unmerged because a contract you cannot point at is a rumour):
+  //
+  //     answer.actors = [
+  //       { kind: "resident", handle, label, allowed: true },
+  //       { kind: "human", id, label, allowed: false, reason: "…the door's own
+  //         words…", token_url?: "…" }
+  //     ]
+  //
+  // plus `because` — "Why it is allowed, in the words of the law that allowed
+  // it" — which the office shipped without on 2026-08-27 and which this asserts.
+  const { actorRoster } = await import("../src/human-actor.mjs");
+  const [resident, human] = actorRoster({
+    residents: ["rei"],
+    humanGrants: ["walk", "say"],
+    humanHandle: "keeminlee",
+    seats: [{ ground: "rei/the-lanternstep-house-parcel", from: "the-town/parcel" }],
+  });
+
+  assert.equal(resident.kind, "resident");
+  assert.equal(resident.handle, "rei");
+  assert.equal(resident.label, "rei");
+  assert.equal(resident.allowed, true);
+
+  assert.equal(human.kind, "human");
+  assert.equal(human.allowed, true, "ground granted, so the face is lit");
+  assert.equal(human.id, "keeminlee");
+  // THE LABEL IS THE VERIFIED GITHUB LOGIN, and it already was — `key.household`
+  // is `ghLogin ?? String(ghId)` (office oauth.mjs), which is exactly what the
+  // site's own bridge derives from `me.verified_github.login` and calls "the only
+  // durable name the site has for the person rather than for one of their
+  // residents". This pins that the two stay the same name.
+  assert.equal(human.label, "keeminlee");
+  assert.equal(human.reason, null, "an allowed face carries no refusal");
+  assert.equal(typeof human.token_url, "string");
+
+  // `because` — present, non-empty, and NAMING the ground that seated them
+  // rather than asserting that something did.
+  assert.equal(typeof human.because, "string");
+  assert.ok(human.because.includes("rei/the-lanternstep-house-parcel"),
+    "the sentence names WHICH ground lit the face");
+  assert.ok(human.because.includes("the-town/parcel"),
+    "and which class granted it — the half that tells a parcel from a portal");
+  assert.ok(/walk/.test(human.because) && /say/.test(human.because),
+    "and what it granted, so the face says what it is for");
+});
+
+test("a human with no ground under them gets a refusal and NO because", async () => {
+  // The discriminating leg, and it pins the contract's own asymmetry: `because`
+  // explains an allowance and `reason` explains a refusal. A row carrying both
+  // would be answering a question nobody asked, and a row carrying neither is
+  // the silent face this whole fix exists to end.
+  const { actorRoster } = await import("../src/human-actor.mjs");
+  const human = actorRoster({ residents: ["rei"], humanGrants: [], humanHandle: "keeminlee" })
+    .find((f) => f.kind === "human");
+  assert.equal(human.allowed, false);
+  assert.equal(human.because, null, "nothing seated them, so nothing is claimed to have");
+  assert.match(human.reason, /embodied only where a ground's class grants it/);
+  assert.equal(human.stance, "companioned-human");
+  // ALWAYS PRESENT, even unlit — "An absent option teaches nothing."
+  assert.equal(human.kind, "human");
+});
+
+test("an unnamed seat produces no sentence rather than an empty one", async () => {
+  // The failure direction that matters: if the grounds cannot be read, the door
+  // says nothing rather than writing prose around a blank. A `because` reading
+  // "  seats your household's human" would be the door inventing the one thing
+  // it asks the site not to invent.
+  const { actorRoster } = await import("../src/human-actor.mjs");
+  const human = actorRoster({ residents: ["rei"], humanGrants: ["say"], humanHandle: "keeminlee", seats: [] })
+    .find((f) => f.kind === "human");
+  assert.equal(human.allowed, true, "the grant still stands — this is about the sentence, not the permission");
+  assert.equal(human.because, null);
+});

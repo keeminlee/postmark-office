@@ -243,7 +243,31 @@ export function humanTokenUrl(handle, { token = null, dir = null } = {}) {
 // spellings, which would have been returned untouched and rendered as a row of
 // faces with no labels and no permission — silently, because `actorsFor` does
 // not validate what it passes through.
-export function actorRoster({ residents = [], humanGrants = [], humanHandle = null, humanToken = null, tokenDir = null, acting = null } = {}) {
+/**
+ * WHY A LIT FACE IS LIT, in the door's own words — the contract's `because`.
+ *
+ * The site declared it as "Why it is allowed, in the words of the law that
+ * allowed it — so a face that lights up says which ruling lit it rather than
+ * merely being bright." That is a sentence only the door can write, because only
+ * the door knows WHICH GROUND answered: the site's own bridge could name a
+ * portal or a parcel and nothing else, and said so.
+ *
+ * Null when nothing seats the human, and that is the contract's shape rather
+ * than an omission: `because` explains an allowance, `reason` explains a
+ * refusal, and a row carrying both would be answering a question nobody asked.
+ * Null too when the seats are unreadable — an unnamed ground is not a reason,
+ * and inventing prose for one would be the door doing what it asks the site not
+ * to.
+ */
+const seatedBecause = (seats = [], grants = []) => {
+  const rows = seats.map((s) => (typeof s === "string" ? { ground: s } : s)).filter((s) => s?.ground);
+  if (!rows.length) return null;
+  const where = [...new Map(rows.map((s) => [s.ground, s])).values()]
+    .map((s) => (s.from ? `${s.ground} (${s.from})` : s.ground));
+  return `${where.join(" and ")} seats your household's human — that ground's class grants them ${grants.join(", ") || "nothing"} where you stand, and nowhere else`;
+};
+
+export function actorRoster({ residents = [], humanGrants = [], humanHandle = null, humanToken = null, tokenDir = null, acting = null, seats = [] } = {}) {
   const roster = [...residents].filter(Boolean).map((h) => ({
     kind: "resident",
     handle: h,
@@ -265,6 +289,22 @@ export function actorRoster({ residents = [], humanGrants = [], humanHandle = nu
     allowed: embodied,
     reason: embodied ? null
       : `A human is embodied only where a ground's class grants it, and this ground does not. ${ONE_GRANT_FENCE}.`,
+    // ── `because` — THE CONTRACT'S FIELD, TRUED 2026-08-27 ──────────────────
+    //
+    // The site declared `because` on 2026-08-26 and this roster shipped without
+    // it on 08-27, which drifted at the worst possible moment: the day the door
+    // began answering `actors` was the day the site's own bridge stopped being
+    // walked, so `because` stopped existing and the human's face fell through to
+    // the stand-in "where ground allows". The one row whose words were most
+    // worth reading went quiet BY SUCCEEDING (site world-cockpit.mjs
+    // § humanWords, bday-pin).
+    //
+    // `says` is kept beside it and is not the same field. `says` is what this
+    // face IS, in every case; `because` is why THIS ground lit it, and only when
+    // it did. The site reads `because` first and falls back to `says`, so the
+    // two together mean the sentence shows whichever half of the contract a
+    // given reader was built against.
+    because: embodied ? seatedBecause(seats, humanGrants) : null,
     // The site's own word for the embodied case, so the bar can style the two
     // apart without re-deriving the rule.
     stance: embodied ? "embodied-human" : "companioned-human",

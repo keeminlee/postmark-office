@@ -1346,13 +1346,21 @@ async function apexRead(args, key) {
       actorHousehold: worldHouseholdOf(standingHandle(args, key)),
       groundHouseholdOf: (id) => worldHouseholdOf(ground.byId?.get(id)?.by ?? null),
     });
+    // GROUND-granted only. An ambient `say` reaches a human anywhere and says
+    // nothing about whether this room gives them feet — counting it would light
+    // "embodied" on every square of the world.
+    const humanGround = humanHere.entries.filter((e) => e.channel === "ground");
     actors = actorRoster({
       residents: [...(key?.handles ?? [])],
-      // GROUND-granted only. An ambient `say` reaches a human anywhere and says
-      // nothing about whether this room gives them feet — counting it would
-      // light "embodied" on every square of the world.
-      humanGrants: humanHere.entries.filter((e) => e.channel === "ground").map((e) => e.action),
+      humanGrants: humanGround.map((e) => e.action),
       humanHandle: humanHandleOf(key),
+      // WHICH GROUND SEATED THEM, so the roster's `because` can name the ruling
+      // that lit the face instead of asserting that one did. Only the door knows
+      // this: the site's own bridge could tell a portal from a parcel and no
+      // more, and its comment says so. `ground` is the instance standing under
+      // the caller; `from` is the CLASS that granted, which is the half that
+      // says whether this is a parcel's own-ground grant or a portal's welcome.
+      seats: humanGround.map((e) => ({ ground: e.ground, from: e.from ?? null })),
     });
   } finally { store.db?.close(); }
 
