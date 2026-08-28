@@ -285,12 +285,22 @@ export async function saveDraftClaim({ actor, householdName, declaration, seq = 
   });
 }
 
-/** One household's own drafts — the whole of what `/world2/my-drafts` answers. */
+/**
+ * One household's own drafts — the whole of what `/world2/my-drafts` answers.
+ *
+ * `submitted_at` comes back as `composed_at`, and `window_id` does not come
+ * back at all. Both are the same small honesty: a draft has not been submitted
+ * and rides no candle, so a column named for the docket would be telling the
+ * author something untrue about their own private thing. The row carries those
+ * values because 001 declares them NOT NULL and a draft has to hold SOMETHING;
+ * what it holds is not a fact about the draft, and the door does not present it
+ * as one. Both become true, and are rewritten, at submit.
+ */
 export async function readDraftClaims(key, env = process.env) {
   const p = await pool(env);
   const household = await householdKeyForKey(p, key);
   const rows = await withHousehold(p, household, (c) => c.query(
-    `SELECT id, slug, class, claimant, body, geometry, stake, submitted_at, window_id
+    `SELECT id, slug, class, claimant, body, geometry, stake, submitted_at AS composed_at
        FROM claims WHERE status = 'draft' AND household = $1 ORDER BY slug`, [household]));
   return { household, drafts: rows.rows };
 }
