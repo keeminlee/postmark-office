@@ -1,16 +1,17 @@
 # `world2/tools` — the repo→DB pens
 
-Three files. Two of them are the `law_ingester` pen; the third is the standing
-guard that holds their output to the repo.
+Four files. Two of them are the `law_ingester` pen; the third is the standing
+guard that holds their output to the repo; the fourth runs once, at the beginning.
 
 | file | what it is |
 |---|---|
 | `law-ingest.mjs` | the world-law repo → `law_projection` + `identities` |
 | `stamp-ingest.mjs` | the town repo → `stamp_projection` |
 | `falsifier-projection-equality.mjs` | re-derives from the checkout at `projection_heads.sha` and asserts equality |
+| `seed-import.mjs` | the frozen sandbox settlement → `windows` + `claims` + `marks` (+ legacy `acts`) |
 
 The law these implement is quoted verbatim in each file's header, from the gold
-plan (`G:/Starstory/PULSE/gold-plans/postmark-world-2/postmark-world-2.md` §3)
+plan (`G:/Starstory/PULSE/gold-plans/postmark-world-2/postmark-world-2.md` §3, §4)
 and the census ruling (`census.md`, decision 1 and the seams amendment). Read the
 headers; this page is the operating surface, not the law.
 
@@ -225,3 +226,231 @@ The build's 12 decisions were reviewed at merge; three were substantive, ruled a
 3. **`identities` replaced whole per ingest (current roster, no sha column)** — KEPT for dev, with the named consequence (ingesting an older law sha rewinds identities). If replay-parity (phase 5) needs roster-as-of, that phase adds the sha column; not before.
 
 Also noted at merge: `pg` resolved to `^8.16.3` (both lanes had added it); the falsifier's shared-derivation caveat (green = DB matches repo, not parser-verified) is accepted and stated in-file.
+
+## The seed
+
+`seed-import.mjs` runs **once**, before any pen has written anything, and turns the
+frozen sandbox settlement into World 2.0's opening state. Gold §4 phase 2: *"seed
+from the most recent settlement as if it were the only settlement."* Every mark
+standing in the frozen register locks in ONE genesis window; no prior windows are
+invented and no clearing is replayed. Replaying the real history is phase 5's job
+and a different tool.
+
+### The frozen sandbox, discovered
+
+The dev channel's seed is a tag **pair**, both named `sandbox/seed`, both annotated,
+each tag's message naming the other half:
+
+| half | repo | tag → commit |
+|---|---|---|
+| world | `keeminlee/postmark-world` | `sandbox/seed` → `52c281b8312d0a1d36eb81d03fbd1a36840a4eb1` |
+| town | `postmark-town/postmark` | `sandbox/seed` → `830a69963d8e4801ad4ed8bb80da38e79fd3fdbf` |
+
+The world half is also `settlement/S47` — the same commit, `settlement: sweep 0
+published, 0 unpublished`, committed `2026-08-26T05:45:16Z`. The tag message says
+what it is: *"S47's certified pair (world half) — the dev instance resets here by
+default. Retag to advance."*
+
+### Which pen, and why the owner
+
+`claims`, `marks` and `windows` belong to `office_api` and `clearing_job`. The seed
+holds none of those pens: it connects as **`world2_owner`** because seeding is a
+MIGRATION-class act — the schema's initial state, in the same class as the
+`registry` INSERT that ships inside `001_tables.sql`. It runs once, before any pen
+writes, and **nothing in the running town may ever call it**. That is the whole
+justification for the owner connection and the only one.
+
+### Running it
+
+The stateless contract is the siblings': the CALLER supplies the checkout, already
+at the tag; this tool never creates, fetches, checks out, rebases or cleans one, and
+the only git it runs is `rev-parse`. A `--tag`/`--sha` that disagrees with HEAD is
+refused, not corrected.
+
+```sh
+git clone --depth 1 --branch sandbox/seed https://github.com/keeminlee/postmark-world.git /tmp/frozen
+
+export PGHOST=localhost PGDATABASE=world2_dev PGUSER=world2_owner
+export PGPASSWORD=…            # /etc/postmark-world2-dev.env, PG_WORLD2_OWNER_PASSWORD
+
+node world2/tools/seed-import.mjs \
+  --world-repo /tmp/frozen --tag sandbox/seed \
+  --town-sha 830a69963d8e4801ad4ed8bb80da38e79fd3fdbf \
+  --with-acts
+rm -rf /tmp/frozen
+```
+
+`--dry-run` derives and prints the census without opening a connection. `--json`
+makes it machine-readable. `--strict` exits 1 if anything the checkout holds could
+not be carried (see below) — for a caller that wants the gap to be a build failure.
+
+The whole import is **one transaction**: either the genesis state exists or none of
+it does.
+
+### Reseeding is refused, and there is no `--force`
+
+Re-running is not a no-op the way the projection pens' re-runs are. Those write
+`projection` tables and replace them whole; these are `source` tables, and `acts`
+carries an append-only trigger. A DELETE here would be one pen performing another's
+act. So a second run stops and names what is already there:
+
+```
+refusing to seed: windows already holds row 150 (status closed).
+There is no --force-reseed that deletes. …
+TO RESEED, REBUILD THE SCHEMA — drop and re-apply world2/schema/001_tables.sql, then run this again.
+```
+
+`--force-reseed` exists only to print that answer, because it is the flag an
+operator reaches for.
+
+### The genesis window is discovered, not declared
+
+Every field is a fact the checkout already states. The id is the highest
+`STATE/log/<N>.jsonl` (*"the crossing NUMBER is the window id — the town's clock
+survives"*), `opens_at` is that file's `.meta.json` `covers_from`, and `closes_at`
+is the settlement commit's own date. A meta file that disagrees with its own
+filename about the clock is refused. `status` is `closed`, because this window is
+over — it produced the register being seeded. Opening window N+1 is `clearing_job`'s
+act, not the seed's.
+
+### What is carried, and what is not
+
+`marks` holds `id · slug · kind · owner · household · body · geometry · bbox ·
+status · locked_window` and nothing else. Everything else a 1.0 mark carries has no
+column. **Nothing is dropped quietly**: every unheld field is counted, printed under
+a `NOT CARRIED` heading, and written into `windows.receipts`, so the database itself
+carries the record of what its own seed could not represent.
+
+Choices worth knowing, each stated at its line in the file:
+
+- **ids are deterministic.** `uuid5(slug)` under a frozen namespace, not
+  `gen_random_uuid()` — so two honest runs of the same tag are comparable row for
+  row, which is what a snapshot diff and a replay-parity run need.
+- **one vocabulary.** The 1.0 `kind` is carried verbatim into BOTH `claims.class`
+  and `marks.kind` (the exclusion constraint's `WHERE` reads the latter), so the
+  clearing job's future claim→mark mapping is the identity.
+- **`points:` rings ride in `geometry`.** A ring is part of the claim
+  (`marksContain` is coverage-honest when one is present), so dropping it would
+  silently widen 21 marks — the five inland waters among them — to their bounding
+  box. `bbox` stays the analytic rect, because that is what the constraint and the
+  spatial index read.
+- **`household` is the KEY, from `households.json`** — the same file `identities` is
+  projected from. A handle the roster does not name gets NULL, not an invention.
+- **legacy `acts` are translated shallowly, on purpose.** `action = 'legacy:<type>'`,
+  `class = 'legacy'`, original event whole in `payload`, and `at_anchor/at_dx/at_dy`
+  left NULL — a legacy event carries a raw world x,y, which is exactly the
+  photograph the witnessed-line ruling refused; writing it into the anchor columns
+  would forge a witnessed line nobody witnessed. A log line the seed cannot read
+  stops the seed; it is never skipped.
+
+### `--verify`, and the proof it can fail
+
+```sh
+node world2/tools/seed-import.mjs --world-repo /tmp/frozen --tag sandbox/seed \
+  --town-sha 830a6996… --verify          # 0 equal · 1 drift · 2 cannot run
+```
+
+Same exit-code discipline as the projection falsifier, for the same reason: there is
+no code for "checked nothing and found nothing", so an empty table or a missing
+window is a finding, never a pass. It compares the window's pins, the locked-claim
+count, and per-slug substance across every column the seed writes.
+
+The red-proof is built in, and it differs from the projection guard's on purpose.
+That one's mangles must COMMIT (only the owner can drift a projection, and the
+repair is another run of the pen). Here the seed already runs as the owner and
+reseeding is deliberately impossible, so a committed mangle would leave the world
+wrong with nothing able to fix it. `--can-fail-proof` therefore mangles inside a
+transaction on the verifier's own connection and rolls back:
+
+```
+$ node world2/tools/seed-import.mjs --world-repo /tmp/frozen --tag sandbox/seed --can-fail-proof
+RED   after mangle: body of aion-solare/aelyria — 1 finding(s)
+  marks DIFFERS at aion-solare/aelyria · field body
+      repo says: …rees, and an upward waterfall. (first divergence at char 123)
+      DB says:   …rees, and an upward waterfall. — MANGLED (first divergence at char 123)
+RED   after mangle: DELETE aion-solare/old-fig — 2 finding(s)
+RED   after mangle: INSERT forged/not-a-real-mark — 2 finding(s)
+GREEN after rollback — the mangles left no trace
+
+can-fail PROVEN: every mangle turned the verifier red, and rollback restored green.
+```
+
+Three mangles because there are three shapes of drift a seed can suffer: a value
+changed, a row gone, a row that should not exist.
+
+**The verifier's first live run went red on all 409 marks, and it was a false
+alarm.** `jsonb` stores a value, not a document: it sorts object keys, so
+`{"w":4,"h":6}` comes back `{"h":6,"w":4}`. Fixed in the COMPARATOR
+(`canonicalJson`), not at the derivation — and the difference is the point.
+law-ingest's `jsonSafe` fixed a deriver returning something the database could not
+hold; this deriver is right, and what was wrong was a comparator asking about a
+serialisation when the question is about a value. Same lesson underneath: a guard
+whose first real firing is a false positive is a guard people turn off.
+
+### Row census on dev, 2026-08-28
+
+World `52c281b8` (`sandbox/seed` = `settlement/S47`), town `830a6996`:
+
+```
+windows      1   id 150, closed, 2026-08-26T00:00Z → 05:45:16Z, law_sha + town_sha pinned
+claims     409   all locked in window 150
+marks      409   sited 343 · parcel 66   (standing_marks view: 409)
+acts     2,400   legacy — emission 1,603 · departure 754 · attachment 43, crossings 118–149
+```
+
+`--verify` green; `--can-fail-proof` green; the reseed refusal fires on the second
+run. The frozen register holds 960 mark records, and the 551 that did not become
+rows are accounted for below.
+
+**`parcels_do_not_overlap` did NOT fire, and the constraint is armed.** All 66
+frozen parcels are 25×25 and no two share so much as an edge — checked before the
+run and confirmed by it. That the seed passed is only evidence because the
+constraint was then shown to refuse:
+
+```
+BEGIN;
+INSERT INTO marks (…) SELECT …, 'probe/overlapping-parcel', 'parcel', …, geometry, bbox, …
+  FROM marks WHERE kind='parcel' ORDER BY slug LIMIT 1;
+ERROR:  conflicting key value violates exclusion constraint "parcels_do_not_overlap"
+DETAIL:  Key (bbox)=((4050,5051),(4025,5026)) conflicts with existing key (bbox)=((4050,5051),(4025,5026)).
+ROLLBACK;
+```
+
+The same INSERT with `kind='sited'` is accepted — the constraint is parcel-scoped,
+as written. **1.0 canon does not violate 2.0's overlap rule.**
+
+### What the seed could not carry (open, for the parity matrix)
+
+Two real gaps, both recorded in `windows.receipts` and printed by every run:
+
+1. **422 de-sited marks have no row shape** — 415 `predicated` + 7 `naming`.
+   `marks.geometry` and `marks.bbox` are `NOT NULL`, and a predicated mark is its
+   parent continued: it has no where, by 1.0 law. 44% of the register is not in the
+   database. (The 129 `class` marks are a separate line and NOT a loss: they are
+   law, and `law_ingester`'s pen.)
+2. **20 frontmatter fields on the 409 seeded marks have no column** — `date` and
+   `tier` on all 409, `pre`/`derived_from` on 225, `image` on 78, `class` on 24,
+   `feature` on 14, and singletons including `entry`, `timetable`, `mobility`, and a
+   bounty's `status: open`. `marks` holds no jsonb for the record's remainder.
+
+Both want the same ruling and it is not the seed's to make: whether `marks` grows a
+`data jsonb` column (and `geometry`/`bbox` become nullable), or whether the de-sited
+marks live somewhere else entirely.
+
+### One thing that blocks a law pin at the seed's sha
+
+`law-ingest.mjs` **cannot run against `sandbox/seed`**. Its `readersOf` imports
+`tools/enter-exit.mjs` from the checkout, and at `52c281b8` that file does not exist
+yet — the reader was called `tools/thresholds.mjs` until world commit `e14a0bd7`,
+which is *after* the frozen tag. It exports the same `termsAt` and `entryLawOf`
+under the old name, so the fix is a fallback in `readersOf`; it is named here rather
+than made, because it is the sibling pen's file.
+
+Consequence today: `windows(150).law_sha` is pinned to `52c281b8` — a true statement
+about which law commit the frozen state cleared under, and there is no foreign key —
+but `law_projection` holds no rows at that sha. `stamp_projection` DOES: the town
+half ingested cleanly (`830a6996`, 134 handles, 132 holding).
+
+This is the general shape worth watching: "reuse the readers, imported from the
+checkout being ingested" is only sha-portable as far back as the reader's current
+NAME goes.
