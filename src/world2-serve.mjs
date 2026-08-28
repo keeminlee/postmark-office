@@ -281,7 +281,7 @@ export async function world2Serve(path, searchParams) {
       roster: { walk_records: new Set(derived.records.map((d) => d.handle)).size, parcels: world.parcels.length, roll: roll.length },
       count: residents.length,
       residents,
-      disclosed: [live.DISCLOSURES.frames, live.DISCLOSURES.no_staleness, ...notes],
+      disclosed: [live.DISCLOSURES.frames, live.DISCLOSURES.no_staleness, live.DISCLOSURES.roll_source, ...notes],
     };
     if (near) {
       // The RENDER gets the radius, never the roll (world.mjs § walkersAround).

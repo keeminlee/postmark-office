@@ -425,6 +425,23 @@ test("the bound is a RADIUS, and the whole roll stays countable from the answer"
   assert.equal(r.roll, 20);
 });
 
+test("the vessel is not a resident, and she is dropped from BOTH halves of the union", () => {
+  // dynamic-presence.mjs: "she is a mark that moves, not a resident, and the
+  // entities table she is excluded from is what feeds the departures below" —
+  // plus "belt and braces: she is not in this table to begin with".
+  //
+  // `acts` makes no such distinction: she declares departures like anyone else,
+  // and the first cut of /world2/present listed her. The A/B against the lab's
+  // 1.0 door is what found it.
+  const dep = [{ handle: "the-post-office", from: { x: 0, y: 0 }, toward: { x: 900, y: 900 }, at: 100, pace: 405 }];
+  const rows = live.everyonePlaced({ world: W(), departures: dep, at: 200,
+    roll: [...IDS.map((i) => i.handle), "the-post-office"] });
+  assert.equal(rows.some((r) => r.handle === "the-post-office"), false);
+  // And she IS in the positions read, which is `positionsAt`'s answer over the
+  // record — 1.0 has no vessel exclusion there either. Two doors, two questions.
+  assert.equal(Object.keys(live.positionsAt(dep, 200))[0], "the-post-office");
+});
+
 test("`aboard` is ABSENT from these answers rather than always false", () => {
   // A field that is always false is a lie with a schema: Stage D's frame fold
   // has no 2.0 surface, so the overlay is disclosed, never faked.

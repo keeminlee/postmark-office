@@ -533,6 +533,26 @@ export function departureCensus(records) {
 
 export const QUAY_MARK_ID = "the-town/the-quay";
 
+/**
+ * dynamic-entities.mjs `VESSEL_HANDLE` / `NON_ENTITY_ACTORS`, verbatim.
+ *
+ * SHE IS NOT A RESIDENT. `dynamic-presence.mjs` deletes her from the departures
+ * before the union is built — "she is a mark that moves, not a resident, and the
+ * entities table she is excluded from is what feeds the departures below" — and
+ * `worldWalkers` publishes her separately, from the TIMETABLE, with
+ * `source: "timetable"`, because "her position is f(timetable, clock)".
+ *
+ * `acts` does not make that distinction: she declares departures like anyone
+ * else, and the first cut of `/world2/present` duly listed her among the
+ * residents. The A/B against the lab's 1.0 door is what found it — she was one
+ * of three handles 2.0 placed and 1.0 did not.
+ *
+ * She is excluded from the RESIDENT union and kept in `/world2/positions`, which
+ * is `positionsAt`'s answer over the record and has no such exclusion in 1.0
+ * either. Two doors, two questions.
+ */
+export const NON_ENTITY_ACTORS = Object.freeze(["the-post-office"]);
+
 /** where-is.mjs `NOWHERE`, verbatim — "The honest nowhere." */
 export const NOWHERE = Object.freeze({ x: null, y: null, placed: false, source: null, mark_id: null });
 
@@ -704,9 +724,21 @@ export function publicResidents(handles, { world = null, departures = [], at = f
   return out;
 }
 
-/** positions.mjs `everyonePlaced`, over rows — the union both doors read. */
+/**
+ * positions.mjs `everyonePlaced`, over rows — the union both doors read.
+ *
+ * The vessel is dropped from BOTH the roster and the departures, which is
+ * `dynamic-presence.mjs`'s own two-step ("belt and braces: she is not in this
+ * table to begin with"). Dropping her from the roster alone would leave her
+ * departures able to place a passenger; dropping her from the departures alone
+ * would leave the roll able to name her.
+ */
 export function everyonePlaced({ world = null, departures = [], at, roll = [] } = {}) {
-  return publicResidents(positionRoster({ departures, world, roll }), { world, departures, at });
+  const notVessel = (h) => !NON_ENTITY_ACTORS.includes(h);
+  const deps = (departures ?? []).filter((d) => notVessel(d.handle));
+  const roster = positionRoster({ departures: deps, world, roll: (roll ?? []).filter(notVessel) })
+    .filter(notVessel);
+  return publicResidents(roster, { world, departures: deps, at });
 }
 
 /**
@@ -1020,4 +1052,15 @@ export const DISCLOSURES = Object.freeze({
   no_staleness: "no staleness to disclose: 2.0 derives position at the instant asked, from the store's own " +
                 "records. There is no crystallized entities table to be behind the ledger, so 1.0's " +
                 "`ledger_moved` / `as_of` disclosures have nothing to describe.",
+  // THE ROLL'S SOURCE IS A RULING, and this answer names which one it took.
+  // 1.0's roll arrives from the TOWN side (`ctx.roll`, the door the #1864 report
+  // came through); 2.0's is `identities`, the projection of the world repo's
+  // `households.json`. The two rosters overlap but neither contains the other —
+  // measured against the lab's 1.0 door on 2026-08-28, twelve handles were in
+  // 1.0's roll and not in `identities`, and two the other way. Whether the 2.0
+  // roll should be the town's or the world's is not this port's call.
+  roll_source: "the roll here is `identities` — the world repo's households.json, projected. 1.0's doors " +
+               "take the TOWN's roll instead, and the two are not the same list: a handle the town knows " +
+               "and households.json does not is asked about by 1.0 and not by this door. Which roster the " +
+               "2.0 read tier should ask is unruled.",
 });
