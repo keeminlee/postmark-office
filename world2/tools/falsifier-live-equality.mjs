@@ -15,17 +15,22 @@
 // so two derivations are the whole point — and every oracle below is 1.0's OWN
 // function, imported live, never a re-expression written here.
 //
-// ── THE SIX EQUALITIES, AND WHAT EACH ONE COULD CATCH ───────────────────────
+// ── THE EQUALITIES, AND WHAT EACH ONE COULD CATCH ──────────────────────────
 //
 //   E1 THE LEDGER PARSE   the checkout's `parseWalkLedger` over
 //                         WORLD/walk-ledger.md, against `departureRecordOf` over
 //                         the ledger-sourced acts. Catches: the backfill's
 //                         payload read wrong, a dropped field, a coerced type.
-//   E2 THE ORDER          the checkout's `currentDeparture` over the ledger in
+//   E2 THE LEDGER ORDER   the checkout's `currentDeparture` over the ledger in
 //                         FILE order, against `governingDepartures` over the
-//                         acts in DEPARTURE_ORDER_SQL order. Catches the
-//                         44-handle trap: `ORDER BY id` puts the pre-journal era
-//                         last, and this is the check that says so.
+//                         ledger-era acts. Scoped to the rows the store holds —
+//                         the 13 the journal carries are not a disagreement.
+//   E2b THE MERGED ORDER  the office's `recordsAcrossEras` merge, against the
+//                         governing departure over the list AS READ. THIS is the
+//                         check that catches the 44-handle trap: `ORDER BY id`
+//                         puts the pre-journal era last, and E2 alone cannot see
+//                         it because reordering does not disturb one era's
+//                         internal order.
 //   E3 THE JOURNAL SEAM   the office's own `storedDepartures` over an in-memory
 //                         `movements` table built from the journal acts' inner
 //                         payloads, against `departureRecordOf` over the same
@@ -215,6 +220,40 @@ export function e2Order(records, ledgerText) {
   }
   return { findings, compared, ledger_rows: departures.length, scoped_rows: scoped.length,
     held_by_the_journal_era: held.length };
+}
+
+/**
+ * E2b · THE MERGED ORDER — the check that actually catches the 44-handle trap.
+ *
+ * E2 scopes to the ledger era, so reordering the whole read leaves it green: the
+ * ledger rows keep their relative order however the list is sorted. The trap is
+ * in the MERGE, and 1.0 has a function for exactly that merge —
+ * `world-movement.mjs recordsAcrossEras`:
+ *
+ *   "APPENDED, NOT SORTED … Era one keeps its order; era two follows, which is
+ *    correct because every store record postdates the freeze."
+ *
+ * So the oracle re-partitions the records into their two eras and merges them
+ * 1.0's way, then asks `currentDeparture`. The port's side takes the list AS
+ * READ. Feed it an `id`-ordered read and the two diverge on every handle whose
+ * eras got swapped — which is what the measured 44 are.
+ */
+export function e2bMergedOrder(records) {
+  const findings = [];
+  const eraOne = records.filter((r) => r.era === "ledger");
+  const eraTwo = records.filter((r) => r.era !== "ledger");
+  const merged = movementMod.recordsAcrossEras(eraOne, eraTwo);
+  const mine = live.governingDepartures(records);
+  let compared = 0;
+  for (const h of new Set(records.map((r) => r.handle))) {
+    const o = walkMod.currentDeparture(merged, h);
+    const m = mine.get(h);
+    compared++;
+    if (!o || !m) { findings.push(`E2b one side has no governing departure for ${h}`); continue; }
+    if (!sameRecord(m, o))
+      findings.push(`E2b the merged governing departure differs for ${h}\n      1.0 (recordsAcrossEras): ${show(o)}\n      port (the read's order):  ${show(m)}`);
+  }
+  return { findings, compared, era_one: eraOne.length, era_two: eraTwo.length };
 }
 
 // ── E3 · the journal seam ────────────────────────────────────────────────────
@@ -546,6 +585,7 @@ try {
   const e = {
     E1: e1LedgerParse(derived.records, ledgerText),
     E2: e2Order(derived.records, ledgerText),
+    E2b: e2bMergedOrder(derived.records),
     E3: await e3JournalSeam(depRows, derived.records),
     E4: e4Arithmetic(derived.records, instants),
     E5: e5Union(derived.records, world, roll, live.fractionalCrossing(nowMs)),
@@ -576,45 +616,74 @@ try {
     // design (the store's own rows are never touched), so the mangles are done
     // to the INPUTS instead. Each is a plausible way the port could be wrong.
     const results = [];
-    const proof = (label, run) => {
-      let n = 0;
-      try { n = run().length; } catch (err) { n = -1; results.push({ mangle: label, findings: -1, note: `threw: ${String(err.message).slice(0, 120)}` }); return; }
-      results.push({ mangle: label, findings: n });
+    /**
+     * A BREAK THAT CHANGES NO INPUT IS NOT A BREAK — the standing lane's finding,
+     * verbatim: "A proof lying in the safe direction is the worst kind, so the
+     * harness now checks `rowCount` for every mangle and reports INERT — the fix
+     * is the harness's, not each mangle's to remember."
+     *
+     * Here the inputs are in memory rather than in rows, so `bit` is the harness's
+     * `rowCount`: each break says how many of its own inputs it actually altered.
+     * A break that altered none is reported INERT and never counted as a pass OR
+     * as a silence — it is a defect in the proof, and it says which.
+     */
+    const proof = async (label, run) => {
+      try {
+        const r = await run();
+        const findings = Array.isArray(r) ? r : r.findings;
+        const bit = Array.isArray(r) ? null : r.bit;
+        results.push({ mangle: label, findings: findings.length, bit,
+          first: findings[0]?.split("\n")[0] ?? null });
+      } catch (err) {
+        results.push({ mangle: label, findings: -1, bit: null, note: `threw: ${String(err.message).slice(0, 140)}` });
+      }
     };
 
-    // 1 · the 44-handle trap: read the acts by plain id instead of era-then-id.
-    proof("departures read in plain `id` order (the era seam ignored)", () => {
+    // EACH BREAK MUST REACH THE CHECK THAT OWNS IT. The first pass of this proof
+    // fed the same broken input to BOTH sides of an equality, which of course
+    // agreed — four breaks read SILENT and none of them was. A break is aimed at
+    // the ONE equality whose oracle is independent of it.
+
+    // 1 · THE 44-HANDLE TRAP: the acts read by plain `id` instead of era-then-id.
+    //     Aimed at E2b, whose oracle re-partitions by era and merges 1.0's way.
+    await proof("departures read in plain `id` order (the era seam ignored)", () => {
       const byId = [...depRows].sort((a, b) => Number(a.id) - Number(b.id));
       const recs = byId.map((r) => { const d = live.departureRecordOf(r); return d.refused ? null : { ...d.record, era: d.era, act_id: String(r.id) }; }).filter(Boolean);
-      return e2Order(recs, ledgerText).findings;
+      const moved = recs.findIndex((r, i) => r.act_id !== derived.records[i]?.act_id);
+      return { bit: moved === -1 ? 0 : recs.length, findings: e2bMergedOrder(recs).findings };
     });
-    // 2 · the journal era dropped, which is what a one-era port looks like.
-    proof("the journal era dropped (a port that reads only the frozen ledger)", () =>
-      e5Union(derived.records.filter((r) => r.era !== "journal"), world, roll, live.fractionalCrossing(nowMs)).findings.length
-        ? e5Union(derived.records.filter((r) => r.era !== "journal"), world, roll, live.fractionalCrossing(nowMs)).findings
-        : e4Arithmetic(derived.records.filter((r) => r.era !== "journal"), instants).findings);
-    // 3 · the sharpest edge: read 2.0's `household` COLUMN as 1.0's handle.
-    proof("marks.household read as the handle (the _cred edge)", () => {
-      const bad = { ...world, parcels: world.parcels.map((p) => ({ ...p, household: p._cred })) };
-      return e5Union(derived.records, bad, roll, live.fractionalCrossing(nowMs)).findings;
+    // 2 · THE JOURNAL ERA DROPPED, which is what a one-era port looks like.
+    //     Aimed at E3, whose oracle is the office's own storedDepartures over the
+    //     journal rows — a side the break cannot reach.
+    await proof("the journal era dropped (a port that reads only the frozen ledger)", async () => {
+      const kept = derived.records.filter((r) => r.era !== "journal");
+      return { bit: derived.records.length - kept.length, findings: (await e3JournalSeam(depRows, kept)).findings };
     });
-    // 4 · the TTL predicate inverted — presence as a delete rather than a query.
-    proof("the TTL predicate widened (every emission stays in the air forever)", () => {
+    // 3 · THE SHARPEST EDGE: 2.0's `household` COLUMN read as 1.0's handle.
+    //     Aimed at E5b, whose oracle is the checkout's own fold.
+    await proof("marks.household read as the handle (the _cred edge)", async () => {
+      const bad = { ...world, parcels: world.parcels.map((p) => ({ ...p, household: p._cred ?? p.household })) };
+      const bit = bad.parcels.filter((p, i) => p.household !== world.parcels[i].household).length;
+      return { bit, findings: (await e5bShimVsFold(bad)).findings };
+    });
+    // 4 · THE TTL PREDICATE WIDENED — presence as a lookup rather than a query.
+    //     Aimed at E6emissions, whose oracle is 1.0's own SQL over sqlite.
+    await proof("the TTL predicate widened (every emission stays in the air forever)", () => {
       const all = emitRows.map((r) => live.emissionOf(r)).filter((r) => !r.refused).map((r) => r.emission);
-      const mineIds = all.map((x) => x.id).join("|");
-      const realIds = live.presentEmissionsAt(emitRows, emissionAt).map((x) => x.id).join("|");
-      return mineIds === realIds ? [] : ["E6 the widened TTL returns a different set — the predicate is load-bearing"];
+      const real = live.presentEmissionsAt(emitRows, emissionAt);
+      return { bit: all.length - real.length,
+        findings: all.length === real.length ? [] : [`the widened TTL returns ${all.length} where the query returns ${real.length} — the predicate is load-bearing`] };
     });
-    // 5 · the `opposed` word honoured as an entry, which would let a resident
-    //     stand inside a mark that refused them at the threshold.
-    proof("an `opposed` crossing counted as an entry", () => {
+    // 5 · THE `opposed` REFUSAL HONOURED AS AN ENTRY. Aimed at E6occupancy.
+    await proof("an `opposed` crossing counted as an entry", () => {
+      const opposed = passages.passages.filter((p) => p.word === "opposed");
       const widened = passages.passages.map((p) => (p.word === "opposed" ? { ...p, word: "neutral" } : p));
       const a = JSON.stringify([...live.occupancyAt(passages.passages, Infinity)].sort());
       const b = JSON.stringify([...live.occupancyAt(widened, Infinity)].sort());
-      return a === b ? [] : ["the opposed word changes the stack — the refusal is load-bearing"];
+      return { bit: opposed.length, findings: a === b ? [] : ["the opposed word changes the stack — the refusal is load-bearing"] };
     });
-    // 6 · the vendored pace constant moved, which would rewrite every unstamped leg.
-    proof("the vendored arithmetic drifted (positionAt fed a wrong pace)", () => {
+    // 6 · THE VENDORED ARITHMETIC DRIFTED. Aimed at E4.
+    await proof("the vendored arithmetic drifted (positionAt fed a wrong pace)", () => {
       const bent = derived.records.map((r) => ({ ...r, pace: (r.pace ?? 15) + 1 }));
       const f = [];
       for (const d of [...live.governingDepartures(bent).values()].slice(0, 50)) {
@@ -622,12 +691,22 @@ try {
         const m = live.positionAt(d, instants[1]);
         if (o.x !== m.x || o.y !== m.y) f.push(`pace change moves ${d.handle}`);
       }
-      return f;
+      return { bit: bent.length, findings: f };
+    });
+    // 7 · A REFUSAL SWALLOWED — an era the port does not know, skipped instead of
+    //     named. Aimed at `departureRecords`' own strictness.
+    await proof("an unreadable act skipped instead of refused", () => {
+      const forged = { id: String(Number(depRows.at(-1).id) + 1), at: new Date(), crossing: "999",
+        actor: "nobody", action: "legacy:departure", payload: { some: "future-pen" } };
+      let threw = false;
+      try { live.departureRecords([...depRows, forged]); } catch { threw = true; }
+      return { bit: 1, findings: threw ? ["the strict read refuses an act it cannot explain"] : [] };
     });
 
     out.can_fail = {
       results,
-      silent: results.filter((r) => r.findings === 0).map((r) => r.mangle),
+      silent: results.filter((r) => r.findings === 0 && r.bit !== 0).map((r) => r.mangle),
+      inert: results.filter((r) => r.bit === 0).map((r) => r.mangle),
       threw: results.filter((r) => r.findings === -1).map((r) => r.mangle),
     };
   }
