@@ -1348,3 +1348,12 @@ search stops at the first container rather than scanning the town
 (`rankCandidates`). The 1.0-verbatim exhaustive path is kept beside it and a unit
 test asserts the two agree mark for mark, including the equal-area tie-break that
 depends on the sort being stable.
+
+## Merge rulings (Wright, 2026-08-28 night — the standing lane's 4 teed decisions)
+
+1. Authored-tier-under-its-own-key: ACCEPTED AS RECOMMENDED — taken when the seed is next touched; the fixpoint holds and the falsifier watches it meanwhile.
+2. Ranked search KEPT — it bounds the growth, and the unit test asserting agreement with the 1.0-verbatim exhaustive path (equal-area tie-break included) is what makes a second path through law code tolerable.
+3. Vendored geometry ACCEPTED (blob-pinned, warning-on-move, and the fold comparison over the whole register is the real guard).
+4. Seed --verify red-past-the-floor: correctly documented as the store having lawfully moved, not a regression.
+
+The lane's own best lines, kept for the record: the port agreed with the fold on all 846 slugs FIRST RUN, nothing tuned to green; "a mangle that changes no row is not a mangle" (INERT detection); and the flip pass catching a test both orderings satisfied.
