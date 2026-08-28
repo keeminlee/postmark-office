@@ -9,22 +9,35 @@
 BEGIN;
 
 -- ── LIVE lane ────────────────────────────────────────────────────────────────
--- The append-only event log. 1.0 source: STATE/log/<N>.jsonl.
+-- The append-only event log. Its row grammar is the office JOURNAL's
+-- (dynamic-store.mjs `journal` table, the 2026-08-23 witnessed-line ruling) —
+-- NOT the older STATE/log photograph shape: position is an anchor and an
+-- offset ("a raw world x,y is a photograph of a moving thing"). 1.0 sources at
+-- seed: the journal itself, plus STATE/log/<N>.jsonl translated (legacy events
+-- ride with action = 'legacy:<type>' and their original body in payload).
 -- Writer: office_api, INSERT only. Nothing updates or deletes an act, ever.
 CREATE TABLE acts (
-  id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  at          timestamptz NOT NULL,
-  crossing    numeric     NOT NULL,          -- the town clock (fractional within a window, per 1.0 departure rows)
-  type        text        NOT NULL,          -- emission | departure | attachment | ... (parity matrix finalizes the enum)
+  id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- = journal.seq role
+  at          timestamptz NOT NULL,          -- journal.written_at
+  crossing    numeric,                       -- the town clock (fractional within a window)
   actor       text        NOT NULL,
-  event_id    text,                          -- 1.0 payload id where one exists (e.g. sound:<ts>:<actor>)
-  seq         integer,                       -- 1.0 per-actor sequence where one exists
-  payload     jsonb       NOT NULL,
+  action      text        NOT NULL,          -- the apex verb (say/walk/enter/...; 'legacy:<type>' at seed)
+  object      text,
+  at_anchor   text,                          -- the witnessed line: anchor + offset, never a bare x,y
+  at_dx       double precision,
+  at_dy       double precision,
+  witnesses   jsonb,
+  class       text        NOT NULL,
+  payload     jsonb,
+  effect      text,
+  household   text,
   inserted_at timestamptz NOT NULL DEFAULT now()
 );
-CREATE INDEX acts_actor_at_idx ON acts (actor, at);
-CREATE INDEX acts_crossing_idx ON acts (crossing);
-CREATE INDEX acts_type_at_idx  ON acts (type, at);
+CREATE INDEX acts_actor_id_idx    ON acts (actor, id);
+CREATE INDEX acts_household_idx   ON acts (household, id);
+CREATE INDEX acts_object_idx      ON acts (object, id);
+CREATE INDEX acts_class_idx       ON acts (class, id);
+CREATE INDEX acts_crossing_idx    ON acts (crossing);
 
 -- ── CANDLE lane ──────────────────────────────────────────────────────────────
 -- The clearing windows. The crossing NUMBER is the window id — the town's clock
