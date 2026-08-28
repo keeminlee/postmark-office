@@ -74,9 +74,22 @@ export const LAW_REPO_KEY = "world-law"; // projection_heads.repo for this pen
 const toolUrl = (repo, file) => pathToFileURL(join(resolve(repo), "tools", file)).href;
 
 async function readersOf(lawRepo) {
+  // TWO-NAME FALLBACK (the rename-orphans class, 4th instance, found by the
+  // seed jetto 2026-08-28): the entry-law reader was tools/thresholds.mjs until
+  // world e14a0bd7 renamed it tools/enter-exit.mjs — AFTER the frozen
+  // sandbox/seed tag (52c281b8). Both export the same termsAt/entryLawOf.
+  // "Import the reader from the checkout" is only sha-portable as far back as
+  // the reader's name goes, so a historical sha gets the name of its own day.
+  const entryLawReader = async () => {
+    try { return await import(toolUrl(lawRepo, "enter-exit.mjs")); }
+    catch (err) {
+      if (err?.code !== "ERR_MODULE_NOT_FOUND") throw err;
+      return import(toolUrl(lawRepo, "thresholds.mjs"));
+    }
+  };
   const [fold, enterExit] = await Promise.all([
     import(toolUrl(lawRepo, "marks-fold.mjs")),
-    import(toolUrl(lawRepo, "enter-exit.mjs")),
+    entryLawReader(),
   ]);
   return { loadMarks: fold.loadMarks, termsAt: enterExit.termsAt, entryLawOf: enterExit.entryLawOf };
 }
