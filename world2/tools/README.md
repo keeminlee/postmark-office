@@ -1179,7 +1179,6 @@ leaked fixture acts and `wright/candle-proof` are gone.
 
 Also accepted with thanks: the seed lighting its own candle (the 58.9h hole was the seed's, now unrepresentable), the fractional-journal widening, compareMarks extraction, and the phantom-claim receipt (le-petit-berthillon) — the single best proof in the report that the harness reads the AUTHORED record and not its own reflection.
 
-<<<<<<< HEAD
 ## The standing recompute
 
 `standing.mjs` is 1.0's standing walk over `marks` rows, and `clearing-job.mjs`
@@ -1358,7 +1357,6 @@ depends on the sort being stable.
 4. Seed --verify red-past-the-floor: correctly documented as the store having lawfully moved, not a regression.
 
 The lane's own best lines, kept for the record: the port agreed with the fold on all 846 slugs FIRST RUN, nothing tuned to green; "a mangle that changes no row is not a mangle" (INERT detection); and the flip pass catching a test both orderings satisfied.
-=======
 ## Private durability — the pg_dump lane (Phase 5.6)
 
 The notary's promise stops at the private compose space, deliberately. Gold §4
@@ -1413,7 +1411,6 @@ hand-run before anything that could lose the store (a migration touching
 `claims`, a box move, a Postgres upgrade). When drafts are load-bearing enough
 that a hand-run is not enough, that is a ruling to bring to Keemin with the
 instance that made it true, not a cron to add quietly.
->>>>>>> be203f61e6e66dd4b28869ad22a82e1ed8a66e30
 
 ## Merge rulings (Wright, 2026-08-28 night — the drafts lane's teed decisions)
 
