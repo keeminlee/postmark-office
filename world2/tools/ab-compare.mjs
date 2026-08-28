@@ -311,12 +311,29 @@ async function sweepPassages() {
   if (existsSync(wl)) {
     const rows = readFileSync(wl, "utf8").split("\n").filter((l) => l.startsWith("- "));
     const [{ min }] = await sql("SELECT min(at) AS min FROM acts");
+    // MULTIPLICITY, not membership. The frozen ledger genuinely repeats one row —
+    // rook-of-garrison at 2026-08-08T18:00:00.000Z is written twice, byte for
+    // byte, an append that ran twice — and the import carries both, because the
+    // record says two. A Set would call that pair satisfied by a single act, so a
+    // dropped copy would hide. Counting per key cannot.
     const dep = await sql("SELECT at, actor FROM acts WHERE action = 'legacy:departure'");
-    const have = new Set(dep.map((r) => `${new Date(r.at).toISOString()}|${r.actor}`));
-    if (SELF_TEST && have.size) have.delete([...have][0]);
+    const have = new Map();
+    for (const r of dep) {
+      const k = `${new Date(r.at).toISOString()}|${r.actor}`;
+      have.set(k, (have.get(k) ?? 0) + 1);
+    }
+    if (SELF_TEST && have.size) {
+      const k = [...have.keys()][0];
+      have.set(k, have.get(k) - 1);
+    }
     const missing = rows.filter((l) => {
       const m = /^- (\S+) · (\S+) · /.exec(l);
-      return m && !have.has(`${new Date(m[1]).toISOString()}|${m[2]}`);
+      if (!m) return false;
+      const k = `${new Date(m[1]).toISOString()}|${m[2]}`;
+      const left = have.get(k) ?? 0;
+      if (left <= 0) return true;
+      have.set(k, left - 1);          // each ledger row consumes one act
+      return false;
     });
     console.log(`  walk-ledger rows: ${rows.length} · departure acts: ${dep.length} · acts begin ${new Date(min).toISOString()}`);
     if (missing.length) finding("passages", "AB-P3", `${missing.length} of ${rows.length} walk-ledger departures have no act in 2.0, e.g. ${missing[0].slice(2, 60)}`);
