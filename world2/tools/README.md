@@ -1,7 +1,8 @@
-# `world2/tools` — the repo→DB pens
+# `world2/tools` — the repo↔DB pens
 
-Four files. Two of them are the `law_ingester` pen; the third is the standing
-guard that holds their output to the repo; the fourth runs once, at the beginning.
+Two of them are the `law_ingester` pen; the third is the standing guard that
+holds their output to the repo; the fourth runs once, at the beginning. The last
+runs the other way — it is the only one that reads the DB and writes the repo.
 
 | file | what it is |
 |---|---|
@@ -9,6 +10,7 @@ guard that holds their output to the repo; the fourth runs once, at the beginnin
 | `stamp-ingest.mjs` | the town repo → `stamp_projection` |
 | `falsifier-projection-equality.mjs` | re-derives from the checkout at `projection_heads.sha` and asserts equality |
 | `seed-import.mjs` | the frozen sandbox settlement → `windows` + `claims` + `marks` (+ legacy `acts`) |
+| `snapshot-export.mjs` | the DB → notary certifications, event archives and mark bodies in git (`snapshot_exporter`) |
 
 The law these implement is quoted verbatim in each file's header, from the gold
 plan (`G:/Starstory/PULSE/gold-plans/postmark-world-2/postmark-world-2.md` §3, §4)
@@ -525,3 +527,233 @@ slot/engine records in the Keeping Works) keeps `parent NULL` with the edge verb
 different KIND of edge than a marks-parent, and folding both into one FK would be false
 uniformity. If a consumer ever needs it as a queryable column, that is a 005-class
 migration (`parent_law_key text`), teed then, not built now (keep-simple).
+
+## The notary
+
+`snapshot-export.mjs` is pen 4, and it is the only one in this directory that
+runs the other way: it **reads the database and writes the repo, and holds no
+credential that could write the database**. Gold §3 rule 2 names it —
+*"`snapshot_exporter` (reads DB, writes notary certifications + event archives
+into git — never writes the DB)"* — and §2 says what it is for:
+
+> Certification → the repo, as NOTARY (the anti-bucket role): periodic certified
+> snapshots binding (event-log cursor, content sha, law sha), signed and tagged.
+> Anyone can clone and verify what was certified when; **the office cannot
+> rewrite history without the repo catching it**.
+
+It writes three surfaces in one commit, and **two of them are not the same kind
+of thing**:
+
+| surface | kind | what a second run does to it |
+|---|---|---|
+| `archives/acts/<window>.jsonl` | **archive** — one line per act, whole row, fixed field order | nothing. Ever. A regeneration that differs is a REFUSAL, named line by line |
+| `WORLD2/marks/<slug>/mark.md` | **render** of DB-source (census decision 1) | rewrites it whole, including deleting files no row derives |
+| `CERTIFICATION.json` | the binding | rewritten when its substance moves |
+
+The asymmetry is the design: an archive is an **input**, a render is an
+**output**. Gold §2's durability obligation is the archive's law — *"each closed
+window exported append-only into `archives/` — machine-written but single-pen,
+**frozen-on-write, an input never re-derived-into**"* — and it is the reason this
+pen refuses rather than repairs when a closed window's export changes underneath
+it. Each rendered `mark.md` says which kind it is in its own frontmatter, so a
+reader who found it by cloning does not have to know this page exists.
+
+### Which acts belong to which window
+
+By the **crossing**, not by the clock: window N archives every act whose crossing
+falls in `(previous closed window, N]`, and the genesis window — having no
+previous — has no lower bound, so the legacy backfill rides with it.
+
+Not by `at BETWEEN opens_at AND closes_at`, and the seeded genesis window is why:
+its `opens_at` is the log meta's `covers_from` (`2026-08-26T00:00Z`), a fact about
+a file rather than a crossing boundary, and every legacy act (crossings 118–149)
+falls before it. A time bound would have archived an empty genesis window and
+called it complete. The crossing IS the town's clock; the timestamps are evidence.
+
+Acts beyond the highest **closed** window are not archived by anyone yet. They are
+counted and named in the summary — a durability lane that silently held rows back
+would be a backup with a hole in it.
+
+### Running it
+
+Same stateless contract as the ingesters, and for the same negative reason: the
+CALLER supplies the checkout. This pen never clones, fetches, creates, checks out,
+rebases, cleans or pushes one, and keeps no state between runs. It does commit and
+tag **in** the caller's checkout — that is the pen's whole job.
+
+```sh
+export WORLD2_PG_URL="postgres://snapshot_reader:…@localhost:5432/world2_dev"
+#                    /etc/postmark-world2-dev.env, PG_SNAPSHOT_READER_PASSWORD
+
+git clone <the notary repo> /tmp/notary
+node world2/tools/snapshot-export.mjs --target /tmp/notary
+node world2/tools/snapshot-export.mjs --verify /tmp/notary --spot-check 200
+```
+
+`--dry-run` derives and prints without writing. `--json` makes the summary
+machine-readable. `--allow-detached` is the only way past the detached-HEAD
+refusal, and it exists because a tag can legitimately be the whole deliverable —
+not because a detached push is ever safe.
+
+Exit codes are the siblings': **0** green · **1** RED (drift, or the append-only
+refusal) · **2** cannot run. There is no code for "checked nothing and found
+nothing": no closed window, no `CERTIFICATION.json`, an unreadable target, or a
+credential that could write the database all exit 2, loudly.
+
+### The tag, and what "idempotent" means
+
+One annotated tag per certification, `notary/<window-cursor>-<acts-cursor>`, whose
+message **is** the certification body. The tag is written once and never moved.
+
+Two honest runs of the same database differ by `exported_at` and by nothing else,
+so that is the one field every comparison leaves out — otherwise "already
+certified" could never be true and the notary would sign a new certification each
+time it merely looked.
+
+But **"already certified" is a claim about the target's FILES, not about the tag**.
+A tag proves this state was certified once; only the files prove the checkout still
+holds it. So a run against a tagged target still re-derives everything, and if the
+checkout has lost or changed any of it, the pen rewrites it and commits
+`notary: restore the state <tag> certifies` — leaving the tag alone. A tag whose
+message certifies something *else* about the same cursors is the loudest finding
+this pen can make, and it stops the run.
+
+### What the certification binds
+
+```json
+{
+  "acts_cursor": 2402, "window_cursor": 151, "marks_count": 832,
+  "marks_content_sha": "sha256:…", "archives": [ { "window": 150, "lines": 2400, "sha256": "…" } ],
+  "archives_sha": "sha256:…", "law_sha": "52c281b8…", "town_sha": "830a6996…",
+  "exported_at": "2026-08-28T16:50:32.530Z"
+}
+```
+
+`law_sha` and `town_sha` are the **latest closed window's own pins**, not a fresh
+read — the certification says what the law was when the state it certifies was
+cleared.
+
+`archives` and `archives_sha` go beyond gold §2's list of three, on purpose: the
+acts cursor alone binds the log's *length*. It would notice an act appended and
+miss an act **rewritten**, and "the office cannot rewrite history without the repo
+catching it" is the sentence this pen exists to make true.
+
+The digest recipe is stated so a stranger with a clone can recompute it without
+this code:
+
+```
+for each file, sorted by path:   sha256(bytes) + "  " + path + "\n"
+digest = "sha256:" + sha256(those lines, concatenated)
+```
+
+### The red-proof carries the run
+
+A falsifier nobody has watched fail is not a falsifier. These were run on
+`world2_dev` on 2026-08-28, against a scratch local repo — never a real remote.
+
+**The append-only refusal**, which is the pen's whole reason to exist. Edit one
+line of a closed window's archive and run the exporter again:
+
+```
+RED · the append-only archive lane refuses this run
+  - archives/acts/150.jsonl is an ARCHIVE and already exists, and re-deriving it does not reproduce it.
+    line 1200 differs at char 67
+      on disk: …ssing":143,"actor":"hand-of-the-office","action":"legacy:emission",…
+      derived: …ssing":143,"actor":"neth","action":"legacy:emission",…
+    An archive is frozen on write (gold §2). This is drift and a FINDING — the notary will not overwrite it.
+    Either the file was edited, or the office rewrote history in a window it had already closed. Both want a human.
+```
+
+The file's sha256 was identical before and after that run: a refusal that had
+already written would be a refusal in name only.
+
+**`--verify`**, six shapes of drift, each named, and green again after restore:
+
+```
+RED  archive archives/acts/150.jsonl does not match what the database derives — first divergence at line 97
+RED  archive archives/acts/150.jsonl does not match the sha CERTIFICATION.json certifies for window 150
+     (certified 1649bd71…, on disk 07f344ec…). This is the check a clone can run without a database.
+RED  archive archives/acts/150.jsonl line 97 (acts.id 97) disagrees with its row · first divergence at char 80
+       archived: …"actor":"forged-hand",…
+       acts row: …"actor":"vermillion",…
+RED  mark render DIFFERS: WORLD2/marks/aion-solare/aelyria/mark.md · first divergence at char 906
+RED  archives/acts/999.jsonl is on disk but no CLOSED window derives it
+RED  CERTIFICATION.json DIFFERS at marks_count · on disk 1 · DB derives 832
+GREEN after restore — the mangles left no trace
+```
+
+And the credential guard, proven by holding the wrong pen:
+
+```
+CANNOT RUN · refusing to run as 'law_ingester', which holds write grants.
+```
+
+**Two findings came out of writing those proofs, and both are worth more than the
+proof they cost.**
+
+- **The first `--verify` red-proof was not a proof.** It mangled line 97 of a
+  2,400-line archive and went red, which looked conclusive. Line 97 is one of the
+  25 lines the sampler picks; line 98 is not, and the certification comparison is
+  DB-derived-against-certified — it never opens an archive. An edit one line lower
+  would have passed. `--verify` now compares every archive **whole**, against the
+  DB derivation *and* against the sha the certification records; the spot-check
+  stayed, because a moved digest cannot name the act, the field and both
+  spellings, and that naming is what a human acts on. *A sampler is not a
+  detector.*
+- **`--target` used to accept a directory that was not a repo.** `git -C
+  <not-a-repo>` does not fail; it **walks up** until it finds one — the walk this
+  town has already watched reach a home directory and stage it. The pen now
+  requires the target to be the repository *root* it resolves to. Found by a unit
+  test that handed it a bare temp directory and got a toplevel back.
+
+A third was smaller but the same shape: a run against a tagged target used to
+answer "nothing new to certify" *before looking at the files*, so deleting an
+archive from a certified checkout reported green and left the hole. That is where
+the repair path above came from.
+
+### The tests
+
+`test/world2-snapshot-export.test.mjs`, 26 of them, no database — everything this
+pen *decides* is pure with respect to Postgres, and the rows are shaped the way
+`pg` hands them over (bigint and numeric as TEXT, timestamptz as `Date`, jsonb as
+objects), because a test fed prettier inputs than the driver gives would prove
+something about a different program. Each asserts a quoted sentence of law.
+
+Three flips were run to prove they can fail: making the append-only check
+overwrite silently reds exactly the two archive tests; rendering every string bare
+reds the `data` test; dropping the repository-root guard reds the target test.
+
+One of them, `pre: "true"`, is worth naming. `data` holds the STRING `"true"`, and
+a frontmatter line spelling it bare would hand the next reader a boolean the
+database never held — as `date: 2026-07-23` bare would hand them a YAML date
+instead of the text a mark's frontmatter carried. The render quotes anything YAML
+would read back as another type, and the test is what found it.
+
+### Run census on dev, 2026-08-28
+
+Against `world2_dev` (windows 150 and 151 closed), into a scratch local repo:
+
+```
+CERTIFIED · notary/151-2402
+  archives/acts/150.jsonl   2,400 acts (the legacy backfill, crossings 118–149.92)
+  archives/acts/151.jsonl       0 acts (a window that closed holding none)
+  2 acts held back — crossing 155, their window has not closed
+  WORLD2/marks/**/mark.md     832 files
+  marks_content_sha  sha256:f346a162202344ece2ddc38a8baa4ad6ed472d6afad3cb010f935792f483f899
+  archives_sha       sha256:e8c30c2ae51839d321db36559fcf441f61dbedc3696eb86d490474405cbda7f8
+  law 52c281b8… · town 830a6996…   (window 151's own pins)
+```
+
+`--verify` green · second run idempotent, working tree untouched · the repair path
+proven by deleting an archive and a mark from the certified target and watching
+both come back with the tag unmoved.
+
+### One thing phase 3 should look at
+
+The render is a render of the DB row, not a reconstruction of the 1.0 `mark.md` a
+human typed: `data` is emitted as itself, key-sorted, because it is *"the record's
+remainder, not a second schema"* (the seed's ruling, kept). That is right for
+fork-and-**read**. Whether anything should be able to fork-and-**parse** these back
+into the 1.0 frontmatter shape is a read-path question, and it belongs to whoever
+owns the viewer — not to the notary, which would otherwise be inventing a schema
+for someone else's file.
