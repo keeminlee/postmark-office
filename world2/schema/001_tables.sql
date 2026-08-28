@@ -5,6 +5,13 @@
 -- Every table here carries a row in `registry` (rule 4: unmanifested = alarm).
 -- Design rule (rule 1): a table exists because a LANE needs it, never because
 -- an old file existed. Everything derived is a VIEW (rule 3).
+--
+-- ⚑ MIGRATION DISCIPLINE (learned live 2026-08-28): world2_dev is a SHARED
+-- store the moment a second lane writes it. A DROP-SCHEMA rebuild silently
+-- wiped the ingester lane's projections the same hour they were certified.
+-- From v0 on: schema changes ship as ALTER migrations (002+, numbered), and a
+-- rebuild-from-scratch requires checking projection_heads/registry is empty
+-- or re-running every pen after.
 
 BEGIN;
 
