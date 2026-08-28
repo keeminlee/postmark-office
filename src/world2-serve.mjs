@@ -78,6 +78,28 @@ export async function world2Serve(path, searchParams) {
     return { code: 200, body: { what: "the candle's ledger — newest first, receipts carried", windows: rows } };
   }
 
+  if (path === "/world2/law") {
+    // A/B finding 6: grants, classes, dials, skeleton, roster were present and
+    // correct in the store and reachable by nothing but a SQL client. This door
+    // serves law_projection AT ITS INGESTED HEAD — the repo stays authoritative
+    // (law is repo-first, exported); this is the projection the clearing reads.
+    const { rows: [head] } = await p.query("SELECT sha FROM projection_heads WHERE repo = 'world-law'");
+    if (!head) return { code: 503, body: { error: "bounce", defect: "no law projection ingested yet", hint: "run law-ingest" } };
+    const kind = searchParams?.get("kind");
+    const key = searchParams?.get("key");
+    const where = ["law_sha = $1"]; const args = [head.sha];
+    if (kind) { where.push(`kind = $${args.length + 1}`); args.push(kind); }
+    if (key)  { where.push(`key = $${args.length + 1}`);  args.push(key); }
+    const { rows } = await p.query(
+      `SELECT kind, key, path, data FROM law_projection WHERE ${where.join(" AND ")} ORDER BY kind, key`, args);
+    return { code: 200, body: {
+      what: "the law projection at its ingested head — the repo is the author; this is what the clearing computes against",
+      law_sha: head.sha, count: rows.length,
+      filters: { kind: kind ?? null, key: key ?? null, kinds: "class · grant · threshold · skeleton · roster" },
+      rows,
+    } };
+  }
+
   if (path === "/world2/status") {
     const counts = {};
     for (const t of ["acts", "claims", "marks", "law_projection", "stamp_projection", "identities"]) {

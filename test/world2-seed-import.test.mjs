@@ -59,6 +59,12 @@ function fixture({ log = { 6: [], 7: [] }, meta = { 7: { crossing: 7, covers_fro
   mkdirSync(join(dir, "WORLD", "marks"), { recursive: true });
   mkdirSync(join(dir, "STATE", "log"), { recursive: true });
   writeFileSync(join(dir, "tools", "marks-fold.mjs"), FIXTURE_READER);
+  // The tier reader beside it (A/B finding 3): the fixture's standing rule is
+  // the frontmatter's own word with the real reader's default — enough to prove
+  // the SEAM (the seed imports the checkout's markStanding); the real walk's
+  // semantics are the world repo's own tests' job, not this fixture's.
+  writeFileSync(join(dir, "tools", "mark-standing.mjs"),
+    'export function markStanding(mark) { return mark?.tier ?? "market"; }\n');
   writeFileSync(join(dir, "WORLD", "households.json"),
     JSON.stringify({ households: { wren: "gh:12345" }, logins: { wrenbird: "gh:12345" } }));
   for (const [n, lines] of Object.entries(log)) {

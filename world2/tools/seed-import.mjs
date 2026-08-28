@@ -91,9 +91,16 @@ import { pathToFileURL } from "node:url";
 // parses sha X is the code that shipped at sha X. A copy would be a twin that
 // drifts silently — the failure class gold § 3 rule 5 exists to forbid.
 async function readersOf(worldRepo) {
-  const url = pathToFileURL(join(resolve(worldRepo), "tools", "marks-fold.mjs")).href;
-  const fold = await import(url);
-  return { loadMarks: fold.loadMarks };
+  const toolUrl = (f) => pathToFileURL(join(resolve(worldRepo), "tools", f)).href;
+  const fold = await import(toolUrl("marks-fold.mjs"));
+  // THE DERIVED TIER (A/B finding 3, 2026-08-28): a record's frontmatter tier is
+  // only the constitution shortcut; a mark's real standing is DERIVED from the
+  // consent handshake — marks-fold writes `tier: markStanding(...)` at fold
+  // time, and a seed that carried the raw frontmatter defaulted 328 residents'
+  // welcomes to "market". mark-standing.mjs calls itself "the ONE definition of
+  // a mark's standing" and asks to be imported, not re-implemented — so it is.
+  const standing = await import(toolUrl("mark-standing.mjs"));
+  return { loadMarks: fold.loadMarks, markStanding: standing.markStanding };
 }
 
 // ── deterministic ids ────────────────────────────────────────────────────────
@@ -229,7 +236,7 @@ const jsonSafe = (v) => JSON.parse(JSON.stringify(v ?? null));
  */
 export async function deriveSeed({ worldRepo, lawSha, townSha = null }) {
   const repo = resolve(worldRepo);
-  const { loadMarks } = await readersOf(repo);
+  const { loadMarks, markStanding } = await readersOf(repo);
 
   const marksDir = join(repo, "WORLD", "marks");
   if (!existsSync(marksDir)) throw new Error(`no WORLD/marks under ${repo} — is this a world checkout?`);
@@ -294,6 +301,10 @@ export async function deriveSeed({ worldRepo, lawSha, townSha = null }) {
     if (parentIsLaw) notPlaced.parentIsLaw.push({ id: rec.id, parent: parentIsLaw });
 
     const data = recordData(rec);
+    // The DERIVED tier overrides the raw frontmatter (A/B finding 3): standing
+    // comes from the consent handshake via the checkout's own markStanding —
+    // "the ONE definition". recIndex is the by-id map its containment walk reads.
+    data.tier = markStanding(rec, byId);
     // The one edge the schema cannot express, kept where it CAN be read. See
     // `resolveParent`: `parent` is a uuid into `marks`, and these parents are not
     // marks rows at all. The edge is preserved verbatim under its own key, counted
