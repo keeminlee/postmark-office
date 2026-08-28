@@ -1428,8 +1428,16 @@ async function apexRead(args, key) {
     // ── THE PORTAL RIDES INSIDE THE STANDPOINT ───────────────────────────────
     //
     // ⚠ `standpoint.portal`, NOT a top-level `portal`, and `id` NOT `ground`.
-    // Both are the site's declared contract (`world-cockpit.mjs § portalOf`),
-    // and both fail SILENTLY when they are wrong: `portalOf` returns null for a
+    // Both are the site's declared contract — `world-cockpit.mjs § portalOf`,
+    // ON THE SITE'S `bday-pin` BRANCH, which is where that file exists and the
+    // only place it does: it is absent from the site's `main` and from
+    // `origin/main` (verified 2026-08-27, not assumed), and the integration
+    // lands that night. Naming the branch is not pedantry here — an unmerged
+    // contract is one somebody can still change out from under this shape, and
+    // a reader who goes looking for `portalOf` on main will conclude this
+    // comment is stale rather than that they are on the wrong branch.
+    //
+    // Both fail SILENTLY when they are wrong: `portalOf` returns null for a
     // portal with no `id`, `mountsHere` returns false for a null portal, and
     // the cockpit simply never appears. No error, no warning, a blank page and
     // a green build. I shipped the wrong shape of both first and only caught it

@@ -226,24 +226,6 @@ export function humanTokenUrl(handle, { token = null, dir = null } = {}) {
 }
 
 /**
- * The ACT-AS roster at this standpoint.
- *
- * `residents` — the handles this key acts for.
- * `humanGrants` — the actions the calculus admitted for `for: human` HERE. Its
- *   emptiness is the whole difference between "your human can play in this
- *   room" and "your human is a voice through your resident": the record decides
- *   it, and this function only reports what the record decided.
- * `humanHandle` / `humanToken` — the household's human, if the office knows one.
- */
-// ⚠ THE FIELD NAMES ARE THE SITE'S, NOT MINE — `kind`/`allowed`, not
-// `as`/`available`. The site declared this roster's shape on 2026-08-26 and
-// built its ACT-AS bar to it ("when `actors` is present this function returns
-// it untouched and the site stops deriving"), so the door adopting those names
-// is what makes the bar stop guessing. My first version invented its own two
-// spellings, which would have been returned untouched and rendered as a row of
-// faces with no labels and no permission — silently, because `actorsFor` does
-// not validate what it passes through.
-/**
  * WHY A LIT FACE IS LIT, in the door's own words — the contract's `because`.
  *
  * The site declared it as "Why it is allowed, in the words of the law that
@@ -267,6 +249,39 @@ const seatedBecause = (seats = [], grants = []) => {
   return `${where.join(" and ")} seats your household's human — that ground's class grants them ${grants.join(", ") || "nothing"} where you stand, and nowhere else`;
 };
 
+/**
+ * The ACT-AS roster at this standpoint.
+ *
+ * `residents` — the handles this key acts for.
+ * `humanGrants` — the actions the calculus admitted for `for: human` HERE. Its
+ *   emptiness is the whole difference between "your human can play in this
+ *   room" and "your human is a voice through your resident": the record decides
+ *   it, and this function only reports what the record decided.
+ * `humanHandle` / `humanToken` — the household's human, if the office knows one.
+ */
+// ⚠ THE FIELD NAMES ARE THE SITE'S, NOT MINE — `kind`/`allowed`, not
+// `as`/`available`. The site declared this roster's shape on 2026-08-26 ("when
+// `actors` is present this function returns it untouched and the site stops
+// deriving"), so the door adopting those names is what makes the bar stop
+// guessing. My first version invented its own two spellings, which would have
+// been returned untouched and rendered as a row of faces with no labels and no
+// permission — silently, because `actorsFor` does not validate what it passes
+// through.
+//
+// ⚠ WHERE THAT CONSUMER ACTUALLY LIVES, corrected 2026-08-27. This comment said
+// the site "built its ACT-AS bar to it", in the past tense, which reads as an
+// integration already standing. IT IS NOT MERGED: the consumer is
+// `src/lib/world-cockpit.mjs` on the SITE'S `bday-pin` BRANCH — absent from the
+// site's `main` and from `origin/main`, verified rather than assumed — and the
+// integration lands the night of 2026-08-27.
+//
+// The correction is worth its lines because the false half is the load-bearing
+// half. A contract on an unmerged branch and a contract in production fail
+// differently and are debugged differently: this door can be perfectly right
+// about the shape and still show a reader nothing, because the page that reads
+// it has not shipped. A comment that hides which of those two worlds you are in
+// sends the next reader looking for a rendering bug in a page that does not
+// exist yet.
 export function actorRoster({ residents = [], humanGrants = [], humanHandle = null, humanToken = null, tokenDir = null, acting = null, seats = [] } = {}) {
   const roster = [...residents].filter(Boolean).map((h) => ({
     kind: "resident",
