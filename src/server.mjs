@@ -43,7 +43,7 @@ import { channelOf, countAct, actsByChannel } from "./channel.mjs";
 import { logAccess } from "./telemetry.mjs";
 import { settlements } from "./settlements.mjs";
 import { worldSummary, worldOrient, worldEyes, worldInvestigate, worldStateRaw, worldSkeletonRaw, worldMyMarks, leaveMarkViaOffice, walkViaOffice, worldNoteViaOffice, worldWalkers, worldPresent, worldConversations, worldSay, worldSayHuman, whoami, worldBlockForHandle, resetPlaceWordsCache, WORLD_CLONE } from "./world.mjs";
-import { world2Serve } from "./world2-serve.mjs";
+import { world2Serve, world2ServeEnabled } from "./world2-serve.mjs";
 import { callHoldTool } from "./world-hold.mjs"; // curl parity: /world/hold + /world/holdings (2026-08-15)
 import { APEX_TOOL, apexEnabled, dispatchToolFor, worldApex } from "./world-apex.mjs"; // stage 3: the apex verb — keyless read half + the POST act door (08-17)
 import { worldStakeViaOffice, worldUnstakeViaOffice, worldStakeRead } from "./world-stake.mjs"; // P3 draft
@@ -729,6 +729,22 @@ const server = createServer((req, res) => {
       // Walk still has no route and resolves against published main in v0.
       // World 2.0 read tier (dev era): /world2/* serves the Postgres store —
       // docket, marks, windows, status. Null = not ours, fall through.
+      //
+      // The lab's LENS, ahead of the JSON router because /world2/viewer would
+      // otherwise be swallowed by the startsWith below: one self-contained page
+      // that renders the world out of those same doors and nothing else, so the
+      // MCP-first law (gold §1–§2) has a reader that cannot cheat. Gated on the
+      // same flag — with the store off there is nothing for it to read, and it
+      // 404s with every other unknown door rather than serving an empty map.
+      // (`path` has already had trailing slashes stripped at the top of the
+      // handler, so /world2/ arrives here as /world2.)
+      if (path === "/world2" || path === "/world2/viewer") {
+        if (!world2ServeEnabled()) return bounce(res, 404, "no such door", "the world 2.0 store is not engaged at this office");
+        const page = resolve(HERE, "../world2/viewer/index.html");
+        if (!existsSync(page)) return bounce(res, 500, "the lens is missing", "world2/viewer/index.html is not in this checkout");
+        res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+        return res.end(readFileSync(page));
+      }
       if (path.startsWith("/world2/")) {
         return world2Serve(path, url.searchParams)
           .then((r) => (r ? j(res, r.code, r.body) : bounce(res, 404, "no such world2 door", "reads: /world2/docket /world2/marks /world2/mark?slug= /world2/windows /world2/status")))
