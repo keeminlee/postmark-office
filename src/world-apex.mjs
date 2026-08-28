@@ -78,6 +78,10 @@ import { readAttachments } from "./dynamic-entities.mjs";
 import { storeDbPath } from "./world-serve.mjs";
 import { AMBIENT_REACH_SQL, CLASS_MARK_GATE_SQL, WORKS_PATH_SQL } from "./world-store.mjs";
 import { actorRoster, resolveHumanActor } from "./human-actor.mjs";
+// The hand an embodied act is recorded under. Imported rather than derived here:
+// `worldSayHuman` has owned this label since 2026-08-08 and `humanHandFor` is
+// that one derivation, moved somewhere both doors can read it.
+import { humanHandFor } from "./households.mjs";
 import {
   classOfInstance, entriesOfClass, guardsPass, heldEntries, kindOf, resolveGrants,
 } from "./world-grants.mjs";
@@ -1717,9 +1721,41 @@ async function apexDo(args, key) {
         household: worldHouseholdOf(standingHandle(args, key)),
         crossing: currentCrossing(), witnessStamp, nowMs: Date.now(),
       };
-      result = acting?.route === "worldSayHuman"
-        ? await worldSayHuman({ ...fields, ...(acting.with ? { with: acting.with } : {}) }, key)
-        : await handler.run(acting?.standing === "embodied" ? { ...fields, as_human: true } : fields, key, ctx);
+      // ── THE HAND, NOT A FLAG (2026-08-27) ─────────────────────────────────
+      //
+      // This line passed `as_human: true` for four hours and NOTHING READ IT —
+      // `git grep as_human src/` returned exactly this dispatch. Every embodied
+      // act therefore reached a handler that knew only how to write the
+      // resident's name, and wrote it. The own-hand law is what that broke, and
+      // it is the one thing the human class exists to protect.
+      //
+      // A boolean could not have been honoured even by a willing handler: it
+      // says an act was a human's without saying WHICH human, so the best a
+      // door could do with it is refuse. The hand itself is what a record needs,
+      // so the hand is what is passed — derived by `humanHandFor`, the same
+      // label `worldSayHuman` has recorded since 2026-08-08, from one copy.
+      //
+      // WHY `say` ROUTES HERE WHEN IT IS EMBODIED. The act's own handler
+      // (`worldSay`) speaks as a RESIDENT by construction — it picks a
+      // standpoint from the key's handles and records that name. The handler
+      // that owns the human's label is `worldSayHuman`, so an embodied say goes
+      // there for the same reason a companioned one does: it is the door that
+      // can write the human's name. What the two do NOT share is the standing,
+      // and that difference is not lost — it rides `done.actor.standing`
+      // ("embodied" vs "companioned") on every answer.
+      //
+      // ⚠ THE GAP THIS LEAVES, stated rather than hidden: § The three channels
+      // calls the parcel's say "heard from the human's own feet", and this
+      // records it heard from the housemate `worldSayHuman` stands them beside.
+      // The HAND is right, which is the law that was being broken; the FEET are
+      // still borrowed, because a human has no position of their own until the
+      // humans-as-residents design arrives. Recording the human's own name
+      // beside a borrowed standpoint is the closest true thing this office can
+      // write, and it is disclosed by `standing_with` on the answer.
+      const hand = acting?.standing === "embodied" ? humanHandFor([...(key?.handles ?? [])]) : null;
+      result = acting?.route === "worldSayHuman" || (hand && action === "say")
+        ? await worldSayHuman({ ...fields, ...(acting?.with ? { with: acting.with } : {}) }, key)
+        : await handler.run(hand ? { ...fields, as_human: hand } : fields, key, ctx);
     } catch (e) {
       if (!e?.code) throw e;
       return { ...bounce(e.code, e.defect, e.hint, e.choices ? { choices: e.choices } : {}), ...done };

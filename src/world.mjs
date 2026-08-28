@@ -41,7 +41,7 @@ import { WORLD_STAKE_TOOLS, callWorldStakeTool, worldPortfolioStakeSlice } from 
 import { classNames, classRoster, classDials, departurePace, RESIDENT_INSTANTIABLE, residentMayInstantiate } from "./world-classes.mjs"; // which classes exist — read from the record, never held
 import { HOLD_TOOLS, callHoldTool } from "./world-hold.mjs"; // the object primitive: who holds what
 import { createVoices, EARSHOT_M } from "./voices.mjs"; // earshot: speech at a position (the party line)
-import { householdOf } from "./households.mjs"; // the human speaker's label wears the town's name, never the login
+import { householdOf, humanHandFor } from "./households.mjs"; // the human speaker's label wears the town's name, never the login
 import { householdLockPath, poolEnabled, pushDraftBranch, withDraftLease } from "./world-pool.mjs";
 import { cannotAnswer, pointAnswerable, servedRead, storeEpoch, storeShadowEnabled } from "./world-serve.mjs"; // stage 1: published-main reads from world.db, behind a flag
 import { emissionsEnabled, openDynamic } from "./dynamic-store.mjs"; // stage 2: the dynamic layer's flag
@@ -725,11 +725,13 @@ export async function worldSayHuman(args = {}, key = null) {
   if (!handles.length)
     return { error: "bounce", defect: "no residents on this key",
       hint: "a human speaks from their household's ground — sign in with the account that holds your residents" };
-  let slug = null;
-  for (const h of handles) {
-    try { const hh = householdOf(h); if (hh?.slug) { slug = hh.slug; break; } } catch { /* garnish only */ }
-  }
-  const speaker = `human-of-${slug ?? handles[0]}`;
+  // THE LABEL MOVED, THE ANSWER DID NOT (2026-08-27). This derivation used to
+  // live inline here and is now `humanHandFor` — same slug-then-first-handle
+  // order, same words — because the apex needs the same name to hand a handler
+  // the hand an embodied act is recorded under. Two copies of a label is two
+  // answers waiting to disagree; this door still owns the label, it just no
+  // longer keeps the only copy of how it is spelled.
+  const speaker = humanHandFor(handles);
   // Whom the human stands beside. `with:` names a housemate explicitly; the
   // default prefers a housemate who is ABOARD a vessel over one ashore (learned
   // mid-crossing 2026-08-08: a split household stood DARKO's welcome in a
@@ -2139,6 +2141,48 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
   const bounce = (code, defect, hint, extra = {}) => {
     const e = new Error(defect); Object.assign(e, { code, defect, hint, ...extra }); return e;
   };
+
+  // ── AN EMBODIED HUMAN'S WALK IS REFUSED, AND LOUDLY (2026-08-27) ───────────
+  //
+  // THE OWN HAND is the one thing the human class exists to protect: it
+  // `implements: ["the-town/the-own-hand"]`, and human-actor.mjs says what that
+  // costs — "A record that wrote the resident's name on a human's words would be
+  // the one thing this class exists to prevent." A walk is a record of a BODY
+  // MOVING THROUGH THE WORLD: `declareMovement` writes `actor` into
+  // dynamic.db/movements, position is derived from that row, and every reader
+  // downstream — the standpoint, presence, the crossing-save's STATE/log/ line —
+  // treats that actor as a thing standing somewhere.
+  //
+  // So this door has exactly two ways to write an embodied human's walk and both
+  // are false:
+  //
+  //   · UNDER THE RESIDENT'S HAND — which is the violation itself, and the
+  //     silent one: the resident's body moves, on the record, on the human's
+  //     word, and nothing anywhere says a human was involved.
+  //   · UNDER THE HUMAN'S HAND — which writes a walker the world cannot place.
+  //     The human has no home mark, no standpoint and no presence row; `from`
+  //     would fall back to `homeCoords` and stand them at the quay, and the save
+  //     would crystallize an entity the atlas has no seat for.
+  //
+  // The second is the humans-as-residents design, and LOGOS/classes.md § The
+  // human class is explicit that it has not arrived: "everything further waits
+  // for the humans-as-residents design, and arrives — if it arrives — as law
+  // here first." § The three channels does grant the walk ("A human embodied by
+  // their own parcel may walk within its extent and no further") and the human
+  // class mark now carries a pace dial for it — so the LAW is ready and the
+  // RECORD is not. That gap is the office's, and this is the office saying so
+  // out loud instead of picking whichever falsehood is quieter.
+  //
+  // A refusal is the correct terminal state here, not a placeholder: the same
+  // shape `walkAllowed` uses one door up ("The refusal NAMES its reason; it is
+  // not a silent clip"), and the same 501 the apex answers with when law opens a
+  // door the office has not built a room behind.
+  if (payload.as_human)
+    throw bounce(501, "this office cannot record a walk under a human's own hand",
+      `Your parcel grants your human this walk and the law behind it stands — what is missing is the RECORD. A walk is written as a body moving: the mover's own row in the movement record, derived into a position every reader trusts. Your human has no such body yet — no home mark, no standpoint, no place the world could put them down — so the only rows this office could write are your resident's (which would put their name on your step, and the human class exists to prevent exactly that) or yours (which would place a walker the atlas has no seat for). Neither is true, so neither is written. Your human still speaks here, and your residents still walk: act as your resident to move, or as your human to be heard.`,
+      { law: "LOGOS/classes.md § The human class — 'everything further waits for the humans-as-residents design, and arrives — if it arrives — as law here first'",
+        granted_by: "the parcel's own-ground grant, which stands — this is the office's gap, not yours",
+        hand: String(payload.as_human) });
 
   // ruling 5 — never infer which resident. One handle auto-resolves; several bounce.
   const handles = [...(key?.handles ?? [])];

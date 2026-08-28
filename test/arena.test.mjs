@@ -725,3 +725,69 @@ test("every beat carries a string actor — including the wipe, the most interes
     }
   } finally { b.close(); }
 });
+
+// ── THE OWN HAND, inside the portal (2026-08-27) ────────────────────────────
+//
+// LOGOS § The portal ground, verbatim: "The verbs carry `for: human` entries
+// beside the resident ones, so a guest's human plays inside the portal without
+// any claim outside it." A human who PLAYS and whose blows land under somebody
+// else's name is not playing — and until tonight that is exactly what happened:
+// the apex passed `as_human: true` and NOTHING in src/ read it, so every
+// embodied act was appended with `actor: <the resident>`.
+//
+// This door can honour the hand where the walk door cannot, and the reason is
+// the class's own: "its state is a fold, never a store." An arena act needs no
+// body in the world — the wheel and the hit points are derived from this
+// ground's own rows — so the hand is a string in the log, and the log already
+// carries non-resident hands with real standing (`openAgainst` writes the
+// adversary's mark id, and hostiles "hold real slots and take real turns").
+
+const HUMAN = "human-of-pando-house";
+
+test("an embodied human's act is recorded under the HUMAN's hand, never the resident's", async () => {
+  const b = bottle();
+  try {
+    // The apex hands down the human's own label; `deps.handle` still carries the
+    // resident whose standpoint was gathered, exactly as it does on every call.
+    await act(b, "darko", "guard", { as_human: HUMAN });
+    const rows = arenaRows(b.dyn, VAULT);
+    const mine = rows.filter((r) => r.actor === HUMAN);
+    assert.ok(mine.length > 0, "the human's act reached the log under their own hand");
+    assert.ok(mine.some((r) => r.action === "guard"), "including the act itself, not only the join");
+    // THE VIOLATION, asserted as an ABSENCE. This is the whole point: not that
+    // the human appears, but that the resident does NOT — a fix that wrote both
+    // would still have put darko's name on a step darko did not take.
+    assert.equal(rows.some((r) => r.actor === "darko"), false,
+      "the resident's name must appear nowhere in an act their human took");
+  } finally { b.close(); }
+});
+
+test("and the same act WITHOUT a human's hand still records under the resident", async () => {
+  // The discriminating leg. Without it, the assertion above passes just as well
+  // against a door that had stopped recording residents at all — and the
+  // ordinary resident act is the overwhelmingly common one.
+  const b = bottle();
+  try {
+    await act(b, "darko", "guard");
+    const rows = arenaRows(b.dyn, VAULT);
+    assert.ok(rows.some((r) => r.actor === "darko"), "an ordinary act is still the resident's own");
+    assert.equal(rows.some((r) => r.actor === HUMAN), false, "and no human is invented for it");
+  } finally { b.close(); }
+});
+
+test("the human holds a real slot on the wheel, beside the hostile that already does", async () => {
+  // "Hostiles hold real slots and take real turns" (the founder, 2026-08-26) is
+  // the precedent this fix stands on: the wheel is already a fold over
+  // free-string actors, so a human on it is the same shape and not a new one.
+  // If the hand were recorded on the act row but the wheel still keyed on the
+  // resident, the fight would be ordered around somebody who is not playing.
+  const b = bottle();
+  try {
+    await act(b, "darko", "guard", { as_human: HUMAN });
+    const s = state(b);
+    assert.equal(inWheel(s, HUMAN), true, "the human is in the wheel under their own hand");
+    assert.equal(inWheel(s, "darko"), false, "and the resident, who did not act, is not");
+    assert.ok((s.wheel?.order ?? []).some((j) => j.kind === "hostile"),
+      "the hostile still takes its slot — the human joins an ordinary wheel, not a special one");
+  } finally { b.close(); }
+});

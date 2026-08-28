@@ -12,6 +12,8 @@ import { join } from "node:path";
 
 import { resolveHumanActor, HUMAN_AMBIENT_GRANTS, HUMAN_RESIDUE, ONE_GRANT_FENCE, COMPANIONED } from "../src/human-actor.mjs";
 import { RESOLVED_ACTOR_KINDS } from "../src/world-apex.mjs";
+import { humanHandFor } from "../src/households.mjs";
+import { walkViaOffice } from "../src/world.mjs";
 
 const key = (...handles) => ({ handles: new Set(handles) });
 
@@ -177,8 +179,79 @@ test("the seam routes and never re-derives the hand", () => {
   // ROUTES and never re-derives the hand.
   assert.match(apex, /result = acting\?\.route === "worldSayHuman"/,
     "the apex routes a companioned say to the human's own handler");
-  assert.match(apex, /await handler\.run\(acting\?\.standing === "embodied"/,
-    "and every other call still takes the ordinary path, with the hand disclosed");
+  // AMENDED 2026-08-27: THE FLAG BECAME THE HAND, and the amendment is the
+  // whole of the own-hand fix. `as_human: true` could not be honoured even by a
+  // willing handler — it says an act was a human's without saying WHICH human,
+  // so there is nothing to write down — and `git grep as_human src/` returned
+  // exactly one hit, the dispatch itself. Every embodied act reached a door that
+  // knew only the resident's name and wrote it. The dispatch now carries the
+  // human's own label, so the far end has something true to record.
+  assert.match(apex, /await handler\.run\(hand \? \{ \.\.\.fields, as_human: hand \}/,
+    "the ordinary path carries the human's HAND, not a flag no handler can record");
+  assert.match(apex, /const hand = acting\?\.standing === "embodied" \? humanHandFor\(/,
+    "the hand is the one derivation, read — not a second spelling of the label invented here");
+});
+
+// ── THE OWN HAND, at the two doors that answer for it ───────────────────────
+
+test("the hand an embodied act is recorded under is the human's own label", () => {
+  // `human-of-<slug>` is RESERVED town-wide so it can never collide with a
+  // resident's voice: residency.mjs and declare.mjs both refuse a handle wearing
+  // it. That reservation is what makes it safe to write into an act row.
+  const hand = humanHandFor(["wright", "rei"]);
+  assert.match(hand, /^human-of-/, "the label the town reserves for a household's human");
+  assert.ok(!/^wright$|^rei$/.test(hand), "and never one of the residents' own names");
+  assert.equal(humanHandFor([]), null,
+    "no handles is null, never a guessed default — the same refusal humanTokenUrl makes");
+});
+
+test("an embodied WALK is refused rather than recorded under the resident's hand", async () => {
+  // THE VIOLATION THIS REPLACES: `walkViaOffice` writes `actor: who` into
+  // dynamic.db/movements, and `who` is checked against the KEY's residents — so
+  // an embodied human's step landed on the record as their resident's, with
+  // nothing anywhere saying a human moved. That is the one thing the human class
+  // exists to prevent (it `implements: the-town/the-own-hand`).
+  //
+  // The fix is a refusal and not a re-hand, because the other row is not
+  // writable either: a walk is a body moving through the world's geometry, and
+  // LOGOS/classes.md § The human class says the design that would give a human
+  // such a body has not arrived — "everything further waits for the
+  // humans-as-residents design, and arrives — if it arrives — as law here
+  // first."
+  //
+  // THE CLONE PATH IS DELIBERATE NONSENSE. The refusal must land before any pen
+  // or clone is touched — a walk that bounced only after reading the world could
+  // still have written something on the way. If this guard were removed, this
+  // call would fail on the missing clone instead, with a different code: the
+  // probe distinguishes "refused by law" from "fell over".
+  await assert.rejects(
+    () => walkViaOffice("/nonexistent-clone-on-purpose",
+      { as_human: "human-of-pando-house", to_x: 1, to_y: 2 }, key("wright", "rei")),
+    (e) => {
+      assert.equal(e.code, 501, "the office's own gap, answered as one");
+      assert.match(e.defect, /cannot record a walk under a human's own hand/);
+      assert.match(e.hint, /human class exists to prevent exactly that/,
+        "the refusal names WHY the resident's row is not an option");
+      assert.match(e.law, /everything further waits for the humans-as-residents design/,
+        "and quotes the law sentence that leaves the other row unwritable");
+      assert.match(e.hint, /act as your resident to move, or as your human to be heard/,
+        "a refusal says what IS still open, not only what is closed");
+      return true;
+    });
+});
+
+test("an ordinary resident's walk is untouched by the human guard", async () => {
+  // The discriminating leg. Without it, "embodied walks are refused" is
+  // indistinguishable from "this door stopped walking anybody" — and every
+  // assertion above would still pass. A walk with no `as_human` must get past
+  // the guard entirely and fail for its own reasons (here: the nonsense clone).
+  await assert.rejects(
+    () => walkViaOffice("/nonexistent-clone-on-purpose", { to_x: 1, to_y: 2 }, key("wright")),
+    (e) => {
+      assert.notEqual(e.code, 501, "a resident's walk never meets the human refusal");
+      assert.equal(/cannot record a walk under a human's own hand/.test(String(e.defect ?? "")), false);
+      return true;
+    });
 });
 
 test("the class mark's own body is quoted verbatim, from the world record", () => {

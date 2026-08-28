@@ -434,7 +434,31 @@ export async function arenaActViaOffice(repo, args = {}, key = null, deps = {}) 
     throw bounce(501, "this ground has no pen at this office",
       "an arena act is a row in the single log, and the log is switched off here — the operator runs it behind WORLD_SINGLE_LOG=1");
 
-  const who = String(actingHandle ?? args.handle ?? "").trim();
+  // ── WHOSE HAND THIS ACT IS RECORDED UNDER ─────────────────────────────────
+  //
+  // `as_human` is the apex's word for "this act was taken by the household's
+  // HUMAN, embodied by the ground that granted it" — and it arrives as the
+  // human's own label (`human-of-<household>`), not a boolean, precisely so a
+  // handler can record it. A flag would say a human acted and leave the door
+  // with nothing to write down but the resident's name, which is the violation
+  // wearing a disclosure.
+  //
+  // THE OWN HAND, honoured here rather than promised. The human class
+  // `implements: ["the-town/the-own-hand"]`; LOGOS § The portal ground says why
+  // this door in particular must: "The verbs carry `for: human` entries beside
+  // the resident ones, so a guest's human plays inside the portal without any
+  // claim outside it." A human who PLAYS and whose blows land under somebody
+  // else's name is not playing, they are ghost-writing.
+  //
+  // AND THIS DOOR CAN, where the walk door cannot. An arena act needs no body
+  // in the world: "its state is a fold, never a store" — the wheel, the hit
+  // points and the turn are derived from this ground's own rows, and the ground
+  // is wherever the caller already stands. So the hand is just a string in the
+  // log, and the log ALREADY carries non-resident hands with real standing:
+  // `openAgainst` writes the adversary's own mark id as an actor, and the
+  // founder's ruling is that "hostiles hold real slots and take real turns."
+  // A human on the wheel beside them is the same shape, not a new one.
+  const who = String(args.as_human ?? actingHandle ?? args.handle ?? "").trim();
   if (!who) throw bounce(422, "which hand is acting?", "this key acts for no resident at this ground");
 
   // ⚑ CLOSE ONLY WHAT YOU OPENED. The first version took an `openStore`
