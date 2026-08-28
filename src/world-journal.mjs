@@ -72,6 +72,7 @@ import { execFileSync } from "node:child_process";
 
 import { openDynamic, dynamicDbPath, singleLogEnabled } from "./dynamic-store.mjs";
 import { mirrorAct } from "./world2-acts.mjs";
+import { submitClaimFromJournal } from "./world2-claims.mjs";
 import { draftDeltaForKey, mainRef, publishedState, resolvedWorldHousehold } from "./world-branches.mjs";
 
 export { singleLogEnabled };
@@ -316,10 +317,12 @@ export function appendJournal(db, entry = {}) {
     row.household, row.written_at);
 
   const seq = Number(res.lastInsertRowid);
-  // World 2.0 shadow pen (dev era): mirror the row into Postgres `acts`.
-  // No-op unless WORLD2_PG=1; fire-and-forget for this caller, loud on
-  // failure, parity-falsified. See src/world2-acts.mjs for the death date.
+  // World 2.0 shadow pens (dev era): mirror the row into Postgres `acts`, and
+  // a mark-class declaration also onto the public docket (`claims`). No-ops
+  // unless WORLD2_PG=1 (+ WORLD2_CANDLE=1 for the docket); fire-and-forget for
+  // this caller, loud on failure, parity-falsified. Death dates in the modules.
   mirrorAct(row, seq);
+  submitClaimFromJournal(row, seq);
 
   return { seq, ...row };
 }
