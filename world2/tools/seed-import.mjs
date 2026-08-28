@@ -606,11 +606,35 @@ export function genesisWindow({ repo, lawSha, townSha }) {
 //   what the column means.
 const LEGACY_CLASS = "legacy";
 
+/**
+ * Every log file the town writes, and the crossing each one is filed under.
+ *
+ * WIDENED 2026-08-28 (the replay lane, from the settlement/S50 checkout). The
+ * original shape here was `/^(\d+)\.jsonl$/`, which was complete for every
+ * checkout the seed had ever been pointed at and is NOT complete for the town's
+ * record generally: the 08-27 hand-drain (world commit 33332ec4, "the stranded
+ * write-down") filed four windows under FRACTIONAL, `.journal`-suffixed names —
+ *
+ *   STATE/log/152.9084.journal.jsonl   STATE/log/153.journal.jsonl
+ *
+ * — and the integer-only pattern skips them silently. At `sandbox/seed` there
+ * are none, so the seed's own behaviour is unchanged to the byte; between S49
+ * and S50 there are seven acts inside them, and a replay that dropped seven acts
+ * without saying so is the failure this file's own "a malformed line is REFUSED,
+ * not skipped" note is against, one level up. A file the pattern does not match
+ * is not refused — it is not seen at all, which is worse.
+ *
+ * The fractional name IS the crossing (the town's clock is fractional inside a
+ * window — `acts.crossing` is `numeric` for exactly that reason), so the number
+ * parsed out of the filename stays the fallback it always was.
+ */
+export const LOG_FILE = /^(\d+(?:\.\d+)?)(?:\.journal)?\.jsonl$/;
+
 export function deriveActs({ worldRepo }) {
   const logDir = join(resolve(worldRepo), "STATE", "log");
   if (!existsSync(logDir)) throw new Error(`no STATE/log under ${worldRepo}`);
   const files = readdirSync(logDir)
-    .map((f) => ({ f, n: Number(/^(\d+)\.jsonl$/.exec(f)?.[1]) }))
+    .map((f) => ({ f, n: Number(LOG_FILE.exec(f)?.[1]) }))
     .filter((x) => Number.isFinite(x.n)).sort((a, b) => a.n - b.n);
 
   const rows = [];
@@ -710,6 +734,28 @@ export async function writeSeed(client, { window, claims, marks, acts }) {
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
       [window.id, window.opens_at, window.closes_at, window.status,
         window.law_sha, window.town_sha, window.cleared_at, JSON.stringify(window.receipts)]);
+
+    // THE CANDLE IS NEVER LEFT UNLIT. The genesis window is CLOSED — it produced
+    // the register being seeded — and 005_candle_tiling.sql says what a store with
+    // no open window means, from the instance that taught it:
+    //
+    //   "window 150 closed 08-26 05:45Z, window 151 was hand-bootstrapped open at
+    //    08-28 16:40Z — a 58.9-hour hole with no open candle. An act that fell into
+    //    it reached `acts` with no claims row and NO REFUSAL … a hole neither
+    //    accepts nor refuses."
+    //
+    // That hole was the SEED's, and it was repaired by hand rather than at its
+    // source: seeding closed a window and opened nothing, so every seeded store
+    // began life with no candle until somebody noticed. The successor now opens in
+    // the same transaction, exactly where 005's trigger requires (at the
+    // predecessor's close) and for the cadence census decision 3 rules (12 hours),
+    // which is also what `clearing-job.mjs` does at every close after this one.
+    // A hand-bootstrapped window is a state with no receipt; this one has the
+    // seed's.
+    await client.query(
+      `INSERT INTO windows (id, opens_at, closes_at, status)
+       VALUES ($1, $2, $2::timestamptz + interval '12 hours', 'open')`,
+      [window.id + 1, window.closes_at]);
 
     await insertClaims(client, claims);
     await insertMarks(client, marks);
@@ -997,6 +1043,15 @@ export async function verifySeed(client, { window, marks, claims }, { columns = 
     if ((r.town_sha ?? null) !== (window.town_sha ?? null)) findings.push(`windows ${window.id} town_sha: repo says ${window.town_sha}, DB says ${r.town_sha}`);
   }
 
+  // The successor the seed opens (see `writeSeed`). A verifier that does not check
+  // what the seed wrote would let the 58.9-hour hole back in silently.
+  const nx = await client.query(
+    "SELECT id, opens_at, status FROM windows WHERE id = $1", [window.id + 1]);
+  if (!nx.rowCount) findings.push(`windows has no row ${window.id + 1} — the seed closed the genesis window and opened no candle (005_candle_tiling: "a hole neither accepts nor refuses")`);
+  else if (nx.rows[0].status !== "open") findings.push(`windows ${window.id + 1} is ${nx.rows[0].status}, not open — the successor the seed opens is the town's live candle`);
+  else if (new Date(nx.rows[0].opens_at).toISOString() !== new Date(window.closes_at).toISOString())
+    findings.push(`windows ${window.id + 1} opens at ${new Date(nx.rows[0].opens_at).toISOString()}, and ${window.id} closed at ${window.closes_at} — the candle must tile time`);
+
   const cq = await client.query("SELECT count(*)::int c FROM claims WHERE window_id = $1 AND status = 'locked'", [window.id]);
   if (cq.rows[0].c !== claims.length) findings.push(`claims locked in window ${window.id}: repo derives ${claims.length}, DB holds ${cq.rows[0].c}`);
 
@@ -1006,12 +1061,52 @@ export async function verifySeed(client, { window, marks, claims }, { columns = 
        FROM marks ORDER BY slug`);
   if (mq.rowCount !== marks.length) findings.push(`marks: repo derives ${marks.length}, DB holds ${mq.rowCount}`);
 
-  const dbBySlug = new Map(mq.rows.map((r) => [r.slug, r]));
+  findings.push(...compareMarks(mq.rows, marks, { columns }));
+
+  // `data` and `parent` ride the claim through the candle too (004), so a backfill
+  // that filled `marks` and forgot `claims` must not read as green.
+  if (checks.has("data") || checks.has("parent")) {
+    const cd = await client.query(
+      `SELECT count(*)::int c FROM claims WHERE window_id = $1 AND data IS NULL`, [window.id]);
+    if (cd.rows[0].c) findings.push(`claims in window ${window.id}: ${cd.rows[0].c} row(s) carry no data — marks were upgraded and claims were not`);
+    const cp = await client.query(
+      `SELECT count(*)::int c FROM claims c JOIN marks m ON m.id = c.id
+        WHERE c.parent IS DISTINCT FROM m.parent`);
+    if (cp.rows[0].c) findings.push(`claims: ${cp.rows[0].c} row(s) disagree with their mark about parent`);
+  }
+
+  return findings;
+}
+
+/**
+ * The per-slug comparator, over a `marks` SELECT and the rows a checkout derives.
+ *
+ * EXTRACTED from `verifySeed` 2026-08-28 for the replay-parity gate
+ * (`replay-ingest.mjs`), which asks the same question of a differently-shaped
+ * world: after a settlement era is replayed, does 2.0's standing register say
+ * what 1.0's says at that settlement's tag? Everything about "does the DB agree
+ * with the checkout, slug by slug" is the same question and must be answered by
+ * the same code — a second copy of this loop is the twin that drifts silently,
+ * which is what `foldOracle` and `readersOf` both exist to avoid one level up.
+ *
+ * What differs between the two callers is only the SCOPE, and it is passed in:
+ * the seed compares every column it wrote, and the replay cannot compare
+ * `locked_window` (a replayed mark locks in the window that actually cleared it,
+ * which is the whole point) and reports the columns 2.0's write path leaves NULL
+ * as their own named findings rather than as per-slug drift.
+ *
+ * `dbRows` are `marks` rows with `bbox::text` and `parent::text` — see the query
+ * in `verifySeed`, which is the shape both callers select.
+ */
+export function compareMarks(dbRows, marks, { columns = ALL_COLUMNS, label = "marks" } = {}) {
+  const checks = new Set(columns);
+  const findings = [];
+  const dbBySlug = new Map(dbRows.map((r) => [r.slug, r]));
   for (const m of marks) {
     const r = dbBySlug.get(m.slug);
-    if (!r) { findings.push(`marks MISSING in DB: ${m.slug}`); continue; }
+    if (!r) { findings.push(`${label} MISSING in DB: ${m.slug}`); continue; }
     dbBySlug.delete(m.slug);
-    const say = (field, repoV, dbV) => findings.push(`marks DIFFERS at ${m.slug} · field ${field}\n    repo says: ${repoV}\n    DB says:   ${dbV}`);
+    const say = (field, repoV, dbV) => findings.push(`${label} DIFFERS at ${m.slug} · field ${field}\n    repo says: ${repoV}\n    DB says:   ${dbV}`);
     const plain = (field, repoV, dbV) => { if ((repoV ?? null) !== (dbV ?? null)) say(field, repoV, dbV); };
     if (checks.has("id")) plain("id", m.id, r.id);
     if (checks.has("kind")) plain("kind", m.kind, r.kind);
@@ -1038,20 +1133,7 @@ export async function verifySeed(client, { window, marks, claims }, { columns = 
     }
     if (checks.has("parent")) plain("parent", m.parent, r.parent);
   }
-  for (const slug of dbBySlug.keys()) findings.push(`marks EXTRA in DB (the checkout derives no such mark): ${slug}`);
-
-  // `data` and `parent` ride the claim through the candle too (004), so a backfill
-  // that filled `marks` and forgot `claims` must not read as green.
-  if (checks.has("data") || checks.has("parent")) {
-    const cd = await client.query(
-      `SELECT count(*)::int c FROM claims WHERE window_id = $1 AND data IS NULL`, [window.id]);
-    if (cd.rows[0].c) findings.push(`claims in window ${window.id}: ${cd.rows[0].c} row(s) carry no data — marks were upgraded and claims were not`);
-    const cp = await client.query(
-      `SELECT count(*)::int c FROM claims c JOIN marks m ON m.id = c.id
-        WHERE c.parent IS DISTINCT FROM m.parent`);
-    if (cp.rows[0].c) findings.push(`claims: ${cp.rows[0].c} row(s) disagree with their mark about parent`);
-  }
-
+  for (const slug of dbBySlug.keys()) findings.push(`${label} EXTRA in DB (the checkout derives no such mark): ${slug}`);
   return findings;
 }
 

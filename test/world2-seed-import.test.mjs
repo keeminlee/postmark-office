@@ -317,6 +317,19 @@ test("the genesis window is the highest crossing in STATE/log, closed at the com
   } finally { f.cleanup(); }
 });
 
+// The successor is written by `writeSeed`, inside the transaction, and there is no
+// database here — so what this asserts is the one thing a pure test can: the
+// genesis window states the two facts the successor is derived FROM. The row
+// itself is proved on the box, by `--verify`, which reds if the candle is unlit.
+test("the genesis window states where its successor must open (005: the candle tiles time)", async () => {
+  const f = fixture();
+  try {
+    const w = genesisWindow({ repo: f.dir, lawSha: f.sha, townSha: null });
+    assert.equal(w.id + 1, 8, "the successor is the next crossing number");
+    assert.equal(w.closes_at, "2026-08-26T05:45:16.000Z", "and opens where this one closed");
+  } finally { f.cleanup(); }
+});
+
 test("a meta file that disagrees with its own filename about the clock is refused", async () => {
   const f = fixture({ meta: { 7: { crossing: 9, covers_from: "2026-08-26T00:00:00.000Z" } } });
   try {
