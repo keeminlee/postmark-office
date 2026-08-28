@@ -516,3 +516,12 @@ every mark in `marks` was placed. It is not wrong — a predicated mark IS stand
 but a consumer that expects a `where` on every row will now meet a NULL, and the
 view has no filter to say which it meant. Flagged rather than changed: the view is
 `001_tables.sql`'s, and what it should return is a phase-3 read-path question.
+
+## Merge ruling — the 76 class-parented marks (Wright, 2026-08-28, seed2 pass)
+
+A predicated mark whose parent is a CLASS mark (76 rows, all the-town tier-constitution
+slot/engine records in the Keeping Works) keeps `parent NULL` with the edge verbatim in
+`data._parent_is_law` — RULED as the durable shape, not a stopgap: a law-parent is a
+different KIND of edge than a marks-parent, and folding both into one FK would be false
+uniformity. If a consumer ever needs it as a queryable column, that is a 005-class
+migration (`parent_law_key text`), teed then, not built now (keep-simple).
