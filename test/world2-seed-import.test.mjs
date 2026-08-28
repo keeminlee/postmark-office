@@ -264,7 +264,7 @@ test("the genesis window is the highest crossing in STATE/log, closed at the com
     assert.equal(w.id, 7);
     assert.equal(w.status, "closed");
     assert.equal(w.opens_at, "2026-08-26T00:00:00.000Z");
-    assert.equal(w.closes_at, "2026-08-26T05:45:16Z");
+    assert.equal(w.closes_at, "2026-08-26T05:45:16.000Z");
     assert.equal(w.cleared_at, w.closes_at);
     assert.equal(w.law_sha, f.sha);
   } finally { f.cleanup(); }

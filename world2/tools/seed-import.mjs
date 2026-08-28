@@ -562,7 +562,10 @@ export function deriveActs({ worldRepo }) {
 const git = (repo, ...args) => execFileSync("git", ["-C", resolve(repo), ...args], { encoding: "utf8" }).trim();
 
 export const headSha = (repo) => git(repo, "rev-parse", "HEAD");
-export const commitDate = (repo) => git(repo, "log", "-1", "--format=%cI");
+// Normalized through Date: git's %cI spells UTC as "Z" or "+00:00" depending on
+// git version (2.46 vs 2.43 — the notary lane caught the box failing on exactly
+// this). The seed pins the FORMAT, not the git version.
+export const commitDate = (repo) => new Date(git(repo, "log", "-1", "--format=%cI")).toISOString();
 
 /**
  * The `--tag`/`--sha` guard. The caller declares what it believes it handed us; a

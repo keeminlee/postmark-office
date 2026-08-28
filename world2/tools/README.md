@@ -757,3 +757,7 @@ fork-and-**read**. Whether anything should be able to fork-and-**parse** these b
 into the 1.0 frontmatter shape is a read-path question, and it belongs to whoever
 owns the viewer — not to the notary, which would otherwise be inventing a schema
 for someone else's file.
+
+## Merge rulings (Wright, 2026-08-28 — the notary's 10 teed decisions)
+
+All ten KEPT as shipped. Named ones: (1) the certification's `archives`/`archives_sha` beyond gold §2's three fields — kept, the cursor binds length and §2's whole point is catching a rewrite; (2) acts-to-window by CROSSING, half-open, genesis unbounded below — kept, and seconded after review: it is the same clock the seed derived windows from, and a time bound would have called an empty genesis complete; (8) the notary's own commit identity — kept, a machine pen with one hand. The seed lane's git-date-format finding fixed at the deriver same merge (commitDate pins the format via Date, not the git version).
