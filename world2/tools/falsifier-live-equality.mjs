@@ -428,10 +428,19 @@ export function e6Emissions(rows, atMs) {
  * eras are reported BESIDE it as the named delta they are. The store carrying
  * more record than the frozen tag is the store being right, not a finding.
  */
-export function e6Occupancy(passages, at) {
+export function e6Occupancy(passages, at, ledgerRel) {
   const findings = [];
-  const rel = ["WORLD/enter-exit-ledger-frozen.md", "WORLD/threshold-ledger.md"].find((f) => existsSync(join(REPO, f)));
-  if (!rel) return { findings: ["E6 the checkout carries neither enter/exit ledger name — occupancy is unchecked"], compared: 0 };
+  // THE ACTS NAME THEIR OWN SOURCE, so nothing here guesses which file to read.
+  // At `settlement/S50` the checkout carries BOTH ledger names — the rename's
+  // two sides — and the backfill refuses exactly that ambiguity ("Two files
+  // claiming to be one archive is the twin phase 0 just killed"). It does not
+  // have to be refused here: `payload._ledger` says which file these rows came
+  // out of, and reading any other one would compare the store to a record it was
+  // not built from.
+  const rel = ledgerRel;
+  if (!rel) return { findings: ["E6 no passage act names its source ledger — occupancy is unchecked"], compared: 0 };
+  if (!existsSync(join(REPO, rel)))
+    return { findings: [`E6 the acts name ${rel} as their source and this checkout has no such file — occupancy is unchecked`], compared: 0 };
   const { acts } = parseEnterExit(readFileSync(join(REPO, rel), "utf8"));
   const frozen = passages.filter((p) => p.era === "ledger");
   const beyond = passages.filter((p) => p.era !== "ledger");
@@ -458,7 +467,11 @@ function vendorDrift() {
   for (const [name, v] of Object.entries(live.VENDOR)) {
     if (v.repo !== "keeminlee/postmark-world") continue;   // only the world half is in this checkout
     let blob = null;
-    try { blob = execFileSync("git", ["-C", REPO, "rev-parse", `HEAD:${v.path}`], { encoding: "utf8" }).trim(); }
+    // stderr swallowed: a checkout predating a RENAME has no such path and says
+    // so on stderr, which is a true fact about that sha and not a finding. (The
+    // enter/exit reader was `tools/thresholds.mjs` until world e14a0bd7 — the
+    // same two-name history law-ingest already carries a fallback for.)
+    try { blob = execFileSync("git", ["-C", REPO, "rev-parse", `HEAD:${v.path}`], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim(); }
     catch { continue; }
     if (blob !== v.blob) out.push({ name, path: v.path, vendored: v.blob, checkout: blob });
   }
@@ -510,7 +523,8 @@ try {
     // Asked at an instant when something IS in the air — asking "now" over a
     // frozen record compares two empty lists and calls it agreement.
     E6emissions: e6Emissions(emitRows, emissionAt),
-    E6occupancy: e6Occupancy(passages.passages, Infinity),
+    E6occupancy: e6Occupancy(passages.passages, Infinity,
+      passRows.find((r) => r.payload?._ledger)?.payload?._ledger ?? null),
   };
 
   const findings = Object.values(e).flatMap((r) => r.findings);
