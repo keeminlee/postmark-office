@@ -737,8 +737,15 @@ export async function upgradeSeed(client, derived) {
 
   // Guard 2: the seed under us must still be exactly what this tool wrote. The
   // verifier is pointed at the INTERSECTION — the marks that were seedable before
-  // 004 — because the de-sited ones are legitimately absent until this run.
-  const seeded = { ...derived, marks: marks.filter((m) => presentSlugs.has(m.slug)) };
+  // 004, and their claims — because the de-sited ones are legitimately absent
+  // until this run, and counting them as missing would refuse every real upgrade.
+  const intersection = marks.filter((m) => presentSlugs.has(m.slug));
+  const intersectionIds = new Set(intersection.map((m) => m.id));
+  const seeded = {
+    ...derived,
+    marks: intersection,
+    claims: claims.filter((c) => intersectionIds.has(c.id)),
+  };
   const findings = await verifySeed(client, seeded, { columns: PRE_004_COLUMNS });
   if (findings.length) {
     throw new Error(
