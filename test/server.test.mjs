@@ -349,11 +349,7 @@ test("MCP tools/list, apex OFF: the full 43 — the slim's delist is apex-condit
   // 42 -> 43 (wave 2, 2026-08-24): update_address_fields, the scoped
   // frontmatter door. Listed unconditionally like every other paper door — the
   // slim only hides what an APEX serves, and no apex serves this one.
-  // 43 -> 45 (Phase 5.6, 2026-08-28): world_submit_mark + world_discard_draft,
-  // the private compose space's two acts. Unconditional, and the ledger is paid
-  // in the same commit that adds them — the note four paragraphs up predicted
-  // exactly this break for "whoever adds the next tool, whatever it is".
-  assert.equal(names.length, 45);
+  assert.equal(names.length, 43);
   assert.ok(names.includes("update_address_fields"), "the fields door stands regardless of the world flag");
   assert.ok(!names.includes("request_blessing"), "request_blessing's delist is unconditional");
   assert.ok(!names.includes("world"), "no apex tool with the flag off");

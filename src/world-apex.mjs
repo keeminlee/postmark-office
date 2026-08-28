@@ -47,7 +47,6 @@ import {
   currentCrossing,
   leaveMarkViaOffice,
   withdrawMarkViaOffice,
-  submitMarkViaOffice,
   placeWords,
   residentStandpoint,
   walkViaOffice,
@@ -272,23 +271,6 @@ const DISPATCH = {
   // no row of its own: it IS leave-mark with amend: true — a newer declaration
   // on your own node, the same primitive wearing its revision face.
   withdraw: { tool: "world_withdraw_mark", run: (args, key) => withdrawMarkViaOffice(WORLD_CLONE, args, key) },
-  // ── the private/public boundary (gold plan §4 Phase 5.6) ───────────────────
-  //
-  // THIS ROW IS UNREACHABLE TODAY, and saying so here is the point — this is
-  // the L6 gap in its honest direction, the office ready before the law. The
-  // gate above admits an action only when a class mark AFFORDS it, and no mark
-  // in the world's law affords `submit` yet: the grant belongs in
-  // `the-town/resident`'s own `actions` array, in the world law repo, which is
-  // a law-tier change and Keemin's word rather than this lane's. Until it is
-  // planted, `world { do: "submit" }` bounces with "afforded nowhere in the
-  // world", correctly, and the act's own doors serve it — the flat
-  // `world_submit_mark` and `POST /world/submit`, neither of which passes the
-  // affordance gate.
-  //
-  // Composing needs no row at all: `draft: true` is a field on `leave-mark`,
-  // which every resident is already afforded, so the private half of this slice
-  // is live through the apex the day it ships and only the boundary act waits.
-  submit: { tool: "world_submit_mark", run: (args, key) => submitMarkViaOffice(WORLD_CLONE, args, key) },
   stake: { tool: "world_stake", run: (args, key) => callWorldStakeTool("world_stake", args, key) },
   unstake: { tool: "world_unstake", run: (args, key) => callWorldStakeTool("world_unstake", args, key) },
   // The private note, reskinned as an act like any other (Keemin, 2026-08-15):

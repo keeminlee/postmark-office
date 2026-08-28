@@ -720,12 +720,7 @@ test("send_letter FOLDS UNDER household — your pen lives where your standing d
   const names = TOOLS.map((t) => t.name);
   assert.ok(names.includes("send_letter"),
     "the DEFINITION stands — a delist is listing-only, and a cached client still calls this name");
-  // 43 -> 45 (Phase 5.6, 2026-08-28): world_submit_mark + world_discard_draft.
-  // The sentence this number guards is about the DELIST, not about growth: it
-  // asserts that folding send_letter under `household` did not remove a
-  // definition. Two additions in an unrelated lane move it and change nothing
-  // it means, so the ledger is paid and the claim restated.
-  assert.equal(names.length, 45, "no tool was DELISTED out of existence; the flag-off listing still defines every name");
+  assert.equal(names.length, 43, "no tool was added or removed; the flag-off listing is untouched");
 
   assert.ok(HOUSEHOLD_DISPATCHABLE.includes("send"), "household do: \"send\" is the letter's apex verb");
   assert.equal(householdDispatchToolFor("send"), "send_letter",
@@ -743,15 +738,8 @@ test("send_letter FOLDS UNDER household — your pen lives where your standing d
       const apexNames = (await list()).map((t) => t.name);
       assert.ok(!apexNames.includes("send_letter"),
         "delisted apex-on: household serves it, so the listing stops carrying the flat name");
-      // Three apexes and FIVE deliberate flats since Phase 5.6: the private
-      // compose space's two acts list because neither has an apex twin —
-      // `submit` is afforded by no class mark yet, so delisting the flat would
-      // leave the private/public boundary reachable by nothing. Same standing
-      // ruling that keeps world_investigate and world_note here, and the
-      // reasoning in full is at the twin assertion in world-apex.test.mjs.
-      assert.deepEqual(apexNames.sort(), ["household", "town", "upload_media", "world",
-        "world_discard_draft", "world_investigate", "world_note", "world_submit_mark"],
-        "the fourth round's whole listing: three apexes and five deliberate flats");
+      assert.deepEqual(apexNames.sort(), ["household", "town", "upload_media", "world", "world_investigate", "world_note"],
+        "the fourth round's whole listing: three apexes and three deliberate flats");
     });
   } finally { rmSync(clone, { recursive: true, force: true }); }
 });

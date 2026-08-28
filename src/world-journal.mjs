@@ -72,7 +72,35 @@ import { execFileSync } from "node:child_process";
 
 import { openDynamic, dynamicDbPath, singleLogEnabled } from "./dynamic-store.mjs";
 import { mirrorAct } from "./world2-acts.mjs";
-import { submitClaimFromJournal } from "./world2-claims.mjs";
+import { candleEnabled, submitClaimFromJournal } from "./world2-claims.mjs";
+
+/**
+ * Is this row a PRIVATE compose, whose act must not reach the public `acts`
+ * log until a stake puts it forward? (Phase 5.6 — see the deferral note in
+ * appendJournal.)
+ *
+ * Narrow on purpose, and every clause earns its place:
+ *   · mark class + leave-mark/amend — the only declarations that carry a body.
+ *   · put_forward !== true — the DOOR's verdict that this act stakes the mark;
+ *     an unstaked declaration is the resident composing, not the town acting.
+ *   · candleEnabled — WITHOUT THE DOCKET THERE IS NOTHING TO CARRY THE ROW.
+ *     Deferring with the candle off would not make an act private, it would
+ *     drop it on the floor, and the parity falsifier would be right to red.
+ *     A store that cannot hold a draft gets the old behaviour, unchanged.
+ *
+ * KNOWN GAP, named rather than hidden: a `withdraw` of a private draft still
+ * mirrors, so `acts` records that this author discarded this slug — the FACT
+ * and the NAME leak, though never the body. Closing it needs the door to know
+ * synchronously that the target is a draft, which it cannot today (the docket
+ * pen is async and the 1.0 published/unpublished split does not answer it).
+ * Carried as a finding, not papered over.
+ */
+function privateDraftAct(row) {
+  return String(row.class) === CLASS_MARK
+    && (row.action === ACTION_LEAVE || row.action === ACTION_AMEND)
+    && candleEnabled()
+    && (() => { try { return JSON.parse(row.payload ?? "{}")?.put_forward !== true; } catch { return false; } })();
+}
 import { draftDeltaForKey, mainRef, publishedState, resolvedWorldHousehold } from "./world-branches.mjs";
 
 export { singleLogEnabled };
@@ -321,8 +349,28 @@ export function appendJournal(db, entry = {}) {
   // a mark-class declaration also onto the public docket (`claims`). No-ops
   // unless WORLD2_PG=1 (+ WORLD2_CANDLE=1 for the docket); fire-and-forget for
   // this caller, loud on failure, parity-falsified. Death dates in the modules.
-  mirrorAct(row, seq);
-  submitClaimFromJournal(row, seq);
+  //
+  // ── THE DEFERRAL, and why the mirror is conditional (Phase 5.6) ───────────
+  //
+  // A PRIVATE DRAFT MUST NOT REACH `acts`, because `acts` is the one table that
+  // leaves the box: the notary exports `archives/acts/<window>.jsonl` into a
+  // public git repo, frozen on write. A leave-mark's payload carries the mark's
+  // BODY — so mirroring an unstaked declaration would publish a resident's
+  // private sentence permanently, and no row policy on `claims` could reach it
+  // there. That is the whole privacy promise of Phase 5.6, lost at this line.
+  //
+  // So the SQLITE JOURNAL always gets its row (it is local to this box, it is
+  // 1.0's live layer, and every 1.0 read depends on it), and the POSTGRES
+  // MIRROR waits. The docket pen carries the row on the draft claim itself
+  // (`data._deferred_act`) and mirrors it the moment a stake makes the mark
+  // public — dated at the putting-forward, which is when the world actually
+  // witnessed anything.
+  //
+  // The predicate is deliberately narrow: ONLY an unstaked mark-class
+  // declaration defers. Everything else — speech, walking, withdrawals of
+  // public marks, every non-mark class — mirrors exactly as before.
+  if (privateDraftAct(row)) submitClaimFromJournal(row, seq);
+  else { mirrorAct(row, seq); submitClaimFromJournal(row, seq); }
 
   return { seq, ...row };
 }
