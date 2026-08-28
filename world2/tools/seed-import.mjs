@@ -606,11 +606,35 @@ export function genesisWindow({ repo, lawSha, townSha }) {
 //   what the column means.
 const LEGACY_CLASS = "legacy";
 
+/**
+ * Every log file the town writes, and the crossing each one is filed under.
+ *
+ * WIDENED 2026-08-28 (the replay lane, from the settlement/S50 checkout). The
+ * original shape here was `/^(\d+)\.jsonl$/`, which was complete for every
+ * checkout the seed had ever been pointed at and is NOT complete for the town's
+ * record generally: the 08-27 hand-drain (world commit 33332ec4, "the stranded
+ * write-down") filed four windows under FRACTIONAL, `.journal`-suffixed names —
+ *
+ *   STATE/log/152.9084.journal.jsonl   STATE/log/153.journal.jsonl
+ *
+ * — and the integer-only pattern skips them silently. At `sandbox/seed` there
+ * are none, so the seed's own behaviour is unchanged to the byte; between S49
+ * and S50 there are seven acts inside them, and a replay that dropped seven acts
+ * without saying so is the failure this file's own "a malformed line is REFUSED,
+ * not skipped" note is against, one level up. A file the pattern does not match
+ * is not refused — it is not seen at all, which is worse.
+ *
+ * The fractional name IS the crossing (the town's clock is fractional inside a
+ * window — `acts.crossing` is `numeric` for exactly that reason), so the number
+ * parsed out of the filename stays the fallback it always was.
+ */
+export const LOG_FILE = /^(\d+(?:\.\d+)?)(?:\.journal)?\.jsonl$/;
+
 export function deriveActs({ worldRepo }) {
   const logDir = join(resolve(worldRepo), "STATE", "log");
   if (!existsSync(logDir)) throw new Error(`no STATE/log under ${worldRepo}`);
   const files = readdirSync(logDir)
-    .map((f) => ({ f, n: Number(/^(\d+)\.jsonl$/.exec(f)?.[1]) }))
+    .map((f) => ({ f, n: Number(LOG_FILE.exec(f)?.[1]) }))
     .filter((x) => Number.isFinite(x.n)).sort((a, b) => a.n - b.n);
 
   const rows = [];
@@ -1006,12 +1030,52 @@ export async function verifySeed(client, { window, marks, claims }, { columns = 
        FROM marks ORDER BY slug`);
   if (mq.rowCount !== marks.length) findings.push(`marks: repo derives ${marks.length}, DB holds ${mq.rowCount}`);
 
-  const dbBySlug = new Map(mq.rows.map((r) => [r.slug, r]));
+  findings.push(...compareMarks(mq.rows, marks, { columns }));
+
+  // `data` and `parent` ride the claim through the candle too (004), so a backfill
+  // that filled `marks` and forgot `claims` must not read as green.
+  if (checks.has("data") || checks.has("parent")) {
+    const cd = await client.query(
+      `SELECT count(*)::int c FROM claims WHERE window_id = $1 AND data IS NULL`, [window.id]);
+    if (cd.rows[0].c) findings.push(`claims in window ${window.id}: ${cd.rows[0].c} row(s) carry no data — marks were upgraded and claims were not`);
+    const cp = await client.query(
+      `SELECT count(*)::int c FROM claims c JOIN marks m ON m.id = c.id
+        WHERE c.parent IS DISTINCT FROM m.parent`);
+    if (cp.rows[0].c) findings.push(`claims: ${cp.rows[0].c} row(s) disagree with their mark about parent`);
+  }
+
+  return findings;
+}
+
+/**
+ * The per-slug comparator, over a `marks` SELECT and the rows a checkout derives.
+ *
+ * EXTRACTED from `verifySeed` 2026-08-28 for the replay-parity gate
+ * (`replay-ingest.mjs`), which asks the same question of a differently-shaped
+ * world: after a settlement era is replayed, does 2.0's standing register say
+ * what 1.0's says at that settlement's tag? Everything about "does the DB agree
+ * with the checkout, slug by slug" is the same question and must be answered by
+ * the same code — a second copy of this loop is the twin that drifts silently,
+ * which is what `foldOracle` and `readersOf` both exist to avoid one level up.
+ *
+ * What differs between the two callers is only the SCOPE, and it is passed in:
+ * the seed compares every column it wrote, and the replay cannot compare
+ * `locked_window` (a replayed mark locks in the window that actually cleared it,
+ * which is the whole point) and reports the columns 2.0's write path leaves NULL
+ * as their own named findings rather than as per-slug drift.
+ *
+ * `dbRows` are `marks` rows with `bbox::text` and `parent::text` — see the query
+ * in `verifySeed`, which is the shape both callers select.
+ */
+export function compareMarks(dbRows, marks, { columns = ALL_COLUMNS, label = "marks" } = {}) {
+  const checks = new Set(columns);
+  const findings = [];
+  const dbBySlug = new Map(dbRows.map((r) => [r.slug, r]));
   for (const m of marks) {
     const r = dbBySlug.get(m.slug);
-    if (!r) { findings.push(`marks MISSING in DB: ${m.slug}`); continue; }
+    if (!r) { findings.push(`${label} MISSING in DB: ${m.slug}`); continue; }
     dbBySlug.delete(m.slug);
-    const say = (field, repoV, dbV) => findings.push(`marks DIFFERS at ${m.slug} · field ${field}\n    repo says: ${repoV}\n    DB says:   ${dbV}`);
+    const say = (field, repoV, dbV) => findings.push(`${label} DIFFERS at ${m.slug} · field ${field}\n    repo says: ${repoV}\n    DB says:   ${dbV}`);
     const plain = (field, repoV, dbV) => { if ((repoV ?? null) !== (dbV ?? null)) say(field, repoV, dbV); };
     if (checks.has("id")) plain("id", m.id, r.id);
     if (checks.has("kind")) plain("kind", m.kind, r.kind);
@@ -1038,20 +1102,7 @@ export async function verifySeed(client, { window, marks, claims }, { columns = 
     }
     if (checks.has("parent")) plain("parent", m.parent, r.parent);
   }
-  for (const slug of dbBySlug.keys()) findings.push(`marks EXTRA in DB (the checkout derives no such mark): ${slug}`);
-
-  // `data` and `parent` ride the claim through the candle too (004), so a backfill
-  // that filled `marks` and forgot `claims` must not read as green.
-  if (checks.has("data") || checks.has("parent")) {
-    const cd = await client.query(
-      `SELECT count(*)::int c FROM claims WHERE window_id = $1 AND data IS NULL`, [window.id]);
-    if (cd.rows[0].c) findings.push(`claims in window ${window.id}: ${cd.rows[0].c} row(s) carry no data — marks were upgraded and claims were not`);
-    const cp = await client.query(
-      `SELECT count(*)::int c FROM claims c JOIN marks m ON m.id = c.id
-        WHERE c.parent IS DISTINCT FROM m.parent`);
-    if (cp.rows[0].c) findings.push(`claims: ${cp.rows[0].c} row(s) disagree with their mark about parent`);
-  }
-
+  for (const slug of dbBySlug.keys()) findings.push(`${label} EXTRA in DB (the checkout derives no such mark): ${slug}`);
   return findings;
 }
 
