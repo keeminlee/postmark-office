@@ -13,6 +13,8 @@ runs the other way — it is the only one that reads the DB and writes the repo.
 | `snapshot-export.mjs` | the DB → notary certifications, event archives and mark bodies in git (`snapshot_exporter`) |
 | `standing.mjs` | 1.0's standing walk over `marks` rows — the library `clearing-job.mjs` step 7 recomputes with |
 | `falsifier-standing-equality.mjs` | the port vs 1.0's own fold, over the same state, slug by slug |
+| `live-reads.mjs` | 1.0's movement/presence/sound/containment reads, ported to `acts` rows — what the LIVE doors serve |
+| `falsifier-live-equality.mjs` | those ports vs 1.0's own imported functions, on identical inputs |
 
 The law these implement is quoted verbatim in each file's header, from the gold
 plan (`G:/Starstory/PULSE/gold-plans/postmark-world-2/postmark-world-2.md` §3, §4)
@@ -1427,3 +1429,238 @@ FOLLOW-UP SLICE (honoring Keemin's stake-is-submit ruling exactly): `do:"stake"`
 ## Merge rulings (Wright, 2026-08-28 night — the drafts REBUILD to stake-is-submit)
 
 THE DEFERRAL: KEPT, recommended to Keemin as the necessary extension of his ruling (an unstaked leave-mark's mirror would have put private bodies in the notary's public archive forever; the 1.0 journal row lands immediately, the Postgres act rides the draft in data._deferred_act and releases at the stake, dated at the putting-forward — "the world witnessed the putting-forward, not the thinking"). His veto stands open; the revert is one predicate. Also ruled: (2) the docket's meaning change (unstaked = draft = not on the docket) is THE FIX, and A/B/replay surfaces asserting docket counts read this section as the notice; (3) the withdraw-of-a-draft fact+name mirror leak stays a NAMED gap (body never leaks) until the office can know a target is a draft synchronously; (4) putting-forward dating accepted (also avoids inserting into notary-frozen windows); (5) the stamps:0-on-commons ambiguity resolved as save-the-draft-refuse-the-promotion, quoting the law — better than discarding an author's work over a number. The three-lawful-departures rewrite of the parity falsifier, with its exit-2-rather-than-unearned-green stance, is accepted as the new mirror contract.
+
+## The LIVE read tier
+
+`live-reads.mjs` is 1.0's movement, presence, sound and containment derivations
+ported to `acts` rows, and `falsifier-live-equality.mjs` is the guard. It closes
+the A/B gaps list's remaining "data present, no door" block — P-092 walkers,
+P-093 present, P-098 dynamic, P-036 occupancy — and it is the last hard
+prerequisite for cutover, because every apex read shadow still answers from
+sqlite.
+
+| door | question | 1.0's equivalent |
+|---|---|---|
+| `/world2/walks` | every departure the record holds, in the ledger's grammar | `WORLD/walk-ledger.md` (the site's one still-baked record) |
+| `/world2/positions[?at=]` | every walker's derived position at one instant | `walk.mjs positionsAt` |
+| `/world2/present[?at=][&x=&y=&radius=&limit=]` | every PLACED resident: a walk, else ground, else the porch | `GET /world/present` · `world_walkers` |
+| `/world2/say?at=&x=&y=[&radius=&mode=]` | what is still in the air, and what reaches this point | `presentEmissions` |
+| `/world2/occupancy[?handle=]` | the containment stack, and who is inside each mark | `world_occupancy` |
+
+Keyless, like the rest of this tier and like 1.0's own: `world_walkers` is in
+mcp.mjs's PUBLIC set and `GET /world/present` is served without a key.
+
+### The order, and the 44-handle trap under it
+
+"latest wins" means latest **APPENDED**, not latest by instant —
+world-movement.mjs states the reason and it is law here too: *"File order and
+instant order disagree in the real ledger (the 08-08 sailing filed every
+passenger at 18:00:00.000Z and those lines were appended after walks stamped
+18:16), so re-sorting here would silently re-decide which leg governs a
+resident."*
+
+In `acts` the rows' append order is **not** the record's: the backfill inserted
+the 304 pre-journal ledger departures AFTER the 786 journal ones, because
+`journalBegins` needs the journal there first. Measured on `world2_dev`:
+
+```
+plain `id` order            44 of 73 handles get a DIFFERENT governing departure
+era-then-id vs by-instant    0 of 73
+journal era, id vs instant   0 of 72   (786 of 786 rows monotone in `at`)
+```
+
+So `DEPARTURE_ORDER_SQL` is `ORDER BY ((payload->>'_ledger') IS NULL), acts.id`
+— era first, row id inside each era, which restores each era's own file order.
+`departureRecords` **asserts** it was applied rather than trusting the caller,
+because the trap is silent: an unordered read returns rows, in an order, with no
+symptom.
+
+`acts.id` is qualified on purpose. Postgres resolves a bare `ORDER BY id`
+against the OUTPUT column list first, so a caller selecting `id::text` sorts the
+ids as TEXT — "1019" before "102". That is what this falsifier's own first run
+did, and the order guard is what caught it.
+
+### The four eras of a movement act
+
+| era | how identified | payload | the mapping's source |
+|---|---|---|---|
+| `ledger` | `payload._ledger` | the checkout reader's own output, whole | ledger-backfill § the shape of a backfilled row |
+| `journal` | `payload.payload.from` | the jsonl row; fields one level down | `storedDepartures`' converter, quoted at its line |
+| `journal-line` | `payload.payload.lines` | a live-pen act crystallized into a crossing log | walk-exec / crossing-exec § SETTLE AT THE SAVE |
+| `live` | `payload.lines` | the live pen's own act, mirrored straight in | the same, post-cutover |
+
+**The fourth era was found by the falsifier, not by reading.** The first cut knew
+three and refused three `legacy:enter`/`legacy:exit` rows the replay had ingested
+from crossings 151–153 — vermillion entering Pando Peak. Those rows are the live
+pen's line inside the journal's envelope. The refusal NAMED them rather than
+dropping them, which is the whole argument for refusing: an era nobody knew about
+announced itself. A payload no era explains still stops the read.
+
+### The equalities
+
+Every oracle is 1.0's OWN function, imported live — never a re-expression.
+
+```sh
+export WORLD2_PG_URL="postgres://snapshot_reader:…@localhost:5432/world2_dev"
+git -C ~/world-full worktree add --detach ~/live-lane/w-s50 settlement/S50
+node world2/tools/falsifier-live-equality.mjs --world-repo ~/live-lane/w-s50 --can-fail-proof
+```
+
+Run against `world2_dev` on 2026-08-28, at `settlement/S50` (the store's own
+state — run it at the FLOOR and E5b reds on marks the replay legitimately moved):
+
+```
+world 0c1aa924 · 1090 departures (ledger 304 · journal 786 · live 0) · 158 passages
+              · 1630 emissions · 847 marks · 102 identities
+  E1  ledger parse   compared  304   the checkout's parseWalkLedger
+  E2  ledger order   compared   50   the checkout's currentDeparture, file order
+  E2b merged order   compared   73   the office's recordsAcrossEras merge
+  E3  journal seam   compared  786   the office's storedDepartures over an in-memory movements table
+  E4  arithmetic     compared  365   the checkout's positionAt / publicWalkers
+  E5  the union      compared  123   the checkout's where-is publicResidents
+  E5b shim vs fold   compared   68   the checkout's own fold
+  E6  presence       compared  129   the office's presentEmissions over an in-memory emissions table
+  E6  occupancy      compared   12   the checkout's occupancyAt over the frozen ledger
+GREEN · the port and 1.0's own functions agree on every row compared
+```
+
+Exit **0** green · **1** RED · **2** cannot run. There is no code for "checked
+nothing and found nothing": every equality reports its own `compared`, and any
+equality that compared zero rows exits 2.
+
+Two scoping decisions are worth knowing, because both started as false findings:
+
+- **E2 scopes the oracle to the rows the store holds.** `acts` carries 304 of the
+  ledger's 317; the other 13 sit at or after the journal's first row and the
+  backfill deliberately left them to the journal (`partitionWalks`). Comparing
+  1.0's answer over the whole ledger against the port's over the 304 reported 8
+  handles as disagreeing when 1.0's answer for them simply lives in the other
+  era. The seam receipt stayed: a ledger row in NEITHER era is a finding.
+- **E6 compares the frozen era to the frozen era** — ab-compare's AB-P2 lesson
+  verbatim. Rows from later eras are reported beside it as the named delta they
+  are. The store carrying more record than the frozen tag is the store being
+  right.
+
+### The can-fail proof
+
+The falsifier holds a read-only credential by design, so the breaks are done to
+the INPUTS, in memory; the store is never touched.
+
+```
+RED    departures read in plain `id` order (the era seam ignored) — 44 finding(s)
+RED    the journal era dropped (a port that reads only the frozen ledger) — 1
+RED    marks.household read as the handle (the _cred edge) — 68
+RED    the TTL predicate widened (every emission stays in the air forever) — 1
+INERT  an `opposed` crossing counted as an entry — the break altered no input
+RED    the vendored arithmetic drifted (positionAt fed a wrong pace) — 1
+RED    an unreadable act skipped instead of refused — 1
+can-fail PROVEN
+```
+
+The 44 is the measured number, arrived at independently.
+
+**The first pass of this proof was not a proof.** Four breaks read SILENT, and
+none of them was: each fed the same broken input to BOTH sides of an equality,
+which of course agreed. Every break is now aimed at the ONE equality whose oracle
+it cannot reach. And INERT is not SILENT — the standing lane's finding, applied
+to inputs rather than rows: a break that altered none of its own inputs proves
+nothing, and reading it as "the falsifier missed it" would be a proof lying in
+the safe direction. There is no `opposed` crossing in the 158-row record; the
+unit suite exercises that predicate instead.
+
+### The A/B against the lab's 1.0 door, and what it found
+
+`GET /world/present` on the lab office (:4382) against `/world2/present` on a
+scratch office (:4391), same instant:
+
+```
+1.0: 132   2.0: 122
+only in 1.0: 12    only in 2.0: quill-stem, dylan-android-husband
+1.0 sources: quay 66 · parcel 66          (its dynamic.db was reset; it sees NO walks)
+2.0 sources: walk 72 · parcel 24 · quay 26
+```
+
+**It found a real port gap, and it is fixed.** `the-post-office` — the vessel —
+was in the resident list. She declares departures in `acts` like anyone else, and
+nothing in the store says she is not a resident; 1.0 knows, and deletes her
+before the union is built: *"she is a mark that moves, not a resident."*
+`NON_ENTITY_ACTORS` is her exclusion, ported, dropped from BOTH the roster and
+the departures (1.0's own belt-and-braces). She stays in `/world2/positions`,
+which is `positionsAt`'s answer over the record and has no such exclusion in 1.0
+either — two doors, two questions.
+
+Everything else in that diff is an INPUT difference, checked rather than assumed:
+
+- the 12 only-in-1.0 are **in the town's roll and not in `identities`** — 0 of 12
+  have a row. See § unruled, below.
+- `quill-stem` has 2 departures in `acts` and no roster row: 2.0 places it from a
+  walk record the lab's 1.0 cannot see at all.
+- `dylan-android-husband` is in `identities` (`gh:312413958`) with no walk and no
+  parcel: the roll puts it on the porch, and 1.0's roll does not name it.
+
+**What could NOT be compared end to end, and why.** The lab's `dynamic.db` was
+reset, so 1.0 there answers from ground and the roll alone — its walk half is
+empty and its emission table is empty. There is therefore no state on which 1.0
+and 2.0 hold the same movement record, and no end-to-end presence comparison is
+available on this box. The equalities above are the real receipt: they feed 1.0's
+own functions and the port IDENTICAL inputs, which is the comparison the missing
+one would only have approximated.
+
+### What is NOT here, said out loud
+
+1. **The carrier-frame overlay (Stage D).** A resident aboard a moving mark reads
+   at the place their own walk record put them, not at the carrier's position.
+   The fold needs `world-frames.mjs foldFrames`, the vessel timetable and the
+   `movements` table, and none of the three has a 2.0 surface. `aboard` is
+   ABSENT from these answers rather than always false — a field that is always
+   false is a lie with a schema.
+2. **The staleness vocabulary** (`standing`, `era`, `ledger_moved`, `as_of`).
+   All facts about the sqlite `entities` table and its refresh cadence. 2.0
+   derives at the instant asked, so there is nothing crystallized to be stale
+   against and the words have nothing to describe.
+3. **The live sound lane.** `world.mjs` calls `appendJournal` for leave-mark,
+   amend and withdraw only — the say path writes no journal row, so it is not
+   mirrored, so `acts` has received nothing said since the seed. Emission
+   presence here is the crossing-save's crystallized record. This is a WRITE-path
+   gap and it is named on the answer, because a read tier that returned silence
+   would be indistinguishable from a quiet town.
+
+All three ride the answers as `DISCLOSURES`, never as silence.
+
+### Unruled, and teed rather than guessed
+
+1. **The earshot radius.** Two readings, and they diverge once the sound class's
+   `radius_m` moves — which it has (`class_version` runs 1 → 2 across the seeded
+   rows). PER-ACT reads each emission's own stamped `props.radius_m`, which is
+   gold §3 rule 2's per-act determinism and the reason `recordEmission` stamps it
+   at all: *"a dial changed tomorrow does not retroactively re-govern what
+   happened today."* CURRENT reads one dial for the whole answer, which is what
+   `voices.mjs heardBy` does today (`distM(point, ear) <= earshotM`). Neither is
+   obviously wrong. The door defaults to PER-ACT, `?mode=current&radius=` selects
+   the other, and every answer says which rule it applied and that the seam is
+   unruled. **Recommendation: per-act.** A historical emission heard at a radius
+   it was never spoken under is a re-derived past, which is the thing the whole
+   per-act stamping discipline exists to prevent — and the live ear can keep the
+   current dial because it is answering about now.
+2. **Which roster the read tier asks.** 1.0's doors take the TOWN's roll
+   (`ctx.roll` — the door #1864's report came through); 2.0 has `identities`, the
+   world repo's `households.json` projected. The two overlap and neither contains
+   the other: 12 handles in 1.0's roll have no `identities` row, and at least one
+   `identities` handle is not in 1.0's roll. **Recommendation: the town's roll**,
+   because #1864's whole lesson is that a roster narrower than the town makes
+   residents unaskable-about — but it needs a 2.0 surface for the town roll
+   first, which this lane does not have and did not invent.
+3. **1.0's `mark.household` has no 2.0 column.** It is a handle; 2.0's
+   `marks.household` is the RESOLVED key (1.0's `_cred`), and the seed dropped
+   the authored field because a column held its name. The port reads `owner` in
+   its place, which is exact on 977 of 977 marks at `c701988f` and is a fact
+   about today's register rather than a law. `admissionNotes` fires the day the
+   two can differ; the fix would be a 005-class column.
+
+### The vendor tripwire fired, and was re-checked
+
+`tools/enter-exit.mjs` is `c3817c10` at world-2 HEAD (where it was vendored) and
+`8a202b05` at `settlement/S50`. The falsifier said so. The diff is 30 lines and
+**all of it is prose** — the `LEDGER_HEADER` constant's own explanation. The
+grammar (`ENTER_EXIT_RE`) and `occupancyAt` are byte-identical. That is the
+tripwire working: it says "re-check", not "you are wrong".
