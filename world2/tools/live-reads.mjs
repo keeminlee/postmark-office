@@ -50,26 +50,34 @@
 //   src/positions.mjs / src/dynamic-presence.mjs — the union and its roster
 //     rule, ported; the FRAME half is refused, see § What is NOT here.
 //
-// ── THE THREE ERAS OF A DEPARTURE, WHICH IS WHERE A PORT GOES WRONG ──────────
+// ── THE FOUR ERAS OF A MOVEMENT ACT, WHICH IS WHERE A PORT GOES WRONG ────────
 //
-// `acts` holds departures written by three different pens, in three payload
+// `acts` holds movement rows written by four different pens, in four payload
 // shapes. A derivation that reads one of them and silently drops the others is
 // the AB-P3 defect all over again — a world wrong by exactly the amount nobody
-// looks for. All three are read, and a shape none of them explains REFUSES.
+// looks for. All four are read, and a shape none of them explains REFUSES.
 //
-// | era | rows how identified | payload | source of the mapping |
+// | era | how identified | payload | source of the mapping |
 // |---|---|---|---|
-// | frozen ledger | `legacy:departure`, `payload._ledger` present | already `parseWalkLedger`'s own output: `{iso,handle,from,toward,at,targetExtent,targetMarkId,pace,line}` | ledger-backfill.mjs § the shape of a backfilled row |
-// | world journal | `legacy:departure`, no `_ledger` | the whole jsonl row: `{at,type,actor,seq,payload:{from,toward,crossing,within,to,pace,line_no}}` | seed-import.mjs `deriveActs` |
-// | live (post-cutover) | `walk` | `{ledger, lines:[<the verbatim ledger line>], toward, pace}` | walk-exec.mjs § SETTLE AT THE SAVE |
+// | `ledger` | `payload._ledger` present | already the checkout reader's own output: `{iso,handle,from,toward,at,targetExtent,targetMarkId,pace,line}` | ledger-backfill.mjs § the shape of a backfilled row |
+// | `journal` | `payload.payload.from` | the whole jsonl row: `{at,type,actor,seq,payload:{from,toward,crossing,within,to,pace,line_no}}` | seed-import.mjs `deriveActs` |
+// | `journal-line` | `payload.payload.lines` | a live-pen act crystallized into a crossing log: `{…,payload:{ledger,lines:[<the verbatim line>],…}}` | walk-exec / crossing-exec § SETTLE AT THE SAVE, seen through the journal envelope |
+// | `live` | `payload.lines` | the live pen's own act, mirrored straight into `acts` | the same, post-cutover |
 //
-// The live era carries its LINE rather than a parse — "carried VERBATIM, so the
-// save appends exactly what this pen formatted rather than re-deriving it" —
-// so it is read with the vendored `DEPARTURE_RE`, the same grammar that wrote
-// it. There are ZERO such rows on `world2_dev` today: nothing has walked since
-// the mirror was switched on. The era is implemented anyway because cutover is
-// the point of this lane, and a NOT-YET-EXERCISED path is stated as such by
-// `departureCensus` rather than left to be discovered.
+// **THE FOURTH ERA WAS FOUND BY THE FALSIFIER, NOT BY READING.** The first cut
+// of this file knew three and refused three `legacy:enter`/`legacy:exit` rows
+// the replay had ingested from crossings 151–153 — vermillion entering Pando
+// Peak. Those rows are the live pen's line inside the journal's envelope, and
+// the refusal named them rather than dropping them, which is the whole argument
+// for refusing: an era nobody knew about announced itself.
+//
+// The last two eras carry their LINE rather than a parse — "carried VERBATIM,
+// so the save appends exactly what this pen formatted rather than re-deriving
+// it" — so both are read with the vendored grammar, the same one that wrote
+// them. There are ZERO bare `live` DEPARTURES on `world2_dev` today: nothing
+// has walked since the mirror was switched on. That path is implemented anyway
+// because cutover is the point of this lane, and a NOT-YET-EXERCISED path is
+// stated as such by `departureCensus` rather than left to be discovered.
 //
 // ── THE ORDER, AND THE 44-HANDLE TRAP UNDER IT ──────────────────────────────
 //
@@ -361,24 +369,26 @@ export function departureRecordOf(row) {
     };
   }
 
-  // ERA 3 — the live pen. walk-exec.mjs § SETTLE AT THE SAVE puts the line into
-  // the journal "carried VERBATIM, so the save appends exactly what this pen
-  // formatted rather than re-deriving it". So the line IS the record, read with
-  // the grammar that wrote it.
-  if (row.action === "walk" || Array.isArray(p.lines)) {
-    const line = Array.isArray(p.lines) ? p.lines[0] : null;
-    const rec = line ? parseDepartureLine(line) : null;
+  // ERA 3 / 4 — the live pen, bare or inside the journal's envelope.
+  // walk-exec.mjs § SETTLE AT THE SAVE puts the line into the journal "carried
+  // VERBATIM, so the save appends exactly what this pen formatted rather than
+  // re-deriving it". So the line IS the record, read with the grammar that wrote
+  // it — and it reads the same whether the row arrived through the mirror
+  // directly or was crystallized into a crossing log first.
+  const lines = Array.isArray(p.lines) ? p.lines : (Array.isArray(p.payload?.lines) ? p.payload.lines : null);
+  if (lines) {
+    const rec = parseDepartureLine(lines[0]);
     if (!rec) {
       return { refused: true, reason:
-        `act ${row.id} is a live walk whose payload.lines[0] does not parse under the ledger grammar: ${JSON.stringify(line)?.slice(0, 160)}` };
+        `act ${row.id} is a walk whose line does not parse under the ledger grammar: ${JSON.stringify(lines[0])?.slice(0, 160)}` };
     }
-    return { era: "live", record: rec };
+    return { era: Array.isArray(p.lines) ? "live" : "journal-line", record: rec };
   }
 
-  // ERA 2 — the world journal. The payload is the whole jsonl row and the
-  // departure's own fields sit one level down. The mapping is world-movement's
-  // `storedDepartures`, verbatim, because that is 1.0's ONE converter for this
-  // exact payload shape:
+  // ERA 2 — the world journal's own departure row. The payload is the whole
+  // jsonl row and the departure's fields sit one level down. The mapping is
+  // world-movement's `storedDepartures`, verbatim, because that is 1.0's ONE
+  // converter for this exact payload shape:
   //
   //   "THE LEDGER'S OWN SHAPE, so a merged list is one vocabulary. `within` and
   //    `to` are the store's column names; `targetExtent` and `targetMarkId` are
@@ -424,7 +434,7 @@ export function departureRecords(rows, { strict = true } = {}) {
   assertDepartureOrder(rows);
   const records = [];
   const refusals = [];
-  const eras = { ledger: 0, journal: 0, live: 0 };
+  const eras = { ledger: 0, journal: 0, "journal-line": 0, live: 0 };
   for (const row of rows) {
     const r = departureRecordOf(row);
     if (r.refused) { refusals.push(r.reason); continue; }
@@ -491,7 +501,7 @@ export function publicWalkers(records, nowFractional = fractionalCrossing()) {
 
 /** Which era answered for how many rows — the doors disclose it. */
 export function departureCensus(records) {
-  const eras = { ledger: 0, journal: 0, live: 0 };
+  const eras = { ledger: 0, journal: 0, "journal-line": 0, live: 0 };
   for (const r of records) eras[r.era] = (eras[r.era] ?? 0) + 1;
   return eras;
 }
@@ -858,12 +868,16 @@ export function passageOf(row) {
     return { era: "ledger", passage: { iso: p.iso, handle: p.handle, act: p.act, mark: p.mark, at: p.at, word: p.word ?? null, line: p.line ?? null } };
   }
 
-  // The live pen: crossing-exec.mjs writes the lines VERBATIM, same as walk-exec.
-  if (Array.isArray(p.lines)) {
-    const line = p.lines[0];
+  // The live pen: crossing-exec.mjs writes the lines VERBATIM, same as
+  // walk-exec — bare when the mirror wrote the act, one level down when the
+  // crossing-save crystallized it into a journal row first. Both are the same
+  // pen's line and both are read with the grammar that wrote it.
+  const lines = Array.isArray(p.lines) ? p.lines : (Array.isArray(p.payload?.lines) ? p.payload.lines : null);
+  if (lines) {
+    const line = lines[0];
     const m = String(line ?? "").match(ENTER_EXIT_RE);
-    if (!m) return { refused: true, reason: `act ${row.id} is a live crossing whose line does not parse: ${JSON.stringify(line)?.slice(0, 160)}` };
-    return { era: "live", passage: {
+    if (!m) return { refused: true, reason: `act ${row.id} is a crossing whose line does not parse: ${JSON.stringify(line)?.slice(0, 160)}` };
+    return { era: Array.isArray(p.lines) ? "live" : "journal-line", passage: {
       iso: m[1], handle: m[2], act: m[3], mark: m[4], at: +m[5],
       word: m[6] ?? (m[3] === "enters" ? DEFAULT_ENTRY_WORD : null), line } };
   }

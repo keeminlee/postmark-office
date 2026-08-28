@@ -435,7 +435,40 @@ test("`aboard` is ABSENT from these answers rather than always false", () => {
 
 test("the era census names a path nothing has exercised yet", () => {
   const { records } = live.departureRecords([liveAct({ iso: "2026-08-29T01:00:00Z", handle: "rei", from: { x: 0, y: 0 }, toward: { x: 1, y: 0 }, at: 155 })]);
-  assert.deepEqual(live.departureCensus(records), { ledger: 0, journal: 0, live: 1 });
+  assert.deepEqual(live.departureCensus(records), { ledger: 0, journal: 0, "journal-line": 0, live: 1 });
   assert.match(live.admissionNotes({ marks: WORLD_ROWS, identities: IDS, departureRecords: records }).join(" "),
     /first traffic on that era/);
+});
+
+// ── the fourth era, which the falsifier found ────────────────────────────────
+
+/** A live-pen act crystallized into a crossing log: the line, one level down. */
+const journalLineAct = ({ iso, handle, from, toward, at, within = null, to = null, pace = null, seq = 1 }) => {
+  const line = live.formatDeparture({ handle, from, toward, at, targetExtent: within, targetMarkId: to, iso, pace });
+  return { id: nextId(), at: new Date(iso), crossing: String(at), actor: handle, action: "legacy:departure",
+    payload: { at: iso, seq, type: "walk", actor: handle, class: "move", crossing: at,
+      payload: { ledger: "WORLD/walk-ledger.md", lines: [line], toward, pace } } };
+};
+
+test("a live-pen act inside the journal's envelope is the SAME line, read the same way", () => {
+  // The three legacy:enter/exit rows the replay ingested from crossings 151–153
+  // are this shape. The first cut of the port knew three eras and refused them —
+  // which is the refusal doing its job, and how the fourth era got found.
+  const a = journalLineAct({ iso: "2026-08-27T10:54:07.669Z", handle: "vermillion",
+    from: { x: 0, y: 0 }, toward: { x: 500, y: 0 }, at: 152.9084, pace: 60 });
+  const { era, record } = live.departureRecordOf(a);
+  assert.equal(era, "journal-line");
+  assert.deepEqual(record.toward, { x: 500, y: 0 });
+  assert.equal(record.pace, 60);
+});
+
+test("a crossing act carries its line bare or wrapped, and both parse", () => {
+  const line = "- 2026-08-27T10:54:07.669Z · vermillion · enters the-town/pando-peak · ferry 152.9084 · word neutral";
+  const bare = { id: nextId(), at: new Date(), actor: "vermillion", action: "enter", payload: { ledger: "w", lines: [line] } };
+  const wrapped = { id: nextId(), at: new Date(), actor: "vermillion", action: "legacy:enter",
+    payload: { at: "2026-08-27T10:54:07.669Z", seq: 51, type: "enter", actor: "vermillion",
+      payload: { ledger: "WORLD/enter-exit-ledger.md", lines: [line], summary: "enters the-town/pando-peak" } } };
+  assert.equal(live.passageOf(bare).era, "live");
+  assert.equal(live.passageOf(wrapped).era, "journal-line");
+  assert.deepEqual(live.passageOf(bare).passage, { ...live.passageOf(wrapped).passage });
 });

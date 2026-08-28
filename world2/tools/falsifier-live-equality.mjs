@@ -379,13 +379,28 @@ export function e6Emissions(rows, atMs) {
   return { findings, compared: oracle.length, at: new Date(atMs).toISOString() };
 }
 
+/**
+ * THE FROZEN ERA AGAINST THE FROZEN ERA — ab-compare's AB-P2 lesson, verbatim:
+ *
+ *   "My first edit widened it to count `enter`/`exit` alongside
+ *    `legacy:enter`/`legacy:exit`, and 30 live acts from an office test run
+ *    promptly made it print `-30 crossings have no act`. The nonsense reading was
+ *    the smaller half of the problem: that shape also let a LIVE enter act mask a
+ *    MISSING frozen crossing and keep the check green."
+ *
+ * So the comparison is scoped to the `ledger` era, and the rows from the other
+ * eras are reported BESIDE it as the named delta they are. The store carrying
+ * more record than the frozen tag is the store being right, not a finding.
+ */
 export function e6Occupancy(passages, at) {
   const findings = [];
   const rel = ["WORLD/enter-exit-ledger-frozen.md", "WORLD/threshold-ledger.md"].find((f) => existsSync(join(REPO, f)));
   if (!rel) return { findings: ["E6 the checkout carries neither enter/exit ledger name — occupancy is unchecked"], compared: 0 };
   const { acts } = parseEnterExit(readFileSync(join(REPO, rel), "utf8"));
+  const frozen = passages.filter((p) => p.era === "ledger");
+  const beyond = passages.filter((p) => p.era !== "ledger");
   const oracle = eeMod.occupancyAt(acts, at);
-  const mine = live.occupancyAt(passages, at);
+  const mine = live.occupancyAt(frozen, at);
   let compared = 0;
   for (const [h, stack] of oracle) {
     compared++;
@@ -394,7 +409,10 @@ export function e6Occupancy(passages, at) {
       findings.push(`E6 the containment stack differs for ${h}\n      1.0:  ${JSON.stringify(stack)}\n      port: ${JSON.stringify(m ?? null)}`);
   }
   for (const h of mine.keys()) if (!oracle.has(h)) findings.push(`E6 the port puts ${h} inside something and 1.0 does not: ${JSON.stringify(mine.get(h))}`);
-  return { findings, compared, ledger: rel, ledger_rows: acts.length, act_rows: passages.length };
+  if (acts.length !== frozen.length)
+    findings.push(`E6 the frozen ledger holds ${acts.length} crossings and the store ${frozen.length} ledger-era passages — AB-P2's own count`);
+  return { findings, compared, ledger: rel, ledger_rows: acts.length, frozen_act_rows: frozen.length,
+    beyond_the_frozen_era: beyond.length ? `${beyond.length} passage(s) from later eras, outside this comparison by design` : null };
 }
 
 // ── the vendor tripwire ──────────────────────────────────────────────────────
