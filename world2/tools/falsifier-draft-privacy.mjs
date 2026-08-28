@@ -11,12 +11,28 @@
 //
 // ── HOW IT ASKS ─────────────────────────────────────────────────────────────
 //
-// One NONCE, planted in a scratch draft's body and slug, then hunted across
-// every surface a resident's words can reach. The nonce is the whole method:
-// the probes do not know what a claim looks like on each surface, they know
-// what THIS RESIDENT'S SENTENCE looks like, and they read the entire answer. A
-// leak through a field nobody thought to check is still a leak, and a probe
-// that only checked `status` would miss it.
+// Two strings, planted in a scratch draft and then hunted across every surface
+// a resident's words can reach. The strings are the whole method: the probes do
+// not know what a claim looks like on each surface, they know what THIS
+// RESIDENT'S SENTENCE looks like, and they read the entire answer. A leak
+// through a field nobody thought to check is still a leak, and a probe that
+// only checked `status` would miss it.
+//
+// THE TWO STRINGS ARE NOT INTERCHANGEABLE, and getting that wrong is how this
+// falsifier was born red on its first run against a store with nothing wrong
+// with it:
+//
+//   NONCE  rides the SLUG — the draft's identity. It is a fine needle for a
+//          surface the caller did not name it to, and a useless one for
+//          `/world2/mark?slug=<nonce>`, whose 404 quotes the slug back at you.
+//          Echoing your own question is not a leak, and the first version of
+//          this file called it one.
+//   SECRET rides the BODY — the resident's actual private sentence. It is
+//          never sent in any request, so finding it in ANY answer means the
+//          store gave it up. Every leak leg hunts this one.
+//
+// The slug leg survives, narrowed to what it can honestly assert: the door
+// answers "no such mark" rather than a mark.
 //
 // ── EVERY LEG CAN FAIL, AND THEY FAIL TWO DIFFERENT WAYS ────────────────────
 //
@@ -80,10 +96,12 @@ const { default: pg } = await import("pg");
 const pools = new Map();
 const P = (url) => { if (!pools.get(url)) pools.set(url, new pg.Pool({ connectionString: url, max: 2 })); return pools.get(url); };
 
-const NONCE = `draftprivacy-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-const ACTOR = arg("--actor", "wright");  // must be a handle the --key acts for
+const stamp = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+const NONCE = `draftprivacy-${stamp()}`;   // the identity; may be echoed by a bounce
+const SECRET = `sealed-${stamp()}`;        // the content; never sent in any request
+const ACTOR = arg("--actor", "wright");    // must be a handle the --key acts for
 const SLUG = `${ACTOR}/${NONCE}`;
-const BODY = `a private sentence nobody but its author may read — ${NONCE}`;
+const BODY = `a private sentence nobody but its author may read — ${SECRET}`;
 
 const findings = [];
 const asleep = [];
@@ -104,9 +122,11 @@ async function withHousehold(pool, household, fn) {
 }
 
 /** Does this credential, asking the plainest possible question, see the nonce? */
-const SEE = "SELECT count(*)::int AS c FROM claims WHERE body LIKE $1 OR slug LIKE $1";
+// A SQL leg holds the store directly, so it may hunt both needles: nothing here
+// is echoing a request back.
+const SEE = "SELECT count(*)::int AS c FROM claims WHERE body LIKE $1 OR slug LIKE $2";
 async function sqlSeesNonce(url, { household = null } = {}) {
-  const like = [`%${NONCE}%`];
+  const like = [`%${SECRET}%`, `%${NONCE}%`];
   const { rows } = household === null
     ? await P(url).query(SEE, like)
     : await withHousehold(P(url), household, (c) => c.query(SEE, like));
@@ -190,22 +210,31 @@ try {
   // Each carries its control: a string that IS in that answer. Nonce absent +
   // control present = the surface was genuinely read and genuinely lacks it.
   const doorLegs = [
-    ["/world2/docket", "/world2/docket", null, "the public docket"],
-    ["/world2/marks?all=true&full=true", "/world2/marks?all=true&full=true", null, "standing register"],
-    [`/world2/mark?slug=${encodeURIComponent(SLUG)}`, `/world2/mark?slug=${encodeURIComponent(SLUG)}`, null, "bounce"],
-    ["/world2/windows", "/world2/windows", null, "the candle's ledger"],
-    ["/world2/status", "/world2/status", null, "world 2.0 store status"],
+    ["/world2/docket", "the public docket"],
+    ["/world2/marks?all=true&full=true", "standing register"],
+    ["/world2/windows", "the candle's ledger"],
+    ["/world2/status", "world 2.0 store status"],
   ];
-  for (const [leg, path, key, control] of doorLegs) {
-    const { code, text } = await door(path, key);
-    if (text.includes(NONCE)) red(`door ${leg}`, `the answer carries the nonce (HTTP ${code})`);
-    else if (!text.includes(control)) dead(`door ${leg}`, `neither the nonce NOR its control ("${control}") is in the answer (HTTP ${code}) — this leg proved nothing`);
+  for (const [path, control] of doorLegs) {
+    const { code, text } = await door(path);
+    if (text.includes(SECRET) || text.includes(NONCE)) red(`door ${path}`, `the answer carries the draft (HTTP ${code})`);
+    else if (!text.includes(control)) dead(`door ${path}`, `neither the draft NOR this leg's control ("${control}") is in the answer (HTTP ${code}) — this leg proved nothing`);
+  }
+
+  // The slug leg, narrowed to what it can honestly assert. The nonce IS the
+  // query here, so a bounce quoting it back is not a leak — only SECRET, which
+  // this request does not carry, would be. What the leg adds is the answer's
+  // shape: "no such mark", not a mark.
+  {
+    const { code, text } = await door(`/world2/mark?slug=${encodeURIComponent(SLUG)}`);
+    if (text.includes(SECRET)) red(`door /world2/mark?slug=`, `the answer carries the draft's body (HTTP ${code})`);
+    else if (!text.includes("bounce") || code !== 404) red(`door /world2/mark?slug=`, `answered HTTP ${code} instead of a 404 bounce: ${text.slice(0, 160)}`);
   }
 
   // ── the cross-household door leg ──────────────────────────────────────────
   if (OTHER_KEY) {
     const { code, text } = await door("/world2/my-drafts", OTHER_KEY);
-    if (text.includes(NONCE)) red("door /world2/my-drafts as ANOTHER household", `the answer carries the nonce (HTTP ${code})`);
+    if (text.includes(SECRET) || text.includes(NONCE)) red("door /world2/my-drafts as ANOTHER household", `the answer carries the draft (HTTP ${code})`);
     else if (!text.includes("compose space")) dead("door /world2/my-drafts as ANOTHER household", `the door did not answer as itself (HTTP ${code}: ${text.slice(0, 120)})`);
   } else dead("door /world2/my-drafts as ANOTHER household", "no --other-key given — the cross-household read was not exercised");
 
@@ -214,7 +243,7 @@ try {
   // consistent with the draft never having been saved at all.
   if (KEY) {
     const { code, text } = await door("/world2/my-drafts", KEY);
-    if (!text.includes(NONCE)) {
+    if (!text.includes(SECRET)) {
       console.error(`CANNOT RUN: the owning household's own door does not show the draft (HTTP ${code}) — either the write or the household resolution is broken, and "nobody else can see it" is not the fact being proved`);
       process.exit(2);
     }
@@ -231,7 +260,7 @@ try {
       if (!out) { dead("export (render + archives)", `the notary could not run: ${String(e?.message ?? e).slice(0, 160)}`); }
     }
     const tree = treeText(TARGET);
-    if (tree.includes(NONCE)) red("export (render + archives)", `the nonce is in the notary's output tree at ${TARGET}`);
+    if (tree.includes(SECRET) || tree.includes(NONCE)) red("export (render + archives)", `the draft is in the notary's output tree at ${TARGET}`);
     else if (!tree.includes("CERTIFICATION")) dead("export (render + archives)", `${TARGET} holds no certification — the notary wrote nothing, so the grep proved nothing`);
   } else dead("export (render + archives)", "no --target given — the notary's output was not searched");
 

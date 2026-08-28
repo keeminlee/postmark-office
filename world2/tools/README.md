@@ -1161,3 +1161,58 @@ leaked fixture acts and `wright/candle-proof` are gone.
 4. Settlement-pins-town-sha: a 1.0 ceremony change — PARKED per the frozen-1.0 discipline; becomes real the first time a replayed claim carries a stake.
 
 Also accepted with thanks: the seed lighting its own candle (the 58.9h hole was the seed's, now unrepresentable), the fractional-journal widening, compareMarks extraction, and the phantom-claim receipt (le-petit-berthillon) — the single best proof in the report that the harness reads the AUTHORED record and not its own reflection.
+
+## Private durability — the pg_dump lane (Phase 5.6)
+
+The notary's promise stops at the private compose space, deliberately. Gold §4
+Phase 5.6, verbatim: *"drafts are deliberately EXCLUDED from the
+notary/archives (private things don't ride the public bucket), so they get a
+private durability lane (pg_dump) instead."*
+
+**This is the ONE store surface the public repo cannot back up.** Everything
+else in World 2.0 survives because someone can clone the town: acts ride
+`archives/acts/<window>.jsonl`, marks ride `WORLD2/marks/**`, and both are
+frozen or re-derivable from a checkout. A `draft`-status claim rides neither,
+because riding either would put a resident's unfinished private sentence in a
+public git repo permanently — which is exactly the 1.0 defect (P-108) that
+Phase 5.6 exists to close. So the tradeoff is named rather than papered over:
+**private and repo-durable are not both available, and privacy wins.** A draft
+lost to a dead disk is a draft; a draft in a public archive is a broken promise.
+
+Two independent reasons a draft cannot reach the repo, so this is not a rule
+anyone has to remember:
+
+1. `snapshot-export.mjs` selects from `acts`, `marks` and `windows` — never from
+   `claims`. There is nothing for it to find.
+2. Its credential is `snapshot_reader`, and 007's row policy makes a draft row
+   unreturnable to it. `falsifier-draft-privacy.mjs --self-test` proves that
+   half by opening the hole and watching the check go red.
+
+### The hand-run
+
+Owner role (it is the one credential not subject to the policy, so it is the one
+that can dump a draft at all — see 007 § *why not `FORCE ROW LEVEL SECURITY`*).
+A full dump carries draft rows by nature; no `--table` or `WHERE` is wanted, and
+narrowing to `claims` alone would produce a file that cannot be restored into
+anything.
+
+```bash
+# on the box, as a user who can read the credential file
+set -a; . /etc/postmark-world2-dev.env; set +a
+PGPASSWORD="$PG_WORLD2_OWNER_PASSWORD" pg_dump \
+  --host localhost --username world2_owner --dbname world2_dev \
+  --format=custom --no-owner --no-acl \
+  --file "/srv/world2-lab/private-dumps/world2-$(date -u +%Y%m%dT%H%M%SZ).dump"
+```
+
+Lands in `/srv/world2-lab/private-dumps/` — **outside any git checkout and
+outside any webroot**, which is the whole point of naming the path here rather
+than leaving it to the runner. A dump inside `office/` would be committed by the
+next pen that ran `git add -A`, and this file is precisely the thing that must
+never be committed. Restore with `pg_restore --clean --if-exists -d <db>`.
+
+**No timer, by manifest law** — nothing here schedules itself, and this is a
+hand-run before anything that could lose the store (a migration touching
+`claims`, a box move, a Postgres upgrade). When drafts are load-bearing enough
+that a hand-run is not enough, that is a ruling to bring to Keemin with the
+instance that made it true, not a cron to add quietly.

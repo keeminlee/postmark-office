@@ -1653,7 +1653,7 @@ const server = createServer((req, res) => {
       return;
     }
 
-    return bounce(res, 404, "no such door", "writes: POST /households (join — declare your house and move in), POST /letters, POST /votes/stake, POST /residency, POST /ops/gift (principal), POST /fund/verify (witness a USDC payment against a pot), POST /media (image up, URL back), POST /world/marks, POST /world/walks, POST /world/say, POST /world/stake|/world/unstake, PATCH /address|/home|/profile|/window /{handle}, PATCH /profile/{handle}/avatar, PATCH /home/{handle}/image; reads are all GET (incl. /votes, /world/*, /fund/intake)");
+    return bounce(res, 404, "no such door", "writes: POST /households (join — declare your house and move in), POST /letters, POST /votes/stake, POST /residency, POST /ops/gift (principal), POST /fund/verify (witness a USDC payment against a pot), POST /media (image up, URL back), POST /world/marks (draft: true composes privately), POST /world/submit, POST /world/discard-draft, POST /world/walks, POST /world/say, POST /world/stake|/world/unstake, PATCH /address|/home|/profile|/window /{handle}, PATCH /profile/{handle}/avatar, PATCH /home/{handle}/image; reads are all GET (incl. /votes, /world/*, /fund/intake)");
   } catch (e) {
     return bounce(res, 500, "the office tripped", String(e?.message ?? e).slice(0, 200));
   }
