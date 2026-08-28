@@ -215,3 +215,13 @@ parsed it, so it is dropped from `data` and its repo-relative form becomes the
 projection — so each law ingest replaces it whole inside the same transaction.
 `law_projection` rows for older shas are kept on purpose: a candle window pins a
 sha and must still be able to read the law as of that pin.
+
+## Merge rulings (Wright, 2026-08-28 — the ingester jetto's 12 teed decisions)
+
+The build's 12 decisions were reviewed at merge; three were substantive, ruled as follows, the rest accepted as clerical:
+
+1. **`threshold` = the enter-exit entry law** (marks carrying `entry:`, data = `termsAt` output) — KEPT. The candle's 05:45Z/17:45Z times are `windows`' concern, not law rows. Caveat stands and is real: `tools/enter-exit.mjs` self-describes as pre-LOGOS; when the entry law is planted in LOGOS, the parser (and these rows) follow it — the projection tracks the reader that ships at the ingested sha, which is the design.
+2. **`stamp_projection.balance` = LIQUID** (staked stamps excluded) — KEPT. Escrow sufficiency is exactly the liquid question; `foldStaked` gets a column the day a clearing computation actually wants assets (keep-simple: no speculative column).
+3. **`identities` replaced whole per ingest (current roster, no sha column)** — KEPT for dev, with the named consequence (ingesting an older law sha rewinds identities). If replay-parity (phase 5) needs roster-as-of, that phase adds the sha column; not before.
+
+Also noted at merge: `pg` resolved to `^8.16.3` (both lanes had added it); the falsifier's shared-derivation caveat (green = DB matches repo, not parser-verified) is accepted and stated in-file.
