@@ -31,7 +31,7 @@ import { pathToFileURL, fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { penCommit } from "./write.mjs";
 import { openDynamic, singleLogEnabled } from "./dynamic-store.mjs";
-import { CLASS_FRAME, appendJournal } from "./world-journal.mjs";
+import { CLASS_FRAME, appendJournal, settleShadowPens } from "./world-journal.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CLONE = process.env.WORLD_CLONE ?? resolve(HERE, "..", "world-clone");
@@ -41,7 +41,19 @@ const CLONE = process.env.WORLD_CLONE ?? resolve(HERE, "..", "world-clone");
 export const LEDGER_NAME = join("WORLD", "enter-exit-ledger.md");
 export const LEGACY_LEDGER_NAME = join("WORLD", "threshold-ledger.md");
 
-const answer = (obj) => { console.log(JSON.stringify(obj)); process.exit(0); };
+// THE SHADOW PENS ARE DRAINED BEFORE THIS PROCESS ENDS (2026-08-28). This pen
+// writes a journal row and then kills its own process; `mirrorAct` is
+// fire-and-forget, so the unawaited INSERT used to die here with the socket and
+// every enter/exit went missing from `acts` in silence. See world-journal.mjs
+// § THE ESCAPE for the whole argument, including why the wait is capped.
+//
+// `answer` is async now and every call site sits inside `main`, whose returned
+// promise keeps the loop alive until the exit actually runs.
+const answer = async (obj) => {
+  await settleShadowPens();
+  console.log(JSON.stringify(obj));
+  process.exit(0);
+};
 const err = (code, defect, hint) => answer({ error: { code, defect, hint } });
 
 async function main() {
@@ -148,7 +160,7 @@ async function main() {
     catch (e) { push_error = String(e?.message ?? e).slice(0, 200); }
   }
 
-  answer({ lines: p.lines, at: p.at, within, commit, pushed, push_error,
+  return answer({ lines: p.lines, at: p.at, within, commit, pushed, push_error,
            ledger_lines: acts.length, ledger_unrecognized: unrecognized.length });
 }
 

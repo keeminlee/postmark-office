@@ -1,0 +1,302 @@
+// falsifier-acts-lane-closure.mjs — EVERY WRITE LANE REACHES `acts`, LANE BY LANE.
+//
+// ── THE LAW ──────────────────────────────────────────────────────────────────
+//
+// Gold plan §1, verbatim, and it is a list rather than a principle for a reason:
+//
+//   "LIVE — acts: walks, says, enters/exits, throws, arena beats. Personal,
+//    ephemeral, non-contested. Written synchronously by the office API."
+//
+// Gold plan §2, verbatim: "Events → Postgres (the office)."
+//
+// And the migration meta-rule, gold §3, verbatim: "every change answers WHICH
+// LANE, WHICH TABLE, WHICH PEN — or it is refused."
+//
+// ── WHY THIS EXISTS BESIDE falsifier-acts-parity ─────────────────────────────
+//
+// The parity falsifier asserts: every undrained sqlite JOURNAL row has its
+// `acts` twin. That is a complete check of the lanes that write a journal row,
+// and it is BLIND BY CONSTRUCTION to the lanes that do not — it iterates the
+// journal, so a lane with no journal row is a lane it never asks about.
+//
+// That blindness is what hid the say gap. Speech is named in the first sentence
+// of the LIVE lane's own definition, its pen is the voices log, it never
+// touched `appendJournal`, and the standing falsifier was green the entire
+// time. Two siblings were hiding in the same shadow (walk under
+// WORLD_MOVEMENT_V2, and give/drop/take), and the class is not "say was
+// forgotten" — it is:
+//
+//   A LANE IS INVISIBLE TO 2.0 UNLESS SOMETHING ASSERTS ITS CLOSURE FROM THE
+//   LANE'S OWN PEN. Asserting it from the journal only ever finds the lanes
+//   that were already there.
+//
+// So this file reads each lane's OWN store — voices-log.jsonl, `attachments`,
+// `movements` — and asks whether the act reached Postgres. Different question,
+// different direction, and the two together cover the whole door.
+//
+// ── AND THE CENSUS GUARD, WHICH IS THE PART THAT SURVIVES US ─────────────────
+//
+// Checks 1–3 catch today's three gaps. Check 0 catches TOMORROW's: it reads the
+// apex's own dispatch table and reds if a verb appears that this file has not
+// been told about. A new act cannot be added to the world without someone
+// answering the meta-rule's question for it. That is the difference between
+// fixing three instances and fixing the class.
+//
+// ── RUN ──────────────────────────────────────────────────────────────────────
+//
+//   WORLD2_PG_URL=... node world2/tools/falsifier-acts-lane-closure.mjs \
+//     --db <dynamic.db> --voices <voices-log.jsonl> [--since <ISO>]
+//
+// `--since` is the closure window's floor. Default: the open window's
+// `opens_at`, which is a boundary the store itself defines rather than one this
+// file invents. Acts written before the mirror was switched on are lawfully
+// absent, and a falsifier that ignored that would be red forever and therefore
+// read by nobody (the lesson departure 3 taught falsifier-acts-parity).
+//
+// Exit 0 green · exit 1 red · exit 2 CANNOT RUN — never green for a question it
+// could not ask. --prove-can-fail proves each check catches a mangled input,
+// touching no store.
+
+import { existsSync, readFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
+
+import { MIRROR_EXPIRES, mirrorExpired } from "../../src/world2-acts.mjs";
+
+const arg = (name) => {
+  const i = process.argv.indexOf(name);
+  return i === -1 ? null : process.argv[i + 1];
+};
+const has = (name) => process.argv.includes(name);
+
+// ── CHECK 0 · THE CENSUS · every mutating apex verb is accounted for ─────────
+//
+// One row per apex action, and the value is the ANSWER to the meta-rule's
+// question — which pen writes it, and how it reaches `acts`. The three values
+// are the only ones that exist:
+//
+//   "journal"  the lane writes a sqlite journal row; `appendJournal`'s mirror
+//              carries it, and falsifier-acts-parity is what checks it.
+//   "lane"     the lane keeps its own pen and calls `mirrorLaneAct`; THIS file
+//              checks it, in the numbered check named beside it.
+//   "none"     the lane deliberately does not reach `acts`, WITH ITS REASON.
+//              A "none" is a ruling, not a gap, and every one of them is a
+//              sentence somebody has to defend.
+const LANE_OF = Object.freeze({
+  // journalled — parity falsifier's territory
+  "leave-mark": "journal", withdraw: "journal", enter: "journal", exit: "journal",
+  // `declare-stance-on`, NOT `declare-stance` — the apex's own spelling
+  // (world-stance.mjs § ACTION_STANCE). Written as a literal rather than
+  // imported on purpose: the census guard's whole job is to catch a name that
+  // has drifted from the door, and it cannot catch drift in a constant it
+  // shares with the door. It caught this one on the first run.
+  "declare-stance-on": "journal",
+
+  // own pen, mirrored by mirrorLaneAct — checked below
+  say: "lane",   // check 1 · voices-log.jsonl
+  walk: "lane",  // check 3 · dynamic.db/movements (WORLD_MOVEMENT_V2); the
+                 // flag-off arm is journalled, and both are the same act
+  give: "lane", drop: "lane", take: "lane",  // check 2 · dynamic.db/attachments
+
+  // ruled out, each with its reason
+  "note-to-self": "none",
+  //   HOUSEHOLD-PRIVATE BY THE DOOR'S OWN LAW — "one note to your returning
+  //   self, replaced on every write, household-private" (world-apex.mjs §
+  //   dispatch). `acts` exports to PUBLIC git through the notary, so mirroring
+  //   a note would publish a resident's private sentence permanently. This is
+  //   the same reasoning Phase 5.6 applies to unstaked drafts, and the same
+  //   answer. A note is not a deed the world witnessed; it is a resident
+  //   talking to themselves.
+  stake: "none", unstake: "none",
+  //   THE TOWN'S LANE, NOT THE WORLD'S. Both write the town stamp-ledger
+  //   (world-stake-exec.mjs), and the gold plan §5 puts the town's ledgers
+  //   explicitly out of scope: "the town repo's ledgers (mail-ledger,
+  //   stamp-ledger — different lane, same disease; NOT in this plan's scope)".
+  //   A stake DOES reach World 2.0 — as a claims transition
+  //   (promoteDraftOnStake), which is the CANDLE lane and has its own
+  //   falsifier — but the escrow movement itself is town business.
+});
+
+// Read-only apex entries would go here if any existed; today every dispatchable
+// action mutates. Kept as an explicit empty set so that "this verb reads" is
+// something a future author has to WRITE DOWN rather than achieve by omission.
+const READ_ONLY_VERBS = new Set([]);
+
+function checkCensus(dispatchable) {
+  const unaccounted = dispatchable.filter((v) => !(v in LANE_OF) && !READ_ONLY_VERBS.has(v));
+  const stale = Object.keys(LANE_OF).filter((v) => !dispatchable.includes(v));
+  const problems = [];
+  if (unaccounted.length)
+    problems.push(
+      `RED (census): the apex dispatches ${unaccounted.map((v) => `"${v}"`).join(", ")}, and this falsifier has never been told which pen writes it. `
+      + "The migration meta-rule (gold §3): \"every change answers which lane, which table, which pen — or it is refused.\" "
+      + "Add the verb to LANE_OF with its answer — and if the answer is \"lane\", add its closure check, because an unchecked lane is how the say gap happened.");
+  if (stale.length)
+    problems.push(
+      `RED (census): LANE_OF names ${stale.map((v) => `"${v}"`).join(", ")}, which the apex no longer dispatches. `
+      + "A census that describes a door that is gone is a census nobody can trust about the doors that remain.");
+  return problems;
+}
+
+// ── the shape of an acts lookup ─────────────────────────────────────────────
+const ms = (t) => new Date(t).getTime();
+
+if (has("--prove-can-fail")) {
+  // Each check, proved able to catch one deliberately mangled input. No store
+  // is opened; this is about the checks, not about any world's data.
+  const fails = [];
+
+  // check 0 — a verb the census does not name must be caught
+  if (!checkCensus(["say", "walk", "brand-new-verb"]).length)
+    fails.push("census: an unnamed apex verb was NOT caught");
+  // check 0 — a census row for a verb the door no longer has must be caught
+  if (!checkCensus(["say"]).some((p) => p.includes("no longer dispatches")))
+    fails.push("census: a stale census row was NOT caught");
+
+  // checks 1–3 all reduce to `matchAct`: a lane record, and the acts rows in
+  // its window. Prove the matcher rejects a near-miss rather than shrugging.
+  const acts = [{ actor: "wright", action: "say", at: "2026-08-28T12:00:00.000Z" }];
+  if (matchAct(acts, { actor: "wright", action: "say", at: "2026-08-28T12:00:00.000Z" }) == null)
+    fails.push("matcher: an exact twin was not matched (the check would red on a healthy store)");
+  if (matchAct(acts, { actor: "darko", action: "say", at: "2026-08-28T12:00:00.000Z" }) != null)
+    fails.push("matcher: a DIFFERENT actor was accepted as a twin");
+  if (matchAct(acts, { actor: "wright", action: "walk", at: "2026-08-28T12:00:00.000Z" }) != null)
+    fails.push("matcher: a DIFFERENT action was accepted as a twin");
+  if (matchAct(acts, { actor: "wright", action: "say", at: "2026-08-28T12:09:00.000Z" }) != null)
+    fails.push("matcher: an act nine minutes away was accepted as a twin");
+
+  if (fails.length) { for (const f of fails) console.error(`RED (falsifier broken): ${f}`); process.exit(1); }
+  console.log("can-fail proof: the census catches an unnamed verb and a stale row; the matcher rejects a wrong actor, a wrong action, and a nine-minute drift.");
+  process.exit(0);
+}
+
+/**
+ * The lane record's twin among the acts, or null.
+ *
+ * MATCHED ON (actor, action, at), WITH A TOLERANCE, and the tolerance is the
+ * honest part. A lane's own pen and the mirror stamp the same act from the same
+ * source value — `voice.at`, `born_at` — so they should agree exactly. They are
+ * compared with a window anyway because the two stores round differently
+ * (sqlite TEXT vs timestamptz) and a falsifier that reds on a rounding mode is
+ * a falsifier that gets switched off. TWO SECONDS is far tighter than the
+ * shortest interval between two acts by one actor (the say rate limit alone is
+ * measured in tens of seconds), so it cannot pair up neighbours.
+ */
+function matchAct(acts, { actor, action, at, object = undefined }) {
+  const t = ms(at);
+  for (const a of acts) {
+    if (a.actor !== actor || a.action !== action) continue;
+    if (object !== undefined && (a.object ?? null) !== (object ?? null)) continue;
+    if (Math.abs(ms(a.at) - t) <= 2000) return a;
+  }
+  return null;
+}
+
+if (mirrorExpired()) {
+  console.error(`RED: the shadow mirror expired ${MIRROR_EXPIRES} — cut over (delete the journal) or have Keemin move the date. No immortal twins.`);
+  process.exit(1);
+}
+
+const dbPath = arg("--db");
+const voicesPath = arg("--voices");
+if (!dbPath || !process.env.WORLD2_PG_URL) {
+  console.error("usage: WORLD2_PG_URL=... node falsifier-acts-lane-closure.mjs --db <dynamic.db> --voices <voices-log.jsonl> [--since <ISO>]");
+  process.exit(2);
+}
+
+// ── check 0, first, because a stale census makes every other check a lie ─────
+const { DISPATCHABLE } = await import("../../src/world-apex.mjs");
+const censusProblems = checkCensus([...DISPATCHABLE]);
+
+const { default: pg } = await import("pg");
+const pool = new pg.Pool({ connectionString: process.env.WORLD2_PG_URL, max: 1 });
+
+// THE WINDOW FLOOR. Default to the open window's `opens_at` — a boundary the
+// store defines. Refusing rather than guessing when there is none: a closure
+// check with no floor would compare a lane's whole history against a mirror
+// that started yesterday, and report a catastrophe that is only a start date.
+let since = arg("--since");
+if (!since) {
+  const { rows } = await pool.query("SELECT opens_at FROM windows WHERE status = 'open' ORDER BY id DESC LIMIT 1");
+  since = rows[0]?.opens_at ? new Date(rows[0].opens_at).toISOString() : null;
+}
+if (!since) {
+  console.error("no --since and no open window to take a floor from — this check cannot say which acts it is entitled to expect, and will not report a green it did not earn.");
+  await pool.end();
+  process.exit(2);
+}
+const floor = ms(since);
+
+const { rows: acts } = await pool.query(
+  "SELECT actor, action, object, at, class FROM acts WHERE at >= $1", [since]);
+
+const reds = [...censusProblems];
+const counts = { say: [0, 0], holding: [0, 0], walk: [0, 0] };
+
+// ── check 1 · SAY · voices-log.jsonl → acts ─────────────────────────────────
+//
+// The gap this whole lane was opened for. The voices log is the say's first pen
+// and the town's ruled durable record of speech; every line in it inside the
+// window is an act the world witnessed and `acts` must hold.
+if (!voicesPath || !existsSync(voicesPath)) {
+  console.error(`--voices ${voicesPath ?? "(not given)"} is not readable — the say lane is the one this falsifier exists for, and it will not report green without reading it.`);
+  await pool.end();
+  process.exit(2);
+}
+for (const line of readFileSync(voicesPath, "utf8").split("\n")) {
+  if (!line.trim()) continue;
+  let v = null;
+  try { v = JSON.parse(line); } catch { continue; } // a torn line is not a missing act
+  if (!v?.handle || !v.at || ms(v.at) < floor) continue;
+  counts.say[1] += 1;
+  if (matchAct(acts, { actor: v.handle, action: "say", at: v.at })) counts.say[0] += 1;
+  else reds.push(
+    `RED (say): ${v.handle} spoke at ${v.at} and no act says so. `
+    + "gold §1: \"LIVE — acts: walks, SAYS, enters/exits\". The voices log is the pen; src/world.mjs § mirrorVoiceAct is what should have carried it.");
+}
+
+const sqlite = new DatabaseSync(dbPath, { readOnly: true });
+
+// ── check 2 · HOLDING · dynamic.db/attachments → acts ───────────────────────
+//
+// give/drop/take. The `attachments` row is the declaration; its `declared_by`
+// is the actor (never inferred — "nobody writes a movement record on anyone
+// else's behalf") and `born_at` is the stamp the door strictly ordered.
+const HOLD_ACTIONS = new Set(["give", "drop", "take"]);
+for (const r of sqlite.prepare("SELECT entity, target, declared_by, born_at FROM attachments ORDER BY seq").all()) {
+  if (!r.born_at || ms(r.born_at) < floor) continue;
+  counts.holding[1] += 1;
+  const twin = acts.find((a) =>
+    a.actor === r.declared_by && HOLD_ACTIONS.has(a.action)
+    && (a.object ?? null) === r.target && Math.abs(ms(a.at) - ms(r.born_at)) <= 2000);
+  if (twin) counts.holding[0] += 1;
+  else reds.push(
+    `RED (holding): ${r.declared_by} declared a holding on ${r.target} at ${r.born_at} and no act says so. `
+    + "The pen is dynamic.db/attachments; src/world-hold.mjs § mirrorHoldingAct is what should have carried it.");
+}
+
+// ── check 3 · WALK · dynamic.db/movements → acts ────────────────────────────
+//
+// The lane that hid best: walk-exec.mjs DOES journal, so the verb read as
+// covered — but that arm is the WORLD_MOVEMENT_V2-off branch, and dev has run
+// movement-v2 on. Two pens behind one verb; a lane is closed only when every
+// pen behind it is.
+for (const r of sqlite.prepare("SELECT actor, at, to_mark, declared_by FROM movements ORDER BY seq").all()) {
+  if (!r.at || ms(r.at) < floor) continue;
+  counts.walk[1] += 1;
+  if (matchAct(acts, { actor: r.actor, action: "walk", at: r.at })) counts.walk[0] += 1;
+  else reds.push(
+    `RED (walk): ${r.actor} departed at ${r.at} and no act says so. `
+    + "The pen is dynamic.db/movements (WORLD_MOVEMENT_V2); src/world.mjs § THE WALK GAP is what should have carried it.");
+}
+sqlite.close();
+await pool.end();
+
+if (reds.length) {
+  for (const r of reds) console.error(r);
+  console.error(`RED: ${reds.length} lane-closure failures.`);
+  process.exit(1);
+}
+const line = (k) => `${k} ${counts[k][0]}/${counts[k][1]}`;
+console.log(
+  `GREEN: every write lane reaches acts since ${since} — ${line("say")}, ${line("holding")}, ${line("walk")} twinned; `
+  + `census clean (${DISPATCHABLE.length} apex actions, each answering which pen writes it). Expiry ${MIRROR_EXPIRES} not reached.`);

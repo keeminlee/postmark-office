@@ -23,7 +23,7 @@ import { pathToFileURL, fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { penCommit } from "./write.mjs";
 import { openDynamic, singleLogEnabled } from "./dynamic-store.mjs";
-import { CLASS_MOVE, appendJournal } from "./world-journal.mjs";
+import { CLASS_MOVE, appendJournal, settleShadowPens } from "./world-journal.mjs";
 import { departurePace } from "./world-classes.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -33,7 +33,16 @@ const CLONE = process.env.WORLD_CLONE ?? resolve(HERE, "..", "world-clone");
 export const LEDGER_NAME = "WORLD/walk-ledger.md";
 const LEDGER = join(CLONE, LEDGER_NAME);
 
-const answer = (obj) => { console.log(JSON.stringify(obj)); process.exit(0); };
+// THE SHADOW PENS ARE DRAINED BEFORE THIS PROCESS ENDS (2026-08-28) — the same
+// escape crossing-exec had, and the same fix; world-journal.mjs § THE ESCAPE
+// carries the argument. This lane is the FLAG-OFF walk (WORLD_MOVEMENT_V2
+// unset), which has not run on dev since movement-v2 shipped — but a pen that
+// loses acts when it does run is not made safe by being quiet.
+const answer = async (obj) => {
+  await settleShadowPens();
+  console.log(JSON.stringify(obj));
+  process.exit(0);
+};
 const err = (code, defect, hint) => answer({ error: { code, defect, hint } });
 
 const LEDGER_HEADER = `# Walk ledger
@@ -148,7 +157,7 @@ async function main() {
     catch (e) { push_error = String(e?.message ?? e).slice(0, 200); }
   }
 
-  answer({ line, at, position, commit, pushed, push_error,
+  return answer({ line, at, position, commit, pushed, push_error,
            pace, ...(dialFallback ? { dial_fallback: true } : {}),
            ledger_lines: departures.length,
            ledger_unrecognized: unrecognized.length });

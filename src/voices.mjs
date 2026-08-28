@@ -534,7 +534,13 @@ export function createVoices({
     return reply(handle, here, t, false, since);
   }
 
-  async function say(handle, text, { standAs = handle, since = null } = {}) {
+  // `household` is CARRIED, NEVER STORED. It rides the `spoken` object to the
+  // `onSpoke` listener — which is how the World 2.0 act row gets scoped by the
+  // same household resolver every other act uses — and it is deliberately
+  // absent from the line this module writes: the voices log's shape is ruled
+  // and durable, and a listener's needs are not a reason to change what the
+  // town's speech record contains.
+  async function say(handle, text, { standAs = handle, since = null, household = null } = {}) {
     const t = now();
     const body = String(text ?? "").trim();
     if (!body) return bounce("nothing to say", "pass text: to speak, or call with no arguments to listen");
@@ -549,7 +555,7 @@ export function createVoices({
     }
     const here = await standing(standAs);
     if (here.bounce) return here.bounce;
-    append({ handle, text: body, at: t, x: here.at.x, y: here.at.y, place: here.place, aboard: here.aboard }, { standAs });
+    append({ handle, text: body, at: t, x: here.at.x, y: here.at.y, place: here.place, aboard: here.aboard }, { standAs, household });
     touch(handle, here.at, t);
     return reply(handle, here, t, true, since);
   }

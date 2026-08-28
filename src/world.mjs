@@ -34,9 +34,10 @@ import {
   publishedState,
   readAtRef,
   readJsonAtRef,
+  resolvedWorldHousehold,
 } from "./world-branches.mjs";
 import { moveGuard } from "./world-move-guard.mjs"; // the drain night: moving a mark moves what stands on it
-import { ACTION_AMEND, ACTION_LEAVE, ACTION_WITHDRAW, CLASS_MARK, anchorAt, appendJournal, draftsForKey, filedPathOfAt, liveChildrenOf, liveMarks, pathFor, pinWitnesses, singleLogEnabled } from "./world-journal.mjs"; // POS-5 slice 1: the one append-only log
+import { ACTION_AMEND, ACTION_LEAVE, ACTION_WITHDRAW, CLASS_MARK, CLASS_MOVE, CLASS_VOICE, anchorAt, appendJournal, draftsForKey, filedPathOfAt, liveChildrenOf, liveMarks, mirrorLaneAct, pathFor, pinWitnesses, singleLogEnabled } from "./world-journal.mjs"; // POS-5 slice 1: the one append-only log
 import { WORLD_STAKE_TOOLS, callWorldStakeTool, worldPortfolioStakeSlice } from "./world-stake.mjs"; // P3 draft, append-shaped
 import { classNames, classRoster, classDials, departurePace, RESIDENT_INSTANTIABLE, residentMayInstantiate } from "./world-classes.mjs"; // which classes exist — read from the record, never held
 import { HOLD_TOOLS, callHoldTool } from "./world-hold.mjs"; // the object primitive: who holds what
@@ -47,6 +48,7 @@ import { cannotAnswer, pointAnswerable, servedRead, storeEpoch, storeShadowEnabl
 import { emissionsEnabled, openDynamic } from "./dynamic-store.mjs"; // stage 2: the dynamic layer's flag
 import { declareMovement } from "./dynamic-entities.mjs"; // stage D: the pen after the ledger's freeze
 import { emissionFromVoice } from "./dynamic-emissions.mjs"; // stage 2: speech also becomes an emission instance
+import { world2Enabled } from "./world2-acts.mjs"; // the write-path closure: is the shadow mirror on at all
 import { VESSEL_HANDLE, ridesTheVessel } from "./dynamic-entities.mjs"; // the aboard test, one home for two readers
 import { carriersFrom, carriersWithDisclosure, carrierReader, heardFromV2, inRect, movementStandpoint, movementV2Enabled, recordsAcrossEras, roadTerms, storedDepartures, storedRecordsFor, vesselPositionAt as vesselFromTimetable, vesselServiceFrom } from "./world-movement.mjs"; // stage D: carriers carry, frames compose
 import { byBand, presenceEnabled, presentNear, near as presenceNear, everyone as presenceEveryone, PRESENCE_DIALS } from "./dynamic-presence.mjs"; // stage 2: residents revealed to each other
@@ -588,6 +590,83 @@ export async function placeWords({ x, y, aboard = false, moving = false } = {}) 
 // in the room. Truncating that list would recreate the defect being fixed.
 const EARSHOT_PRESENCE_CAP = 500;
 
+// ── THE SAY GAP, CLOSED (2026-08-28) ────────────────────────────────────────
+//
+// THE DEFECT, in the LIVE lane's own words: "world.mjs calls appendJournal for
+// leave-mark/amend/withdraw only. The say path writes no journal row, so
+// nothing said since the seed is mirrored into acts. /world2/say answers over
+// the crossing-save's crystallized record only."
+//
+// THE LAW IT BREAKS (gold plan §1, verbatim): "LIVE — acts: walks, says,
+// enters/exits, throws, arena beats." A say is named in the first sentence of
+// the lane it was missing from.
+//
+// The voices log stays the first pen and stays the ruled durable operator
+// record; this is a second consumer of the same fact, in the shape
+// `emissionFromVoice` established beside it. `mirrorLaneAct` rather than a
+// journal row, for the reasons in world-journal.mjs § THE LANE HOOK.
+//
+// ── WHAT THE ROW SAYS, field by field, because each one was a choice ────────
+//
+//   actor        voice.handle — WHO SPOKE. Not `standAs`: on the human lane the
+//                speaker is `human-of-<slug>` and a housemate only lends the
+//                PLACE, so recording the housemate as the actor would put words
+//                in a resident's mouth. (The emissions row makes the opposite
+//                choice for its own reasons — `source: standAs ?? handle` — and
+//                the two are answering different questions.) Whose body lent
+//                the standpoint rides the payload where it belongs.
+//   written_at   voice.at — WHEN IT WAS SAID, not when this hook ran.
+//   at           stamped at the voice's OWN x/y (witnessStampAt), never at the
+//                speaker's position now.
+//   witnesses    who was within earshot, pinned — the-witnessed-line's plural,
+//                and for speech the most literal witnesses this log will ever
+//                hold.
+//   household    `resolvedWorldHousehold(key)` — THE SAME RESOLVER THE MARK
+//                LANE USES, threaded down through `voices.say` rather than
+//                re-derived here. One column, one spelling: world2-claims.mjs
+//                already paid for the alternative once ("one column carried
+//                three spellings of one fact"), and a say row spelling the
+//                household differently from a leave-mark row would seed exactly
+//                that again. Null for a berth (which has no household) and for
+//                a visitor key, which is what the resolver already answers.
+//
+// ── PRIVACY: NOTHING NEW LEAVES THE BOX ────────────────────────────────────
+//
+// `acts` exports to public git through the notary, so every mirrored field has
+// to be already-public. Speech is: the town's law is that words "fade from
+// hearing, never from the record", the record is served at
+// postmark.town/conversations, and the say path has no household scoping of any
+// kind. This mirror publishes nothing that the conversations page does not
+// already publish.
+function mirrorVoiceAct(voice, spoken = null) {
+  if (!world2Enabled()) return;
+  void (async () => {
+    try {
+      const here = { x: voice.x, y: voice.y };
+      const { at, witnesses } = await witnessStampAt(voice.handle, here);
+      const household = spoken?.household ?? null;
+      const standAs = spoken?.standAs && spoken.standAs !== voice.handle ? spoken.standAs : null;
+      await mirrorLaneAct({
+        crossing: currentCrossing(),
+        actor: voice.handle,
+        action: "say",
+        object: null,
+        at, witnesses, cls: CLASS_VOICE, household,
+        payload: {
+          text: voice.text,
+          place: voice.place ?? null,
+          ...(voice.aboard ? { aboard: true } : {}),
+          ...(standAs ? { stood_with: standAs } : {}),
+        },
+        effect: "the words were spoken where the actor stood and heard by whoever was within earshot; hearing fades, the record does not",
+        writtenAt: new Date(voice.at).toISOString(),
+      });
+    } catch (e) {
+      console.error(`[world2-acts] a voice did not reach acts (${String(e?.message ?? e).slice(0, 160)}) — the voices log is unaffected`);
+    }
+  })();
+}
+
 const voices = createVoices({
   // The unplaced speak from the threshold (Keemin, party night — FireflyArc's
   // human bounced off the room with a cheer unsaid): a resident whose home
@@ -622,7 +701,16 @@ const voices = createVoices({
   //
   // Behind WORLD_EMISSIONS, checked on `emissionFromVoice`'s first line. With
   // the flag off nothing is opened and the say path is what it was.
-  onSpoke: (voice, spoken) => emissionFromVoice(voice, { standAs: spoken?.standAs ?? null, repo: WORLD_CLONE }),
+  // TWO SECOND-CONSUMERS NOW, and the voices log is still the first pen and
+  // still untouched. `emissionFromVoice` gives the say a body in the world
+  // (dynamic.db/emissions, behind WORLD_EMISSIONS); `mirrorVoiceAct` gives it
+  // its line in World 2.0's event log (Postgres `acts`, behind WORLD2_PG),
+  // which is the gap the write-path closure exists to shut — see the function.
+  // Neither throws; a box that cannot write either still lets the town talk.
+  onSpoke: (voice, spoken) => {
+    emissionFromVoice(voice, { standAs: spoken?.standAs ?? null, repo: WORLD_CLONE });
+    mirrorVoiceAct(voice, spoken);
+  },
   // WHO IS HERE, BY POSITION (issue #5 §2, behind WORLD_PRESENCE). `presentNear`
   // returns null on its first line with the flag off, so `nearby` answers null
   // and the store's `listeners` is exactly the door-activity list it has always
@@ -701,7 +789,10 @@ export async function worldSay(args = {}, key = null) {
   try {
     const text = args.text == null ? "" : String(args.text);
     const since = Number.isFinite(Number(args.since)) ? Number(args.since) : null;
-    const r = text.trim() ? await voices.say(choice.handle, text, { since }) : await voices.hear(choice.handle, { since });
+    // `household` rides the say so the act's row can be scoped by the SAME
+    // resolver the mark lane uses (mirrorVoiceAct § household). It reaches only
+    // the `onSpoke` listener; nothing about hearing or the voices log changes.
+    const r = text.trim() ? await voices.say(choice.handle, text, { since, household: resolvedWorldHousehold(key) }) : await voices.hear(choice.handle, { since });
     withNoticeBoard(r);
     return r;
   } catch (e) {
@@ -773,7 +864,7 @@ export async function worldSayHuman(args = {}, key = null) {
   try {
     const text = args.text == null ? "" : String(args.text);
     const since = Number.isFinite(Number(args.since)) ? Number(args.since) : null;
-    const r = text.trim() ? await voices.say(speaker, text, { standAs, since }) : await voices.hear(speaker, { standAs, since });
+    const r = text.trim() ? await voices.say(speaker, text, { standAs, since, household: resolvedWorldHousehold(key) }) : await voices.hear(speaker, { standAs, since });
     // Whose body you borrowed, said out loud. A human has no place of their own
     // — they stand with a housemate — and until this line the reply named the
     // PLACE but never the person, so landing somewhere unexpected was a mystery
@@ -1442,14 +1533,39 @@ export async function witnessStamp(handle) {
   const unread = (reason) => ({ at: { anchor: null, dx: null, dy: null, unplaced: true }, witnesses: { source: "unread", reason, list: [] } });
   try {
     const w = await world();
+    const standing = await residentStandpoint(handle, w);
+    if (!standing?.placed) return { at: { anchor: null, dx: null, dy: null, unplaced: true }, witnesses: { source: "presence", list: [] } };
+    return await witnessStampAt(handle, { x: standing.x, y: standing.y }, w);
+  } catch (e) {
+    return unread(`witness-read-threw: ${String(e?.message ?? e).slice(0, 120)}`);
+  }
+}
+
+/**
+ * THE STAMP FOR A POINT THAT IS ALREADY KNOWN.
+ *
+ * `witnessStamp` asks the world where the actor is standing. A lane whose act
+ * CARRIES its own place must not ask that question a second time — for speech
+ * it would be redundant and also WRONG: a voice is logged at the coordinates it
+ * was spoken from (voices.mjs § THE DECK RULE, "the stored x/y stay where the
+ * words were actually said"), and a resident who walks away between the say and
+ * the stamp would have their words pinned where they now stand rather than
+ * where they spoke them. The whole anchor pair exists to stop exactly that kind
+ * of quiet substitution.
+ *
+ * Everything after the standpoint is shared with `witnessStamp` — one home for
+ * the-witnessed-line's serialization, so a `say` row and a `leave-mark` row
+ * cannot come to mean different things by the same field.
+ */
+export async function witnessStampAt(handle, here, known = null) {
+  const unread = (reason) => ({ at: { anchor: null, dx: null, dy: null, unplaced: true }, witnesses: { source: "unread", reason, list: [] } });
+  try {
+    const w = known ?? await world();
     const { verbs } = await mods();
     const marks = w.marks ?? [];
     const centreOf = (id) => marks.find((m) => m.id === id)?.at ?? null;
     const chainAt = (p) => verbs.containmentChain(p, marks);
 
-    const standing = await residentStandpoint(handle, w);
-    if (!standing?.placed) return { at: { anchor: null, dx: null, dy: null, unplaced: true }, witnesses: { source: "presence", list: [] } };
-    const here = { x: standing.x, y: standing.y };
     const at = anchorAt(here, { chain: chainAt(here), centreOf });
 
     // `presentNear` is null when the presence layer is switched off at this
@@ -2426,6 +2542,46 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
         within: targetExtent, toMark: targetMarkId, declaredBy: who, pace,
       });
     } finally { store.close(); }
+
+    // ── THE WALK GAP, CLOSED (2026-08-28) ───────────────────────────────────
+    //
+    // The say gap's sibling, and it hid better. `walk-exec.mjs` DOES call
+    // appendJournal, so the walk lane reads as mirrored — but that arm is the
+    // `else` below, and dev has run WORLD_MOVEMENT_V2=1 since movement-v2
+    // shipped. Every walk on this office goes through the branch you are
+    // reading, whose pen is `dynamic.db/movements`, and not one of them had
+    // reached `acts`. Two pens for one verb, only one of them mirrored: a lane
+    // is closed only when EVERY pen behind it is.
+    //
+    // Same fields the journal arm writes (walk-exec.mjs § SETTLE AT THE SAVE),
+    // so the act is the same act whichever pen recorded it — CLASS_MOVE,
+    // action "walk", the target as `object`, the pace on the payload. What it
+    // cannot carry is that arm's `payload.ledger`/`lines`: this pen formats no
+    // ledger line (that is the whole point of movement-v2 — "no commit is made
+    // on the resident's turn"), and inventing one here would be a second
+    // formatter for a serialization that has one home. The departure's own
+    // geometry rides instead, which is what this pen actually knows.
+    //
+    // Privacy: a departure is public — it crystallizes into `STATE/log/` in the
+    // public world repo at the next crossing-save, by this branch's own
+    // `movement.crystallizes`. Nothing new leaves the box.
+    if (world2Enabled()) {
+      void (async () => {
+        try {
+          const { at: stampAt, witnesses } = await witnessStampAt(who, from);
+          await mirrorLaneAct({
+            crossing: at, actor: who, action: "walk",
+            object: targetMarkId ?? null,
+            at: stampAt, witnesses, cls: CLASS_MOVE,
+            payload: { from, toward, pace, ...(targetExtent ? { within: targetExtent } : {}) },
+            effect: "the walk is declared; the record receives it at the save",
+            household: resolvedWorldHousehold(key),
+          });
+        } catch (e) {
+          console.error(`[world2-acts] a walk did not reach acts (${String(e?.message ?? e).slice(0, 160)}) — dynamic.db/movements is unaffected`);
+        }
+      })();
+    }
     result = { position: positionAt({ from, toward, at, targetExtent, targetMarkId, pace }, at), pace, movement: { record: "dynamic.db/movements", crystallizes: "STATE/log/ at the next crossing-save" } };
   } else {
     const exec = join(HERE, "walk-exec.mjs");

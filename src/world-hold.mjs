@@ -309,6 +309,75 @@ export async function callHoldTool(name, args = {}, key = null) {
     // schema-vs-runtime defect this branch flagged on `leave_mark`'s `tier:`, and
     // it is not better for being mine.
     const dials = thingDials();
-    return declareHolding({ db, thing: args.thing, to: args.to ?? null, actor, roster: null, groundOwner: null, dials });
+    const did = declareHolding({ db, thing: args.thing, to: args.to ?? null, actor, roster: null, groundOwner: null, dials });
+    mirrorHoldingAct(did, key);
+    return did;
   } finally { db.close(); }
+}
+
+// ── THE HOLDING GAP, CLOSED (2026-08-28) ────────────────────────────────────
+//
+// Third instance of the say gap's class: a live write lane whose pen is not the
+// journal, and so invisible to World 2.0. Here the pen is the `attachments`
+// table (`declareAttachment`, dynamic-entities.mjs), and give/drop/take are
+// three of the world's thirteen apex actions — nothing anyone has picked up,
+// handed over or set down since the seed had a line in `acts`.
+//
+// HOOKED AT THE DOOR, NOT INSIDE `declareHolding`, and that is deliberate:
+// `declareHolding` is the pure adjudicator — it takes a db and no key, it is
+// tested directly on hand-built stores, and giving it a mirror would give every
+// one of those tests a Postgres dependency it has no business having. The door
+// is where a key exists (so the household resolves the way every other act's
+// does) and where success is unambiguous: `declareHolding` THROWS on refusal,
+// so a returned value is a declaration that landed.
+//
+// THE LAZY IMPORT IS THE POINT, not a shortcut. `world.mjs` imports this file,
+// so a static import back would close a cycle; `await import(...)` inside the
+// async body is the idiom this codebase already uses for exactly this
+// (world-stake.mjs reaching world2-claims.mjs). It also means a store with the
+// mirror off never loads world.mjs's world at all.
+//
+// Privacy: a holding is public by the door's own law — "what it does instead is
+// RECORD every take with the resident who made it, so a ground-holder who
+// objects has the record to point at" (world_hold's description). The thing is
+// a public mark id and the actor is the resident who acted. Nothing new leaves
+// the box.
+function mirrorHoldingAct(did, key) {
+  if (!did?.thing) return;
+  void (async () => {
+    try {
+      const { world2Enabled } = await import("./world2-acts.mjs");
+      if (!world2Enabled()) return;
+      const { mirrorLaneAct, CLASS_HOLDING } = await import("./world-journal.mjs");
+      const { witnessStamp } = await import("./world.mjs");
+      const { resolvedWorldHousehold } = await import("./world-branches.mjs");
+      const { currentCrossing } = await import("./crossings.mjs");
+
+      // The actor's own standpoint, not the thing's: an act is witnessed where
+      // the ACTOR stood (the-witnessed-line), and a held thing has no position
+      // of its own — "it is wherever its holder is, derived on read".
+      const { at, witnesses } = await witnessStamp(did.declared_by);
+      await mirrorLaneAct({
+        crossing: currentCrossing(),
+        actor: did.declared_by,
+        action: did.did,                 // give | drop | take — the face, as the resident named it
+        object: did.thing,
+        at, witnesses, cls: CLASS_HOLDING,
+        household: resolvedWorldHousehold(key),
+        payload: {
+          thing: did.thing,
+          holder: did.holder ?? null,
+          previous_holder: did.previous_holder ?? null,
+          made_by: did.made_by,
+          policy: did.policy,
+        },
+        effect: did.did === "drop"
+          ? "it stands on the ground where the holder set it down; the edge they authored is nullified"
+          : `${did.holder} holds it now — authorship did not move, and where it stands is derived from whoever is holding it`,
+        writtenAt: did.at,               // the declaration's own stamp, strictly ordered by the door
+      });
+    } catch (e) {
+      console.error(`[world2-acts] a holding did not reach acts (${String(e?.message ?? e).slice(0, 160)}) — the attachments edge is unaffected`);
+    }
+  })();
 }
