@@ -171,24 +171,50 @@ export function e1LedgerParse(records, ledgerText) {
 // governing leg for every handle the ledger era covers — and it can only do so
 // if the acts were read era-first.
 
+/**
+ * THE POPULATIONS MUST MATCH BEFORE THE ORDERS CAN BE COMPARED, and the first
+ * run of this check got that wrong in a way worth keeping.
+ *
+ * `acts` holds 304 of the ledger's 317 departures: the backfill deliberately did
+ * not insert the 13 that sit at or after the journal's first row, because the
+ * journal already carries them (`partitionWalks`). Running 1.0's
+ * `currentDeparture` over the WHOLE ledger and the port's over the 304 compared
+ * two different questions, and reported 8 handles as disagreeing when what had
+ * actually happened is that 1.0's answer for them lives in the journal era.
+ *
+ * So the oracle's list is scoped to the rows the store holds — keeping FILE
+ * ORDER, which is the only thing under test — and the 13 are asserted to be the
+ * whole of the difference rather than assumed away.
+ */
 export function e2Order(records, ledgerText) {
   const findings = [];
   const { departures } = parseWalkLedger(ledgerText);
-  const ledgerHandles = [...new Set(departures.map((d) => d.handle))];
   const mineLedgerEra = records.filter((r) => r.era === "ledger");
+  const inStore = new Set(mineLedgerEra.map((r) => `${r.iso}|${r.handle}|${r.at}`));
+  const scoped = departures.filter((d) => inStore.has(`${d.iso}|${d.handle}|${d.at}`));
+  const held = departures.filter((d) => !inStore.has(`${d.iso}|${d.handle}|${d.at}`));
+
+  // The seam receipt: every ledger row the store does not carry as a LEDGER act
+  // must be carried as a JOURNAL one. A row in neither is a departure that fell
+  // down the seam — the class the backfill exists to close.
+  const journalKeys = new Set(records.filter((r) => r.era !== "ledger").map((r) => `${r.iso}|${r.handle}`));
+  for (const d of held) {
+    if (!journalKeys.has(`${d.iso}|${d.handle}`))
+      findings.push(`E2 ${d.handle} @ ${d.iso} is in the walk ledger and in NEITHER era of the store — a departure that fell down the seam`);
+  }
+
   const gov = live.governingDepartures(mineLedgerEra);
   let compared = 0;
-  for (const h of ledgerHandles) {
-    const o = walkMod.currentDeparture(departures, h);
+  for (const h of [...new Set(scoped.map((d) => d.handle))]) {
+    const o = walkMod.currentDeparture(scoped, h);
     const m = gov.get(h);
-    // A handle whose only ledger rows are the 13 the journal already carried has
-    // no ledger-sourced act, by the backfill's design. Not a finding.
-    if (!m) continue;
+    if (!m) { findings.push(`E2 the store carries no ledger-era departure for ${h}, which the scoped ledger does`); continue; }
     compared++;
     if (!sameRecord(m, o))
       findings.push(`E2 the governing ledger departure differs for ${h}\n      1.0 (file order): ${show(o)}\n      port (acts order): ${show(m)}`);
   }
-  return { findings, compared, ledger_handles: ledgerHandles.length };
+  return { findings, compared, ledger_rows: departures.length, scoped_rows: scoped.length,
+    held_by_the_journal_era: held.length };
 }
 
 // ── E3 · the journal seam ────────────────────────────────────────────────────
@@ -312,10 +338,20 @@ export function e5Union(records, world, roll, at) {
  */
 export async function e5bShimVsFold(world) {
   const findings = [];
-  const { fold, loadMarks } = foldMod;
   let folded;
-  try { folded = fold(loadMarks(REPO)); }
-  catch (e) { return { findings: [`E5b could not fold the checkout: ${e.message}`], compared: 0 }; }
+  try {
+    // The assembly is `seed-import.mjs § foldOracle`'s, line for line — the same
+    // four inputs, from the same four places. "Stakes are the ✦weight input and
+    // touch neither field this asks about; the seed carries no stake ledger …
+    // so the honest value is the empty one."
+    const marksDir = join(REPO, "WORLD", "marks");
+    if (!existsSync(marksDir)) return { findings: [`E5b no WORLD/marks under ${REPO}`], compared: 0 };
+    const terrainPath = join(REPO, "WORLD", "skeleton.json");
+    const terrain = existsSync(terrainPath) ? JSON.parse(readFileSync(terrainPath, "utf8")) : null;
+    const hhPath = join(REPO, "WORLD", "households.json");
+    const households = existsSync(hhPath) ? (JSON.parse(readFileSync(hhPath, "utf8")).households ?? null) : null;
+    folded = foldMod.fold({ marks: foldMod.loadMarks(marksDir), terrain, stakes: [], households });
+  } catch (e) { return { findings: [`E5b could not fold the checkout: ${e.message}`], compared: 0 }; }
 
   const foldParcels = new Map((folded.parcels ?? []).map((p) => [p.id, p]));
   const shimParcels = new Map(world.parcels.map((p) => [p.id, p]));
