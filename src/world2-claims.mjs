@@ -41,7 +41,7 @@ async function pool(env = process.env) {
 export function submitClaimFromJournal(row, seq, env = process.env) {
   if (!candleEnabled(env)) return;
   if (!MARK_CLASSES.has(row.class)) return;
-  if (!["leave-mark", "amend"].includes(row.action)) return; // withdraw = retraction, next slice
+  if (!["leave-mark", "amend", "withdraw"].includes(row.action)) return;
 
   state.queue = state.queue.then(async () => {
     try {
@@ -51,6 +51,20 @@ export function submitClaimFromJournal(row, seq, env = process.env) {
         "SELECT id FROM windows WHERE status = 'open' ORDER BY id DESC LIMIT 1");
       if (!win) throw new Error("no open window — the candle is dark; bootstrap the next window before the docket can take claims");
 
+      // withdraw → retraction: free until the close (gold §1). The guard in
+      // 002_grants.sql permits exactly this transition and nothing else.
+      if (row.action === "withdraw") {
+        const slug = row.object; // the journal's object IS the <by>/<slug> id
+        const { rowCount } = await p.query(
+          `UPDATE claims SET status = 'retracted', decided_at = now()
+           WHERE window_id = $1 AND status = 'pending' AND geometry->>'slug' = $2 AND claimant = $3`,
+          [win.id, slug, row.actor]);
+        // rowCount 0 is lawful: withdrawing a PUBLISHED 1.0 mark has no pending
+        // claim to retract — that lane is the settlement unpublish, not the docket.
+        if (rowCount) state.written += 1;
+        return;
+      }
+
       const kind = payload.kind ?? "sited";
       const placed = payload.at && payload.extent;
       const slug = `${payload.by ?? row.actor}/${payload.slug}`;
@@ -58,11 +72,22 @@ export function submitClaimFromJournal(row, seq, env = process.env) {
       const geometry = placed ? { slug, at, extent, ...(points ? { points } : {}) } : { slug };
       const bbox = placed ? boxOf(at, extent) : null;
 
+      // amend → the supersession chain: the clearing computes head-of-chain
+      // (its transition 2), so the new claim names the pending one it amends.
+      let supersedes = null;
+      if (row.action === "amend") {
+        const { rows: [prior] } = await p.query(
+          `SELECT id FROM claims WHERE window_id = $1 AND status = 'pending'
+           AND geometry->>'slug' = $2 AND claimant = $3 ORDER BY submitted_at DESC LIMIT 1`,
+          [win.id, slug, row.actor]);
+        supersedes = prior?.id ?? null; // amending a published mark: no in-window chain, fresh claim
+      }
+
       await p.query(
-        `INSERT INTO claims (window_id, class, claimant, household, body, geometry, bbox, stake, data)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        `INSERT INTO claims (window_id, class, claimant, household, body, geometry, bbox, stake, supersedes, data)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
         [win.id, kind, row.actor, row.household, body ?? null,
-         JSON.stringify(geometry), bbox, stamps ?? 0,
+         JSON.stringify(geometry), bbox, stamps ?? 0, supersedes,
          Object.keys(rest).length ? JSON.stringify({ ...rest, _journal_seq: seq }) : JSON.stringify({ _journal_seq: seq })]);
       state.written += 1;
     } catch (err) {
