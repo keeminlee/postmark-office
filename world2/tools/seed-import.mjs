@@ -133,6 +133,31 @@ export function boxOf(at, extent) {
   return `((${x1},${y1}),(${x2},${y2}))`;
 }
 
+/**
+ * A stable rendering of a jsonb value, for comparison only.
+ *
+ * `jsonb` STORES A VALUE, NOT A DOCUMENT: it sorts object keys on input (by key
+ * length, then bytes), so `{"w":4,"h":6}` comes back as `{"h":6,"w":4}`. The
+ * verifier's first run against the live dev DB reported all 409 marks as drift on
+ * exactly that — every one a false alarm about a difference the database never had
+ * a choice about, which is the same shape of bug as law-ingest.mjs's `jsonSafe`
+ * note and the same reason it matters: a guard whose first real firing is a false
+ * positive is a guard people turn off.
+ *
+ * The fix belongs HERE and not at the derivation, and the difference is worth
+ * being precise about. `jsonSafe` fixed a deriver that was returning something the
+ * database could not hold. This deriver is right — key order carries no meaning
+ * and `geometry` round-trips perfectly — so what was wrong was the COMPARATOR,
+ * asking about a serialisation when the question is about a value.
+ */
+export function canonicalJson(v) {
+  if (Array.isArray(v)) return `[${v.map(canonicalJson).join(",")}]`;
+  if (v && typeof v === "object") {
+    return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canonicalJson(v[k])}`).join(",")}}`;
+  }
+  return JSON.stringify(v ?? null);
+}
+
 /** Parse either spelling of a box back to four numbers, for comparison. */
 export function boxNumbers(text) {
   const n = String(text).match(/-?\d+(?:\.\d+)?(?:e[+-]?\d+)?/gi)?.map(Number) ?? [];
@@ -574,7 +599,7 @@ export async function verifySeed(client, { window, marks, claims }) {
     if (r.owner !== m.owner) say("owner", m.owner, r.owner);
     if ((r.household ?? null) !== (m.household ?? null)) say("household", m.household, r.household);
     if (r.body !== m.body) say("body", firstDivergence(m.body, r.body), firstDivergence(r.body, m.body));
-    const repoGeo = JSON.stringify(m.geometry), dbGeo = JSON.stringify(r.geometry);
+    const repoGeo = canonicalJson(m.geometry), dbGeo = canonicalJson(r.geometry);
     if (repoGeo !== dbGeo) say("geometry", firstDivergence(repoGeo, dbGeo), firstDivergence(dbGeo, repoGeo));
     const a = boxNumbers(m.bbox), b = boxNumbers(r.bbox);
     if (!a || !b || a.some((v, i) => v !== b[i])) say("bbox", m.bbox, r.bbox);

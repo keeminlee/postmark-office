@@ -18,7 +18,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
-  deriveSeed, deriveActs, genesisWindow, assertRef, uuid5, boxOf, boxNumbers,
+  deriveSeed, deriveActs, genesisWindow, assertRef, uuid5, boxOf, boxNumbers, canonicalJson,
 } from "../world2/tools/seed-import.mjs";
 
 // A `loadMarks` with the world's own contract: world coordinates on `at`, `id` =
@@ -226,4 +226,14 @@ test("a checkout that is not at the declared ref is refused, not corrected", asy
     assert.throws(() => assertRef(f.dir, { sha: "0".repeat(40) }), /does not match/);
     assert.throws(() => assertRef(f.dir, { tag: "no-such-tag" }), /does not exist/);
   } finally { f.cleanup(); }
+});
+
+test("jsonb sorts object keys — the comparator asks about the value, not the spelling", async () => {
+  // What Postgres hands back for `{"w":4,"h":6}`. The verifier's first live run
+  // called all 409 marks drift over exactly this.
+  assert.equal(canonicalJson({ w: 4, h: 6 }), canonicalJson({ h: 6, w: 4 }));
+  assert.notEqual(canonicalJson({ w: 4, h: 6 }), canonicalJson({ w: 4, h: 7 }));
+  // Arrays are ordered — a ring reordered IS a different ring.
+  assert.notEqual(canonicalJson([[0, 0], [1, 1]]), canonicalJson([[1, 1], [0, 0]]));
+  assert.equal(canonicalJson({ at: { y: 2, x: 1 } }), canonicalJson({ at: { x: 1, y: 2 } }));
 });
