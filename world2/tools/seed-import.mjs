@@ -754,6 +754,45 @@ export async function upgradeSeed(client, derived) {
       findings.slice(0, 3).join("\n  "));
   }
 
+  // GUARD 4, and it is the one that decides the whole shape of this path.
+  //
+  // `002_grants.sql`'s `claims_update_guard` fires BEFORE UPDATE on every claim and
+  // exempts exactly one role:
+  //
+  //   IF current_user = 'clearing_job' THEN RETURN NEW; END IF;
+  //   IF OLD.status = 'pending' AND NEW.status = 'retracted' … THEN RETURN NEW;
+  //   RAISE EXCEPTION 'claims: % may only retract a pending claim …'
+  //
+  // So a LOCKED claim's fields are immutable to every pen but the clearing job —
+  // deliberately, because a locked claim is the record of what was submitted and
+  // cleared. The seed connects as `world2_owner` (migration-class, § THE PEN), and
+  // the owner is not exempt. That means `--upgrade` CANNOT complete for claims, and
+  // the honest response is to say so before touching anything rather than to die
+  // half-way, reach for `clearing_job`'s password, or disable a guard.
+  //
+  // On dev the answer is the one this tool already gives for a reseed: rebuild the
+  // schema and seed once with 004 in place. Nothing is lost — every row is derived
+  // from a frozen tag — and the primary path is the one that then gets exercised.
+  const locked = await client.query(
+    `SELECT count(*)::int c FROM claims WHERE window_id = $1 AND status = 'locked' AND data IS NULL`,
+    [window.id]);
+  const who = (await client.query("SELECT current_user AS u")).rows[0].u;
+  if (locked.rows[0].c && who !== "clearing_job") {
+    throw new Error(
+      `--upgrade cannot finish: ${locked.rows[0].c} locked claim(s) need data, and 002_grants.sql's\n` +
+      `claims_update_guard refuses an UPDATE on a locked claim from every role but clearing_job\n` +
+      `(current_user is '${who}'). That guard is correct — a locked claim is the record of what was\n` +
+      `submitted and cleared — so this pen will not work around it, borrow another pen's role, or\n` +
+      `disable a trigger.\n\n` +
+      `THE PATH IS THE REBUILD, and on dev it costs nothing: drop and re-apply\n` +
+      `  world2/schema/001_tables.sql, 002_grants.sql, 003_falsifier_roles.sql, 004_marks_data.sql\n` +
+      `then run the seed ONCE, without --upgrade. Every row is derived from the frozen tag, so a\n` +
+      `rebuilt world is identical to an upgraded one — and the ids are deterministic, so it is\n` +
+      `identical row for row.\n\n` +
+      `(--upgrade remains the right path for marks alone, and for any future column 004-style\n` +
+      ` migrations add to a table whose rows are still mutable by the pen that must fill them.)`);
+  }
+
   await client.query("BEGIN");
   try {
     let updated = 0;
