@@ -15,6 +15,13 @@
 // first step" at window close, then the window pins law_sha + town_sha —
 // outcomes reproducible from (claims, law_sha, town_sha).
 //
+// LAW (Wright's ruling on the replay gate's finding 4, 2026-08-28 eve, verbatim):
+// "tier is recomputed for ALL standing marks inside the clearing transaction,
+// which is settlement-equivalent staleness, zero new class" — the cadence being
+// 1.0's own, "derived weight moves at the next Settlement" (ECONOMY-DIALS
+// read_side). That is step 7, the window's last act; the walk lives in
+// standing.mjs and `falsifier-standing-equality.mjs` holds it to 1.0's fold.
+//
 // PEN: connects as clearing_job — the ONLY role transitioning claims,
 // writing windows, and materializing marks (gold §3 rule 2). The stamp ingest
 // first-step runs as law_ingester (its own pen) BEFORE this transaction; this
@@ -33,6 +40,7 @@
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { computeStanding, admissionNotes } from "./standing.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const arg = (n) => { const i = process.argv.indexOf(n); return i === -1 ? null : process.argv[i + 1]; };
@@ -266,11 +274,76 @@ try {
     "SELECT COUNT(*)::int AS count FROM claims WHERE window_id = $1 AND status = 'retracted'", [windowId]);
   sixCount.retracted_before_close = retracted;
 
+  // 7 · THE STANDING RECOMPUTE — the window's last act, after everything this
+  //     window materialized is in the register.
+  //
+  //     RULING (Wright, 2026-08-28 eve, on the replay gate's finding 4):
+  //     "tier = recompute-at-close, per the dials' own cadence ('derived weight
+  //      moves at the next Settlement'); the standing walk ports as a spatial
+  //      query; the replay gate is the judge."
+  //
+  //     The finding it closes: "`data.tier` is not a field of the record — it is
+  //     what the fold says after resolving the whole world, and 1.0 recomputes it
+  //     for all 960 records at every settlement. 2.0 writes it once, at
+  //     materialization, and never revisits it."
+  //
+  //     ALL STANDING MARKS, not this window's. That is the whole point: standing
+  //     is a fact about the ground a mark stands on, so a NEIGHBOUR's parcel
+  //     landing in this window moves marks nobody claimed —
+  //     `berthillon/le-petit-berthillon` went `market → home` with every authored
+  //     byte identical, because `berthillon/chez-antoine` gave the walk sovereign
+  //     ground to stop at.
+  //
+  //     INSIDE THIS TRANSACTION, because a recompute that could land after the
+  //     window closed would be a second pen writing the register, and the
+  //     determinism property ("every window's outcome is reproducible from
+  //     (claims, law_sha, town_sha)") would stop being true of `marks`.
+  //
+  //     ONLY THE ROWS THAT MOVED are written, and the count is a receipt: a
+  //     recompute that touched every row every window would tell a reader nothing
+  //     about whether the world moved.
+  const { rows: standing } = await q(
+    `SELECT id::text, slug, kind, owner, household, geometry, parent::text, data
+       FROM marks WHERE status = 'standing'`);
+  const tiers = computeStanding(standing);
+  const moved = [];
+  for (const m of standing) {
+    const next = tiers.get(m.slug);
+    // A standing mark the walk did not answer for is not a mark with an unknown
+    // standing; it is a register the recompute could not resolve, and writing the
+    // stale value would be the finding-4 bug wearing a receipt. Seed-import makes
+    // the same refusal about the fold ("A record the fold does not answer for
+    // STOPS the seed").
+    if (next == null) throw new Error(`the standing walk returned no verdict for ${m.slug}`);
+    if ((m.data?.tier ?? null) === next) continue;
+    await q(
+      `UPDATE marks SET data = jsonb_set(coalesce(data, '{}'::jsonb), '{tier}', to_jsonb($2::text)) WHERE id = $1`,
+      [m.id, next]);
+    moved.push({ slug: m.slug, from: m.data?.tier ?? null, to: next });
+  }
+  // The premises the port stands on that are FACTS about today's register rather
+  // than law (standing.mjs § the tripwires). Recorded in the receipts, not
+  // thrown: a window must not fail to close because the town outgrew a premise,
+  // but nobody should have to go looking for the day it did.
+  const notes = admissionNotes(standing);
+  for (const n of notes) console.log(`  ⚑ standing: ${n}`);
+
   // Close, pin, open the successor.
   await q(
     `UPDATE windows SET status = 'closed', cleared_at = now(), law_sha = $2, town_sha = $3, receipts = $4
      WHERE id = $1`,
-    [windowId, lawSha, townSha, JSON.stringify({ six_count: sixCount, computed_against: { law_sha: lawSha, town_sha: townSha } })]);
+    [windowId, lawSha, townSha, JSON.stringify({
+      six_count: sixCount,
+      computed_against: { law_sha: lawSha, town_sha: townSha },
+      standing: {
+        recomputed: standing.length, moved: moved.length,
+        // Capped, because the receipt is evidence and not an export: the first
+        // recompute over a freshly floored store can move hundreds of rows, and a
+        // window row is not where that list belongs. The count is exact.
+        moves: moved.slice(0, 25),
+        ...(notes.length ? { notes } : {}),
+      },
+    })]);
   await q(
     `INSERT INTO windows (id, opens_at, closes_at, status)
      VALUES ($1, $2, $2::timestamptz + interval '12 hours', 'open')
@@ -279,10 +352,10 @@ try {
 
   if (has("--dry-run")) {
     await q("ROLLBACK");
-    console.log(`DRY RUN window ${windowId}: ${JSON.stringify(sixCount)} (rolled back)`);
+    console.log(`DRY RUN window ${windowId}: ${JSON.stringify(sixCount)}; standing recomputed over ${standing.length}, ${moved.length} moved (rolled back)`);
   } else {
     await q("COMMIT");
-    console.log(`CLEARED window ${windowId} @ law ${lawSha?.slice(0, 8) ?? "∅"} town ${townSha?.slice(0, 8) ?? "∅"}: ${JSON.stringify(sixCount)}; window ${windowId + 1} open`);
+    console.log(`CLEARED window ${windowId} @ law ${lawSha?.slice(0, 8) ?? "∅"} town ${townSha?.slice(0, 8) ?? "∅"}: ${JSON.stringify(sixCount)}; standing recomputed over ${standing.length} mark(s), ${moved.length} moved${moved.length ? ` (${moved.slice(0, 3).map((m) => `${m.slug} ${m.from}→${m.to}`).join(", ")}${moved.length > 3 ? ", …" : ""})` : ""}; window ${windowId + 1} open`);
   }
 } catch (err) {
   await q("ROLLBACK").catch(() => {});

@@ -11,6 +11,8 @@ runs the other way — it is the only one that reads the DB and writes the repo.
 | `falsifier-projection-equality.mjs` | re-derives from the checkout at `projection_heads.sha` and asserts equality |
 | `seed-import.mjs` | the frozen sandbox settlement → `windows` + `claims` + `marks` (+ legacy `acts`) |
 | `snapshot-export.mjs` | the DB → notary certifications, event archives and mark bodies in git (`snapshot_exporter`) |
+| `standing.mjs` | 1.0's standing walk over `marks` rows — the library `clearing-job.mjs` step 7 recomputes with |
+| `falsifier-standing-equality.mjs` | the port vs 1.0's own fold, over the same state, slug by slug |
 
 The law these implement is quoted verbatim in each file's header, from the gold
 plan (`G:/Starstory/PULSE/gold-plans/postmark-world-2/postmark-world-2.md` §3, §4)
@@ -1083,8 +1085,22 @@ GREEN  settlement/S50 (window 153)  22 acts, 5 claims
 
 Zero refusals. Windows tile 150→154 with a law sha pinned per era. 846 marks,
 2,925 acts, 850 claims. `--can-fail-proof` green at S50 (five mangles, five
-reds, restored). Seed `--verify` and `--can-fail-proof` green, the roles
-falsifier green, projection equality green at both heads.
+reds, restored). Seed `--verify` and `--can-fail-proof` green *at the floor*,
+the roles falsifier green, projection equality green at both heads.
+
+Third pass, after the standing recompute landed (§ The standing recompute), from
+a re-floored store — the same range, with the stale-standing check GATED instead
+of noted:
+
+```
+GREEN  settlement/S48 (window 151)  34 acts, 0 claims    standing: 831 recomputed, 0 moved
+GREEN  settlement/S49 (window 152)  10 acts, 14 claims   standing: 841 recomputed, 1 moved
+                                                           berthillon/le-petit-berthillon market→home
+GREEN  settlement/S50 (window 153)  22 acts, 5 claims    standing: 846 recomputed, 0 moved
+```
+
+No flags. The one mark that carried a stale standing now moves in the window its
+neighbour's parcel landed in, which is the whole of the ruling.
 
 `falsifier-acts-claims-closure.mjs` reports GREEN over 0 mark acts and its
 `--self-test` says `THE CHECK IS ASLEEP` — correctly. Every act the replay
@@ -1146,7 +1162,8 @@ leaked fixture acts and `wright/candle-proof` are gone.
 2. **Finding 4, the stale standing, needs a ruling.** Recommendation: `tier`
    becomes a VIEW over the fold's inputs rather than a stored key, per
    anti-rebake rule 3. That is a phase-3 change and it is the last thing between
-   this range and a fully green gate.
+   this range and a fully green gate. **RULED and BUILT — recompute-at-close, not
+   a view; see § The standing recompute.**
 3. **The town half of every replayed window pins the FROZEN sha**
    (`830a6996`). No settlement receipt in this range names a town commit, so
    there was nothing to discover; no claim in these three eras carries a stake,
@@ -1161,3 +1178,173 @@ leaked fixture acts and `wright/candle-proof` are gone.
 4. Settlement-pins-town-sha: a 1.0 ceremony change — PARKED per the frozen-1.0 discipline; becomes real the first time a replayed claim carries a stake.
 
 Also accepted with thanks: the seed lighting its own candle (the 58.9h hole was the seed's, now unrepresentable), the fractional-journal widening, compareMarks extraction, and the phantom-claim receipt (le-petit-berthillon) — the single best proof in the report that the harness reads the AUTHORED record and not its own reflection.
+
+## The standing recompute
+
+`standing.mjs` is 1.0's standing walk over `marks` rows, and `clearing-job.mjs`
+step 7 runs it over EVERY standing mark as the window's last act, inside the
+window's own transaction. That is ruling 2 above, built:
+
+> tier is recomputed for ALL standing marks inside the clearing transaction,
+> which is settlement-equivalent staleness, zero new class.
+
+`falsifier-standing-equality.mjs` is the guard, and the replay gate is the judge.
+
+### Why a recompute and not a view
+
+Both were on the table and the ruling took the cadence over the shape. A view
+would make `tier` fresh at every read; the town's own law does not ask for that.
+*"Derived weight moves at the next Settlement"* — so a standing that moves at the
+candle's close is not stale, it is ON TIME, and it costs no new class, no new
+read path, and no change to any consumer that already reads `data.tier`.
+
+What it does cost is stated plainly: `data.tier` remains a derived value living
+in a source column, which is what anti-rebake rule 3 dislikes. The recompute
+makes that column TRUE at every window boundary rather than true once; the rule's
+own remedy stays available later and nothing here forecloses it.
+
+### Why a PORT, and what holds it honest
+
+`mark-standing.mjs` forbids exactly what this file is: *"One definition, five
+consumers … a second copy of this walk is a future drift; import it."* The
+clearing job cannot import it — it holds no world checkout, by the same
+stateless-contract reasoning that keeps the ingesters clone-free — so what stands
+in for the import is a falsifier that runs BOTH over the same state:
+
+```sh
+export WORLD2_PG_URL="postgres://snapshot_reader:…@localhost:5432/world2_dev"
+git -C ~/world-full worktree add --detach /tmp/w-s50 settlement/S50
+node world2/tools/falsifier-standing-equality.mjs --world-repo /tmp/w-s50 --idempotence
+```
+
+The oracle is the FOLD, not `markStanding` alone — the same distinction that cost
+the seed lane six rows (§ The derived fields, and why the FOLD answers them). It
+asks two questions and reds on either:
+
+| | |
+|---|---|
+| THE WALK | does the port over `marks` rows say what the fold says over the checkout? |
+| THE STORE | does the `data.tier` actually stored equal it? (finding 4 itself) |
+
+Exit codes are the siblings': **0** green · **1** RED · **2** cannot run. An
+empty `marks`, a checkout with no register, or a comparison with zero slugs in
+common all exit 2 — there is no code for "checked nothing and found nothing".
+
+Three things beyond the walk are carried, because the port has to reconstruct
+what the FOLD stamps and the loader does not (`_cred`, `_sovereign`,
+`_containedBy`). The row→record mapping is tabulated in `standing.mjs`'s header;
+one line of it is the port's sharpest edge and worth repeating here: **2.0's
+`household` COLUMN is 1.0's `_cred`, not 1.0's `household`.** A port that read it
+as the handle would compare a key against a handle and answer `market` for every
+same-household mark in the town.
+
+### The premises that are facts, not law
+
+Three things this port stands on are true of today's register rather than true by
+law, so each is a tripwire (`admissionNotes`) rather than a comment. All three
+are silent on the current store, and the falsifier and the window receipts print
+them when they are not:
+
+- **The 76 class-parented marks.** Their parent is law and has no `marks` row, so
+  the walk cannot climb it — and never has to, because every one of them is
+  `the-town` + `tier: constitution` and the constitution shortcut answers first.
+  The note fires on any class-parented mark the shortcut does not catch.
+- **1.0's parcel claim cap** (3 per household, forward from 2026-07-30) is
+  enforced by 1.0's fold and NOT by 2.0's candle, so `_sovereign` here reads every
+  standing parcel as admitted. Exact today, and checked: the five households
+  holding more than three hold them all dated `2026-07-24`, prior estate, never
+  gated. The note fires the day a household's post-law parcels pass the cap.
+- **One parcel per HANDLE.** Same shape; no handle in the register holds two.
+
+### The constitution shortcut reads the column the recompute writes
+
+`markStanding`'s town exception reads `mark.tier`, which in 2.0 is `data.tier` —
+the column this recompute writes, because `seed-import.mjs` overwrites the
+authored word with the fold's answer. That is a FIXPOINT and not a loop, in three
+lines: a `the-town` mark that authored `tier: constitution` makes the shortcut
+fire, stores `constitution`, and fires again; one that did not cannot have
+reached the shortcut, so the stored value is the walk's own verdict and the walk
+gives it again; a non-town mark never reaches the shortcut at all.
+
+`--idempotence` asserts it instead of leaving it on paper, and a unit test does
+the same. **The durable fix is teed, not taken**: preserve the authored word
+under its own key at seed and materialization time, so the shortcut never reads a
+derived column. That is a seed change, and it is not this slice's to make.
+
+### The red-proof carries the run
+
+Run on `world2_dev` 2026-08-28, from a re-floored store replayed S48→S50.
+
+Before the recompute landed, against the same store, the gate's newly-gated check
+went red naming the mark and both values — which is the finding 4 receipt:
+
+```
+✗ marks DIFFERS at berthillon/le-petit-berthillon · field data.tier
+      repo says: home
+      DB says:   market
+```
+
+After — the three-way agreement, asked of the three surfaces separately:
+
+```
+berthillon/le-petit-berthillon    1.0 fold: home   · ported walk: home   · stored: home
+berthillon/chez-antoine           1.0 fold: home   · ported walk: home   · stored: home
+berthillon/pistache-cone-for-julian  1.0 fold: market · ported walk: market · stored: market
+```
+
+`--can-fail-proof`, five mangles inside a rolled-back transaction:
+
+```
+RED after mangle: data.tier of aion-solare/old-fig set to market (the stale-standing shape) — 1
+RED after mangle: aion-solare/the-returning-house-parcel retired (the ground leaves) — 15
+RED after mangle: household of aion-solare/old-fig changed (the grain moves) — 1
+RED after mangle: geometry of aion-solare/old-fig moved 5 km away — 1
+RED after mangle: a forged mark inserted — 1
+GREEN after rollback — the mangles left no trace
+can-fail PROVEN
+```
+
+**Two findings came out of writing the proofs, and both outlive them.**
+
+- **A mangle that changes no row is not a mangle.** The first `--can-fail-proof`
+  reported one check SILENT. It had not missed anything: the victim was the first
+  row standing at `home`, which was a PREDICATED mark with no geometry, so the
+  "moved 5 km away" `UPDATE` matched zero rows. A proof lying in the safe
+  direction is the worst kind, so the harness now checks `rowCount` for every
+  mangle and reports `INERT` — the fix is the harness's, not each mangle's to
+  remember.
+- **A test that could not fail.** The unit test for "the directory edge is the
+  LAST thing the walk believes" filed a guest's mark under the holder's parcel
+  and asserted `market` — which is the answer *both* orderings give, because
+  without a consent word the parcel confers nothing either way. The flip pass
+  found it (reordering the up-chain left the suite green). The stray filing now
+  carries a WELCOMED word, so believing the path and believing the ground give
+  different answers.
+
+The unit suite is 26 tests in `test/world2-standing.test.mjs`, each asserting a
+quoted sentence; five flips were run to prove they fail — `_cred` read as the
+handle (4 red), the constitution shortcut removed (2), the directory edge read
+first (1), the welcomed conferral dropped (1), sovereignty keyed on the handle
+(1) and dropped entirely (1).
+
+### Two receipts worth keeping from the run
+
+- **Window 151 recomputed 831 marks and moved 0.** The floor's tiers — written by
+  the seed from 1.0's own fold — and the ported walk agree on every one of the
+  831 seeded rows. That is the port's whole-register agreement, free, as a
+  by-product of the first clearing.
+- **`seed-import.mjs --verify` is a FLOOR check, not a tip check.** It is red at
+  S50 (35 findings) and was red at S50 before this slice (34) — the store has
+  legitimately moved past the frozen tag: 15 new marks, four amends. The recompute
+  adds exactly one line, `le-petit-berthillon · field data.tier market → home`,
+  and that line is the fix working. Run the seed verify at the floor.
+
+### What it costs
+
+`computeStanding` over 846 marks takes ~1.7 s, inside a transaction that closes a
+12-hour candle. `placementParent` is the cost and it is O(n²) in the register;
+the recompute passes it a candidate list ordered smallest-area-first so the
+search stops at the first container rather than scanning the town
+(`rankCandidates`). The 1.0-verbatim exhaustive path is kept beside it and a unit
+test asserts the two agree mark for mark, including the equal-area tie-break that
+depends on the sort being stable.

@@ -331,10 +331,12 @@ export const amendId = (slug, windowId) => uuid5(`amend:${windowId}:${slug}`);
  * settlement's own receipt of 14 published — which is how it was caught.
  *
  * The parity check still compares both fields, and must: the STANDING STATE has
- * to agree with 1.0's whatever caused it to move. That split is what turns the
- * le-petit-berthillon case from a miscount into the finding it actually is —
- * 1.0 recomputes standing for the whole register at every settlement, and 2.0
- * stores it on the mark row at materialization and never revisits it.
+ * to agree with 1.0's whatever caused it to move. That split is what turned the
+ * le-petit-berthillon case from a miscount into finding 4 — and finding 4 is now
+ * closed at the other end: `clearing-job.mjs` step 7 recomputes standing for
+ * every mark inside the window transaction, which is 1.0's own cadence
+ * ("derived weight moves at the next Settlement"). So `data.tier` still may not
+ * make a claim, and it must now MATCH, and this file asserts both.
  */
 export function authoredSubstance(m) {
   const { tier, ...authoredData } = m.data ?? {};   // eslint-disable-line no-unused-vars
@@ -568,8 +570,14 @@ export async function parityFindings(client, { registerAfter }) {
   }));
   const substance = compareMarks(db, registerAfter.marks, { columns: SUBSTANCE_COLUMNS });
 
-  // PROVENANCE — reported, never gated, never dropped. Three separate questions,
-  // kept separate because they have three different answers.
+  // PROVENANCE — reported, never gated, never dropped. Separate questions, kept
+  // separate because they have different answers.
+  //
+  // THE STALE STANDING IS NO LONGER ONE OF THEM. It was provenance while it was
+  // unruled ("Standing goes stale, and that one is not fixed … NEEDS A RULING");
+  // Wright ruled it 2026-08-28 eve — "tier = recompute-at-close … the replay gate
+  // is the judge" — and a judge that only makes a note is not a judge. It joins
+  // `substance` below, in compareMarks' own voice, and the gate goes red on it.
   const provenance = [];
   const bySlug = new Map(db.map((r) => [r.slug, r]));
   const noData = [], staleTier = [], otherData = [], missingParent = [];
@@ -579,16 +587,29 @@ export async function parityFindings(client, { registerAfter }) {
     if (r.parent == null && m.parent != null) missingParent.push(m.slug);
     if (r.data == null) { if (m.data != null) noData.push(m.slug); continue; }
     if (canonicalJson(r.data) === canonicalJson(m.data)) continue;
-    // THE STALE-STANDING CLASS, isolated on purpose. `data.tier` is not a field of
-    // the record — it is what the FOLD says about the record after resolving the
-    // whole world (seed-import § foldOracle), and 1.0 recomputes it for all 960
-    // records at every settlement. 2.0 writes it once, at materialization, and
-    // never revisits it, so a mark's standing goes stale the moment a NEIGHBOUR's
-    // parcel lands. Anti-rebake rule 3 has the answer already — "derived is a
-    // VIEW" — and this is a derived value living in a source column.
+    // THE STALE-STANDING CLASS, isolated on purpose — and, since the ruling,
+    // GATED. `data.tier` is not a field of the record: it is what the FOLD says
+    // about the record after resolving the whole world (seed-import §
+    // foldOracle), and 1.0 recomputes it for all 960 records at every settlement.
+    // 2.0 used to write it once, at materialization, and never revisit it, so a
+    // mark's standing went stale the moment a NEIGHBOUR's parcel landed.
+    //
+    // `clearing-job.mjs` step 7 now recomputes every standing mark's tier inside
+    // the window transaction (Wright's ruling, per the dials' own cadence —
+    // "derived weight moves at the next Settlement"). This is the check that says
+    // whether it worked, so it counts: a stale standing is 2.0 failing to reach
+    // 1.0's state, which is the one thing this gate exists to refuse.
+    //
+    // It stays SEPARATE from `otherData` rather than being folded into the
+    // substance comparison wholesale, because the two findings mean different
+    // things and a reader acts differently on them: a stale tier is the recompute
+    // not having run or not agreeing; a `data` that differs beyond tier is the
+    // materializer having lost part of the record.
     const { tier: rt, ...rrest } = r.data;     // eslint-disable-line no-unused-vars
     const { tier: mt, ...mrest } = m.data ?? {}; // eslint-disable-line no-unused-vars
-    if (canonicalJson(rrest) === canonicalJson(mrest)) staleTier.push(`${m.slug} (${rt} → ${mt})`);
+    if (canonicalJson(rrest) === canonicalJson(mrest))
+      staleTier.push(`marks DIFFERS at ${m.slug} · field data.tier (the fold's standing, recomputed at close)` +
+        `\n    repo says: ${mt}\n    DB says:   ${rt}`);
     else otherData.push(m.slug);
   }
   const slugInGeometry = (await client.query("SELECT slug FROM marks WHERE geometry ? 'slug'")).rows.map((r) => r.slug);
@@ -599,17 +620,13 @@ export async function parityFindings(client, { registerAfter }) {
   if (otherData.length)
     provenance.push(`${otherData.length} mark(s) carry a \`data\` that differs from the checkout's beyond tier, ` +
       `e.g. ${otherData.slice(0, 4).join(", ")}`);
-  if (staleTier.length)
-    provenance.push(`${staleTier.length} mark(s) carry a STALE STANDING: 2.0 stores the fold's \`tier\` on the ` +
-      `mark row at materialization; 1.0 recomputes it for the whole register at every settlement, so a ` +
-      `neighbour's parcel moves it and nothing in 2.0 notices — ${staleTier.slice(0, 4).join(", ")}`);
   if (missingParent.length)
     provenance.push(`${missingParent.length} mark(s) lost the continuation edge \`parent\`, e.g. ${missingParent.slice(0, 4).join(", ")}`);
   if (slugInGeometry.length)
     provenance.push(`${slugInGeometry.length} mark(s) carry their own slug inside \`geometry\` — the pre-006 ` +
       `identity, which the clearing job had nowhere else to read from, e.g. ${slugInGeometry.slice(0, 4).join(", ")}`);
 
-  return { substance, provenance };
+  return { substance: [...substance, ...staleTier], provenance };
 }
 
 const stripSlug = (g) => {
