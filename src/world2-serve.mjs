@@ -52,13 +52,23 @@ export async function world2Serve(path, searchParams) {
 
   if (path === "/world2/marks") {
     const all = searchParams?.get("all") === "true";
+    // ?full=true — the WHOLE row per mark (body + data, tier included). Added
+    // 2026-08-28 for the site repoint: composing the register from per-mark
+    // reads cost 845 round-trips into the keyless bouncer (429 after the first
+    // burst; 456s paced). A page composes from ONE read; the door pays the
+    // bytes, not the caller the trips.
+    const full = searchParams?.get("full") === "true";
+    const cols = full
+      ? "slug, kind, owner, household, geometry, bbox, status, locked_window, parent, body, data"
+      : "slug, kind, owner, household, geometry, status, locked_window, parent";
     const { rows } = await p.query(
-      `SELECT slug, kind, owner, household, geometry, status, locked_window, parent
+      `SELECT ${cols}
        FROM marks WHERE status = 'standing' ${all ? "" : "AND geometry IS NOT NULL"}
        ORDER BY slug`);
     return { code: 200, body: {
-      what: all ? "the whole standing register (de-sited included — a predicated mark is its parent continued)"
-                : "placed standing marks (every row has a where); ?all=true for the whole register",
+      what: (all ? "the whole standing register (de-sited included — a predicated mark is its parent continued)"
+                 : "placed standing marks (every row has a where); ?all=true for the whole register")
+            + (full ? "" : "; ?full=true adds body + data (tier rides data)"),
       count: rows.length, marks: rows,
     } };
   }
