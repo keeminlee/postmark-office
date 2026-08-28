@@ -382,6 +382,36 @@ export async function e5bShimVsFold(world) {
 
 // ── E6 · presence and the stack ──────────────────────────────────────────────
 
+/**
+ * THE INSTANT IS CHOSEN SO THE CHECK IS NOT ASLEEP.
+ *
+ * The first run asked one instant and compared ONE emission — a green over a
+ * near-empty answer, which is the shape ab-compare's AB-P3 note warns about ("a
+ * probe that goes green on 1 row of a 317-row import is not a probe"). So the
+ * instants are the record's own busiest moments: every emission's birth is a
+ * candidate, and the ones with the most sound in the air are asked.
+ */
+export function busiestInstants(rows, n = 5) {
+  const spans = rows.map((r) => live.emissionOf(r)).filter((r) => !r.refused).map((r) => r.emission);
+  const scored = spans.map((e) => {
+    const t = Date.parse(e.born_at);
+    return { t, n: spans.filter((o) => Date.parse(o.born_at) <= t && Date.parse(o.ttl_expires_at) > t).length };
+  });
+  scored.sort((a, b) => b.n - a.n || a.t - b.t);
+  const out = [];
+  for (const s of scored) { if (!out.includes(s.t)) out.push(s.t); if (out.length >= n) break; }
+  return out;
+}
+
+export function e6EmissionsAcross(rows, instants) {
+  const all = instants.map((t) => e6Emissions(rows, t));
+  return {
+    findings: all.flatMap((r) => r.findings),
+    compared: all.reduce((a, r) => a + r.compared, 0),
+    instants: all.map((r) => `${r.at} (${r.compared} in the air)`),
+  };
+}
+
 export function e6Emissions(rows, atMs) {
   const findings = [];
   if (!rows.length) return { findings, compared: 0, note: "no emission acts in the store" };
@@ -511,7 +541,7 @@ try {
   try { sha = execFileSync("git", ["-C", REPO, "rev-parse", "HEAD"], { encoding: "utf8" }).trim(); } catch { /* not a git checkout */ }
 
   const nowMs = Date.now();
-  const emissionAt = emitRows.length ? Date.parse(emitRows[0].payload?.payload?.ttl_expires_at ?? emitRows[0].at) - 1 : nowMs;
+  const emissionAt = busiestInstants(emitRows, 1)[0] ?? nowMs;
 
   const e = {
     E1: e1LedgerParse(derived.records, ledgerText),
@@ -520,9 +550,9 @@ try {
     E4: e4Arithmetic(derived.records, instants),
     E5: e5Union(derived.records, world, roll, live.fractionalCrossing(nowMs)),
     E5b: await e5bShimVsFold(world),
-    // Asked at an instant when something IS in the air — asking "now" over a
-    // frozen record compares two empty lists and calls it agreement.
-    E6emissions: e6Emissions(emitRows, emissionAt),
+    // Asked at the record's busiest instants — asking "now" over a frozen record
+    // compares two empty lists and calls it agreement.
+    E6emissions: e6EmissionsAcross(emitRows, busiestInstants(emitRows)),
     E6occupancy: e6Occupancy(passages.passages, Infinity,
       passRows.find((r) => r.payload?._ledger)?.payload?._ledger ?? null),
   };
