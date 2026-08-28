@@ -53,7 +53,14 @@ const crossingAt = (iso) => Math.floor((Date.parse(iso) - CROSSING_EPOCH_UTC) / 
 // appears on one side only and is NOT on this list is a finding.
 const KNOWN_LAB_MARKS = ["wright/candle-proof"];
 const KNOWN_LAB_CLAIM_WINDOWS = [151, 152];
-const KNOWN_LAB_ACT_ACTIONS = ["leave-mark", "amend", "withdraw"]; // non-`legacy:` acts
+// non-`legacy:` acts. `enter`/`exit`/`walk`/`declare-stance-on` joined the list
+// 2026-08-28: the lab office serves the office test suite as well as a browser, and
+// a suite run mirrors its fixture acts (lucien, alta, sable at the town square)
+// straight into world2_dev. `acts` is append-only for every pen including the
+// owner, so those rows are not removable and are not meant to be — the sanctioned
+// reset is seed-import's own ("rebuild the schema and re-seed"). Naming them is
+// what keeps "zero unexplained rows" a claim rather than a hope.
+const KNOWN_LAB_ACT_ACTIONS = ["leave-mark", "amend", "withdraw", "enter", "exit", "walk", "declare-stance-on"];
 
 const get = async (path) => {
   const r = await fetch(OFFICE + path);
@@ -281,17 +288,34 @@ async function sweepPassages() {
   // journal; 2.0 is supposed to hold the same passages as enter/exit acts.
   const eel = await get("/world/enter-exit-ledger");
   const ledgerRows = String(eel.ledger ?? "").split("\n").filter((l) => l.startsWith("- ") && (l.includes(" enters ") || l.includes(" exits ")));
-  // `enter`/`exit` are the LIVE door's verbs; `legacy:enter`/`legacy:exit` are the
-  // frozen era's, carried by ledger-backfill.mjs under seed-import's `legacy:`
-  // convention so an imported row does not vote in a vocabulary it predates. 1.0's
-  // door serves both eras from one derivation, so the comparison counts both.
-  const [{ n: crossActsRaw }] = await sql(
-    "SELECT count(*)::int AS n FROM acts WHERE action IN ('enter','exit','legacy:enter','legacy:exit')");
-  const crossActs = SELF_TEST ? crossActsRaw - 1 : crossActsRaw;
-  console.log(`  1.0 crossings: ${ledgerRows.length} (door reports acts=${eel.acts}) · 2.0 enter/exit acts: ${crossActs}`);
-  if (crossActs !== ledgerRows.length)
-    finding("passages", "AB-P2", `${ledgerRows.length - crossActs} of 1.0's ${ledgerRows.length} crossings have no act in 2.0`);
-  else ok(`crossings carried: ${crossActs}`);
+  // ERA BY ERA, because the two eras have different verbs and different sources
+  // and only one of them is what AB-P2 is about.
+  //
+  // `legacy:enter`/`legacy:exit` are the FROZEN era, carried by
+  // ledger-backfill.mjs under seed-import's `legacy:` convention. Bare
+  // `enter`/`exit` are the LIVE door's, written by the acts mirror as residents
+  // (and the test suite) use the lab — they are lab rows with no twin in the
+  // frozen clone, exactly like `leave-mark`/`amend`/`withdraw` on
+  // KNOWN_LAB_ACT_ACTIONS, and they are subtracted the same way.
+  //
+  // Counting the two together was this check's own bug, caught 2026-08-28 while
+  // the backfill was being verified: 30 live enter/exit acts from a test run
+  // pushed the total to 185 and the check reported "-30 crossings have no act",
+  // which is not a sentence about anything. Worse than the nonsense reading is
+  // what the shape allowed — a live enter act could have MASKED a missing frozen
+  // crossing and kept the check green. The frozen era is compared to the frozen
+  // era, against the door's own `frozen_acts` count rather than the whole ledger.
+  const frozenRows = eel.derived?.frozen_acts ?? ledgerRows.length;
+  const [{ n: frozenActsRaw }] = await sql(
+    "SELECT count(*)::int AS n FROM acts WHERE action IN ('legacy:enter','legacy:exit')");
+  const [{ n: liveActs }] = await sql(
+    "SELECT count(*)::int AS n FROM acts WHERE action IN ('enter','exit')");
+  const frozenActs = SELF_TEST ? frozenActsRaw - 1 : frozenActsRaw;
+  console.log(`  1.0 crossings: ${ledgerRows.length} (door: ${frozenRows} frozen + ${eel.derived?.journal_acts ?? 0} journal)` +
+    ` · 2.0 frozen-era acts: ${frozenActs} · 2.0 live lab enter/exit: ${liveActs} (known delta)`);
+  if (frozenActs !== frozenRows)
+    finding("passages", "AB-P2", `${frozenRows - frozenActs} of 1.0's ${frozenRows} frozen-era crossings have no act in 2.0`);
+  else ok(`crossings carried: ${frozenActs} frozen-era passages, each with its consent word`);
 
   // The frozen walk ledger: departures older than the journal's first row have
   // no other home, so if `acts` starts after them they simply are not in 2.0.
