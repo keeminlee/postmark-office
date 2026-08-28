@@ -581,6 +581,46 @@ including the owner (`002_grants.sql` `acts_append_only`), so a second run is
 refused by naming the rows already there; if they are wrong the answer is
 seed-import's — rebuild the schema and re-run both pens.
 
+### What the backfill changed in `ab-compare.mjs`, and why
+
+The probe is the judge, so editing it while making its findings go green deserves
+its reasons in the open. Three changes, each forced by the data model rather than
+by the wanted outcome, and all three still fail under `--self-test` (now 5/5
+injected faults, up from 3/3 — AB-P2 and AB-P3 joined the list, because a check
+that has never been green has never proved it can go red for the right reason).
+
+**AB-P1 now scopes to journal-sourced acts.** It compared "rows of the world
+journal" with "acts matching `legacy:%`" by counting, which was exact while those
+were the same set. The backfill makes them different sets. Unscoped, the fix
+itself would have reported the journal as mis-bucketed by the number of rows it
+correctly added.
+
+**AB-P2 now compares the frozen era to the frozen era.** My first edit widened it
+to count `enter`/`exit` alongside `legacy:enter`/`legacy:exit`, and 30 live acts
+from an office test run promptly made it print `-30 crossings have no act`. The
+nonsense reading was the smaller half of the problem: that shape also let a LIVE
+enter act mask a MISSING frozen crossing and keep the check green. It now compares
+2.0's `legacy:enter`/`legacy:exit` against the door's own `frozen_acts`, and
+reports the live lab acts beside it as the named delta they are.
+
+**AB-P3 now asserts the claim instead of a proxy for it.** It asked "do any
+walk-ledger rows predate `min(at)`?" — the right question while the answer was
+304, and a question that CANNOT FAIL the moment one early row lands, because that
+row moves `min(at)` behind all the others. A probe that goes green on 1 row of a
+317-row import is not a probe. It now asserts that every departure in the frozen
+ledger has an act, matched on `(at, actor)` — and counts multiplicity rather than
+testing membership, because the ledger genuinely repeats one row
+(`rook-of-garrison` at `2026-08-08T18:00:00.000Z`, written twice byte for byte)
+and a Set would let a dropped copy hide.
+
+> **Lab note.** `npm test` with `lab.env` sourced points the acts mirror at
+> `world2_dev`, so a suite run writes its fixture acts (lucien, alta, sable at the
+> town square) into the lab database. `acts` is append-only for every pen
+> including the owner, so they cannot be removed and are not meant to be — the
+> sanctioned reset is seed-import's own, rebuild the schema and re-seed. They are
+> named on `KNOWN_LAB_ACT_ACTIONS` instead. Run the suite without `lab.env` unless
+> you mean to write to the lab.
+
 ## The derived fields, and why the FOLD answers them
 
 `tier` and `household` are not fields on a record. They are what the **fold** says
