@@ -613,6 +613,26 @@ testing membership, because the ledger genuinely repeats one row
 (`rook-of-garrison` at `2026-08-08T18:00:00.000Z`, written twice byte for byte)
 and a Set would let a dropped copy hide.
 
+### The closure falsifier's pairing key
+
+`falsifier-acts-claims-closure.mjs` matched an act to its claim on
+`data->>'_journal_seq'` alone, and went red on a database with nothing wrong with
+it: `wright/lab-cairn` and `alpha/x` both carried `_journal_seq = 1`, so one act
+was told it had two docket rows.
+
+`journal_seq` is not an identity, and `001_tables.sql` says so in the column's own
+comment — *"the journal truncates at each drain, so `(journal_seq, at)` pairs a row
+only within its window"*. It is weaker even than that: a fresh sqlite journal
+restarts the counter at 1 inside a window that is already open, so two unrelated
+acts collide with no drain involved at all.
+
+The act's `object` is the missing half — the `<by>/<slug>` identity the claim also
+carries at `geometry->>'slug'`. Pairing on `(journal_seq, slug)` names *this act's*
+claim rather than some claim with this number, and it is the truer statement of the
+law being asserted: the question was never "does a row with this sequence number
+exist", it is "did THIS submission reach the docket". A `--self-test` flag was added
+alongside, ab-compare's idiom, so the check proves it can still go red.
+
 > **Lab note.** `npm test` with `lab.env` sourced points the acts mirror at
 > `world2_dev`, so a suite run writes its fixture acts (lucien, alta, sable at the
 > town square) into the lab database. `acts` is append-only for every pen
