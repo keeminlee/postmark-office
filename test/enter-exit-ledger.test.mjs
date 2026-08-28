@@ -138,14 +138,14 @@ test("END TO END — several acts of one chain keep the pen's own order", async 
 test("REGENERATES WHOLE — delete the derived file, derive again, byte for byte", async () => {
   withDb((db) => passageRow(db, { handle: "little-m-of-garrison", lines: ["- 2026-08-26T20:00:00.000Z · little-m-of-garrison · enters vermillion/pando-peak-library-shelf · ferry 151.2 · word neutral"] }));
 
-  const first = await emitEnterExitLedger(repo, rows());
+  const first = await emitEnterExitLedger(repo, rows(), { paths: [LEDGER_NEW] });
   const onDisk = readFileSync(join(repo, LEDGER_NEW), "utf8");
   assert.equal(onDisk, first.text);
 
   unlinkSync(join(repo, LEDGER_NEW));
   assert.equal(existsSync(join(repo, LEDGER_NEW)), false, "gone, so the second derivation cannot be reading the first");
 
-  const again = await emitEnterExitLedger(repo, rows());
+  const again = await emitEnterExitLedger(repo, rows(), { paths: [LEDGER_NEW] });
   assert.equal(readFileSync(join(repo, LEDGER_NEW), "utf8"), onDisk,
     "byte for byte — a derived artifact that cannot be rebuilt from its sources is a stored one wearing a derivation's clothes");
   assert.equal(again.text, first.text);
@@ -154,17 +154,17 @@ test("REGENERATES WHOLE — delete the derived file, derive again, byte for byte
 test("REGENERATES WHOLE — and it is the same after the third and fourth run", async () => {
   withDb((db) => passageRow(db, { handle: "sable", lines: ["- 2026-08-26T20:10:00.000Z · sable · exits fabel-of-garrison/the-riverside-arcade · ferry 151.21"] }));
   const texts = [];
-  for (const _ of [1, 2, 3, 4]) texts.push((await emitEnterExitLedger(repo, rows())).text);
+  for (const _ of [1, 2, 3, 4]) texts.push((await emitEnterExitLedger(repo, rows(), { paths: [LEDGER_NEW] })).text);
   assert.equal(new Set(texts).size, 1, "idempotent: emitting twice must not double a line");
   assert.equal(acts(texts[0]).length, 3, "two frozen, one live — not two frozen and four live");
 });
 
 test("REGENERATES WHOLE — a file already holding these bytes is not rewritten", async () => {
   withDb((db) => passageRow(db, { handle: "sable", lines: ["- 2026-08-26T20:10:00.000Z · sable · exits x/y · ferry 151.21"] }));
-  await emitEnterExitLedger(repo, rows());
-  const second = await emitEnterExitLedger(repo, rows());
-  assert.deepEqual(second.wrote.map((w) => w.written), [false, false],
-    "a save that changed nothing must commit nothing");
+  await emitEnterExitLedger(repo, rows(), { paths: [LEDGER_NEW] });
+  const second = await emitEnterExitLedger(repo, rows(), { paths: [LEDGER_NEW] });
+  assert.deepEqual(second.wrote.map((w) => w.written), [false],
+    "a derivation that changed nothing must rewrite nothing");
 });
 
 // ── THE BACKFILL ────────────────────────────────────────────────────────────
@@ -253,11 +253,59 @@ test("THE HEADER — a clone with no grammar module gets a NAMED absence, not an
 
 // ── THE GRACE WINDOW ────────────────────────────────────────────────────────
 
-test("THE GRACE WINDOW — both paths get the same bytes", async () => {
-  withDb((db) => passageRow(db, { handle: "a", lines: ["- 2026-08-26T20:05:00.000Z · a · enters x/y · ferry 151.15 · word neutral"] }));
-  await emitEnterExitLedger(repo, rows());
-  assert.equal(readFileSync(join(repo, LEDGER_OLD), "utf8"), readFileSync(join(repo, LEDGER_NEW), "utf8"),
-    "a viewer bundle blessed before the rename must read a TRUE record, not an old one");
+// ── THE TWO PENS, REMOVED (#2152) ───────────────────────────────────────────
+//
+// This block replaces "THE GRACE WINDOW — both paths get the same bytes", which
+// asserted that the emitter wrote the twin alongside the new name. The twin is
+// deleted from world main at the founder's word and the emitter has no
+// production caller at all: the committed copy of the record is the frozen era
+// by the world repo's own law, quoted verbatim from
+// `tools/enter-exit-record.test.mjs` over there —
+//
+//     "the world repo has no journal to read — a longer derived file means a
+//      hand wrote in it"
+//
+// — and every passage since the cutover is served by the DERIVATION, which the
+// tests above cover. Two office pens went on appending live-era lines into that
+// committed file anyway; each append turned the world's grammar suite red, cost
+// the settlement sweep its isolation, and refused the whole crossing.
+
+test("NO PEN — nothing in src/ or tools/ calls the writer any more", async () => {
+  // THE SOURCE PIN, and it reads the bytes rather than the wiring, because the
+  // wiring is what was wrong: `tools/crossing-save.mjs` imported this function
+  // and called it on every save, twice a crossing, and nothing anywhere said
+  // that it must not.
+  const { readdirSync } = await import("node:fs");
+  const root = join(import.meta.dirname, "..");
+  const offenders = [];
+  for (const dir of ["src", "tools"]) {
+    for (const file of readdirSync(join(root, dir))) {
+      if (!file.endsWith(".mjs")) continue;
+      if (dir === "src" && file === "enter-exit-ledger.mjs") continue;   // the writer's own home
+      const text = readFileSync(join(root, dir, file), "utf8");
+      if (/\bemitEnterExitLedger\s*\(/.test(text)) offenders.push(`${dir}/${file}`);
+    }
+  }
+  assert.deepEqual(offenders, [],
+    `these pens write the passage record and must not: ${offenders.join(", ")} (#2152)`);
+});
+
+test("NO PEN — the source pin can fail, shown against the line that used to sit in crossing-save", () => {
+  // THE CAN-FAIL FLIP. A scan that finds nothing proves nothing unless it can
+  // recognise the call it was written to catch. This is the exact line removed
+  // from `tools/crossing-save.mjs`.
+  const removedLine = "  const ledgers = await emitEnterExitLedger(CLONE, readJournal(db));";
+  assert.equal(/\bemitEnterExitLedger\s*\(/.test(removedLine), true,
+    "the detector cannot see the call it exists to find");
+});
+
+test("NO DEFAULT DESTINATION — the writer refuses to guess where it writes", async () => {
+  // The default used to be BOTH ledger paths, which is how the twin outlived
+  // every decision to retire it: nobody had to name the file to keep writing it.
+  // A writer that refuses is a writer whose destinations are all in the diff.
+  await assert.rejects(() => emitEnterExitLedger(repo, rows()), /no default destination/);
+  await assert.rejects(() => emitEnterExitLedger(repo, rows(), { paths: [] }), /no default destination/);
+  assert.equal(existsSync(join(repo, LEDGER_NEW)), false, "and it wrote nothing on its way out");
 });
 
 test("THE GRACE WINDOW — a row that named the retired ledger is still read", async () => {
@@ -305,7 +353,7 @@ ${FROZEN_B}
   const before = readFileSync(join(pre, LEDGER_OLD), "utf8");
   withDb((db) => passageRow(db, { handle: "a", lines: ["- 2026-08-26T20:20:00.000Z · a · enters x/y · ferry 151.2 · word neutral"] }));
 
-  const out = await emitEnterExitLedger(pre, rows());
+  const out = await emitEnterExitLedger(pre, rows(), { paths: [LEDGER_NEW] });
   assert.deepEqual(out.wrote, [], "nothing may be written into a clone the world half has not reached");
   assert.match(out.held, /has not been blessed here yet/, "and holding must be SAID, not silent");
   assert.equal(existsSync(join(pre, LEDGER_NEW)), false, "the new name must not be minted beside the commit about to create it");
@@ -346,9 +394,9 @@ test("THE GRACE WINDOW — the emitted retired file is never read back as the ar
   writeFileSync(join(both, LEDGER_OLD), `${FROZEN_HEADER}${FROZEN_A}\n${FROZEN_B}\n`);
   withDb((db) => passageRow(db, { handle: "a", lines: ["- 2026-08-26T20:08:00.000Z · a · enters x/y · ferry 151.18 · word neutral"] }));
 
-  const one = (await emitEnterExitLedger(both, rows())).text;
-  const two = (await emitEnterExitLedger(both, rows())).text;
-  const three = (await emitEnterExitLedger(both, rows())).text;
+  const one = (await emitEnterExitLedger(both, rows(), { paths: [LEDGER_NEW] })).text;
+  const two = (await emitEnterExitLedger(both, rows(), { paths: [LEDGER_NEW] })).text;
+  const three = (await emitEnterExitLedger(both, rows(), { paths: [LEDGER_NEW] })).text;
   assert.equal(one, two);
   assert.equal(two, three);
   assert.equal(acts(three).length, 3, "three acts after three runs, not three then four then five");

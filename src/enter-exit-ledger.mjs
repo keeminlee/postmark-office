@@ -50,11 +50,23 @@
 // does. It also BACKFILLS by construction — the first time this runs it emits
 // every act since the cutover, because they were all still in the log.
 //
-// ONE PEN. Nothing else writes these files. `materializeLedgers` in
-// world-drain.mjs appends to them and is the older, append-shaped answer to the
-// same question; it was never wired to anything that runs (the drain has never
-// executed in production — `journal_drained_through: null`), and it must not be
-// wired to these files now. Two writers is how a record forks.
+// NO PEN AT ALL, since #2152 (2026-08-28). This module derives; nothing in this
+// office writes the enter/exit files into the world clone any more.
+//
+// The paragraph above used to say ONE PEN, and it was wrong twice over. Two
+// pens were writing: the crossing-save's emit (which ran twice a crossing) and
+// `materializeLedgers` in world-drain.mjs (the older append-shaped answer, which
+// the note here assumed was safely unwired). Both appended LIVE-ERA passages
+// into a file the world repo's law says must equal the frozen era exactly —
+// "the world repo has no journal to read — a longer derived file means a hand
+// wrote in it" — which turned the world's grammar suite red during passage
+// activity, cost the settlement sweep its ability to attribute a failure, and
+// refused the whole crossing. Three hand-repairs on world main.
+//
+// The count that mattered was never one pen versus two. It was that the record
+// has a DERIVER and therefore needs no pen: the committed copy is the frozen
+// era, the live era is derived at read time, and a file written by anybody is a
+// second answer to a question that already has one.
 //
 // ── THE GRACE WINDOW, AND WHY BOTH NAMES ────────────────────────────────────
 //
@@ -66,12 +78,25 @@
 //
 // But the office, the world package and the site's viewer bundle deploy on
 // three separate clocks, and a rename that orphans a name-keyed reader is the
-// exact defect that had this town walking four times too slow for four days.
-// So the deriver emits the SAME BYTES to both paths for one grace window, and
-// the door answers under both names. The still-blessed viewer on prod reads
-// true data the moment this lands, without waiting for a settlement.
+// exact defect that had this town walking four times too slow for four days. So
+// for a grace window the record answered to both names and the door answered
+// under both.
 //
-// Both come out once the rename is blessed and prod is serving it.
+// THE TWIN FILE IS GONE (2026-08-28, at the founder's word: "truly useless").
+// `WORLD/threshold-ledger.md` is deleted from world main; one committed file
+// remains. What survives here is only the READING half, and each piece has its
+// own reason:
+//
+//   LEDGER_OLD in LEDGER_NAMES — journal rows written before the rename name
+//     the old path in `payload.ledger`. Dropping it would drop their lines out
+//     of the derivation, which is the rename-orphans-a-reader defect again.
+//   LEDGER_OLD in `frozenLinesIn`'s fallback — for a clone that predates the
+//     split. It cannot fire against a world checkout that has the frozen file.
+//   `DEPRECATED_DOOR` and the `/world/threshold-ledger` route — the office's
+//     API contract, still asked for by viewer bundles built before the rename.
+//     It answers the same derived bytes and names its successor.
+//
+// None of those writes anything. The deleted file was the only half that could.
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -83,7 +108,9 @@ import { readJournal } from "./world-journal.mjs";
 /** The derived record, under its own name. */
 export const LEDGER_NEW = "WORLD/enter-exit-ledger.md";
 
-/** The same bytes under the retired name, for the grace window. */
+/** The retired name. READ-ONLY since 2026-08-28 — the file is deleted from world
+ *  main; this constant survives because journal rows written before the rename
+ *  still name it, and the door still answers under it. */
 export const LEDGER_OLD = "WORLD/threshold-ledger.md";
 
 /** The pre-cutover era, frozen. A fixed input; never written by this module. */
@@ -299,31 +326,46 @@ export async function servedEnterExitLedger(repo, { dbPath = undefined } = {}) {
 }
 
 /**
- * EMIT. The derived text to both paths, same bytes.
+ * EMIT. The derived text to the paths the caller NAMES.
  *
- * Returns what it wrote and what it left alone — a file already holding these
- * bytes is not rewritten, so a save that changed nothing commits nothing and
- * the git status of an untouched clone stays clean.
+ * ── NOTHING IN THIS OFFICE CALLS THIS ANY MORE (#2152) ──────────────────────
+ *
+ * It used to default to writing both ledger paths, and the crossing-save called
+ * it on every save. That was one of the two pens that baked live-era passages
+ * into a committed file the world repo's own law says must equal the frozen era
+ * exactly, quoted verbatim from `tools/enter-exit-record.test.mjs` over there:
+ *
+ *     "the world repo has no journal to read — a longer derived file means a
+ *      hand wrote in it"
+ *
+ * Each append turned the world's grammar suite red, which cost the settlement
+ * sweep its isolation and refused the whole crossing. Three hand-repairs on
+ * world main before the pens were named. So: the crossing-save's call is gone,
+ * the drain filters these ledgers out explicitly, and
+ * `test/enter-exit-ledger.test.mjs` pins that no pen in `src/` or `tools/`
+ * reaches this function again.
+ *
+ * `paths` IS REQUIRED, and that is the point of the change rather than
+ * tidiness. A writer with a default destination is a writer somebody wires up
+ * without deciding where it writes — which is exactly how the default that
+ * included the now-deleted `WORLD/threshold-ledger.md` outlived the twin it
+ * wrote to. What remains is a derivation-and-write the falsifiers drive
+ * directly, where every call says on its own line what file it is making.
  *
  * ── THE FOLD WAITS FOR THE RECORD'S NEW SHAPE ──────────────────────────────
  *
- * It writes NOTHING until the frozen era exists as its own file, and that gate
- * is a sequencing fact rather than caution. These two halves ship on different
- * clocks: this office rides the train, and the world commit that splits the
- * record into frozen + derived rides a blessing. In the window between them the
- * office's clone still holds the single old file — and a fold that ran there
- * would MINT `WORLD/enter-exit-ledger.md` on world main and rewrite
- * `WORLD/threshold-ledger.md`'s header, which is exactly what the unmerged world
- * commit also does. Two pens writing the same two paths is a merge conflict
- * handed to whoever reviews it, produced by a save nobody was watching.
+ * It writes NOTHING until the frozen era exists as its own file: a repo holding
+ * only the single pre-rename file is not a repo this derivation can write into
+ * without minting a record beside the commit that is about to create it.
  *
- * NOTHING IS LOST BY WAITING, and this is why the gate is safe rather than a
- * deferral: the DOOR derives on every read and heals prod on its own, because
- * the viewer asks the office before it asks the staged file. The record catches
- * up at the first save after the rename is blessed, and the journal is not
- * truncated here, so that save still carries every line.
+ * NOTHING IS LOST BY NOT WRITING. The DOOR derives on every read — the frozen
+ * era from the clone, the live era from the journal — so the town reads a
+ * complete record whether or not any file was ever emitted. That was true
+ * before this function was unwired and it is why unwiring it was safe.
  */
-export async function emitEnterExitLedger(repo, rows, { paths = [LEDGER_NEW, LEDGER_OLD] } = {}) {
+export async function emitEnterExitLedger(repo, rows, { paths } = {}) {
+  if (!Array.isArray(paths) || !paths.length)
+    throw new TypeError("emitEnterExitLedger writes only where it is told: pass { paths: [...] } (#2152 — this writer has no default destination)");
   if (!existsSync(join(repo, LEDGER_FROZEN)))
     return {
       text: null, wrote: [], acts: 0,

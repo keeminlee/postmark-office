@@ -111,6 +111,9 @@ import { draftBranch, mainRef, materializeAtRef, readAtRef, refExists } from "./
 import {
   ACTION_WITHDRAW, CLASS_MARK, frozenFilingAt, journalHead, pathFor, readJournal,
 } from "./world-journal.mjs";
+// Every name the enter/exit record has ever answered to. One home for that list
+// (`src/enter-exit-ledger.mjs`), read here so this filter cannot drift from it.
+import { LEDGER_NAMES } from "./enter-exit-ledger.mjs";
 
 /** The cursor slice 1 reserved on the health surface and left unwritten. This is what writes it. */
 export const DRAIN_CURSOR = "journal_drained_through";
@@ -545,6 +548,36 @@ export function writeJournalWindow(stateDir, crossing, lines, { asOfWorld = null
  * IDEMPOTENT, like everything else the drain does before the truncate: a line
  * already present in the ledger is not appended twice, so a crash between the
  * write-down and the truncate replays to the same file.
+ *
+ * ── THE ENTER/EXIT RECORD IS NOT ONE OF THESE, AND MUST NOT BE (#2152) ──────
+ *
+ * The passage record stopped being a file anybody appends to on 2026-08-26. It
+ * is DERIVED at read time office-side — the frozen era from the clone plus the
+ * journal's rows — and the world repo's own law, `tools/enter-exit-record.test.
+ * mjs`, says what its committed copy must be, quoted verbatim:
+ *
+ *     "the world repo has no journal to read — a longer derived file means a
+ *      hand wrote in it"
+ *
+ * So the committed copy is the frozen era EXACTLY, 155 act-lines, forever. Two
+ * office pens went on appending live passages into it anyway — this loop and
+ * the crossing-save's emit — and each append turned the world's grammar suite
+ * red, which cost the settlement sweep its ability to attribute a failure to a
+ * candidate and refused the whole crossing. Three hand-repairs (world main
+ * 06c741d5, fd801ebe, and the instance before them) before the writers were
+ * found.
+ *
+ * The filter is EXPLICIT rather than incidental. A production clone happens not
+ * to be missing these files, so the "no such ledger in this clone" branch below
+ * would not have caught this; and a filter that works only because a file is
+ * absent is a filter that comes back the day somebody adds the file.
+ *
+ * WALK LEDGER LINES STILL ROUTE. `WORLD/walk-ledger.md` is a committed
+ * append-only record with no deriver — this is its only pen, and it is lawful.
+ * That is the whole reason this loop survives at all.
+ *
+ * (World 2.0's database migration supersedes this seam; until it lands, the
+ * passage record has exactly one writer and it is the reader.)
  */
 export function materializeLedgers(repo, rows) {
   const byLedger = new Map();
@@ -552,6 +585,7 @@ export function materializeLedgers(repo, rows) {
     const ledger = row?.payload?.ledger;
     const lines = row?.payload?.lines;
     if (!ledger || !Array.isArray(lines) || !lines.length) continue;
+    if (LEDGER_NAMES.includes(String(ledger).replace(/\\/g, "/"))) continue;   // #2152 — derived, never appended
     if (!byLedger.has(ledger)) byLedger.set(ledger, []);
     for (const line of lines) byLedger.get(ledger).push({ seq: row.seq, line: String(line) });
   }

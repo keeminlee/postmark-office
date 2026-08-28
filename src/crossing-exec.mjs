@@ -103,6 +103,25 @@ async function main() {
                     ledger_lines: actsJ.length, ledger_unrecognized: unrecJ.length });
   }
 
+  // ── A THIRD PEN, DORMANT — READ THIS BEFORE TURNING THE FLAG OFF (#2152) ──
+  //
+  // Everything below writes a passage line into the committed ledger and commits
+  // it, per act. That is the PRE-FLAG lane, and prod has run WORLD_SINGLE_LOG=1
+  // since 2026-08-24, so it has not executed since.
+  //
+  // It must not execute again as written. The record is DERIVED now — the
+  // committed copy is the frozen era, the live era comes from the journal at
+  // read time — and the world repo's falsifier refuses a longer file: "the world
+  // repo has no journal to read — a longer derived file means a hand wrote in
+  // it". Two office pens that did exactly this were removed on 2026-08-28 (the
+  // crossing-save's emit, and the drain's routing) after three hand-repairs on
+  // world main. This one survives only because the flag it sits behind is on.
+  //
+  // Left standing rather than cut because cutting it is a decision about what
+  // the flag-off lane MEANS with no file to write to, and World 2.0's database
+  // migration answers that question. Turning WORLD_SINGLE_LOG off before then
+  // re-plants the bug.
+  //
   // The threshold ledger is PUBLIC record on main, exactly as the walk ledger
   // is — and for exactly the reason walk-exec stands on main explicitly: the
   // pens share this clone and a draft exec may have left the checkout on a

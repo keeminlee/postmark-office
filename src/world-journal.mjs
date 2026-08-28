@@ -97,10 +97,18 @@ export const CLASS_MOVE = "move";
 
 // ── THE LEDGER CONTRACT (POS-5 §3's finisher) ───────────────────────────────
 //
-// The two PUBLIC ledgers — `WORLD/walk-ledger.md` and
-// `WORLD/threshold-ledger.md` — took one git commit on main PER ACT. Ruled
-// 2026-08-22: "walks + enter-exit should settle at the save, not per-act to git
-// main."
+// The two PUBLIC ledgers — `WORLD/walk-ledger.md` and the passage record (then
+// `WORLD/threshold-ledger.md`, since 2026-08-26 `WORLD/enter-exit-ledger.md`) —
+// took one git commit on main PER ACT. Ruled 2026-08-22: "walks + enter-exit
+// should settle at the save, not per-act to git main."
+//
+// ONLY THE WALK LEDGER STILL SETTLES INTO A FILE (2026-08-28, #2152). The
+// passage record became DERIVED — regenerated at read time from a frozen era
+// plus these very rows — and the copy committed in the world repo is the frozen
+// era by that repo's own law. Passage rows still carry their lines here, and
+// they are still read: the derivation is what reads them. What changed is that
+// nothing appends them to a file any more, because a derived record with a pen
+// is two answers to one question. See `src/enter-exit-ledger.mjs`.
 //
 // A row that owes lines to a public ledger carries them VERBATIM:
 //

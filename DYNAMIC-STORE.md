@@ -405,11 +405,23 @@ crossing spent ONE GIT COMMIT on world main, per act. Ruled 2026-08-22: *"walks
 + enter-exit should settle at the save, not per-act to git main."* Under the flag
 the act writes its ledger line into the journal — **verbatim**, so the save
 appends exactly what the act's own pen formatted rather than re-deriving it — and
-`materializeLedgers` gives `WORLD/walk-ledger.md` and
-`WORLD/threshold-ledger.md` their lines once, in seq order, idempotently. The
-record that results is byte-identical to what the per-act commits would have
-written; `test/settle-at-save.test.mjs` runs the real pen down both lanes and
-compares the file.
+`materializeLedgers` gives `WORLD/walk-ledger.md` its lines once, in seq order,
+idempotently. The record that results is byte-identical to what the per-act
+commits would have written; `test/settle-at-save.test.mjs` runs the real pen down
+both lanes and compares the file.
+
+**The passage record settles nowhere, because it is derived** (2026-08-28,
+issue #2152). `WORLD/enter-exit-ledger.md` stopped being a file anybody appends
+to on 2026-08-26: it is regenerated whole at READ time from the frozen era plus
+the journal's rows, and the copy committed in the world repo is the frozen era
+exactly — that repo has no journal to read, and its own falsifier refuses a
+longer file. Two office pens went on appending live-era passages into it anyway
+(this drain's routing, and the crossing-save's emit); each append turned the
+world's grammar suite red, which cost the settlement sweep its ability to
+attribute a failure and refused the whole crossing. Both pens are gone: the
+drain filters these ledger names out explicitly, and the crossing-save writes
+only `STATE/`. The passages are not lost — they are in the journal, and the
+`/world/enter-exit-ledger` door serves them.
 
 **Where the drain puts things.** Marks go to `draft/<household>` sketchbooks
 (proto-canon). EVERY row — mark rows included — is crystallized into

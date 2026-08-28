@@ -70,7 +70,7 @@ import {
 } from "../src/dynamic-entities.mjs";
 import { emissionsBetween, pruneEmissions } from "../src/dynamic-emissions.mjs";
 import { readJournal } from "../src/world-journal.mjs";
-import { emitEnterExitLedger } from "../src/enter-exit-ledger.mjs";
+import { enterExitLedgerText } from "../src/enter-exit-ledger.mjs";
 
 const argOf = (name, fallback = null) => { const i = process.argv.indexOf(name); return i !== -1 ? process.argv[i + 1] : fallback; };
 const flag = (name) => process.argv.includes(name);
@@ -284,27 +284,39 @@ async function main() {
     if (writeIfChanged(metaPath, stableJson(s.meta))) written.push(metaPath);
   }
 
-  // ── THE PASSAGES, INTO THE RECORD ────────────────────────────────────────
+  // ── THE PASSAGES ARE NOT WRITTEN HERE. THEY ARE NOT WRITTEN ANYWHERE (#2152)
   //
-  // The enter/exit ledger is derived — regenerated whole from the frozen era
-  // plus the journal — and this is the fold that puts the derived artifact into
-  // the repo, exactly as `WORLD/containment.json` is emitted at every fold and
-  // never stored by hand.
+  // This is where the save used to emit `WORLD/enter-exit-ledger.md` and its
+  // retired twin into the clone, and it was one of the two pens that had to go.
   //
-  // It runs HERE and not in the drain. `world-drain.mjs`'s `materializeLedgers`
-  // is the older, append-shaped answer to this question and it has never
-  // executed in production — measured 2026-08-26 on prod,
-  // `journal_drained_through: null` with thirty-nine rows waiting. Wiring the
-  // emission to the save is wiring it to the thing that actually runs, twice a
-  // crossing, beside every other record the save writes.
+  // The world repo's own law says what the committed copy is, quoted verbatim
+  // from `tools/enter-exit-record.test.mjs` over there:
   //
-  // FULL REGENERATION, so the first run backfills every act since the cutover
-  // without anyone replaying anything: the lines were in the log the whole time.
-  // The journal is NOT truncated here — the save is not the drain, and a
-  // regeneration that depends on the rows staying put is a regeneration that
-  // must not be the one to remove them.
-  const ledgers = await emitEnterExitLedger(CLONE, readJournal(db));
-  for (const l of ledgers.wrote) if (l.written) written.push(join(CLONE, l.ledger));
+  //     "the world repo has no journal to read — a longer derived file means a
+  //      hand wrote in it"
+  //
+  // The committed file is the FROZEN ERA exactly, 155 act-lines, and it stays
+  // that way. Every passage since the 2026-08-24 cutover lives in the office
+  // journal, and the READ derives the live era on every request
+  // (`servedEnterExitLedger`, the `/world/enter-exit-ledger` door, and the
+  // viewer through it). Nothing is lost by not writing: the record the town
+  // reads is complete, and it was complete before this line was deleted.
+  //
+  // What the emit actually did was bake live-era lines into the committed file
+  // during passage activity, which put the world's grammar suite in the red —
+  // and a red grammar suite costs the settlement sweep its isolation, which
+  // refuses the whole crossing. Three hand-repairs on world main before both
+  // pens were named. The other pen was `materializeLedgers` in
+  // `src/world-drain.mjs`; it now filters these ledgers out explicitly.
+  //
+  // (World 2.0's database migration supersedes this seam. Until then the
+  // passage record has exactly one writer, and it is the reader.)
+  //
+  // What remains is a READ: the same derivation the door performs, counted for
+  // the report so the operator can still see the record moving. It writes no
+  // file, commits nothing, and does not truncate the journal.
+  const derivedActs = (await enterExitLedgerText(CLONE, readJournal(db)))
+    .split("\n").filter((l) => l.startsWith("- ")).length;
 
   // A STATE directory outside the clone is a legitimate thing to write (tests
   // do it), but it is not something the pen can commit — and a save that
@@ -314,9 +326,9 @@ async function main() {
   let commit = null, committed = false, pushed = false, push_error = null;
   if (!flag("--no-commit") && inClone) {
     const last = saves.at(-1);
-    // The ledgers ride the SAME commit as STATE: one save, one commit, which is
-    // the whole point of settling at the save rather than per act.
-    commit = penCommit(CLONE, [join(STATE_DIR), ...ledgers.wrote.filter((l) => l.written).map((l) => join(CLONE, l.ledger))],
+    // STATE, and only STATE. The passage record used to ride this commit; it is
+    // derived now and no longer belongs to any pen (#2152, above).
+    commit = penCommit(CLONE, [join(STATE_DIR)],
       `crossing-save ${last.meta.crossing}: ${last.snapshot.entity_count} entities, ${saves.reduce((n, s) => n + s.meta.event_count, 0)} events`);
     committed = true;                      // the ceremony ran; `null` means nothing had changed
     if (process.env.TOWN_PUSH === "1" && commit) {
@@ -354,11 +366,12 @@ async function main() {
     entities_refreshed: refresh ? { count: refresh.entities, mid_walk: refresh.mid_walk, as_of: refresh.as_of } : null,
     source: { as_of_world: read.as_of_world, hydrated_at: read.hydrated_at, fresh: read.fresh },
     disclosed: read.disclosed,
-    // THE PASSAGES. Either what the fold wrote, or the sentence saying why it
-    // held — a fold that quietly did nothing is how a record goes two days
-    // stale without anybody finding out, which is the defect this whole lane
-    // exists to close.
-    enter_exit_ledger: ledgers.held ? { held: ledgers.held } : { wrote: ledgers.wrote, acts: ledgers.acts },
+    // THE PASSAGES, COUNTED AND NOT WRITTEN (#2152). The save no longer folds
+    // this record into the repo — it is derived on every read — but it still
+    // says how many acts the read would serve, because a number that stops
+    // moving is how the two-day staleness was finally noticed, and losing the
+    // number would be trading one silence for another.
+    enter_exit_ledger: { written: false, derived_acts: derivedActs, where: "derived at read time from the frozen era + the office journal; the committed copy is the frozen era by the world repo's own law (#2152)" },
     prune,
   };
   db.close();
@@ -371,7 +384,7 @@ async function main() {
   console.log(`  files    ${written.length ? written.length + " changed" : "no change — the save is idempotent"}`);
   console.log(`  commit   ${commit ?? (flag("--no-commit") ? "skipped (--no-commit)" : (inClone ? "nothing to commit" : "skipped — STATE/ is outside the world clone"))}${pushed ? " · pushed" : ""}${push_error ? ` · PUSH FAILED: ${push_error}` : ""}`);
   console.log(`  world    ${String(read.as_of_world).slice(0, 12)} hydrated ${read.hydrated_at}${read.fresh === false ? "  (the walk ledger has MOVED since — disclosed in this report)" : ""}`);
-  console.log(`  passages ${ledgers.held ? `HELD — ${ledgers.held}` : `${ledgers.acts} in the derived ledger · ${ledgers.wrote.filter((l) => l.written).length} of ${ledgers.wrote.length} file(s) rewritten`}`);
+  console.log(`  passages ${derivedActs} in the derived record · NOT written — the save has no pen here (#2152)`);
   for (const d of read.disclosed) console.log(`  DISCLOSED ${d}`);
   if (prune) console.log(`  prune    ${prune.refused ?? `${prune.pruned} faded emission(s) dropped (occurrence saved through ${prune.horizon})`}`);
 }
