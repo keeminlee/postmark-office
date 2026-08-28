@@ -92,15 +92,93 @@ import { pathToFileURL } from "node:url";
 // drifts silently — the failure class gold § 3 rule 5 exists to forbid.
 async function readersOf(worldRepo) {
   const toolUrl = (f) => pathToFileURL(join(resolve(worldRepo), "tools", f)).href;
-  const fold = await import(toolUrl("marks-fold.mjs"));
-  // THE DERIVED TIER (A/B finding 3, 2026-08-28): a record's frontmatter tier is
-  // only the constitution shortcut; a mark's real standing is DERIVED from the
-  // consent handshake — marks-fold writes `tier: markStanding(...)` at fold
-  // time, and a seed that carried the raw frontmatter defaulted 328 residents'
-  // welcomes to "market". mark-standing.mjs calls itself "the ONE definition of
-  // a mark's standing" and asks to be imported, not re-implemented — so it is.
-  const standing = await import(toolUrl("mark-standing.mjs"));
-  return { loadMarks: fold.loadMarks, markStanding: standing.markStanding };
+  const mf = await import(toolUrl("marks-fold.mjs"));
+  return { loadMarks: mf.loadMarks, fold: mf.fold };
+}
+
+/**
+ * THE TWO DERIVED FIELDS, ASKED OF THE FOLD ITSELF (A/B findings AB-R.tier and
+ * AB-R.household, 2026-08-28).
+ *
+ * `tier` and `declared_household` are not on a record. They are what the FOLD
+ * says about a record after it has resolved the world, and marks-fold.mjs:1031
+ * is where both are published:
+ *
+ *   `id: mk.id, kind: mk.kind, by: …, tier: markStanding(mk, byId), household: mk.household,`
+ *   `declared_household: mk._cred, date: mk.date,`
+ *
+ * The first pass at the tier fix imported `markStanding` and called it on the raw
+ * loader records. That was closer but still wrong, and the A/B probe kept six rows
+ * red to say so. `markStanding` reads three fields the LOADER never writes and the
+ * FOLD does, and the walk gives a different verdict without them:
+ *
+ *   `_cred`       the household grain — `households[handle] ?? solo:<handle>`.
+ *                 Without it the walk compares HANDLES, so a mark standing on a
+ *                 sibling handle's ground in the same household reads as a guest.
+ *                 (rook-of-garrison/the-aerial-display-deck on sol-of-garrison's
+ *                 parcel; rei/the-white-flower-at-wrights-door.)
+ *   `_sovereign`  a sited mark standing wholly inside its own household's parcel.
+ *                 The walk STOPS at sovereign ground; without the flag it walks
+ *                 past the house it should have stopped at. (The three sable
+ *                 marks; rei/the-garden-notebook-tin.)
+ *   `_containedBy` the fold's containment answer, which the walk prefers over the
+ *                 directory edge since the 2026-08-25 filing freeze.
+ *
+ * Measured on the frozen checkout: stamping `_containedBy` alone moves 0 of the 6;
+ * `_cred` alone moves 2; the fold moves all 6, and reproduces `world-state.json`'s
+ * `tier` and `declared_household` on 960 of 960 marks exactly. So the fold is
+ * asked, rather than its preamble re-derived here — re-deriving it would be the
+ * "second copy of this walk" mark-standing.mjs's own header forbids, one level up.
+ *
+ * THE FOLD IS AN ORACLE HERE, NOT THE RECORD SOURCE. `loadMarks` still supplies
+ * the rows; this only answers two questions about them, keyed by id. And it folds
+ * a CLONE, because `fold()` mutates the records it is handed (`_cred`,
+ * `_sovereign`, `_containedBy` are stamped onto them in place) and `recordData`
+ * copies every non-column key into `data` — folding the seed's own records would
+ * silently plant the fold's scratch fields in 831 stored rows.
+ *
+ * A record the fold does not answer for STOPS the seed. A silent fallback to the
+ * frontmatter is how this bug shipped the first time.
+ *
+ * EXPORTED because the two one-off dev repairs (repair-tier-2026-08-28.mjs,
+ * repair-household-2026-08-28.mjs) true the ALREADY-seeded rows and must reach
+ * the same verdict this does. A repair that derived its answer differently from
+ * the seed would leave the database in a state no single run could reproduce.
+ */
+export function foldOracle({ repo, records, fold }) {
+  const terrainPath = join(repo, "WORLD", "skeleton.json");
+  const terrain = existsSync(terrainPath) ? JSON.parse(readFileSync(terrainPath, "utf8")) : null;
+  const hhPath = join(repo, "WORLD", "households.json");
+  const households = existsSync(hhPath) ? (JSON.parse(readFileSync(hhPath, "utf8")).households ?? null) : null;
+  // Stakes are the ✦weight input and touch neither field this asks about; the
+  // seed carries no stake ledger (it lives in the TOWN repo — marks-fold's own
+  // `loadStakes` note), so the honest value is the empty one.
+  const state = fold({ marks: structuredClone(records), terrain, stakes: [], households });
+  const byId = new Map(state.marks.map((m) => [m.id, m]));
+  return (rec) => {
+    const m = byId.get(rec.id);
+    if (!m) {
+      throw new Error(
+        `the fold returns no row for ${rec.id}, so its standing and household cannot be derived. ` +
+        `Both fields are the fold's to answer (marks-fold.mjs § the published mark); seeding the ` +
+        `record's own frontmatter instead is the A/B finding this seed was corrected for.`);
+    }
+    return { tier: m.tier, household: m.declared_household ?? null };
+  };
+}
+
+/**
+ * The oracle plus the records it was built from, for a checkout path — the whole
+ * of what a repair pen needs, in one call, so no caller assembles the three
+ * pieces slightly differently from the seed.
+ */
+export async function foldDerivedFor(worldRepo) {
+  const repo = resolve(worldRepo);
+  const { loadMarks, fold } = await readersOf(repo);
+  const marksDir = join(repo, "WORLD", "marks");
+  if (!existsSync(marksDir)) throw new Error(`no WORLD/marks under ${repo} — is this a world checkout?`);
+  const records = loadMarks(marksDir);
+  return { records, derive: foldOracle({ repo, records, fold }) };
 }
 
 // ── deterministic ids ────────────────────────────────────────────────────────
@@ -236,24 +314,29 @@ const jsonSafe = (v) => JSON.parse(JSON.stringify(v ?? null));
  */
 export async function deriveSeed({ worldRepo, lawSha, townSha = null }) {
   const repo = resolve(worldRepo);
-  const { loadMarks, markStanding } = await readersOf(repo);
+  const { loadMarks, fold } = await readersOf(repo);
 
   const marksDir = join(repo, "WORLD", "marks");
   if (!existsSync(marksDir)) throw new Error(`no WORLD/marks under ${repo} — is this a world checkout?`);
   const records = loadMarks(marksDir);
 
-  // The household KEY, not the handle. `identities.household` holds the key
-  // (`gh:293432145`), and `claims.household` is "denormalized at submit from
-  // identities" — so the seed reads households.json, which is the same file
-  // law-ingest projects `identities` from. A handle the roster does not name gets
-  // NULL, which is the truth: a mark whose owner is not on the roster (the town
-  // itself, and the residents whose households.json line predates them) has no
-  // household key to denormalize, and inventing one would be a fabrication.
-  const households = (() => {
-    const p = join(repo, "WORLD", "households.json");
-    if (!existsSync(p)) return {};
-    return JSON.parse(readFileSync(p, "utf8")).households ?? {};
-  })();
+  // THE HOUSEHOLD SPELLING (A/B finding AB-R.household, Wright's ruling
+  // 2026-08-28): adopt 1.0's spelling, which is the fold's `declared_household`,
+  // which is `households[handle] ?? solo:<handle>` (marks-fold.mjs § the
+  // household grain). A roster owner keeps the household KEY (`gh:293432145`); a
+  // non-roster owner is `solo:<handle>` and NEVER null.
+  //
+  // The earlier reading — NULL for a handle the roster does not name, on the
+  // ground that inventing a key would be a fabrication — had the right instinct
+  // and the wrong fact. `solo:<handle>` is not an invented key: it is the town's
+  // own answer to "which household is this", written in the fold beside the
+  // comment that explains it ("A handle in no declared household is its own
+  // household — registry lag never blocks a new resident, it only leaves them
+  // ungrouped until the town knows them"). NULL threw that answer away on 358 of
+  // 831 marks and left `household` with three spellings across one column.
+  //
+  // So this no longer reads households.json directly. One question, one answerer.
+  const oracle = foldOracle({ repo, records, fold });
 
   const window = genesisWindow({ repo, lawSha, townSha });
   const byId = new Map(records.map((r) => [r.id, r]));
@@ -273,7 +356,8 @@ export async function deriveSeed({ worldRepo, lawSha, townSha = null }) {
     if (rec.kind === "class") { notPlaced.law.push(rec.id); continue; }
 
     const id = uuid5(rec.id);
-    const household = households[rec.by] ?? null;
+    const derived = oracle(rec);
+    const household = derived.household;
     const placed = !!(rec.at && rec.extent);
 
     // `at` is already WORLD coordinates — `loadMarks` composed the v3 frame. The
@@ -301,10 +385,10 @@ export async function deriveSeed({ worldRepo, lawSha, townSha = null }) {
     if (parentIsLaw) notPlaced.parentIsLaw.push({ id: rec.id, parent: parentIsLaw });
 
     const data = recordData(rec);
-    // The DERIVED tier overrides the raw frontmatter (A/B finding 3): standing
-    // comes from the consent handshake via the checkout's own markStanding —
-    // "the ONE definition". recIndex is the by-id map its containment walk reads.
-    data.tier = markStanding(rec, byId);
+    // The DERIVED tier overrides the raw frontmatter (A/B finding AB-R.tier):
+    // standing comes from the consent handshake, and the fold is what resolves
+    // it — see `foldOracle` for why the fold and not `markStanding` alone.
+    data.tier = derived.tier;
     // The one edge the schema cannot express, kept where it CAN be read. See
     // `resolveParent`: `parent` is a uuid into `marks`, and these parents are not
     // marks rows at all. The edge is preserved verbatim under its own key, counted

@@ -23,8 +23,33 @@ import {
 } from "../world2/tools/seed-import.mjs";
 
 // A `loadMarks` with the world's own contract: world coordinates on `at`, `id` =
-// `<by>/<slug>`, `kind` verbatim, everything else the frontmatter said.
+// `<by>/<slug>`, `kind` verbatim, everything else the frontmatter said — and the
+// `fold` beside it, because the seed asks the FOLD for the two DERIVED fields
+// (A/B findings AB-R.tier and AB-R.household; see seed-import § foldOracle).
+//
+// The fixture's fold is small enough to reason about and keeps the three
+// properties the seam depends on:
+//   · it publishes `tier` and `declared_household`, the two fields the seed reads;
+//   · `declared_household` is the real rule — `households[handle] ?? solo:<handle>`;
+//   · it MUTATES the records it is handed, exactly as the real fold does when it
+//     stamps `_cred`/`_sovereign`/`_containedBy`. That is what proves the seed
+//     folds a clone: if it ever folded its own records, `_folded` would appear in
+//     831 rows of stored `data`.
+// The real walk's semantics are the world repo's own tests' job, not this
+// fixture's — what is tested here is that the seed asks the fold and stores its
+// answer.
 const FIXTURE_READER = `
+export function fold({ marks, households }) {
+  for (const m of marks) m._folded = true;   // the fold mutates its input, as the real one does
+  return {
+    marks: marks.map((m) => ({
+      id: m.id,
+      tier: m.tier ?? "market",
+      declared_household: households?.[m.household ?? m.by] ?? ("solo:" + (m.household ?? m.by)),
+    })),
+  };
+}
+
 export function loadMarks() {
   return [
     { id: "wren/the-yard", slug: "the-yard", by: "wren", kind: "parcel", tier: "market",
@@ -59,12 +84,6 @@ function fixture({ log = { 6: [], 7: [] }, meta = { 7: { crossing: 7, covers_fro
   mkdirSync(join(dir, "WORLD", "marks"), { recursive: true });
   mkdirSync(join(dir, "STATE", "log"), { recursive: true });
   writeFileSync(join(dir, "tools", "marks-fold.mjs"), FIXTURE_READER);
-  // The tier reader beside it (A/B finding 3): the fixture's standing rule is
-  // the frontmatter's own word with the real reader's default — enough to prove
-  // the SEAM (the seed imports the checkout's markStanding); the real walk's
-  // semantics are the world repo's own tests' job, not this fixture's.
-  writeFileSync(join(dir, "tools", "mark-standing.mjs"),
-    'export function markStanding(mark) { return mark?.tier ?? "market"; }\n');
   writeFileSync(join(dir, "WORLD", "households.json"),
     JSON.stringify({ households: { wren: "gh:12345" }, logins: { wrenbird: "gh:12345" } }));
   for (const [n, lines] of Object.entries(log)) {
@@ -125,11 +144,33 @@ test("a geometric mark becomes one locked claim and one standing mark", async ()
   } finally { f.cleanup(); }
 });
 
-test("an owner the roster does not name gets NULL, not an invented household", async () => {
+// A/B finding AB-R.household, Wright's ruling 2026-08-28. This test asserted the
+// OPPOSITE until the A/B pass: "an owner the roster does not name gets NULL, not
+// an invented household". `solo:<handle>` is not invented — it is the town's own
+// answer, and 1.0's register has always spelled it that way. NULL threw the
+// answer away on 358 of 831 marks.
+test("an owner the roster does not name is solo:<handle>, never NULL", async () => {
   const f = fixture();
   try {
     const { marks } = await seedOf(f);
-    assert.equal(marks.find((m) => m.slug === "stranger/the-rock").household, null);
+    assert.equal(marks.find((m) => m.slug === "stranger/the-rock").household, "solo:stranger");
+    // and a roster owner still keeps the KEY, not the handle
+    assert.equal(marks.find((m) => m.slug === "wren/the-yard").household, "gh:12345");
+    assert.equal(marks.filter((m) => m.household == null).length, 0);
+  } finally { f.cleanup(); }
+});
+
+// The seed folds a CLONE. The fixture's fold stamps `_folded` on every record it
+// is handed, exactly as the real fold stamps `_cred`/`_sovereign`/`_containedBy`;
+// `recordData` copies every non-column key into `data`, so folding the seed's own
+// records would plant the fold's scratch fields in every stored row.
+test("the fold's scratch fields do not reach stored `data`", async () => {
+  const f = fixture();
+  try {
+    const { marks } = await seedOf(f);
+    for (const m of marks) {
+      assert.ok(!("_folded" in m.data), `${m.slug} carries the fold's scratch field in data`);
+    }
   } finally { f.cleanup(); }
 });
 

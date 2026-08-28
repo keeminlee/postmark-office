@@ -528,6 +528,134 @@ different KIND of edge than a marks-parent, and folding both into one FK would b
 uniformity. If a consumer ever needs it as a queryable column, that is a 005-class
 migration (`parent_law_key text`), teed then, not built now (keep-simple).
 
+## The ledger backfill
+
+`ledger-backfill.mjs` closes the A/B pass's two unmigrated-history findings. The
+seed read `STATE/log/*.jsonl` completely — 2400 for 2400, all 33 crossings
+bucketing row-for-row — but the journal is only the LIVE era. The town's earlier
+record sits in two frozen files beside it, and the seeder read neither:
+
+| file | rows | finding |
+|---|---|---|
+| `WORLD/enter-exit-ledger-frozen.md` (`WORLD/threshold-ledger.md` before the 2026-08-28 rename) | 155 crossings, each with its `word <welcomed\|neutral\|opposed>` | AB-P2 |
+| `WORLD/walk-ledger.md` | 317 departures, 304 of them older than the journal's first row | AB-P3 |
+
+Migration-class, like the seed: `--world-repo <checkout>` plus `WORLD2_PG_URL`
+under the owner role, one transaction, `--dry-run` to get the receipt without the
+write. It reuses the checkout's own `parseEnterExitLedger` and `parseWalkLedger` —
+no second regex, which matters most for the enter/exit grammar, because it has an
+era seam inside it (`at <n>` before 2026-08-26, `ferry <n>` after) that the
+checkout's reader already handles on both sides.
+
+**The consent word rides every crossing row.** The ledger's own header says why it
+is stamped there: *"the MARK's side of the handshake … stamped as it stood at the
+crossing (the walk ledger's `pace` precedent) so amending a law never re-derives a
+crossing already made."* That is gold §3 rule 2's per-act determinism, already
+practised by the 1.0 record, and until this pass none of it was in Postgres.
+
+**Both ledger names are read; both files present is a refusal.** The
+`sandbox/seed` tag predates the phase-0 rename and carries `threshold-ledger.md`;
+world main carries `enter-exit-ledger-frozen.md`. Two files claiming to be one
+archive is the twin phase 0 just killed, so the pen stops rather than guessing.
+
+**`payload._ledger` is load-bearing, not decoration.** Before this pass, "a
+`legacy:%` act" and "a row of the world journal" were the same set, and
+`ab-compare.mjs`'s AB-P1 compared them by counting. The backfill adds a second
+legacy source — 304 departures at crossings the journal has no rows for, and 155
+crossings inside the journal's own era — so the unscoped count would report the
+journal as mis-bucketed by exactly the number of rows the fix correctly added: a
+false finding manufactured by a fix. The source stamp is what lets AB-P1 ask for
+the journal's rows and AB-P2/AB-P3 ask for these. It is also what makes the
+pre-journal boundary stable: it is computed from journal-sourced rows only, so it
+does not move when this pen's own rows land behind it.
+
+**The 13 overlapping departures are checked, not assumed.** The A/B report counts
+304 of 317 as pre-journal. Trusting that arithmetic would be the wrong shape of
+confidence, so each of the other 13 is verified present in `acts` on `(at, actor)`
+before anything is written. A departure that is in neither record stops the run —
+that is the seam class this backfill exists to close, and importing half of it
+would certify a history with a hole in it.
+
+There is no repair path and no `--force`. `acts` is append-only for every pen
+including the owner (`002_grants.sql` `acts_append_only`), so a second run is
+refused by naming the rows already there; if they are wrong the answer is
+seed-import's — rebuild the schema and re-run both pens.
+
+## The derived fields, and why the FOLD answers them
+
+`tier` and `household` are not fields on a record. They are what the **fold** says
+about a record once it has resolved the world, and `marks-fold.mjs:1031` publishes
+both (`tier: markStanding(mk, byId)`, `declared_household: mk._cred`).
+
+The first pass at the tier fix imported `markStanding` and called it on the raw
+loader records. Closer, still wrong: it fixed 322 of 328 rows and the A/B probe
+kept six red. `markStanding` reads three fields the loader never writes and the
+fold does — `_cred` (the household grain), `_sovereign` (a sited mark wholly inside
+its own household's parcel, where the walk STOPS), and `_containedBy` (the fold's
+containment answer, preferred over the directory edge since the 2026-08-25 filing
+freeze). Measured on the frozen checkout:
+
+| stamped on the raw records | of the 6 residual rows, fixed |
+|---|---|
+| `_containedBy` alone | 0 |
+| `_cred` alone | 2 |
+| the fold | 6 — and it reproduces `world-state.json`'s `tier` **and** `declared_household` on 960 of 960 marks exactly |
+
+So `seed-import.mjs` asks the fold (`foldOracle`) rather than re-deriving its
+preamble, which would be the "second copy of this walk" `mark-standing.mjs`'s own
+header forbids, one level up. The fold is an **oracle** here, not the record
+source: `loadMarks` still supplies the rows, and the fold answers two questions
+about them. It folds a **clone**, because `fold()` stamps its scratch fields onto
+the records in place and `recordData` copies every non-column key into `data` —
+folding the seed's own records would plant `_cred`/`_sovereign`/`_containedBy` in
+831 stored rows. A test holds that.
+
+## The household spelling (Wright's ruling, 2026-08-28)
+
+**A roster owner keeps the household KEY (`gh:<id>`); a non-roster owner is
+`solo:<handle>`, never NULL.** That is 1.0's spelling — the fold's
+`declared_household` — and `identities` is the projection of the same file the fold
+reads, so the register and the docket now give one answer.
+
+The seed wrote NULL for every handle `households.json` does not name, reasoning
+that inventing a key would be a fabrication. Right instinct, wrong fact:
+`solo:<handle>` is not invented, it is the town's own answer, written in the fold
+beside the comment that explains it — *"a handle in no declared household is its
+own household; registry lag never blocks a new resident, it only leaves them
+ungrouped until the town knows them."* NULL threw that answer away on 358 of 831
+marks and left one column carrying three spellings of one fact.
+
+Three surfaces were changed, and one deliberately was not:
+
+- `seed-import.mjs` — derives it from the fold, so a future reseed is right from birth.
+- `repair-household-2026-08-28.mjs` — trues the already-seeded `marks` rows in place.
+- `src/world2-claims.mjs` — the live docket pen resolves through `identities`
+  instead of writing the journal's bare handle. Only positive answers are cached:
+  a household key is not a fact that gets taken away, but a MISS is the registry-lag
+  case, and caching it would keep writing `solo:` for a resident the town had
+  already learned.
+- **`src/world2-acts.mjs` was NOT changed.** `acts.household` carries the same bare
+  handle, and it should: that file is a *mirror*, and `falsifier-acts-parity.mjs`
+  compares `household` between the sqlite journal row and its acts twin. Resolving
+  the key there would turn a standing falsifier red for a cosmetic alignment. The
+  acts-side spelling is a cutover question, to be settled when the journal dies and
+  the mirror becomes the door's one write.
+
+### Known residual: `claims.household`
+
+The 358 NULLs in `claims.household` are **not** repaired, and this is the
+substrate refusing correctly rather than a job left undone. `claims_update_guard`
+(`002_grants.sql`) permits exactly one UPDATE from any role but `clearing_job` — a
+pending claim going to retracted, fields untouched — and every seeded claim is
+`locked`. Disabling the trigger, or `SET ROLE clearing_job`, would be one pen
+performing another's act, which is the disease this migration exists to end.
+
+The residual is honest and bounded: the shadow-era claims are the **seed's
+synthetic submission record** — nobody submitted them; the seed wrote them so each
+locked mark had the claim it would have had. The next full reseed writes them with
+the corrected spelling from birth. Live claims written from now on are correct at
+submit.
+
 ## The notary
 
 `snapshot-export.mjs` is pen 4, and it is the only one in this directory that

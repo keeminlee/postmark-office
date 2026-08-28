@@ -37,6 +37,40 @@ async function pool(env = process.env) {
   return state.pool;
 }
 
+// ── the household KEY, not the handle (A/B finding AB-R.household) ───────────
+//
+// 001_tables.sql says what this column holds: "denormalized at submit from
+// identities". This pen was writing the journal's own `household` field, which is
+// a bare resident handle (`darko`) — so one column carried three spellings of one
+// fact: `gh:<id>` from the seed, NULL where the seed found no roster line, and a
+// bare handle from here.
+//
+// Wright's ruling, 2026-08-28: adopt 1.0's spelling. A roster owner keeps the
+// household KEY; a non-roster owner is `solo:<handle>`, never NULL. That is the
+// fold's `declared_household` rule verbatim — `households[handle] ?? solo:<handle>`
+// (marks-fold.mjs § the household grain) — and `identities` is the projection of
+// the very file the fold reads, so asking it here gives the register and the
+// docket one answer.
+//
+// ONLY POSITIVE ANSWERS ARE CACHED, deliberately. A handle that has a household
+// key does not lose it, so caching that is safe. A MISS is the registry-lag case
+// the fold's own comment describes — "registry lag never blocks a new resident, it
+// only leaves them ungrouped until the town knows them" — and it resolves the
+// moment law_ingester projects the new roster line. Caching the miss would keep
+// writing `solo:` for a resident the town had already learned, for as long as the
+// office stayed up.
+const householdKeys = new Map();
+
+export async function householdKeyFor(p, handle) {
+  if (!handle) return null;
+  const hit = householdKeys.get(handle);
+  if (hit) return hit;
+  const { rows } = await p.query("SELECT household FROM identities WHERE handle = $1", [handle]);
+  const key = rows[0]?.household ?? null;
+  if (key) householdKeys.set(handle, key);
+  return key ?? `solo:${handle}`;
+}
+
 /** Called from appendJournal beside mirrorAct, with the same normalized row. */
 export function submitClaimFromJournal(row, seq, env = process.env) {
   if (!candleEnabled(env)) return;
@@ -83,10 +117,15 @@ export function submitClaimFromJournal(row, seq, env = process.env) {
         supersedes = prior?.id ?? null; // amending a published mark: no in-window chain, fresh claim
       }
 
+      // The journal's `household` is the resident's own handle; the column wants
+      // the KEY. Resolved on the handle the journal states, falling back to the
+      // actor when it states none.
+      const household = await householdKeyFor(p, row.household ?? row.actor);
+
       await p.query(
         `INSERT INTO claims (window_id, class, claimant, household, body, geometry, bbox, stake, supersedes, data)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-        [win.id, kind, row.actor, row.household, body ?? null,
+        [win.id, kind, row.actor, household, body ?? null,
          JSON.stringify(geometry), bbox, stamps ?? 0, supersedes,
          Object.keys(rest).length ? JSON.stringify({ ...rest, _journal_seq: seq }) : JSON.stringify({ _journal_seq: seq })]);
       state.written += 1;

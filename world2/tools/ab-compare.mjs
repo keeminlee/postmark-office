@@ -252,7 +252,22 @@ async function sweepPassages() {
       }
     }
   }
-  const actRows = await sql("SELECT floor(crossing)::int AS c, count(*)::int AS n FROM acts WHERE action LIKE 'legacy:%' GROUP BY 1");
+  // A LEGACY ACT IS NO LONGER THE SAME THING AS A JOURNAL ROW, and this query has
+  // to say which it means (changed 2026-08-28 with the ledger backfill). Until the
+  // backfill there was exactly one legacy source, so `action LIKE 'legacy:%'` and
+  // "a row of the world journal" were the same set and counting either answered
+  // both. `ledger-backfill.mjs` adds a second source — 304 departures at crossings
+  // the journal has no rows for, and 155 crossings inside the journal's own era —
+  // so the unscoped count would now report the journal as mis-bucketed by exactly
+  // the number of rows the backfill correctly added. That would be a false finding
+  // manufactured by a fix, which is the worst kind.
+  //
+  // `payload->>'_ledger'` is the source stamp: journal-sourced acts have none,
+  // ledger-sourced acts name the repo file they came out of. AB-P1 asks for the
+  // journal's; AB-P2 and AB-P3 below ask for the ledgers'.
+  const actRows = await sql(
+    `SELECT floor(crossing)::int AS c, count(*)::int AS n FROM acts
+      WHERE action LIKE 'legacy:%' AND (payload->>'_ledger') IS NULL GROUP BY 1`);
   const acts = new Map(actRows.map((r) => [r.c, r.n]));
   if (SELF_TEST && acts.size) acts.set([...acts.keys()][0], (acts.get([...acts.keys()][0]) ?? 0) + 1);
 
@@ -266,7 +281,13 @@ async function sweepPassages() {
   // journal; 2.0 is supposed to hold the same passages as enter/exit acts.
   const eel = await get("/world/enter-exit-ledger");
   const ledgerRows = String(eel.ledger ?? "").split("\n").filter((l) => l.startsWith("- ") && (l.includes(" enters ") || l.includes(" exits ")));
-  const [{ n: crossActs }] = await sql("SELECT count(*)::int AS n FROM acts WHERE action IN ('enter','exit')");
+  // `enter`/`exit` are the LIVE door's verbs; `legacy:enter`/`legacy:exit` are the
+  // frozen era's, carried by ledger-backfill.mjs under seed-import's `legacy:`
+  // convention so an imported row does not vote in a vocabulary it predates. 1.0's
+  // door serves both eras from one derivation, so the comparison counts both.
+  const [{ n: crossActsRaw }] = await sql(
+    "SELECT count(*)::int AS n FROM acts WHERE action IN ('enter','exit','legacy:enter','legacy:exit')");
+  const crossActs = SELF_TEST ? crossActsRaw - 1 : crossActsRaw;
   console.log(`  1.0 crossings: ${ledgerRows.length} (door reports acts=${eel.acts}) · 2.0 enter/exit acts: ${crossActs}`);
   if (crossActs !== ledgerRows.length)
     finding("passages", "AB-P2", `${ledgerRows.length - crossActs} of 1.0's ${ledgerRows.length} crossings have no act in 2.0`);
@@ -274,14 +295,32 @@ async function sweepPassages() {
 
   // The frozen walk ledger: departures older than the journal's first row have
   // no other home, so if `acts` starts after them they simply are not in 2.0.
+  // STRENGTHENED 2026-08-28, with the backfill that answers it. The original
+  // check asked "do any walk-ledger rows predate min(at)?" — which was the right
+  // question while the answer was 304, and becomes a question that CANNOT FAIL the
+  // moment one early row lands, because that row moves `min(at)` behind all the
+  // others. A probe that goes green on one row of a 317-row import is not a probe.
+  //
+  // So it now asks the claim itself: every departure in the frozen ledger has an
+  // act. Matched on (at, actor), which is what the two records share — the ledger
+  // states no id and the act's payload carries the ledger's own line, so the
+  // timestamp and the walker are the join. This can fail on a partial import, on a
+  // mis-parsed timestamp, and on a row dropped in the middle, none of which the
+  // old shape could see.
   const wl = join(CLONE, "WORLD", "walk-ledger.md");
   if (existsSync(wl)) {
     const rows = readFileSync(wl, "utf8").split("\n").filter((l) => l.startsWith("- "));
     const [{ min }] = await sql("SELECT min(at) AS min FROM acts");
-    const before = rows.filter((l) => Date.parse(l.slice(2, 26)) < Date.parse(min));
-    console.log(`  walk-ledger rows: ${rows.length} · acts begin ${new Date(min).toISOString()}`);
-    if (before.length) finding("passages", "AB-P3", `${before.length} of ${rows.length} walk-ledger departures predate the acts log and are absent from 2.0`);
-    else ok(`walk-ledger fully covered by acts`);
+    const dep = await sql("SELECT at, actor FROM acts WHERE action = 'legacy:departure'");
+    const have = new Set(dep.map((r) => `${new Date(r.at).toISOString()}|${r.actor}`));
+    if (SELF_TEST && have.size) have.delete([...have][0]);
+    const missing = rows.filter((l) => {
+      const m = /^- (\S+) · (\S+) · /.exec(l);
+      return m && !have.has(`${new Date(m[1]).toISOString()}|${m[2]}`);
+    });
+    console.log(`  walk-ledger rows: ${rows.length} · departure acts: ${dep.length} · acts begin ${new Date(min).toISOString()}`);
+    if (missing.length) finding("passages", "AB-P3", `${missing.length} of ${rows.length} walk-ledger departures have no act in 2.0, e.g. ${missing[0].slice(2, 60)}`);
+    else ok(`walk-ledger fully covered by acts: ${rows.length} departures, all matched on (at, actor)`);
   }
 
   // Every CANDLE act must have produced a claim. An act the docket never
@@ -310,7 +349,11 @@ const main = async () => {
   console.log(`\n== VERDICT ==\n${findings.length ? `${findings.length} unreconciled divergence(s) — 2.0's read surface is NOT yet purely upside:` : "no unreconciled divergences: every 1.0 read has a 2.0 answer that agrees"}`);
   for (const f of findings) console.log(`  [${f.sweep}/${f.id}] ${f.what}`);
   if (SELF_TEST) {
-    const wanted = ["AB-SELFTEST", "AB-L3", "AB-P1"];
+    // AB-P2 and AB-P3 joined the sweep list when the backfill gave them something
+    // to be right about: a check that has never been green has never proved it can
+    // GO red for the right reason, and AB-P3's old shape could not fail at all
+    // once one early row landed. Five faults, one per sweep that makes a claim.
+    const wanted = ["AB-SELFTEST", "AB-L3", "AB-P1", "AB-P2", "AB-P3"];
     const got = wanted.filter((w) => findings.some((f) => f.id === w));
     console.log(`\nself-test: ${got.length}/${wanted.length} injected faults caught (${got.join(", ")})`);
     await pool?.end();
