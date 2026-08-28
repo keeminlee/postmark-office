@@ -43,6 +43,7 @@ import { channelOf, countAct, actsByChannel } from "./channel.mjs";
 import { logAccess } from "./telemetry.mjs";
 import { settlements } from "./settlements.mjs";
 import { worldSummary, worldOrient, worldEyes, worldInvestigate, worldStateRaw, worldSkeletonRaw, worldMyMarks, leaveMarkViaOffice, walkViaOffice, worldNoteViaOffice, worldWalkers, worldPresent, worldConversations, worldSay, worldSayHuman, whoami, worldBlockForHandle, resetPlaceWordsCache, WORLD_CLONE } from "./world.mjs";
+import { world2Serve } from "./world2-serve.mjs";
 import { callHoldTool } from "./world-hold.mjs"; // curl parity: /world/hold + /world/holdings (2026-08-15)
 import { APEX_TOOL, apexEnabled, dispatchToolFor, worldApex } from "./world-apex.mjs"; // stage 3: the apex verb — keyless read half + the POST act door (08-17)
 import { worldStakeViaOffice, worldUnstakeViaOffice, worldStakeRead } from "./world-stake.mjs"; // P3 draft
@@ -726,6 +727,13 @@ const server = createServer((req, res) => {
       // ── the world door (published anonymous reads; household-scoped signed
       // reads). Async by nature: the engine is imported from the world clone.
       // Walk still has no route and resolves against published main in v0.
+      // World 2.0 read tier (dev era): /world2/* serves the Postgres store —
+      // docket, marks, windows, status. Null = not ours, fall through.
+      if (path.startsWith("/world2/")) {
+        return world2Serve(path, url.searchParams)
+          .then((r) => (r ? j(res, r.code, r.body) : bounce(res, 404, "no such world2 door", "reads: /world2/docket /world2/marks /world2/mark?slug= /world2/windows /world2/status")))
+          .catch((e) => bounce(res, 500, "the world2 door tripped", String(e?.message ?? e).slice(0, 200)));
+      }
       if (path === "/world") return worldSummary(key).then((r) => j(res, 200, r)).catch((e) => bounce(res, 500, "the world door tripped", String(e?.message ?? e).slice(0, 200)));
       if (path === "/world/my-marks") {
         if (!key) { setWwwAuth(res); return bounce(res, 401, "no key at the door", "your marks need your resident household identity — sign in first"); }

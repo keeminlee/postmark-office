@@ -1,0 +1,92 @@
+// world2-serve.mjs — the door's WORLD 2.0 READ TIER (dev era).
+//
+// Phase 3c of the gold plan: the reads the site will consume, served straight
+// from Postgres — freshness as a QUERY, not a pipeline (the staleness-sentinel
+// class dies here, gold §2). Keyless like the 1.0 world read tier: the docket,
+// standing marks, and window receipts are all public facts — the docket being
+// PUBLIC is half the candle's point ("here is everything that locks at 17:45").
+//
+// Namespaced under /world2/* so nothing shadows a 1.0 route during the shadow
+// era; at cutover these become the /world reads (and the bake pipeline dies).
+// Role: the same office_api connection the shadow pens hold (SELECT is granted
+// on everything).
+//
+// The placed/standing split (the seed lane's read-path note, resolved here):
+//   /world2/marks          -> placed marks only (they have a where) — the map's read
+//   /world2/marks?all=true -> the whole standing register incl. de-sited
+//   A de-sited mark IS standing; a consumer that wants a `where` on every row
+//   asks for the default.
+
+const state = { pool: null };
+
+export function world2ServeEnabled(env = process.env) {
+  return env.WORLD2_PG === "1" && !!env.WORLD2_PG_URL;
+}
+
+async function pool(env = process.env) {
+  if (state.pool) return state.pool;
+  const { default: pg } = await import("pg");
+  state.pool = new pg.Pool({ connectionString: env.WORLD2_PG_URL, max: 3 });
+  return state.pool;
+}
+
+/**
+ * Route a GET under /world2/*. Returns null when the path is not ours
+ * (server.mjs falls through), else { code, body }.
+ */
+export async function world2Serve(path, searchParams) {
+  if (!world2ServeEnabled()) return null;
+  const p = await pool();
+
+  if (path === "/world2/docket") {
+    const { rows } = await p.query(
+      `SELECT id, window_id, closes_at, class, claimant, household, submitted_at,
+              stake, geometry, counterclaim_of FROM docket ORDER BY submitted_at`);
+    const { rows: [win] } = await p.query(
+      "SELECT id, opens_at, closes_at FROM windows WHERE status = 'open' ORDER BY id DESC LIMIT 1");
+    return { code: 200, body: {
+      what: "the public docket — every pending claim, and the candle it locks at",
+      window: win ?? null, pending: rows.length, claims: rows,
+    } };
+  }
+
+  if (path === "/world2/marks") {
+    const all = searchParams?.get("all") === "true";
+    const { rows } = await p.query(
+      `SELECT slug, kind, owner, household, geometry, status, locked_window, parent
+       FROM marks WHERE status = 'standing' ${all ? "" : "AND geometry IS NOT NULL"}
+       ORDER BY slug`);
+    return { code: 200, body: {
+      what: all ? "the whole standing register (de-sited included — a predicated mark is its parent continued)"
+                : "placed standing marks (every row has a where); ?all=true for the whole register",
+      count: rows.length, marks: rows,
+    } };
+  }
+
+  if (path === "/world2/mark") {
+    const slug = searchParams?.get("slug");
+    if (!slug) return { code: 422, body: { error: "bounce", defect: "which mark?", hint: "?slug=<owner>/<name>" } };
+    const { rows: [mark] } = await p.query("SELECT * FROM marks WHERE slug = $1", [slug]);
+    if (!mark) return { code: 404, body: { error: "bounce", defect: `no mark "${slug}"` } };
+    return { code: 200, body: mark };
+  }
+
+  if (path === "/world2/windows") {
+    const { rows } = await p.query(
+      `SELECT id, opens_at, closes_at, status, law_sha, town_sha, cleared_at, receipts
+       FROM windows ORDER BY id DESC LIMIT 20`);
+    return { code: 200, body: { what: "the candle's ledger — newest first, receipts carried", windows: rows } };
+  }
+
+  if (path === "/world2/status") {
+    const counts = {};
+    for (const t of ["acts", "claims", "marks", "law_projection", "stamp_projection", "identities"]) {
+      const { rows: [r] } = await p.query(`SELECT count(*)::int AS c FROM ${t}`);
+      counts[t] = r.c;
+    }
+    const { rows: heads } = await p.query("SELECT repo, sha, ingested_at FROM projection_heads");
+    return { code: 200, body: { what: "world 2.0 store status (dev)", counts, projection_heads: heads } };
+  }
+
+  return null;
+}
