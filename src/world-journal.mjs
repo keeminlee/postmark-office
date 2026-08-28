@@ -71,6 +71,7 @@
 import { execFileSync } from "node:child_process";
 
 import { openDynamic, dynamicDbPath, singleLogEnabled } from "./dynamic-store.mjs";
+import { mirrorAct } from "./world2-acts.mjs";
 import { draftDeltaForKey, mainRef, publishedState, resolvedWorldHousehold } from "./world-branches.mjs";
 
 export { singleLogEnabled };
@@ -314,7 +315,13 @@ export function appendJournal(db, entry = {}) {
     row.witnesses, row.class, row.payload, row.effect,
     row.household, row.written_at);
 
-  return { seq: Number(res.lastInsertRowid), ...row };
+  const seq = Number(res.lastInsertRowid);
+  // World 2.0 shadow pen (dev era): mirror the row into Postgres `acts`.
+  // No-op unless WORLD2_PG=1; fire-and-forget for this caller, loud on
+  // failure, parity-falsified. See src/world2-acts.mjs for the death date.
+  mirrorAct(row, seq);
+
+  return { seq, ...row };
 }
 
 // ── the replay reader ────────────────────────────────────────────────────────

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "type": "module",
   "private": true,
-  "description": "Postmark's post office \u2014 the API/MCP front door. Read shadow + letter enqueue; the town repo stays the constitution.",
+  "description": "Postmark's post office — the API/MCP front door. Read shadow + letter enqueue; the town repo stays the constitution.",
   "scripts": {
     "test": "node --test --test-concurrency=1 \"test/*.test.mjs\"",
     "hydrate": "node src/hydrate.mjs",
@@ -27,6 +27,7 @@
   },
   "dependencies": {
     "graphology": "^0.26.0",
-    "graphology-gexf": "^0.13.2"
+    "graphology-gexf": "^0.13.2",
+    "pg": "^8.13.0"
   }
 }

@@ -31,8 +31,13 @@ CREATE TABLE acts (
   payload     jsonb,
   effect      text,
   household   text,
+  journal_seq bigint,                        -- SHADOW-ERA pairing key: the sqlite journal.seq this row mirrors.
+                                             -- The journal truncates at each drain, so (journal_seq, at) pairs a row
+                                             -- only within its window — good enough for the parity falsifier.
+                                             -- DIES AT CUTOVER with the sqlite journal (anti-rebake rule 6).
   inserted_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE INDEX acts_journal_seq_idx ON acts (journal_seq, at);
 CREATE INDEX acts_actor_id_idx    ON acts (actor, id);
 CREATE INDEX acts_household_idx   ON acts (household, id);
 CREATE INDEX acts_object_idx      ON acts (object, id);
