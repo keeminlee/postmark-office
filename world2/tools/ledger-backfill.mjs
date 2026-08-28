@@ -10,7 +10,8 @@
 //   WORLD/enter-exit-ledger-frozen.md   155 crossings, each carrying the MARK's
 //     (`threshold-ledger.md` before        side of the consent handshake as
 //      the 2026-08-28 rename — both        `word <welcomed|neutral|opposed>`
-//      names are read; see LEDGERS)
+//      names are read, and so are both
+//      names of its READER; see readersOf)
 //   WORLD/walk-ledger.md                317 departures, 304 of them older than
 //                                         the journal's first row and homeless
 //                                         without this pass
@@ -131,12 +132,43 @@ const LEGACY_CLASS = "legacy";
 const arg = (n) => { const i = process.argv.indexOf(n); return i === -1 ? null : process.argv[i + 1]; };
 const flag = (n) => process.argv.includes(n);
 
-/** The checkout's own two readers, imported out of the checkout. */
+/**
+ * The checkout's own two readers, imported out of the checkout.
+ *
+ * BOTH MODULE NAMES AND BOTH EXPORT NAMES, because the rename that renamed the
+ * ledger file renamed its reader in the same breath: `tools/thresholds.mjs` +
+ * `parseThresholdLedger` before 2026-08-28, `tools/enter-exit.mjs` +
+ * `parseEnterExitLedger` after. The `sandbox/seed` tag is on the old side of it —
+ * it carries `thresholds.mjs` and no `enter-exit.mjs` at all — and world main is
+ * on the new side, so a backfill that knew only one name could read only one
+ * checkout.
+ *
+ * This is not a workaround invented here. `src/crossing-exec.mjs` already does
+ * exactly this, for the reason it states in the office's own words: "a pen that
+ * cannot read a clone one pull behind refuses every passage in the town for the
+ * length of that gap." Same seam, same resolution, and neither copy re-expresses
+ * the grammar — both import whichever module the checkout actually has.
+ */
 export async function readersOf(worldRepo) {
   const toolUrl = (f) => pathToFileURL(join(resolve(worldRepo), "tools", f)).href;
-  const ee = await import(toolUrl("enter-exit.mjs"));
+  const law = await import(toolUrl("enter-exit.mjs"))
+    .catch(() => import(toolUrl("thresholds.mjs")))
+    .catch(() => null);
+  if (!law) {
+    throw new Error(
+      `${resolve(worldRepo)} has no enter/exit grammar: neither tools/enter-exit.mjs nor the retired ` +
+      `tools/thresholds.mjs is present. The grammar travels with the clone, and this pen will not ` +
+      `carry a second copy of it — a checkout without its own reader cannot be backfilled.`);
+  }
+  const parseEnterExitLedger = law.parseEnterExitLedger ?? law.parseThresholdLedger;
+  if (typeof parseEnterExitLedger !== "function") {
+    throw new Error(
+      `${resolve(worldRepo)}'s enter/exit module exports neither parseEnterExitLedger nor ` +
+      `parseThresholdLedger. Those are the two names this grammar has had; a third is a rename ` +
+      `nobody told this pen about, and guessing at it would be worse than stopping.`);
+  }
   const walk = await import(toolUrl("walk.mjs"));
-  return { parseEnterExitLedger: ee.parseEnterExitLedger, parseWalkLedger: walk.parseWalkLedger };
+  return { parseEnterExitLedger, parseWalkLedger: walk.parseWalkLedger };
 }
 
 /** Which enter/exit archive this checkout carries. Exactly one, or a refusal. */

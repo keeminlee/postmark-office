@@ -75,11 +75,23 @@ const WALKS = [
   "- 2026-08-15T00:00:00.000Z · wright · from 0,0 · toward 1,1 · at 110.0000",
 ];
 
-function fixture({ crossings = CROSSINGS, walks = WALKS, eeName = ENTER_EXIT_LEDGERS[0], alsoTwin = false } = {}) {
+function fixture({
+  crossings = CROSSINGS, walks = WALKS, eeName = ENTER_EXIT_LEDGERS[0], alsoTwin = false,
+  // the pre-2026-08-28 side of the rename: tools/thresholds.mjs exporting
+  // parseThresholdLedger, which is what the `sandbox/seed` tag actually carries
+  preRenameReader = false, noReader = false,
+} = {}) {
   const dir = mkdtempSync(join(tmpdir(), "w2ledger-"));
   mkdirSync(join(dir, "tools"));
   mkdirSync(join(dir, "WORLD"), { recursive: true });
-  writeFileSync(join(dir, "tools", "enter-exit.mjs"), ENTER_EXIT_READER);
+  if (!noReader) {
+    if (preRenameReader) {
+      writeFileSync(join(dir, "tools", "thresholds.mjs"),
+        ENTER_EXIT_READER.replace("parseEnterExitLedger", "parseThresholdLedger"));
+    } else {
+      writeFileSync(join(dir, "tools", "enter-exit.mjs"), ENTER_EXIT_READER);
+    }
+  }
   writeFileSync(join(dir, "tools", "walk.mjs"), WALK_READER);
   const head = "# ledger\n\nProse the reader skips.\n";
   writeFileSync(join(dir, eeName), head + crossings.join("\n") + "\n");
@@ -184,6 +196,33 @@ test("either archive name is read; BOTH present is the twin, and is refused", as
   const neither = mkdtempSync(join(tmpdir(), "w2ledger-none-"));
   try { assert.throws(() => enterExitLedgerPath(neither), /no enter\/exit archive/); }
   finally { rmSync(neither, { recursive: true, force: true }); }
+});
+
+// The rename that renamed the ledger renamed its reader in the same breath:
+// tools/thresholds.mjs + parseThresholdLedger before 2026-08-28,
+// tools/enter-exit.mjs + parseEnterExitLedger after. `sandbox/seed` — the tag this
+// backfill actually runs against — is on the OLD side and carries no
+// enter-exit.mjs at all, so a pen that knew only one name could read only one
+// checkout. src/crossing-exec.mjs already resolves both, for the reason it states.
+test("the reader is found under either name, on either side of the rename", async () => {
+  const after = fixture();
+  try {
+    assert.equal((await deriveLedgerActs({ worldRepo: after.dir })).crossings.length, 3);
+  } finally { after.cleanup(); }
+
+  const before = fixture({ preRenameReader: true });
+  try {
+    const { crossings } = await deriveLedgerActs({ worldRepo: before.dir });
+    assert.equal(crossings.length, 3);
+    assert.equal(crossings.find((a) => a.action === "legacy:enter").payload.word, "neutral");
+  } finally { before.cleanup(); }
+});
+
+test("a checkout carrying NO enter/exit grammar is refused — the pen keeps no copy of it", async () => {
+  const f = fixture({ noReader: true });
+  try {
+    await assert.rejects(() => deriveLedgerActs({ worldRepo: f.dir }), /no enter\/exit grammar/);
+  } finally { f.cleanup(); }
 });
 
 // ── the partition, against a stub client ────────────────────────────────────
