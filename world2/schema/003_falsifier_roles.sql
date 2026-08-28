@@ -20,6 +20,16 @@ lawful AS (
     ('office_api',   'acts',             'INSERT'),
     ('office_api',   'claims',           'INSERT'),
     ('office_api',   'claims',           'UPDATE'),
+    -- 007_private_drafts.sql, and it is the ONLY grant on this list that a row
+    -- policy rather than a trigger keeps narrow: `claims_delete_own_draft`
+    -- restricts it to `status = 'draft'` rows of the acting household, and
+    -- `claims_delete_guard` refuses a non-draft deletion for every role
+    -- including the owner. Lawful because a draft is the one claims state with
+    -- no public receipt obligation — nobody outside the household has seen it,
+    -- so nobody outside the household is owed an account of its ending. Every
+    -- other state here is a public fact, and a public fact is retracted, never
+    -- deleted. 007's header carries the full argument.
+    ('office_api',   'claims',           'DELETE'),
     ('clearing_job', 'claims',           'UPDATE'),
     ('clearing_job', 'windows',          'INSERT'),
     ('clearing_job', 'windows',          'UPDATE'),

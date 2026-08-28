@@ -22,7 +22,7 @@
 
 import { boxOf } from "../world2/tools/seed-import.mjs";
 
-const state = { queue: Promise.resolve(), written: 0, failed: 0, lastError: null, pool: null };
+const state = { queue: Promise.resolve(), written: 0, failed: 0, submitted: 0, lastError: null, pool: null };
 
 const MARK_CLASSES = new Set(["mark"]); // journal CLASS_MARK; stance/frame rows are LIVE, not candle
 
@@ -60,6 +60,51 @@ async function pool(env = process.env) {
 // writing `solo:` for a resident the town had already learned, for as long as the
 // office stayed up.
 const householdKeys = new Map();
+
+/**
+ * THE ONE RESOLVER, called by BOTH halves of the private-draft lane.
+ *
+ * The write path resolves the household from the journal row's `household`
+ * (which is the office key's household name); `/world2/my-drafts` resolves it
+ * from the same key. If those two ever spelled the household differently, a
+ * resident would save a draft and then be told they have none — the row policy
+ * would be working perfectly and the answer would still be wrong. Routing both
+ * through this function is what makes that unrepresentable, so do not inline
+ * either half.
+ */
+export async function householdKeyForKey(p, key) {
+  const named = String(key?.household ?? "").trim();
+  const handles = [...(key?.handles ?? [])];
+  return householdKeyFor(p, named || handles[0] || null);
+}
+
+/**
+ * Run `fn` inside a transaction that has declared whose household is acting.
+ *
+ * `SET LOCAL` (here in its parameterized spelling, `set_config(..., true)`)
+ * is scoped to the transaction and unset when it ends. THAT IS THE WHOLE POINT
+ * AND IT IS ALSO THE TRAP: this runs on a POOL, so a setting that outlived its
+ * transaction would still be set for whatever unrelated request borrowed the
+ * connection next — one resident reading another household's drafts, with every
+ * policy in 007 working exactly as written. Hence: a dedicated client, an
+ * explicit BEGIN/COMMIT, rollback on the way out, and the connection released
+ * in `finally`. Nothing in this file may reach `app.household` any other way.
+ */
+export async function withHousehold(p, household, fn) {
+  const client = await p.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT set_config('app.household', $1, true)", [household]);
+    const out = await fn(client);
+    await client.query("COMMIT");
+    return out;
+  } catch (err) {
+    try { await client.query("ROLLBACK"); } catch { /* connection already gone */ }
+    throw err;
+  } finally {
+    client.release();
+  }
+}
 
 export async function householdKeyFor(p, handle) {
   if (!handle) return null;
@@ -121,13 +166,40 @@ export function submitClaimFromJournal(row, seq, env = process.env) {
       // the KEY. Resolved on the handle the journal states, falling back to the
       // actor when it states none.
       const household = await householdKeyFor(p, row.household ?? row.actor);
+      const data = Object.keys(rest).length
+        ? JSON.stringify({ ...rest, _journal_seq: seq })
+        : JSON.stringify({ _journal_seq: seq });
+
+      // ── SUBMIT: the private/public boundary, crossed (gold §4 Phase 5.6) ──
+      //
+      // If this act's author already holds a PRIVATE DRAFT of this slug, the act
+      // does not create a second claim — it promotes the one they composed.
+      // Everything the act declares wins (the act is the deed; the draft was a
+      // sketch of it), and the row keeps its uuid, so a resident who watched
+      // their draft's id is looking at the same claim afterwards.
+      //
+      // window_id and submitted_at move here, and only here: a draft rides no
+      // candle. It joins the one burning at the moment its author submits, which
+      // is what the candle's law has always said — everything submitted since
+      // the last close belongs to the next window (005's header).
+      //
+      // `_journal_seq` lands in the same statement, which is what keeps the
+      // closure falsifier honest: the promoted row is this act's ONE docket row.
+      const promoted = await withHousehold(p, household, (c) => c.query(
+        `UPDATE claims SET status = 'pending', window_id = $1, submitted_at = now(),
+                class = $2, body = $3, geometry = $4, bbox = $5, stake = $6,
+                supersedes = $7, data = $8, slug = $9
+          WHERE status = 'draft' AND claimant = $10 AND slug = $9 AND household = $11
+          RETURNING id`,
+        [win.id, kind, body ?? null, JSON.stringify(geometry), bbox, stamps ?? 0,
+         supersedes, data, slug, row.actor, household]));
+      if (promoted.rowCount) { state.written += 1; state.submitted += 1; return; }
 
       await p.query(
-        `INSERT INTO claims (window_id, class, claimant, household, body, geometry, bbox, stake, supersedes, data)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+        `INSERT INTO claims (window_id, class, claimant, household, body, geometry, bbox, stake, supersedes, data, slug)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
         [win.id, kind, row.actor, household, body ?? null,
-         JSON.stringify(geometry), bbox, stamps ?? 0, supersedes,
-         Object.keys(rest).length ? JSON.stringify({ ...rest, _journal_seq: seq }) : JSON.stringify({ _journal_seq: seq })]);
+         JSON.stringify(geometry), bbox, stamps ?? 0, supersedes, data, slug]);
       state.written += 1;
     } catch (err) {
       state.failed += 1;
@@ -138,9 +210,125 @@ export function submitClaimFromJournal(row, seq, env = process.env) {
   return state.queue;
 }
 
+// ── THE PRIVATE COMPOSE SPACE (gold §4 Phase 5.6) ───────────────────────────
+//
+// The half of this pen that is NOT a mirror. Everything above shadows the 1.0
+// journal; the three functions below have no 1.0 twin, because 1.0 had nowhere
+// to put a private thing — a `draft/<household>` branch in a public repo was
+// always readable, which is the tension P-108 named and this closes.
+//
+// A DRAFT IS NOT AN ACT, and that is the load-bearing decision of this slice.
+// The notary exports `archives/acts/<window>.jsonl` into git, frozen on write;
+// an act carrying a draft's BODY would put that body in a public repo forever,
+// and no row policy on `claims` could reach it. So composing writes no journal
+// row and no `acts` row: the act is SUBMIT, which is the gold plan's own
+// sentence — "the submit verb is the private/public boundary". A draft is a
+// resident thinking, and the world does not witness thinking.
+//
+// The closure falsifier (falsifier-acts-claims-closure.mjs) asserts acts →
+// claims, one docket row per mark act. Drafts have no act, so they are outside
+// what it asserts, and the promotion above keeps the count at one when the act
+// finally arrives.
+//
+// These three throw rather than queueing: composing is synchronous to the
+// resident's request, unlike the fire-and-forget mirror. A draft that failed to
+// save must say so at the door, not in a log line nobody reads.
+
+/** The open window a draft would join if submitted now. Drafts ride no candle; the column wants one. */
+async function openWindow(c) {
+  const { rows: [win] } = await c.query(
+    "SELECT id FROM windows WHERE status = 'open' ORDER BY id DESC LIMIT 1");
+  if (!win) {
+    const e = new Error("no open window — the candle is dark; bootstrap the next window before the docket can take claims");
+    e.code = 503;
+    throw e;
+  }
+  return win.id;
+}
+
+/**
+ * Save (or rewrite) one private draft. Returns { id, slug, rewritten }.
+ *
+ * UPSERT BY (claimant, slug), deliberately: a draft is a compose space, so
+ * leaving the same slug again is editing, not colliding. A published mark of
+ * that slug still bounces at the door above — that check is 1.0's and stays
+ * there; this pen rules only on drafts.
+ */
+export async function saveDraftClaim({ actor, householdName, declaration, seq = null }, env = process.env) {
+  const p = await pool(env);
+  const household = await householdKeyFor(p, householdName ?? actor);
+  const { slug: leaf, at, extent, points, body, stamps, kind: rawKind, ...rest } = declaration;
+  const kind = rawKind ?? "sited";
+  const slug = `${declaration.by ?? actor}/${leaf}`;
+  const placed = at && extent;
+  const geometry = placed ? { slug, at, extent, ...(points ? { points } : {}) } : { slug };
+  const bbox = placed ? boxOf(at, extent) : null;
+  const data = JSON.stringify({ ...rest, ...(seq == null ? {} : { _journal_seq: seq }) });
+
+  return withHousehold(p, household, async (c) => {
+    const windowId = await openWindow(c);
+    const updated = await c.query(
+      `UPDATE claims SET class = $1, body = $2, geometry = $3, bbox = $4, stake = $5,
+              data = $6, window_id = $7, submitted_at = now()
+        WHERE status = 'draft' AND claimant = $8 AND slug = $9 AND household = $10
+        RETURNING id`,
+      [kind, body ?? null, JSON.stringify(geometry), bbox, stamps ?? 0, data,
+       windowId, actor, slug, household]);
+    if (updated.rowCount) return { id: updated.rows[0].id, slug, rewritten: true };
+
+    const inserted = await c.query(
+      `INSERT INTO claims (window_id, class, claimant, household, body, geometry, bbox, stake, data, slug, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'draft') RETURNING id`,
+      [windowId, kind, actor, household, body ?? null, JSON.stringify(geometry),
+       bbox, stamps ?? 0, data, slug]);
+    return { id: inserted.rows[0].id, slug, rewritten: false };
+  });
+}
+
+/**
+ * One household's own drafts — the whole of what `/world2/my-drafts` answers.
+ *
+ * `submitted_at` comes back as `composed_at`, and `window_id` does not come
+ * back at all. Both are the same small honesty: a draft has not been submitted
+ * and rides no candle, so a column named for the docket would be telling the
+ * author something untrue about their own private thing. The row carries those
+ * values because 001 declares them NOT NULL and a draft has to hold SOMETHING;
+ * what it holds is not a fact about the draft, and the door does not present it
+ * as one. Both become true, and are rewritten, at submit.
+ */
+export async function readDraftClaims(key, env = process.env) {
+  const p = await pool(env);
+  const household = await householdKeyForKey(p, key);
+  const rows = await withHousehold(p, household, (c) => c.query(
+    `SELECT id, slug, class, claimant, body, geometry, stake, submitted_at AS composed_at
+       FROM claims WHERE status = 'draft' AND household = $1 ORDER BY slug`, [household]));
+  return { household, drafts: rows.rows };
+}
+
+/** Discard one of your own drafts. Returns true if a row went. */
+export async function deleteDraftClaim({ actor, householdName, slug }, env = process.env) {
+  const p = await pool(env);
+  const household = await householdKeyFor(p, householdName ?? actor);
+  const gone = await withHousehold(p, household, (c) => c.query(
+    `DELETE FROM claims WHERE status = 'draft' AND claimant = $1 AND slug = $2 AND household = $3`,
+    [actor, slug, household]));
+  return gone.rowCount > 0;
+}
+
+/** The declaration a draft was composed from, for the submit path to replay as an act. */
+export async function readDraftClaim({ actor, householdName, slug }, env = process.env) {
+  const p = await pool(env);
+  const household = await householdKeyFor(p, householdName ?? actor);
+  const { rows } = await withHousehold(p, household, (c) => c.query(
+    `SELECT id, slug, class, body, geometry, stake, data FROM claims
+      WHERE status = 'draft' AND claimant = $1 AND slug = $2 AND household = $3`,
+    [actor, slug, household]));
+  return rows[0] ?? null;
+}
+
 export function docketStatus() {
-  const { written, failed, lastError } = state;
-  return { enabled: candleEnabled(), written, failed, lastError };
+  const { written, failed, submitted, lastError } = state;
+  return { enabled: candleEnabled(), written, failed, submitted, lastError };
 }
 
 export function docketSettled() { return state.queue; }

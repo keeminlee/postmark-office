@@ -36,6 +36,12 @@ export const BOUNCER_LIMITS = Object.freeze({
 export const WORLD_WRITE_VERBS = new Set([
   "world_hold", // give/drop/take move attachments — world writes; uncounted until 08-17 (the parity audit's ledger hole)
   "world_leave_mark",
+  // Composing privately, submitting, and discarding are all world writes and
+  // are counted as such. A private act still costs the office a write, and a
+  // daily budget that excused the private half would be a budget a caller could
+  // spend around by drafting.
+  "world_submit_mark",
+  "world_discard_draft",
   "world_note",
   "world_stake",
   "world_unstake",
@@ -141,6 +147,8 @@ export const keyIdForToken = (token) =>
 
 const REST_WORLD_WRITE_VERBS = new Map([
   ["/world/marks", "world_leave_mark"],
+  ["/world/submit", "world_submit_mark"],
+  ["/world/discard-draft", "world_discard_draft"],
   ["/world/stake", "world_stake"],
   ["/world/unstake", "world_unstake"],
   ["/world/walks", "world_walk"],

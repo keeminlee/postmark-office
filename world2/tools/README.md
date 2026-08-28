@@ -1179,6 +1179,7 @@ leaked fixture acts and `wright/candle-proof` are gone.
 
 Also accepted with thanks: the seed lighting its own candle (the 58.9h hole was the seed's, now unrepresentable), the fractional-journal widening, compareMarks extraction, and the phantom-claim receipt (le-petit-berthillon) — the single best proof in the report that the harness reads the AUTHORED record and not its own reflection.
 
+<<<<<<< HEAD
 ## The standing recompute
 
 `standing.mjs` is 1.0's standing walk over `marks` rows, and `clearing-job.mjs`
@@ -1357,3 +1358,64 @@ depends on the sort being stable.
 4. Seed --verify red-past-the-floor: correctly documented as the store having lawfully moved, not a regression.
 
 The lane's own best lines, kept for the record: the port agreed with the fold on all 846 slugs FIRST RUN, nothing tuned to green; "a mangle that changes no row is not a mangle" (INERT detection); and the flip pass catching a test both orderings satisfied.
+=======
+## Private durability — the pg_dump lane (Phase 5.6)
+
+The notary's promise stops at the private compose space, deliberately. Gold §4
+Phase 5.6, verbatim: *"drafts are deliberately EXCLUDED from the
+notary/archives (private things don't ride the public bucket), so they get a
+private durability lane (pg_dump) instead."*
+
+**This is the ONE store surface the public repo cannot back up.** Everything
+else in World 2.0 survives because someone can clone the town: acts ride
+`archives/acts/<window>.jsonl`, marks ride `WORLD2/marks/**`, and both are
+frozen or re-derivable from a checkout. A `draft`-status claim rides neither,
+because riding either would put a resident's unfinished private sentence in a
+public git repo permanently — which is exactly the 1.0 defect (P-108) that
+Phase 5.6 exists to close. So the tradeoff is named rather than papered over:
+**private and repo-durable are not both available, and privacy wins.** A draft
+lost to a dead disk is a draft; a draft in a public archive is a broken promise.
+
+Two independent reasons a draft cannot reach the repo, so this is not a rule
+anyone has to remember:
+
+1. `snapshot-export.mjs` selects from `acts`, `marks` and `windows` — never from
+   `claims`. There is nothing for it to find.
+2. Its credential is `snapshot_reader`, and 007's row policy makes a draft row
+   unreturnable to it. `falsifier-draft-privacy.mjs --self-test` proves that
+   half by opening the hole and watching the check go red.
+
+### The hand-run
+
+Owner role (it is the one credential not subject to the policy, so it is the one
+that can dump a draft at all — see 007 § *why not `FORCE ROW LEVEL SECURITY`*).
+A full dump carries draft rows by nature; no `--table` or `WHERE` is wanted, and
+narrowing to `claims` alone would produce a file that cannot be restored into
+anything.
+
+```bash
+# on the box, as a user who can read the credential file
+set -a; . /etc/postmark-world2-dev.env; set +a
+PGPASSWORD="$PG_WORLD2_OWNER_PASSWORD" pg_dump \
+  --host localhost --username world2_owner --dbname world2_dev \
+  --format=custom --no-owner --no-acl \
+  --file "/srv/world2-lab/private-dumps/world2-$(date -u +%Y%m%dT%H%M%SZ).dump"
+```
+
+Lands in `/srv/world2-lab/private-dumps/` — **outside any git checkout and
+outside any webroot**, which is the whole point of naming the path here rather
+than leaving it to the runner. A dump inside `office/` would be committed by the
+next pen that ran `git add -A`, and this file is precisely the thing that must
+never be committed. Restore with `pg_restore --clean --if-exists -d <db>`.
+
+**No timer, by manifest law** — nothing here schedules itself, and this is a
+hand-run before anything that could lose the store (a migration touching
+`claims`, a box move, a Postgres upgrade). When drafts are load-bearing enough
+that a hand-run is not enough, that is a ruling to bring to Keemin with the
+instance that made it true, not a cron to add quietly.
+>>>>>>> be203f61e6e66dd4b28869ad22a82e1ed8a66e30
+
+## Merge rulings (Wright, 2026-08-28 night — the drafts lane's teed decisions)
+
+The slice's own foundational call — **a draft is not an act** — ACCEPTED as the load-bearing insight: a body in the append-only public archive would be beyond any row policy forever, so composing writes no journal/acts row and SUBMIT is the act. (1) Grammar KEPT as shipped: draft:true composes; submit ships flat (world_submit_mark + POST /world/submit) with the apex DISPATCH row waiting on the law grant — planted at cutover, law-tier. (2) "draft" terminology KEPT — the 1.0 collision self-retires at cutover. (3) No FORCE RLS — accepted as argued. (4) Shadow-era honesty note carried to the tracker verbatim: privacy is complete only BEFORE submit until phase 6 kills the 1.0 path. (5) claims.slug drive-by accepted (006's intent). (6) v0 bounds accepted — and the stamps-leak insight (a public escrow line behind an unreadable mark would leak on the ledger side) is RECORDED AS LAW here: escrow executes at the submit boundary, never before.
+FOLLOW-UP SLICE (honoring Keemin's stake-is-submit ruling exactly): `do:"stake"` aimed at one's own draft PROMOTES it in the same motion (going public is what staking means), then writes the escrow line — the leak ordering preserved. Small; rides the next office pass.

@@ -17,6 +17,8 @@
 //   A de-sited mark IS standing; a consumer that wants a `where` on every row
 //   asks for the default.
 
+import { readDraftClaims } from "./world2-claims.mjs";
+
 const state = { pool: null };
 
 export function world2ServeEnabled(env = process.env) {
@@ -28,6 +30,32 @@ async function pool(env = process.env) {
   const { default: pg } = await import("pg");
   state.pool = new pg.Pool({ connectionString: env.WORLD2_PG_URL, max: 3 });
   return state.pool;
+}
+
+/**
+ * GET /world2/my-drafts — the one KEY-SCOPED door in this tier.
+ *
+ * Every other read here is keyless because the docket is public. This one
+ * cannot be, and it is deliberately not routed through `world2Serve` below:
+ * that function's whole signature is `(path, searchParams)`, which has nowhere
+ * to put a credential, so a private read added to it would have had to invent
+ * a way to carry one. server.mjs calls this directly, with the key it already
+ * holds.
+ *
+ * THE SCOPING IS NOT DONE HERE, and that is the design. This function passes
+ * the key to `readDraftClaims`, which resolves the household through the SAME
+ * resolver the write path used and asks inside a `SET LOCAL app.household`
+ * transaction. The row policy in 007 is what makes another household's drafts
+ * unreturnable — so a bug in this file cannot widen the answer, and the door's
+ * WHERE clause is belt to the policy's braces rather than the only strap.
+ */
+export async function world2MyDrafts(key) {
+  const { household, drafts } = await readDraftClaims(key);
+  return {
+    what: "your household's private compose space — every draft you hold, and nobody else can ask this question about you",
+    household, count: drafts.length, drafts,
+    privacy: "these stand on no docket, in no export, in no archive, and in no public answer. Submitting one is the act that makes it public, and it crosses once.",
+  };
 }
 
 /**
