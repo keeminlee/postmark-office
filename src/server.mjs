@@ -42,8 +42,8 @@ import { fundVerifyViaOffice, intakeDisclosure, POT_RE as FUND_POT_RE, INTAKE as
 import { channelOf, countAct, actsByChannel } from "./channel.mjs";
 import { logAccess } from "./telemetry.mjs";
 import { settlements } from "./settlements.mjs";
-import { worldSummary, worldOrient, worldEyes, worldInvestigate, worldStateRaw, worldSkeletonRaw, worldMyMarks, leaveMarkViaOffice, walkViaOffice, worldNoteViaOffice, worldWalkers, worldPresent, worldConversations, worldSay, worldSayHuman, whoami, worldBlockForHandle, resetPlaceWordsCache, WORLD_CLONE } from "./world.mjs";
-import { world2Serve, world2ServeEnabled } from "./world2-serve.mjs";
+import { worldSummary, worldOrient, worldEyes, worldInvestigate, worldStateRaw, worldSkeletonRaw, worldMyMarks, leaveMarkViaOffice, submitMarkViaOffice, discardDraftViaOffice, walkViaOffice, worldNoteViaOffice, worldWalkers, worldPresent, worldConversations, worldSay, worldSayHuman, whoami, worldBlockForHandle, resetPlaceWordsCache, WORLD_CLONE } from "./world.mjs";
+import { world2MyDrafts, world2Serve, world2ServeEnabled } from "./world2-serve.mjs";
 import { callHoldTool } from "./world-hold.mjs"; // curl parity: /world/hold + /world/holdings (2026-08-15)
 import { APEX_TOOL, apexEnabled, dispatchToolFor, worldApex } from "./world-apex.mjs"; // stage 3: the apex verb — keyless read half + the POST act door (08-17)
 import { worldStakeViaOffice, worldUnstakeViaOffice, worldStakeRead } from "./world-stake.mjs"; // P3 draft
@@ -745,9 +745,22 @@ const server = createServer((req, res) => {
         res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
         return res.end(readFileSync(page));
       }
+      // THE ONE KEY-SCOPED WORLD 2.0 READ, and it is ahead of the keyless
+      // router deliberately: every other /world2/* door is public (the docket
+      // being public is half the candle's point), and this one cannot be, so it
+      // is answered here where the key is in hand rather than inside a module
+      // that never receives one. A door that could forget to ask for the key is
+      // a door that eventually does.
+      if (path === "/world2/my-drafts") {
+        if (!world2ServeEnabled()) return bounce(res, 404, "no such door", "the world 2.0 store is not engaged at this office");
+        if (!key) { setWwwAuth(res); return bounce(res, 401, "no key at the door", "your drafts are yours alone — sign in as your resident household first"); }
+        return world2MyDrafts(key)
+          .then((r) => j(res, 200, r))
+          .catch((e) => bounce(res, 500, "the drafts door tripped", String(e?.message ?? e).slice(0, 200)));
+      }
       if (path.startsWith("/world2/")) {
         return world2Serve(path, url.searchParams)
-          .then((r) => (r ? j(res, r.code, r.body) : bounce(res, 404, "no such world2 door", "reads: /world2/docket /world2/marks /world2/mark?slug= /world2/windows /world2/status")))
+          .then((r) => (r ? j(res, r.code, r.body) : bounce(res, 404, "no such world2 door", "reads: /world2/docket /world2/marks /world2/mark?slug= /world2/windows /world2/status /world2/my-drafts (yours, keyed)")))
           .catch((e) => bounce(res, 500, "the world2 door tripped", String(e?.message ?? e).slice(0, 200)));
       }
       if (path === "/world") return worldSummary(key).then((r) => j(res, 200, r)).catch((e) => bounce(res, 500, "the world door tripped", String(e?.message ?? e).slice(0, 200)));
@@ -1443,6 +1456,41 @@ const server = createServer((req, res) => {
         } catch (e) {
           if (e.code) return bounce(res, e.code, e.defect, e.hint);
           if (e instanceof SyntaxError) return bounce(res, 400, "body is not JSON", '{"slug","kind","body", …}');
+          return bounce(res, 500, "the office tripped", String(e?.message ?? e).slice(0, 200));
+        }
+      }).catch(() => bounce(res, 400, "could not read the body", "send a JSON object"));
+      return;
+    }
+
+    // POST /world/submit — cross the private/public boundary (credentialed).
+    // The curl twin of world_submit_mark: the draft is replayed as an ordinary
+    // leave-mark, so this answers with a leave-mark's own answer plus the claim
+    // it promoted. 200 for the same reason /world/marks is: the act is done now.
+    if (req.method === "POST" && path === "/world/submit") {
+      if (!key) return bounce(res, 401, "submitting a draft needs a key", "your drafts are household-private — send your resident key as a Bearer token");
+      readJsonBody(req).then(async (raw) => {
+        try {
+          const result = await submitMarkViaOffice(WORLD_CLONE, JSON.parse(raw || "{}"), key);
+          return j(res, 200, result);
+        } catch (e) {
+          if (e.code) return bounce(res, e.code, e.defect, e.hint);
+          if (e instanceof SyntaxError) return bounce(res, 400, "body is not JSON", '{"mark":"<by>/<slug>"}');
+          return bounce(res, 500, "the office tripped", String(e?.message ?? e).slice(0, 200));
+        }
+      }).catch(() => bounce(res, 400, "could not read the body", "send a JSON object"));
+      return;
+    }
+
+    // POST /world/discard-draft — end a draft (credentialed).
+    if (req.method === "POST" && path === "/world/discard-draft") {
+      if (!key) return bounce(res, 401, "discarding a draft needs a key", "your drafts are household-private — send your resident key as a Bearer token");
+      readJsonBody(req).then(async (raw) => {
+        try {
+          const result = await discardDraftViaOffice(WORLD_CLONE, JSON.parse(raw || "{}"), key);
+          return j(res, 200, result);
+        } catch (e) {
+          if (e.code) return bounce(res, e.code, e.defect, e.hint);
+          if (e instanceof SyntaxError) return bounce(res, 400, "body is not JSON", '{"mark":"<by>/<slug>"}');
           return bounce(res, 500, "the office tripped", String(e?.message ?? e).slice(0, 200));
         }
       }).catch(() => bounce(res, 400, "could not read the body", "send a JSON object"));
