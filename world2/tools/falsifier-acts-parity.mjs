@@ -27,7 +27,14 @@ const arg = (name) => {
 const has = (name) => process.argv.includes(name);
 
 const norm = (v) => (v === undefined || v === null ? null : v);
-const substance = (r) => JSON.stringify({
+// jsonb re-orders object keys (length, then bytewise — the seed importer's
+// verify hit the same false alarm on all 409 marks). Canonicalize in the
+// COMPARATOR: the question is about a value, not a serialisation.
+const canon = (v) => Array.isArray(v) ? v.map(canon)
+  : v && typeof v === "object"
+    ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, canon(v[k])]))
+    : v;
+const substance = (r) => JSON.stringify(canon({
   crossing: r.crossing == null ? null : Number(r.crossing),
   actor: r.actor, action: r.action, object: norm(r.object),
   at_anchor: norm(r.at_anchor),
@@ -37,7 +44,7 @@ const substance = (r) => JSON.stringify({
   class: r.class, payload: r.payload == null ? null : JSON.parse(typeof r.payload === "string" ? r.payload : JSON.stringify(r.payload)),
   effect: norm(r.effect), household: norm(r.household),
   written_at: new Date(r.written_at).toISOString(),
-});
+}));
 
 if (has("--prove-can-fail")) {
   const a = { crossing: 1, actor: "x", action: "say", object: null, at_anchor: null, at_dx: null, at_dy: null, witnesses: null, class: "c", payload: null, effect: null, household: null, written_at: "2026-08-28T00:00:00.000Z" };
