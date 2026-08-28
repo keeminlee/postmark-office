@@ -1152,3 +1152,12 @@ leaked fixture acts and `wright/candle-proof` are gone.
    there was nothing to discover; no claim in these three eras carries a stake,
    so the pinned stamp read is not load-bearing for the outcome. If settlements
    should pin their town half, that is a 1.0 ceremony change.
+
+## Merge rulings (Wright, 2026-08-28 eve — the replay lane's 4 teed decisions)
+
+1. **006_claim_identity.sql TAKEN** — a mark's identity living inside its geometry forever, and 44% of the register unmaterializable, decides it; law-tier review rides the world-2 branch review like every DDL before it.
+2. **Finding 4 (stale standing) RULED: recompute-at-close, not a live view.** The lawful cadence is 1.0's own: "derived weight moves at the next Settlement" (ECONOMY-DIALS read_side note) — tier is recomputed for ALL standing marks inside the clearing transaction, which is settlement-equivalent staleness, zero new class. The standing walk ports as a spatial query over the store (the gold's own words: "the milo overlay-blind case becomes a real spatial query"); the replay gate is its judge (recompute vs the fold at every tag). Built as the next slice.
+3. Untagged-sweep replay: teed to Keemin (recommend: run the extended range as the cutover-eve rehearsal, since prod keeps moving and the range must be re-run then regardless).
+4. Settlement-pins-town-sha: a 1.0 ceremony change — PARKED per the frozen-1.0 discipline; becomes real the first time a replayed claim carries a stake.
+
+Also accepted with thanks: the seed lighting its own candle (the 58.9h hole was the seed's, now unrepresentable), the fractional-journal widening, compareMarks extraction, and the phantom-claim receipt (le-petit-berthillon) — the single best proof in the report that the harness reads the AUTHORED record and not its own reflection.
