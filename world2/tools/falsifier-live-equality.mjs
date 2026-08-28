@@ -734,7 +734,15 @@ else {
   if (out.can_fail) {
     console.log("\ncan-fail proof (the port's inputs broken in memory; the store is never touched):");
     for (const r of out.can_fail.results)
-      console.log(`  ${r.findings > 0 ? "RED   " : r.findings === 0 ? "SILENT" : "THREW "} ${r.mangle} — ${r.findings > 0 ? `${r.findings} finding(s)` : r.findings === 0 ? "NOTHING NOTICED" : r.note}`);
+      // INERT is not SILENT, and the difference is the whole point of the
+      // standing lane's finding: a break that altered none of its own inputs
+      // proves nothing, and reading it as "the falsifier missed it" would be a
+      // proof lying in the safe direction. It is a defect in the PROOF, named
+      // as one, with the reason the record gave it.
+      console.log(r.bit === 0
+        ? `  INERT  ${r.mangle} — the break altered no input (the record holds none of that shape), so it proves nothing here`
+        : `  ${r.findings > 0 ? "RED   " : r.findings === 0 ? "SILENT" : "THREW "} ${r.mangle} — ${r.findings > 0 ? `${r.findings} finding(s)` : r.findings === 0 ? "NOTHING NOTICED" : r.note}`);
+    if (out.can_fail.inert.length) console.log(`  ${out.can_fail.inert.length} break(s) INERT — exercised by the unit suite instead (test/world2-live-reads.test.mjs)`);
     console.log(out.can_fail.silent.length
       ? `  can-fail NOT PROVEN: ${out.can_fail.silent.length} break(s) went unnoticed`
       : "  can-fail PROVEN: every break turned the falsifier red");
