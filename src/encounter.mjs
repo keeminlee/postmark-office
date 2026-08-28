@@ -96,10 +96,17 @@ export function rollOf({ at, actId, actor, die, salt = "" }) {
 /**
  * The order, the round, and whose turn it is — all derived.
  *
- * `joins` are the crossings in log order: `{who, kind, seq, initiative}`. A
- * late arrival APPENDS TO THE BOTTOM at the next round boundary and never
- * mid-round, because an order that can change under a hand mid-round is an
- * order nobody can read (LOGOS § The arena).
+ * `joins` are the hands on the wheel in log order: `{who, kind, seq,
+ * initiative}` — ONE ENTRY PER HAND. A late arrival APPENDS TO THE BOTTOM at
+ * the next round boundary and never mid-round, because an order that can change
+ * under a hand mid-round is an order nobody can read (LOGOS § The arena).
+ *
+ * ⚠ THE ONE-ENTRY-PER-HAND INVARIANT IS THE FOLD'S TO KEEP, and this function
+ * does not re-check it: a rejoin RETIRES the returner's old entry in
+ * `foldEncounter` rather than being de-duplicated here, so that the wipe and
+ * every other reader of `joins` gets the same answer the wheel does. A caller
+ * who hands this raw crossings — two entries for one hand — will get two slots,
+ * which is a hand taking two turns a round.
  *
  * `turnsTaken` counts turn-ending acts already folded. `downed` and `left` are
  * skipped: the wheel does not stop for someone who cannot act, and it does not
@@ -237,10 +244,30 @@ export function foldEncounter(rows = [], { dials = {}, weaponOf = () => null } =
 
     // ── the crossings ────────────────────────────────────────────────────────
     if (verb === "join") {
-      if (joins.some((j) => j.who === actor) && !left.has(actor)) { ignored.push({ seq: r.seq, actor, why: "already in the wheel" }); continue; }
+      const held = joins.findIndex((j) => j.who === actor);
+      if (held >= 0 && !left.has(actor)) { ignored.push({ seq: r.seq, actor, why: "already in the wheel" }); continue; }
       // A REJOIN KEEPS THE HP YOU LEFT WITH. LOGOS § Downed, not dead:
       // "Strength is ENCOUNTER-scoped, and fleeing does not heal you." Without
       // this the door is the strongest move in the room.
+      //
+      // ⚠ AND IT TAKES ONE SLOT BACK, NEVER A SECOND. `leave` never removed the
+      // entry — it only added the hand to `left`, and `wheelOf` drops the
+      // departed by consulting `left`. So clearing `left` here and appending a
+      // second entry left BOTH past the filter: two seats, two turns a round,
+      // stacking with every cycle through the door. The clause above names that
+      // exact failure for the hit points; the turn economy is the same door and
+      // the same answer. RETIRING THE STALE ENTRY IS DONE HERE, IN THE FOLD,
+      // rather than by de-duplicating inside `wheelOf`, because `joins` has
+      // readers that are not the wheel — the wipe's `hands` filter walks it
+      // directly, and a duplicate there named one hand twice in the beat that
+      // records a defeat. One owner of "one entry per hand", and every reader
+      // of `joins` inherits it.
+      //
+      // The splice happens BEFORE `wheelNow()` below, so the returner is out of
+      // the wheel at the instant their own round is computed — the same footing
+      // a first-time joiner stands on, and the same room the fight has been
+      // reporting ever since they walked out.
+      if (held >= 0) joins.splice(held, 1);
       left.delete(actor);
       const w = wheelNow();
       const roundJoined = joins.length === 0 ? 1 : (w.round > 1 || turnsTaken > 0 ? w.round + 1 : 1);
