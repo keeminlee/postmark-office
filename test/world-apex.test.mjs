@@ -477,25 +477,8 @@ test("the slim: rounds three and four take the listing to six; world_note and wo
     // transport door with no register semantics and two world flats that have
     // no apex twin yet (the standing ruling: a delist must never hide a
     // capability with no other door).
-    // ── 6 → 8 (Phase 5.6, the private compose space) ──────────────────
-    //
-    // `world_submit_mark` and `world_discard_draft` join the survivors, and
-    // they join for the survivors' own stated reason rather than as an
-    // exception to it: "a delist must never hide a capability with no other
-    // door." Neither has an apex twin. Composing does — `draft: true` is a
-    // field on `leave-mark`, which the apex serves — but SUBMIT is a verb no
-    // class mark affords yet (the grant belongs in `the-town/resident`'s
-    // `actions` array, in the world law repo, and is Keemin's word), so
-    // `world { do: "submit" }` bounces with "afforded nowhere in the world".
-    // Delisting the flat would leave the boundary act reachable by nothing.
-    //
-    // THIS PAIR RETIRES ITSELF. The day that grant is planted, `submit` starts
-    // resolving through the apex — world-apex.mjs already carries the dispatch
-    // row waiting for it — and both flats become delistable on the same
-    // ruling that lists them now.
-    assert.deepEqual([...names].sort(), ["household", "town", "upload_media", "world",
-      "world_discard_draft", "world_investigate", "world_note", "world_submit_mark"]);
-    assert.equal(names.length, 8);
+    assert.deepEqual([...names].sort(), ["household", "town", "upload_media", "world", "world_investigate", "world_note"]);
+    assert.equal(names.length, 6);
   });
 });
 

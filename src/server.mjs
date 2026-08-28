@@ -42,7 +42,7 @@ import { fundVerifyViaOffice, intakeDisclosure, POT_RE as FUND_POT_RE, INTAKE as
 import { channelOf, countAct, actsByChannel } from "./channel.mjs";
 import { logAccess } from "./telemetry.mjs";
 import { settlements } from "./settlements.mjs";
-import { worldSummary, worldOrient, worldEyes, worldInvestigate, worldStateRaw, worldSkeletonRaw, worldMyMarks, leaveMarkViaOffice, submitMarkViaOffice, discardDraftViaOffice, walkViaOffice, worldNoteViaOffice, worldWalkers, worldPresent, worldConversations, worldSay, worldSayHuman, whoami, worldBlockForHandle, resetPlaceWordsCache, WORLD_CLONE } from "./world.mjs";
+import { worldSummary, worldOrient, worldEyes, worldInvestigate, worldStateRaw, worldSkeletonRaw, worldMyMarks, leaveMarkViaOffice, walkViaOffice, worldNoteViaOffice, worldWalkers, worldPresent, worldConversations, worldSay, worldSayHuman, whoami, worldBlockForHandle, resetPlaceWordsCache, WORLD_CLONE } from "./world.mjs";
 import { world2MyDrafts, world2Serve, world2ServeEnabled } from "./world2-serve.mjs";
 import { callHoldTool } from "./world-hold.mjs"; // curl parity: /world/hold + /world/holdings (2026-08-15)
 import { APEX_TOOL, apexEnabled, dispatchToolFor, worldApex } from "./world-apex.mjs"; // stage 3: the apex verb — keyless read half + the POST act door (08-17)
@@ -1462,41 +1462,6 @@ const server = createServer((req, res) => {
       return;
     }
 
-    // POST /world/submit — cross the private/public boundary (credentialed).
-    // The curl twin of world_submit_mark: the draft is replayed as an ordinary
-    // leave-mark, so this answers with a leave-mark's own answer plus the claim
-    // it promoted. 200 for the same reason /world/marks is: the act is done now.
-    if (req.method === "POST" && path === "/world/submit") {
-      if (!key) return bounce(res, 401, "submitting a draft needs a key", "your drafts are household-private — send your resident key as a Bearer token");
-      readJsonBody(req).then(async (raw) => {
-        try {
-          const result = await submitMarkViaOffice(WORLD_CLONE, JSON.parse(raw || "{}"), key);
-          return j(res, 200, result);
-        } catch (e) {
-          if (e.code) return bounce(res, e.code, e.defect, e.hint);
-          if (e instanceof SyntaxError) return bounce(res, 400, "body is not JSON", '{"mark":"<by>/<slug>"}');
-          return bounce(res, 500, "the office tripped", String(e?.message ?? e).slice(0, 200));
-        }
-      }).catch(() => bounce(res, 400, "could not read the body", "send a JSON object"));
-      return;
-    }
-
-    // POST /world/discard-draft — end a draft (credentialed).
-    if (req.method === "POST" && path === "/world/discard-draft") {
-      if (!key) return bounce(res, 401, "discarding a draft needs a key", "your drafts are household-private — send your resident key as a Bearer token");
-      readJsonBody(req).then(async (raw) => {
-        try {
-          const result = await discardDraftViaOffice(WORLD_CLONE, JSON.parse(raw || "{}"), key);
-          return j(res, 200, result);
-        } catch (e) {
-          if (e.code) return bounce(res, e.code, e.defect, e.hint);
-          if (e instanceof SyntaxError) return bounce(res, 400, "body is not JSON", '{"mark":"<by>/<slug>"}');
-          return bounce(res, 500, "the office tripped", String(e?.message ?? e).slice(0, 200));
-        }
-      }).catch(() => bounce(res, 400, "could not read the body", "send a JSON object"));
-      return;
-    }
-
     // POST /world/walks — declare a departure (credentialed). The pen appends ONE
     // line to the movement ledger; position is derived by every reader from that
     // line and the clock, so nothing en route is stored and no arrival is written.
@@ -1653,7 +1618,7 @@ const server = createServer((req, res) => {
       return;
     }
 
-    return bounce(res, 404, "no such door", "writes: POST /households (join — declare your house and move in), POST /letters, POST /votes/stake, POST /residency, POST /ops/gift (principal), POST /fund/verify (witness a USDC payment against a pot), POST /media (image up, URL back), POST /world/marks (draft: true composes privately), POST /world/submit, POST /world/discard-draft, POST /world/walks, POST /world/say, POST /world/stake|/world/unstake, PATCH /address|/home|/profile|/window /{handle}, PATCH /profile/{handle}/avatar, PATCH /home/{handle}/image; reads are all GET (incl. /votes, /world/*, /fund/intake)");
+    return bounce(res, 404, "no such door", "writes: POST /households (join — declare your house and move in), POST /letters, POST /votes/stake, POST /residency, POST /ops/gift (principal), POST /fund/verify (witness a USDC payment against a pot), POST /media (image up, URL back), POST /world/marks, POST /world/walks, POST /world/say, POST /world/stake|/world/unstake, PATCH /address|/home|/profile|/window /{handle}, PATCH /profile/{handle}/avatar, PATCH /home/{handle}/image; reads are all GET (incl. /votes, /world/*, /fund/intake)");
   } catch (e) {
     return bounce(res, 500, "the office tripped", String(e?.message ?? e).slice(0, 200));
   }

@@ -22,6 +22,33 @@
 --    tension: residents gain real privacy 1.0 only pretended to have (a
 --    draft/<household> branch in a public repo was always readable)."
 --
+-- ── THE BOUNDARY, AS RULED (Keemin, 2026-08-28) ─────────────────────────────
+--
+-- The gold plan above says "the SUBMIT verb", and the ruling that followed it
+-- says submit is NOT A NEW WORD. Both states are recorded here rather than one
+-- quietly replacing the other, because the second only makes sense against the
+-- first: the plan named the boundary correctly and guessed wrong about how the
+-- town would spell it.
+--
+--   "SUBMIT IS NOT A NEW WORD — it is implicit in staking on a draft. The
+--    town's own economy law decides it ('a commons mark PUBLISHES ONLY WITH
+--    ESCROW BEHIND IT' — town#1990): staking a nonzero amount on a draft mark
+--    IS the submission act."
+--
+-- So the lexicon gains nothing. `leave-mark` unstaked composes privately;
+-- staking it — inline with `stamps:` or later with `world_stake` — is what puts
+-- it on the docket; `world_withdraw_mark` already means "let this go" and
+-- deletes a draft rather than retracting it. The ZERO-MINIMUM EDGE is the one
+-- refinement: the ground's lawful minimum is 0 on your household's own
+-- sovereign ground (an explicit `stamps: 0` there is a deliberate
+-- putting-forward) and 1 on the commons, where a zero is refused with the law
+-- named and the mark simply stays private.
+--
+-- NOTHING IN THIS FILE CHANGES for that ruling, which is the useful thing to
+-- notice: the status, the row policy, the one-way trigger and the narrowed
+-- DELETE were all about what a draft IS and who may see it, never about which
+-- word crosses the boundary. The grammar moved and the substrate did not.
+--
 -- ── WHY THE ROW POLICY AND NOT A WHERE CLAUSE ───────────────────────────────
 --
 -- "Enforced structurally, not by vigilance" is the whole sentence. A `WHERE
@@ -36,7 +63,8 @@
 --
 -- ── THE ONE-WAY BOUNDARY ────────────────────────────────────────────────────
 --
--- draft → pending crosses once. Nothing returns to 'draft' (the trigger below
+-- draft → pending crosses once (the crossing act is a STAKE — see the ruling
+-- above). Nothing returns to 'draft' (the trigger below
 -- refuses it by name): a claim that has stood on the public docket has been
 -- read, and un-publishing a read thing is a promise the town cannot keep. This
 -- is the same shape as the acts log's append-only rule, one lane over.

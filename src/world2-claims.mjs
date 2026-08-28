@@ -21,6 +21,7 @@
 // both when present).
 
 import { boxOf } from "../world2/tools/seed-import.mjs";
+import { mirrorAct } from "./world2-acts.mjs"; // Phase 5.6: a deferred act, released when a stake makes it public
 
 const state = { queue: Promise.resolve(), written: 0, failed: 0, submitted: 0, lastError: null, pool: null };
 
@@ -116,7 +117,32 @@ export async function householdKeyFor(p, handle) {
   return key ?? `solo:${handle}`;
 }
 
-/** Called from appendJournal beside mirrorAct, with the same normalized row. */
+/**
+ * Called from appendJournal beside mirrorAct, with the same normalized row.
+ *
+ * -- THE STAKE IS THE BOUNDARY (Keemin's ruling, 2026-08-28) -----------------
+ *
+ * Submit is not a word. The town's own economy law already decided where the
+ * private/public line falls -- "a commons mark PUBLISHES ONLY WITH ESCROW
+ * BEHIND IT" (town#1990) -- so STAKING a mark IS submitting it, and this pen
+ * reads the status straight off that law instead of off a flag:
+ *
+ *   leave-mark, unstaked            -> status 'draft'   (private compose space)
+ *   leave-mark with stamps: n>0     -> status 'pending' (draft + stake, one act)
+ *   a later world_stake on a draft  -> promoted to 'pending' (promoteDraftOnStake)
+ *
+ * `put_forward` is the DOOR's verdict, not the caller's word: the door owns the
+ * ground check (commons needs >0; your own sovereign ground allows an explicit
+ * 0) because the ground's lawful minimum is law, and law is readable
+ * office-side and not from in here.
+ *
+ * THIS CHANGES WHAT THE DOCKET CONTAINS, deliberately and for every lane: an
+ * unstaked commons mark never published in 1.0 either -- it sat invisible in a
+ * household branch -- so a docket carrying it was 2.0 promising a hearing that
+ * 1.0's economy would never have given it. Sibling lanes asserting on docket
+ * counts (A/B parity, replay) will see the difference, and it is the fix rather
+ * than drift.
+ */
 export function submitClaimFromJournal(row, seq, env = process.env) {
   if (!candleEnabled(env)) return;
   if (!MARK_CLASSES.has(row.class)) return;
@@ -130,10 +156,28 @@ export function submitClaimFromJournal(row, seq, env = process.env) {
         "SELECT id FROM windows WHERE status = 'open' ORDER BY id DESC LIMIT 1");
       if (!win) throw new Error("no open window — the candle is dark; bootstrap the next window before the docket can take claims");
 
-      // withdraw → retraction: free until the close (gold §1). The guard in
-      // 002_grants.sql permits exactly this transition and nothing else.
+      const household = await householdKeyFor(p, row.household ?? row.actor);
+
+      // -- withdraw ---------------------------------------------------------
+      //
+      // TWO OUTCOMES, and which one happens is read off what the claim IS
+      // rather than off a second verb. Withdrawing a PENDING claim is a
+      // retraction: it has stood on the public docket, so the row stays and
+      // says it ended. Withdrawing a DRAFT is a deletion, because nothing
+      // outside the household ever saw it and nothing outside is owed an
+      // account of its ending -- the one deletion this town performs, argued in
+      // 007's header and enforced by claims_delete_own_draft + the delete guard.
+      //
+      // This is why the ruling needs no discard verb: withdraw already means
+      // "let this go", and 1.0's own withdraw answer already branches the same
+      // way ("the draft is gone — it never crossed, so there is nothing to
+      // unpublish").
       if (row.action === "withdraw") {
         const slug = row.object; // the journal's object IS the <by>/<slug> id
+        const dropped = await withHousehold(p, household, (c) => c.query(
+          "DELETE FROM claims WHERE status = 'draft' AND slug = $1 AND claimant = $2 AND household = $3",
+          [slug, row.actor, household]));
+        if (dropped.rowCount) { state.written += 1; return; }
         const { rowCount } = await p.query(
           `UPDATE claims SET status = 'retracted', decided_at = now()
            WHERE window_id = $1 AND status = 'pending' AND geometry->>'slug' = $2 AND claimant = $3`,
@@ -147,9 +191,10 @@ export function submitClaimFromJournal(row, seq, env = process.env) {
       const kind = payload.kind ?? "sited";
       const placed = payload.at && payload.extent;
       const slug = `${payload.by ?? row.actor}/${payload.slug}`;
-      const { slug: _s, at, extent, points, body, stamps, ...rest } = payload;
+      const { slug: _s, at, extent, points, body, stamps, put_forward, ...rest } = payload;
       const geometry = placed ? { slug, at, extent, ...(points ? { points } : {}) } : { slug };
       const bbox = placed ? boxOf(at, extent) : null;
+      const status = put_forward === true ? "pending" : "draft";
 
       // amend → the supersession chain: the clearing computes head-of-chain
       // (its transition 2), so the new claim names the pending one it amends.
@@ -162,44 +207,63 @@ export function submitClaimFromJournal(row, seq, env = process.env) {
         supersedes = prior?.id ?? null; // amending a published mark: no in-window chain, fresh claim
       }
 
-      // The journal's `household` is the resident's own handle; the column wants
-      // the KEY. Resolved on the handle the journal states, falling back to the
-      // actor when it states none.
-      const household = await householdKeyFor(p, row.household ?? row.actor);
-      const data = Object.keys(rest).length
-        ? JSON.stringify({ ...rest, _journal_seq: seq })
-        : JSON.stringify({ _journal_seq: seq });
+      // THE DEFERRED ACT rides on the draft it belongs to (world2-acts.mjs
+      // § the deferral). A draft is not a public deed, so nothing was mirrored;
+      // the row is carried here, in the claim's own `data`, and mirrored the
+      // moment a stake makes it public. Carried in the DATABASE rather than in
+      // process memory on purpose: a draft composed before a restart and staked
+      // after it must still be able to become an act.
+      const data = JSON.stringify({
+        ...rest, _journal_seq: seq,
+        ...(status === "draft" ? { _deferred_act: { ...row, _seq: seq } } : {}),
+      });
 
-      // ── SUBMIT: the private/public boundary, crossed (gold §4 Phase 5.6) ──
+      // -- the stake crossing the boundary, in ONE act ------------------------
       //
-      // If this act's author already holds a PRIVATE DRAFT of this slug, the act
-      // does not create a second claim — it promotes the one they composed.
-      // Everything the act declares wins (the act is the deed; the draft was a
-      // sketch of it), and the row keeps its uuid, so a resident who watched
-      // their draft's id is looking at the same claim afterwards.
+      // If this act's author already holds a private draft of this slug, the act
+      // does not create a second claim -- it rewrites the one they composed.
+      // Composing again while unstaked keeps it a draft; composing WITH a stake
+      // is the same motion as submitting, and the row goes pending.
       //
-      // window_id and submitted_at move here, and only here: a draft rides no
-      // candle. It joins the one burning at the moment its author submits, which
-      // is what the candle's law has always said — everything submitted since
-      // the last close belongs to the next window (005's header).
-      //
-      // `_journal_seq` lands in the same statement, which is what keeps the
-      // closure falsifier honest: the promoted row is this act's ONE docket row.
+      // The row keeps its uuid either way, so a resident watching their draft's
+      // id is looking at the same claim afterwards. window_id and submitted_at
+      // move only when it goes pending: a draft rides no candle, and takes the
+      // one burning at the moment it is put forward.
+      // The rewritten `data` above simply does not carry `_deferred_act` when
+      // the row goes pending, so the promotion DROPS it in the same statement.
+      // Dropped rather than mirrored, and the difference matters: this act is
+      // itself public (world-journal already mirrored it, because put_forward
+      // made it so), and mirroring the earlier private compose as well would
+      // put TWO acts behind one claim — which is exactly what the closure
+      // falsifier exists to catch. The compose was superseded by this
+      // declaration; only the declaration is a deed.
       const promoted = await withHousehold(p, household, (c) => c.query(
-        `UPDATE claims SET status = 'pending', window_id = $1, submitted_at = now(),
-                class = $2, body = $3, geometry = $4, bbox = $5, stake = $6,
-                supersedes = $7, data = $8, slug = $9
+        `UPDATE claims SET status = $12, class = $2, body = $3, geometry = $4, bbox = $5,
+                stake = $6, supersedes = $7, data = $8, slug = $9,
+                window_id = CASE WHEN $12 = 'pending' THEN $1 ELSE window_id END,
+                submitted_at = CASE WHEN $12 = 'pending' THEN now() ELSE submitted_at END
           WHERE status = 'draft' AND claimant = $10 AND slug = $9 AND household = $11
           RETURNING id`,
         [win.id, kind, body ?? null, JSON.stringify(geometry), bbox, stamps ?? 0,
-         supersedes, data, slug, row.actor, household]));
-      if (promoted.rowCount) { state.written += 1; state.submitted += 1; return; }
+         supersedes, data, slug, row.actor, household, status]));
+      if (promoted.rowCount) {
+        state.written += 1;
+        if (status === "pending") state.submitted += 1;
+        return;
+      }
 
-      await p.query(
-        `INSERT INTO claims (window_id, class, claimant, household, body, geometry, bbox, stake, supersedes, data, slug)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      // INSIDE the household transaction even for a plain pending insert, and
+      // the policy is what taught this: `claims_insert`'s WITH CHECK refuses a
+      // draft row whose household is not the one this transaction declared, so
+      // an insert outside `withHousehold` cannot plant a draft AT ALL. It failed
+      // exactly that way on the first live run — which is 007 working, not 007
+      // in the way: you may not create a private thing without saying whose it
+      // is. Pending rows would pass either way; one path is fewer.
+      await withHousehold(p, household, (c) => c.query(
+        `INSERT INTO claims (window_id, class, claimant, household, body, geometry, bbox, stake, supersedes, data, slug, status)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
         [win.id, kind, row.actor, household, body ?? null,
-         JSON.stringify(geometry), bbox, stamps ?? 0, supersedes, data, slug]);
+         JSON.stringify(geometry), bbox, stamps ?? 0, supersedes, data, slug, status]));
       state.written += 1;
     } catch (err) {
       state.failed += 1;
@@ -210,79 +274,64 @@ export function submitClaimFromJournal(row, seq, env = process.env) {
   return state.queue;
 }
 
-// ── THE PRIVATE COMPOSE SPACE (gold §4 Phase 5.6) ───────────────────────────
-//
-// The half of this pen that is NOT a mirror. Everything above shadows the 1.0
-// journal; the three functions below have no 1.0 twin, because 1.0 had nowhere
-// to put a private thing — a `draft/<household>` branch in a public repo was
-// always readable, which is the tension P-108 named and this closes.
-//
-// A DRAFT IS NOT AN ACT, and that is the load-bearing decision of this slice.
-// The notary exports `archives/acts/<window>.jsonl` into git, frozen on write;
-// an act carrying a draft's BODY would put that body in a public repo forever,
-// and no row policy on `claims` could reach it. So composing writes no journal
-// row and no `acts` row: the act is SUBMIT, which is the gold plan's own
-// sentence — "the submit verb is the private/public boundary". A draft is a
-// resident thinking, and the world does not witness thinking.
-//
-// The closure falsifier (falsifier-acts-claims-closure.mjs) asserts acts →
-// claims, one docket row per mark act. Drafts have no act, so they are outside
-// what it asserts, and the promotion above keeps the count at one when the act
-// finally arrives.
-//
-// These three throw rather than queueing: composing is synchronous to the
-// resident's request, unlike the fire-and-forget mirror. A draft that failed to
-// save must say so at the door, not in a log line nobody reads.
-
-/** The open window a draft would join if submitted now. Drafts ride no candle; the column wants one. */
-async function openWindow(c) {
-  const { rows: [win] } = await c.query(
-    "SELECT id FROM windows WHERE status = 'open' ORDER BY id DESC LIMIT 1");
-  if (!win) {
-    const e = new Error("no open window — the candle is dark; bootstrap the next window before the docket can take claims");
-    e.code = 503;
-    throw e;
-  }
-  return win.id;
-}
-
 /**
- * Save (or rewrite) one private draft. Returns { id, slug, rewritten }.
+ * A later `world_stake` on a draft: the boundary act, arriving on its own.
  *
- * UPSERT BY (claimant, slug), deliberately: a draft is a compose space, so
- * leaving the same slug again is editing, not colliding. A published mark of
- * that slug still bounces at the door above — that check is 1.0's and stays
- * there; this pen rules only on drafts.
+ * The ruling's plainest case -- you composed something, slept on it, and now
+ * you back it. Staking is submitting, so this is the whole of what the stake
+ * door has to do about the docket.
+ *
+ * ONE STATEMENT DOES THE PROMOTION AND THE STRIP, and that shape was taught by
+ * the transition guard rather than chosen: a second `UPDATE ... SET data = data
+ * - '_deferred_act'` on the now-PENDING row is not one of the four transitions
+ * 007 permits, so it raised — after the promotion had already committed and the
+ * act had already been mirrored. The guard was right and the code was wrong.
+ * Reading the held act BEFORE the update and stripping it IN the update leaves
+ * nothing for a second write to do.
+ *
+ * THE MIRROR RUNS OUTSIDE THE TRANSACTION, deliberately: `mirrorAct` holds its
+ * own pool and its own serial queue, and awaiting it from inside a client this
+ * function is holding is a deadlock waiting for the pool to be busy.
+ *
+ * THE ACT IS DATED AT THE PUTTING-FORWARD, not at the composing. The world
+ * witnessed a resident put this mark forward; it did not witness them thinking
+ * about it. Back-dating would also aim the row at a window the notary may have
+ * frozen already — an append-only archive refusing a late arrival, which is the
+ * repo catching the office rewriting history, correctly, over something that
+ * would have been our own doing.
+ *
+ * Returns { promoted, claim }. `promoted: false` is the ordinary answer for a
+ * stake on an already-public mark, and never an error.
  */
-export async function saveDraftClaim({ actor, householdName, declaration, seq = null }, env = process.env) {
+export async function promoteDraftOnStake({ actor, householdName, slug, stamps = 0 }, env = process.env) {
+  if (!candleEnabled(env)) return { promoted: false, claim: null };
   const p = await pool(env);
   const household = await householdKeyFor(p, householdName ?? actor);
-  const { slug: leaf, at, extent, points, body, stamps, kind: rawKind, ...rest } = declaration;
-  const kind = rawKind ?? "sited";
-  const slug = `${declaration.by ?? actor}/${leaf}`;
-  const placed = at && extent;
-  const geometry = placed ? { slug, at, extent, ...(points ? { points } : {}) } : { slug };
-  const bbox = placed ? boxOf(at, extent) : null;
-  const data = JSON.stringify({ ...rest, ...(seq == null ? {} : { _journal_seq: seq }) });
+  const { rows: [win] } = await p.query(
+    "SELECT id FROM windows WHERE status = 'open' ORDER BY id DESC LIMIT 1");
+  if (!win) throw new Error("no open window — the candle is dark; the stake cannot put this mark forward");
 
-  return withHousehold(p, household, async (c) => {
-    const windowId = await openWindow(c);
-    const updated = await c.query(
-      `UPDATE claims SET class = $1, body = $2, geometry = $3, bbox = $4, stake = $5,
-              data = $6, window_id = $7, submitted_at = now()
-        WHERE status = 'draft' AND claimant = $8 AND slug = $9 AND household = $10
-        RETURNING id`,
-      [kind, body ?? null, JSON.stringify(geometry), bbox, stamps ?? 0, data,
-       windowId, actor, slug, household]);
-    if (updated.rowCount) return { id: updated.rows[0].id, slug, rewritten: true };
-
-    const inserted = await c.query(
-      `INSERT INTO claims (window_id, class, claimant, household, body, geometry, bbox, stake, data, slug, status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'draft') RETURNING id`,
-      [windowId, kind, actor, household, body ?? null, JSON.stringify(geometry),
-       bbox, stamps ?? 0, data, slug]);
-    return { id: inserted.rows[0].id, slug, rewritten: false };
+  const out = await withHousehold(p, household, async (c) => {
+    const { rows: [draft] } = await c.query(
+      `SELECT id, data->'_deferred_act' AS held FROM claims
+        WHERE status = 'draft' AND claimant = $1 AND slug = $2 AND household = $3`,
+      [actor, slug, household]);
+    if (!draft) return null;
+    await c.query(
+      `UPDATE claims SET status = 'pending', window_id = $1, submitted_at = now(),
+              stake = GREATEST(stake, $2), data = data - '_deferred_act'
+        WHERE id = $3`,
+      [win.id, Number(stamps) || 0, draft.id]);
+    return draft;
   });
+  if (!out) return { promoted: false, claim: null };
+
+  if (out.held) {
+    const { _seq, ...actRow } = out.held;
+    await mirrorAct({ ...actRow, written_at: new Date().toISOString() }, _seq, env);
+  }
+  state.submitted += 1;
+  return { promoted: true, claim: out.id };
 }
 
 /**
@@ -294,7 +343,10 @@ export async function saveDraftClaim({ actor, householdName, declaration, seq = 
  * author something untrue about their own private thing. The row carries those
  * values because 001 declares them NOT NULL and a draft has to hold SOMETHING;
  * what it holds is not a fact about the draft, and the door does not present it
- * as one. Both become true, and are rewritten, at submit.
+ * as one. Both become true, and are rewritten, when a stake puts it forward.
+ *
+ * `data` is deliberately not returned: it carries `_deferred_act`, which is
+ * plumbing rather than anything the author wrote.
  */
 export async function readDraftClaims(key, env = process.env) {
   const p = await pool(env);
@@ -303,27 +355,6 @@ export async function readDraftClaims(key, env = process.env) {
     `SELECT id, slug, class, claimant, body, geometry, stake, submitted_at AS composed_at
        FROM claims WHERE status = 'draft' AND household = $1 ORDER BY slug`, [household]));
   return { household, drafts: rows.rows };
-}
-
-/** Discard one of your own drafts. Returns true if a row went. */
-export async function deleteDraftClaim({ actor, householdName, slug }, env = process.env) {
-  const p = await pool(env);
-  const household = await householdKeyFor(p, householdName ?? actor);
-  const gone = await withHousehold(p, household, (c) => c.query(
-    `DELETE FROM claims WHERE status = 'draft' AND claimant = $1 AND slug = $2 AND household = $3`,
-    [actor, slug, household]));
-  return gone.rowCount > 0;
-}
-
-/** The declaration a draft was composed from, for the submit path to replay as an act. */
-export async function readDraftClaim({ actor, householdName, slug }, env = process.env) {
-  const p = await pool(env);
-  const household = await householdKeyFor(p, householdName ?? actor);
-  const { rows } = await withHousehold(p, household, (c) => c.query(
-    `SELECT id, slug, class, body, geometry, stake, data FROM claims
-      WHERE status = 'draft' AND claimant = $1 AND slug = $2 AND household = $3`,
-    [actor, slug, household]));
-  return rows[0] ?? null;
 }
 
 export function docketStatus() {

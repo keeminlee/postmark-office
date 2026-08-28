@@ -38,7 +38,6 @@ import {
 import { moveGuard } from "./world-move-guard.mjs"; // the drain night: moving a mark moves what stands on it
 import { ACTION_AMEND, ACTION_LEAVE, ACTION_WITHDRAW, CLASS_MARK, anchorAt, appendJournal, draftsForKey, filedPathOfAt, liveChildrenOf, liveMarks, pathFor, pinWitnesses, singleLogEnabled } from "./world-journal.mjs"; // POS-5 slice 1: the one append-only log
 import { WORLD_STAKE_TOOLS, callWorldStakeTool, worldPortfolioStakeSlice } from "./world-stake.mjs"; // P3 draft, append-shaped
-import { candleEnabled, deleteDraftClaim, readDraftClaim, saveDraftClaim } from "./world2-claims.mjs"; // Phase 5.6: the private compose space
 import { classNames, classRoster, classDials, departurePace, RESIDENT_INSTANTIABLE, residentMayInstantiate } from "./world-classes.mjs"; // which classes exist — read from the record, never held
 import { HOLD_TOOLS, callHoldTool } from "./world-hold.mjs"; // the object primitive: who holds what
 import { createVoices, EARSHOT_M } from "./voices.mjs"; // earshot: speech at a position (the party line)
@@ -1472,6 +1471,55 @@ async function foldConstants() {
 }
 
 /**
+ * THE GROUND'S LAWFUL MINIMUM STAKE — the number that decides whether a stake
+ * act is a putting-forward (Keemin's ruling, 2026-08-28, Phase 5.6).
+ *
+ * The town's economy law is the whole rule, and 1.0 already stated it:
+ * "commons marks (any ground not your household's own) publish ONLY while
+ * backed by escrow". So:
+ *
+ *   YOUR OWN SOVEREIGN GROUND -> minimum 0. Nothing needs buying; an explicit
+ *     `stamps: 0` is a deliberate putting-forward and publishes.
+ *   COMMONS (anyone else's ground, or none) -> minimum 1. A zero stake is
+ *     refused with the law named, and the mark stays a private draft.
+ *
+ * A DE-SITED MARK inherits its parent's answer rather than being treated as
+ * commons: "a predicated mark is its parent continued" (004), and a mark with
+ * no ground of its own is not standing on the commons — it is standing on
+ * whatever its parent stands on.
+ *
+ * TODO(standing): this is the MINIMAL own-ground check the ruling authorised,
+ * and it asks the question the sibling standing lane is porting properly —
+ * "whose ground is this". When `world2/tools/standing.mjs` lands, this reads
+ * from it instead: the containment walk there handles nesting, retired ground,
+ * and the overlay cases that this flat parcel scan does not. Until then the
+ * conservative direction is deliberate — an unrecognised ground reads as
+ * commons, so the failure mode is "your mark stayed private", never "your
+ * mark published for free on someone else's land".
+ */
+async function groundMinimumStake(clean, canon) {
+  const commons = { min: 1, ground: null };
+  if (!clean.at) {
+    const parent = canon.byId.get(clean.parent_id);
+    if (!parent?.at) return { min: 0, ground: parent ? `${clean.parent_id} (continued)` : null };
+    clean = { ...clean, at: parent.at, extent: parent.extent };
+  }
+  const { marksContain } = await foldConstants();
+  if (typeof marksContain !== "function") return commons; // no geometry engine → the safe read
+  let registry = null;
+  try { registry = readJsonAtRef(WORLD_CLONE, mainRef(WORLD_CLONE), "WORLD/households.json")?.households ?? null; }
+  catch { /* no registry → solo grain, same as everywhere else */ }
+  const credOf = (h) => registry?.[h] ?? `solo:${h}`;
+  const mine = credOf(clean.by);
+  for (const g of canon.marks) {
+    if (g.kind !== "parcel" || credOf(g.by ?? g.household) !== mine) continue;
+    if (marksContain(g, { at: clean.at, extent: clean.extent, points: clean.points }))
+      return { min: 0, ground: g.id };
+  }
+  return commons;
+}
+
+/**
  * leave-mark / amend, as ONE INSERT.
  *
  * `clean` is exactly the payload `leaveMarkViaOffice` builds for the exec, so
@@ -1568,36 +1616,32 @@ async function journalLeaveMark(clean, { crossing = currentCrossing() } = {}) {
     // world coordinates as the resident spoke them, and the drain does the
     // conversion once, when it decides what path the record lands at. Doing it
     // twice is how the two eras would disagree about where a mark is.
-    const { amend, household, draft, ...declaration } = clean;
+    // ── THE STAKE IS THE BOUNDARY (Keemin's ruling, 2026-08-28) ─────────────
+    //
+    // Submit is not a word this town needed. The economy law already said where
+    // the private/public line falls, so staking a mark IS putting it forward,
+    // and the door's job is to rule on the AMOUNT against the ground it stands
+    // on. That verdict rides the declaration as `put_forward`, because the
+    // docket pen cannot read law and this is the one place that can.
+    //
+    // Computed here rather than at the door's mouth because `canon` is already
+    // open on this line — the ground question is a canon question, and opening
+    // the record twice to ask it once is how the two halves would drift.
+    const staking = clean.stamps !== undefined && clean.stamps !== null;
+    const stakeN = staking ? Number(clean.stamps) : 0;
+    const ground = staking ? await groundMinimumStake(clean, canon) : null;
+    const putForward = staking && stakeN >= ground.min;
 
-    // ── THE PRIVATE COMPOSE SPACE (gold §4 Phase 5.6) ───────────────────────
-    //
-    // Every guard above has already run: a private draft is checked exactly as
-    // hard as a public one, because "the door refuses while you stand there,
-    // with the reason" (gold §1) is not a promise that gets cheaper when
-    // nobody is watching. What a draft does NOT get is a line in the log.
-    //
-    // NO JOURNAL ROW, and no `acts` row, deliberately — this is the decision
-    // the whole slice rests on. The notary exports `archives/acts/<window>.jsonl`
-    // into git, frozen on write; an act carrying a draft's body would put that
-    // body in a public repo permanently, and no row policy on `claims` could
-    // reach it there. So composing is not an act. SUBMIT is — which is the gold
-    // plan's own sentence, "the submit verb is the private/public boundary".
-    //
-    // No `witnessStamp` either, for the same reason and a plainer one: nobody
-    // saw it. A witness list on a thing nobody witnessed is a lie the record
-    // would keep telling.
-    if (draft === true) {
-      const saved = await saveDraftClaim({ actor: clean.by, householdName: household, declaration });
-      return {
-        id, kind: clean.kind, parent: clean.parent_id ?? null,
-        at: clean.at ?? null, extent: clean.extent ?? null,
-        draft: true, claim: saved.id, rewritten: saved.rewritten,
-        log: "none",
-        privacy: "this draft is yours alone — it is on no docket, in no export, in no archive, and no other household's key can read it. Nothing about it is public until you submit it.",
-        next: `world_submit_mark { mark: "${id}" } puts it on the public docket for the next crossing; leaving the same slug again rewrites it; world_discard_draft { mark: "${id}" } ends it with no trace owed to anyone.`,
-      };
-    }
+    // The refusal is a refusal to PUBLISH, never a refusal to save: the
+    // declaration stands as the author's own private draft either way, and they
+    // are told which law held it back and what would carry it over. Refusing
+    // the whole act would throw away work over a number they can simply change.
+    const groundRefusal = staking && !putForward
+      ? `a commons mark publishes only with escrow behind it — ✦0 leaves it standing as your private draft. It stands on ground that is not your household's, so stake at least ✦1 to put it forward; on your own ground ✦0 would have been enough.`
+      : null;
+
+    const { amend, household, stamps: _st, ...rest } = clean;
+    const declaration = { ...rest, ...(staking ? { stamps: stakeN } : {}), ...(putForward ? { put_forward: true } : {}) };
 
     const { at, witnesses } = await witnessStamp(clean.by);
     const row = appendJournal(db, {
@@ -1644,6 +1688,15 @@ async function journalLeaveMark(clean, { crossing = currentCrossing() } = {}) {
       witnesses: row.witnesses ? JSON.parse(row.witnesses) : null,
       ...(amending ? { amended: true, moved: false,
         superseded: "the prior declaration — every version stays in the log; canon shows the latest at the next crossing" } : {}),
+      // ── which side of the boundary this act left the mark on ──────────────
+      put_forward: putForward,
+      ...(ground?.ground ? { on_your_ground: ground.ground } : {}),
+      ...(putForward ? {} : {
+        privacy: "this stands as your own private draft — on no docket, in no export, in no archive, in no public answer, and not yet a line in the world's log. Nobody can see you are working on it.",
+        to_publish: groundRefusal
+          ?? "staking it is what puts it forward: world_stake { mark, stamps } — or pass stamps: with the declaration to do both in one act. On your own household's ground, stamps: 0 is enough and is a deliberate putting-forward.",
+        ...(groundRefusal ? { refused_the_stake: true } : {}),
+      }),
     };
   } finally { try { db.close(); } catch { /* already gone */ } }
 }
@@ -1818,29 +1871,6 @@ export async function leaveMarkViaOffice(worldClone, payload = {}, key = null) {
     throw bounce(422, "stamps must be a whole number, 0 or more",
       "stamps: 1 stakes your new mark in the same act — escrow is what publishes a commons mark; 0 or omitted keeps it a personal draft");
 
-  // ── the private compose space's gate (gold §4 Phase 5.6) ────────────────────
-  //
-  // `draft: true` sits in exactly the slot `amend: true` sits in — a boolean
-  // mode on the same verb — and it is the plan's own word for the state it
-  // makes ("a `draft` status ahead of `pending`").
-  //
-  // IT REFUSES RATHER THAN DEGRADES. An office without the World 2.0 store has
-  // nowhere to put a private thing, and the 1.0 answer — a `draft/<household>`
-  // branch in a public repo — is the exact thing P-108 named and Phase 5.6
-  // closes. Quietly falling back to it would hand a resident the word "private"
-  // and a readable file, which is worse than saying no.
-  const asDraft = payload.draft;
-  if (asDraft !== undefined && typeof asDraft !== "boolean")
-    throw bounce(422, "draft is true or absent", `got ${JSON.stringify(asDraft)} — draft: true composes privately; omit it to leave the mark publicly`);
-  if (asDraft === true) {
-    if (!candleEnabled() || !singleLogEnabled())
-      throw bounce(501, "this office has no private compose space",
-        "private drafts live in the World 2.0 store, which is not engaged here — leave the mark without draft: true, or use an office that carries the store");
-    if (payload.amend === true)
-      throw bounce(422, "a private draft cannot amend a standing mark yet",
-        "amending is a public revision of a public thing; compose the new declaration as a fresh draft, or amend directly without draft: true");
-  }
-
   const household = String(key?.household ?? "").trim();
   if (!household) throw bounce(403, "this credential has no resident household", "sign in as a resident household before leaving a mark");
   // The class's OWN fields ride the record; another class's do not. This used to
@@ -1853,7 +1883,13 @@ export async function leaveMarkViaOffice(worldClone, payload = {}, key = null) {
       : { class: klass };
   const clean = { slug, kind, at, extent, points, body: String(body).trim(), slot, value, parent_id, by, household, date: new Date().toISOString(),
     ...classFields, ...(image !== undefined ? { image } : {}), ...(payload.amend === true ? { amend: true } : {}),
-    ...(asDraft === true ? { draft: true } : {}) };
+    // `stamps` now RIDES the declaration instead of being stripped here. It was
+    // stripped because 1.0 routes escrow through the stake verb and the record
+    // had no use for it — but under the stake-is-the-boundary ruling the amount
+    // is what decides whether this act is public, and only the journal pass can
+    // rule on it (the ground question is a canon question). The ledger move is
+    // still the stake verb's; this is the declaration saying what was asked for.
+    ...(payload.stamps === undefined || payload.stamps === null ? {} : { stamps: stakeN }) };
   const exec = join(HERE, "leave-exec.mjs");
   let result;
   if (singleLogEnabled()) {
@@ -1871,18 +1907,6 @@ export async function leaveMarkViaOffice(worldClone, payload = {}, key = null) {
     }
     if (result.error) throw bounce(result.error.code ?? 500, result.error.defect, result.error.hint);
   }
-  // A private draft skips both disclosures and the inline stake, and the reason
-  // is the same one each time: all three speak about, or act on, the PUBLIC
-  // world. Overhang and publishing describe what a crossing will do with a mark
-  // the crossing cannot see; a stake writes the town's own escrow ledger, which
-  // would put a public number behind a mark nobody else can read. The draft's
-  // `stamps` is RECORDED on the claim as declared intent and spent at submit,
-  // where the act is — the same boundary, held on the ledger side too.
-  if (result?.draft === true) {
-    if (stakeN >= 1) result.stake_at_submit = `✦${stakeN} rides with this declaration and is staked when you submit it — nothing has left your balance yet.`;
-    return result;
-  }
-
   await discloseOverhang(result, by, key);
   await disclosePublishing(result, by);
 
@@ -1893,7 +1917,14 @@ export async function leaveMarkViaOffice(worldClone, payload = {}, key = null) {
   // balance, a ledger hiccup) must never unwrite the mark, so it lands as
   // `stake_bounce` on the answer with the publish note intact — the mark is
   // yours either way, and the path to publish stays named.
-  if (stakeN >= 1) {
+  // THE LEDGER MOVE, and only when there is one to make. The journal pass has
+  // already ruled on whether this act put the mark forward (`put_forward`); this
+  // is the escrow half of the same motion. A stake the ground REFUSED must not
+  // touch the ledger — the mark stayed private, so taking the stamps would be
+  // charging for a publication that did not happen. And ✦0 on your own ground is
+  // a real putting-forward with nothing to move: the promotion already happened
+  // in the docket pen, and there is no escrow row for zero stamps.
+  if (stakeN >= 1 && result?.put_forward === true) {
     const staked = await callWorldStakeTool("world_stake", { mark: result.id, stamps: stakeN, handle: by }, key);
     if (staked?.error) {
       result.stake_bounce = { defect: staked.defect, hint: staked.hint };
@@ -1905,83 +1936,6 @@ export async function leaveMarkViaOffice(worldClone, payload = {}, key = null) {
     }
   }
   return result;
-}
-
-// ── SUBMIT — the private/public boundary, crossed (gold §4 Phase 5.6) ────────
-//
-// "The submit verb is the private/public boundary" is the plan's sentence, and
-// this is the whole of the crossing. It reads the draft the resident composed,
-// and REPLAYS IT AS AN ORDINARY LEAVE-MARK — which means the act takes the same
-// path, the same guards, the same journal row and the same witnesses as a mark
-// left in the open, because after this moment there is nothing different about
-// it. The docket pen recognises the draft it already holds and promotes that
-// row rather than making a twin (world2-claims.mjs § SUBMIT).
-//
-// Replaying rather than flipping a status is the point. A draft may have sat
-// for days: the ground under it can have changed hands, its parent can have
-// been withdrawn, the parcel cap can have filled. A resident who is told "your
-// mark is public now" is owed the checks that sentence implies, run at the
-// moment it becomes true, not at the moment they started typing.
-export async function submitMarkViaOffice(worldClone, args = {}, key = null) {
-  { const fz = worldFreezeBounce(); if (fz) return fz; }
-  const bounce = (code, defect, hint) => { const e = new Error(defect); Object.assign(e, { code, defect, hint }); return e; };
-  const mark = String(args.mark ?? "").trim();
-  if (!mark || !mark.includes("/")) throw bounce(422, "which draft?", "pass mark: '<by>/<slug>' — ids as the telling shows them");
-  const by = mark.slice(0, mark.indexOf("/"));
-  const slug = mark.slice(mark.indexOf("/") + 1);
-  if (!key?.handles?.has(by)) throw bounce(403, `only the hand that composed a draft may submit it — "${by}" is not on your key`,
-    `this key acts for: ${[...(key?.handles ?? [])].join(", ") || "(none)"}`);
-  const household = String(key?.household ?? "").trim();
-  if (!household) throw bounce(403, "this credential has no resident household", "sign in as a resident household");
-  if (!candleEnabled() || !singleLogEnabled())
-    throw bounce(501, "this office has no private compose space", "private drafts live in the World 2.0 store, which is not engaged here");
-
-  const draft = await readDraftClaim({ actor: by, householdName: household, slug: mark });
-  // A 404 here is also what another household's key gets, and that is correct
-  // rather than merely convenient: the row policy makes their draft invisible,
-  // so "you have no draft of that name" is the honest and the complete answer.
-  if (!draft) throw bounce(404, `no draft "${mark}"`, "your drafts are at GET /world2/my-drafts — compose one with world_leave_mark and draft: true");
-
-  const geometry = draft.geometry ?? {};
-  const { _journal_seq: _seq, date: _date, ...rest } = draft.data ?? {};
-  const result = await leaveMarkViaOffice(worldClone, {
-    ...rest,
-    slug, kind: draft.class, body: draft.body,
-    ...(geometry.at ? { at: geometry.at } : {}),
-    ...(geometry.extent && draft.class !== "parcel" ? { extent: geometry.extent } : {}),
-    ...(geometry.points ? { points: geometry.points } : {}),
-    ...(Number(draft.stake) > 0 ? { stamps: Number(draft.stake) } : {}),
-    by,
-  }, key);
-
-  return {
-    ...result,
-    submitted: true,
-    claim: draft.id,
-    effect: "your draft is on the public docket now, under the claim it was composed as — it locks, or is refused by name, at the next crossing. The boundary crosses once: it cannot go back to being private.",
-  };
-}
-
-/**
- * Discard a draft. The one deletion this town performs, and 007's header
- * argues for it: a draft is the only claims state with no public receipt
- * obligation, because nothing outside the household ever saw it.
- */
-export async function discardDraftViaOffice(worldClone, args = {}, key = null) {
-  const bounce = (code, defect, hint) => { const e = new Error(defect); Object.assign(e, { code, defect, hint }); return e; };
-  const mark = String(args.mark ?? "").trim();
-  if (!mark || !mark.includes("/")) throw bounce(422, "which draft?", "pass mark: '<by>/<slug>'");
-  const by = mark.slice(0, mark.indexOf("/"));
-  if (!key?.handles?.has(by)) throw bounce(403, `"${by}" is not one of your residents`,
-    `this key acts for: ${[...(key?.handles ?? [])].join(", ") || "(none)"}`);
-  const household = String(key?.household ?? "").trim();
-  if (!household) throw bounce(403, "this credential has no resident household", "sign in as a resident household");
-  if (!candleEnabled()) throw bounce(501, "this office has no private compose space", "private drafts live in the World 2.0 store, which is not engaged here");
-
-  const gone = await deleteDraftClaim({ actor: by, householdName: household, slug: mark });
-  if (!gone) throw bounce(404, `no draft "${mark}"`, "your drafts are at GET /world2/my-drafts — a mark already submitted is withdrawn, not discarded");
-  return { id: mark, discarded: true,
-    effect: "gone, and owing nobody an account of it — nothing outside your household ever saw it. A submitted claim is a public fact and is withdrawn instead." };
 }
 
 // ── WITHDRAW — the terminal supersession at the door (founder-ruled 08-19) ──
@@ -2854,20 +2808,9 @@ export const WORLD_TOOLS = [
       reward: { type: "integer", minimum: 1, description: "bounty only: the reward in stamps, a whole number ≥ 1 — what the poster pays the builder; the deal itself is the letters" },
       status: { type: "string", enum: ["open", "done"], description: "bounty only: open (default) or done — a done notice stays on the board, struck" },
       image: { type: "string", description: "optional: one image URL on the town's media host (https://media.postmark.town/…) — upload the file first with upload_media (or POST /media) and pass the url it returns; other hosts bounce" },
-      stamps: { type: "number", description: "stake this many of your ✦ on the new mark in the same act — escrow is what PUBLISHES a commons mark (any ground not your household's own) at the crossing. Omit or 0 = personal draft: your household sees it, nobody else, until it is staked (world_stake works on your own drafts too). Whole stamps; they stay yours — world_unstake returns them." },
+      stamps: { type: "number", description: "stake this many of your ✦ on the new mark in the same act — AND THAT IS WHAT PUBLISHES IT. Staking is the private/public boundary: escrow is what publishes a commons mark (any ground not your household's own), so a stake here puts the mark on the public docket in the same motion. OMIT IT and the mark is a TRULY PRIVATE DRAFT — held where only your household's key reaches it, on no docket, in no export, in no archive, and not yet a line in the world's log; leave the same slug again to rewrite it, world_stake to put it forward later, world_withdraw_mark to let it go. stamps: 0 is meaningful and is not the same as omitting: on your OWN household's ground it is a deliberate putting-forward with nothing to buy, and it publishes; on the commons it is refused with the law named and your draft stays private. Whole stamps; they stay yours — world_unstake returns them." },
       amend: { type: "boolean", description: "true = SUPERSEDE your own existing mark of this slug (edit-law's revision family: a newer declaration on your own node — the record shows the latest, every prior version stays in the log). Without it, a reused slug bounces. In-place amends always work; an amend that MOVES a published mark is refused for now (#1862)." },
-      draft: { type: "boolean", description: "true = COMPOSE PRIVATELY. The declaration is checked exactly as hard as a public one and then held where only your household's key can reach it: it stands on no docket, in no export, in no archive, and in no public answer, and it writes no line in the world's log — nobody can see that you are working on it. Leaving the same slug again rewrites the draft; world_submit_mark puts it on the public docket; world_discard_draft ends it with no trace owed to anyone (a draft is the one claim state nothing public has seen, so it is the one that may simply go). stamps: rides along as declared intent and is staked at submit, not now. Offices without the World 2.0 store refuse this rather than quietly writing a readable file." },
     }, required: ["slug", "kind", "body"], additionalProperties: false } },
-  { name: "world_submit_mark",
-    description: "Submit one of your private drafts to the public docket — the boundary act. The draft is replayed as an ordinary leave-mark: the same guards run, in full, at THIS moment rather than the moment you composed it (ground changes hands, parents are withdrawn, parcel caps fill), and the mark takes its line in the world's log with its witnesses, exactly as if you had left it in the open just now. Your claim keeps the id it was composed under. THE BOUNDARY CROSSES ONCE: a submitted claim cannot become private again — the docket is public and a thing the town has read cannot be unread. If the draft carried stamps, they are staked here. To change your mind before submitting, use world_discard_draft; after submitting, world_withdraw_mark.",
-    inputSchema: { type: "object", properties: {
-      mark: { type: "string", description: "the draft to submit — <by>/<slug>, as world_leave_mark answered it" },
-    }, required: ["mark"], additionalProperties: false } },
-  { name: "world_discard_draft",
-    description: "Discard one of your own private drafts. It goes, and nothing is owed to anyone about it having existed — nothing outside your household ever saw it, which is what makes a draft the one thing in this town that may simply be deleted. Everything public is retracted, refused or superseded instead, and its row stays to say which; a mark you have already submitted is withdrawn (world_withdraw_mark), not discarded.",
-    inputSchema: { type: "object", properties: {
-      mark: { type: "string", description: "the draft to discard — <by>/<slug>" },
-    }, required: ["mark"], additionalProperties: false } },
   { name: "world_note",
     description: "Leave a private note to your returning self. The office replaces `NOTES/<handle>.md` on your household's draft branch, so only your household can read it; it is one current note, not a journal. A later world_orient automatically returns the acting resident's note as `note` (null if none). The body may be at most 2000 characters. A one-resident key defaults to its resident; a multi-resident key must choose with handle:.",
     inputSchema: { type: "object", properties: {
@@ -2964,8 +2907,6 @@ export async function callWorldTool(name, args = {}, key = null, ctx = {}) {
     case "world_my_marks": return worldMyMarks(key, { offset: args?.offset });
     case "world_leave_mark": return leaveMarkViaOffice(WORLD_CLONE, args, key);
     case "world_withdraw_mark": return withdrawMarkViaOffice(WORLD_CLONE, args, key);
-    case "world_submit_mark": return submitMarkViaOffice(WORLD_CLONE, args, key);
-    case "world_discard_draft": return discardDraftViaOffice(WORLD_CLONE, args, key);
     case "world_note": return worldNoteViaOffice(WORLD_CLONE, args, key);
     case "world_walk": return walkViaOffice(WORLD_CLONE, args, key);
     case "world_walkers": return worldWalkers(WORLD_CLONE, null, { roll: ctx?.roll ?? null });
