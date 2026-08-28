@@ -107,14 +107,22 @@ if (!parseWalkLedger || !parseEnterExit) die("the checkout exports neither ledge
 // ── the store ────────────────────────────────────────────────────────────────
 
 const DEPARTURE_SELECT =
-  `SELECT id::text, at, crossing, actor, action, payload FROM acts
+  // `id` bare, never `id::text`: node-postgres already hands bigint over as a
+  // string, and casting it here would put a TEXT column named `id` in the output
+  // list — which `ORDER BY` resolves against before the table. That sorted 1019
+  // before 102 on this pen's first run, and the order guard is what caught it.
+  `SELECT id, at, crossing, actor, action, payload FROM acts
     WHERE action = ANY($1) ${live.DEPARTURE_ORDER_SQL}`;
 const PASSAGE_SELECT =
-  `SELECT id::text, at, crossing, actor, action, payload FROM acts
+  // `id` bare, never `id::text`: node-postgres already hands bigint over as a
+  // string, and casting it here would put a TEXT column named `id` in the output
+  // list — which `ORDER BY` resolves against before the table. That sorted 1019
+  // before 102 on this pen's first run, and the order guard is what caught it.
+  `SELECT id, at, crossing, actor, action, payload FROM acts
     WHERE action = ANY($1) ${live.PASSAGE_ORDER_SQL}`;
 const EMISSION_SELECT =
-  `SELECT id::text, at, actor, action, payload FROM acts
-    WHERE action IN ('legacy:emission','emission') ORDER BY at, id`;
+  `SELECT id, at, actor, action, payload FROM acts
+    WHERE action IN ('legacy:emission','emission') ORDER BY at, acts.id`;
 
 /**
  * A field-for-field record comparison. `null` and absent are the SAME here —

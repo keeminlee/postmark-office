@@ -312,8 +312,15 @@ export function publicWalker(handle, p) {
  * id` returns rows, in an order, with no symptom, and hands 44 of 73 residents
  * somebody else's leg.
  */
+// `acts.id` is QUALIFIED, and that is not decoration. Postgres resolves a bare
+// `ORDER BY id` against the OUTPUT column list first, so a caller that selected
+// `id::text` would sort the ids as TEXT — "1019" before "102" — and get an order
+// that is wrong inside an era with nothing to show for it. That is exactly what
+// happened on this falsifier's first run against `world2_dev`, and the guard
+// below is what said so. A qualified name is always an expression against the
+// table, so it cannot be captured by an alias.
 export const DEPARTURE_ORDER_SQL =
-  "ORDER BY ((payload->>'_ledger') IS NULL), id";
+  "ORDER BY ((payload->>'_ledger') IS NULL), acts.id";
 
 export const DEPARTURE_ACTIONS = Object.freeze(["legacy:departure", "walk"]);
 
