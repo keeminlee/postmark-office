@@ -121,6 +121,50 @@ const LANE_OF = Object.freeze({
 // something a future author has to WRITE DOWN rather than achieve by omission.
 const READ_ONLY_VERBS = new Set([]);
 
+// ── CHECK 0b · THE CLASS CENSUS · the half the apex table cannot see ────────
+//
+// FOUND BY THIS FILE'S OWN FIRST RUN, and it is the reason 0b exists at all.
+// The dev office's journal carries `arena-act` rows — join/leave, written by
+// src/arena.mjs — and the verb census above is STRUCTURALLY BLIND to them:
+// arena beats are not apex actions, so they are not in DISPATCHABLE, so no
+// amount of care with check 0 would ever have asked about them.
+//
+// That is the same blindness one level up. Check 0 asks "does every DOOR have
+// an answer"; this asks "does every KIND OF ACT the store actually holds have
+// one" — and it reads the journal, so it can only ever be answered by what the
+// world has really written.
+//
+// `arena-act` is named here although src/arena.mjs is NOT on this branch (it
+// rides the birthday-dungeon proto, which the gold plan §6 says not to
+// entangle). Naming it early is deliberate: the plan already ruled arena in —
+// gold §1's LIVE lane is "walks, says, enters/exits, throws, ARENA BEATS" — and
+// it writes journal rows, so `appendJournal`'s mirror carries it the day it
+// merges. A census that only learns about a lane after it lands is a census
+// that is late by exactly the interval in which the gap can open.
+//
+// Unlike check 0, a named-but-absent class is NOT red: the authority here is
+// the store, which holds only what has happened, and a class no one has
+// exercised yet is not a stale door.
+const CLASS_LANE_OF = Object.freeze({
+  mark: "journal",        // leave-mark / amend / withdraw
+  frame: "journal",       // enter / exit
+  move: "journal",        // walk, flag-off arm (the flag-on arm is check 3)
+  stance: "journal",      // declare-stance-on
+  "arena-act": "journal", // gold §1: "LIVE — acts: ... throws, arena beats"
+  voice: "lane",          // check 1 — never written to the journal; see world-journal.mjs
+  holding: "lane",        // check 2 — likewise
+});
+
+function checkClassCensus(classesInJournal) {
+  const unaccounted = classesInJournal.filter((c) => !(c in CLASS_LANE_OF));
+  if (!unaccounted.length) return [];
+  return [
+    `RED (class census): the journal holds ${unaccounted.map((c) => `"${c}"`).join(", ")}, and this falsifier has never been told whether that kind of act belongs in \`acts\`. `
+    + "The migration meta-rule (gold §3): \"every change answers which lane, which table, which pen — or it is refused.\" "
+    + "A class that reaches the journal is mirrored by appendJournal whether or not anyone ruled that it should be — so answer it here, and check its payload against the notary's public export before agreeing.",
+  ];
+}
+
 function checkCensus(dispatchable) {
   const unaccounted = dispatchable.filter((v) => !(v in LANE_OF) && !READ_ONLY_VERBS.has(v));
   const stale = Object.keys(LANE_OF).filter((v) => !dispatchable.includes(v));
@@ -151,6 +195,12 @@ if (has("--prove-can-fail")) {
   // check 0 — a census row for a verb the door no longer has must be caught
   if (!checkCensus(["say"]).some((p) => p.includes("no longer dispatches")))
     fails.push("census: a stale census row was NOT caught");
+  // check 0b — a journal class nobody has ruled on must be caught, and a
+  // ruled one must not be
+  if (!checkClassCensus(["mark", "some-new-class"]).length)
+    fails.push("class census: an unruled journal class was NOT caught");
+  if (checkClassCensus(["mark", "frame", "arena-act"]).length)
+    fails.push("class census: a ruled class was wrongly flagged");
 
   // checks 1–3 all reduce to `matchAct`: a lane record, and the acts rows in
   // its window. Prove the matcher rejects a near-miss rather than shrugging.
@@ -165,7 +215,9 @@ if (has("--prove-can-fail")) {
     fails.push("matcher: an act nine minutes away was accepted as a twin");
 
   if (fails.length) { for (const f of fails) console.error(`RED (falsifier broken): ${f}`); process.exit(1); }
-  console.log("can-fail proof: the census catches an unnamed verb and a stale row; the matcher rejects a wrong actor, a wrong action, and a nine-minute drift.");
+  console.log(
+    "can-fail proof: the verb census catches an unnamed verb and a stale row; the class census catches an unruled journal class and passes a ruled one; "
+    + "the matcher rejects a wrong actor, a wrong action, and a nine-minute drift.");
   process.exit(0);
 }
 
@@ -255,6 +307,10 @@ for (const line of readFileSync(voicesPath, "utf8").split("\n")) {
 }
 
 const sqlite = new DatabaseSync(dbPath, { readOnly: true });
+
+// ── check 0b · the class census, against what the store actually holds ──────
+reds.push(...checkClassCensus(
+  sqlite.prepare("SELECT DISTINCT class FROM journal").all().map((r) => String(r.class))));
 
 // ── check 2 · HOLDING · dynamic.db/attachments → acts ───────────────────────
 //
