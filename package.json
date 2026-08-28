@@ -28,6 +28,6 @@
   "dependencies": {
     "graphology": "^0.26.0",
     "graphology-gexf": "^0.13.2",
-    "pg": "^8.13.0"
+    "pg": "^8.16.3"
   }
 }
