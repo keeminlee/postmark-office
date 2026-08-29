@@ -422,8 +422,13 @@ export function actingBlocked(state, who) {
  * this cannot be read off the record alone: a sword that fell out of a downed
  * hand is loose because of something that happened in the fight, and only the
  * fold knows it.
+ *
+ * ⚑ AND IT INJECTS, rather than only marking. See the injection block below:
+ * `nearby` is a salience ranking with a budget, and the things this function
+ * exists to flag are precisely the ones too small to survive it. A version that
+ * only maps is a version that marks an empty list correctly.
  */
-export function withLoose(nearby = [], portal = null) {
+export function withLoose(nearby = [], portal = null, { standpoint = null } = {}) {
   const dropped = new Map((portal?.state?.dropped ?? []).map((d) => [String(d.thing), d]));
   // ── THE SHROUD (founder-ruled 2026-08-29) ──────────────────────────────────
   //
@@ -441,9 +446,12 @@ export function withLoose(nearby = [], portal = null) {
   // law and it is enforced by omission.
   const shrouded = new Set((portal?.shrouded ?? []).map(String));
   // The record's half of `loose:` — computed in `portalBlockAt`, where the
-  // stores are, and handed here as a list for the same reason the shroud is.
-  const onTheFloor = new Set((portal?.loose ?? []).map(String));
-  return nearby.filter((o) => !shrouded.has(String(o.id))).map((o) => {
+  // stores are, and handed here as rows for the same reason the shroud is a
+  // list: one reader of the room, not two.
+  const floor = (portal?.floor ?? []).filter((t) => !shrouded.has(String(t.thing)));
+  const onTheFloor = new Set(floor.map((t) => String(t.thing)));
+
+  const marked = nearby.filter((o) => !shrouded.has(String(o.id))).map((o) => {
     const d = dropped.get(String(o.id));
     // Sited here, held by nobody, and nothing in the fight put it down: loose
     // by the record alone. It gets the boolean and none of the fight's facts,
@@ -457,6 +465,65 @@ export function withLoose(nearby = [], portal = null) {
     // declares for them.
     return { ...o, loose: true, dropped_by: d.by, dropped_at_seq: d.at_seq };
   });
+
+  // ── THE INJECTION (found by driving the live door, 2026-08-29) ─────────────
+  //
+  // ⚑ MARKING `nearby` WAS NEVER ENOUGH, AND THE FIX ABOVE SHIPPED WITHOUT
+  // NOTICING. `nearby` is `worldEyes`' SALIENCE RANKING — the engine's field of
+  // view, capped at a context budget of about thirteen entries — and it ranks
+  // the world by how much of it there is to see. A 0.2 m lighter loses that
+  // ranking to every house, ground and cake in the district, so it is not in
+  // the list at all. Live receipt: a spectator standing EXACTLY ON the good
+  // lighter got thirteen entries and the lighter was not among them.
+  //
+  // So `portalBlockAt` computed the floor correctly, `withLoose` marked
+  // faithfully, and there was nothing to mark. My own note two screens up says
+  // "a thing that appears in `nearby` with no `loose` flag does not appear on a
+  // floor anybody draws" — and it has a sibling I did not write: A THING THAT
+  // NEVER APPEARS IN `nearby` AT ALL. Same defect class as the half-promise it
+  // was fixing, one level further out, and the first fix could not see it
+  // because every falsifier handed `withLoose` a `nearby` that already
+  // contained the thing.
+  //
+  // LOGOS § The portal ground: "Inside a portal ground the floor is not the
+  // world's business, it is the GROUND's: whatever lies loose there rides the
+  // standpoint's `nearby` whether or not salience would have chosen it, because
+  // a room whose furniture of play is invisible is a room nobody can play in."
+  //
+  // THE SHROUD OUTRANKS THE INJECTION — `floor` is filtered by it above, so
+  // held-back loot is absent whether or not it would have been ranked. Being on
+  // the floor never overrides being hidden.
+  const present = new Set(marked.map((o) => String(o.id)));
+  const here = standpoint && Number.isFinite(Number(standpoint.x)) && Number.isFinite(Number(standpoint.y))
+    ? { x: Number(standpoint.x), y: Number(standpoint.y) } : null;
+  for (const t of floor) {
+    if (present.has(String(t.thing))) continue;
+    const d = dropped.get(String(t.thing));
+    marked.push({
+      id: t.thing,
+      by: t.by ?? null,
+      at: t.at,
+      ...(t.extent ? { extent: t.extent } : {}),
+      kind: t.kind ?? null,
+      tier: t.tier ?? null,
+      ...(t.body ? { body: t.body } : {}),
+      loose: true,
+      // ⚑ `distance_m` IS COMPUTED AND `bearing` IS NOT, deliberately. Distance
+      // is a hypotenuse and means one thing; BEARING is a convention — which way
+      // is zero, which way it turns — and that convention belongs to the world
+      // engine's field of view. A second implementation of it here would be a
+      // second answer to a question that has one, which is the drift this office
+      // keeps nailing shut. A consumer sorting by distance gets these in their
+      // right place; one grouping by bearing sees them absent, and that is the
+      // honest state rather than a guessed one.
+      ...(here ? { distance_m: Math.round(Math.hypot(t.at.x - here.x, t.at.y - here.y) * 10) / 10 } : {}),
+      // Said out loud so a reader comparing this list against the eyes' budget
+      // is not left wondering where the extra rows came from.
+      via: "floor",
+      ...(d ? { dropped_by: d.by, dropped_at_seq: d.at_seq } : {}),
+    });
+  }
+  return marked;
 }
 
 /**
@@ -541,14 +608,18 @@ export function portalBlockAt(db, spineIds = []) {
     // `looseIn` applies the shroud itself, so the phase is handed to it and the
     // list is already free of held-back loot — no second filter, no second
     // chance for the two to disagree.
+    // ⚑ THE ROWS, NOT THE IDS (2026-08-29). This was a list of ids until the
+    // live door was driven and the floor came back empty anyway — see
+    // `withLoose`'s injection note for why marking `nearby` was never enough.
+    // The entries have to be BUILDABLE from here, because here is where the
+    // store is.
     const phase = state?.phase ?? null;
     let held = [];
     try { held = readAttachments(dyn); } catch { held = []; }
-    const onTheFloor = looseIn(db, place.row, { phase })
-      .map((t) => String(t.thing))
-      .filter((id) => liveHolder(held, id) == null);
-    return { place, state, shrouded: lootShroudedIn(db, place.row, phase), loose: onTheFloor };
-  } catch { return { place, state: null, shrouded: [], loose: [] }; }
+    const floor = looseIn(db, place.row, { phase })
+      .filter((t) => liveHolder(held, String(t.thing)) == null);
+    return { place, state, shrouded: lootShroudedIn(db, place.row, phase), floor };
+  } catch { return { place, state: null, shrouded: [], floor: [] }; }
   finally { try { dyn?.close(); } catch { /* same */ } }
 }
 
@@ -1626,7 +1697,7 @@ async function apexRead(args, key) {
     // `loose:` on a nearby entry — what is lying on this ground that a hand
     // could `take`. Only ever added inside a portal, and only to the things
     // that are actually loose there, so an ordinary reach entry is untouched.
-    nearby: portal?.state ? withLoose(nearby, portal) : nearby,
+    nearby: portal?.state ? withLoose(nearby, portal, { standpoint: oriented.standpoint }) : nearby,
     // ── THE PORTAL AND ITS ENCOUNTER (2026-08-27) ────────────────────────────
     //
     // The two rooms and the fight, as a resident reads them. `space` is the
