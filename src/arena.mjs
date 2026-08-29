@@ -143,7 +143,13 @@ const ADVERSARY_IN = `SELECT id, by,
        WHERE json_extract(props, '$.class') = 'adversary'
          AND at_x IS NOT NULL AND at_y IS NOT NULL`;
 
-const LOOSE_IN = `SELECT id, by,
+// `subkind` and `tier` ride along for the INJECTION (2026-08-29): a floor thing
+// that never made the eyes' salience cut has to be handed to `nearby` as an
+// entry of the same shape everything else there has, and those are two of the
+// fields that shape carries. Reading them here rather than in a second query is
+// the same rule the rest of this file keeps — one question of the record per
+// answer.
+const LOOSE_IN = `SELECT id, by, subkind, tier,
          json_extract(props, '$.class')       AS class,
          json_extract(props, '$.loot')        AS loot,
          json_extract(props, '$.held_grant')  AS held_grant,
@@ -270,6 +276,16 @@ export function looseIn(db, groundRow, { phase = null, all = false } = {}) {
       .map((e) => ({ action: e.action, bonus: e.bonus ?? null, says: e.says ?? null })),
     at: { x: Number(r.at_x), y: Number(r.at_y) },
     body: String(r.body ?? ""),
+    // The record's own words for what this thing IS, carried so a caller that
+    // must hand it to `nearby` does not have to ask the store a second time.
+    // `kind` is the mark's subkind ("sited") — the same word `nearby` carries —
+    // and NOT `class` ("thing"), which is a different question with a similar
+    // answer shape. Getting those two crossed puts the word "thing" where every
+    // other entry says "sited".
+    kind: r.subkind ?? null,
+    tier: r.tier ?? null,
+    extent: Number.isFinite(Number(r.extent_w)) && Number.isFinite(Number(r.extent_h))
+      ? { w: Number(r.extent_w), h: Number(r.extent_h) } : null,
   }));
 }
 

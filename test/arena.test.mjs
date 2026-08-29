@@ -105,6 +105,16 @@ function worldDb(guestHp = 20) {
             body: "A brass lighter with somebody else's initials worn off it." }));
   ins.run(WICK, "the-town", "mark", "sited", 1098, -783, 0.1, 0.1,
     props({ class: "thing", loot: true, body: "One burnt wick end, saved." }));
+  // ⚑ THE TIER COLUMN, SET ON THE THINGS ONLY (2026-08-29). The insert above
+  // never touched it, so every row read `tier: null` — which nothing noticed
+  // until a `nearby` entry had to be BUILT from one of these rows and came out
+  // as the single entry in the list with no tier. The real marks carry `market`;
+  // this is the fixture catching up with the record, and it is set by UPDATE
+  // rather than by widening the shared insert so the class rows above keep
+  // reading exactly as they did.
+  const setTier = db.prepare("UPDATE nodes SET tier = ? WHERE id = ?");
+  setTier.run("market", LIGHTER);
+  setTier.run("market", WICK);
   return db;
 }
 
@@ -1038,6 +1048,20 @@ test("loot is not in the room until the room is spent — and then it is", () =>
     assert.ok(looseIn(b.db, ground, { phase: "spent" }).find((l) => l.thing === WICK)?.loot,
       "the loot never appeared at spent — the shroud is a delay, not a deletion");
 
+    // ── THE FIELDS AN INJECTED ENTRY IS BUILT FROM, off the real record ─────
+    //
+    // ⚑ ASSERTED HERE BECAUSE THE INJECTION'S OWN TEST CANNOT SEE THEM. That
+    // test hands `withLoose` rows it built itself, so it proves what the
+    // injection does with a row and never what the READER puts in one — the
+    // flip that swapped `subkind` for `class` in `looseIn` stayed green against
+    // it. This is the store's own answer.
+    const lighter = looseIn(b.db, ground, { phase: "afoot" }).find((l) => l.thing === LIGHTER);
+    assert.equal(lighter.kind, "sited",
+      "the row says `thing` where `nearby` carries `sited` — that is the mark's CLASS in the field that holds its KIND, and an injected entry would be the one row in the list spelling it differently");
+    assert.deepEqual(lighter.extent, { w: 0.2, h: 0.2 },
+      "the row carries no extent — an injected entry would be the one floor item with no size");
+    assert.equal(lighter.tier, "market", "the row carries no tier, which every other `nearby` entry has");
+
     // THE LIST THE STANDPOINT SUBTRACTS — the other half of "absent from what a
     // standpoint says stands nearby".
     assert.deepEqual(lootShroudedIn(b.db, ground, "afoot"), [WICK],
@@ -1054,12 +1078,12 @@ test("a standpoint's `nearby` drops shrouded loot, and keeps everything else it 
   // room before you even beat the cake".
   const { withLoose } = await import("../src/world-apex.mjs");
   const nearby = [{ id: WICK }, { id: LIGHTER }, { id: CAKE }];
-  const hidden = withLoose(nearby, { shrouded: [WICK], state: { dropped: [{ thing: LIGHTER, by: "darko", at_seq: 9 }] } });
+  const hidden = withLoose(nearby, { shrouded: [WICK], floor: [], state: { dropped: [{ thing: LIGHTER, by: "darko", at_seq: 9 }] } });
   assert.deepEqual(hidden.map((o) => o.id), [LIGHTER, CAKE],
     "the shrouded loot survived into `nearby` — the site draws what the door hands it");
   assert.equal(hidden.find((o) => o.id === LIGHTER)?.loose, true,
     "the dropped weapon lost its `loose: true` — the shroud ate an answer it was only supposed to pass through");
-  const open = withLoose(nearby, { shrouded: [], state: { dropped: [] } });
+  const open = withLoose(nearby, { shrouded: [], floor: [], state: { dropped: [] } });
   assert.deepEqual(open.map((o) => o.id), [WICK, LIGHTER, CAKE],
     "an unshrouded room lost something — with no loot held back this must be what it always was");
 });
@@ -1191,24 +1215,96 @@ test("`loose:` keeps BOTH halves its own doc promises — the record's and the f
   // anybody draws.
   const { withLoose } = await import("../src/world-apex.mjs");
   const nearby = [{ id: WICK }, { id: LIGHTER }, { id: CAKE }];
+  // `floor` is ROWS since 2026-08-29, not ids — the entries have to be
+  // buildable, because `withLoose` now injects the ones salience never ranked.
+  const FLOOR_LIGHTER = { thing: LIGHTER, by: "the-town", at: { x: 1095.5, y: -784 },
+                          extent: { w: 0.2, h: 0.2 }, kind: "sited", tier: "market", body: "A brass lighter." };
 
   // THE RECORD'S HALF: sited here, unheld, nothing dropped by anyone.
-  const byRecord = withLoose(nearby, { shrouded: [WICK], loose: [LIGHTER], state: { dropped: [] } });
+  const byRecord = withLoose(nearby, { shrouded: [WICK], floor: [FLOOR_LIGHTER], state: { dropped: [] } });
   assert.equal(byRecord.find((o) => o.id === LIGHTER)?.loose, true,
     "a thing the record sites on this floor with nobody holding it is not marked loose — the first half of the doc's own sentence");
   assert.equal(byRecord.find((o) => o.id === CAKE)?.loose, undefined,
     "the adversary was marked as lying loose on the floor — `loose` is for things a hand could pick up");
 
   // THE FOLD'S HALF still carries the fight's facts beside the boolean.
-  const byFold = withLoose(nearby, { shrouded: [WICK], loose: [], state: { dropped: [{ thing: LIGHTER, by: "darko", at_seq: 9 }] } });
+  const byFold = withLoose(nearby, { shrouded: [WICK], floor: [], state: { dropped: [{ thing: LIGHTER, by: "darko", at_seq: 9 }] } });
   assert.equal(byFold.find((o) => o.id === LIGHTER)?.dropped_by, "darko",
     "a weapon dropped in the fight lost who dropped it — the fold's half must keep its own facts");
 
   // A HELD THING IS NOT LOOSE. Without this leg, "mark everything sited here"
   // passes — and a sword in somebody's hand would be drawn lying on the floor.
-  const heldByHand = withLoose(nearby, { shrouded: [WICK], loose: [], state: { dropped: [] } });
+  const heldByHand = withLoose(nearby, { shrouded: [WICK], floor: [], state: { dropped: [] } });
   assert.equal(heldByHand.find((o) => o.id === LIGHTER)?.loose, undefined,
     "a thing somebody is holding was drawn on the floor");
+});
+
+test("the floor rides `nearby` even when salience never ranked it — and the shroud still outranks the floor", async () => {
+  // LOGOS § The portal ground, verbatim (2026-08-29):
+  //   "Inside a portal ground the floor is not the world's business, it is the
+  //    GROUND's: whatever lies loose there rides the standpoint's answer whether
+  //    or not salience would have chosen it, because a room whose furniture of
+  //    play is invisible is a room nobody can play in."
+  //   "The shroud outranks it. Loot the encounter is still holding back is
+  //    absent either way; lying on the floor never overrides being hidden, and
+  //    the two clauses meet in that order."
+  //
+  // ⚑ THIS IS THE TEST THE LAST ROUND DID NOT HAVE, and its absence is why the
+  // marking fix shipped over an empty floor. Every falsifier for `withLoose`
+  // handed it a `nearby` that ALREADY CONTAINED the thing — so all of them
+  // proved the marking and none of them could see that the live `nearby` never
+  // carries a 0.2 m lighter at all. `nearby` is the eyes' salience ranking under
+  // a budget of about thirteen, and it ranks by how much of a thing there is to
+  // see, so the floor loses to every building in the district.
+  //
+  // The apparatus here is the crowd: `nearby` carries only big marks, exactly
+  // as the live door answered when a spectator stood ON the lighter and got
+  // thirteen entries without it.
+  const { withLoose } = await import("../src/world-apex.mjs");
+  const crowd = Array.from({ length: 13 }, (_, i) => ({ id: `the-town/a-large-house-${i}`, at: { x: 1000 + i, y: -800 }, kind: "sited" }));
+  const floorRow = (id, extra = {}) => ({ thing: id, by: "the-town", at: { x: 1096, y: -784 },
+                                          extent: { w: 0.2, h: 0.2 }, kind: "sited", tier: "market", body: "on the floor", ...extra });
+
+  // AFOOT: the lighter is injected; the shrouded wick end is not.
+  const afoot = withLoose(crowd, {
+    shrouded: [WICK],
+    floor: [floorRow(LIGHTER), floorRow(WICK)],
+    state: { dropped: [] },
+  }, { standpoint: { x: 1097, y: -783.5 } });
+
+  const lighter = afoot.find((o) => o.id === LIGHTER);
+  assert.ok(lighter, "the lighter is not in `nearby` at all — salience never ranked it and nothing put it back, so the floor the site draws is empty");
+  assert.equal(lighter.loose, true, "and it rode in without the flag the site filters on");
+  assert.equal(lighter.at.x, 1096, "the injected entry lost its position — a floor item with no `at` cannot be drawn anywhere");
+  assert.equal(lighter.kind, "sited",
+    "the injected entry says `thing` where every other entry says `sited` — that is the mark's CLASS in the field that carries its KIND");
+  assert.equal(lighter.via, "floor",
+    "the injected entry does not say where it came from — a reader counting `nearby` against the eyes' budget is owed the reason");
+  assert.equal(lighter.distance_m, 1.1,
+    "the injected entry carries no distance from a standpoint that has one — a consumer sorting by distance puts it nowhere");
+  assert.equal("bearing" in lighter, false,
+    "a bearing was invented here — that convention belongs to the engine's field of view, and a second implementation is a second answer");
+
+  assert.equal(afoot.find((o) => o.id === WICK), undefined,
+    "shrouded loot was INJECTED — being on the floor must never override being hidden, and the injection is the one path that could smuggle it in");
+
+  // SPENT: the shroud lifts and the same reader hands the prize over.
+  const spent = withLoose(crowd, { shrouded: [], floor: [floorRow(LIGHTER), floorRow(WICK)], state: { dropped: [] } },
+    { standpoint: { x: 1097, y: -783.5 } });
+  assert.equal(spent.find((o) => o.id === WICK)?.loose, true,
+    "at spent the loot never appeared — the shroud is a delay, not a deletion, and the injection is what makes the appearance visible");
+
+  // NO DOUBLE ENTRY. A thing salience DID rank must not arrive twice.
+  const ranked = withLoose([...crowd, { id: LIGHTER, at: { x: 1096, y: -784 }, kind: "sited", bearing: "NE" }],
+    { shrouded: [], floor: [floorRow(LIGHTER)], state: { dropped: [] } }, { standpoint: { x: 1097, y: -783.5 } });
+  assert.equal(ranked.filter((o) => o.id === LIGHTER).length, 1,
+    "the lighter arrived twice — a thing salience ranked must be MARKED, not injected beside itself");
+  assert.equal(ranked.find((o) => o.id === LIGHTER).bearing, "NE",
+    "the ranked entry was replaced by the injected one, losing the engine's own bearing — marking must win where both exist");
+
+  // AND OUTSIDE A PORTAL NOTHING CHANGES: no portal, no injection, no marking.
+  assert.deepEqual(withLoose(crowd, null), crowd,
+    "a standpoint outside any portal ground had its `nearby` touched — every ordinary read in the town must be byte-identical");
 });
 
 test("...and the HOLD DOOR itself refuses it — the guard is wired, not merely written", async () => {
@@ -1269,12 +1365,18 @@ test("...and the HOLD DOOR itself refuses it — the guard is wired, not merely 
     try {
       const portal = portalBlockAt(store.db, IN_VAULT);
       assert.ok(portal, "no portal block at the vault — the legs below would prove nothing");
-      assert.equal(portal.loose.includes(LIGHTER), false,
+      const onFloor = (portal.floor ?? []).map((t) => String(t.thing));
+      assert.equal(onFloor.includes(LIGHTER), false,
         "a thing in darko's hands is still listed as lying on the floor — the site would draw it twice, once in the hand and once underfoot");
       assert.equal(portal.shrouded.includes(WICK), true,
         "the shroud list lost the wick end while the cake is still standing");
-      assert.equal(portal.loose.includes(WICK), false,
-        "shrouded loot leaked into the loose list — the two readers disagree about the same room");
+      assert.equal(onFloor.includes(WICK), false,
+        "shrouded loot leaked into the floor list — the two readers disagree about the same room");
+      // ROWS, NOT IDS — the injection has to be able to BUILD a nearby entry
+      // from this, so a list of bare ids is the shape that could not.
+      for (const row of portal.floor ?? [])
+        assert.ok(row.at && Number.isFinite(row.at.x),
+          `the floor row for ${row.thing} carries no position — an injected entry with no \`at\` cannot be drawn`);
     } finally { try { store.db?.close(); } catch { /* already gone */ } }
   } finally {
     for (const [k, v] of [["WORLD_STORE_DB", prev.store], ["WORLD_DYNAMIC_DB", prev.dyn], ["WORLD_SINGLE_LOG", prev.log]])

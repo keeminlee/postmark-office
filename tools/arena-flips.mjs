@@ -264,7 +264,33 @@ const FLIPS = [
 
   { name: "a thing in somebody's hands is drawn lying on the floor",
     file: APEX, catches: "keeps BOTH halves its own doc promises",
-    edit: (t) => t.replace("      .filter((id) => liveHolder(held, id) == null);", "") },
+    edit: (t) => t.replace("      .filter((t) => liveHolder(held, String(t.thing)) == null);", ";") },
+
+  // ── the floor's injection (2026-08-29) ───────────────────────────────────
+
+  { name: "the floor is only MARKED again — a thing salience never ranked stays invisible",
+    file: APEX, catches: "rides `nearby` even when salience never ranked it",
+    edit: (t) => t.replace("  for (const t of floor) {\n    if (present.has(String(t.thing))) continue;", "  for (const t of []) {\n    if (present.has(String(t.thing))) continue;") },
+
+  { name: "the injection skips the present-check — a ranked thing arrives twice",
+    file: APEX, catches: "rides `nearby` even when salience never ranked it",
+    edit: (t) => t.replace("    if (present.has(String(t.thing))) continue;", "") },
+
+  { name: "the shroud stops outranking the floor — held-back loot is injected",
+    file: APEX, catches: "rides `nearby` even when salience never ranked it",
+    edit: (t) => t.replace("  const floor = (portal?.floor ?? []).filter((t) => !shrouded.has(String(t.thing)));", "  const floor = (portal?.floor ?? []);") },
+
+  { name: "the injected entry says the mark's CLASS where `nearby` carries its KIND",
+    file: ARENA, catches: "rides `nearby` even when salience never ranked it",
+    edit: (t) => t.replace("    kind: r.subkind ?? null,", "    kind: r.class ?? null,") },
+
+  { name: "an injected entry carries no distance from a standpoint that has one",
+    file: APEX, catches: "rides `nearby` even when salience never ranked it",
+    edit: (t) => t.replace("      ...(here ? { distance_m: Math.round(Math.hypot(t.at.x - here.x, t.at.y - here.y) * 10) / 10 } : {}),", "") },
+
+  { name: "the injection stops saying where the extra rows came from",
+    file: APEX, catches: "rides `nearby` even when salience never ranked it",
+    edit: (t) => t.replace('      via: "floor",', "") },
 
   { name: "the beats tail is uncapped — the answer grows with the length of the party",
     file: ARENA, catches: "a CAPPED tail of beats",
