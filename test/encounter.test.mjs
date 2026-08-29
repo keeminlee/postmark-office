@@ -710,6 +710,35 @@ test("the creature's target is a RULE, with no input where a favourite could go"
     "the creature's choice is stated as the rule it followed, not left for a reader to guess");
 });
 
+test("the departed are not targets — a leaver's last strike does not draw the swing", () => {
+  // hostileAct's own law, quoted: "the pool it draws from now excludes the
+  // hands the fold itself says are gone." Journal seq 288, live at the party:
+  // the cake chose rowan-archive, "the most recent hand to strike it", ten
+  // minutes after rowan-archive left the vault — and the fold rightly answered
+  // nobody-to-hit, so the creature whiffed every turn while the founder
+  // watched. The rule keeps no favourites; the pool must keep no ghosts.
+  reset();
+  const rows = [row("darko", "join", 0), row("rei", "join", 1), boss("join", 2)];
+  let s = foldEncounter(rows, { dials: DIALS });
+  const acc = [...rows];
+  let n = 10;
+  // walk turns until REI is up and strikes — she must be the most recent striker
+  while (n < 30) {
+    const t = s.wheel.turn;
+    if (t === "rei") { acc.push(row("rei", "strike", n)); n += 1; s = foldEncounter(acc, { dials: DIALS }); break; }
+    acc.push(t === "the-unlit-cake" ? boss("strike", n, "darko") : row(t, "guard", n));
+    n += 1; s = foldEncounter(acc, { dials: DIALS });
+  }
+  acc.push(row("rei", "leave", n)); n += 1;
+  s = foldEncounter(acc, { dials: DIALS });
+  const lastStrike = [...(s.beats ?? [])].reverse().find((b) => b.act === "strike" && b.kind !== HOSTILE);
+  assert.equal(lastStrike?.actor, "rei", "the setup never made the leaver the most recent striker — this would prove nothing");
+  assert.equal(s.hands?.rei?.gone, true, "the setup never recorded the leave — this would prove nothing");
+  const act = hostileAct(s, "the-unlit-cake", { at: at(60) });
+  assert.notEqual(act.object, "rei", "the creature must not swing at a hand who has left the room");
+  assert.equal(act.object, "darko", "the swing falls on a hand still standing");
+});
+
 // ── downed, not dead ────────────────────────────────────────────────────────
 
 test("at zero you are DOWN: your acts refuse, the wheel skips you, your weapon falls loose", () => {

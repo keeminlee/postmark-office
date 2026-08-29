@@ -671,9 +671,18 @@ export function pendingHostileTurns(state) {
  * and the function has nowhere to put one.
  */
 export function hostileAct(state, who, { at }) {
+  // ⚑ THE DEPARTED ARE NOT TARGETS (found live 2026-08-29, the founder watching
+  // his own cake whiff: "cake is hitting nothing on its turn"). This filtered
+  // the downed and not the GONE, so at a party where hands strike and then
+  // drift home, "the most recent hand that struck it" was a leaver — journal
+  // seq 288 chose rowan-archive ten minutes after rowan-archive left, and the
+  // fold rightly answered "nobody to hit". The rule is unchanged (most recent
+  // striker, no favourites — atom 8); the pool it draws from now excludes the
+  // hands the fold itself says are gone.
+  const gone = (a) => state.hands?.[a]?.gone === true;
   const struck = [...(state.beats ?? [])].reverse()
-    .find((b) => b.act === "strike" && b.kind !== HOSTILE && !state.downed.includes(b.actor));
-  const standing = (state.wheel?.order ?? []).filter((j) => j.kind !== HOSTILE && !j.downed);
+    .find((b) => b.act === "strike" && b.kind !== HOSTILE && !state.downed.includes(b.actor) && !gone(b.actor));
+  const standing = (state.wheel?.order ?? []).filter((j) => j.kind !== HOSTILE && !j.downed && !gone(j.who));
   const target = struck?.actor ?? standing[0]?.who ?? null;
   return {
     actor: who, action: "strike", object: target,
