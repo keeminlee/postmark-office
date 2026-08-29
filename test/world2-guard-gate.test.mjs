@@ -41,6 +41,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 
 import { openDynamic } from "../src/dynamic-store.mjs";
 import { appendJournal, readJournal, CLASS_MARK, ACTION_LEAVE } from "../src/world-journal.mjs";
@@ -119,6 +120,13 @@ const stanceRowCount = (dbPath) => {
 
 // ── running one door, and reading what it touched ───────────────────────────
 
+// `--import` takes a SPECIFIER and a file: URL is one; the main script argument
+// is a PATH and a file: URL is not. Two forms because node reads them through
+// two resolvers, and the mismatch is silent until a run starts somewhere other
+// than the repo root.
+const HOOK = new URL("./w2-pg-stub-fixture.mjs", import.meta.url).href;
+const DOOR = fileURLToPath(new URL("./w2-guard-door-fixture.mjs", import.meta.url));
+
 let n = 0;
 /**
  * Run the door in a child with the resolve hook installed, and return
@@ -150,9 +158,15 @@ function runDoor({ on, w2 = {}, claims = [], mode = "ok", journal = null }) {
   for (const k of ["WORLD2_PG", "WORLD2_PG_URL", "W2_PEN"]) delete env[k];
   Object.assign(env, w2);
 
+  // Absolute file: URLs, not paths relative to a cwd. `--import` takes a
+  // specifier and a bare relative path is resolved against the working
+  // directory, so a run started from anywhere but the repo root would fail to
+  // install the hook — and a test whose hook silently did not load would report
+  // zero `pg` resolutions for the wrong reason, which is the one green this
+  // file must never hand back.
   const out = execFileSync(process.execPath,
-    ["--import", "./test/w2-pg-stub-fixture.mjs", "./test/w2-guard-door-fixture.mjs"],
-    { cwd: process.cwd(), env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    ["--import", HOOK, DOOR],
+    { env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
 
   const line = out.split(/\r?\n/).find((l) => l.startsWith("ANSWER ") || l.startsWith("BOUNCE ")) ?? "";
   const parsed = line ? JSON.parse(line.slice(7)) : null;
