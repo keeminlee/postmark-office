@@ -46,9 +46,15 @@ const HYDRATE = "src/world-hydrate.mjs";
 // hole that is not there — which this runner did three times tonight before
 // the mapping was fixed.
 const FOLD = "src/encounter.mjs";
+// The calculus joined 2026-08-29 with the lifecycle invariant: the founder lost
+// STRIKE after a down and a lift, and the only office-side shape that could
+// produce it lives in the seat's borrowed set — so the guard for it belongs
+// against the arena suite, where the invariant is asserted.
+const GRANTS = "src/world-grants.mjs";
 const SUITES = { [ARENA]: "test/arena.test.mjs", [HUMAN]: "test/arena.test.mjs",
                  [APEX]: "test/arena.test.mjs", [HOLD]: "test/arena.test.mjs",
-                 [HYDRATE]: "test/hydrate-loot.test.mjs", [FOLD]: "test/arena.test.mjs" };
+                 [HYDRATE]: "test/hydrate-loot.test.mjs", [FOLD]: "test/arena.test.mjs",
+                 [GRANTS]: "test/arena.test.mjs" };
 
 const FLIPS = [
   // ── ruling 1 · the wheel gates, and the refusal NAMES the turn ───────────
@@ -170,6 +176,24 @@ const FLIPS = [
   { name: "the adversary renders as a resident rather than a creature",
     file: ARENA, catches: "the door speaks the exact shapes the cockpit reads",
     edit: (t) => t.replace('kind: o.kind === "hostile" ? "creature"', 'kind: "resident" ? "resident"') },
+
+  // ── the verb set across the lifecycle (founder-reported 2026-08-29) ──────
+  //
+  // These break the SEAT rather than the arena, because that is where a
+  // lifecycle-dependent verb set could actually come from: if the seat's
+  // borrowed resident grants ever started overwriting the human's own, the
+  // human's `for: human` strike would be replaced by the resident's HELD one —
+  // which needs the weapon in hand, which the fall drops. That is the shape the
+  // founder's report would have had if the office were the answer.
+  { name: "the seat's borrowed set overwrites the human's own — strike becomes the HELD weapon's",
+    file: GRANTS, catches: "the verb set is invariant across down and lift",
+    edit: (t) => t.replace("    if (!byAction.has(e.action)) byAction.set(e.action, { ...e, via_seat: true });",
+                           "    byAction.set(e.action, { ...e, via_seat: true });") },
+
+  { name: "the gather starts reading the holder — a dropped weapon takes its verb with it",
+    file: GRANTS, catches: "the verb set is invariant across down and lift",
+    edit: (t) => t.replace('  const seatable = (first.admitted ?? first.entries).filter((e) => e.channel === "ground");',
+                           '  const seatable = (first.admitted ?? first.entries).filter((e) => e.channel === "held");') },
 
   // ── the spawn on entry (founder-ruled 2026-08-29) ────────────────────────
 

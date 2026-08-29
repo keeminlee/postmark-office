@@ -1671,3 +1671,131 @@ test("the walk desk's decision: a room's stride snaps the destination, and cross
       "a point out in the town resolved to a portal ground");
   } finally { b.close(); }
 });
+
+// ── THE AFFORDANCE SET ACROSS THE ENCOUNTER LIFECYCLE ───────────────────────
+//
+// Founder-reported at the board, 2026-08-29: a human went down, was lifted, and
+// came back with STRIKE gone from the bar — walk/say/guard/cast/enter/exit lit,
+// lift correctly disabled, strike absent entirely.
+//
+// ⚑ WHAT THIS FILE COULD NOT REPRODUCE, and the absence is the finding. Against
+// the record as it stands — `the-town/arena`'s roster, which pairs every verb
+// with a `for: human` entry, and the five verb residues, where strike, guard and
+// cast carry the IDENTICAL guard `{within_class: portal-ground}` — the gather
+// yields strike to a seated human in every combination: holding the weapon and
+// empty-handed, before the fall and after the lift. Strike is indistinguishable
+// from guard and cast at every layer the office reads.
+//
+// So the office is exonerated against the readable record, and the loss is
+// data-side (a dev-stage roster differing from the record) or site-side. What
+// this test can do is PIN THE PROPERTY, so that if the office ever becomes the
+// answer, it is this that goes red rather than a party.
+//
+// THE PROPERTY: the affordance set does not depend on the encounter. Going down,
+// being lifted, dropping a weapon and standing back up change the WHEEL and
+// change nothing about which verbs the record grants you where you stand.
+
+test("the verb set is invariant across down and lift — the whole set, not only strike", async () => {
+  const { gatherActions, gatherGroundActions, gatherHeldActions } = await import("../src/world-apex.mjs");
+  const { resolveForActor } = await import("../src/world-grants.mjs");
+  const { foldEncounter, HOSTILE } = await import("../src/encounter.mjs");
+
+  const db = new DatabaseSync(":memory:");
+  db.exec(SCHEMA);
+  const ins = db.prepare(`INSERT INTO nodes (id,by,kind,subkind,tier,at_x,at_y,extent_w,extent_h,props) VALUES (?,?,?,?,?,?,?,?,?,?)`);
+  const P = (o) => JSON.stringify(o);
+  // ⚑ THE ARENA'S ROSTER, VERBATIM FROM THE RECORD (proto/birthday, the arena
+  // class mark). Transcribed rather than invented, because a fixture that
+  // writes the shape the code expects proves only that they agree — and the
+  // whole question here is whether the RECORD's shape reaches a human.
+  const ARENA_ACTIONS = [
+    { action: "strike", residue: "the-town/strike" }, { action: "strike", for: "human", residue: "the-town/strike" },
+    { action: "guard", residue: "the-town/guard" }, { action: "guard", for: "human", residue: "the-town/guard" },
+    { action: "cast", residue: "the-town/cast" }, { action: "cast", for: "human", residue: "the-town/cast" },
+    { action: "lift", residue: "the-town/lift" }, { action: "lift", for: "human", residue: "the-town/lift" },
+    { action: "loot", residue: "the-town/loot" }, { action: "loot", for: "human", residue: "the-town/loot" },
+  ];
+  ins.run("the-town/resident", "the-town", "mark", "class", "constitution", null, null, null, null,
+    P({ class: "resident", in_works: true, ambient: true, actions: [
+      { action: "say", residue: "the-town/say" }, { action: "walk", residue: "the-town/depart" },
+      { action: "enter", residue: "the-town/enter" }, { action: "exit", residue: "the-town/enter" }] }));
+  ins.run("the-town/arena", "the-town", "mark", "class", "constitution", null, null, null, null,
+    P({ class: "arena", in_works: true, extends: "portal-ground", actions: ARENA_ACTIONS }));
+  ins.run(VAULT, "the-town", "mark", "sited", "market", 1097, -783.5, 3, 2, P({ class: "arena" }));
+  ins.run(LIGHTER, "the-town", "mark", "sited", "market", 1095.5, -784, 0.2, 0.2,
+    P({ class: "thing", held_grant: [{ action: "strike", residue: "the-town/strike", bonus: 3 }] }));
+
+  const spineIds = [VAULT];
+  // ⚑ THE SHAPE THIS RETURNS IS "action:channel", NOT the bare verb, and the
+  // flip runner is why. Comparing bare names could not see a strike that
+  // CHANGED CHANNELS — and the channel is the whole mechanism the founder's
+  // report would have had if the office were the answer: a strike reaching a
+  // human through the HELD weapon instead of the ground vanishes the instant
+  // the fall drops it. Two flips broke exactly that and both stayed green
+  // against a name-only comparison.
+  const setFor = (kind, holding) => {
+    const amb = gatherActions(db, { spineIds, reachIds: [] });
+    const ground = gatherGroundActions(db, { spineIds, reachIds: [] });
+    const held = gatherHeldActions(db, holding);
+    return resolveForActor([...held.entries, ...ground.entries, ...amb.entries], { kind, spineIds })
+      .entries.map((e) => `${e.action}:${e.channel}${e.via_seat ? ":via_seat" : ""}`).sort();
+  };
+
+  // THE LIFECYCLE IS REAL: the fold is driven to a genuine down and a genuine
+  // lift, and both states are asserted — otherwise "the set did not change"
+  // would be true of a fight that never happened.
+  let seq = 0;
+  const t0 = Date.parse("2026-08-29T19:00:00Z");
+  const row = (actor, action, n, extra = {}) => ({ seq: ++seq, actor, action, written_at: new Date(t0 + n * 1000).toISOString(), ...extra });
+  const boss = (action, n, object) => row(CAKE, action, n, { object, payload: { kind: HOSTILE } });
+  const D = { strike: { to_hit_die: 20, damage_die: 6, beats_ac: 1 }, cast: { to_hit_die: 20, damage_die: 10, beats_ac: 11 },
+              guard: { halves_next_hit: true }, lift: { restores_to: 8 },
+              adversary: { hp: 400, to_hit_die: 20, damage_die: 20, initiative_bonus: 2, persistent: false },
+              arena: { guest_hp: 12, initiative_die: 20, turn_timeout_s: 600, lift_to: 8 } };
+  const HUMAN = "human-of-starforge";
+  const acc = [row(HUMAN, "join", 0), row("wright", "join", 1), boss("join", 2)];
+
+  // ⚑ AN ABSOLUTE SET, NOT ONLY A STABLE ONE. Invariance alone is satisfied by
+  // a bug that breaks all three stages equally — a flip that unseated the human
+  // outright left walk/say/enter/exit missing at every stage and the deepEqual
+  // below passed happily. So what the set IS gets pinned here, once, and the
+  // stages are compared against it.
+  const before = setFor("human", [LIGHTER]);
+  assert.deepEqual(before, [
+    "cast:ground", "enter:ambient:via_seat", "exit:ambient:via_seat", "guard:ground",
+    "lift:ground", "loot:ground", "say:ambient:via_seat", "strike:ground", "walk:ambient:via_seat",
+  ], `a seated human's verb set is not what the record grants (got: ${before.join(", ")}) — the five arena verbs from the GROUND, the resident's four through the seat`);
+  assert.ok(before.includes("strike:ground"),
+    "strike must reach a human from the GROUND — a strike that arrives through the held weapon is a strike the fall takes away, which is the founder's report exactly");
+
+  let s = foldEncounter(acc, { dials: D }), n = 10;
+  while (!s.downed.includes(HUMAN) && n < 120) {
+    const t = s.wheel.turn;
+    if (!t) break;
+    acc.push(t === CAKE ? boss("strike", n, HUMAN) : row(t, "guard", n));
+    n += 1; s = foldEncounter(acc, { dials: D });
+  }
+  assert.ok(s.downed.includes(HUMAN), "the setup never put the human down — this test would prove nothing");
+  const whileDown = setFor("human", [LIGHTER]);
+
+  acc.push(row("wright", "lift", n, { object: HUMAN }));
+  s = foldEncounter(acc, { dials: D });
+  assert.ok(!s.downed.includes(HUMAN), "the setup never lifted them back up — the second half is the founder's own case");
+  const afterLift = setFor("human", [LIGHTER]);
+
+  // THE PROPERTY, all three stages, the WHOLE set — not only strike, because the
+  // founder hit this path live and any other post-lift loss bites at the party.
+  assert.deepEqual(whileDown, before,
+    `the verb set moved while the human was DOWN (${before.join(", ")} -> ${whileDown.join(", ")}) — the affordance calculus must not read the encounter`);
+  assert.deepEqual(afterLift, before,
+    `the verb set moved after the LIFT (${before.join(", ")} -> ${afterLift.join(", ")}) — this is the founder's bug, and it is now in the office`);
+  assert.ok(afterLift.includes("strike:ground"),
+    "STRIKE is gone after a lift (or arrives by another channel) — the founder's exact report, reproduced in the office");
+
+  // AND EMPTY-HANDED TOO: the weapon drops when you go down, so a set that
+  // depended on holding it would lose strike at exactly this moment. Strike
+  // reaches a human through the GROUND, and the ground does not care what
+  // fell out of their hands.
+  assert.deepEqual(setFor("human", []), before,
+    "the verb set depends on what the human is HOLDING — going down drops the weapon, so that dependency is the bug wearing a different cause");
+});
