@@ -111,9 +111,11 @@ const FLIPS = [
     file: ENC, catches: "an act out of turn is refused, and the refusal NAMES whose turn it is",
     edit: (t) => t.replace("why: `it is ${w.turn}'s turn` });", "why: `not your turn` });") },
 
+  // Retargeted 2026-08-29 with the gate narrowing — the predicate stopped being
+  // spelled `verb !== "loot"` and this flip went silently inert.
   { name: "the wheel gates a room with no fight in it",
     file: ENC, catches: "with no encounter live, nothing is gated",
-    edit: (t) => t.replace("    if (live && verb !== \"loot\") {", "    if (true) {") },
+    edit: (t) => t.replace("    if (live && WHEEL_GATED.includes(verb)) {", "    if (WHEEL_GATED.includes(verb)) {") },
 
   { name: "a latecomer is sorted in by initiative instead of appended",
     file: ENC, catches: "a late joiner lands at the BOTTOM of the order",
@@ -151,9 +153,39 @@ const FLIPS = [
     file: ENC, catches: "when the whole room goes down: the wipe",
     edit: (t) => t.replace("    if (hands.length && hands.every((j) => downed.has(j.who))) {", "    if (false) {") },
 
+  // Retargeted 2026-08-29: the line grew its `persistent` condition, so the old
+  // string matched nothing and this flip had quietly stopped being a flip.
   { name: "a full-room wipe leaves the adversary wounded",
     file: ENC, catches: "when the whole room goes down: the wipe",
-    edit: (t) => t.replace("      bossHp = D.bossHpMax;", "      bossHp = Math.max(1, bossHp);") },
+    edit: (t) => t.replace("      if (!D.bossPersistent) bossHp = D.bossHpMax;", "      bossHp = Math.max(1, bossHp);") },
+
+  // ── THE BIRTHDAY AMENDMENTS (founder-ruled 2026-08-29) ───────────────────
+
+  // 2 · the persistent adversary
+  { name: "the persistent dial is ignored — every wipe heals the adversary whole",
+    file: ENC, catches: "a PERSISTENT adversary keeps its wounds across a wipe",
+    edit: (t) => t.replace("      if (!D.bossPersistent) bossHp = D.bossHpMax;", "      bossHp = D.bossHpMax;") },
+
+  { name: "the dial inverts — EVERY adversary becomes a one-off boss",
+    file: ENC, catches: "a PERSISTENT adversary keeps its wounds across a wipe",
+    edit: (t) => t.replace("      if (!D.bossPersistent) bossHp = D.bossHpMax;", "      if (D.bossPersistent) bossHp = D.bossHpMax;") },
+
+  { name: "a persistent wipe also spares the HANDS — a room nobody ever wakes up in",
+    file: ENC, catches: "a PERSISTENT adversary keeps its wounds across a wipe",
+    edit: (t) => t.replace("      for (const j of hands) { downed.delete(j.who); hp.set(j.who, D.guestHp); left.add(j.who); }", "") },
+
+  { name: "the wipe beat stops saying which law it took",
+    file: ENC, catches: "a PERSISTENT adversary keeps its wounds across a wipe",
+    edit: (t) => t.replace("                  persistent: D.bossPersistent,", "                  persistent: false,") },
+
+  // 1 · the gate narrows
+  { name: "the fold gates by exception again — every verb the wheel has not heard of",
+    file: ENC, catches: "the wheel gates the acts it COUNTS, and nothing else",
+    edit: (t) => t.replace("if (live && WHEEL_GATED.includes(verb)) {", 'if (live && verb !== "loot") {') },
+
+  { name: "the wheel gates nothing at all — the narrowing becomes a removal",
+    file: ENC, catches: "the wheel gates the acts it COUNTS, and nothing else",
+    edit: (t) => t.replace("if (live && WHEEL_GATED.includes(verb)) {", "if (false) {") },
 
   { name: "the timeout answers without being given an instant",
     file: ENC, catches: "an absent hand's turn passes at the NEXT DOOR TOUCH",
