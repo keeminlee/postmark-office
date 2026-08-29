@@ -154,7 +154,26 @@ for (const [n, f] of Object.entries({ appendJournal, liveMarks, liveChildrenOf, 
 // The published mark for the last one is planted directly in `marks`, because
 // only `clearing_job` may materialize one and the candle is not what is on trial.
 
-const HOUSEHOLDS = { a: "gh:9000001", b: "gh:9000002" };
+// ── THE TWO SPELLINGS, WHICH THIS HARNESS MUST HOLD APART ──────────────────
+//
+// The first run of this falsifier got them wrong and said so loudly, which is
+// the reason both names exist here rather than one.
+//
+// `JOURNAL_HOUSEHOLD` is what `resolvedWorldHousehold(key)` returns — the office
+// KEY's household name, which for a one-resident key is the handle. It is what
+// `appendJournal` stores, what `liveMarks(db, {household})` scopes by, and what
+// `mirrorAct` copies into `acts.household`.
+//
+// `HOUSEHOLD_KEY` is what `householdKeyFor` resolves that name to through
+// `identities` — the RESOLVED key, and what `claims.household` holds.
+//
+// Feeding the key to `liveMarks` and the name to `pgLiveMarks` would compare two
+// different questions and report the port as holding nothing. Feeding both sides
+// the key made `householdKeyFor` miss (it is keyed by HANDLE) and write
+// `solo:gh:9000001` — a spelling of a spelling. Both happened on run 1, and both
+// were the harness rather than the port.
+const JOURNAL_HOUSEHOLD = { a: "guards-alfa", b: "guards-bravo" };
+const HOUSEHOLD_KEY = { a: "gh:9000001", b: "gh:9000002" };
 const ACTORS = { a: "guards-alfa", b: "guards-bravo" };
 
 const SCRIPT = [
@@ -173,7 +192,7 @@ const SCRIPT = [
 
 // The published mark the last withdrawal is about. Planted in `marks` (canon),
 // never in `claims` — which is exactly the state 1.0 calls "was_published".
-const PUBLISHED = { slug: `${ACTORS.a}/the-standing-stone`, kind: "sited", owner: ACTORS.a, household: HOUSEHOLDS.a,
+const PUBLISHED = { slug: `${ACTORS.a}/the-standing-stone`, kind: "sited", owner: ACTORS.a, household: HOUSEHOLD_KEY.a,
                     body: "a stone that stands in canon", geometry: { at: { x: 10, y: 10 }, extent: { w: 3, h: 3 } } };
 
 async function plantPopulation(ownerClient, dbPath) {
@@ -183,7 +202,7 @@ async function plantPopulation(ownerClient, dbPath) {
   for (const [k, handle] of Object.entries(ACTORS))
     await ownerClient.query(
       "INSERT INTO identities (handle, household, status) VALUES ($1,$2,'resident') ON CONFLICT (handle) DO UPDATE SET household = EXCLUDED.household",
-      [handle, HOUSEHOLDS[k]]);
+      [handle, HOUSEHOLD_KEY[k]]);
 
   // an open window — the docket pen refuses without one ("no open window — the
   // candle is dark"), and that refusal would be swallowed by its own queue.
@@ -205,7 +224,7 @@ async function plantPopulation(ownerClient, dbPath) {
     appendJournal(db, {
       crossing: 999999.5,
       actor: ACTORS[step.who],
-      household: HOUSEHOLDS[step.who],
+      household: JOURNAL_HOUSEHOLD[step.who],
       action: step.action,
       object: `${ACTORS[step.who]}/${step.slug}`,
       at: { anchor: "the-town/let-there-be-light", dx: step.payload.at?.x ?? 0, dy: step.payload.at?.y ?? 0 },
@@ -311,12 +330,12 @@ export function g2Seams(oneMarks, claimRows, identities, label) {
 // G3 · THE CHILDREN — asked about every id, empties included
 // ═════════════════════════════════════════════════════════════════════════════
 
-export async function g3Children(db, client, household, ids, mangleParent = null) {
+export async function g3Children(db, client, name, key, ids, mangleParent = null) {
   const findings = [];
   let compared = 0;
   for (const id of ids) {
-    const one = liveChildrenOf(db, id, { household }).map((m) => m.id).sort();
-    let two = (await guards.pgLiveChildrenOf(client, id, { household })).children.map((m) => m.id).sort();
+    const one = liveChildrenOf(db, id, { household: name }).map((m) => m.id).sort();
+    let two = (await guards.pgLiveChildrenOf(client, id, { household: key })).children.map((m) => m.id).sort();
     if (mangleParent) two = mangleParent(id, two);
     compared++;
     if (JSON.stringify(one) !== JSON.stringify(two))
@@ -517,21 +536,23 @@ try {
 
   const g = {};
   const overlays = {};
-  for (const [k, household] of Object.entries(HOUSEHOLDS)) {
-    const oneMarks = liveMarks(db, { household });
-    const two = await withHousehold(scratchPool, household, (c) => guards.pgLiveMarks(c, { household }));
+  for (const k of Object.keys(HOUSEHOLD_KEY)) {
+    const name = JOURNAL_HOUSEHOLD[k];   // 1.0's scope: the office key's household NAME
+    const key = HOUSEHOLD_KEY[k];        // 2.0's scope: the resolved KEY
+    const oneMarks = liveMarks(db, { household: name });
+    const two = await withHousehold(scratchPool, key, (c) => guards.pgLiveMarks(c, { household: key }));
     g[`G1_${k}`] = g1LiveLayer(oneMarks, two.marks, k);
 
-    const { rows: claimRows } = await withHousehold(scratchPool, household, (c) =>
+    const { rows: claimRows } = await withHousehold(scratchPool, key, (c) =>
       c.query("SELECT slug, status, stake, household FROM claims WHERE status = ANY($1)", [guards.LIVE_STATUSES]));
     g[`G2_${k}`] = g2Seams(oneMarks, claimRows, identities, k);
 
     const ids = [...new Set([...oneMarks.map((m) => m.id), ...two.marks.map((m) => m.id), `${ACTORS[k]}/the-quiet-shed`])];
-    g[`G3_${k}`] = await withHousehold(scratchPool, household, (c) => g3Children(db, c, household, ids));
+    g[`G3_${k}`] = await withHousehold(scratchPool, key, (c) => g3Children(db, c, name, key, ids));
 
-    const oneOverlay = replayDrafts(readJournal(db, { household, cls: CLASS_MARK }), { publishedIds, publishedPathOf, publishedMarkOf });
-    const twoOverlay = await withHousehold(scratchPool, household, (c) =>
-      guards.pgDraftsForKey(c, { household, publishedIds, publishedPathOf, publishedMarkOf, pathFor }));
+    const oneOverlay = replayDrafts(readJournal(db, { household: name, cls: CLASS_MARK }), { publishedIds, publishedPathOf, publishedMarkOf });
+    const twoOverlay = await withHousehold(scratchPool, key, (c) =>
+      guards.pgDraftsForKey(c, { household: key, journalHousehold: name, publishedIds, publishedPathOf, publishedMarkOf, pathFor }));
     overlays[k] = { one: oneOverlay, two: twoOverlay };
     g[`G4_${k}`] = g4Overlay(oneOverlay.marks, twoOverlay.marks);
   }
@@ -545,7 +566,7 @@ try {
   finally { devClient.release(); }
   g.G5 = g5Holdings(oracle.rows, portAttachments.rows);
 
-  g.G6 = await g6Rls(scratchPool, HOUSEHOLDS.a, ownerPool, process.env.W2_OWNER_URL ?? null);
+  g.G6 = await g6Rls(scratchPool, HOUSEHOLD_KEY.a, ownerPool, process.env.W2_OWNER_URL ?? null);
 
   const findings = Object.values(g).flatMap((r) => r.findings);
   const unchecked = Object.entries(g).filter(([, r]) => !r.compared).map(([k]) => k);
@@ -553,9 +574,20 @@ try {
   const { rows: [hr] } = await ownerPool.query("SELECT count(*)::int AS n FROM claims WHERE status = 'held_review'");
   const liveClaims = (await ownerPool.query("SELECT slug, household FROM claims WHERE status = ANY($1)", [guards.LIVE_STATUSES])).rows;
 
+  // THE TWO SPELLINGS, MEASURED ON THE REAL STORE — the number behind
+  // DISCLOSURES.two_household_spellings, not a number this file remembers.
+  const devOwner = process.env.W2_OWNER_URL ? new pg.Pool({ connectionString: process.env.W2_OWNER_URL, max: 1 }) : null;
+  let actsHouseholds = [], claimHouseholds = [];
+  if (devOwner) {
+    try {
+      actsHouseholds = (await devOwner.query("SELECT DISTINCT household FROM acts WHERE household IS NOT NULL")).rows.map((r) => r.household);
+      claimHouseholds = (await devOwner.query("SELECT DISTINCT household FROM claims WHERE household IS NOT NULL")).rows.map((r) => r.household);
+    } catch { /* the count is a disclosure, not a gate */ } finally { await devOwner.end(); }
+  }
+
   out = {
     world_repo: REPO,
-    scratch: { households: HOUSEHOLDS, declarations: SCRIPT.length },
+    scratch: { households: HOUSEHOLD_KEY, journal_households: JOURNAL_HOUSEHOLD, declarations: SCRIPT.length },
     store: {
       oracle_attachments: oracle.rows.length, port_attachments: portAttachments.rows.length,
       attachment_eras: portAttachments.eras, oracle_from_crossing: oracle.crossing,
@@ -563,7 +595,8 @@ try {
     },
     equalities: Object.fromEntries(Object.entries(g).map(([k, r]) => [k, { compared: r.compared, findings: r.findings.length }])),
     unchecked, findings,
-    notes: guards.admissionNotes({ claims: liveClaims, attachments: portAttachments.rows, heldReview: hr.n }),
+    notes: guards.admissionNotes({ claims: liveClaims, attachments: portAttachments.rows, heldReview: hr.n,
+                                   actsHouseholds, claimHouseholds }),
     refusals: [...portAttachments.refusals],
     disclosures: Object.keys(guards.DISCLOSURES),
   };
@@ -586,8 +619,9 @@ try {
       }
     };
 
-    const hh = HOUSEHOLDS.a;
-    const oneA = liveMarks(db, { household: hh });
+    const hh = HOUSEHOLD_KEY.a;       // the claims scope
+    const hname = JOURNAL_HOUSEHOLD.a; // the journal scope
+    const oneA = liveMarks(db, { household: hname });
 
     // 1 · LIVE_STATUSES WIDENED to include 'locked' — canon counted as live.
     //     Aimed at G1, whose oracle is 1.0's own journal fold.
@@ -612,7 +646,7 @@ try {
       const ids = oneA.map((m) => m.id);
       let bit = 0;
       const r = await withHousehold(scratchPool, hh, (c) =>
-        g3Children(db, c, hh, ids, (id, kids) => { if (kids.length) bit += kids.length; return []; }));
+        g3Children(db, c, hname, hh, ids, (id, kids) => { if (kids.length) bit += kids.length; return []; }));
       return { bit, findings: r.findings };
     });
 

@@ -443,10 +443,39 @@ export async function assertHouseholdDeclared(client, household) {
 // retires it, canon agrees with the household and there is nothing left to
 // propose. That is self-limiting, needs no cursor, and matches 1.0's `if
 // (!published) continue` on the other side of the same branch.
+//
+// ── AND THE HOUSEHOLD IT IS SCOPED BY, WHICH IS NOT `acts.household` ────────
+//
+// FOUND BY THIS LANE'S FALSIFIER, 2026-08-28, and it is a defect in the store
+// rather than in this read: `acts.household` and `claims.household` carry the
+// SAME FACT IN TWO SPELLINGS.
+//
+//   acts.household     'darko'  ×12  — every live-written act; NULL on all 2925
+//                                      seeded ones (STATE/log states none)
+//   claims.household   'gh:67605380', 'solo:the-town', … — the RESOLVED KEY,
+//                                      per Wright's 2026-08-28 ruling
+//
+// The docket pen was corrected to the key ("adopt 1.0's spelling … a roster
+// owner keeps the household KEY") and the acts mirror was not — `mirrorAct`
+// writes `row.household` verbatim, and `row.household` is
+// `resolvedWorldHousehold(key)`, which is the office key's NAME. So an overlay
+// that filtered `claims` by the key and `acts` by the same string would return
+// the added/modified marks and NONE of the deleted ones, silently, for every
+// household in town.
+//
+// This read goes through `identities` instead, which is the projection that
+// DEFINES the handle → key mapping and the one `householdKeyFor` reads to write
+// the claim. Asking it here is asking the same question the write asked, so the
+// two cannot come apart the way the two columns have. `journalHousehold`
+// optionally widens it for the registry-lag case the fold names — "registry lag
+// never blocks a new resident, it only leaves them ungrouped" — where a handle
+// has acts but no roster line yet.
 export const WITHDRAW_ACT_SELECT =
   `SELECT a.id, a.at, a.actor, a.object, a.household, a.payload
      FROM acts a
-    WHERE a.class = 'mark' AND a.action = 'withdraw'`;
+    WHERE a.class = 'mark' AND a.action = 'withdraw'
+      AND (a.actor IN (SELECT handle FROM identities WHERE household = $1)
+           OR ($2::text IS NOT NULL AND a.household = $2))`;
 
 /**
  * `draftsForKey`'s JOURNAL HALF, over 2.0's stores.
@@ -474,6 +503,7 @@ export const WITHDRAW_ACT_SELECT =
  */
 export async function pgDraftsForKey(client, {
   household,
+  journalHousehold = null,
   publishedIds = new Set(),
   publishedPathOf = null,
   publishedMarkOf = null,
@@ -502,7 +532,7 @@ export async function pgDraftsForKey(client, {
   // THE DELETED ARM. Scoped to withdrawals whose mark still stands in canon —
   // see § THE DELETED ARM above for why the scope is canon's and not the log's.
   const { rows: withdrawn } = await client.query(
-    `${WITHDRAW_ACT_SELECT} AND a.household = $1 ORDER BY a.id`, [household]);
+    `${WITHDRAW_ACT_SELECT} ORDER BY a.id`, [household, journalHousehold]);
   const seen = new Set(out.map((m) => m.id));
   for (const act of withdrawn) {
     const id = act.object ?? (act.payload?.by && act.payload?.slug ? `${act.payload.by}/${act.payload.slug}` : null);
@@ -836,7 +866,8 @@ export async function pgAttachmentsFor(client, { target = null, until = null, st
 // true of the store as it is rather than true by law, so each gets a check that
 // fires when it stops being true instead of a comment nobody re-reads.
 
-export function admissionNotes({ claims = [], attachments = [], heldReview = 0, hiddenDrafts = null } = {}) {
+export function admissionNotes({ claims = [], attachments = [], heldReview = 0, hiddenDrafts = null,
+                                 actsHouseholds = [], claimHouseholds = [] } = {}) {
   const notes = [];
 
   // 1. `held_review` — the unruled status. Zero today; the day it is not, the
@@ -872,7 +903,21 @@ export function admissionNotes({ claims = [], attachments = [], heldReview = 0, 
                `STATE/log event shape. This is first traffic on that era.`);
   }
 
-  // 4. WHAT THE CREDENTIAL CANNOT SEE. Only measurable with a credential that can
+  // 4. THE TWO SPELLINGS. `acts.household` is the office key's NAME and
+  //    `claims.household` is the resolved KEY; the overlay reads both tables.
+  //    This fires while the two disagree, and goes quiet when the acts mirror is
+  //    corrected to the docket pen's spelling.
+  if (actsHouseholds.length && claimHouseholds.length) {
+    const actsKeyed = actsHouseholds.filter((h) => /^(gh|solo|login):/.test(h)).length;
+    if (actsKeyed !== actsHouseholds.length) {
+      notes.push(`${actsHouseholds.length - actsKeyed} of ${actsHouseholds.length} distinct acts.household value(s) are ` +
+                 `NOT in the resolved-key spelling (e.g. ${JSON.stringify(actsHouseholds.find((h) => !/^(gh|solo|login):/.test(h)))}), ` +
+                 `while claims.household is. Two tables, one fact, two spellings — the deleted arm is scoped through ` +
+                 `identities for that reason, and this note goes quiet the day the acts mirror adopts the same ruling.`);
+    }
+  }
+
+  // 5. WHAT THE CREDENTIAL CANNOT SEE. Only measurable with a credential that can
   //    see drafts, so it is passed in rather than asked for here.
   if (hiddenDrafts) {
     notes.push(`${hiddenDrafts} draft claim(s) exist that this connection's credential cannot see under 007's row ` +
@@ -909,4 +954,10 @@ export const DISCLOSURES = Object.freeze({
     "a declaration whose docket write failed is invisible here. `submitClaimFromJournal` is fire-and-forget " +
     "and needs an open window; the sqlite journal row lands either way. That is DESIGN-pen-flip.md's R1 " +
     "atomicity hole seen from the READ side, and it is why these reads gate the flip rather than follow it.",
+  two_household_spellings:
+    "`acts.household` and `claims.household` spell one fact two ways — the office key's NAME on the acts " +
+    "mirror ('darko', 12 rows on world2_dev; NULL on all 2925 seeded ones), the resolved KEY on the docket " +
+    "('gh:67605380', 'solo:the-town'). The draft overlay reads both tables, so it scopes the withdraw acts " +
+    "through `identities` rather than through either column. A caller that filtered both by one string would " +
+    "get every added and modified mark and no deleted ones, silently, for every household in town.",
 });
