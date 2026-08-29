@@ -1231,7 +1231,25 @@ export function cockpitEncounter(state, me = null, { human = null } = {}) {
         //
         // The label is still the office's own (humanHandFor); the page matches
         // on the kind and never spells the hand a second way.
-        kind: o.kind === "hostile" ? "creature" : (human && o.who === human ? "human" : "resident"),
+        // ⚑ EVERY HUMAN ON THE WHEEL IS A HUMAN, NOT ONLY THE READER'S OWN
+        // (found 2026-08-29 answering "will party guests see each other?").
+        //
+        // This compared the row against the CALLER's own hand and nothing else,
+        // so at a party with several humans fighting, each reader saw their own
+        // human labelled `human` and EVERY OTHER GUEST'S HUMAN labelled
+        // `resident` — a row bearing the id `human-of-<somebody>` and the kind
+        // of a thing it is not. One reader, four right answers about themselves
+        // and three wrong ones about everyone else.
+        //
+        // The hand's own SHAPE is what settles it. `humanHandFor` builds every
+        // human label as `human-of-<household slug>` and has since 2026-08-08,
+        // so the prefix is the office's one spelling for "this is a human" and
+        // is available without knowing whose key is reading. `human` stays a
+        // parameter because `you` below still needs to know which row is the
+        // reader's — that is a different question with the same input, and
+        // conflating them is how this got wrong in the first place.
+        kind: o.kind === "hostile" ? "creature"
+          : (String(o.who).startsWith("human-of-") || (human && o.who === human) ? "human" : "resident"),
         label: String(o.who).includes("/") ? String(o.who).split("/").pop().replace(/-/g, " ") : o.who,
         initiative: o.initiative ?? null,
         // `down`, not `downed` — the page's spelling. Getting this wrong shows

@@ -360,8 +360,15 @@ let failures = 0;
 for (const f of FLIPS) {
   const path = join(root, f.file);
   const original = readFileSync(path, "utf8");
-  const mutated = f.edit(original);
-  if (mutated === original) { console.log(`APPARATUS  ${f.name}\n           the edit changed nothing — this flip proves nothing`); failures += 1; continue; }
+  // Line endings normalised before the edit — see arena-flips.mjs for the full
+  // note. Short version: a multi-line flip string is written with a newline, a
+  // CRLF checkout holds a carriage return too, the match silently fails, and the
+  // runner says "the edit changed nothing" without saying which kind of nothing.
+  // The same flip was red in one worktree and inert in another over identical
+  // source. The tree is restored from `original` below either way.
+  const source = original.includes("\r\n") ? original.split("\r\n").join("\n") : original;
+  const mutated = f.edit(source);
+  if (mutated === source) { console.log(`APPARATUS  ${f.name}\n           the edit changed nothing — this flip proves nothing`); failures += 1; continue; }
   writeFileSync(path, mutated);
   const r = suite(f.file);
   writeFileSync(path, original);

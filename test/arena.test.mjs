@@ -645,6 +645,35 @@ test("the door speaks the exact shapes the cockpit reads — id, down, boolean l
     assert.equal(cake.kind, "creature", "the adversary must render as a creature, not a resident");
     assert.ok(e.order.find((o) => o.id === "darko")?.you, "the caller's own row must be marked `you`");
 
+    // ── EVERY HUMAN IS A HUMAN, not only the reader's own (2026-08-29) ───────
+    //
+    // Asked while answering "will party guests see each other's humans?". The
+    // kind was computed against the CALLER's hand alone, so at a party with
+    // several humans on the wheel each reader got their own row right and
+    // everyone else's human labelled `resident` — a row whose id literally
+    // reads `human-of-<somebody>` wearing the kind of a thing it is not.
+    const wheel = {
+      ground: VAULT, wheel: { round: 1, turn: "human-of-darko", order: [
+        { who: "human-of-darko", kind: "player", initiative: 12 },
+        { who: "human-of-keeminlee", kind: "player", initiative: 9 },
+        { who: "rei", kind: "player", initiative: 7 },
+        { who: CAKE, kind: "hostile", initiative: 14 },
+      ] }, hands: {},
+    };
+    // read as darko's human: their OWN row and the OTHER guest's must both be human
+    const seen = cockpitEncounter(wheel, "human-of-darko", { human: "human-of-darko" });
+    const kindOfRow = (id) => seen.order.find((o) => o.id === id)?.kind;
+    assert.equal(kindOfRow("human-of-darko"), "human", "the reader's own human must render as a human");
+    assert.equal(kindOfRow("human-of-keeminlee"), "human",
+      "another guest's human rendered as a RESIDENT — at a party with several humans every reader is right about themselves and wrong about everyone else");
+    assert.equal(kindOfRow("rei"), "resident", "and an actual resident must not be swept up as a human");
+    assert.equal(kindOfRow(CAKE), "creature", "nor the adversary");
+    // `you` is still the reader's own row and only theirs — the same input
+    // answers two different questions, and conflating them is the original bug.
+    assert.ok(seen.order.find((o) => o.id === "human-of-darko")?.you, "the reader's own row is still marked `you`");
+    assert.equal(seen.order.find((o) => o.id === "human-of-keeminlee")?.you, undefined,
+      "another guest's human was marked as the reader's own row");
+
     const r = cockpitRolls([{ of: "d20", rolled: 20, for: "to-hit" }], { modifier: 0 });
     assert.equal(r[0].faces, 20, "rollsFrom derives faces from `die` only when `faces` is absent — send it");
     assert.equal(r[0].total, 20);

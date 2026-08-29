@@ -169,7 +169,16 @@ const FLIPS = [
   // stopped guarding, which is the same class as the law it watches.
   { name: "the adversary renders as a resident rather than a creature",
     file: ARENA, catches: "the door speaks the exact shapes the cockpit reads",
-    edit: (t) => t.replace('kind: o.kind === "hostile" ? "creature" : (human && o.who === human ? "human" : "resident"),', 'kind: "resident",') },
+    edit: (t) => t.replace('kind: o.kind === "hostile" ? "creature"', 'kind: "resident" ? "resident"') },
+
+  // ── every human is a human, not only the reader's own (2026-08-29) ───────
+  { name: "only the READER's own human renders as a human — every other guest's is a resident",
+    file: ARENA, catches: "the door speaks the exact shapes the cockpit reads",
+    edit: (t) => t.replace('String(o.who).startsWith("human-of-") || (human && o.who === human)', "human && o.who === human") },
+
+  { name: "every row becomes a human — a resident is swept up with the guests",
+    file: ARENA, catches: "the door speaks the exact shapes the cockpit reads",
+    edit: (t) => t.replace('String(o.who).startsWith("human-of-") || (human && o.who === human)', "true") },
 
   { name: "a crit is left for the page to guess at",
     file: ARENA, catches: "the door speaks the exact shapes the cockpit reads",
@@ -405,11 +414,25 @@ let failures = 0;
 for (const f of FLIPS) {
   const path = join(root, f.file);
   const original = readFileSync(path, "utf8");
-  const mutated = f.edit(original);
+  // ⚑ LINE ENDINGS ARE NORMALISED BEFORE THE EDIT, and this is apparatus rather
+  // than tidiness. A flip whose search string spans two lines is written with a
+  // newline; a working copy checked out with CRLF holds a carriage return too;
+  // the match silently fails and the runner reports "the edit changed nothing".
+  //
+  // Found 2026-08-29: the SAME multi-line flip was RED in one worktree and inert
+  // in another, over identical source, because the two checkouts differed in
+  // line endings alone. A guard whose reliability depends on which clone you
+  // stand in is a guard nobody can trust, and the report says only that nothing
+  // happened — never which kind of nothing.
+  //
+  // The tree is restored from `original` below, so this comparison never changes
+  // what the working copy holds.
+  const source = original.includes("\r\n") ? original.split("\r\n").join("\n") : original;
+  const mutated = f.edit(source);
   // A NO-OP EDIT IS REPORTED, NEVER COUNTED. It is also the guard that caught
   // an invisible NUL corruption once: a flip whose search string silently
   // matched nothing looks exactly like a law that cannot be broken.
-  if (mutated === original) {
+  if (mutated === source) {
     console.log(`APPARATUS  ${f.name}\n           the edit changed nothing — this flip proves nothing`);
     failures += 1; continue;
   }
