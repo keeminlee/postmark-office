@@ -533,11 +533,39 @@ export async function arenaActViaOffice(repo, args = {}, key = null, deps = {}) 
     // be a party-forming gate wearing a different hat.
     let joined = null;
     let opened = null;
-    if (place.keeps_wheel && !inWheel(state, who)) {
-      // THE OPEN FIRST — see `openAgainst`. The creature must be in round 1's
-      // order beside the hand, not appended below it as a late arrival.
+    // ⚑ THE OPEN IS NOT THE JOINER'S ERRAND (found live 2026-08-28, in the
+    // founder's own browser, three rounds into a fight that could not answer).
+    //
+    // The open used to live INSIDE the `!inWheel` branch below, so the
+    // adversary could only take its slot in the same breath as some hand's
+    // first join. That is the common case and it hid a whole class: a hand who
+    // joins a wheel-keeping ground with nothing standing on it yet is joined
+    // FOREVER, and `openAgainst` — the only thing that ever puts a creature on
+    // the wheel — is never reachable again on that ground. When the adversary
+    // is sited afterwards (which is exactly how the dungeon was staged: the
+    // props were re-sited into their rooms after rei had already walked in),
+    // the room folds to `live: false` for good.
+    //
+    // What that looks like from the outside is the thing `openAgainst`'s own
+    // note warns about, and it is worth naming twice because the fix shipped
+    // for one path and left the other: "a turn-based engine that never takes a
+    // turn, reading exactly like a working one". rei stood in the candle vault
+    // at round 4 with the cake at 51 of 60 — damage landing, because an
+    // un-live encounter gates nothing — and no swing ever came back.
+    //
+    // So the open is asked on EVERY door touch into a ground that keeps a
+    // wheel, whoever is acting and whether or not they are already in it. It
+    // costs one fold read: `openAgainst` is idempotent by construction, asking
+    // the fold whether a hostile is already in and writing nothing when one is.
+    //
+    // IT STILL RUNS FIRST. The creature must be in round 1's order beside the
+    // hand rather than appended below it as a late arrival, which is why this
+    // sits above the join rather than beside it.
+    if (place.keeps_wheel) {
       opened = openAgainst(db, dyn, place, { household, crossing });
       if (opened) state = refold();
+    }
+    if (place.keeps_wheel && !inWheel(state, who)) {
       const r = write({
         actor: who, action: "join",
         payload: { kind: "player", how: "acted in" },

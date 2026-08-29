@@ -791,3 +791,49 @@ test("the human holds a real slot on the wheel, beside the hostile that already 
       "the hostile still takes its slot — the human joins an ordinary wheel, not a special one");
   } finally { b.close(); }
 });
+
+test("the open is asked on EVERY door touch, so a room that gained its adversary late still opens", async () => {
+  // ⚑ THE FOUNDER'S OWN BROWSER, 2026-08-28. rei stood in the candle vault at
+  // round 4, the cake read 51 of 60, and no swing ever came back. The wheel
+  // held ONE row.
+  //
+  // LOGOS § The arena: "Hostiles hold real slots and take real turns", and
+  // "Initiative is rolled at the open." `openAgainst` is the only writer that
+  // ever puts a creature on the wheel — and it used to be reachable only from
+  // inside the branch that joins a hand who is not yet in the wheel. So a hand
+  // who joined a ground with nothing standing on it was joined for good, and
+  // the open became unreachable on that ground forever after.
+  //
+  // That is exactly how the dungeon was staged: the props were re-sited into
+  // their rooms AFTER rei had already walked in. This test stages it the same
+  // way — join an empty vault, site the adversary, act again.
+  const b = bottle();
+  try {
+    // the room, with nothing standing in it yet
+    b.db.prepare("DELETE FROM nodes WHERE id = ?").run(CAKE);
+    assert.equal(adversaryIn(b.db, arenaGroundAt(b.db, IN_VAULT)), null,
+      "precondition: the vault has no adversary at the moment the hand joins");
+    await act(b, "rei", "guard");
+    const before = state(b);
+    assert.equal(inWheel(before, "rei"), true, "the hand joined the empty room");
+    assert.equal(before.encounter_live, false, "and nothing is live, because nothing stands against them");
+
+    // the adversary is sited afterwards — the stage's own order of events
+    b.db.prepare(
+      `INSERT INTO nodes (id, by, kind, subkind, at_x, at_y, extent_w, extent_h, props)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      CAKE, "the-town", "mark", "sited", 1097, -783.5, 1.5, 1,
+      props({ class: "adversary", dials: { hp: 60, hits_for: 5, to_hit_die: 20, damage_die: 8, initiative_bonus: 2 },
+              body: "Nine tiers, four hundred candles, not one ever lit." }));
+    assert.equal(adversaryIn(b.db, arenaGroundAt(b.db, IN_VAULT)).id, CAKE,
+      "precondition: the cake now stands in the vault");
+
+    // one more door touch by the hand who is ALREADY in the wheel
+    await act(b, "rei", "guard").catch(() => {});
+    const after = state(b);
+    assert.ok((after.wheel?.order ?? []).some((j) => j.kind === "hostile"),
+      "the cake takes its slot at the next door touch, not only at somebody's first join");
+    assert.equal(after.encounter_live, true,
+      "and the encounter is LIVE — without this the turn gate never engages and every act sails through unrefused");
+  } finally { b.close(); }
+});
