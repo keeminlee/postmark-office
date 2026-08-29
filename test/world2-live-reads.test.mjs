@@ -452,9 +452,58 @@ test("`aboard` is ABSENT from these answers rather than always false", () => {
 
 test("the era census names a path nothing has exercised yet", () => {
   const { records } = live.departureRecords([liveAct({ iso: "2026-08-29T01:00:00Z", handle: "rei", from: { x: 0, y: 0 }, toward: { x: 1, y: 0 }, at: 155 })]);
-  assert.deepEqual(live.departureCensus(records), { ledger: 0, journal: 0, "journal-line": 0, live: 1 });
+  assert.deepEqual(live.departureCensus(records), { ledger: 0, journal: 0, "journal-line": 0, live: 1, "movement-store": 0 });
   assert.match(live.admissionNotes({ marks: WORLD_ROWS, identities: IDS, departureRecords: records }).join(" "),
     /first traffic on that era/);
+});
+
+// ── the fifth era: the movement-store pen (WORLD_MOVEMENT_V2) ───────────────
+
+/** The act the movement-v2 walk mirror writes: the movements row's own columns, no line. */
+const movementStoreAct = ({ iso, handle, from, toward, at, within = null, to = null, pace = null }) => ({
+  id: nextId(), at: new Date(iso), crossing: at == null ? null : String(at), actor: handle, action: "walk",
+  payload: { from, toward, pace, within, to },
+});
+
+test("the movement-store pen writes no line, and is read by the mapping rather than the grammar", () => {
+  // WORLD_MOVEMENT_V2 has been on since movement-v2 shipped, so this is the
+  // shape EVERY walk on dev actually takes. Before the era was learned, every
+  // one of them was refused by name.
+  const a = movementStoreAct({ iso: "2026-08-28T23:59:00Z", handle: "wright",
+    from: { x: 0, y: 0 }, toward: { x: 100, y: 40 }, at: 155.5, within: { w: 20, h: 20 },
+    to: "the-town/the-quay", pace: 1.4 });
+  const { era, record } = live.departureRecordOf(a);
+  assert.equal(era, "movement-store");
+  assert.deepEqual(record.from, { x: 0, y: 0 });
+  assert.deepEqual(record.toward, { x: 100, y: 40 });
+  assert.equal(record.at, 155.5, "the crossing rides the ACT ROW, not the payload");
+  assert.deepEqual(record.targetExtent, { w: 20, h: 20 }, "`within` is storedDepartures' own column name");
+  assert.equal(record.targetMarkId, "the-town/the-quay", "`to` likewise");
+  assert.equal(record.pace, 1.4);
+  assert.equal(record.line, null, "this pen formats no ledger line — that is the whole point of movement-v2");
+});
+
+test("a null crossing on a movement-store act is REFUSED, never read as crossing zero", () => {
+  // `Number(null)` is 0 and 0 is finite, so the obvious check would hand this
+  // walk the founding instant as its governing position. Caught by this arm's
+  // own first probe; the same trap world-journal.mjs documents three times.
+  const a = movementStoreAct({ iso: "2026-08-28T23:59:00Z", handle: "wright",
+    from: { x: 0, y: 0 }, toward: { x: 1, y: 0 }, at: null });
+  assert.equal(live.departureRecordOf(a).refused, true);
+  // and a REAL crossing zero must still be read — the guard is about null, not falsiness
+  const zero = movementStoreAct({ iso: "2026-08-28T23:59:00Z", handle: "wright",
+    from: { x: 0, y: 0 }, toward: { x: 1, y: 0 }, at: 0 });
+  assert.equal(live.departureRecordOf(zero).era, "movement-store");
+  assert.equal(live.departureRecordOf(zero).record.at, 0);
+});
+
+test("a payload no era explains is still refused by name — the fifth era did not open the door", () => {
+  const a = { id: nextId(), at: new Date("2026-08-28T23:59:00Z"), crossing: "155.5",
+    actor: "wright", action: "walk", payload: { mystery: true } };
+  const r = live.departureRecordOf(a);
+  assert.equal(r.refused, true);
+  assert.match(r.reason, /matches no departure era/);
+  assert.match(r.reason, /a fifth pen has written here/);
 });
 
 // ── the fourth era, which the falsifier found ────────────────────────────────

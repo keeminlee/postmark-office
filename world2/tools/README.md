@@ -15,6 +15,7 @@ runs the other way — it is the only one that reads the DB and writes the repo.
 | `falsifier-standing-equality.mjs` | the port vs 1.0's own fold, over the same state, slug by slug |
 | `live-reads.mjs` | 1.0's movement/presence/sound/containment reads, ported to `acts` rows — what the LIVE doors serve |
 | `falsifier-live-equality.mjs` | those ports vs 1.0's own imported functions, on identical inputs |
+| `falsifier-acts-lane-closure.mjs` | every WRITE lane reaches `acts`, checked from each lane's own pen — and a census that reds when a new act appears that nobody has ruled on |
 
 The law these implement is quoted verbatim in each file's header, from the gold
 plan (`G:/Starstory/PULSE/gold-plans/postmark-world-2/postmark-world-2.md` §3, §4)
