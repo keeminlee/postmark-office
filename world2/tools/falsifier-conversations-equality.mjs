@@ -85,6 +85,7 @@
 //     node world2/tools/falsifier-conversations-equality.mjs \
 //       --voices-log /srv/postmark-office/voices-log.jsonl [--can-fail-proof] [--json]
 
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -117,6 +118,32 @@ const lostKey = new Set(LOST_TO_THE_PRE_FIX_ERA.map((l) => `${Date.parse(l.at)}|
 
 const key = (v) => `${v.at}|${v.handle}`;
 const firstDiff = (a, b) => { let i = 0; while (i < a.length && i < b.length && a[i] === b[i]) i++; return i; };
+
+/**
+ * THE VENDOR TRIPWIRE, for the OFFICE half.
+ *
+ * `falsifier-live-equality.mjs`'s own tripwire skips everything that is not in
+ * the world repo (`if (v.repo !== "keeminlee/postmark-world") continue`) — the
+ * office-side vendors there are unwatched. These two are in THIS repo, so the
+ * check is one `git rev-parse` and there is no reason not to make it.
+ *
+ * It says "re-check", not "you are wrong": a moved file is a fact about the
+ * checkout, and whether the vendored function moved with it is a question for a
+ * person. It has already earned itself once — `src/world-journal.mjs` moved from
+ * `70c5a1f8` to `fc8cda4c` the same night this landed, and `composeAnchor` was
+ * byte-identical across the move.
+ */
+export function vendorDrift(repoRoot) {
+  const out = [];
+  for (const [name, v] of Object.entries(talk.VENDOR)) {
+    if (v.repo !== "keeminlee/postmark-office") continue;
+    let blob = null;
+    try { blob = execFileSync("git", ["-C", repoRoot, "rev-parse", `HEAD:${v.path}`], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim(); }
+    catch { continue; }   // not a checkout, or a path this sha does not carry
+    if (blob !== v.blob) out.push({ name, path: v.path, vendored: v.blob, checkout: blob });
+  }
+  return out;
+}
 
 // ── C1 · the record ─────────────────────────────────────────────────────────
 
@@ -348,6 +375,7 @@ async function main() {
       equalities: Object.fromEntries(Object.entries(e).map(([k, r]) => [k, { compared: r.compared, findings: r.findings.length, ...(r.note ? { note: r.note } : {}) }])),
       unchecked: Object.entries(e).filter(([, r]) => !r.compared).map(([k]) => k),
       findings: Object.values(e).flatMap((r) => r.findings),
+      vendor_drift: vendorDrift(OFFICE),
       refusals: derived.refusals,
       allowlist: LOST_TO_THE_PRE_FIX_ERA.map((l) => ({ ...l, exercised: (c1.excused ?? []).includes(`${Date.parse(l.at)}|${l.handle}`) })),
     };
@@ -463,6 +491,8 @@ function report(out) {
   console.log(`  dials: ${Object.entries(out.dials).map(([k, v]) => `${k} ${v}`).join(" · ")}`);
   for (const [k, v] of Object.entries(out.equalities))
     console.log(`  ${v.findings ? "✗" : "·"} ${k}  compared ${String(v.compared).padStart(5)}  findings ${v.findings}${v.note ? `\n         ${v.note}` : ""}`);
+  for (const v of out.vendor_drift ?? [])
+    console.log(`  ⚑ the vendored ${v.path} has MOVED: ${v.vendored.slice(0, 8)} when copied, ${v.checkout.slice(0, 8)} in this checkout — re-check conversations.mjs`);
   for (const a of out.allowlist)
     console.log(`  ${a.exercised ? "⚑ EXCUSED" : "· unexercised"}: ${a.at} ${a.handle} — ${a.receipt.slice(0, 110)}…`);
   for (const r of out.refusals.slice(0, 5)) console.log(`  ⚑ refused: ${r}`);
