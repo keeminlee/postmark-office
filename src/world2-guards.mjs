@@ -143,6 +143,71 @@ export async function pgGuardLiveMarks({ household = null, env = process.env } =
   }, { household, env });
 }
 
+/**
+ * The resolved household KEY for an office key — `gh:…` / `solo:…`, the spelling
+ * `claims.household` holds.
+ *
+ * NOT `resolvedWorldHousehold(key)`, which is the household's NAME, and the
+ * difference is the falsifier's own first finding (README § What the falsifier
+ * found, 1): "`acts.household` and `claims.household` spell one fact two ways".
+ * A guard that filtered `claims` by the name would match no row and refuse a
+ * resident off their own ground with every policy working as written. So the
+ * resolver is the docket pen's own — `householdKeyForKey`, the function that
+ * WROTE the column — reached lazily, because world2-claims.mjs is not a
+ * dependency an unflipped office should carry.
+ */
+export async function guardHouseholdKey(key, { env = process.env } = {}) {
+  if (!key) return null;
+  try {
+    const pool = await penPool(env);
+    const { householdKeyForKey } = await import("./world2-claims.mjs");
+    return await householdKeyForKey(pool, key);
+  } catch (err) {
+    console.error(`[world2-guards] HOUSEHOLD KEY UNREADABLE: ${String(err?.message ?? err)}`);
+    throw new GuardRefusedError(err);
+  }
+}
+
+/**
+ * THE LIVE LAYER A DOOR ACTUALLY NEEDS: everything a public connection can see,
+ * plus the asking household's own drafts.
+ *
+ * ── WHY ONE READ IS NOT ENOUGH, AND THE 403 IT WOULD CAUSE ──────────────────
+ *
+ * 007's row policy shows a draft only inside a transaction that named its
+ * household, and a cross-household read names none — so a single `household:
+ * null` read returns every household's PENDING claims and NOBODY'S DRAFTS, the
+ * caller's own included. At the stance door that is not a narrowing a resident
+ * could shrug at: `groundFor` is computed over the caller's own marks, so a
+ * resident whose parcel is still a draft would be told their own ground "does
+ * not stand on your ground" — a 403 against them, sourced entirely from a guard
+ * that could not see.
+ *
+ * `DISCLOSURES.cross_household` names the narrowing as "exactly the other
+ * households' DRAFTS", and that is the sentence this function makes true: the
+ * public read for everyone else, one household-scoped read for the asker. The
+ * scoped half rides `withGuardClient`'s transaction, which is what makes it
+ * answerable at all (guard-reads refuses a scoped read on an undeclared
+ * connection rather than answering partially).
+ *
+ * The asker's own row WINS an id collision: for their own mark they are the
+ * household that can see all of it.
+ */
+export async function pgGuardWorld(key, { env = process.env } = {}) {
+  const household = await guardHouseholdKey(key, { env });
+  const cross = await pgGuardLiveMarks({ household: null, env });
+  if (!household) return cross;
+  const own = await pgGuardLiveMarks({ household, env });
+  const byId = new Map(cross.marks.map((m) => [m.id, m]));
+  for (const m of own.marks) byId.set(m.id, m);
+  return {
+    marks: [...byId.values()],
+    refusals: [...cross.refusals, ...own.refusals],
+    disclosures: cross.disclosures,
+    household,
+  };
+}
+
 // ── R3's THIRD ROW IS NOT HERE, AND THAT IS THE GATE WORKING ────────────────
 //
 // The holder check (`liveHolder` / `readAttachments`, give/drop/take's guard) is

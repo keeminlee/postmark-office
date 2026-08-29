@@ -269,7 +269,7 @@ export function standingStances(rows, { by = null } = {}) {
  * because a door that validated somewhere the resident cannot see and did not
  * say so is the thing R3 is about.
  */
-export async function worldForStances(repo, { dbPath = null, guardFor = null } = {}) {
+export async function worldForStances(repo, { dbPath = null, guardFor = null, key = null } = {}) {
   const canon = publishedState(repo).state?.marks ?? [];
   const shape = (m) => ({ id: m.id, by: m.by, kind: m.kind, at: m.at, extent: m.extent, date: m.date, body: m.body ?? "", published: false });
   let live = [];
@@ -281,8 +281,14 @@ export async function worldForStances(repo, { dbPath = null, guardFor = null } =
     // the only place `pg` is resolved. A GuardRefusedError travels — there is no
     // catch here, deliberately, because catching it is what a silent sqlite
     // fallback would look like.
-    const { pgGuardLiveMarks } = await import("./world2-guards.mjs");
-    const read = await pgGuardLiveMarks({ household: null });
+    //
+    // `key` is passed so the asker's OWN drafts come back: under 007 a
+    // cross-household read sees nobody's drafts, and `groundFor` runs over the
+    // caller's own marks — so without it a resident whose parcel is still a
+    // sketch would be refused off their own ground by a guard that could not
+    // see it. pgGuardWorld is the public layer plus that one scoped read.
+    const { pgGuardWorld } = await import("./world2-guards.mjs");
+    const read = await pgGuardWorld(key);
     live = read.marks.filter((m) => m.at && m.extent).map(shape);
     guard = "claims";
     disclosures = read.disclosures;
@@ -560,7 +566,7 @@ export async function declareStanceViaOffice(repo, args = {}, key = null, { dbPa
   // permitting from a store it is no longer writing to.
   let all, guard, disclosures;
   try {
-    ({ marks: all, guard, disclosures } = await worldForStances(repo, { dbPath, guardFor: "stance" }));
+    ({ marks: all, guard, disclosures } = await worldForStances(repo, { dbPath, guardFor: "stance", key }));
   } catch (err) {
     if (err?.name === "GuardRefusedError")
       throw bounce(503, err.message,

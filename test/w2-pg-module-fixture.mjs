@@ -20,6 +20,11 @@ import { appendFileSync } from "node:fs";
 const RECEIPT = process.env.W2_STUB_RECEIPT;
 const MODE = process.env.W2_STUB_MODE ?? "ok"; // ok | unreachable
 const CLAIMS = JSON.parse(process.env.W2_STUB_CLAIMS ?? "[]");
+// What `identities` answers for the asking handle — the resolved household KEY
+// (`gh:…`/`solo:…`), which is what `claims.household` holds and what
+// `householdKeyFor` reads. Empty means "no identity row", and the resolver's own
+// `solo:<handle>` fallback takes over.
+const IDENTITY = process.env.W2_STUB_IDENTITY ?? null;
 
 const note = (o) => appendFileSync(RECEIPT, JSON.stringify(o) + "\n");
 const flat = (s) => String(s ?? "").replace(/\s+/g, " ").trim();
@@ -44,7 +49,25 @@ const client = {
     if (/set_config\('app\.household'/i.test(sql)) { declared = values?.[0] ?? null; return { rows: [] }; }
     if (/current_setting\('app\.household'/i.test(sql)) return { rows: [{ declared }] };
     if (/^(COMMIT|ROLLBACK)/i.test(sql)) { declared = null; return { rows: [] }; }
-    if (/FROM claims/i.test(sql)) return { rows: CLAIMS };
+    if (/FROM identities/i.test(sql)) return { rows: IDENTITY ? [{ household: IDENTITY }] : [] };
+    // ── 007's ROW POLICY, in the one sentence a guard cares about ────────────
+    //
+    //   "a public read compares against NULL, which is never equal to anything,
+    //    and sees none."  — guard-reads.mjs § THE RLS CONTRACT, quoting 007
+    //
+    // Modelled, not waved at, because the whole point of the scoped read is
+    // that the cross-household one CANNOT see a draft. A stub that handed the
+    // same rows to both would make the two-read wire look identical to the
+    // one-read wire that refuses a resident off their own sketch.
+    //
+    // Which read is which is read off the port's own SQL: the cross read binds
+    // statuses alone, the scoped read binds statuses AND the household.
+    if (/FROM claims/i.test(sql)) {
+      const scoped = Array.isArray(values) && values.length > 1;
+      return { rows: scoped
+        ? CLAIMS.filter((c) => c.household === values[1])
+        : CLAIMS.filter((c) => c.status !== "draft") };
+    }
     return { rows: [] };
   },
   release() { note({ kind: "release" }); },

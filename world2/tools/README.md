@@ -1724,10 +1724,22 @@ resolve hook counts every attempt to reach `pg`, because prod runs with no `pg`
 installed and a resolution there is `MODULE_NOT_FOUND` at boot rather than a
 slower path.
 
-**The one thing the wire refused to decide.** A cross-household guard read is
-narrower than 1.0's by exactly the other households' drafts
-(`DISCLOSURES.cross_household`), so a flipped stance door can 404 a sketch
-the-late-welcome would have surfaced. The port says which law gives way "is a
+**A cross-household read alone is not the live layer a door needs**, and the
+first draft of the wire got this wrong. 007 hides a draft from any connection
+that named no household — *every* draft, the asker's own included — and
+`groundFor` runs over the caller's own marks, so a single `household: null` read
+would have refused a resident off ground whose parcel is still a sketch: a 403
+against them, sourced entirely from a guard that could not see, with every policy
+working as written. `pgGuardWorld` is the fix: the public layer for everyone
+else, plus ONE household-scoped read for the asker, resolved through
+`householdKeyForKey` — the docket pen's own function, because `claims.household`
+is the resolved KEY and the office key carries the NAME (finding 1 below). That
+is what makes `DISCLOSURES.cross_household`'s boundary — "exactly the other
+households' DRAFTS" — a true sentence at the door rather than an understatement.
+
+**The one thing the wire refused to decide.** That residual narrowing is real: a
+flipped stance door can still 404 another household's sketch, which
+the-late-welcome asks to be surfaced. The port says which law gives way "is a
 ruling, and it is not this port's to make"; it is not the wire's either. What
 the wire does instead is carry the disclosure to the door — into the 404's hint
 and onto the answer — so nobody is told "no such mark" by a guard that simply

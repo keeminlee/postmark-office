@@ -91,10 +91,22 @@ git("commit", "-qm", "canon");
 // differs between the falsifiers.
 const CAIRN = { id: "beta/on-alphas-edge", by: "beta", kind: "sited", at: { x: 112, y: 100 }, extent: { w: 4, h: 4 }, date: "2026-08-10", body: "beta's cairn, half over the line" };
 
-/** The cairn as a `claims` row, in the columns `LIVE_CLAIM_SELECT` names. */
-const claimsRow = (m) => ({
-  id: "00000000-0000-0000-0000-0000000000c1",
-  slug: m.id, class: m.kind, claimant: m.by, household: "gh:67605380", status: "draft",
+// alpha's household, as `claims.household` spells it — the RESOLVED KEY, not the
+// office key's name. That difference is the guard-equality falsifier's own first
+// finding, and it is why the wire resolves through `householdKeyForKey` rather
+// than through `resolvedWorldHousehold`.
+const ALPHA_KEY = "gh:67605380";
+
+/**
+ * A mark as a `claims` row, in the columns `LIVE_CLAIM_SELECT` names.
+ *
+ * `status` matters and is never defaulted quietly: under 007 a `pending` claim
+ * is visible to any connection and a `draft` only to one that named its
+ * household, so the status IS which read can see it.
+ */
+const claimsRow = (m, { status = "pending", household = "gh:beta", id = "c1" } = {}) => ({
+  id: `00000000-0000-0000-0000-0000000000${id}`,
+  slug: m.id, class: m.kind, claimant: m.by, household, status,
   body: m.body, geometry: { slug: m.id.split("/")[1], at: m.at, extent: m.extent },
   stake: 0, data: { by: m.by, kind: m.kind, date: m.date }, submitted_at: `${m.date}T00:00:00.000Z`,
 });
@@ -135,7 +147,7 @@ let n = 0;
  * `env` is the WHOLE W2 environment for that run — nothing is inherited, so an
  * unflipped run is unflipped for the reason prod is: the variables are absent.
  */
-function runDoor({ on, w2 = {}, claims = [], mode = "ok", journal = null, doorMode = null, household = null }) {
+function runDoor({ on, w2 = {}, claims = [], mode = "ok", journal = null, doorMode = null, household = null, identity = null }) {
   const id = ++n;
   const dbPath = join(scratch, `dyn-${id}.db`);
   const receipt = join(scratch, `receipt-${id}.jsonl`);
@@ -154,6 +166,7 @@ function runDoor({ on, w2 = {}, claims = [], mode = "ok", journal = null, doorMo
     W2_DOOR_ON: on,
     ...(doorMode ? { W2_DOOR_MODE: doorMode } : {}),
     ...(household ? { W2_DOOR_HOUSEHOLD: household } : {}),
+    ...(identity ? { W2_STUB_IDENTITY: identity } : {}),
   };
   // Absent, not empty: `world2Enabled` reads WORLD2_PG === "1" and the presence
   // of a URL, so an unflipped run must carry neither key at all.
@@ -196,7 +209,7 @@ test("GG1 — the flipped stance door reads its guard from `claims`, before the 
   // to Postgres and validates against sqlite — a split brain with a switch on
   // it." The cairn is in `claims` and in NO sqlite journal anywhere, so the door
   // can only reach it through the port.
-  const r = runDoor({ on: CAIRN.id, w2: FLIPPED, claims: [claimsRow(CAIRN)] });
+  const r = runDoor({ on: CAIRN.id, w2: FLIPPED, claims: [claimsRow(CAIRN)], identity: ALPHA_KEY });
 
   assert.equal(r.bounce, null, `the door bounced: ${JSON.stringify(r.bounce)}\n${r.raw}`);
   assert.equal(r.answer.stance, "welcomed");
@@ -226,7 +239,7 @@ test("GG1b — the same door, same store, WITHOUT the claims row: the flip does 
   // carry the narrowing disclosure rather than a bare "no such mark", because a
   // guard that could not SEE a mark and a mark that does not EXIST are two
   // different sentences owed to a resident.
-  const r = runDoor({ on: CAIRN.id, w2: FLIPPED, claims: [] });
+  const r = runDoor({ on: CAIRN.id, w2: FLIPPED, claims: [], identity: ALPHA_KEY });
   assert.equal(r.answer, null, `the door answered where it had nothing to answer about: ${JSON.stringify(r.answer)}`);
   assert.equal(r.bounce.code, 404);
   assert.match(r.bounce.defect, /no mark "beta\/on-alphas-edge"/);
@@ -325,8 +338,9 @@ test("GG4 — a scoped guard read names its household to the connection first, a
   // this proves the path a future door would trust, instead of shipping it on a
   // comment. The stub models `set_config(…, true)` as transaction-scoped, so a
   // wire that skipped the declaration turns this red at the port's own refusal.
-  const r = runDoor({ on: CAIRN.id, w2: FLIPPED, claims: [claimsRow(CAIRN)],
-                      doorMode: "household-read", household: "gh:67605380" });
+  const r = runDoor({ on: CAIRN.id, w2: FLIPPED,
+                      claims: [claimsRow(CAIRN, { status: "draft", household: ALPHA_KEY })],
+                      doorMode: "household-read", household: ALPHA_KEY });
 
   assert.equal(r.bounce, null, `the scoped read was refused: ${JSON.stringify(r.bounce)}\n${r.raw}`);
   assert.deepEqual(r.answer.marks, [CAIRN.id], "and it answered from `claims`");
@@ -341,4 +355,73 @@ test("GG4 — a scoped guard read names its household to the connection first, a
     `BEGIN → set_config → read, in that order; got ${JSON.stringify(r.queries)}`);
   assert.match(r.queries.at(-1), /^ROLLBACK/i,
     "and it ends in ROLLBACK — the transaction exists to scope a setting, and committing it would say something happened");
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GG5 · THE ASKER'S OWN DRAFTS ARE PART OF THE GUARD'S ANSWER
+// ═══════════════════════════════════════════════════════════════════════════
+
+// The far field: neither of these is in canon, so the whole exchange is decided
+// by the live layer. alpha's ground is a DRAFT — under 007 no cross-household
+// read can see it — and the cairn is PENDING, which any connection can.
+const FAR_PARCEL = { id: "alpha/far-parcel", by: "alpha", kind: "parcel", at: { x: 9000, y: 9000 }, extent: { w: 25, h: 25 }, date: "2026-08-01", body: "alpha's sketch, not yet settled" };
+const FAR_CAIRN = { id: "beta/far-cairn", by: "beta", kind: "sited", at: { x: 9005, y: 9000 }, extent: { w: 4, h: 4 }, date: "2026-08-10", body: "beta's cairn on alpha's sketch" };
+
+test("GG5 — a flipped door sees the asker's OWN draft ground, and does not refuse them off it", () => {
+  // `DISCLOSURES.cross_household` bounds the narrowing at "exactly the other
+  // households' DRAFTS", and this is the falsifier that keeps that sentence
+  // true. 007's policy — "a public read compares against NULL, which is never
+  // equal to anything, and sees none" — hides EVERY draft from a connection that
+  // named no household, the asker's own included. `groundFor` runs over the
+  // caller's own marks, so a single cross-household read would answer this with
+  // 403 "does not stand on your ground" — a resident refused off ground they
+  // hold, sourced entirely from a guard that could not see it, with every policy
+  // working exactly as written.
+  //
+  // Can-fail: drop the scoped read from pgGuardWorld and this is a 403.
+  const r = runDoor({
+    on: FAR_CAIRN.id, w2: FLIPPED, identity: ALPHA_KEY,
+    claims: [claimsRow(FAR_CAIRN, { id: "c2" }),
+             claimsRow(FAR_PARCEL, { status: "draft", household: ALPHA_KEY, id: "c3" })],
+  });
+
+  assert.equal(r.bounce, null,
+    `the door refused the asker off their own draft ground: ${JSON.stringify(r.bounce)}\n${r.raw}`);
+  assert.deepEqual(r.answer.on_your_ground, [FAR_PARCEL.id],
+    "the ground named is alpha's own sketch — visible only because the guard declared alpha's household");
+  assert.equal(r.answer.guard, "claims");
+
+  // TWO reads, and the second is the scoped one. The public layer for everyone
+  // else, one household-scoped transaction for the asker: that is the whole of
+  // what makes the disclosure's boundary honest.
+  const reads = r.queries.filter((q) => /FROM claims/i.test(q));
+  assert.equal(reads.length, 2, `expected a public read and a scoped read; got ${JSON.stringify(reads)}`);
+  assert.ok(!/household = \$/.test(reads[0]), "the first is the public layer — no household to name");
+  assert.match(reads[1], /household = \$/, "the second names one");
+  assert.match(r.queries.join(" | "), /set_config\('app\.household'/,
+    "and it rides a transaction that declared it, because guard-reads refuses a scoped read that did not");
+});
+
+test("GG5b — the household is resolved through the docket pen's own key, not the office key's name", () => {
+  // README § What the falsifier found, 1: "acts.household and claims.household
+  // spell one fact two ways" — the office key's NAME on the acts mirror, the
+  // RESOLVED KEY on the docket. `claims.household` is the key, so a guard that
+  // filtered by the name would match no row and refuse the asker off their own
+  // ground. The wire resolves through householdKeyForKey, the function that
+  // WROTE the column.
+  //
+  // Here `identities` answers nothing, so the resolver's own fallback applies
+  // (`solo:<handle>`) and alpha's gh: draft is correctly NOT theirs to see.
+  const r = runDoor({
+    on: FAR_CAIRN.id, w2: FLIPPED,
+    claims: [claimsRow(FAR_CAIRN, { id: "c2" }),
+             claimsRow(FAR_PARCEL, { status: "draft", household: ALPHA_KEY, id: "c3" })],
+  });
+  assert.equal(r.answer, null, "with no identity row alpha is solo:alpha, and the gh: draft is not theirs");
+  assert.equal(r.bounce.code, 403, `expected the ground refusal; got ${JSON.stringify(r.bounce)}`);
+  const scoped = r.queries.filter((q) => /household = \$/.test(q));
+  assert.equal(scoped.length, 1, "a scoped read still happened");
+  const values = r.receipt.find((x) => x.kind === "query" && /household = \$/.test(x.sql))?.values;
+  assert.equal(values?.[1], "solo:alpha",
+    `the scoped read must bind a RESOLVED key, never the office key's household name ("alpha"); bound ${JSON.stringify(values?.[1])}`);
 });
