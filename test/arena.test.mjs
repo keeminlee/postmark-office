@@ -1086,6 +1086,58 @@ test("take and give of shrouded loot are refused with a sentence that explains i
   } finally { b.close(); }
 });
 
+test("...and the HOLD DOOR itself refuses it — the guard is wired, not merely written", async () => {
+  // LOGOS § The portal ground: "a `take` or a `give` aimed at it is refused with
+  // a sentence that explains itself rather than a bounce that reads like a
+  // fault."
+  //
+  // ⚑ THE LEG ABOVE ASSERTS THE LAW; THIS ONE ASSERTS THE WIRE. `lootHiddenReason`
+  // can be perfect while `callHoldTool` never calls it, which is the shape
+  // src/arena.mjs's own header names — a function existing is not a function
+  // running, and this whole module exists because of one instance of it. So the
+  // real door is driven, against a real world store on disk, with the same
+  // marks the fixture carries.
+  const dir = mkdtempSync(join(tmpdir(), "bde-hold-"));
+  const prev = { store: process.env.WORLD_STORE_DB, dyn: process.env.WORLD_DYNAMIC_DB, log: process.env.WORLD_SINGLE_LOG };
+  const storePath = join(dir, "world.db");
+  try {
+    // the same bottle, written to disk where `storeDbPath()` will find it
+    const disk = new DatabaseSync(storePath);
+    disk.exec(SCHEMA);
+    disk.prepare("INSERT INTO meta VALUES (?, ?)").run("hydration_status", "OK");
+    const src = worldDb();
+    for (const r of src.prepare("SELECT * FROM nodes").all()) {
+      const cols = Object.keys(r);
+      disk.prepare(`INSERT INTO nodes (${cols.join(",")}) VALUES (${cols.map(() => "?").join(",")})`)
+        .run(...cols.map((c) => r[c]));
+    }
+    src.close(); disk.close();
+    process.env.WORLD_STORE_DB = storePath;
+    process.env.WORLD_DYNAMIC_DB = join(dir, "dynamic.db");
+    process.env.WORLD_SINGLE_LOG = "1";
+
+    const { callHoldTool } = await import("../src/world-hold.mjs");
+    const key = { handles: new Set(["darko"]) };
+
+    const refused = await callHoldTool("world_hold", { thing: WICK }, key).then(() => null, (e) => e);
+    assert.ok(refused, "the hold door took the wick end while the cake was still standing — the guard is written but not wired");
+    assert.equal(refused.code, 409, `the refusal came back ${refused.code}, and a thing that is simply not there yet is not a 4xx about the caller`);
+    assert.match(String(refused.hint), /not in the room until the room is spent/,
+      "the refusal does not explain itself — a bounce a resident cannot read is a bounce that reads like a fault");
+    assert.match(String(refused.hint), new RegExp(CAKE.split("/").pop()),
+      "the refusal does not name what is still standing");
+
+    // THE DISCRIMINATING LEG: the weapon goes through the same door, unrefused.
+    // Without it a guard that refused every take would pass everything above.
+    const took = await callHoldTool("world_hold", { thing: LIGHTER }, key);
+    assert.ok(took, "the good lighter was refused by the shroud — the fight is meant to be fought with it");
+  } finally {
+    for (const [k, v] of [["WORLD_STORE_DB", prev.store], ["WORLD_DYNAMIC_DB", prev.dyn], ["WORLD_SINGLE_LOG", prev.log]])
+      if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    try { rmSync(dir, { recursive: true, force: true }); } catch { /* windows holds it a beat */ }
+  }
+});
+
 test("crossing into the vault stands you at its door-side edge, never inside the cake", async () => {
   // LOGOS § The arena, verbatim:
   //   "An entrant into a wheel-keeping ground is placed where the ground was

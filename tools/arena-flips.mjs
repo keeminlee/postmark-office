@@ -28,7 +28,12 @@ const HUMAN = "src/human-actor.mjs";
 // resident can feel. Its falsifier lives in the arena suite because that is
 // where the wheel's law is asserted, so it runs against the same suite.
 const APEX = "src/world-apex.mjs";
-const SUITES = { [ARENA]: "test/arena.test.mjs", [HUMAN]: "test/arena.test.mjs", [APEX]: "test/arena.test.mjs" };
+// The hold door joined with the loot shroud: `lootHiddenReason` can be perfect
+// while `callHoldTool` never calls it, and a law with no door behind it is what
+// src/arena.mjs was written to close.
+const HOLD = "src/world-hold.mjs";
+const SUITES = { [ARENA]: "test/arena.test.mjs", [HUMAN]: "test/arena.test.mjs",
+                 [APEX]: "test/arena.test.mjs", [HOLD]: "test/arena.test.mjs" };
 
 const FLIPS = [
   // ── ruling 1 · the wheel gates, and the refusal NAMES the turn ───────────
@@ -227,6 +232,14 @@ const FLIPS = [
   { name: "a weapon is treated as loot — the fight's own tool is shrouded with the prize",
     file: ARENA, catches: "take and give of shrouded loot are refused",
     edit: (t) => t.replace("  if (!thing || !isLoot(thing)) return null;", "  if (!thing) return null;") },
+
+  { name: "the hold door stops asking — the guard is written and never called",
+    file: HOLD, catches: "the HOLD DOOR itself refuses it",
+    edit: (t) => t.replace("    await refuseShroudedLoot(args.thing);", "") },
+
+  { name: "the hold door's refusal swallows itself — the shroud throws and nobody hears it",
+    file: HOLD, catches: "the HOLD DOOR itself refuses it",
+    edit: (t) => t.replace('    if (e?.code === 409 && /is not in this room yet/.test(String(e.defect ?? ""))) throw e;', "") },
 
   // 4 · entry placement
   { name: "the placement stops stepping clear — an entrant is set down inside the adversary",
