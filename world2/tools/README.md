@@ -1665,3 +1665,209 @@ All three ride the answers as `DISCLOSURES`, never as silence.
 **all of it is prose** — the `LEDGER_HEADER` constant's own explanation. The
 grammar (`ENTER_EXIT_RE`) and `occupancyAt` are byte-identical. That is the
 tripwire working: it says "re-check", not "you are wrong".
+
+## The write-path guards
+
+`guard-reads.mjs` is DESIGN-pen-flip.md § 2 R3's remaining rows — the three door
+guards that still validate against a 1.0 pen:
+
+| 1.0 read | who needs it | 2.0 source |
+|---|---|---|
+| `liveMarks` / `liveChildrenOf` | leave-mark slug collision, the parcel cap, withdraw's stranding check, declare-stance-on's candidates | `claims` where status ∈ (draft, pending) |
+| `draftsForKey` (journal half) | the signed-in draft overlay | `claims` + the withdraw acts |
+| `liveHolder` / `readAttachments` | give/drop/take's holder check | `acts`, folded across two eras |
+
+It is `live-reads.mjs`'s twin in shape and differs from it in one way worth
+knowing: **the LIVE tier reads and this one PERMITS.** A read tier that drops a
+row answers with a number nobody can check; a guard that drops a row lets a
+duplicate slug or a fourth parcel through, and the receipt for that arrives at
+the next settlement. So every refusal here is strict by default and says what the
+skip would have cost.
+
+Pure over rows and a pg client — nothing from `src/` is imported. Where a
+predicate is small and exact it is VENDORED with its blob sha (`liveHolder`,
+`holdingsOf`, `liveMarks`' record shaper); where it is a whole module's judgment
+(`pathFor`, canon's filing) it is REFUSED and taken as an injected parameter, so
+the office hands over its own function rather than this file growing a twin. The
+falsifier injects 1.0's real ones, which is what keeps `path` on trial rather
+than exempt.
+
+### The equalities
+
+```sh
+. ~/guards-env.sh
+export WORLD2_PG_URL="$W2_READER_URL"       # world2_dev, read-only — G5's store
+export W2_GUARDS_URL="postgres://office_api:…@localhost/world2_guards_lane"
+export W2_GUARDS_OWNER_URL="postgres://world2_owner:…@localhost/world2_guards_lane"
+node world2/tools/falsifier-guard-equality.mjs --world-repo ~/world-full --prove-can-fail
+```
+
+Run 2026-08-28, scratch `world2_guards_lane` + `world2_dev` + `~/world-full`:
+
+```
+scratch 10 declarations across 2 households · holdings: oracle 43 rows
+        (recovered from crossing 155) · port 43 (legacy 43 · live 0)
+  · G1_a  compared    4  the live layer, against 1.0's own liveMarks
+  · G2_a  compared    4  the three seams (stamps↔stake, put_forward↔status, name↔key)
+  · G3_a  compared    4  the children, against 1.0's own liveChildrenOf
+  · G4_a  compared    5  the overlay, against 1.0's own replayDrafts
+  · G1_b  compared    2      … and the same four for the second household
+  · G2_b  compared    2
+  · G3_b  compared    2
+  · G4_b  compared    2
+  · G5    compared   75  the holder fold, against 1.0's own recovery chain
+  · G6    compared    2  the RLS refusal, and what office_api cannot see
+GREEN · the port and 1.0's own functions agree on every row compared
+```
+
+Exit **0** green · **1** RED · **2** cannot run. Every equality reports its own
+`compared`; any that compared zero exits 2.
+
+**G1–G4's population is WRITTEN, not found.** On `world2_dev` the two stores hold
+different questions — its 851 locked claims are canon (rows in `marks`) and the
+lab office's journal holds one row — so comparing them would repeat the live
+lane's E2 mistake. Instead ten declarations go through 1.0's own `appendJournal`,
+the one function that feeds both pens, into a temp sqlite and the scratch
+database. Neither side is arranged; each is what its own pen made of one call.
+The script exercises an unstaked leave-mark, a staked one, an amend of a live
+draft, a predicated child, a parcel, a withdrawal of a draft, a withdrawal of a
+PUBLISHED mark, and a second household holding the same slug.
+
+**G5's oracle is 1.0's recovery covenant, run.** `dynamic-rebuild.mjs` says
+attachments are "store-canon-durable — no ledger holds them, so the crossing-save
+is their only way back", so the oracle is that way back taken:
+`attachmentsFromState` over the world checkout's STATE → `declareAttachment` into
+a throwaway sqlite → `readAttachments`. It is not the lab's `attachments` table,
+and that is measured rather than preferred — see § What the holdings coverage
+actually is.
+
+### The can-fail proof
+
+```
+RED    LIVE_STATUSES widened to include 'locked' (canon counted as the live layer) — 1
+RED    claims.household read as the bare handle (the resolved-key edge) — 4
+RED    parent_id read as absent (the stranding check answers empty) — 1
+RED    the deleted arm dropped (a published mark's withdrawal goes unseen) — 1
+RED    attachments read in acts.id order (latest-wins handed the seed's insert order) — 70
+RED    the live era's entity read as acts.actor (every give handed back to the giver) — 4
+RED    the RLS assertion removed (a household-scoped read on an undeclared connection) — 1
+can-fail PROVEN
+```
+
+The first break read **INERT** on its first pass, and the fix belonged to the
+POPULATION rather than to the break: the scratch store held a published mark with
+no locked claim behind it, which is not a store this town ever produces. Planting
+the claim made the break real. That is the standing lane's finding applied one
+lane over — an INERT break proves nothing, and reading it as "the falsifier
+missed it" would be a proof lying in the safe direction.
+
+The sixth break's rows are **synthesized**, and it says so: nothing has been
+given, dropped or taken since the mirror shipped, so `acts` holds no live-era
+holding row to bend. The alternative was leaving that era's sharpest trap
+untested until the first give, which is the wrong side of the record to discover
+it on. The unit suite (`test/world2-guard-reads.test.mjs`, 17 tests) covers the
+same mapping directly.
+
+### What the falsifier found
+
+**1 · `acts.household` and `claims.household` spell one fact two ways.**
+
+```
+acts.household     'darko'  ×12 — every live-written act; NULL on all 2925 seeded ones
+claims.household   'gh:67605380', 'solo:the-town', … — the RESOLVED KEY
+```
+
+The docket pen was corrected to the key on 2026-08-28 ("a roster owner keeps the
+household KEY; a non-roster owner is `solo:<handle>`, never NULL") and the acts
+mirror was not — `mirrorAct` writes `row.household` verbatim, and that is
+`resolvedWorldHousehold(key)`, the office key's NAME.
+
+The draft overlay reads **both tables**, so this is not cosmetic: a read that
+filtered `claims` by the key and `acts` by the same string would return every
+added and modified mark and NONE of the deleted ones, silently, for every
+household in town. `pgDraftsForKey` scopes the withdraw acts through
+`identities` — the projection that DEFINES the mapping, and the one
+`householdKeyFor` reads to write the claim — so the two cannot come apart the way
+the columns have. `admissionNotes` fires while they disagree and goes quiet when
+the acts mirror adopts the same ruling.
+
+**2 · The deleted arm has no `claims` source at all.**
+
+`replayDrafts` produces three statuses and `claims` can answer two.
+`submitClaimFromJournal`'s withdraw arm deletes a draft or retracts a pending
+claim, and rules on the third case itself: "rowCount 0 is lawful: withdrawing a
+PUBLISHED 1.0 mark has no pending claim to retract". Lawful for the docket and
+fatal for the overlay, which draws the mark the household is proposing to remove.
+It is not lost — the withdraw act mirrors — so the arm's source is `acts`, scoped
+to withdrawals whose mark still STANDS in `marks`. That scope is the mark's own
+life rather than the log's, which is self-limiting and needs no cursor: `acts` is
+append-only and would otherwise keep showing a mark deleted three settlements
+ago.
+
+**3 · The docket pen discards the bare slug.**
+
+`const { slug: _s, … } = payload` — the column holds the full id and the bare
+slug is thrown away. 1.0's live mark carries both, and the collision guard speaks
+the bare one back: `you already have a mark "${clean.slug}"`. Derived here from
+the id with 1.0's own `idPartsOf` rule, which is unambiguous for the reason
+`world-journal.mjs` states: the office's slug grammar is `^[a-z0-9][a-z0-9-]*$`,
+so an id is exactly two segments.
+
+**4 · A household-scoped guard read outside `withHousehold` PERMITS.**
+
+007's row policy is written for exporters — "a public read compares against NULL,
+which is never equal to anything, and sees none" — and that is exactly right for
+the notary and lethal for a guard. A slug-collision check on an undeclared
+connection sees the household's pending claims, none of its drafts, finds no
+collision, and permits a duplicate, with every policy working as written and
+nothing saying the answer was partial.
+
+`assertHouseholdDeclared` refuses instead: one round trip, asking
+`current_setting('app.household', true)` — the policy's own question — and
+throwing when it does not match. Refuse, not degrade, applied to a read. G6 is
+what proves it fires.
+
+**5 · jsonb does not preserve key order.** `{w,h}` goes in and `{h,w}` comes
+back; the values are identical. Readers that read fields are unaffected; a reader
+comparing two marks by `JSON.stringify` would see every mark as changed. The
+falsifier canonicalizes key order and compares everything else exactly.
+
+### What the holdings coverage actually is
+
+Measured 2026-08-28, because the brief asked for it honestly rather than
+assumed:
+
+```
+43   legacy:attachment acts on world2_dev
+43   attachment events in the world repo's STATE/log at settlement/S47
+     (= sandbox/seed, what the seed read) AND at settlement/S50
+43   attachments in STATE/snapshot/150's boundary — the whole table, saved
+ 0   rows in /srv/world2-lab/office/dynamic.db  attachments
+ 0   rows in /srv/postmark-office-dev/dynamic.db  attachments
+ 0   give / drop / take acts
+```
+
+**The gap is on the sqlite side, not this one.** `acts` holds the complete
+holdings record; the 1.0 stores on this box hold none of it. So the usual
+disclosure inverts — there is no live 1.0 holder state to disagree with, which is
+why G5's oracle is the recovery covenant rather than a table. An equality against
+those tables would have compared 43 rows to nothing and called the port wrong,
+or compared nothing to nothing and called it green.
+
+### Unruled, and teed rather than guessed
+
+- **`held_review` is not in `LIVE_STATUSES`.** It has no 1.0 counterpart: in 1.0
+  a colliding declaration sits in the journal until the settlement adjudicates
+  it, so it IS live. Including it is safer for the slug-collision guard and wrong
+  for the parcel cap. Zero rows today, so the choice is free; `admissionNotes`
+  fires the day it is not.
+- **The cross-household live read is structurally narrower than 1.0's**, by
+  exactly the other households' drafts. 1.0's `worldForStances` deliberately
+  surfaces another household's sketch when it overlaps ground you hold — "the ONE
+  place a sketch becomes visible to somebody who did not write it", which
+  the-late-welcome asks for. Under 007 that is not narrowable for `office_api`,
+  it is unrepresentable. Two laws collide and which gives way is a ruling.
+- **`path` is null unless injected.** 2.0 has no mark tree, and a guessed filing
+  is worse than a missing one: gate A refuses a mark filed at the wrong place at
+  the next lint, so a plausible guess would turn an absent field into a refused
+  settlement.
