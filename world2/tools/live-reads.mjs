@@ -50,12 +50,12 @@
 //   src/positions.mjs / src/dynamic-presence.mjs — the union and its roster
 //     rule, ported; the FRAME half is refused, see § What is NOT here.
 //
-// ── THE FOUR ERAS OF A MOVEMENT ACT, WHICH IS WHERE A PORT GOES WRONG ────────
+// ── THE FIVE ERAS OF A MOVEMENT ACT, WHICH IS WHERE A PORT GOES WRONG ────────
 //
-// `acts` holds movement rows written by four different pens, in four payload
+// `acts` holds movement rows written by five different pens, in five payload
 // shapes. A derivation that reads one of them and silently drops the others is
 // the AB-P3 defect all over again — a world wrong by exactly the amount nobody
-// looks for. All four are read, and a shape none of them explains REFUSES.
+// looks for. All five are read, and a shape none of them explains REFUSES.
 //
 // | era | how identified | payload | source of the mapping |
 // |---|---|---|---|
@@ -63,6 +63,16 @@
 // | `journal` | `payload.payload.from` | the whole jsonl row: `{at,type,actor,seq,payload:{from,toward,crossing,within,to,pace,line_no}}` | seed-import.mjs `deriveActs` |
 // | `journal-line` | `payload.payload.lines` | a live-pen act crystallized into a crossing log: `{…,payload:{ledger,lines:[<the verbatim line>],…}}` | walk-exec / crossing-exec § SETTLE AT THE SAVE, seen through the journal envelope |
 // | `live` | `payload.lines` | the live pen's own act, mirrored straight into `acts` | the same, post-cutover |
+// | `movement-store` | `payload.from` with no line and no envelope | the movements row's own columns: `{from,toward,pace,within,to}`, the crossing on the ACT row | world.mjs § THE WALK GAP; the mapping is `storedDepartures`' again, one level up |
+//
+// **THE FIFTH ERA WAS FOUND THE SAME WAY THE FOURTH WAS** — by the refusal
+// firing (2026-08-28, the write-path closure). `WORLD_MOVEMENT_V2` has been on
+// since movement-v2 shipped, so EVERY walk on dev goes to `dynamic.db/movements`
+// and its pen writes no ledger line at all. Those acts did not exist to be
+// refused until the write-path lane mirrored them; the hour they did, this
+// derivation refused every one, exactly as the last line of `departureRecordOf`
+// says it should. The era was then learned deliberately rather than guessed,
+// which is what that refusal is for.
 //
 // **THE FOURTH ERA WAS FOUND BY THE FALSIFIER, NOT BY READING.** The first cut
 // of this file knew three and refused three `legacy:enter`/`legacy:exit` rows
@@ -415,9 +425,50 @@ export function departureRecordOf(row) {
     };
   }
 
+  // ERA 5 — THE MOVEMENT-STORE PEN, learned deliberately (2026-08-28, the
+  // write-path closure) because the refusal below asked for exactly that.
+  //
+  // `WORLD_MOVEMENT_V2` moved the departure's pen to `dynamic.db/movements`,
+  // and that pen writes NO ledger line — "no commit is made on the resident's
+  // turn" is the whole point of it (world.mjs § WHERE THE DEPARTURE IS
+  // WRITTEN). So its act carries neither `_ledger`, nor `lines`, nor a journal
+  // envelope, and matched none of the four shapes above: every walk on a
+  // movement-v2 office would have been refused by name here.
+  //
+  // The payload is the MOVEMENTS ROW'S OWN COLUMNS — `within` and `to`, which
+  // is `storedDepartures`' vocabulary, the same one era 2 maps from. So this
+  // arm is that mapping with the fields one level up, and no new spelling of a
+  // departure enters the world.
+  //
+  // The crossing rides the ACT ROW (`acts.crossing`), not the payload, because
+  // that column is where a mirrored act puts the town clock. `pg` hands numeric
+  // back as TEXT, hence the Number().
+  if (p.from && p.toward && !p.lines && !p._ledger) {
+    // `== null` FIRST, and this file is the fourth place that trap has been
+    // written down: `Number(null)` is 0 and 0 is finite, so a null crossing
+    // would read as crossing ZERO — the founding instant — and hand this walk a
+    // governing position from the beginning of the world. Caught by this arm's
+    // own first probe, which is the only reason it is not in the branch.
+    const at = row.crossing == null ? NaN : Number(row.crossing);
+    if (!Number.isFinite(at)) {
+      return { refused: true, reason: `act ${row.id} is a movement-store departure with no crossing on the act row` };
+    }
+    return {
+      era: "movement-store",
+      record: {
+        iso: isoOf(row.at), handle: row.actor,
+        from: p.from, toward: p.toward, at,
+        targetExtent: p.within ?? null,
+        targetMarkId: p.to ?? null,
+        pace: p.pace ?? null,
+        line: null,
+      },
+    };
+  }
+
   return { refused: true, reason:
     `act ${row.id} (${row.action}) matches no departure era — keys: ${Object.keys(p).join(",")}. ` +
-    `Three shapes are known (ledger / journal / live); a fourth pen has written here and this ` +
+    `Four shapes are known (ledger / journal / live / movement-store); a fifth pen has written here and this ` +
     `derivation must learn it deliberately rather than guess.` };
 }
 
@@ -434,7 +485,7 @@ export function departureRecords(rows, { strict = true } = {}) {
   assertDepartureOrder(rows);
   const records = [];
   const refusals = [];
-  const eras = { ledger: 0, journal: 0, "journal-line": 0, live: 0 };
+  const eras = { ledger: 0, journal: 0, "journal-line": 0, live: 0, "movement-store": 0 };
   for (const row of rows) {
     const r = departureRecordOf(row);
     if (r.refused) { refusals.push(r.reason); continue; }
@@ -501,7 +552,7 @@ export function publicWalkers(records, nowFractional = fractionalCrossing()) {
 
 /** Which era answered for how many rows — the doors disclose it. */
 export function departureCensus(records) {
-  const eras = { ledger: 0, journal: 0, "journal-line": 0, live: 0 };
+  const eras = { ledger: 0, journal: 0, "journal-line": 0, live: 0, "movement-store": 0 };
   for (const r of records) eras[r.era] = (eras[r.era] ?? 0) + 1;
   return eras;
 }

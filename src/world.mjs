@@ -2573,7 +2573,13 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
             crossing: at, actor: who, action: "walk",
             object: targetMarkId ?? null,
             at: stampAt, witnesses, cls: CLASS_MOVE,
-            payload: { from, toward, pace, ...(targetExtent ? { within: targetExtent } : {}) },
+            // THE MOVEMENTS ROW'S OWN COLUMN VOCABULARY — `within` and `to`,
+            // not `targetExtent`/`targetMarkId`. That is 1.0's one converter
+            // for this exact record (world-movement.mjs § storedDepartures:
+            // "`within` and `to` are the store's column names"), and using it
+            // here is what lets live-reads.mjs read this pen with the mapping
+            // it already has rather than a fifth spelling of one departure.
+            payload: { from, toward, pace, within: targetExtent ?? null, to: targetMarkId ?? null },
             effect: "the walk is declared; the record receives it at the save",
             household: resolvedWorldHousehold(key),
           });
