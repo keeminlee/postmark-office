@@ -630,7 +630,7 @@ export function weaponReader(db, rows, { holdingsNow = () => [], thingRow = () =
     for (const id of holdingsNow(actor)) {
       const t = thingRow(id);
       const grant = heldEntries(t, { parse: (v) => parseJson(v, null) }).find((e) => e.action === "strike");
-      if (grant) return { thing: id, bonus: grant.bonus ?? 0, says: grant.says ?? null };
+      if (grant) return { thing: id, bonus: grant.bonus ?? 0, says: grant.says ?? null, for: grant.action };
     }
     return null;
   };
@@ -648,7 +648,17 @@ export function weaponInHand(db, handle) {
     for (const r of rows) {
       const grant = heldEntries({ ...r, held_grant: parseJson(r.held_grant, null) }, { parse: (v) => v })
         .find((e) => e.action === "strike");
-      if (grant) return { thing: r.id, bonus: Number(grant.bonus ?? 0), says: grant.says ?? null };
+      // ⚑ `for:` HERE IS THE ACT, AND THE TOWN'S `for:` IS THE ACTOR KIND.
+      // Pinned by the site lane's shipped consumer and ruled by Wright
+      // 2026-08-29, so it lands under this spelling — but it is a homonym with
+      // the grants vocabulary, and the entry this very line reads carries the
+      // OTHER sense: `heldEntries` sets `for: kindOf(a)`, and LOGOS § The three
+      // channels says "`for:` is the actor kind (absent means resident)". A
+      // reader who knows that and meets `weapon.for: "strike"` will misread it.
+      // Flagged to Wright for the lexicon rather than swapped unilaterally: the
+      // word is young and the successor would be `augments`, one edit on each
+      // side, while it is still cheap.
+      if (grant) return { thing: r.id, bonus: Number(grant.bonus ?? 0), says: grant.says ?? null, for: grant.action };
     }
     return null;
   } catch { return null; }
@@ -1048,17 +1058,23 @@ export const BEATS_TAIL = 30;
  * is too many, and that stays true, so the tail is capped and the cap is a named
  * constant rather than a number in a slice.
  *
- * `beats_through` is the last beat's seq, so a poller can dedupe against what it
- * already rendered instead of diffing arrays. Absent when there are no beats —
- * a `null` there would read as "beat zero".
+ * NO LATEST-SEQ FIELD, and that is a ruling rather than an omission (Wright,
+ * 2026-08-29, with bday-rail). One was written and taken back out: the consumer
+ * derives its watermark as the max seq in the window it received, so a separate
+ * field would be a second way to learn one fact — and the only thing it could
+ * add over the max is a GAP CONFESSION, telling a reader that rows exist above
+ * every beat in the tail. Rows above the tail do exist (the fold ignores an
+ * out-of-turn act and it earns no beat), so the confession is sayable; the rail
+ * says it will never act on it and Wright agreed. `beats_cap` and `beats_total`
+ * stay, because those answer a different question — how much was withheld —
+ * which a reader cannot derive from the window at all.
  */
 export function publicState(state) {
   if (!state) return null;
   const beats = state.beats ?? [];
   const tail = beats.slice(-BEATS_TAIL);
   return {
-    ...(tail.length ? { beats_tail: tail, beats_through: tail[tail.length - 1]?.seq ?? null,
-                        beats_cap: BEATS_TAIL, beats_total: beats.length } : {}),
+    ...(tail.length ? { beats_tail: tail, beats_cap: BEATS_TAIL, beats_total: beats.length } : {}),
     phase: state.phase,
     live: state.encounter_live,
     space: state.space,

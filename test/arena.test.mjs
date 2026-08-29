@@ -33,7 +33,7 @@ import {
   joinOnCrossing, leaveOnCrossing,
   // the birthday amendments' own readers (2026-08-29)
   arrivalOnGround, BEATS_TAIL, cockpitPortal, entryPointInto, groundAtPoint,
-  lootHiddenReason, lootShroudedIn, snapTo, walkMinStepOf,
+  lootHiddenReason, lootShroudedIn, snapTo, walkMinStepOf, weaponInHand,
 } from "../src/arena.mjs";
 import { WORLD_CLONE } from "../src/world-store.mjs";
 import { actingBlocked } from "../src/world-apex.mjs";
@@ -1086,6 +1086,42 @@ test("take and give of shrouded loot are refused with a sentence that explains i
   } finally { b.close(); }
 });
 
+test("the weapon says WHICH ACT it augments, read off the grant's own entry", async () => {
+  // Site-pinned 2026-08-29 (bday-cockpit, ruled by Wright): two of this room's
+  // acts state damage and only one is helped by what is held, so without this a
+  // page has to invent the act's name to know where to render the bonus.
+  //
+  // ⚑ THE VALUE IS THE GRANT'S OWN WORD, never a constant. The office already
+  // looks for `action === "strike"` when it resolves a weapon, so a hardcoded
+  // "strike" here would agree with today's record and be wrong the first time a
+  // thing grants `cast` — and nothing would notice, because it would still
+  // match. Read from the entry.
+  //
+  // ⚠ AND `for` IS A HOMONYM. LOGOS § The three channels: "`for:` is the actor
+  // kind (absent means resident)", and `heldEntries` sets exactly that sense on
+  // the entry this value is read FROM. Landed under the pinned spelling because
+  // the consumer has shipped; flagged for the lexicon, where `augments` is the
+  // successor if the register rules against it.
+  const { declareAttachment } = await import("../src/dynamic-entities.mjs");
+  const b = bottle();
+  try {
+    declareAttachment(b.dyn, { entity: "darko", target: LIGHTER, declaredBy: "darko" });
+    const held = weaponInHand(b.db, "darko");
+    assert.ok(held, "darko is not holding the lighter — the setup failed and nothing below discriminates");
+    assert.equal(held.bonus, 3, "the bonus is the record's number");
+    assert.equal(held.for, "strike",
+      "the weapon does not say which act it augments — the page must invent the act name to place the bonus");
+    assert.equal(weaponInHand(b.db, "rei"), null, "an empty-handed hand was handed somebody else's weapon");
+
+    // AND IT RIDES THE HAND'S OWN ANSWER, which is where the page reads it.
+    await act(b, "darko", "guard");
+    const hand = state(b).hands.darko;
+    assert.equal(hand.weapon?.for, "strike",
+      "the act rode the weapon reader but not the hand's answer — `encounter_detail.hands[who].weapon.for` is the consumer's path");
+    assert.equal(hand.weapon?.thing, LIGHTER, "and the hand's answer names the thing itself");
+  } finally { b.close(); }
+});
+
 test("the encounter answer carries a CAPPED tail of beats, and says where the tail ends", async () => {
   // Requested by the site lane 2026-08-29. Without beats, a combat log can only
   // infer other hands' lines from hit-point deltas in the receiving voice — "rei
@@ -1108,8 +1144,12 @@ test("the encounter answer carries a CAPPED tail of beats, and says where the ta
     `the answer carried ${pub.beats_tail.length} of ${many.length} beats — an answer that grows with the length of the party is not bounded`);
   assert.deepEqual(pub.beats_tail, many.slice(-BEATS_TAIL),
     "the tail is not the LAST beats — a combat log reading it would render the opening of the fight forever");
-  assert.equal(pub.beats_through, many[many.length - 1].seq,
-    "the answer does not say where its tail ends — a poller has no way to dedupe but to diff arrays");
+  // NO LATEST-SEQ FIELD (Wright's ruling with bday-rail, 2026-08-29): the
+  // consumer derives its watermark as the max seq in the window, so a separate
+  // field would be a second way to learn one fact. Asserted as an ABSENCE
+  // because a field quietly reappearing is how one contract becomes two.
+  assert.equal("beats_through" in pub, false,
+    "a latest-seq field is back — the consumer derives its watermark from the window, and two ways to learn one fact is how a contract forks");
   assert.equal(pub.beats_total, many.length,
     "the answer does not say how much it withheld, so a reader cannot tell a full history from a truncated one");
   assert.equal("beats_tail" in publicState({ phase: "afoot", beats: [] }), false,

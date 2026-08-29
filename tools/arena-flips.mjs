@@ -32,8 +32,15 @@ const APEX = "src/world-apex.mjs";
 // while `callHoldTool` never calls it, and a law with no door behind it is what
 // src/arena.mjs was written to close.
 const HOLD = "src/world-hold.mjs";
+// The hydrator joined 2026-08-29, and it is the only subject here whose suite
+// is a REAL pipeline rather than a store in memory: a mark file, through the
+// real hydrator, into a real store. It is in this runner because the loot flag
+// died in that pipe while eight in-memory flips over the same law stayed red on
+// cue — the shroud's readers were all correct and none of them was ever reached.
+const HYDRATE = "src/world-hydrate.mjs";
 const SUITES = { [ARENA]: "test/arena.test.mjs", [HUMAN]: "test/arena.test.mjs",
-                 [APEX]: "test/arena.test.mjs", [HOLD]: "test/arena.test.mjs" };
+                 [APEX]: "test/arena.test.mjs", [HOLD]: "test/arena.test.mjs",
+                 [HYDRATE]: "test/hydrate-loot.test.mjs" };
 
 const FLIPS = [
   // ── ruling 1 · the wheel gates, and the refusal NAMES the turn ───────────
@@ -261,7 +268,29 @@ const FLIPS = [
 
   { name: "the answer stops saying where its tail ends — a poller can only diff arrays",
     file: ARENA, catches: "a CAPPED tail of beats",
-    edit: (t) => t.replace("beats_through: tail[tail.length - 1]?.seq ?? null,", "") },
+    edit: (t) => t.replace("beats_tail: tail, beats_cap: BEATS_TAIL, beats_total: beats.length", "beats_tail: tail, beats_cap: BEATS_TAIL, beats_total: tail.length") },
+
+  // ── the hydrator's loot carry, and the weapon's act ──────────────────────
+
+  { name: "the hydrator drops `loot` again — the flag dies between the file and the store",
+    file: HYDRATE, catches: "reaches the store as a real boolean",
+    edit: (t) => t.replace('      loot: (m.loot === true || m.loot === "true") ? true : null,', "") },
+
+  { name: "the hydrator reads `loot` by truthiness — `loot: yes` quietly hides a thing",
+    file: HYDRATE, catches: "reaches the store as a real boolean",
+    edit: (t) => t.replace('      loot: (m.loot === true || m.loot === "true") ? true : null,', "      loot: m.loot ? true : null,") },
+
+  { name: "a misspelled `loot:` is dropped in silence — the author is never told",
+    file: HYDRATE, catches: "reaches the store as a real boolean",
+    edit: (t) => t.replace('  if (m.loot != null && m.loot !== true && m.loot !== "true") problems.push(', "  if (false) problems.push(") },
+
+  { name: "the weapon stops saying which act it augments",
+    file: ARENA, catches: "says WHICH ACT it augments",
+    edit: (t) => t.replace("says: grant.says ?? null, for: grant.action };", "says: grant.says ?? null };") },
+
+  { name: "the weapon's act is hardcoded rather than read off the grant",
+    file: ARENA, catches: "says WHICH ACT it augments",
+    edit: (t) => t.replace('for: grant.action };', 'for: "cast" };') },
 
   // 4 · entry placement
   { name: "the placement stops stepping clear — an entrant is set down inside the adversary",
