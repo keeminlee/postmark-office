@@ -15,6 +15,12 @@ runs the other way — it is the only one that reads the DB and writes the repo.
 | `falsifier-standing-equality.mjs` | the port vs 1.0's own fold, over the same state, slug by slug |
 | `live-reads.mjs` | 1.0's movement/presence/sound/containment reads, ported to `acts` rows — what the LIVE doors serve |
 | `falsifier-live-equality.mjs` | those ports vs 1.0's own imported functions, on identical inputs |
+| `roll-ingest.mjs` | the town repo → `town_roll` (the roster the read tier asks; derives only — `stamp-ingest.mjs` writes it, one town head) |
+| `materialize.mjs` | how a claim becomes a mark, and how standing is re-walked after — the clearing job's steps 6 and 7, shared with the REVIEW lane |
+| `review-rule.mjs` | the operator's ruling on a `held_review` contest (census D2, "a mind rules") |
+| `falsifier-review-closure.mjs` | a ruled claim ends in exactly one lawful state, with a receipt naming who ruled |
+| `conversations.mjs` | 1.0's thread derivation over voice `acts` — what `/world/conversations` becomes when the voices log dies |
+| `falsifier-conversations-equality.mjs` | that port vs `voices.mjs` itself, on identical inputs, era by era |
 | `falsifier-acts-lane-closure.mjs` | every WRITE lane reaches `acts`, checked from each lane's own pen — and a census that reds when a new act appears that nobody has ruled on. STANDING INVOCATION CARRIES `--since 2026-08-29T00:20Z` (the fix's lab deploy): exactly ONE act was lost before the lanes closed — wright's say at 2026-08-28T16:18:38.744Z, the lab's first witnessed act, which lives in voices-log.jsonl and never reached `acts`. The exclusion is dated at the deploy so it excuses only the pre-fix era and nothing after; the loss itself is recorded here, in the merge commit (87f4fe65), and in the epic — a red nobody can act on is a falsifier nobody reads (the discarded-draft lesson), but a loss nobody wrote down is worse. |
 
 The law these implement is quoted verbatim in each file's header, from the gold
@@ -1665,3 +1671,390 @@ All three ride the answers as `DISCLOSURES`, never as silence.
 **all of it is prose** — the `LEDGER_HEADER` constant's own explanation. The
 grammar (`ENTER_EXIT_RE`) and `occupancyAt` are byte-identical. That is the
 tripwire working: it says "re-check", not "you are wrong".
+
+## The town's roll (Keemin's ruling, 2026-08-29)
+
+`live-reads.mjs`'s `DISCLOSURES.roll_source` teed a seam and refused to guess at
+it: *"Which roster the 2.0 read tier should ask is unruled."* `/world2/present`
+asked `identities` — the world repo's `households.json`, 102 handles — while
+1.0's own doors ask the TOWN's roll (`townRoll()` → `residentList`, 132).
+
+Ruled: **the town's roll**, for issue #1864's reason, which `positionRoster`
+already carries verbatim — *"28 of 103 residents were not answered wrongly, they
+were never asked about."* A narrower roster produces no red. Twelve people were
+simply not in the question.
+
+| file | what it is |
+|---|---|
+| `roll-ingest.mjs` | the town repo → `town_roll` rows. Derives; does not write. |
+| `010_town_roll.sql` | the table, its grants, its `registry` row |
+
+### The roll has one definition, and it is two steps
+
+Both imported live, neither restated:
+
+1. `readTown` (`vendor/town.mjs`) enumerates it — *"residents (skip TEMPLATE —
+   it's the blank form, not a resident)"*.
+2. `isResidentHandle` (`src/residency.mjs`) admits it, and that file says why
+   step 1 is not enough alone: *"The vendor's enumeration skips exactly one name
+   (`n !== "TEMPLATE"`) — a NAME LIST, not a rule, which is why the second
+   non-resident directory walked straight through it and `_archived` came out of
+   the live walkers door standing on the quay."*
+
+Those are the same two steps `residentList` applies to the office's own index.
+At town `830a6996`: 140 WHITE_PAGES entries → 133 directories → **132 handles**,
+and 132 is exactly what the lab's 1.0 door answered with on 2026-08-28.
+
+The office's readers are imported from THIS checkout rather than from the town
+one, and that is the right half of the reuse rule: the town owns its frontmatter
+(`vendor/town.mjs` is that reader, vendored under a do-not-edit-here notice),
+while who counts as a resident AT THE DOOR is the office's own law.
+
+### One pen, one head
+
+`roll-ingest.mjs` holds no credential. `stamp-ingest.mjs` writes both town
+projections inside its one transaction, because `projection_heads['town']` is
+ONE ROW: a head standing at a sha with stamps and no roll could not say what
+roster its clearing computed against, and the determinism property ("outcomes
+reproducible from `(claims, law_sha, town_sha)`") would quietly stop covering
+half the town's facts. `writeStamps` REFUSES a call with no roll rather than
+writing half a head.
+
+`data` is the resident's ADDRESS.md frontmatter as the town's reader returned it
+— *"the parser's own output, not a normal form invented here"*, kept from
+`law_projection`. `{}` for a resident with no card: the roll is a list of PEOPLE,
+and a missing card is a missing card, never a missing person.
+
+### What changed at the door
+
+`/world2/present` joins `town_roll` through `projection_heads` (the PINNED head,
+not `max(town_sha)`), so the roster the answer used is the roster a window
+pinning that sha was cleared against. `identities` is still read and still does
+its own job — the household KEY a resident's ground is grouped by. Two rosters,
+two questions: the roll says who to ask about, the identities say whose ground
+counts as yours.
+
+```
+before   1.0: 132   2.0: 122
+after    1.0: 132   2.0: 133   (all 132 roll handles placed; the 133rd is
+                                quill-stem, who has walks in `acts` and no
+                                WHITE_PAGES directory at the pinned sha)
+```
+
+### The invariant, and its live red
+
+**identities is a subset of town_roll** — every world identity is a town
+resident. One line in `falsifier-projection-equality.mjs`, and it went RED on the
+live store the first time it ran: `dylan-android-husband` sat in `identities` and
+in no WHITE_PAGES directory. The store's law projection was at `0c1aa924`, which
+predates Keemin's strip of that alias at world main `559301d4`; re-ingesting law
+at main turns it green (101 identities, 0 outside the roll). A can-fail proof on
+real data, for free — and the reverse is NOT symmetrical: the town is the wider
+list by design, and a resident with no world household is simply someone not yet
+grouped.
+
+### The red-proof carries the run
+
+```
+node world2/tools/falsifier-projection-equality.mjs --law-repo ... --town-repo ...
+GREEN . town @ 830a6996 - {"roll_derived":132,"roll_db":132,"identities_outside_the_roll":0}
+
+# three kinds of drift, by hand - DELETE and INSERT are the pen's own grants,
+# the UPDATE has to come from the owner (there is no UPDATE on a projection)
+DELETE FROM town_roll WHERE town_sha='<t>' AND handle='wright';
+INSERT INTO town_roll (town_sha,handle,data) VALUES ('<t>','not-a-resident','{}');
+UPDATE town_roll SET data = jsonb_set(data,'{joined}','"1999-01-01"') WHERE handle='rei';
+
+RED . town @ 830a6996 - 3 drift finding(s)
+  - town_roll DIFFERS at rei . field data . first divergence at char 334
+    repo says: ..."joined":"2026-06-12",...
+    DB says:   ..."joined":"1999-01-01",...
+  - town_roll MISSING in DB: wright
+  - town_roll EXTRA in DB (repo derives no such row): not-a-resident
+
+# repair is running the pen again; green again.
+```
+
+And `E5c` in `falsifier-live-equality.mjs`, which asks what the union cannot ask
+itself: that the roster the ANSWER used is the roster that was ruled, that 1.0's
+own `publicResidents` and the port agree over it, and — as a receipt, never a
+gate — that the gap closed.
+
+```
+  . E5c  compared 133  findings 0
+         roll 132 (identities 101) . present 133 (was 121) . gained 12: andromeda,
+         bellamy-spark, caelan-rhys, elias-returning, jack-astra, kept-elsewhere, ...
+
+can-fail break 8: "the roll read as `identities` (the pre-ruling roster)" - RED, 2 findings
+```
+
+The break is aimed at E5c and E5 cannot see it, which is the point: E5 compares
+the port and 1.0 over whatever roster BOTH are handed, and a narrowed roster is
+handed to both.
+
+## The REVIEW lane's verb
+
+`claims.status` has carried `held_review` since 001 and `clearing-job.mjs` step 5
+puts claims into it (census D2: *"neither locks; both held for REVIEW (a mind
+rules)"*). Nothing took them out. **A state a system can enter and never leave is
+not a lifecycle stage, it is a hole with a name** — a contested parcel would have
+sat on a closed window's docket forever wearing a status that promised a decision
+nobody could record.
+
+| file | what it is |
+|---|---|
+| `review-rule.mjs` | the operator's ruling: grant · refuse · hold |
+| `materialize.mjs` | steps 6 and 7 EXTRACTED, so the candle and the ruling share one |
+| `falsifier-review-closure.mjs` | a ruled claim ends in one lawful state, with a receipt naming who ruled |
+| `009_review_ruling.sql` | `claims.ruling jsonb` |
+
+```sh
+export WORLD2_CLEARING_URL=postgres://clearing_job:...@localhost/world2_dev
+export WORLD2_OFFICE_URL=postgres://office_api:...@localhost/world2_dev
+
+node world2/tools/review-rule.mjs --claim <uuid> --rule grant \
+  --by wright --because "<one sentence>"        # --dry-run rolls back
+node world2/tools/review-rule.mjs --claim <uuid> --journal-only   # the repair
+```
+
+### Why an operator tool and not a door
+
+Three reasons, and the first is the substrate refusing. **The pen**:
+transitioning a claim is `clearing_job`'s grant and `claims_update_guard` exempts
+exactly that role, so an `office_api` endpoint could not do this if it wanted to
+— and giving the door the clearing pen so that it could would hand the candle's
+whole authority to the widest surface. **It is not a resident verb**: there is no
+grant in `law_projection` for settling someone else's contest and there should
+not be. **The precedent is in this file**: *"The REVIEW lane — 'a mind clears it'
+— lives entirely in the GitHub PR flow … Nothing in this directory decides
+anything."* That is about LAW review; this is the CLAIMS half of the same lane,
+and every judgement arrives on the command line (`--by`, `--rule`, `--because`).
+The tool computes none of it, and refuses to run without all three.
+
+### Why it materializes rather than re-dockets
+
+The cheaper design is to put the winner back to `pending` and let the next candle
+lock it. It is wrong, and Decision 2's last sentence is why: a claim's escrow was
+judged at ITS window's `town_sha`, so re-pending would have the candle re-judge
+it at a different one — able to REFUSE a claim a mind had already granted, which
+is stake-weight overturning the mind.
+
+What a ruling does not get to do is rule on a world that has moved. Steps 1 and 4
+are re-asked at ruling time and a failure **refuses the run**, not the claim:
+
+```
+RULING REFUSED: the world moved while this claim was held, so the ruling is REFUSED
+rather than applied:
+  - this parcel now overlaps standing parcel "adam-rhys/hollow-edge" - the ground was
+    taken while the claim was held; contesting a STANDING mark is a different question
+    from the one that was held
+Nothing was written. Re-decide the contest against the world as it now stands.
+```
+
+The mark locks into the OPEN window, not the held one: the held window is closed
+and its acts may already be in the notary's frozen archive. That is the drafts
+lane's own ruling one lane over — *"putting-forward dating accepted (also avoids
+inserting into notary-frozen windows)"*.
+
+### The extraction, and the receipt that survives a close
+
+`materialize.mjs` is the candle's steps 6 and 7, moved rather than copied — one
+`materializeClaims`, one `recomputeStanding`, two callers. A mark that arrives by
+a ruling and one that arrives by the candle are the same row by construction, and
+the standing recompute is not optional in a ruling: granted ground moves a
+neighbour's tier exactly as a clearing's does.
+
+The ruling lands on three surfaces — `claims.ruling` (the receipt on the thing
+ruled), `windows.receipts.review_rulings` (the window's own account), and an
+`acts` row (the public deed). `clearing-job.mjs` now CARRIES `review_rulings`
+forward when it closes a window, because that `UPDATE` replaces `receipts` whole
+and would otherwise erase a decision the town made inside it. **Proved by flip**:
+remove the carry-forward line, close a window holding a ruling, and R6 goes red
+naming both claims.
+
+### The one seam this lane does not close
+
+`clearing_job` holds no INSERT on `acts` (that is `office_api`'s), and
+`003_falsifier_roles.sql` exists to red when a fourth writer appears — so
+granting it one is law-tier and **teed, not taken**. The run is therefore
+ORDERED, not atomic: the ruling transaction commits, then the act is written on a
+second connection. The order is chosen so the failure is recoverable — `acts` is
+append-only, so an act for a ruling that then rolled back could never be removed,
+while a ruling whose act did not land is fully recorded in `claims.ruling` and
+`windows.receipts` and can have its act written afterwards (`--journal-only`).
+
+**Recommendation: grant `clearing_job` INSERT on `acts`** and make the ruling one
+transaction. It is the same pen already writing `marks` and `windows` inside that
+transaction; the alternative is a two-phase write on the one lane whose whole
+subject is a decision somebody has to be able to audit.
+
+### The census cannot see this lane
+
+`falsifier-acts-lane-closure.mjs` has two censuses and BOTH are anchored on the
+sqlite journal — one over the apex's dispatchable verbs, one over the classes the
+journal holds. A `review` act is written by no 1.0 pen and reaches no journal: it
+is the first act in this store **born in `acts`**. Neither census is blind by
+accident; they are blind by construction, which is why the closure falsifier is
+its own file.
+
+### The red-proof carries the run
+
+Run end to end on a scratch copy of `world2_dev`, 2026-08-29:
+
+```
+asleep before any ruling (exit 2)   - "2 claim(s) sit in 'held_review' unruled"
+RULED grant . wright/contested-meadow . by wright
+  11111111 wright/contested-meadow: held_review -> locked
+  22222222 rei/same-meadow:         held_review -> refused
+  materialized 1 mark(s); standing recomputed over 849, 1 moved (null->home); act 2939
+closure GREEN . and still GREEN after the window's own close
+FLIP: carry-forward removed -> R6 RED, naming both claims
+refusals proven: a claim that is not held . a ruling with no --by . the ground taken
+hold, then refuse: closure GREEN with "2 pairings record an EARLIER ruling - history, not drift"
+--self-test: healthy shape green, 12 injected faults each firing the check it was aimed at
+```
+
+**Two live reds were the check being wrong, and both were the pairing key** —
+`falsifier-acts-claims-closure.mjs`'s *"journal_seq is not an identity"*, twice
+more. An act covers its whole CONTEST rather than one subject claim; and it pairs
+on `(claim, ruling.at)`, because a contest may lawfully be ruled twice (a `hold`
+and then a decision) and `acts` is append-only precisely because history
+accumulates.
+
+## Conversations, served from acts (D4's read port)
+
+`/world/conversations` is the page the town reads itself back from, and 1.0
+serves it out of `voices-log.jsonl` — a box-local file, never git, backed up by
+nothing. It was the last read in the live tier still answering from a 1.0 pen,
+and that file dies at cutover.
+
+| file | what it is |
+|---|---|
+| `conversations.mjs` | 1.0's thread derivation over voice acts; the say dials read from `marks` |
+| `falsifier-conversations-equality.mjs` | the port vs `voices.mjs` itself, on identical inputs |
+
+`/world2/conversations[?at=][&closed=][&voices=]` is the door.
+
+### The record was already there, and it was measured before anything was built
+
+Every voice is also an emission (`emissionFromVoice`, *"the second consumer of a
+voice"*), every emission is crystallized into a crossing log, and the seed
+carried 1,630 of them into `acts`. Since 2026-08-28 the LIVE lane reaches `acts`
+directly too (`world-journal.mjs` § THE LANE HOOK). Against the prod office's own
+voices log:
+
+```
+1,630 emission acts . 1,630 log lines inside the acts era . 0 missing . 0 extra .
+0 field-drift rows.   823 log lines predate the era; 238 postdate it.
+```
+
+### The two eras, and the frontier between them
+
+| era | how identified | where the point comes from |
+|---|---|---|
+| `crystallized` | `legacy:emission`/`emission` with `payload.payload.class === 'sound'` | `payload.payload.x/y`, the raw point the crossing log froze |
+| `live` | `action === 'say'` | the WITNESSED LINE composed back: `at_anchor` + `at_dx/at_dy` |
+
+The eras disagree about position ON PURPOSE: the crystallized one stores a bare
+x,y because that is the photograph the crossing log took, and the live one stores
+an anchor and an offset because the witnessed-line ruling says a bare world x,y
+is *"a photograph of a moving thing"*. A live say whose anchor does not resolve
+is REFUSED, never placed at `{0,0}` — `composeAnchor`'s own refusal, carried up,
+and Ferry's crossing is a real place somebody could be standing.
+
+An act no era explains refuses the whole read, by name. That is the live lane's
+rule and it earned itself twice there.
+
+### The dials come from the store
+
+*"every standing number of speech reads off this node's dials"* — `the-town/say`
+says so in its own record. In 2.0 those dials are `marks` rows: the say class's
+PREDICATE CHILDREN, each carrying `data.slot` and `data.value` under
+`data._parent_is_law = 'the-town/say'`. So this door asks Postgres and needs no
+1.0 store at all, which is what makes it cutover-ready.
+
+⚑ **And the honest limit**: all seven recorded values currently EQUAL
+`voices.mjs`'s fallback constants (60 · 5 · 30 · 20 · 15 · 15 · 500), so a bug in
+the dial SOURCE would be invisible in every comparison until one of them moves.
+C4 says so rather than reporting a green it did not earn.
+
+### The equalities
+
+`voices.mjs` is VENDORED rather than imported (`clusterVoices`, `threadOf`,
+`chains`), because its module init reads the 1.0 sqlite world store at import
+time — putting a 1.0 store read in the boot path of a Postgres-only door is the
+coupling this whole tier exists to end. The falsifier imports the original and
+holds the copy to it.
+
+```sh
+WORLD2_PG_URL=postgres://snapshot_reader:...@localhost/world2_dev \
+  node world2/tools/falsifier-conversations-equality.mjs \
+    --voices-log /srv/postmark-office/voices-log.jsonl --can-fail-proof
+```
+
+```
+1631 voice act(s) -> 1631 voices (crystallized 1630 . live 1) . 2707 in 1.0's log
+  . C1  compared 1631  findings 0
+        crystallized 2026-08-10T04:20Z -> 2026-08-27T05:18Z (1630) . live 2026-08-28T18:00Z (1)
+        . log before 823 . 6 between the eras (spoken, not yet crystallized) . after 247
+  . C2  compared 1631  findings 0     the vendored clusterVoices vs voices.mjs's own
+  . C3  compared   43  findings 0     1.0's whole conversations() vs the port's, thread for thread
+  . C4  compared    7  findings 0     the dials (see the limit above)
+GREEN
+```
+
+C3 runs 1.0's REAL render: `threadOf` is module-private in `voices.mjs`, so the
+only way to reach it is through `conversations()`, which reads a log — so the
+acts-derived voices are written to a temp log in the log's own format and 1.0's
+own reader is pointed at it. Identical inputs, two whole pipelines.
+
+### The one loss, allowed by name
+
+```js
+LOST_TO_THE_PRE_FIX_ERA = [{ at: "2026-08-28T16:18:38.744Z", handle: "wright", receipt: ... }]
+```
+
+One row, keyed `(at, handle)`, with its receipt — not a widened window, not a
+tolerance. It PRINTS whether or not it fires, so a second loss cannot hide behind
+the first one's excuse, and can-fail break 7 (*"a SECOND lost voice, not the
+allowed one"*) is what proves that. It reads UNEXERCISED today and that is
+correct: 16:18:38 sits in the frontier between the eras, which no era covers.
+
+### Two findings came out of the proofs, and both outlive them
+
+- **The eras are scoped SEPARATELY, and the first cut did not do that.** It took
+  `[min(acts), max(acts)]` as one contiguous stretch — true while `acts` held
+  only the crystallized record, and false the moment a live say landed, because
+  that range swallows the un-crystallized frontier. The run that found it
+  reported five prod voices as missing when every one was simply not crystallized
+  yet: a false finding manufactured by the check's own scoping (AB-P1's shape).
+- **Era scoping is blind at the edges, and that is stated rather than tuned
+  away.** The first can-fail break dropped the LAST voice and read SILENT — not
+  the check missing a loss, but the boundary moving with it. C1 covers the
+  record's INTERIOR; the FRONTIER belongs to `falsifier-acts-lane-closure.mjs`,
+  which compares each lane's own pen against `acts` from a standing `--since` and
+  therefore has a boundary no loss can move.
+
+```
+can-fail proof:
+  RED    a voice missing from the middle of `acts` (the say lane silently open again)
+  RED    a voice's text bent in the act
+  INERT  the vendored chain rule loses the deck exception - the record holds no aboard
+         pair beyond earshot within one lull, so the break proves nothing here
+  RED    the record clustered on the EAR's clock (fadeMs, not the lull) - 32 findings
+  RED    the earshot widened to the whole town - 32 findings
+  RED    an unreadable voice act skipped instead of refused
+  RED    a SECOND lost voice, not the allowed one
+  can-fail PROVEN
+```
+
+### What is NOT here, said out loud
+
+1. **No listeners and no presence.** 1.0's `hear` answers who is within earshot
+   right now from a RAM map that is empty after every restart. That is a fact
+   about a running office, not about the record.
+2. **No look-back bound.** 1.0 clusters the last 2,000 voices it holds in memory
+   (`MEMORY_MAX_VOICES`); this clusters every voice the store holds. The bound is
+   a property of a process, not of the record, so there is nothing to reproduce —
+   and it is a REAL divergence that bites the day the record passes 2,000. Named
+   on the answer rather than matched.
