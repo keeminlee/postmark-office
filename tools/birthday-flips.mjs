@@ -30,9 +30,27 @@ const SUITES = {
 
 const FLIPS = [
   // ── the calculus ────────────────────────────────────────────────────────
+  // ── the silent kind-drop (found live 2026-08-29, the founder's exit) ─────
+  { name: "a kind mismatch goes back to being dropped in silence",
+    file: GRANTS, catches: "a kind mismatch is REFUSED with a reason",
+    edit: (t) => t.replace("      refused.push({ ...e, refused: `this door is ${kindOf(e) === \"resident\" ? \"a resident's\" : `for a ${kindOf(e)}`}, and you are acting as ${kind === \"human\" ? \"a human\" : `a ${kind}`}` });", "") },
+
+  { name: "the kind refusal stops naming which kind the door is for",
+    file: GRANTS, catches: "a kind mismatch is REFUSED with a reason",
+    edit: (t) => t.replace("refused: `this door is ${kindOf(e) === \"resident\" ? \"a resident's\" : `for a ${kindOf(e)}`}, and you are acting as ${kind === \"human\" ? \"a human\" : `a ${kind}`}`", "refused: `not your door`") },
+
+  { name: "the kind fence stops fencing — a human is admitted through a resident's grant",
+    file: GRANTS, catches: "a kind mismatch is REFUSED with a reason",
+    edit: (t) => t.replace("    if (kindOf(e) !== String(kind)) {", "    if (false) {") },
+
+  // Retargeted 2026-08-29: the bare `continue` grew a body when the kind
+  // mismatch started recording a refusal, and this flip went silently inert —
+  // the third such retarget this lane, and the same lesson each time. It now
+  // shares its mutation with "the kind fence stops fencing" above; one break,
+  // two guards, and they catch it through different assertions on purpose.
   { name: "an absent for: becomes a wildcard (the 914ddc26 widening, in code)",
     file: GRANTS, catches: "a human is not admitted through a resident's grant",
-    edit: (t) => t.replace('if (kindOf(e) !== String(kind)) continue;', 'if (false) continue;') },
+    edit: (t) => t.replace("    if (kindOf(e) !== String(kind)) {", "    if (false) {") },
 
   { name: "the kind default flips from resident to anybody",
     file: GRANTS, catches: "an absent for: reads as RESIDENT",

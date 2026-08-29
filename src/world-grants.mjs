@@ -164,7 +164,35 @@ export function resolveGrants(candidates, { kind = "resident", actorHousehold = 
   const admitted = [];
   const refused = [];
   for (const e of candidates) {
-    if (kindOf(e) !== String(kind)) continue;   // not your door, whatever it spells
+    // ── A KIND MISMATCH IS A REFUSAL, AND IT USED TO BE A SILENCE ────────────
+    //
+    // ⚑ FOUND LIVE 2026-08-29: the founder, standing in the candle-vault as his
+    // HUMAN, dispatched `exit` and was told «"exit" is not afforded where you
+    // stand». That sentence was false in the way that matters — exit IS granted
+    // where he stood, by `the-town/resident`, ambiently and world-wide. What is
+    // true is that the grant carries no `for:`, so it defaults to RESIDENT
+    // (`kindOf`), and his human is not that kind.
+    //
+    // This `continue` dropped the entry with no record, so the caller fell all
+    // the way through to the apex's "not afforded / walk somewhere else" bounce
+    // — which sent a reader looking for a place that affords exit, when every
+    // place affords it and none of them to him. A door that answers the wrong
+    // question confidently is worse than one that says no.
+    //
+    // The refusal now RIDES, which is what `refused` has always been for: the
+    // apex turns it into «granted here, but not to you» with a reason, and into
+    // the read's `not_yours` block, whose own note says it exists so "a guest's
+    // human standing on someone else's parcel" is told WHY "rather than left to
+    // infer it from an absence". Scope refusals were recorded there from the
+    // day it was written; kind refusals never were. Half the promise, kept.
+    //
+    // THE ADMISSION RULE IS UNCHANGED. Nothing new is afforded to anybody by
+    // this — `admitted` takes exactly the entries it took before. Only the
+    // SAYING changes.
+    if (kindOf(e) !== String(kind)) {
+      refused.push({ ...e, refused: `this door is ${kindOf(e) === "resident" ? "a resident's" : `for a ${kindOf(e)}`}, and you are acting as ${kind === "human" ? "a human" : `a ${kind}`}` });
+      continue;
+    }
     const s = scopeAdmits(e, { actorHousehold, groundHousehold: e.ground ? groundHouseholdOf(e.ground) : null });
     if (!s.ok) { refused.push({ ...e, refused: s.why }); continue; }
     admitted.push(e);

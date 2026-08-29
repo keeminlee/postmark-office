@@ -46,6 +46,48 @@ test("a human is not admitted through a resident's grant, even when the verb spe
     "the human's say comes from the HUMAN class — the door must name the grant that actually opened it");
 });
 
+test("a kind mismatch is REFUSED with a reason, never dropped in silence", () => {
+  // LOGOS/classes.md § The three channels: "An entry whose `for:` does not name
+  // the caller's kind is not the caller's door, even when its verb spells the
+  // same." That says what is not ADMITTED. It does not say the caller may be
+  // told nothing — and being told nothing is what happened.
+  //
+  // ⚑ FOUND LIVE 2026-08-29. The founder, standing in the candle-vault as his
+  // HUMAN, dispatched `exit` and was answered «"exit" is not afforded where you
+  // stand». Every place in the world affords exit — `the-town/resident` grants
+  // it ambiently — and none of them to him, because not one of that class's
+  // twelve action entries carries a `for:` and `kindOf` defaults to resident.
+  // The bare `continue` here left no record, so the apex fell through to its
+  // "walk somewhere else and it appears" bounce and sent him looking for a
+  // place that does not exist.
+  //
+  // The `refused` list is exactly where this belongs: the apex turns it into
+  // «granted here, but not to you», and into the read's `not_yours` block,
+  // whose own note says it is there so a guest's human is told WHY "rather than
+  // left to infer it from an absence". Scope refusals rode it from the day it
+  // was written; kind refusals never did.
+  const candidates = entriesOfClass(
+    classRow("the-town/resident", "resident", [{ action: "exit", residue: "the-town/enter" }]),
+    { channel: "ambient" });
+
+  const asHuman = resolveGrants(candidates, { kind: "human" });
+  assert.deepEqual(asHuman.entries, [], "a resident's grant must still not ADMIT a human — the fence is unchanged");
+  assert.equal(asHuman.refused.length, 1,
+    "the kind mismatch vanished without a word — the caller is told the act is afforded NOWHERE, when it is afforded everywhere and simply not to them");
+  assert.equal(asHuman.refused[0].action, "exit");
+  assert.match(String(asHuman.refused[0].refused), /resident/,
+    "the refusal does not say whose door it is");
+  assert.match(String(asHuman.refused[0].refused), /human/,
+    "nor what the caller is acting as — a reason that names neither side explains nothing");
+
+  // AND THE ADMITTED SIDE IS UNTOUCHED: a resident still gets it, and gets no
+  // refusal alongside. Without this leg, "refuse everything" passes.
+  const asResident = resolveGrants(candidates, { kind: "resident" });
+  assert.deepEqual(asResident.entries.map((e) => e.action), ["exit"],
+    "the resident lost their own ambient exit — the fix must change the SAYING, not the admitting");
+  assert.deepEqual(asResident.refused, [], "and a caller who was admitted must not also be told they were refused");
+});
+
 // ── the instance → class resolution (the eleven-day gap) ────────────────────
 
 test("a mark with no class: is an instance of the class its KIND names", () => {
