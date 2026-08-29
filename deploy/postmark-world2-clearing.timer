@@ -1,0 +1,17 @@
+[Unit]
+Description=World 2.0 candle at 05:45 and 17:45 UTC — census Decision 3's own marks
+
+[Timer]
+# The census's cadence, verbatim, and nothing else. These are the same two
+# marks postmark-settlement.timer carries for 1.0; that is not a coincidence to
+# be tidied away, it is the town having one clock.
+OnCalendar=*-*-* 05:45:00 UTC
+OnCalendar=*-*-* 17:45:00 UTC
+# A box that was down through a close still owes that close. Persistent makes
+# systemd fire on boot for a missed mark; the script's own catch-up loop is
+# what handles more than one window being owed.
+Persistent=true
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target

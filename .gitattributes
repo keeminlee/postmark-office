@@ -10,3 +10,7 @@
 *.sh text eol=lf
 *.yml text eol=lf
 *.yaml text eol=lf
+
+# Systemd units run on the box. A CRLF in ExecStart fails as a missing file.
+*.service text eol=lf
+*.timer text eol=lf

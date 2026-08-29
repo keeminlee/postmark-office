@@ -231,6 +231,66 @@
     "stale_after_minutes": 100
    },
    "stale_means": "The site stops following the town: a ferry landing never reaches postmark.town, and nothing else publishes prod now that the box is the one writer. The allowance is three ticks plus build time."
+  },
+  {
+   "unit": "postmark-world2-clearing.timer",
+   "label": "the World 2.0 candle",
+   "stage": "live",
+   "activation_owner": "Wright — founder ruling 2026-08-29 (prod Postgres on the box, cutover drive on). Windows 149..155 had been closed by hand all day; 155 was the last one a person typed and the first this timer closed, 2026-08-29T01:54Z. Unit source: deploy/postmark-world2-clearing.{service,timer}, script deploy/world2-clearing.sh",
+   "cadence": "05:45 and 17:45 UTC — census Decision 3's own marks, the same two postmark-settlement.timer carries",
+   "cadence_source": "systemctl show postmark-world2-clearing.timer -p TimersCalendar",
+   "heartbeat": {
+    "kind": "state_file",
+    "path": "/srv/world2-lab/state/clearing.json",
+    "stamp_field": "at",
+    "stale_after_minutes": 780
+   },
+   "stale_means": "The candle stops. Windows pass their close and stay open, claims sit pending in a window that will not clear, and every downstream read — standing tiers, the docket, escrow sufficiency — describes a town frozen at the last close somebody performed by hand. The allowance is one crossing plus an hour, matching the settlement sweep it shares its marks with. NOTE THAT THE STAMP IS WRITTEN ON REFUSAL TOO, deliberately: a clearing that refused (the null-pin guard) has RUN, and this heartbeat answers 'did the lane run', while the service's own non-zero exit is what answers 'did it succeed'. Read both — a fresh stamp with an ALARM-failed beside it means the guard fired, and clearing.json names which one."
+  },
+  {
+   "unit": "postmark-world2-ingest.timer",
+   "label": "the World 2.0 projection poll",
+   "stage": "live",
+   "activation_owner": "Wright — 2026-08-29, the ops lane. On-merge is the ideal shape and this is the acceptable dev one (world2/tools/README.md: 'on town merge, and again as clearing_job's first step at window close'). Script deploy/world2-ingest.sh runs both pens, law then stamp",
+   "cadence": "every 15 minutes at :04/:19/:34/:49 UTC, jittered up to 45s — offset from the :07/:22/:37/:52 that office-rehydrate and stripe-watch already hold",
+   "cadence_source": "systemctl show postmark-world2-ingest.timer -p TimersCalendar",
+   "heartbeat": {
+    "kind": "state_file",
+    "path": "/srv/world2-lab/state/ingest.json",
+    "stamp_field": "at",
+    "stale_after_minutes": 50
+   },
+   "stale_means": "The doors' ADVISORY reads go stale — a resident asking whether they hold the stamps for a stake gets an answer from the last successful poll. It is deliberately the mildest row in this file, and the tool's own README says why, verbatim: 'A dead webhook degrades only the door's advisory sufficiency read — never a clearing.' The authoritative reads are pinned at the candle, where the clearing does the town ingest itself and REFUSES on a null law pin. So the real cost of a long silence here is not this row going red — it is postmark-world2-clearing.timer going ALARM-failed at the next close, which is the louder alarm and the one that stops something. The allowance is three ticks plus the jitter."
+  },
+  {
+   "unit": "postmark-world2-notary.timer",
+   "label": "the World 2.0 notary",
+   "stage": "live",
+   "activation_owner": "Wright — 2026-08-29, PAYING A NAMED DEBT. The notary shipped with 'Nightly TIMER deferred deliberately — the box roll-call manifest law' written into world2/tools/README.md at its merge; the deferral was correct and this row is what settles it. Script deploy/world2-notary.sh, connecting as snapshot_reader and no other role",
+   "cadence": "nightly at 03:20 UTC, jittered up to 2 min — between the 17:45 and 05:45 closes so a certification never races a clearing",
+   "cadence_source": "systemctl show postmark-world2-notary.timer -p TimersCalendar",
+   "heartbeat": {
+    "kind": "state_file",
+    "path": "/srv/world2-lab/state/notary.json",
+    "stamp_field": "at",
+    "stale_after_minutes": 1560
+   },
+   "stale_means": "No new certified snapshot binds (acts cursor, window cursor, content sha, law sha, town sha), so the repo stops being able to catch the office rewriting history — gold section 2's whole promise. The allowance is one day plus two hours. TWO THINGS AN OPERATOR MUST KNOW HERE. First, a RED from this unit is usually a FINDING and not a broken timer: an archive is frozen on write, and the pen refuses and names the diff rather than overwriting. Second, as of 2026-08-29 the notary checkout at /srv/world2-lab/notary has NO GIT REMOTE, so its certifications live only on the box they certify; world2-backup.sh carries them off-box as a git bundle as a stopgap, and the push target is teed to Keemin."
+  },
+  {
+   "unit": "postmark-world2-backup.timer",
+   "label": "the World 2.0 durability lane",
+   "stage": "live",
+   "activation_owner": "Wright — founder ruling 2026-08-29 ('prod Postgres = ON THE BOX with shipped backups, no managed service'). Script deploy/world2-backup.sh. First rehearsed restore from the off-box copy the same night: 6318 rows across 9 tables, every table matching, restore in 1s, projection-equality falsifier GREEN against the restored database",
+   "cadence": "nightly at 04:10 UTC, jittered up to 5 min — after the notary, so the shipped bundle carries that night's certification",
+   "cadence_source": "systemctl show postmark-world2-backup.timer -p TimersCalendar",
+   "heartbeat": {
+    "kind": "state_file",
+    "path": "/srv/world2-lab/state/backup.json",
+    "stamp_field": "at",
+    "stale_after_minutes": 1560
+   },
+   "stale_means": "THE STORE STOPS HAVING AN OFF-BOX COPY, and this is the one row in this file where a long silence is not a degraded read but an unbounded loss: every hour past the last successful ship is an hour that dies with the box. The allowance is one day plus two hours. What the lane ships is the pg_dump (RPO no worse than 24h) plus a bundle of the notary checkout, to github.com/wright-starforge/postmark-world2-backups, private, over an SSH deploy key scoped to that one repository. What it does NOT ship is the WAL: measured at about 163 MB/day raw on 2026-08-29, which no git history survives, so the pg_basebackup and the WAL spool are on-box only and cover a bad migration rather than a lost box. That split is deliberate and it is the tee — an object-storage bucket makes the WAL ship a dozen lines. Check the receipt with deploy/world2-restore-rehearse.sh --from-remote, which is the only thing that turns any of this from a hope into a backup."
   }
  ]
 }
