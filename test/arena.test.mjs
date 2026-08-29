@@ -869,3 +869,65 @@ test("the read does not gate a hand the act would have joined", async () => {
     }
   } finally { b.close(); }
 });
+
+test("a creature holding the wheel does not block a hand — the act is what resolves it", async () => {
+  // ⚑ THE FOUNDER'S OWN QUESTION, 2026-08-28: "I also tried striking and it's
+  // just stuck now? like when does the cake take its turn?" It takes it when
+  // you act.
+  //
+  // LOGOS § The arena: "Hostile turns are resolved by the act that ends a
+  // player's turn, in the same handling, until the wheel reaches a player
+  // again. There is no daemon and no ticker: the duet is the event loop."
+  //
+  // arenaActViaOffice drives every due hostile turn (step 4) before the gate
+  // judges anyone (step 5), so a caller told "it is the creature's turn" is
+  // being refused for the one thing that would have moved the fight. The bar
+  // greyed itself out and waited for a turn nothing was ever going to take.
+  const b = bottle();
+  try {
+    // ASKED OF THE FUNCTION DIRECTLY, and that is a deliberate choice rather
+    // than a shortcut. The wheel comes to rest on a creature only through a
+    // particular history — the last hand leaves, the rounds run on with nobody
+    // to hand the turn to, and someone crosses back in to find it holding the
+    // wheel (seen live 2026-08-28). Staging that through the door means driving
+    // the fold to a specific turnsTaken, which tests the fold's arithmetic
+    // rather than this rule. `actingBlocked` is a pure function of a state and
+    // a name, so it is asked as one.
+    const wheel = (turn, order) => ({ encounter_live: true, downed: [], wheel: { turn, order } });
+    const creatureOnTurn = wheel(CAKE, [
+      { who: CAKE, kind: "hostile" },
+      { who: "rei", kind: "player" },
+    ]);
+    assert.equal(actingBlocked(creatureOnTurn, "rei"), null,
+      "a creature's turn does not block a hand — the hand's act is what drives it");
+
+    // THE DISCRIMINATING LEG. Without it this passes just as well against a
+    // door that stopped gating altogether, and the gate is the law: "An act out
+    // of turn is refused NAMING WHOSE TURN IT IS."
+    const playerOnTurn = wheel("darko", [
+      { who: "darko", kind: "player" },
+      { who: "rei", kind: "player" },
+    ]);
+    assert.equal(actingBlocked(playerOnTurn, "rei")?.acting_blocked?.whose_turn, "darko",
+      "another HAND's turn still blocks, by name — nothing here drives a person");
+
+    // and the name reported past a creature is the hand the gate will really
+    // judge against, not the creature the wheel happens to be resting on
+    const past = wheel(CAKE, [
+      { who: CAKE, kind: "hostile" },
+      { who: "darko", kind: "player" },
+      { who: "rei", kind: "player" },
+    ]);
+    assert.equal(actingBlocked(past, "rei")?.acting_blocked?.whose_turn, "darko",
+      "the turn reported is the one after the duet resolves, which is the one the gate will judge");
+
+    // the act itself, through the real door, so the rule above is a promise the
+    // door keeps rather than a claim about a literal
+    await act(b, "rei", "guard");
+    const s = state(b);
+    if (s.wheel?.turn === "rei") {
+      const r = await act(b, "rei", "strike", { object: CAKE });
+      assert.equal(r.did, "strike", "and an unblocked hand's act is one the door takes");
+    }
+  } finally { b.close(); }
+});

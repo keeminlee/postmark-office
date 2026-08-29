@@ -355,9 +355,36 @@ export function actingBlocked(state, who) {
   if ((state.downed ?? []).includes(who))
     return { acting_blocked: { reason: `${who} is down — someone has to lift you`, downed: true,
       hint: "at zero you are DOWN, not dead: the wheel skips you until an ally spends their whole turn lifting you" } };
+  // ⚑ A CREATURE'S TURN IS NOT SOMETHING YOU WAIT OUT — IT IS SOMETHING YOUR
+  // ACT RESOLVES. LOGOS § The arena: "Hostile turns are resolved by the act
+  // that ends a player's turn, in the same handling, until the wheel reaches a
+  // player again. There is no daemon and no ticker: the duet is the event
+  // loop."
+  //
+  // So when the wheel is resting on a creature, the honest answer to "may I
+  // act?" is YES: `arenaActViaOffice` drives every due hostile turn (step 4)
+  // before the gate judges anyone (step 5), so by the time the caller is
+  // judged the wheel has already come round. Reporting the creature's name as
+  // the blocker made the bar grey itself out and wait for a turn that nothing
+  // was ever going to take — which is the founder's own question, in his words:
+  // "I also tried striking and it's just stuck now? like when does the cake
+  // take its turn?" It takes it when you act. A door that greys out the act is
+  // a door that has removed the only thing that moves the fight.
+  //
+  // What is reported instead is the turn AFTER the duet resolves, which is the
+  // turn the gate will actually judge against. This walk mirrors
+  // `pendingHostileTurns` in encounter.mjs — same order, same skips — and the
+  // two are worth keeping in step: that one decides who swings, this one
+  // decides who is told they may not.
+  const order = state.wheel?.order ?? [];
   const turn = state.wheel?.turn ?? null;
-  if (turn && turn !== who)
-    return { acting_blocked: { reason: `it is ${turn}'s turn`, whose_turn: turn,
+  let i = order.findIndex((j) => j.who === turn);
+  let guard = 0;
+  while (i >= 0 && order[i] && (order[i].kind === "hostile" || order[i].downed)
+         && guard++ < order.length * 2) i = (i + 1) % order.length;
+  const effective = (i >= 0 ? order[i]?.who : null) ?? turn;
+  if (effective && effective !== who)
+    return { acting_blocked: { reason: `it is ${effective}'s turn`, whose_turn: effective,
       hint: "the wheel gates every act while an encounter is live — yours comes round" } };
   return null;
 }
