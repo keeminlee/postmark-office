@@ -12,7 +12,8 @@ runs the other way — it is the only one that reads the DB and writes the repo.
 | `seed-import.mjs` | the frozen sandbox settlement → `windows` + `claims` + `marks` (+ legacy `acts`) |
 | `snapshot-export.mjs` | the DB → notary certifications, event archives and mark bodies in git (`snapshot_exporter`) |
 | `standing.mjs` | 1.0's standing walk over `marks` rows — the library `clearing-job.mjs` step 7 recomputes with |
-| `falsifier-standing-equality.mjs` | the port vs 1.0's own fold, over the same state, slug by slug |
+| `falsifier-standing-equality.mjs` | the port vs 1.0's own fold, slug by slug — and, since 2026-08-29, honest about the two states not being the same one: divergences the store-only ground explains are ATTRIBUTED with their cause named, not red |
+| `falsifier-candle-tiling.mjs` | the candle's tiling invariant against the write paths that can break it — the same statement on either side of 011, on a throwaway database |
 | `live-reads.mjs` | 1.0's movement/presence/sound/containment reads, ported to `acts` rows — what the LIVE doors serve |
 | `falsifier-live-equality.mjs` | those ports vs 1.0's own imported functions, on identical inputs |
 | `falsifier-pen-flip.mjs` | the FLIPPED pen's two laws (ruled 2026-08-29): reverse parity — every journal_seq-NULL act on a flipped lane has its reverse-mirror journal twin (iterates ACTS, the direction acts-parity is blind in) — and `--prove-refusal`, which points the pen at an unreachable Postgres on a throwaway sqlite and proves the refusal fires with the ruled sentence AND writes nothing anywhere (the R2 ordering, demonstrated not asserted). Lanes via `--lanes`; a vacuous green says so out loud. |
@@ -1129,6 +1130,39 @@ SEED's, and a hand-bootstrapped window is a state with no receipt. `--verify`
 reds if the successor is missing, closed, or does not open where its predecessor
 closed.
 
+### The candle tiles on UPDATE too (011)
+
+005's trigger fired `BEFORE INSERT` only. The A/B re-verification lane read the
+live definition on 2026-08-29 and named the gap: *"a hole can no longer be
+inserted, but it can still be updated into existence — and 005's own repair of
+window 151 was an `UPDATE windows SET opens_at = …`"*. It could not prove it,
+because firing a trigger needs a write and that lane was SELECT-only.
+
+`011_candle_tiling_update.sql` recreates the trigger `BEFORE INSERT OR UPDATE`
+and checks **both edges**: a window must open where its predecessor closed *and*
+close where its successor opens. The second half is unreachable on INSERT (ids
+ascend, so there is no successor yet) and load-bearing on UPDATE — guarding
+`opens_at` alone would close the path 005 used and leave its mirror image open.
+It is inert on every write path the repo has today, which is the point: it costs
+nothing until someone reaches for the edit that would have been silent.
+`replay-ingest.mjs:990` already told the reader `opens_at` was safe because
+"005's trigger owns it"; that sentence is true now.
+
+Repairs that RESTORE tiling are still welcome — the check is on the resulting
+state, not on the act of updating — so 005's own fix would pass unchanged.
+
+`falsifier-candle-tiling.mjs` is the write-capable proof the read-only lane could
+not run, and the flip is the whole design: **phase A applies 005 alone and the
+hole-making UPDATE must SUCCEED; phase B applies 011 and the identical statement
+must be REFUSED.** A phase-A refusal exits 2, not 0 — a fixture that never had
+the defect proves nothing about the fix. It runs on a throwaway database only and
+refuses any name without `scratch` in it.
+
+```sh
+WORLD2_SCRATCH_URL=postgres://world2_owner:…@127.0.0.1:5432/world2_scratch_x \
+  node world2/tools/falsifier-candle-tiling.mjs
+```
+
 ### Re-flooring
 
 The replay leaves the store past the floor, and `acts` is append-only for every
@@ -1234,7 +1268,49 @@ asks two questions and reds on either:
 | | |
 |---|---|
 | THE WALK | does the port over `marks` rows say what the fold says over the checkout? |
-| THE STORE | does the `data.tier` actually stored equal it? (finding 4 itself) |
+| THE STORE | does the `data.tier` actually stored equal **what the walk says**? (finding 4 itself) |
+
+### Corrected 2026-08-29 — the two states were not the same state
+
+This falsifier ran RED live on `berthillon/le-petit-berthillon` ("fold says:
+market · port says: home"), and that red was carried upward as evidence that the
+clearing job's recompute re-introduces the repaired tier defect. **It does not.**
+The port was right and the oracle was old.
+
+`berthillon/chez-antoine` is a 25×25 parcel held by `solo:berthillon` standing
+exactly under the shop, so the shop is `_sovereign`, the walk stops there,
+holder === house, and the verdict is `home` — the sovereignty law working. It is
+2.0-born: present in the store, absent from the frozen tag *and* from world
+`main`, because a mark born in 2.0 has no file for a checkout to hold.
+
+The rule that failed is this section's own — *"a falsifier that runs BOTH over
+the same state"*. It was not. The store held 17 marks the checkout did not, and
+the file already knew that; it excused them **by membership**. Standing is
+**relational** — one store-only parcel re-answers every mark inside it — so a
+slug in *both* sets can have its verdict changed by a mark in only one. Two of
+nineteen findings, one cause. Three changes close it:
+
+- **The attribution rule.** A WALK divergence is attributable to state the oracle
+  cannot see if re-walking *without* the store-only marks makes the port agree
+  with the fold. Attributed divergences print with their cause named and do not
+  red. Anything surviving the removal is a real port defect and stays RED — it
+  cannot launder one, because the removal only withdraws rows the checkout
+  provably lacks.
+- **THE STORE is asked against THE WALK**, which is what the table above always
+  said it was for and not what the code did (it compared to the fold, so every
+  attributable walk divergence was double-reported as a second, independent-
+  looking finding). Store-vs-walk has no checkout in it and cannot go stale.
+- **The store-only marks get a frontier in time.** The latest admission among
+  marks the register *does* hold; a store-only mark admitted after it was born
+  after the state the checkout describes and is a receipt, not a finding. One
+  admitted at or before it — or carrying **no locking claim at all** — is RED.
+  `locked_window` was tried first and is wrong: window 152 straddles
+  `settlement/S47`, so 4 marks the register holds and 10 it does not share one
+  window number.
+
+Proven on a restored scratch copy of `world2_dev`: green with all 17 born-after
+marks and the one attribution disclosed, and `--can-fail-proof` still red on all
+five mangles — the forged mark now caught by the sharper *no locking claim* limb.
 
 Exit codes are the siblings': **0** green · **1** RED · **2** cannot run. An
 empty `marks`, a checkout with no register, or a comparison with zero slugs in
