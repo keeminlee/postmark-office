@@ -7,6 +7,7 @@
 // the acceptance rows, and three of them are testable at this layer; the fourth
 // (eyes move from gate to audit) is a lane change, not a code path.
 
+import "./helpers/drain-pen.mjs"; // #2040: fixtures get a real ledger pen
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";

@@ -121,7 +121,7 @@ import {
 import {
   pendingRows, townDrainCursor, townJournalHead, townLogEnabled, TOWN_CLASSES,
 } from "./town-journal.mjs";
-import { advanceTownCursor, planTownDrain, writeTownDrain } from "./town-drain.mjs";
+import { advanceTownCursor, drainPenReady, planTownDrain, writeTownDrain } from "./town-drain.mjs";
 import { replayPaperAct } from "./town-updates.mjs";
 import { replayLetter } from "./town-mail.mjs";
 import { townLockPath, useFlock } from "./town-lock.mjs";
@@ -367,6 +367,22 @@ export function runTownDrain(odb, {
       settled: plan.settle.map((r) => r.handle), waiting: plan.waiting.map(({ row, why }) => ({ seq: row.seq, handle: row.handle, why })),
       skipped_rows: plan.skipped.filter(({ row }) => row.cls === "join").map(({ row, why }) => ({ seq: row.seq, handle: row.handle, why })),
       updates: [], letters: [], remaining: rows.length });
+
+  // THE PEN GATE (#2040): a settle that would append a registry line refuses
+  // BEFORE writing when the ledger pen cannot sign it. Refuse, never degrade —
+  // an unsigned registry line is not a lesser record, it is a red the whole
+  // ledger wears at the next verify, and it has cost three hand-repairs.
+  // Rows stay queued, the cursor does not move, and the crossing says why.
+  if (plan.plans.length) {
+    const pen = drainPenReady(clone);
+    if (!pen.ready)
+      return done({ ran: false, refused: "ledger-pen-not-ready", drained: 0, counts, head,
+        cursor: townDrainCursor(odb), ...gangwayFields,
+        skipped: `the drain would append ${plan.plans.length} registry line(s) and cannot sign them — ${pen.why}. `
+          + `Nothing was written and the cursor did not move: every row is still here. (#2040)`,
+        settled: [], waiting: plan.settle.map((r) => ({ handle: r.handle, why: "pen not ready" })),
+        updates: [], letters: [], remaining: rows.length });
+  }
 
   const touched = writeTownDrain(clone, plan, { date: stamp });
 

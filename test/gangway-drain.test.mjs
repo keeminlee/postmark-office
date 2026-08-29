@@ -24,6 +24,7 @@
 // landed in, so a held join would have been reported as waiting and then walked
 // past forever. G4 is that falsifier, and it fails on the reporting half alone.
 
+import "./helpers/drain-pen.mjs"; // #2040: fixtures get a real ledger pen
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
