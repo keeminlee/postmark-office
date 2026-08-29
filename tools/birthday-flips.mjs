@@ -187,6 +187,15 @@ const FLIPS = [
     file: ENC, catches: "the wheel gates the acts it COUNTS, and nothing else",
     edit: (t) => t.replace("if (live && WHEEL_GATED.includes(verb)) {", "if (false) {") },
 
+  // ── the site lane's weapon hover, added 2026-08-29 ───────────────────────
+  { name: "a hand stops saying what it holds — the bonus is invisible outside the office again",
+    file: ENC, catches: "says what it is HOLDING",
+    edit: (t) => t.replace("      const held = letGo ? null : weaponOf(j.who, null);", "      const held = null;") },
+
+  { name: "a DOWNED hand still claims the weapon lying at its feet",
+    file: ENC, catches: "says what it is HOLDING",
+    edit: (t) => t.replace("      const letGo = dropped.some((d) => d.by === j.who);", "      const letGo = false;") },
+
   { name: "the timeout answers without being given an instant",
     file: ENC, catches: "an absent hand's turn passes at the NEXT DOOR TOUCH",
     edit: (t) => t.replace("  if (since == null || !Number.isFinite(Number(nowMs))) return { out: false, why: \"no instant to judge against\" };", "  if (false) return { out: false };") },

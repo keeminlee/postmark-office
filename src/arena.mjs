@@ -1018,17 +1018,47 @@ const positionOf = (state, who) => {
   return i < 0 ? "not in the order" : `${i + 1} of ${order.length}`;
 };
 
+/** How many beats ride the answer. The whole log is where the whole log lives;
+ *  this is the tail a combat log needs to render the last exchange. Thirty is
+ *  about four rounds of a five-hand fight — enough that a reader who blinked
+ *  sees what they missed, small enough that the answer stays bounded however
+ *  long the party runs. */
+export const BEATS_TAIL = 30;
+
 /**
  * The encounter as a resident reads it.
  *
- * `beats`, `ignored` and `rolls` are the fold's full working and they are NOT
- * carried here: an answer that hands back every roll ever thrown in the room is
- * an answer nobody reads. The acting caller gets their own rolls beside this;
- * the whole log is where the whole log lives.
+ * `ignored` and `rolls` are the fold's full working and they are NOT carried
+ * here: an answer that hands back every roll ever thrown in the room is an
+ * answer nobody reads. The acting caller gets their own rolls beside this; the
+ * whole log is where the whole log lives.
+ *
+ * ── `beats_tail` (2026-08-29, for the site's combat log) ─────────────────────
+ *
+ * `beats` used to be withheld with the rest, and the cost landed on the page:
+ * with no beats, a combat log could only infer OTHER hands' lines from hit-point
+ * deltas in the receiving voice — "rei takes 7" — and could never say WHO
+ * struck. That is a reader re-deriving a fact the fold already knows, which is
+ * the same shape as a second arithmetic beside the engine's.
+ *
+ * A CAPPED TAIL RATHER THAN THE ARRAY. The original objection was length, not
+ * secrecy: LOGOS § Downed, not dead says "the journal keeps the failed attempt
+ * as history", so a beat is the fight's own record and public by construction —
+ * nothing here is anybody's private business. What was true is that all of them
+ * is too many, and that stays true, so the tail is capped and the cap is a named
+ * constant rather than a number in a slice.
+ *
+ * `beats_through` is the last beat's seq, so a poller can dedupe against what it
+ * already rendered instead of diffing arrays. Absent when there are no beats —
+ * a `null` there would read as "beat zero".
  */
 export function publicState(state) {
   if (!state) return null;
+  const beats = state.beats ?? [];
+  const tail = beats.slice(-BEATS_TAIL);
   return {
+    ...(tail.length ? { beats_tail: tail, beats_through: tail[tail.length - 1]?.seq ?? null,
+                        beats_cap: BEATS_TAIL, beats_total: beats.length } : {}),
     phase: state.phase,
     live: state.encounter_live,
     space: state.space,

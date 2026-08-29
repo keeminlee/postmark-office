@@ -241,6 +241,28 @@ const FLIPS = [
     file: HOLD, catches: "the HOLD DOOR itself refuses it",
     edit: (t) => t.replace('    if (e?.code === 409 && /is not in this room yet/.test(String(e.defect ?? ""))) throw e;', "") },
 
+  // ── the site lane's three, added 2026-08-29 ──────────────────────────────
+
+  { name: "`loose:` loses the record's half again — only dropped things are drawn",
+    file: APEX, catches: "keeps BOTH halves its own doc promises",
+    edit: (t) => t.replace("    if (!d) return onTheFloor.has(String(o.id)) ? { ...o, loose: true } : o;", "    if (!d) return o;") },
+
+  { name: "a thing in somebody's hands is drawn lying on the floor",
+    file: APEX, catches: "keeps BOTH halves its own doc promises",
+    edit: (t) => t.replace("      .filter((id) => liveHolder(held, id) == null);", "") },
+
+  { name: "the beats tail is uncapped — the answer grows with the length of the party",
+    file: ARENA, catches: "a CAPPED tail of beats",
+    edit: (t) => t.replace("  const tail = beats.slice(-BEATS_TAIL);", "  const tail = beats;") },
+
+  { name: "the tail is taken from the FRONT — the log renders the opening forever",
+    file: ARENA, catches: "a CAPPED tail of beats",
+    edit: (t) => t.replace("  const tail = beats.slice(-BEATS_TAIL);", "  const tail = beats.slice(0, BEATS_TAIL);") },
+
+  { name: "the answer stops saying where its tail ends — a poller can only diff arrays",
+    file: ARENA, catches: "a CAPPED tail of beats",
+    edit: (t) => t.replace("beats_through: tail[tail.length - 1]?.seq ?? null,", "") },
+
   // 4 · entry placement
   { name: "the placement stops stepping clear — an entrant is set down inside the adversary",
     file: ARENA, catches: "crossing into the vault stands you at its door-side edge",

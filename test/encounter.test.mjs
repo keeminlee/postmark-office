@@ -525,6 +525,46 @@ test("the wheel gates the acts it COUNTS, and nothing else — an ordinary verb 
     `an out-of-turn walk was refused by the WHEEL ("${why}"), and the amended clause says the ordinary verbs flow ungated`);
 });
 
+test("a hand's answer says what it is HOLDING, and stops saying so the moment it falls", () => {
+  // Requested by the site lane 2026-08-29: the hover wants "d20 vs 12 to hit ·
+  // d8 damage · +3 with the good-lighter". The first two come off the strike
+  // card's dials; the third was computed here at strike time and never left the
+  // fold, so the office knew the bonus and nothing outside it could.
+  //
+  // ⚑ THE DISCRIMINATING CASE IS THE DROP, and it is why this is a test rather
+  // than a field. LOGOS § Downed, not dead: "what you were holding drops loose
+  // where you stand." Going down writes no attachment — the drop is a fact only
+  // the FOLD holds — so a `weapon` read straight off the live hold table would
+  // keep offering a downed hand a bonus their next strike will not get.
+  reset();
+  const acc = [row("darko", "join", 0), row("rei", "join", 1), boss("join", 2)];
+  const D = { ...DIALS, strike: { ...DIALS.strike, beats_ac: 1 },
+              adversary: { ...DIALS.adversary, damage_die: 20, to_hit_die: 20 } };
+  const weaponOf = (who) => (who === "darko" ? { thing: "the-town/the-good-lighter", bonus: 3, says: "a flame that has never once gone out on the way over" } : null);
+
+  const upright = foldEncounter(acc, { dials: D, weaponOf });
+  assert.deepEqual(
+    { thing: upright.hands.darko.weapon?.thing, bonus: upright.hands.darko.weapon?.bonus },
+    { thing: "the-town/the-good-lighter", bonus: 3 },
+    "a hand holding a weapon does not say so — the bonus that decides its blows stays invisible outside the office");
+  assert.equal(upright.hands.darko.weapon.says, "a flame that has never once gone out on the way over",
+    "the weapon's own words did not ride along — the hover has a number and nothing to call it");
+  assert.equal("weapon" in upright.hands.rei, false,
+    "an empty-handed hand answered `weapon: null` — absent is how this answer says nothing, so a reader tests presence");
+
+  let s = upright, n = 10;
+  while (!s.downed.includes("darko") && n < 80) {
+    const t = s.wheel.turn;
+    acc.push(t === "the-unlit-cake" ? boss("strike", n, "darko") : row(t, "guard", n));
+    n += 1;
+    s = foldEncounter(acc, { dials: D, weaponOf });
+  }
+  assert.ok(s.downed.includes("darko"), "the setup never put anybody down — this test would prove nothing");
+  assert.ok(s.dropped.some((d) => d.by === "darko"), "and never made them drop anything, which is the case under test");
+  assert.equal("weapon" in s.hands.darko, false,
+    "a downed hand still claims the weapon lying at its feet — the live hold table does not know about the drop, and the fold does");
+});
+
 test("a rejoin while DOWN comes back down, and at the hit points it left with", () => {
   // LOGOS § Downed, not dead, verbatim:
   //   "At zero you are DOWN, and down is not gone. You lose your acts, the

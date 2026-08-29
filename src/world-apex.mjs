@@ -72,7 +72,7 @@ import { servedEnterExitLedger } from "./enter-exit-ledger.mjs";
 // POS-5's consent verb. STANCE_TOOLS ride the schema lookup without joining
 // the flat tool list, exactly as CROSSING_TOOLS do and for the same reason.
 import { ACTION_STANCE, STANCE_TOOLS, declareStanceViaOffice, readNeverPerforms, stanceShadow, stancesBlock } from "./world-stance.mjs";
-import { callHoldTool, holdingsOf } from "./world-hold.mjs";
+import { callHoldTool, holdingsOf, liveHolder } from "./world-hold.mjs";
 import { openDynamic } from "./dynamic-store.mjs";
 import { readAttachments } from "./dynamic-entities.mjs";
 import { storeDbPath } from "./world-serve.mjs";
@@ -92,7 +92,7 @@ import { exitAllowed, walkAllowed } from "./embodiment.mjs";
 // below used to answer. `arena.mjs` is the caller; this is where it is called.
 import {
   ARENA_TOOLS, ARENA_VERBS, arenaActViaOffice, arenaGroundAt, cockpitEncounter, lootShroudedIn,
-  cockpitPortal, encounterOn, joinOnCrossing, leaveOnCrossing, publicState,
+  cockpitPortal, encounterOn, joinOnCrossing, leaveOnCrossing, looseIn, publicState,
 } from "./arena.mjs";
 
 export const apexEnabled = () => process.env.WORLD_APEX === "1";
@@ -440,9 +440,15 @@ export function withLoose(nearby = [], portal = null) {
   // by anybody. The record still holds the mark the whole time; this is a read
   // law and it is enforced by omission.
   const shrouded = new Set((portal?.shrouded ?? []).map(String));
+  // The record's half of `loose:` — computed in `portalBlockAt`, where the
+  // stores are, and handed here as a list for the same reason the shroud is.
+  const onTheFloor = new Set((portal?.loose ?? []).map(String));
   return nearby.filter((o) => !shrouded.has(String(o.id))).map((o) => {
     const d = dropped.get(String(o.id));
-    if (!d) return o;
+    // Sited here, held by nobody, and nothing in the fight put it down: loose
+    // by the record alone. It gets the boolean and none of the fight's facts,
+    // because there is no fight fact to give it.
+    if (!d) return onTheFloor.has(String(o.id)) ? { ...o, loose: true } : o;
     // ⚠ `loose: true`, A BOOLEAN. The site filters `m.loose === true`
     // (`world-cockpit.mjs § looseThings`), so an OBJECT here — which is what I
     // wrote first, because an object could carry who dropped it and when — is
@@ -515,8 +521,34 @@ export function portalBlockAt(db, spineIds = []) {
     // asking the store a second time — a second reader of the same question is
     // a second answer waiting to disagree at the one moment it matters, which
     // is the instant the cake goes down.
-    return { place, state, shrouded: lootShroudedIn(db, place.row, state?.phase ?? null) };
-  } catch { return { place, state: null, shrouded: [] }; }
+    // ⚑ THE OTHER HALF OF `loose:`, WHICH ITS OWN DOC HAS PROMISED SINCE THE DAY
+    // IT WAS WRITTEN (found 2026-08-29, by the site lane walking into it).
+    //
+    // `withLoose` says: "A thing is loose when the record sites it here and
+    // nobody is holding it, OR when the fold says somebody DROPPED it going
+    // down." Only the second half was ever implemented. So the good lighter —
+    // lying on the vault floor, in the record, held by nobody, and the whole
+    // point of the weapon ruling — never carried `loose: true`, and a page
+    // drawing floor items off `nearby[].loose === true` could not draw it. The
+    // gap only shows once something IS on the floor to miss, which is why a
+    // comment promising two halves survived a green suite: the dropped half was
+    // the only half anybody had exercised.
+    //
+    // It matters twice over tonight: the loot amendment's whole payoff is "at
+    // `spent` it appears", and a thing that appears in `nearby` with no `loose`
+    // flag does not appear on a floor anybody draws.
+    //
+    // `looseIn` applies the shroud itself, so the phase is handed to it and the
+    // list is already free of held-back loot — no second filter, no second
+    // chance for the two to disagree.
+    const phase = state?.phase ?? null;
+    let held = [];
+    try { held = readAttachments(dyn); } catch { held = []; }
+    const onTheFloor = looseIn(db, place.row, { phase })
+      .map((t) => String(t.thing))
+      .filter((id) => liveHolder(held, id) == null);
+    return { place, state, shrouded: lootShroudedIn(db, place.row, phase), loose: onTheFloor };
+  } catch { return { place, state: null, shrouded: [], loose: [] }; }
   finally { try { dyn?.close(); } catch { /* same */ } }
 }
 

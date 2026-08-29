@@ -520,8 +520,33 @@ export function foldEncounter(rows = [], { dials = {}, weaponOf = () => null } =
       ...(w.all_down ? { all_down: true } : {}),
       turn_timeout_s: D.timeoutS,
     },
-    hands: Object.fromEntries(joins.filter((j) => j.kind !== HOSTILE).map((j) =>
-      [j.who, { hp: hpOf(j.who), of: D.guestHp, downed: downed.has(j.who), guarding: guarded.has(j.who), gone: left.has(j.who) }])),
+    // ── WHAT EACH HAND IS HOLDING (2026-08-29, for the site's hover) ─────────
+    //
+    // The bonus that decides a blow was computed here and never left: the site
+    // could render "d20 vs 12 to hit · d8 damage" off the strike card's dials
+    // and had no way to say "+3 with the good-lighter", because `weaponOf` is
+    // consulted inside the fold at strike time and `hands` carried only hit
+    // points. Same reader, same answer, said out loud.
+    //
+    // ⚑ A DROPPED WEAPON IS NOT A HELD ONE, and this is the case that makes it
+    // worth a line rather than a field. `weaponOf`'s fallback is the LIVE hold
+    // table, and going down does not write an attachment — the drop is a fact
+    // the FOLD knows (see `dropped`, and `weaponReader`'s own note on this).
+    // So asking the live table about a downed hand answers with the sword lying
+    // at their feet, and the hover would offer a bonus the next strike will not
+    // get. The fold's own `dropped` list is what settles it.
+    hands: Object.fromEntries(joins.filter((j) => j.kind !== HOSTILE).map((j) => {
+      const letGo = dropped.some((d) => d.by === j.who);
+      const held = letGo ? null : weaponOf(j.who, null);
+      return [j.who, {
+        hp: hpOf(j.who), of: D.guestHp, downed: downed.has(j.who),
+        guarding: guarded.has(j.who), gone: left.has(j.who),
+        // ABSENT when empty-handed, so a reader tests presence rather than a
+        // value — the manner `dials_missing` and `acting_blocked` already keep.
+        ...(held ? { weapon: { thing: held.thing ?? held.id ?? null, bonus: Number(held.bonus ?? 0),
+                               ...(held.says ? { says: held.says } : {}) } } : {}),
+      }];
+    })),
     downed: [...downed].sort(),
     dropped,
     looted: [...looted].sort(),

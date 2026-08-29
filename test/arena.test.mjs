@@ -32,7 +32,7 @@ import {
   dialsFromRecord, arenaRows, encounterOn, arenaActViaOffice, inWheel, publicState,
   joinOnCrossing, leaveOnCrossing,
   // the birthday amendments' own readers (2026-08-29)
-  arrivalOnGround, cockpitPortal, entryPointInto, groundAtPoint,
+  arrivalOnGround, BEATS_TAIL, cockpitPortal, entryPointInto, groundAtPoint,
   lootHiddenReason, lootShroudedIn, snapTo, walkMinStepOf,
 } from "../src/arena.mjs";
 import { WORLD_CLONE } from "../src/world-store.mjs";
@@ -1086,6 +1086,84 @@ test("take and give of shrouded loot are refused with a sentence that explains i
   } finally { b.close(); }
 });
 
+test("the encounter answer carries a CAPPED tail of beats, and says where the tail ends", async () => {
+  // Requested by the site lane 2026-08-29. Without beats, a combat log can only
+  // infer other hands' lines from hit-point deltas in the receiving voice — "rei
+  // takes 7" — and can never say WHO struck. That is a page re-deriving what the
+  // fold already knows, which is the same shape as a second arithmetic beside
+  // the engine's.
+  //
+  // LOGOS § Downed, not dead: "the journal keeps the failed attempt as history."
+  // A beat is the fight's own record, so nothing here is anybody's private
+  // business; the original objection to publishing them was LENGTH, and length
+  // is answered with a cap rather than with silence.
+  //
+  // The cap is asserted on SYNTHETIC beats because `publicState` is a pure
+  // function of a state and the cap is arithmetic over an array — driving a real
+  // fight long enough to overflow it would be measuring the dice. The real door
+  // is driven below for the half that is about the door.
+  const many = Array.from({ length: BEATS_TAIL * 2 }, (_, i) => ({ seq: i + 1, actor: "darko", act: "strike", round: 1 }));
+  const pub = publicState({ phase: "afoot", beats: many });
+  assert.equal(pub.beats_tail.length, BEATS_TAIL,
+    `the answer carried ${pub.beats_tail.length} of ${many.length} beats — an answer that grows with the length of the party is not bounded`);
+  assert.deepEqual(pub.beats_tail, many.slice(-BEATS_TAIL),
+    "the tail is not the LAST beats — a combat log reading it would render the opening of the fight forever");
+  assert.equal(pub.beats_through, many[many.length - 1].seq,
+    "the answer does not say where its tail ends — a poller has no way to dedupe but to diff arrays");
+  assert.equal(pub.beats_total, many.length,
+    "the answer does not say how much it withheld, so a reader cannot tell a full history from a truncated one");
+  assert.equal("beats_tail" in publicState({ phase: "afoot", beats: [] }), false,
+    "a fight with no beats answered with an empty tail instead of no tail — a reader must not have to tell those apart");
+
+  // AND THROUGH THE REAL DOOR: the tail arrives, and it names who struck, which
+  // is the whole request.
+  const b = bottle();
+  try {
+    await act(b, "darko", "guard");
+    await act(b, "darko", "strike", { object: CAKE }).catch(() => {});
+    const live = publicState(state(b));
+    assert.ok(live.beats_tail?.length, "a live fight's answer carried no beats at all");
+    assert.ok(live.beats_tail.every((x) => "seq" in x), "a beat with no seq cannot be deduped against");
+    assert.ok(live.beats_tail.some((x) => x.actor),
+      "no beat in the tail names its actor — the page is back to guessing who struck from hit-point deltas");
+  } finally { b.close(); }
+});
+
+test("`loose:` keeps BOTH halves its own doc promises — the record's and the fold's", async () => {
+  // src/world-apex.mjs § withLoose, its own words since the day it was written:
+  //   "A thing is loose when the record sites it here and nobody is holding it,
+  //    OR when the fold says somebody DROPPED it going down."
+  //
+  // Only the second half ever ran. The good lighter — sited on the vault floor,
+  // held by nobody, and the whole point of the weapon ruling — never carried
+  // `loose: true`, so a page drawing floor items off `nearby[].loose === true`
+  // could not draw it. Found by the site lane walking into it, 2026-08-29.
+  //
+  // It matters twice tonight: the loot amendment's payoff is "at `spent` it
+  // appears", and a thing that appears with no `loose` flag appears on no floor
+  // anybody draws.
+  const { withLoose } = await import("../src/world-apex.mjs");
+  const nearby = [{ id: WICK }, { id: LIGHTER }, { id: CAKE }];
+
+  // THE RECORD'S HALF: sited here, unheld, nothing dropped by anyone.
+  const byRecord = withLoose(nearby, { shrouded: [WICK], loose: [LIGHTER], state: { dropped: [] } });
+  assert.equal(byRecord.find((o) => o.id === LIGHTER)?.loose, true,
+    "a thing the record sites on this floor with nobody holding it is not marked loose — the first half of the doc's own sentence");
+  assert.equal(byRecord.find((o) => o.id === CAKE)?.loose, undefined,
+    "the adversary was marked as lying loose on the floor — `loose` is for things a hand could pick up");
+
+  // THE FOLD'S HALF still carries the fight's facts beside the boolean.
+  const byFold = withLoose(nearby, { shrouded: [WICK], loose: [], state: { dropped: [{ thing: LIGHTER, by: "darko", at_seq: 9 }] } });
+  assert.equal(byFold.find((o) => o.id === LIGHTER)?.dropped_by, "darko",
+    "a weapon dropped in the fight lost who dropped it — the fold's half must keep its own facts");
+
+  // A HELD THING IS NOT LOOSE. Without this leg, "mark everything sited here"
+  // passes — and a sword in somebody's hand would be drawn lying on the floor.
+  const heldByHand = withLoose(nearby, { shrouded: [WICK], loose: [], state: { dropped: [] } });
+  assert.equal(heldByHand.find((o) => o.id === LIGHTER)?.loose, undefined,
+    "a thing somebody is holding was drawn on the floor");
+});
+
 test("...and the HOLD DOOR itself refuses it — the guard is wired, not merely written", async () => {
   // LOGOS § The portal ground: "a `take` or a `give` aimed at it is refused with
   // a sentence that explains itself rather than a bounce that reads like a
@@ -1131,6 +1209,26 @@ test("...and the HOLD DOOR itself refuses it — the guard is wired, not merely 
     // Without it a guard that refused every take would pass everything above.
     const took = await callHoldTool("world_hold", { thing: LIGHTER }, key);
     assert.ok(took, "the good lighter was refused by the shroud — the fight is meant to be fought with it");
+
+    // ── AND A HELD THING IS NOT ON THE FLOOR ────────────────────────────────
+    //
+    // `portalBlockAt` is where `loose:` learns what the RECORD sites here, and
+    // it must subtract what somebody is holding. Driven here rather than in the
+    // `withLoose` unit test because that test is handed its list — it can never
+    // catch the reader that BUILDS the list getting it wrong, which is what the
+    // flip runner found. darko is holding the lighter as of the line above.
+    const { portalBlockAt, openStore } = await import("../src/world-apex.mjs");
+    const store = openStore();
+    try {
+      const portal = portalBlockAt(store.db, IN_VAULT);
+      assert.ok(portal, "no portal block at the vault — the legs below would prove nothing");
+      assert.equal(portal.loose.includes(LIGHTER), false,
+        "a thing in darko's hands is still listed as lying on the floor — the site would draw it twice, once in the hand and once underfoot");
+      assert.equal(portal.shrouded.includes(WICK), true,
+        "the shroud list lost the wick end while the cake is still standing");
+      assert.equal(portal.loose.includes(WICK), false,
+        "shrouded loot leaked into the loose list — the two readers disagree about the same room");
+    } finally { try { store.db?.close(); } catch { /* already gone */ } }
   } finally {
     for (const [k, v] of [["WORLD_STORE_DB", prev.store], ["WORLD_DYNAMIC_DB", prev.dyn], ["WORLD_SINGLE_LOG", prev.log]])
       if (v === undefined) delete process.env[k]; else process.env[k] = v;
