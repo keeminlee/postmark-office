@@ -1563,7 +1563,11 @@ async function apexRead(args, key) {
     // encounter is running, because `encounterOf` treats an empty order as no
     // encounter and an empty object here would say the same thing twice.
     ...(portal?.state ? (() => {
-      const e = cockpitEncounter(portal.state, standingHandle(args, key));
+      // the hand rides along so the wheel can name the reader's own row — see
+      // cockpitEncounter's third kind, described there since it was written and
+      // unreachable until this argument existed
+      const e = cockpitEncounter(portal.state, standingHandle(args, key),
+        { human: humanHandFor([...(key?.handles ?? [])]) });
       return e ? { encounter: e, encounter_detail: publicState(portal.state) } : {};
     })() : {}),
     ...(oriented.present ? { present: oriented.present } : {}),

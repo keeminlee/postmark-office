@@ -813,7 +813,7 @@ export function leaveOnCrossing(db, dyn, spineIds, who, { household = null, cros
 // page's, and the place that knows both is this one.
 
 /** The wheel, in the shape `world-cockpit.mjs § encounterOf` declares. */
-export function cockpitEncounter(state, me = null) {
+export function cockpitEncounter(state, me = null, { human = null } = {}) {
   if (!state?.wheel?.order?.length) return null;
   const hands = state.hands ?? {};
   return {
@@ -827,7 +827,19 @@ export function cockpitEncounter(state, me = null) {
         // The page's three kinds. A hand is a `resident` unless it is the
         // caller's own human — the fold does not distinguish those and does not
         // need to; who is a human is a fact about the CALLER, not the wheel.
-        kind: o.kind === "hostile" ? "creature" : "resident",
+        //
+        // ⚑ AND THE CALLER NOW SAYS SO (2026-08-29). The third kind was
+        // described here from the day this shape was written and never once
+        // emitted, because nothing passed the hand in — so a human's own row
+        // came back as a resident like any other. The page uses the kind to
+        // know which row is the reader's when they are acting as themselves,
+        // and with every row a resident it could only ever find the RESIDENT's:
+        // the wheel came round to the human, and the bar refused them with "it
+        // is human-of-starforge's turn", which was their own name.
+        //
+        // The label is still the office's own (humanHandFor); the page matches
+        // on the kind and never spells the hand a second way.
+        kind: o.kind === "hostile" ? "creature" : (human && o.who === human ? "human" : "resident"),
         label: String(o.who).includes("/") ? String(o.who).split("/").pop().replace(/-/g, " ") : o.who,
         initiative: o.initiative ?? null,
         // `down`, not `downed` — the page's spelling. Getting this wrong shows
