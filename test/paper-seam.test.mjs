@@ -21,6 +21,7 @@
 // option. These falsifiers are therefore mostly PER-SKIN — the bug was never in
 // the logging rule, it was in how many places had to remember it.
 
+import "./helpers/drain-pen.mjs"; // #2040: fixtures get a real ledger pen
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";

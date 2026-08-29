@@ -11,6 +11,7 @@
 // test; a suite that only kept testing those halves would go on being green
 // while the record never moved.
 
+import "./helpers/drain-pen.mjs"; // #2040: fixtures get a real ledger pen
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
