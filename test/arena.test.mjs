@@ -32,6 +32,7 @@ import {
   dialsFromRecord, arenaRows, encounterOn, arenaActViaOffice, inWheel, publicState,
   joinOnCrossing, leaveOnCrossing,
 } from "../src/arena.mjs";
+import { actingBlocked } from "../src/world-apex.mjs";
 import { openDynamic } from "../src/dynamic-store.mjs";
 import { SCHEMA } from "../src/world-store.mjs";
 
@@ -835,5 +836,36 @@ test("the open is asked on EVERY door touch, so a room that gained its adversary
       "the cake takes its slot at the next door touch, not only at somebody's first join");
     assert.equal(after.encounter_live, true,
       "and the encounter is LIVE — without this the turn gate never engages and every act sails through unrefused");
+  } finally { b.close(); }
+});
+
+test("the read does not gate a hand the act would have joined", async () => {
+  // ⚑ FOUND LIVE 2026-08-28, playing the dungeon in a browser. rei left the
+  // wheel while still standing on the arena ground. The creature then held the
+  // turn — it was the only row left — and the read answered `acting_blocked`
+  // for every verb, so the bar greyed out whole and the room looked dead.
+  //
+  // The act would have worked the entire time. `arenaActViaOffice` joins a
+  // caller who is not in the wheel (step 3) BEFORE it judges them by it (step
+  // 5), because "anyone can walk in whenever" is the ruling. The read mirrored
+  // the gate and not the join, so this half of the door was stricter than the
+  // half that acts — and a reader cannot be expected to click a button the door
+  // has just told them is refused.
+  const b = bottle();
+  try {
+    await act(b, "rei", "guard");
+    leaveOnCrossing(b.db, b.dyn, IN_VAULT, "rei");
+    const s = state(b);
+    assert.equal(inWheel(s, "rei"), false, "precondition: rei has left the wheel");
+    assert.equal(s.encounter_live, true, "precondition: the fight is still live without them");
+    assert.equal(actingBlocked(s, "rei"), null,
+      "a hand who is not in the wheel is not waiting for it — the act would join them first");
+    // the discriminating leg: someone who IS in the wheel and not on turn is
+    // still gated, in the gate's own words
+    const held = s.wheel?.turn;
+    if (held && held !== CAKE) {
+      assert.equal(actingBlocked(s, CAKE)?.acting_blocked?.whose_turn, held,
+        "and a row that IS in the order still gets the wheel's refusal by name");
+    }
   } finally { b.close(); }
 });

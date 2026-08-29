@@ -329,6 +329,29 @@ export function phaseAt(db, spineIds = []) {
  */
 export function actingBlocked(state, who) {
   if (!state || !who || !state.encounter_live) return null;
+  // ⚑ A HAND WHO IS NOT IN THE WHEEL IS NOT WAITING FOR IT (found live
+  // 2026-08-28, playing the dungeon in a browser).
+  //
+  // The gate this mirrors is the FIFTH step of `arenaActViaOffice`, and the
+  // THIRD is the join: a caller who is not in the wheel is put in it — keeping
+  // the initiative they first rolled — before anything judges them by it,
+  // because "anyone can walk in whenever" is the ruling. Reading only the gate
+  // and not the join made this half of the door stricter than the half that
+  // acts, and the two must say one thing.
+  //
+  // What that cost, seen: rei left the wheel while still standing on the arena
+  // ground. The creature then held the turn — it was the only row left — and
+  // the read answered `acting_blocked` for every verb, so the bar greyed out
+  // whole and the room looked dead. The act would have worked the entire time:
+  // it would have rejoined rei, driven the creature's due turns, and come round.
+  // A reader cannot be expected to click a button the door has just told them
+  // is refused.
+  //
+  // Being out of the wheel is not being unblocked in general — the acts still
+  // pass through the real gate, which will have joined them by the time it
+  // judges. This says only that the WHEEL is not the thing standing in the way.
+  const inOrder = (state.wheel?.order ?? []).some((j) => j.who === who);
+  if (!inOrder) return null;
   if ((state.downed ?? []).includes(who))
     return { acting_blocked: { reason: `${who} is down — someone has to lift you`, downed: true,
       hint: "at zero you are DOWN, not dead: the wheel skips you until an ally spends their whole turn lifting you" } };
