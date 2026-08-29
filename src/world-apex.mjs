@@ -425,8 +425,17 @@ export function withLoose(nearby = [], portal = null) {
  * nothing — a hand that walked out stays on the wheel forever, hostiles keep
  * swinging at them, and nothing anywhere reports an error.
  */
-async function wheelOnCrossing(action, args, key, preSpineIds = []) {
-  const who = standingHandle(args, key);
+async function wheelOnCrossing(action, args, key, preSpineIds = [], hand = null) {
+  // ⚑ WHOEVER CROSSED IS WHO THE WHEEL COUNTS, and for an embodied human that
+  // is the HAND, not the housemate whose standpoint oriented the act. The
+  // resident's name was the only one this could write, so a human stepping into
+  // the vault rolled REI into the fight and left themselves outside it — then
+  // acted, and `arenaActViaOffice` joined them properly under their own hand a
+  // moment later, at the bottom of the order. Two joins, one of them nobody's.
+  //
+  // Same rule the act path already keeps (`as_human` is read before the
+  // handle in arena.mjs): the hand leads where there is one.
+  const who = hand || standingHandle(args, key);
   if (!who) return null;
   let spineIds = preSpineIds;
   if (action === "enter") {
@@ -982,14 +991,42 @@ export function gatherGroundActions(db, { spineIds = [], reachIds = [] } = {}) {
       // and not a live defect. THE DOOR MUST ANSWER THE SAME SHAPE WHICHEVER
       // CHANNEL OPENED IT; `entriesFrom` is that shape, and there is now one
       // builder rather than two that agree until one of them is edited.
-      for (const e of entriesFrom(row, db)) {
-        // The kind and scope live on the DECLARED entry, which `entriesFrom`
-        // does not carry through, so they are lifted back on here from the same
-        // row it read. `entriesOfClass` is the one that knows the grant grammar.
-        const declared = entriesOfClass(row, { channel: "ground", ground: groundId, parse: (s) => parseJson(s, null) })
-          .find((d) => d.action === e.action);
+      // ⚑ ONE ENTRY PER DECLARED GRANT, NOT PER VERB NAME — and the difference
+      // is the whole of "a human may not fight in portal ground".
+      //
+      // A class declares a verb once per KIND it opens it to. `portal-ground`
+      // and `arena` both declare strike twice, verbatim from the record:
+      //
+      //   {"action":"strike","residue":"the-town/strike"},
+      //   {"action":"strike","for":"human","residue":"the-town/strike"}
+      //
+      // Both builders below walk that same array and both emit one entry per
+      // DECLARED ITEM, so `entriesFrom` correctly produced two strikes. The
+      // join then looked its partner up by NAME — `.find(d => d.action ===
+      // e.action)` — which returns the first match every time. Both strikes
+      // were married to the resident declaration, the `for: human` one was
+      // never represented at all, and `resolveGrants` filtering by kind found
+      // no human strike to admit or even to refuse.
+      //
+      // What that looked like from outside: the record grants a human the
+      // arena's verbs, the office's own store holds that grant, and the door
+      // answered "not afforded where you stand … From here you can: walk, say."
+      // A grant that is written down, loaded, and unreachable — and it fails
+      // this way for any class that ever opens one verb to two kinds, so the
+      // arena is the instance rather than the bug.
+      //
+      // So the DECLARED entries lead: each one becomes an entry and keeps its
+      // own `for`. The shape (blurb, fields, dispatches_to) is still joined by
+      // name, and that join is safe where the other was not — a verb's shape
+      // comes from its residue class, which both variants point at, so the two
+      // strikes differ in who may swing and in nothing else.
+      const shapeOf = new Map();
+      for (const e of entriesFrom(row, db)) if (!shapeOf.has(e.action)) shapeOf.set(e.action, e);
+      for (const declared of entriesOfClass(row, { channel: "ground", ground: groundId, parse: (s) => parseJson(s, null) })) {
+        const e = shapeOf.get(declared.action);
+        if (!e) continue;
         entries.push({
-          ...e, ...(declared ?? {}),
+          ...e, ...declared,
           channel: "ground", ground: groundId,
           via: spine.has(groundId) ? "within" : "in reach",
           fields: e.fields, blurb: e.blurb,
@@ -1760,6 +1797,9 @@ async function apexDo(args, key) {
       ...(match.channel && match.channel !== "ambient" ? { channel: match.channel, ...(match.ground ? { ground: match.ground } : {}), ...(match.held ? { in_hand: match.held } : {}) } : {}),
       ...(acting ? { actor: { kind: acting.kind, standing: acting.standing, residue: acting.residue, says: acting.says, note: acting.note } } : {}) };
     let result;
+    // Declared out here because the CROSSING below needs it too — the wheel has
+    // to be told which hand crossed, and that block sits after this try.
+    let hand = null;
     try {
       // THE ACTOR SEAM'S ONE EFFECT ON DISPATCH. A human's COMPANIONED say goes
       // to the human's own handler, which has owned the speaker label, the
@@ -1818,7 +1858,7 @@ async function apexDo(args, key) {
       // humans-as-residents design arrives. Recording the human's own name
       // beside a borrowed standpoint is the closest true thing this office can
       // write, and it is disclosed by `standing_with` on the answer.
-      const hand = acting?.standing === "embodied" ? humanHandFor([...(key?.handles ?? [])]) : null;
+      hand = acting?.standing === "embodied" ? humanHandFor([...(key?.handles ?? [])]) : null;
       if (acting?.route === "worldSayHuman" || (hand && action === "say")) {
         // THE ORIENT HANDLE IS NOT A VOICE (2026-08-28, found live on the
         // dungeon stage): the envelope's `handle:` chose whose standpoint
@@ -1854,7 +1894,7 @@ async function apexDo(args, key) {
     // happen, and joining somebody to a fight they were refused entry to would
     // be the door writing a fact the world does not hold.
     if ((action === "enter" || action === "exit") && !result?.error) {
-      const wheeled = await wheelOnCrossing(action, args, key, spineIds);
+      const wheeled = await wheelOnCrossing(action, args, key, spineIds, hand);
       if (wheeled) return { ...done, result, [action === "enter" ? "joined" : "left"]: wheeled };
     }
     return result?.error === "bounce" ? { ...result, ...done } : { ...done, result };

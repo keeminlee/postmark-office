@@ -1388,3 +1388,72 @@ test("POST /world/apex: the GET twin's 405 now points here", async () => {
     assert.match(r.hint, /acts POST this same path/, "the refusal must name the door that exists now");
   });
 });
+
+// ── one entry per DECLARED grant, not per verb name (2026-08-29) ─────────────
+//
+// ⚑ THE BUG THIS PINS, found by trying to fight as a human in the founder's
+// browser: a class that opens one verb to two KINDS lost the second one.
+//
+// `portal-ground` and `arena` both declare strike twice, verbatim from the
+// record — once bare (residents) and once `"for": "human"`. Both builders walk
+// that array and both emit one entry per declared item, so two strikes came
+// out of `entriesFrom`. The join then found each one's partner BY NAME, and
+// `.find(d => d.action === e.action)` returns the first match every time — so
+// both strikes married the resident declaration, the human one was never
+// represented, and `resolveGrants` filtering by kind had nothing to admit and
+// nothing even to refuse.
+//
+// The door's answer to a human standing in the candle vault: `"strike" is not
+// afforded where you stand … From here you can: walk, say.` A grant written in
+// the record, loaded into the store, and unreachable.
+//
+// The founder's ruling, 2026-08-29: "yes the portal should be a special zone
+// where the human can fight."
+test("a class that opens a verb to two kinds keeps both — the human's grant survives the join", async () => {
+  const { resolveGrants } = await import("../src/world-grants.mjs");
+  const path = join(repo, "apex-world-two-kinds.db");
+  const GROUND = "the-town/two-kinds-ground";
+  const CLS = "the-town/two-kinds";
+  buildStore([
+    { id: FRAME, by: "the-town", kind: "sited", tier: "constitution", at: { x: 0, y: 0 }, extent: { w: 100000, h: 100000 }, body: "Let there be light." },
+    // the class, declaring ONE verb to TWO kinds — the record's own shape
+    { id: CLS, by: "the-town", kind: "sited", tier: "constitution", at: { x: -900, y: -760 }, extent: { w: 10, h: 10 },
+      body: "A ground with its own verbs.",
+      props: { class: "two-kinds", class_version: 1, actions: [
+        { action: "strike", residue: "the-town/sound" },
+        { action: "strike", for: "human", residue: "the-town/sound" },
+      ] } },
+    // its residue, so the shape half resolves exactly as it does in the world
+    { id: "the-town/sound", by: "the-town", kind: "sited", tier: "constitution", at: { x: -900, y: -760 }, extent: { w: 200, h: 200 },
+      body: "A voice carries sixty metres.",
+      props: { class: "sound", class_version: 1, ambient: true, dials: { radius_m: 60 }, actions: SOUND_ACTIONS } },
+    // and a sited instance of it, standing on the caller's spine
+    { id: GROUND, by: "the-town", kind: "sited", tier: "market", at: { x: -900, y: -760 }, extent: { w: 8, h: 8 },
+      // ⚠ ITS OWN PATH, EXPLICITLY. buildStore hands any props.class mark a
+      // Keeping-Works path, which is the works clause the DECLARATION gate
+      // asks — so without this the instance reads as a second declaration of
+      // its own class and `groundClassesAt` finds no instance at all.
+      body: "The ground itself.", props: { class: "two-kinds", path: "WORLD/marks/the-town/two-kinds-ground/mark.md" } },
+  ], path);
+  const db = new DatabaseSync(path);
+  try {
+    const { entries } = apex.gatherGroundActions(db, { spineIds: [GROUND], reachIds: [] });
+    const strikes = entries.filter((e) => e.action === "strike");
+    assert.equal(strikes.length, 2, "both declarations survive the gather — one per kind, not one per name");
+    assert.deepEqual(strikes.map((e) => e.for).sort(), ["human", "resident"],
+      "and they are the two KINDS the class named, not the same kind twice");
+
+    // what the door actually asks, both ways round
+    const asHuman = resolveGrants(entries, { kind: "human" }).entries.map((e) => e.action);
+    assert.ok(asHuman.includes("strike"), "a human standing here may strike — the ruling, kept");
+    const asResident = resolveGrants(entries, { kind: "resident" }).entries.map((e) => e.action);
+    assert.ok(asResident.includes("strike"), "and the resident's own grant is untouched by the fix");
+
+    // THE DISCRIMINATING LEG: the fix must not hand every verb to every kind.
+    // `say` here is granted by the ambient sound class for nobody in
+    // particular, and this ground declares it to no one at all.
+    const humanEntries = resolveGrants(entries, { kind: "human" }).entries.map((e) => e.action);
+    assert.ok(!humanEntries.includes("say"),
+      "a verb this ground never declared is still not afforded — the kinds filter is intact");
+  } finally { db.close(); }
+});
