@@ -76,6 +76,36 @@ function build() {
   return byHandle;
 }
 
+/**
+ * The household's HUMAN, as the town's record names them.
+ *
+ * ONE DERIVATION, TWO CALLERS. `worldSayHuman` has owned this label since
+ * 2026-08-08 — `human-of-<household slug>`, the town's declared slug when the
+ * registry has one and the first handle otherwise, "NEVER the GitHub login
+ * (the office does not name people)". The apex now needs the SAME name, because
+ * an embodied act has to be handed the hand it is recorded under, and a second
+ * derivation there would be a second answer to a settled question — the drift
+ * the quote law exists to kill. So the derivation moved here, where household
+ * identity already lives, and both doors read it.
+ *
+ * The prefix is reserved town-wide on purpose: `residency.mjs` and
+ * `declare.mjs` each refuse a resident handle wearing it, precisely so this
+ * label can never collide with somebody's own voice.
+ *
+ * Null when there is no handle to name a household after — never a guessed
+ * default, for the same reason `humanTokenUrl` returns null rather than
+ * somebody else's face.
+ */
+export function humanHandFor(handles = []) {
+  const list = [...handles].filter(Boolean).map(String);
+  if (!list.length) return null;
+  let slug = null;
+  for (const h of list) {
+    try { const hh = householdOf(h); if (hh?.slug) { slug = hh.slug; break; } } catch { /* garnish only */ }
+  }
+  return `human-of-${slug ?? list[0]}`;
+}
+
 let warned = false;
 export function householdOf(handle) {
   if (!currentHouseholds) return null; // no engine at this checkout — garnish stays absent

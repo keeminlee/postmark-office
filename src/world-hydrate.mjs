@@ -412,6 +412,20 @@ for (const m of marks) {
       affordances: Array.isArray(m.affordances) ? m.affordances : null,
       mobility: m.mobility ?? null,
       anchor: m.anchor ?? null,
+      // `requires:` — a GUARD IN GATE POSITION on a class (2026-08-26).
+      // LOGOS/classes.md § The derived: "a verb or slot may name a derived and
+      // a required value as its precondition — that is the whole condition
+      // grammar." Carried for the same reason `dials:` is: the apex asks the
+      // store whether an act's precondition holds, and a precondition the store
+      // cannot see is a precondition the door invents or ignores.
+      requires: (m.requires && typeof m.requires === "object" && !Array.isArray(m.requires)) ? m.requires : null,
+      // `held_grant:` — an INSTANCE filling the thing class's unsealed
+      // `held-grant` slot. The field/slot name pair follows the `entry` /
+      // `entry-law` precedent already on the record: the slot names the law,
+      // the frontmatter field is what an instance writes. Custody is checked at
+      // the read (`by: the-town`), never here — the hydrator carries what the
+      // record says and the gate decides what it means.
+      held_grant: Array.isArray(m.held_grant) ? m.held_grant : null,
       exempt: Array.isArray(m.exempt) ? m.exempt : null,
       // `ambient:` is class-declared REACH (2026-08-09): the class's affordances
       // gather everywhere rather than only where the mark stands — jurisdiction
