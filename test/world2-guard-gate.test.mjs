@@ -41,7 +41,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { openDynamic } from "../src/dynamic-store.mjs";
 import { appendJournal, readJournal, CLASS_MARK, ACTION_LEAVE } from "../src/world-journal.mjs";
@@ -424,4 +424,56 @@ test("GG5b — the household is resolved through the docket pen's own key, not t
   const values = r.receipt.find((x) => x.kind === "query" && /household = \$/.test(x.sql))?.values;
   assert.equal(values?.[1], "solo:alpha",
     `the scoped read must bind a RESOLVED key, never the office key's household name ("alpha"); bound ${JSON.stringify(values?.[1])}`);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GG6 · THE PRIME CONSTRAINT: THE OFFICE BOOTS WITH NO `pg` INSTALLED
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// GG2 proves the stance DOOR never reaches for the driver. This proves the whole
+// world module graph still LOADS when the driver does not exist, which is a
+// different claim and the one prod is deployed under: `pg` is absent from the
+// box's node_modules, so a static `import ... from "pg"` anywhere in this graph
+// is ERR_MODULE_NOT_FOUND before the first request — not a disabled feature.
+//
+// world2-guards.mjs is in the list on purpose. It is the module this lane added,
+// and its only path to the driver is world2-pen's lazy `await import("pg")`; the
+// day someone hoists that to the top of a file, this is what says so.
+
+const NO_PG = new URL("./w2-no-pg-fixture.mjs", import.meta.url).href;
+const PROBE = fileURLToPath(new URL("./w2-boot-probe-fixture.mjs", import.meta.url));
+const SRC = new URL("../src/", import.meta.url);
+
+const bootWithoutPg = (target) => {
+  const env = { ...process.env, W2_PROBE_TARGET: target };
+  for (const k of ["WORLD2_PG", "WORLD2_PG_URL", "W2_PEN"]) delete env[k];
+  try {
+    return { out: execFileSync(process.execPath, ["--import", NO_PG, PROBE],
+                               { env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }), failed: null };
+  } catch (e) {
+    return { out: String(e.stdout ?? ""), failed: String(e.stderr ?? e.message ?? "") };
+  }
+};
+
+test("GG6 — every world module loads with `pg` unresolvable, and the probe that says so can fail", () => {
+  for (const mod of ["world-apex.mjs", "world.mjs", "world-journal.mjs",
+                     "world-stance.mjs", "world2-pen.mjs", "world2-guards.mjs"]) {
+    const r = bootWithoutPg(new URL(mod, SRC).href);
+    assert.match(r.out, /BOOTED/,
+      `src/${mod} did not load with \`pg\` absent — in prod that is a boot-time crash, not a missing feature:\n${r.failed}`);
+  }
+
+  // ── THE PROBE ON TRIAL ────────────────────────────────────────────────────
+  //
+  // A resolve hook that silently failed to install would let every line above
+  // pass for the wrong reason — the exact green this file must never hand back.
+  // So a module that DOES import the driver eagerly is written here and must be
+  // refused. Written rather than borrowed from the repo, so nothing in the tree
+  // can drift out from under the check.
+  const eager = join(scratch, "eager-pg.mjs");
+  writeFileSync(eager, 'import pg from "pg";\nexport default pg;\n');
+  const bad = bootWithoutPg(pathToFileURL(eager).href);
+  assert.doesNotMatch(bad.out, /BOOTED/, "a module that imports `pg` eagerly must NOT boot under this hook");
+  assert.match(bad.failed, /Cannot find package 'pg'/,
+    "and it must be refused by the probe's own hook — otherwise the greens above prove only that the hook never ran");
 });
