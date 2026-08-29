@@ -533,11 +533,39 @@ export async function arenaActViaOffice(repo, args = {}, key = null, deps = {}) 
     // be a party-forming gate wearing a different hat.
     let joined = null;
     let opened = null;
-    if (place.keeps_wheel && !inWheel(state, who)) {
-      // THE OPEN FIRST — see `openAgainst`. The creature must be in round 1's
-      // order beside the hand, not appended below it as a late arrival.
+    // ⚑ THE OPEN IS NOT THE JOINER'S ERRAND (found live 2026-08-28, in the
+    // founder's own browser, three rounds into a fight that could not answer).
+    //
+    // The open used to live INSIDE the `!inWheel` branch below, so the
+    // adversary could only take its slot in the same breath as some hand's
+    // first join. That is the common case and it hid a whole class: a hand who
+    // joins a wheel-keeping ground with nothing standing on it yet is joined
+    // FOREVER, and `openAgainst` — the only thing that ever puts a creature on
+    // the wheel — is never reachable again on that ground. When the adversary
+    // is sited afterwards (which is exactly how the dungeon was staged: the
+    // props were re-sited into their rooms after rei had already walked in),
+    // the room folds to `live: false` for good.
+    //
+    // What that looks like from the outside is the thing `openAgainst`'s own
+    // note warns about, and it is worth naming twice because the fix shipped
+    // for one path and left the other: "a turn-based engine that never takes a
+    // turn, reading exactly like a working one". rei stood in the candle vault
+    // at round 4 with the cake at 51 of 60 — damage landing, because an
+    // un-live encounter gates nothing — and no swing ever came back.
+    //
+    // So the open is asked on EVERY door touch into a ground that keeps a
+    // wheel, whoever is acting and whether or not they are already in it. It
+    // costs one fold read: `openAgainst` is idempotent by construction, asking
+    // the fold whether a hostile is already in and writing nothing when one is.
+    //
+    // IT STILL RUNS FIRST. The creature must be in round 1's order beside the
+    // hand rather than appended below it as a late arrival, which is why this
+    // sits above the join rather than beside it.
+    if (place.keeps_wheel) {
       opened = openAgainst(db, dyn, place, { household, crossing });
       if (opened) state = refold();
+    }
+    if (place.keeps_wheel && !inWheel(state, who)) {
       const r = write({
         actor: who, action: "join",
         payload: { kind: "player", how: "acted in" },
@@ -785,7 +813,7 @@ export function leaveOnCrossing(db, dyn, spineIds, who, { household = null, cros
 // page's, and the place that knows both is this one.
 
 /** The wheel, in the shape `world-cockpit.mjs § encounterOf` declares. */
-export function cockpitEncounter(state, me = null) {
+export function cockpitEncounter(state, me = null, { human = null } = {}) {
   if (!state?.wheel?.order?.length) return null;
   const hands = state.hands ?? {};
   return {
@@ -799,7 +827,19 @@ export function cockpitEncounter(state, me = null) {
         // The page's three kinds. A hand is a `resident` unless it is the
         // caller's own human — the fold does not distinguish those and does not
         // need to; who is a human is a fact about the CALLER, not the wheel.
-        kind: o.kind === "hostile" ? "creature" : "resident",
+        //
+        // ⚑ AND THE CALLER NOW SAYS SO (2026-08-29). The third kind was
+        // described here from the day this shape was written and never once
+        // emitted, because nothing passed the hand in — so a human's own row
+        // came back as a resident like any other. The page uses the kind to
+        // know which row is the reader's when they are acting as themselves,
+        // and with every row a resident it could only ever find the RESIDENT's:
+        // the wheel came round to the human, and the bar refused them with "it
+        // is human-of-starforge's turn", which was their own name.
+        //
+        // The label is still the office's own (humanHandFor); the page matches
+        // on the kind and never spells the hand a second way.
+        kind: o.kind === "hostile" ? "creature" : (human && o.who === human ? "human" : "resident"),
         label: String(o.who).includes("/") ? String(o.who).split("/").pop().replace(/-/g, " ") : o.who,
         initiative: o.initiative ?? null,
         // `down`, not `downed` — the page's spelling. Getting this wrong shows
