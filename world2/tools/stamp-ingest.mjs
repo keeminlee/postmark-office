@@ -48,6 +48,24 @@
 // is the right number for the clearing's escrow-sufficiency read: what a
 // claimant can actually still commit.
 //
+// ── THE TOWN'S SECOND PROJECTION: THE ROLL (2026-08-29) ─────────────────────
+//
+// This pen now writes BOTH of the town's projections, in its one transaction:
+// `stamp_projection` and `town_roll` (Keemin's ruling that the 2.0 read tier
+// asks the town's roll — `roll-ingest.mjs` carries the law and the derivation).
+//
+// It is one pen and not two because `projection_heads['town']` is ONE ROW. Two
+// tools moving it would let the head stand at a sha with stamps and no roll, and
+// a window that pins `town_sha` would then be unable to say what roster it was
+// cleared against — the determinism property ("outcomes reproducible from
+// (claims, law_sha, town_sha)") quietly stops covering half the town's facts.
+// So the roll's derivation lives in its own file with its own law header, and
+// its WRITE runs inside the transaction below.
+//
+// Nothing about the stamp half changed: same derivation, same DELETE-then-INSERT
+// idempotence, same summary fields (the roll's are added beside them, never
+// instead of them).
+//
 // ── USAGE ───────────────────────────────────────────────────────────────────
 //
 //   PGHOST=localhost PGDATABASE=world2_dev PGUSER=law_ingester PGPASSWORD=… \
@@ -61,6 +79,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { assertSha } from "./law-ingest.mjs";   // the same --sha guard, not a twin of it
+import { deriveRoll, writeRoll } from "./roll-ingest.mjs";
 
 export const TOWN_REPO_KEY = "town";            // projection_heads.repo for this pen
 
@@ -104,11 +123,21 @@ export async function deriveStamps({ townRepo }) {
 const CHUNK = 500;
 
 /**
- * One transaction: clear this sha's rows, insert the derived set, move the head.
- * Re-running the same sha is a no-op — which is what makes the merge webhook and
- * the clearing_job's own first-step ingest safe to both fire for one commit.
+ * One transaction: clear this sha's rows, insert the derived set, write the
+ * town's ROLL for the same sha, move the head. Re-running the same sha is a
+ * no-op — which is what makes the merge webhook and the clearing_job's own
+ * first-step ingest safe to both fire for one commit.
+ *
+ * `rollRows` is optional ONLY so a caller that has not derived them yet cannot
+ * silently write half a town head. Omitting it does not skip the roll — it
+ * REFUSES the whole write, for the reason in this file's header.
  */
-export async function writeStamps(client, { townSha, rows }) {
+export async function writeStamps(client, { townSha, rows, rollRows }) {
+  if (!Array.isArray(rollRows)) {
+    throw new Error("writeStamps needs the town's roll as well as its stamps — one town sha, one head, one transaction " +
+      "(a head at a sha with stamps and no roll cannot say what roster its clearing computed against). " +
+      "Derive it with roll-ingest.mjs deriveRoll().");
+  }
   await client.query("BEGIN");
   try {
     await client.query("DELETE FROM stamp_projection WHERE town_sha = $1", [townSha]);
@@ -125,6 +154,7 @@ export async function writeStamps(client, { townSha, rows }) {
       await client.query(
         `INSERT INTO stamp_projection (town_sha, handle, household, balance) VALUES ${values.join(", ")}`, params);
     }
+    await writeRoll(client, { townSha, rows: rollRows });
     await client.query(
       `INSERT INTO projection_heads (repo, sha, ingested_at) VALUES ($1, $2, now())
        ON CONFLICT (repo) DO UPDATE SET sha = EXCLUDED.sha, ingested_at = EXCLUDED.ingested_at`,
@@ -150,23 +180,27 @@ async function main() {
   }
   const townSha = assertSha(townRepo, declared);
   const { rows, entries, accounts } = await deriveStamps({ townRepo });
+  const roll = await deriveRoll({ townRepo });
   const held = rows.filter((r) => r.balance > 0).length;
-  const summary = { repo: TOWN_REPO_KEY, town_sha: townSha, rows: rows.length, ledger_entries: entries, ledger_accounts: accounts, handles_holding_stamps: held };
+  const summary = { repo: TOWN_REPO_KEY, town_sha: townSha, rows: rows.length, ledger_entries: entries, ledger_accounts: accounts, handles_holding_stamps: held,
+    roll_rows: roll.rows.length, white_pages_entries: roll.scanned, roll_refused: roll.refused, roll_without_address: roll.no_address };
+  const rollLine = `  town_roll:        ${roll.rows.length} handles from ${roll.scanned} WHITE_PAGES entries` +
+    (roll.refused.length ? ` (refused by the door's admission grammar: ${roll.refused.join(", ")})` : "");
 
   if (flag("--dry-run")) {
     console.log(flag("--json") ? JSON.stringify(summary, null, 2)
-      : `dry-run · ${townSha}\n  stamp_projection: ${rows.length} handles (${held} holding), from ${entries} ledger entries / ${accounts} accounts`);
+      : `dry-run · ${townSha}\n  stamp_projection: ${rows.length} handles (${held} holding), from ${entries} ledger entries / ${accounts} accounts\n${rollLine}`);
     return;
   }
 
   const { default: pg } = await import("pg");
   const client = new pg.Client();
   await client.connect();
-  try { await writeStamps(client, { townSha, rows }); }
+  try { await writeStamps(client, { townSha, rows, rollRows: roll.rows }); }
   finally { await client.end(); }
 
   console.log(flag("--json") ? JSON.stringify(summary, null, 2)
-    : `ingested stamps ${townSha}\n  stamp_projection: ${rows.length} handles (${held} holding)\n  projection_heads['${TOWN_REPO_KEY}'] = ${townSha}`);
+    : `ingested the town ${townSha}\n  stamp_projection: ${rows.length} handles (${held} holding)\n${rollLine}\n  projection_heads['${TOWN_REPO_KEY}'] = ${townSha}`);
 }
 
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {

@@ -261,24 +261,41 @@ export async function world2Serve(path, searchParams) {
     if (at.error) return at.error;
     const near = pointOf(searchParams);
     if (near?.error) return near.error;
-    const [{ rows: depRows }, { rows: markRows }, { rows: idRows }] = await Promise.all([
+    //
+    // THE ROLL IS THE TOWN'S (Keemin, 2026-08-29). It was `identities` — the
+    // world repo's households.json — and that list is NARROWER than the town by
+    // twelve handles, which #1864 already ruled on: a narrower roster does not
+    // answer wrongly, it leaves residents unasked-about. `town_roll` is the town
+    // repo's WHITE_PAGES at the PINNED head, joined through `projection_heads`
+    // rather than read at `max(town_sha)`, so the roster this answer used is the
+    // roster a window pinning that sha was cleared against.
+    //
+    // `identities` is still read, and still does its own job: it is where the
+    // HOUSEHOLD KEY comes from (`worldFromRows` → `world.households` →
+    // `householdOf` → `parcelsFor`). Two rosters, two questions — the roll says
+    // who to ask about, the identities say whose ground counts as yours.
+    const [{ rows: depRows }, { rows: markRows }, { rows: idRows }, { rows: rollRows }] = await Promise.all([
       p.query(`SELECT id, at, crossing, actor, action, payload FROM acts
                 WHERE action = ANY($1) ${live.DEPARTURE_ORDER_SQL}`, [live.DEPARTURE_ACTIONS]),
       p.query("SELECT slug, kind, owner, household, geometry, status, data FROM marks WHERE status = 'standing'"),
       p.query("SELECT handle, household FROM identities"),
+      p.query(`SELECT r.handle FROM town_roll r
+                 JOIN projection_heads h ON h.repo = 'town' AND h.sha = r.town_sha
+                ORDER BY r.handle`),
     ]);
     let derived;
     try { derived = live.departureRecords(depRows); }
     catch (e) { return { code: 500, body: { error: "bounce", defect: "a departure act matches no known era", hint: String(e.message).slice(0, 400) } }; }
     const world = live.worldFromRows({ marks: markRows, identities: idRows });
     const fc = live.fractionalCrossing(at.ms);
-    const roll = idRows.map((i) => i.handle);
+    const roll = rollRows.map((r) => r.handle);
     const residents = live.everyonePlaced({ world, departures: derived.records, at: fc, roll });
-    const notes = live.admissionNotes({ marks: markRows, identities: idRows, departureRecords: derived.records, world });
+    const notes = live.admissionNotes({ marks: markRows, identities: idRows, roll, departureRecords: derived.records, world });
     const body = {
       what: "every placed resident at one instant — a walk if they have one, else their ground, else the town's porch",
       evaluated_at: new Date(at.ms).toISOString(), crossing: fc,
-      roster: { walk_records: new Set(derived.records.map((d) => d.handle)).size, parcels: world.parcels.length, roll: roll.length },
+      roster: { walk_records: new Set(derived.records.map((d) => d.handle)).size, parcels: world.parcels.length,
+                roll: roll.length, roll_source: "town_roll @ projection_heads['town']", households_known: idRows.length },
       count: residents.length,
       residents,
       disclosed: [live.DISCLOSURES.frames, live.DISCLOSURES.no_staleness, live.DISCLOSURES.roll_source, ...notes],
@@ -359,7 +376,7 @@ export async function world2Serve(path, searchParams) {
 
   if (path === "/world2/status") {
     const counts = {};
-    for (const t of ["acts", "claims", "marks", "law_projection", "stamp_projection", "identities"]) {
+    for (const t of ["acts", "claims", "marks", "law_projection", "stamp_projection", "identities", "town_roll"]) {
       const { rows: [r] } = await p.query(`SELECT count(*)::int AS c FROM ${t}`);
       counts[t] = r.c;
     }

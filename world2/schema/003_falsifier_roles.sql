@@ -39,6 +39,12 @@ lawful AS (
     ('law_ingester', 'law_projection',   'DELETE'),
     ('law_ingester', 'stamp_projection', 'INSERT'),
     ('law_ingester', 'stamp_projection', 'DELETE'),
+    -- 010_town_roll.sql. The town's SECOND projection, written by the same pen
+    -- in the same transaction against the same `projection_heads` row — so it
+    -- is the stamp lane's grants, not a fourth writer. INSERT + DELETE and no
+    -- UPDATE, like every projection here: replaced, never edited.
+    ('law_ingester', 'town_roll',        'INSERT'),
+    ('law_ingester', 'town_roll',        'DELETE'),
     ('law_ingester', 'projection_heads', 'INSERT'),
     ('law_ingester', 'projection_heads', 'UPDATE'),
     ('law_ingester', 'projection_heads', 'DELETE'),
