@@ -7,6 +7,29 @@
 //    and validates against sqlite — a split brain with a switch on it."
 //    — DESIGN-pen-flip.md § 2 R3
 //
+// ── WHAT THIS GATES, PER THE RUNBOOK — NOT WHAT § 7 SAID ────────────────────
+//
+// § 7 put the read ports BEFORE the pen flips, on the sentence above. D3's
+// reverse-mirror ruling changed that dependency, and the runbook
+// (G:/Starstory/PULSE/gold-plans/postmark-world-2/runbook.md § 0) corrects it
+// by quoting world2-pen.mjs's own header back:
+//
+//   "While it holds, every 1.0 read — guards included — stays valid, which is
+//    what lets a lane flip before the R3 read ports land: THE PORTS GATE THE
+//    DELETION (rule 6), NOT THE FLAG."
+//
+// So this file is not what makes a flip safe — the reverse mirror is. This is
+// what lets the mirror DIE: a door on a flipped lane validating against the
+// store its pen writes to is the precondition for rule 6's deletion. The
+// runbook calls this step B1, and it gates C6 (mark) and all of the G-series.
+//
+// TWO EXCEPTIONS THE RUNBOOK KEEPS, and neither is designed away here. The MARK
+// lane, "whose guards PERMIT rather than report (a dropped row is a duplicate
+// slug or a fourth parcel, not a wrong number)" — which is why every read this
+// wire makes keeps the port's `strict: true`, and why the mark door stays
+// unwired while its lane refuses the flip by name. And any lane flipping AFTER
+// the reverse mirror is off — nothing below assumes the mirror exists.
+//
 // `world2/tools/guard-reads.mjs` is the port that closes it — the three door
 // guards over `claims` and `acts`, held to 1.0's own functions by
 // `falsifier-guard-equality.mjs`. It was built, unit-tested, falsifier-covered

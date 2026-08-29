@@ -1691,7 +1691,24 @@ duplicate slug or a fourth parcel through, and the receipt for that arrives at
 the next settlement. So every refusal here is strict by default and says what the
 skip would have cost.
 
-### Where it is wired (2026-08-29)
+### Where it is wired (2026-08-29) — the runbook's B1
+
+**What this gates, and it is not what DESIGN § 7 said.** § 7 put the read ports
+before the pen flips, on R3's split-brain sentence. D3's reverse-mirror ruling
+changed that dependency, and the runbook
+(`G:/Starstory/PULSE/gold-plans/postmark-world-2/runbook.md` § 0) corrects it by
+quoting `world2-pen.mjs`'s own header: *"the ports gate the DELETION (rule 6),
+not the flag."* So the wire below is not what makes a flip safe — the reverse
+mirror is. It is what lets the mirror **die**: a door on a flipped lane
+validating against the store its pen writes to is rule 6's precondition. B1
+gates C6 (mark) and all of the G-series.
+
+Two exceptions the runbook keeps, neither designed away here: the **mark** lane,
+whose guards *permit* rather than report — "a dropped row is a duplicate slug or
+a fourth parcel, not a wrong number" — which is why every read the wire makes
+keeps `strict: true` and why the mark door stays unwired while its lane refuses
+the flip by name; and **any lane flipping after the reverse mirror is off**,
+which nothing in the wire assumes against.
 
 `src/world2-guards.mjs` is the wire, and it is deliberately thin — every judgment
 about what a live mark IS stays here in the port; that module only decides WHICH

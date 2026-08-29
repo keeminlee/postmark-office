@@ -241,6 +241,13 @@ export function standingStances(rows, { by = null } = {}) {
  *   "A pen flip without a read flip produces an office that writes to Postgres
  *    and validates against sqlite — a split brain with a switch on it."
  *
+ * ⚠ AND THE RUNBOOK'S CORRECTION TO § 7's SEQUENCING, which is what this
+ * actually gates. D3's reverse mirror means "every 1.0 read — guards included —
+ * stays valid", so a lane may flip BEFORE the ports land: "the ports gate the
+ * DELETION (rule 6), not the flag" (world2-pen.mjs's header, quoted by the
+ * runbook § 0). This wiring is therefore not what makes the stance flip safe —
+ * the mirror is. It is what lets the mirror DIE, and it is the runbook's B1.
+ *
  * The live half is exactly one of R3's rows — `world2/tools/README.md § The
  * write-path guards` names this door in the row itself: "`liveMarks` /
  * `liveChildrenOf` … declare-stance-on's candidates". So when the caller is a
