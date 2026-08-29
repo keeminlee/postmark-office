@@ -171,6 +171,35 @@ const FLIPS = [
     file: ARENA, catches: "the door speaks the exact shapes the cockpit reads",
     edit: (t) => t.replace('kind: o.kind === "hostile" ? "creature"', 'kind: "resident" ? "resident"') },
 
+  // ── the spawn on entry (founder-ruled 2026-08-29) ────────────────────────
+
+  { name: "a ground's spawn stops placing anybody — entrants keep landing where they stood",
+    file: ARENA, catches: "sets its entrants down at its own spawn",
+    edit: (t) => t.replace("  if (!spawn) return null;", "  if (true) return null;") },
+
+  { name: "a spawn outside its own ground is honoured — every entrant is placed out of the room",
+    file: ARENA, catches: "a spawn outside its own ground is refused",
+    edit: (t) => t.replace("  if (!inRect(spawn, g))", "  if (false)") },
+
+  { name: "the jitter is dropped — every entrant stacks on one tile",
+    file: ARENA, catches: "sets its entrants down at its own spawn",
+    edit: (t) => t.replace("  const off = (i) => ((h[i] / 255) * 2 - 1) * reach;", "  const off = () => 0;") },
+
+  { name: "the jitter stops depending on the hand — two entrants land together",
+    file: ARENA, catches: "sets its entrants down at its own spawn",
+    edit: (t) => t.replace("`${place.ground}|${who}|${crossing ?? \"\"}`", "`${place.ground}`") },
+
+  { name: "the placement escapes the ground's fence — the clamp is dropped",
+    file: ARENA, catches: "sets its entrants down at its own spawn",
+    edit: (t) => t.replace("  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));", "  const clamp = (v) => v;") },
+
+  // The comment-stripping guard must still ban the real thing, or widening it
+  // to admit a note about randomUUID would have quietly admitted randomUUID.
+  { name: "unwitnessed randomness returns to the door, in CODE this time",
+    file: ARENA, catches: "nothing in the door reads a wall clock of its own",
+    edit: (t) => t.replace("  const off = (i) => ((h[i] / 255) * 2 - 1) * reach;",
+                           "  const off = () => (Math.random() * 2 - 1) * reach;") },
+
   // ── every human is a human, not only the reader's own (2026-08-29) ───────
   { name: "only the READER's own human renders as a human — every other guest's is a resident",
     file: ARENA, catches: "the door speaks the exact shapes the cockpit reads",

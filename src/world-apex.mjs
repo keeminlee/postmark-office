@@ -74,7 +74,10 @@ import { servedEnterExitLedger } from "./enter-exit-ledger.mjs";
 import { ACTION_STANCE, STANCE_TOOLS, declareStanceViaOffice, readNeverPerforms, stanceShadow, stancesBlock } from "./world-stance.mjs";
 import { callHoldTool, holdingsOf, liveHolder } from "./world-hold.mjs";
 import { openDynamic } from "./dynamic-store.mjs";
-import { readAttachments } from "./dynamic-entities.mjs";
+import { declareMovement, readAttachments } from "./dynamic-entities.mjs";
+// The stride a placement is stamped with — read off the record like every other
+// departure's, never a constant here (decision 008b).
+import { departurePace } from "./world-classes.mjs";
 import { storeDbPath } from "./world-serve.mjs";
 import { AMBIENT_REACH_SQL, CLASS_MARK_GATE_SQL, WORKS_PATH_SQL } from "./world-store.mjs";
 import { actorRoster, resolveHumanActor } from "./human-actor.mjs";
@@ -91,7 +94,7 @@ import { exitAllowed, walkAllowed } from "./embodiment.mjs";
 // law with no door behind it, which is precisely the 501 the dispatch miss
 // below used to answer. `arena.mjs` is the caller; this is where it is called.
 import {
-  ARENA_TOOLS, ARENA_VERBS, arenaActViaOffice, arenaGroundAt, cockpitEncounter, lootShroudedIn,
+  ARENA_TOOLS, ARENA_VERBS, arenaActViaOffice, arenaGroundAt, cockpitEncounter, lootShroudedIn, spawnPointFor,
   cockpitPortal, encounterOn, joinOnCrossing, leaveOnCrossing, looseIn, publicState,
 } from "./arena.mjs";
 
@@ -538,6 +541,59 @@ export function withLoose(nearby = [], portal = null, { standpoint = null } = {}
  * nothing — a hand that walked out stays on the wheel forever, hostiles keep
  * swinging at them, and nothing anywhere reports an error.
  */
+/**
+ * Set an entrant down where the ground they just entered says to, or do nothing.
+ *
+ * ⚑ THE GROUND IS FOUND BY THE MARK THE CALLER NAMED, not by where they are
+ * standing — which is the whole point: they may be standing nowhere near it,
+ * and that is the bug being cured. `arenaGroundAt` takes a spine, so it is
+ * given a one-mark spine: the target itself.
+ *
+ * ⚑ IT WRITES A MOVEMENT, WHICH IS THE ONLY PEN THE WORLD PLACES BODIES WITH.
+ * A zero-length departure to the spawn point — the same record a walk writes,
+ * so every reader downstream (the standpoint, presence, the crossing-save)
+ * learns the position the way it always has. Nothing here invents a second
+ * geometry, and R15 is untouched: this is not a walk the caller asked for, it
+ * is where the GROUND says an entrant stands, which is the ground's business
+ * exactly as its stride is.
+ *
+ * Silent on every failure and on every ground that declares no spawn, because
+ * the enter itself has already succeeded — a placement that could not be
+ * written must not turn a successful crossing into an error.
+ */
+async function spawnOnEnter(args, key, who) {
+  const target = String(args.mark ?? args.mark_id ?? parseEnvelope(args)?.mark ?? parseEnvelope(args)?.mark_id ?? "").trim();
+  if (!target || !who) return null;
+  const store = openStore();
+  let dyn = null;
+  try {
+    if (!store.db) return null;
+    const place = arenaGroundAt(store.db, [target]);
+    if (!place) return null;
+    const spawn = spawnPointFor(store.db, place, { who, crossing: currentCrossing() });
+    if (!spawn) return null;
+    if (spawn.refused) return { ground: place.ground, refused: spawn.refused };
+    dyn = openDynamic();
+    // A ZERO-LENGTH DEPARTURE: from the spawn point to itself, so `positionAt`
+    // answers "arrived, standing" from the first instant. A leg with length
+    // would leave the entrant walking across the room they are already in, and
+    // the wheel would seat them somewhere they had not reached yet.
+    declareMovement(dyn, {
+      actor: who, from: spawn.at, toward: spawn.at, crossing: currentCrossing(),
+      within: null, toMark: place.ground, declaredBy: who, pace: departurePace(),
+    });
+    return {
+      ground: place.ground, at: spawn.at,
+      ...(spawn.jitter ? { jitter_m: spawn.jitter, from_spawn: spawn.from } : {}),
+      note: `${place.ground} sets its entrants down at its own spawn point — you did not walk here, the ground placed you`,
+    };
+  } catch { return null; }
+  finally {
+    try { dyn?.close(); } catch { /* a writer that cannot close still wrote */ }
+    try { store.db?.close(); } catch { /* same */ }
+  }
+}
+
 async function wheelOnCrossing(action, args, key, preSpineIds = [], hand = null) {
   // ⚑ WHOEVER CROSSED IS WHO THE WHEEL COUNTS, and for an embodied human that
   // is the HAND, not the housemate whose standpoint oriented the act. The
@@ -551,7 +607,22 @@ async function wheelOnCrossing(action, args, key, preSpineIds = [], hand = null)
   const who = hand || standingHandle(args, key);
   if (!who) return null;
   let spineIds = preSpineIds;
+  let placed = null;
   if (action === "enter") {
+    // ── THE SPAWN, BEFORE THE SPINE IS ASKED (founder-ruled 2026-08-29) ─────
+    //
+    // ⚑ ORDER IS THE WHOLE FIX. The wheel is seated off the GEOMETRIC spine,
+    // and entry writes an occupancy edge without moving anybody — so a hand who
+    // enters from outside the fence is inside by the record and outside by
+    // geometry, and `joinOnCrossing` finds no arena on the spine and returns
+    // null. No join, no initiative, no refusal. Reproduced live: a hand entered
+    // the candle-vault from 16 m away, was told they had entered, and never
+    // reached the wheel.
+    //
+    // Placing them FIRST and re-orienting AFTER makes the two answers agree.
+    // Placing them after would leave the join reading the stale spine and fix
+    // nothing — which is the version that looks identical in a diff.
+    placed = await spawnOnEnter(args, key, who);
     const after = await worldOrient(args, key);
     if (after?.error) return null;
     spineIds = (after.you?.within ?? []).map((m) => m.id);
@@ -563,9 +634,13 @@ async function wheelOnCrossing(action, args, key, preSpineIds = [], hand = null)
     if (!store.db) return null;
     dyn = openDynamic();
     const opts = { household: worldHouseholdOf(who), crossing: currentCrossing() };
-    return action === "enter"
+    const wheeled = action === "enter"
       ? joinOnCrossing(store.db, dyn, spineIds, who, opts)
       : leaveOnCrossing(store.db, dyn, spineIds, who, opts);
+    // The placement rides the answer when one happened, so a reader can see
+    // WHY they are standing somewhere they did not walk to. Absent otherwise,
+    // which is every ground that declares no spawn.
+    return wheeled ? { ...wheeled, ...(placed ? { placed } : {}) } : (placed ? { placed } : null);
   } catch { return null; }
   finally {
     try { dyn?.close(); } catch { /* a writer that cannot close still wrote */ }

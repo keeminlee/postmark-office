@@ -73,6 +73,7 @@
 // PURE-ADJACENT: this module owns the door's sequencing and the record's
 // queries. It holds no law the fold holds and no arithmetic at all.
 
+import { createHash } from "node:crypto";
 import { foldEncounter, pendingHostileTurns, hostileAct, timedOut, TURN_ENDING, WHEEL_GATED } from "./encounter.mjs";
 import { appendJournal, readJournal } from "./world-journal.mjs";
 import { openDynamic, singleLogEnabled } from "./dynamic-store.mjs";
@@ -562,6 +563,82 @@ export function arrivalOnGround({ from, toward, targetFrom = "" }, place, advers
     targetFrom: entry.backed_off
       ? `${place.ground} — its door-side edge, stepped clear of ${adversaryRow?.id ?? "what stands in it"}`
       : `${place.ground} — its door-side edge`,
+  };
+}
+
+/**
+ * WHERE A GROUND SETS AN ENTRANT DOWN — `spawn`, the ground's own dial.
+ *
+ * ⚑ WHY THIS EXISTS, and it is a cure rather than a decoration. The wheel seats
+ * you off the GEOMETRIC containment spine (`containmentChain` in the world
+ * clone: marks whose footprint contains your point). Entry writes an OCCUPANCY
+ * edge and moves nothing. So a resident who enters a mark while their body
+ * stands outside its fence is INSIDE BY THE RECORD AND OUTSIDE BY GEOMETRY —
+ * the enter is adjudicated, and `joinOnCrossing` then asks the spine, finds no
+ * arena, and returns null. No join, no initiative, no refusal. Reproduced live
+ * 2026-08-29: a hand entered the candle-vault from 16 m away, was told they had
+ * entered, and never appeared on the wheel. The cure they found was exit and
+ * re-enter while standing inside, which no guest would ever discover.
+ *
+ * Placing the entrant makes the two answers agree, which is the honest fix
+ * available before the freeze. The disagreement itself — two derivations of
+ * "where are you" with only one of them consulted — is written up for Wright.
+ *
+ * THE DIAL IS THE GROUND'S, NEVER A ROOM'S NAME IN THE OFFICE: `walk_min_step`'s
+ * precedent exactly. Absent, every ground behaves as it does today.
+ *
+ * ⚑ AND A SPAWN OUTSIDE ITS OWN GROUND IS REFUSED, not honoured. A mis-measured
+ * point would teleport every entrant OUT of the room they just walked into, and
+ * the failure would look exactly like the bug this fixes. So the point is
+ * checked against the ground's own rect and a bad one is disclosed and ignored,
+ * leaving today's behaviour. (The founder's own first estimate for the vault
+ * was outside it, which is how this guard came to be written.)
+ */
+export function spawnPointFor(db, place, { who = "", crossing = null } = {}) {
+  if (!place?.row) return null;
+  const read = (d) => {
+    const s = parseJson(d, null)?.spawn;
+    const x = Number(s?.x), y = Number(s?.y);
+    return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
+  };
+  let spawn = read(place.row.dials ?? place.dials);
+  if (!spawn && db) {
+    try {
+      const row = db.prepare(CLASS_DIALS).all(JSON.stringify([String(place.class ?? place.row.class ?? "")]))[0];
+      spawn = row ? read(row.dials) : null;
+    } catch { spawn = null; }
+  }
+  if (!spawn) return null;
+
+  const g = rectOf(place.row);
+  if (!g) return null;
+  if (!inRect(spawn, g))
+    return { refused: `${place.ground} declares a spawn at ${spawn.x},${spawn.y}, which is outside its own extent — ignored`, at: null };
+
+  // THE JITTER IS WITNESSED, NOT RANDOM, for the reason every roll in this
+  // module is: `crypto.randomUUID` consults a source nobody can reproduce, and a
+  // placement that differs on replay is a placement the record cannot defend.
+  // Derived from the ground, the hand and the crossing, so two entrants land
+  // apart and the same entrant lands consistently within one crossing.
+  const step = Number.isFinite(place.walk_min_step) && place.walk_min_step > 0 ? place.walk_min_step : 0.1;
+  const reach = (() => {
+    const declared = Number(parseJson(place.row.dials ?? place.dials, null)?.spawn_jitter_m);
+    return Number.isFinite(declared) && declared >= 0 ? declared : step;
+  })();
+  if (reach === 0) return { at: { x: snapTo(spawn.x, step), y: snapTo(spawn.y, step) }, jitter: 0 };
+
+  const h = createHash("sha256").update(`${place.ground}|${who}|${crossing ?? ""}`).digest();
+  // Two independent bytes → two axes; centred so the offset is as often
+  // negative as positive, and scaled to `reach`.
+  const off = (i) => ((h[i] / 255) * 2 - 1) * reach;
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  return {
+    at: {
+      x: snapTo(clamp(spawn.x + off(0), g.x0, g.x1), step),
+      y: snapTo(clamp(spawn.y + off(1), g.y0, g.y1), step),
+    },
+    jitter: reach,
+    from: spawn,
   };
 }
 

@@ -33,7 +33,7 @@ import {
   joinOnCrossing, leaveOnCrossing,
   // the birthday amendments' own readers (2026-08-29)
   arrivalOnGround, BEATS_TAIL, cockpitPortal, entryPointInto, groundAtPoint,
-  lootHiddenReason, lootShroudedIn, snapTo, walkMinStepOf, weaponInHand,
+  lootHiddenReason, lootShroudedIn, snapTo, spawnPointFor, walkMinStepOf, weaponInHand,
 } from "../src/arena.mjs";
 import { WORLD_CLONE } from "../src/world-store.mjs";
 import { actingBlocked } from "../src/world-apex.mjs";
@@ -95,7 +95,7 @@ function worldDb(guestHp = 20) {
   // marks must carry them, and the disclosure test below is what will notice if
   // the marks are staged without them.
   ins.run(VAULT, "the-town", "mark", "sited", 1097, -783.5, 3, 2,
-    props({ class: "arena", dials: { turn_timeout_s: 600, initiative_die: 20, guest_hp: guestHp, lift_to: 8, walk_min_step: 0.25 },
+    props({ class: "arena", dials: { turn_timeout_s: 600, initiative_die: 20, guest_hp: guestHp, lift_to: 8, walk_min_step: 0.25, spawn: { x: 1097, y: -784.25 } },
             body: "Past the inner door the candles go up in tiers until you cannot see the top of them." }));
   ins.run(CAKE, "the-town", "mark", "sited", 1097, -783.5, 1.5, 1,
     props({ class: "adversary", dials: { hp: 60, hits_for: 5, to_hit_die: 20, damage_die: 8, initiative_bonus: 2, persistent: false },
@@ -603,8 +603,19 @@ test("nothing in the door reads a wall clock of its own — the instant is the c
   // behalf." A `setInterval` or a bare `Date.now()` inside the timeout path
   // would BE that process.
   const src = readFileSync(join(here, "..", "src", "arena.mjs"), "utf8");
+  // ⚑ CODE ONLY, and the sibling guard in encounter.test.mjs already learned
+  // this the same way: "a comment that documents the boundary is the opposite of
+  // crossing it, and the first version of this probe could not tell the two
+  // apart." This one still could not, until `spawnPointFor` earned a note
+  // explaining why a HASH is admissible where `crypto.randomUUID` is not — a
+  // sentence that exists to keep the ban and was read as breaking it.
+  //
+  // JSDoc lines start with `*`, so they are stripped with the `//` ones.
+  const body = src.split("\n")
+    .filter((l) => { const c = l.trim(); return !c.startsWith("//") && !c.startsWith("*") && !c.startsWith("/*"); })
+    .join("\n");
   for (const banned of ["setInterval", "setTimeout", "Math.random", "crypto.randomUUID"])
-    assert.ok(!src.includes(banned),
+    assert.ok(!body.includes(banned),
       `${banned} in the arena door is the ticker the duet clause forbids (or the unwitnessed randomness atom 8 forbids)`);
   // `nowMs` must arrive as a parameter, never be read here.
   assert.match(src, /nowMs = Date\.now\(\)/,
@@ -1481,6 +1492,84 @@ test("crossing into the vault stands you at its door-side edge, never inside the
     // movement inside this exact room.
     assert.equal(entryPointInto({ x: 1096, y: -784 }, place.row, cake, { entryT: targetEntryT, step: 0.25 }), null,
       "a hand already standing in the vault was re-placed at the door — that is a room nobody can move in");
+  } finally { b.close(); }
+});
+
+test("a ground sets its entrants down at its own spawn — jittered apart, inside its own fence, and only where declared", () => {
+  // The cure for a bug reproduced live 2026-08-29: a hand entered the
+  // candle-vault while their body stood ~16 m outside its fence. Entry was
+  // adjudicated — occupancy written, "entered" reported — and the wheel never
+  // seated them: no join beat, no initiative, NO ERROR. The wheel reads the
+  // GEOMETRIC containment spine (`containmentChain`: marks whose footprint
+  // contains your point) and entry moves nobody, so inside-by-record and
+  // outside-by-geometry are both true at once and only one of them is consulted.
+  //
+  // Placing the entrant makes the two answers agree. The dial is the GROUND's,
+  // on `walk_min_step`'s precedent — never a room's name in the office.
+  const b = bottle();
+  try {
+    const vault = arenaGroundAt(b.db, IN_VAULT);
+    const antechamber = arenaGroundAt(b.db, IN_ANTECHAMBER);
+    const inVault = (p) => p.x >= 1095.5 && p.x <= 1098.5 && p.y >= -784.5 && p.y <= -782.5;
+
+    // (1) AN ENTRANT IS PLACED, and inside the fence — which is the predicate
+    // the join reads. A spawn that landed outside would reproduce the bug.
+    const one = spawnPointFor(b.db, vault, { who: "darko", crossing: 155.5 });
+    assert.ok(one?.at, "the vault declares a spawn and none was computed — every entrant keeps landing wherever they happened to stand");
+    assert.ok(inVault(one.at), `an entrant was placed at ${one.at.x},${one.at.y} — outside the vault, which is the bug this cures wearing a fix's clothes`);
+
+    // (2) TWO ENTRANTS DO NOT STACK.
+    const two = spawnPointFor(b.db, vault, { who: "rei", crossing: 155.5 });
+    assert.ok(inVault(two.at), "the second entrant landed outside the fence");
+    assert.notDeepEqual(one.at, two.at,
+      "two entrants were set down on the same tile — at a party they stack into one token and nobody can tell who is who");
+
+    // ...and the jitter is WITNESSED, not random: the same hand at the same
+    // crossing lands on the same tile, or the record cannot defend a placement
+    // it can never reproduce.
+    assert.deepEqual(spawnPointFor(b.db, vault, { who: "darko", crossing: 155.5 }).at, one.at,
+      "the same hand landed somewhere else on a second read — that is Math.random wearing a placement");
+    assert.notDeepEqual(spawnPointFor(b.db, vault, { who: "darko", crossing: 156.5 }).at, one.at,
+      "the crossing does not move the spot — then a room's whole party lands on one tile every night");
+
+    // ...AND THE JITTER CANNOT CARRY ANYBODY OUT. The vault's own 0.25 m jitter
+    // is far too small to reach its fence, so the clamp is never exercised by
+    // the real dial and shipped untested — the flip runner said so. A spawn in
+    // the CORNER with a metre of jitter is the case that reaches it, and a room
+    // whose spawn sits near a wall is the ordinary case, not a contrived one.
+    const corner = { ...vault, row: { ...vault.row,
+      dials: JSON.stringify({ walk_min_step: 0.25, spawn: { x: 1095.5, y: -784.5 }, spawn_jitter_m: 1 }) } };
+    for (const hand of ["darko", "rei", "keeminlee", "limen", "meep"]) {
+      const p = spawnPointFor(b.db, corner, { who: hand, crossing: 155.5 });
+      assert.ok(inVault(p.at),
+        `a corner spawn with a metre of jitter put ${hand} at ${p.at.x},${p.at.y} — outside the fence, which is the bug this cures`);
+    }
+
+    // (3) THE CONTROL: a ground that declares no spawn places nobody. Without
+    // this leg, "always place at the ground's centre" passes everything above
+    // and quietly teleports every entrant in the town.
+    assert.equal(spawnPointFor(b.db, antechamber, { who: "darko", crossing: 155.5 }), null,
+      "the cellar door placed an entrant it never asked to place — a ground that has said nothing must behave exactly as it does today");
+  } finally { b.close(); }
+});
+
+test("a spawn outside its own ground is refused, not honoured", () => {
+  // ⚑ THE GUARD THAT EXISTS BECAUSE THE FIRST ESTIMATE WAS WRONG. The founder's
+  // own first reading of the vault's floor was a point outside the vault's
+  // extent. Honouring it would teleport every entrant OUT of the room they had
+  // just walked into — and the symptom would be identical to the bug being
+  // fixed: entered by the record, standing outside the fence, never seated.
+  //
+  // So a mis-measured dial is disclosed and ignored, leaving today's behaviour,
+  // rather than being trusted because it was written down.
+  const b = bottle();
+  try {
+    const vault = arenaGroundAt(b.db, IN_VAULT);
+    const wrong = { ...vault, row: { ...vault.row, dials: JSON.stringify({ walk_min_step: 0.25, spawn: { x: 1083, y: -791.4 } }) } };
+    const r = spawnPointFor(b.db, wrong, { who: "darko", crossing: 155.5 });
+    assert.equal(r?.at, null, "a spawn outside the ground was honoured — every entrant is now placed outside the room they entered");
+    assert.match(String(r?.refused ?? ""), /outside its own extent/,
+      "and it was dropped in silence, so nobody staging the mark learns the number is wrong");
   } finally { b.close(); }
 });
 
