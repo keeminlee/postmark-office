@@ -32,6 +32,7 @@ import {
   dialsFromRecord, arenaRows, encounterOn, arenaActViaOffice, inWheel, publicState,
   joinOnCrossing, leaveOnCrossing,
 } from "../src/arena.mjs";
+import { actingBlocked } from "../src/world-apex.mjs";
 import { openDynamic } from "../src/dynamic-store.mjs";
 import { SCHEMA } from "../src/world-store.mjs";
 
@@ -789,5 +790,144 @@ test("the human holds a real slot on the wheel, beside the hostile that already 
     assert.equal(inWheel(s, "darko"), false, "and the resident, who did not act, is not");
     assert.ok((s.wheel?.order ?? []).some((j) => j.kind === "hostile"),
       "the hostile still takes its slot — the human joins an ordinary wheel, not a special one");
+  } finally { b.close(); }
+});
+
+test("the open is asked on EVERY door touch, so a room that gained its adversary late still opens", async () => {
+  // ⚑ THE FOUNDER'S OWN BROWSER, 2026-08-28. rei stood in the candle vault at
+  // round 4, the cake read 51 of 60, and no swing ever came back. The wheel
+  // held ONE row.
+  //
+  // LOGOS § The arena: "Hostiles hold real slots and take real turns", and
+  // "Initiative is rolled at the open." `openAgainst` is the only writer that
+  // ever puts a creature on the wheel — and it used to be reachable only from
+  // inside the branch that joins a hand who is not yet in the wheel. So a hand
+  // who joined a ground with nothing standing on it was joined for good, and
+  // the open became unreachable on that ground forever after.
+  //
+  // That is exactly how the dungeon was staged: the props were re-sited into
+  // their rooms AFTER rei had already walked in. This test stages it the same
+  // way — join an empty vault, site the adversary, act again.
+  const b = bottle();
+  try {
+    // the room, with nothing standing in it yet
+    b.db.prepare("DELETE FROM nodes WHERE id = ?").run(CAKE);
+    assert.equal(adversaryIn(b.db, arenaGroundAt(b.db, IN_VAULT)), null,
+      "precondition: the vault has no adversary at the moment the hand joins");
+    await act(b, "rei", "guard");
+    const before = state(b);
+    assert.equal(inWheel(before, "rei"), true, "the hand joined the empty room");
+    assert.equal(before.encounter_live, false, "and nothing is live, because nothing stands against them");
+
+    // the adversary is sited afterwards — the stage's own order of events
+    b.db.prepare(
+      `INSERT INTO nodes (id, by, kind, subkind, at_x, at_y, extent_w, extent_h, props)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      CAKE, "the-town", "mark", "sited", 1097, -783.5, 1.5, 1,
+      props({ class: "adversary", dials: { hp: 60, hits_for: 5, to_hit_die: 20, damage_die: 8, initiative_bonus: 2 },
+              body: "Nine tiers, four hundred candles, not one ever lit." }));
+    assert.equal(adversaryIn(b.db, arenaGroundAt(b.db, IN_VAULT)).id, CAKE,
+      "precondition: the cake now stands in the vault");
+
+    // one more door touch by the hand who is ALREADY in the wheel
+    await act(b, "rei", "guard").catch(() => {});
+    const after = state(b);
+    assert.ok((after.wheel?.order ?? []).some((j) => j.kind === "hostile"),
+      "the cake takes its slot at the next door touch, not only at somebody's first join");
+    assert.equal(after.encounter_live, true,
+      "and the encounter is LIVE — without this the turn gate never engages and every act sails through unrefused");
+  } finally { b.close(); }
+});
+
+test("the read does not gate a hand the act would have joined", async () => {
+  // ⚑ FOUND LIVE 2026-08-28, playing the dungeon in a browser. rei left the
+  // wheel while still standing on the arena ground. The creature then held the
+  // turn — it was the only row left — and the read answered `acting_blocked`
+  // for every verb, so the bar greyed out whole and the room looked dead.
+  //
+  // The act would have worked the entire time. `arenaActViaOffice` joins a
+  // caller who is not in the wheel (step 3) BEFORE it judges them by it (step
+  // 5), because "anyone can walk in whenever" is the ruling. The read mirrored
+  // the gate and not the join, so this half of the door was stricter than the
+  // half that acts — and a reader cannot be expected to click a button the door
+  // has just told them is refused.
+  const b = bottle();
+  try {
+    await act(b, "rei", "guard");
+    leaveOnCrossing(b.db, b.dyn, IN_VAULT, "rei");
+    const s = state(b);
+    assert.equal(inWheel(s, "rei"), false, "precondition: rei has left the wheel");
+    assert.equal(s.encounter_live, true, "precondition: the fight is still live without them");
+    assert.equal(actingBlocked(s, "rei"), null,
+      "a hand who is not in the wheel is not waiting for it — the act would join them first");
+    // the discriminating leg: someone who IS in the wheel and not on turn is
+    // still gated, in the gate's own words
+    const held = s.wheel?.turn;
+    if (held && held !== CAKE) {
+      assert.equal(actingBlocked(s, CAKE)?.acting_blocked?.whose_turn, held,
+        "and a row that IS in the order still gets the wheel's refusal by name");
+    }
+  } finally { b.close(); }
+});
+
+test("a creature holding the wheel does not block a hand — the act is what resolves it", async () => {
+  // ⚑ THE FOUNDER'S OWN QUESTION, 2026-08-28: "I also tried striking and it's
+  // just stuck now? like when does the cake take its turn?" It takes it when
+  // you act.
+  //
+  // LOGOS § The arena: "Hostile turns are resolved by the act that ends a
+  // player's turn, in the same handling, until the wheel reaches a player
+  // again. There is no daemon and no ticker: the duet is the event loop."
+  //
+  // arenaActViaOffice drives every due hostile turn (step 4) before the gate
+  // judges anyone (step 5), so a caller told "it is the creature's turn" is
+  // being refused for the one thing that would have moved the fight. The bar
+  // greyed itself out and waited for a turn nothing was ever going to take.
+  const b = bottle();
+  try {
+    // ASKED OF THE FUNCTION DIRECTLY, and that is a deliberate choice rather
+    // than a shortcut. The wheel comes to rest on a creature only through a
+    // particular history — the last hand leaves, the rounds run on with nobody
+    // to hand the turn to, and someone crosses back in to find it holding the
+    // wheel (seen live 2026-08-28). Staging that through the door means driving
+    // the fold to a specific turnsTaken, which tests the fold's arithmetic
+    // rather than this rule. `actingBlocked` is a pure function of a state and
+    // a name, so it is asked as one.
+    const wheel = (turn, order) => ({ encounter_live: true, downed: [], wheel: { turn, order } });
+    const creatureOnTurn = wheel(CAKE, [
+      { who: CAKE, kind: "hostile" },
+      { who: "rei", kind: "player" },
+    ]);
+    assert.equal(actingBlocked(creatureOnTurn, "rei"), null,
+      "a creature's turn does not block a hand — the hand's act is what drives it");
+
+    // THE DISCRIMINATING LEG. Without it this passes just as well against a
+    // door that stopped gating altogether, and the gate is the law: "An act out
+    // of turn is refused NAMING WHOSE TURN IT IS."
+    const playerOnTurn = wheel("darko", [
+      { who: "darko", kind: "player" },
+      { who: "rei", kind: "player" },
+    ]);
+    assert.equal(actingBlocked(playerOnTurn, "rei")?.acting_blocked?.whose_turn, "darko",
+      "another HAND's turn still blocks, by name — nothing here drives a person");
+
+    // and the name reported past a creature is the hand the gate will really
+    // judge against, not the creature the wheel happens to be resting on
+    const past = wheel(CAKE, [
+      { who: CAKE, kind: "hostile" },
+      { who: "darko", kind: "player" },
+      { who: "rei", kind: "player" },
+    ]);
+    assert.equal(actingBlocked(past, "rei")?.acting_blocked?.whose_turn, "darko",
+      "the turn reported is the one after the duet resolves, which is the one the gate will judge");
+
+    // the act itself, through the real door, so the rule above is a promise the
+    // door keeps rather than a claim about a literal
+    await act(b, "rei", "guard");
+    const s = state(b);
+    if (s.wheel?.turn === "rei") {
+      const r = await act(b, "rei", "strike", { object: CAKE });
+      assert.equal(r.did, "strike", "and an unblocked hand's act is one the door takes");
+    }
   } finally { b.close(); }
 });
