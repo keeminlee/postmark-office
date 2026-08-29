@@ -17,11 +17,12 @@
 // ── THE GATE IS THE PEN'S OWN SWITCH, NOT A SECOND ONE ──────────────────────
 //
 // D1 ruled the flip PER LANE and `W2_PEN` names the flipped lanes; `laneFlipped`
-// is that switch and it is the one asked here too. A door whose pen is Postgres
-// validates against Postgres; a door whose pen is still the journal validates
-// against the journal, bit for bit. Two switches would be two answers to "is
-// this lane flipped", and the day they disagreed the office would be back in the
-// split brain by a different road.
+// is that switch, and the DOOR asks it — this file has no switch of its own and
+// exports no alias for one. A door whose pen is Postgres validates against
+// Postgres; a door whose pen is still the journal validates against the journal,
+// bit for bit. Two switches would be two answers to "is this lane flipped", and
+// the day they disagreed the office would be back in the split brain by a
+// different road.
 //
 // ── REFUSE, NEVER FALL BACK ─────────────────────────────────────────────────
 //
@@ -47,7 +48,7 @@
 // it is already lazy). THE PRIME CONSTRAINT: an office booted with no W2 env
 // behaves exactly as it did before this file existed.
 
-import { laneFlipped, penPool } from "./world2-pen.mjs";
+import { penPool } from "./world2-pen.mjs";
 
 /**
  * The guard could not read the record — and the door refuses rather than
@@ -66,11 +67,6 @@ export class GuardRefusedError extends Error {
     this.cause = cause;
     this.reason = String(cause?.message ?? cause);
   }
-}
-
-/** Whether this lane's door validates against Postgres. The pen's own switch. */
-export function guardsFlipped(lane, env = process.env) {
-  return laneFlipped(lane, env);
 }
 
 /**
