@@ -568,12 +568,17 @@ test("every dial the fold reads comes off a mark, and the INSTANCE outranks its 
 
 // ── the timeout ─────────────────────────────────────────────────────────────
 
-test("an absent hand's turn resolves as a PASS at the next door touch, by anyone", async () => {
-  // LOGOS § The arena, verbatim:
-  //   "An absent hand cannot freeze the room. `turn_timeout` is a dial on the
-  //    arena; once it has expired, that hand's turn resolves as a pass at the
-  //    next door touch — by anyone. The turn is skipped when someone arrives to
-  //    notice, never by a process watching a clock."
+test("an absent hand's turn resolves as a STRIKE at the next door touch, by anyone", async () => {
+  // ⚑ SUPERSEDED IN PLACE (founder-called, 2026-08-29, mid-party): this test
+  // asserted the timeout resolved as a PASS, quoting LOGOS § The arena as it
+  // then stood. The founder's ruling at the party: "have them STRIKE at the end
+  // of the timer" — a timed-out turn swings, so the room's pace stops depending
+  // on who wandered off. The clauses that SURVIVE from the old law are still
+  // asserted here: the timeout is a dial, it resolves at the next door touch by
+  // anyone, never by a process watching a clock, and the act belongs to the
+  // absent hand. Only the resolving verb changed: pass → strike, rolled by the
+  // fold from the row like any chosen swing, payload kind "timeout" so the
+  // record never pretends the hand chose it.
   const b = bottle();
   try {
     await act(b, "darko", "guard");
@@ -588,10 +593,19 @@ test("an absent hand's turn resolves as a PASS at the next door touch, by anyone
     // no other test gets a timeout it did not ask for.
     const late = Date.now() + 2 * 3600 * 1000;
     const r = await act(b, other, "guard", {}, { nowMs: late }).catch((e) => e);
-    const passRows = arenaRows(b.dyn, VAULT).filter((x) => x.action === "pass" && x.payload?.kind === "timeout");
-    assert.ok(passRows.length >= 1,
-      "an hour past a ten-minute dial, the arriving hand's own door touch must resolve the absent turn as a pass");
-    assert.equal(passRows[0].actor, turn, "the pass belongs to the hand who was absent, not to whoever noticed");
+    const timerRows = arenaRows(b.dyn, VAULT).filter((x) => x.payload?.kind === "timeout");
+    assert.ok(timerRows.length >= 1,
+      "an hour past a ten-minute dial, the arriving hand's own door touch must resolve the absent turn");
+    assert.equal(timerRows[0].action, "strike",
+      "the timer swings — a timed-out turn resolves as a strike, not a pass");
+    assert.equal(timerRows[0].actor, turn, "the swing belongs to the hand who was absent, not to whoever noticed");
+    // And the fold rolls it like any chosen swing: the beat carries a real
+    // to-hit, proving it resolved as a strike rather than merely being spelled
+    // like one.
+    const after = state(b);
+    const beat = (after.beats ?? []).find((bt) => bt.actor === turn && bt.act === "strike");
+    assert.ok(beat && Number.isFinite(beat.to_hit),
+      "the fold must roll the timer's swing — a strike beat with a to-hit, not a silent skip");
     void r;
   } finally { b.close(); }
 });

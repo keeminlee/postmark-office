@@ -927,10 +927,19 @@ export async function arenaActViaOffice(repo, args = {}, key = null, deps = {}) 
     if (place.keeps_wheel) {
       const t = timedOut(state, nowMs);
       if (t.out && t.who !== who) {
+        // ⚑ THE TIMEOUT SWINGS NOW (founder-called, 2026-08-29, mid-party):
+        // "can we tweak the timeout to just have them STRIKE at the end of the
+        // timer?" A timed-out turn resolves as an honest strike rather than a
+        // pass, so the room's pace stops depending on who wandered off — the
+        // fold rolls it from this row exactly as it rolls a chosen swing, and
+        // the payload keeps `kind: "timeout"` so the record never pretends the
+        // hand chose it. The cake answers auto-strikers by its own law (most
+        // recent hand to strike it), which is the fight the wheel promised:
+        // being on it IS being in it.
         const r = write({
-          actor: t.who, action: "pass",
+          actor: t.who, action: "strike",
           payload: { kind: "timeout", waited_s: t.waited_s, limit_s: t.limit_s },
-          effect: `${t.who} was ${t.waited_s}s into a ${t.limit_s}s turn and the wheel moved on — resolved at this door touch, by ${who}`,
+          effect: `${t.who} was ${t.waited_s}s into a ${t.limit_s}s turn — the timer swings for them, resolved at this door touch, by ${who}`,
         });
         timedOutPass = { who: t.who, waited_s: t.waited_s, limit_s: t.limit_s, seq: r.seq };
         state = refold();
