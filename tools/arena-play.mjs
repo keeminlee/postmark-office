@@ -101,7 +101,11 @@ function show() {
       console.log(`   ${mark} ${String(o.who).padEnd(28)} init ${String(o.initiative).padStart(2)}${st}${o.who === who ? "   ← you" : ""}`);
     }
   }
-  const loose = looseIn(db, place.row);
+  // The phase rides in, so the play-through sees exactly the floor a resident
+  // sees: LOGOS § The portal ground — loot "is absent from that ground's loose
+  // things … At `spent` it appears." A tool that showed the prize early would
+  // be the one reader in town telling a different story about the room.
+  const loose = looseIn(db, place.row, { phase: s.phase });
   if (loose.length) {
     console.log(`\n  on the floor:`);
     for (const l of loose)
@@ -169,7 +173,11 @@ try {
     // next attempt finds the lighter where the record put it. (The first draft
     // of this line bound run() instead of calling it and deleted nothing —
     // found in play, 2026-08-27; the target of a hold is the THING's id.)
-    const things = looseIn(db, place.row).map((x) => x.thing);
+    // `all: true` — the reset must see the room WHOLE, loot included, or it
+    // leaves the prize held by whoever picked it up last attempt. This is the
+    // one caller the shroud is deliberately opened for, and it is a local
+    // developer tool rather than a door.
+    const things = looseIn(db, place.row, { all: true }).map((x) => x.thing);
     if (things.length) {
       const q = things.map(() => "?").join(",");
       dyn.prepare(`DELETE FROM attachments WHERE target IN (${q})`).run(...things);
@@ -189,7 +197,7 @@ try {
     const { declareAttachment } = await import("../src/dynamic-entities.mjs");
     declareAttachment(dyn, { entity: who, target: thing, declaredBy: who });
     console.log(`  ${who} picks up ${thing}. (The ordinary attach — see this file's header.)`);
-    const l = looseIn(db, place.row).find((x) => x.thing === thing);
+    const l = looseIn(db, place.row, { phase: encounterOn(db, dyn, place)?.phase ?? null }).find((x) => x.thing === thing);
     const g = l?.grants?.find((x) => x.action === "strike");
     if (g) console.log(`  It grants strike +${g.bonus}${g.says ? ` — "${g.says}"` : ""}. Strike again and the bonus rides the blow.`);
   }

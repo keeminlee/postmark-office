@@ -248,6 +248,47 @@ function actingHandle(args, key) {
   return who;
 }
 
+/**
+ * Refuses a take/give aimed at loot the room has not opened yet, or returns.
+ *
+ * ⚑ THE IMPORTS ARE LAZY AND THAT IS THE POINT, not a shortcut — the same
+ * reason `mirrorHoldingAct` reaches for `world.mjs` this way, one screen down.
+ * `arena.mjs` imports THIS file (for `holdingsOf`), so a static import back
+ * would close a cycle; and a store with no arena anywhere in it never loads
+ * either module.
+ *
+ * ⚑ IT REFUSES ONLY WHAT IT CAN PROVE. Every failure to read — no world store,
+ * a store that will not open, a dynamic store that throws — falls through to
+ * the ordinary door. A shroud that turned an unreadable room into a refusal
+ * would make an unrelated outage look like the cake was still standing, and a
+ * resident would have no way to tell those two apart.
+ */
+async function refuseShroudedLoot(thingId) {
+  if (!thingId) return;
+  let store = null, dyn = null;
+  try {
+    const [{ openStore }, { lootHiddenReason }] = await Promise.all([
+      import("./world-apex.mjs"), import("./arena.mjs"),
+    ]);
+    store = openStore();
+    if (!store?.db) return;
+    dyn = openDynamic();
+    const hidden = lootHiddenReason(store.db, dyn, String(thingId));
+    if (!hidden) return;
+    throw bounce(409, `${thingId} is not in this room yet`,
+      `it is the loot of ${hidden.ground}, and the loot is not in the room until the room is spent${
+        hidden.adversary ? ` — ${hidden.adversary} is still standing${hidden.standing ? ` (${hidden.standing})` : ""}` : ""
+      }. Put down what stands here and it will be lying where you can reach it; until then it is not something anyone can take or hand over.`);
+  } catch (e) {
+    // Our own refusal travels; anything else is a reader's trouble and is not
+    // the resident's to be punished for.
+    if (e?.code === 409 && /is not in this room yet/.test(String(e.defect ?? ""))) throw e;
+  } finally {
+    try { dyn?.close(); } catch { /* a reader that cannot close still read */ }
+    try { store?.db?.close(); } catch { /* same */ }
+  }
+}
+
 export async function callHoldTool(name, args = {}, key = null) {
   if (name === "world_hold") { const fz = worldFreezeBounce(); if (fz) return fz; }
   const actor = actingHandle(args, key);
@@ -308,6 +349,24 @@ export async function callHoldTool(name, args = {}, key = null) {
     // — a door that promised enforcement it does not perform would be the exact
     // schema-vs-runtime defect this branch flagged on `leave_mark`'s `tier:`, and
     // it is not better for being mine.
+    // ── THE LOOT SHROUD, AT THE HOLD DOOR (founder-ruled 2026-08-29) ─────────
+    //
+    // LOGOS § The portal ground: "A thing whose mark declares `loot` is NEITHER
+    // VISIBLE NOR TAKEABLE while the encounter on its ground is afoot: … a
+    // `take` or a `give` aimed at it is refused with a sentence that explains
+    // itself rather than a bounce that reads like a fault."
+    //
+    // HERE RATHER THAN IN `declareHolding`, for the reason the mirror is at this
+    // door too: `declareHolding` is the pure adjudicator, tested on hand-built
+    // stores with no world db and no journal anywhere near it, and a shroud
+    // inside it would hand every one of those tests two dependencies it has no
+    // business having. This door is where the stores already are.
+    //
+    // BOTH VERBS, ONE CHECK. give/drop/take are one primitive here, and the
+    // shroud is a fact about the OBJECT, so a hand that somehow has the wick end
+    // cannot pass it on either — which is the honest reading of "neither
+    // visible nor takeable" and costs nothing to hold.
+    await refuseShroudedLoot(args.thing);
     const dials = thingDials();
     const did = declareHolding({ db, thing: args.thing, to: args.to ?? null, actor, roster: null, groundOwner: null, dials });
     mirrorHoldingAct(did, key);

@@ -23,7 +23,12 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
 const ARENA = "src/arena.mjs";
 const HUMAN = "src/human-actor.mjs";
-const SUITES = { [ARENA]: "test/arena.test.mjs", [HUMAN]: "test/arena.test.mjs" };
+// The apex joined 2026-08-29 with the gate-narrowing ruling: `acting_blocked`
+// is the READ's half of the wheel's refusal, and the amendment's only surface a
+// resident can feel. Its falsifier lives in the arena suite because that is
+// where the wheel's law is asserted, so it runs against the same suite.
+const APEX = "src/world-apex.mjs";
+const SUITES = { [ARENA]: "test/arena.test.mjs", [HUMAN]: "test/arena.test.mjs", [APEX]: "test/arena.test.mjs" };
 
 const FLIPS = [
   // ── ruling 1 · the wheel gates, and the refusal NAMES the turn ───────────
@@ -136,9 +141,15 @@ const FLIPS = [
     file: ARENA, catches: "the door speaks the exact shapes the cockpit reads",
     edit: (t) => t.replace("        down: o.downed === true,", "        downed: o.downed === true,") },
 
+  // ⚠ RETARGETED 2026-08-29, and it had been dead since the human kind landed:
+  // the line grew `(human && o.who === human ? "human" : "resident")`, the old
+  // string stopped matching, and this flip reported "the edit changed nothing"
+  // — which the runner prints and nobody reads as an alarm. A flip whose
+  // subject has been renamed out from under it is a guard that has quietly
+  // stopped guarding, which is the same class as the law it watches.
   { name: "the adversary renders as a resident rather than a creature",
     file: ARENA, catches: "the door speaks the exact shapes the cockpit reads",
-    edit: (t) => t.replace('kind: o.kind === "hostile" ? "creature" : "resident",', 'kind: "resident",') },
+    edit: (t) => t.replace('kind: o.kind === "hostile" ? "creature" : (human && o.who === human ? "human" : "resident"),', 'kind: "resident",') },
 
   { name: "a crit is left for the page to guess at",
     file: ARENA, catches: "the door speaks the exact shapes the cockpit reads",
@@ -178,6 +189,74 @@ const FLIPS = [
   { name: "loot opens while the adversary is still standing",
     file: ARENA, catches: "loot is REFUSED while the adversary is still standing",
     edit: (t) => t.replace('    if (action === "loot" && state.phase !== "spent")', "    if (false)") },
+
+  // ── THE BIRTHDAY AMENDMENTS (founder-ruled 2026-08-29) ───────────────────
+
+  // 1 · the gate narrows
+  //
+  // ⚑ THERE IS NO FLIP FOR `WHEEL_GATED.includes(action)` ITSELF, and the
+  // absence is the finding rather than a gap. Over the actions that reach that
+  // line — ARENA_VERBS and nothing else — `WHEEL_GATED.includes(action)` and
+  // the old `action !== "loot"` are the SAME PREDICATE, so flipping one to the
+  // other changes no behaviour and the suite correctly stays green. Written as
+  // a flip first, and it came back an apparatus failure; the honest reading is
+  // that the door's own gate never held an ordinary verb, because the 422 below
+  // refuses one two hundred lines earlier. The narrowing that a resident can
+  // actually feel is `acting_blocked.gates`, and that is what these two flip.
+  { name: "the door stops fencing its verbs — an ordinary verb reaches the wheel and is refused BY IT",
+    file: ARENA, catches: "the wheel gates ARENA verbs only",
+    edit: (t) => t.replace("  if (!ARENA_VERBS.includes(action))", "  if (false)") },
+
+  { name: "the read's refusal stops naming what it gates — a page can only grey the whole bar",
+    file: APEX, catches: "the read's half names WHAT is gated",
+    edit: (t) => t.replaceAll("      gates: [...ARENA_VERBS],", "") },
+
+  // 3 · loot hides until the room is spent
+  { name: "the loot shroud lifts — the prize is lying in the room from the start",
+    file: ARENA, catches: "loot is not in the room until the room is spent",
+    edit: (t) => t.replace("  const open = all || phase === \"spent\";", "  const open = true;") },
+
+  { name: "the shroud list comes back empty — the standpoint has nothing to subtract",
+    file: ARENA, catches: "loot is not in the room until the room is spent",
+    edit: (t) => t.replace('  if (!db || !groundRow || phase === "spent") return [];', "  if (true) return [];") },
+
+  { name: "the hold door's refusal stops asking the phase — loot is takeable mid-fight",
+    file: ARENA, catches: "take and give of shrouded loot are refused",
+    edit: (t) => t.replace('    if (state?.phase === "spent") continue;', "    continue;") },
+
+  { name: "a weapon is treated as loot — the fight's own tool is shrouded with the prize",
+    file: ARENA, catches: "take and give of shrouded loot are refused",
+    edit: (t) => t.replace("  if (!thing || !isLoot(thing)) return null;", "  if (!thing) return null;") },
+
+  // 4 · entry placement
+  { name: "the placement stops stepping clear — an entrant is set down inside the adversary",
+    file: ARENA, catches: "crossing into the vault stands you at its door-side edge",
+    edit: (t) => t.replace("  while (a && inRect(p, a) && guard++ < cap) p = snapPt({ x: p.x - dir.x * s, y: p.y - dir.y * s });", "") },
+
+  { name: "a hand already inside is re-placed at the door — the room freezes",
+    file: ARENA, catches: "crossing into the vault stands you at its door-side edge",
+    edit: (t) => t.replace("  if (inRect({ x: Number(from.x), y: Number(from.y) }, g)) return null;", "") },
+
+  { name: "the walk desk's decision stops placing a crossing at all",
+    file: ARENA, catches: "the walk desk's decision",
+    edit: (t) => t.replace("  if (!place.keeps_wheel) return out;", "  if (true) return out;") },
+
+  // 5 · the ground's own stride
+  { name: "a ground that declared no stride is given the town's whole metre anyway",
+    file: ARENA, catches: "a ground may set its own stride",
+    edit: (t) => t.replace("    return Number.isFinite(n) && n > 0 ? n : null;", "    return Number.isFinite(n) && n > 0 ? n : 1;") },
+
+  { name: "the stride stops riding the ground's answer — the site is left to guess the grid",
+    file: ARENA, catches: "a ground may set its own stride",
+    edit: (t) => t.replace("  ...(Number.isFinite(place.walk_min_step) && place.walk_min_step > 0\n    ? { walk_min_step: place.walk_min_step } : {}),", "") },
+
+  { name: "the snap leaves float dust on every coordinate it touches",
+    file: ARENA, catches: "a ground may set its own stride",
+    edit: (t) => t.replace("  return Number((Math.round(Number(v) / s) * s).toFixed(6));", "  return Math.round(Number(v) / s) * s;") },
+
+  { name: "the destination is no longer snapped to the room's stride",
+    file: ARENA, catches: "the walk desk's decision",
+    edit: (t) => t.replace("    if (snapped.x !== toward.x || snapped.y !== toward.y)", "    if (false)") },
 ];
 
 const suite = (file) => {

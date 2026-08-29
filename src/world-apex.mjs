@@ -91,7 +91,7 @@ import { exitAllowed, walkAllowed } from "./embodiment.mjs";
 // law with no door behind it, which is precisely the 501 the dispatch miss
 // below used to answer. `arena.mjs` is the caller; this is where it is called.
 import {
-  ARENA_TOOLS, ARENA_VERBS, arenaActViaOffice, arenaGroundAt, cockpitEncounter,
+  ARENA_TOOLS, ARENA_VERBS, arenaActViaOffice, arenaGroundAt, cockpitEncounter, lootShroudedIn,
   cockpitPortal, encounterOn, joinOnCrossing, leaveOnCrossing, publicState,
 } from "./arena.mjs";
 
@@ -354,7 +354,12 @@ export function actingBlocked(state, who) {
   if (!inOrder) return null;
   if ((state.downed ?? []).includes(who))
     return { acting_blocked: { reason: `${who} is down — someone has to lift you`, downed: true,
-      hint: "at zero you are DOWN, not dead: the wheel skips you until an ally spends their whole turn lifting you" } };
+      // WHAT IS BLOCKED, BY NAME (founder-ruled 2026-08-29). LOGOS § Downed, not
+      // dead: "Down stops your ARENA acts, not your voice: a downed hand still
+      // speaks, still walks, still holds and hands things over. What they have
+      // lost is the fight, not the room."
+      gates: [...ARENA_VERBS],
+      hint: "at zero you are DOWN, not dead: the wheel skips you until an ally spends their whole turn lifting you. This blocks your ARENA acts only — you can still walk, speak, stake and hand things over while you are on the floor." } };
   // ⚑ A CREATURE'S TURN IS NOT SOMETHING YOU WAIT OUT — IT IS SOMETHING YOUR
   // ACT RESOLVES. LOGOS § The arena: "Hostile turns are resolved by the act
   // that ends a player's turn, in the same handling, until the wheel reaches a
@@ -385,7 +390,27 @@ export function actingBlocked(state, who) {
   const effective = (i >= 0 ? order[i]?.who : null) ?? turn;
   if (effective && effective !== who)
     return { acting_blocked: { reason: `it is ${effective}'s turn`, whose_turn: effective,
-      hint: "the wheel gates every act while an encounter is live — yours comes round" } };
+      // ── WHAT THE WHEEL ACTUALLY GATES (founder-ruled 2026-08-29) ───────────
+      //
+      // LOGOS § The arena, as amended: "The wheel gates this ground's ARENA
+      // verbs, and nothing else. … The ordinary verbs of the town are not the
+      // wheel's business: walk, say, stake, unstake, give, take and every other
+      // verb a resident holds anywhere flow UNGATED inside a live encounter,
+      // exactly as they do outside one."
+      //
+      // ⚑ THIS FIELD IS THE RULING'S WHOLE LIVE SURFACE, AND IT IS A READ.
+      // The `do:` gate never held walk or say — `arenaActViaOffice` refuses
+      // anything that is not an arena verb before the wheel is consulted at
+      // all, so the door has always let a walk through mid-fight. What actually
+      // stopped the founder moving during the party is this key: a reader that
+      // sees `acting_blocked` and greys its whole action bar has been told "you
+      // may not act", full stop, because until tonight that is what the law
+      // said. `gates:` is the narrowing, said in a field rather than in prose so
+      // a page can act on it — grey exactly these, leave the rest alone.
+      //
+      // The hint says it too, for the reader who has no page and only sentences.
+      gates: [...ARENA_VERBS],
+      hint: `the wheel gates this ground's ARENA verbs (${ARENA_VERBS.join(", ")}) while an encounter is live — yours comes round. Everything else you can do here is unaffected: walk, speak, stake, hand things over, all ungated mid-fight.` } };
   return null;
 }
 
@@ -400,7 +425,22 @@ export function actingBlocked(state, who) {
  */
 export function withLoose(nearby = [], portal = null) {
   const dropped = new Map((portal?.state?.dropped ?? []).map((d) => [String(d.thing), d]));
-  return nearby.map((o) => {
+  // ── THE SHROUD (founder-ruled 2026-08-29) ──────────────────────────────────
+  //
+  // LOGOS § The portal ground: "A thing whose mark declares `loot` is NEITHER
+  // VISIBLE NOR TAKEABLE while the encounter on its ground is afoot: it is
+  // absent from that ground's loose things, absent from what a standpoint says
+  // stands nearby … At `spent` it appears."
+  //
+  // A FILTER, NOT A FLAG. The first shape of this hid the loot with `hidden:
+  // true` beside `loose:`, which is the same mistake in the opposite direction
+  // from the one two lines down: a page that has the id can draw the thing, and
+  // "already sitting in the room before you even beat the cake" is precisely
+  // what the founder was looking at. What is not in the answer cannot be drawn
+  // by anybody. The record still holds the mark the whole time; this is a read
+  // law and it is enforced by omission.
+  const shrouded = new Set((portal?.shrouded ?? []).map(String));
+  return nearby.filter((o) => !shrouded.has(String(o.id))).map((o) => {
     const d = dropped.get(String(o.id));
     if (!d) return o;
     // ⚠ `loose: true`, A BOOLEAN. The site filters `m.loose === true`
@@ -468,8 +508,15 @@ export function portalBlockAt(db, spineIds = []) {
   try {
     dyn = openDynamic();
     const state = encounterOn(db, dyn, place);
-    return { place, state };
-  } catch { return { place, state: null }; }
+    // THE SHROUD IS COMPUTED WHERE THE PHASE IS, and nowhere else. LOGOS § The
+    // portal ground: a loot thing is "absent from what a standpoint says stands
+    // nearby" while the encounter is afoot. `withLoose` is the one place a
+    // portal touches `nearby`, and it takes the LIST from here rather than
+    // asking the store a second time — a second reader of the same question is
+    // a second answer waiting to disagree at the one moment it matters, which
+    // is the instant the cake goes down.
+    return { place, state, shrouded: lootShroudedIn(db, place.row, state?.phase ?? null) };
+  } catch { return { place, state: null, shrouded: [] }; }
   finally { try { dyn?.close(); } catch { /* same */ } }
 }
 
