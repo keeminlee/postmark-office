@@ -244,6 +244,249 @@ test("fleeing and re-entering keeps the HP you fled with — the door is not a h
   assert.equal(after.hands.darko.hp, wounded, "the door restored them — walking out is now the strongest move in the room");
 });
 
+test("re-entering takes ONE slot back, it does not add a second — a rejoin is not a free turn", () => {
+  // LOGOS § The arena, verbatim:
+  //   "Walking out drops you from the wheel — the exit law holds mid-fight, and
+  //    the arena simply stops counting you. No jails."
+  // LOGOS § Downed, not dead, verbatim:
+  //   "Strength is ENCOUNTER-scoped, and fleeing does not heal you. Re-entering
+  //    mid-encounter rejoins you at what you left with. A door that restored you
+  //    would make walking out the strongest move in the room."
+  //
+  // ⚠ THE HP HALF OF THAT CLAUSE WAS ASSERTED (the test above); THE TURN
+  // ECONOMY HALF WAS NOT, AND IT WAS OPEN. `leave` only added the hand to
+  // `left` — the entry stayed in `joins` — and `join` cleared `left` and
+  // APPENDED A SECOND entry. `wheelOf` drops the departed by `left`, so with
+  // `left` empty of them BOTH entries survived the filter: two seats, two turns
+  // a round, stacking with every cycle through the door. That is precisely the
+  // failure the clause names, arriving through the turn economy instead of the
+  // hit points.
+  //
+  // ASSERTED THROUGH THE FOLD, not on `wheelOf` with hand-built joins: the
+  // duplicate is something the FOLD produces, so a wheelOf-level fixture would
+  // have had to be handed the bug to show it, and would have gone on passing
+  // while the fold stayed broken.
+  reset();
+  const rows = [row("darko", "join", 0), row("rei", "join", 1), boss("join", 2)];
+  const acc = [...rows];
+  let s = foldEncounter(acc, { dials: DIALS });
+  let n = 10;
+  // Turn the wheel a full lap first, so the rejoin takes the LATE-ARRIVAL
+  // branch — the one that appends. A rejoin at the open goes down the round-1
+  // path and would not discriminate.
+  for (let i = 0; i < rows.length; i += 1) {
+    acc.push(row(s.wheel.turn, "pass", n)); n += 1;
+    s = foldEncounter(acc, { dials: DIALS });
+  }
+  assert.ok(s.wheel.round > 1, "the setup never turned the wheel — the rejoin would open at round 1 and prove nothing");
+  const seats = s.wheel.order.length;
+
+  const acc2 = [...acc, row("darko", "leave", n), row("darko", "join", n + 1)];
+  n += 2;
+  const after = foldEncounter(acc2, { dials: DIALS });
+  const slots = after.wheel.order.filter((o) => o.who === "darko");
+  assert.equal(slots.length, 1,
+    `darko holds ${slots.length} slots on the wheel after ONE leave/rejoin — every extra slot is an extra turn a round, and the door can be walked through again`);
+  assert.equal(after.wheel.order.length, seats,
+    "the room is the size it was — a rejoin takes back a seat, it does not add one");
+  assert.ok(slots[0].joined_round > 1,
+    "and the seat they take back is the BOTTOM one: a returner is a late arrival, not their old place in the order");
+
+  // The economy leg, stated as turns rather than seats: over one full lap of
+  // the wheel a hand acts once. Counting SEATS alone would pass a fold that
+  // de-duplicated the answer while still walking the extra slot.
+  let s2 = after;
+  const seen = [];
+  for (let i = 0; i < after.wheel.order.length; i += 1) {
+    if (!s2.wheel.turn) break;
+    seen.push(s2.wheel.turn);
+    acc2.push(row(s2.wheel.turn, "pass", n)); n += 1;
+    s2 = foldEncounter(acc2, { dials: DIALS });
+  }
+  const mine = seen.filter((t) => t === "darko").length;
+  assert.equal(mine, 1, `darko took ${mine} turns in one lap of the wheel (${seen.join(", ")}) — walking out is the strongest move in the room`);
+
+  // AND IT DOES NOT STACK. The hole paid out per cycle, so a fix that merely
+  // capped the FIRST rejoin would still hand out a slot on the second — and
+  // the single-cycle assertion above would not have noticed.
+  const cycled = foldEncounter([...acc2, row("darko", "leave", n), row("darko", "join", n + 1)], { dials: DIALS });
+  assert.equal(cycled.wheel.order.filter((o) => o.who === "darko").length, 1,
+    "a second trip through the door bought a second slot — the exploit is priced per cycle");
+  assert.equal(cycled.wheel.order.length, seats, "and the room is still the size it was");
+});
+
+test("a rejoin KEEPS the initiative it first rolled — the door is not a re-roll", () => {
+  // LOGOS § The arena, verbatim:
+  //   "Initiative is rolled at the open and appended at the boundary. Crossing
+  //    the inner threshold rolls you in; a late arrival joins at the BOTTOM of
+  //    the order at the next round boundary, never mid-round."
+  //
+  // Ruled by the founder 2026-08-28, closing the shop the slot fix exposed:
+  // every join rolled fresh initiative, and BEFORE the first turn is taken a
+  // rejoiner is re-sorted into round 1 by that new roll. So a hand could walk
+  // out and back in at the open until the die was kind — observed climbing
+  // 9 -> 18 -> 13 -> 12 -> 18 -> 19 and taking the top of the order. The roll
+  // is now KEPT from the first join, so the shop dies without a new refusal:
+  // nothing is forbidden, there is simply nothing to buy.
+  //
+  // ⚠ THE FLATNESS ASSERTION ALONE COULD PASS ON LUCK — six d20 rolls landing
+  // equal is about one run in three million, which is rare enough to trust and
+  // not rare enough to rest a law on. The leg that CANNOT pass by luck is the
+  // roll ledger: a kept initiative records NO throw, so `rolls` holds exactly
+  // one initiative entry for this hand however many times they use the door.
+  reset();
+  const acc = [row("darko", "join", 0), row("rei", "join", 1), boss("join", 2)];
+  const seenInit = [];
+  let n = 10;
+  for (let i = 0; i < 6; i += 1) {
+    const st = foldEncounter(acc, { dials: DIALS });
+    assert.equal(st.wheel.round, 1, "the setup took a turn — this asserts the AT-THE-OPEN case, where a re-roll would re-sort the order");
+    seenInit.push(st.wheel.order.find((o) => o.who === "darko")?.initiative ?? null);
+    acc.push(row("darko", "leave", n)); n += 1;
+    acc.push(row("darko", "join", n)); n += 1;
+  }
+  const first = seenInit[0];
+  assert.ok(Number.isFinite(first), "the setup never rolled darko in at all");
+  assert.deepEqual(seenInit, Array(6).fill(first),
+    `darko's initiative moved across leave/rejoin cycles (${seenInit.join(" -> ")}) — the door is a re-roll and the order can be shopped`);
+
+  // THE LUCK-PROOF LEG. A kept roll is a roll not thrown, and the ledger says so.
+  const final = foldEncounter(acc, { dials: DIALS });
+  const thrown = final.rolls.filter((x) => x.for === "initiative" && x.actor === "darko");
+  assert.equal(thrown.length, 1,
+    `darko threw ${thrown.length} initiative rolls across six trips through the door — a kept initiative throws once, at the first join`);
+  assert.equal(final.wheel.order.find((o) => o.who === "darko").initiative, first,
+    "and the kept value is the FIRST join's roll, not the one before it");
+
+  // A FIRST-TIME JOIN STILL ROLLS, exactly as before. Without this the fix
+  // could have been "never roll initiative", which flattens every order in the
+  // town and would pass every assertion above.
+  for (const who of ["rei", "the-unlit-cake"]) {
+    assert.equal(final.rolls.filter((x) => x.for === "initiative" && x.actor === who).length, 1,
+      `${who} never rolled initiative — a first join must still roll`);
+  }
+  assert.ok(final.beats.some((b) => b.act === "join" && b.actor === "darko" && b.initiative_kept),
+    "the journal does not say the roll was kept — a reader seeing no throw for a join is owed the reason");
+});
+
+test("a wipe is a clean slate: re-entering a NEW attempt rolls initiative fresh", () => {
+  // LOGOS § Downed, not dead, verbatim:
+  //   "If the whole room goes down, the attempt ends and the room resets —
+  //    everyone wakes in the antechamber, the adversary stands again at full,
+  //    and the journal keeps the failed attempt as history."
+  //
+  // The kept-initiative rule must not leak ACROSS attempts. A new attempt is a
+  // new fight — the adversary stands again at full, so the hands roll again
+  // too. The fold gets this from the wipe emptying `joins`: with no prior entry
+  // to carry, the next join is a first join. This test pins that, because the
+  // cheapest way to implement "keep the first roll" is a per-actor memo that
+  // the wipe would never clear, and nothing else here would notice.
+  reset();
+  const D = { ...DIALS, strike: { ...DIALS.strike, beats_ac: 1, damage_die: 4 },
+              arena: { ...DIALS.arena, guest_hp: 25 },
+              adversary: { ...DIALS.adversary, hp: 200, damage_die: 20, to_hit_die: 20 } };
+  const acc = [row("darko", "join", 0), boss("join", 1)];
+  let n = 10;
+  // a leave/rejoin BEFORE the wipe, so the kept rule is demonstrably in force
+  acc.push(row("darko", "leave", n)); n += 1;
+  acc.push(row("darko", "join", n)); n += 1;
+  let s = foldEncounter(acc, { dials: D });
+  const beforeWipe = s.rolls.filter((x) => x.for === "initiative" && x.actor === "darko");
+  assert.equal(beforeWipe.length, 1, "the kept rule was not in force before the wipe — this test would prove nothing");
+  const keptInit = s.wheel.order.find((o) => o.who === "darko").initiative;
+
+  while (!s.attempts && n < 90) {
+    const t = s.wheel.turn;
+    if (!t) break;
+    acc.push(t === "the-unlit-cake" ? boss("strike", n, "darko") : row(t, "strike", n));
+    n += 1; s = foldEncounter(acc, { dials: D });
+  }
+  assert.equal(s.attempts, 1, "the setup never wiped the room");
+  assert.deepEqual(s.wheel.order, [], "nobody is in the wheel — they are next door, which is what makes the next join a FIRST one");
+
+  const after = foldEncounter([...acc, row("darko", "join", n), boss("join", n + 1)], { dials: D });
+  const rolled = after.rolls.filter((x) => x.for === "initiative" && x.actor === "darko");
+  assert.equal(rolled.length, 2,
+    `darko threw ${rolled.length} initiative rolls across two attempts — a new attempt is a new fight and rolls again`);
+  assert.equal(after.beats.filter((b) => b.act === "join" && b.actor === "darko" && b.initiative_kept).length, 1,
+    "the post-wipe join was recorded as a KEPT roll — the memo leaked across attempts");
+  assert.equal(after.wheel.order.find((o) => o.who === "darko").initiative, rolled[1].rolled,
+    "and the hand stands on the NEW throw, not the one the last attempt ended with");
+  void keptInit;   // the old attempt's value is history; the journal keeps it, the wheel does not
+});
+
+test("a rejoin while DOWN comes back down, and at the hit points it left with", () => {
+  // LOGOS § Downed, not dead, verbatim:
+  //   "At zero you are DOWN, and down is not gone. You lose your acts, the
+  //    wheel skips you, and what you were holding drops loose where you stand."
+  //   "Any ally may spend their WHOLE turn lifting you, and you come back at
+  //    partial strength. The cost is the turn; that is the entire economy of it."
+  //
+  // The discriminating case for the slot fix: a rejoin has to RETIRE the old
+  // entry, and the cheapest way to get that wrong is to retire the hand's whole
+  // standing with it — clearing `downed` or `hp` along the way would turn the
+  // door into the lift, whose price is somebody's entire turn.
+  reset();
+  const D = { ...DIALS, arena: { ...DIALS.arena, guest_hp: 1 },
+              strike: { ...DIALS.strike, beats_ac: 1 },
+              adversary: { ...DIALS.adversary, damage_die: 20 } };
+  const acc = [row("darko", "join", 0), row("rei", "join", 1), boss("join", 2)];
+  let s = foldEncounter(acc, { dials: D });
+  let n = 10;
+  while (!s.downed.includes("darko") && n < 60) {
+    const t = s.wheel.turn;
+    if (!t) break;
+    acc.push(t === "the-unlit-cake" ? boss("strike", n, "darko") : row(t, "guard", n));
+    n += 1; s = foldEncounter(acc, { dials: D });
+  }
+  assert.ok(s.downed.includes("darko"), "the setup never put darko down — this test would prove nothing");
+  assert.ok(!s.attempts, "the setup wiped the room instead of downing one hand");
+
+  const after = foldEncounter([...acc, row("darko", "leave", n), row("darko", "join", n + 1)], { dials: D });
+  assert.ok(after.downed.includes("darko"), "the door stood them up — a rejoin is not a lift, and the lift costs an ally their whole turn");
+  assert.equal(after.hands.darko.hp, 0, "and they came back at what they left with");
+  assert.equal(after.wheel.order.filter((o) => o.who === "darko").length, 1, "one slot, down or not");
+  assert.equal(after.wheel.turn === "darko", false, "the wheel still skips them");
+});
+
+test("the wipe counts a hand who left and came back ONCE — the room it names is the room that was in it", () => {
+  // LOGOS § Downed, not dead, verbatim:
+  //   "If the whole room goes down, the attempt ends and the room resets —
+  //    everyone wakes in the antechamber, the adversary stands again at full,
+  //    and the journal keeps the failed attempt as history."
+  //
+  // ⚠ THIS IS THE READER OF `joins` THAT IS NOT THE WHEEL. The wipe's own
+  // `hands` filter walks `joins` directly, so a duplicate entry survived into
+  // the beat's `everyone` list and named one hand twice — a journal row that
+  // reports a room that never existed. It is why the fix retires the stale
+  // entry in the FOLD rather than de-duplicating inside `wheelOf`: one owner of
+  // the invariant, and every reader of `joins` gets it.
+  reset();
+  const D = { ...DIALS, strike: { ...DIALS.strike, beats_ac: 1, damage_die: 4 },
+              arena: { ...DIALS.arena, guest_hp: 25 },
+              adversary: { ...DIALS.adversary, hp: 200, damage_die: 20, to_hit_die: 20 } };
+  const acc = [row("darko", "join", 0), boss("join", 1)];
+  let s = foldEncounter(acc, { dials: D });
+  let n = 10;
+  acc.push(row(s.wheel.turn, "pass", n)); n += 1;
+  s = foldEncounter(acc, { dials: D });
+  acc.push(row("darko", "leave", n)); n += 1;
+  acc.push(row("darko", "join", n)); n += 1;
+  s = foldEncounter(acc, { dials: D });
+  assert.ok(s.wheel.order.some((o) => o.who === "darko"), "the setup never got darko back in the room");
+
+  while (!s.attempts && n < 90) {
+    const t = s.wheel.turn;
+    if (!t) break;
+    acc.push(t === "the-unlit-cake" ? boss("strike", n, "darko") : row(t, "strike", n));
+    n += 1; s = foldEncounter(acc, { dials: D });
+  }
+  assert.equal(s.attempts, 1, "the setup never wiped the room");
+  const wipe = s.beats.find((b) => b.act === "wipe");
+  assert.deepEqual(wipe.everyone, ["darko"],
+    `the wipe named ${JSON.stringify(wipe.everyone)} — a hand who walked through the door twice is still one hand`);
+});
+
 // ── the NPC driver ──────────────────────────────────────────────────────────
 
 test("hostile turns are due to the DOOR, in order, and stop when a hand comes up", () => {

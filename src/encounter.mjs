@@ -96,10 +96,17 @@ export function rollOf({ at, actId, actor, die, salt = "" }) {
 /**
  * The order, the round, and whose turn it is — all derived.
  *
- * `joins` are the crossings in log order: `{who, kind, seq, initiative}`. A
- * late arrival APPENDS TO THE BOTTOM at the next round boundary and never
- * mid-round, because an order that can change under a hand mid-round is an
- * order nobody can read (LOGOS § The arena).
+ * `joins` are the hands on the wheel in log order: `{who, kind, seq,
+ * initiative}` — ONE ENTRY PER HAND. A late arrival APPENDS TO THE BOTTOM at
+ * the next round boundary and never mid-round, because an order that can change
+ * under a hand mid-round is an order nobody can read (LOGOS § The arena).
+ *
+ * ⚠ THE ONE-ENTRY-PER-HAND INVARIANT IS THE FOLD'S TO KEEP, and this function
+ * does not re-check it: a rejoin RETIRES the returner's old entry in
+ * `foldEncounter` rather than being de-duplicated here, so that the wipe and
+ * every other reader of `joins` gets the same answer the wheel does. A caller
+ * who hands this raw crossings — two entries for one hand — will get two slots,
+ * which is a hand taking two turns a round.
  *
  * `turnsTaken` counts turn-ending acts already folded. `downed` and `left` are
  * skipped: the wheel does not stop for someone who cannot act, and it does not
@@ -237,16 +244,61 @@ export function foldEncounter(rows = [], { dials = {}, weaponOf = () => null } =
 
     // ── the crossings ────────────────────────────────────────────────────────
     if (verb === "join") {
-      if (joins.some((j) => j.who === actor) && !left.has(actor)) { ignored.push({ seq: r.seq, actor, why: "already in the wheel" }); continue; }
+      const held = joins.findIndex((j) => j.who === actor);
+      if (held >= 0 && !left.has(actor)) { ignored.push({ seq: r.seq, actor, why: "already in the wheel" }); continue; }
       // A REJOIN KEEPS THE HP YOU LEFT WITH. LOGOS § Downed, not dead:
       // "Strength is ENCOUNTER-scoped, and fleeing does not heal you." Without
       // this the door is the strongest move in the room.
+      //
+      // ⚠ AND IT TAKES ONE SLOT BACK, NEVER A SECOND. `leave` never removed the
+      // entry — it only added the hand to `left`, and `wheelOf` drops the
+      // departed by consulting `left`. So clearing `left` here and appending a
+      // second entry left BOTH past the filter: two seats, two turns a round,
+      // stacking with every cycle through the door. The clause above names that
+      // exact failure for the hit points; the turn economy is the same door and
+      // the same answer. RETIRING THE STALE ENTRY IS DONE HERE, IN THE FOLD,
+      // rather than by de-duplicating inside `wheelOf`, because `joins` has
+      // readers that are not the wheel — the wipe's `hands` filter walks it
+      // directly, and a duplicate there named one hand twice in the beat that
+      // records a defeat. One owner of "one entry per hand", and every reader
+      // of `joins` inherits it.
+      //
+      // The splice happens BEFORE `wheelNow()` below, so the returner is out of
+      // the wheel at the instant their own round is computed — the same footing
+      // a first-time joiner stands on, and the same room the fight has been
+      // reporting ever since they walked out.
+      //
+      // ⚠ AND IT KEEPS THE INITIATIVE IT FIRST ROLLED. Ruled by the founder
+      // 2026-08-28, closing the shop the slot fix left standing. Every join
+      // used to roll fresh, and BEFORE the first turn is taken a rejoiner is
+      // re-sorted into round 1 by that new roll — so a hand could walk out and
+      // back in at the open until the die was kind (observed climbing 9, 18,
+      // 13, 12, 18, 19, taking the top of the order). Carrying the stale
+      // entry's value kills it WITHOUT A NEW REFUSAL: nothing is forbidden,
+      // there is simply nothing left to buy.
+      //
+      // It carries the FIRST roll, not the previous one, and transitively:
+      // cycle two copies what cycle one copied, so the value is the one thrown
+      // at the first join however many times the door is used. The bonus is
+      // already inside the kept number and must NOT be re-added.
+      //
+      // A WIPE IS A CLEAN SLATE and gets that for free: the wipe empties
+      // `joins`, so the next join finds nothing to carry and rolls as a first
+      // join. A new attempt is a new fight — the adversary stands again at
+      // full, and the hands roll again with it. Keeping the memo anywhere but
+      // in `joins` would have leaked the roll across attempts.
+      const kept = held >= 0 ? joins[held].initiative : null;
+      if (held >= 0) joins.splice(held, 1);
       left.delete(actor);
       const w = wheelNow();
       const roundJoined = joins.length === 0 ? 1 : (w.round > 1 || turnsTaken > 0 ? w.round + 1 : 1);
-      const init = roll(r, D.initDie, "initiative") + (isHostile ? D.bossInit : 0);
+      // A kept initiative is a roll NOT THROWN, so nothing lands in `rolls`.
+      // That absence is the honest receipt that no re-roll happened, and the
+      // beat says so in words for a reader who would otherwise wonder.
+      const init = kept ?? (roll(r, D.initDie, "initiative") + (isHostile ? D.bossInit : 0));
       joins.push({ who: actor, kind: isHostile ? HOSTILE : "player", seq: r.seq, initiative: init, round_joined: roundJoined });
-      beats.push({ seq: r.seq, actor, act: "join", initiative: init, joins_round: roundJoined });
+      beats.push({ seq: r.seq, actor, act: "join", initiative: init, joins_round: roundJoined,
+                  ...(kept != null ? { initiative_kept: true } : {}) });
       continue;
     }
     if (verb === "leave") {
