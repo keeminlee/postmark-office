@@ -259,6 +259,27 @@ const SEAM_KEYS = Object.freeze({
 // would report every one of these as a difference.
 const PORT_ONLY_KEYS = Object.freeze(new Set(["claim_id", "claim_status"]));
 
+/**
+ * A key-order-independent serialization, and it is NOT a widening.
+ *
+ * FOUND BY RUN 2: `{"w":4,"h":4}` on 1.0's side and `{"h":4,"w":4}` on the
+ * port's, on every sited mark. jsonb stores an object's keys sorted by length
+ * then bytes and hands them back that way, so a round trip through `geometry`
+ * reorders them. The values are identical.
+ *
+ * A comparison that reported this would be asserting something Postgres never
+ * promised, and the finding would be permanent and meaningless — which is worse
+ * than useless, because a falsifier nobody can get to green is a falsifier
+ * nobody reads. Numbers, strings and arrays are still compared exactly, and
+ * ARRAY order is preserved (jsonb keeps it), so `points` is untouched by this.
+ */
+function stable(v) {
+  if (Array.isArray(v)) return v.map(stable);
+  if (v && typeof v === "object") return Object.fromEntries(Object.keys(v).sort().map((k) => [k, stable(v[k])]));
+  return v;
+}
+const canon = (v) => JSON.stringify(stable(v));
+
 function sameMark(a, b) {
   const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
   const diffs = [];
@@ -269,7 +290,7 @@ function sameMark(a, b) {
     // key; the port reassembles from columns that hold NULL. Treating those as a
     // divergence would make every row red for a difference that is not one.
     if (x == null && y == null) continue;
-    if (JSON.stringify(x) !== JSON.stringify(y)) diffs.push(`${k}: 1.0 ${JSON.stringify(x)} · 2.0 ${JSON.stringify(y)}`);
+    if (canon(x) !== canon(y)) diffs.push(`${k}: 1.0 ${JSON.stringify(x)} · 2.0 ${JSON.stringify(y)}`);
   }
   return diffs;
 }
@@ -371,7 +392,7 @@ export function g4Overlay(oneMarks, twoMarks) {
     for (const k of OVERLAY_KEYS) {
       const x = a[k], y = b[k];
       if (x == null && y == null) continue;
-      if (JSON.stringify(x) !== JSON.stringify(y)) findings.push(`G4 ${id} · ${k}: 1.0 ${JSON.stringify(x)} · 2.0 ${JSON.stringify(y)}`);
+      if (canon(x) !== canon(y)) findings.push(`G4 ${id} · ${k}: 1.0 ${JSON.stringify(x)} · 2.0 ${JSON.stringify(y)}`);
     }
   }
   for (const id of two.keys()) if (!one.has(id)) findings.push(`G4 the port draws ${id} and 1.0's overlay does not`);

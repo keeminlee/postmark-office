@@ -270,6 +270,25 @@ export function liveMarkOf(row) {
 
   const payload = {
     ...declared,
+    // ── THE BARE SLUG, WHICH THE DOCKET PEN THROWS AWAY ───────────────────
+    //
+    // FOUND BY THE FALSIFIER, run 2: `submitClaimFromJournal` opens with
+    // `const { slug: _s, … } = payload` and never stores it — the column holds
+    // the FULL id (`<by>/<slug>`, 006's "the 1.0 path identity") and the bare
+    // one is discarded. 1.0's live mark carries both, and the collision guard
+    // speaks the bare one back to the resident: `you already have a mark
+    // "${clean.slug}"`. A port without it would refuse with `undefined` in the
+    // sentence.
+    //
+    // Derived, not stored, and the derivation is 1.0's own — `idPartsOf`:
+    //
+    //   slug: record?.slug ?? (idRest.length ? idRest.join("/") : null)
+    //
+    // and it is unambiguous for the reason world-journal.mjs states at
+    // MARKS_PREFIX: "The office's slug grammar is `^[a-z0-9][a-z0-9-]*$`
+    // (world.mjs), so an id is exactly two segments and this join is
+    // unambiguous."
+    slug: declared.slug ?? String(id).split("/").slice(1).join("/") ?? null,
     ...(geometry.at ? { at: geometry.at } : {}),
     ...(geometry.extent ? { extent: geometry.extent } : {}),
     ...(geometry.points ? { points: geometry.points } : {}),
@@ -954,6 +973,12 @@ export const DISCLOSURES = Object.freeze({
     "a declaration whose docket write failed is invisible here. `submitClaimFromJournal` is fire-and-forget " +
     "and needs an open window; the sqlite journal row lands either way. That is DESIGN-pen-flip.md's R1 " +
     "atomicity hole seen from the READ side, and it is why these reads gate the flip rather than follow it.",
+  jsonb_key_order:
+    "`geometry` and `data` come back through jsonb, which does not preserve an object's key order — Postgres " +
+    "stores keys sorted by length then bytes, so a `{w,h}` extent returns as `{h,w}`. The VALUES are identical " +
+    "and every reader that reads fields is unaffected; a reader that compares two marks by JSON.stringify is " +
+    "not, and would see every mark as changed. Compare by field or canonicalize; do not assert key order, " +
+    "because jsonb never promised it.",
   two_household_spellings:
     "`acts.household` and `claims.household` spell one fact two ways — the office key's NAME on the acts " +
     "mirror ('darko', 12 rows on world2_dev; NULL on all 2925 seeded ones), the resolved KEY on the docket " +
