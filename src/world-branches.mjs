@@ -185,37 +185,20 @@ export function readAtRef(repo, ref, path, encoding = "utf8") {
 // (deliberately: a pull would move the pen's checkout mid-write), so local main
 // only advances when some resident's walk happens to pull it. Reading engine
 // modules off that is reading whatever the last walker left behind.
-// ── THE MEMO, AND WHY A READ DOOR MAY NOT SPAWN GIT (2026-08-29, the party) ──
+// ⚑ THIS FUNCTION IS DELIBERATELY NOT MEMOISED, and the first version of the
+// party relief memoised it — which broke `freshestMainRef prefers origin/main
+// when the local branch lags`, a test that moves the ref and asks again in the
+// same breath. That test is right: this reading is a LAW ("the tick fetches and
+// never pulls, so origin is the published truth") and a law that answers from
+// five seconds ago is not the law.
 //
-// This function costs up to THREE git subprocesses — two `refExists`, one
-// `rev-list` — and `worldToolModule` calls it on EVERY module read, which
-// `readPresence` does three times per standpoint. Measured under the party's
-// own load on prod: `spawn` frames were ~10% of a saturated event loop, and
-// strace showed ~8.8k `access` (8k failing) plus 6.6k `openat` per six seconds
-// — the module-resolution storm that brownout was made of.
-//
-// The office is ONE event loop on a four-core box, so a read door that spawns
-// processes is a read door that stops the whole town while it waits.
-//
-// THE TTL IS THE HONEST BOUND. The ref moves when the tick fetches, which is
-// once a crossing; five seconds of staleness is far inside that, and far less
-// stale than the thing this function's own comment says it exists to fix
-// ("whatever the last walker left behind"). A wrong answer here is a module
-// read from a ref up to five seconds old — not a wrong world, an old one, and
-// only for the length of a blink.
-const REF_TTL_MS = 5000;
-const _refMemo = new Map();   // repo -> { ref, at }
-
+// It costs up to three git subprocesses, and the relief it was blocking is real
+// — but the cost belongs to the CALLER that asks per request, not to the
+// reading itself. `worldToolModule` is where the memo went instead: it asks
+// this once per window rather than once per read, which removes the same
+// subprocess storm without touching what the answer means. Fix the caller's
+// cadence, not the answer's truth.
 export function freshestMainRef(repo) {
-  const hit = _refMemo.get(repo);
-  if (hit && Date.now() - hit.at < REF_TTL_MS) return hit.ref;
-  const ref = freshestMainRefUncached(repo);
-  _refMemo.set(repo, { ref, at: Date.now() });
-  return ref;
-}
-
-/** The real reading, unmemoized — kept whole so the memo above adds no law. */
-export function freshestMainRefUncached(repo) {
   const local = refExists(repo, "refs/heads/main");
   const remote = refExists(repo, "refs/remotes/origin/main");
   if (local && remote) {
