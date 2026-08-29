@@ -62,6 +62,7 @@ import { pathToFileURL } from "node:url";
 
 import { deriveLaw, headSha, LAW_REPO_KEY } from "./law-ingest.mjs";
 import { deriveStamps, TOWN_REPO_KEY } from "./stamp-ingest.mjs";
+import { deriveRoll } from "./roll-ingest.mjs";
 
 // Canonical JSON: keys sorted at every depth, so two structurally equal values
 // have one spelling. Both sides are JS values by the time they get here — `pg`
@@ -155,7 +156,16 @@ async function checkLaw(client, lawRepo) {
     counts: { derived: derived.length, db: db.length, identities: identities.length, db_identities: dbIdent.length }, findings };
 }
 
-/** The town lane: stamp_projection rows at the head sha. */
+/**
+ * The town lane: BOTH town projections at the head sha — `stamp_projection` and
+ * `town_roll` — because one pen writes them in one transaction against one head
+ * (stamp-ingest.mjs § THE TOWN'S SECOND PROJECTION). Checking one and not the
+ * other would leave the guard covering half of what the head promises.
+ *
+ * The roll also carries the one CROSS-PROJECTION invariant this store has, and
+ * it is here rather than in a lane of its own because this is the only tool that
+ * holds both sides at their recorded shas.
+ */
 async function checkStamps(client, townRepo) {
   const head = await headOf(client, TOWN_REPO_KEY);
   if (!head) return { lane: TOWN_REPO_KEY, status: "no-head", findings: [`projection_heads has no '${TOWN_REPO_KEY}' row — nothing has been ingested, so there is nothing to hold to the repo`] };
@@ -170,12 +180,44 @@ async function checkStamps(client, townRepo) {
   const db = (await client.query(
     "SELECT handle, household, balance FROM stamp_projection WHERE town_sha = $1", [head.sha])).rows;
 
-  const findings = diffKeyed(derived, db, {
-    label: "stamp_projection", idOf: (r) => r.handle,
-    fieldsOf: (r) => ({ household: r.household, balance: Number(r.balance) }),
-  });
+  const { rows: rollDerived } = await deriveRoll({ townRepo });
+  const rollDb = (await client.query(
+    "SELECT handle, data FROM town_roll WHERE town_sha = $1", [head.sha])).rows;
+
+  const findings = [
+    ...diffKeyed(derived, db, {
+      label: "stamp_projection", idOf: (r) => r.handle,
+      fieldsOf: (r) => ({ household: r.household, balance: Number(r.balance) }),
+    }),
+    ...diffKeyed(rollDerived, rollDb, {
+      label: "town_roll", idOf: (r) => r.handle, fieldsOf: (r) => ({ data: r.data }),
+    }),
+  ];
+
+  // ── THE INVARIANT: identities ⊆ town_roll ─────────────────────────────────
+  //
+  // EVERY WORLD IDENTITY IS A TOWN RESIDENT. `identities` is the world repo's
+  // `households.json`, projected; `town_roll` is who the town's own WHITE_PAGES
+  // admits. A handle in the first and not the second is a world that has granted
+  // standing to somebody the town has never heard of — which is what the
+  // `dylan-android-husband` alias was until it was stripped from world main at
+  // `559301d4` (2026-08-29). It is not the same shape as the reverse: the town
+  // is the wider list BY DESIGN (that is this whole ruling), and a resident with
+  // no world household is simply someone who has not been grouped yet.
+  //
+  // One line, because it is one sentence of law and it can fail: put any handle
+  // into households.json that WHITE_PAGES does not carry and this reds.
+  const rollHandles = new Set(rollDerived.map((r) => r.handle));
+  const orphans = (await client.query("SELECT handle FROM identities ORDER BY handle")).rows
+    .map((r) => r.handle).filter((h) => !rollHandles.has(h));
+  if (orphans.length) {
+    findings.push(`identities ⊄ town_roll: ${orphans.length} world identit${orphans.length === 1 ? "y is" : "ies are"} not in the town's roll ` +
+      `(${orphans.join(", ")}) — every world identity is a town resident; the world cannot grant standing to a handle WHITE_PAGES does not carry`);
+  }
+
   return { lane: TOWN_REPO_KEY, status: findings.length ? "drift" : "equal", sha: head.sha,
-    counts: { derived: derived.length, db: db.length }, findings };
+    counts: { derived: derived.length, db: db.length, roll_derived: rollDerived.length, roll_db: rollDb.length,
+              identities_outside_the_roll: orphans.length }, findings };
 }
 
 // ── CLI ──────────────────────────────────────────────────────────────────────

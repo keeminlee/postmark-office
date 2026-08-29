@@ -731,8 +731,12 @@ export function whereIs(handle, { world = null, departures = [], at = fractional
  *  the union honest ... 28 of 103 residents were not answered wrongly, they
  *  were never asked about."
  *
- * The roll in 2.0 is `identities` — the projection of the same `households.json`
- * the fold reads, so this door asks about exactly the town's own roster.
+ * The roll in 2.0 is `town_roll` — the TOWN repo's WHITE_PAGES at the pinned
+ * `town_sha`, which is the same roster 1.0's `townRoll()` hands its own doors.
+ * It was `identities` (the world repo's households.json) until Keemin ruled the
+ * seam on 2026-08-29; that list was NARROWER than the town's by twelve handles,
+ * and #1864's whole lesson is that a narrower roster does not answer wrongly —
+ * it leaves people unasked-about.
  */
 export function positionRoster({ departures = [], world = null, roll = [] } = {}) {
   return [
@@ -1054,7 +1058,7 @@ export function passageRecords(rows, { strict = true } = {}) {
 // true of the store as it is rather than true by law, so each gets a check that
 // fires when it stops being true instead of a comment nobody re-reads.
 
-export function admissionNotes({ marks = [], identities = [], departureRecords: recs = [], world = null } = {}) {
+export function admissionNotes({ marks = [], identities = [], roll = null, departureRecords: recs = [], world = null } = {}) {
   const notes = [];
   const w = world ?? worldFromRows({ marks, identities });
 
@@ -1065,12 +1069,22 @@ export function admissionNotes({ marks = [], identities = [], departureRecords: 
                `neither a walk nor ground drops out of the answer instead of standing at the town's porch.`);
   }
 
-  // 2. THE ROLL. `identities` is the roster this door asks about. An empty one
-  //    silently narrows the question to "who has DONE something", which is
-  //    issue #1864 exactly.
+  // 2. THE ROLL. `town_roll` is the roster this door asks about since Keemin's
+  //    2026-08-29 ruling. An empty one silently narrows the question to "who has
+  //    DONE something", which is issue #1864 exactly. The note is about the ROLL
+  //    THE CALLER ACTUALLY USED, not about a table it might have read — an
+  //    answer built from an empty roll is #1864 whatever the store holds.
+  if (Array.isArray(roll) && !roll.length) {
+    notes.push(`the town roll is empty — the roll is the third term of the roster union, and without it this ` +
+               `answer can only contain residents with a walk record or ground (#1864: 28 of 103 went unasked-about). ` +
+               `Run stamp-ingest.mjs against a town checkout at projection_heads['town'].`);
+  }
+  // `identities` is no longer the roll, but it is still the whole of what this
+  // answer knows about HOUSEHOLDS — `householdOf` falls back to the handle
+  // without it, and `parcelsFor` then groups nobody with their family.
   if (!identities.length) {
-    notes.push(`identities is empty — the roll is the third term of the roster union, and without it this ` +
-               `answer can only contain residents with a walk record or ground (#1864: 28 of 103 went unasked-about).`);
+    notes.push(`identities is empty — the roll still names everyone, but no resident can be grouped into a ` +
+               `household, so a resident standing on a housemate's parcel drops back to the porch.`);
   }
 
   // 3. THE HANDLE/HOUSEHOLD IDENTITY. 1.0's `mark.household` is a handle and
@@ -1110,15 +1124,15 @@ export const DISCLOSURES = Object.freeze({
   no_staleness: "no staleness to disclose: 2.0 derives position at the instant asked, from the store's own " +
                 "records. There is no crystallized entities table to be behind the ledger, so 1.0's " +
                 "`ledger_moved` / `as_of` disclosures have nothing to describe.",
-  // THE ROLL'S SOURCE IS A RULING, and this answer names which one it took.
-  // 1.0's roll arrives from the TOWN side (`ctx.roll`, the door the #1864 report
-  // came through); 2.0's is `identities`, the projection of the world repo's
-  // `households.json`. The two rosters overlap but neither contains the other —
-  // measured against the lab's 1.0 door on 2026-08-28, twelve handles were in
-  // 1.0's roll and not in `identities`, and two the other way. Whether the 2.0
-  // roll should be the town's or the world's is not this port's call.
-  roll_source: "the roll here is `identities` — the world repo's households.json, projected. 1.0's doors " +
-               "take the TOWN's roll instead, and the two are not the same list: a handle the town knows " +
-               "and households.json does not is asked about by 1.0 and not by this door. Which roster the " +
-               "2.0 read tier should ask is unruled.",
+  // THE ROLL'S SOURCE WAS UNRULED AND IS NOW RULED (Keemin, 2026-08-29): the
+  // TOWN's roll, for #1864's reason. `town_roll` is that roster as a projection
+  // of the town repo at the pinned `town_sha`, derived by the town's own reader
+  // under the door's own admission grammar (roll-ingest.mjs). `identities` keeps
+  // its own job — the household KEY a resident's ground is grouped by — so this
+  // answer reads two rosters for two questions and says so.
+  roll_source: "the roll here is `town_roll` — the TOWN repo's WHITE_PAGES at the pinned town_sha, which is " +
+               "the same roster 1.0's doors take (`ctx.roll`). Household grouping still comes from " +
+               "`identities` (the world repo's households.json): the roll says who to ask about, the " +
+               "identities say whose ground counts as yours. A resident in the roll with no identity row " +
+               "is asked about and stands alone — registry lag never unplaces anyone.",
 });

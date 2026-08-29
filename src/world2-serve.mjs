@@ -41,6 +41,7 @@
 
 import { readDraftClaims } from "./world2-claims.mjs";
 import * as live from "../world2/tools/live-reads.mjs";
+import * as talk from "../world2/tools/conversations.mjs";
 
 const state = { pool: null };
 
@@ -261,24 +262,41 @@ export async function world2Serve(path, searchParams) {
     if (at.error) return at.error;
     const near = pointOf(searchParams);
     if (near?.error) return near.error;
-    const [{ rows: depRows }, { rows: markRows }, { rows: idRows }] = await Promise.all([
+    //
+    // THE ROLL IS THE TOWN'S (Keemin, 2026-08-29). It was `identities` — the
+    // world repo's households.json — and that list is NARROWER than the town by
+    // twelve handles, which #1864 already ruled on: a narrower roster does not
+    // answer wrongly, it leaves residents unasked-about. `town_roll` is the town
+    // repo's WHITE_PAGES at the PINNED head, joined through `projection_heads`
+    // rather than read at `max(town_sha)`, so the roster this answer used is the
+    // roster a window pinning that sha was cleared against.
+    //
+    // `identities` is still read, and still does its own job: it is where the
+    // HOUSEHOLD KEY comes from (`worldFromRows` → `world.households` →
+    // `householdOf` → `parcelsFor`). Two rosters, two questions — the roll says
+    // who to ask about, the identities say whose ground counts as yours.
+    const [{ rows: depRows }, { rows: markRows }, { rows: idRows }, { rows: rollRows }] = await Promise.all([
       p.query(`SELECT id, at, crossing, actor, action, payload FROM acts
                 WHERE action = ANY($1) ${live.DEPARTURE_ORDER_SQL}`, [live.DEPARTURE_ACTIONS]),
       p.query("SELECT slug, kind, owner, household, geometry, status, data FROM marks WHERE status = 'standing'"),
       p.query("SELECT handle, household FROM identities"),
+      p.query(`SELECT r.handle FROM town_roll r
+                 JOIN projection_heads h ON h.repo = 'town' AND h.sha = r.town_sha
+                ORDER BY r.handle`),
     ]);
     let derived;
     try { derived = live.departureRecords(depRows); }
     catch (e) { return { code: 500, body: { error: "bounce", defect: "a departure act matches no known era", hint: String(e.message).slice(0, 400) } }; }
     const world = live.worldFromRows({ marks: markRows, identities: idRows });
     const fc = live.fractionalCrossing(at.ms);
-    const roll = idRows.map((i) => i.handle);
+    const roll = rollRows.map((r) => r.handle);
     const residents = live.everyonePlaced({ world, departures: derived.records, at: fc, roll });
-    const notes = live.admissionNotes({ marks: markRows, identities: idRows, departureRecords: derived.records, world });
+    const notes = live.admissionNotes({ marks: markRows, identities: idRows, roll, departureRecords: derived.records, world });
     const body = {
       what: "every placed resident at one instant — a walk if they have one, else their ground, else the town's porch",
       evaluated_at: new Date(at.ms).toISOString(), crossing: fc,
-      roster: { walk_records: new Set(derived.records.map((d) => d.handle)).size, parcels: world.parcels.length, roll: roll.length },
+      roster: { walk_records: new Set(derived.records.map((d) => d.handle)).size, parcels: world.parcels.length,
+                roll: roll.length, roll_source: "town_roll @ projection_heads['town']", households_known: idRows.length },
       count: residents.length,
       residents,
       disclosed: [live.DISCLOSURES.frames, live.DISCLOSURES.no_staleness, live.DISCLOSURES.roll_source, ...notes],
@@ -326,6 +344,53 @@ export async function world2Serve(path, searchParams) {
       heard: live.earshotAt(emissions, near, { radiusM, mode }).sort((a, b) => a.distance_m - b.distance_m) } };
   }
 
+  if (path === "/world2/conversations") {
+    // D4's READ PORT. 1.0 serves `/world/conversations` out of
+    // `voices-log.jsonl` — a box-local file, never git, backed up by nothing —
+    // and that file dies at cutover. This is the same page's answer, derived
+    // from `acts`: the crystallized emission record the seed imported, plus the
+    // live `say` acts the lane hook has mirrored since 2026-08-28.
+    //
+    // `?closed=` and `?voices=` are the 1.0 caller's own two dials
+    // (`closedMax`, `voiceCap`); `?at=` evaluates the whole answer at an instant,
+    // like every other read in this tier — a thread is "live" relative to a
+    // clock, and this door can be asked about any of them.
+    //
+    // THE MARKS READ IS FOR THE ANCHORS, not for the marks. A live say stores
+    // the witnessed line (anchor + offset), so composing it back to a point
+    // needs the anchor mark's centre — world.mjs's own
+    // `(id) => marks.find((m) => m.id === id)?.at`.
+    const at = clockOf(searchParams);
+    if (at.error) return at.error;
+    const n = (k, d) => { const v = Number(searchParams?.get(k)); return Number.isFinite(v) && v > 0 ? v : d; };
+    const [{ rows }, { rows: markRows }] = await Promise.all([
+      p.query(`SELECT id, at, actor, action, at_anchor, at_dx, at_dy, payload FROM acts
+                WHERE action = ANY($1) ${talk.VOICE_ORDER_SQL}`, [talk.VOICE_ACTIONS]),
+      p.query("SELECT slug, geometry, data FROM marks WHERE status = 'standing'"),
+    ]);
+    const centres = new Map(markRows.map((m) => [m.slug, m.geometry?.at ?? null]));
+    const dials = talk.sayDials(markRows);
+    let derived;
+    try { derived = talk.voiceRecords(rows, { centreOf: (id) => centres.get(id) ?? null }); }
+    catch (e) { return { code: 500, body: { error: "bounce", defect: "a voice act matches no known era", hint: String(e.message).slice(0, 400) } }; }
+    const body = talk.conversationsOf(derived.voices, {
+      now: at.ms,
+      earshotM: dials.earshot_m.value,
+      closeMs: dials.conversation_lull_min.ms,
+      fadeMs: dials.fade_min.ms,
+      closedMax: n("closed", 40), voiceCap: n("voices", 80),
+    });
+    const fellBack = talk.sayDialsDisclosure(dials);
+    return { code: 200, body: {
+      what: "every conversation in the world, live ones first — a thread is a derivation over the record, not an object",
+      evaluated_at: new Date(at.ms).toISOString(),
+      voices: derived.voices.length, eras: derived.eras,
+      dials: Object.fromEntries(Object.entries(dials).map(([k, d]) => [k, { value: d.value, source: d.source }])),
+      ...body,
+      disclosed: [talk.DISCLOSURES.eras, talk.DISCLOSURES.presence, talk.DISCLOSURES.no_window, ...(fellBack ? [fellBack] : [])],
+    } };
+  }
+
   if (path === "/world2/occupancy") {
     // The containment stack, folded from the crossings. P-036's door: the
     // consent word rides every row, and a resident refused at a threshold is in
@@ -359,7 +424,7 @@ export async function world2Serve(path, searchParams) {
 
   if (path === "/world2/status") {
     const counts = {};
-    for (const t of ["acts", "claims", "marks", "law_projection", "stamp_projection", "identities"]) {
+    for (const t of ["acts", "claims", "marks", "law_projection", "stamp_projection", "identities", "town_roll"]) {
       const { rows: [r] } = await p.query(`SELECT count(*)::int AS c FROM ${t}`);
       counts[t] = r.c;
     }

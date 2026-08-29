@@ -40,7 +40,10 @@
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { computeStanding, admissionNotes } from "./standing.mjs";
+// Steps 6 and 7's law, extracted the day the REVIEW lane became a second tool
+// holding the same `clearing_job` pen (`review-rule.mjs`). One definition, two
+// callers — see materialize.mjs's header for why it is not a copy.
+import { materializeClaims, recomputeStanding, slugOf } from "./materialize.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const arg = (n) => { const i = process.argv.indexOf(n); return i === -1 ? null : process.argv[i + 1]; };
@@ -97,13 +100,6 @@ try {
 
   const outcomes = new Map(); // id -> { status, refusal_check }
   const decide = (id, status, check = null) => outcomes.set(id, { status, refusal_check: check });
-
-  // The identity a claim will materialize under. `claims.slug` since 006; the
-  // `geometry->>'slug'` fallback is for the lab rows written before it, and dies
-  // with them (anti-rebake rule 5: every shim ships with its own death — this one
-  // is over when `SELECT count(*) FROM claims WHERE slug IS NULL AND geometry ? 'slug'`
-  // is zero, which 006's own UPDATE already made true on dev).
-  const slugOf = (c) => c.slug ?? c.geometry?.slug ?? null;
 
   // 1 · refused-duplicate: "dropped/the-already-standing → refused-duplicate".
   //     A claim whose slug already stands (same slug in marks, standing).
@@ -197,22 +193,10 @@ try {
     }
   }
 
-  // 6 · everything still undecided LOCKS and materializes.
-  //
-  //     THE MARK CARRIES THE WHOLE RECORD, not the columns that existed before 004
-  //     (the replay gate's finding 3). `data` is where the record's remainder
-  //     lives — `date`, `image`, `pre`, `slot`, and the standing the fold
-  //     answered — and `parent` is the continuation edge a predicated mark IS.
-  //     Materializing without them made every mark that came through the candle
-  //     strictly poorer than one the seed imported: 19 of them after two
-  //     settlements, each with a NULL `data` where 1.0 has a whole frontmatter.
-  //
-  //     A CLAIM THAT NAMES A MARK MATERIALIZES, geometry or no geometry (finding
-  //     1). The old gate was `c.geometry?.slug`, so a de-sited claim — 44% of 1.0's
-  //     register is predicated or naming — locked and then produced nothing, with
-  //     no refusal and nothing to notice. 004 made that row representable
-  //     (`sited_marks_have_a_where` permits NULL geometry for exactly these
-  //     kinds); this is the writer catching up with it.
+  // 6 · everything still undecided LOCKS and materializes. The materialization
+  //     itself is `materialize.mjs`'s — the same code the REVIEW lane's ruling
+  //     runs, so a mark that arrives by a mind's ruling and one that arrives by
+  //     the candle are the same row shape by construction.
   const sixCount = { locked: 0, refused: 0, held_review: 0, retracted_before_close: 0, pending_carried: 0 };
   const materialize = [];
   for (const c of pending) {
@@ -221,55 +205,11 @@ try {
       [c.id, o.status, o.refusal_check]);
     sixCount[o.status === "locked" ? "locked" : o.status === "held_review" ? "held_review" : "refused"] += 1;
     if (o.status !== "locked") continue;
-    if (slugOf(c)) materialize.push(c);        // a stake or escrow claim names no mark
+    materialize.push(c);
   }
 
-  // PARENTS BEFORE CHILDREN. `marks.parent` is a self-referencing foreign key and
-  // it is NOT deferrable (004), so two marks locking in one window with one
-  // predicated on the other are refused mid-transaction unless they go in order —
-  // and the whole window would roll back on it, which is the right failure and a
-  // needless one. This is seed-import's `orderByParent`, asked of a window instead
-  // of a whole register: a claim whose parent is not another claim in THIS batch
-  // is already satisfiable (the parent stands from an earlier window, or there is
-  // none), so it goes first.
-  const inBatch = new Set(materialize.map((c) => String(c.id)));
-  const ordered = [];
-  const emitted = new Set();
-  let waiting = materialize.slice();
-  while (waiting.length) {
-    const ready = waiting.filter((c) => !c.parent || !inBatch.has(String(c.parent)) || emitted.has(String(c.parent)));
-    if (!ready.length) {
-      throw new Error(`the parent edges among ${waiting.length} claim(s) in window ${windowId} form a cycle, e.g. ` +
-        waiting.slice(0, 3).map((c) => slugOf(c)).join(", "));
-    }
-    for (const c of ready) { ordered.push(c); emitted.add(String(c.id)); }
-    const readySet = new Set(ready);
-    waiting = waiting.filter((c) => !readySet.has(c));
-  }
+  await materializeClaims(q, { claims: materialize, amends, windowId, label: `window ${windowId}` });
 
-  for (const c of ordered) {
-    const slug = slugOf(c);
-    const amended = amends.get(String(c.id));
-    if (amended) {
-      // AN AMEND REWRITES THE MARK IT CONTINUES. Not a new row: the slug is
-      // unique, the mark's id is its FIRST locking claim's id, and the register
-      // has one standing mark per slug. `locked_window` moves to this window,
-      // because that is when this version of the record was ruled.
-      await q(
-        `UPDATE marks SET kind = $2, owner = $3, household = $4, body = $5, geometry = $6,
-                          bbox = $7, data = $8, parent = $9, locked_window = $10
-           WHERE id = $1`,
-        [amended.id, c.class, c.claimant, c.household, c.body, c.geometry, c.bbox,
-         c.data, c.parent, windowId]);
-      continue;
-    }
-    await q(
-      `INSERT INTO marks (id, slug, kind, owner, household, body, geometry, bbox, status,
-                          locked_window, data, parent)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'standing',$9,$10,$11)`,
-      [c.id, slug, c.class, c.claimant, c.household,
-       c.body, c.geometry, c.bbox, windowId, c.data, c.parent]);
-  }
   const { rows: [{ count: retracted }] } = await q(
     "SELECT COUNT(*)::int AS count FROM claims WHERE window_id = $1 AND status = 'retracted'", [windowId]);
   sixCount.retracted_before_close = retracted;
@@ -302,38 +242,28 @@ try {
   //     ONLY THE ROWS THAT MOVED are written, and the count is a receipt: a
   //     recompute that touched every row every window would tell a reader nothing
   //     about whether the world moved.
-  const { rows: standing } = await q(
-    `SELECT id::text, slug, kind, owner, household, geometry, parent::text, data
-       FROM marks WHERE status = 'standing'`);
-  const tiers = computeStanding(standing);
-  const moved = [];
-  for (const m of standing) {
-    const next = tiers.get(m.slug);
-    // A standing mark the walk did not answer for is not a mark with an unknown
-    // standing; it is a register the recompute could not resolve, and writing the
-    // stale value would be the finding-4 bug wearing a receipt. Seed-import makes
-    // the same refusal about the fold ("A record the fold does not answer for
-    // STOPS the seed").
-    if (next == null) throw new Error(`the standing walk returned no verdict for ${m.slug}`);
-    if ((m.data?.tier ?? null) === next) continue;
-    await q(
-      `UPDATE marks SET data = jsonb_set(coalesce(data, '{}'::jsonb), '{tier}', to_jsonb($2::text)) WHERE id = $1`,
-      [m.id, next]);
-    moved.push({ slug: m.slug, from: m.data?.tier ?? null, to: next });
-  }
-  // The premises the port stands on that are FACTS about today's register rather
-  // than law (standing.mjs § the tripwires). Recorded in the receipts, not
-  // thrown: a window must not fail to close because the town outgrew a premise,
-  // but nobody should have to go looking for the day it did.
-  const notes = admissionNotes(standing);
+  //
+  //     The walk itself is `materialize.mjs`'s, shared with the REVIEW lane for
+  //     the same reason step 6 is: a ruling that grants ground has to move the
+  //     neighbours' standing exactly as a clearing does.
+  const { standing, moved, notes } = await recomputeStanding(q);
   for (const n of notes) console.log(`  ⚑ standing: ${n}`);
 
   // Close, pin, open the successor.
+  //
+  // `receipts` is REPLACED, so anything already written there has to be carried
+  // forward by name. Today that is `review_rulings` — a mind's ruling on a
+  // `held_review` contest lands on the OPEN window's receipts as it happens
+  // (`review-rule.mjs`), and this UPDATE would otherwise erase the record of a
+  // decision the town made inside this window. A receipt a later write silently
+  // drops is worse than one nobody wrote.
+  const carried = Array.isArray(win.receipts?.review_rulings) ? win.receipts.review_rulings : null;
   await q(
     `UPDATE windows SET status = 'closed', cleared_at = now(), law_sha = $2, town_sha = $3, receipts = $4
      WHERE id = $1`,
     [windowId, lawSha, townSha, JSON.stringify({
       six_count: sixCount,
+      ...(carried ? { review_rulings: carried } : {}),
       computed_against: { law_sha: lawSha, town_sha: townSha },
       standing: {
         recomputed: standing.length, moved: moved.length,

@@ -368,6 +368,89 @@ export function e5Union(records, world, roll, at) {
 }
 
 /**
+ * E5c · THE ROLL THE UNION ASKS — and the gap it was ruled to close.
+ *
+ * E5 proves the port and 1.0 agree over whatever roster they are BOTH handed.
+ * It is silent about which roster that should be, and that silence is exactly
+ * where the twelve residents went: the door asked `identities` (the world repo's
+ * households.json, 102 handles) while 1.0's own doors ask the TOWN's roll
+ * (`townRoll()` → `residentList`, 132 handles). Nothing was ever red. Twelve
+ * people were simply not in the question.
+ *
+ *   #1864, quoted in `positions.mjs` and carried in `positionRoster`: "28 of 103
+ *   residents were not answered wrongly, they were never asked about."
+ *
+ * So this asks two things the union cannot ask itself:
+ *
+ *   THE EQUALITY — 1.0's own `publicResidents` and the port, over the TOWN roll,
+ *   agree resident for resident. That is E5's comparison with the ruled roster
+ *   substituted in, and it is what makes the wider roll safe to take: the twelve
+ *   new names are answered by the SAME law, not merely added to a list.
+ *
+ *   THE CLOSING, as a receipt rather than a gate — how many residents the answer
+ *   holds under the town's roll and how many it held under `identities`. A gate
+ *   would be wrong here: the numbers move with the town, and a falsifier that
+ *   reds when somebody joins is a falsifier people turn off. What IS a finding
+ *   is the gap failing to close at all — the town's roll answering for no more
+ *   residents than the narrow one did, which would mean the repoint did nothing.
+ */
+export function e5cRollParity(records, world, { usedRoll, ruledRoll, identityRoll }, at) {
+  const findings = [];
+  if (!ruledRoll.length) {
+    return { findings: ["E5c town_roll is empty — the ruled roster has no rows at the ingested head, and a union " +
+                        "checked against an absent roll is the #1864 defect being re-certified"], compared: 0 };
+  }
+  // THE ROSTER THE ANSWER USED IS THE ROSTER THAT WAS RULED. `usedRoll` is what
+  // the read path passed to `everyonePlaced`; `ruledRoll` is `town_roll` at the
+  // pinned head. A door that reads the ruled table and then asks a different
+  // list is the whole defect wearing a fix, and every equality below would stay
+  // green through it — they compare the port with 1.0 over ONE roster, and a
+  // narrowed roster is handed to both.
+  const unasked = ruledRoll.filter((h) => !usedRoll.includes(h));
+  if (unasked.length) {
+    findings.push(`E5c the answer asked about ${usedRoll.length} handles and the ruled roll holds ${ruledRoll.length} — ` +
+      `${unasked.length} resident(s) the town names went unasked-about (${unasked.slice(0, 8).join(", ")}${unasked.length > 8 ? ", …" : ""}). ` +
+      `#1864: "they were never asked about."`);
+  }
+
+  const wide = live.everyonePlaced({ world, departures: records, at, roll: usedRoll });
+  const narrow = live.everyonePlaced({ world, departures: records, at, roll: identityRoll });
+
+  // The equality, over the roster the answer used. `everyonePlaced` drops the
+  // vessel from BOTH the roster and the departures before it asks, so the oracle
+  // is fed the roster it actually built rather than the raw roll.
+  const notVessel = (h) => !live.NON_ENTITY_ACTORS.includes(h);
+  const deps = records.filter((d) => notVessel(d.handle));
+  const roster = live.positionRoster({ departures: deps, world, roll: usedRoll.filter(notVessel) }).filter(notVessel);
+  const o = whereMod.publicResidents(roster, { world, departures: deps, at });
+  const byO = new Map(o.map((r) => [r.handle, r]));
+  const byM = new Map(wide.map((r) => [r.handle, r]));
+  let compared = 0;
+  for (const [h, ro] of byO) {
+    const rm = byM.get(h);
+    if (!rm) { findings.push(`E5c 1.0 places ${h} from the town roll and the port does not`); continue; }
+    compared++;
+    for (const k of ["x", "y", "source", "moving", "mark_id"]) {
+      if (JSON.stringify(ro[k]) !== JSON.stringify(rm[k])) {
+        findings.push(`E5c publicResidents disagrees at ${h} · field ${k}\n      1.0:  ${JSON.stringify(ro[k])}\n      port: ${JSON.stringify(rm[k])}`);
+        break;
+      }
+    }
+  }
+  for (const h of byM.keys()) if (!byO.has(h)) findings.push(`E5c the port places ${h} from the town roll and 1.0 does not`);
+
+  // The closing. A finding only if the wider roll bought nothing.
+  const gained = wide.filter((r) => !narrow.some((n) => n.handle === r.handle)).map((r) => r.handle);
+  if (ruledRoll.length > identityRoll.length && !gained.length) {
+    findings.push(`E5c the town roll holds ${ruledRoll.length} handles against identities' ${identityRoll.length}, and the ` +
+      `answer gained nobody — the roll is being read and then not asked, which is the repoint not happening`);
+  }
+  return { findings, compared,
+    note: `roll ${ruledRoll.length} (identities ${identityRoll.length}) · present ${wide.length} (was ${narrow.length})` +
+          (gained.length ? ` · gained ${gained.length}: ${gained.slice(0, 6).join(", ")}${gained.length > 6 ? ", …" : ""}` : "") };
+}
+
+/**
  * THE SHIM AGAINST THE FOLD. E5 proves the port and 1.0 agree over one world
  * object; this proves the world object built from DB rows is the same world the
  * fold builds from the checkout. It is the check that catches the household /
@@ -561,6 +644,11 @@ try {
   const { rows: emitRows } = await client.query(EMISSION_SELECT);
   const { rows: markRows } = await client.query("SELECT slug, kind, owner, household, geometry, status, data FROM marks WHERE status = 'standing'");
   const { rows: idRows } = await client.query("SELECT handle, household FROM identities");
+  // The ruled roster, at the PINNED head — the same join the door makes, so the
+  // falsifier and the door cannot be asking two different rolls.
+  const { rows: rollRows } = await client.query(
+    `SELECT r.handle FROM town_roll r
+       JOIN projection_heads h ON h.repo = 'town' AND h.sha = r.town_sha ORDER BY r.handle`);
 
   const ledgerPath = join(REPO, "WORLD/walk-ledger.md");
   if (!existsSync(ledgerPath)) die(`no WORLD/walk-ledger.md under ${REPO} — E1 and E2 have no oracle, and a run that skipped them would report a green it did not earn`);
@@ -569,7 +657,8 @@ try {
   const derived = live.departureRecords(depRows);
   const passages = live.passageRecords(passRows);
   const world = live.worldFromRows({ marks: markRows, identities: idRows });
-  const roll = idRows.map((i) => i.handle);
+  const roll = rollRows.map((r) => r.handle);
+  const identityRoll = idRows.map((i) => i.handle);
 
   // The instants. Every branch of positionAt wants one: before any leg started,
   // inside the record, and far past every arrival.
@@ -590,6 +679,8 @@ try {
     E4: e4Arithmetic(derived.records, instants),
     E5: e5Union(derived.records, world, roll, live.fractionalCrossing(nowMs)),
     E5b: await e5bShimVsFold(world),
+    E5c: e5cRollParity(derived.records, world,
+      { usedRoll: roll, ruledRoll: roll, identityRoll }, live.fractionalCrossing(nowMs)),
     // Asked at the record's busiest instants — asking "now" over a frozen record
     // compares two empty lists and calls it agreement.
     E6emissions: e6EmissionsAcross(emitRows, busiestInstants(emitRows)),
@@ -603,10 +694,10 @@ try {
   out = {
     world_sha: sha,
     store: { departures: depRows.length, passages: passRows.length, emissions: emitRows.length,
-             marks: markRows.length, identities: idRows.length, eras: derived.eras },
+             marks: markRows.length, identities: idRows.length, town_roll: rollRows.length, eras: derived.eras },
     equalities: Object.fromEntries(Object.entries(e).map(([k, r]) => [k, { compared: r.compared, findings: r.findings.length, ...(r.note ? { note: r.note } : {}) }])),
     unchecked, findings,
-    notes: live.admissionNotes({ marks: markRows, identities: idRows, departureRecords: derived.records, world }),
+    notes: live.admissionNotes({ marks: markRows, identities: idRows, roll, departureRecords: derived.records, world }),
     refusals: [...derived.refusals, ...passages.refusals],
     vendor_drift: vendorDrift(),
   };
@@ -703,6 +794,17 @@ try {
       return { bit: 1, findings: threw ? ["the strict read refuses an act it cannot explain"] : [] };
     });
 
+    // 8 · THE ROLL NARROWED BACK to `identities` — the door as it stood before
+    //     Keemin's 2026-08-29 ruling. Aimed at E5c's closing check, whose oracle
+    //     is the two rolls' own row counts; E5 cannot see this break at all,
+    //     because E5 compares the port and 1.0 over whatever roster both are
+    //     handed, and a narrowed roster is handed to both.
+    await proof("the roll read as `identities` (the pre-ruling roster)", () => {
+      const r = e5cRollParity(derived.records, world,
+        { usedRoll: identityRoll, ruledRoll: roll, identityRoll }, live.fractionalCrossing(nowMs));
+      return { bit: roll.filter((h) => !identityRoll.includes(h)).length, findings: r.findings };
+    });
+
     out.can_fail = {
       results,
       silent: results.filter((r) => r.findings === 0 && r.bit !== 0).map((r) => r.mangle),
@@ -722,7 +824,7 @@ if (has("--json")) console.log(JSON.stringify(out, null, 2));
 else {
   const s = out.store;
   console.log(`world ${out.world_sha?.slice(0, 8)} · ${s.departures} departures (ledger ${s.eras.ledger} · journal ${s.eras.journal} · live ${s.eras.live}) · ` +
-              `${s.passages} passages · ${s.emissions} emissions · ${s.marks} marks · ${s.identities} identities`);
+              `${s.passages} passages · ${s.emissions} emissions · ${s.marks} marks · ${s.identities} identities · ${s.town_roll} in the town roll`);
   for (const [k, v] of Object.entries(out.equalities))
     console.log(`  ${v.findings ? "✗" : "·"} ${k.padEnd(12)} compared ${String(v.compared).padStart(5)}  findings ${v.findings}${v.note ? `  (${v.note})` : ""}`);
   for (const v of out.vendor_drift)
