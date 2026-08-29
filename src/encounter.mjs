@@ -543,12 +543,14 @@ export function foldEncounter(rows = [], { dials = {}, weaponOf = () => null } =
         guarding: guarded.has(j.who), gone: left.has(j.who),
         // ABSENT when empty-handed, so a reader tests presence rather than a
         // value — the manner `dials_missing` and `acting_blocked` already keep.
-        // `for` is WHICH ACT the bonus augments — two of this room's acts state
-        // damage and only one is helped by what is held, so a page without it
-        // has to invent the act's name. Site-pinned spelling; see the homonym
-        // note beside `weaponInHand` in arena.mjs, where the value is read.
+        // `augments` is WHICH ACT the bonus helps — two of this room's acts
+        // state damage and only one is helped by what is held, so a page
+        // without it has to invent the act's name and assert it on the page's
+        // own authority. NOT `for`: that word means the actor kind on the very
+        // entry this value is read from — see the rename note beside
+        // `weaponInHand` in arena.mjs.
         ...(held ? { weapon: { thing: held.thing ?? held.id ?? null, bonus: Number(held.bonus ?? 0),
-                               ...(held.for ? { for: held.for } : {}),
+                               ...(held.augments ? { augments: held.augments } : {}),
                                ...(held.says ? { says: held.says } : {}) } } : {}),
       }];
     })),

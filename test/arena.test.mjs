@@ -1097,11 +1097,15 @@ test("the weapon says WHICH ACT it augments, read off the grant's own entry", as
   // thing grants `cast` — and nothing would notice, because it would still
   // match. Read from the entry.
   //
-  // ⚠ AND `for` IS A HOMONYM. LOGOS § The three channels: "`for:` is the actor
-  // kind (absent means resident)", and `heldEntries` sets exactly that sense on
-  // the entry this value is read FROM. Landed under the pinned spelling because
-  // the consumer has shipped; flagged for the lexicon, where `augments` is the
-  // successor if the register rules against it.
+  // ⚠ THE WORD IS `augments`, AND `for` IS THE TRAP IT WAS RENAMED OUT OF
+  // (Wright, 2026-08-29). LOGOS § The three channels: "`for:` is the actor kind
+  // (absent means resident)" — and `heldEntries` sets exactly that sense on the
+  // entry this value is read FROM, so `for` would have meant actor-kind on the
+  // record and act-name in the answer two paces apart. Renamed rather than
+  // registered, by the register's own rule: young, cheap, actively harmful.
+  //
+  // The absence of `for` is asserted below, because a homonym that comes back
+  // through a merge is a homonym nobody notices twice.
   const { declareAttachment } = await import("../src/dynamic-entities.mjs");
   const b = bottle();
   try {
@@ -1109,15 +1113,18 @@ test("the weapon says WHICH ACT it augments, read off the grant's own entry", as
     const held = weaponInHand(b.db, "darko");
     assert.ok(held, "darko is not holding the lighter — the setup failed and nothing below discriminates");
     assert.equal(held.bonus, 3, "the bonus is the record's number");
-    assert.equal(held.for, "strike",
-      "the weapon does not say which act it augments — the page must invent the act name to place the bonus");
+    assert.equal(held.augments, "strike",
+      "the weapon does not say which act its bonus helps — the page must invent the act name to place the bonus, and then the claim is the site's rather than the record's");
+    assert.equal("for" in held, false,
+      "`for` is back on the weapon — it means the ACTOR KIND on the grant entry this value is read from, and the rename exists so a reader never meets both senses");
     assert.equal(weaponInHand(b.db, "rei"), null, "an empty-handed hand was handed somebody else's weapon");
 
     // AND IT RIDES THE HAND'S OWN ANSWER, which is where the page reads it.
     await act(b, "darko", "guard");
     const hand = state(b).hands.darko;
-    assert.equal(hand.weapon?.for, "strike",
-      "the act rode the weapon reader but not the hand's answer — `encounter_detail.hands[who].weapon.for` is the consumer's path");
+    assert.equal(hand.weapon?.augments, "strike",
+      "the act rode the weapon reader but not the hand's answer — `encounter_detail.hands[who].weapon.augments` is the consumer's path");
+    assert.equal("for" in (hand.weapon ?? {}), false, "and the retired spelling does not ride along beside the new one");
     assert.equal(hand.weapon?.thing, LIGHTER, "and the hand's answer names the thing itself");
   } finally { b.close(); }
 });

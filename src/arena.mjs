@@ -630,7 +630,7 @@ export function weaponReader(db, rows, { holdingsNow = () => [], thingRow = () =
     for (const id of holdingsNow(actor)) {
       const t = thingRow(id);
       const grant = heldEntries(t, { parse: (v) => parseJson(v, null) }).find((e) => e.action === "strike");
-      if (grant) return { thing: id, bonus: grant.bonus ?? 0, says: grant.says ?? null, for: grant.action };
+      if (grant) return { thing: id, bonus: grant.bonus ?? 0, says: grant.says ?? null, augments: grant.action };
     }
     return null;
   };
@@ -648,17 +648,22 @@ export function weaponInHand(db, handle) {
     for (const r of rows) {
       const grant = heldEntries({ ...r, held_grant: parseJson(r.held_grant, null) }, { parse: (v) => v })
         .find((e) => e.action === "strike");
-      // ⚑ `for:` HERE IS THE ACT, AND THE TOWN'S `for:` IS THE ACTOR KIND.
-      // Pinned by the site lane's shipped consumer and ruled by Wright
-      // 2026-08-29, so it lands under this spelling — but it is a homonym with
-      // the grants vocabulary, and the entry this very line reads carries the
-      // OTHER sense: `heldEntries` sets `for: kindOf(a)`, and LOGOS § The three
-      // channels says "`for:` is the actor kind (absent means resident)". A
-      // reader who knows that and meets `weapon.for: "strike"` will misread it.
-      // Flagged to Wright for the lexicon rather than swapped unilaterally: the
-      // word is young and the successor would be `augments`, one edit on each
-      // side, while it is still cheap.
-      if (grant) return { thing: r.id, bonus: Number(grant.bonus ?? 0), says: grant.says ?? null, for: grant.action };
+      // ⚑ `augments:` IS THE ACT THIS BONUS HELPS, AND IT IS NOT `for:`.
+      //
+      // The site lane asked for `for`, and `for` shipped for one commit before
+      // Wright renamed it (2026-08-29). The reason is visible on this very line:
+      // `heldEntries` sets `for: kindOf(a)` on the entry being read, and LOGOS
+      // § The three channels says "`for:` is the actor kind (absent means
+      // resident)". So the record's entry would have said `for: human` and the
+      // answer derived from it `for: "strike"`, two paces apart and neither
+      // wrong on its own.
+      //
+      // Taken as a RENAME rather than a lexicon entry by the register's own
+      // rule: it "cures reader traps; it does not rename living vocabulary — a
+      // rename is taken only when a word is young, cheap, and actively
+      // harmful." One night old, one edit each side, and a homonym a reader
+      // meets while holding the other sense. All three.
+      if (grant) return { thing: r.id, bonus: Number(grant.bonus ?? 0), says: grant.says ?? null, augments: grant.action };
     }
     return null;
   } catch { return null; }

@@ -38,9 +38,17 @@ const HOLD = "src/world-hold.mjs";
 // died in that pipe while eight in-memory flips over the same law stayed red on
 // cue — the shroud's readers were all correct and none of them was ever reached.
 const HYDRATE = "src/world-hydrate.mjs";
+// The fold is a subject here, mapped to the ARENA suite, for the one law whose
+// assertion lives there: the hand's weapon rides out through `foldEncounter`,
+// and `test/arena.test.mjs` is where the consumer's path is asserted. Its other
+// laws are birthday-flips' business against its own suite. A flip pointed at
+// the suite that does not contain its assertion comes back green and reports a
+// hole that is not there — which this runner did three times tonight before
+// the mapping was fixed.
+const FOLD = "src/encounter.mjs";
 const SUITES = { [ARENA]: "test/arena.test.mjs", [HUMAN]: "test/arena.test.mjs",
                  [APEX]: "test/arena.test.mjs", [HOLD]: "test/arena.test.mjs",
-                 [HYDRATE]: "test/hydrate-loot.test.mjs" };
+                 [HYDRATE]: "test/hydrate-loot.test.mjs", [FOLD]: "test/arena.test.mjs" };
 
 const FLIPS = [
   // ── ruling 1 · the wheel gates, and the refusal NAMES the turn ───────────
@@ -286,11 +294,38 @@ const FLIPS = [
 
   { name: "the weapon stops saying which act it augments",
     file: ARENA, catches: "says WHICH ACT it augments",
-    edit: (t) => t.replace("says: grant.says ?? null, for: grant.action };", "says: grant.says ?? null };") },
+    edit: (t) => t.replace("says: grant.says ?? null, augments: grant.action };", "says: grant.says ?? null };") },
 
   { name: "the weapon's act is hardcoded rather than read off the grant",
     file: ARENA, catches: "says WHICH ACT it augments",
-    edit: (t) => t.replace('for: grant.action };', 'for: "cast" };') },
+    edit: (t) => t.replace("augments: grant.action };", 'augments: "cast" };') },
+
+  // The rename's own guard: `for` means the ACTOR KIND on the grant entry this
+  // value is read from, so the homonym coming back through a merge is the
+  // failure this flip watches for.
+  // ⚑ TARGETED AT THE FOLD, NOT THE READER, AND THE FIRST VERSION WAS NEITHER.
+  // It read `says: grant.says ?? null, augments: grant.action };` — a substring
+  // BOTH `weaponReader` and `weaponInHand` carry, so `replace` took the first
+  // and mutated the reader while the assertion watched the other one. It came
+  // back green twice over: the reader is not what the test reads, AND the fold
+  // builds its weapon object field by explicit field, so a stray key upstream
+  // never reaches the answer at all. That second half is a real guarantee worth
+  // having, which is why the flip moved here rather than being made to match —
+  // the only place the retired spelling could actually come back is where the
+  // answer is assembled.
+  { name: "the retired `for` spelling returns beside `augments`",
+    file: FOLD, catches: "says WHICH ACT it augments",
+    edit: (t) => t.replace("                               ...(held.augments ? { augments: held.augments } : {}),",
+                           "                               ...(held.augments ? { augments: held.augments, for: held.augments } : {}),") },
+
+  { name: "the weapon reader lets the retired spelling back out",
+    file: ARENA, catches: "says WHICH ACT it augments",
+    edit: (t) => t.replace("bonus: Number(grant.bonus ?? 0), says: grant.says ?? null, augments: grant.action };",
+                           "bonus: Number(grant.bonus ?? 0), says: grant.says ?? null, augments: grant.action, for: grant.action };") },
+
+  { name: "the fold reads the weapon and drops the act on the way out",
+    file: FOLD, catches: "says WHICH ACT it augments",
+    edit: (t) => t.replace("                               ...(held.augments ? { augments: held.augments } : {}),", "") },
 
   // 4 · entry placement
   { name: "the placement stops stepping clear — an entrant is set down inside the adversary",
