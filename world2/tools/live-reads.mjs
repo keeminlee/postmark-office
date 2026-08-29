@@ -1089,6 +1089,13 @@ export function admissionNotes({ marks = [], identities = [], departureRecords: 
     notes.push(`${eras.live} live 'walk' act(s) are being read through the vendored DEPARTURE_RE. This is the ` +
                `first traffic on that era; the falsifier's line round-trip is what stands behind it.`);
   }
+  if (eras["movement-store"]) {
+    notes.push(`${eras["movement-store"]} movement-store 'walk' act(s) are being read through the mapping rather ` +
+               `than the line grammar — the WORLD_MOVEMENT_V2 pen writes no ledger line, so there is no line to ` +
+               `round-trip and the falsifier's line proof does NOT stand behind these. What stands behind them ` +
+               `is that the payload carries the movements row's own columns, so the mapping is storedDepartures' ` +
+               `own. First traffic on that era began 2026-08-28 with the write-path closure.`);
+  }
   return notes;
 }
 
