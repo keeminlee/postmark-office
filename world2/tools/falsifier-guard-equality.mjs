@@ -219,6 +219,22 @@ async function plantPopulation(ownerClient, dbPath) {
      PUBLISHED.geometry.at.x - PUBLISHED.geometry.extent.w / 2, PUBLISHED.geometry.at.y - PUBLISHED.geometry.extent.h / 2,
      PUBLISHED.geometry.at.x + PUBLISHED.geometry.extent.w / 2, PUBLISHED.geometry.at.y + PUBLISHED.geometry.extent.h / 2]);
 
+  // THE LOCKED CLAIM BEHIND THE PUBLISHED MARK. Planted as the owner, because
+  // only `clearing_job` may transition one and the candle is not on trial here.
+  //
+  // It exists for a reason run 1 of the can-fail proof gave: the "LIVE_STATUSES
+  // widened to include 'locked'" break read INERT, because the scratch store
+  // held no locked claim for the break to let through. An INERT break proves
+  // nothing (the standing lane's finding), and the fix belonged to the
+  // POPULATION rather than to the break — a store with a published mark and no
+  // claim behind it is not a store this town ever produces.
+  await ownerClient.query(
+    `INSERT INTO claims (window_id, class, claimant, household, status, body, geometry, slug, stake)
+     VALUES (999999, $1, $2, $3, 'locked', $4, $5, $6, 1)
+     ON CONFLICT DO NOTHING`,
+    [PUBLISHED.kind, PUBLISHED.owner, HOUSEHOLD_KEY.a, PUBLISHED.body,
+     JSON.stringify({ slug: PUBLISHED.slug, ...PUBLISHED.geometry }), PUBLISHED.slug]);
+
   const db = openDynamic(dbPath);
   for (const step of SCRIPT) {
     appendJournal(db, {
