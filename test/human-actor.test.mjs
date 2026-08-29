@@ -197,8 +197,18 @@ test("the seam routes and never re-derives the hand", () => {
   // human's own label, so the far end has something true to record.
   assert.match(apex, /await handler\.run\(hand \? \{ \.\.\.fields, as_human: hand \}/,
     "the ordinary path carries the human's HAND, not a flag no handler can record");
-  assert.match(apex, /const hand = acting\?\.standing === "embodied" \? humanHandFor\(/,
+  // AMENDED AGAIN 2026-08-29, and only in shape: `const hand` became a hoisted
+  // `let`, because the CROSSING now needs the hand too — a human stepping into
+  // a wheel-keeping ground must be the name the wheel counts, and that block
+  // sits after the dispatch try the hand used to be scoped to. The property
+  // pinned is untouched: the hand is DERIVED ONCE, by humanHandFor, off
+  // `acting.standing`, and never spelled a second way here.
+  assert.match(apex, /hand = acting\?\.standing === "embodied" \? humanHandFor\(/,
     "the hand is the one derivation, read — not a second spelling of the label invented here");
+  assert.match(apex, /let hand = null;/,
+    "and it is declared where both the dispatch and the crossing can see it, rather than derived twice");
+  assert.match(apex, /wheelOnCrossing\(action, args, key, spineIds, hand\)/,
+    "so the wheel counts whoever actually crossed — the hand where there is one");
 });
 
 // ── THE OWN HAND, at the two doors that answer for it ───────────────────────
