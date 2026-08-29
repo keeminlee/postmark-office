@@ -1691,6 +1691,46 @@ duplicate slug or a fourth parcel through, and the receipt for that arrives at
 the next settlement. So every refusal here is strict by default and says what the
 skip would have cost.
 
+### Where it is wired (2026-08-29)
+
+`src/world2-guards.mjs` is the wire, and it is deliberately thin — every judgment
+about what a live mark IS stays here in the port; that module only decides WHICH
+STORE A DOOR ASKS and WHAT HAPPENS WHEN IT CANNOT. The gate is the pen's own
+switch (`laneFlipped` / `W2_PEN`, D1's per-lane flip), never a second one: two
+switches would be two answers to "is this lane flipped", and the day they
+disagreed the office would be back in the split brain by another road.
+
+One door consults it today — `declare-stance-on`, the one lane whose pen is
+actually flipped (`world-stance.mjs`, via `worldForStances(repo, { guardFor:
+"stance" })`). Its answer names both stores: `log` for the record, `guard` for
+the validation, and `guard` appears only when flipped so an unflipped office
+answers byte-identically. Unreachable Postgres is a 503 refusal in the guard's
+own sentence — there is no path from the wire back to `readJournal`, because a
+guard that answered from sqlite while the pen wrote to `acts` would be the split
+brain wearing a mask.
+
+Not wired: the mark door (its lane refuses the flip by name — `FLIP_REFUSED` in
+world-journal.mjs) and the hold door (`callHoldTool` reaches `acts` through
+`mirrorLaneAct`, so wiring `pgGuardHolder` there would build the split brain
+BACKWARDS — validate against Postgres, write to sqlite, read a mirror that had
+not landed). `pgGuardHolder` exists in the wire for the day the hold lane's pen
+flips, so that is one call site rather than a port to find again.
+
+`test/world2-guard-gate.test.mjs` is the gate's falsifier — five checks, each
+flip-proven red, and it measures the MODULE GRAPH as well as the answers: a
+resolve hook counts every attempt to reach `pg`, because prod runs with no `pg`
+installed and a resolution there is `MODULE_NOT_FOUND` at boot rather than a
+slower path.
+
+**The one thing the wire refused to decide.** A cross-household guard read is
+narrower than 1.0's by exactly the other households' drafts
+(`DISCLOSURES.cross_household`), so a flipped stance door can 404 a sketch
+the-late-welcome would have surfaced. The port says which law gives way "is a
+ruling, and it is not this port's to make"; it is not the wire's either. What
+the wire does instead is carry the disclosure to the door — into the 404's hint
+and onto the answer — so nobody is told "no such mark" by a guard that simply
+could not see it. **Standing item for the founder.**
+
 Pure over rows and a pg client — nothing from `src/` is imported. Where a
 predicate is small and exact it is VENDORED with its blob sha (`liveHolder`,
 `holdingsOf`, `liveMarks`' record shaper); where it is a whole module's judgment
