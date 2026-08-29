@@ -135,7 +135,7 @@ let n = 0;
  * `env` is the WHOLE W2 environment for that run — nothing is inherited, so an
  * unflipped run is unflipped for the reason prod is: the variables are absent.
  */
-function runDoor({ on, w2 = {}, claims = [], mode = "ok", journal = null }) {
+function runDoor({ on, w2 = {}, claims = [], mode = "ok", journal = null, doorMode = null, household = null }) {
   const id = ++n;
   const dbPath = join(scratch, `dyn-${id}.db`);
   const receipt = join(scratch, `receipt-${id}.jsonl`);
@@ -152,6 +152,8 @@ function runDoor({ on, w2 = {}, claims = [], mode = "ok", journal = null }) {
     W2_DOOR_REPO: repo,
     W2_DOOR_DB: dbPath,
     W2_DOOR_ON: on,
+    ...(doorMode ? { W2_DOOR_MODE: doorMode } : {}),
+    ...(household ? { W2_DOOR_HOUSEHOLD: household } : {}),
   };
   // Absent, not empty: `world2Enabled` reads WORLD2_PG === "1" and the presence
   // of a URL, so an unflipped run must carry neither key at all.
@@ -303,4 +305,40 @@ test("GG3 — a flipped door whose record is unreachable REFUSES, with the journ
   // brain with no symptom at all.
   assert.equal(r.connects, 1,
     `the door reached for Postgres ${r.connects} times — the second is the pen, which means the guard answered from somewhere and let the door walk on: ${JSON.stringify(r.receipt)}`);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GG4 · A HOUSEHOLD-SCOPED GUARD READ DECLARES WHOSE HOUSEHOLD IS ASKING
+// ═══════════════════════════════════════════════════════════════════════════
+
+test("GG4 — a scoped guard read names its household to the connection first, and leaves nothing set behind", () => {
+  // guard-reads.mjs § THE RLS CONTRACT, on 007's row policy: "a public read
+  // compares against NULL, which is never equal to anything, and sees none …
+  // That is exactly right for the notary and exactly LETHAL for a guard. A slug
+  // collision check that ran outside `withHousehold` would see the household's
+  // pending claims and none of its drafts, find no collision, and permit a
+  // second `the-lamp` — with every policy in 007 working as written and nothing
+  // anywhere saying the answer was partial."
+  //
+  // The port REFUSES rather than answering partially, so the wire's transaction
+  // is what makes a scoped guard answerable at all. No door asks for one yet;
+  // this proves the path a future door would trust, instead of shipping it on a
+  // comment. The stub models `set_config(…, true)` as transaction-scoped, so a
+  // wire that skipped the declaration turns this red at the port's own refusal.
+  const r = runDoor({ on: CAIRN.id, w2: FLIPPED, claims: [claimsRow(CAIRN)],
+                      doorMode: "household-read", household: "gh:67605380" });
+
+  assert.equal(r.bounce, null, `the scoped read was refused: ${JSON.stringify(r.bounce)}\n${r.raw}`);
+  assert.deepEqual(r.answer.marks, [CAIRN.id], "and it answered from `claims`");
+  assert.deepEqual(r.answer.disclosures, [],
+    "cross_household is NOT disclosed on a scoped read — that narrowing is the price of having no household to name, and this read named one");
+
+  const declaredAt = r.queries.findIndex((q) => /set_config\('app\.household'/.test(q));
+  const readAt = r.queries.findIndex((q) => /FROM claims/i.test(q));
+  const beginAt = r.queries.findIndex((q) => /^BEGIN/i.test(q));
+  assert.notEqual(beginAt, -1, "the declaration is transaction-scoped, so there is a transaction");
+  assert.ok(beginAt < declaredAt && declaredAt < readAt,
+    `BEGIN → set_config → read, in that order; got ${JSON.stringify(r.queries)}`);
+  assert.match(r.queries.at(-1), /^ROLLBACK/i,
+    "and it ends in ROLLBACK — the transaction exists to scope a setting, and committing it would say something happened");
 });

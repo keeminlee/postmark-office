@@ -14,6 +14,25 @@
 
 import { declareStanceViaOffice, resetStanceGeometry } from "../src/world-stance.mjs";
 
+// ── the household-scoped guard read, called directly ────────────────────────
+//
+// No door asks for one yet — `worldForStances` wants the cross-household layer.
+// It is exercised here anyway because 007's row policy is the reason it exists:
+// guard-reads' `assertHouseholdDeclared` refuses a scoped read on a connection
+// that has not said whose household is asking, so the wire's transaction is
+// what makes a household-scoped guard answerable at all. An untested path that
+// a future door would trust is worse than no path.
+if (process.env.W2_DOOR_MODE === "household-read") {
+  const { pgGuardLiveMarks } = await import("../src/world2-guards.mjs");
+  try {
+    const read = await pgGuardLiveMarks({ household: process.env.W2_DOOR_HOUSEHOLD });
+    console.log("ANSWER " + JSON.stringify({ marks: read.marks.map((m) => m.id), disclosures: read.disclosures }));
+  } catch (e) {
+    console.log("BOUNCE " + JSON.stringify({ name: e?.name ?? null, code: e?.code ?? null, defect: String(e?.message ?? e), reason: e?.reason ?? null }));
+  }
+  process.exit(0);
+}
+
 resetStanceGeometry();
 const stamp = async () => ({ at: { anchor: null, dx: null, dy: null }, witnesses: { source: "unread", reason: "falsifier", list: [] } });
 const key = { household: "alpha", handles: new Set(["alpha"]) };

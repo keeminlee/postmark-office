@@ -26,11 +26,24 @@ const flat = (s) => String(s ?? "").replace(/\s+/g, " ").trim();
 
 note({ kind: "module-loaded" });
 
+// ── the one piece of real Postgres behaviour this stub keeps ────────────────
+//
+// `set_config(..., true)` is TRANSACTION-scoped and `current_setting(..., true)`
+// answers NULL when nothing set it. guard-reads' `assertHouseholdDeclared` asks
+// exactly that pair, and REFUSES on a mismatch — so a stub that answered the
+// household unconditionally would make the RLS handshake untestable, and one
+// that never answered it would make every scoped read refuse for the wrong
+// reason. Both are modelled: declared until the transaction ends.
+let declared = null;
+
 const client = {
   async query(text, values) {
     const sql = flat(typeof text === "string" ? text : text?.text);
     note({ kind: "query", sql: sql.slice(0, 240), values: values ?? null });
     if (/^INSERT INTO acts/i.test(sql)) return { rows: [{ id: 4242 }] };
+    if (/set_config\('app\.household'/i.test(sql)) { declared = values?.[0] ?? null; return { rows: [] }; }
+    if (/current_setting\('app\.household'/i.test(sql)) return { rows: [{ declared }] };
+    if (/^(COMMIT|ROLLBACK)/i.test(sql)) { declared = null; return { rows: [] }; }
     if (/FROM claims/i.test(sql)) return { rows: CLAIMS };
     return { rows: [] };
   },
