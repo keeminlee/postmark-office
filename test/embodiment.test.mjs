@@ -55,14 +55,40 @@ test("a ground with no extent is an unreadable embodiment, not a smaller one", (
   assert.match(r.why, /declares no extent/);
 });
 
-test("exit from the embodying ground is refused with the same sentence as the walk", () => {
-  // LOGOS/classes.md § The three channels, verbatim:
-  //   "`exit` — which would step them off the very ground the embodiment rests
-  //    on — is refused with it."
+test("exit from the embodying ground is refused with the same sentence as the walk — UNSEATED", () => {
+  // The clause this asserts was AMENDED 2026-08-29 and stands superseded in
+  // place. It read: "`exit` — which would step them off the very ground the
+  // embodiment rests on — is refused with it." That refusal survives only for a
+  // human no ground has seated; see the seat test below for what replaced it.
   const r = exitAllowed({ ground: PARCEL.id, target: PARCEL.id });
   assert.equal(r.ok, false);
   assert.match(r.why, /embodiment stands on the household's ground/);
   assert.match(r.hint, /Speak through your resident/, "the refusal says what IS still open, not only what is closed");
+});
+
+test("a SEATED human may always leave — the seat repeals the exit refusal", () => {
+  // LOGOS/classes.md § The three channels, verbatim (founder-ruled 2026-08-29):
+  //   "Leaving is never the thing you may not do. Exit is a resident's act, so
+  //    a seated human has it; and stepping out of the seating ground ends the
+  //    seating, which is the ordinary consequence rather than a refusal. Nobody
+  //    is held anywhere by the shape of their own hand."
+  //
+  // The refusal above was not wrong about its reasoning — it said there is
+  // "nothing on the other side of it for an embodied human to be". The seat
+  // ruling supplies the something, and it is exactly what that refusal's own
+  // hint pointed at: a voice through their resident, as before they stepped in.
+  // What the clause could not see is the room it built — the founder, in the
+  // candle-vault, able to strike the cake and unable to walk out.
+  const seated = exitAllowed({ ground: PARCEL.id, target: PARCEL.id, seated: PARCEL.id });
+  assert.equal(seated.ok, true,
+    "a seated human was refused their own exit — this is the founder's bug exactly, and the room has no door");
+  assert.equal(seated.seated, PARCEL.id,
+    "the permission does not name what seated them — a reader cannot check a repeal that points at nothing");
+
+  // THE DISCRIMINATING LEG: seating is what lifts it, not the call itself.
+  // Without this, `ok: true` for everything passes every assertion above.
+  assert.equal(exitAllowed({ ground: PARCEL.id, target: PARCEL.id, seated: null }).ok, false,
+    "the refusal lifted for an UNSEATED human too — then the fence is gone rather than amended");
 });
 
 test("exit from something else inside the ground is not this rule's business", () => {

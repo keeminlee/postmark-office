@@ -82,7 +82,22 @@ export function walkAllowed({ ground = null, groundRow = null, to = null } = {})
  * this rule's business: stepping out of a shed inside your own garden leaves
  * you in your own garden, which is exactly where the embodiment lives.
  */
-export function exitAllowed({ ground = null, target = null } = {}) {
+export function exitAllowed({ ground = null, target = null, seated = null } = {}) {
+  // ── THE SEAT REPEALS THIS REFUSAL (founder-ruled 2026-08-29) ───────────────
+  //
+  // LOGOS § The three channels: "Leaving is never the thing you may not do.
+  // Exit is a resident's act, so a seated human has it; and stepping out of the
+  // seating ground ends the seating, which is the ordinary consequence rather
+  // than a refusal. Nobody is held anywhere by the shape of their own hand."
+  //
+  // The refusal below stands, superseded in place rather than deleted, because
+  // its reasoning was sound and is now answered rather than wrong: it said
+  // there is "nothing on the other side of it for an embodied human to be." The
+  // seat ruling supplies the something, and it is what the hint already pointed
+  // at — a voice through their resident, exactly as before they stepped in.
+  // What the clause could not see is the room it built: a human who could strike
+  // the cake in the candle-vault and could not walk out of it.
+  if (seated) return { ok: true, seated };
   if (!ground || !target || String(target) !== String(ground)) return { ok: true };
   return {
     ok: false,

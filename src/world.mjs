@@ -2397,7 +2397,33 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
   // shape `walkAllowed` uses one door up ("The refusal NAMES its reason; it is
   // not a silent clip"), and the same 501 the apex answers with when law opens a
   // door the office has not built a room behind.
-  if (payload.as_human)
+  // ── THE SEAT ANSWERS THE SECOND FALSEHOOD (founder-ruled 2026-08-29) ──────
+  //
+  // The refusal below named two ways to write an embodied walk and called both
+  // false. It was right about both, and it missed a third that the founder has
+  // now ruled: WRITE THE SEAT'S WALK AND SAY WHOSE ACT IT WAS.
+  //
+  // LOGOS § The three channels: "Any act needing a record WRITES THROUGH THE
+  // SEAT — the resident whose household hosts the human — and the answer says
+  // so. The human has no home mark, no standpoint and no threshold record; the
+  // seat has all three, and they are the ones actually moving. … writing the
+  // seat's name in SILENCE is the ghost-writing the human class exists to
+  // prevent. The disclosure is what makes the difference."
+  //
+  // So the first horn — "under the resident's hand … and nothing anywhere says
+  // a human was involved" — is answered exactly where it was sharpest: the
+  // silence. The row is the seat's because the seat is the body that moves, and
+  // `acted_by` on the answer is the part that was missing.
+  //
+  // ⚑ FENCED TO A SEATING GROUND, and this office does not decide which. The
+  // apex resolves seating from the admitted calculus (scope and all) and names
+  // it in `__seated_ground`; without that word this door still refuses, so the
+  // flat tool and the REST body reach the 501 exactly as before. The escalation
+  // question is answered one line down regardless: `who` must be a resident THIS
+  // KEY HOLDS, so the worst a forged word can buy is a walk the caller could
+  // already have taken under their own hand.
+  const seatedGround = String(payload.__seated_ground ?? "").trim();
+  if (payload.as_human && !seatedGround)
     throw bounce(501, "this office cannot record a walk under a human's own hand",
       `Your parcel grants your human this walk and the law behind it stands — what is missing is the RECORD. A walk is written as a body moving: the mover's own row in the movement record, derived into a position every reader trusts. Your human has no such body yet — no home mark, no standpoint, no place the world could put them down — so the only rows this office could write are your resident's (which would put their name on your step, and the human class exists to prevent exactly that) or yours (which would place a walker the atlas has no seat for). Neither is true, so neither is written. Your human still speaks here, and your residents still walk: act as your resident to move, or as your human to be heard.`,
       { law: "LOGOS/classes.md § The human class — 'everything further waits for the humans-as-residents design, and arrives — if it arrives — as law here first'",
@@ -2796,6 +2822,20 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
 
   return {
     handle: who, from, toward, toward_is: targetFrom, mark_id: targetMarkId,
+    // ── WHOSE ACT THIS WAS, WHEN IT WAS NOT THE SEAT'S OWN (2026-08-29) ──────
+    //
+    // `handle` above is the body that moved and the name on the row; this is
+    // the hand that asked for it. LOGOS § The three channels: the seat writes
+    // the record "and the answer says so … writing the seat's name in SILENCE
+    // is the ghost-writing the human class exists to prevent."
+    //
+    // ABSENT for an ordinary walk, so every resident's answer is byte-identical
+    // — a key that is always there would make a reader test its value, and the
+    // value it would carry for a resident is the resident, which says nothing.
+    ...(seatedGround && payload.as_human
+      ? { acted_by: { human: String(payload.as_human), through_seat: who, seated_by: seatedGround },
+          acted_by_note: `this walk was ${String(payload.as_human)}'s act, recorded under ${who} — the seat is the body the world can place, and ${seatedGround} is the ground that seats them` }
+      : {}),
     departed_at_crossing: at,
     ...(entry ? { entry, arrived_note: entry.refused
       ? `arrived; entry refused: ${entry.refused}`

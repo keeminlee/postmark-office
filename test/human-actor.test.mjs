@@ -195,8 +195,17 @@ test("the seam routes and never re-derives the hand", () => {
   // exactly one hit, the dispatch itself. Every embodied act reached a door that
   // knew only the resident's name and wrote it. The dispatch now carries the
   // human's own label, so the far end has something true to record.
-  assert.match(apex, /await handler\.run\(hand \? \{ \.\.\.fields, as_human: hand \}/,
+  // AMENDED 2026-08-29 (the seat ruling), and only in shape: the dispatch broke
+  // across lines and grew `__seated_ground` beside the hand, so the one-line
+  // regex stopped matching. The property pinned is untouched — the ordinary
+  // path carries the HAND. The seat rides beside it rather than instead of it,
+  // and the second clause below pins that, because a seat with no hand would be
+  // the own-hand defect wearing this ruling's clothes: the record would name
+  // the resident and nothing would say a human was involved.
+  assert.match(apex, /handler\.run\(\s*hand \? \{ \.\.\.fields, as_human: hand/,
     "the ordinary path carries the human's HAND, not a flag no handler can record");
+  assert.match(apex, /__seated_ground: seatedAt/,
+    "the seating ground rides the dispatch — it is what lifts the walk door's 501, and a handler that had to derive it would be a second calculus");
   // AMENDED AGAIN 2026-08-29, and only in shape: `const hand` became a hoisted
   // `let`, because the CROSSING now needs the hand too — a human stepping into
   // a wheel-keeping ground must be the name the wheel counts, and that block

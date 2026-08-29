@@ -30,6 +30,41 @@ const SUITES = {
 
 const FLIPS = [
   // ── the calculus ────────────────────────────────────────────────────────
+  // ── the seat (founder-ruled 2026-08-29) ─────────────────────────────────
+
+  { name: "seating stops seating — a human in a portal ground gets only the portal's verbs",
+    file: GRANTS, catches: "seats them whole",
+    edit: (t) => t.replace("  if (!seat) return { ...first, seated: null };", "  if (true) return { ...first, seated: null };") },
+
+  { name: "seating is read off the CANDIDATES — a guest's human is seated in a stranger's garden",
+    file: GRANTS, catches: "not seated by a stranger's ground",
+    edit: (t) => t.replace("(first.admitted ?? first.entries).filter((e) => e.channel === \"ground\")", "candidates.filter((e) => e.channel === \"ground\")") },
+
+  { name: "an AMBIENT grant seats a human — the seat leaks world-wide",
+    file: GRANTS, catches: "seats them whole",
+    edit: (t) => t.replace('.filter((e) => e.channel === "ground")', ".filter(() => true)") },
+
+  { name: "the human's own grant is overwritten by the resident's",
+    file: GRANTS, catches: "seats them whole",
+    edit: (t) => t.replace("    if (!byAction.has(e.action)) byAction.set(e.action, { ...e, via_seat: true });",
+                           "    byAction.set(e.action, { ...e, via_seat: true });") },
+
+  { name: "a seat-borrowed act stops saying it was borrowed",
+    file: GRANTS, catches: "seats them whole",
+    edit: (t) => t.replace("byAction.set(e.action, { ...e, via_seat: true });", "byAction.set(e.action, { ...e });") },
+
+  { name: "the answer stops naming the ground that seated them",
+    file: GRANTS, catches: "seats them whole",
+    edit: (t) => t.replace("    seated: seat.ground ?? seat.from ?? null,", "    seated: null,") },
+
+  { name: "the seat repeal fires for an UNSEATED human — the fence is gone rather than amended",
+    file: EMB, catches: "the seat repeals the exit refusal",
+    edit: (t) => t.replace("  if (seated) return { ok: true, seated };", "  return { ok: true, seated };") },
+
+  { name: "the seat stops repealing the exit refusal — the room has no door again",
+    file: EMB, catches: "the seat repeals the exit refusal",
+    edit: (t) => t.replace("  if (seated) return { ok: true, seated };", "") },
+
   // ── the silent kind-drop (found live 2026-08-29, the founder's exit) ─────
   { name: "a kind mismatch goes back to being dropped in silence",
     file: GRANTS, catches: "a kind mismatch is REFUSED with a reason",

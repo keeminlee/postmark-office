@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 
 import {
   CHANNELS, SCOPE_OWN_GROUND, kindOf, classOfInstance, scopeAdmits,
-  entriesOfClass, resolveGrants, thingMayLend, heldEntries, guardsPass,
+  entriesOfClass, resolveGrants, resolveForActor, thingMayLend, heldEntries, guardsPass,
 } from "../src/world-grants.mjs";
 
 const classRow = (id, cls, actions) => ({ id, class: cls, actions: JSON.stringify(actions) });
@@ -86,6 +86,165 @@ test("a kind mismatch is REFUSED with a reason, never dropped in silence", () =>
   assert.deepEqual(asResident.entries.map((e) => e.action), ["exit"],
     "the resident lost their own ambient exit — the fix must change the SAYING, not the admitting");
   assert.deepEqual(asResident.refused, [], "and a caller who was admitted must not also be told they were refused");
+});
+
+// ── the seat (founder-ruled 2026-08-29) ─────────────────────────────────────
+
+test("a ground that SEATS a human seats them whole — the resident set, inside and only inside", () => {
+  // LOGOS/classes.md § The three channels, verbatim, the founder's own words:
+  //   "inside a ground that seats a human, the human can do everything a
+  //    resident can."
+  // And the clause built from it:
+  //   "A ground seats a human when its class actually grants that human
+  //    something — an entry whose `for:` names them, admitted through the
+  //    ground channel, with the relation `scope:` demands satisfied."
+  //   "Inside such a ground the human's affordances are the RESIDENT set —
+  //    walk, say, enter, exit, give, take, and the ground's own verbs beside
+  //    them."
+  //   "Outside a seating ground, nothing changes. A human affords nothing
+  //    ambiently, anywhere, exactly as before."
+  //
+  // The founder found this standing in the candle-vault as his human, able to
+  // strike the cake and unable to walk out of the room.
+  const residentClass = classRow("the-town/resident", "resident",
+    [{ action: "exit", residue: "the-town/enter" }, { action: "walk", residue: "the-town/depart" },
+     { action: "say", residue: "the-town/say" }]);
+  // ⚑ THE HUMAN CLASS'S OWN AMBIENT SAY IS IN THIS FIXTURE ON PURPOSE, and its
+  // absence was a hole the flip runner found. A human carries `for: human`
+  // grants AMBIENTLY, everywhere in the world (the human class grants `say`
+  // that way) — so "the human has an admitted entry" is true on every square,
+  // and only "the human has an admitted GROUND entry" means a room is seating
+  // them. Without this row the two predicates are indistinguishable and a
+  // seating rule that leaked world-wide passed the test.
+  const ambient = [
+    ...entriesOfClass(residentClass, { channel: "ambient" }),
+    ...entriesOfClass(classRow("the-town/human", "human", [{ action: "say", residue: "the-town/say", for: "human" }]),
+      { channel: "ambient" }),
+  ];
+  // The arena grants the human `strike` — and its OWN `say`, which the resident
+  // class also grants. The overlap is deliberate: it is the only way to see
+  // whether the seat's borrowed set overwrites a grant written for the human.
+  const portal = entriesOfClass(
+    classRow("the-town/arena", "arena", [
+      { action: "strike", residue: "the-town/strike", for: "human" },
+      { action: "say", residue: "the-town/portal-say", for: "human" },
+    ]),
+    { channel: "ground", ground: "the-town/the-candle-vault" });
+
+  // SEATED: the arena grants the human `strike`, so the resident set follows.
+  const seated = resolveForActor([...portal, ...ambient], { kind: "human" });
+  const acts = seated.entries.map((e) => e.action).sort();
+  assert.deepEqual(acts, ["exit", "say", "strike", "walk"],
+    `a seated human affords ${acts.join(", ") || "(nothing)"} — the ruling says the resident set, and exit is the one he could not get`);
+  assert.equal(seated.seated, "the-town/the-candle-vault",
+    "the answer does not name the ground that seated them — the disclosure has nothing to point at");
+  assert.equal(seated.entries.find((e) => e.action === "exit").via_seat, true,
+    "an act reached through the seat does not say so — the record will carry the seat's name and the reader is owed the reason");
+  assert.equal(seated.entries.find((e) => e.action === "strike").via_seat, undefined,
+    "the human's OWN grant was marked as seat-borrowed — it was written `for: human` deliberately");
+  // THE OVERLAP LEG: `say` is granted by the resident class AND by the arena
+  // `for: human`. The human's own must win — it was written for them and may
+  // differ in residue or dials, and the seat's borrowed copy would silently
+  // swap the portal's say for the town's.
+  const say = seated.entries.find((e) => e.action === "say");
+  assert.equal(say.residue, "the-town/portal-say",
+    "the seat's borrowed resident grant overwrote a grant written FOR the human — the borrowed set fills gaps, it does not replace");
+  assert.equal(say.via_seat, undefined, "and the human's own grant must not be labelled as borrowed");
+
+  // UNSEATED: the same ambient grants — including the human's OWN ambient say,
+  // which reaches them everywhere — and no ground seating them.
+  const unseated = resolveForActor(ambient, { kind: "human" });
+  assert.deepEqual(unseated.entries.map((e) => e.action), ["say"],
+    "an unseated human lost or gained something — they keep their own ambient grants and get nothing of the resident's");
+  assert.equal(unseated.seated, null,
+    "an AMBIENT grant seated them — seating is a fact about a GROUND, and a human carries ambient grants on every square of the world");
+  assert.ok(unseated.refused.some((r) => r.action === "exit"),
+    "the refusal vanished again — an unseated human must still be TOLD, not silently handed an empty set");
+
+  // A RESIDENT IS UNCHANGED, and never "seated" — asking whether they may be
+  // themselves is not a question the calculus has.
+  const asResident = resolveForActor([...portal, ...ambient], { kind: "resident" });
+  assert.deepEqual(asResident.entries.map((e) => e.action).sort(), ["exit", "say", "walk"],
+    "the resident's own set moved — this ruling adds a human's seat and touches nothing else");
+  assert.equal(asResident.entries.find((e) => e.action === "say").residue, "the-town/say",
+    "the resident was handed the PORTAL's human say — the seat borrows in one direction only");
+  assert.equal(asResident.seated, null, "a resident was reported as seated");
+});
+
+test("nested rooms both seat, and the OUTERMOST wins — decided by the spine, not by gather order", () => {
+  // LOGOS § The three channels: "inside a ground that seats a human, the human
+  // can do everything a resident can."
+  //
+  // ⚑ THE WALK FENCE FOLLOWS THE SEAT, so this is not cosmetic. The
+  // candle-vault (3x2) sits inside the cellar-door (5x5) and both grant `for:
+  // human`, so a seat picked by whichever row the store handed over first would
+  // decide how far a seated human may move — by an accident of ordering. Found
+  // by probing the real gather: the answer named the outer room, and would have
+  // named either.
+  //
+  // The outermost wins because a human seated by two nested rooms is seated by
+  // both, and pinching their feet to the inner one would stop them crossing a
+  // floor a resident crosses freely.
+  const ambient = entriesOfClass(
+    classRow("the-town/resident", "resident", [{ action: "walk", residue: "the-town/depart" }]),
+    { channel: "ambient" });
+  const grant = (ground) => entriesOfClass(
+    classRow("the-town/arena", "arena", [{ action: "strike", residue: "the-town/strike", for: "human" }]),
+    { channel: "ground", ground });
+  const CELLAR = "the-town/the-cellar-door", VAULT = "the-town/the-candle-vault";
+  const spineIds = [CELLAR, VAULT];   // root-first, as the apex builds it
+
+  // Both orders of arrival must answer the same room.
+  for (const candidates of [[...grant(VAULT), ...grant(CELLAR), ...ambient],
+                           [...grant(CELLAR), ...grant(VAULT), ...ambient]]) {
+    const r = resolveForActor(candidates, { kind: "human", spineIds });
+    assert.equal(r.seated, CELLAR,
+      "the seat moved with the order the entries arrived in — that is a fence decided by a sort's accident, and it is how far somebody may walk");
+  }
+
+  // AND IT IS STILL THE SPINE'S ANSWER, not simply "the first one given": with
+  // the spine reversed the innermost-listed room wins, because root-first is
+  // what the apex hands over and the rule reads that order rather than guessing.
+  const flipped = resolveForActor([...grant(CELLAR), ...grant(VAULT), ...ambient],
+    { kind: "human", spineIds: [VAULT, CELLAR] });
+  assert.equal(flipped.seated, VAULT,
+    "the rule ignored the spine it was given — then it is not reading containment at all");
+
+  // WITH NO SPINE the answer is still an admitted ground, never nothing: a
+  // caller that cannot say where it stands must not lose its seat over it.
+  const blind = resolveForActor([...grant(VAULT), ...ambient], { kind: "human" });
+  assert.equal(blind.seated, VAULT, "a seat vanished because the caller passed no spine");
+});
+
+test("seating is read off the ADMITTED set, so a guest's human is not seated by a stranger's ground", () => {
+  // LOGOS § The three channels: seating comes from an entry "admitted through
+  // the ground channel, WITH THE RELATION `scope:` DEMANDS SATISFIED."
+  //
+  // ⚑ THIS IS THE SECURITY LEG. The parcel class grants `for: human` with
+  // `scope: own-ground`, so a guest's human standing in somebody else's garden
+  // HAS a candidate entry and is refused it. Reading seating off the candidates
+  // instead of the survivors would seat that guest in a stranger's garden and
+  // hand them the whole resident set there — walk, take, leave-mark — under the
+  // householder's own roof.
+  const ambient = entriesOfClass(
+    classRow("the-town/resident", "resident", [{ action: "take", residue: "the-town/attach" }]),
+    { channel: "ambient" });
+  const parcel = entriesOfClass(
+    classRow("the-town/parcel", "parcel", [{ action: "walk", residue: "the-town/depart", for: "human", scope: SCOPE_OWN_GROUND }]),
+    { channel: "ground", ground: "rei/her-parcel" });
+  const groundHouseholdOf = () => "rei";
+
+  const owner = resolveForActor([...parcel, ...ambient], { kind: "human", actorHousehold: "rei", groundHouseholdOf });
+  assert.equal(owner.seated, "rei/her-parcel", "the householder's own human is not seated by their own parcel");
+  assert.ok(owner.entries.some((e) => e.action === "take"), "and so does not get the resident set");
+
+  const guest = resolveForActor([...parcel, ...ambient], { kind: "human", actorHousehold: "darko", groundHouseholdOf });
+  assert.equal(guest.seated, null,
+    "a GUEST's human was seated by a ground that refused them — scope is what makes the parcel's grant the householder's, and seating must not reach past it");
+  assert.deepEqual(guest.entries, [],
+    "and was handed the resident set in somebody else's garden");
+  assert.ok(guest.refused.some((r) => r.action === "walk"),
+    "the scope refusal stopped being reported once seating was asked");
 });
 
 // ── the instance → class resolution (the eleven-day gap) ────────────────────

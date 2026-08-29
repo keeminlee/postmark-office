@@ -202,7 +202,96 @@ export function resolveGrants(candidates, { kind = "resident", actorHousehold = 
     const prior = best.get(e.action);
     if (!prior || rank(e) < rank(prior)) best.set(e.action, e);
   }
-  return { entries: [...best.values()], refused };
+  // `admitted` rides beside the winners, and it is NOT the same list: `best`
+  // keeps ONE entry per action, so two nested grounds granting the same verb
+  // collapse to whichever the gather handed over first. Any reader asking
+  // WHICH GROUNDS reach this caller — the seat, below — must ask the admitted
+  // set, because the winners have already thrown the answer away.
+  return { entries: [...best.values()], refused, admitted };
+}
+
+/**
+ * THE SEAT — the calculus as an actor who may be SEATED reads it.
+ *
+ * LOGOS/classes.md § The three channels, verbatim (founder-ruled 2026-08-29):
+ *
+ *   "A ground seats a human when its class actually grants that human something
+ *    — an entry whose `for:` names them, admitted through the ground channel,
+ *    with the relation `scope:` demands satisfied. This is derived, never
+ *    declared: a ground seats whoever it is already lending verbs to, so the
+ *    seating and the grant cannot disagree."
+ *
+ *   "Inside such a ground the human's affordances are the RESIDENT set — walk,
+ *    say, enter, exit, give, take, and the ground's own verbs beside them."
+ *
+ *   "Outside a seating ground, nothing changes. A human affords nothing
+ *    ambiently, anywhere, exactly as before."
+ *
+ * ⚑ SEATING IS DERIVED FROM THE ADMITTED SET, NOT FROM THE CANDIDATES, and the
+ * difference is a whole security property. A guest's human standing on somebody
+ * else's parcel HAS a candidate entry — the parcel class grants `for: human` —
+ * and `scope: own-ground` refuses it. Reading seating off the candidates would
+ * seat that guest in a stranger's garden and hand them the resident set there.
+ * So the first resolution runs in full, scope and all, and only what SURVIVES
+ * it can seat anybody.
+ *
+ * A resident is never "seated": they hold the resident set by being one, and
+ * asking the question of them would be asking whether they may be themselves.
+ */
+export function resolveForActor(candidates, opts = {}) {
+  const kind = String(opts.kind ?? "resident");
+  const first = resolveGrants(candidates, opts);
+  if (kind === "resident") return { ...first, seated: null };
+
+  // ⚑ WHICH GROUND SEATS YOU IS DECIDED BY THE SPINE, NOT BY GATHER ORDER.
+  //
+  // Nested rooms both seat: the candle-vault sits inside the cellar-door and
+  // each grants `for: human`, so `find` returned whichever the store happened
+  // to hand over first. That is a tie broken by a sort's accident, and it is
+  // not cosmetic here — THE WALK FENCE FOLLOWS THE SEAT, so the accident
+  // decided how far a seated human could move: the 5x5 antechamber or the 3x2
+  // vault, depending on row order.
+  //
+  // The OUTERMOST seating ground wins, which is the containing room. A human
+  // seated by two nested rooms is seated by both, and pinching their feet to
+  // the inner one would stop them crossing a floor a resident crosses freely —
+  // against the ruling's own words, "the human can do everything a resident
+  // can". `spineIds` is root-first, so the first match is the outermost.
+  // ⚑ FROM `admitted`, NOT FROM `entries`. `entries` is one-per-action, so the
+  // candle-vault and the cellar-door — both granting `strike` `for: human` —
+  // collapse into a single winner and the loser's GROUND disappears with it.
+  // Reading the winners made this rule answer whichever room the store listed
+  // first, which is the accident it exists to remove. `admitted` is post-filter
+  // (kind and scope both applied) and pre-dedupe, which is exactly the set the
+  // question needs: every ground that actually reaches this caller.
+  const seatable = (first.admitted ?? first.entries).filter((e) => e.channel === "ground");
+  const spine = [...(opts.spineIds ?? [])].map(String);
+  const depth = (e) => {
+    const i = spine.indexOf(String(e.ground ?? ""));
+    return i < 0 ? Number.MAX_SAFE_INTEGER : i;   // off-spine sorts last, never first
+  };
+  const seat = spine.length
+    ? seatable.slice().sort((a, b) => depth(a) - depth(b))[0]
+    : seatable[0];
+  if (!seat) return { ...first, seated: null };
+
+  // The resident set, read against the same law a resident standing here is
+  // read against — resolved, not copied. A second list of "what a resident may
+  // do" would be a second answer to a question the calculus already owns.
+  const asResident = resolveGrants(candidates, { ...opts, kind: "resident" });
+  const byAction = new Map(first.entries.map((e) => [e.action, e]));
+  for (const e of asResident.entries) {
+    // The human's OWN grant wins where both exist: an entry written `for:
+    // human` was written for them deliberately, and may differ from the
+    // resident's in residue or dials.
+    if (!byAction.has(e.action)) byAction.set(e.action, { ...e, via_seat: true });
+  }
+  return {
+    entries: [...byAction.values()],
+    // A refusal that the seat has since answered is not a refusal any more.
+    refused: first.refused.filter((r) => !byAction.has(r.action)),
+    seated: seat.ground ?? seat.from ?? null,
+  };
 }
 
 /**

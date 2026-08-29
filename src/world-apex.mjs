@@ -83,7 +83,7 @@ import { actorRoster, resolveHumanActor } from "./human-actor.mjs";
 // that one derivation, moved somewhere both doors can read it.
 import { humanHandFor } from "./households.mjs";
 import {
-  classOfInstance, entriesOfClass, guardsPass, heldEntries, kindOf, resolveGrants,
+  classOfInstance, entriesOfClass, guardsPass, heldEntries, kindOf, resolveGrants, resolveForActor,
 } from "./world-grants.mjs";
 import { exitAllowed, walkAllowed } from "./embodiment.mjs";
 // THE ARENA'S DOOR. `src/encounter.mjs` has held the wheel, the witnessed roll
@@ -1253,6 +1253,22 @@ export const actorKindOf = (args = {}) => {
   return asked || "resident";
 };
 
+/**
+ * The seat disclosure — who the record will name, and whose act it was.
+ *
+ * LOGOS § The three channels (2026-08-29): a seated human's acts "write through
+ * the SEAT — the resident whose household hosts the human — and the answer says
+ * so." Three fields and no prose, because a page renders this and a reader
+ * checks it: WHERE the seating comes from, WHOSE name goes on the row, and WHO
+ * actually acted.
+ */
+export const seatBlock = (ground, args = {}, key = null) => ({
+  ground,
+  seat: standingHandle(args, key),
+  human: humanHandFor([...(key?.handles ?? [])]),
+  note: "you are seated by this ground: your acts here are a resident's, and the record carries the seat's name with your own beside it",
+});
+
 /** Which of this key's residents is standing here — the walk door's own rule,
  *  not a second one: one handle auto-resolves, several want naming. */
 export function standingHandle(args = {}, key = null) {
@@ -1541,6 +1557,7 @@ async function apexRead(args, key) {
   let actions = [];
   let rows = [];
   let refusedGrants = [];
+  let seatedAt = null;
   let portal = null;
   let actors = [];
   try {
@@ -1556,13 +1573,20 @@ async function apexRead(args, key) {
     rows = amb.rows;
     const ground = gatherGroundActions(store.db, { spineIds, reachIds });
     const held = gatherHeldActions(store.db, holdingsFor(args, key));
-    const resolved = resolveGrants([...held.entries, ...ground.entries, ...amb.entries], {
+    // THE SEAT, and the read must gather it the same way the act does — "read:
+    // is every action's shadow ... anything you can do, you can read, and never
+    // the reverse." A read that showed a seated human less than the door admits
+    // is that reverse, wearing an omission.
+    const resolved = resolveForActor([...held.entries, ...ground.entries, ...amb.entries], {
       kind: actorKindOf(args),
       actorHousehold: worldHouseholdOf(standingHandle(args, key)),
       groundHouseholdOf: (id) => worldHouseholdOf(ground.byId?.get(id)?.by ?? null),
+      // root-first, so the seat lands on the OUTERMOST room that seats you
+      spineIds,
     });
     actions = resolved.entries;
     refusedGrants = resolved.refused;
+    seatedAt = resolved.seated;
     // ── THE PORTAL BLOCK (2026-08-27) ────────────────────────────────────────
     //
     // Computed HERE, inside the one store handle the read already holds, and
@@ -1683,6 +1707,19 @@ async function apexRead(args, key) {
       ...oriented.standpoint,
       ...(portal ? { portal: cockpitPortal(portal.place) } : {}),
       ...(portal?.state ? (actingBlocked(portal.state, standingHandle(args, key)) ?? {}) : {}),
+      // ── THE SEAT, SAID BEFORE IT IS USED (founder-ruled 2026-08-29) ────────
+      //
+      // LOGOS § The three channels: "Any act needing a record WRITES THROUGH THE
+      // SEAT — the resident whose household hosts the human — and the answer
+      // says so. … writing the seat's name in SILENCE is the ghost-writing the
+      // human class exists to prevent. The disclosure is what makes the
+      // difference."
+      //
+      // ABSENT for a resident and for an unseated human, so every ordinary
+      // standpoint is byte-identical. Present only where the extra affordances
+      // are, which is the one place a reader needs to know whose name the record
+      // will carry.
+      ...(seatedAt ? { seat: seatBlock(seatedAt, args, key) } : {}),
     },
     crossing: oriented.crossing,
     // The private note rides exactly as orient carries it: embodied property,
@@ -1791,11 +1828,12 @@ async function apexDo(args, key) {
     const ground = gatherGroundActions(store.db, { spineIds, reachIds });
     const held = gatherHeldActions(store.db, holdingsFor(args, key));
     const kind = actorKindOf(args);
-    const { entries, refused: refusedGrants } = resolveGrants(
+    const { entries, refused: refusedGrants, seated: seatedAt } = resolveForActor(
       [...held.entries, ...ground.entries, ...amb.entries], {
         kind,
         actorHousehold: worldHouseholdOf(standingHandle(args, key)),
         groundHouseholdOf: (id) => worldHouseholdOf(ground.byId?.get(id)?.by ?? null),
+        spineIds,
       });
     const rows = [...amb.rows, ...ground.classRows];
     const match = entries.find((e) => e.action === action);
@@ -1844,12 +1882,25 @@ async function apexDo(args, key) {
       // and not the innermost mark in the spine. Those differ the moment the
       // garden has a flowerbed in it, and using the innermost would fence a
       // human into whatever they last stepped onto instead of into their parcel.
-      if (kind === "human" && match.channel === "ground" && match.ground) {
-        const groundRow = store.db.prepare("SELECT id, at_x, at_y, extent_w, extent_h FROM nodes WHERE id = ?").get(match.ground);
+      // ⚑ THE FENCE NOW FOLLOWS THE SEAT, NOT THE MATCHING GRANT (2026-08-29).
+      //
+      // It used to fire only for a GROUND-channel match, because that was the
+      // only way a human held a verb at all. Under the seat ruling a human's
+      // `walk` can arrive through the resident set (`via_seat`, channel
+      // "ambient"), and reading `match.channel` alone would have waved that
+      // step straight past the boundary — a seated human walking off across the
+      // town under their host's name. So the ground the fence checks is the
+      // SEATING ground where there is one, and the matching grant's otherwise.
+      const fenceGround = kind === "human" ? (seatedAt ?? match.ground) : match.ground;
+      if (kind === "human" && fenceGround) {
+        const groundRow = store.db.prepare("SELECT id, at_x, at_y, extent_w, extent_h FROM nodes WHERE id = ?").get(fenceGround);
         if (action === "exit") {
-          const target = String(args.mark ?? parseEnvelope(args)?.mark ?? "").trim() || match.ground;
-          const e = exitAllowed({ ground: match.ground, target });
-          if (!e.ok) return bounce(403, e.why, e.hint, { law: e.law, ground: match.ground });
+          const target = String(args.mark ?? parseEnvelope(args)?.mark ?? "").trim() || fenceGround;
+          // `seated` repeals the refusal — see exitAllowed's own note. Leaving
+          // the seating ground ends the seating, which is a consequence and not
+          // a wall.
+          const e = exitAllowed({ ground: fenceGround, target, seated: seatedAt });
+          if (!e.ok) return bounce(403, e.why, e.hint, { law: e.law, ground: fenceGround });
         }
         if (action === "walk") {
           const env = parseEnvelope(args) ?? {};
@@ -1859,10 +1910,10 @@ async function apexDo(args, key) {
           // uncheckable step is the one shape a fence must not wave through.
           if (!Number.isFinite(to.x) || !Number.isFinite(to.y))
             return bounce(422, "an embodied step needs a destination this door can read",
-              `Your walk here is ${match.ground}'s grant and is bounded by its fence, so the step has to be checked against it — and a destination that cannot be read cannot be checked. Name to_x and to_y.`,
-              { ground: match.ground });
-          const w = walkAllowed({ ground: match.ground, groundRow, to });
-          if (!w.ok) return bounce(403, w.why, w.hint, { law: w.law, fence: w.fence, asked: to, ground: match.ground });
+              `Your walk here is ${fenceGround}'s grant and is bounded by its fence, so the step has to be checked against it — and a destination that cannot be read cannot be checked. Name to_x and to_y.`,
+              { ground: fenceGround });
+          const w = walkAllowed({ ground: fenceGround, groundRow, to });
+          if (!w.ok) return bounce(403, w.why, w.hint, { law: w.law, fence: w.fence, asked: to, ground: fenceGround });
         }
       }
     }
@@ -1949,6 +2000,13 @@ async function apexDo(args, key) {
       : null;
     const done = { did: action, via: match.via, from: match.from, dispatched_to: handler.tool, terms,
       ...(match.channel && match.channel !== "ambient" ? { channel: match.channel, ...(match.ground ? { ground: match.ground } : {}), ...(match.held ? { in_hand: match.held } : {}) } : {}),
+      // THE SEAT ON EVERY SEATED ACT, whatever the verb and whatever the
+      // handler does with it. LOGOS § The three channels: the record is written
+      // through the seat "and the answer says so." The handler's own answer may
+      // disclose it too (the walk door's `acted_by` does), but a disclosure
+      // that depended on each handler remembering would be a promise kept by
+      // habit — this is the one place every act passes through.
+      ...(seatedAt ? { seat: seatBlock(seatedAt, args, key), ...(match.via_seat ? { via_seat: true } : {}) } : {}),
       ...(acting ? { actor: { kind: acting.kind, standing: acting.standing, residue: acting.residue, says: acting.says, note: acting.note } } : {}) };
     let result;
     // Declared out here because the CROSSING below needs it too — the wheel has
@@ -2026,7 +2084,16 @@ async function apexDo(args, key) {
         const withWhom = acting?.with ?? orientingHandle;
         result = await worldSayHuman({ ...humanFields, ...(withWhom ? { with: withWhom } : {}) }, key);
       } else {
-        result = await handler.run(hand ? { ...fields, as_human: hand } : fields, key, ctx);
+        // `__seated_ground` rides beside the hand, and only the apex can put it
+        // there: seating is the admitted calculus's answer (scope and all), and
+        // a handler that computed it for itself would be a second calculus. It
+        // is what lifts the walk door's 501 — see walkViaOffice's own note —
+        // and it is deliberately double-underscored, the `__action` precedent,
+        // to say out loud that it is office plumbing rather than a field a
+        // resident writes.
+        result = await handler.run(
+          hand ? { ...fields, as_human: hand, ...(seatedAt ? { __seated_ground: seatedAt } : {}) } : fields,
+          key, ctx);
       }
     } catch (e) {
       if (!e?.code) throw e;
