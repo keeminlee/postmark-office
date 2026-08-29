@@ -267,13 +267,38 @@ export function foldEncounter(rows = [], { dials = {}, weaponOf = () => null } =
       // the wheel at the instant their own round is computed — the same footing
       // a first-time joiner stands on, and the same room the fight has been
       // reporting ever since they walked out.
+      //
+      // ⚠ AND IT KEEPS THE INITIATIVE IT FIRST ROLLED. Ruled by the founder
+      // 2026-08-28, closing the shop the slot fix left standing. Every join
+      // used to roll fresh, and BEFORE the first turn is taken a rejoiner is
+      // re-sorted into round 1 by that new roll — so a hand could walk out and
+      // back in at the open until the die was kind (observed climbing 9, 18,
+      // 13, 12, 18, 19, taking the top of the order). Carrying the stale
+      // entry's value kills it WITHOUT A NEW REFUSAL: nothing is forbidden,
+      // there is simply nothing left to buy.
+      //
+      // It carries the FIRST roll, not the previous one, and transitively:
+      // cycle two copies what cycle one copied, so the value is the one thrown
+      // at the first join however many times the door is used. The bonus is
+      // already inside the kept number and must NOT be re-added.
+      //
+      // A WIPE IS A CLEAN SLATE and gets that for free: the wipe empties
+      // `joins`, so the next join finds nothing to carry and rolls as a first
+      // join. A new attempt is a new fight — the adversary stands again at
+      // full, and the hands roll again with it. Keeping the memo anywhere but
+      // in `joins` would have leaked the roll across attempts.
+      const kept = held >= 0 ? joins[held].initiative : null;
       if (held >= 0) joins.splice(held, 1);
       left.delete(actor);
       const w = wheelNow();
       const roundJoined = joins.length === 0 ? 1 : (w.round > 1 || turnsTaken > 0 ? w.round + 1 : 1);
-      const init = roll(r, D.initDie, "initiative") + (isHostile ? D.bossInit : 0);
+      // A kept initiative is a roll NOT THROWN, so nothing lands in `rolls`.
+      // That absence is the honest receipt that no re-roll happened, and the
+      // beat says so in words for a reader who would otherwise wonder.
+      const init = kept ?? (roll(r, D.initDie, "initiative") + (isHostile ? D.bossInit : 0));
       joins.push({ who: actor, kind: isHostile ? HOSTILE : "player", seq: r.seq, initiative: init, round_joined: roundJoined });
-      beats.push({ seq: r.seq, actor, act: "join", initiative: init, joins_round: roundJoined });
+      beats.push({ seq: r.seq, actor, act: "join", initiative: init, joins_round: roundJoined,
+                  ...(kept != null ? { initiative_kept: true } : {}) });
       continue;
     }
     if (verb === "leave") {

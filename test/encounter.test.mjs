@@ -315,6 +315,106 @@ test("re-entering takes ONE slot back, it does not add a second — a rejoin is 
   assert.equal(cycled.wheel.order.length, seats, "and the room is still the size it was");
 });
 
+test("a rejoin KEEPS the initiative it first rolled — the door is not a re-roll", () => {
+  // LOGOS § The arena, verbatim:
+  //   "Initiative is rolled at the open and appended at the boundary. Crossing
+  //    the inner threshold rolls you in; a late arrival joins at the BOTTOM of
+  //    the order at the next round boundary, never mid-round."
+  //
+  // Ruled by the founder 2026-08-28, closing the shop the slot fix exposed:
+  // every join rolled fresh initiative, and BEFORE the first turn is taken a
+  // rejoiner is re-sorted into round 1 by that new roll. So a hand could walk
+  // out and back in at the open until the die was kind — observed climbing
+  // 9 -> 18 -> 13 -> 12 -> 18 -> 19 and taking the top of the order. The roll
+  // is now KEPT from the first join, so the shop dies without a new refusal:
+  // nothing is forbidden, there is simply nothing to buy.
+  //
+  // ⚠ THE FLATNESS ASSERTION ALONE COULD PASS ON LUCK — six d20 rolls landing
+  // equal is about one run in three million, which is rare enough to trust and
+  // not rare enough to rest a law on. The leg that CANNOT pass by luck is the
+  // roll ledger: a kept initiative records NO throw, so `rolls` holds exactly
+  // one initiative entry for this hand however many times they use the door.
+  reset();
+  const acc = [row("darko", "join", 0), row("rei", "join", 1), boss("join", 2)];
+  const seenInit = [];
+  let n = 10;
+  for (let i = 0; i < 6; i += 1) {
+    const st = foldEncounter(acc, { dials: DIALS });
+    assert.equal(st.wheel.round, 1, "the setup took a turn — this asserts the AT-THE-OPEN case, where a re-roll would re-sort the order");
+    seenInit.push(st.wheel.order.find((o) => o.who === "darko")?.initiative ?? null);
+    acc.push(row("darko", "leave", n)); n += 1;
+    acc.push(row("darko", "join", n)); n += 1;
+  }
+  const first = seenInit[0];
+  assert.ok(Number.isFinite(first), "the setup never rolled darko in at all");
+  assert.deepEqual(seenInit, Array(6).fill(first),
+    `darko's initiative moved across leave/rejoin cycles (${seenInit.join(" -> ")}) — the door is a re-roll and the order can be shopped`);
+
+  // THE LUCK-PROOF LEG. A kept roll is a roll not thrown, and the ledger says so.
+  const final = foldEncounter(acc, { dials: DIALS });
+  const thrown = final.rolls.filter((x) => x.for === "initiative" && x.actor === "darko");
+  assert.equal(thrown.length, 1,
+    `darko threw ${thrown.length} initiative rolls across six trips through the door — a kept initiative throws once, at the first join`);
+  assert.equal(final.wheel.order.find((o) => o.who === "darko").initiative, first,
+    "and the kept value is the FIRST join's roll, not the one before it");
+
+  // A FIRST-TIME JOIN STILL ROLLS, exactly as before. Without this the fix
+  // could have been "never roll initiative", which flattens every order in the
+  // town and would pass every assertion above.
+  for (const who of ["rei", "the-unlit-cake"]) {
+    assert.equal(final.rolls.filter((x) => x.for === "initiative" && x.actor === who).length, 1,
+      `${who} never rolled initiative — a first join must still roll`);
+  }
+  assert.ok(final.beats.some((b) => b.act === "join" && b.actor === "darko" && b.initiative_kept),
+    "the journal does not say the roll was kept — a reader seeing no throw for a join is owed the reason");
+});
+
+test("a wipe is a clean slate: re-entering a NEW attempt rolls initiative fresh", () => {
+  // LOGOS § Downed, not dead, verbatim:
+  //   "If the whole room goes down, the attempt ends and the room resets —
+  //    everyone wakes in the antechamber, the adversary stands again at full,
+  //    and the journal keeps the failed attempt as history."
+  //
+  // The kept-initiative rule must not leak ACROSS attempts. A new attempt is a
+  // new fight — the adversary stands again at full, so the hands roll again
+  // too. The fold gets this from the wipe emptying `joins`: with no prior entry
+  // to carry, the next join is a first join. This test pins that, because the
+  // cheapest way to implement "keep the first roll" is a per-actor memo that
+  // the wipe would never clear, and nothing else here would notice.
+  reset();
+  const D = { ...DIALS, strike: { ...DIALS.strike, beats_ac: 1, damage_die: 4 },
+              arena: { ...DIALS.arena, guest_hp: 25 },
+              adversary: { ...DIALS.adversary, hp: 200, damage_die: 20, to_hit_die: 20 } };
+  const acc = [row("darko", "join", 0), boss("join", 1)];
+  let n = 10;
+  // a leave/rejoin BEFORE the wipe, so the kept rule is demonstrably in force
+  acc.push(row("darko", "leave", n)); n += 1;
+  acc.push(row("darko", "join", n)); n += 1;
+  let s = foldEncounter(acc, { dials: D });
+  const beforeWipe = s.rolls.filter((x) => x.for === "initiative" && x.actor === "darko");
+  assert.equal(beforeWipe.length, 1, "the kept rule was not in force before the wipe — this test would prove nothing");
+  const keptInit = s.wheel.order.find((o) => o.who === "darko").initiative;
+
+  while (!s.attempts && n < 90) {
+    const t = s.wheel.turn;
+    if (!t) break;
+    acc.push(t === "the-unlit-cake" ? boss("strike", n, "darko") : row(t, "strike", n));
+    n += 1; s = foldEncounter(acc, { dials: D });
+  }
+  assert.equal(s.attempts, 1, "the setup never wiped the room");
+  assert.deepEqual(s.wheel.order, [], "nobody is in the wheel — they are next door, which is what makes the next join a FIRST one");
+
+  const after = foldEncounter([...acc, row("darko", "join", n), boss("join", n + 1)], { dials: D });
+  const rolled = after.rolls.filter((x) => x.for === "initiative" && x.actor === "darko");
+  assert.equal(rolled.length, 2,
+    `darko threw ${rolled.length} initiative rolls across two attempts — a new attempt is a new fight and rolls again`);
+  assert.equal(after.beats.filter((b) => b.act === "join" && b.actor === "darko" && b.initiative_kept).length, 1,
+    "the post-wipe join was recorded as a KEPT roll — the memo leaked across attempts");
+  assert.equal(after.wheel.order.find((o) => o.who === "darko").initiative, rolled[1].rolled,
+    "and the hand stands on the NEW throw, not the one the last attempt ended with");
+  void keptInit;   // the old attempt's value is history; the journal keeps it, the wheel does not
+});
+
 test("a rejoin while DOWN comes back down, and at the hit points it left with", () => {
   // LOGOS § Downed, not dead, verbatim:
   //   "At zero you are DOWN, and down is not gone. You lose your acts, the
