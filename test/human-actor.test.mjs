@@ -393,3 +393,21 @@ test("the door's whitelist passes the seam's own words through", () => {
   const v = validateArgs(APEX_TOOL, { do: "walk", handle: "rei", as: "human", beside: "rei", args: { x: 1, y: 2 } });
   assert.equal(v?.error, undefined, `an embodied act's envelope validates clean, got: ${JSON.stringify(v)}`);
 });
+
+test("THE CREDENTIAL IS NOT THE NAME: POSTMARK_HUMAN_NAMES maps a login's shown label, display only", async () => {
+  const { actorRoster } = await import("../src/human-actor.mjs");
+  const prev = process.env.POSTMARK_HUMAN_NAMES;
+  process.env.POSTMARK_HUMAN_NAMES = "keeminlee=DARKO, other=Someone Else";
+  try {
+    const r = actorRoster({ residents: ["rei"], humanGrants: [{ action: "strike" }], humanHandle: "keeminlee", seats: [] });
+    const h = r.find((x) => x.kind === "human");
+    assert.equal(h.label, "DARKO", "the shown name is the town name");
+    assert.equal(h.id, "keeminlee", "the id stays the credential — renaming a record orphans its readers");
+    assert.equal(h.handle, "keeminlee", "the handle stays the credential");
+    // CAN-FAIL control: an unmapped login shows as itself
+    const r2 = actorRoster({ residents: [], humanGrants: [], humanHandle: "somebody", seats: [] });
+    assert.equal(r2.find((x) => x.kind === "human").label, "somebody");
+  } finally {
+    if (prev == null) delete process.env.POSTMARK_HUMAN_NAMES; else process.env.POSTMARK_HUMAN_NAMES = prev;
+  }
+});

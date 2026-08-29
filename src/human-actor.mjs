@@ -204,6 +204,24 @@ export function resolveHumanActor({ action, as: kind, beside, key, fence = "ambi
 export const HUMAN_TOKEN_DIR = () => process.env.POSTMARK_HUMAN_TOKENS ?? "/atelier/postmark/birthday";
 
 /**
+ * A human's SHOWN name. The credential is not the name — the MCP door has said
+ * so in prose since it opened ("the founder goes by DARKO in town; the
+ * keeminlee GitHub account is his credential, not his name"), and this makes
+ * that sentence real where labels are composed. POSTMARK_HUMAN_NAMES holds
+ * comma-separated login=Name pairs; a login with no pair shows as itself.
+ * DISPLAY ONLY: the record's hand (`human-of-<household>`) and every id keyed
+ * on the login are untouched — renaming a record orphans its readers.
+ */
+export const humanDisplayName = (login) => {
+  if (!login) return login;
+  for (const pair of String(process.env.POSTMARK_HUMAN_NAMES ?? "").split(",")) {
+    const i = pair.indexOf("=");
+    if (i > 0 && pair.slice(0, i).trim() === login) return pair.slice(i + 1).trim() || login;
+  }
+  return login;
+};
+
+/**
  * The token image for an embodied human, as a URL the site can draw.
  *
  * A SLOT, deliberately left empty of any particular person's picture. The
@@ -297,7 +315,7 @@ export function actorRoster({ residents = [], humanGrants = [], humanHandle = nu
     kind: "human",
     id: humanHandle ?? null,
     handle: humanHandle ?? null,
-    label: humanHandle ?? "Human",
+    label: humanHandle ? humanDisplayName(humanHandle) : "Human",
     // ALWAYS PRESENT, SOMETIMES NOT ALLOWED. An absent option teaches nothing:
     // a player who never sees "Human" cannot learn that embodiment exists, let
     // alone that it is fenced to ground that grants it.
