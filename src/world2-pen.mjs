@@ -81,9 +81,14 @@ async function pool(env = process.env) {
  * R1 exists to end, moved one tier over — two connection budgets, two failure
  * surfaces, and two different answers to "can the record be reached".
  *
- * `await import("pg")` above is the ONLY place this office resolves `pg`, and it
- * runs on first use. An office with no W2 flags never calls this, so an office
- * with no `pg` installed boots and serves exactly as it does today.
+ * `await import("pg")` above is the only place THIS module resolves `pg`, and it
+ * runs on first use — not the only place the office does: world2-acts,
+ * world2-claims and world2-serve each hold their own lazy import and their own
+ * pool (10 connections across the four when all are warm, which is a fact worth
+ * knowing before the box is sized). What matters here is that every one of them
+ * is lazy and gated on `world2Enabled`, so an office with no W2 flags calls none
+ * of them and an office with no `pg` installed boots and serves exactly as it
+ * does today. `test/world2-guard-gate.test.mjs` GG6 is what holds that true.
  */
 export async function penPool(env = process.env) { return pool(env); }
 

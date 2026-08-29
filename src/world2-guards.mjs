@@ -41,12 +41,14 @@
 // and it is asked once per act; a cached permit is a permit granted against a
 // store that has changed, which is the failure mode a guard may not have.
 //
-// No sqlite anything. This module imports the port lazily and the pool from
-// world2-pen.mjs, and that is the entire dependency surface — so an office with
-// no W2 flags never loads it, and an office with no `pg` installed never
-// resolves `pg` (world2-pen.mjs's pool is the only place that import lives, and
-// it is already lazy). THE PRIME CONSTRAINT: an office booted with no W2 env
-// behaves exactly as it did before this file existed.
+// No sqlite anything. This module imports the port lazily and takes its pool
+// from world2-pen.mjs, and that is the entire dependency surface — so an office
+// with no W2 flags never loads it, and the guard path reaches `pg` only through
+// world2-pen's lazy import. (The office has four such lazy imports in all —
+// world2-acts, world2-claims, world2-pen, world2-serve — each gated on
+// `world2Enabled`; this file adds none.) THE PRIME CONSTRAINT: an office booted
+// with no W2 env behaves exactly as it did before this file existed, and
+// `test/world2-guard-gate.test.mjs` GG2 and GG6 are what hold that true.
 
 import { penPool } from "./world2-pen.mjs";
 
