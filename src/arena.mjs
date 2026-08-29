@@ -1060,11 +1060,19 @@ export async function arenaActViaOffice(repo, args = {}, key = null, deps = {}) 
         throw bounce(409, `${who} is down — someone has to lift you`,
           "at zero you are DOWN, not dead: your ARENA acts stop and any ally may spend their whole turn lifting you. The wheel skips you until one does, so waiting for your turn will not help. Down stops your arena acts, not your voice — you can still speak, still walk, still hand things over while you are on the floor.",
           { encounter: publicState(state), downed: true });
-      const turn = state.wheel?.turn ?? null;
-      if (turn && turn !== who)
-        throw bounce(409, `it is ${turn}'s turn`,
-          `the wheel gates every act while an encounter is live. You are ${positionOf(state, who)} in the order; ${turn} acts next.`,
-          { encounter: publicState(state), whose_turn: turn });
+      // ⚑ OUT OF TURN IS NO LONGER A REFUSAL (founder-asked 2026-08-29): "let
+      // agents QUEUE their actions (1 at a time, requeue just replaces) instead
+      // of bouncing and saying it's not your turn."
+      //
+      // So the row is WRITTEN and the fold holds it. The door does not decide
+      // whether it resolves now or waits — it appends the act and reads the
+      // refold, which is the same division of labour every other verb here
+      // keeps: the door owns the pen, the fold owns the law. A door that
+      // branched on the turn would be a second wheel.
+      //
+      // The refusal that STAYS is the one above: down is not a wait, it is a
+      // state somebody else has to end, and holding an act through it would fire
+      // a stale intent after a lift.
     }
 
     // ── 6 · the act ─────────────────────────────────────────────────────────
@@ -1084,6 +1092,11 @@ export async function arenaActViaOffice(repo, args = {}, key = null, deps = {}) 
     });
     state = refold();
     const myBeat = (state.beats ?? []).find((b) => Number(b.seq) === Number(mine.seq)) ?? null;
+    // DID IT LAND, OR IS IT WAITING? The fold decided; the door reports. An act
+    // with no beat of its own that appears in the queue was taken and held —
+    // which is a success, not a refusal, and the answer has to say which so a
+    // page does not render a queued swing as a swing that missed.
+    const held = (state.queued ?? []).find((q) => Number(q.seq) === Number(mine.seq)) ?? null;
 
     // ── 7 · the creatures — the duet IS the event loop ──────────────────────
     //
@@ -1105,6 +1118,15 @@ export async function arenaActViaOffice(repo, args = {}, key = null, deps = {}) 
       ...(opened ? { opened } : {}),
       ...(timedOutPass ? { timed_out: timedOutPass } : {}),
       ...(myBeat ? { beat: myBeat } : {}),
+      // ⚑ QUEUED IS A SUCCESS, AND THE ANSWER MUST NOT LOOK LIKE A MISS. A held
+      // act has no beat — no roll, no damage, nothing happened yet — so an
+      // answer that only carried `beat` would read as a swing that did nothing.
+      // `positionOf` earns its keep here: it used to tell a refused hand where
+      // they stood in the order, and it tells a waiting one the same thing, for
+      // the better reason.
+      ...(held ? { queued: { ...held, whose_turn: state.wheel?.turn ?? null,
+                             you_are: positionOf(state, who),
+                             note: `held — it resolves when the wheel reaches you. Send another and it REPLACES this one; you hold one slot, not a plan.` } } : {}),
       ...(withWeapon ? { with: withWeapon } : {}),
       // The page's shape (`rollsFrom`) is what rides the answer; the fold's own
       // rows stay beside it under a name that does not collide, because a
