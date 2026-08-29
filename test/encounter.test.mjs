@@ -923,10 +923,105 @@ test("the wheel is a FOLD, not a schedule — wheelOf takes rows-derived facts a
   ];
   const w0 = wheelOf({ joins, turnsTaken: 0 });
   assert.equal(w0.turn, "b", "highest initiative leads");
-  assert.equal(wheelOf({ joins, turnsTaken: 1 }).turn, "a");
-  assert.equal(wheelOf({ joins, turnsTaken: 2 }).turn, "b");
+
+  // ⚠ SUPERSEDED IN PLACE, 2026-08-29. These three lines read
+  //   wheelOf({ joins, turnsTaken: 1 }).turn === "a"
+  //   wheelOf({ joins, turnsTaken: 2 }).turn === "b"
+  // — the turn derived by REPLAYING the count over the current list. That
+  // derivation is what handed the founder repeat turns live: every join, leave,
+  // down and lift remaps the past wraps, and the pointer can land back on the
+  // hand who just acted. The TURN is now the successor of whoever acted last;
+  // the count survives only for the ROUND, which is asserted below and is
+  // deliberately unchanged tonight.
+  //
+  // The law this test is named for is untouched: no clock in the signature, a
+  // pure function of facts the rows already carry. `lastActor` is one more such
+  // fact — the actor of the most recent turn-ending act — not a cursor and not
+  // a schedule.
+  assert.equal(wheelOf({ joins, turnsTaken: 1, lastActor: "b" }).turn, "a",
+    "after b acts the turn is the next hand who can act");
+  assert.equal(wheelOf({ joins, turnsTaken: 2, lastActor: "a" }).turn, "b",
+    "and after a acts it comes round again");
   assert.equal(wheelOf({ joins, turnsTaken: 2 }).round, 2, "and the round advances when the wheel comes round");
-  assert.equal(wheelOf({ joins, turnsTaken: 1, downed: new Set(["a"]) }).turn, "b", "the downed are skipped, not waited for");
+  assert.equal(wheelOf({ joins, turnsTaken: 1, lastActor: "b", downed: new Set(["a"]) }).turn, "b",
+    "the downed are skipped, not waited for — with a down, b's successor is b again because nobody else can act");
+});
+
+// ── THE TURN POINTER UNDER MEMBERSHIP CHANGE (founder-reported 2026-08-29) ───
+//
+// Live: keith struck at 20:13, 20:18 and 20:22 with solan's join at 20:17 and
+// DARKO's at 20:20:52 bracketed between, and the wheel offered him another turn
+// at 20:30. The count-replay derivation re-walked `turnsTaken` steps over a list
+// that had grown under it, so every past wrap was remapped and the pointer
+// landed backward onto the hand who had just acted.
+
+test("after a hand acts, a join mid-round does not hand them the turn again", () => {
+  // Wright's property (a): after X acts it cannot be X again unless nobody else
+  // can act. This is the founder's own sequence in miniature.
+  const before = [
+    { who: "keith", kind: "player", seq: 1, initiative: 18, round_joined: 1 },
+    { who: "wright", kind: "player", seq: 2, initiative: 9, round_joined: 1 },
+  ];
+  assert.equal(wheelOf({ joins: before, turnsTaken: 1, lastActor: "keith" }).turn, "wright",
+    "with nobody joining, keith's successor is wright");
+
+  // solan joins mid-fight — a late arrival, at the bottom of the order.
+  const after = [...before, { who: "solan", kind: "player", seq: 7, initiative: 14, round_joined: 3 }];
+  const turn = wheelOf({ joins: after, turnsTaken: 1, lastActor: "keith" }).turn;
+  assert.notEqual(turn, "keith",
+    "keith acted and the join handed the turn straight back to him — this is the founder's bug exactly");
+  assert.equal(turn, "wright",
+    "and the successor is unchanged: a hand added elsewhere in the ring must shift the FUTURE, never who came before");
+});
+
+test("a hand leaving from BEFORE the last actor does not rewind the turn onto them", () => {
+  // Wright's property (b), the other direction: a departure changes the list's
+  // length, which under the count-replay moved every wrap boundary.
+  const joins = [
+    { who: "first", kind: "player", seq: 1, initiative: 20, round_joined: 1 },
+    { who: "keith", kind: "player", seq: 2, initiative: 15, round_joined: 1 },
+    { who: "wright", kind: "player", seq: 3, initiative: 9, round_joined: 1 },
+  ];
+  const turn = wheelOf({ joins, turnsTaken: 4, lastActor: "keith", left: new Set(["first"]) }).turn;
+  assert.notEqual(turn, "keith", "the departure rewound the turn onto the hand who had just acted");
+  assert.equal(turn, "wright", "the turn walks FORWARD from keith regardless of who left behind them");
+});
+
+test("when the last actor is the one who left, the turn is the next able hand after their empty chair", () => {
+  // Wright's property: "if the last actor has left the wheel, walk from where
+  // their slot was." Without the seating chart keeping the departed, there is
+  // nowhere to walk from and the pointer falls to the top of the order — which
+  // would hand the turn to `first` and skip wright entirely.
+  const joins = [
+    { who: "first", kind: "player", seq: 1, initiative: 20, round_joined: 1 },
+    { who: "keith", kind: "player", seq: 2, initiative: 15, round_joined: 1 },
+    { who: "wright", kind: "player", seq: 3, initiative: 9, round_joined: 1 },
+  ];
+  const w = wheelOf({ joins, turnsTaken: 3, lastActor: "keith", left: new Set(["keith"]) });
+  assert.equal(w.turn, "wright",
+    "the departed hand's chair is gone from the order, so the turn must be read from where it WAS — not from the top");
+  assert.deepEqual(w.order.map((j) => j.who), ["first", "wright"],
+    "and the departed are still out of the order a reader is shown — the chair is for the walk, not for the roster");
+});
+
+test("with one membership and nothing changing, the sequence is exactly what it always was", () => {
+  // Wright's control (4), and the leg that stops "return anyone" from passing:
+  // a fight where nobody joins, leaves, falls or is lifted must walk the ring in
+  // the same order the old derivation walked it.
+  const joins = [
+    { who: "a", kind: "player", seq: 1, initiative: 30, round_joined: 1 },
+    { who: "b", kind: "player", seq: 2, initiative: 20, round_joined: 1 },
+    { who: "c", kind: "player", seq: 3, initiative: 10, round_joined: 1 },
+  ];
+  const seen = [];
+  let last = null;
+  for (let n = 0; n < 7; n += 1) {
+    const turn = wheelOf({ joins, turnsTaken: n, lastActor: last }).turn;
+    seen.push(turn);
+    last = turn;
+  }
+  assert.deepEqual(seen, ["a", "b", "c", "a", "b", "c", "a"],
+    "the undisturbed ring must go round in initiative order, forever — this is the shape the old walk had and the new one must keep");
 });
 
 test("an initiative tie breaks on the log's own order, not on a sort's accident", () => {
@@ -936,4 +1031,89 @@ test("an initiative tie breaks on the log's own order, not on a sort's accident"
   ];
   assert.equal(wheelOf({ joins, turnsTaken: 0 }).turn, "earlier",
     "a tie is broken by a FACT — who was written first — so two readers cannot disagree");
+});
+
+test("a turn that did NOT count does not move the pointer either", () => {
+  // The fold has one act that increments `turnsTaken` and then takes it back:
+  // a swing at an adversary already at zero ("there was nothing left standing to
+  // hit"). A turn that did not count must not leave its actor sitting as the one
+  // the NEXT turn is derived from — otherwise a wasted swing steals the ring's
+  // position, and the hand after the real last actor is skipped.
+  reset();
+  const D = { ...DIALS, strike: { ...DIALS.strike, beats_ac: 1, damage_die: 20 },
+              adversary: { ...DIALS.adversary, hp: 1, to_hit_die: 20 } };
+  const acc = [row("a", "join", 0), row("b", "join", 1), row("c", "join", 2), boss("join", 3)];
+  let s = foldEncounter(acc, { dials: D });
+  const ring = s.wheel.order.filter((o) => o.kind !== HOSTILE).map((o) => o.who);
+  assert.equal(ring.length, 3, "the setup needs three hands for successors to differ");
+
+  // Drive the ring honestly until a HAND is on turn and kills the cake (hp 1,
+  // beats_ac 1 — any landed blow does it). Substituting a hand who is not on
+  // turn just gets the swing gated, which is how the first draft of this test
+  // never reached the branch it exists for.
+  let killer = null, n0 = 10;
+  while (s.phase !== "spent" && n0 < 40) {
+    const t = s.wheel.turn;
+    if (!t) break;
+    if (t === "the-unlit-cake") { acc.push(boss("strike", n0, ring[0])); }
+    else { killer = t; acc.push(row(t, "strike", n0)); }
+    n0 += 1;
+    s = foldEncounter(acc, { dials: D });
+  }
+  assert.equal(s.phase, "spent", "the setup never put the cake down — this test would prove nothing");
+  assert.ok(killer, "the setup never let a hand swing");
+  const afterKill = s.wheel.turn;
+
+  // now a DIFFERENT hand swings at nothing: ignored, and the turn must not move
+  const waster = ring.find((h) => h !== killer && h !== afterKill) ?? ring.find((h) => h !== killer);
+  acc.push(row(waster, "strike", 11));
+  const after = foldEncounter(acc, { dials: D });
+  assert.ok(after.ignored.some((i) => i.actor === waster && /nothing left standing/.test(i.why)),
+    "the setup's wasted swing was not ignored — the branch under test was never reached");
+  assert.equal(after.wheel.turn, afterKill,
+    "a swing that did not count moved the turn — the pointer must follow the last act that COUNTED, not the last act attempted");
+});
+
+test("a wipe clears who acted last — the next attempt opens on the ring, not mid-ring", () => {
+  // LOGOS § Downed, not dead: a wipe ends the attempt and the room resets. The
+  // turn pointer is part of that reset: a new attempt has no last actor, so it
+  // opens by the opening rule exactly as the first join did. Carrying the dead
+  // attempt's last actor across would start the new fight partway round a ring
+  // that no longer exists.
+  reset();
+  const D = { ...DIALS, strike: { ...DIALS.strike, beats_ac: 1, damage_die: 4 },
+              arena: { ...DIALS.arena, guest_hp: 10 },
+              adversary: { ...DIALS.adversary, hp: 300, damage_die: 20, to_hit_die: 20 } };
+  const acc = [row("darko", "join", 0), boss("join", 1)];
+  let s = foldEncounter(acc, { dials: D }), n = 10;
+  while (!s.attempts && n < 120) {
+    const t = s.wheel.turn;
+    if (!t) break;
+    acc.push(t === "the-unlit-cake" ? boss("strike", n, "darko") : row(t, "strike", n));
+    n += 1; s = foldEncounter(acc, { dials: D });
+  }
+  assert.equal(s.attempts, 1, "the setup never wiped the room");
+
+  // A fresh attempt. THREE hands and the cake, so the ring is long enough for
+  // "the opening" and "whoever follows the cake" to be different seats — with a
+  // short ring they coincide whenever the cake sits last, and then this test
+  // cannot see a stale pointer at all.
+  const after = foldEncounter([...acc,
+    row("darko", "join", n), row("rei", "join", n + 1), row("wright", "join", n + 2), boss("join", n + 3)],
+    { dials: D });
+  const seats = after.wheel.order.map((o) => o.who);
+  const opening = seats[0];
+  assert.ok(opening, "the new attempt seated nobody");
+
+  // THE PRECONDITION, stated rather than hoped: the cake's successor must not
+  // BE the opening, or a pointer left pointing at the cake would answer the
+  // right seat for the wrong reason and this test would pass over the bug.
+  const cakeAt = seats.indexOf("the-unlit-cake");
+  assert.ok(cakeAt >= 0, "the cake did not rejoin the new attempt");
+  const afterCake = seats[(cakeAt + 1) % seats.length];
+  assert.notEqual(afterCake, opening,
+    `the cake sits last in this ring (${seats.join(" -> ")}), so its successor IS the opening — the fixture cannot discriminate a stale pointer`);
+
+  assert.equal(after.wheel.turn, opening,
+    "the new attempt did not open on the top of its own ring — the dead attempt's last actor is still steering the pointer");
 });

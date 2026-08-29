@@ -112,7 +112,7 @@ export function rollOf({ at, actId, actor, die, salt = "" }) {
  * skipped: the wheel does not stop for someone who cannot act, and it does not
  * hold a seat for someone who walked out.
  */
-export function wheelOf({ joins = [], turnsTaken = 0, downed = new Set(), left = new Set() } = {}) {
+export function wheelOf({ joins = [], turnsTaken = 0, downed = new Set(), left = new Set(), lastActor = null } = {}) {
   // Round 1 is whoever was in at the open, ordered by initiative (ties by the
   // seq they joined at — the log's own order, so a tie is broken by a fact and
   // not by a sort's accident).
@@ -121,15 +121,30 @@ export function wheelOf({ joins = [], turnsTaken = 0, downed = new Set(), left =
     (b.initiative - a.initiative) || (a.seq - b.seq));
   const late = joins.filter((j) => j.round_joined > 1).sort((a, b) => a.seq - b.seq);
 
-  const active = [...order, ...late].filter((j) => !left.has(j.who));
+  // ⚑ THE SEATING CHART KEEPS THE DEPARTED; the wheel does not.
+  //
+  // `active` is who may be counted. `seats` is every hand that ever took a slot
+  // in this attempt, in wheel order, INCLUDING those who walked out — because
+  // the turn is derived by walking forward from whoever acted last, and that
+  // hand may be the one who has since left. Without their empty chair there is
+  // nowhere to walk forward FROM, and the pointer would fall back to the top of
+  // the order and hand the round to whoever sits there.
+  const seats = [...order, ...late];
+  const active = seats.filter((j) => !left.has(j.who));
   if (!active.length) return { order: [], round: 0, turn: null, index: 0, active: [] };
 
-  // Walk the wheel `turnsTaken` times, skipping the downed and the departed.
-  // Walking is how a skip stays DERIVED — the alternative is storing a cursor,
-  // and a stored cursor is the private grammar atom 1 refuses.
-  let i = 0, round = 1, taken = 0, guard = 0;
   const canAct = (j) => !downed.has(j.who) && !left.has(j.who);
-  if (!active.some(canAct)) return { order: active, round, turn: null, index: 0, active, all_down: true };
+  if (!active.some(canAct)) return { order: active, round: 1, turn: null, index: 0, active, all_down: true };
+
+  // ── THE ROUND, unchanged ────────────────────────────────────────────────
+  //
+  // Still the count-replay walk, and still carrying the wobble that walk has
+  // when membership changes under it — the founder's round-14-then-round-11.
+  // Explicitly OUT OF SCOPE tonight (Wright's call): the round is display, the
+  // TURN is who may act, and only one of those was handing keith repeat turns.
+  // Counting the round forward at fold time is the real fix and it changes
+  // every round number in every answer, which is not a party-night change.
+  let i = 0, round = 1, taken = 0, guard = 0;
   while (!canAct(active[i])) { i = (i + 1) % active.length; if (++guard > active.length * 4) break; }
   while (taken < turnsTaken) {
     do {
@@ -138,7 +153,45 @@ export function wheelOf({ joins = [], turnsTaken = 0, downed = new Set(), left =
     } while (!canAct(active[i]));
     taken += 1;
   }
-  return { order: active, round, turn: active[i]?.who ?? null, index: i, active };
+
+  // ── THE TURN: THE SUCCESSOR OF WHOEVER ACTED LAST ───────────────────────
+  //
+  // ⚑ THE COUNT-REPLAY ABOVE IS NOT A SAFE WAY TO FIND THE TURN, and this is
+  // the bug the founder hit live: replaying `turnsTaken` steps over the CURRENT
+  // list means every join, leave, down and lift RETRO-REMAPS every past wrap.
+  // The pointer can land backwards onto the hand who just acted — keith struck
+  // at 20:13, 20:18 and 20:22 with two joins bracketed between, and the wheel
+  // offered him another turn at 20:30.
+  //
+  // The record already knows the answer without any replaying: the last
+  // turn-ending act names its actor, and the next turn is the next hand after
+  // them who can act. Walking FORWARD from a fact instead of REPLAYING a count
+  // is what makes membership changes shift only the future — a hand added or
+  // removed elsewhere in the ring cannot move where the last actor sat.
+  //
+  // Three properties this buys, and each has a falsifier:
+  //   · after X acts it cannot be X again unless nobody else can act;
+  //   · a join or a leave changes only who comes next, never who came before;
+  //   · it is still pure derivation from the journal — no stored cursor, so the
+  //     fold, the wipe and the replay invariants are untouched.
+  //
+  // The walk is over `seats`, not `active`, so a last actor who has since left
+  // is still found in their old chair and the successor is read from THERE.
+  const from = lastActor == null ? -1 : seats.findIndex((j) => j.who === lastActor);
+  let seat = null;
+  if (from < 0) {
+    // No last actor (the open), or a last actor this attempt no longer knows —
+    // the opening rule, which is the first hand in the order who can act. This
+    // is the same answer the old walk gave for turn one, unchanged.
+    seat = seats.find(canAct) ?? null;
+  } else {
+    for (let n = 1; n <= seats.length; n += 1) {
+      const cand = seats[(from + n) % seats.length];
+      if (canAct(cand)) { seat = cand; break; }
+    }
+  }
+  const at = seat ? active.findIndex((j) => j.who === seat.who) : -1;
+  return { order: active, round, turn: seat?.who ?? null, index: at < 0 ? 0 : at, active };
 }
 
 // ── THE DIALS ───────────────────────────────────────────────────────────────
@@ -258,9 +311,15 @@ export function foldEncounter(rows = [], { dials = {}, weaponOf = () => null } =
   const looted = new Set();
   let turnsTaken = 0;
   let lastAt = null;
+  // WHO ACTED LAST, which is what the turn is now derived FROM. It is a fact
+  // the log already carries — the actor of the most recent turn-ending act —
+  // and tracking it here costs nothing because this fold already walks the rows
+  // in seq order. No stored cursor: it is recomputed from the journal on every
+  // fold, exactly as the hit points are.
+  let lastTurnActor = null;
 
   const hpOf = (a) => (hp.has(a) ? hp.get(a) : D.guestHp);
-  const wheelNow = () => wheelOf({ joins, turnsTaken, downed, left });
+  const wheelNow = () => wheelOf({ joins, turnsTaken, downed, left, lastActor: lastTurnActor });
 
   const roll = (r, die, salt) => {
     const out = rollOf({ at: r.seq, actId: r.action, actor: r.actor, die, salt });
@@ -376,7 +435,7 @@ export function foldEncounter(rows = [], { dials = {}, weaponOf = () => null } =
       }
     }
 
-    if (verb === "pass") { turnsTaken += 1; beats.push({ seq: r.seq, actor, act: "pass", round: w.round }); continue; }
+    if (verb === "pass") { turnsTaken += 1; lastTurnActor = actor; beats.push({ seq: r.seq, actor, act: "pass", round: w.round }); continue; }
 
     if (verb === "loot") {
       if (bossHp > 0) { ignored.push({ seq: r.seq, actor, why: "the loot was not open yet" }); continue; }
@@ -388,6 +447,7 @@ export function foldEncounter(rows = [], { dials = {}, weaponOf = () => null } =
     if (verb === "guard") {
       guarded.add(actor);
       turnsTaken += 1;
+      lastTurnActor = actor;
       beats.push({ seq: r.seq, actor, act: "guard", round: w.round });
       continue;
     }
@@ -398,6 +458,7 @@ export function foldEncounter(rows = [], { dials = {}, weaponOf = () => null } =
       downed.delete(target);
       hp.set(target, D.liftTo);
       turnsTaken += 1;
+      lastTurnActor = actor;
       beats.push({ seq: r.seq, actor, act: "lift", lifted: target, to: D.liftTo, round: w.round });
       continue;
     }
@@ -405,7 +466,12 @@ export function foldEncounter(rows = [], { dials = {}, weaponOf = () => null } =
     if (verb !== "strike" && verb !== "cast") { ignored.push({ seq: r.seq, actor, why: `"${verb}" is not one of this ground's verbs` }); continue; }
 
     const spec = verb === "strike" ? D.strike : D.cast;
+    // The prior is kept because the "nothing left standing to hit" branch below
+    // UNDOES this turn — and a turn that did not count must not leave its actor
+    // sitting as the one the next turn is derived from.
+    const priorTurnActor = lastTurnActor;
     turnsTaken += 1;
+    lastTurnActor = actor;
 
     if (isHostile) {
       // ── the creature's turn ────────────────────────────────────────────────
@@ -444,7 +510,7 @@ export function foldEncounter(rows = [], { dials = {}, weaponOf = () => null } =
       }
     } else {
       // ── a hand's turn ──────────────────────────────────────────────────────
-      if (bossHp <= 0) { ignored.push({ seq: r.seq, actor, why: "there was nothing left standing to hit" }); turnsTaken -= 1; continue; }
+      if (bossHp <= 0) { ignored.push({ seq: r.seq, actor, why: "there was nothing left standing to hit" }); turnsTaken -= 1; lastTurnActor = priorTurnActor; continue; }
       const toHit = roll(r, spec.hit, "to-hit");
       const b = { seq: r.seq, actor, act: verb, to_hit: toHit, round: w.round };
       if (toHit < spec.ac) { b.missed = true; beats.push(b); }
@@ -500,6 +566,9 @@ export function foldEncounter(rows = [], { dials = {}, weaponOf = () => null } =
       for (const j of hands) { downed.delete(j.who); hp.set(j.who, D.guestHp); left.add(j.who); }
       guarded.clear();
       turnsTaken = 0;
+      // A new attempt has no last actor: the next turn is the opening rule
+      // again, exactly as it was at the first join.
+      lastTurnActor = null;
       joins.length = 0;
       for (const j of hands) left.delete(j.who);   // they are in the antechamber, not banished
     }

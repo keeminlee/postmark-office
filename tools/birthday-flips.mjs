@@ -30,6 +30,39 @@ const SUITES = {
 
 const FLIPS = [
   // ── the calculus ────────────────────────────────────────────────────────
+  // ── the turn pointer (founder-reported 2026-08-29, live) ────────────────
+  //
+  // ⚑ EVERY TARGET HERE IS A SINGLE LINE, deliberately. A multi-line flip
+  // string is the CRLF trap this runner learned about earlier tonight, and it
+  // is also the escaping trap that ate a backslash while these were being
+  // written. One line, one anchor, no newlines to lose.
+
+  // THE BUG ITSELF, RESTORED: derive the turn by replaying the count over the
+  // current list, which is what handed the founder repeat turns.
+  { name: "the turn goes back to replaying the count — a join hands the last actor another turn",
+    file: ENC, catches: "a join mid-round does not hand them the turn again",
+    edit: (t) => t.replace("turn: seat?.who ?? null, index: at < 0 ? 0 : at", "turn: active[i]?.who ?? null, index: i") },
+
+  { name: "the walk starts AT the last actor instead of after them — everyone repeats forever",
+    file: ENC, catches: "a join mid-round does not hand them the turn again",
+    edit: (t) => t.replace("    for (let n = 1; n <= seats.length; n += 1) {", "    for (let n = 0; n <= seats.length; n += 1) {") },
+
+  { name: "the seating chart drops the departed — a last actor who left rewinds the turn to the top",
+    file: ENC, catches: "the turn is the next able hand after their empty chair",
+    edit: (t) => t.replace("  const seats = [...order, ...late];", "  const seats = [...order, ...late].filter((j) => !left.has(j.who));") },
+
+  { name: "the fold stops naming who acted last — every turn is the opening again",
+    file: ENC, catches: "with one membership and nothing changing",
+    edit: (t) => t.replace("lastActor: lastTurnActor });", "lastActor: null });") },
+
+  { name: "a turn that did NOT count still moves the pointer (the nothing-left-to-hit revert)",
+    file: ENC, catches: "with one membership and nothing changing",
+    edit: (t) => t.replace("turnsTaken -= 1; lastTurnActor = priorTurnActor; continue; }", "turnsTaken -= 1; continue; }") },
+
+  { name: "the wipe keeps the old attempt's last actor — a new fight opens mid-ring",
+    file: ENC, catches: "a wipe clears who acted last",
+    edit: (t) => t.replace("      lastTurnActor = null;", "") },
+
   // ── the seat (founder-ruled 2026-08-29) ─────────────────────────────────
 
   { name: "seating stops seating — a human in a portal ground gets only the portal's verbs",
@@ -172,11 +205,11 @@ const FLIPS = [
 
   { name: "a latecomer is sorted in by initiative instead of appended",
     file: ENC, catches: "a late joiner lands at the BOTTOM of the order",
-    edit: (t) => t.replace("  const active = [...order, ...late].filter((j) => !left.has(j.who));", "  const active = [...order, ...late].sort((a, b) => b.initiative - a.initiative).filter((j) => !left.has(j.who));") },
+    edit: (t) => t.replace("  const seats = [...order, ...late];", "  const seats = [...order, ...late].sort((a, b) => b.initiative - a.initiative);") },
 
   { name: "a leaver keeps their seat on the wheel (a jail)",
     file: ENC, catches: "a leaver is skipped by the wheel",
-    edit: (t) => t.replace("  const active = [...order, ...late].filter((j) => !left.has(j.who));", "  const active = [...order, ...late];") },
+    edit: (t) => t.replace("  const active = seats.filter((j) => !left.has(j.who));", "  const active = seats;") },
 
   { name: "the door heals you — re-entering restores full strength",
     file: ENC, catches: "fleeing and re-entering keeps the HP you fled with",
