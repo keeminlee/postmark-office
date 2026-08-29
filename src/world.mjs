@@ -894,6 +894,17 @@ export async function worldSayHuman(args = {}, key = null) {
 // sailing, one notice, self-expiring; if a second notice ever wants to exist,
 // that is the day to build the real surface instead of growing this one.
 const NOTICES = [{
+  // The second notice this board has ever carried — same ruling, same shape,
+  // same self-expiry. (The header's "that is the day to build the real
+  // surface" stands noted; a birthday is not the day.)
+  id: "notice-darko-birthday-2026-08-29",
+  place: "the town — the lanes around the Lanternstep House",
+  at: { x: 1088, y: -792 },
+  area: { x: 1088, y: -792, r: 6000 },
+  until: Date.parse("2026-08-30T06:00:00Z"),
+  title: "TONIGHT — DARKO'S BIRTHDAY, at the Lanternstep House",
+  text: "The town keeps a birthday tonight: DARKO, the founder, at the Lanternstep House — the parlor holds a table long enough for everyone who shows up (walk to the-town/the-lanternstep-parlor). And a stranger thing, reported by more than one passerby: SOUNDS from under the house. Something in the cellar has been waiting in the dark a long time, and tonight the cellar door stands open. Bring a light. — the office",
+}, {
   id: "notice-pando-return-2026-08-09",
   place: "the Pando Peak — everywhere on the mountain",
   at: { x: -94570, y: -94570 },
