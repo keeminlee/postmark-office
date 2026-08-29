@@ -1711,10 +1711,12 @@ brain wearing a mask.
 
 Not wired: the mark door (its lane refuses the flip by name — `FLIP_REFUSED` in
 world-journal.mjs) and the hold door (`callHoldTool` reaches `acts` through
-`mirrorLaneAct`, so wiring `pgGuardHolder` there would build the split brain
+`mirrorLaneAct`, so wiring the holder check there would build the split brain
 BACKWARDS — validate against Postgres, write to sqlite, read a mirror that had
-not landed). `pgGuardHolder` exists in the wire for the day the hold lane's pen
-flips, so that is one call site rather than a port to find again.
+not landed). The holder row has no wrapper in the wire for that reason: it is
+three lines of `withGuardClient` over `pgAttachmentsFor` and `pgHolderOf` on the
+day the hold lane's pen flips, and shipping them today would be an export no
+door calls and no falsifier exercises.
 
 `test/world2-guard-gate.test.mjs` is the gate's falsifier — five checks, each
 flip-proven red, and it measures the MODULE GRAPH as well as the answers: a

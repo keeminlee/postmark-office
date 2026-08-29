@@ -143,22 +143,16 @@ export async function pgGuardLiveMarks({ household = null, env = process.env } =
   }, { household, env });
 }
 
-/**
- * 1.0's `liveHolder` over `readAttachments`, answered from `acts` — give / drop
- * / take's holder check, R3's row 6.
- *
- * NOT WIRED AT A DOOR YET, AND THE REASON IS THE GATE ITSELF: the hold lane's
- * pen is not flipped anywhere. `callHoldTool` writes the `attachments` table and
- * reaches `acts` through `mirrorLaneAct` — fire-and-forget, journal-era. Wiring
- * this guard there while the pen stays sqlite would build the split brain
- * BACKWARDS: validate against Postgres, write to sqlite, and read a mirror that
- * had not landed yet. It is here so the hold lane's flip is one call site rather
- * than a port to find again, and `guardsFlipped("hold")` is what will turn it on
- * — on the day the hold door's write goes through `appendActFlipped` too.
- */
-export async function pgGuardHolder(thing, { env = process.env } = {}) {
-  return withGuardClient(async (client, port) => {
-    const { rows } = await port.pgAttachmentsFor(client, { target: thing, strict: true });
-    return { holder: port.pgHolderOf(rows, thing), rows };
-  }, { env });
-}
+// ── R3's THIRD ROW IS NOT HERE, AND THAT IS THE GATE WORKING ────────────────
+//
+// The holder check (`liveHolder` / `readAttachments`, give/drop/take's guard) is
+// ported in guard-reads.mjs and has no wrapper here, because THE HOLD LANE'S PEN
+// IS NOT FLIPPED ANYWHERE: `callHoldTool` writes the `attachments` table and
+// reaches `acts` through `mirrorLaneAct` — fire-and-forget, journal-era. Wiring
+// its guard while its pen is sqlite would build the split brain BACKWARDS:
+// validate against Postgres, write to sqlite, and read a mirror that had not
+// landed yet.
+//
+// It is three lines when that lane flips — `withGuardClient` over
+// `pgAttachmentsFor` and `pgHolderOf`, exactly the shape above — and writing
+// them today would ship an export no door calls and no falsifier exercises.
