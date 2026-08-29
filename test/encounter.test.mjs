@@ -24,7 +24,11 @@ const DIALS = {
   cast: { to_hit_die: 20, damage_die: 10, beats_ac: 11 },
   guard: { halves_next_hit: true },
   lift: { restores_to: 8 },
-  adversary: { hp: 60, to_hit_die: 20, damage_die: 8, initiative_bonus: 2 },
+  // `persistent: false` is the town's standing law spelled out on the record
+  // rather than left to the floor (LOGOS § Downed, not dead, 2026-08-29). The
+  // fold discloses every floor it stands on, so a dial the law now names has to
+  // be here or every fold in this file starts reporting a missing dial.
+  adversary: { hp: 60, to_hit_die: 20, damage_die: 8, initiative_bonus: 2, persistent: false },
   arena: { guest_hp: 20, initiative_die: 20, turn_timeout_s: 600, lift_to: 8 },
 };
 
@@ -413,6 +417,152 @@ test("a wipe is a clean slate: re-entering a NEW attempt rolls initiative fresh"
   assert.equal(after.wheel.order.find((o) => o.who === "darko").initiative, rolled[1].rolled,
     "and the hand stands on the NEW throw, not the one the last attempt ended with");
   void keptInit;   // the old attempt's value is history; the journal keeps it, the wheel does not
+});
+
+// ── the persistent adversary (founder-ruled 2026-08-29) ─────────────────────
+
+test("a PERSISTENT adversary keeps its wounds across a wipe, and a plain one does not", () => {
+  // LOGOS § Downed, not dead, verbatim:
+  //   "Whether the ADVERSARY stands again at full is its own dial. `persistent`
+  //    is a dial on the adversary's own mark. Absent or false it is the town's
+  //    standing law and the wipe restores the adversary whole, which is what a
+  //    fight worth re-fighting means. Declared true, the adversary KEEPS ITS
+  //    WOUNDS ACROSS THE WIPE: the attempt ends, the room resets, the hands come
+  //    back whole, and the thing they were hitting is exactly as hurt as they
+  //    left it."
+  //
+  // ⚑ THE TWO FOLDS RUN OVER THE SAME ROWS. That is the whole discipline of
+  // this test: the log is identical, only the dial differs, so nothing about
+  // the fight's luck or length can be doing the work. A test that built two
+  // fights would prove that two fights differ.
+  reset();
+  const base = { ...DIALS,
+    strike: { ...DIALS.strike, beats_ac: 1, damage_die: 4 },
+    arena: { ...DIALS.arena, guest_hp: 25 },
+    adversary: { ...DIALS.adversary, hp: 200, damage_die: 20, to_hit_die: 20 } };
+  const plain = { ...base, adversary: { ...base.adversary, persistent: false } };
+  const kept = { ...base, adversary: { ...base.adversary, persistent: true } };
+
+  // Drive one attempt to a wipe, with the hands landing real damage on the way
+  // down (beats_ac 1 — every swing lands), so there is a wound to keep.
+  const acc = [row("darko", "join", 0), boss("join", 1)];
+  let n = 10, s = foldEncounter(acc, { dials: plain });
+  while (!s.attempts && n < 120) {
+    const t = s.wheel.turn;
+    if (!t) break;
+    acc.push(t === "the-unlit-cake" ? boss("strike", n, "darko") : row(t, "strike", n));
+    n += 1; s = foldEncounter(acc, { dials: plain });
+  }
+  assert.equal(s.attempts, 1, "the setup never wiped the room — this test would prove nothing");
+
+  const wiped = foldEncounter(acc, { dials: kept });
+  const beat = wiped.beats.find((b) => b.act === "wipe");
+  assert.ok(beat, "no wipe beat — the journal must keep the failed attempt as history");
+  assert.equal(beat.persistent, true, "the wipe beat must say which law it took, or a reader has to infer it");
+  assert.ok(beat.boss_left > 0 && beat.boss_left < base.adversary.hp,
+    `the hands did ${base.adversary.hp - beat.boss_left} damage before going down (${beat.boss_left} of ${base.adversary.hp}) — with none done, "keeps its wounds" and "stands again at full" are the same number and nothing is discriminated`);
+
+  // THE DISCRIMINATION, both directions.
+  assert.equal(wiped.boss.hp, beat.boss_left,
+    "a persistent adversary was healed by the wipe — the founder's whole ruling is that it is not");
+  assert.equal(s.boss.hp, base.adversary.hp,
+    "a plain adversary did NOT stand again at full — the standing law must still hold where the dial is absent or false");
+
+  // AND THE REST OF THE WIPE IS UNTOUCHED, which is the half a fix could
+  // quietly break: the room still resets, the hands still come back whole.
+  for (const st of [s, wiped]) {
+    assert.equal(st.attempts, 1, "the attempt was not counted");
+    assert.deepEqual(st.wheel.order, [], "the wheel was not emptied — everyone wakes in the antechamber");
+    assert.deepEqual(st.downed, [], "somebody was left down after the attempt ended");
+  }
+
+  // THE NEXT ATTEMPT PICKS UP WHERE THE LAST ONE LEFT OFF — "whoever attends
+  // the party can continue trying to defeat it and it will eventually go down."
+  const again = foldEncounter([...acc, row("darko", "join", n), boss("join", n + 1), row("darko", "strike", n + 2)],
+    { dials: kept });
+  assert.ok(again.boss.hp < beat.boss_left,
+    `the second attempt opened at ${again.boss.hp} against a boss left at ${beat.boss_left} — a persistent boss carries its wounds INTO the next attempt or it is not persistent`);
+  assert.equal(again.hands.darko.hp, base.arena.guest_hp,
+    "the hand did not come back whole — the reset stands the room up even when it leaves the adversary hurt");
+});
+
+test("the wheel gates the acts it COUNTS, and nothing else — an ordinary verb is never refused for being out of turn", () => {
+  // LOGOS § The arena, as amended by the founder 2026-08-29, verbatim:
+  //   "The wheel gates this ground's ARENA verbs, and nothing else. … The
+  //    ordinary verbs of the town are not the wheel's business: walk, say,
+  //    stake, unstake, give, take and every other verb a resident holds anywhere
+  //    flow UNGATED inside a live encounter, exactly as they do outside one."
+  //
+  // The fold is the law's own reading of a ground's rows. Nothing writes a walk
+  // onto an arena-act row today, so this asserts the READING rather than a live
+  // path — but the reading is what a replay of any future log will stand on,
+  // and the old code gated by exception (`verb !== "loot"`), which means it
+  // gated everything it had not heard of.
+  reset();
+  const rows = [row("darko", "join", 0), boss("join", 1), row("rei", "join", 2)];
+  let s = foldEncounter(rows, { dials: DIALS });
+  assert.ok(s.encounter_live, "the setup never opened a fight — nothing would be gated either way");
+  const notTheirTurn = ["darko", "rei"].find((h) => h !== s.wheel.turn);
+  assert.ok(notTheirTurn, "the setup left nobody out of turn");
+
+  // ⚑ THE STRIKE LEG RUNS FIRST AND IS THE PRECONDITION, not an afterthought.
+  // "walk was not refused by the wheel" is true of a hand whose turn it IS, so
+  // without proving this actor is genuinely out of turn the walk assertion
+  // passes vacuously — which is exactly how the first draft of this test went
+  // green over a wheel that had not been narrowed at all. Each extra row keeps
+  // its own seq, because `row()` advances the counter on every call and reusing
+  // a literal 4 looked up a row the second fold never had.
+  const gated = row(notTheirTurn, "strike", 3);
+  const whyGated = foldEncounter([...rows, gated], { dials: DIALS }).ignored.find((i) => i.seq === gated.seq)?.why ?? "";
+  assert.match(whyGated, /'s turn/,
+    `an out-of-turn STRIKE was let through (ignored: "${whyGated}") — the wheel still gates this ground's arena verbs, and until it does this test discriminates nothing`);
+
+  const walked = row(notTheirTurn, "walk", 3);
+  const why = foldEncounter([...rows, walked], { dials: DIALS }).ignored.find((i) => i.seq === walked.seq)?.why ?? "";
+  assert.match(why, /is not one of this ground's verbs/,
+    `an out-of-turn walk was ignored with "${why}" — the wheel refused a verb that is not its business`);
+  assert.doesNotMatch(why, /turn/,
+    `an out-of-turn walk was refused by the WHEEL ("${why}"), and the amended clause says the ordinary verbs flow ungated`);
+});
+
+test("a hand's answer says what it is HOLDING, and stops saying so the moment it falls", () => {
+  // Requested by the site lane 2026-08-29: the hover wants "d20 vs 12 to hit ·
+  // d8 damage · +3 with the good-lighter". The first two come off the strike
+  // card's dials; the third was computed here at strike time and never left the
+  // fold, so the office knew the bonus and nothing outside it could.
+  //
+  // ⚑ THE DISCRIMINATING CASE IS THE DROP, and it is why this is a test rather
+  // than a field. LOGOS § Downed, not dead: "what you were holding drops loose
+  // where you stand." Going down writes no attachment — the drop is a fact only
+  // the FOLD holds — so a `weapon` read straight off the live hold table would
+  // keep offering a downed hand a bonus their next strike will not get.
+  reset();
+  const acc = [row("darko", "join", 0), row("rei", "join", 1), boss("join", 2)];
+  const D = { ...DIALS, strike: { ...DIALS.strike, beats_ac: 1 },
+              adversary: { ...DIALS.adversary, damage_die: 20, to_hit_die: 20 } };
+  const weaponOf = (who) => (who === "darko" ? { thing: "the-town/the-good-lighter", bonus: 3, says: "a flame that has never once gone out on the way over" } : null);
+
+  const upright = foldEncounter(acc, { dials: D, weaponOf });
+  assert.deepEqual(
+    { thing: upright.hands.darko.weapon?.thing, bonus: upright.hands.darko.weapon?.bonus },
+    { thing: "the-town/the-good-lighter", bonus: 3 },
+    "a hand holding a weapon does not say so — the bonus that decides its blows stays invisible outside the office");
+  assert.equal(upright.hands.darko.weapon.says, "a flame that has never once gone out on the way over",
+    "the weapon's own words did not ride along — the hover has a number and nothing to call it");
+  assert.equal("weapon" in upright.hands.rei, false,
+    "an empty-handed hand answered `weapon: null` — absent is how this answer says nothing, so a reader tests presence");
+
+  let s = upright, n = 10;
+  while (!s.downed.includes("darko") && n < 80) {
+    const t = s.wheel.turn;
+    acc.push(t === "the-unlit-cake" ? boss("strike", n, "darko") : row(t, "guard", n));
+    n += 1;
+    s = foldEncounter(acc, { dials: D, weaponOf });
+  }
+  assert.ok(s.downed.includes("darko"), "the setup never put anybody down — this test would prove nothing");
+  assert.ok(s.dropped.some((d) => d.by === "darko"), "and never made them drop anything, which is the case under test");
+  assert.equal("weapon" in s.hands.darko, false,
+    "a downed hand still claims the weapon lying at its feet — the live hold table does not know about the drop, and the fold does");
 });
 
 test("a rejoin while DOWN comes back down, and at the hit points it left with", () => {

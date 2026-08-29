@@ -23,7 +23,32 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
 const ARENA = "src/arena.mjs";
 const HUMAN = "src/human-actor.mjs";
-const SUITES = { [ARENA]: "test/arena.test.mjs", [HUMAN]: "test/arena.test.mjs" };
+// The apex joined 2026-08-29 with the gate-narrowing ruling: `acting_blocked`
+// is the READ's half of the wheel's refusal, and the amendment's only surface a
+// resident can feel. Its falsifier lives in the arena suite because that is
+// where the wheel's law is asserted, so it runs against the same suite.
+const APEX = "src/world-apex.mjs";
+// The hold door joined with the loot shroud: `lootHiddenReason` can be perfect
+// while `callHoldTool` never calls it, and a law with no door behind it is what
+// src/arena.mjs was written to close.
+const HOLD = "src/world-hold.mjs";
+// The hydrator joined 2026-08-29, and it is the only subject here whose suite
+// is a REAL pipeline rather than a store in memory: a mark file, through the
+// real hydrator, into a real store. It is in this runner because the loot flag
+// died in that pipe while eight in-memory flips over the same law stayed red on
+// cue — the shroud's readers were all correct and none of them was ever reached.
+const HYDRATE = "src/world-hydrate.mjs";
+// The fold is a subject here, mapped to the ARENA suite, for the one law whose
+// assertion lives there: the hand's weapon rides out through `foldEncounter`,
+// and `test/arena.test.mjs` is where the consumer's path is asserted. Its other
+// laws are birthday-flips' business against its own suite. A flip pointed at
+// the suite that does not contain its assertion comes back green and reports a
+// hole that is not there — which this runner did three times tonight before
+// the mapping was fixed.
+const FOLD = "src/encounter.mjs";
+const SUITES = { [ARENA]: "test/arena.test.mjs", [HUMAN]: "test/arena.test.mjs",
+                 [APEX]: "test/arena.test.mjs", [HOLD]: "test/arena.test.mjs",
+                 [HYDRATE]: "test/hydrate-loot.test.mjs", [FOLD]: "test/arena.test.mjs" };
 
 const FLIPS = [
   // ── ruling 1 · the wheel gates, and the refusal NAMES the turn ───────────
@@ -136,9 +161,15 @@ const FLIPS = [
     file: ARENA, catches: "the door speaks the exact shapes the cockpit reads",
     edit: (t) => t.replace("        down: o.downed === true,", "        downed: o.downed === true,") },
 
+  // ⚠ RETARGETED 2026-08-29, and it had been dead since the human kind landed:
+  // the line grew `(human && o.who === human ? "human" : "resident")`, the old
+  // string stopped matching, and this flip reported "the edit changed nothing"
+  // — which the runner prints and nobody reads as an alarm. A flip whose
+  // subject has been renamed out from under it is a guard that has quietly
+  // stopped guarding, which is the same class as the law it watches.
   { name: "the adversary renders as a resident rather than a creature",
     file: ARENA, catches: "the door speaks the exact shapes the cockpit reads",
-    edit: (t) => t.replace('kind: o.kind === "hostile" ? "creature" : "resident",', 'kind: "resident",') },
+    edit: (t) => t.replace('kind: o.kind === "hostile" ? "creature" : (human && o.who === human ? "human" : "resident"),', 'kind: "resident",') },
 
   { name: "a crit is left for the page to guess at",
     file: ARENA, catches: "the door speaks the exact shapes the cockpit reads",
@@ -178,6 +209,153 @@ const FLIPS = [
   { name: "loot opens while the adversary is still standing",
     file: ARENA, catches: "loot is REFUSED while the adversary is still standing",
     edit: (t) => t.replace('    if (action === "loot" && state.phase !== "spent")', "    if (false)") },
+
+  // ── THE BIRTHDAY AMENDMENTS (founder-ruled 2026-08-29) ───────────────────
+
+  // 1 · the gate narrows
+  //
+  // ⚑ THERE IS NO FLIP FOR `WHEEL_GATED.includes(action)` ITSELF, and the
+  // absence is the finding rather than a gap. Over the actions that reach that
+  // line — ARENA_VERBS and nothing else — `WHEEL_GATED.includes(action)` and
+  // the old `action !== "loot"` are the SAME PREDICATE, so flipping one to the
+  // other changes no behaviour and the suite correctly stays green. Written as
+  // a flip first, and it came back an apparatus failure; the honest reading is
+  // that the door's own gate never held an ordinary verb, because the 422 below
+  // refuses one two hundred lines earlier. The narrowing that a resident can
+  // actually feel is `acting_blocked.gates`, and that is what these two flip.
+  { name: "the door stops fencing its verbs — an ordinary verb reaches the wheel and is refused BY IT",
+    file: ARENA, catches: "the wheel gates ARENA verbs only",
+    edit: (t) => t.replace("  if (!ARENA_VERBS.includes(action))", "  if (false)") },
+
+  { name: "the read's refusal stops naming what it gates — a page can only grey the whole bar",
+    file: APEX, catches: "the read's half names WHAT is gated",
+    edit: (t) => t.replaceAll("      gates: [...ARENA_VERBS],", "") },
+
+  // 3 · loot hides until the room is spent
+  { name: "the loot shroud lifts — the prize is lying in the room from the start",
+    file: ARENA, catches: "loot is not in the room until the room is spent",
+    edit: (t) => t.replace("  const open = all || phase === \"spent\";", "  const open = true;") },
+
+  { name: "the shroud list comes back empty — the standpoint has nothing to subtract",
+    file: ARENA, catches: "loot is not in the room until the room is spent",
+    edit: (t) => t.replace('  if (!db || !groundRow || phase === "spent") return [];', "  if (true) return [];") },
+
+  { name: "the hold door's refusal stops asking the phase — loot is takeable mid-fight",
+    file: ARENA, catches: "take and give of shrouded loot are refused",
+    edit: (t) => t.replace('    if (state?.phase === "spent") continue;', "    continue;") },
+
+  { name: "a weapon is treated as loot — the fight's own tool is shrouded with the prize",
+    file: ARENA, catches: "take and give of shrouded loot are refused",
+    edit: (t) => t.replace("  if (!thing || !isLoot(thing)) return null;", "  if (!thing) return null;") },
+
+  { name: "the hold door stops asking — the guard is written and never called",
+    file: HOLD, catches: "the HOLD DOOR itself refuses it",
+    edit: (t) => t.replace("    await refuseShroudedLoot(args.thing);", "") },
+
+  { name: "the hold door's refusal swallows itself — the shroud throws and nobody hears it",
+    file: HOLD, catches: "the HOLD DOOR itself refuses it",
+    edit: (t) => t.replace('    if (e?.code === 409 && /is not in this room yet/.test(String(e.defect ?? ""))) throw e;', "") },
+
+  // ── the site lane's three, added 2026-08-29 ──────────────────────────────
+
+  { name: "`loose:` loses the record's half again — only dropped things are drawn",
+    file: APEX, catches: "keeps BOTH halves its own doc promises",
+    edit: (t) => t.replace("    if (!d) return onTheFloor.has(String(o.id)) ? { ...o, loose: true } : o;", "    if (!d) return o;") },
+
+  { name: "a thing in somebody's hands is drawn lying on the floor",
+    file: APEX, catches: "keeps BOTH halves its own doc promises",
+    edit: (t) => t.replace("      .filter((id) => liveHolder(held, id) == null);", "") },
+
+  { name: "the beats tail is uncapped — the answer grows with the length of the party",
+    file: ARENA, catches: "a CAPPED tail of beats",
+    edit: (t) => t.replace("  const tail = beats.slice(-BEATS_TAIL);", "  const tail = beats;") },
+
+  { name: "the tail is taken from the FRONT — the log renders the opening forever",
+    file: ARENA, catches: "a CAPPED tail of beats",
+    edit: (t) => t.replace("  const tail = beats.slice(-BEATS_TAIL);", "  const tail = beats.slice(0, BEATS_TAIL);") },
+
+  { name: "the answer stops saying where its tail ends — a poller can only diff arrays",
+    file: ARENA, catches: "a CAPPED tail of beats",
+    edit: (t) => t.replace("beats_tail: tail, beats_cap: BEATS_TAIL, beats_total: beats.length", "beats_tail: tail, beats_cap: BEATS_TAIL, beats_total: tail.length") },
+
+  // ── the hydrator's loot carry, and the weapon's act ──────────────────────
+
+  { name: "the hydrator drops `loot` again — the flag dies between the file and the store",
+    file: HYDRATE, catches: "reaches the store as a real boolean",
+    edit: (t) => t.replace('      loot: (m.loot === true || m.loot === "true") ? true : null,', "") },
+
+  { name: "the hydrator reads `loot` by truthiness — `loot: yes` quietly hides a thing",
+    file: HYDRATE, catches: "reaches the store as a real boolean",
+    edit: (t) => t.replace('      loot: (m.loot === true || m.loot === "true") ? true : null,', "      loot: m.loot ? true : null,") },
+
+  { name: "a misspelled `loot:` is dropped in silence — the author is never told",
+    file: HYDRATE, catches: "reaches the store as a real boolean",
+    edit: (t) => t.replace('  if (m.loot != null && m.loot !== true && m.loot !== "true") problems.push(', "  if (false) problems.push(") },
+
+  { name: "the weapon stops saying which act it augments",
+    file: ARENA, catches: "says WHICH ACT it augments",
+    edit: (t) => t.replace("says: grant.says ?? null, augments: grant.action };", "says: grant.says ?? null };") },
+
+  { name: "the weapon's act is hardcoded rather than read off the grant",
+    file: ARENA, catches: "says WHICH ACT it augments",
+    edit: (t) => t.replace("augments: grant.action };", 'augments: "cast" };') },
+
+  // The rename's own guard: `for` means the ACTOR KIND on the grant entry this
+  // value is read from, so the homonym coming back through a merge is the
+  // failure this flip watches for.
+  // ⚑ TARGETED AT THE FOLD, NOT THE READER, AND THE FIRST VERSION WAS NEITHER.
+  // It read `says: grant.says ?? null, augments: grant.action };` — a substring
+  // BOTH `weaponReader` and `weaponInHand` carry, so `replace` took the first
+  // and mutated the reader while the assertion watched the other one. It came
+  // back green twice over: the reader is not what the test reads, AND the fold
+  // builds its weapon object field by explicit field, so a stray key upstream
+  // never reaches the answer at all. That second half is a real guarantee worth
+  // having, which is why the flip moved here rather than being made to match —
+  // the only place the retired spelling could actually come back is where the
+  // answer is assembled.
+  { name: "the retired `for` spelling returns beside `augments`",
+    file: FOLD, catches: "says WHICH ACT it augments",
+    edit: (t) => t.replace("                               ...(held.augments ? { augments: held.augments } : {}),",
+                           "                               ...(held.augments ? { augments: held.augments, for: held.augments } : {}),") },
+
+  { name: "the weapon reader lets the retired spelling back out",
+    file: ARENA, catches: "says WHICH ACT it augments",
+    edit: (t) => t.replace("bonus: Number(grant.bonus ?? 0), says: grant.says ?? null, augments: grant.action };",
+                           "bonus: Number(grant.bonus ?? 0), says: grant.says ?? null, augments: grant.action, for: grant.action };") },
+
+  { name: "the fold reads the weapon and drops the act on the way out",
+    file: FOLD, catches: "says WHICH ACT it augments",
+    edit: (t) => t.replace("                               ...(held.augments ? { augments: held.augments } : {}),", "") },
+
+  // 4 · entry placement
+  { name: "the placement stops stepping clear — an entrant is set down inside the adversary",
+    file: ARENA, catches: "crossing into the vault stands you at its door-side edge",
+    edit: (t) => t.replace("  while (a && inRect(p, a) && guard++ < cap) p = snapPt({ x: p.x - dir.x * s, y: p.y - dir.y * s });", "") },
+
+  { name: "a hand already inside is re-placed at the door — the room freezes",
+    file: ARENA, catches: "crossing into the vault stands you at its door-side edge",
+    edit: (t) => t.replace("  if (inRect({ x: Number(from.x), y: Number(from.y) }, g)) return null;", "") },
+
+  { name: "the walk desk's decision stops placing a crossing at all",
+    file: ARENA, catches: "the walk desk's decision",
+    edit: (t) => t.replace("  if (!place.keeps_wheel) return out;", "  if (true) return out;") },
+
+  // 5 · the ground's own stride
+  { name: "a ground that declared no stride is given the town's whole metre anyway",
+    file: ARENA, catches: "a ground may set its own stride",
+    edit: (t) => t.replace("    return Number.isFinite(n) && n > 0 ? n : null;", "    return Number.isFinite(n) && n > 0 ? n : 1;") },
+
+  { name: "the stride stops riding the ground's answer — the site is left to guess the grid",
+    file: ARENA, catches: "a ground may set its own stride",
+    edit: (t) => t.replace("  ...(Number.isFinite(place.walk_min_step) && place.walk_min_step > 0\n    ? { walk_min_step: place.walk_min_step } : {}),", "") },
+
+  { name: "the snap leaves float dust on every coordinate it touches",
+    file: ARENA, catches: "a ground may set its own stride",
+    edit: (t) => t.replace("  return Number((Math.round(Number(v) / s) * s).toFixed(6));", "  return Math.round(Number(v) / s) * s;") },
+
+  { name: "the destination is no longer snapped to the room's stride",
+    file: ARENA, catches: "the walk desk's decision",
+    edit: (t) => t.replace("    if (snapped.x !== toward.x || snapped.y !== toward.y)", "    if (false)") },
 ];
 
 const suite = (file) => {

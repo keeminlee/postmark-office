@@ -73,7 +73,7 @@
 // PURE-ADJACENT: this module owns the door's sequencing and the record's
 // queries. It holds no law the fold holds and no arithmetic at all.
 
-import { foldEncounter, pendingHostileTurns, hostileAct, timedOut, TURN_ENDING } from "./encounter.mjs";
+import { foldEncounter, pendingHostileTurns, hostileAct, timedOut, TURN_ENDING, WHEEL_GATED } from "./encounter.mjs";
 import { appendJournal, readJournal } from "./world-journal.mjs";
 import { openDynamic, singleLogEnabled } from "./dynamic-store.mjs";
 import { readAttachments } from "./dynamic-entities.mjs";
@@ -184,7 +184,7 @@ export function arenaGroundAt(db, spineIds = []) {
   for (const cls of GROUND_CLASSES) {
     const row = byClass.get(cls);
     if (!row) continue;
-    return {
+    const place = {
       ground: row.id,
       row,
       class: cls,
@@ -194,6 +194,12 @@ export function arenaGroundAt(db, spineIds = []) {
       keeps_wheel: cls === "arena",
       body: String(row.body ?? ""),
     };
+    // The ground's own stride rides the place from the moment the place exists,
+    // so every reader of a place — the door, the standpoint, the walk desk —
+    // reads one answer. Computing it a second time somewhere else is how two
+    // grids end up drawn over one floor.
+    place.walk_min_step = walkMinStepOf(db, place);
+    return place;
   }
   return null;
 }
@@ -225,22 +231,322 @@ export function adversaryIn(db, place) {
   return rows.find((r) => within(r, row)) ?? null;
 }
 
-/** The loose things lying on this ground — what a `take` could pick up, and
- *  what the site draws where it fell. `loot: true` marks the ones the loot
- *  verb opens; a weapon is loose without being loot. */
-export function looseIn(db, groundRow) {
+/** Is this row's `loot` column the record's yes? The column arrives as 1, true
+ *  or "true" depending on how the mark spelled it and what the hydrator did
+ *  with it, and all three mean the same thing. */
+const isLoot = (r) => r?.loot === 1 || r?.loot === true || r?.loot === "true";
+
+/**
+ * The loose things lying on this ground — what a `take` could pick up, and what
+ * the site draws where it fell. `loot: true` marks the ones the loot verb
+ * opens; a weapon is loose without being loot.
+ *
+ * ⚑ LOOT IS NOT IN THE ROOM UNTIL THE ROOM IS SPENT (founder-ruled 2026-08-29).
+ * LOGOS § The portal ground: "A thing whose mark declares `loot` is NEITHER
+ * VISIBLE NOR TAKEABLE while the encounter on its ground is afoot: it is absent
+ * from that ground's loose things, absent from what a standpoint says stands
+ * nearby, and a `take` or a `give` aimed at it is refused with a sentence that
+ * explains itself rather than a bounce that reads like a fault. At `spent` it
+ * appears, and from that moment it is an ordinary thing under the ordinary law
+ * above."
+ *
+ * THE PHASE IS PASSED IN, NEVER READ HERE, for the same reason `weaponOf` is
+ * injected: this function knows the record's geometry and nothing about a
+ * fight. A caller who does not know the phase is told nothing about the loot,
+ * which is the safe direction — the shroud's whole job is to not leak the prize
+ * — and `{ all: true }` is the deliberate way past it, for the tools that must
+ * see the room whole (the reset in `tools/arena-play.mjs` is the only one).
+ */
+export function looseIn(db, groundRow, { phase = null, all = false } = {}) {
   if (!db || !groundRow) return [];
   let rows = [];
   try { rows = db.prepare(LOOSE_IN).all(); } catch { return []; }
-  return rows.filter((r) => within(r, groundRow)).map((r) => ({
+  const open = all || phase === "spent";
+  return rows.filter((r) => within(r, groundRow) && (open || !isLoot(r))).map((r) => ({
     thing: r.id,
     by: r.by,
-    loot: r.loot === 1 || r.loot === true || r.loot === "true",
+    loot: isLoot(r),
     grants: heldEntries({ ...r, held_grant: parseJson(r.held_grant, null) }, { parse: (v) => v })
       .map((e) => ({ action: e.action, bonus: e.bonus ?? null, says: e.says ?? null })),
     at: { x: Number(r.at_x), y: Number(r.at_y) },
     body: String(r.body ?? ""),
   }));
+}
+
+// Every wheel-bearing ground on the record, for the readers that arrive holding
+// a THING and have to find the room it is standing in — the reverse of
+// `arenaGroundAt`, which arrives holding a containment spine. It asks the same
+// two columns the spine query asks and answers with the same rows, so a ground
+// found this way and a ground found that way are one ground.
+const GROUNDS_ALL = `SELECT id, by,
+         json_extract(props, '$.class')  AS class,
+         json_extract(props, '$.dials')  AS dials,
+         json_extract(props, '$.body')   AS body,
+         at_x, at_y, extent_w, extent_h
+       FROM nodes
+       WHERE json_extract(props, '$.class') IN ('arena', 'portal-ground')
+         AND at_x IS NOT NULL AND at_y IS NOT NULL`;
+
+const placeOf = (row) => ({
+  ground: row.id, row, class: String(row.class),
+  space: String(row.class) === "arena" ? "arena" : "antechamber",
+  keeps_wheel: String(row.class) === "arena",
+  body: String(row.body ?? ""),
+});
+
+/**
+ * The wheel-bearing ground a POINT falls in, innermost first — `arenaGroundAt`
+ * for a caller holding a coordinate instead of a containment spine.
+ *
+ * The walk desk needs this and the standpoint does not: a click on a floor is a
+ * pair of numbers, and the ground whose stride governs that step is the ground
+ * the numbers land in. `GROUND_CLASSES` order is kept, so a point inside both
+ * the vault and the antechamber that contains it resolves to the vault, exactly
+ * as a spine would.
+ */
+export function groundAtPoint(db, point) {
+  if (!db || !point || !Number.isFinite(Number(point.x)) || !Number.isFinite(Number(point.y))) return null;
+  let rows = [];
+  try { rows = db.prepare(GROUNDS_ALL).all(); } catch { return null; }
+  const p = { at_x: Number(point.x), at_y: Number(point.y) };
+  for (const cls of GROUND_CLASSES) {
+    const row = rows.find((r) => String(r.class) === cls && within(p, r));
+    if (!row) continue;
+    const place = placeOf(row);
+    place.walk_min_step = walkMinStepOf(db, place);
+    return place;
+  }
+  return null;
+}
+
+/**
+ * The loot this ground is still holding back — the ids no reader may be shown.
+ *
+ * LOGOS § The portal ground: a loot thing "is absent from that ground's loose
+ * things, absent from what a standpoint says stands nearby". `looseIn` honours
+ * the first half by simply not returning them; the standpoint's `nearby` is
+ * assembled by the world read long before this module sees it, so the second
+ * half needs the LIST — what to subtract — rather than a filtered answer.
+ */
+export function lootShroudedIn(db, groundRow, phase = null) {
+  if (!db || !groundRow || phase === "spent") return [];
+  try {
+    return db.prepare(LOOSE_IN).all()
+      .filter((r) => within(r, groundRow) && isLoot(r))
+      .map((r) => String(r.id));
+  } catch { return []; }
+}
+
+/**
+ * Why this thing may not be handled yet, or null — the take/give half of the
+ * shroud, asked by a door that holds a thing id and nothing else.
+ *
+ * Arrives at the ground from the THING's position rather than from a caller's
+ * spine, because a `give` is refused for what the OBJECT is, not for where the
+ * actor happens to be standing: handing the wick end to somebody from the
+ * antechamber is the same act as pocketing it from inside the vault.
+ *
+ * Only an ARENA shrouds. A portal ground with no wheel keeps no encounter, so
+ * it has no phase to be afoot in, and a loot-flagged thing lying in one is an
+ * ordinary thing — the same reasoning `adversaryIn` stands on.
+ */
+export function lootHiddenReason(db, dyn, thingId) {
+  if (!db || !dyn || !thingId) return null;
+  let thing = null;
+  try { thing = db.prepare(LOOSE_IN).all().find((r) => String(r.id) === String(thingId)) ?? null; }
+  catch { return null; }
+  if (!thing || !isLoot(thing)) return null;
+  let grounds = [];
+  try { grounds = db.prepare(GROUNDS_ALL).all(); } catch { return null; }
+  for (const row of grounds) {
+    if (String(row.class) !== "arena" || !within(thing, row)) continue;
+    const place = placeOf(row);
+    let state = null;
+    try { state = encounterOn(db, dyn, place); } catch { state = null; }
+    if (state?.phase === "spent") continue;
+    return { ground: place.ground, phase: state?.phase ?? "afoot",
+             adversary: state?.adversary?.id ?? null,
+             standing: state?.adversary ? `${state.adversary.hp} of ${state.adversary.of}` : null };
+  }
+  return null;
+}
+
+/**
+ * THE GROUND'S OWN STRIDE, in metres — `walk_min_step`, or null where the
+ * ground has not declared one.
+ *
+ * LOGOS § The portal ground (founder-asked 2026-08-29): "`walk_min_step` is a
+ * dial on the ground's own mark, in metres: within that ground a walk is
+ * validated and snapped at that granularity instead of the town's whole-metre
+ * step. Absent — which is every ground in the town on the day this is written —
+ * the town-wide step governs and nothing anywhere changes."
+ *
+ * NULL, NOT 1, IS THE ANSWER FOR AN UNDECLARED GROUND, and the difference is
+ * the whole safety of this change. A floor of 1 here would make every ground in
+ * the town start snapping walks to whole metres — which is not what the town
+ * does today, so "the default is 1" would have been a town-wide re-cut of the
+ * walk wearing a per-ground dial's clothes. Null means "this ground says
+ * nothing", and the walk desk then does exactly what it did yesterday.
+ *
+ * The instance outranks its class, the same order `dialsFromRecord` keeps: a
+ * room may be finer than the class of rooms it belongs to.
+ */
+export function walkMinStepOf(db, place) {
+  if (!place) return null;
+  const read = (d) => {
+    const v = parseJson(d, null)?.walk_min_step;
+    const n = Number(v);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  };
+  const own = read(place.row?.dials ?? place.dials);
+  if (own != null) return own;
+  if (!db) return null;
+  try {
+    const cls = place.class ?? place.row?.class;
+    const row = db.prepare(CLASS_DIALS).all(JSON.stringify([String(cls ?? "")]))[0];
+    return row ? read(row.dials) : null;
+  } catch { return null; }
+}
+
+// ── the placement ───────────────────────────────────────────────────────────
+
+const rectOf = (r) => {
+  const x = Number(r?.at_x), y = Number(r?.at_y);
+  const w = Math.abs(Number(r?.extent_w)), h = Math.abs(Number(r?.extent_h));
+  if (![x, y, w, h].every(Number.isFinite)) return null;
+  return { x, y, w, h, x0: x - w / 2, x1: x + w / 2, y0: y - h / 2, y1: y + h / 2 };
+};
+const inRect = (p, r) => !!r && p.x >= r.x0 && p.x <= r.x1 && p.y >= r.y0 && p.y <= r.y1;
+
+/**
+ * A metre snapped to a lattice of `step`, with the float dust taken off.
+ *
+ * `Math.round(1097.3 / 0.1) * 0.1` is 1097.3000000000002, and a coordinate that
+ * differs from itself in the twelfth decimal is a coordinate that will one day
+ * fail an equality nobody expected to be fragile. Six places is well past any
+ * step a floor will ever declare and well short of where doubles get vague.
+ */
+export const snapTo = (v, step) => {
+  const s = Number(step);
+  if (!Number.isFinite(s) || s <= 0 || !Number.isFinite(Number(v))) return Number(v);
+  return Number((Math.round(Number(v) / s) * s).toFixed(6));
+};
+
+/**
+ * WHERE A CROSSING SETS YOU DOWN — the door-side edge, clear of the adversary.
+ *
+ * LOGOS § The arena (founder-ruled 2026-08-29): "An entrant into a wheel-keeping
+ * ground is placed where the ground was entered from — the point on its boundary
+ * the crossing came through — and never within an adversary's own extent. Where
+ * that edge point falls inside one, the placement steps back OUT along the way
+ * in until it is clear, by arithmetic every reader repeats identically."
+ *
+ * ⚑ THE ARRIVAL MATH IS INJECTED, NEVER RE-IMPLEMENTED. `entryT` is the world
+ * clone's own `targetEntryT` — the same function the walk derivation and the
+ * viewer's drawn leg both stop at. An office copy of the slab test would be a
+ * SECOND arrival truth, and the world repo's own note on that function says why
+ * it is exported at all: "the dotted line and the derivation stop at the same
+ * point — one arrival truth, never a second." With no `entryT` in hand this
+ * answers null and the caller keeps doing exactly what it did before.
+ *
+ * The walk back is in whole `step`s along the way in, and every point it
+ * considers is snapped first, so the answer is a lattice point either way and
+ * two readers cannot land a hair apart. `from` is outside the ground, hence
+ * outside the adversary (an adversary stands INSIDE its arena), so the loop has
+ * an end even in the degenerate room where the cake is wedged against the door.
+ */
+export function entryPointInto(from, groundRow, adversaryRow = null, { entryT, step = 0.1 } = {}) {
+  if (typeof entryT !== "function" || !from) return null;
+  const g = rectOf(groundRow);
+  if (!g) return null;
+  // ⚑ A WALKER ALREADY INSIDE IS NOT CROSSING IN, and this guard is the whole
+  // difference between placement law and a room nobody can move in. The clause
+  // is about ENTRY — "an entrant into a wheel-keeping ground" — and `entryT`
+  // returns 0 for a start point already within the rect, so without this line a
+  // hand crossing the vault floor would be placed back exactly where they were
+  // standing, every time, and the room would look frozen while every test
+  // passed. The founder asked for FINER movement inside the room; pinning it
+  // would have been the opposite of the same night's other ruling.
+  if (inRect({ x: Number(from.x), y: Number(from.y) }, g)) return null;
+  const s = Number.isFinite(Number(step)) && Number(step) > 0 ? Number(step) : 0.1;
+  const centre = { x: g.x, y: g.y };
+  const legM = Math.hypot(centre.x - Number(from.x), centre.y - Number(from.y));
+  if (!Number.isFinite(legM) || legM === 0) return null;
+  const t = entryT({ x: Number(from.x), y: Number(from.y) }, centre, { x: g.x, y: g.y, w: g.w, h: g.h });
+  const snapPt = (p) => ({ x: snapTo(p.x, s), y: snapTo(p.y, s) });
+  const dir = { x: (centre.x - Number(from.x)) / legM, y: (centre.y - Number(from.y)) / legM };
+  let p = snapPt({ x: Number(from.x) + (centre.x - Number(from.x)) * t,
+                   y: Number(from.y) + (centre.y - Number(from.y)) * t });
+  const a = rectOf(adversaryRow);
+  let guard = 0;
+  const cap = Math.ceil(legM / s) + 4;
+  while (a && inRect(p, a) && guard++ < cap) p = snapPt({ x: p.x - dir.x * s, y: p.y - dir.y * s });
+  return { x: p.x, y: p.y, backed_off: guard > 0, step: s };
+}
+
+/**
+ * WHAT A GROUND DOES TO A WALK THAT ENDS ON IT — both of tonight's rulings, as
+ * one pure decision over facts the caller has already read.
+ *
+ * Returns `null` when the ground has nothing to say, so a caller can write
+ * `Object.assign(walk, arrivalOnGround(...) ?? {})` and a town with no portal
+ * grounds in it behaves exactly as it did yesterday.
+ *
+ * ⚑ THIS IS A FUNCTION BECAUSE THE WALK DESK HAS NO TEST HARNESS. `walkViaOffice`
+ * needs a world clone, a world store, a dynamic store and a resident before it
+ * will run a line, which is why nothing in `test/` drives it — so twenty lines
+ * of composition living inside it would be twenty lines no falsifier could ever
+ * turn red. Pulled out here, the decision is a pure function of four numbers and
+ * two rows, and the flip runner can break it. The desk keeps the pen; this keeps
+ * the law.
+ *
+ * THE ORDER IS THE FOUNDER'S OWN: the room's stride first, because the placement
+ * is snapped to it.
+ */
+export function arrivalOnGround({ from, toward, targetFrom = "" }, place, adversaryRow = null, { entryT } = {}) {
+  if (!place || !from || !toward) return null;
+  const step = Number.isFinite(place.walk_min_step) && place.walk_min_step > 0 ? place.walk_min_step : null;
+  let out = null;
+
+  // ── the stride ────────────────────────────────────────────────────────────
+  // LOGOS § The portal ground: "within that ground a walk is validated and
+  // snapped at that granularity instead of the town's whole-metre step."
+  //
+  // The DESTINATION is what a resident chose and what a page clicked, so the
+  // destination is what the room's stride governs. Snapping the derived
+  // position instead would leave the record and the answer disagreeing about
+  // where somebody asked to go.
+  if (step) {
+    const snapped = { x: snapTo(toward.x, step), y: snapTo(toward.y, step) };
+    if (snapped.x !== toward.x || snapped.y !== toward.y)
+      out = { toward: snapped, targetFrom: `${targetFrom} — snapped to ${place.ground}'s own ${step} m step`, snapped: true };
+  }
+
+  // ── the placement ─────────────────────────────────────────────────────────
+  // LOGOS § The arena: "An entrant into a wheel-keeping ground is placed where
+  // the ground was entered from … and never within an adversary's own extent."
+  //
+  // POINT ARRIVAL, DELIBERATELY. The rim arrival a frozen extent performs is
+  // "the first point on the ground", which is the same point this computes —
+  // until an adversary is standing on it, and then they differ and the extent
+  // has no way to say so. So the placement becomes the destination itself and
+  // the rect comes off: a named point is MORE frozen than a rect, not less (a
+  // later resize of the room cannot rewrite an arrival that is a coordinate),
+  // and the target's id still rides the ledger line, so the record says where
+  // the walker was headed either way.
+  if (!place.keeps_wheel) return out;
+  const entry = entryPointInto(from, place.row, adversaryRow, { entryT, step: step ?? 0.1 });
+  if (!entry) return out;
+  return {
+    ...(out ?? {}),
+    toward: { x: entry.x, y: entry.y },
+    targetExtent: null,
+    placed: true,
+    backed_off: entry.backed_off === true,
+    targetFrom: entry.backed_off
+      ? `${place.ground} — its door-side edge, stepped clear of ${adversaryRow?.id ?? "what stands in it"}`
+      : `${place.ground} — its door-side edge`,
+  };
 }
 
 /**
@@ -324,7 +630,7 @@ export function weaponReader(db, rows, { holdingsNow = () => [], thingRow = () =
     for (const id of holdingsNow(actor)) {
       const t = thingRow(id);
       const grant = heldEntries(t, { parse: (v) => parseJson(v, null) }).find((e) => e.action === "strike");
-      if (grant) return { thing: id, bonus: grant.bonus ?? 0, says: grant.says ?? null };
+      if (grant) return { thing: id, bonus: grant.bonus ?? 0, says: grant.says ?? null, augments: grant.action };
     }
     return null;
   };
@@ -342,7 +648,22 @@ export function weaponInHand(db, handle) {
     for (const r of rows) {
       const grant = heldEntries({ ...r, held_grant: parseJson(r.held_grant, null) }, { parse: (v) => v })
         .find((e) => e.action === "strike");
-      if (grant) return { thing: r.id, bonus: Number(grant.bonus ?? 0), says: grant.says ?? null };
+      // ⚑ `augments:` IS THE ACT THIS BONUS HELPS, AND IT IS NOT `for:`.
+      //
+      // The site lane asked for `for`, and `for` shipped for one commit before
+      // Wright renamed it (2026-08-29). The reason is visible on this very line:
+      // `heldEntries` sets `for: kindOf(a)` on the entry being read, and LOGOS
+      // § The three channels says "`for:` is the actor kind (absent means
+      // resident)". So the record's entry would have said `for: human` and the
+      // answer derived from it `for: "strike"`, two paces apart and neither
+      // wrong on its own.
+      //
+      // Taken as a RENAME rather than a lexicon entry by the register's own
+      // rule: it "cures reader traps; it does not rename living vocabulary — a
+      // rename is taken only when a word is young, cheap, and actively
+      // harmful." One night old, one edit each side, and a homonym a reader
+      // meets while holding the other sense. All three.
+      if (grant) return { thing: r.id, bonus: Number(grant.bonus ?? 0), says: grant.says ?? null, augments: grant.action };
     }
     return null;
   } catch { return null; }
@@ -613,10 +934,29 @@ export async function arenaActViaOffice(repo, args = {}, key = null, deps = {}) 
     if (place.keeps_wheel) driveHostiles();
 
     // ── 5 · the wheel's gate, refusing BY NAME ──────────────────────────────
-    if (place.keeps_wheel && state.encounter_live && action !== "loot") {
+    //
+    // ⚑ THE GATE IS ARENA-SCOPED, AND IT IS SCOPED FROM THE LIST RATHER THAN BY
+    // AN EXCEPTION (founder-ruled 2026-08-29). LOGOS § The arena: "The wheel
+    // gates this ground's ARENA verbs, and nothing else. … The ordinary verbs of
+    // the town are not the wheel's business: walk, say, stake, unstake, give,
+    // take and every other verb a resident holds anywhere flow UNGATED inside a
+    // live encounter, exactly as they do outside one."
+    //
+    // This door only ever HANDLES arena verbs — anything else is refused 422 at
+    // the top — so the narrowing changes nothing that reaches here today, and
+    // that is exactly why it is written down rather than assumed. The gate that
+    // actually held walk and say shut was never in this file: it is
+    // `acting_blocked` on the standpoint (world-apex.mjs § actingBlocked), which
+    // a reader treats as "you may not act" full stop. That one carries the
+    // narrowing where a resident can feel it.
+    //
+    // `WHEEL_GATED` is the fold's own list, imported rather than restated, so
+    // the door refuses exactly the acts the fold ignores. Two hand-kept lists of
+    // gated verbs would be the drift this file keeps nailing shut.
+    if (place.keeps_wheel && state.encounter_live && WHEEL_GATED.includes(action)) {
       if ((state.downed ?? []).includes(who))
         throw bounce(409, `${who} is down — someone has to lift you`,
-          "at zero you are DOWN, not dead: your acts stop and any ally may spend their whole turn lifting you. The wheel skips you until one does, so waiting for your turn will not help.",
+          "at zero you are DOWN, not dead: your ARENA acts stop and any ally may spend their whole turn lifting you. The wheel skips you until one does, so waiting for your turn will not help. Down stops your arena acts, not your voice — you can still speak, still walk, still hand things over while you are on the floor.",
           { encounter: publicState(state), downed: true });
       const turn = state.wheel?.turn ?? null;
       if (turn && turn !== who)
@@ -693,17 +1033,53 @@ const positionOf = (state, who) => {
   return i < 0 ? "not in the order" : `${i + 1} of ${order.length}`;
 };
 
+/** How many beats ride the answer. The whole log is where the whole log lives;
+ *  this is the tail a combat log needs to render the last exchange. Thirty is
+ *  about four rounds of a five-hand fight — enough that a reader who blinked
+ *  sees what they missed, small enough that the answer stays bounded however
+ *  long the party runs. */
+export const BEATS_TAIL = 30;
+
 /**
  * The encounter as a resident reads it.
  *
- * `beats`, `ignored` and `rolls` are the fold's full working and they are NOT
- * carried here: an answer that hands back every roll ever thrown in the room is
- * an answer nobody reads. The acting caller gets their own rolls beside this;
- * the whole log is where the whole log lives.
+ * `ignored` and `rolls` are the fold's full working and they are NOT carried
+ * here: an answer that hands back every roll ever thrown in the room is an
+ * answer nobody reads. The acting caller gets their own rolls beside this; the
+ * whole log is where the whole log lives.
+ *
+ * ── `beats_tail` (2026-08-29, for the site's combat log) ─────────────────────
+ *
+ * `beats` used to be withheld with the rest, and the cost landed on the page:
+ * with no beats, a combat log could only infer OTHER hands' lines from hit-point
+ * deltas in the receiving voice — "rei takes 7" — and could never say WHO
+ * struck. That is a reader re-deriving a fact the fold already knows, which is
+ * the same shape as a second arithmetic beside the engine's.
+ *
+ * A CAPPED TAIL RATHER THAN THE ARRAY. The original objection was length, not
+ * secrecy: LOGOS § Downed, not dead says "the journal keeps the failed attempt
+ * as history", so a beat is the fight's own record and public by construction —
+ * nothing here is anybody's private business. What was true is that all of them
+ * is too many, and that stays true, so the tail is capped and the cap is a named
+ * constant rather than a number in a slice.
+ *
+ * NO LATEST-SEQ FIELD, and that is a ruling rather than an omission (Wright,
+ * 2026-08-29, with bday-rail). One was written and taken back out: the consumer
+ * derives its watermark as the max seq in the window it received, so a separate
+ * field would be a second way to learn one fact — and the only thing it could
+ * add over the max is a GAP CONFESSION, telling a reader that rows exist above
+ * every beat in the tail. Rows above the tail do exist (the fold ignores an
+ * out-of-turn act and it earns no beat), so the confession is sayable; the rail
+ * says it will never act on it and Wright agreed. `beats_cap` and `beats_total`
+ * stay, because those answer a different question — how much was withheld —
+ * which a reader cannot derive from the window at all.
  */
 export function publicState(state) {
   if (!state) return null;
+  const beats = state.beats ?? [];
+  const tail = beats.slice(-BEATS_TAIL);
   return {
+    ...(tail.length ? { beats_tail: tail, beats_cap: BEATS_TAIL, beats_total: beats.length } : {}),
     phase: state.phase,
     live: state.encounter_live,
     space: state.space,
@@ -896,6 +1272,20 @@ export const cockpitPortal = (place) => (!place ? null : {
   by: String(place.ground).split("/")[0] || null,
   space: place.space,
   keeps_wheel: place.keeps_wheel,
+  // ── THE GROUND'S STRIDE, SAID AT THE DOOR (founder-asked 2026-08-29) ───────
+  //
+  // LOGOS § The portal ground: the dial "rides the ground's answer at the door,
+  // so a reader drawing that floor can draw the grid the door will actually
+  // accept. A client left to guess the granularity would be inventing law, and
+  // would be wrong the first time a ground ruled otherwise."
+  //
+  // ABSENT, NOT NULL, when the ground has not declared one — the same manner
+  // `body` keeps two lines up, and the same reason `acting_blocked` is absent
+  // rather than empty: a key that is always present teaches a reader to test its
+  // VALUE, and `walk_min_step: null` reads as "this ground has a stride and it
+  // is nothing". A ground that has said nothing should say nothing.
+  ...(Number.isFinite(place.walk_min_step) && place.walk_min_step > 0
+    ? { walk_min_step: place.walk_min_step } : {}),
   ...(place.body ? { body: place.body } : {}),
 });
 

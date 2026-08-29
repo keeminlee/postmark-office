@@ -156,6 +156,7 @@ export const DIAL_SOURCES = Object.freeze({
   "adversary.to_hit_die": "the adversary's own mark § dials.to_hit_die",
   "adversary.damage_die": "the adversary's own mark § dials.damage_die",
   "adversary.initiative_bonus": "the adversary's own mark § dials.initiative_bonus",
+  "adversary.persistent": "the adversary's own mark § dials.persistent",
   "arena.guest_hp": "the-town/arena § dials.guest_hp",
   "arena.initiative_die": "the-town/arena § dials.initiative_die",
   "arena.turn_timeout_s": "the-town/arena § dials.turn_timeout_s",
@@ -167,7 +168,13 @@ const FLOOR = Object.freeze({
   cast: { to_hit_die: 20, damage_die: 10, beats_ac: 11 },
   guard: { halves_next_hit: true },
   lift: { restores_to: 8 },
-  adversary: { hp: 60, to_hit_die: 20, damage_die: 8, initiative_bonus: 0 },
+  // `persistent: false` IS THE FLOOR BECAUSE IT IS THE TOWN'S STANDING LAW, not
+  // because it is the safe guess. LOGOS § Downed, not dead: "Absent or false it
+  // is the town's standing law and the wipe restores the adversary whole."
+  // Standing on this floor is disclosed like every other, so an adversary whose
+  // mark forgot the dial says so in `dials_missing` rather than being quietly
+  // read as a one-off boss or quietly read as a repeating one.
+  adversary: { hp: 60, to_hit_die: 20, damage_die: 8, initiative_bonus: 0, persistent: false },
   arena: { guest_hp: 20, initiative_die: 20, turn_timeout_s: 600, lift_to: 8 },
 });
 
@@ -183,6 +190,25 @@ const ms = (iso) => { const t = Date.parse(String(iso ?? "")); return Number.isF
 // The act vocabulary. `join`/`leave` are the crossings; `pass` is the timeout's
 // resolution; the rest are the verbs.
 export const TURN_ENDING = Object.freeze(["strike", "cast", "guard", "lift", "pass"]);
+
+/**
+ * THE ACTS THE WHEEL GATES — and they are exactly the acts that take a turn.
+ *
+ * LOGOS § The arena, as the founder amended it 2026-08-29: "The wheel gates
+ * this ground's ARENA verbs, and nothing else. … `loot` is an arena verb the
+ * wheel does not gate either — it waits on the PHASE instead". And: "The
+ * ordinary verbs of the town are not the wheel's business: walk, say, stake,
+ * unstake, give, take and every other verb a resident holds anywhere flow
+ * UNGATED inside a live encounter, exactly as they do outside one."
+ *
+ * It is an ALIAS rather than a second frozen list on purpose. "The wheel gates
+ * what the wheel counts" is the whole content of the amended clause, and two
+ * lists that must agree are two lists that will eventually disagree — this fold
+ * has already paid that bill once, in `weaponOf` and in the one-entry-per-hand
+ * invariant. If a verb is ever added that ends a turn without being gated, that
+ * is the moment to fork them, and the fork will need its own law sentence.
+ */
+export const WHEEL_GATED = TURN_ENDING;
 export const HOSTILE = "hostile";
 
 /**
@@ -206,6 +232,13 @@ export function foldEncounter(rows = [], { dials = {}, weaponOf = () => null } =
     bossHit: dial(dials, "adversary.to_hit_die", missing),
     bossDmg: dial(dials, "adversary.damage_die", missing),
     bossInit: dial(dials, "adversary.initiative_bonus", missing),
+    // Coerced rather than trusted: this number comes off a mark's props through
+    // the hydrator and JSON, and a YAML `true` has arrived as 1 and as "true"
+    // in this store before now. Anything else is the standing law.
+    bossPersistent: (() => {
+      const v = dial(dials, "adversary.persistent", missing);
+      return v === true || v === 1 || v === "true";
+    })(),
     guestHp: dial(dials, "arena.guest_hp", missing),
     initDie: dial(dials, "arena.initiative_die", missing),
     timeoutS: dial(dials, "arena.turn_timeout_s", missing),
@@ -284,9 +317,12 @@ export function foldEncounter(rows = [], { dials = {}, weaponOf = () => null } =
       //
       // A WIPE IS A CLEAN SLATE and gets that for free: the wipe empties
       // `joins`, so the next join finds nothing to carry and rolls as a first
-      // join. A new attempt is a new fight — the adversary stands again at
-      // full, and the hands roll again with it. Keeping the memo anywhere but
-      // in `joins` would have leaked the roll across attempts.
+      // join. A new attempt is a new fight — the hands stand again at full and
+      // roll again with it. Keeping the memo anywhere but in `joins` would have
+      // leaked the roll across attempts. (Whether the ADVERSARY comes back
+      // whole is `adversary.persistent`, added 2026-08-29 — see the wipe
+      // branch. The initiative memo is cleared either way: a persistent boss
+      // keeps its hit points, not its place in an order that no longer exists.)
       const kept = held >= 0 ? joins[held].initiative : null;
       if (held >= 0) joins.splice(held, 1);
       left.delete(actor);
@@ -311,7 +347,23 @@ export function foldEncounter(rows = [], { dials = {}, weaponOf = () => null } =
     // ── the wheel's gate ─────────────────────────────────────────────────────
     const w = wheelNow();
     const live = bossHp > 0 && joins.some((j) => j.kind === HOSTILE && !left.has(j.who));
-    if (live && verb !== "loot") {
+    // ── THE GATE IS ARENA-SCOPED (founder-ruled 2026-08-29) ──────────────────
+    //
+    // LOGOS § The arena: "The wheel gates this ground's ARENA verbs, and nothing
+    // else. … The ordinary verbs of the town are not the wheel's business: walk,
+    // say, stake, unstake, give, take and every other verb a resident holds
+    // anywhere flow UNGATED inside a live encounter, exactly as they do outside
+    // one."
+    //
+    // This test read `verb !== "loot"` — one exception carved out of "gates
+    // everything", which is the old clause's shape. Under the amendment the
+    // default flips: a verb is gated only if it is ON THE LIST. Nothing in this
+    // ground's log is a walk or a say today (the door writes only arena acts on
+    // `arena-act` rows), so the live effect is confined to the `why` a
+    // non-arena row would be ignored with — but the fold is the law's own
+    // reading of its rows, and a replay of a log that ever carries one must
+    // reach the same answer this clause now states.
+    if (live && WHEEL_GATED.includes(verb)) {
       // DOWNED IS CHECKED FIRST, and the order is the whole usefulness of the
       // refusal. A downed hand is skipped by the wheel, so "it is someone
       // else's turn" is TRUE for them and will be true forever — a reader
@@ -409,10 +461,26 @@ export function foldEncounter(rows = [], { dials = {}, weaponOf = () => null } =
 
     // ── the wipe ─────────────────────────────────────────────────────────────
     // LOGOS § Downed, not dead: "If the whole room goes down, the attempt ends
-    // and the room resets — everyone wakes in the antechamber, the adversary
-    // stands again at full, and the journal keeps the failed attempt as
-    // history." Nothing is erased: the rows stay, the fold just starts a new
-    // attempt over them.
+    // and the room resets — everyone wakes in the antechamber, the hands stand
+    // again at full, and the journal keeps the failed attempt as history."
+    // Nothing is erased: the rows stay, the fold just starts a new attempt over
+    // them.
+    //
+    // ⚑ WHAT THE ADVERSARY DOES IS NOW ITS OWN DIAL (founder-ruled 2026-08-29).
+    // The same section: "Whether the ADVERSARY stands again at full is its own
+    // dial. `persistent` is a dial on the adversary's own mark. Absent or false
+    // it is the town's standing law and the wipe restores the adversary whole …
+    // Declared true, the adversary KEEPS ITS WOUNDS ACROSS THE WIPE: the attempt
+    // ends, the room resets, the hands come back whole, and the thing they were
+    // hitting is exactly as hurt as they left it."
+    //
+    // Everything else about the wipe is untouched, and that matters: the hands
+    // are stood up, the wheel is emptied, the initiative memo is cleared with
+    // `joins` (see the join branch's last paragraph), and the attempt is
+    // counted. Only `bossHp` is spared. A version that ALSO kept the wheel
+    // would have been a fight that never ends rather than a boss that never
+    // heals — the founder asked for the second one: "whoever attends the party
+    // can continue trying to defeat it and it will eventually go down."
     const hands = joins.filter((j) => j.kind !== HOSTILE && !left.has(j.who));
     if (hands.length && hands.every((j) => downed.has(j.who))) {
       attempts += 1;
@@ -421,8 +489,14 @@ export function foldEncounter(rows = [], { dials = {}, weaponOf = () => null } =
       // never crash on the most interesting beat in the fight (found in play,
       // 2026-08-27: the CLI guarded it, the site's cockpit could not).
       const wipedBy = joins.find((j) => j.kind === HOSTILE && !left.has(j.who))?.who ?? null;
-      beats.push({ seq: r.seq, act: "wipe", actor: wipedBy, attempt: attempts, everyone: hands.map((j) => j.who) });
-      bossHp = D.bossHpMax;
+      beats.push({ seq: r.seq, act: "wipe", actor: wipedBy, attempt: attempts, everyone: hands.map((j) => j.who),
+                  // The beat says which law it took, in the beat, because a
+                  // reader watching a wipe wants to know whether the next
+                  // attempt starts from 60 or from 11 — and inferring it from a
+                  // later fold is inferring it.
+                  persistent: D.bossPersistent,
+                  boss_left: D.bossPersistent ? bossHp : D.bossHpMax });
+      if (!D.bossPersistent) bossHp = D.bossHpMax;
       for (const j of hands) { downed.delete(j.who); hp.set(j.who, D.guestHp); left.add(j.who); }
       guarded.clear();
       turnsTaken = 0;
@@ -446,8 +520,40 @@ export function foldEncounter(rows = [], { dials = {}, weaponOf = () => null } =
       ...(w.all_down ? { all_down: true } : {}),
       turn_timeout_s: D.timeoutS,
     },
-    hands: Object.fromEntries(joins.filter((j) => j.kind !== HOSTILE).map((j) =>
-      [j.who, { hp: hpOf(j.who), of: D.guestHp, downed: downed.has(j.who), guarding: guarded.has(j.who), gone: left.has(j.who) }])),
+    // ── WHAT EACH HAND IS HOLDING (2026-08-29, for the site's hover) ─────────
+    //
+    // The bonus that decides a blow was computed here and never left: the site
+    // could render "d20 vs 12 to hit · d8 damage" off the strike card's dials
+    // and had no way to say "+3 with the good-lighter", because `weaponOf` is
+    // consulted inside the fold at strike time and `hands` carried only hit
+    // points. Same reader, same answer, said out loud.
+    //
+    // ⚑ A DROPPED WEAPON IS NOT A HELD ONE, and this is the case that makes it
+    // worth a line rather than a field. `weaponOf`'s fallback is the LIVE hold
+    // table, and going down does not write an attachment — the drop is a fact
+    // the FOLD knows (see `dropped`, and `weaponReader`'s own note on this).
+    // So asking the live table about a downed hand answers with the sword lying
+    // at their feet, and the hover would offer a bonus the next strike will not
+    // get. The fold's own `dropped` list is what settles it.
+    hands: Object.fromEntries(joins.filter((j) => j.kind !== HOSTILE).map((j) => {
+      const letGo = dropped.some((d) => d.by === j.who);
+      const held = letGo ? null : weaponOf(j.who, null);
+      return [j.who, {
+        hp: hpOf(j.who), of: D.guestHp, downed: downed.has(j.who),
+        guarding: guarded.has(j.who), gone: left.has(j.who),
+        // ABSENT when empty-handed, so a reader tests presence rather than a
+        // value — the manner `dials_missing` and `acting_blocked` already keep.
+        // `augments` is WHICH ACT the bonus helps — two of this room's acts
+        // state damage and only one is helped by what is held, so a page
+        // without it has to invent the act's name and assert it on the page's
+        // own authority. NOT `for`: that word means the actor kind on the very
+        // entry this value is read from — see the rename note beside
+        // `weaponInHand` in arena.mjs.
+        ...(held ? { weapon: { thing: held.thing ?? held.id ?? null, bonus: Number(held.bonus ?? 0),
+                               ...(held.augments ? { augments: held.augments } : {}),
+                               ...(held.says ? { says: held.says } : {}) } } : {}),
+      }];
+    })),
     downed: [...downed].sort(),
     dropped,
     looted: [...looted].sort(),

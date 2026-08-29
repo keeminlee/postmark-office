@@ -19,6 +19,7 @@
 
 import { worldFreezeBounce } from "./freeze.mjs";
 import { existsSync, readFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { isPrincipal } from "./ops.mjs";
@@ -44,7 +45,12 @@ import { HOLD_TOOLS, callHoldTool } from "./world-hold.mjs"; // the object primi
 import { createVoices, EARSHOT_M } from "./voices.mjs"; // earshot: speech at a position (the party line)
 import { householdOf, humanHandFor } from "./households.mjs"; // the human speaker's label wears the town's name, never the login
 import { householdLockPath, poolEnabled, pushDraftBranch, withDraftLease } from "./world-pool.mjs";
-import { cannotAnswer, pointAnswerable, servedRead, storeEpoch, storeShadowEnabled } from "./world-serve.mjs"; // stage 1: published-main reads from world.db, behind a flag
+import { cannotAnswer, pointAnswerable, servedRead, storeEpoch, storeShadowEnabled, storeDbPath } from "./world-serve.mjs"; // stage 1: published-main reads from world.db, behind a flag
+// The arena's own readers, for the two things a walk into a wheel-keeping
+// ground must ask the record: where does this ground set an entrant down, and
+// how fine is its floor. arena.mjs imports world-hold.mjs and world-journal.mjs
+// and never world.mjs, so this edge closes no cycle.
+import { arenaGroundAt, adversaryIn, arrivalOnGround, groundAtPoint } from "./arena.mjs";
 import { emissionsEnabled, openDynamic } from "./dynamic-store.mjs"; // stage 2: the dynamic layer's flag
 import { declareMovement } from "./dynamic-entities.mjs"; // stage D: the pen after the ledger's freeze
 import { emissionFromVoice } from "./dynamic-emissions.mjs"; // stage 2: speech also becomes an emission instance
@@ -2433,7 +2439,7 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
 
   const w = await world();
   const skeleton = w?._raw?.skeleton ?? null;
-  const { parseWalkLedger, currentDeparture, positionAt, fractionalCrossing, extentForArrival, isWalkArrival } =
+  const { parseWalkLedger, currentDeparture, positionAt, fractionalCrossing, extentForArrival, isWalkArrival, targetEntryT } =
     await import(pathToFileURL(join(worldClone, "tools", "walk.mjs")));
 
   // WHERE IN THE TARGET — issue #5 §1, RENAMED 2026-08-19 (founder-ruled, the
@@ -2530,6 +2536,78 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
     const asked = withinFor(forClone, targetExtent);
     if (asked === null) targetFrom = `${targetFrom} — its center`;
     targetExtent = asked;
+  }
+
+  /**
+   * The portal ground this walk has business with, or null — asked ONCE, in one
+   * store read, and answered for both of tonight's rulings at the same time.
+   *
+   * THE GROUND IS FOUND TWO WAYS AND THE TWO ARE DIFFERENT QUESTIONS. A walk
+   * that NAMES a mark is asking to cross into it, so the named mark is the
+   * ground; a walk to bare coordinates is a step across whatever floor those
+   * numbers land on, which is what a click-to-walk grid sends and is exactly
+   * the case the stride dial exists for. The placement fires only for the
+   * first: `entryPointInto` refuses a walker already inside the ground, so a
+   * step across the vault floor keeps its own destination.
+   *
+   * A store that will not open answers null and this whole block is skipped —
+   * the same shape every other reader of the world store keeps here. A walk is
+   * not the act to fail because a room could not be read.
+   */
+  const arenaHere = (markId, aim) => {
+    const path = storeDbPath();
+    if (!existsSync(path)) return null;
+    let db = null;
+    try {
+      db = new DatabaseSync(path, { readOnly: true });
+      // The named mark first, the destination point second. A walk that names
+      // the CAKE is still a walk into the vault the cake stands in — which is
+      // the founder's own case, and the reason the fallback is not just for
+      // bare coordinates.
+      const place = (markId ? arenaGroundAt(db, [markId]) : null) ?? groundAtPoint(db, aim);
+      if (!place) return null;
+      return { place, adversaryRow: place.keeps_wheel ? adversaryIn(db, place) : null };
+    } catch { return null; }
+    finally { try { db?.close(); } catch { /* a reader that cannot close still read */ } }
+  };
+
+  // ── THE ARENA'S PLACEMENT AND ITS STRIDE (founder-ruled 2026-08-29) ────────
+  //
+  // Two rulings, one lookup, and they belong together because they are the same
+  // question asked twice: WHERE ON THIS FLOOR DOES A BODY GET TO STAND.
+  //
+  // LOGOS § The arena: "An entrant into a wheel-keeping ground is placed where
+  // the ground was entered from — the point on its boundary the crossing came
+  // through — and never within an adversary's own extent. Where that edge point
+  // falls inside one, the placement steps back OUT along the way in until it is
+  // clear, by arithmetic every reader repeats identically."
+  //
+  // LOGOS § The portal ground: "`walk_min_step` is a dial on the ground's own
+  // mark, in metres: within that ground a walk is validated and snapped at that
+  // granularity instead of the town's whole-metre step. Absent — which is every
+  // ground in the town on the day this is written — the town-wide step governs
+  // and nothing anywhere changes."
+  //
+  // ⚑ EVERYTHING HERE IS FENCED BEHIND A GROUND THAT SAID SOMETHING. A walk to
+  // an ordinary mark reaches none of it: `arenaGroundAt` answers null for
+  // anything that is not a portal ground, `walk_min_step` is null for a ground
+  // that has not declared one, and the placement only ever fires for a ground
+  // that KEEPS A WHEEL. Which is the whole safety of the change — the founder
+  // asked for a finer floor in one room, not a re-cut of the town's stride.
+  //
+  // ONE DECISION, MADE IN arena.mjs AND APPLIED HERE. `arrivalOnGround` owns
+  // both rulings and their order; this desk owns the store read and the pen.
+  // The split is what makes the decision falsifiable at all — see that
+  // function's own note on why a walk desk with no test harness must not be
+  // where new law lives.
+  const arena = arenaHere(targetMarkId, toward);
+  const onGround = arena
+    ? arrivalOnGround({ from, toward, targetFrom }, arena.place, arena.adversaryRow, { entryT: targetEntryT })
+    : null;
+  if (onGround) {
+    if (onGround.toward) toward = onGround.toward;
+    if ("targetExtent" in onGround) targetExtent = onGround.targetExtent;
+    if (onGround.targetFrom) targetFrom = onGround.targetFrom;
   }
 
   // THE WATER GATE IS OFF FOR v0 — Keemin's ruling: "walking on water is fine for
