@@ -1,0 +1,10 @@
+[Unit]
+Description=World 2.0 backup, nightly at 04:10 UTC — after the notary, so the shipped bundle carries that night's certification
+
+[Timer]
+OnCalendar=*-*-* 04:10:00 UTC
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target
