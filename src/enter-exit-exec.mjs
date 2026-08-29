@@ -1,20 +1,20 @@
-// crossing-exec.mjs — one crossing, appended, under the caller's flock.
+// enter-exit-exec.mjs — one enter or exit, appended, under the caller's flock.
 //
 // DEMO SLICE (gold plan postmark-world-view-system, step 5 — the enter/exit
 // pair, ruled in the 2026-08-18 wind-down and NOT yet planted in LOGOS). This
 // file exists on `jetto/enter-exit-demo` and merges nowhere: verbs-before-law
 // would break the TDD method, so the pen is written and left standing.
 //
-// It is walk-exec.mjs's sibling and deliberately its twin, because a crossing
+// It is walk-exec.mjs's sibling and deliberately its twin, because an entry
 // is the same KIND of fact as a departure: declared once, at the moment it is
 // declared, into an append-only public record — and everything after it derives.
 // Occupancy is never stored. The `contains` edge with the entity child that R14
-// makes a crossing MEAN is derived from these lines by tools/thresholds.mjs, in
+// makes an entry MEAN is derived from these lines by tools/thresholds.mjs, in
 // every reader, exactly as position is derived from the walk ledger's.
 //
 // It appends ONE OR MORE lines and commits: one per link of the chain, because
-// deep entry is a chain of crossings and each link is separately adjudicated —
-// so a chain that was refused at its third door writes two crossings and a
+// deep entry is a chain of entries and each link is separately adjudicated —
+// so a chain that was refused at its third door writes two entries and a
 // refusal, which is precisely what happened and precisely what the record
 // should hold.
 //
@@ -65,14 +65,14 @@ async function main() {
   const { occupancyAt, LEDGER_HEADER } = law;
   const parseEnterExitLedger = law.parseEnterExitLedger ?? law.parseThresholdLedger;
 
-  if (!Array.isArray(p.lines) || !p.lines.length) return err(422, "no crossing to record", "the door fills these in; this exec is not a public surface");
+  if (!Array.isArray(p.lines) || !p.lines.length) return err(422, "no act to record", "the door fills these in; this exec is not a public surface");
   if (!p.handle) return err(422, "missing handle", "the door fills these in; this exec is not a public surface");
 
   // ── SETTLE AT THE SAVE (ruled 2026-08-22; built behind WORLD_SINGLE_LOG) ───
   //
   // "walks + enter-exit should settle at the save, not per-act to git main."
   //
-  // Every crossing used to spend one commit on main. Under the flag the lines go
+  // Every act used to spend one commit on main. Under the flag the lines go
   // into the journal — VERBATIM, so the save appends exactly what this pen
   // formatted — and the record receives them at the save. The occupancy answer
   // is derived from the same ledger text either way; one copy of it simply is
@@ -94,12 +94,12 @@ async function main() {
         crossing: p.at, actor: p.handle, action: p.act ?? "enter", object: p.mark ?? null,
         cls: CLASS_FRAME, at: null, witnesses: null,
         payload: { ledger: LEDGER_NAME.replace(/\\/g, "/"), lines: p.lines, summary: p.summary },
-        effect: "the crossing is declared; the record receives it at the save",
+        effect: "the act is declared; the record receives it at the save",
       }).seq;
     } finally { try { db.close(); } catch { /* already gone */ } }
     return answer({ lines: p.lines, at: p.at, within: occupancyAt(actsJ, p.at).get(p.handle) ?? [],
                     commit: null, pushed: false, push_error: null, log: "journal", seq,
-                    settles: "at the save — this crossing spends no commit of its own (WORLD_SINGLE_LOG)",
+                    settles: "at the save — this act spends no commit of its own (WORLD_SINGLE_LOG)",
                     ledger_lines: actsJ.length, ledger_unrecognized: unrecJ.length });
   }
 
@@ -139,8 +139,8 @@ async function main() {
   const { acts, unrecognized } = parseEnterExitLedger(readFileSync(LEDGER, "utf8"));
   const within = occupancyAt(acts, p.at).get(p.handle) ?? [];
 
-  const what = p.lines.length === 1 ? p.summary : `${p.summary} (${p.lines.length} crossings)`;
-  const commit = penCommit(CLONE, [LEDGER], `crossing: ${p.handle} ${what} (via world_${p.act ?? "enter"})`);
+  const what = p.lines.length === 1 ? p.summary : `${p.summary} (${p.lines.length} acts)`;
+  const commit = penCommit(CLONE, [LEDGER], `enter-exit: ${p.handle} ${what} (via world_${p.act ?? "enter"})`);
 
   let pushed = false, push_error = null;
   if (process.env.TOWN_PUSH === "1" && commit) {
@@ -152,4 +152,4 @@ async function main() {
            ledger_lines: acts.length, ledger_unrecognized: unrecognized.length });
 }
 
-main().catch((e) => err(500, "the crossing pen tripped", String(e?.message ?? e).slice(0, 300)));
+main().catch((e) => err(500, "the enter/exit pen tripped", String(e?.message ?? e).slice(0, 300)));

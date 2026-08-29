@@ -15,7 +15,7 @@
 //
 // `the-town/enter`, class, constitution tier, version 4, source LOGOS/classes.md:
 //
-//     "An entry is one passage written — who crossed, into what, at a threshold
+//     "An entry is one passage written — who entered, into what, at a threshold
 //      you truly stand before; exit writes the next, to the effective parent."
 //
 // `the-town/consent-at-thresholds`, class, constitution tier, version 1:
@@ -77,7 +77,7 @@ const WORLD_CLONE_FOR_TEST = process.env.WORLD_CLONE ?? join(process.cwd(), ".."
 const GRAMMAR = ["tools/enter-exit.mjs", "tools/thresholds.mjs"]
   .find((rel) => existsSync(join(WORLD_CLONE_FOR_TEST, rel)));
 
-/** A passage row exactly as `crossing-exec.mjs` writes one under the flag —
+/** A passage row exactly as `enter-exit-exec.mjs` writes one under the flag —
  *  the same class, the same action, the same `payload.ledger + payload.lines`.
  *  Copied from the pen rather than invented, so a change to the pen that this
  *  no longer matches is a change somebody has to come here and make. */
@@ -85,7 +85,7 @@ const passageRow = (db, { handle, lines, act = "enter", at = 147.9, seq = 1, led
   crossing: at, actor: handle, action: act, object: "the-town/the-post-office", cls: CLASS_FRAME,
   at: null, witnesses: null,
   payload: { ledger, lines, summary: `${act}s the post office` },
-  effect: "the crossing is declared; the record receives it at the save",
+  effect: "the act is declared; the record receives it at the save",
   writtenAt: `2026-08-26T2${seq}:00:00.000Z`,
 });
 
@@ -268,7 +268,7 @@ test("THE HEADER — a clone with no grammar module gets a NAMED absence, not an
 // — and every passage since the cutover is served by the DERIVATION, which the
 // tests above cover. Two office pens went on appending live-era lines into that
 // committed file anyway; each append turned the world's grammar suite red, cost
-// the settlement sweep its isolation, and refused the whole crossing.
+// the settlement sweep its isolation, and refused the whole write.
 
 test("NO PEN — nothing in src/ or tools/ calls the writer any more", async () => {
   // THE SOURCE PIN, and it reads the bytes rather than the wiring, because the
@@ -511,13 +511,13 @@ test("enterExitLedgerText and the door's answer are the same bytes", async () =>
 //
 // The layer above drives a row shaped like the pen's. This one runs the PEN,
 // as its own process, exactly as the office runs it — so a change to
-// crossing-exec that stopped naming this ledger fails here.
+// enter-exit-exec that stopped naming this ledger fails here.
 //
 // Needs a world clone for the grammar module; says so instead of passing over
 // an invented world.
 
 
-test("END TO END through the real pen — crossing-exec writes, the door serves", { skip: GRAMMAR ? false : `no world clone at ${WORLD_CLONE_FOR_TEST} — the grammar module travels with it` }, async () => {
+test("END TO END through the real pen — enter-exit-exec writes, the door serves", { skip: GRAMMAR ? false : `no world clone at ${WORLD_CLONE_FOR_TEST} — the grammar module travels with it` }, async () => {
   const clone = join(scratch, `pen-${n}`);
   mkdirSync(join(clone, "WORLD"), { recursive: true });
   mkdirSync(join(clone, "tools"), { recursive: true });
@@ -526,7 +526,7 @@ test("END TO END through the real pen — crossing-exec writes, the door serves"
 
   const line = "- 2026-08-26T22:30:00.000Z · wright · enters wright/the-trueing-house · ferry 151.6 · word neutral";
   const out = execFileSync(process.execPath, [
-    join(process.cwd(), "src", "crossing-exec.mjs"),
+    join(process.cwd(), "src", "enter-exit-exec.mjs"),
     JSON.stringify({ handle: "wright", act: "enter", at: 151.6, lines: [line], summary: "enters the trueing house" }),
   ], { encoding: "utf8", env: { ...process.env, WORLD_CLONE: clone, WORLD_DYNAMIC_DB: dbPath, WORLD_SINGLE_LOG: "1" } });
 

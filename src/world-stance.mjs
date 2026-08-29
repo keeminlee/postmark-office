@@ -542,7 +542,7 @@ export async function declareStanceViaOffice(repo, args = {}, key = null, { dbPa
 // ── the door's schema ────────────────────────────────────────────────────────
 //
 // STANCE_TOOLS ride the apex's SCHEMA lookup without joining the flat door's
-// tool list — the CROSSING_TOOLS precedent, for the same reason and with the
+// tool list — the ENTER_EXIT_TOOLS precedent, for the same reason and with the
 // same consequence: seam 4 says the fields an act takes come from the act's own
 // schema, so inventing a second grammar beside the apex row would be exactly the
 // drift that seam exists to close. The flat `tools/list` count is unchanged.

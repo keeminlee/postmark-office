@@ -2389,17 +2389,17 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
   // threshold ledger's own stamp carries the arrival crossing, so the act is
   // written where it happens on the town's clock.
   //
-  // The import is lazy on purpose — `world-crossings` reaches back into this
+  // The import is lazy on purpose — `world-enter-exit` reaches back into this
   // module, and a top-level edge would be a cycle for a leg most walks never
   // take.
   let entry = null;
   if (enterOnArrival) {
     const arrivedAtCrossing = at + (result.position.etaCrossings ?? 0);
     try {
-      const { enterViaOffice } = await import("./world-crossings.mjs");
-      const { crossingDeps } = await import("./world-apex.mjs");
+      const { enterViaOffice } = await import("./world-enter-exit.mjs");
+      const { enterExitDeps } = await import("./world-apex.mjs");
       entry = await enterViaOffice(worldClone, { mark: targetMarkId, handle: who, accept: payload.accept === true }, key, {
-        ...crossingDeps(),
+        ...enterExitDeps(),
         now: () => arrivedAtCrossing,
         standpointOf: async () => ({ x: toward.x, y: toward.y, name: who }),
       });

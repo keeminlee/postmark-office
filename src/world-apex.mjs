@@ -65,12 +65,12 @@ import {
 import { carrierReader, movementV2Enabled, stopDepartures, vesselServiceFrom } from "./world-movement.mjs";
 import { carriedLegsFor, happenedBlock, latestSettlement, readCrossingLogs } from "./world-happened.mjs";
 import { WORLD_STAKE_TOOLS, callWorldStakeTool } from "./world-stake.mjs";
-// DEMO SLICE (step 5) — the crossings. Imported for the dispatch table and the
+// DEMO SLICE (step 5) — the enterexit pair. Imported for the dispatch table and the
 // `fields` lookup; unreachable in production because no class mark grants them.
-import { CROSSING_EXEC, CROSSING_TOOLS, enterViaOffice, exitViaOffice } from "./world-crossings.mjs";
+import { ENTER_EXIT_EXEC, ENTER_EXIT_TOOLS, enterViaOffice, exitViaOffice } from "./world-enter-exit.mjs";
 import { servedEnterExitLedger } from "./enter-exit-ledger.mjs";
 // POS-5's consent verb. STANCE_TOOLS ride the schema lookup without joining
-// the flat tool list, exactly as CROSSING_TOOLS do and for the same reason.
+// the flat tool list, exactly as ENTER_EXIT_TOOLS do and for the same reason.
 import { ACTION_STANCE, STANCE_TOOLS, declareStanceViaOffice, readNeverPerforms, stanceShadow, stancesBlock } from "./world-stance.mjs";
 import { callHoldTool } from "./world-hold.mjs";
 import { storeDbPath } from "./world-serve.mjs";
@@ -79,7 +79,7 @@ import { resolveHumanActor } from "./human-actor.mjs";
 
 export const apexEnabled = () => process.env.WORLD_APEX === "1";
 
-// ── the crossings' office plumbing (DEMO SLICE, step 5) ─────────────────────
+// ── the enterexit pair's office plumbing (DEMO SLICE, step 5) ───────────────
 //
 // enter/exit read their law from the CLONE and their people from here. This is
 // the whole of "here": the folded world, where a resident is standing (the walk
@@ -88,20 +88,20 @@ export const apexEnabled = () => process.env.WORLD_APEX === "1";
 // running office is picked up the same way every other world read picks it up.
 // ONE GEOMETRY, ONE TRUTH — and since §1c there is only one to name.
 //
-// The fault this line once carried is worth keeping: the crossing asked for
+// The fault this line once carried is worth keeping: the entry asked for
 // main's committed save while every other verb read a signed-in household's own
-// live fold, so a resident crossed thresholds in a DIFFERENT world from the one
+// live fold, so a resident entered thresholds in a DIFFERENT world from the one
 // their door served them. It was fixed by threading the key through. The fold on
 // the read is now gone — canon is the only world any door serves — so the two
 // components agree by construction, and there is no key left to thread. A
-// threshold is crossed in the published world: a door you have only drafted is
+// threshold is entered in the published world: a door you have only drafted is
 // not yet ground you can stand in.
 // Exported since the walk round: `enter_on_arrival` composes the SAME entry
 // door with the SAME deps, substituting only the instant and the standpoint.
 // A second copy of this wiring in world.mjs would be two answers to "how does
 // the office reach the threshold ledger" — the drift this repo keeps closing.
 // world.mjs imports it lazily, so the edge back to the apex is not a cycle.
-export function crossingDeps() {
+export function enterExitDeps() {
   return {
     world: async () => await worldStateRaw(),
     // THE DERIVED LEDGER, not the file. Reading the file here is what made
@@ -120,12 +120,12 @@ export function crossingDeps() {
       const { execUnderTownLock, lockTimedOut, LOCK_BUSY } = await import("./town-lock.mjs");
       let out;
       try {
-        out = await execUnderTownLock(CROSSING_EXEC, JSON.stringify({ handle, act, at, lines, summary }),
+        out = await execUnderTownLock(ENTER_EXIT_EXEC, JSON.stringify({ handle, act, at, lines, summary }),
           { ...process.env, WORLD_CLONE });
       } catch (e) {
         if (lockTimedOut(e)) { const err = new Error(LOCK_BUSY.defect); Object.assign(err, LOCK_BUSY); throw err; }
-        const err = new Error("the crossing pass tripped");
-        Object.assign(err, { code: 500, defect: "the crossing pass tripped", hint: String(e.stderr ?? e.message ?? e).slice(0, 300) });
+        const err = new Error("the enter/exit pass tripped");
+        Object.assign(err, { code: 500, defect: "the enter/exit pass tripped", hint: String(e.stderr ?? e.message ?? e).slice(0, 300) });
         throw err;
       }
       const result = JSON.parse(out.trim().split("\n").at(-1));
@@ -290,7 +290,7 @@ const DISPATCH = {
   give: { tool: "world_hold", run: (args, key) => callHoldTool("world_hold", args, key) },
   drop: { tool: "world_hold", run: (args, key) => callHoldTool("world_hold", args, key) },
   take: { tool: "world_hold", run: (args, key) => callHoldTool("world_hold", args, key) },
-  // ── the crossings ─────────────────────────────────────────────────────────
+  // ── the enterexit pair ─────────────────────────────────────────────────────────
   //
   // ⚠ THE OLD COMMENT HERE WAS FALSE, AND SAID SO CONFIDENTLY. It read:
   // "enter/exit join the table but NOT production: R16 keeps the pair out until
@@ -321,7 +321,7 @@ const DISPATCH = {
   //     handler.
   //
   //   · THE WRITE. Probed against an IN-MEMORY PEN (the harness in
-  //     test/world-crossings.test.mjs; the clone was read and never written).
+  //     test/world-enter-exit.test.mjs; the clone was read and never written).
   //     `enterViaOffice` adjudicates the containment chain, enters
   //     the-town-centre and the-quay-reach, stops at a threshold that declares
   //     a counter-edge and returns its terms with nothing recorded, accepts on
@@ -339,8 +339,8 @@ const DISPATCH = {
   // The row is also here so the door, the lint (L6 reads DISPATCHABLE) and the
   // demo all read the same table rather than three, which is the drift the
   // dispatch table exists to prevent.
-  enter: { tool: "world_enter", run: (args, key) => enterViaOffice(WORLD_CLONE, args, key, crossingDeps()) },
-  exit: { tool: "world_exit", run: (args, key) => exitViaOffice(WORLD_CLONE, args, key, crossingDeps()) },
+  enter: { tool: "world_enter", run: (args, key) => enterViaOffice(WORLD_CLONE, args, key, enterExitDeps()) },
+  exit: { tool: "world_exit", run: (args, key) => exitViaOffice(WORLD_CLONE, args, key, enterExitDeps()) },
   // ── the consent door (POS-5) ───────────────────────────────────────────────
   //
   // The single log's first new verb. `witnessStamp` is passed in rather than
@@ -440,12 +440,12 @@ let _flatSchemas = null;
 function flatSchemas() {
   if (_flatSchemas) return _flatSchemas;
   _flatSchemas = new Map();
-  // CROSSING_TOOLS ride the SCHEMA lookup without joining the flat door's tool
+  // ENTER_EXIT_TOOLS ride the SCHEMA lookup without joining the flat door's tool
   // list (R16: the pair stays out of production until the law is planted). The
   // fields an act takes must still come from the act's own schema — the seam-4
   // discipline — and inventing a second grammar here for two verbs would be
   // exactly the drift that seam exists to close.
-  for (const tool of [...WORLD_TOOLS, ...WORLD_STAKE_TOOLS, ...CROSSING_TOOLS, ...STANCE_TOOLS]) {
+  for (const tool of [...WORLD_TOOLS, ...WORLD_STAKE_TOOLS, ...ENTER_EXIT_TOOLS, ...STANCE_TOOLS]) {
     _flatSchemas.set(tool.name, actionFields(tool?.inputSchema?.properties, tool?.inputSchema?.required));
   }
   return _flatSchemas;
@@ -458,7 +458,7 @@ let _fullProps = null;
 function fullPropsFor(toolName) {
   if (!_fullProps) {
     _fullProps = new Map();
-    for (const t of [...WORLD_TOOLS, ...WORLD_STAKE_TOOLS, ...CROSSING_TOOLS, ...STANCE_TOOLS]) _fullProps.set(t.name, t?.inputSchema?.properties ?? {});
+    for (const t of [...WORLD_TOOLS, ...WORLD_STAKE_TOOLS, ...ENTER_EXIT_TOOLS, ...STANCE_TOOLS]) _fullProps.set(t.name, t?.inputSchema?.properties ?? {});
   }
   return _fullProps.get(toolName) ?? null;
 }

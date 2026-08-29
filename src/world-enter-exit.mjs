@@ -1,4 +1,4 @@
-// world-crossings.mjs — enter(mark) / exit(mark), the office's half.
+// world-enter-exit.mjs — enter(mark) / exit(mark), the office's half.
 //
 // DEMO SLICE (step 5, `jetto/enter-exit-demo`). The law is the 2026-08-18
 // wind-down's: R14 (occupancy is a literal `contains` edge with an ENTITY
@@ -41,7 +41,7 @@ const bounce = (code, defect, hint, extra = {}) => {
  *
  *  The parser is aliased over to one name so the call sites stay single-named:
  *  a caller should not have to know which era of the module answered. */
-async function crossingLaw(worldClone) {
+async function enterExitLaw(worldClone) {
   const load = (name) => import(pathToFileURL(join(worldClone, "tools", name)));
   try {
     const law = await load("enter-exit.mjs").catch(() => load("thresholds.mjs"));
@@ -88,7 +88,7 @@ export async function enterViaOffice(worldClone, payload = {}, key = null, deps 
   const markId = String(payload.mark ?? payload.mark_id ?? "").trim();
   if (!markId) throw bounce(422, "enter what?", "name a mark — mark: \"<by>/<slug>\", as ids appear in the telling");
 
-  const { thresholds, verbs } = await crossingLaw(worldClone);
+  const { thresholds, verbs } = await enterExitLaw(worldClone);
   const w = await deps.world();
   const at = thresholds.stampAt(deps.now ? deps.now() : Date.now() / 43200000);
   const acts = thresholds.parseEnterExitLedger(await deps.ledger()).acts;
@@ -115,15 +115,15 @@ export async function enterViaOffice(worldClone, payload = {}, key = null, deps 
 
   // THE SUMMARY MUST NOT CALL AN UN-REFUSED ACT A REFUSAL. Entering nothing has
   // three different causes and only one of them is a refusal: the door said no,
-  // the door asked for terms, or there was no door to cross because you were
+  // the door asked for terms, or there was no door to enter because you were
   // already inside. Writing "refused at X" for all three put a lie in the
-  // crossing journal for two of them.
+  // enterexit journal for two of them.
   const summary = answer.entered.length
     ? `enters ${answer.entered.join(", ")}${answer.refused ? ` — refused at ${answer.refused.mark}` : ""}`
     : answer.refused ? `refused at ${answer.stranded ?? markId}`
     : answer.awaiting ? `stood at the door of ${answer.stranded ?? markId} — terms not yet accepted`
-    : answer.already ? `already within ${markId} — nothing to cross`
-    : `crossed nothing at ${markId}`;
+    : answer.already ? `already within ${markId} — nothing to enter`
+    : `entered nothing at ${markId}`;
   const written = answer.rows.length
     ? await deps.record({ handle: who, act: "enter", at, lines: answer.rows, summary })
     : { within: [...(occupancy.get(who) ?? [])] };
@@ -148,7 +148,7 @@ export async function enterViaOffice(worldClone, payload = {}, key = null, deps 
     terms: (answer.adjudications ?? answer.crossings ?? []).map((c) => c.terms).filter(Boolean),
     ledger: written.commit ? { lines: written.lines, commit: written.commit, pushed: written.pushed } : null,
     // EMPTY SUCCESS IS NOW IMPOSSIBLE (founder, 2026-08-20: an enter that did
-    // nothing and said nothing). The engine already knew why it crossed nothing
+    // nothing and said nothing). The engine already knew why it entered nothing
     // — `already`, with its own note — and this door THREW THAT AWAY, replacing
     // it with the generic occupancy boilerplate. The answer was success-shaped,
     // carried no rows, and explained nothing, so the viewer correctly rendered
@@ -159,8 +159,8 @@ export async function enterViaOffice(worldClone, payload = {}, key = null, deps 
     ...(answer.already ? { already: true } : {}),
     ...(!answer.entered.length && !answer.refused && !answer.awaiting
       ? { crossed_nothing: answer.already
-          ? `you are already within ${markId} — there was no threshold left to cross`
-          : `nothing was crossed at ${markId}, and the door named neither terms nor a refusal — treat this as an error in the passage, not as an entry` }
+          ? `you are already within ${markId} — there was no threshold left to enter`
+          : `nothing was entered at ${markId}, and the door named neither terms nor a refusal — treat this as an error in the passage, not as an entry` }
       : {}),
     note: answer.refused
       ? "refused at the threshold — you are standing at that door, not back where you started: the walk half needs no consent, so it can never be the refused half."
@@ -174,7 +174,7 @@ export async function enterViaOffice(worldClone, payload = {}, key = null, deps 
 export async function exitViaOffice(worldClone, payload = {}, key = null, deps = {}) {
   { const fz = worldFreezeBounce(); if (fz) return fz; }
   const who = actorFrom(payload, key);
-  const { thresholds, verbs } = await crossingLaw(worldClone);
+  const { thresholds, verbs } = await enterExitLaw(worldClone);
   const w = await deps.world();
   const at = thresholds.stampAt(deps.now ? deps.now() : Date.now() / 43200000);
   const acts = thresholds.parseEnterExitLedger(await deps.ledger()).acts;
@@ -201,7 +201,7 @@ export async function exitViaOffice(worldClone, payload = {}, key = null, deps =
 
 /** Who is inside what, derived — the public read behind the scoped view. */
 export async function occupancyViaOffice(worldClone, payload = {}, deps = {}) {
-  const { thresholds } = await crossingLaw(worldClone);
+  const { thresholds } = await enterExitLaw(worldClone);
   const at = thresholds.stampAt(Number.isFinite(payload.at) ? payload.at : (deps.now ? deps.now() : Date.now() / 43200000));
   const { acts, unrecognized } = thresholds.parseEnterExitLedger(await deps.ledger());
   const occupancy = thresholds.occupancyAt(acts, at);
@@ -215,15 +215,15 @@ export async function occupancyViaOffice(worldClone, payload = {}, deps = {}) {
   };
 }
 
-export const CROSSING_EXEC = join(HERE, "crossing-exec.mjs");
+export const ENTER_EXIT_EXEC = join(HERE, "enter-exit-exec.mjs");
 
 // ── the doors ───────────────────────────────────────────────────────────────
-export const CROSSING_TOOLS = [
+export const ENTER_EXIT_TOOLS = [
   { name: "world_enter",
-    description: "Enter a mark — cross its threshold. This is NOT walking: walking moves you to coordinates and puts you inside nothing, which is a real state (the visitor on the deck who never stepped aboard). Entering is the act with mechanical weight, and it is one edge and two words: your side is your authorship of the act, the mark's side is its automatic answer from its own standing entry law — welcomed, neutral, or opposed. Mutual consent, or the effect is null. A mark that has written no entry law answers neutral and lets you in; a mark whose law declares a counter-edge (the Post Office's `aboard`) shows you its terms and records nothing until you pass accept: true. OPPOSED IS A REFUSAL AT THE THRESHOLD: you are left standing at that door, and everything you crossed before it still stands. Entering from outside bundles the walk to the threshold in. Naming a deep target enters the CHAIN — each door adjudicated in turn, so an effect-bearing door cannot be bypassed by naming a room behind it.",
+    description: "Enter a mark — step past its threshold. This is NOT walking: walking moves you to coordinates and puts you inside nothing, which is a real state (the visitor on the deck who never stepped aboard). Entering is the act with mechanical weight, and it is one edge and two words: your side is your authorship of the act, the mark's side is its automatic answer from its own standing entry law — welcomed, neutral, or opposed. Mutual consent, or the effect is null. A mark that has written no entry law answers neutral and lets you in; a mark whose law declares a counter-edge (the Post Office's `aboard`) shows you its terms and records nothing until you pass accept: true. OPPOSED IS A REFUSAL AT THE THRESHOLD: you are left standing at that door, and everything you entered before it still stands. Entering from outside bundles the walk to the threshold in. Naming a deep target enters the CHAIN — each door adjudicated in turn, so an effect-bearing door cannot be bypassed by naming a room behind it.",
     inputSchema: { type: "object", properties: {
       mark: { type: "string", description: "the mark to enter — <by>/<slug>, as ids appear in the telling" },
-      accept: { type: "boolean", description: "your explicit word, demanded only where the door declares a counter-edge. Call once without it to READ the terms; call again with it to cross." },
+      accept: { type: "boolean", description: "your explicit word, demanded only where the door declares a counter-edge. Call once without it to READ the terms; call again with it to enter." },
       handle: { type: "string", description: "which of YOUR residents is entering (omit if your key holds one; a multi-resident key must name one)" },
     }, additionalProperties: false } },
   { name: "world_exit",

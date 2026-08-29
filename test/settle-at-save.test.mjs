@@ -1,12 +1,12 @@
-// settle-at-save.test.mjs — POS-5 §3's finisher: walks and crossings settle at
+// settle-at-save.test.mjs — POS-5 §3's finisher: walks and enterexit acts settle at
 // the save, not per act to git main.
 //
 // The ruling (2026-08-22, founder): "walks + enter-exit should settle at the
 // save, not per-act to git main."
 //
-// Until now every walk and every crossing spent ONE GIT COMMIT on world main —
+// Until now every walk and every enter/exit spent ONE GIT COMMIT on world main —
 // they were still arriving on main's log the morning this was written
-// ("crossing: lucien exits caelum/evermoon (via world_exit)"). Behind
+// ("enter-exit: lucien exits caelum/evermoon (via world_exit)"). Behind
 // WORLD_SINGLE_LOG the act writes a journal row instead and the save gives the
 // record the same lines, once.
 //
@@ -73,12 +73,12 @@ const walkRow = (db, { handle, line, at = 145.1, seq }) => appendJournal(db, {
   writtenAt: `2026-08-24T0${seq ?? 0}:00:00.000Z`,
 });
 
-/** A crossing row exactly as `crossing-exec` writes one under the flag. */
-const crossRow = (db, { handle, lines, act = "enter", at = 145.2, seq, ledger = ENTER_EXIT_LEDGER }) => appendJournal(db, {
+/** An enterexit row exactly as `enter-exit-exec` writes one under the flag. */
+const enterExitRow = (db, { handle, lines, act = "enter", at = 145.2, seq, ledger = ENTER_EXIT_LEDGER }) => appendJournal(db, {
   crossing: at, actor: handle, action: act, object: "the-town/town-square", cls: CLASS_FRAME,
   at: null, witnesses: null,
   payload: { ledger, lines, summary: `${act}s the square` },
-  effect: "the crossing is declared; the record receives it at the save",
+  effect: "the act is declared; the record receives it at the save",
   writtenAt: `2026-08-24T0${seq ?? 0}:00:00.000Z`,
 });
 
@@ -130,7 +130,7 @@ test("THE BAR — the save's record is BYTE-IDENTICAL to what the per-act commit
 //
 // Every append turned the world's grammar suite red, which cost the settlement
 // sweep its ability to attribute a failure to a candidate and refused the whole
-// crossing. Three hand-repairs on world main before the pens were found.
+// write. Three hand-repairs on world main before the pens were found.
 //
 // The passages are not lost by this: they are in the journal, and the office
 // door derives the live era on every read. The walk ledger keeps its pen,
@@ -139,8 +139,8 @@ test("THE BAR — the save's record is BYTE-IDENTICAL to what the per-act commit
 test("THE FILTER — a passage row leaves the committed enter/exit file BYTE-UNCHANGED", () => {
   const before = ledger(ENTER_EXIT_LEDGER);
   withDb((db) => {
-    crossRow(db, { handle: "lucien", lines: ["- c1 · lucien enters"], seq: 1 });
-    crossRow(db, { handle: "lucien", lines: ["- c2 · lucien exits"], act: "exit", seq: 2 });
+    enterExitRow(db, { handle: "lucien", lines: ["- c1 · lucien enters"], seq: 1 });
+    enterExitRow(db, { handle: "lucien", lines: ["- c2 · lucien exits"], act: "exit", seq: 2 });
   });
   const wrote = materializeLedgers(repo, withDb((db) => readJournal(db)));
 
@@ -154,7 +154,7 @@ test("THE FILTER — a row under the RETIRED name is filtered too, and the retir
   // in their payload. They are the same record; a filter that knew only the new
   // name would let every pre-rename row through.
   const before = ledger(RETIRED_LEDGER);
-  withDb((db) => crossRow(db, { handle: "sable", lines: ["- old name, same record"], seq: 1, ledger: RETIRED_LEDGER }));
+  withDb((db) => enterExitRow(db, { handle: "sable", lines: ["- old name, same record"], seq: 1, ledger: RETIRED_LEDGER }));
   const wrote = materializeLedgers(repo, withDb((db) => readJournal(db)));
 
   assert.equal(ledger(RETIRED_LEDGER), before);
@@ -168,7 +168,7 @@ test("THE FILTER IS EXPLICIT, not an accident of a missing file", () => {
   // the filter is asserted against a clone where the file is present AND
   // writable — if it were load-bearing on absence, this is the case that fails.
   assert.ok(existsSync(join(repo, ENTER_EXIT_LEDGER)), "the file is here, so absence cannot be what is protecting it");
-  withDb((db) => crossRow(db, { handle: "alta", lines: ["- a passage"], seq: 1 }));
+  withDb((db) => enterExitRow(db, { handle: "alta", lines: ["- a passage"], seq: 1 }));
   const wrote = materializeLedgers(repo, withDb((db) => readJournal(db)));
   assert.deepEqual(wrote, [], "no skip note either — the rows never reached the routing at all");
 });
@@ -178,16 +178,16 @@ test("THE DISCRIMINATOR — the walk ledger still gets its lines, in the same pa
   // this loop is its only pen and removing it would strand every departure.
   withDb((db) => {
     walkRow(db, { handle: "lucien", line: "- w1 · lucien", seq: 1 });
-    crossRow(db, { handle: "lucien", lines: ["- c1 · lucien enters"], seq: 2 });
+    enterExitRow(db, { handle: "lucien", lines: ["- c1 · lucien enters"], seq: 2 });
     walkRow(db, { handle: "ember", line: "- w2 · ember", seq: 3 });
-    crossRow(db, { handle: "lucien", lines: ["- c2 · lucien exits"], act: "exit", seq: 4 });
+    enterExitRow(db, { handle: "lucien", lines: ["- c2 · lucien exits"], act: "exit", seq: 4 });
   });
   const passagesBefore = ledger(ENTER_EXIT_LEDGER);
   const wrote = materializeLedgers(repo, withDb((db) => readJournal(db)));
 
   assert.equal(ledger(WALK_LEDGER), `${WALK_HEADER}- w1 · lucien\n- w2 · ember\n`);
   assert.deepEqual(wrote, [{ ledger: WALK_LEDGER, appended: 2 }]);
-  assert.equal(ledger(WALK_LEDGER).includes("enters"), false, "a crossing never lands in the walk ledger");
+  assert.equal(ledger(WALK_LEDGER).includes("enters"), false, "an enterexit row never lands in the walk ledger");
   assert.equal(ledger(ENTER_EXIT_LEDGER), passagesBefore, "and the passages went nowhere on disk");
 });
 
@@ -202,13 +202,13 @@ test("IN SEQ ORDER — a ledger the drain still writes takes its lines in seq or
   materializeLedgers(repo, withDb((db) => readJournal(db)));
   const body = ledger(WALK_LEDGER);
   assert.ok(body.indexOf("sets out\n") < body.indexOf("sets out again"),
-    "seq decides, not the crossing stamp — a record out of order is a record that cannot be read");
+    "seq decides, not the ferry-crossing stamp — a record out of order is a record that cannot be read");
 });
 
 test("IDEMPOTENT — materializing twice appends nothing twice", () => {
   // The drain's whole crash story rests on every step before the truncate being
   // re-runnable (the-atomic-drain). A ledger appended twice on a replay would be
-  // a record the crossing invented.
+  // a record the settlement invented.
   withDb((db) => walkRow(db, { handle: "lucien", line: "- once and only once", seq: 1 }));
   const rows = withDb((db) => readJournal(db));
   materializeLedgers(repo, rows);

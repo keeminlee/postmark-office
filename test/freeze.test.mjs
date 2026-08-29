@@ -44,7 +44,7 @@ test("the doors are wired: frozen ground acts bounce before touching anything", 
     const { walkViaOffice, leaveMarkViaOffice, worldSay, worldNoteViaOffice, withdrawMarkViaOffice } = await import("../src/world.mjs");
     const { callHoldTool } = await import("../src/world-hold.mjs");
     const { callWorldStakeTool } = await import("../src/world-stake.mjs");
-    const { enterViaOffice, exitViaOffice } = await import("../src/world-crossings.mjs");
+    const { enterViaOffice, exitViaOffice } = await import("../src/world-enter-exit.mjs");
     // No clone path, no key, garbage args: if the gate were NOT first, every
     // one of these would fail differently (422s, throws, fs errors). A uniform
     // 503 across all nine proves the freeze answers before any machinery runs.

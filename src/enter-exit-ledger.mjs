@@ -5,7 +5,7 @@
 // On 2026-08-24 at 19:39:13Z the enter/exit pair stopped spending a git commit
 // per act. Under WORLD_SINGLE_LOG the act writes a journal row instead, and the
 // row carries its formatted ledger lines verbatim under `payload.lines`. That
-// half shipped and works: the record of every crossing since has been kept.
+// half shipped and works: the record of every act since has been kept.
 //
 // Nothing ever gave those lines to a reader. Both occupancy readers — the
 // office's own door and the viewer through it — read the ledger FILE, and the
@@ -22,7 +22,7 @@
 // The law this violates is the enter class's own, `the-town/enter` v4,
 // constitution tier, quoted verbatim:
 //
-//     "An entry is one passage written — who crossed, into what, at a
+//     "An entry is one passage written — who entered, into what, at a
 //      threshold you truly stand before; exit writes the next, to the
 //      effective parent."
 //
@@ -33,7 +33,7 @@
 // The ledger stops being a file anybody appends to and becomes a DERIVED
 // artifact, regenerated whole from its two sources every time it is asked for:
 //
-//   the frozen era   WORLD/enter-exit-ledger-frozen.md — every crossing made
+//   the frozen era   WORLD/enter-exit-ledger-frozen.md — every act made
 //                    before the cutover, when each act took its own commit.
 //                    Frozen with honor, exactly as the walk ledger was on
 //                    2026-08-10 when movement moved into the store. Never
@@ -61,7 +61,7 @@
 // "the world repo has no journal to read — a longer derived file means a hand
 // wrote in it" — which turned the world's grammar suite red during passage
 // activity, cost the settlement sweep its ability to attribute a failure, and
-// refused the whole crossing. Three hand-repairs on world main.
+// refused the whole write. Three hand-repairs on world main.
 //
 // The count that mattered was never one pen versus two. It was that the record
 // has a DERIVER and therefore needs no pen: the committed copy is the frozen
@@ -133,7 +133,7 @@ export const DEPRECATED_DOOR = {
  * The world package owns the enter/exit grammar — the row shape, the parser,
  * the formatter — and the office reads all of it out of its clone rather than
  * keeping a second copy, because "the enforcer and the record must agree, and
- * the clone owns both" (world-crossings.mjs). The derived ledger's header is
+ * the clone owns both" (world-enter-exit.mjs). The derived ledger's header is
  * part of that serialization: it names the grammar, the frozen era's path and
  * the grace window. A copy here would be a second home for one text, which is
  * the drift this seam exists to prevent.
@@ -275,7 +275,7 @@ export async function enterExitLedgerText(repo, rows) {
  *
  * So a failure comes back as a SENTENCE beside the rows rather than as an empty
  * array. The caller still gets a usable answer; it simply cannot mistake "nobody
- * has crossed a door since the cutover" for "I could not read the log".
+ * has entered a door since the cutover" for "I could not read the log".
  *
  * (Caught by running this against a copy of prod's own store, 2026-08-26: a
  * mis-resolved path made the read throw, and the draft answered 155 acts with a
@@ -339,7 +339,7 @@ export async function servedEnterExitLedger(repo, { dbPath = undefined } = {}) {
  *      hand wrote in it"
  *
  * Each append turned the world's grammar suite red, which cost the settlement
- * sweep its isolation and refused the whole crossing. Three hand-repairs on
+ * sweep its isolation and refused the whole write. Three hand-repairs on
  * world main before the pens were named. So: the crossing-save's call is gone,
  * the drain filters these ledgers out explicitly, and
  * `test/enter-exit-ledger.test.mjs` pins that no pen in `src/` or `tools/`
