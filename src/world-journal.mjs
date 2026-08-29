@@ -72,7 +72,8 @@ import { execFileSync } from "node:child_process";
 
 import { openDynamic, dynamicDbPath, singleLogEnabled } from "./dynamic-store.mjs";
 import { mirrorAct, mirrorSettled, world2Enabled } from "./world2-acts.mjs";
-import { candleEnabled, docketSettled, submitClaimFromJournal } from "./world2-claims.mjs";
+import { candleEnabled, claimEligible, claimHouseholdFor, claimTxFromJournal, docketSettled, submitClaimFromJournal } from "./world2-claims.mjs";
+import { PenUnreachableError, laneFlipped, laneOf, penSettled, penWrite, shadowWrite } from "./world2-pen.mjs";
 
 /**
  * Is this row a PRIVATE compose, whose act must not reach the public `acts`
@@ -333,11 +334,82 @@ export function appendJournal(db, entry = {}) {
   // The predicate is deliberately narrow: ONLY an unstaked mark-class
   // declaration defers. Everything else — speech, walking, withdrawals of
   // public marks, every non-mark class — mirrors exactly as before.
+  //
+  // ── R1'S ROUTING (2026-08-29): one act, one transaction ──────────────────
+  // A public mark-class row used to take TWO queues (mirrorAct's acts insert,
+  // submitClaimFromJournal's claims write) with nothing joining them — the
+  // design's two-pens disease. It now takes ONE `shadowWrite`, whose single
+  // transaction inserts the act and runs the claim logic on the same client.
+  // A private draft still touches claims ONLY (the deferral, unchanged), and
+  // a non-candle row keeps mirrorAct's single-table queue: with one table
+  // there is nothing to be atomic WITH, and its ordering guarantee for the
+  // lane acts stays where it has always been. (The two queues can interleave
+  // acts ids across lanes now; D6 already ruled replay order is `(at, id)`,
+  // so id order carries no meaning a reader may lean on.)
   if (privateDraftAct(row)) submitClaimFromJournal(row, seq);
-  else { mirrorAct(row, seq); submitClaimFromJournal(row, seq); }
+  else if (claimEligible(row)) {
+    shadowWrite(row, seq, {
+      household: () => claimHouseholdFor(row),
+      claimFn: (client, _actId, household) => claimTxFromJournal(client, row, seq, { household }),
+    });
+  } else mirrorAct(row, seq);
 
   return { seq, ...row };
 }
+
+/**
+ * THE FLIPPED WRITE — the pen-flip design's §3 ordering, per lane (D1).
+ *
+ * Postgres commits FIRST and is awaited; on failure this THROWS
+ * PenUnreachableError and NOTHING has been written anywhere — the door owes
+ * the resident the ruled refusal (D2): "the office's record cannot be
+ * reached — nothing was written, and nothing was lost."
+ *
+ * After the commit, the sqlite journal receives the same row as the REVERSE
+ * mirror (D3) — best-effort, after the record, never with a vote. While it
+ * holds, every 1.0 read (the door guards included) stays valid, which is what
+ * lets a lane flip before the R3 read ports land: the ports gate rule 6's
+ * DELETION, not this flag. A reverse write that fails is loud and the parity
+ * falsifier's reverse arm reds at the next check.
+ *
+ * The mark lane is refused here BY NAME until its claim path is wired through
+ * `penWrite`'s claimFn at the call site — flipping it via the env flag alone
+ * would write acts with no docket, which is F2 self-inflicted.
+ */
+export async function appendActFlipped(db, entry = {}) {
+  const row = normalizeRow(entry);
+  const lane = laneOf(row);
+  if (lane === "mark" || privateDraftAct(row)) {
+    throw new Error(`the "${lane}" lane's flip is not wired yet — its candle half must ride penWrite's own transaction; unset it from W2_PEN`);
+  }
+  const { actId } = await penWrite(row); // throws PenUnreachableError — the door bounces, nothing was written
+  let seq = null;
+  try {
+    const stmt = db.prepare(
+      `INSERT INTO journal (${ROW_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    const res = stmt.run(
+      row.crossing, row.actor, row.action, row.object,
+      row.at_anchor, row.at_dx, row.at_dy,
+      row.witnesses, row.class, row.payload, row.effect,
+      row.household, row.written_at);
+    seq = Number(res.lastInsertRowid);
+  } catch (err) {
+    // The record is already committed; the convenience copy failed. Loud, and
+    // the reverse-parity check names the row — never a refusal, because
+    // refusing now would tell the resident an act the record holds did not
+    // happen, which is the exact lie R2 exists to prevent (in mirror image).
+    console.error(`[world-journal] REVERSE MIRROR FAILED (act ${actId}, ${row.actor} ${row.action}): ${String(err?.message ?? err)}`);
+  }
+  return { seq, actId, flipped: true, ...row };
+}
+
+/** Which pen a lane's call site should use — the one switch the doors read. */
+export function penFor(entry) {
+  const lane = laneOf(normalizeRow(entry));
+  return laneFlipped(lane) ? "postgres" : "journal";
+}
+
+export { PenUnreachableError, laneFlipped };
 
 /**
  * ONE ROW, NORMALIZED — the whole of what a journal line IS, with no store in
@@ -514,7 +586,7 @@ export async function settleShadowPens({ timeoutMs = 5000 } = {}) {
   const capped = new Promise((resolve) => { timer = setTimeout(() => resolve("timeout"), timeoutMs); });
   try {
     const done = await Promise.race([
-      Promise.allSettled([mirrorSettled(), docketSettled()]).then(() => "settled"),
+      Promise.allSettled([mirrorSettled(), docketSettled(), penSettled()]).then(() => "settled"),
       capped,
     ]);
     const waited = Date.now() - started;

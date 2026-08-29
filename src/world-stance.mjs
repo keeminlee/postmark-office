@@ -75,7 +75,7 @@
 import { openDynamic, singleLogEnabled } from "./dynamic-store.mjs";
 import { WORLD_CLONE } from "./world-store.mjs"; // the standing-scoped inbox door defaults to the office's own world checkout
 import { worldFreezeBounce } from "./freeze.mjs";
-import { appendJournal, liveMarks, readJournal } from "./world-journal.mjs";
+import { appendActFlipped, appendJournal, laneFlipped, liveMarks, readJournal } from "./world-journal.mjs";
 import { mainRef, materializeAtRef, publishedState, resolvedWorldHousehold } from "./world-branches.mjs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -516,7 +516,7 @@ export async function declareStanceViaOffice(repo, args = {}, key = null, { dbPa
   const db = openDynamic(dbPath ?? undefined);
   try {
     const prior = standingStances(readJournal(db, { cls: CLASS_STANCE }), { by }).find((s) => s.on === on) ?? null;
-    const row = appendJournal(db, {
+    const entry = {
       crossing, actor: by, household: resolvedWorldHousehold(key) ?? null,
       action: ACTION_STANCE, object: on, cls: CLASS_STANCE,
       at: stamp.at, witnesses: stamp.witnesses,
@@ -524,11 +524,32 @@ export async function declareStanceViaOffice(repo, args = {}, key = null, { dbPa
       effect: stance === "welcomed"
         ? "your ground welcomes it — the crossing confers your standing on it when it judges"
         : "your ground opposes it — the crossing reads your veto when it judges",
-    });
+    };
+    // ── LANE ONE OF THE PEN FLIP (W2_PEN=stance; Keemin ruled the shape
+    // 2026-08-29 — D1 per lane, D2 refuse, D3 reverse mirror). The design's
+    // own pick for first: "the one door that has never had a second pen to
+    // disagree with." Flipped, the record is Postgres `acts`, committed and
+    // awaited BEFORE anything else; sqlite gets the reverse-mirror copy after.
+    // Unreachable Postgres = the ruled refusal, and nothing was written.
+    let row;
+    if (laneFlipped("stance")) {
+      try { row = await appendActFlipped(db, entry); }
+      catch (err) {
+        if (err?.name === "PenUnreachableError")
+          throw bounce(503, err.message,
+            "this lane's pen is the office's record (W2_PEN=stance); when it cannot be reached the door refuses rather than writing anywhere else — your stance is safe to speak again");
+        throw err;
+      }
+    } else {
+      row = appendJournal(db, entry);
+    }
     return {
       on, stance, by,
       on_your_ground: ground.map((g) => g.id),
-      seq: row.seq, crossing: row.crossing, log: "journal",
+      seq: row.seq, crossing: row.crossing,
+      // Which store is the RECORD for this act — a flipped lane's answer says
+      // so honestly (the journal row behind it is the reverse-mirror copy).
+      log: row.flipped ? "acts" : "journal",
       witnesses: row.witnesses ? JSON.parse(row.witnesses) : null,
       ...(prior ? { superseded: { stance: prior.stance, at: prior.at, seq: prior.seq } } : {}),
       // The door does not enforce, and says so where the resident is standing

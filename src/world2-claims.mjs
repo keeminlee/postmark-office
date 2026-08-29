@@ -21,7 +21,8 @@
 // both when present).
 
 import { boxOf } from "../world2/tools/seed-import.mjs";
-import { mirrorAct } from "./world2-acts.mjs"; // Phase 5.6: a deferred act, released when a stake makes it public
+// Phase 5.6's deferred act is released through world2-pen's insertAct, INSIDE
+// the promotion's own transaction (imported lazily there — R1, 2026-08-29).
 
 const state = { queue: Promise.resolve(), written: 0, failed: 0, submitted: 0, lastError: null, pool: null };
 
@@ -143,20 +144,35 @@ export async function householdKeyFor(p, handle) {
  * counts (A/B parity, replay) will see the difference, and it is the fix rather
  * than drift.
  */
-export function submitClaimFromJournal(row, seq, env = process.env) {
-  if (!candleEnabled(env)) return;
-  if (!MARK_CLASSES.has(row.class)) return;
-  if (!["leave-mark", "amend", "withdraw"].includes(row.action)) return;
+/** Whether this journal row is the candle's business at all. */
+export function claimEligible(row, env = process.env) {
+  return candleEnabled(env)
+    && MARK_CLASSES.has(row.class)
+    && ["leave-mark", "amend", "withdraw"].includes(row.action);
+}
 
-  state.queue = state.queue.then(async () => {
-    try {
-      const p = await pool(env);
+/** The household a claim row will be scoped to — resolved on the POOL, before
+ *  any transaction opens, so `officeWrite` can declare it at BEGIN. */
+export async function claimHouseholdFor(row, env = process.env) {
+  const p = await pool(env);
+  return householdKeyFor(p, row.household ?? row.actor);
+}
+
+/**
+ * THE CANDLE HALF OF ONE ACT, ON ONE CLIENT — R1 of the pen-flip design
+ * (2026-08-29): this used to be the body of a second queue on a second pool,
+ * which is the two-pens disease reproduced inside Postgres (DESIGN §2 R1).
+ * The caller (world2-pen's `shadowWrite`/`penWrite` via world-journal) holds
+ * the transaction and has already declared `app.household`; every query here
+ * rides that client, so the act and its claim commit or vanish TOGETHER.
+ *
+ * All the shadow-era semantics below are unchanged — only the plumbing moved.
+ */
+export async function claimTxFromJournal(client, row, seq, { household, env = process.env } = {}) {
       const payload = row.payload == null ? {} : JSON.parse(row.payload);
-      const { rows: [win] } = await p.query(
+      const { rows: [win] } = await client.query(
         "SELECT id FROM windows WHERE status = 'open' ORDER BY id DESC LIMIT 1");
       if (!win) throw new Error("no open window — the candle is dark; bootstrap the next window before the docket can take claims");
-
-      const household = await householdKeyFor(p, row.household ?? row.actor);
 
       // -- withdraw ---------------------------------------------------------
       //
@@ -174,11 +190,11 @@ export function submitClaimFromJournal(row, seq, env = process.env) {
       // unpublish").
       if (row.action === "withdraw") {
         const slug = row.object; // the journal's object IS the <by>/<slug> id
-        const dropped = await withHousehold(p, household, (c) => c.query(
+        const dropped = await client.query(
           "DELETE FROM claims WHERE status = 'draft' AND slug = $1 AND claimant = $2 AND household = $3",
-          [slug, row.actor, household]));
+          [slug, row.actor, household]);
         if (dropped.rowCount) { state.written += 1; return; }
-        const { rowCount } = await p.query(
+        const { rowCount } = await client.query(
           `UPDATE claims SET status = 'retracted', decided_at = now()
            WHERE window_id = $1 AND status = 'pending' AND geometry->>'slug' = $2 AND claimant = $3`,
           [win.id, slug, row.actor]);
@@ -200,7 +216,7 @@ export function submitClaimFromJournal(row, seq, env = process.env) {
       // (its transition 2), so the new claim names the pending one it amends.
       let supersedes = null;
       if (row.action === "amend") {
-        const { rows: [prior] } = await p.query(
+        const { rows: [prior] } = await client.query(
           `SELECT id FROM claims WHERE window_id = $1 AND status = 'pending'
            AND geometry->>'slug' = $2 AND claimant = $3 ORDER BY submitted_at DESC LIMIT 1`,
           [win.id, slug, row.actor]);
@@ -237,7 +253,7 @@ export function submitClaimFromJournal(row, seq, env = process.env) {
       // put TWO acts behind one claim — which is exactly what the closure
       // falsifier exists to catch. The compose was superseded by this
       // declaration; only the declaration is a deed.
-      const promoted = await withHousehold(p, household, (c) => c.query(
+      const promoted = await client.query(
         `UPDATE claims SET status = $12, class = $2, body = $3, geometry = $4, bbox = $5,
                 stake = $6, supersedes = $7, data = $8, slug = $9,
                 window_id = CASE WHEN $12 = 'pending' THEN $1 ELSE window_id END,
@@ -245,7 +261,7 @@ export function submitClaimFromJournal(row, seq, env = process.env) {
           WHERE status = 'draft' AND claimant = $10 AND slug = $9 AND household = $11
           RETURNING id`,
         [win.id, kind, body ?? null, JSON.stringify(geometry), bbox, stamps ?? 0,
-         supersedes, data, slug, row.actor, household, status]));
+         supersedes, data, slug, row.actor, household, status]);
       if (promoted.rowCount) {
         state.written += 1;
         if (status === "pending") state.submitted += 1;
@@ -255,16 +271,36 @@ export function submitClaimFromJournal(row, seq, env = process.env) {
       // INSIDE the household transaction even for a plain pending insert, and
       // the policy is what taught this: `claims_insert`'s WITH CHECK refuses a
       // draft row whose household is not the one this transaction declared, so
-      // an insert outside `withHousehold` cannot plant a draft AT ALL. It failed
-      // exactly that way on the first live run — which is 007 working, not 007
-      // in the way: you may not create a private thing without saying whose it
-      // is. Pending rows would pass either way; one path is fewer.
-      await withHousehold(p, household, (c) => c.query(
+      // an insert outside the declared transaction cannot plant a draft AT ALL.
+      // It failed exactly that way on the first live run — which is 007
+      // working, not 007 in the way: you may not create a private thing
+      // without saying whose it is. Pending rows would pass either way; one
+      // path is fewer.
+      await client.query(
         `INSERT INTO claims (window_id, class, claimant, household, body, geometry, bbox, stake, supersedes, data, slug, status)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
         [win.id, kind, row.actor, household, body ?? null,
-         JSON.stringify(geometry), bbox, stamps ?? 0, supersedes, data, slug, status]));
+         JSON.stringify(geometry), bbox, stamps ?? 0, supersedes, data, slug, status]);
       state.written += 1;
+}
+
+/**
+ * The standalone shadow entry — claims WITHOUT an acts row, which since the
+ * R1 unification means exactly one thing: a PRIVATE DRAFT (the deferral —
+ * the act is carried on the claim and mirrored at the stake). Public
+ * mark-class rows ride the unified act+claim transaction in world-journal's
+ * routing instead; this path keeps the privacy law's shape: nothing about a
+ * private compose touches `acts`.
+ */
+export function submitClaimFromJournal(row, seq, env = process.env) {
+  if (!claimEligible(row, env)) return;
+  state.queue = state.queue.then(async () => {
+    try {
+      const household = await claimHouseholdFor(row, env);
+      const { officeWrite } = await import("./world2-pen.mjs");
+      await officeWrite(
+        (client) => claimTxFromJournal(client, row, seq, { household, env }),
+        { household, env });
     } catch (err) {
       state.failed += 1;
       state.lastError = String(err?.message ?? err);
@@ -289,9 +325,14 @@ export function submitClaimFromJournal(row, seq, env = process.env) {
  * Reading the held act BEFORE the update and stripping it IN the update leaves
  * nothing for a second write to do.
  *
- * THE MIRROR RUNS OUTSIDE THE TRANSACTION, deliberately: `mirrorAct` holds its
- * own pool and its own serial queue, and awaiting it from inside a client this
- * function is holding is a deadlock waiting for the pool to be busy.
+ * THE MIRROR RUNS INSIDE THE TRANSACTION NOW (R1, ruled and rebuilt
+ * 2026-08-29). The old shape — `mirrorAct` after the COMMIT, on its own pool
+ * and queue — was correct for two independent pens and became the design's
+ * named atomicity hole F3: a promotion that commits and then fails to mirror
+ * leaves a PENDING CLAIM WITH NO DEED on the public docket. The old deadlock
+ * argument dissolved with the plumbing: `insertAct` takes THIS transaction's
+ * own client, so there is no second pool to wait on. The act and the
+ * promotion now commit together or not at all.
  *
  * THE ACT IS DATED AT THE PUTTING-FORWARD, not at the composing. The world
  * witnessed a resident put this mark forward; it did not witness them thinking
@@ -322,14 +363,18 @@ export async function promoteDraftOnStake({ actor, householdName, slug, stamps =
               stake = GREATEST(stake, $2), data = data - '_deferred_act'
         WHERE id = $3`,
       [win.id, Number(stamps) || 0, draft.id]);
+    // The released deferred act, in the SAME transaction (F3 closed): dated at
+    // the putting-forward exactly as before — the world witnessed the resident
+    // put it forward, not think about it — and journal_seq carried from the
+    // compose so the parity falsifier's released-late arm keeps its key.
+    if (draft.held) {
+      const { insertAct } = await import("./world2-pen.mjs");
+      const { _seq, ...actRow } = draft.held;
+      await insertAct(c, { ...actRow, written_at: new Date().toISOString() }, _seq ?? null);
+    }
     return draft;
   });
   if (!out) return { promoted: false, claim: null };
-
-  if (out.held) {
-    const { _seq, ...actRow } = out.held;
-    await mirrorAct({ ...actRow, written_at: new Date().toISOString() }, _seq, env);
-  }
   state.submitted += 1;
   return { promoted: true, claim: out.id };
 }

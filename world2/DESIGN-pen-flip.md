@@ -188,7 +188,17 @@ it should be chosen knowingly rather than discovered.
 
 ## 5 · The founder's decisions
 
-Each carries a recommendation and the one-line reason. None is implemented.
+> **RULED 2026-08-29 (Keemin, in the sitting that ordered the cutover drive):
+> D1 per lane · D2 refuse · D3 yes, reverse mirror with the death date — all
+> three as recommended. Prod Postgres ruled the same night: ON THE BOX with
+> shipped backups and a rehearsed restore (no managed service now).**
+> Implementation began the same hour: `src/world2-pen.mjs` (officeWrite /
+> penWrite / shadowWrite — R1's one transaction, both eras), `appendActFlipped`
+> + per-lane `W2_PEN` routing in world-journal.mjs, lane one flipped at the
+> stance door, `falsifier-pen-flip.mjs` (reverse parity + the refusal-ordering
+> proof). D4–D9 stand as recommended pending their own build moments.
+
+Each carries a recommendation and the one-line reason.
 
 **D1 · Does the pen flip per lane, or all at once?**
 → **Per lane**, each gated on that lane's reads being Postgres-served and
