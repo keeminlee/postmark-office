@@ -1423,11 +1423,42 @@ than leaving it to the runner. A dump inside `office/` would be committed by the
 next pen that ran `git add -A`, and this file is precisely the thing that must
 never be committed. Restore with `pg_restore --clean --if-exists -d <db>`.
 
-**No timer, by manifest law** — nothing here schedules itself, and this is a
-hand-run before anything that could lose the store (a migration touching
-`claims`, a box move, a Postgres upgrade). When drafts are load-bearing enough
-that a hand-run is not enough, that is a ruling to bring to Keemin with the
-instance that made it true, not a cron to add quietly.
+~~**No timer, by manifest law**~~ — **SUPERSEDED 2026-08-29.** Both states are
+left standing here rather than one overwriting the other, because the sentence
+below was right when it was written and a reader needs to see what changed and
+on whose word:
+
+> **No timer, by manifest law** — nothing here schedules itself, and this is a
+> hand-run before anything that could lose the store (a migration touching
+> `claims`, a box move, a Postgres upgrade). When drafts are load-bearing enough
+> that a hand-run is not enough, that is a ruling to bring to Keemin with the
+> instance that made it true, not a cron to add quietly.
+
+The ruling arrived on 2026-08-29: **prod Postgres lives on the box, with shipped
+backups and no managed service.** That is the instance. A store that is about to
+be the production world cannot have its only durability lane be a person
+remembering — so the timer exists now, and it was added the way that paragraph
+demanded rather than in spite of it: **with its manifest row**
+(`postmark-world2-backup.timer` in `deploy/box-rollcall-manifest.json`), which is
+what "by manifest law" was protecting in the first place.
+
+What the hand-run section above still governs is the SHAPE of the dump — owner
+role, full database, no `--table`, landing outside every checkout and webroot.
+The timer runs exactly that command. Three things it adds, none of which change
+the shape:
+
+- the dump is **shipped off-box** (`deploy/world2-backup.sh` § the off-box
+  destination, which discloses where and records what was refused and why);
+- a `pg_basebackup` rides along, because **WAL cannot be replayed onto a
+  `pg_dump` restore** — a logical dump and a physical redo journal are not a
+  restore path in company, and archived WAL with no base backup is a spool
+  nothing can consume;
+- a **rehearsed restore** (`deploy/world2-restore-rehearse.sh`) exists and is
+  expected to be run, because until a dump has been restored it is a file that
+  has never been asked to be a backup.
+
+The hand-run is still the right move before a migration that touches `claims`.
+It is no longer the only thing standing between this store and a dead disk.
 
 ## Merge rulings (Wright, 2026-08-28 night — the drafts lane's teed decisions)
 

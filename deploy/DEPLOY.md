@@ -668,3 +668,93 @@ are ordinary receipts.
 
 **What returns to manual.** Unclaimed money stays in the operator queue until
 the patron claims it or you decide by hand.
+
+## The World 2.0 box lanes (2026-08-29)
+
+Four timers that make the Postgres world store operationally real, installed on
+the founder's ruling of 2026-08-29 — *prod Postgres on the box, with shipped
+backups, no managed service.* They run against **dev** today; the prod move is
+one line, named below.
+
+| unit | what it runs | when |
+|---|---|---|
+| `postmark-world2-clearing.timer` | `world2-clearing.sh` → `clearing-job.mjs` | 05:45 / 17:45 UTC |
+| `postmark-world2-ingest.timer` | `world2-ingest.sh` → `law-ingest.mjs` + `stamp-ingest.mjs` | every 15 min, :04/:19/:34/:49 |
+| `postmark-world2-notary.timer` | `world2-notary.sh` → `snapshot-export.mjs` | 03:20 UTC |
+| `postmark-world2-backup.timer` | `world2-backup.sh` → `pg_dump` + ship, `pg_basebackup` | 04:10 UTC |
+
+All four carry rows in `deploy/box-rollcall-manifest.json`. `world2-restore-rehearse.sh`
+is a hand-run, deliberately: it drops and recreates a database, and nothing that
+does that belongs on a clock.
+
+### Where things live
+
+    /srv/world2-lab/ops/            the scripts (a plain file copy from this repo,
+                                    the same shape as /srv/postmark-office)
+    /srv/world2-lab/state/          one JSON per lane — the roll-call heartbeats
+    /srv/world2-lab/private-dumps/  pg_dump output, 0700, outside every checkout
+    /srv/world2-lab/basebackups/    pg_basebackup output, 0700
+    /srv/world2-lab/backup-repo/    the off-box repo's checkout
+    /srv/world2-lab/ingest-clones/  persistent world/town checkouts, reset per run
+    /srv/world2-lab/.ssh/           the backup deploy key + a pinned known_hosts
+    /srv/world2-wal/                the WAL archive spool, 2770 postgres:meepo
+
+### Install
+
+    scp deploy/world2-*.sh meepo-ec2:/srv/world2-lab/ops/
+    ssh meepo-ec2 'chmod +x /srv/world2-lab/ops/*.sh'
+    scp deploy/postmark-world2-*.{service,timer} meepo-ec2:/tmp/
+    ssh meepo-ec2 'sudo install -m0644 -o root -g root /tmp/postmark-world2-* /etc/systemd/system/ && sudo systemctl daemon-reload'
+    ssh meepo-ec2 'for u in clearing ingest notary backup; do sudo systemctl enable --now postmark-world2-$u.timer; done'
+    ssh meepo-ec2 'sh /srv/postmark-office/deploy/box-rollcall.sh'
+
+The scripts are `bash`, not `sh` — the same reason `/srv/world2-lab/launch.sh`
+is. Strip CR after any copy from a Windows checkout and check it stuck; a unit
+file with a trailing `\r` in `ExecStart` fails in a way that reads like a
+missing file.
+
+### The one Postgres change, and the restart it cost
+
+`archive_mode` is postmaster-level, so turning it on cost one restart
+(2026-08-29 ~01:53Z, four idle pool connections from the :4382 lab office, which
+reconnected; `/srv/postmark-office-dev` holds no Postgres and was unaffected).
+`wal_level` was already `replica` and was **not** raised. The appended block
+lives at the end of `/etc/postgresql/16/main/postgresql.conf` under a
+`world2 ops lane` header, with a dated `.bak-world2-ops-*` beside it.
+
+Two role attributes were granted to `world2_owner`, which already owns the
+database: `REPLICATION` (so `pg_basebackup` can connect over TCP as the lane's
+own user rather than needing a sudo hop to `postgres`) and `CREATEDB` (so the
+restore rehearsal can make its scratch target). `pg_hba.conf` needed no edit —
+it already carried `host replication all 127.0.0.1/32 scram-sha-256`.
+
+### Reading a red
+
+The roll-call's `state_file` heartbeat answers **did the lane run**; the
+service's exit code answers **did it succeed**. Read both. A fresh stamp beside
+an `ALARM-failed` is a lane that ran and refused, and the state file names which
+guard fired. That combination is normal and informative, not contradictory.
+
+### The prod rename
+
+`EnvironmentFile=` in each `.service`, and nothing else. Point it at a prod
+credential file whose `WORLD2_DB` says `world2`; every script reads the database
+name from there (`world2-lib.sh` § `w2_db`), and the units, the manifest rows and
+the state paths all follow without another edit. The units are named
+`postmark-world2-*` rather than `postmark-world2-dev-*` for exactly this reason —
+the unit is the mechanism, the env file is which store it points at. The
+`postmark-` prefix is not decoration either: `tools/box-rollcall.mjs` globs
+`list-unit-files postmark*`, so a unit named otherwise would be invisible to the
+roll-call and could never be held to the manifest law.
+
+### Two things this lane owes
+
+1. **The notary has no push target.** `/srv/world2-lab/notary` is a git repo with
+   no remote, so its certifications live only on the box they certify — which is
+   most of what a notary is for. `world2-backup.sh` ships it as a git bundle as a
+   stopgap. The fix is a remote.
+2. **The WAL does not ride off-box.** Measured at ~163 MB/day raw (2026-08-29,
+   a heavy build day), which no git history survives. The dump ships; the WAL and
+   the base backups stay on the box. Giving the box a private object-storage
+   bucket turns that into about a dozen lines — see `world2-backup.sh` § *the
+   off-box destination* for what was tried and why each was refused.
