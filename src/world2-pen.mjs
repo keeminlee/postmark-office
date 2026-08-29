@@ -73,6 +73,20 @@ async function pool(env = process.env) {
   return state.pool;
 }
 
+/**
+ * The flipped era's ONE pool, shared with the guard reads (world2-guards.mjs).
+ *
+ * Exported rather than duplicated: R3's reads and R2's write are two halves of
+ * one door, and a second `pg.Pool` beside this one would be the two-pools shape
+ * R1 exists to end, moved one tier over — two connection budgets, two failure
+ * surfaces, and two different answers to "can the record be reached".
+ *
+ * `await import("pg")` above is the ONLY place this office resolves `pg`, and it
+ * runs on first use. An office with no W2 flags never calls this, so an office
+ * with no `pg` installed boots and serves exactly as it does today.
+ */
+export async function penPool(env = process.env) { return pool(env); }
+
 // ── the lane census ─────────────────────────────────────────────────────────
 // One act class → one lane. The vocabulary is falsifier-acts-lane-closure's
 // own census; adding a class here without a census row reds check 0b, which is

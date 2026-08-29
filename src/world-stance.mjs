@@ -235,17 +235,64 @@ export function standingStances(rows, { by = null } = {}) {
  * sketch and before the publish"), and without it the crossing would have no
  * stance to read when it judges. Flagged for the founder in the handback rather
  * than left for a reader to discover.
+ *
+ * ── THE READ FLIP (`guardFor`), DESIGN-pen-flip.md § 2 R3 ───────────────────
+ *
+ *   "A pen flip without a read flip produces an office that writes to Postgres
+ *    and validates against sqlite — a split brain with a switch on it."
+ *
+ * The live half is exactly one of R3's rows — `world2/tools/README.md § The
+ * write-path guards` names this door in the row itself: "`liveMarks` /
+ * `liveChildrenOf` … declare-stance-on's candidates". So when the caller is a
+ * DOOR ABOUT TO WRITE and that door's lane is flipped, the live layer comes from
+ * `claims` through the port, and the journal is not opened at all.
+ *
+ * `guardFor` is the LANE, not a boolean, and the gate is the pen's own
+ * `laneFlipped` — one switch for "is this lane flipped", asked by the write and
+ * by the read that validates it. Reads that are not about to write (the inbox,
+ * the shadow, the doorstep block) pass nothing and keep 1.0's path bit for bit.
+ *
+ * CANON DOES NOT MOVE. It is `publishedState` either way — canon is not a pen
+ * being flipped, and guard-reads.mjs says so in as many words ("the guards take
+ * canon as an argument the way `canonForGuards()` hands it over today").
+ *
+ * ⚠ THE LAG THIS DOOR DOES NOT HAVE, named because the next lane will. `claims`
+ * is written by the mark lane, which is UNFLIPPED — its rows arrive on the
+ * shadow queue, fire-and-forget. A door validating against its own lane's
+ * shadow-written data would need `settleShadowPens()` before the read (DESIGN
+ * § 6 calls it "the awaited write primitive the flip needs at every door"). This
+ * door does not: a mark is never its own ground, so no resident can declare a
+ * stance on a mark this same request just wrote, and the guard's input is
+ * always another household's earlier act.
+ *
+ * Returns `{ marks, guard, disclosures }` — `guard` names WHICH STORE answered,
+ * because a door that validated somewhere the resident cannot see and did not
+ * say so is the thing R3 is about.
  */
-export function worldForStances(repo, { dbPath = null } = {}) {
+export async function worldForStances(repo, { dbPath = null, guardFor = null } = {}) {
   const canon = publishedState(repo).state?.marks ?? [];
+  const shape = (m) => ({ id: m.id, by: m.by, kind: m.kind, at: m.at, extent: m.extent, date: m.date, body: m.body ?? "", published: false });
   let live = [];
-  if (singleLogEnabled()) {
+  let guard = "journal";
+  let disclosures = [];
+  if (guardFor && laneFlipped(guardFor)) {
+    // THE LAZY IMPORT IS THE POINT, the way it is at the hold door's mirror: an
+    // office with no W2 flags never loads this module, and world2-pen's pool is
+    // the only place `pg` is resolved. A GuardRefusedError travels — there is no
+    // catch here, deliberately, because catching it is what a silent sqlite
+    // fallback would look like.
+    const { pgGuardLiveMarks } = await import("./world2-guards.mjs");
+    const read = await pgGuardLiveMarks({ household: null });
+    live = read.marks.filter((m) => m.at && m.extent).map(shape);
+    guard = "claims";
+    disclosures = read.disclosures;
+  } else if (singleLogEnabled()) {
     try {
       const db = openDynamic(dbPath ?? undefined, { readOnly: true });
       try {
         live = liveMarks(db, { household: undefined })
           .filter((m) => m.at && m.extent)
-          .map((m) => ({ id: m.id, by: m.by, kind: m.kind, at: m.at, extent: m.extent, date: m.date, body: m.body ?? "", published: false }));
+          .map(shape);
       } finally { try { db.close(); } catch { /* already gone */ } }
     } catch { /* no live layer → canon alone is an honest world to weigh */ }
   }
@@ -254,7 +301,7 @@ export function worldForStances(repo, { dbPath = null } = {}) {
   const byId = new Map();
   for (const m of live) byId.set(m.id, m);
   for (const m of canon) if (m?.id) byId.set(m.id, { ...m, published: true });
-  return [...byId.values()];
+  return { marks: [...byId.values()], guard, disclosures };
 }
 
 /** Every stance row in the live layer. Empty (never a throw) when there is no journal to read. */
@@ -284,7 +331,12 @@ export async function stanceInbox(repo, key, { dbPath = null } = {}) {
   if (!geom) return { candidates: [], standing: [], mine: [], unavailable: "the world's own geometry could not be read — overlap is the engine's answer, never this door's" };
   const overlaps = (a, b) => geom.overlapArea(geom.rect(a), geom.rect(b)) > 0;
 
-  const all = worldForStances(repo, { dbPath });
+  // No `guardFor`: this is a READ, not a door about to write. It keeps 1.0's
+  // live layer whether or not the stance lane's pen is flipped — the read flip
+  // gates the WRITE PATH's validation inputs (R3's own words), and flipping a
+  // read here would narrow the-late-welcome's inbox by 007's row policy without
+  // any write being made safer for it.
+  const { marks: all } = await worldForStances(repo, { dbPath });
   const mine = all.filter((m) => mineHandles.has(m.by) && m.at && m.extent);
   const rows = stanceRows({ dbPath });
   const standing = standingStances(rows).filter((s) => mineHandles.has(s.by));
@@ -499,9 +551,35 @@ export async function declareStanceViaOffice(repo, args = {}, key = null, { dbPa
     "overlap is the engine's answer and this door will not substitute its own — try again once the world store is readable");
   const overlaps = (a, b) => geom.overlapArea(geom.rect(a), geom.rect(b)) > 0;
 
-  const all = worldForStances(repo, { dbPath });
+  // ── STEP 1 OF § 3's ORDERING: THE DOOR VALIDATES ─────────────────────────
+  //
+  // "1  door validates ← Postgres reads (R3) … 2 BEGIN" — the guard read comes
+  // FIRST, before the pen is opened, and on a flipped lane it comes from the
+  // same store the pen writes to. A GuardRefusedError here is D2's ruling read
+  // back: the record could not be reached, so the door refuses rather than
+  // permitting from a store it is no longer writing to.
+  let all, guard, disclosures;
+  try {
+    ({ marks: all, guard, disclosures } = await worldForStances(repo, { dbPath, guardFor: "stance" }));
+  } catch (err) {
+    if (err?.name === "GuardRefusedError")
+      throw bounce(503, err.message,
+        `this lane validates against the office's record (W2_PEN=stance) and will not fall back to the journal — that would permit from one store while writing to another, which is the split brain the flip exists to end. Nothing was written. (${err.reason})`);
+    throw err;
+  }
   const target = all.find((m) => m.id === on);
-  if (!target) throw bounce(404, `no mark "${on}"`, "ids are <by>/<slug> — see the telling, or your own inbox: world { read: \"" + ACTION_STANCE + "\" }");
+  if (!target) throw bounce(404, `no mark "${on}"`,
+    "ids are <by>/<slug> — see the telling, or your own inbox: world { read: \"" + ACTION_STANCE + "\" }"
+    // THE LATE WELCOME, NARROWED — and said here rather than buried in the port.
+    // guard-reads.mjs's DISCLOSURES.cross_household: a cross-household live read
+    // is narrower than 1.0's "by exactly the other households' DRAFTS", because
+    // 007's row policy shows a draft only inside a transaction that named its
+    // household and there is no household to name here. So a flipped door can
+    // 404 a sketch 1.0 would have surfaced. Which law gives way — the-late-
+    // welcome or 007 — is a founder ruling, and neither the port nor this wire
+    // makes it; what the wire owes is that the resident is never told "no such
+    // mark" by a guard that simply could not see it.
+    + (guard === "claims" ? `\n\n${disclosures.join(" ")}` : ""));
   if (target.by === by) throw bounce(422, "a mark is never its own ground",
     "you do not consent to your own declaration — a stance is the word of the ground it landed on");
 
@@ -550,6 +628,11 @@ export async function declareStanceViaOffice(repo, args = {}, key = null, { dbPa
       // Which store is the RECORD for this act — a flipped lane's answer says
       // so honestly (the journal row behind it is the reverse-mirror copy).
       log: row.flipped ? "acts" : "journal",
+      // ...and which store VALIDATED it. Two fields because they are two facts,
+      // and R3's whole subject is the day they disagree. PRESENT ONLY WHEN THE
+      // GUARD IS FLIPPED, so an office with no W2 env answers byte-identically
+      // to the one before this line existed — which is how prod is deployed.
+      ...(guard === "journal" ? {} : { guard, guard_note: disclosures.join(" ") }),
       witnesses: row.witnesses ? JSON.parse(row.witnesses) : null,
       ...(prior ? { superseded: { stance: prior.stance, at: prior.at, seq: prior.seq } } : {}),
       // The door does not enforce, and says so where the resident is standing
