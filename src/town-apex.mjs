@@ -230,8 +230,14 @@ export const TOWN_TOOL = {
   name: "town",
   get description() { return TOWN_DESCRIPTION; },
   inputSchema: { type: "object", properties: {
-    do: { type: "string", description: "the act to perform — declare-household. Omit to read what the town is. Never rides with read:" },
-    read: { type: "string", description: `a focused read — ${TOWN_READABLE.join(", ")}. Never rides with do:` },
+    // The option sets are DECLARED, derived from the serving tables so they
+    // cannot drift (the prototype's dropdowns and the validator's bounce both
+    // read this one declaration). Both sets are closed and context-free at
+    // this door — the honest `enum` case; a door whose values depend on who
+    // asks (world's do:) or accepts names beyond its roster (household's
+    // read:) carries `examples` instead, never a lying enum.
+    do: { type: "string", enum: TOWN_DISPATCHABLE, description: "the act to perform — declare-household. Omit to read what the town is. Never rides with read:" },
+    read: { type: "string", enum: TOWN_READABLE, description: `a focused read — ${TOWN_READABLE.join(", ")}. Never rides with do:` },
     args: { type: "object", description: "the act's or read's own fields — town { do: \"declare-household\", args: { household: \"…\", handle: \"…\", card: \"…\" } }", additionalProperties: true },
   }, additionalProperties: true },
 };

@@ -203,3 +203,42 @@ test("THE FLAG: the town tool appears only apex-on, and costs one frozen array o
     assert.deepEqual(townTools().map((t) => t.name), ["town"]);
   } finally { if (before === undefined) delete process.env.WORLD_APEX; else process.env.WORLD_APEX = before; }
 });
+
+// ── the option sets: declared where closed, suggested where open ────────────
+//
+// THE LAW these quote (the schema comments carry it, 2026-08-30): a closed,
+// context-free roster is an honest `enum`; a field that accepts names beyond
+// its roster (household read: takes any act name as a card read) or whose
+// lawful values depend on who asks and where they stand (world do:) carries
+// `examples` — a suggestion, never a constraint. An enum on those fields
+// would bounce lawful calls, so its ABSENCE is asserted here on purpose: a
+// later hand "completing" the enum is the regression this block exists to
+// catch. The values derive from the serving tables, so the menu cannot drift
+// from the door.
+
+test("town's read/do enums ARE the serving tables — closed, context-free, derived", () => {
+  const p = TOWN_TOOL.inputSchema.properties;
+  assert.deepEqual(p.read.enum, TOWN_READABLE);
+  assert.deepEqual(p.do.enum, TOWN_DISPATCHABLE);
+});
+
+test("household: do is enum'd from ACTS; read carries NO enum (act-card grammar) and suggests the roster", async () => {
+  const { HOUSEHOLD_TOOL, HOUSEHOLD_DISPATCHABLE, HOUSEHOLD_READABLE } = await import("../src/household-apex.mjs");
+  const p = HOUSEHOLD_TOOL.inputSchema.properties;
+  assert.deepEqual(p.do.enum, HOUSEHOLD_DISPATCHABLE);
+  assert.equal(p.read.enum, undefined, "an enum here would bounce lawful act-card reads like read: \"send\"");
+  assert.deepEqual(p.read.examples, HOUSEHOLD_READABLE);
+});
+
+test("world: do/read carry NO enum (standpoint decides) and suggest the dispatch roster; as: is the closed pair", async () => {
+  const { apexTools, DISPATCHABLE } = await import("../src/world-apex.mjs");
+  const prev = process.env.WORLD_APEX; process.env.WORLD_APEX = "1";
+  try {
+    const p = apexTools()[0].inputSchema.properties;
+    assert.equal(p.do.enum, undefined, "which acts are afforded depends on where you stand — an enum would promise acts the ground refuses");
+    assert.equal(p.read.enum, undefined);
+    assert.deepEqual(p.do.examples, DISPATCHABLE);
+    assert.deepEqual(p.read.examples, DISPATCHABLE);
+    assert.deepEqual(p.as.enum, ["resident", "human"]);
+  } finally { if (prev === undefined) delete process.env.WORLD_APEX; else process.env.WORLD_APEX = prev; }
+});
