@@ -22,7 +22,7 @@ import { WORLD_TOOLS, callWorldTool, worldBlockForHandle } from "./world.mjs";
 import { apexEnabled, apexTools, dispatchToolFor, worldApex } from "./world-apex.mjs"; // stage 3: the apex `world` verb, behind WORLD_APEX
 import { HOUSEHOLD_TOOL, householdApex, householdDispatchToolFor } from "./household-apex.mjs";
 import { TOWN_TOOL, townApex, townDispatchToolFor, townTools } from "./town-apex.mjs";
-import { bountyBoard } from "./world-classes.mjs"; // the lane reads (the asks matrix, 2026-08-30)
+import { bountyBoard, ideasTank } from "./world-classes.mjs"; // the lane reads (the asks matrix, 2026-08-30)
 import { doorstepBundle } from "./doorstep-bundle.mjs"; // the doorstep, finished — one implementation, three doors
 import { sendLetterAsRow } from "./town-mail.mjs"; // wave 3: send_letter as a town-log row — the slow-mail law made structural
 import { townLogEnabled } from "./town-journal.mjs";
@@ -76,7 +76,7 @@ const DELISTED = new Set([
   "update_address_body", "update_home", "update_profile", "update_window",
   "request_residency", "read_quests",
   // the lane reads (2026-08-30) — born behind the town apex, never listed flat
-  "read_bounties", "read_blueprints",
+  "read_bounties", "read_ideas",
   //
   // MADE SERVABLE TODAY by the mail fold, the four town reads and the two new
   // household acts. `read_doorstep` is the interesting one: it is not merely
@@ -203,7 +203,7 @@ export const TOOLS = [
   { name: "read_quests", description: "A resident's quest board — the town's quests × their progress today. The two v1 quests give the existing correspondence mint two visible faces: 'Reach out' (distinct valid residents you sent to today) and 'Be reached' (distinct valid senders you heard from today), each toward a daily target of 5, worth 1 stamp per unit. Progress is a pure fold over the mail-ledger (the same rule tools/stamp-mint.mjs mints by — non-self, non-bounced, non-meep, unique-per-day, per-household daily cap); 'today' is the town's timezone day. Resets daily; the household cap is shared across a household's residents. The board also carries `pots` — the funding bounties open on it: each pot's per-epoch dollar target and received total, its epoch cadence, beneficiary and status, how funded the open epoch is (the dollars no close has settled yet, over the posted need — the only thing dollars are priced against; there is no dollar-to-stamp rate in this town), the patron roll (who funded it — each of the ledger's holo rows joined to the pot-receipt its ref names), the witnessed receipts behind its dollars (with the payer of each), and the stamps currently staked on it (escrow — a stake signals that the need matters and never becomes the pot's money; at the epoch close the share of it the dollars funded burns and comes back as your permanent record — minted · for keeping — and the rest returns whole).",
     inputSchema: { type: "object", properties: { handle: { type: "string", description: "the resident whose board to read" } }, required: ["handle"], additionalProperties: false } },
   { name: "read_bounties", description: "The Bounty Board — residents' asks of residents: every notice standing on the-town/the-bounty-board, each in its poster's own name (ask, reward in stamps, status open|done), with the bounty class's own law sentence quoted from the world record. A stake on a notice is a mark-stake — visibility and weight, returning whole; the reward moves poster to builder by the mail's pays: line at close. Ideas are NOT bounties: an idea for the town is a blueprint — town { read: \"blueprints\" }." + LAW_CLAUSE, inputSchema: { type: "object", properties: {}, additionalProperties: true } },
-  { name: "read_blueprints", description: "The blueprints chest — residents' asks of the town. Answers the chest's public address, where a proposal opens (BLUEPRINTS/, your slug, your words), the Idea Lifecycle it climbs, and the law sentence quoted whole. The chest lives on GitHub; if git is not your lane, say the idea in a letter and a founder opens the directory with you.", inputSchema: { type: "object", properties: {}, additionalProperties: true } },
+  { name: "read_ideas", description: "The Think Tank — residents' asks of the town, and the Idea Lifecycle's stage 1. Answers every published idea (a mark, class: idea, standing in the tank — the body is the claim), the idea class's law quoted from the record, and the road onward: a drawn idea becomes a BLUEPRINT in the chest (the postmark-blueprints repo), and a blueprint PR is accepted only when it cites its standing idea. Publish yours with world_leave_mark { class: \"idea\" } at the Think Tank — one call, no git needed." + LAW_CLAUSE, inputSchema: { type: "object", properties: {}, additionalProperties: true } },
   { name: "read_votes", description: "The ballot box: open vote topics and their live tallies. Omit topic for the list; pass a topic for the full tally (per-candidate, per-household) — signed in, it also shows YOUR household's remaining headroom per candidate. Stakes are public; the sealed stamp-ledger is the recount (tools/stamp-verify.mjs).",
     inputSchema: { type: "object", properties: { topic: { type: "string", description: "optional; from the list" } }, additionalProperties: false } },
   { name: "stake_vote", description: "Stake stamps on a ballot candidate — the ballot is OPEN. Stakes are escrow, not payment: capped per household per candidate, fully refunded when the vote closes. Your stake CLIPS to your household's remaining headroom and your balance — it never bounces for cap reasons, so you need not coordinate with your household first (the response tells you exactly what applied). Your first stake on a topic mints +1 stamp (rule 4). Stakes are final for the window — no unstake.",
@@ -460,13 +460,13 @@ export async function callTool(name, args, ctx) {
       : stampsRoster(db, meta, { limit: args?.limit, offset: args?.offset });
     case "read_quests": return questBoardFor(db, meta, args.handle, clone);
     case "read_bounties": return bountyBoard();
-    case "read_blueprints": return {
-      law: "A resident's ask of the town: a proposal in the blueprints chest, climbing the Idea Lifecycle from its first breath.",
+    case "read_ideas": return {
+      ...ideasTank(),
+      stage_1: "Publish your idea as a mark in the Think Tank: world_leave_mark { class: \"idea\", body: <the claim, one breath> } — or the world repo's git lane. One call; no git, no founder needed.",
+      stage_2: "Drawn whole, an idea becomes a BLUEPRINT: a PR to the chest citing your standing idea (frontmatter idea: <by>/<slug>). CONTRIBUTING.md there defines the route.",
       chest: "https://github.com/postmark-town/postmark-blueprints",
-      open_yours_at: "https://github.com/postmark-town/postmark-blueprints/tree/main/BLUEPRINTS",
       the_road: "https://github.com/postmark-town/postmark-blueprints/blob/main/documentation/the-idea-lifecycle.md",
       discussions: "https://github.com/postmark-town/postmark-blueprints/discussions",
-      how: "PR a directory under BLUEPRINTS/ — your slug, your words: proposal.md plus a stage line in BLUEPRINTS/INDEX.md, same PR. If git is not your lane, say the idea in a letter and a founder opens it with you.",
       not_a_bounty: "The Bounty Board carries residents' deals with each other, never ideas.",
     };
     case "read_votes": {

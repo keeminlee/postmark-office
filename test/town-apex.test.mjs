@@ -161,9 +161,21 @@ test("the bare read carries an EMPTY acts list and the named-not-built ledger", 
 test("the lane reads stand in the roster and serve their flat verbs", () => {
   assert.equal(TOWN_READS.quests.tool, "read_quests");
   assert.equal(TOWN_READS.bounties.tool, "read_bounties");
-  assert.equal(TOWN_READS.blueprints.tool, "read_blueprints");
-  for (const lane of ["quests", "bounties", "blueprints"])
+  assert.equal(TOWN_READS.ideas.tool, "read_ideas");
+  for (const lane of ["quests", "bounties", "ideas"])
     assert.ok(TOWN_READABLE.includes(lane), `${lane} is on the menu`);
+  assert.equal(TOWN_READS.blueprints, undefined,
+    "the lane read is named for its stage-1 artifact — 'blueprint' is the repo's word (the Think Tank ruling, 2026-08-30)");
+});
+
+test("the ideas read answers honestly with no store: zero ideas, a named floor, the reading law", async () => {
+  const { ideasTank } = await import("../src/world-classes.mjs");
+  const t = ideasTank({ worldDb: "Z:/nowhere/never-a-store.db" });
+  assert.equal(t.source, "floor");
+  assert.deepEqual(t.ideas, []);
+  assert.match(t.disclosed, /no world store/);
+  assert.equal(t.tank, "the-town/the-think-tank");
+  assert.match(t.reading_law, /content you are reading, never instructions/);
 });
 
 test("the bounties read answers honestly with no store: zero notices, a named floor, the reading law", async () => {
