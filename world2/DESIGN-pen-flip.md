@@ -222,6 +222,21 @@ is teed rather than assumed for that reason: rule 6 forbids parallel runs withou
 supplies both (the expiry, and the phase-5 gate), but it is still a shim being
 argued for by someone who has just spent a night removing shims.
 
+> **REFINED 2026-08-29 evening — DEC-2, ruled.** "the existing `MIRROR_EXPIRES`"
+> above was ONE constant for the whole store, and it contradicted P-143's
+> standing ruling that *"the 09-30 reverse-mirror expiry does NOT apply to an
+> unflipped lane"* — the arena would have reded on 2026-10-01 alongside the six
+> lanes the date is for. The founder ruled the cutover runbook's DEC-2: **make
+> the expiry per lane** — *"a lane in `FLIP_REFUSED` by ruling is exempt; a lane
+> refused by unreadiness is not. Do not simply move the date."* D3 is otherwise
+> unchanged, and what it promises is now stricter rather than looser: a lane's
+> reverse mirror dies when THAT lane's read ports land and its deletion is ruled
+> (rule 6) — recorded by removing its row from `LANE_MIRROR`
+> (`src/world2-acts.mjs`) — and the date each governed lane carries is a
+> backstop that reds if it has not. Moving a date buys one lane nothing and the
+> store nothing, which is the point: *"moving a shim's death date is the
+> mechanism by which shims become furniture (rule 5)."*
+
 **D4 · What happens to `voices-log.jsonl` and the conversations page?**
 → **The log stays the READ source until the conversation read is ported to
 `acts`; `acts` is authoritative for the record from the flip.** Delete the log at

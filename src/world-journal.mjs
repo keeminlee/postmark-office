@@ -383,6 +383,19 @@ export function appendJournal(db, entry = {}) {
  * no read port exists, no reverse-mirror deadline applies to it, and a
  * `W2_PEN=all` sweep must not carry it along by accident. Lifting this refusal
  * is a founder ruling plus the arena read ports, together.
+ *
+ * "No reverse-mirror deadline applies to it" was a sentence this file asserted
+ * and no mechanism kept: `MIRROR_EXPIRES` was one date for the whole store, so
+ * the parity falsifier would have reded the arena on 2026-10-01 with everything
+ * else (the cutover runbook §8 named it; DEC-2 ruled it 2026-08-29 evening). It
+ * is now true where it is checked: `LANE_MIRROR.arena.expires` is null in
+ * src/world2-acts.mjs, carrying this same ruling in its own words.
+ *
+ * THE TWO REFUSALS ARE NOT THE SAME KIND, and the expiry is where the
+ * difference bites. `mark` is refused for UNREADINESS, so it is governed by its
+ * backstop exactly like the five wired lanes — DEC-2, verbatim: "a lane in
+ * `FLIP_REFUSED` by ruling is exempt; a lane refused by unreadiness is not."
+ * Being un-wired must never be the thing that buys a lane immortality.
  */
 const FLIP_REFUSED = Object.freeze({
   mark: "its candle half must ride penWrite's own transaction; unset it from W2_PEN",
