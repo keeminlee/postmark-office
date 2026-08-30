@@ -51,6 +51,30 @@ import { loadWorldGraph, geometryIndex, geometryAsOf, rectOfVersion, reachable, 
 
 const RED = "RED", GREEN = "GREEN", NA = "N/A";
 
+// THE PARCEL CLASS'S REAL ID, named once here because L3 and L4 both key on it
+// and both used to key on a node that no longer exists. The step-1 promotion
+// (2026-08-18) retired the synthesized `the-town/parcel-class` — src/world-
+// hydrate.mjs:866-873, which names the same id in its own `PARCEL_CLASS` — and
+// the works' `the-town/parcel` mark has been the declaration ever since. Two
+// lints silently keying on a headstone is precisely the failure L3 exists to
+// name, so the name lives in one place here for the same reason
+// STRIDE_CLASS_NAME does in world-classes.mjs: the next rename fails a test
+// instead of failing the town.
+const PARCEL_CLASS = "the-town/parcel";
+
+// Where the parcel's extent actually lives. It is a DIAL on the class mark
+// (`dials: {"extent_m": 25}`), not a geometry column: a class mark has no
+// at/extent of its own, so `attr.w` on it is null and any `?? 25` beside it is
+// a hardcoded answer wearing a lookup's clothes.
+const PARCEL_EXTENT_SLOT = "extent_m";
+const parcelExtent = (graph) => {
+  if (!graph.hasNode(PARCEL_CLASS)) return { value: null, why: `${PARCEL_CLASS} is not in the graph` };
+  const d = graph.getNodeAttributes(PARCEL_CLASS)?.props?.dials?.[PARCEL_EXTENT_SLOT];
+  return Number.isFinite(Number(d))
+    ? { value: Number(d), why: null }
+    : { value: null, why: `${PARCEL_CLASS} declares no numeric ${PARCEL_EXTENT_SLOT} dial` };
+};
+
 // ── the law each question enforces ───────────────────────────────────────────
 // The eight id↔Lx pairs, taken from the marks' own `dials: {"lint": "Lx"}`, and
 // the eight bodies quoted verbatim. This table is a COPY of law that lives
@@ -393,7 +417,15 @@ export async function runLints({ dbPath = DEFAULT_DB, sources = null, engineText
     const SELF = "code:office/src/world-lints.mjs";
     const CONSTS = [
       { key: "pace 405 (the vessel's dial)", value: 405, owner: "the-town/the-wheelhouse", export: null, definer: null, context: /\b(pace|km|crossing|vessel|timetable|stops?)\b/i },
-      { key: "parcel dial 25 (25x25)", value: 25, owner: "the-town/parcel-class", export: "PARCEL_EXTENT_M", definer: "code:world/tools/marks-fold.mjs", context: /\b(parcel|extent|dial|w|h)\b/i },
+      // THE OWNER IS `the-town/parcel`, NOT `the-town/parcel-class`. The latter
+      // was the synthesized node the step-1 promotion retired on 2026-08-18 —
+      // src/world-hydrate.mjs:866-873 says so and repoints every parcel
+      // instance at the real declaration — and it has not existed in the graph
+      // since. `ownerDir` therefore returned null here, `readsOwner` could
+      // never fire, and this row's absolution-by-owner was dead code pointing
+      // at a headstone. Verified rather than assumed: `the-town/parcel-class`
+      // has zero occurrences anywhere in the world repo.
+      { key: "parcel dial 25 (25x25)", value: 25, owner: PARCEL_CLASS, export: "PARCEL_EXTENT_M", definer: "code:world/tools/marks-fold.mjs", context: /\b(parcel|extent|dial|w|h)\b/i },
       { key: "walking pace 15 (km per crossing)", value: 15, owner: "the-town/the-walking-pace", export: null, definer: null, context: /\b(pace|km|crossing|walk)\b/i },
     ];
     const ownerDir = (id) => (graph.hasNode(id) ? (graph.getNodeAttributes(id).props?.path ?? null) : null);
@@ -428,16 +460,130 @@ export async function runLints({ dbPath = DEFAULT_DB, sources = null, engineText
     }
     const totalOrphans = rows.reduce((n, r) => n + r.orphan_files, 0);
     const inContext = rows.reduce((n, r) => n + r.orphan_files_in_context, 0);
+
+    // ── THE OTHER DIRECTION: a dial that owns nothing ──────────────────────
+    //
+    // Everything above asks CODE -> DIAL: is this literal in the machinery
+    // owned by a declaration? The mark's own words are wider than that —
+    //
+    //   "Every constant in the machinery is owned by a dial or a law — an
+    //    orphan number is a rule nobody declared."
+    //
+    // — and the inverse failure is the one the 2026-08-29 audit actually kept
+    // finding: a number DECLARED in the constitution that no engine reads. The
+    // walk pace stood in three nodes and was read from one; `ends_turn` stood
+    // on five marks and was read by none; `declare-stance-on` ran on two live
+    // constants no dial declared at all. None of those could be seen from
+    // here, because the watch list was three constants long and hand-written —
+    // a falsifier whose question was smaller than its law.
+    //
+    // So this half iterates the RECORD instead of a list: every value-carrying
+    // constitutional node in the Works, asking of each dial whether the engine
+    // names it, or whether the mark says out loud that nothing does yet. A
+    // dial that is neither read nor flagged is the finding — the town
+    // declaring a number it does not use and not saying so.
+    //
+    // It rules on names, not values, and that is deliberate: a dial is reached
+    // by name (`dialNumber(CLASS, "earshot_m", …)`), so the name is the join
+    // between a declaration and its reader. The limits of that are stated
+    // below rather than discovered later.
+    const nameVariants = (slot) => {
+      const s = String(slot);
+      return [...new Set([s, s.replace(/-/g, "_"), s.replace(/_/g, "-")])];
+    };
+    // A declared value the engine could read. Strings are excluded on purpose:
+    // `unsealed` and the pointer form (`"the-town/resident"`) are the record's
+    // two ways of saying "the value is not here", and asking whether the engine
+    // reads a signpost would report every correctly-delegated dial as an orphan.
+    const isValue = (v) => typeof v === "number" || typeof v === "boolean";
+    const FLAG = /aspirational|unbuilt|no reader|nothing reads|not yet read|awaits|ahead of (its |the )?wiring/i;
+
+    // STANDING IS READ FROM THE FILING, NOT FROM THE FOLD. `props.in_works` is
+    // stamped from `WORLD/containment.json` — a DERIVED record, regenerated at
+    // a crossing — so a mark planted since the last fold carries `in_works:
+    // false` and is invisible to every gate that trusts it. Verified, not
+    // assumed: the two dials planted on `declare-stance-on` this same day come
+    // back `in_works=false` while their sibling `the-town/earshot-m` comes back
+    // true, on identical filing. A question about whether the constitution's
+    // numbers are read must not go blind to the newest ones — that is the shape
+    // of the bug this whole lint exists to name — so the mark's own directory
+    // is the authority here, and it cannot be stale.
+    //
+    // ⚠ WORTH A SEPARATE RULING: `standsInTheWorks` (world-store.mjs:190)
+    // forgives `in_works == null` but not `in_works === false`, so the same
+    // staleness reaches isClassMark and every lint keyed on it. Named here
+    // rather than fixed here.
+    const inTheWorks = (a) => a.props?.in_works === true
+      || String(a.props?.path ?? "").includes("/the-keeping-works/");
+
+    const declared = [];
+    for (const { id, attr } of nodesWhere(graph, (a) =>
+      a.kind === "mark" && a.by === "the-town" && a.tier === "constitution" && inTheWorks(a))) {
+      const p = attr.props ?? {};
+      const pairs = [];
+      if (p.dials && typeof p.dials === "object" && !Array.isArray(p.dials))
+        for (const [k, v] of Object.entries(p.dials)) if (isValue(v)) pairs.push([k, v]);
+      if (p.slot != null && isValue(p.value)) pairs.push([p.slot, p.value]);
+      if (!pairs.length) continue;
+
+      // The mark's own disclosure — the `voices.mjs` standard the Works holds
+      // up: keep the unread thing if you must, and SAY SO.
+      const says = `${Array.isArray(p.implements) ? p.implements.join(" ") : String(p.implements ?? "")} ${p.body ?? ""}`;
+      for (const [slot, value] of pairs) {
+        const names = nameVariants(slot);
+        const readers = [];
+        for (const { id: cid } of codeNodes) {
+          // A FALSIFIER IS NOT A READER, and this exclusion is the difference
+          // between this half working and this half lying. The world's own
+          // suite quotes dials constantly — tools/reached-grants.test.mjs and
+          // tools/reached-grants-flips.mjs both name `ends_turn` — so counting
+          // them made all five `ends_turn` declarations read as READ while the
+          // audit's `grep -rn ends_turn src/` returned zero. A dial whose only
+          // mention is in the test asserting it exists is the exact orphan this
+          // question is asking after, and it would have been laundered green by
+          // the very test written to catch it.
+          if (/\.test\.mjs$|-flips\.mjs$|fixture/i.test(cid)) continue;
+          // AND NEITHER IS THIS LINT. Asking the question puts every dial name
+          // it discusses into its own source, so without this the module reads
+          // as the reader of everything it reports on — `ends_turn` came back
+          // READ off nothing but the comment above. Note the asymmetry with the
+          // code->dial half, which deliberately does NOT exempt itself: there,
+          // this file genuinely holds copies of the constants it watches and
+          // says so (`is_watchlist`). Here it holds only their names, and a
+          // name in a lint is not a reading in an engine — L4 reads
+          // `dials.extent_m` one screen up, and that is a lint checking a
+          // contract, not the town running on it.
+          if (cid === SELF) continue;
+          const text = sourceOf(cid);
+          if (!text) continue;
+          if (names.some((n) => new RegExp(`(?<![\\w])${n}(?![\\w])`, "i").test(text))) readers.push(cid);
+        }
+        // Flagged only if the disclosure names THIS dial: a blanket
+        // "aspirational" somewhere on a mark must not launder its other dials.
+        const flagged = names.some((n) => new RegExp(`(?<![\\w])${n}(?![\\w])`, "i").test(says)) && FLAG.test(says);
+        declared.push({
+          mark: id, slot, value, path: p.path ?? null,
+          readers: readers.length, read_by: readers.slice(0, 4).map((c) => c.replace("code:", "")),
+          flagged_aspirational: flagged,
+          verdict: readers.length ? "read" : flagged ? "flagged" : "orphan",
+        });
+      }
+    }
+    const undeclaredReaders = declared.filter((d) => d.verdict === "orphan");
     add({
       id: "L3", name: "no orphan constants",
-      verdict: totalOrphans ? RED : GREEN,
-      headline: `${totalOrphans} source files carry a watched class constant as a bare literal with no link to its owner — ${inContext} of them on a line that also names the constant's own domain (${rows.map((r) => `${r.value}: ${r.orphan_files_in_context}/${r.orphan_files}`).join(", ")})`,
-      method: `Word-boundary numeric scan over the scanned source set (${codeNodes.length} .mjs across office/src and world/tools), absolved by: defining the constant, importing the defining module and naming its export, or a \`reads\` edge into the owning mark's directory.`,
-      limits: "THE WATCH LIST IS CLOSED, and it is three constants long: pace 405, the parcel dial 25, and walking pace 15. The mark says every constant in the machinery; this asks after those three, so a green here is a green about three numbers and silence about every other number in the corpus. The narrowing is named rather than hidden, and the list grows by being edited — the CONSTS table above is the whole of it. Within those three: a text scan with no context, so HTTP status 405 is matched by the pace-405 watch and the parcel dial 25 matches every unrelated 25. Every row carries its source line for adjudication. Structurally: the store has NO code->mark edge type, so absolution by 'reads the owning mark' can only fire on a file that quotes a mark's path literally — which no file does today. And since Stage 1 moved the lints into office/src, this module's own watch list is inside the scanned corpus and counts as an orphan of every constant it watches (rows marked is_watchlist) — true by the lint's own definition, and left in rather than exempted. This lint points; it does not rule.",
+      verdict: totalOrphans || undeclaredReaders.length ? RED : GREEN,
+      headline: `${totalOrphans} source files carry a watched class constant as a bare literal with no link to its owner — ${inContext} of them on a line that also names the constant's own domain (${rows.map((r) => `${r.value}: ${r.orphan_files_in_context}/${r.orphan_files}`).join(", ")}); and of ${declared.length} values declared across the constitution, ${undeclaredReaders.length} are read by no engine and say nothing about it`,
+      method: `Two directions, because the law names both. CODE -> DIAL: word-boundary numeric scan over the scanned source set (${codeNodes.length} .mjs across office/src and world/tools), absolved by defining the constant, importing the defining module and naming its export, or a \`reads\` edge into the owning mark's directory. DIAL -> CODE: every constitutional mark standing in the Keeping Works is walked for the values it declares (\`dials:\` entries and a predicate's own \`slot\`/\`value\`; numbers and booleans, never strings), and each is looked for BY NAME in the same source set — a dial is reached by name, so the name is the join. A dial no module names is reported unless the mark itself discloses that nothing reads it yet.`,
+      limits: "THE WATCH LIST IS CLOSED on the code->dial half, and it is three constants long: pace 405, the parcel dial 25, and walking pace 15. The mark says every constant in the machinery; that half asks after those three, so a green there is a green about three numbers and silence about every other number in the corpus. The narrowing is named rather than hidden, and the list grows by being edited — the CONSTS table above is the whole of it. THE DIAL->CODE HALF IS NOT CLOSED (added 2026-08-30, after an audit found four separate instances the closed list could not see): it walks every value-carrying constitutional node in the Works, so it is open by construction and grows with the record. Its own limits are the ones that matter now, and they are three. It matches on NAMES, so a module constant that merely shares a dial's name reads as a reader — `the-town/sound`'s four dials are derived from `say`'s in src/dynamic-store.mjs rather than read off the mark, and this half cannot tell those apart. It cannot see WHERE a name is read, so 'read by the engine' here means 'named somewhere in the running source', not 'read at its declared home' — a dial reached through `dialNumber` and one hardcoded beside a comment mentioning it look identical. And it rules only on numbers and booleans: `unsealed` and the pointer form (`\"the-town/resident\"`) are the record's two ways of saying the value is not here, and asking whether the engine reads a signpost would report every correctly-delegated dial as an orphan. A flagged dial is taken at its word — the mark saying nothing reads it is accepted as true, which makes the flag a promise a human has to keep, not a fact this lint verified. Within the three watched constants: a text scan with no context, so HTTP status 405 is matched by the pace-405 watch and the parcel dial 25 matches every unrelated 25. Every row carries its source line for adjudication. Structurally: the store has NO code->mark edge type, so absolution by 'reads the owning mark' can only fire on a file that quotes a mark's path literally — which no file does today. And since Stage 1 moved the lints into office/src, this module's own watch list is inside the scanned corpus and counts as an orphan of every constant it watches (rows marked is_watchlist) — true by the lint's own definition, and left in rather than exempted. This lint points; it does not rule.",
       rows,
+      declared,
       evidence: rows.flatMap((r) => r.hits.filter((h) => !h.absolved && h.plausible).slice(0, 5).map((h) =>
         `${r.value} in ${h.file.replace("code:", "")} x${h.occurrences} (owner ${r.owner})${h.is_watchlist ? " [this lint's own watch list]" : ""} — L${h.lines[0].line}: ${h.lines[0].text}`))
-        .concat([`out-of-context noise this method cannot tell from a real hit: HTTP status 405, and every unrelated 25 and 15 in the corpus — see --json for all ${totalOrphans} files`]),
+        .concat([`out-of-context noise this method cannot tell from a real hit: HTTP status 405, and every unrelated 25 and 15 in the corpus — see --json for all ${totalOrphans} files`])
+        .concat(undeclaredReaders.slice(0, 12).map((d) =>
+          `declared and unread: ${d.mark} ${d.slot} = ${JSON.stringify(d.value)} — no module names it, and the mark does not say so${d.path ? ` (${d.path})` : ""}`))
+        .concat(undeclaredReaders.length > 12 ? [`…and ${undeclaredReaders.length - 12} more declared-and-unread dials — see --json`] : []),
     });
   }
 
@@ -446,8 +592,21 @@ export async function runLints({ dbPath = DEFAULT_DB, sources = null, engineText
   // door sets the dial" — a parcel that declares no extent INHERITS the dial and
   // conforms by construction, so absence is conformity, not a violation.
   {
-    const cls = graph.hasNode("the-town/parcel-class") ? graph.getNodeAttributes("the-town/parcel-class") : null;
-    const dial = cls?.w ?? 25;
+    // THE DIAL IS READ FROM THE DECLARATION, AND ITS ABSENCE IS A FINDING.
+    // This read `graph.hasNode("the-town/parcel-class") ? … : null` and then
+    // `cls?.w ?? 25`, and BOTH halves were broken in the same direction: the
+    // node had been retired 12 days earlier (src/world-hydrate.mjs:866-873), so
+    // `cls` was always null and every parcel was judged against a hardcoded 25
+    // that no longer answered to the record — a falsifier that could not fail,
+    // reporting GREEN about a conformity it was no longer measuring.
+    //
+    // Repointing alone would NOT have fixed it: `the-town/parcel` is a class
+    // mark with no geometry, so `attr.w` is null there too and the `?? 25`
+    // would have swallowed it exactly the same way. The value lives on the
+    // class's `dials.extent_m`, so that is what is read — and when it cannot be
+    // read the lint says so and rules N/A rather than inventing a number to
+    // measure against.
+    const { value: dial, why: dialWhy } = parcelExtent(graph);
     const parcels = nodesWhere(graph, (a) => a.kind === "mark" && a.subkind === "parcel");
     const rows = parcels.map(({ id, attr }) => {
       const absent = attr.w == null && attr.h == null;
@@ -456,21 +615,28 @@ export async function runLints({ dbPath = DEFAULT_DB, sources = null, engineText
       // prior estate door-written, which inverts this lint's whole reading.
       const pre = attr.props?.pre === true || attr.props?.pre === "true";
       return { parcel: id, by: attr.by, w: attr.w, h: attr.h, extent_absent: absent,
-        conforms: absent || (attr.w === dial && attr.h === dial), pre, date: attr.props?.date ?? null, path: attr.props?.path ?? null };
+        // With no dial to measure against there is no verdict to give. `null`
+        // rather than `false`: an unmeasured parcel is not a failing one.
+        conforms: dial == null ? null : (absent || (attr.w === dial && attr.h === dial)),
+        pre, date: attr.props?.date ?? null, path: attr.props?.path ?? null };
     });
-    const bad = rows.filter((r) => !r.conforms);
+    const bad = dial == null ? [] : rows.filter((r) => !r.conforms);
     const doorWritten = rows.filter((r) => !r.pre);
     const badDoorWritten = bad.filter((r) => !r.pre);
     add({
       id: "L4", name: "every instance conforms to its class",
-      verdict: bad.length ? RED : GREEN,
-      headline: bad.length
+      // The unreadable-dial case is N/A and LOUD, never a quiet green: a lint
+      // that cannot reach the contract it checks has not checked it.
+      verdict: dial == null ? NA : bad.length ? RED : GREEN,
+      headline: dial == null
+        ? `no verdict: the parcel contract could not be read — ${dialWhy}. ${rows.length} parcels went unjudged rather than being measured against a number this lint invented`
+        : bad.length
         ? `${bad.length} of ${rows.length} parcels are not ${dial}x${dial}` + (badDoorWritten.length
           ? `, and ${badDoorWritten.length} of those were written by the door (no \`pre:\`): ${badDoorWritten.map((b) => b.parcel).join(", ")}`
           : `; every one carries \`pre: true\` — seeded prior estate, which the class law explicitly grandfathers, so the door has never written an off-dial parcel`)
         : `all ${rows.length} parcels are ${dial}x${dial} or extent-absent (dial inherited)`,
-      method: "nodes kind=mark subkind=parcel, extent read from the node's own extent_w/extent_h, compared against the parcel class node's extent (PARCEL_EXTENT_M). Extent-absent counts as conforming: the door fills the dial in. The `pre:` flag is reported per row, not applied as a filter.",
-      limits: "THE CHECKED SET IS CLOSED, and it is one class: the parcel. The mark says every instance conforms to its class; this reads one class's contract against its records, because the parcel's extent is the only class param that lives anywhere a machine can reach — so a green here is a green about parcels and silence about every other class's instances. The narrowing is named rather than hidden, and the set grows as the params explosion seats each class's dials on its mark. Within the parcel: the class law asks for conformance to the CURRENT contract, and the prior-estate clause that grandfathers seeded estate lives in a code comment in tools/marks-fold.mjs rather than on the mark — so this lint answers the strict question and hands a human the `pre:` column instead of applying a filter it cannot cite. The instances stand on real instance-of rails to the works' own parcel mark (the synthesized class node retired at the step-1 promotion, 2026-08-18), but the extent dial itself still lives in code (PARCEL_EXTENT_M).",
+      method: `nodes kind=mark subkind=parcel, extent read from the node's own extent_w/extent_h, compared against the contract read off the parcel class mark itself — \`${PARCEL_CLASS}\`'s \`dials.${PARCEL_EXTENT_SLOT}\` (${dial ?? "unreadable"}). Extent-absent counts as conforming: the door fills the dial in. The \`pre:\` flag is reported per row, not applied as a filter. A dial that cannot be read is N/A, never a green.`,
+      limits: "THE CHECKED SET IS CLOSED, and it is one class: the parcel. The mark says every instance conforms to its class; this reads one class's contract against its records, because the parcel's extent is the only class param that lives anywhere a machine can reach — so a green here is a green about parcels and silence about every other class's instances. The narrowing is named rather than hidden, and the set grows as the params explosion seats each class's dials on its mark. Within the parcel: the class law asks for conformance to the CURRENT contract, and the prior-estate clause that grandfathers seeded estate lives in a code comment in tools/marks-fold.mjs rather than on the mark — so this lint answers the strict question and hands a human the `pre:` column instead of applying a filter it cannot cite. The instances stand on real instance-of rails to the works' own parcel mark (the synthesized class node retired at the step-1 promotion, 2026-08-18). CORRECTED 2026-08-30: this lint keyed on that retired `the-town/parcel-class` for twelve days after it stopped existing, and fell back to a hardcoded 25 without saying so — it was reporting a conformity it had stopped measuring. It now reads the contract off `the-town/parcel`'s own `dials.extent_m`, and rules N/A rather than green when it cannot. The world's write door still carries its own `PARCEL_EXTENT_M` constant for the same number, which is a code-side copy this lint does not read and L3's watch list is what watches.",
       rows,
       evidence: [
         ...bad.map((b) => `${b.parcel} ${b.w}x${b.h} · pre:${b.pre} · dated ${b.date} (${b.path})`),
