@@ -134,11 +134,12 @@ export function ideasTank({ worldDb = null } = {}) {
     const db = new DatabaseSync(path, { readOnly: true });
     const law = db.prepare(`SELECT json_extract(props,'$.body') AS body FROM nodes WHERE ${CLASS_ROSTER_GATE_SQL} AND json_extract(props,'$.class')='idea'`).get()?.body ?? null;
     const rows = db.prepare(`
-      SELECT n.id, n.by, json_extract(n.props,'$.body') AS body
+      SELECT n.id, n.by, json_extract(n.props,'$.body') AS body,
+             json_extract(n.props,'$.date') AS date
         FROM nodes n
         JOIN edges e ON e.dst = n.id AND e.type = 'contains' AND e.src = 'the-town/the-think-tank'
        WHERE json_extract(n.props,'$.class') = 'idea'
-       ORDER BY n.id`).all();
+       ORDER BY COALESCE(json_extract(n.props,'$.date'), ''), n.id`).all();
     db.close();
     return answer(rows, "store", null, law);
   } catch (e) {
