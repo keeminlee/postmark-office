@@ -349,7 +349,10 @@ test("MCP tools/list, apex OFF: the full 43 — the slim's delist is apex-condit
   // 42 -> 43 (wave 2, 2026-08-24): update_address_fields, the scoped
   // frontmatter door. Listed unconditionally like every other paper door — the
   // slim only hides what an APEX serves, and no apex serves this one.
-  assert.equal(names.length, 43);
+  // 43 -> 45 (the lane reads, 2026-08-30): read_bounties + read_blueprints —
+  // born delisted behind the town apex, so the flag-OFF listing is where their
+  // flat definitions show (delisting is listing-only, apex-conditioned).
+  assert.equal(names.length, 45);
   assert.ok(names.includes("update_address_fields"), "the fields door stands regardless of the world flag");
   assert.ok(!names.includes("request_blessing"), "request_blessing's delist is unconditional");
   assert.ok(!names.includes("world"), "no apex tool with the flag off");

@@ -720,7 +720,10 @@ test("send_letter FOLDS UNDER household — your pen lives where your standing d
   const names = TOOLS.map((t) => t.name);
   assert.ok(names.includes("send_letter"),
     "the DEFINITION stands — a delist is listing-only, and a cached client still calls this name");
-  assert.equal(names.length, 43, "no tool was added or removed; the flag-off listing is untouched");
+  // 43 → 45: read_bounties + read_blueprints (the lane reads, 2026-08-30) —
+  // born delisted behind the town apex, but the DEFINITIONS stand flat like
+  // every delisted verb's, so the flag-off listing carries them.
+  assert.equal(names.length, 45, "no tool was added or removed beyond the paid ledger; the flag-off listing is untouched");
 
   assert.ok(HOUSEHOLD_DISPATCHABLE.includes("send"), "household do: \"send\" is the letter's apex verb");
   assert.equal(householdDispatchToolFor("send"), "send_letter",
