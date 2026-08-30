@@ -203,8 +203,12 @@ test('town-only classes: "residents may instantiate only [bounty, thing, note] t
   // is absent and the roster stands on its floor (this env), which is exactly
   // where the end-to-end bounce cannot be exercised. The shadow's full suite
   // covers the live-tree half.
-  assert.deepEqual([...RESIDENT_INSTANTIABLE], ["bounty", "thing", "note"]);
+  // + idea (the Think Tank ruling, 2026-08-30) — the door-side twin of the
+  // world repo's whitelist; the two move together or the door refuses what
+  // the law allows. This assert is the tripwire for the stale-twin class.
+  assert.deepEqual([...RESIDENT_INSTANTIABLE], ["bounty", "thing", "note", "idea"]);
   assert.ok(residentMayInstantiate("bounty") && residentMayInstantiate("thing") && residentMayInstantiate("note"));
+  assert.ok(residentMayInstantiate("idea"), "stage 1 is a resident's own hand — the announcement's whole mechanic");
   assert.ok(!residentMayInstantiate("home"), '"home" is town-only — the 2026-08-22 shadow catch');
   assert.ok(!residentMayInstantiate("parcel") && !residentMayInstantiate("resident"));
 });

@@ -49,7 +49,13 @@ export const ROSTER_FLOOR = Object.freeze(["bounty", "thing"]);
 // (board-grammar.test.mjs, the live-tree law). Found 2026-08-22: a resident's
 // class: "home" sailed through the exists-check and the settlement shadow
 // caught the crossing as a would-refuse.
-export const RESIDENT_INSTANTIABLE = Object.freeze(["bounty", "thing", "note"]);
+// `idea` joined 2026-08-30 (founder-ruled, the Think Tank): stage 1 of the
+// Idea Lifecycle is a resident publishing an idea mark with their own hand —
+// one call, no git, no founder. The same ruling is carried by name in the
+// world repo's board-grammar.test.mjs whitelist; these two sets are NAME-KEYED
+// TWINS and move together or the door refuses what the law allows (this one
+// nearly shipped stale — caught at the w36 pre-ship risk review).
+export const RESIDENT_INSTANTIABLE = Object.freeze(["bounty", "thing", "note", "idea"]);
 export const residentMayInstantiate = (klass) => RESIDENT_INSTANTIABLE.includes(String(klass));
 
 const ROSTER_SQL = `SELECT DISTINCT json_extract(props, '$.class') AS class
