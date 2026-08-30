@@ -1,0 +1,687 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>world 2.0 — lab lens</title>
+<!--
+  THE VIEWER READING THE DOOR (gold §4 phase 3).
+
+  One self-contained page, served BY the office, that renders World 2.0 from the
+  /world2/* JSON doors and from nothing else. No build step, no CDN, no external
+  font, no bundler — open it and every pixel on the screen came out of a door a
+  client could have called itself. That is the point of it: it is the standing
+  proof that the MCP-first law (gold §1–§2, site = UI derived from the door) is
+  actually satisfiable, checked continuously by the only reader that cannot
+  cheat. If a fact is on this page and not in a door, the page is lying.
+
+  It is a lab instrument, not the product page. Small, dark, dense, honest about
+  what it does not know. The real site's world page stays where it is; nothing
+  here touches it.
+
+  What it consumes, and nothing else:
+    GET /world2/marks              placed marks (every row has a where) -> the map
+    GET /world2/marks?all=true     the whole standing register -> search + census
+    GET /world2/docket             the open window + every pending claim
+    GET /world2/windows            the candle's ledger, newest first
+    GET /world2/status             row counts + the pinned projection heads
+    GET /world2/mark?slug=…        one mark, whole row -> the inspector
+
+  Coordinate frame, borrowed from the 1.0 painting:
+    +x east, +y SOUTH — the sea (the-town/the-sea) sits at y=+5700 and the world
+    falls from the northern rim to the southern sea, so screen-native SVG (y down)
+    already puts north at the top and needs no flip. Light comes from the
+    northeast and dies in the southwest (LOGOS/RECONCILIATION.md), so every mark
+    is lit on its north and east edges and drops its shadow to the southwest.
+    Marks are drawn centre-based from geometry.at ± extent/2, or as their polygon
+    where geometry.points exists.
+-->
+<style>
+  :root {
+    --bg: #0b0d10;
+    --panel: #12151a;
+    --panel-2: #171b21;
+    --line: #242a33;
+    --line-2: #2f3742;
+    --ink: #c8d0da;
+    --ink-dim: #7b8695;
+    --ink-faint: #58616e;
+    --candle: #e6a23c;
+    --candle-dim: #8a6222;
+    --sited: #7d93b0;
+    --sited-fill: #2a323d;
+    --parcel: #4f9d86;
+    --naming: #8a7bb5;
+    --fresh: #e6a23c;
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font: 12px/1.5 var(--mono);
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+  a { color: var(--sited); }
+
+  #app { display: grid; grid-template-rows: auto 1fr; height: 100%; }
+
+  header {
+    display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap;
+    padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--panel);
+  }
+  header h1 { margin: 0; font-size: 12px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+  header h1 .v { color: var(--candle); }
+  #heads { color: var(--ink-faint); font-size: 11px; }
+  #heads b { color: var(--ink-dim); font-weight: 500; }
+  .grow { flex: 1; }
+  #find {
+    background: var(--bg); border: 1px solid var(--line-2); color: var(--ink);
+    font: inherit; padding: 3px 7px; width: 230px; border-radius: 2px;
+  }
+  #find:focus { outline: none; border-color: var(--candle-dim); }
+  #findhint { color: var(--ink-faint); font-size: 11px; }
+
+  main { display: grid; grid-template-columns: 1fr 372px; min-height: 0; }
+
+  /* ── the map ─────────────────────────────────────────────────────────── */
+  #mapwrap { position: relative; min-width: 0; background:
+      radial-gradient(120% 90% at 78% 12%, #12161c 0%, #0b0d10 62%); }
+  #map { width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
+  #map.dragging { cursor: grabbing; }
+
+  /* Marks nest — a quarter holds a garden holds a parcel holds a home — so a
+     sited fill is translucent: an opaque one hides everything it contains and
+     the map reads as a pile of blank boxes. */
+  .mk { fill: var(--sited-fill); fill-opacity: .5; stroke: var(--sited); stroke-width: 1;
+        vector-effect: non-scaling-stroke; }
+  .mk.parcel { fill: none; stroke: var(--parcel); stroke-dasharray: 4 3; }
+  .mk.naming { fill: none; stroke: var(--naming); stroke-opacity: .45; stroke-dasharray: 1 5; }
+  .mk.fresh { stroke: var(--fresh); stroke-width: 1.5; }
+  .mk:hover { stroke: #fff; }
+  .mk.sel { stroke: var(--candle); stroke-width: 2; fill: #6a5320; fill-opacity: .55; }
+  .pin { fill: none; stroke-width: 1; vector-effect: non-scaling-stroke; pointer-events: none; }
+  #shadow .mk { fill: #000; fill-opacity: .3; stroke: none; }
+  .off { display: none; }
+
+  #hud {
+    position: absolute; left: 10px; bottom: 10px; pointer-events: none;
+    display: flex; flex-direction: column; gap: 6px; align-items: flex-start;
+  }
+  #legend {
+    pointer-events: auto; background: rgba(11,13,16,.86); border: 1px solid var(--line);
+    padding: 6px 8px; border-radius: 3px; display: flex; flex-direction: column; gap: 3px;
+  }
+  #legend label { display: flex; align-items: center; gap: 6px; color: var(--ink-dim); cursor: pointer; }
+  #legend input { accent-color: var(--candle); margin: 0; }
+  #legend .sw { width: 18px; height: 9px; border: 1px solid; flex: none; }
+  #legend .sw.s { background: var(--sited-fill); border-color: var(--sited); }
+  #legend .sw.p { border-color: var(--parcel); border-style: dashed; }
+  #legend .sw.n { border-color: var(--naming); border-style: dotted; }
+  #legend .n { color: var(--ink-faint); }
+  #readout { color: var(--ink-faint); background: rgba(11,13,16,.8); padding: 2px 5px; border-radius: 2px; }
+  #scale { display: flex; align-items: center; gap: 7px; color: var(--ink-faint);
+           background: rgba(11,13,16,.8); padding: 3px 5px; border-radius: 2px; }
+  #scale i { display: block; height: 5px; border: 1px solid var(--ink-faint); border-top: none; }
+  .origin { stroke: var(--ink-faint); stroke-opacity: .5; stroke-width: 1;
+            vector-effect: non-scaling-stroke; pointer-events: none; }
+
+  #tools { position: absolute; right: 10px; top: 10px; display: flex; gap: 5px; }
+  button.t {
+    background: var(--panel-2); border: 1px solid var(--line-2); color: var(--ink-dim);
+    font: inherit; padding: 3px 8px; border-radius: 2px; cursor: pointer;
+  }
+  button.t:hover { color: var(--ink); border-color: var(--ink-faint); }
+
+  #tip {
+    position: absolute; pointer-events: none; display: none; z-index: 5;
+    background: rgba(8,10,13,.95); border: 1px solid var(--line-2);
+    padding: 3px 6px; border-radius: 2px; white-space: nowrap; color: var(--ink);
+  }
+  #tip .k { color: var(--ink-faint); }
+
+  /* ── the rail ────────────────────────────────────────────────────────── */
+  #rail { border-left: 1px solid var(--line); background: var(--panel);
+          overflow-y: auto; overflow-x: hidden; min-width: 0; }
+  section { border-bottom: 1px solid var(--line); padding: 10px 12px; }
+  section > h2 {
+    margin: 0 0 8px; font-size: 11px; font-weight: 600; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--ink-dim);
+    display: flex; align-items: baseline; gap: 8px;
+  }
+  section > h2 .c { color: var(--ink-faint); font-weight: 400; letter-spacing: 0; }
+
+  /* the docket — pride of place. It never existed in 1.0. */
+  #docket { background: linear-gradient(180deg, #1a1610 0%, var(--panel) 74%); }
+  #docket > h2 { color: var(--candle); }
+  .candle {
+    border: 1px solid var(--candle-dim); border-radius: 3px; padding: 8px 9px; margin-bottom: 9px;
+    background: rgba(230,162,60,.05);
+  }
+  .candle .big { font-size: 18px; color: var(--candle); letter-spacing: .04em; }
+  .candle .lbl { color: var(--ink-faint); }
+  .row { display: flex; justify-content: space-between; gap: 10px; }
+  .row .k { color: var(--ink-faint); }
+  .claim {
+    border: 1px solid var(--line-2); border-left: 2px solid var(--candle);
+    padding: 6px 8px; margin-bottom: 5px; background: var(--panel-2); border-radius: 0 2px 2px 0;
+  }
+  .claim .top { display: flex; justify-content: space-between; gap: 8px; }
+  .claim .slugish { color: var(--ink); word-break: break-all; }
+  .claim .meta { color: var(--ink-faint); }
+  .empty { color: var(--ink-faint); font-style: italic; }
+
+  .win { border-top: 1px solid var(--line); padding: 7px 0; }
+  .win:first-of-type { border-top: none; }
+  .win .id { color: var(--ink); }
+  .win .st { font-size: 10px; letter-spacing: .06em; text-transform: uppercase;
+             padding: 0 4px; border: 1px solid var(--line-2); border-radius: 2px; color: var(--ink-faint); }
+  .win .st.open { color: var(--candle); border-color: var(--candle-dim); }
+  .six { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px 8px; margin-top: 4px; }
+  .six span { color: var(--ink-faint); }
+  .six b { color: var(--ink-dim); font-weight: 500; }
+  .six .hit b { color: var(--candle); }
+  .shas { margin-top: 4px; color: var(--ink-faint); word-break: break-all; }
+  .noreceipt { color: var(--ink-faint); font-style: italic; margin-top: 4px; }
+
+  #inspector dl { margin: 0; display: grid; grid-template-columns: 88px 1fr; gap: 2px 8px; }
+  #inspector dt { color: var(--ink-faint); }
+  #inspector dd { margin: 0; word-break: break-word; }
+  #inspector pre {
+    margin: 4px 0 0; padding: 6px; background: var(--bg); border: 1px solid var(--line);
+    border-radius: 2px; max-height: 220px; overflow: auto; color: var(--ink-dim);
+    white-space: pre-wrap; word-break: break-word;
+  }
+  #inspector .body { margin: 6px 0 8px; color: var(--ink); font-style: italic; }
+  #census { display: grid; grid-template-columns: 1fr auto; gap: 1px 10px; }
+  #census .k { color: var(--ink-faint); }
+  .err { color: #d97066; }
+  .fade { color: var(--ink-faint); }
+</style>
+
+<div id="app">
+  <header>
+    <h1>postmark <span class="v">world 2.0</span> — lab lens</h1>
+    <div id="heads">reading the doors…</div>
+    <div class="grow"></div>
+    <input id="find" placeholder="find a mark (slug or owner)" autocomplete="off" spellcheck="false">
+    <span id="findhint"></span>
+  </header>
+  <main>
+    <div id="mapwrap">
+      <svg id="map"></svg>
+      <div id="tools">
+        <button class="t" id="fit-town">fit town</button>
+        <button class="t" id="fit-all">fit all</button>
+        <button class="t" id="go-candle">candle-proof</button>
+        <button class="t" id="reload">reload doors</button>
+      </div>
+      <div id="hud">
+        <div id="legend"></div>
+        <div id="scale"><i></i><span></span></div>
+        <div id="readout"></div>
+      </div>
+      <div id="tip"></div>
+    </div>
+    <aside id="rail">
+      <section id="docket"><h2>the public docket</h2><div id="docket-body" class="fade">reading /world2/docket…</div></section>
+      <section id="windows"><h2>the candle's ledger</h2><div id="windows-body" class="fade">reading /world2/windows…</div></section>
+      <section id="inspector"><h2>inspector</h2><div id="inspector-body" class="fade">click a mark on the map.</div></section>
+      <section id="store"><h2>store</h2><div id="census" class="fade">reading /world2/status…</div></section>
+    </aside>
+  </main>
+</div>
+
+<script>
+"use strict";
+(function () {
+  var SVGNS = "http://www.w3.org/2000/svg";
+  var $ = function (id) { return document.getElementById(id); };
+  var el = function (n, a) { var e = document.createElementNS(SVGNS, n); for (var k in a) e.setAttribute(k, a[k]); return e; };
+  var esc = function (s) { return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) { return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]; }); };
+  var num = function (n) { return typeof n === "number" ? (Math.abs(n) >= 1000 ? Math.round(n).toLocaleString("en-US") : String(n)) : String(n); };
+
+  // Every door read goes through here so a tripped door reads as a tripped door
+  // on the page, not as an empty panel that looks like an empty world.
+  function door(path) {
+    return fetch(path, { headers: { accept: "application/json" } }).then(function (r) {
+      return r.json().catch(function () { return { error: "bounce", defect: "not json (" + r.status + ")" }; })
+        .then(function (b) { if (!r.ok) throw new Error((b && (b.defect || b.error)) || ("HTTP " + r.status)); return b; });
+    });
+  }
+
+  // ── state ────────────────────────────────────────────────────────────────
+  var S = {
+    placed: [], register: [], byslug: Object.create(null),
+    docket: null, windows: [], status: null,
+    freshWindow: null,           // newest CLOSED window — its locks get the ring
+    sel: null, nodes: [],        // {mark, shape, shadow, pin, area}
+    show: { sited: true, parcel: true, naming: true },
+    cam: { k: 1, x: 0, y: 0 }, size: { w: 100, h: 100 },
+  };
+
+  // ── camera ───────────────────────────────────────────────────────────────
+  var svg = $("map"), gShadow, gMarks, gPins, camG;
+
+  function sizeMap() {
+    var r = $("mapwrap").getBoundingClientRect();
+    S.size = { w: Math.max(1, r.width), h: Math.max(1, r.height) };
+    svg.setAttribute("viewBox", "0 0 " + S.size.w + " " + S.size.h);
+  }
+  function applyCam() {
+    var c = S.cam;
+    camG.setAttribute("transform", "translate(" + c.x + "," + c.y + ") scale(" + c.k + ")");
+    // Pins hold a constant SCREEN radius, so a 2-unit mark is still findable at
+    // town scale — the alternative is a map that silently omits its smallest
+    // facts (wright/candle-proof is 4 units wide).
+    var r = 3.2 / c.k, pinned = 0, off = 0;
+    for (var i = 0; i < S.nodes.length; i++) {
+      var n = S.nodes[i];
+      var big = n.w * c.k > 7 || n.h * c.k > 7;
+      if (n.pin) {
+        n.pin.setAttribute("r", r);
+        n.pin.style.display = (big || n.hidden) ? "none" : "";
+      }
+      if (n.hidden) continue;
+      if (!big) pinned++;
+      var a = n.m.geometry.at, sx = a.x * c.k + c.x, sy = a.y * c.k + c.y;
+      if (sx < -2 || sy < -2 || sx > S.size.w + 2 || sy > S.size.h + 2) off++;
+    }
+    $("readout").textContent = "zoom " + c.k.toFixed(4) + "×   ·   centre " +
+      Math.round((S.size.w / 2 - c.x) / c.k) + ", " + Math.round((S.size.h / 2 - c.y) / c.k) +
+      "   ·   " + pinned + " under 7 px, drawn as pins   ·   " + off + " off frame";
+
+    // A bar of round world units, because "zoom 0.036×" tells a reader nothing
+    // about how far apart two marks actually are.
+    var want = 130 / c.k, pow = Math.pow(10, Math.floor(Math.log10(want)));
+    var mult = want / pow, unit = (mult >= 5 ? 5 : mult >= 2 ? 2 : 1) * pow;
+    $("scale").firstChild.style.width = Math.round(unit * c.k) + "px";
+    $("scale").lastChild.textContent = num(unit) + " units";
+  }
+  function fit(box, padFrac) {
+    var pad = padFrac == null ? 0.06 : padFrac;
+    var w = Math.max(1e-6, box.x1 - box.x0), h = Math.max(1e-6, box.y1 - box.y0);
+    var k = Math.min(S.size.w / w, S.size.h / h) * (1 - pad * 2);
+    S.cam.k = k;
+    S.cam.x = S.size.w / 2 - (box.x0 + w / 2) * k;
+    S.cam.y = S.size.h / 2 - (box.y0 + h / 2) * k;
+    applyCam();
+  }
+  function flyTo(x, y, k) {
+    S.cam.k = k == null ? Math.max(S.cam.k, 0.6) : k;
+    S.cam.x = S.size.w / 2 - x * S.cam.k;
+    S.cam.y = S.size.h / 2 - y * S.cam.k;
+    applyCam();
+  }
+  // TWO FRAMES, NEITHER PRETENDING TO BE THE OTHER.
+  //
+  // The register is not one blob. 376 of the 410 placed marks sit within a few
+  // thousand units of the origin; 34 sit ~96 000 units southwest, and at least
+  // one mark is 320 000 units wide. Fit the literal extremes and the town is
+  // three pixels across — which is what the first cut of this page did, and it
+  // looked like a working map. So "fit town" frames the body of the
+  // distribution by a Tukey fence (median ± 2 IQR — robust, and it does not
+  // care what fraction of the marks are outliers, which a percentile box does),
+  // "fit all" frames every placed mark, and the readout always says how many
+  // marks the current camera has left off screen. Nothing is quietly dropped.
+  function tukey(vals, k) {
+    var a = vals.slice().sort(function (p, q) { return p - q; });
+    var at = function (f) { return a[Math.min(a.length - 1, Math.max(0, Math.round((a.length - 1) * f)))]; };
+    var q1 = at(0.25), q3 = at(0.75), iqr = Math.max(1, q3 - q1);
+    return { lo: Math.max(a[0], q1 - k * iqr), hi: Math.min(a[a.length - 1], q3 + k * iqr) };
+  }
+  function boxOf(marks, mode) {
+    var xs = [], ys = [];
+    marks.forEach(function (m) { var a = m.geometry && m.geometry.at; if (a) { xs.push(a.x); ys.push(a.y); } });
+    if (!xs.length) return { x0: -100, y0: -100, x1: 100, y1: 100 };
+    var bx, by;
+    if (mode === "all") {
+      bx = { lo: Math.min.apply(null, xs), hi: Math.max.apply(null, xs) };
+      by = { lo: Math.min.apply(null, ys), hi: Math.max.apply(null, ys) };
+    } else { bx = tukey(xs, 2); by = tukey(ys, 2); }
+    var mx = Math.max(120, (bx.hi - bx.lo) * 0.06), my = Math.max(120, (by.hi - by.lo) * 0.06);
+    return { x0: bx.lo - mx, x1: bx.hi + mx, y0: by.lo - my, y1: by.hi + my };
+  }
+
+  // ── the map ──────────────────────────────────────────────────────────────
+  function drawMap() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var defs = el("defs");
+    // Light from the northeast, dying in the southwest (the world's own law).
+    var lg = el("linearGradient", { id: "ne", x1: "1", y1: "0", x2: "0", y2: "1" });
+    lg.appendChild(el("stop", { offset: "0", "stop-color": "#3b4655" }));
+    lg.appendChild(el("stop", { offset: "1", "stop-color": "#20262f" }));
+    defs.appendChild(lg);
+    svg.appendChild(defs);
+
+    camG = el("g");
+    // The origin, drawn before anything else: without it the map has no anchor
+    // and a reader cannot tell 0,0 from any other empty patch.
+    var o = el("g");
+    o.appendChild(el("line", { x1: -1e6, y1: 0, x2: 1e6, y2: 0, class: "origin" }));
+    o.appendChild(el("line", { x1: 0, y1: -1e6, x2: 0, y2: 1e6, class: "origin" }));
+    camG.appendChild(o);
+    gShadow = el("g", { id: "shadow" });
+    gMarks = el("g", { id: "marks" });
+    gPins = el("g", { id: "pins" });
+    camG.appendChild(gShadow); camG.appendChild(gMarks); camG.appendChild(gPins);
+    svg.appendChild(camG);
+
+    S.nodes = [];
+    // Big first, small last: a 1 400-unit quarter must not sit on top of the
+    // 4-unit mark inside it.
+    var ms = S.placed.slice().sort(function (a, b) { return area(b) - area(a); });
+    ms.forEach(function (m) {
+      var g = m.geometry, a = g && g.at; if (!a) return;
+      var ex = (g && g.extent) || { w: 0, h: 0 };
+      var w = Math.max(1, ex.w || 0), h = Math.max(1, ex.h || 0);
+      var kind = m.kind === "parcel" ? "parcel" : m.kind === "naming" ? "naming" : "sited";
+      var fresh = S.freshWindow != null && m.locked_window === S.freshWindow;
+      var cls = "mk " + kind + (fresh ? " fresh" : "");
+
+      var shape, shadow = null;
+      if (g.points && g.points.length > 2) {
+        var pts = g.points.map(function (p) { return p[0] + "," + p[1]; }).join(" ");
+        shape = el("polygon", { points: pts, class: cls });
+        shadow = el("polygon", { points: pts, class: "mk", transform: "translate(" + (-w * 0.02) + "," + (h * 0.02) + ")" });
+      } else {
+        var x = a.x - w / 2, y = a.y - h / 2;
+        shape = el("rect", { x: x, y: y, width: w, height: h, class: cls });
+        shadow = el("rect", { x: x - w * 0.02, y: y + h * 0.02, width: w, height: h, class: "mk" });
+      }
+      if (kind === "sited") shape.setAttribute("fill", "url(#ne)");
+      shape.setAttribute("data-slug", m.slug);
+
+      var pin = el("circle", { cx: a.x, cy: a.y, r: 3, class: "pin",
+        stroke: kind === "parcel" ? "#4f9d86" : kind === "naming" ? "#8a7bb5" : (fresh ? "#e6a23c" : "#7d93b0") });
+
+      if (kind === "sited" && w * h > 4) gShadow.appendChild(shadow); else shadow = null;
+      gMarks.appendChild(shape);
+      gPins.appendChild(pin);
+      var node = { m: m, shape: shape, shadow: shadow, pin: pin, w: w, h: h, kind: kind, hidden: false };
+      S.nodes.push(node);
+    });
+    applyVisibility();
+  }
+  function area(m) { var e = m.geometry && m.geometry.extent; return e ? (e.w || 1) * (e.h || 1) : 1; }
+
+  function applyVisibility() {
+    S.nodes.forEach(function (n) {
+      var on = S.show[n.kind];
+      n.hidden = !on;
+      n.shape.classList.toggle("off", !on);
+      if (n.shadow) n.shadow.classList.toggle("off", !on);
+    });
+    applyCam();
+  }
+
+  function select(slug, fly) {
+    S.sel = slug;
+    S.nodes.forEach(function (n) { n.shape.classList.toggle("sel", n.m.slug === slug); });
+    var node = S.nodes.filter(function (n) { return n.m.slug === slug; })[0];
+    if (fly && node) {
+      var a = node.m.geometry.at;
+      var span = Math.max(node.w, node.h, 8);
+      flyTo(a.x, a.y, Math.min(4, (Math.min(S.size.w, S.size.h) * 0.45) / span));
+    }
+    inspect(slug);
+  }
+
+  // ── interaction ──────────────────────────────────────────────────────────
+  function wire() {
+    var drag = null;
+    svg.addEventListener("pointerdown", function (e) {
+      drag = { x: e.clientX, y: e.clientY, cx: S.cam.x, cy: S.cam.y, moved: false };
+      svg.setPointerCapture(e.pointerId); svg.classList.add("dragging");
+    });
+    svg.addEventListener("pointermove", function (e) {
+      if (drag) {
+        var dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+        if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
+        S.cam.x = drag.cx + dx; S.cam.y = drag.cy + dy; applyCam();
+        return;
+      }
+      var t = e.target.closest ? e.target.closest(".mk, .pin") : null;
+      var tip = $("tip");
+      if (t && t.getAttribute("data-slug")) {
+        var m = S.byslug[t.getAttribute("data-slug")];
+        var r = $("mapwrap").getBoundingClientRect();
+        tip.innerHTML = esc(m.slug) + ' <span class="k">' + esc(m.kind) + " · w" + esc(m.locked_window) + "</span>";
+        tip.style.display = "block";
+        tip.style.left = Math.min(r.width - tip.offsetWidth - 8, e.clientX - r.left + 12) + "px";
+        tip.style.top = (e.clientY - r.top + 14) + "px";
+      } else tip.style.display = "none";
+    });
+    var up = function (e) {
+      if (drag && !drag.moved) {
+        var t = e.target.closest ? e.target.closest(".mk") : null;
+        if (t && t.getAttribute("data-slug")) select(t.getAttribute("data-slug"), false);
+      }
+      drag = null; svg.classList.remove("dragging");
+    };
+    svg.addEventListener("pointerup", up);
+    svg.addEventListener("pointercancel", function () { drag = null; svg.classList.remove("dragging"); });
+    svg.addEventListener("pointerleave", function () { $("tip").style.display = "none"; });
+
+    svg.addEventListener("wheel", function (e) {
+      e.preventDefault();
+      var r = svg.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
+      var f = Math.pow(1.0015, -e.deltaY);
+      var k2 = Math.max(1e-5, Math.min(400, S.cam.k * f));
+      f = k2 / S.cam.k;
+      S.cam.x = mx - (mx - S.cam.x) * f;
+      S.cam.y = my - (my - S.cam.y) * f;
+      S.cam.k = k2; applyCam();
+    }, { passive: false });
+
+    $("fit-town").onclick = function () { fit(boxOf(S.placed, "town")); };
+    $("fit-all").onclick = function () { fit(boxOf(S.placed, "all")); };
+    $("go-candle").onclick = function () {
+      var m = S.byslug["wright/candle-proof"];
+      if (m) select(m.slug, true);
+      else $("findhint").textContent = "no wright/candle-proof in the register";
+    };
+    $("reload").onclick = boot;
+
+    $("find").addEventListener("input", function () {
+      var q = this.value.trim().toLowerCase();
+      if (!q) { $("findhint").textContent = ""; return; }
+      var hits = S.register.filter(function (m) { return m.slug.toLowerCase().indexOf(q) >= 0; });
+      var placed = hits.filter(function (m) { return m.geometry && m.geometry.at; });
+      $("findhint").textContent = hits.length + " match" + (hits.length === 1 ? "" : "es") +
+        (hits.length ? " · " + placed.length + " placed · ↵ to open" : "");
+    });
+    $("find").addEventListener("keydown", function (e) {
+      if (e.key !== "Enter") return;
+      var q = this.value.trim().toLowerCase(); if (!q) return;
+      var hits = S.register.filter(function (m) { return m.slug.toLowerCase().indexOf(q) >= 0; });
+      var placed = hits.filter(function (m) { return m.geometry && m.geometry.at; })[0];
+      if (placed) select(placed.slug, true);
+      else if (hits.length) { select(hits[0].slug, false); $("findhint").textContent = "de-sited — no where to fly to"; }
+      else $("findhint").textContent = "no such mark";
+    });
+
+    window.addEventListener("resize", function () { sizeMap(); applyCam(); });
+  }
+
+  function drawLegend() {
+    var counts = { sited: 0, parcel: 0, naming: 0 };
+    S.placed.forEach(function (m) {
+      var k = m.kind === "parcel" ? "parcel" : m.kind === "naming" ? "naming" : "sited";
+      counts[k]++;
+    });
+    var rows = [["sited", "s", "sited"], ["parcel", "p", "parcel"], ["naming", "n", "naming"]];
+    $("legend").innerHTML = rows.map(function (r) {
+      return '<label' + (counts[r[0]] ? "" : ' style="opacity:.45"') + '><input type="checkbox" data-kind="' + r[0] + '" checked>' +
+        '<span class="sw ' + r[1] + '"></span>' + r[2] + ' <span class="n">' +
+        (counts[r[0]] || "none placed") + "</span></label>";
+    }).join("") +
+      '<label style="cursor:default"><span class="sw" style="border-color:var(--fresh)"></span>' +
+      'locked in w' + (S.freshWindow == null ? "?" : S.freshWindow) + " <span class=\"n\">newest close</span></label>";
+    Array.prototype.forEach.call($("legend").querySelectorAll("input"), function (i) {
+      i.onchange = function () { S.show[i.getAttribute("data-kind")] = i.checked; applyVisibility(); };
+    });
+  }
+
+  // ── the docket: the candle made visible ──────────────────────────────────
+  var tick = null;
+  function drawDocket() {
+    var d = S.docket, out = [];
+    if (!d) { $("docket-body").innerHTML = '<div class="err">the docket door did not answer</div>'; return; }
+    var w = d.window;
+    if (w) {
+      out.push('<div class="candle">' +
+        '<div class="row"><span class="k">window</span><span>#' + esc(w.id) + " · open</span></div>" +
+        '<div class="big" id="countdown">—</div>' +
+        '<div class="row"><span class="lbl">closes</span><span class="lbl">' + esc(w.closes_at) + "</span></div>" +
+        '<div class="row"><span class="lbl">opened</span><span class="lbl">' + esc(w.opens_at) + "</span></div>" +
+        "</div>");
+    } else {
+      out.push('<div class="candle"><div class="empty">no window is open. nothing can lock.</div></div>');
+    }
+    out.push('<div class="row" style="margin-bottom:6px"><span class="k">pending claims</span><span>' + esc(d.pending) + "</span></div>");
+    if (!d.claims || !d.claims.length) {
+      out.push('<div class="empty">the docket is empty — every claim so far has burned down with its candle. ' +
+        "anything filed before the close will appear here, in public, before it is law.</div>");
+    } else {
+      d.claims.forEach(function (c) {
+        out.push('<div class="claim">' +
+          '<div class="top"><span class="slugish">' + esc(c.claimant || "?") + "</span><span class=\"meta\">" + esc(c.class || "?") + "</span></div>" +
+          '<div class="meta">household ' + esc(c.household || "—") + (c.stake != null ? " · stake " + esc(c.stake) : "") + "</div>" +
+          '<div class="meta">filed ' + esc(c.submitted_at) + " · locks at w" + esc(c.window_id) + "</div>" +
+          (c.counterclaim_of ? '<div class="meta">counterclaim of ' + esc(c.counterclaim_of) + "</div>" : "") +
+          (c.geometry && c.geometry.at ? '<div class="meta">at ' + num(c.geometry.at.x) + ", " + num(c.geometry.at.y) + "</div>" : "") +
+          "</div>");
+      });
+    }
+    out.push('<div class="fade" style="margin-top:6px">' + esc(d.what) + "</div>");
+    $("docket-body").innerHTML = out.join("");
+
+    if (tick) clearInterval(tick);
+    if (w) {
+      var run = function () {
+        var n = $("countdown"); if (!n) return;
+        var ms = new Date(w.closes_at).getTime() - Date.now();
+        if (!isFinite(ms)) { n.textContent = "—"; return; }
+        if (ms <= 0) { n.textContent = "closed — reload"; return; }
+        var s = Math.floor(ms / 1000), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+        n.textContent = h + "h " + String(m).padStart(2, "0") + "m " + String(s % 60).padStart(2, "0") + "s";
+      };
+      run(); tick = setInterval(run, 1000);
+    }
+  }
+
+  // ── the ledger ───────────────────────────────────────────────────────────
+  var SIX = ["locked", "refused", "held_review", "pending_carried", "retracted_before_close", "withdrawn"];
+  function drawWindows() {
+    if (!S.windows.length) { $("windows-body").innerHTML = '<div class="empty">no windows.</div>'; return; }
+    $("windows").querySelector("h2").innerHTML = "the candle's ledger <span class=\"c\">newest " +
+      Math.min(6, S.windows.length) + " of " + S.windows.length + "</span>";
+    $("windows-body").innerHTML = S.windows.slice(0, 6).map(function (w) {
+      var r = w.receipts, six = r && r.six_count;
+      var body = "";
+      if (six) {
+        body = '<div class="six">' + SIX.filter(function (k) { return six[k] != null; }).map(function (k) {
+          return '<span class="' + (six[k] ? "hit" : "") + '">' + k.replace(/_/g, " ") + " <b>" + six[k] + "</b></span>";
+        }).join("") + "</div>";
+      } else if (r) {
+        body = '<div class="noreceipt">' + esc(r.note || "receipts carried, no six-count") + "</div>";
+      } else if (w.status === "open") {
+        body = '<div class="noreceipt">burning — no receipt until it closes</div>';
+      } else {
+        body = '<div class="noreceipt">closed with no receipt</div>';
+      }
+      var shas = (w.law_sha || w.town_sha)
+        ? '<div class="shas">law ' + esc((w.law_sha || "—").slice(0, 12)) + " · town " + esc((w.town_sha || "—").slice(0, 12)) + "</div>"
+        : '<div class="shas">no sha pinned yet</div>';
+      return '<div class="win">' +
+        '<div class="row"><span class="id">#' + esc(w.id) + '</span><span class="st ' + esc(w.status) + '">' + esc(w.status) + "</span></div>" +
+        '<div class="row"><span class="k">closes</span><span class="k">' + esc(w.closes_at) + "</span></div>" +
+        (w.cleared_at ? '<div class="row"><span class="k">cleared</span><span class="k">' + esc(w.cleared_at) + "</span></div>" : "") +
+        body + shas + "</div>";
+    }).join("");
+  }
+
+  // ── the inspector ────────────────────────────────────────────────────────
+  function inspect(slug) {
+    $("inspector").querySelector("h2").innerHTML = "inspector <span class=\"c\">/world2/mark?slug=</span>";
+    $("inspector-body").innerHTML = '<div class="fade">reading ' + esc(slug) + "…</div>";
+    door("/world2/mark?slug=" + encodeURIComponent(slug)).then(function (m) {
+      if (S.sel !== slug) return;
+      var g = m.geometry || {}, at = g.at || {}, ex = g.extent || {};
+      var dl = [
+        ["slug", esc(m.slug)],
+        ["kind", esc(m.kind)],
+        ["owner", esc(m.owner)],
+        ["household", esc(m.household || "—")],
+        ["status", esc(m.status)],
+        ["locked", m.locked_window == null ? "—" : "window " + esc(m.locked_window)],
+        ["retired", m.retired_window == null ? "—" : "window " + esc(m.retired_window)],
+        ["parent", esc(m.parent || "—")],
+        ["at", at.x == null ? "de-sited (no where)" : num(at.x) + ", " + num(at.y)],
+        ["extent", ex.w == null ? "—" : num(ex.w) + " × " + num(ex.h)],
+        ["bbox", esc(m.bbox || "—")],
+        ["id", '<span class="fade">' + esc(m.id) + "</span>"],
+      ];
+      $("inspector-body").innerHTML =
+        (m.body ? '<div class="body">“' + esc(m.body) + "”</div>" : "") +
+        "<dl>" + dl.map(function (r) { return "<dt>" + r[0] + "</dt><dd>" + r[1] + "</dd>"; }).join("") + "</dl>" +
+        (m.data ? "<pre>" + esc(JSON.stringify(m.data, null, 1)) + "</pre>" : "");
+    }).catch(function (e) {
+      $("inspector-body").innerHTML = '<div class="err">' + esc(e.message) + "</div>";
+    });
+  }
+
+  // ── the store ────────────────────────────────────────────────────────────
+  function drawStatus() {
+    var s = S.status;
+    if (!s) { $("census").innerHTML = '<div class="err">status door did not answer</div>'; return; }
+    var rows = Object.keys(s.counts).map(function (k) {
+      return '<span class="k">' + esc(k) + "</span><span>" + num(s.counts[k]) + "</span>";
+    });
+    rows.push('<span class="k">placed / register</span><span>' + S.placed.length + " / " + S.register.length + "</span>");
+    $("census").innerHTML = rows.join("");
+    $("heads").innerHTML = (s.projection_heads || []).map(function (h) {
+      return "<b>" + esc(h.repo) + "</b> " + esc(String(h.sha).slice(0, 10)) +
+        ' <span class="fade">@ ' + esc(String(h.ingested_at).replace("T", " ").slice(0, 19)) + "Z</span>";
+    }).join(" &nbsp;·&nbsp; ") || "no projection heads";
+  }
+
+  // ── boot ─────────────────────────────────────────────────────────────────
+  function boot() {
+    sizeMap();
+    Promise.all([
+      door("/world2/marks"),
+      door("/world2/marks?all=true"),
+      door("/world2/docket"),
+      door("/world2/windows"),
+      door("/world2/status"),
+    ]).then(function (r) {
+      S.placed = r[0].marks || [];
+      S.register = r[1].marks || [];
+      S.byslug = Object.create(null);
+      S.register.forEach(function (m) { S.byslug[m.slug] = m; });
+      S.placed.forEach(function (m) { S.byslug[m.slug] = m; });
+      S.docket = r[2];
+      S.windows = (r[3] && r[3].windows) || [];
+      S.status = r[4];
+      var closed = S.windows.filter(function (w) { return w.status !== "open"; });
+      S.freshWindow = closed.length ? closed[0].id : null;
+
+      drawMap();
+      drawLegend();
+      drawDocket();
+      drawWindows();
+      drawStatus();
+      fit(boxOf(S.placed, "town"));
+      if (S.sel) inspect(S.sel);
+    }).catch(function (e) {
+      $("heads").innerHTML = '<span class="err">door failure: ' + esc(e.message) + "</span>";
+      $("docket-body").innerHTML = '<div class="err">' + esc(e.message) + "</div>";
+    });
+  }
+
+  wire();
+  boot();
+})();
+</script>

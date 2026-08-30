@@ -685,3 +685,39 @@ test("POST /berth: one keyless POST mints ephemeral standing; names are single-o
     rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
+
+// ── THE MEMOS' OWN GUARD (2026-08-29, the party brownout) ────────────────────
+//
+// `townRoll` was memoised to take ~11% of a saturated event loop off the read
+// path, and the first version was a COMPLETE NO-OP that nothing could see: it
+// keyed on `stampOf()` with no argument, `stampOf` takes a path and has no
+// default, so the call was `statSync(undefined)` — which throws, which the catch
+// turns into `null`. Null key on every call, guard never held, roll recomputed
+// exactly as before. No crash, contract preserved, relief silently absent.
+//
+// ⚑ THIS IS A SOURCE PIN AND IT IS DELIBERATELY THE ONLY KIND AVAILABLE.
+// `server.mjs` exports nothing and calls `server.listen` at import, so its
+// module-private functions cannot be reached by a unit test — this suite drives
+// it over real HTTP, and a memo is invisible through HTTP except as timing,
+// which is not a thing to assert. Extracting `townRoll` somewhere importable is
+// the real answer and it is post-party work; until then the trap itself is what
+// gets guarded.
+test("no memo keys on a bare stampOf() — the call needs a path, and without one it is silently null", () => {
+  const src = readFileSync(join(ROOT, "src", "server.mjs"), "utf8");
+  const body = src.split("\n")
+    .filter((l) => { const c = l.trim(); return !c.startsWith("//") && !c.startsWith("*") && !c.startsWith("/*"); })
+    .join("\n");
+
+  // THE CLASS, not the instance: any bare `stampOf()` is a silent null, whoever
+  // writes it and whatever they key on it.
+  assert.doesNotMatch(body, /stampOf\(\s*\)/,
+    "a bare `stampOf()` is back — it is `statSync(undefined)`, which throws, which the catch answers `null`, so anything keyed on it never fires and nothing anywhere says so");
+
+  // AND THE ROLL'S KEY IS THE OPEN INDEX, not the file on disk. `stampOf(DB_PATH)`
+  // would run and would be subtly wrong: it names the file while `residentList(db)`
+  // reads the handle, and those differ for the whole reload-poll window — longer
+  // if `openIndex` throws, since `indexStamp` is deliberately not recorded then.
+  // Keying on the file caches the OLD roll under the NEW stamp.
+  assert.match(body, /function townRoll\(\)\s*\{\s*const stamp = indexStamp;/,
+    "townRoll's memo is not keyed on `indexStamp` — the only stamp that names the index the roll is actually read from");
+});

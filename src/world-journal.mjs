@@ -71,6 +71,37 @@
 import { execFileSync } from "node:child_process";
 
 import { openDynamic, dynamicDbPath, singleLogEnabled } from "./dynamic-store.mjs";
+import { mirrorAct, mirrorSettled, world2Enabled } from "./world2-acts.mjs";
+import { candleEnabled, claimEligible, claimHouseholdFor, claimTxFromJournal, docketSettled, submitClaimFromJournal } from "./world2-claims.mjs";
+import { PenUnreachableError, laneFlipped, laneOf, penSettled, penWrite, shadowWrite } from "./world2-pen.mjs";
+
+/**
+ * Is this row a PRIVATE compose, whose act must not reach the public `acts`
+ * log until a stake puts it forward? (Phase 5.6 — see the deferral note in
+ * appendJournal.)
+ *
+ * Narrow on purpose, and every clause earns its place:
+ *   · mark class + leave-mark/amend — the only declarations that carry a body.
+ *   · put_forward !== true — the DOOR's verdict that this act stakes the mark;
+ *     an unstaked declaration is the resident composing, not the town acting.
+ *   · candleEnabled — WITHOUT THE DOCKET THERE IS NOTHING TO CARRY THE ROW.
+ *     Deferring with the candle off would not make an act private, it would
+ *     drop it on the floor, and the parity falsifier would be right to red.
+ *     A store that cannot hold a draft gets the old behaviour, unchanged.
+ *
+ * KNOWN GAP, named rather than hidden: a `withdraw` of a private draft still
+ * mirrors, so `acts` records that this author discarded this slug — the FACT
+ * and the NAME leak, though never the body. Closing it needs the door to know
+ * synchronously that the target is a draft, which it cannot today (the docket
+ * pen is async and the 1.0 published/unpublished split does not answer it).
+ * Carried as a finding, not papered over.
+ */
+function privateDraftAct(row) {
+  return String(row.class) === CLASS_MARK
+    && (row.action === ACTION_LEAVE || row.action === ACTION_AMEND)
+    && candleEnabled()
+    && (() => { try { return JSON.parse(row.payload ?? "{}")?.put_forward !== true; } catch { return false; } })();
+}
 import { draftDeltaForKey, mainRef, publishedState, resolvedWorldHousehold } from "./world-branches.mjs";
 
 export { singleLogEnabled };
@@ -88,6 +119,22 @@ import { TOWN_CLASSES } from "./town-journal.mjs";
 
 export const CLASS_MARK = "mark";
 export const CLASS_FRAME = "frame";
+// ── THE LANE CLASSES (2026-08-28, the write-path closure) ───────────────────
+//
+// Two more kinds of act, and NEITHER RIDES THIS TABLE. They are declared here
+// beside their siblings because `class` is one vocabulary and a word invented
+// at its own call site is a word the next reader has to go find — the same
+// reason CLASS_STANCE living in world-stance.mjs cost this file eight tests
+// (the tripwire's allowlist, above).
+//
+// `voice` is a say: written to the voices log (voices.mjs § append), which is
+// the ruled durable operator record and stays exactly that. `holding` is a
+// give/drop/take: an edge in `attachments` (world-hold.mjs § the act). Both
+// reach World 2.0's `acts` through `mirrorLaneAct` rather than through this
+// table — see its header for why a lane with its own pen does not grow one
+// here.
+export const CLASS_VOICE = "voice";
+export const CLASS_HOLDING = "holding";
 // `move` is a walk — an entity's own declared departure. It is not a `frame`
 // row: a walk moves you WITHIN a frame, and §8 is explicit that a frame changes
 // only at a boundary you stand on. enter/exit are the reparentings and keep
@@ -252,6 +299,149 @@ const ROW_COLUMNS = "crossing, actor, action, object, at_anchor, at_dx, at_dy, w
  * receipt: a caller that cannot name the line it wrote cannot prove it wrote.
  */
 export function appendJournal(db, entry = {}) {
+  const row = normalizeRow(entry);
+
+  const stmt = db.prepare(
+    `INSERT INTO journal (${ROW_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  const res = stmt.run(
+    row.crossing, row.actor, row.action, row.object,
+    row.at_anchor, row.at_dx, row.at_dy,
+    row.witnesses, row.class, row.payload, row.effect,
+    row.household, row.written_at);
+
+  const seq = Number(res.lastInsertRowid);
+  // World 2.0 shadow pens (dev era): mirror the row into Postgres `acts`, and
+  // a mark-class declaration also onto the public docket (`claims`). No-ops
+  // unless WORLD2_PG=1 (+ WORLD2_CANDLE=1 for the docket); fire-and-forget for
+  // this caller, loud on failure, parity-falsified. Death dates in the modules.
+  //
+  // ── THE DEFERRAL, and why the mirror is conditional (Phase 5.6) ───────────
+  //
+  // A PRIVATE DRAFT MUST NOT REACH `acts`, because `acts` is the one table that
+  // leaves the box: the notary exports `archives/acts/<window>.jsonl` into a
+  // public git repo, frozen on write. A leave-mark's payload carries the mark's
+  // BODY — so mirroring an unstaked declaration would publish a resident's
+  // private sentence permanently, and no row policy on `claims` could reach it
+  // there. That is the whole privacy promise of Phase 5.6, lost at this line.
+  //
+  // So the SQLITE JOURNAL always gets its row (it is local to this box, it is
+  // 1.0's live layer, and every 1.0 read depends on it), and the POSTGRES
+  // MIRROR waits. The docket pen carries the row on the draft claim itself
+  // (`data._deferred_act`) and mirrors it the moment a stake makes the mark
+  // public — dated at the putting-forward, which is when the world actually
+  // witnessed anything.
+  //
+  // The predicate is deliberately narrow: ONLY an unstaked mark-class
+  // declaration defers. Everything else — speech, walking, withdrawals of
+  // public marks, every non-mark class — mirrors exactly as before.
+  //
+  // ── R1'S ROUTING (2026-08-29): one act, one transaction ──────────────────
+  // A public mark-class row used to take TWO queues (mirrorAct's acts insert,
+  // submitClaimFromJournal's claims write) with nothing joining them — the
+  // design's two-pens disease. It now takes ONE `shadowWrite`, whose single
+  // transaction inserts the act and runs the claim logic on the same client.
+  // A private draft still touches claims ONLY (the deferral, unchanged), and
+  // a non-candle row keeps mirrorAct's single-table queue: with one table
+  // there is nothing to be atomic WITH, and its ordering guarantee for the
+  // lane acts stays where it has always been. (The two queues can interleave
+  // acts ids across lanes now; D6 already ruled replay order is `(at, id)`,
+  // so id order carries no meaning a reader may lean on.)
+  if (privateDraftAct(row)) submitClaimFromJournal(row, seq);
+  else if (claimEligible(row)) {
+    shadowWrite(row, seq, {
+      household: () => claimHouseholdFor(row),
+      claimFn: (client, _actId, household) => claimTxFromJournal(client, row, seq, { household }),
+    });
+  } else mirrorAct(row, seq);
+
+  return { seq, ...row };
+}
+
+/**
+ * THE FLIPPED WRITE — the pen-flip design's §3 ordering, per lane (D1).
+ *
+ * Postgres commits FIRST and is awaited; on failure this THROWS
+ * PenUnreachableError and NOTHING has been written anywhere — the door owes
+ * the resident the ruled refusal (D2): "the office's record cannot be
+ * reached — nothing was written, and nothing was lost."
+ *
+ * After the commit, the sqlite journal receives the same row as the REVERSE
+ * mirror (D3) — best-effort, after the record, never with a vote. While it
+ * holds, every 1.0 read (the door guards included) stays valid, which is what
+ * lets a lane flip before the R3 read ports land: the ports gate rule 6's
+ * DELETION, not this flag. A reverse write that fails is loud and the parity
+ * falsifier's reverse arm reds at the next check.
+ *
+ * The mark lane is refused here BY NAME until its claim path is wired through
+ * `penWrite`'s claimFn at the call site — flipping it via the env flag alone
+ * would write acts with no docket, which is F2 self-inflicted.
+ *
+ * The ARENA lane is refused BY RULING, not by unreadiness (founder, 2026-08-29,
+ * the birthday party's own night: "we can just keep the arena on sqlite for
+ * now"). The combat machinery is scheduled to be rebuilt hardened and
+ * 2.0-native rather than ported, so its lane stays sqlite-first deliberately —
+ * no read port exists, no reverse-mirror deadline applies to it, and a
+ * `W2_PEN=all` sweep must not carry it along by accident. Lifting this refusal
+ * is a founder ruling plus the arena read ports, together.
+ */
+const FLIP_REFUSED = Object.freeze({
+  mark: "its candle half must ride penWrite's own transaction; unset it from W2_PEN",
+  arena: "the arena stays sqlite-first by founder ruling (2026-08-29) — the hardened rebuild lands 2.0-native instead; unset it from W2_PEN",
+});
+
+export async function appendActFlipped(db, entry = {}) {
+  const row = normalizeRow(entry);
+  const lane = laneOf(row);
+  if (FLIP_REFUSED[lane] || privateDraftAct(row)) {
+    throw new Error(`the "${lane}" lane's flip is not wired — ${FLIP_REFUSED[lane] ?? "private drafts never ride the flip"}`);
+  }
+  const { actId } = await penWrite(row); // throws PenUnreachableError — the door bounces, nothing was written
+  let seq = null;
+  try {
+    const stmt = db.prepare(
+      `INSERT INTO journal (${ROW_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    const res = stmt.run(
+      row.crossing, row.actor, row.action, row.object,
+      row.at_anchor, row.at_dx, row.at_dy,
+      row.witnesses, row.class, row.payload, row.effect,
+      row.household, row.written_at);
+    seq = Number(res.lastInsertRowid);
+  } catch (err) {
+    // The record is already committed; the convenience copy failed. Loud, and
+    // the reverse-parity check names the row — never a refusal, because
+    // refusing now would tell the resident an act the record holds did not
+    // happen, which is the exact lie R2 exists to prevent (in mirror image).
+    console.error(`[world-journal] REVERSE MIRROR FAILED (act ${actId}, ${row.actor} ${row.action}): ${String(err?.message ?? err)}`);
+  }
+  return { seq, actId, flipped: true, ...row };
+}
+
+/** Which pen a lane's call site should use — the one switch the doors read. */
+export function penFor(entry) {
+  const lane = laneOf(normalizeRow(entry));
+  return laneFlipped(lane) ? "postgres" : "journal";
+}
+
+export { PenUnreachableError, laneFlipped };
+
+/**
+ * ONE ROW, NORMALIZED — the whole of what a journal line IS, with no store in
+ * sight.
+ *
+ * Split out of `appendJournal` on 2026-08-28 for the write-path closure, and
+ * the split is the point rather than tidiness. `acts` receives rows from TWO
+ * kinds of lane now — the ones that write a sqlite journal row first, and the
+ * ones that keep their own pen (a voice, a holding) — and if each built its own
+ * row shape, the two would drift field by field until a `say` and a
+ * `leave-mark` disagreed about what `at_dx: null` means. This file already
+ * learned that lesson once, in the LEDGER_PAYLOAD note above: one home for a
+ * serialization, or two eras disagree in a way that still parses.
+ *
+ * Every trap the insert path knew is in here, unchanged and still commented at
+ * its line — most of all the `== null` FIRST ordering, which is the difference
+ * between "the world, position unknown" and Ferry's crossing.
+ */
+export function normalizeRow(entry = {}) {
   const {
     crossing = null, actor, action, object = null,
     at = null, witnesses = null, cls = CLASS_MARK,
@@ -306,15 +496,121 @@ export function appendJournal(db, entry = {}) {
     written_at: String(writtenAt),
   };
 
-  const stmt = db.prepare(
-    `INSERT INTO journal (${ROW_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
-  const res = stmt.run(
-    row.crossing, row.actor, row.action, row.object,
-    row.at_anchor, row.at_dx, row.at_dy,
-    row.witnesses, row.class, row.payload, row.effect,
-    row.household, row.written_at);
+  return row;
+}
 
-  return { seq: Number(res.lastInsertRowid), ...row };
+// ── THE LANE HOOK · an act the sqlite journal never held ────────────────────
+//
+// THE GAP THIS CLOSES, stated as the class rather than the instance. The live
+// lane's law is that `acts` is the town's event log — "every act in the town
+// belongs to exactly one lane" (gold §1) — and the mirror above delivers on
+// that for every act that takes a journal row. It is silent about the acts that
+// do not, and there are three of them: a SAY (its pen is the voices log), a
+// HOLDING (its pen is `attachments`), and a WALK under WORLD_MOVEMENT_V2 (its
+// pen is `movements`; the journal arm in walk-exec.mjs is the flag-OFF lane and
+// has not run on dev since movement-v2 shipped). Nothing said, carried or
+// walked since the seed reached World 2.0, and `/world2/say` answered over the
+// crossing-save's crystallized record alone.
+//
+// ── WHY THESE DO NOT SIMPLY GROW A JOURNAL ROW ─────────────────────────────
+//
+// It was the first thing tried and it is the wrong shape, for two reasons that
+// point the same way:
+//
+//   · THE JOURNAL IS BEING DELETED. It is 1.0's live layer, and rule 6 removes
+//     it at cutover. Adding three lanes to the thing we are retiring is
+//     lift-and-shift wearing a migration's coat (rule 1) — and `journal_seq`
+//     is documented in 001_tables.sql as the SHADOW-ERA pairing key that "DIES
+//     AT CUTOVER". A lane mirrored with no seq is already in its final shape;
+//     a lane given a seq would have to be un-given one later.
+//   · IT WOULD CHANGE 1.0. The drain crystallizes every non-mark row into
+//     `STATE/log/<N>.journal.jsonl` in the world repo (world-drain.mjs §
+//     logLine, which filters only for CLASS_MARK). So a journal row for every
+//     say would put a new public git artifact on a live shared world, today,
+//     to buy World 2.0 nothing it cannot have without it.
+//
+// So these lanes keep their own pens — untouched, still 1.0's truth — and this
+// is the SECOND consumer of the same fact, exactly as `emissionFromVoice` is
+// the second consumer of a voice. Same fire-and-forget contract as `mirrorAct`,
+// same loudness on failure, same death date.
+//
+// ── AND THE ROW SHAPE IS NOT REINVENTED ────────────────────────────────────
+//
+// `normalizeRow` is the one that `appendJournal` uses, which is what makes "a
+// say and a leave-mark are the same kind of row in `acts`" true by construction
+// rather than by two normalizers agreeing.
+/**
+ * Mirror an act whose pen is not this table. `entry` is `appendJournal`'s own
+ * vocabulary, so a lane describes its act exactly as a journalled lane would.
+ *
+ * Returns the mirror's promise (the caller may await it — an exec that is about
+ * to `process.exit` MUST) or undefined when the mirror is off.
+ */
+export function mirrorLaneAct(entry = {}) {
+  return mirrorAct(normalizeRow(entry), null);
+}
+
+// ── THE ESCAPE, AND WHY IT IS WORSE THAN THE GAP ────────────────────────────
+//
+// The say gap is a lane that never calls `appendJournal`. This is its twin, and
+// the twin is the dangerous one BECAUSE THE LANE LOOKS CLOSED: `crossing-exec`
+// and `walk-exec` both call `appendJournal` — every enter, every exit, every
+// flag-off walk — and both are SUBPROCESSES whose last line is
+//
+//     const answer = (obj) => { console.log(JSON.stringify(obj)); process.exit(0); };
+//
+// `mirrorAct` is fire-and-forget by contract (world2-acts.mjs § WRITE
+// DISCIPLINE): it queues the INSERT and returns before a connection is even
+// opened. `process.exit(0)` is immediate and unconditional — it does not drain
+// the event loop — so the act died in the child with the pg socket, and the
+// console.error that the module promises on failure died with it too. A lost
+// act, silently, from a lane whose code reads as mirrored.
+//
+// LATENT RATHER THAN LIVE, and the difference is only luck: `/etc/postmark-
+// office-dev.env` carries no WORLD2_* variable (verified 2026-08-28), so the
+// mirror has never been on in a process that spawns these execs. It would have
+// begun losing enter/exit acts the hour the flag was set.
+//
+// THE FIX IS THE CONTRACT MADE EXPLICIT rather than the contract changed: the
+// mirror stays fire-and-forget for the request path (an in-process caller has
+// an event loop that outlives it, which is the whole reason the queue is
+// allowed to be async), and any caller ABOUT TO END ITS PROCESS awaits this
+// first. That is the one place the difference matters.
+//
+// BOUNDED, and the bound is not a detail. These execs run under the town flock;
+// an unbounded wait on an unreachable Postgres would hold the lock for the
+// TCP timeout and stall the crossing behind it — trading a lost act for a
+// wedged town, which is the worse of the two. So the wait is capped and a cap
+// that is REACHED is loud: the operator learns the mirror is behind, and the
+// parity falsifier reds at the next check, which is exactly the alarm the
+// missing console.error should have raised in the first place.
+/**
+ * Await the World 2.0 shadow pens. Call before `process.exit` in any pen that
+ * writes acts and then ends its own process.
+ *
+ * Returns `{ settled, waited_ms }` — `settled: false` means the cap was hit and
+ * a write may be in flight, which is a fact the caller should report rather
+ * than swallow.
+ */
+export async function settleShadowPens({ timeoutMs = 5000 } = {}) {
+  if (!world2Enabled() && !candleEnabled()) return { settled: true, waited_ms: 0 };
+  const started = Date.now();
+  let timer = null;
+  const capped = new Promise((resolve) => { timer = setTimeout(() => resolve("timeout"), timeoutMs); });
+  try {
+    const done = await Promise.race([
+      Promise.allSettled([mirrorSettled(), docketSettled(), penSettled()]).then(() => "settled"),
+      capped,
+    ]);
+    const waited = Date.now() - started;
+    if (done === "timeout") {
+      console.error(
+        `[world2] SHADOW PENS DID NOT SETTLE in ${timeoutMs}ms — this process is about to exit and a mirror write may be in flight. `
+        + "The act is in the sqlite journal; `acts` may be missing its twin, and falsifier-acts-parity will say so.");
+      return { settled: false, waited_ms: waited };
+    }
+    return { settled: true, waited_ms: waited };
+  } finally { clearTimeout(timer); }
 }
 
 // ── the replay reader ────────────────────────────────────────────────────────

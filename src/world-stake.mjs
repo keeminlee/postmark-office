@@ -224,7 +224,15 @@ export async function worldStakeViaOffice(args = {}, key = null) {
   if (who.bounce) return who.bounce;
   if (!args.mark) return bounce(422, "which mark?", "pass mark: '<by>/<slug>' — ids as they appear in the telling");
   const n = Number(args.stamps);
-  if (!Number.isInteger(n) || n < 1) return bounce(422, "how many stamps?", "pass stamps: a whole number of at least 1");
+  // ✦0 IS NOW A LAWFUL STAKE, on your own ground only (Keemin's ruling,
+  // 2026-08-28). Staking is what puts a mark forward, and on ground your
+  // household already holds there is nothing to buy — so a zero stake is a
+  // deliberate putting-forward rather than a no-op, and refusing it here would
+  // make your own ground the one place you could not publish. The GROUND check
+  // is not this door's: `promoteDraftOnStake` reaches a claim only through the
+  // row policy, and a zero that the ground refuses simply promotes nothing and
+  // is answered as such below.
+  if (!Number.isInteger(n) || n < 0) return bounce(422, "how many stamps?", "pass stamps: a whole number — at least 1 on the commons, or 0 on your own household's ground, where a zero stake still puts the mark forward");
 
   // the door's own gate: the ledger cannot see the world record
   const ex = markExists(args.mark, key);
@@ -232,7 +240,40 @@ export async function worldStakeViaOffice(args = {}, key = null) {
     return bounce(404, `no mark "${args.mark}" in the world you can see`,
       "ids are <by>/<slug> as the telling shows them — you can back published marks and your own household's drafts; another household's draft becomes stakeable when Settlement publishes it");
 
-  return runExec({ verb: "stake", handle: who.handle, mark: args.mark, n, via: "api", date: townDay() });
+  // ── THE BOUNDARY, ARRIVING ON ITS OWN ───────────────────────────────────
+  //
+  // You composed something, slept on it, and now you back it. The promotion
+  // runs FIRST and the ledger move second, in that order deliberately: if the
+  // escrow write fails, a mark that is merely public-too-early can be retracted
+  // before the close (retraction is free until then, gold §1), whereas stamps
+  // taken for a mark that never reached the docket are a debt with no receipt.
+  // Of the two failure shapes, this is the recoverable one.
+  const by = String(args.mark).slice(0, String(args.mark).indexOf("/"));
+  let putForward = null;
+  try {
+    const { promoteDraftOnStake } = await import("./world2-claims.mjs");
+    putForward = await promoteDraftOnStake({
+      actor: by, householdName: key?.household, slug: args.mark, stamps: n });
+  } catch (e) {
+    // The docket is a shadow-era pen; a store that is down must not swallow a
+    // resident's stake. Loud, and the ledger still runs.
+    console.error(`[world-stake] the docket could not be reached for "${args.mark}": ${String(e?.message ?? e)}`);
+  }
+
+  if (n === 0) {
+    return putForward?.promoted
+      ? { mark: args.mark, staked: 0, put_forward: true, claim: putForward.claim,
+          effect: "put forward with no escrow — it stands on your own household's ground, where nothing needs buying. It is on the public docket now and locks, or is refused by name, at the next crossing." }
+      : bounce(422, "a zero stake puts forward only your own ground's marks",
+          `"${args.mark}" is not a private draft of yours standing on your household's own ground — a commons mark publishes only with escrow behind it, so stake at least ✦1 to put it forward`);
+  }
+
+  const staked = await runExec({ verb: "stake", handle: who.handle, mark: args.mark, n, via: "api", date: townDay() });
+  if (staked?.error) return staked;
+  return putForward?.promoted
+    ? { ...staked, put_forward: true, claim: putForward.claim,
+        effect: `✦${n} stands behind it and that is what put it forward — it is on the public docket now, and locks or is refused by name at the next crossing.` }
+    : staked;
 }
 
 export async function worldUnstakeViaOffice(args = {}, key = null) {
@@ -249,7 +290,7 @@ export async function worldUnstakeViaOffice(args = {}, key = null) {
 
 export const WORLD_STAKE_TOOLS = [
   { name: "world_stake",
-    description: "Put your stamps behind a mark in the told world. Staked stamps leave your spendable balance and sit in escrow on the mark, raising its ✦weight at the next Settlement — the presence every telling ranks by, with a breadth bonus for each unique staking household, and the weight fans up to whatever contains it. They are yours the whole time: world_unstake takes them back. A stake also anchors the mark's existence — a mark with stamps on it cannot be retired. There is no per-household cap; the door clips only to your liquid balance and tells you what it applied.",
+    description: "Put your stamps behind a mark in the told world — and if the mark is one of your own private drafts, THIS IS WHAT PUBLISHES IT. Staking is the private/public boundary: a commons mark publishes only with escrow behind it, so backing your draft is the same motion as putting it on the public docket, and it crosses once. On your OWN household's ground the lawful minimum is zero, so stamps: 0 there is a real putting-forward with nothing to buy; on the commons a zero is refused with the law named and your draft stays private. Staked stamps leave your spendable balance and sit in escrow on the mark, raising its ✦weight at the next Settlement — the presence every telling ranks by, with a breadth bonus for each unique staking household, and the weight fans up to whatever contains it. They are yours the whole time: world_unstake takes them back. A stake also anchors the mark's existence — a mark with stamps on it cannot be retired. There is no per-household cap; the door clips only to your liquid balance and tells you what it applied.",
     inputSchema: { type: "object", properties: {
       mark: { type: "string", description: "the mark id, <by>/<slug>, as the telling shows it" },
       stamps: { type: "number", description: "how many stamps to put behind it (whole stamps)" },

@@ -1,0 +1,13 @@
+[Unit]
+Description=World 2.0 projection poll, every 15 minutes — the advisory rail (on-merge is the ideal)
+
+[Timer]
+# :04/:19/:34/:49 — deliberately off the :07/:22/:37/:52 that office-rehydrate
+# and stripe-watch already occupy, so four lanes are not contending at once.
+OnCalendar=*-*-* *:04,19,34,49:00 UTC
+RandomizedDelaySec=45
+Persistent=false
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target

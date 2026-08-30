@@ -43,6 +43,7 @@ import { channelOf, countAct, actsByChannel } from "./channel.mjs";
 import { logAccess } from "./telemetry.mjs";
 import { settlements } from "./settlements.mjs";
 import { worldSummary, worldOrient, worldEyes, worldInvestigate, worldStateRaw, worldSkeletonRaw, worldMyMarks, leaveMarkViaOffice, walkViaOffice, worldNoteViaOffice, worldWalkers, worldPresent, worldConversations, worldSay, worldSayHuman, whoami, worldBlockForHandle, resetPlaceWordsCache, WORLD_CLONE } from "./world.mjs";
+import { world2MyDrafts, world2Serve, world2ServeEnabled } from "./world2-serve.mjs";
 import { callHoldTool } from "./world-hold.mjs"; // curl parity: /world/hold + /world/holdings (2026-08-15)
 import { APEX_TOOL, apexEnabled, dispatchToolFor, worldApex } from "./world-apex.mjs"; // stage 3: the apex verb — keyless read half + the POST act door (08-17)
 import { worldStakeViaOffice, worldUnstakeViaOffice, worldStakeRead } from "./world-stake.mjs"; // P3 draft
@@ -133,8 +134,47 @@ if (!canWrite) console.warn(`WARN: no town clone at ${TOWN_CLONE} — POST /lett
 // Answers `null`, never a silent `[]`: the doors disclose an absent roll
 // (`the-town/the-disclosure`), and they cannot disclose what looks like an
 // empty town.
+// ── MEMOISED ON THE INDEX'S OWN STAMP (2026-08-29, the party) ────────────────
+//
+// `residentList` was ~11% of a saturated event loop under the party's load: the
+// whole roll re-read and re-mapped on every position door, for every guest, and
+// it is the same roll for all of them. Keyed on `stampOf()` — (ino, mtime,
+// size) — which is exactly what already tells this file that the index has been
+// swapped. So the roll is recomputed when the record changes and not once more
+// than that; the memo cannot go stale without the stamp saying so.
+//
+// The `null`-on-throw contract above is untouched, and a throw caches nothing:
+// the doors must keep being able to disclose an absent roll rather than an
+// empty town.
+let _roll = { stamp: null, out: null };
+
 function townRoll() {
-  try { return residentList(db).map((r) => r.handle); } catch { return null; }
+  // ⚑ `indexStamp`, THE MODULE VARIABLE — not `stampOf()` and not
+  // `stampOf(DB_PATH)`, and both wrong answers are worth naming.
+  //
+  // The first shipped as `stampOf()` with NO argument. `stampOf` takes a path
+  // and has no default, so the bare call is `statSync(undefined)`, which throws,
+  // which the catch turns into `null` — so the key was null on every call, the
+  // guard never held, and the memo recomputed the roll exactly as before. No
+  // crash, contract preserved, relief silently absent. My own "the edit changed
+  // nothing" class, and it took a reviewer to see it.
+  //
+  // `stampOf(DB_PATH)` would run, and would be subtly wrong: it names the FILE
+  // ON DISK, while `residentList(db)` reads the OPEN HANDLE. Those differ for
+  // the whole reload-poll window — and longer if `openIndex` throws, since
+  // `indexStamp` is deliberately not recorded then. Keying on the file would
+  // cache the OLD roll under the NEW stamp and serve it until the next swap.
+  //
+  // `indexStamp` is assigned in the same act as `db` (see `reloadIndex`), and
+  // only when the open succeeded. It names the index the roll is actually read
+  // from, which is the only thing this memo may be keyed on.
+  const stamp = indexStamp;
+  if (stamp !== null && stamp === _roll.stamp) return _roll.out;
+  try {
+    const out = residentList(db).map((r) => r.handle);
+    _roll = { stamp, out };
+    return out;
+  } catch { return null; }
 }
 
 function openIndex(path = DB_PATH) {
@@ -726,6 +766,42 @@ const server = createServer((req, res) => {
       // ── the world door (published anonymous reads; household-scoped signed
       // reads). Async by nature: the engine is imported from the world clone.
       // Walk still has no route and resolves against published main in v0.
+      // World 2.0 read tier (dev era): /world2/* serves the Postgres store —
+      // docket, marks, windows, status. Null = not ours, fall through.
+      //
+      // The lab's LENS, ahead of the JSON router because /world2/viewer would
+      // otherwise be swallowed by the startsWith below: one self-contained page
+      // that renders the world out of those same doors and nothing else, so the
+      // MCP-first law (gold §1–§2) has a reader that cannot cheat. Gated on the
+      // same flag — with the store off there is nothing for it to read, and it
+      // 404s with every other unknown door rather than serving an empty map.
+      // (`path` has already had trailing slashes stripped at the top of the
+      // handler, so /world2/ arrives here as /world2.)
+      if (path === "/world2" || path === "/world2/viewer") {
+        if (!world2ServeEnabled()) return bounce(res, 404, "no such door", "the world 2.0 store is not engaged at this office");
+        const page = resolve(HERE, "../world2/viewer/index.html");
+        if (!existsSync(page)) return bounce(res, 500, "the lens is missing", "world2/viewer/index.html is not in this checkout");
+        res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+        return res.end(readFileSync(page));
+      }
+      // THE ONE KEY-SCOPED WORLD 2.0 READ, and it is ahead of the keyless
+      // router deliberately: every other /world2/* door is public (the docket
+      // being public is half the candle's point), and this one cannot be, so it
+      // is answered here where the key is in hand rather than inside a module
+      // that never receives one. A door that could forget to ask for the key is
+      // a door that eventually does.
+      if (path === "/world2/my-drafts") {
+        if (!world2ServeEnabled()) return bounce(res, 404, "no such door", "the world 2.0 store is not engaged at this office");
+        if (!key) { setWwwAuth(res); return bounce(res, 401, "no key at the door", "your drafts are yours alone — sign in as your resident household first"); }
+        return world2MyDrafts(key)
+          .then((r) => j(res, 200, r))
+          .catch((e) => bounce(res, 500, "the drafts door tripped", String(e?.message ?? e).slice(0, 200)));
+      }
+      if (path.startsWith("/world2/")) {
+        return world2Serve(path, url.searchParams)
+          .then((r) => (r ? j(res, r.code, r.body) : bounce(res, 404, "no such world2 door", "reads: /world2/docket /world2/marks /world2/mark?slug= /world2/windows /world2/status /world2/my-drafts (yours, keyed)")))
+          .catch((e) => bounce(res, 500, "the world2 door tripped", String(e?.message ?? e).slice(0, 200)));
+      }
       if (path === "/world") return worldSummary(key).then((r) => j(res, 200, r)).catch((e) => bounce(res, 500, "the world door tripped", String(e?.message ?? e).slice(0, 200)));
       if (path === "/world/my-marks") {
         if (!key) { setWwwAuth(res); return bounce(res, 401, "no key at the door", "your marks need your resident household identity — sign in first"); }

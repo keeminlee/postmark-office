@@ -72,10 +72,31 @@ import { servedEnterExitLedger } from "./enter-exit-ledger.mjs";
 // POS-5's consent verb. STANCE_TOOLS ride the schema lookup without joining
 // the flat tool list, exactly as CROSSING_TOOLS do and for the same reason.
 import { ACTION_STANCE, STANCE_TOOLS, declareStanceViaOffice, readNeverPerforms, stanceShadow, stancesBlock } from "./world-stance.mjs";
-import { callHoldTool } from "./world-hold.mjs";
+import { callHoldTool, holdingsOf, liveHolder } from "./world-hold.mjs";
+import { openDynamic } from "./dynamic-store.mjs";
+import { declareMovement, readAttachments } from "./dynamic-entities.mjs";
+// The stride a placement is stamped with — read off the record like every other
+// departure's, never a constant here (decision 008b).
+import { departurePace } from "./world-classes.mjs";
 import { storeDbPath } from "./world-serve.mjs";
-import { AMBIENT_REACH_SQL, CLASS_MARK_GATE_SQL } from "./world-store.mjs";
-import { resolveHumanActor } from "./human-actor.mjs";
+import { AMBIENT_REACH_SQL, CLASS_MARK_GATE_SQL, WORKS_PATH_SQL } from "./world-store.mjs";
+import { actorRoster, resolveHumanActor } from "./human-actor.mjs";
+// The hand an embodied act is recorded under. Imported rather than derived here:
+// `worldSayHuman` has owned this label since 2026-08-08 and `humanHandFor` is
+// that one derivation, moved somewhere both doors can read it.
+import { humanHandFor } from "./households.mjs";
+import {
+  classOfInstance, entriesOfClass, guardsPass, heldEntries, kindOf, resolveGrants, resolveForActor,
+} from "./world-grants.mjs";
+import { exitAllowed, walkAllowed } from "./embodiment.mjs";
+// THE ARENA'S DOOR. `src/encounter.mjs` has held the wheel, the witnessed roll
+// and the NPC driver since 2026-08-26 and was imported by nothing in `src/` —
+// law with no door behind it, which is precisely the 501 the dispatch miss
+// below used to answer. `arena.mjs` is the caller; this is where it is called.
+import {
+  ARENA_TOOLS, ARENA_VERBS, arenaActViaOffice, arenaGroundAt, cockpitEncounter, lootShroudedIn, spawnPointFor,
+  cockpitPortal, encounterOn, joinOnCrossing, leaveOnCrossing, looseIn, publicState,
+} from "./arena.mjs";
 
 export const apexEnabled = () => process.env.WORLD_APEX === "1";
 
@@ -257,6 +278,426 @@ export function lawOf(db, id) {
   } catch { return null; }
 }
 
+// ── the precondition a residue class puts in gate position ──────────────────
+//
+// Sibling of `residueOf` and `lawOf`, same authorship and tier gate. It reads
+// ONE field — `requires:` — off the class an action's residue names, because
+// the precondition belongs to the ACT, not to the ground that granted it. That
+// placement is what makes it hold no matter which channel opened the door: a
+// weapon carried out of a portal still calls `strike`, and `strike` still says
+// where it may be swung.
+const REQUIRES_QUERY = `SELECT id, json_extract(props, '$.requires') AS requires
+       FROM nodes
+      WHERE id = ? AND by = 'the-town' AND tier = 'constitution'
+        AND json_extract(props, '$.class') IS NOT NULL`;
+
+export function requiresOf(db, id) {
+  if (!db || !id) return null;
+  try {
+    const row = db.prepare(REQUIRES_QUERY).get(String(id));
+    return row ? parseJson(row.requires, null) : null;
+  } catch { return null; }
+}
+
+/**
+ * The encounter's phase where the caller is standing, or null.
+ *
+ * Asked only when a residue class names `phase:` in its precondition — which
+ * today is `the-town/loot` and nothing else. Null when there is no wheel-
+ * bearing ground under the caller, and `guardsPass` refuses on null exactly as
+ * it should: a phase precondition off a portal ground is a condition about a
+ * fight that is not happening.
+ *
+ * Opens the dynamic store because the acts are journal rows; closes it on the
+ * way out, including when the fold throws.
+ */
+export function phaseAt(db, spineIds = []) {
+  const place = arenaGroundAt(db, spineIds);
+  if (!place) return null;
+  let dyn = null;
+  try {
+    dyn = openDynamic();
+    return encounterOn(db, dyn, place)?.phase ?? null;
+  } catch { return null; }
+  finally { try { dyn?.close(); } catch { /* a reader that cannot close still read */ } }
+}
+
+/**
+ * Why this hand may not act right now — the read's half of the wheel's gate.
+ *
+ * THE WORDS ARE THE GATE'S OWN, deliberately. A reader who is told "it is
+ * darko's turn" here and then refused with a different sentence at `do:` has
+ * met two doors; there is one door, and it says one thing. Absent — not empty —
+ * when the caller may act, because "you are not blocked" is what no key means.
+ */
+export function actingBlocked(state, who) {
+  if (!state || !who || !state.encounter_live) return null;
+  // ⚑ A HAND WHO IS NOT IN THE WHEEL IS NOT WAITING FOR IT (found live
+  // 2026-08-28, playing the dungeon in a browser).
+  //
+  // The gate this mirrors is the FIFTH step of `arenaActViaOffice`, and the
+  // THIRD is the join: a caller who is not in the wheel is put in it — keeping
+  // the initiative they first rolled — before anything judges them by it,
+  // because "anyone can walk in whenever" is the ruling. Reading only the gate
+  // and not the join made this half of the door stricter than the half that
+  // acts, and the two must say one thing.
+  //
+  // What that cost, seen: rei left the wheel while still standing on the arena
+  // ground. The creature then held the turn — it was the only row left — and
+  // the read answered `acting_blocked` for every verb, so the bar greyed out
+  // whole and the room looked dead. The act would have worked the entire time:
+  // it would have rejoined rei, driven the creature's due turns, and come round.
+  // A reader cannot be expected to click a button the door has just told them
+  // is refused.
+  //
+  // Being out of the wheel is not being unblocked in general — the acts still
+  // pass through the real gate, which will have joined them by the time it
+  // judges. This says only that the WHEEL is not the thing standing in the way.
+  const inOrder = (state.wheel?.order ?? []).some((j) => j.who === who);
+  if (!inOrder) return null;
+  if ((state.downed ?? []).includes(who))
+    return { acting_blocked: { reason: `${who} is down — someone has to lift you`, downed: true,
+      // WHAT IS BLOCKED, BY NAME (founder-ruled 2026-08-29). LOGOS § Downed, not
+      // dead: "Down stops your ARENA acts, not your voice: a downed hand still
+      // speaks, still walks, still holds and hands things over. What they have
+      // lost is the fight, not the room."
+      gates: [...ARENA_VERBS],
+      hint: "at zero you are DOWN, not dead: the wheel skips you until an ally spends their whole turn lifting you. This blocks your ARENA acts only — you can still walk, speak, stake and hand things over while you are on the floor." } };
+  // ⚑ A CREATURE'S TURN IS NOT SOMETHING YOU WAIT OUT — IT IS SOMETHING YOUR
+  // ACT RESOLVES. LOGOS § The arena: "Hostile turns are resolved by the act
+  // that ends a player's turn, in the same handling, until the wheel reaches a
+  // player again. There is no daemon and no ticker: the duet is the event
+  // loop."
+  //
+  // So when the wheel is resting on a creature, the honest answer to "may I
+  // act?" is YES: `arenaActViaOffice` drives every due hostile turn (step 4)
+  // before the gate judges anyone (step 5), so by the time the caller is
+  // judged the wheel has already come round. Reporting the creature's name as
+  // the blocker made the bar grey itself out and wait for a turn that nothing
+  // was ever going to take — which is the founder's own question, in his words:
+  // "I also tried striking and it's just stuck now? like when does the cake
+  // take its turn?" It takes it when you act. A door that greys out the act is
+  // a door that has removed the only thing that moves the fight.
+  //
+  // What is reported instead is the turn AFTER the duet resolves, which is the
+  // turn the gate will actually judge against. This walk mirrors
+  // `pendingHostileTurns` in encounter.mjs — same order, same skips — and the
+  // two are worth keeping in step: that one decides who swings, this one
+  // decides who is told they may not.
+  const order = state.wheel?.order ?? [];
+  const turn = state.wheel?.turn ?? null;
+  let i = order.findIndex((j) => j.who === turn);
+  let guard = 0;
+  while (i >= 0 && order[i] && (order[i].kind === "hostile" || order[i].downed)
+         && guard++ < order.length * 2) i = (i + 1) % order.length;
+  const effective = (i >= 0 ? order[i]?.who : null) ?? turn;
+  if (effective && effective !== who)
+    return { acting_blocked: { reason: `it is ${effective}'s turn`, whose_turn: effective,
+      // ── WHAT THE WHEEL ACTUALLY GATES (founder-ruled 2026-08-29) ───────────
+      //
+      // LOGOS § The arena, as amended: "The wheel gates this ground's ARENA
+      // verbs, and nothing else. … The ordinary verbs of the town are not the
+      // wheel's business: walk, say, stake, unstake, give, take and every other
+      // verb a resident holds anywhere flow UNGATED inside a live encounter,
+      // exactly as they do outside one."
+      //
+      // ⚑ THIS FIELD IS THE RULING'S WHOLE LIVE SURFACE, AND IT IS A READ.
+      // The `do:` gate never held walk or say — `arenaActViaOffice` refuses
+      // anything that is not an arena verb before the wheel is consulted at
+      // all, so the door has always let a walk through mid-fight. What actually
+      // stopped the founder moving during the party is this key: a reader that
+      // sees `acting_blocked` and greys its whole action bar has been told "you
+      // may not act", full stop, because until tonight that is what the law
+      // said. `gates:` is the narrowing, said in a field rather than in prose so
+      // a page can act on it — grey exactly these, leave the rest alone.
+      //
+      // The hint says it too, for the reader who has no page and only sentences.
+      gates: [...ARENA_VERBS],
+      hint: `the wheel gates this ground's ARENA verbs (${ARENA_VERBS.join(", ")}) while an encounter is live — yours comes round. Everything else you can do here is unaffected: walk, speak, stake, hand things over, all ungated mid-fight.` } };
+  return null;
+}
+
+/**
+ * `loose:` on the nearby things that are lying on this portal's floor.
+ *
+ * A thing is loose when the record sites it here and nobody is holding it, or
+ * when the fold says somebody DROPPED it going down. The second half is why
+ * this cannot be read off the record alone: a sword that fell out of a downed
+ * hand is loose because of something that happened in the fight, and only the
+ * fold knows it.
+ *
+ * ⚑ AND IT INJECTS, rather than only marking. See the injection block below:
+ * `nearby` is a salience ranking with a budget, and the things this function
+ * exists to flag are precisely the ones too small to survive it. A version that
+ * only maps is a version that marks an empty list correctly.
+ */
+export function withLoose(nearby = [], portal = null, { standpoint = null } = {}) {
+  const dropped = new Map((portal?.state?.dropped ?? []).map((d) => [String(d.thing), d]));
+  // ── THE SHROUD (founder-ruled 2026-08-29) ──────────────────────────────────
+  //
+  // LOGOS § The portal ground: "A thing whose mark declares `loot` is NEITHER
+  // VISIBLE NOR TAKEABLE while the encounter on its ground is afoot: it is
+  // absent from that ground's loose things, absent from what a standpoint says
+  // stands nearby … At `spent` it appears."
+  //
+  // A FILTER, NOT A FLAG. The first shape of this hid the loot with `hidden:
+  // true` beside `loose:`, which is the same mistake in the opposite direction
+  // from the one two lines down: a page that has the id can draw the thing, and
+  // "already sitting in the room before you even beat the cake" is precisely
+  // what the founder was looking at. What is not in the answer cannot be drawn
+  // by anybody. The record still holds the mark the whole time; this is a read
+  // law and it is enforced by omission.
+  const shrouded = new Set((portal?.shrouded ?? []).map(String));
+  // The record's half of `loose:` — computed in `portalBlockAt`, where the
+  // stores are, and handed here as rows for the same reason the shroud is a
+  // list: one reader of the room, not two.
+  const floor = (portal?.floor ?? []).filter((t) => !shrouded.has(String(t.thing)));
+  const onTheFloor = new Set(floor.map((t) => String(t.thing)));
+
+  const marked = nearby.filter((o) => !shrouded.has(String(o.id))).map((o) => {
+    const d = dropped.get(String(o.id));
+    // Sited here, held by nobody, and nothing in the fight put it down: loose
+    // by the record alone. It gets the boolean and none of the fight's facts,
+    // because there is no fight fact to give it.
+    if (!d) return onTheFloor.has(String(o.id)) ? { ...o, loose: true } : o;
+    // ⚠ `loose: true`, A BOOLEAN. The site filters `m.loose === true`
+    // (`world-cockpit.mjs § looseThings`), so an OBJECT here — which is what I
+    // wrote first, because an object could carry who dropped it and when — is
+    // falsy against that test and every dropped weapon quietly stops being
+    // drawn. The extra facts ride BESIDE it in the field the page already
+    // declares for them.
+    return { ...o, loose: true, dropped_by: d.by, dropped_at_seq: d.at_seq };
+  });
+
+  // ── THE INJECTION (found by driving the live door, 2026-08-29) ─────────────
+  //
+  // ⚑ MARKING `nearby` WAS NEVER ENOUGH, AND THE FIX ABOVE SHIPPED WITHOUT
+  // NOTICING. `nearby` is `worldEyes`' SALIENCE RANKING — the engine's field of
+  // view, capped at a context budget of about thirteen entries — and it ranks
+  // the world by how much of it there is to see. A 0.2 m lighter loses that
+  // ranking to every house, ground and cake in the district, so it is not in
+  // the list at all. Live receipt: a spectator standing EXACTLY ON the good
+  // lighter got thirteen entries and the lighter was not among them.
+  //
+  // So `portalBlockAt` computed the floor correctly, `withLoose` marked
+  // faithfully, and there was nothing to mark. My own note two screens up says
+  // "a thing that appears in `nearby` with no `loose` flag does not appear on a
+  // floor anybody draws" — and it has a sibling I did not write: A THING THAT
+  // NEVER APPEARS IN `nearby` AT ALL. Same defect class as the half-promise it
+  // was fixing, one level further out, and the first fix could not see it
+  // because every falsifier handed `withLoose` a `nearby` that already
+  // contained the thing.
+  //
+  // LOGOS § The portal ground: "Inside a portal ground the floor is not the
+  // world's business, it is the GROUND's: whatever lies loose there rides the
+  // standpoint's `nearby` whether or not salience would have chosen it, because
+  // a room whose furniture of play is invisible is a room nobody can play in."
+  //
+  // THE SHROUD OUTRANKS THE INJECTION — `floor` is filtered by it above, so
+  // held-back loot is absent whether or not it would have been ranked. Being on
+  // the floor never overrides being hidden.
+  const present = new Set(marked.map((o) => String(o.id)));
+  const here = standpoint && Number.isFinite(Number(standpoint.x)) && Number.isFinite(Number(standpoint.y))
+    ? { x: Number(standpoint.x), y: Number(standpoint.y) } : null;
+  for (const t of floor) {
+    if (present.has(String(t.thing))) continue;
+    const d = dropped.get(String(t.thing));
+    marked.push({
+      id: t.thing,
+      by: t.by ?? null,
+      at: t.at,
+      ...(t.extent ? { extent: t.extent } : {}),
+      kind: t.kind ?? null,
+      tier: t.tier ?? null,
+      ...(t.body ? { body: t.body } : {}),
+      loose: true,
+      // ⚑ `distance_m` IS COMPUTED AND `bearing` IS NOT, deliberately. Distance
+      // is a hypotenuse and means one thing; BEARING is a convention — which way
+      // is zero, which way it turns — and that convention belongs to the world
+      // engine's field of view. A second implementation of it here would be a
+      // second answer to a question that has one, which is the drift this office
+      // keeps nailing shut. A consumer sorting by distance gets these in their
+      // right place; one grouping by bearing sees them absent, and that is the
+      // honest state rather than a guessed one.
+      ...(here ? { distance_m: Math.round(Math.hypot(t.at.x - here.x, t.at.y - here.y) * 10) / 10 } : {}),
+      // Said out loud so a reader comparing this list against the eyes' budget
+      // is not left wondering where the extra rows came from.
+      via: "floor",
+      ...(d ? { dropped_by: d.by, dropped_at_seq: d.at_seq } : {}),
+    });
+  }
+  return marked;
+}
+
+/**
+ * The wheel's half of a crossing — and THE TWO ENDS TAKE DIFFERENT SPINES.
+ *
+ * ⚑ THIS IS THE ONE PLACE A SINGLE SPINE WOULD BE WRONG IN BOTH DIRECTIONS,
+ * and the wrong version reads perfectly well. `enter` needs the spine AFTER the
+ * step, because the arena is the room it just walked into and the pre-act spine
+ * does not contain it. `exit` needs the spine BEFORE it, because the arena is
+ * the room it just walked out of and the post-act spine no longer contains it.
+ * Use the post-act spine for both and enter works while exit silently writes
+ * nothing — a hand that walked out stays on the wheel forever, hostiles keep
+ * swinging at them, and nothing anywhere reports an error.
+ */
+/**
+ * Set an entrant down where the ground they just entered says to, or do nothing.
+ *
+ * ⚑ THE GROUND IS FOUND BY THE MARK THE CALLER NAMED, not by where they are
+ * standing — which is the whole point: they may be standing nowhere near it,
+ * and that is the bug being cured. `arenaGroundAt` takes a spine, so it is
+ * given a one-mark spine: the target itself.
+ *
+ * ⚑ IT WRITES A MOVEMENT, WHICH IS THE ONLY PEN THE WORLD PLACES BODIES WITH.
+ * A zero-length departure to the spawn point — the same record a walk writes,
+ * so every reader downstream (the standpoint, presence, the crossing-save)
+ * learns the position the way it always has. Nothing here invents a second
+ * geometry, and R15 is untouched: this is not a walk the caller asked for, it
+ * is where the GROUND says an entrant stands, which is the ground's business
+ * exactly as its stride is.
+ *
+ * Silent on every failure and on every ground that declares no spawn, because
+ * the enter itself has already succeeded — a placement that could not be
+ * written must not turn a successful crossing into an error.
+ */
+async function spawnOnEnter(args, key, who) {
+  const target = String(args.mark ?? args.mark_id ?? parseEnvelope(args)?.mark ?? parseEnvelope(args)?.mark_id ?? "").trim();
+  if (!target || !who) return null;
+  const store = openStore();
+  let dyn = null;
+  try {
+    if (!store.db) return null;
+    const place = arenaGroundAt(store.db, [target]);
+    if (!place) return null;
+    const spawn = spawnPointFor(store.db, place, { who, crossing: currentCrossing() });
+    if (!spawn) return null;
+    if (spawn.refused) return { ground: place.ground, refused: spawn.refused };
+    dyn = openDynamic();
+    // A ZERO-LENGTH DEPARTURE: from the spawn point to itself, so `positionAt`
+    // answers "arrived, standing" from the first instant. A leg with length
+    // would leave the entrant walking across the room they are already in, and
+    // the wheel would seat them somewhere they had not reached yet.
+    declareMovement(dyn, {
+      actor: who, from: spawn.at, toward: spawn.at, crossing: currentCrossing(),
+      within: null, toMark: place.ground, declaredBy: who, pace: departurePace(),
+    });
+    return {
+      ground: place.ground, at: spawn.at,
+      ...(spawn.jitter ? { jitter_m: spawn.jitter, from_spawn: spawn.from } : {}),
+      note: `${place.ground} sets its entrants down at its own spawn point — you did not walk here, the ground placed you`,
+    };
+  } catch { return null; }
+  finally {
+    try { dyn?.close(); } catch { /* a writer that cannot close still wrote */ }
+    try { store.db?.close(); } catch { /* same */ }
+  }
+}
+
+async function wheelOnCrossing(action, args, key, preSpineIds = [], hand = null) {
+  // ⚑ WHOEVER CROSSED IS WHO THE WHEEL COUNTS, and for an embodied human that
+  // is the HAND, not the housemate whose standpoint oriented the act. The
+  // resident's name was the only one this could write, so a human stepping into
+  // the vault rolled REI into the fight and left themselves outside it — then
+  // acted, and `arenaActViaOffice` joined them properly under their own hand a
+  // moment later, at the bottom of the order. Two joins, one of them nobody's.
+  //
+  // Same rule the act path already keeps (`as_human` is read before the
+  // handle in arena.mjs): the hand leads where there is one.
+  const who = hand || standingHandle(args, key);
+  if (!who) return null;
+  let spineIds = preSpineIds;
+  let placed = null;
+  if (action === "enter") {
+    // ── THE SPAWN, BEFORE THE SPINE IS ASKED (founder-ruled 2026-08-29) ─────
+    //
+    // ⚑ ORDER IS THE WHOLE FIX. The wheel is seated off the GEOMETRIC spine,
+    // and entry writes an occupancy edge without moving anybody — so a hand who
+    // enters from outside the fence is inside by the record and outside by
+    // geometry, and `joinOnCrossing` finds no arena on the spine and returns
+    // null. No join, no initiative, no refusal. Reproduced live: a hand entered
+    // the candle-vault from 16 m away, was told they had entered, and never
+    // reached the wheel.
+    //
+    // Placing them FIRST and re-orienting AFTER makes the two answers agree.
+    // Placing them after would leave the join reading the stale spine and fix
+    // nothing — which is the version that looks identical in a diff.
+    placed = await spawnOnEnter(args, key, who);
+    const after = await worldOrient(args, key);
+    if (after?.error) return null;
+    spineIds = (after.you?.within ?? []).map((m) => m.id);
+  }
+  if (!spineIds.length) return null;
+  const store = openStore();
+  let dyn = null;
+  try {
+    if (!store.db) return null;
+    dyn = openDynamic();
+    const opts = { household: worldHouseholdOf(who), crossing: currentCrossing() };
+    const wheeled = action === "enter"
+      ? joinOnCrossing(store.db, dyn, spineIds, who, opts)
+      : leaveOnCrossing(store.db, dyn, spineIds, who, opts);
+    // The placement rides the answer when one happened, so a reader can see
+    // WHY they are standing somewhere they did not walk to. Absent otherwise,
+    // which is every ground that declares no spawn.
+    return wheeled ? { ...wheeled, ...(placed ? { placed } : {}) } : (placed ? { placed } : null);
+  } catch { return null; }
+  finally {
+    try { dyn?.close(); } catch { /* a writer that cannot close still wrote */ }
+    try { store.db?.close(); } catch { /* same */ }
+  }
+}
+
+/** The portal block a standpoint carries when the caller is inside one. */
+export function portalBlockAt(db, spineIds = []) {
+  const place = arenaGroundAt(db, spineIds);
+  if (!place) return null;
+  let dyn = null;
+  try {
+    dyn = openDynamic();
+    const state = encounterOn(db, dyn, place);
+    // THE SHROUD IS COMPUTED WHERE THE PHASE IS, and nowhere else. LOGOS § The
+    // portal ground: a loot thing is "absent from what a standpoint says stands
+    // nearby" while the encounter is afoot. `withLoose` is the one place a
+    // portal touches `nearby`, and it takes the LIST from here rather than
+    // asking the store a second time — a second reader of the same question is
+    // a second answer waiting to disagree at the one moment it matters, which
+    // is the instant the cake goes down.
+    // ⚑ THE OTHER HALF OF `loose:`, WHICH ITS OWN DOC HAS PROMISED SINCE THE DAY
+    // IT WAS WRITTEN (found 2026-08-29, by the site lane walking into it).
+    //
+    // `withLoose` says: "A thing is loose when the record sites it here and
+    // nobody is holding it, OR when the fold says somebody DROPPED it going
+    // down." Only the second half was ever implemented. So the good lighter —
+    // lying on the vault floor, in the record, held by nobody, and the whole
+    // point of the weapon ruling — never carried `loose: true`, and a page
+    // drawing floor items off `nearby[].loose === true` could not draw it. The
+    // gap only shows once something IS on the floor to miss, which is why a
+    // comment promising two halves survived a green suite: the dropped half was
+    // the only half anybody had exercised.
+    //
+    // It matters twice over tonight: the loot amendment's whole payoff is "at
+    // `spent` it appears", and a thing that appears in `nearby` with no `loose`
+    // flag does not appear on a floor anybody draws.
+    //
+    // `looseIn` applies the shroud itself, so the phase is handed to it and the
+    // list is already free of held-back loot — no second filter, no second
+    // chance for the two to disagree.
+    // ⚑ THE ROWS, NOT THE IDS (2026-08-29). This was a list of ids until the
+    // live door was driven and the floor came back empty anyway — see
+    // `withLoose`'s injection note for why marking `nearby` was never enough.
+    // The entries have to be BUILDABLE from here, because here is where the
+    // store is.
+    const phase = state?.phase ?? null;
+    let held = [];
+    try { held = readAttachments(dyn); } catch { held = []; }
+    const floor = looseIn(db, place.row, { phase })
+      .filter((t) => liveHolder(held, String(t.thing)) == null);
+    return { place, state, shrouded: lootShroudedIn(db, place.row, phase), floor };
+  } catch { return { place, state: null, shrouded: [], floor: [] }; }
+  finally { try { dyn?.close(); } catch { /* same */ } }
+}
+
 // ── the dispatch table · the apex is a door to doors ────────────────────────
 //
 // v0 mints no write machinery. Each action names an implementation that
@@ -351,6 +792,21 @@ const DISPATCH = {
     tool: "world_declare_stance",
     run: (args, key) => declareStanceViaOffice(WORLD_CLONE, args, key, { witnessStamp, crossing: currentCrossing() }),
   },
+  // ── the arena's five verbs (2026-08-27) ───────────────────────────────────
+  //
+  // ⚑ THESE FIVE WERE THE 501. The class marks granted them from the day the
+  // birthday law was planted, so `gatherActions` afforded them and `read:`
+  // showed their cards — and every `do:` reached the lookup below, found
+  // nothing, and answered "afforded here but this office has no handler for
+  // it". Lint L6 was reporting it correctly the whole time. The handler exists
+  // now, and the third argument is why it can: an arena act must be judged
+  // against the wheel on the ground the CALLER is standing on, and the ground
+  // is something only the standpoint knows. `ctx` carries it. Every handler
+  // above ignores a third argument, which is what makes this additive.
+  ...Object.fromEntries(ARENA_VERBS.map((verb) => [verb, {
+    tool: `world_${verb}`,
+    run: (args, key, ctx) => arenaActViaOffice(WORLD_CLONE, { ...args, __action: verb }, key, ctx ?? {}),
+  }])),
 };
 
 // ── seam 4 · the fields an action takes ─────────────────────────────────────
@@ -445,7 +901,7 @@ function flatSchemas() {
   // fields an act takes must still come from the act's own schema — the seam-4
   // discipline — and inventing a second grammar here for two verbs would be
   // exactly the drift that seam exists to close.
-  for (const tool of [...WORLD_TOOLS, ...WORLD_STAKE_TOOLS, ...CROSSING_TOOLS, ...STANCE_TOOLS]) {
+  for (const tool of [...WORLD_TOOLS, ...WORLD_STAKE_TOOLS, ...CROSSING_TOOLS, ...STANCE_TOOLS, ...ARENA_TOOLS]) {
     _flatSchemas.set(tool.name, actionFields(tool?.inputSchema?.properties, tool?.inputSchema?.required));
   }
   return _flatSchemas;
@@ -458,7 +914,7 @@ let _fullProps = null;
 function fullPropsFor(toolName) {
   if (!_fullProps) {
     _fullProps = new Map();
-    for (const t of [...WORLD_TOOLS, ...WORLD_STAKE_TOOLS, ...CROSSING_TOOLS, ...STANCE_TOOLS]) _fullProps.set(t.name, t?.inputSchema?.properties ?? {});
+    for (const t of [...WORLD_TOOLS, ...WORLD_STAKE_TOOLS, ...CROSSING_TOOLS, ...STANCE_TOOLS, ...ARENA_TOOLS]) _fullProps.set(t.name, t?.inputSchema?.properties ?? {});
   }
   return _fullProps.get(toolName) ?? null;
 }
@@ -674,8 +1130,260 @@ export function gatherActions(db, { spineIds = [], reachIds = [] } = {}) {
   const via = (id) => (spine.has(id) ? "within" : reach.has(id) ? "in reach" : "ambient");
   const entries = [];
   for (const row of rows) {
-    for (const e of entriesFrom(row, db)) entries.push({ ...e, via: via(row.id) });
+    for (const e of entriesFrom(row, db)) entries.push({ ...e, via: via(row.id), channel: "ambient" });
   }
+  return { entries, rows };
+}
+
+// ── seam 5 · THE GROUND-GRANTED CHANNEL (2026-08-26) ────────────────────────
+//
+// LOGOS/classes.md § Class-nodes, verbatim, since 2026-08-15:
+//
+//   "The resident class carries every resident's standing capabilities,
+//    world-wide by its own ambient declaration; A GROUND'S CLASS MAY GRANT MORE
+//    TO THOSE IT REACHES."
+//
+// `gatherActions` above implements the first clause and CANNOT implement the
+// second, and it is worth being exact about why rather than calling it a bug.
+// Its query asks for class marks whose id is on the spine or in reach. A class
+// mark is DE-SITED — "law has no where" (2026-08-18) — so it has no coordinates
+// and can never appear in a geometric spine. The clause therefore reached
+// nothing, for eleven days, and no test could have caught it because nothing
+// was wrong: the query answers its own question correctly.
+//
+// What was missing is the RESOLUTION STEP. A caller stands on Rei's parcel;
+// Rei's parcel is an INSTANCE of `the-town/parcel`; `the-town/parcel` is the
+// class mark carrying the contract. Instance → class name → class mark, and the
+// class mark passes the same gate every ambient one does. Nothing widens.
+const CLASS_BY_NAME = `SELECT ${GATE_COLUMNS} FROM nodes
+                        WHERE ${CLASS_MARK_GATE_SQL}
+                          AND json_extract(props, '$.class') IN (SELECT value FROM json_each(?))`;
+
+// ⚠ THE DECLARATION TEST ASKS THE WORKS CLAUSE, NOT THE `declares` STAMP, and
+// the difference bit within the hour. `declares` is a convenience the hydrator
+// emits; `worksClause()` is what `CLASS_ROSTER_GATE_SQL` and the world's own
+// lint both ask, and it falls back to the path when the stamp is absent. A
+// store written without the stamp — a fixture, or anything hydrated before the
+// stamp existed — reads every class mark as an INSTANCE OF ITSELF under the
+// stamp-only test, so `the-town/resident` in reach would hand a caller the
+// resident contract as a GROUND grant. One question, asked the way the rest of
+// the office asks it.
+const INSTANCE_ROWS = `SELECT id, by,
+         json_extract(props, '$.class') AS class,
+         ${WORKS_PATH_SQL}              AS declares,
+         subkind
+       FROM nodes WHERE id IN (SELECT value FROM json_each(?))`;
+
+/**
+ * The classes a caller is standing in or within reach of, and which mark each
+ * came from — so a grant can be told which GROUND opened it, which is what the
+ * relation scope needs to check whose ground it is.
+ */
+export function groundClassesAt(db, ids = []) {
+  if (!db || !ids.length) return { byClass: new Map(), byId: new Map() };
+  const rows = db.prepare(INSTANCE_ROWS).all(JSON.stringify([...new Set(ids.filter(Boolean))]));
+  const byClass = new Map();
+  const byId = new Map();
+  for (const r of rows) {
+    byId.set(r.id, r);
+    const cls = classOfInstance({ ...r, declares: r.declares === 1 || r.declares === true });
+    if (!cls) continue;
+    if (!byClass.has(cls)) byClass.set(cls, []);
+    byClass.get(cls).push(r.id);
+  }
+  return { byClass, byId };
+}
+
+/** The ground channel's entries: every class contract reachable from here. */
+export function gatherGroundActions(db, { spineIds = [], reachIds = [] } = {}) {
+  const { byClass, byId } = groundClassesAt(db, [...spineIds, ...reachIds]);
+  if (!byClass.size) return { entries: [], classRows: [], byId, spineClasses: [] };
+  const classRows = db.prepare(CLASS_BY_NAME).all(JSON.stringify([...byClass.keys()]));
+  const spine = new Set(spineIds);
+  const entries = [];
+  for (const row of classRows) {
+    // ONE ENTRY PER GROUND, not one per class. Two parcels in your spine are
+    // two grounds and the relation scope must be asked of each — collapsing
+    // them would let a guest inherit their host's grant by standing on a
+    // nested parcel of their own somewhere in the same chain.
+    for (const groundId of byClass.get(row.class) ?? []) {
+      // ⚠ BUILT THROUGH `entriesFrom`, NOT BESIDE IT. My first version minted
+      // these itself and they came out POORER than the ambient ones: no
+      // `fields`, no `blurb_from`, no `dispatches_to`. Because a ground entry
+      // outranks an ambient one for the same verb, a resident standing beside
+      // any classed mark got a `say` card with no field grammar on it — and
+      // four apex tests found it, which is the only reason this is a comment
+      // and not a live defect. THE DOOR MUST ANSWER THE SAME SHAPE WHICHEVER
+      // CHANNEL OPENED IT; `entriesFrom` is that shape, and there is now one
+      // builder rather than two that agree until one of them is edited.
+      // ⚑ ONE ENTRY PER DECLARED GRANT, NOT PER VERB NAME — and the difference
+      // is the whole of "a human may not fight in portal ground".
+      //
+      // A class declares a verb once per KIND it opens it to. `portal-ground`
+      // and `arena` both declare strike twice, verbatim from the record:
+      //
+      //   {"action":"strike","residue":"the-town/strike"},
+      //   {"action":"strike","for":"human","residue":"the-town/strike"}
+      //
+      // Both builders below walk that same array and both emit one entry per
+      // DECLARED ITEM, so `entriesFrom` correctly produced two strikes. The
+      // join then looked its partner up by NAME — `.find(d => d.action ===
+      // e.action)` — which returns the first match every time. Both strikes
+      // were married to the resident declaration, the `for: human` one was
+      // never represented at all, and `resolveGrants` filtering by kind found
+      // no human strike to admit or even to refuse.
+      //
+      // What that looked like from outside: the record grants a human the
+      // arena's verbs, the office's own store holds that grant, and the door
+      // answered "not afforded where you stand … From here you can: walk, say."
+      // A grant that is written down, loaded, and unreachable — and it fails
+      // this way for any class that ever opens one verb to two kinds, so the
+      // arena is the instance rather than the bug.
+      //
+      // So the DECLARED entries lead: each one becomes an entry and keeps its
+      // own `for`. The shape (blurb, fields, dispatches_to) is still joined by
+      // name, and that join is safe where the other was not — a verb's shape
+      // comes from its residue class, which both variants point at, so the two
+      // strikes differ in who may swing and in nothing else.
+      const shapeOf = new Map();
+      for (const e of entriesFrom(row, db)) if (!shapeOf.has(e.action)) shapeOf.set(e.action, e);
+      for (const declared of entriesOfClass(row, { channel: "ground", ground: groundId, parse: (s) => parseJson(s, null) })) {
+        const e = shapeOf.get(declared.action);
+        if (!e) continue;
+        entries.push({
+          ...e, ...declared,
+          channel: "ground", ground: groundId,
+          via: spine.has(groundId) ? "within" : "in reach",
+          fields: e.fields, blurb: e.blurb,
+          ...(e.blurb_from ? { blurb_from: e.blurb_from } : {}),
+          ...(e.dispatches_to ? { dispatches_to: e.dispatches_to } : {}),
+        });
+      }
+    }
+  }
+  const spineClasses = [...byClass.entries()].filter(([, ids]) => ids.some((i) => spine.has(i))).map(([c]) => c);
+  return { entries, classRows, byId, spineClasses };
+}
+
+// ── seam 6 · THE HELD CHANNEL ───────────────────────────────────────────────
+//
+// LOGOS § The three channels: "The grant lives on the OBJECT … and it is set
+// down with the object: pick it up and the door opens, drop it and the door
+// closes, with nothing to revoke because nothing was conferred."
+//
+// The custody gate is `by: the-town` and lives in world-grants.mjs, asked here
+// through `heldEntries` rather than re-spelled — a security boundary with two
+// copies is a security boundary with one bug.
+const HELD_ROWS = `SELECT id, by,
+         json_extract(props, '$.class')      AS class,
+         json_extract(props, '$.held_grant') AS held_grant,
+         json_extract(props, '$.body')       AS body
+       FROM nodes WHERE id IN (SELECT value FROM json_each(?))`;
+
+// ── the household grain, read from the world's own registry ─────────────────
+//
+// `WORLD/households.json` is the world clone's own pin registry — the same file
+// leave-exec reads for the fan-up grain. Used here for ONE question: whose
+// ground is this, and is the caller of that house? A handle with no registry
+// row is `solo:<handle>`, which is the grain the fold already assumes and is
+// why two accounts of one house compose here exactly as they do there.
+//
+// UNREADABLE IS NULL, NOT A GUESS. `scopeAdmits` refuses on a null household
+// rather than admitting, so a missing registry closes the relation-scoped doors
+// instead of opening them to everyone. That direction is the whole point.
+let _hh = null;
+export function worldHouseholdOf(handle, { repo = WORLD_CLONE } = {}) {
+  if (!handle) return null;
+  if (_hh === null) {
+    try { _hh = JSON.parse(readFileSync(join(repo, "WORLD", "households.json"), "utf8")).households ?? {}; }
+    catch { _hh = {}; }
+  }
+  return _hh[handle] ?? `solo:${handle}`;
+}
+export const resetHouseholdCache = () => { _hh = null; };
+
+/**
+ * The household's HUMAN, as the office knows them.
+ *
+ * The key's `household` is the GitHub login the credential resolved to, and
+ * that login is the human — LOGOS § The human class: the household's human is
+ * the person the credential belongs to, as distinct from the residents they act
+ * for. Null for a key that resolved to nobody, and null is honest: a roster
+ * entry labelled "Human" with no handle behind it is still a legible option (it
+ * teaches that embodiment exists), while inventing a name for them would put a
+ * person on the record who is not on it.
+ */
+export const humanHandleOf = (key = null) => {
+  const h = key?.household == null ? null : String(key.household).trim();
+  return h || null;
+};
+
+/**
+ * The actor kind for this call. `as:` absent means resident — LOGOS § The human
+ * class, verbatim: "Absent means resident: the default that was always the
+ * intent, made explicit the day a second kind needed naming."
+ */
+export const actorKindOf = (args = {}) => {
+  const asked = String(args?.as ?? "").trim();
+  return asked || "resident";
+};
+
+/**
+ * The seat disclosure — who the record will name, and whose act it was.
+ *
+ * LOGOS § The three channels (2026-08-29): a seated human's acts "write through
+ * the SEAT — the resident whose household hosts the human — and the answer says
+ * so." Three fields and no prose, because a page renders this and a reader
+ * checks it: WHERE the seating comes from, WHOSE name goes on the row, and WHO
+ * actually acted.
+ */
+export const seatBlock = (ground, args = {}, key = null) => ({
+  ground,
+  seat: standingHandle(args, key),
+  human: humanHandFor([...(key?.handles ?? [])]),
+  note: "you are seated by this ground: your acts here are a resident's, and the record carries the seat's name with your own beside it",
+});
+
+/** Which of this key's residents is standing here — the walk door's own rule,
+ *  not a second one: one handle auto-resolves, several want naming. */
+export function standingHandle(args = {}, key = null) {
+  const named = String(args?.handle ?? "").trim();
+  if (named) return named;
+  const handles = [...(key?.handles ?? [])];
+  return handles.length === 1 ? handles[0] : null;
+}
+
+/**
+ * What this caller is carrying, from the attachments table and nowhere else.
+ *
+ * `holdingsOf` is imported rather than re-derived: latest-wins over the hold
+ * rows is one arithmetic with one home (world-hold.mjs), and a second copy here
+ * would be a second answer to "who holds what" — the split-brain this office
+ * keeps a museum of.
+ *
+ * An unreadable store returns NO HOLDINGS, which closes the held channel rather
+ * than opening it. A capability channel that fails open is not a channel.
+ */
+export function holdingsFor(args = {}, key = null) {
+  const who = standingHandle(args, key);
+  if (!who) return [];
+  let db = null;
+  try {
+    db = openDynamic();
+    return holdingsOf(readAttachments(db), who);
+  } catch { return []; }
+  finally { try { db?.close(); } catch { /* a reader that cannot close is still a reader that read */ } }
+}
+
+/** What the things in this caller's hands lend them. `holding` is the hold
+ *  table's answer, passed in: this file does not re-derive who holds what. */
+export function gatherHeldActions(db, holding = []) {
+  if (!db || !holding.length) return { entries: [], rows: [] };
+  const rows = db.prepare(HELD_ROWS).all(JSON.stringify([...new Set(holding.filter(Boolean))]));
+  const entries = [];
+  for (const row of rows)
+    for (const e of heldEntries(row, { parse: (s) => parseJson(s, null) }))
+      entries.push({ ...e, via: "in hand", blurb: String(row.body ?? "").slice(0, BLURB_MAX) });
   return { entries, rows };
 }
 
@@ -923,23 +1631,92 @@ async function apexRead(args, key) {
   const store = openStore();
   let actions = [];
   let rows = [];
+  let refusedGrants = [];
+  let seatedAt = null;
+  let portal = null;
+  let actors = [];
   try {
-    ({ entries: actions, rows } = gatherActions(store.db, {
-      spineIds: spine.map((m) => m.id),
-      reachIds: nearby.map((o) => o.id),
-    }));
+    // ── THE THREE CHANNELS (2026-08-26) ──────────────────────────────────────
+    //
+    // LOGOS § The three channels: ambient (what you ARE) ∪ ground (where you
+    // STAND) ∪ held (what you CARRY), filtered by actor kind, resolved by
+    // specificity. Before this the union had one member and the second clause
+    // of § Class-nodes reached nothing.
+    const spineIds = spine.map((m) => m.id);
+    const reachIds = nearby.map((o) => o.id);
+    const amb = gatherActions(store.db, { spineIds, reachIds });
+    rows = amb.rows;
+    const ground = gatherGroundActions(store.db, { spineIds, reachIds });
+    const held = gatherHeldActions(store.db, holdingsFor(args, key));
+    // THE SEAT, and the read must gather it the same way the act does — "read:
+    // is every action's shadow ... anything you can do, you can read, and never
+    // the reverse." A read that showed a seated human less than the door admits
+    // is that reverse, wearing an omission.
+    const resolved = resolveForActor([...held.entries, ...ground.entries, ...amb.entries], {
+      kind: actorKindOf(args),
+      actorHousehold: worldHouseholdOf(standingHandle(args, key)),
+      groundHouseholdOf: (id) => worldHouseholdOf(ground.byId?.get(id)?.by ?? null),
+      // root-first, so the seat lands on the OUTERMOST room that seats you
+      spineIds,
+    });
+    actions = resolved.entries;
+    refusedGrants = resolved.refused;
+    seatedAt = resolved.seated;
+    // ── THE PORTAL BLOCK (2026-08-27) ────────────────────────────────────────
+    //
+    // Computed HERE, inside the one store handle the read already holds, and
+    // not in a second opener afterwards: `openStore()` twice per read is two
+    // answers to "what does the world say" separated by however long the first
+    // one took. Null everywhere except inside a portal ground, so the ordinary
+    // standpoint is byte-identical to what it was — this block is absent, not
+    // empty, when you are not in one.
+    portal = portalBlockAt(store.db, spineIds);
+    // ── THE ACT-AS ROSTER ────────────────────────────────────────────────────
+    //
+    // "Abilities live at the CLASS level ('Act As' a class), and 'Human' is one
+    // of the Act-As options." What a human may do HERE is the calculus's answer
+    // for `for: human` at this very standpoint — asked with the same three
+    // channels, so the roster cannot claim feet the door would refuse.
+    const humanHere = resolveGrants([...held.entries, ...ground.entries, ...amb.entries], {
+      kind: "human",
+      actorHousehold: worldHouseholdOf(standingHandle(args, key)),
+      groundHouseholdOf: (id) => worldHouseholdOf(ground.byId?.get(id)?.by ?? null),
+    });
+    // GROUND-granted only. An ambient `say` reaches a human anywhere and says
+    // nothing about whether this room gives them feet — counting it would light
+    // "embodied" on every square of the world.
+    const humanGround = humanHere.entries.filter((e) => e.channel === "ground");
+    actors = actorRoster({
+      residents: [...(key?.handles ?? [])],
+      humanGrants: humanGround.map((e) => e.action),
+      humanHandle: humanHandleOf(key),
+      // WHICH GROUND SEATED THEM, so the roster's `because` can name the ruling
+      // that lit the face instead of asserting that one did. Only the door knows
+      // this: the site's own bridge could tell a portal from a parcel and no
+      // more, and its comment says so. `ground` is the instance standing under
+      // the caller; `from` is the CLASS that granted, which is the half that
+      // says whether this is a parcel's own-ground grant or a portal's welcome.
+      seats: humanGround.map((e) => ({ ground: e.ground, from: e.from ?? null })),
+    });
   } finally { store.db?.close(); }
 
   // ── Stage ② · whose grant opened each door ────────────────────────────────
   //
   // `yours` travels with what you are — the ocap grants on a class you are an
-  // instance of; `here` is the ground's and the reach's. v1 knows one actor
-  // class, resident; the berth class joins this rule when it lands.
+  // instance of; `here` is the ground's and the reach's; `in_hand` is the third
+  // channel, and it is its own word because "the place lends it to you" and
+  // "you brought it" are different facts a player needs to be able to tell
+  // apart — one of them survives walking out.
   const embodied = oriented.standpoint?.stance === "embodied";
-  for (const e of actions) e.grant = embodied && e.class === "resident" ? "yours" : "here";
+  for (const e of actions)
+    e.grant = e.channel === "held" ? "in_hand"
+            : e.channel === "ground" ? "here"
+            : embodied && e.class === "resident" ? "yours" : "here";
   const granted = {
     yours: actions.filter((e) => e.grant === "yours").map((e) => e.action),
     here: actions.filter((e) => e.grant === "here").map((e) => e.action),
+    ...(actions.some((e) => e.grant === "in_hand")
+      ? { in_hand: actions.filter((e) => e.grant === "in_hand").map((e) => e.action) } : {}),
   };
 
   // ── v2.2 §B: the contract at the boundary, and what happened ─────────────
@@ -984,7 +1761,41 @@ async function apexRead(args, key) {
   const focus = await focusOn(args, key);
 
   return {
-    standpoint: oriented.standpoint,
+    // ── THE PORTAL RIDES INSIDE THE STANDPOINT ───────────────────────────────
+    //
+    // ⚠ `standpoint.portal`, NOT a top-level `portal`, and `id` NOT `ground`.
+    // Both are the site's declared contract — `world-cockpit.mjs § portalOf`,
+    // ON THE SITE'S `bday-pin` BRANCH, which is where that file exists and the
+    // only place it does: it is absent from the site's `main` and from
+    // `origin/main` (verified 2026-08-27, not assumed), and the integration
+    // lands that night. Naming the branch is not pedantry here — an unmerged
+    // contract is one somebody can still change out from under this shape, and
+    // a reader who goes looking for `portalOf` on main will conclude this
+    // comment is stale rather than that they are on the wrong branch.
+    //
+    // Both fail SILENTLY when they are wrong: `portalOf` returns null for a
+    // portal with no `id`, `mountsHere` returns false for a null portal, and
+    // the cockpit simply never appears. No error, no warning, a blank page and
+    // a green build. I shipped the wrong shape of both first and only caught it
+    // by reading the consumer.
+    standpoint: {
+      ...oriented.standpoint,
+      ...(portal ? { portal: cockpitPortal(portal.place) } : {}),
+      ...(portal?.state ? (actingBlocked(portal.state, standingHandle(args, key)) ?? {}) : {}),
+      // ── THE SEAT, SAID BEFORE IT IS USED (founder-ruled 2026-08-29) ────────
+      //
+      // LOGOS § The three channels: "Any act needing a record WRITES THROUGH THE
+      // SEAT — the resident whose household hosts the human — and the answer
+      // says so. … writing the seat's name in SILENCE is the ghost-writing the
+      // human class exists to prevent. The disclosure is what makes the
+      // difference."
+      //
+      // ABSENT for a resident and for an unseated human, so every ordinary
+      // standpoint is byte-identical. Present only where the extra affordances
+      // are, which is the one place a reader needs to know whose name the record
+      // will carry.
+      ...(seatedAt ? { seat: seatBlock(seatedAt, args, key) } : {}),
+    },
     crossing: oriented.crossing,
     // The private note rides exactly as orient carries it: embodied property,
     // key-gated there, null when none. Carrying it here is what lets the bare
@@ -995,12 +1806,47 @@ async function apexRead(args, key) {
     ...(departures ? { departures } : {}),
     ...(stances ? { stances } : {}),
     within: spine,
-    nearby,
+    // `loose:` on a nearby entry — what is lying on this ground that a hand
+    // could `take`. Only ever added inside a portal, and only to the things
+    // that are actually loose there, so an ordinary reach entry is untouched.
+    nearby: portal?.state ? withLoose(nearby, portal, { standpoint: oriented.standpoint }) : nearby,
+    // ── THE PORTAL AND ITS ENCOUNTER (2026-08-27) ────────────────────────────
+    //
+    // The two rooms and the fight, as a resident reads them. `space` is the
+    // word that tells the antechamber from the arena — the founder's own two
+    // spaces — and it is on the PORTAL rather than the encounter because a
+    // room is a room whether or not anything is happening in it.
+    //
+    // `acting_blocked` is the read's half of the wheel's refusal. The gate at
+    // `do:` refuses by name and that is where the law is enforced; this is so a
+    // reader can see the refusal COMING instead of discovering it by being
+    // told no. Same sentence, both places, from the same fold.
+    // The wheel, in the page's own vocabulary. Absent — not empty — when no
+    // encounter is running, because `encounterOf` treats an empty order as no
+    // encounter and an empty object here would say the same thing twice.
+    ...(portal?.state ? (() => {
+      // the hand rides along so the wheel can name the reader's own row — see
+      // cockpitEncounter's third kind, described there since it was written and
+      // unreachable until this argument existed
+      const e = cockpitEncounter(portal.state, standingHandle(args, key),
+        { human: humanHandFor([...(key?.handles ?? [])]) });
+      return e ? { encounter: e, encounter_detail: publicState(portal.state) } : {};
+    })() : {}),
     ...(oriented.present ? { present: oriented.present } : {}),
     ...(happened ? { happened } : {}),
     ...(focus ? { focus } : {}),
     ...cardsBlock(actions, args.cards),
     granted,
+    // The ACT-AS roster. Always present: a caller who cannot see the Human
+    // option cannot learn that embodiment exists, let alone that it is fenced.
+    ...(actors.length ? { actors } : {}),
+    // A door that closed on you and said nothing is a door you cannot ask about.
+    // A guest's human standing on someone else's parcel gets no verbs from it —
+    // this is where they are told that, and told WHY, rather than left to infer
+    // it from an absence. (Only ever populated when something was refused.)
+    ...(refusedGrants.length
+      ? { not_yours: refusedGrants.map((e) => ({ action: e.action, from: e.from, ground: e.ground ?? null, because: e.refused })) }
+      : {}),
     law: store.unavailable
       ? { unavailable: store.unavailable, actions: "none can be read — the class layer lives in the world store" }
       : { as_of_world: store.meta?.as_of_world ?? null, hydrated_at: store.meta?.hydrated_at ?? null, source: "world.db", class_marks_in_reach: rows.length },
@@ -1019,7 +1865,12 @@ async function apexDo(args, key) {
   // whose standing is even being asked for. Absent `as:` returns null and
   // nothing below changes — the default was always resident, and this seam is
   // invisible to every call that does not ask for it.
-  const actor = resolveHumanActor({ action, as: args.as, beside: args.beside, key });
+  // `fence: "calculus"` — the apex GATHERS a standpoint, so the fence it must
+  // honour is the record's at that standpoint, not the ambient list. What is
+  // still asked here is what the calculus cannot answer: is this an actor kind
+  // the door resolves at all, and is the named companion actually this key's.
+  // Both are questions about WHO, and both are cheap enough to ask first.
+  const actor = resolveHumanActor({ action, as: args.as, beside: args.beside, key, fence: "calculus" });
   if (actor?.error) return actor;
 
   // The mail asymmetry, refused before anything else is computed — the answer
@@ -1042,11 +1893,106 @@ async function apexDo(args, key) {
     if (!store.db) {
       return bounce(503, "the law that binds this act cannot be read", `${store.unavailable}. No act dispatches without its terms — you cannot be bound by law you were not shown at the door.`);
     }
-    const { entries, rows } = gatherActions(store.db, {
-      spineIds: spine.map((m) => m.id),
-      reachIds: (seen.objects ?? []).map((o) => o.id),
-    });
+    // THE SAME THREE CHANNELS THE READ GATHERS, and it must be the same
+    // gathering: "read: is every action's shadow … anything you can do, you can
+    // read, and never the reverse." A door that admits an act the read did not
+    // show is precisely the reverse that law forbids.
+    const spineIds = spine.map((m) => m.id);
+    const reachIds = (seen.objects ?? []).map((o) => o.id);
+    const amb = gatherActions(store.db, { spineIds, reachIds });
+    const ground = gatherGroundActions(store.db, { spineIds, reachIds });
+    const held = gatherHeldActions(store.db, holdingsFor(args, key));
+    const kind = actorKindOf(args);
+    const { entries, refused: refusedGrants, seated: seatedAt } = resolveForActor(
+      [...held.entries, ...ground.entries, ...amb.entries], {
+        kind,
+        actorHousehold: worldHouseholdOf(standingHandle(args, key)),
+        groundHouseholdOf: (id) => worldHouseholdOf(ground.byId?.get(id)?.by ?? null),
+        spineIds,
+      });
+    const rows = [...amb.rows, ...ground.classRows];
     const match = entries.find((e) => e.action === action);
+
+    // A RELATION-SCOPED REFUSAL IS ITS OWN ANSWER, and it comes BEFORE the warm
+    // "not here — there" bounce. That bounce sends a reader off to walk
+    // somewhere the act is afforded; for an own-ground grant there is nowhere to
+    // walk to, because what is wrong is WHOSE ground it is, not which ground.
+    // Telling a guest to go find another parcel would be a correct-shaped answer
+    // to a question they did not ask.
+    if (!match) {
+      const mine = refusedGrants.find((e) => e.action === action);
+      if (mine)
+        return bounce(403, `"${action}" is granted here, but not to you`,
+          `${mine.because}. This is not a place to walk to — it is a relation, and walking will not change it.`,
+          { from: mine.from, ground: mine.ground ?? null, actor_kind: kind });
+    }
+
+    // THE GUARD IN GATE POSITION, asked before the act and never after.
+    // LOGOS § The derived: "a verb or slot may name a derived and a required
+    // value as its precondition — that is the whole condition grammar." This is
+    // what keeps a held grant from opening its verb outside the ground the
+    // residue class fences it to.
+    if (match) {
+      const requires = requiresOf(store.db, match.residue);
+      // THE PHASE IS READ, NOT PASSED AS NULL, and the difference is a whole
+      // verb. `the-town/loot` declares `requires: {phase: "spent"}`; with a
+      // hardcoded null, `guardsPass` compared "" against "spent" and refused
+      // loot EVERYWHERE, FOREVER — a precondition that can never be satisfied
+      // is not a guard, it is a wall, and it would have read as "the law says
+      // so" to anyone who looked. The fold is the only thing that knows the
+      // phase, so the fold is asked. Only ever computed when a guard actually
+      // names a phase: an ordinary act pays nothing for this.
+      const phase = requires?.phase == null ? null : phaseAt(store.db, spineIds);
+      const g = guardsPass(requires, { spineClasses: ground.spineClasses, phase });
+      if (!g.ok)
+        return bounce(422, `"${action}" is not performed here`, `${g.why}. The precondition is the residue class's own (${match.residue}), not this office's.`,
+          { requires, within: ground.spineClasses });
+
+      // ── THE EMBODIMENT FENCE ───────────────────────────────────────────────
+      //
+      // Asked only of a GROUND-granted act by a human, because that is exactly
+      // when the grant rests on the ground: an ambient act travels, a held one
+      // travels, and neither is fenced by whose garden you are in. The ground
+      // asked about is `match.ground` — the mark whose CLASS granted the verb —
+      // and not the innermost mark in the spine. Those differ the moment the
+      // garden has a flowerbed in it, and using the innermost would fence a
+      // human into whatever they last stepped onto instead of into their parcel.
+      // ⚑ THE FENCE NOW FOLLOWS THE SEAT, NOT THE MATCHING GRANT (2026-08-29).
+      //
+      // It used to fire only for a GROUND-channel match, because that was the
+      // only way a human held a verb at all. Under the seat ruling a human's
+      // `walk` can arrive through the resident set (`via_seat`, channel
+      // "ambient"), and reading `match.channel` alone would have waved that
+      // step straight past the boundary — a seated human walking off across the
+      // town under their host's name. So the ground the fence checks is the
+      // SEATING ground where there is one, and the matching grant's otherwise.
+      const fenceGround = kind === "human" ? (seatedAt ?? match.ground) : match.ground;
+      if (kind === "human" && fenceGround) {
+        const groundRow = store.db.prepare("SELECT id, at_x, at_y, extent_w, extent_h FROM nodes WHERE id = ?").get(fenceGround);
+        if (action === "exit") {
+          const target = String(args.mark ?? parseEnvelope(args)?.mark ?? "").trim() || fenceGround;
+          // `seated` repeals the refusal — see exitAllowed's own note. Leaving
+          // the seating ground ends the seating, which is a consequence and not
+          // a wall.
+          const e = exitAllowed({ ground: fenceGround, target, seated: seatedAt });
+          if (!e.ok) return bounce(403, e.why, e.hint, { law: e.law, ground: fenceGround });
+        }
+        if (action === "walk") {
+          const env = parseEnvelope(args) ?? {};
+          const to = { x: Number(env.to_x ?? args.to_x ?? env.x ?? args.x), y: Number(env.to_y ?? args.to_y ?? env.y ?? args.y) };
+          // A step whose destination this door cannot read is NOT admitted on
+          // the assumption it is fine. The fence exists to be checked, and an
+          // uncheckable step is the one shape a fence must not wave through.
+          if (!Number.isFinite(to.x) || !Number.isFinite(to.y))
+            return bounce(422, "an embodied step needs a destination this door can read",
+              `Your walk here is ${fenceGround}'s grant and is bounded by its fence, so the step has to be checked against it — and a destination that cannot be read cannot be checked. Name to_x and to_y.`,
+              { ground: fenceGround });
+          const w = walkAllowed({ ground: fenceGround, groundRow, to });
+          if (!w.ok) return bounce(403, w.why, w.hint, { law: w.law, fence: w.fence, asked: to, ground: fenceGround });
+        }
+      }
+    }
+
     if (!match) {
       // The warm bounce: not "no", but "not here — there". TWO CONDITIONS, two
       // sentences (issue #7 §4): the defect used to say "where you stand" even
@@ -1117,21 +2063,135 @@ async function apexDo(args, key) {
     // that promise holds on the failing path too.
     const { do: _dropped, telling: _t, args: _envelope, ...rest } = args;
     const fields = toFlatFields(action, envelope ? { ...rest, ...envelope } : rest);
+    // WHICH STANDING THIS ACT IS TAKEN FROM is decided by the CHANNEL that
+    // granted it, and can only be asked once the match is known — the same
+    // `say` is companioned when the human class grants it ambiently and
+    // EMBODIED when the parcel grants it at the human's own gate. So the actor
+    // is re-resolved here with the channel in hand. The early call answered
+    // "is this a kind we resolve, and is that companion yours"; this one
+    // answers "and from whose feet".
+    const acting = actor
+      ? resolveHumanActor({ action, as: args.as, beside: args.beside, key, fence: "calculus", channel: match.channel })
+      : null;
     const done = { did: action, via: match.via, from: match.from, dispatched_to: handler.tool, terms,
-      ...(actor ? { actor: { kind: actor.kind, residue: actor.residue, says: actor.says, note: actor.note } } : {}) };
+      ...(match.channel && match.channel !== "ambient" ? { channel: match.channel, ...(match.ground ? { ground: match.ground } : {}), ...(match.held ? { in_hand: match.held } : {}) } : {}),
+      // THE SEAT ON EVERY SEATED ACT, whatever the verb and whatever the
+      // handler does with it. LOGOS § The three channels: the record is written
+      // through the seat "and the answer says so." The handler's own answer may
+      // disclose it too (the walk door's `acted_by` does), but a disclosure
+      // that depended on each handler remembering would be a promise kept by
+      // habit — this is the one place every act passes through.
+      ...(seatedAt ? { seat: seatBlock(seatedAt, args, key), ...(match.via_seat ? { via_seat: true } : {}) } : {}),
+      ...(acting ? { actor: { kind: acting.kind, standing: acting.standing, residue: acting.residue, says: acting.says, note: acting.note } } : {}) };
     let result;
+    // Declared out here because the CROSSING below needs it too — the wheel has
+    // to be told which hand crossed, and that block sits after this try.
+    let hand = null;
     try {
-      // THE ACTOR SEAM'S ONE EFFECT ON DISPATCH. A human's say goes to the
-      // human's own handler, which has owned the speaker label, the companion
-      // choice and the record since 2026-08-08 — this only decides WHICH door,
-      // and never what happens behind it. `beside:` is the apex's word for that
-      // handler's `with:`.
-      result = actor?.route === "worldSayHuman"
-        ? await worldSayHuman({ ...fields, ...(actor.with ? { with: actor.with } : {}) }, key)
-        : await handler.run(fields, key);
+      // THE ACTOR SEAM'S ONE EFFECT ON DISPATCH. A human's COMPANIONED say goes
+      // to the human's own handler, which has owned the speaker label, the
+      // companion choice and the record since 2026-08-08 — this only decides
+      // WHICH door, and never what happens behind it. `beside:` is the apex's
+      // word for that handler's `with:`.
+      //
+      // AN EMBODIED act does NOT route there, and must not: that handler's whole
+      // job is to find a resident to be heard beside, and an embodied human has
+      // no companion to find. It goes to the act's own handler with the human
+      // named as the hand — which is the-own-hand honoured through a second
+      // door rather than a second implementation of it.
+      // ── THE HANDLER'S CONTEXT (third argument, additive) ──────────────────
+      //
+      // Every handler that predates the arena takes `(args, key)` and ignores a
+      // third argument, so this is invisible to all of them. The arena needs it
+      // because its act is judged against the wheel on THE GROUND THE CALLER IS
+      // STANDING ON, and re-deriving that inside the handler would be a second
+      // containment answer beside the one this function already computed.
+      const ctx = {
+        // BORROWED, not opened: `apexDo` already holds this handle and closes
+        // it in its own finally. Handing the factory instead would open a
+        // second store per act and read the world twice in one call.
+        db: store.db, spineIds, handle: standingHandle(args, key),
+        household: worldHouseholdOf(standingHandle(args, key)),
+        crossing: currentCrossing(), witnessStamp, nowMs: Date.now(),
+      };
+      // ── THE HAND, NOT A FLAG (2026-08-27) ─────────────────────────────────
+      //
+      // This line passed `as_human: true` for four hours and NOTHING READ IT —
+      // `git grep as_human src/` returned exactly this dispatch. Every embodied
+      // act therefore reached a handler that knew only how to write the
+      // resident's name, and wrote it. The own-hand law is what that broke, and
+      // it is the one thing the human class exists to protect.
+      //
+      // A boolean could not have been honoured even by a willing handler: it
+      // says an act was a human's without saying WHICH human, so the best a
+      // door could do with it is refuse. The hand itself is what a record needs,
+      // so the hand is what is passed — derived by `humanHandFor`, the same
+      // label `worldSayHuman` has recorded since 2026-08-08, from one copy.
+      //
+      // WHY `say` ROUTES HERE WHEN IT IS EMBODIED. The act's own handler
+      // (`worldSay`) speaks as a RESIDENT by construction — it picks a
+      // standpoint from the key's handles and records that name. The handler
+      // that owns the human's label is `worldSayHuman`, so an embodied say goes
+      // there for the same reason a companioned one does: it is the door that
+      // can write the human's name. What the two do NOT share is the standing,
+      // and that difference is not lost — it rides `done.actor.standing`
+      // ("embodied" vs "companioned") on every answer.
+      //
+      // ⚠ THE GAP THIS LEAVES, stated rather than hidden: § The three channels
+      // calls the parcel's say "heard from the human's own feet", and this
+      // records it heard from the housemate `worldSayHuman` stands them beside.
+      // The HAND is right, which is the law that was being broken; the FEET are
+      // still borrowed, because a human has no position of their own until the
+      // humans-as-residents design arrives. Recording the human's own name
+      // beside a borrowed standpoint is the closest true thing this office can
+      // write, and it is disclosed by `standing_with` on the answer.
+      hand = acting?.standing === "embodied" ? humanHandFor([...(key?.handles ?? [])]) : null;
+      if (acting?.route === "worldSayHuman" || (hand && action === "say")) {
+        // THE ORIENT HANDLE IS NOT A VOICE (2026-08-28, found live on the
+        // dungeon stage): the envelope's `handle:` chose whose standpoint
+        // oriented this act — a multi-resident key MUST name one to orient at
+        // all — but worldSayHuman owns the "one voice at a time" fence and
+        // refuses any handle it is handed. So the handle's duty ends here: it
+        // leaves the fields, surviving only as the housemate the human stands
+        // beside when `beside:` named nobody. The feet the standpoint borrowed
+        // and the feet the record names stay the same feet.
+        const { handle: orientingHandle, ...humanFields } = fields;
+        const withWhom = acting?.with ?? orientingHandle;
+        result = await worldSayHuman({ ...humanFields, ...(withWhom ? { with: withWhom } : {}) }, key);
+      } else {
+        // `__seated_ground` rides beside the hand, and only the apex can put it
+        // there: seating is the admitted calculus's answer (scope and all), and
+        // a handler that computed it for itself would be a second calculus. It
+        // is what lifts the walk door's 501 — see walkViaOffice's own note —
+        // and it is deliberately double-underscored, the `__action` precedent,
+        // to say out loud that it is office plumbing rather than a field a
+        // resident writes.
+        result = await handler.run(
+          hand ? { ...fields, as_human: hand, ...(seatedAt ? { __seated_ground: seatedAt } : {}) } : fields,
+          key, ctx);
+      }
     } catch (e) {
       if (!e?.code) throw e;
       return { ...bounce(e.code, e.defect, e.hint, e.choices ? { choices: e.choices } : {}), ...done };
+    }
+    // ── CROSSING IS JOINING (`the-town/crossing-is-joining`) ────────────────
+    //
+    // "Crossing the inner threshold rolls you in … Walking out drops you from
+    // the wheel — the exit law holds mid-fight, and the arena simply stops
+    // counting you. No jails."
+    //
+    // Written HERE rather than inside the crossing exec, because the crossing
+    // exec is the THRESHOLD's law and this is the ARENA's: an ordinary portal
+    // ground is crossed with nothing written, and only a ground that keeps a
+    // wheel gets a row. `joinOnCrossing` returns null for every other ground,
+    // so enter/exit anywhere else in the town is untouched.
+    //
+    // AFTER the act and only when it succeeded: a crossing that bounced did not
+    // happen, and joining somebody to a fight they were refused entry to would
+    // be the door writing a fact the world does not hold.
+    if ((action === "enter" || action === "exit") && !result?.error) {
+      const wheeled = await wheelOnCrossing(action, args, key, spineIds, hand);
+      if (wheeled) return { ...done, result, [action === "enter" ? "joined" : "left"]: wheeled };
     }
     return result?.error === "bounce" ? { ...result, ...done } : { ...done, result };
   } finally { store.db?.close(); }
@@ -1244,10 +2304,25 @@ async function apexReadAction(args, key, ctx = {}) {
     if (!store.db) {
       return bounce(503, "the law behind this read cannot be opened", `${store.unavailable}. The card is the class layer's answer, and the class layer lives in the world store.`);
     }
-    const { entries, rows } = gatherActions(store.db, {
-      spineIds: spine.map((m) => m.id),
-      reachIds: (seen.objects ?? []).map((o) => o.id),
+    // THE SHADOW GATHERS THE SAME THREE CHANNELS, and it has to.
+    //
+    // "read: is every action's shadow … anything you can do, you can read, and
+    // never the reverse." An ambient-only gather here would have made an
+    // embodied human able to DO `walk` on their own ground and unable to READ
+    // it — the exact reverse that law forbids, and the one asymmetry nobody
+    // would have found until a human tried to read the card for the act they
+    // had just performed.
+    const spineIds = spine.map((m) => m.id);
+    const reachIds = (seen.objects ?? []).map((o) => o.id);
+    const amb = gatherActions(store.db, { spineIds, reachIds });
+    const ground = gatherGroundActions(store.db, { spineIds, reachIds });
+    const held = gatherHeldActions(store.db, holdingsFor(args, key));
+    const { entries } = resolveGrants([...held.entries, ...ground.entries, ...amb.entries], {
+      kind: actorKindOf(args),
+      actorHousehold: worldHouseholdOf(standingHandle(args, key)),
+      groundHouseholdOf: (id) => worldHouseholdOf(ground.byId?.get(id)?.by ?? null),
     });
+    const rows = [...amb.rows, ...ground.classRows];
     const match = entries.find((e) => e.action === action);
     if (!match) {
       const elsewhere = affordableAt(store.db, action);
@@ -1325,6 +2400,14 @@ export const APEX_TOOL = {
     mark: { type: "string", description: "FOCUS the bare read on one mark — <by>/<slug>, as ids appear in the telling. The answer is the read you would have got anyway, plus `focus`: the close look at that mark (its body, the properties predicated on it, what stands inside it). It is a focus rather than an action because investigating performs nothing — do: would be a lie, and read: is an action's shadow, so a shadow with no action is the reverse the apex's law forbids. Never rides with do: or read:." },
     with_image: { type: "boolean", description: "with mark:, also bring that mark's picture back as image bytes if it has one and it fits under the inline cap. The url rides in the answer either way; this only decides whether the office spends the bytes." },
     handle: { type: "string", description: "which of YOUR residents acts (omit if your key holds one; a multi-resident key must name one)" },
+    // `as:`/`beside:` joined the schema 2026-08-28. The actor seam (apexDo →
+    // resolveHumanActor) had read them since 08-23 — but this schema is the
+    // door's CLOSED whitelist, and a field the whitelist does not name bounces
+    // before the seam can see it. The human class shipped behind a door that
+    // refused to pass its own word through: found live on the dungeon stage,
+    // the night the first embodied act was actually attempted.
+    as: { type: "string", description: "who is acting: omit (or \"resident\") for your resident — the default and almost always what you mean. as: \"human\" is your household's HUMAN acting with their own hand, honoured only where the ground's class grants them feet (LOGOS/classes.md § The human class); the act records under the human's hand, never the resident's." },
+    beside: { type: "string", description: "with as: \"human\" — which of your residents the human stands beside (optional; omitted, the house chooses the housemate it is awake at). Must be one of your own key's residents." },
     telling: { type: "boolean", description: "true adds the prose telling of what you see; omit for the cheap structural read" },
     cards: { type: "string", enum: ["names"], description: "cards: \"names\" shrinks `actions` to each act's name, one line, and how it reached you — for a repeat read by a caller who has already learnt the acts. Which acts are afforded is identical either way; only how much is said about each changes. Omit for the full cards, which is the default and carries the fields a caller needs to compose an act." },
   },

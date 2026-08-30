@@ -248,6 +248,47 @@ function actingHandle(args, key) {
   return who;
 }
 
+/**
+ * Refuses a take/give aimed at loot the room has not opened yet, or returns.
+ *
+ * ⚑ THE IMPORTS ARE LAZY AND THAT IS THE POINT, not a shortcut — the same
+ * reason `mirrorHoldingAct` reaches for `world.mjs` this way, one screen down.
+ * `arena.mjs` imports THIS file (for `holdingsOf`), so a static import back
+ * would close a cycle; and a store with no arena anywhere in it never loads
+ * either module.
+ *
+ * ⚑ IT REFUSES ONLY WHAT IT CAN PROVE. Every failure to read — no world store,
+ * a store that will not open, a dynamic store that throws — falls through to
+ * the ordinary door. A shroud that turned an unreadable room into a refusal
+ * would make an unrelated outage look like the cake was still standing, and a
+ * resident would have no way to tell those two apart.
+ */
+async function refuseShroudedLoot(thingId) {
+  if (!thingId) return;
+  let store = null, dyn = null;
+  try {
+    const [{ openStore }, { lootHiddenReason }] = await Promise.all([
+      import("./world-apex.mjs"), import("./arena.mjs"),
+    ]);
+    store = openStore();
+    if (!store?.db) return;
+    dyn = openDynamic();
+    const hidden = lootHiddenReason(store.db, dyn, String(thingId));
+    if (!hidden) return;
+    throw bounce(409, `${thingId} is not in this room yet`,
+      `it is the loot of ${hidden.ground}, and the loot is not in the room until the room is spent${
+        hidden.adversary ? ` — ${hidden.adversary} is still standing${hidden.standing ? ` (${hidden.standing})` : ""}` : ""
+      }. Put down what stands here and it will be lying where you can reach it; until then it is not something anyone can take or hand over.`);
+  } catch (e) {
+    // Our own refusal travels; anything else is a reader's trouble and is not
+    // the resident's to be punished for.
+    if (e?.code === 409 && /is not in this room yet/.test(String(e.defect ?? ""))) throw e;
+  } finally {
+    try { dyn?.close(); } catch { /* a reader that cannot close still read */ }
+    try { store?.db?.close(); } catch { /* same */ }
+  }
+}
+
 export async function callHoldTool(name, args = {}, key = null) {
   if (name === "world_hold") { const fz = worldFreezeBounce(); if (fz) return fz; }
   const actor = actingHandle(args, key);
@@ -308,7 +349,94 @@ export async function callHoldTool(name, args = {}, key = null) {
     // — a door that promised enforcement it does not perform would be the exact
     // schema-vs-runtime defect this branch flagged on `leave_mark`'s `tier:`, and
     // it is not better for being mine.
+    // ── THE LOOT SHROUD, AT THE HOLD DOOR (founder-ruled 2026-08-29) ─────────
+    //
+    // LOGOS § The portal ground: "A thing whose mark declares `loot` is NEITHER
+    // VISIBLE NOR TAKEABLE while the encounter on its ground is afoot: … a
+    // `take` or a `give` aimed at it is refused with a sentence that explains
+    // itself rather than a bounce that reads like a fault."
+    //
+    // HERE RATHER THAN IN `declareHolding`, for the reason the mirror is at this
+    // door too: `declareHolding` is the pure adjudicator, tested on hand-built
+    // stores with no world db and no journal anywhere near it, and a shroud
+    // inside it would hand every one of those tests two dependencies it has no
+    // business having. This door is where the stores already are.
+    //
+    // BOTH VERBS, ONE CHECK. give/drop/take are one primitive here, and the
+    // shroud is a fact about the OBJECT, so a hand that somehow has the wick end
+    // cannot pass it on either — which is the honest reading of "neither
+    // visible nor takeable" and costs nothing to hold.
+    await refuseShroudedLoot(args.thing);
     const dials = thingDials();
-    return declareHolding({ db, thing: args.thing, to: args.to ?? null, actor, roster: null, groundOwner: null, dials });
+    const did = declareHolding({ db, thing: args.thing, to: args.to ?? null, actor, roster: null, groundOwner: null, dials });
+    mirrorHoldingAct(did, key);
+    return did;
   } finally { db.close(); }
+}
+
+// ── THE HOLDING GAP, CLOSED (2026-08-28) ────────────────────────────────────
+//
+// Third instance of the say gap's class: a live write lane whose pen is not the
+// journal, and so invisible to World 2.0. Here the pen is the `attachments`
+// table (`declareAttachment`, dynamic-entities.mjs), and give/drop/take are
+// three of the world's thirteen apex actions — nothing anyone has picked up,
+// handed over or set down since the seed had a line in `acts`.
+//
+// HOOKED AT THE DOOR, NOT INSIDE `declareHolding`, and that is deliberate:
+// `declareHolding` is the pure adjudicator — it takes a db and no key, it is
+// tested directly on hand-built stores, and giving it a mirror would give every
+// one of those tests a Postgres dependency it has no business having. The door
+// is where a key exists (so the household resolves the way every other act's
+// does) and where success is unambiguous: `declareHolding` THROWS on refusal,
+// so a returned value is a declaration that landed.
+//
+// THE LAZY IMPORT IS THE POINT, not a shortcut. `world.mjs` imports this file,
+// so a static import back would close a cycle; `await import(...)` inside the
+// async body is the idiom this codebase already uses for exactly this
+// (world-stake.mjs reaching world2-claims.mjs). It also means a store with the
+// mirror off never loads world.mjs's world at all.
+//
+// Privacy: a holding is public by the door's own law — "what it does instead is
+// RECORD every take with the resident who made it, so a ground-holder who
+// objects has the record to point at" (world_hold's description). The thing is
+// a public mark id and the actor is the resident who acted. Nothing new leaves
+// the box.
+function mirrorHoldingAct(did, key) {
+  if (!did?.thing) return;
+  void (async () => {
+    try {
+      const { world2Enabled } = await import("./world2-acts.mjs");
+      if (!world2Enabled()) return;
+      const { mirrorLaneAct, CLASS_HOLDING } = await import("./world-journal.mjs");
+      const { witnessStamp } = await import("./world.mjs");
+      const { resolvedWorldHousehold } = await import("./world-branches.mjs");
+      const { currentCrossing } = await import("./crossings.mjs");
+
+      // The actor's own standpoint, not the thing's: an act is witnessed where
+      // the ACTOR stood (the-witnessed-line), and a held thing has no position
+      // of its own — "it is wherever its holder is, derived on read".
+      const { at, witnesses } = await witnessStamp(did.declared_by);
+      await mirrorLaneAct({
+        crossing: currentCrossing(),
+        actor: did.declared_by,
+        action: did.did,                 // give | drop | take — the face, as the resident named it
+        object: did.thing,
+        at, witnesses, cls: CLASS_HOLDING,
+        household: resolvedWorldHousehold(key),
+        payload: {
+          thing: did.thing,
+          holder: did.holder ?? null,
+          previous_holder: did.previous_holder ?? null,
+          made_by: did.made_by,
+          policy: did.policy,
+        },
+        effect: did.did === "drop"
+          ? "it stands on the ground where the holder set it down; the edge they authored is nullified"
+          : `${did.holder} holds it now — authorship did not move, and where it stands is derived from whoever is holding it`,
+        writtenAt: did.at,               // the declaration's own stamp, strictly ordered by the door
+      });
+    } catch (e) {
+      console.error(`[world2-acts] a holding did not reach acts (${String(e?.message ?? e).slice(0, 160)}) — the attachments edge is unaffected`);
+    }
+  })();
 }

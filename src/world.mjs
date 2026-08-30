@@ -19,6 +19,7 @@
 
 import { worldFreezeBounce } from "./freeze.mjs";
 import { existsSync, readFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { isPrincipal } from "./ops.mjs";
@@ -34,19 +35,26 @@ import {
   publishedState,
   readAtRef,
   readJsonAtRef,
+  resolvedWorldHousehold,
 } from "./world-branches.mjs";
 import { moveGuard } from "./world-move-guard.mjs"; // the drain night: moving a mark moves what stands on it
-import { ACTION_AMEND, ACTION_LEAVE, ACTION_WITHDRAW, CLASS_MARK, anchorAt, appendJournal, draftsForKey, filedPathOfAt, liveChildrenOf, liveMarks, pathFor, pinWitnesses, singleLogEnabled } from "./world-journal.mjs"; // POS-5 slice 1: the one append-only log
+import { ACTION_AMEND, ACTION_LEAVE, ACTION_WITHDRAW, CLASS_MARK, CLASS_MOVE, CLASS_VOICE, anchorAt, appendJournal, draftsForKey, filedPathOfAt, liveChildrenOf, liveMarks, mirrorLaneAct, pathFor, pinWitnesses, singleLogEnabled } from "./world-journal.mjs"; // POS-5 slice 1: the one append-only log
 import { WORLD_STAKE_TOOLS, callWorldStakeTool, worldPortfolioStakeSlice } from "./world-stake.mjs"; // P3 draft, append-shaped
 import { classNames, classRoster, classDials, departurePace, RESIDENT_INSTANTIABLE, residentMayInstantiate } from "./world-classes.mjs"; // which classes exist — read from the record, never held
 import { HOLD_TOOLS, callHoldTool } from "./world-hold.mjs"; // the object primitive: who holds what
 import { createVoices, EARSHOT_M } from "./voices.mjs"; // earshot: speech at a position (the party line)
-import { householdOf } from "./households.mjs"; // the human speaker's label wears the town's name, never the login
+import { householdOf, humanHandFor } from "./households.mjs"; // the human speaker's label wears the town's name, never the login
 import { householdLockPath, poolEnabled, pushDraftBranch, withDraftLease } from "./world-pool.mjs";
-import { cannotAnswer, pointAnswerable, servedRead, storeEpoch, storeShadowEnabled } from "./world-serve.mjs"; // stage 1: published-main reads from world.db, behind a flag
+import { cannotAnswer, pointAnswerable, servedRead, storeEpoch, storeShadowEnabled, storeDbPath } from "./world-serve.mjs"; // stage 1: published-main reads from world.db, behind a flag
+// The arena's own readers, for the two things a walk into a wheel-keeping
+// ground must ask the record: where does this ground set an entrant down, and
+// how fine is its floor. arena.mjs imports world-hold.mjs and world-journal.mjs
+// and never world.mjs, so this edge closes no cycle.
+import { arenaGroundAt, adversaryIn, arrivalOnGround, groundAtPoint } from "./arena.mjs";
 import { emissionsEnabled, openDynamic } from "./dynamic-store.mjs"; // stage 2: the dynamic layer's flag
 import { declareMovement } from "./dynamic-entities.mjs"; // stage D: the pen after the ledger's freeze
 import { emissionFromVoice } from "./dynamic-emissions.mjs"; // stage 2: speech also becomes an emission instance
+import { world2Enabled } from "./world2-acts.mjs"; // the write-path closure: is the shadow mirror on at all
 import { VESSEL_HANDLE, ridesTheVessel } from "./dynamic-entities.mjs"; // the aboard test, one home for two readers
 import { carriersFrom, carriersWithDisclosure, carrierReader, heardFromV2, inRect, movementStandpoint, movementV2Enabled, recordsAcrossEras, roadTerms, storedDepartures, storedRecordsFor, vesselPositionAt as vesselFromTimetable, vesselServiceFrom } from "./world-movement.mjs"; // stage D: carriers carry, frames compose
 import { byBand, presenceEnabled, presentNear, near as presenceNear, everyone as presenceEveryone, PRESENCE_DIALS } from "./dynamic-presence.mjs"; // stage 2: residents revealed to each other
@@ -588,6 +596,83 @@ export async function placeWords({ x, y, aboard = false, moving = false } = {}) 
 // in the room. Truncating that list would recreate the defect being fixed.
 const EARSHOT_PRESENCE_CAP = 500;
 
+// ── THE SAY GAP, CLOSED (2026-08-28) ────────────────────────────────────────
+//
+// THE DEFECT, in the LIVE lane's own words: "world.mjs calls appendJournal for
+// leave-mark/amend/withdraw only. The say path writes no journal row, so
+// nothing said since the seed is mirrored into acts. /world2/say answers over
+// the crossing-save's crystallized record only."
+//
+// THE LAW IT BREAKS (gold plan §1, verbatim): "LIVE — acts: walks, says,
+// enters/exits, throws, arena beats." A say is named in the first sentence of
+// the lane it was missing from.
+//
+// The voices log stays the first pen and stays the ruled durable operator
+// record; this is a second consumer of the same fact, in the shape
+// `emissionFromVoice` established beside it. `mirrorLaneAct` rather than a
+// journal row, for the reasons in world-journal.mjs § THE LANE HOOK.
+//
+// ── WHAT THE ROW SAYS, field by field, because each one was a choice ────────
+//
+//   actor        voice.handle — WHO SPOKE. Not `standAs`: on the human lane the
+//                speaker is `human-of-<slug>` and a housemate only lends the
+//                PLACE, so recording the housemate as the actor would put words
+//                in a resident's mouth. (The emissions row makes the opposite
+//                choice for its own reasons — `source: standAs ?? handle` — and
+//                the two are answering different questions.) Whose body lent
+//                the standpoint rides the payload where it belongs.
+//   written_at   voice.at — WHEN IT WAS SAID, not when this hook ran.
+//   at           stamped at the voice's OWN x/y (witnessStampAt), never at the
+//                speaker's position now.
+//   witnesses    who was within earshot, pinned — the-witnessed-line's plural,
+//                and for speech the most literal witnesses this log will ever
+//                hold.
+//   household    `resolvedWorldHousehold(key)` — THE SAME RESOLVER THE MARK
+//                LANE USES, threaded down through `voices.say` rather than
+//                re-derived here. One column, one spelling: world2-claims.mjs
+//                already paid for the alternative once ("one column carried
+//                three spellings of one fact"), and a say row spelling the
+//                household differently from a leave-mark row would seed exactly
+//                that again. Null for a berth (which has no household) and for
+//                a visitor key, which is what the resolver already answers.
+//
+// ── PRIVACY: NOTHING NEW LEAVES THE BOX ────────────────────────────────────
+//
+// `acts` exports to public git through the notary, so every mirrored field has
+// to be already-public. Speech is: the town's law is that words "fade from
+// hearing, never from the record", the record is served at
+// postmark.town/conversations, and the say path has no household scoping of any
+// kind. This mirror publishes nothing that the conversations page does not
+// already publish.
+function mirrorVoiceAct(voice, spoken = null) {
+  if (!world2Enabled()) return;
+  void (async () => {
+    try {
+      const here = { x: voice.x, y: voice.y };
+      const { at, witnesses } = await witnessStampAt(voice.handle, here);
+      const household = spoken?.household ?? null;
+      const standAs = spoken?.standAs && spoken.standAs !== voice.handle ? spoken.standAs : null;
+      await mirrorLaneAct({
+        crossing: currentCrossing(),
+        actor: voice.handle,
+        action: "say",
+        object: null,
+        at, witnesses, cls: CLASS_VOICE, household,
+        payload: {
+          text: voice.text,
+          place: voice.place ?? null,
+          ...(voice.aboard ? { aboard: true } : {}),
+          ...(standAs ? { stood_with: standAs } : {}),
+        },
+        effect: "the words were spoken where the actor stood and heard by whoever was within earshot; hearing fades, the record does not",
+        writtenAt: new Date(voice.at).toISOString(),
+      });
+    } catch (e) {
+      console.error(`[world2-acts] a voice did not reach acts (${String(e?.message ?? e).slice(0, 160)}) — the voices log is unaffected`);
+    }
+  })();
+}
+
 const voices = createVoices({
   // The unplaced speak from the threshold (Keemin, party night — FireflyArc's
   // human bounced off the room with a cheer unsaid): a resident whose home
@@ -622,7 +707,16 @@ const voices = createVoices({
   //
   // Behind WORLD_EMISSIONS, checked on `emissionFromVoice`'s first line. With
   // the flag off nothing is opened and the say path is what it was.
-  onSpoke: (voice, spoken) => emissionFromVoice(voice, { standAs: spoken?.standAs ?? null, repo: WORLD_CLONE }),
+  // TWO SECOND-CONSUMERS NOW, and the voices log is still the first pen and
+  // still untouched. `emissionFromVoice` gives the say a body in the world
+  // (dynamic.db/emissions, behind WORLD_EMISSIONS); `mirrorVoiceAct` gives it
+  // its line in World 2.0's event log (Postgres `acts`, behind WORLD2_PG),
+  // which is the gap the write-path closure exists to shut — see the function.
+  // Neither throws; a box that cannot write either still lets the town talk.
+  onSpoke: (voice, spoken) => {
+    emissionFromVoice(voice, { standAs: spoken?.standAs ?? null, repo: WORLD_CLONE });
+    mirrorVoiceAct(voice, spoken);
+  },
   // WHO IS HERE, BY POSITION (issue #5 §2, behind WORLD_PRESENCE). `presentNear`
   // returns null on its first line with the flag off, so `nearby` answers null
   // and the store's `listeners` is exactly the door-activity list it has always
@@ -701,7 +795,10 @@ export async function worldSay(args = {}, key = null) {
   try {
     const text = args.text == null ? "" : String(args.text);
     const since = Number.isFinite(Number(args.since)) ? Number(args.since) : null;
-    const r = text.trim() ? await voices.say(choice.handle, text, { since }) : await voices.hear(choice.handle, { since });
+    // `household` rides the say so the act's row can be scoped by the SAME
+    // resolver the mark lane uses (mirrorVoiceAct § household). It reaches only
+    // the `onSpoke` listener; nothing about hearing or the voices log changes.
+    const r = text.trim() ? await voices.say(choice.handle, text, { since, household: resolvedWorldHousehold(key) }) : await voices.hear(choice.handle, { since });
     withNoticeBoard(r);
     return r;
   } catch (e) {
@@ -725,11 +822,13 @@ export async function worldSayHuman(args = {}, key = null) {
   if (!handles.length)
     return { error: "bounce", defect: "no residents on this key",
       hint: "a human speaks from their household's ground — sign in with the account that holds your residents" };
-  let slug = null;
-  for (const h of handles) {
-    try { const hh = householdOf(h); if (hh?.slug) { slug = hh.slug; break; } } catch { /* garnish only */ }
-  }
-  const speaker = `human-of-${slug ?? handles[0]}`;
+  // THE LABEL MOVED, THE ANSWER DID NOT (2026-08-27). This derivation used to
+  // live inline here and is now `humanHandFor` — same slug-then-first-handle
+  // order, same words — because the apex needs the same name to hand a handler
+  // the hand an embodied act is recorded under. Two copies of a label is two
+  // answers waiting to disagree; this door still owns the label, it just no
+  // longer keeps the only copy of how it is spelled.
+  const speaker = humanHandFor(handles);
   // Whom the human stands beside. `with:` names a housemate explicitly; the
   // default prefers a housemate who is ABOARD a vessel over one ashore (learned
   // mid-crossing 2026-08-08: a split household stood DARKO's welcome in a
@@ -773,7 +872,7 @@ export async function worldSayHuman(args = {}, key = null) {
   try {
     const text = args.text == null ? "" : String(args.text);
     const since = Number.isFinite(Number(args.since)) ? Number(args.since) : null;
-    const r = text.trim() ? await voices.say(speaker, text, { standAs, since }) : await voices.hear(speaker, { standAs, since });
+    const r = text.trim() ? await voices.say(speaker, text, { standAs, since, household: resolvedWorldHousehold(key) }) : await voices.hear(speaker, { standAs, since });
     // Whose body you borrowed, said out loud. A human has no place of their own
     // — they stand with a housemate — and until this line the reply named the
     // PLACE but never the person, so landing somewhere unexpected was a mystery
@@ -795,6 +894,17 @@ export async function worldSayHuman(args = {}, key = null) {
 // sailing, one notice, self-expiring; if a second notice ever wants to exist,
 // that is the day to build the real surface instead of growing this one.
 const NOTICES = [{
+  // The second notice this board has ever carried — same ruling, same shape,
+  // same self-expiry. (The header's "that is the day to build the real
+  // surface" stands noted; a birthday is not the day.)
+  id: "notice-darko-birthday-2026-08-29",
+  place: "the town — the lanes around the Lanternstep House",
+  at: { x: 1088, y: -792 },
+  area: { x: 1088, y: -792, r: 6000 },
+  until: Date.parse("2026-08-30T06:00:00Z"),
+  title: "TONIGHT — DARKO'S BIRTHDAY, at the Lanternstep House",
+  text: "The town keeps a birthday tonight: DARKO, the founder, at the Lanternstep House — the parlor holds a table long enough for everyone who shows up (walk to the-town/the-lanternstep-parlor). And a stranger thing, reported by more than one passerby: SOUNDS from under the house. Something in the cellar has been waiting in the dark a long time, and tonight the cellar door stands open. Bring a light. — the office",
+}, {
   id: "notice-pando-return-2026-08-09",
   place: "the Pando Peak — everywhere on the mountain",
   at: { x: -94570, y: -94570 },
@@ -1442,14 +1552,39 @@ export async function witnessStamp(handle) {
   const unread = (reason) => ({ at: { anchor: null, dx: null, dy: null, unplaced: true }, witnesses: { source: "unread", reason, list: [] } });
   try {
     const w = await world();
+    const standing = await residentStandpoint(handle, w);
+    if (!standing?.placed) return { at: { anchor: null, dx: null, dy: null, unplaced: true }, witnesses: { source: "presence", list: [] } };
+    return await witnessStampAt(handle, { x: standing.x, y: standing.y }, w);
+  } catch (e) {
+    return unread(`witness-read-threw: ${String(e?.message ?? e).slice(0, 120)}`);
+  }
+}
+
+/**
+ * THE STAMP FOR A POINT THAT IS ALREADY KNOWN.
+ *
+ * `witnessStamp` asks the world where the actor is standing. A lane whose act
+ * CARRIES its own place must not ask that question a second time — for speech
+ * it would be redundant and also WRONG: a voice is logged at the coordinates it
+ * was spoken from (voices.mjs § THE DECK RULE, "the stored x/y stay where the
+ * words were actually said"), and a resident who walks away between the say and
+ * the stamp would have their words pinned where they now stand rather than
+ * where they spoke them. The whole anchor pair exists to stop exactly that kind
+ * of quiet substitution.
+ *
+ * Everything after the standpoint is shared with `witnessStamp` — one home for
+ * the-witnessed-line's serialization, so a `say` row and a `leave-mark` row
+ * cannot come to mean different things by the same field.
+ */
+export async function witnessStampAt(handle, here, known = null) {
+  const unread = (reason) => ({ at: { anchor: null, dx: null, dy: null, unplaced: true }, witnesses: { source: "unread", reason, list: [] } });
+  try {
+    const w = known ?? await world();
     const { verbs } = await mods();
     const marks = w.marks ?? [];
     const centreOf = (id) => marks.find((m) => m.id === id)?.at ?? null;
     const chainAt = (p) => verbs.containmentChain(p, marks);
 
-    const standing = await residentStandpoint(handle, w);
-    if (!standing?.placed) return { at: { anchor: null, dx: null, dy: null, unplaced: true }, witnesses: { source: "presence", list: [] } };
-    const here = { x: standing.x, y: standing.y };
     const at = anchorAt(here, { chain: chainAt(here), centreOf });
 
     // `presentNear` is null when the presence layer is switched off at this
@@ -1468,6 +1603,55 @@ export async function witnessStamp(handle) {
 /** The clone's own dials, read at the engine ref rather than out of whatever branch the tree is parked on. */
 async function foldConstants() {
   try { return await engineImport("marks-fold.mjs"); } catch { return {}; }
+}
+
+/**
+ * THE GROUND'S LAWFUL MINIMUM STAKE — the number that decides whether a stake
+ * act is a putting-forward (Keemin's ruling, 2026-08-28, Phase 5.6).
+ *
+ * The town's economy law is the whole rule, and 1.0 already stated it:
+ * "commons marks (any ground not your household's own) publish ONLY while
+ * backed by escrow". So:
+ *
+ *   YOUR OWN SOVEREIGN GROUND -> minimum 0. Nothing needs buying; an explicit
+ *     `stamps: 0` is a deliberate putting-forward and publishes.
+ *   COMMONS (anyone else's ground, or none) -> minimum 1. A zero stake is
+ *     refused with the law named, and the mark stays a private draft.
+ *
+ * A DE-SITED MARK inherits its parent's answer rather than being treated as
+ * commons: "a predicated mark is its parent continued" (004), and a mark with
+ * no ground of its own is not standing on the commons — it is standing on
+ * whatever its parent stands on.
+ *
+ * TODO(standing): this is the MINIMAL own-ground check the ruling authorised,
+ * and it asks the question the sibling standing lane is porting properly —
+ * "whose ground is this". When `world2/tools/standing.mjs` lands, this reads
+ * from it instead: the containment walk there handles nesting, retired ground,
+ * and the overlay cases that this flat parcel scan does not. Until then the
+ * conservative direction is deliberate — an unrecognised ground reads as
+ * commons, so the failure mode is "your mark stayed private", never "your
+ * mark published for free on someone else's land".
+ */
+async function groundMinimumStake(clean, canon) {
+  const commons = { min: 1, ground: null };
+  if (!clean.at) {
+    const parent = canon.byId.get(clean.parent_id);
+    if (!parent?.at) return { min: 0, ground: parent ? `${clean.parent_id} (continued)` : null };
+    clean = { ...clean, at: parent.at, extent: parent.extent };
+  }
+  const { marksContain } = await foldConstants();
+  if (typeof marksContain !== "function") return commons; // no geometry engine → the safe read
+  let registry = null;
+  try { registry = readJsonAtRef(WORLD_CLONE, mainRef(WORLD_CLONE), "WORLD/households.json")?.households ?? null; }
+  catch { /* no registry → solo grain, same as everywhere else */ }
+  const credOf = (h) => registry?.[h] ?? `solo:${h}`;
+  const mine = credOf(clean.by);
+  for (const g of canon.marks) {
+    if (g.kind !== "parcel" || credOf(g.by ?? g.household) !== mine) continue;
+    if (marksContain(g, { at: clean.at, extent: clean.extent, points: clean.points }))
+      return { min: 0, ground: g.id };
+  }
+  return commons;
 }
 
 /**
@@ -1567,7 +1751,33 @@ async function journalLeaveMark(clean, { crossing = currentCrossing() } = {}) {
     // world coordinates as the resident spoke them, and the drain does the
     // conversion once, when it decides what path the record lands at. Doing it
     // twice is how the two eras would disagree about where a mark is.
-    const { amend, household, ...declaration } = clean;
+    // ── THE STAKE IS THE BOUNDARY (Keemin's ruling, 2026-08-28) ─────────────
+    //
+    // Submit is not a word this town needed. The economy law already said where
+    // the private/public line falls, so staking a mark IS putting it forward,
+    // and the door's job is to rule on the AMOUNT against the ground it stands
+    // on. That verdict rides the declaration as `put_forward`, because the
+    // docket pen cannot read law and this is the one place that can.
+    //
+    // Computed here rather than at the door's mouth because `canon` is already
+    // open on this line — the ground question is a canon question, and opening
+    // the record twice to ask it once is how the two halves would drift.
+    const staking = clean.stamps !== undefined && clean.stamps !== null;
+    const stakeN = staking ? Number(clean.stamps) : 0;
+    const ground = staking ? await groundMinimumStake(clean, canon) : null;
+    const putForward = staking && stakeN >= ground.min;
+
+    // The refusal is a refusal to PUBLISH, never a refusal to save: the
+    // declaration stands as the author's own private draft either way, and they
+    // are told which law held it back and what would carry it over. Refusing
+    // the whole act would throw away work over a number they can simply change.
+    const groundRefusal = staking && !putForward
+      ? `a commons mark publishes only with escrow behind it — ✦0 leaves it standing as your private draft. It stands on ground that is not your household's, so stake at least ✦1 to put it forward; on your own ground ✦0 would have been enough.`
+      : null;
+
+    const { amend, household, stamps: _st, ...rest } = clean;
+    const declaration = { ...rest, ...(staking ? { stamps: stakeN } : {}), ...(putForward ? { put_forward: true } : {}) };
+
     const { at, witnesses } = await witnessStamp(clean.by);
     const row = appendJournal(db, {
       crossing, actor: clean.by, household,
@@ -1613,6 +1823,15 @@ async function journalLeaveMark(clean, { crossing = currentCrossing() } = {}) {
       witnesses: row.witnesses ? JSON.parse(row.witnesses) : null,
       ...(amending ? { amended: true, moved: false,
         superseded: "the prior declaration — every version stays in the log; canon shows the latest at the next crossing" } : {}),
+      // ── which side of the boundary this act left the mark on ──────────────
+      put_forward: putForward,
+      ...(ground?.ground ? { on_your_ground: ground.ground } : {}),
+      ...(putForward ? {} : {
+        privacy: "this stands as your own private draft — on no docket, in no export, in no archive, in no public answer, and not yet a line in the world's log. Nobody can see you are working on it.",
+        to_publish: groundRefusal
+          ?? "staking it is what puts it forward: world_stake { mark, stamps } — or pass stamps: with the declaration to do both in one act. On your own household's ground, stamps: 0 is enough and is a deliberate putting-forward.",
+        ...(groundRefusal ? { refused_the_stake: true } : {}),
+      }),
     };
   } finally { try { db.close(); } catch { /* already gone */ } }
 }
@@ -1798,7 +2017,14 @@ export async function leaveMarkViaOffice(worldClone, payload = {}, key = null) {
       ? { class: klass, ask: String(ask).trim(), reward: Number(reward), status: status === undefined ? "open" : String(status).trim() }
       : { class: klass };
   const clean = { slug, kind, at, extent, points, body: String(body).trim(), slot, value, parent_id, by, household, date: new Date().toISOString(),
-    ...classFields, ...(image !== undefined ? { image } : {}), ...(payload.amend === true ? { amend: true } : {}) };
+    ...classFields, ...(image !== undefined ? { image } : {}), ...(payload.amend === true ? { amend: true } : {}),
+    // `stamps` now RIDES the declaration instead of being stripped here. It was
+    // stripped because 1.0 routes escrow through the stake verb and the record
+    // had no use for it — but under the stake-is-the-boundary ruling the amount
+    // is what decides whether this act is public, and only the journal pass can
+    // rule on it (the ground question is a canon question). The ledger move is
+    // still the stake verb's; this is the declaration saying what was asked for.
+    ...(payload.stamps === undefined || payload.stamps === null ? {} : { stamps: stakeN }) };
   const exec = join(HERE, "leave-exec.mjs");
   let result;
   if (singleLogEnabled()) {
@@ -1826,7 +2052,14 @@ export async function leaveMarkViaOffice(worldClone, payload = {}, key = null) {
   // balance, a ledger hiccup) must never unwrite the mark, so it lands as
   // `stake_bounce` on the answer with the publish note intact — the mark is
   // yours either way, and the path to publish stays named.
-  if (stakeN >= 1) {
+  // THE LEDGER MOVE, and only when there is one to make. The journal pass has
+  // already ruled on whether this act put the mark forward (`put_forward`); this
+  // is the escrow half of the same motion. A stake the ground REFUSED must not
+  // touch the ledger — the mark stayed private, so taking the stamps would be
+  // charging for a publication that did not happen. And ✦0 on your own ground is
+  // a real putting-forward with nothing to move: the promotion already happened
+  // in the docket pen, and there is no escrow row for zero stamps.
+  if (stakeN >= 1 && result?.put_forward === true) {
     const staked = await callWorldStakeTool("world_stake", { mark: result.id, stamps: stakeN, handle: by }, key);
     if (staked?.error) {
       result.stake_bounce = { defect: staked.defect, hint: staked.hint };
@@ -2140,6 +2373,74 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
     const e = new Error(defect); Object.assign(e, { code, defect, hint, ...extra }); return e;
   };
 
+  // ── AN EMBODIED HUMAN'S WALK IS REFUSED, AND LOUDLY (2026-08-27) ───────────
+  //
+  // THE OWN HAND is the one thing the human class exists to protect: it
+  // `implements: ["the-town/the-own-hand"]`, and human-actor.mjs says what that
+  // costs — "A record that wrote the resident's name on a human's words would be
+  // the one thing this class exists to prevent." A walk is a record of a BODY
+  // MOVING THROUGH THE WORLD: `declareMovement` writes `actor` into
+  // dynamic.db/movements, position is derived from that row, and every reader
+  // downstream — the standpoint, presence, the crossing-save's STATE/log/ line —
+  // treats that actor as a thing standing somewhere.
+  //
+  // So this door has exactly two ways to write an embodied human's walk and both
+  // are false:
+  //
+  //   · UNDER THE RESIDENT'S HAND — which is the violation itself, and the
+  //     silent one: the resident's body moves, on the record, on the human's
+  //     word, and nothing anywhere says a human was involved.
+  //   · UNDER THE HUMAN'S HAND — which writes a walker the world cannot place.
+  //     The human has no home mark, no standpoint and no presence row; `from`
+  //     would fall back to `homeCoords` and stand them at the quay, and the save
+  //     would crystallize an entity the atlas has no seat for.
+  //
+  // The second is the humans-as-residents design, and LOGOS/classes.md § The
+  // human class is explicit that it has not arrived: "everything further waits
+  // for the humans-as-residents design, and arrives — if it arrives — as law
+  // here first." § The three channels does grant the walk ("A human embodied by
+  // their own parcel may walk within its extent and no further") and the human
+  // class mark now carries a pace dial for it — so the LAW is ready and the
+  // RECORD is not. That gap is the office's, and this is the office saying so
+  // out loud instead of picking whichever falsehood is quieter.
+  //
+  // A refusal is the correct terminal state here, not a placeholder: the same
+  // shape `walkAllowed` uses one door up ("The refusal NAMES its reason; it is
+  // not a silent clip"), and the same 501 the apex answers with when law opens a
+  // door the office has not built a room behind.
+  // ── THE SEAT ANSWERS THE SECOND FALSEHOOD (founder-ruled 2026-08-29) ──────
+  //
+  // The refusal below named two ways to write an embodied walk and called both
+  // false. It was right about both, and it missed a third that the founder has
+  // now ruled: WRITE THE SEAT'S WALK AND SAY WHOSE ACT IT WAS.
+  //
+  // LOGOS § The three channels: "Any act needing a record WRITES THROUGH THE
+  // SEAT — the resident whose household hosts the human — and the answer says
+  // so. The human has no home mark, no standpoint and no threshold record; the
+  // seat has all three, and they are the ones actually moving. … writing the
+  // seat's name in SILENCE is the ghost-writing the human class exists to
+  // prevent. The disclosure is what makes the difference."
+  //
+  // So the first horn — "under the resident's hand … and nothing anywhere says
+  // a human was involved" — is answered exactly where it was sharpest: the
+  // silence. The row is the seat's because the seat is the body that moves, and
+  // `acted_by` on the answer is the part that was missing.
+  //
+  // ⚑ FENCED TO A SEATING GROUND, and this office does not decide which. The
+  // apex resolves seating from the admitted calculus (scope and all) and names
+  // it in `__seated_ground`; without that word this door still refuses, so the
+  // flat tool and the REST body reach the 501 exactly as before. The escalation
+  // question is answered one line down regardless: `who` must be a resident THIS
+  // KEY HOLDS, so the worst a forged word can buy is a walk the caller could
+  // already have taken under their own hand.
+  const seatedGround = String(payload.__seated_ground ?? "").trim();
+  if (payload.as_human && !seatedGround)
+    throw bounce(501, "this office cannot record a walk under a human's own hand",
+      `Your parcel grants your human this walk and the law behind it stands — what is missing is the RECORD. A walk is written as a body moving: the mover's own row in the movement record, derived into a position every reader trusts. Your human has no such body yet — no home mark, no standpoint, no place the world could put them down — so the only rows this office could write are your resident's (which would put their name on your step, and the human class exists to prevent exactly that) or yours (which would place a walker the atlas has no seat for). Neither is true, so neither is written. Your human still speaks here, and your residents still walk: act as your resident to move, or as your human to be heard.`,
+      { law: "LOGOS/classes.md § The human class — 'everything further waits for the humans-as-residents design, and arrives — if it arrives — as law here first'",
+        granted_by: "the parcel's own-ground grant, which stands — this is the office's gap, not yours",
+        hand: String(payload.as_human) });
+
   // ruling 5 — never infer which resident. One handle auto-resolves; several bounce.
   const handles = [...(key?.handles ?? [])];
   // Read ONLY `handle` — the one key the schema declares. `from` in a walk means
@@ -2175,7 +2476,7 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
 
   const w = await world();
   const skeleton = w?._raw?.skeleton ?? null;
-  const { parseWalkLedger, currentDeparture, positionAt, fractionalCrossing, extentForArrival, isWalkArrival } =
+  const { parseWalkLedger, currentDeparture, positionAt, fractionalCrossing, extentForArrival, isWalkArrival, targetEntryT } =
     await import(pathToFileURL(join(worldClone, "tools", "walk.mjs")));
 
   // WHERE IN THE TARGET — issue #5 §1, RENAMED 2026-08-19 (founder-ruled, the
@@ -2274,6 +2575,78 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
     targetExtent = asked;
   }
 
+  /**
+   * The portal ground this walk has business with, or null — asked ONCE, in one
+   * store read, and answered for both of tonight's rulings at the same time.
+   *
+   * THE GROUND IS FOUND TWO WAYS AND THE TWO ARE DIFFERENT QUESTIONS. A walk
+   * that NAMES a mark is asking to cross into it, so the named mark is the
+   * ground; a walk to bare coordinates is a step across whatever floor those
+   * numbers land on, which is what a click-to-walk grid sends and is exactly
+   * the case the stride dial exists for. The placement fires only for the
+   * first: `entryPointInto` refuses a walker already inside the ground, so a
+   * step across the vault floor keeps its own destination.
+   *
+   * A store that will not open answers null and this whole block is skipped —
+   * the same shape every other reader of the world store keeps here. A walk is
+   * not the act to fail because a room could not be read.
+   */
+  const arenaHere = (markId, aim) => {
+    const path = storeDbPath();
+    if (!existsSync(path)) return null;
+    let db = null;
+    try {
+      db = new DatabaseSync(path, { readOnly: true });
+      // The named mark first, the destination point second. A walk that names
+      // the CAKE is still a walk into the vault the cake stands in — which is
+      // the founder's own case, and the reason the fallback is not just for
+      // bare coordinates.
+      const place = (markId ? arenaGroundAt(db, [markId]) : null) ?? groundAtPoint(db, aim);
+      if (!place) return null;
+      return { place, adversaryRow: place.keeps_wheel ? adversaryIn(db, place) : null };
+    } catch { return null; }
+    finally { try { db?.close(); } catch { /* a reader that cannot close still read */ } }
+  };
+
+  // ── THE ARENA'S PLACEMENT AND ITS STRIDE (founder-ruled 2026-08-29) ────────
+  //
+  // Two rulings, one lookup, and they belong together because they are the same
+  // question asked twice: WHERE ON THIS FLOOR DOES A BODY GET TO STAND.
+  //
+  // LOGOS § The arena: "An entrant into a wheel-keeping ground is placed where
+  // the ground was entered from — the point on its boundary the crossing came
+  // through — and never within an adversary's own extent. Where that edge point
+  // falls inside one, the placement steps back OUT along the way in until it is
+  // clear, by arithmetic every reader repeats identically."
+  //
+  // LOGOS § The portal ground: "`walk_min_step` is a dial on the ground's own
+  // mark, in metres: within that ground a walk is validated and snapped at that
+  // granularity instead of the town's whole-metre step. Absent — which is every
+  // ground in the town on the day this is written — the town-wide step governs
+  // and nothing anywhere changes."
+  //
+  // ⚑ EVERYTHING HERE IS FENCED BEHIND A GROUND THAT SAID SOMETHING. A walk to
+  // an ordinary mark reaches none of it: `arenaGroundAt` answers null for
+  // anything that is not a portal ground, `walk_min_step` is null for a ground
+  // that has not declared one, and the placement only ever fires for a ground
+  // that KEEPS A WHEEL. Which is the whole safety of the change — the founder
+  // asked for a finer floor in one room, not a re-cut of the town's stride.
+  //
+  // ONE DECISION, MADE IN arena.mjs AND APPLIED HERE. `arrivalOnGround` owns
+  // both rulings and their order; this desk owns the store read and the pen.
+  // The split is what makes the decision falsifiable at all — see that
+  // function's own note on why a walk desk with no test harness must not be
+  // where new law lives.
+  const arena = arenaHere(targetMarkId, toward);
+  const onGround = arena
+    ? arrivalOnGround({ from, toward, targetFrom }, arena.place, arena.adversaryRow, { entryT: targetEntryT })
+    : null;
+  if (onGround) {
+    if (onGround.toward) toward = onGround.toward;
+    if ("targetExtent" in onGround) targetExtent = onGround.targetExtent;
+    if (onGround.targetFrom) targetFrom = onGround.targetFrom;
+  }
+
   // THE WATER GATE IS OFF FOR v0 — Keemin's ruling: "walking on water is fine for
   // v0 lol". A leg across the channel is permitted, and no bounce is raised.
   //
@@ -2328,6 +2701,52 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
         within: targetExtent, toMark: targetMarkId, declaredBy: who, pace,
       });
     } finally { store.close(); }
+
+    // ── THE WALK GAP, CLOSED (2026-08-28) ───────────────────────────────────
+    //
+    // The say gap's sibling, and it hid better. `walk-exec.mjs` DOES call
+    // appendJournal, so the walk lane reads as mirrored — but that arm is the
+    // `else` below, and dev has run WORLD_MOVEMENT_V2=1 since movement-v2
+    // shipped. Every walk on this office goes through the branch you are
+    // reading, whose pen is `dynamic.db/movements`, and not one of them had
+    // reached `acts`. Two pens for one verb, only one of them mirrored: a lane
+    // is closed only when EVERY pen behind it is.
+    //
+    // Same fields the journal arm writes (walk-exec.mjs § SETTLE AT THE SAVE),
+    // so the act is the same act whichever pen recorded it — CLASS_MOVE,
+    // action "walk", the target as `object`, the pace on the payload. What it
+    // cannot carry is that arm's `payload.ledger`/`lines`: this pen formats no
+    // ledger line (that is the whole point of movement-v2 — "no commit is made
+    // on the resident's turn"), and inventing one here would be a second
+    // formatter for a serialization that has one home. The departure's own
+    // geometry rides instead, which is what this pen actually knows.
+    //
+    // Privacy: a departure is public — it crystallizes into `STATE/log/` in the
+    // public world repo at the next crossing-save, by this branch's own
+    // `movement.crystallizes`. Nothing new leaves the box.
+    if (world2Enabled()) {
+      void (async () => {
+        try {
+          const { at: stampAt, witnesses } = await witnessStampAt(who, from);
+          await mirrorLaneAct({
+            crossing: at, actor: who, action: "walk",
+            object: targetMarkId ?? null,
+            at: stampAt, witnesses, cls: CLASS_MOVE,
+            // THE MOVEMENTS ROW'S OWN COLUMN VOCABULARY — `within` and `to`,
+            // not `targetExtent`/`targetMarkId`. That is 1.0's one converter
+            // for this exact record (world-movement.mjs § storedDepartures:
+            // "`within` and `to` are the store's column names"), and using it
+            // here is what lets live-reads.mjs read this pen with the mapping
+            // it already has rather than a fifth spelling of one departure.
+            payload: { from, toward, pace, within: targetExtent ?? null, to: targetMarkId ?? null },
+            effect: "the walk is declared; the record receives it at the save",
+            household: resolvedWorldHousehold(key),
+          });
+        } catch (e) {
+          console.error(`[world2-acts] a walk did not reach acts (${String(e?.message ?? e).slice(0, 160)}) — dynamic.db/movements is unaffected`);
+        }
+      })();
+    }
     result = { position: positionAt({ from, toward, at, targetExtent, targetMarkId, pace }, at), pace, movement: { record: "dynamic.db/movements", crystallizes: "STATE/log/ at the next crossing-save" } };
   } else {
     const exec = join(HERE, "walk-exec.mjs");
@@ -2414,6 +2833,20 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
 
   return {
     handle: who, from, toward, toward_is: targetFrom, mark_id: targetMarkId,
+    // ── WHOSE ACT THIS WAS, WHEN IT WAS NOT THE SEAT'S OWN (2026-08-29) ──────
+    //
+    // `handle` above is the body that moved and the name on the row; this is
+    // the hand that asked for it. LOGOS § The three channels: the seat writes
+    // the record "and the answer says so … writing the seat's name in SILENCE
+    // is the ghost-writing the human class exists to prevent."
+    //
+    // ABSENT for an ordinary walk, so every resident's answer is byte-identical
+    // — a key that is always there would make a reader test its value, and the
+    // value it would carry for a resident is the resident, which says nothing.
+    ...(seatedGround && payload.as_human
+      ? { acted_by: { human: String(payload.as_human), through_seat: who, seated_by: seatedGround },
+          acted_by_note: `this walk was ${String(payload.as_human)}'s act, recorded under ${who} — the seat is the body the world can place, and ${seatedGround} is the ground that seats them` }
+      : {}),
     departed_at_crossing: at,
     ...(entry ? { entry, arrived_note: entry.refused
       ? `arrived; entry refused: ${entry.refused}`
@@ -2710,7 +3143,7 @@ export const WORLD_TOOLS = [
       reward: { type: "integer", minimum: 1, description: "bounty only: the reward in stamps, a whole number ≥ 1 — what the poster pays the builder; the deal itself is the letters" },
       status: { type: "string", enum: ["open", "done"], description: "bounty only: open (default) or done — a done notice stays on the board, struck" },
       image: { type: "string", description: "optional: one image URL on the town's media host (https://media.postmark.town/…) — upload the file first with upload_media (or POST /media) and pass the url it returns; other hosts bounce" },
-      stamps: { type: "number", description: "stake this many of your ✦ on the new mark in the same act — escrow is what PUBLISHES a commons mark (any ground not your household's own) at the crossing. Omit or 0 = personal draft: your household sees it, nobody else, until it is staked (world_stake works on your own drafts too). Whole stamps; they stay yours — world_unstake returns them." },
+      stamps: { type: "number", description: "stake this many of your ✦ on the new mark in the same act — AND THAT IS WHAT PUBLISHES IT. Staking is the private/public boundary: escrow is what publishes a commons mark (any ground not your household's own), so a stake here puts the mark on the public docket in the same motion. OMIT IT and the mark is a TRULY PRIVATE DRAFT — held where only your household's key reaches it, on no docket, in no export, in no archive, and not yet a line in the world's log; leave the same slug again to rewrite it, world_stake to put it forward later, world_withdraw_mark to let it go. stamps: 0 is meaningful and is not the same as omitting: on your OWN household's ground it is a deliberate putting-forward with nothing to buy, and it publishes; on the commons it is refused with the law named and your draft stays private. Whole stamps; they stay yours — world_unstake returns them." },
       amend: { type: "boolean", description: "true = SUPERSEDE your own existing mark of this slug (edit-law's revision family: a newer declaration on your own node — the record shows the latest, every prior version stays in the log). Without it, a reused slug bounces. In-place amends always work; an amend that MOVES a published mark is refused for now (#1862)." },
     }, required: ["slug", "kind", "body"], additionalProperties: false } },
   { name: "world_note",

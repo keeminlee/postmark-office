@@ -360,6 +360,13 @@ for (const m of marks) {
   // had declared world-wide reach and has not is exactly the silent
   // disagreement `frontmatter_problems` exists to surface.
   if (m.ambient != null && m.ambient !== true && m.ambient !== "true") problems.push(`\`ambient:\` must be true to widen reach (got ${JSON.stringify(m.ambient)}) — this class reaches only where it stands`);
+  // `loot:` marks a thing as what a fight is FOR, and the shroud hides it until
+  // the room is spent. Same one-spelling rule as `ambient:`, and the same
+  // reason: a prize whose author believed it was held back and is not is the
+  // silent disagreement this list exists to surface — except here the failure
+  // is visible in the world, as a cake's reward sitting in the room before
+  // anyone has swung at it.
+  if (m.loot != null && m.loot !== true && m.loot !== "true") problems.push(`\`loot:\` must be true to hold a thing back until the encounter is spent (got ${JSON.stringify(m.loot)}) — this thing is an ordinary thing and is visible from the start`);
   if (problems.length) oddFrontmatter.push({ id: m.id, path: relPath(m._dir), problems });
 
   node(m.id, "mark", {
@@ -412,6 +419,20 @@ for (const m of marks) {
       affordances: Array.isArray(m.affordances) ? m.affordances : null,
       mobility: m.mobility ?? null,
       anchor: m.anchor ?? null,
+      // `requires:` — a GUARD IN GATE POSITION on a class (2026-08-26).
+      // LOGOS/classes.md § The derived: "a verb or slot may name a derived and
+      // a required value as its precondition — that is the whole condition
+      // grammar." Carried for the same reason `dials:` is: the apex asks the
+      // store whether an act's precondition holds, and a precondition the store
+      // cannot see is a precondition the door invents or ignores.
+      requires: (m.requires && typeof m.requires === "object" && !Array.isArray(m.requires)) ? m.requires : null,
+      // `held_grant:` — an INSTANCE filling the thing class's unsealed
+      // `held-grant` slot. The field/slot name pair follows the `entry` /
+      // `entry-law` precedent already on the record: the slot names the law,
+      // the frontmatter field is what an instance writes. Custody is checked at
+      // the read (`by: the-town`), never here — the hydrator carries what the
+      // record says and the gate decides what it means.
+      held_grant: Array.isArray(m.held_grant) ? m.held_grant : null,
       exempt: Array.isArray(m.exempt) ? m.exempt : null,
       // `ambient:` is class-declared REACH (2026-08-09): the class's affordances
       // gather everywhere rather than only where the mark stands — jurisdiction
@@ -434,6 +455,29 @@ for (const m of marks) {
       // (`AMBIENT_REACH_SQL`, `json_type = 'true'`) is strict about it. The
       // accommodation lives at the one place that meets the parser.
       ambient: (m.ambient === true || m.ambient === "true") ? true : null,
+      // `loot:` — an INSTANCE saying it is what a fight is for (2026-08-29).
+      // LOGOS/classes.md § The portal ground: "A thing whose mark declares
+      // `loot` is NEITHER VISIBLE NOR TAKEABLE while the encounter on its ground
+      // is afoot ... At `spent` it appears."
+      //
+      // ⚑ THE FLAG DIED HERE, BETWEEN THE FILE AND THE STORE, and it is worth
+      // naming rather than quietly adding. This props block is an EXPLICIT field
+      // list, so a frontmatter key nobody adds to it reaches no reader at all —
+      // and `loot` was never added. the-wick-end and a-slice-to-take-home have
+      // carried `loot: true` in their mark.md since they were written; after a
+      // fresh hydrate their store rows read `props.loot = NULL`, so `looseIn`
+      // saw no loot anywhere and the shroud hid nothing. Found on the box, not
+      // by the suite: every falsifier for the shroud writes props DIRECTLY, so
+      // the pipe the flag actually travels was the one thing none of them
+      // crossed. Exactly the defect `dials:` had here before it (see § THE CLASS
+      // FIELDS above) — the second instance of one class in one file.
+      //
+      // Normalized on the `ambient:` precedent immediately above, for its exact
+      // reason: the world's frontmatter parser has no boolean case, so a file's
+      // `loot: true` arrives as the STRING "true", and the string is the live
+      // shape on the dev stage today. `true` and `"true"` become the boolean,
+      // everything else becomes null and is REPORTED.
+      loot: (m.loot === true || m.loot === "true") ? true : null,
       frontmatter_problems: problems.length ? problems : null,
       keys: rawKeys(m),               // see § what the AUTHOR wrote, above
     },

@@ -62,10 +62,66 @@ export function ridesTheVessel(mine, vessel) {
     && mine.toward?.x === vessel.toward?.x && mine.toward?.y === vessel.toward?.y;
 }
 
+// ── THE MODULE MEMO, AND IT IS ALSO THE SINGLE-FLIGHT ────────────────────────
+//
+// This did a git ref read, a tree materialise and a module resolve ON EVERY
+// CALL, and `readPresence` calls it three times per standpoint. Under the
+// party's load that was the largest removable share of a saturated event loop.
+//
+// ⚑ THE PROMISE IS CACHED, NOT THE MODULE, and that is what makes this a
+// single-flight rather than only a cache. Twenty guests arriving together used
+// to start twenty materialisations of the same tree; now the first one starts
+// it and the other nineteen await the same promise. Caching the resolved module
+// would have left that thundering herd exactly as it was, because the herd
+// arrives before the first one finishes.
+//
+// KEYED BY THE REF, so a tick that moves main is a new key and the next read
+// materialises the new tree. Nothing is pinned to a stale world; the key IS the
+// freshness.
+//
+// A REJECTED IMPORT IS EVICTED. Caching a failure forever would turn one bad
+// materialise into a permanently broken door, which is worse than the cost this
+// memo exists to save.
+// ⚑ THE WINDOW IS ON THE CALLER, NOT ON THE REF READING. The first version
+// memoised `freshestMainRef` itself and broke its law: that reading answers "is
+// origin ahead of local", and a five-second-old answer to that is not the law,
+// which its own test proved by moving the ref and asking again in the same
+// breath. So the ref reading stays exact and THIS is where the cadence changes
+// — asked once per window per file instead of once per read. Same subprocess
+// storm removed, nothing about the answer's meaning touched.
+//
+// PAST THE WINDOW THE REF IS RE-READ, and only a ref that actually MOVED costs
+// a re-materialise: a window that expires over an unchanged ref just refreshes
+// its timestamp and keeps the module. So the steady state is one git read per
+// file per window, and a tick that moves main is picked up within one window
+// rather than never.
+const TOOL_TTL_MS = 5000;
+const _toolModules = new Map();   // `${repo}|${file}` -> { ref, at, mod }
+
 /** One of the world's own tool modules, read at a ref — never from the working tree. */
 export async function worldToolModule(file, { repo = WORLD_CLONE } = {}) {
-  const dir = materializeAtRef(repo, freshestMainRef(repo), "tools");
-  return import(pathToFileURL(join(dir, "tools", file)).href);
+  const key = `${repo}|${file}`;
+  const hit = _toolModules.get(key);
+  if (hit && Date.now() - hit.at < TOOL_TTL_MS) return hit.mod;
+
+  const ref = freshestMainRef(repo);
+  if (hit && hit.ref === ref) { hit.at = Date.now(); return hit.mod; }
+
+  // THE PROMISE IS CACHED, NOT THE MODULE, which makes this a single-flight as
+  // well as a memo: twenty guests arriving together used to start twenty
+  // materialisations of the same tree, and now the first starts it and the rest
+  // await it. Caching the resolved module would leave that herd exactly as it
+  // was, because the herd arrives before the first one finishes.
+  const mod = (async () => {
+    const dir = materializeAtRef(repo, ref, "tools");
+    return import(pathToFileURL(join(dir, "tools", file)).href);
+  })();
+  const entry = { ref, at: Date.now(), mod };
+  _toolModules.set(key, entry);
+  // A rejected import is evicted rather than cached forever — one bad
+  // materialise must not become a permanently broken door.
+  mod.catch(() => { if (_toolModules.get(key) === entry) _toolModules.delete(key); });
+  return mod;
 }
 
 /** The world's own walk arithmetic, read at a ref. */
