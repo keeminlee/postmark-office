@@ -122,6 +122,7 @@ import {
   pendingRows, townDrainCursor, townJournalHead, townLogEnabled, TOWN_CLASSES,
 } from "./town-journal.mjs";
 import { advanceTownCursor, drainPenReady, planTownDrain, writeTownDrain } from "./town-drain.mjs";
+import { planFirstIdeaSweep, writeFirstIdeaSweep } from "./first-idea-sweep.mjs";
 import { replayPaperAct } from "./town-updates.mjs";
 import { replayLetter } from "./town-mail.mjs";
 import { townLockPath, useFlock } from "./town-lock.mjs";
@@ -453,12 +454,43 @@ export function runTownDrain(odb, {
     letters.push({ seq: row.seq, id, file, ...entry });
   }
 
+  // ── the first-idea sweep (the Think Tank, 2026-08-30) ────────────────────
+  // Rides every crossing beside the join drain: a household's first published
+  // idea mark earns its witnessed 5 (once, ever — idempotent by ledger, so a
+  // re-run costs nothing; the engine of the town clone answers every law
+  // question, and a clone whose engine predates the rule no-ops by name). The
+  // pen gate mirrors the join half's with one difference in temper: a quest
+  // mint held by an unready pen SKIPS with a name and the mail still sails —
+  // refusing the whole crossing is the join half's duty, never this rider's.
+  let firstIdea = null;
+  try {
+    const ideaPen = drainPenReady(clone);
+    if (!ideaPen.ready) firstIdea = { ran: false, skipped: `pen not ready — ${ideaPen.why}` };
+    else {
+      const ideaPlan = planFirstIdeaSweep(clone, { date: stamp });
+      if (ideaPlan.refused) firstIdea = { ran: false, skipped: ideaPlan.refused };
+      else {
+        const ideaTouched = writeFirstIdeaSweep(clone, ideaPlan);
+        if (ideaTouched.length)
+          penCommit(clone, ideaTouched.map((rel) => join(clone, rel)),
+            `first-idea: ${ideaPlan.mints.length} household(s) paid for their first published idea (the Think Tank)`);
+        firstIdea = { ran: true, minted: ideaPlan.mints.map((m) => ({ handle: m.handle, mark: m.mark })),
+          skipped_ideas: ideaPlan.skipped, note: ideaPlan.note ?? null };
+      }
+    }
+  } catch (e) {
+    // A sweep that dies must not hold the mail — record and sail (the bounced-
+    // replay reasoning above; every candidate is re-derived from the world and
+    // the ledger next crossing, so passing over loses nothing).
+    firstIdea = { ran: false, error: String(e?.message ?? e) };
+  }
+
   // ── the cursor, LAST — and not at all while the gangway holds a row ──────
   if (!gangwayHold) advanceTownCursor(odb, head);
 
   return done({
     ran: true, date: stamp, drained: rows.length, counts, head,
-    cursor: townDrainCursor(odb), commit, ...gangwayFields,
+    cursor: townDrainCursor(odb), commit, first_idea: firstIdea, ...gangwayFields,
     settled: plan.plans.map(({ row }) => row.handle),
     waiting: plan.waiting.map(({ row, why }) => ({ seq: row.seq, handle: row.handle, why })),
     // JOIN ROWS ONLY. planTownDrain reads the WHOLE pending log and files every

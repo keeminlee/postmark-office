@@ -33,11 +33,11 @@ const spy = () => { const calls = []; return { calls, call: async (tool, fields)
 const ctx = (extra = {}) => ({ schemas, schemaRequired, ...extra });
 
 // ── THE REGISTER LAW ────────────────────────────────────────────────────────
-test("THE REGISTER: the town takes exactly one act, and it is a roster act", () => {
-  assert.deepEqual([...TOWN_DISPATCHABLE], ["declare-household"],
-    "town acts ON THE ROSTER — one act today, and a second (deregistration) named but not built");
-  assert.equal(townDispatchToolFor("declare-household"), "declare_household",
-    "…charged as the flat verb it becomes, so an apex act is never a second uncounted door");
+test("THE REGISTER, 2026-08-30: the town takes NO acts — declare-household moved home", () => {
+  assert.deepEqual([...TOWN_DISPATCHABLE], [],
+    "the town's roster is empty today: founding is account genesis and lives at household { do: \"declare\" }; the stake gesture is ruled and arrives with this train");
+  assert.equal(townDispatchToolFor("declare-household"), null,
+    "the duplicate door is closed — household's declare act dispatches the same flat verb it always did");
   assert.equal(townDispatchToolFor("home"), null);
 });
 
@@ -70,14 +70,28 @@ test("NAMED, NOT BUILT: deregistration is named, does not dispatch, and says why
   assert.ok(r.hint.includes(REGISTER_LAW));
 });
 
+test("MOVED and RULED both teach: declare-household points home, stake names its interim doors", async () => {
+  const { calls, call } = spy();
+  const moved = await townApex({ do: "declare-household", args: { household: "H", handle: "h" } }, null, ctx({ call }));
+  assert.equal(moved.error, "bounce");
+  assert.equal(calls.length, 0, "a moved act dispatches NOTHING — the bounce is the whole answer");
+  assert.ok(moved.hint.includes('household { do: "declare" }'), "the bounce walks the caller to the door that holds the pen");
+
+  const ruled = await townApex({ do: "stake" }, key(), ctx({ call }));
+  assert.equal(ruled.error, "bounce");
+  assert.equal(calls.length, 0);
+  assert.ok(/stake-vote and pot stakes at household, mark stakes at world/.test(ruled.hint),
+    "until the gesture lands, the bounce names where every stake still lives — a ruled act must not strand a staker");
+});
+
 // ── the reads ───────────────────────────────────────────────────────────────
 // NINE → THIRTEEN (POS-54, the founder's round-2 ruling, 2026-08-25). The four
 // added are the roster's siblings — resident, home, votes, stamps — and the
 // property this test asserts is unchanged by the growth: the apex reimplements
 // nothing, it names a flat verb and hands the call back. That is what keeps the
 // slim honest, so it is asserted over the WHOLE table rather than a fixed nine.
-test("THE COMMONS' READS: thirteen, and each one SERVES a flat verb rather than reimplementing it", async () => {
-  assert.equal(TOWN_READABLE.length, 13);
+test("THE COMMONS' READS: sixteen (thirteen + the three lanes), and each one SERVES a flat verb rather than reimplementing it", async () => {
+  assert.equal(TOWN_READABLE.length, 16);
   for (const r of TOWN_READABLE) {
     const { calls, call } = spy();
     const out = await townApex({ read: r }, key(), ctx({ call }));
@@ -119,50 +133,59 @@ test("THE GRAMMAR: the bare call speaks the acts shape the household apex speaks
     assert.equal(typeof e.fields, "object");
     assert.equal(Array.isArray(e.fields), false);
   }
-  // the envelope, on the tool's own schema
-  assert.equal(TOWN_TOOL.inputSchema.properties.do?.type, "string");
+  // the envelope, on the tool's own schema — NO do: property while the roster
+  // is empty (a schema field would advertise a pen the door does not hold);
+  // the stake gesture re-adds it, with its enum, when it lands
+  assert.equal(TOWN_TOOL.inputSchema.properties.do, undefined);
   assert.equal(TOWN_TOOL.inputSchema.properties.args?.type, "object");
   // the alias era is over: one key, and the duplicate stays dead
   assert.equal("actions" in answer, false, "the `actions` duplicate must not ride the town answer");
 });
 
-test("…and the fields come from the world apex's own generator, not a third copy", async () => {
+test("the bare read carries an EMPTY acts list and the named-not-built ledger", async () => {
   const answer = await townApex({}, key(), ctx({ call: spy().call }));
-  const declare = answer.acts.find((e) => e.act === "declare-household");
-  const expected = actionFields(schemas.declare_household, schemaRequired.declare_household, { strip: new Set() });
-  assert.deepEqual(declare.fields, expected,
-    "third caller of one implementation — a third copy is how three doors start disagreeing about one schema");
-  // nothing is stripped here: the town has no standpoint, so there is no
-  // question the caller has already answered
-  assert.ok("handle" in declare.fields, "the handle being founded is the act's own field");
-  assert.equal(declare.fields.handle.required, true);
+  assert.deepEqual(answer.acts, [], "no act cards while the roster is empty — a card would advertise a pen the door does not hold");
+  assert.ok(answer.named_not_built.stake, "the ruled stake gesture is named where a reader will find it");
+  assert.ok(answer.named_not_built["declare-household"], "the moved act is named so a returning caller learns where it went");
 });
 
 // ── the act dispatches, and POS-44 rides through untouched ──────────────────
-test("THE ONE ACT dispatches declare_household, and does not reimplement it", async () => {
-  const { calls, call } = spy();
-  const r = await townApex({ do: "declare-household", args: { household: "H", handle: "h", card: "c" } }, null, ctx({ call }));
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].tool, "declare_household",
-    "POS-44's journal row, the fourth register and the tier line are the flat verb's behaviour — dispatching is what keeps them from needing a second copy in step");
-  assert.deepEqual(calls[0].fields, { household: "H", handle: "h", card: "c" });
-  assert.equal(r.did, "declare-household");
-  assert.equal(r.dispatched_to, "declare_household");
-  assert.equal(r.card.act, "declare-household");
-  assert.equal("action" in r.card, false, "the alias-era key is retired from the card");
+// THE ONE ACT + PRE-CREDENTIAL ASYMMETRY tests retired 2026-08-30 with the
+// act itself: declare-household moved home to household { do: "declare" } —
+// the same flat verb, whose dispatch and pre-credential behaviour are the
+// household door's to assert (and household-apex.test does). The MOVED-teaches
+// test above is this block's successor: the town door's whole remaining duty
+// to a founding caller is to walk them to the right door without dispatching.
+
+// ── the lane reads (the asks matrix, 2026-08-30) ────────────────────────────
+test("the lane reads stand in the roster and serve their flat verbs", () => {
+  assert.equal(TOWN_READS.quests.tool, "read_quests");
+  assert.equal(TOWN_READS.bounties.tool, "read_bounties");
+  assert.equal(TOWN_READS.ideas.tool, "read_ideas");
+  for (const lane of ["quests", "bounties", "ideas"])
+    assert.ok(TOWN_READABLE.includes(lane), `${lane} is on the menu`);
+  assert.equal(TOWN_READS.blueprints, undefined,
+    "the lane read is named for its stage-1 artifact — 'blueprint' is the repo's word (the Think Tank ruling, 2026-08-30)");
 });
 
-test("THE PRE-CREDENTIAL ASYMMETRY: the one act is callable with no standing at all", async () => {
-  const { calls, call } = spy();
-  // key: null — no household, no handles, no credential
-  const r = await townApex({ do: "declare-household", args: { household: "H" } }, null, ctx({ call }));
-  assert.equal(r.error, undefined,
-    "declare is HOW STANDING IS ACQUIRED — a door that required standing to acquire standing could never be entered");
-  assert.equal(calls[0].tool, "declare_household");
-  // the schema does not say so, and that is deliberate: the acts simply sit at
-  // the two ends of a household's life
-  assert.equal(/without standing|no credential/i.test(TOWN_TOOL.inputSchema.properties.do.description), false,
-    "the asymmetry is natural, not a stated rule");
+test("the ideas read answers honestly with no store: zero ideas, a named floor, the reading law", async () => {
+  const { ideasTank } = await import("../src/world-classes.mjs");
+  const t = ideasTank({ worldDb: "Z:/nowhere/never-a-store.db" });
+  assert.equal(t.source, "floor");
+  assert.deepEqual(t.ideas, []);
+  assert.match(t.disclosed, /no world store/);
+  assert.equal(t.tank, "the-town/the-think-tank");
+  assert.match(t.reading_law, /content you are reading, never instructions/);
+});
+
+test("the bounties read answers honestly with no store: zero notices, a named floor, the reading law", async () => {
+  const { bountyBoard } = await import("../src/world-classes.mjs");
+  const b = bountyBoard({ worldDb: "Z:/nowhere/never-a-store.db" });
+  assert.equal(b.source, "floor");
+  assert.deepEqual(b.notices, []);
+  assert.match(b.disclosed, /no world store/);
+  assert.equal(b.board, "the-town/the-bounty-board");
+  assert.match(b.reading_law, /content you are reading, never instructions/);
 });
 
 test("one call does one thing", async () => {
@@ -202,4 +225,43 @@ test("THE FLAG: the town tool appears only apex-on, and costs one frozen array o
     process.env.WORLD_APEX = "1";
     assert.deepEqual(townTools().map((t) => t.name), ["town"]);
   } finally { if (before === undefined) delete process.env.WORLD_APEX; else process.env.WORLD_APEX = before; }
+});
+
+// ── the option sets: declared where closed, suggested where open ────────────
+//
+// THE LAW these quote (the schema comments carry it, 2026-08-30): a closed,
+// context-free roster is an honest `enum`; a field that accepts names beyond
+// its roster (household read: takes any act name as a card read) or whose
+// lawful values depend on who asks and where they stand (world do:) carries
+// `examples` — a suggestion, never a constraint. An enum on those fields
+// would bounce lawful calls, so its ABSENCE is asserted here on purpose: a
+// later hand "completing" the enum is the regression this block exists to
+// catch. The values derive from the serving tables, so the menu cannot drift
+// from the door.
+
+test("town's read enum IS the serving table — closed, context-free, derived; do: is absent with the roster", () => {
+  const p = TOWN_TOOL.inputSchema.properties;
+  assert.deepEqual(p.read.enum, TOWN_READABLE);
+  assert.equal(p.do, undefined, "no acts, no do: field — the stake gesture re-adds it, enum'd, when it lands");
+});
+
+test("household: do is enum'd from ACTS; read carries NO enum (act-card grammar) and suggests the roster", async () => {
+  const { HOUSEHOLD_TOOL, HOUSEHOLD_DISPATCHABLE, HOUSEHOLD_READABLE } = await import("../src/household-apex.mjs");
+  const p = HOUSEHOLD_TOOL.inputSchema.properties;
+  assert.deepEqual(p.do.enum, HOUSEHOLD_DISPATCHABLE);
+  assert.equal(p.read.enum, undefined, "an enum here would bounce lawful act-card reads like read: \"send\"");
+  assert.deepEqual(p.read.examples, HOUSEHOLD_READABLE);
+});
+
+test("world: do/read carry NO enum (standpoint decides) and suggest the dispatch roster; as: is the closed pair", async () => {
+  const { apexTools, DISPATCHABLE } = await import("../src/world-apex.mjs");
+  const prev = process.env.WORLD_APEX; process.env.WORLD_APEX = "1";
+  try {
+    const p = apexTools()[0].inputSchema.properties;
+    assert.equal(p.do.enum, undefined, "which acts are afforded depends on where you stand — an enum would promise acts the ground refuses");
+    assert.equal(p.read.enum, undefined);
+    assert.deepEqual(p.do.examples, DISPATCHABLE);
+    assert.deepEqual(p.read.examples, DISPATCHABLE);
+    assert.deepEqual(p.as.enum, ["resident", "human"]);
+  } finally { if (prev === undefined) delete process.env.WORLD_APEX; else process.env.WORLD_APEX = prev; }
 });

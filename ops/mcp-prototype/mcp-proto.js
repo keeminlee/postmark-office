@@ -504,6 +504,20 @@
       host.appendChild(control);
     } else if (kind === "string") {
       control = el("input", { type: "text", placeholder: "string" });
+      // `examples` is the schema's non-binding sibling of `enum` — a door
+      // whose field accepts more than its roster (or whose options depend on
+      // who asks) suggests without constraining. Rendered as a datalist:
+      // dropdown of the suggestions, free text still typed. Procedural, like
+      // everything here — the values come from the schema, never this file.
+      if (Array.isArray(spec.examples) && spec.examples.length &&
+          spec.examples.every(function (v) { return typeof v === "string"; })) {
+        var dlId = "dl-" + Math.random().toString(36).slice(2, 10);
+        var dl = el("datalist", { id: dlId });
+        spec.examples.forEach(function (v) { dl.appendChild(el("option", { value: v })); });
+        control.setAttribute("list", dlId);
+        control.placeholder = "string · " + spec.examples.length + " suggested";
+        host.appendChild(dl);
+      }
       host.appendChild(control);
       // A one-line box is wrong for a letter body and right for a handle, and
       // no schema keyword says which — so the reader decides, per field.

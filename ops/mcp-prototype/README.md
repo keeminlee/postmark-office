@@ -23,7 +23,9 @@ comes back:
   schema keyword tells you whether a field holds a handle or a letter); a number
   becomes a number box; a boolean becomes an unset/true/false select, so
   *omitting* a boolean stays expressible; anything with an `enum` becomes a
-  select of exactly those values. **Anything the walk cannot name — an object,
+  select of exactly those values; a string carrying `examples` becomes a
+  suggestion dropdown (datalist) that still types free — the door's way of
+  offering a roster it does not enforce. **Anything the walk cannot name — an object,
   an array, a `oneOf`, an untyped property — falls back to a raw-JSON
   textarea** rather than being guessed at. Every card also has a whole-form
   "raw arguments" toggle for when the generator is not what you want.
