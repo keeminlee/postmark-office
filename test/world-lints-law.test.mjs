@@ -461,3 +461,163 @@ test("no finding cites §2.10 — the pointers are re-anchored to the invariants
     for (const field of ["headline", "method", "limits"])
       assert.ok(!/§\s*2\.10/.test(l[field] ?? ""), `${l.id}.${field} still points at §2.10`);
 });
+
+// ── L3/L4 · the two falsifiers that could not fail (the 2026-08-29 audit) ────
+//
+// Both lints keyed on `the-town/parcel-class`, a node the step-1 promotion
+// retired on 2026-08-18 (src/world-hydrate.mjs § THE PARCEL-CLASS CUTOVER).
+// L4 then read `cls?.w ?? 25` and judged every parcel against a hardcoded 25,
+// reporting GREEN about a conformity it had stopped measuring; L3's parcel row
+// resolved its owner directory to null, so absolution-by-owner was dead code.
+// Twelve days, two invariants, no way for either to go red.
+//
+// These fixtures build the store directly rather than through a fold: the
+// question is what the lints do when the declaration is present, moved, or
+// unreadable, and a hydrator in the loop would only obscure that.
+
+const FIXTURE_WORKS = "WORLD/marks/let-there-be-light/the-town-centre/the-keeping-works";
+
+/** A store carrying a parcel class declaration and one instance of it. */
+function parcelStore(name, { classId = "the-town/parcel", dials = { extent_m: 25 }, w = 25, h = 25, extra = [] } = {}) {
+  const path = join(root, name);
+  const db = new DatabaseSync(path);
+  db.exec(SCHEMA);
+  const meta = db.prepare("INSERT OR REPLACE INTO meta VALUES (?, ?)");
+  meta.run("as_of_world", "1a44eface0000000000000000000000000000000");
+  meta.run("hydrated_at", new Date().toISOString());
+  meta.run("hydration_status", "OK");
+  const node = db.prepare("INSERT INTO nodes (id, kind, subkind, tier, by, at_x, at_y, extent_w, extent_h, props) VALUES (?,?,?,?,?,?,?,?,?,?)");
+  if (classId)
+    // A CLASS MARK HAS NO GEOMETRY — extent_w/h are null, exactly as the live
+    // `the-town/parcel` node is. This is the half a naive repoint misses.
+    node.run(classId, "mark", "class", "constitution", "the-town", null, null, null, null,
+      JSON.stringify({ class: "parcel", path: FIXTURE_WORKS + "/postmark-node/mark/parcel", dials }));
+  node.run("someone/their-parcel", "mark", "parcel", "market", "someone", 100, 100, w, h,
+    JSON.stringify({ date: "2026-08-30" }));
+  for (const [id, props] of extra)
+    node.run(id, "mark", props.subkind ?? "class", "constitution", "the-town", null, null, null, null, JSON.stringify(props));
+  db.close();
+  return path;
+}
+
+const l3of = (lints) => lints.find((l) => l.id === "L3");
+const l4of = (lints) => lints.find((l) => l.id === "L4");
+
+test("L4 reads the parcel contract off the class mark's DIAL, not off a geometry column", async () => {
+  // The dial is the only place the number lives on a class mark. A lint that
+  // reads `attr.w` here reads null and falls through to whatever it was going
+  // to guess — which is how the retired-node bug stayed invisible.
+  const { lints } = await runLints({ dbPath: parcelStore("l4-dial.db", { dials: { extent_m: 25 } }), treePath: worldTree("l4-dial") });
+  const l4 = l4of(lints);
+  assert.equal(l4.verdict, "GREEN", "a 25x25 parcel conforms to a 25 dial");
+  assert.match(l4.method, /dials\.extent_m/, "L4 must say it reads the dial, since that is what it now does");
+
+  // AND IT MOVES WITH THE RECORD, which `?? 25` never could: same parcel, a
+  // class that declares 40, and the verdict has to change.
+  const moved = await runLints({ dbPath: parcelStore("l4-moved.db", { dials: { extent_m: 40 } }), treePath: worldTree("l4-moved") });
+  assert.equal(l4of(moved.lints).verdict, "RED",
+    "with the contract at 40 and the parcel at 25, a lint actually reading the contract goes red — the hardcoded 25 could not");
+  assert.match(l4of(moved.lints).headline, /not 40x40/);
+});
+
+test("L4 rules N/A, never GREEN, when the parcel contract cannot be read", async () => {
+  // THE CONTROL FOR THE WHOLE BUG. Under the old code this store — no class
+  // declaration at all — produced a confident GREEN off the hardcoded 25.
+  // Silence about a contract is not evidence of conformity to it.
+  const { lints } = await runLints({ dbPath: parcelStore("l4-gone.db", { classId: null }), treePath: worldTree("l4-gone") });
+  const l4 = l4of(lints);
+  assert.equal(l4.verdict, "N/A", "with no declaration to read, there is no verdict to give");
+  assert.match(l4.headline, /no verdict/);
+  assert.match(l4.headline, /is not in the graph/);
+  assert.ok(l4.rows.every((r) => r.conforms === null), "an unmeasured parcel is not a failing one");
+
+  // and the same when the node stands but declares no numeric dial
+  const noDial = await runLints({ dbPath: parcelStore("l4-nodial.db", { dials: {} }), treePath: worldTree("l4-nodial") });
+  assert.equal(l4of(noDial.lints).verdict, "N/A");
+  assert.match(l4of(noDial.lints).headline, /declares no numeric extent_m dial/);
+});
+
+test("neither L3 nor L4 keys on the retired the-town/parcel-class", async () => {
+  // The rename-orphans check, done where it can fail rather than by eye: a
+  // store whose declaration stands ONLY at the retired id must not satisfy
+  // either lint. If some later hand repoints one of them back, this reds.
+  const { lints } = await runLints({
+    dbPath: parcelStore("l4-retired.db", { classId: "the-town/parcel-class" }),
+    treePath: worldTree("l4-retired"),
+  });
+  assert.equal(l4of(lints).verdict, "N/A",
+    "the retired id must not answer for the live declaration — that equivalence is the bug");
+  assert.ok(!l3of(lints).rows.some((r) => r.owner === "the-town/parcel-class"),
+    "L3's parcel row must own itself to the live mark");
+  assert.ok(l3of(lints).rows.some((r) => r.owner === "the-town/parcel"),
+    "…which is the-town/parcel");
+});
+
+// ── L3 · the other direction: a dial that owns nothing ──────────────────────
+
+test("L3 reports a constitutional number no engine reads, and takes a flagged one at its word", async () => {
+  // The audit found four instances of this in one pass (the walk pace in three
+  // nodes read from one; `ends_turn` on five marks read by none;
+  // `declare-stance-on` running on two constants no dial declared). The closed
+  // three-constant watch list could not see any of them, because it was asking
+  // the opposite question.
+  const dbPath = parcelStore("l3-dials.db", {
+    extra: [
+      ["the-town/quiet", { class: "quiet", path: FIXTURE_WORKS + "/postmark-edge/quiet", dials: { unread_cap: 7 } }],
+      ["the-town/honest", { class: "honest", path: FIXTURE_WORKS + "/postmark-edge/honest", dials: { flagged_cap: 9 },
+        implements: ["flagged_cap is ASPIRATIONAL — declared ahead of its wiring; nothing reads it yet"] }],
+    ],
+  });
+  const { lints } = await runLints({ dbPath, treePath: worldTree("l3-dials") });
+  const l3 = l3of(lints);
+
+  const quiet = l3.declared.find((d) => d.slot === "unread_cap");
+  assert.ok(quiet, "a declared number must be walked at all");
+  assert.equal(quiet.verdict, "orphan", "no engine names it and the mark does not admit that — that is the finding");
+  assert.equal(l3.verdict, "RED", "and an undeclared-reader dial reds the lint");
+  assert.ok(l3.evidence.some((e) => /declared and unread: the-town\/quiet unread_cap/.test(e)),
+    "the finding must be evidence a human can go check, not just a count");
+
+  const honest = l3.declared.find((d) => d.slot === "flagged_cap");
+  assert.equal(honest.verdict, "flagged",
+    "a mark that says out loud that nothing reads its dial is doing what the town asked — the voices.mjs standard");
+
+  // THE FLAG IS NOT A BLANKET. A disclosure that does not name THIS dial must
+  // not launder it, or one aspirational sentence excuses every number on a mark.
+  const laundered = parcelStore("l3-launder.db", {
+    extra: [["the-town/sneak", { class: "sneak", path: FIXTURE_WORKS + "/postmark-edge/sneak", dials: { other_cap: 11 },
+      implements: ["something_else is ASPIRATIONAL — declared ahead of its wiring"] }]],
+  });
+  const l3b = l3of((await runLints({ dbPath: laundered, treePath: worldTree("l3-launder") })).lints);
+  assert.equal(l3b.declared.find((d) => d.slot === "other_cap").verdict, "orphan",
+    "the flag must name the dial it excuses");
+});
+
+test("L3 walks a mark planted since the last fold — standing is read from the filing, not the fold", async () => {
+  // `props.in_works` is stamped from the derived containment map, so a mark
+  // planted after the last crossing carries `in_works: false`. Verified live:
+  // the two dials planted on `declare-stance-on` on 2026-08-30 came back false
+  // while their sibling `the-town/earshot-m` came back true, on identical
+  // filing. A question about the constitution's numbers that cannot see the
+  // newest ones is the bug it exists to name.
+  const dbPath = parcelStore("l3-fresh.db", {
+    extra: [["the-town/fresh", { class: "fresh", in_works: false,
+      path: FIXTURE_WORKS + "/postmark-edge/fresh", dials: { fresh_cap: 13 } }]],
+  });
+  const l3 = l3of((await runLints({ dbPath, treePath: worldTree("l3-fresh") })).lints);
+  assert.ok(l3.declared.some((d) => d.slot === "fresh_cap"),
+    "a just-planted dial must be walked — in_works: false is the fold being stale, not the mark being outside the works");
+});
+
+test("L3 discloses that its dial->code half is OPEN, beside the closed one", async () => {
+  // logos/the-invariant: an invariant "names its method and its limits". The
+  // two halves have different limits and both have to be stated — the closed
+  // watch list above, and the name-matching this half rules on.
+  const l3 = l3of((await runLints({ dbPath: emptyStore("l3-open.db"), treePath: worldTree("l3-open") })).lints);
+  assert.match(l3.limits, /DIAL->CODE HALF IS NOT CLOSED/, "the open half must say it is open");
+  assert.match(l3.method, /DIAL -> CODE/, "and the method must describe both directions");
+  // the three limits that actually bite, each named rather than discovered later
+  assert.match(l3.limits, /matches on NAMES/i);
+  assert.match(l3.limits, /numbers and booleans/i);
+  assert.match(l3.limits, /taken at its word/i);
+});
