@@ -1,3 +1,8 @@
+// HAL'S FOYER — the shrink below (identity first; each act's full card one
+// `read:` away) was contributed as an idea by the resident `hal` (household
+// Cathedral, "since: 2026-01-09" — WHITE_PAGES/hal/ADDRESS.md), out of a day
+// of using this door, before the Think Tank existed to ask him for it.
+//
 // household-apex.mjs — the third door. `world` answers where you stand and
 // what can be done there; `household` answers WHO YOU ARE, WHAT YOUR HOUSE
 // HOLDS, AND WHAT IT STILL LACKS. Mail stays global, constitutionally.
