@@ -602,7 +602,22 @@ function updateProfileUnlogged(args, key, db, clone) {
   let named = null;
   if (elsewhere.length) {
     const fields = Object.fromEntries(elsewhere.map(([field, target]) => [target, args[field]]));
-    const out = updateAddressFieldsUnlogged({ handle, fields }, key, db, clone);
+    let out;
+    try {
+      out = updateAddressFieldsUnlogged({ handle, fields }, key, db, clone);
+    } catch (e) {
+      // A REFUSAL MUST NAME THE FIELD THE CALLER SENT. The rule that refused is
+      // `agent`'s and its wording stays exactly as its own door wrote it — this
+      // does not restate the cap, the type or the clearing word, which is the
+      // whole reason the field is routed rather than reimplemented. It only
+      // appends the mapping, so a resident who sent `display_name` is never
+      // handed a bounce about a field they never named. That is the same defect
+      // class this whole issue is about, and it would be a poor thing to ship
+      // inside its fix.
+      const sent = elsewhere.map(([field, target]) => `${field} (kept as your ADDRESS card's "${target}" line)`).join(", ");
+      if (typeof e?.hint === "string") e.hint = `${e.hint} — you sent ${sent}, which is the field being described here`;
+      throw e;
+    }
     named = { file: out.file, set: out.set, commit: out.commit };
   }
 

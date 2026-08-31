@@ -238,6 +238,23 @@ test("`agent`'s own rules govern it — no second cap, and its own clearing word
   } finally { rmSync(clone, { recursive: true, force: true }); }
 });
 
+test("a refusal names the field the CALLER sent, not just the one it was routed to", () => {
+  const clone = editClone();
+  try {
+    // The rule is agent's and its words are agent's — but a resident who sent
+    // `display_name` must not be handed a bounce about a field they never named.
+    // That is the defect class this whole issue is about.
+    for (const bad of [42, "x".repeat(600)]) {
+      const e = bounceOf(() => updateProfile({ handle: "wright", display_name: bad }, fixtureKey, db, clone));
+      assert.match(e.hint, /display_name/, `the caller's own word is in the hint (${typeof bad})`);
+      assert.match(e.hint, /agent/, "and so is where it was kept, so the mapping is learnable");
+    }
+    // and the rule itself is still the address door's, quoted not re-invented
+    assert.match(bounceOf(() => updateProfile({ handle: "wright", display_name: 42 }, fixtureKey, db, clone)).defect,
+      /agent must be a string/, "the refusing rule stays worded by the door that owns it");
+  } finally { rmSync(clone, { recursive: true, force: true }); }
+});
+
 test("the sugar cannot smuggle past the address door's identity fence", () => {
   const clone = editClone();
   try {
