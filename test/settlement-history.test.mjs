@@ -26,7 +26,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { append, lineFor, readHistory, isDecision, RETAIN } from "../deploy/settlement-history.mjs";
+import { append, lineFor, readHistory, isDecision, recurringUnsettled, RETAIN } from "../deploy/settlement-history.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TOOL = join(HERE, "..", "deploy", "settlement-history.mjs");
@@ -127,4 +127,70 @@ test("a receipt with no channels at all still lands, with zeros rather than hole
   assert.equal(line.left_drafted, 0);
   assert.equal(line.status, "refused");
   assert.equal(line.class, "input-bad");
+});
+
+// ── §3 the recurring-refusal query, asked at CROSSING time ──────────────────
+//
+// The same question the roll-call asks on the operator round, asked here on the
+// box — because the round runs at 8:05 ET and the settlement crosses twice a
+// day, so an EVENING refusal has no round behind it until the next morning. The
+// operator round's own skill file names that gap and says the terminal-refusal
+// auto-issue is what covers it: "a missing auto-issue mechanism is itself a
+// finding here."
+
+const unsettledRow = (status = "refused") => ({ at: "t", status, class: "input-bad", published: 0, left_drafted: 0 });
+
+test("three crossings in a row that did not complete IS the pattern", () => {
+  // "every crossing since 08-28 re-drained them, dropped one, tripped on the
+  // other" — postmark-world 7f866059. Three days of individually-rerunnable
+  // refusals, none of which ever cleared.
+  assert.equal(recurringUnsettled([unsettledRow(), unsettledRow(), unsettledRow()], 3), true);
+  assert.equal(recurringUnsettled([unsettledRow("race"), unsettledRow("starving"), unsettledRow()], 3), true);
+});
+
+test("a SUCCESS anywhere in the window breaks it — the machinery fixed itself", () => {
+  // The 02:39-refuse / 02:59:28Z-publish night. Escalating on that would file an
+  // issue every time a rerun worked, which is most of them.
+  assert.equal(recurringUnsettled([unsettledRow(), { at: "t", status: "published" }, unsettledRow()], 3), false);
+  assert.equal(recurringUnsettled([unsettledRow(), unsettledRow(), { at: "t", status: "quiet" }], 3), false);
+});
+
+test("a SHORT log is not a pattern — a fresh install must not escalate about its own age", () => {
+  // On deploy day the log is empty and fills one line per crossing. Two
+  // refusals in a two-line log is not evidence of anything yet.
+  assert.equal(recurringUnsettled([unsettledRow(), unsettledRow()], 3), false);
+  assert.equal(recurringUnsettled([], 3), false);
+  assert.equal(recurringUnsettled([unsettledRow()], 1), true, "a window of one is still answerable");
+});
+
+test("the query answers with an EXIT CODE, because its caller is a POSIX `if`", () => {
+  const dir = mkdtempSync(join(tmpdir(), "settlement-recurring-"));
+  const write = (name, rows) => {
+    const p = join(dir, name);
+    writeFileSync(p, `${rows.map((r) => JSON.stringify(r)).join("\n")}\n`);
+    return p;
+  };
+  const ask = (p) => {
+    try {
+      execFileSync(process.execPath, [TOOL, "--history", p, "--recurring", "3"], { stdio: "ignore" });
+      return 0;
+    } catch (err) { return err.status ?? -1; }
+  };
+
+  assert.equal(ask(write("three.jsonl", [unsettledRow(), unsettledRow(), unsettledRow()])), 0, "the pattern did not answer 0");
+  assert.equal(ask(write("two.jsonl", [unsettledRow(), unsettledRow()])), 1);
+  assert.equal(ask(write("mixed.jsonl", [unsettledRow(), { at: "t", status: "published" }, unsettledRow()])), 1);
+  // A log that is not there is not a pattern. An absent file answering 0 would
+  // make a fresh box escalate on its very first refusal.
+  assert.equal(ask(join(dir, "absent.jsonl")), 1);
+});
+
+test("the query mode NEVER writes — it is asked from inside a refusing crossing", () => {
+  const dir = mkdtempSync(join(tmpdir(), "settlement-recurring-ro-"));
+  const p = join(dir, "h.jsonl");
+  const rows = [unsettledRow(), unsettledRow(), unsettledRow()];
+  writeFileSync(p, `${rows.map((r) => JSON.stringify(r)).join("\n")}\n`);
+  const before = readFileSync(p, "utf8");
+  try { execFileSync(process.execPath, [TOOL, "--history", p, "--recurring", "3"], { stdio: "ignore" }); } catch { /* exit code is the answer */ }
+  assert.equal(readFileSync(p, "utf8"), before, "the query appended to the log it was asked about");
 });

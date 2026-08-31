@@ -193,3 +193,25 @@ test("a race escalation says its own next step — it is contention, and nothing
   assert.match(body, /contention, not a transient/);
   assert.match(body, /next scheduled crossing tries again on its own/);
 });
+
+test("a recurring-refusal escalation speaks OVER the receipt's own next_step", () => {
+  // Two classes override it, and for the same reason: for those two the
+  // per-crossing advice has stopped being true, and repeating it is what wasted
+  // the three days this exists to end. A recurring refusal's receipt still says
+  // "rerunnable AFTER the source is repaired" — correct about that crossing,
+  // and exactly the advice that had already been followed and had not worked.
+  const body = bodyFor("recurring-refusal", CANON_RECEIPT);
+  assert.match(body, /THE RERUN HAS STOPPED BEING THE ANSWER/);
+  assert.match(body, /upstream of the rerun/);
+  assert.match(body, /7f866059/, "the escalation does not point at the repair whose shape this is");
+  // The receipt is still quoted whole below it, so its next_step is available
+  // as evidence rather than as the headline.
+  assert.ok(body.includes(JSON.stringify(CANON_RECEIPT, null, 1)));
+});
+
+test("its title is its own, so it never lands on the canon-bad issue", () => {
+  // Different findings, different removal lanes. Folding one into the other
+  // would file a recurring drawer fault under a heading about world main.
+  assert.equal(titleFor("recurring-refusal"), "settlement refusal: recurring-refusal");
+  assert.notEqual(titleFor("recurring-refusal"), titleFor("canon-bad"));
+});

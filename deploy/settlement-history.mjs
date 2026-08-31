@@ -81,6 +81,31 @@ export function append(existingText, receipt, retain = RETAIN) {
   return `${rows.slice(-retain).map((r) => JSON.stringify(r)).join("\n")}\n`;
 }
 
+/** The statuses that mean a crossing ended without completing. */
+export const UNSETTLED = new Set(["refused", "starving", "race"]);
+
+/**
+ * Have the last `n` DECIDED crossings all ended without completing?
+ *
+ * The same question tools/box-rollcall.mjs asks on the operator round, asked
+ * here at crossing time — because the round runs at 8:05 ET and the settlement
+ * crosses twice a day, so the EVENING refusal has no round behind it until the
+ * next morning. The operator round's own skill file says this is the gap the
+ * terminal-refusal escalation covers, "so a missing auto-issue mechanism is
+ * itself a finding here." A canon-bad refusal announces itself; a refusal that
+ * simply keeps coming back does not, and postmark-world 7f866059 is the receipt
+ * that the second kind ran for three days (08-28 to 08-30) with every crossing
+ * refusing identically.
+ *
+ * Deliberately false on a SHORT history: a fresh log with two lines has not yet
+ * shown a pattern, and escalating on it would file an issue about the log's
+ * age rather than about the town.
+ */
+export function recurringUnsettled(rows, n) {
+  if (!Number.isFinite(n) || n <= 0 || rows.length < n) return false;
+  return rows.slice(-n).every((r) => UNSETTLED.has(String(r.status)));
+}
+
 /**
  * The rows, newest LAST, from a history file's text. The reader half.
  */
@@ -101,6 +126,19 @@ function argOf(name, fallback = null) {
 export function run() {
   const receiptPath = argOf("receipt");
   const historyPath = argOf("history");
+
+  // THE QUERY MODE, for settlement-auto.sh's escalation decision. Exit 0 = the
+  // last N decided crossings all ended without completing; exit 1 = they did
+  // not. An exit code rather than a printed answer because the caller is a
+  // POSIX `if`, and `if <cmd>` is the one shape that cannot be misparsed.
+  const askN = argOf("recurring");
+  if (askN) {
+    if (!historyPath) return 1;
+    let rows = [];
+    try { rows = readHistory(readFileSync(historyPath, "utf8")); } catch { return 1; }
+    return recurringUnsettled(rows, Number(askN)) ? 0 : 1;
+  }
+
   if (!receiptPath || !historyPath) return 0;
   let receipt;
   try { receipt = JSON.parse(readFileSync(receiptPath, "utf8")); } catch { return 0; }

@@ -84,10 +84,23 @@ export function tokenFrom(text) {
  * an operator ends up debugging the summary.
  */
 export function bodyFor(klass, receipt, { at = new Date().toISOString() } = {}) {
-  const nextStep = receipt?.next_step
-    ?? (klass === "race"
-      ? "a door write is landing on every pass. This is contention, not a transient: nothing needs repairing, but the crossing publishes nothing until the writes quiet down. The next scheduled crossing tries again on its own."
-      : "read the refusal below and decide the removal lane.");
+  // TWO CLASSES SPEAK OVER THE RECEIPT'S OWN next_step, because for those two
+  // the per-crossing advice has stopped being true and repeating it is what
+  // wasted the three days this exists to end.
+  const OVERRIDE = {
+    race:
+      "a door write is landing on every pass. This is contention, not a transient: nothing needs repairing, "
+      + "but the crossing publishes nothing until the writes quiet down. The next scheduled crossing tries "
+      + "again on its own.",
+    "recurring-refusal":
+      "THE RERUN HAS STOPPED BEING THE ANSWER. Three crossings in a row have ended without completing. Each "
+      + "refusal may be individually rerunnable and none of them has cleared, which means whatever produces "
+      + "them is upstream of the rerun — the shape of postmark-world 7f866059, where the same 2-error lint "
+      + "refusal returned every crossing from 08-28 to 08-30 and was cleared only by a hand repairing the "
+      + "drawer. Read the last crossing's own next_step below for what it named, then look for what keeps "
+      + "re-proposing it rather than repairing the instance again.",
+  };
+  const nextStep = OVERRIDE[klass] ?? receipt?.next_step ?? "read the refusal below and decide the removal lane.";
 
   const lines = [
     `**${klass}** — the settlement refused at \`${receipt?.at ?? at}\` and cannot clear itself.`,

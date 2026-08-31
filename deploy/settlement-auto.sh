@@ -335,7 +335,25 @@ SWEEP_JSON="$WORK/sweep.json"
     # person rather than a log line nobody is watching at 02:39Z.
     if [ "$(node -e 'const r=require(process.argv[1]);process.stdout.write(String(r.class))' "$REFUSAL_JSON" 2>/dev/null)" = "canon-bad" ]; then
       node "$OFFICE/deploy/settlement-escalate.mjs" --class canon-bad --receipt "$OUT" >&2 || true
+      RECURRING_ESCALATED=1
     fi
+  fi
+  # ── AND THE REFUSAL THAT SIMPLY KEEPS COMING BACK ─────────────────────────
+  # A canon-bad refusal announces itself. The other terminal kind does not: from
+  # 08-28 to 08-30 the same 2-error lint refusal returned every single crossing —
+  # "every crossing since 08-28 re-drained them, dropped one, tripped on the
+  # other" (postmark-world 7f866059) — and each one was individually rerunnable,
+  # so nothing on the box ever called it terminal. Three in a row is terminal in
+  # practice whatever the class says: what produces it is upstream of the rerun.
+  #
+  # It is asked HERE and not only on the operator round because the round runs at
+  # 8:05 ET and the settlement crosses twice a day, so an evening refusal has no
+  # round behind it until the next morning. The round's own skill file names this
+  # gap and says the auto-issue is what covers it.
+  if [ "${RECURRING_ESCALATED:-0}" != "1" ] \
+     && node "$OFFICE/deploy/settlement-history.mjs" --history "$HISTORY" --recurring 3 >/dev/null 2>&1; then
+    echo "[settlement-auto] THIRD UNSETTLED CROSSING IN A ROW — escalating" >&2
+    node "$OFFICE/deploy/settlement-escalate.mjs" --class recurring-refusal --receipt "$OUT" >&2 || true
   fi
   exit 1
 }
