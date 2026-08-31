@@ -44,7 +44,19 @@
   "                        liveness is simply that it is up",
   "  stale_means           the sentence the operator reads at 8am: what it means for THIS",
   "                        unit to be late, and why the allowance is that number",
-  "  no_staleness_because  the only escape from an allowance, and deliberately a sentence"
+  "  no_staleness_because  the only escape from an allowance, and deliberately a sentence",
+  "  outcome               judges what the rail PRODUCED, not just that it ran — a rolling",
+  "                        Inside it: history_path · alarm_on_classes (terminal on sight) ·",
+  "                        zero_published_runs (the starvation window) · means (the ONE sentence",
+  "                        the board prints) · why (the paragraph a reviewer weighs, never printed",
+  "                        — a board that recites its own rationale every morning teaches skimming)",
+  "                        receipt log, the refusal classes that are terminal on sight, and",
+  "                        how many consecutive empty runs is starvation. Every threshold is",
+  "                        DATA here rather than a constant in the checker, because a baseline",
+  "                        compiled into code is a number nobody can review beside its reason",
+  "",
+  "SEE ALSO the custody[] block at the foot of this file: every row above asks whether a",
+  "mechanism RAN; those ask whether it still CAN."
  ],
  "units": [
   {
@@ -144,7 +156,17 @@
     "stamp_field": "at",
     "stale_after_minutes": 780
    },
-   "stale_means": "Drafts stop settling into the world: residents' work sits eligible and unpublished, and the world pin stops advancing twice daily as the law requires. The allowance is one crossing plus an hour. The stamp is the verdict's own 'at' rather than the file's mtime, because a run that refuses still rewrites the file — the question is when it last DECIDED, not when the bytes last moved."
+   "stale_means": "Drafts stop settling into the world: residents' work sits eligible and unpublished, and the world pin stops advancing twice daily as the law requires. The allowance is one crossing plus an hour. The stamp is the verdict's own 'at' rather than the file's mtime, because a run that refuses still rewrites the file — the question is when it last DECIDED, not when the bytes last moved.",
+   "outcome": {
+    "history_path": "/srv/postmark-harbor/settlement-auto-history.jsonl",
+    "alarm_on_classes": [
+     "canon-bad"
+    ],
+    "zero_published_runs": 3,
+    "why": "THE CLOCK IS NOT THE WORK. Until 2026-08-30 this row judged timer recency and nothing else, so the board would have read a green tick over the night of 08-31: the timer fired at 02:38:50Z exactly as scheduled and the crossing refused at 02:39:26Z with {\"phase\":\"unknown\"}, publishing nothing. TWO SHAPES ARE JUDGED HERE AND THEY FAIL DIFFERENTLY. A canon-bad refusal (deploy/settlement-classify.mjs) is loud and instantaneous — the failing path is in origin/main s own tree, so no rerun ever clears it and one occurrence is already forever; it alarms on sight. STARVATION is quiet and only exists across crossings: on 2026-08-26 a crossing left 42 marks drafted and reported nothing, and a starving crossing printed 0 published, 0 unpublished and read as a quiet day for two days — every receipt individually honest, the pattern the finding. Three consecutive crossings that published nothing WHILE left_drafted grew is work arriving with none getting out. THE WINDOW IS THREE because two is a weekend of genuinely nothing eligible and four is two full days of silence, which is the length the 08-26 starvation actually ran. The log is written by deploy/settlement-history.mjs at the end of every decided crossing; a single receipt file is overwritten twice a day and structurally cannot hold a pattern. AND A REFUSAL THAT KEEPS COMING BACK: the class rule above catches the refusal that announces itself terminal; unsettled_runs catches the one that does not and is terminal anyway. postmark-world 7f866059 (2026-08-30 22:40) says it in its own message — the fault \"was the sweep s standing 2-error lint refusal (every crossing since 08-28 re-drained them, dropped one, tripped on the other)\": six input-bad refusals over three days, each individually rerunnable, none ever cleared, because what produced them was upstream of the rerun. It is judged on STATUS and not on left_drafted, because a refused crossing never reaches the point of having channel counts — its receipt carries zeros, so the starvation rule is structurally blind to it.",
+    "means": "Read the receipt at /srv/postmark-harbor/settlement-auto.json — its `class` and `next_step` say whether this is yours to rerun or yours to repair. INSTALL-DAY NOTE: this row is EXPECTED to read ALARM-outcome until the first crossing after deploy writes the log, and it clears itself then.",
+    "unsettled_runs": 3
+   }
   },
   {
    "unit": "postmark-settlement-shadow.timer",
@@ -205,17 +227,15 @@
    "label": "the stripe watch (Stage B)",
    "stage": "live",
    "activation_owner": "Keemin — ADOPTED 2026-08-27 ~00:15 EDT (the founder's ON word, the night of the martina $20; enabled by Wright 06:23Z after review of wright/stripe-login-attribution). The Stage-B header's condition was met: the paste became the outage.",
-   "cadence": "would be every 15 minutes at :07/:22/:37/:52 once adopted — offset from usdc-watch so the two funding watchers never contend for town.lock",
-   "cadence_source": "deploy/postmark-stripe-watch.timer (the unit is not on the box, so systemctl has nothing to show)",
-   "parked_because": "Stage A (node tools/funding-report.mjs plus one pasted line per payment) is the default and the founder has not called it tedious yet. Unlike usdc-watch and harbor-watch, this unit WRITES — it takes the pen and town.lock — so adopting it is a real delegation, not a convenience.",
-   "adopt_command": "sudo systemctl enable --now postmark-stripe-watch.timer (after the install steps in deploy/DEPLOY.md § stripe-watch; installing is not adopting)",
+   "cadence": "every 15 minutes at :07/:22/:37/:52 — offset from usdc-watch so the two funding watchers never contend for town.lock",
+   "cadence_source": "systemctl show postmark-stripe-watch.timer -p TimersCalendar — measured on the box 2026-08-31T03:4xZ: '{ OnCalendar=*-*-* *:07/15:00 }', UnitFileState=enabled, ActiveState=active",
    "heartbeat": {
     "kind": "state_file",
     "path": "/srv/postmark-stripe/state.json",
     "stamp_field": "last_run",
     "stale_after_minutes": 45
    },
-   "stale_means": "Nothing, while parked — a parked row is never alarmed for being inert. The heartbeat is recorded now so that adoption is a one-word edit (parked -> live) rather than a fresh piece of thinking at the moment someone is in a hurry. NOTE FOR WHOEVER ADOPTS IT: on 2026-08-27 there was a file at /srv/postmark-office/.stripe-watch-state.json, four minutes fresh, written by a HAND-RUN of the tool's default state path — while no unit existed on the box at all. That file is not this row's heartbeat and must not become it: a hand-run's output is exactly the evidence that would make a rail with no runner look alive, which is why this checker judges the unit before it ever looks at a heartbeat."
+   "stale_means": "Stripe payments stop being attributed: a resident pays and the funding ledger does not learn, so the town's own record of who is paid up goes quietly wrong rather than loudly absent. The allowance is three ticks. WHAT THIS ROW HAS ALREADY CAUGHT ONCE, and the reason it judges the unit before the heartbeat: on 2026-08-27 a file at /srv/postmark-office/.stripe-watch-state.json was four minutes fresh, written by a HAND-RUN of the tool's default state path, while no unit existed on the box at all. That file is not this row's heartbeat and must never become it — a hand-run's output is exactly the evidence that makes a rail with no runner look alive. THE ROW'S OWN SCAR (2026-08-30, the v1 sweep): this rail was adopted on 08-27 by flipping stage parked -> live, and every sentence around that word stayed written for a rail that does not run — cadence said 'would be … once adopted', cadence_source said 'the unit is not on the box', and parked_because and adopt_command were both still standing. The suite went red for three weeks about a manifest that described the wrong box, which is this file's own failure class committed inside this file."
   },
   {
    "unit": "postmark-site-refresh.timer",
@@ -291,6 +311,44 @@
     "stale_after_minutes": 1560
    },
    "stale_means": "THE STORE STOPS HAVING AN OFF-BOX COPY, and this is the one row in this file where a long silence is not a degraded read but an unbounded loss: every hour past the last successful ship is an hour that dies with the box. The allowance is one day plus two hours. What the lane ships is the pg_dump (RPO no worse than 24h) plus a bundle of the notary checkout, to github.com/wright-starforge/postmark-world2-backups, private, over an SSH deploy key scoped to that one repository. What it does NOT ship is the WAL: measured at about 163 MB/day raw on 2026-08-29, which no git history survives, so the pg_basebackup and the WAL spool are on-box only and cover a bad migration rather than a lost box. That split is deliberate and it is the tee — an object-storage bucket makes the WAL ship a dozen lines. Check the receipt with deploy/world2-restore-rehearse.sh --from-remote, which is the only thing that turns any of this from a hope into a backup."
+  }
+ ],
+ "_custody_readme": [
+  "§2b — WHO OWNS THE FILES A SERVICE HAS TO WRITE.",
+  "",
+  "Every row above asks whether a mechanism RAN. These ask whether it still can.",
+  "On 2026-08-28 a sudo git touched the settlement clone and left root-owned files",
+  "inside it. The lane runs as meepo. Root-owned refs, objects and a root-owned",
+  "credential store then failed LATER and SEPARATELY — a two-hour pen lockout one",
+  "day, a refused 05:45Z crossing the next — with nothing on the box tying either",
+  "back to the one act that caused them, because nothing on the box could see the",
+  "ownership of a working file at all.",
+  "",
+  "ALARM-custody is its own verdict because its repair is chown, not systemctl. A",
+  "row that reported it as ALARM-failed would send the operator to restart a unit",
+  "that will fail again the same way in twelve hours.",
+  "",
+  "FIELDS. id · label · path (the root scanned, recursively) · must_be_owned_by",
+  "(a username, resolved to a uid on the box — a name that does not resolve is",
+  "itself an alarm, never a pass) · why (what breaks when custody slips; required,",
+  "same discipline as a unit row's activation_owner) · repair (the command)."
+ ],
+ "custody": [
+  {
+   "id": "settlement-clone-git",
+   "label": "the settlement clone's git internals",
+   "path": "/srv/postmark-office/settlement-clone/.git",
+   "must_be_owned_by": "meepo",
+   "why": "This clone is the settlement's whole pen. postmark-settlement.service runs as meepo (its unit says so: 'the clones and push credentials are meepos'), and the sweep writes refs, objects and a commit into it on every crossing, then pushes under a lease. A single root-owned ref or pack from a stray sudo git makes the next write fail — and it fails at whichever step touches that particular file, hours later, looking like an unrelated fault.",
+   "repair": "sudo chown -R meepo:meepo /srv/postmark-office/settlement-clone && sudo -u meepo git -C /srv/postmark-office/settlement-clone fsck --no-progress"
+  },
+  {
+   "id": "office-git-credentials",
+   "label": "the office pen's credential store",
+   "path": "/srv/postmark-office/.git-credentials",
+   "must_be_owned_by": "meepo",
+   "why": "Every push this box makes reads it — the settlement clone is configured with credential.helper 'store --file /srv/postmark-office/.git-credentials' by settlement-auto.sh itself, and deploy/settlement-escalate.mjs reads the same file to reach the operator queue. A root-owned credential store is the exact shape of the 2026-08-28 two-hour pen lockout: readable by nobody who needs it, and silent until the moment something tries to push.",
+   "repair": "sudo chown meepo:meepo /srv/postmark-office/.git-credentials && sudo chmod 600 /srv/postmark-office/.git-credentials"
   }
  ]
 }
