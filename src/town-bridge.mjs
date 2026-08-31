@@ -82,8 +82,30 @@
 //   · JOINS already do. planTownDrain skips a handle that "already stands in
 //     the white pages", and the registry fold is planned against the registry
 //     as it now reads.
-//   · PAPER ACTS already do. The door rewrites the file with the same bytes and
-//     penCommit returns null for a diff that is empty.
+//   · PAPER ACTS DO NOT EITHER, and this line used to say they did — "the door
+//     rewrites the file with the same bytes and penCommit returns null for a
+//     diff that is empty". True of the file the door wrote, and the premise it
+//     hid is that the file is still that file. #2302 is what happens when it is
+//     not: on 2026-08-30 a `update_profile` call carrying empty strings was a
+//     documented no-op against a PROFILE.md that did not have those keys; four
+//     fields were then hand-added by their owner (the road TOWN_BULLETIN's
+//     build-your-profile.md advertises); and the 12:00Z crossing replayed the
+//     same "clear" against a file that by then HAD them, deleting all four
+//     (63a38162). Rewriting with the same bytes is only harmless when nothing
+//     else has written in between, and nothing was checking.
+//     So the update branch now carries the same shape the letter branch has
+//     always had: the row records what the act ALREADY LANDED — the shas the
+//     door's own pen returned, `payload.commits` — and a row whose every sha is
+//     an ancestor of the clone's HEAD is `already`, not replayed. The companion
+//     half is that a documented no-op writes no row at all (town-updates.mjs §
+//     logPaperAct): a call that landed nothing has nothing to settle.
+//     TWO LIMITS, STATED. A row logged before this fix carries no `commits`
+//     field, and is replayed exactly as before — the guard skips only on a
+//     POSITIVE match, never on an absent one, because reading absence as "no
+//     commits, therefore nothing to redo" would silently un-settle every row
+//     already in the log. And the ancestor question is asked of THIS clone: a
+//     sha it has never seen answers "not applied" and the row replays, which is
+//     the safe direction.
 //   · LETTERS DO NOT, and this is the one place the bridge must think. The pen
 //     lane throws 409 "that letter file already exists" on a second write — the
 //     right answer for a resident sending the same letter twice, and the wrong
@@ -164,6 +186,29 @@ export function townLockHeld({ flock = useFlock(), path = townLockPath() } = {})
   const r = spawnSync("/usr/bin/flock", ["-n", path, "true"], { stdio: "ignore" });
   if (r.error) return null;
   return r.status !== 0;
+}
+
+/**
+ * Is this sha already behind the clone's HEAD? (#2302 — the update resume key.)
+ *
+ * `merge-base --is-ancestor` is the same question penCommit asks of origin/main
+ * after a push, in the same words, and it is asked here rather than in
+ * town-updates.mjs for the reason that module states about itself: it never
+ * imports the pen and never learns what a clone is. The bridge is where the
+ * clone lives.
+ *
+ * FALSE ON ANY DOUBT, and that asymmetry is the whole safety of the guard. A
+ * missing git, an unreadable clone, a sha this clone has never heard of — every
+ * one of them answers "not applied", and the row replays exactly as it did
+ * before the fix. The guard can therefore cost a redundant replay (which is
+ * what the drain already did every crossing) and can never cost a lost act.
+ * `spawnSync` rather than execFileSync for the same reason: a non-zero exit is
+ * an answer here, not an exception to catch and interpret.
+ */
+export function isAncestorOfHead(clone, sha) {
+  if (!clone || typeof sha !== "string" || !/^[0-9a-f]{7,64}$/i.test(sha)) return false;
+  const r = spawnSync("git", ["-C", clone, "merge-base", "--is-ancestor", sha, "HEAD"], { stdio: "ignore" });
+  return !r.error && r.status === 0;
 }
 
 // THE TOWN'S DAY, NOT THE WIRE'S (found live 2026-08-30 ~20:22 EDT, the gift
@@ -441,6 +486,12 @@ export function runTownDrain(odb, {
 
   for (const row of rows) {
     if (row.cls === "update") {
+      // the resume check — see § idempotence in this file's header
+      const applied = row.payload?.commits;
+      if (Array.isArray(applied) && applied.length && applied.every((sha) => isAncestorOfHead(clone, sha))) {
+        updates.push({ seq: row.seq, act: row.act, handle: row.handle, already: true, commits: applied });
+        continue;
+      }
       let entry;
       try {
         const out = replayPaperAct(row, { doors, db, clone });
