@@ -113,6 +113,21 @@ export function laneBounce(mark, { worldDb = null } = {}) {
   if (!seen.found)
     return bounce(404, `no mark "${mark}" stands in the town's published record`,
       `this door stakes what the town can see standing on its own lanes (${STAKE_LANES.join(", ")}), and your own unpublished drafts are not in it yet — ${ELSEWHERE}, and staking a draft of yours there is what publishes it`);
+  // WRONG CLASS FIRST, then the type/instance seam. The order is load-bearing:
+  // `the-town/home` is a class mark too, and asking "is this a class mark?"
+  // before "is this class one of my lanes?" would answer a caller holding a
+  // HOME with a sentence about the home *lane* — a lane this door does not have
+  // and must not appear to. A refusal that invents a lane to explain itself is
+  // worse than a blunt one. So: not-my-lane is answered as not-my-lane, and the
+  // seam below only ever speaks about bounty and idea, which are the only
+  // classes it can be reached holding.
+  if (!STAKE_LANES.includes(String(seen.class)))
+    return bounce(422,
+      seen.class == null
+        ? `"${mark}" carries no class, and the town door's stake is target-typed by class`
+        : `"${mark}" is a ${seen.class} mark — the town door stakes its own lanes, which are ${STAKE_LANES.join(" and ")}`,
+      `${ELSEWHERE}. This door's stake serves the two lanes it also reads — town { read: "bounties" } and town { read: "ideas" }`,
+      { class: seen.class ?? null, lanes: [...STAKE_LANES] });
   // THE TYPE IS NOT AN INSTANCE OF ITSELF. `the-town/idea` carries
   // `class: idea` — a class mark declares the class it is — so a guard reading
   // class alone admits the constitution mark that DEFINES the Think Tank
@@ -124,17 +139,12 @@ export function laneBounce(mark, { worldDb = null } = {}) {
   // class mark for anyone who means to, on the same escrow with the same
   // custody, and the refusal says so. What this door will not do is let
   // "back this idea" land on the law that defines ideas.
-  if (seen.defines_class)
+  if (seen.defines_class) {
+    const lane = seen.class === "idea" ? "ideas" : "bounties";
     return bounce(422, `"${mark}" is the class mark that DEFINES the ${seen.class} lane — it is not ${seen.class === "idea" ? "an idea" : "a bounty"} standing in it`,
-      `back a notice or a claim, not the law that types them: town { read: "${seen.class === "idea" ? "ideas" : "bounties"}" } lists the ones this door stakes. ${ELSEWHERE}`,
+      `back a notice or a claim, not the law that types them: town { read: "${lane}" } lists the ones this door stakes. ${ELSEWHERE}`,
       { class: seen.class, defines_class: true });
-  if (!STAKE_LANES.includes(String(seen.class)))
-    return bounce(422,
-      seen.class == null
-        ? `"${mark}" carries no class, and the town door's stake is target-typed by class`
-        : `"${mark}" is a ${seen.class} mark — the town door stakes its own lanes, which are ${STAKE_LANES.join(" and ")}`,
-      `${ELSEWHERE}. This door's stake serves the two lanes it also reads — town { read: "bounties" } and town { read: "ideas" }`,
-      { class: seen.class ?? null, lanes: [...STAKE_LANES] });
+  }
   return null;
 }
 

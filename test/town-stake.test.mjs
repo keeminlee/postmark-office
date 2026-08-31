@@ -148,7 +148,7 @@ test("REFUSED BY NAME: another class is named, and the door that does stake it i
 // ideas.
 test("THE TYPE/INSTANCE SEAM: the class mark that defines a lane is not a mark standing in it", () => {
   const { path, cleanup } = storeWith([
-    classMark("idea"), classMark("bounty"),
+    classMark("idea"), classMark("bounty"), classMark("home"),
     { id: IDEA, class: "idea" }, { id: BOUNTY, class: "bounty", by: "rei" },
   ]);
   try {
@@ -162,6 +162,18 @@ test("THE TYPE/INSTANCE SEAM: the class mark that defines a lane is not a mark s
     // and the instances beside them are untouched — the seam narrows nothing else
     assert.equal(laneBounce(IDEA, { worldDb: path }), null);
     assert.equal(laneBounce(BOUNTY, { worldDb: path }), null);
+    // ORDER MATTERS, and this is the falsifier for it. `the-town/home` is a
+    // class mark too. Asking "is this a class mark?" before "is this class one
+    // of my lanes?" would answer a caller holding a HOME with a sentence about
+    // the home *lane* — a lane this door does not have and must not appear to.
+    // Not-my-lane is answered as not-my-lane; the seam only ever speaks about
+    // the two classes it can be reached holding.
+    const home = laneBounce("the-town/home", { worldDb: path });
+    assert.equal(home.code, 422);
+    assert.match(home.defect, /is a home mark — the town door stakes its own lanes/,
+      "a refusal that invents a lane to explain itself is worse than a blunt one");
+    assert.doesNotMatch(home.defect, /DEFINES/);
+    assert.equal(home.defines_class, undefined);
     // markClass names the seam itself, from the roster gate rather than a
     // retyped tier check, so one definition moves both readers
     assert.equal(markClass("the-town/idea", { worldDb: path }).defines_class, true);
