@@ -34,7 +34,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { statSync } from "node:fs";
 
-import { CLASS_ROSTER_GATE_SQL, worksClause } from "./world-store.mjs";
+import { CLASS_ROSTER_GATE_SQL, worksClause } from "./world-store.mjs"; // the roster gate is also the type/instance seam — see markClass
 import { storeDbPath } from "./world-serve.mjs";
 
 // THE FLOOR, not the law. Every name here is also in the record; this list is
@@ -221,6 +221,22 @@ export const classNames = (opts) => [...classRoster(opts).roster].sort();
  *
  * `class` is null for a mark that carries none (an ordinary sited mark). That
  * is `found: true` with no class, not `found: false`: the record answered.
+ *
+ * ── `defines_class`: THE TYPE/INSTANCE SEAM ─────────────────────────────────
+ *
+ * Found live, 2026-08-31, against a freshly hydrated store: `the-town/idea`
+ * carries `class: idea` and `the-town/bounty` carries `class: bounty`, because
+ * a class mark declares the class it IS. So "what class does this mark carry"
+ * answers the same word for the constitution mark that DEFINES the idea lane
+ * and for an idea standing in the Think Tank — and any caller filtering on
+ * class alone silently sweeps the constitution in beside the instances. The
+ * lane reads never had this problem, because they also require the lane's
+ * ground; a caller that types by class alone needs the seam named for it.
+ *
+ * So it is named, and by the SAME predicate that decides what a class mark is
+ * everywhere else in this file — CLASS_ROSTER_GATE_SQL, not a retyped
+ * `tier === "constitution"`. One definition, so a change to what counts as a
+ * class mark moves this reader with it.
  */
 export function markClass(markId, { worldDb = null } = {}) {
   const path = worldDb ?? storeDbPath();
@@ -232,10 +248,13 @@ export function markClass(markId, { worldDb = null } = {}) {
   try {
     const db = new DatabaseSync(path, { readOnly: true });
     const row = db.prepare(
-      `SELECT json_extract(props, '$.class') AS class FROM nodes WHERE id = ?`).get(String(markId));
+      `SELECT json_extract(props, '$.class') AS class,
+              (${CLASS_ROSTER_GATE_SQL}) AS defines_class
+         FROM nodes WHERE id = ?`).get(String(markId));
     db.close();
     if (!row) return { known: true, found: false, path };
-    return { known: true, found: true, class: row.class ?? null, path };
+    return { known: true, found: true, class: row.class ?? null,
+      defines_class: Boolean(row.defines_class), path };
   } catch (e) {
     return { known: false, path,
       disclosed: `the world store would not open (${String(e?.message ?? e).slice(0, 120)}) — this door could not read what class "${markId}" carries` };

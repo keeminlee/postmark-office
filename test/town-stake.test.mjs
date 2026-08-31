@@ -66,11 +66,21 @@ function storeWith(rows) {
   db.exec(`CREATE TABLE nodes (id TEXT PRIMARY KEY, kind TEXT, by TEXT, tier TEXT, props TEXT,
              at_x REAL, at_y REAL, extent_w REAL, extent_h REAL)`);
   const ins = db.prepare("INSERT INTO nodes (id, kind, by, tier, props) VALUES (?, ?, ?, ?, ?)");
-  for (const r of rows) ins.run(r.id, r.kind ?? "mark", r.by ?? "wright", r.tier ?? "resident",
-    JSON.stringify(r.class === undefined ? {} : { class: r.class }));
+  for (const r of rows) ins.run(r.id, r.kind ?? "mark", r.by ?? "wright", r.tier ?? "market",
+    JSON.stringify({ ...(r.class === undefined ? {} : { class: r.class }), ...(r.props ?? {}) }));
   db.close();
   return { path, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }
+
+/** A CLASS MARK as the record actually writes one — the constitution tier, the
+ *  town's own hand, standing in the Keeping Works. Spelled out here because
+ *  the first draft of this fixture had no Keeping Works in it at all, and that
+ *  omission is precisely what let the type/instance leak below pass a green
+ *  suite until a real hydrated store was pointed at the guard. */
+const classMark = (klass) => ({
+  id: `the-town/${klass}`, by: "the-town", tier: "constitution", class: klass,
+  props: { in_works: 1, path: `WORLD/marks/…/the-keeping-works/postmark-edge/${klass}/mark.md` },
+});
 
 const IDEA = "wright/a-newcomers-first-hour";
 const BOUNTY = "rei/paint-the-quay";
@@ -119,6 +129,43 @@ test("REFUSED BY NAME: another class is named, and the door that does stake it i
     assert.deepEqual(r.lanes, ["bounty", "idea"]);
     assert.match(r.hint, /world \{ do: "stake"/, "…and the refusal teaches where the act DOES live");
     assert.ok(r.hint.includes(ELSEWHERE), "one sentence, so the refusal and the card cannot drift");
+  } finally { cleanup(); }
+});
+
+// ── THE TYPE IS NOT AN INSTANCE OF ITSELF ───────────────────────────────────
+//
+// FOUND LIVE, not by review. Pointed at a store hydrated from postmark-world
+// main (47e0c9b8) the guard admitted `the-town/idea` and `the-town/bounty` —
+// the constitution marks that DEFINE the two lanes — because a class mark
+// declares the class it is, and a guard typing by class alone cannot tell the
+// law from an instance of it. The fixtures above had no Keeping Works in them,
+// which is exactly how this survived a green suite: the invented schema could
+// not represent the thing that breaks the rule.
+//
+// It is a SCOPE rule, not a custody one. The world door still stakes a class
+// mark for anyone who means to, on the same escrow with the same custody. What
+// this door refuses is letting "back this idea" land on the law that types
+// ideas.
+test("THE TYPE/INSTANCE SEAM: the class mark that defines a lane is not a mark standing in it", () => {
+  const { path, cleanup } = storeWith([
+    classMark("idea"), classMark("bounty"),
+    { id: IDEA, class: "idea" }, { id: BOUNTY, class: "bounty", by: "rei" },
+  ]);
+  try {
+    for (const [id, klass, lane] of [["the-town/idea", "idea", "ideas"], ["the-town/bounty", "bounty", "bounties"]]) {
+      const r = laneBounce(id, { worldDb: path });
+      assert.equal(r?.code, 422, `${id} carries class:${klass} and must STILL be refused — it is the law, not a notice`);
+      assert.match(r.defect, /is the class mark that DEFINES/);
+      assert.equal(r.defines_class, true);
+      assert.match(r.hint, new RegExp(`town \\{ read: "${lane}" \\}`), "…and the refusal names the read that lists what this door DOES stake");
+    }
+    // and the instances beside them are untouched — the seam narrows nothing else
+    assert.equal(laneBounce(IDEA, { worldDb: path }), null);
+    assert.equal(laneBounce(BOUNTY, { worldDb: path }), null);
+    // markClass names the seam itself, from the roster gate rather than a
+    // retyped tier check, so one definition moves both readers
+    assert.equal(markClass("the-town/idea", { worldDb: path }).defines_class, true);
+    assert.equal(markClass(IDEA, { worldDb: path }).defines_class, false);
   } finally { cleanup(); }
 });
 
