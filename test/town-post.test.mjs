@@ -28,15 +28,23 @@ import { townPost, POST_PLACES } from "../src/world.mjs";
 const TANK = "the-town/the-think-tank";
 
 // a store with the tank's real geometry (30×20 at 285,-179.5 — the walked
-// siting) and whatever marks a test plants
+// siting) and whatever marks a test plants. THE DDL IS THE HYDRATION'S REAL
+// ONE — geometry in dedicated columns, copied from the live store's own shape
+// (and from foyer-shrink.test.mjs, which had it right first). The first draft
+// of this fixture invented a props-shaped schema; freeCellIn matched the
+// invention, every test here went green, and the live door answered "no sited
+// ground" for a tank standing right there. A fixture must copy the real
+// schema, never model it.
 function fixtureStore(marks = []) {
   const dir = mkdtempSync(join(tmpdir(), "town-post-"));
   const p = join(dir, "world.db");
   const d = new DatabaseSync(p);
-  d.exec("CREATE TABLE nodes (id TEXT PRIMARY KEY, kind TEXT, subkind TEXT, tier TEXT, by TEXT, props TEXT)");
-  const ins = d.prepare("INSERT INTO nodes (id, kind, by, props) VALUES (?, 'mark', ?, ?)");
-  ins.run(TANK, "the-town", JSON.stringify({ at: { x: 285, y: -179.5 }, extent: { w: 30, h: 20 }, body: "the tank" }));
-  for (const m of marks) ins.run(m.id, m.by ?? "someone", JSON.stringify(m.props));
+  d.exec("CREATE TABLE nodes (id TEXT PRIMARY KEY, kind TEXT, subkind TEXT, tier TEXT, by TEXT, at_x REAL, at_y REAL, extent_w REAL, extent_h REAL, props TEXT)");
+  const ins = d.prepare("INSERT INTO nodes (id, kind, by, at_x, at_y, extent_w, extent_h, props) VALUES (?, 'mark', ?, ?, ?, ?, ?, ?)");
+  ins.run(TANK, "the-town", 285, -179.5, 30, 20, JSON.stringify({ body: "the tank" }));
+  for (const m of marks)
+    ins.run(m.id, m.by ?? "someone", m.props?.at?.x ?? null, m.props?.at?.y ?? null,
+      m.props?.extent?.w ?? null, m.props?.extent?.h ?? null, JSON.stringify(m.props ?? {}));
   d.close();
   return { path: p, done: () => rmSync(dir, { recursive: true, force: true }) };
 }

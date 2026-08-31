@@ -225,20 +225,21 @@ export function freeCellIn(placeId, seed, { worldDb = null } = {}) {
   let db;
   try {
     db = new DatabaseSync(path, { readOnly: true });
+    // Geometry rides the store's DEDICATED COLUMNS (at_x/at_y/extent_w/extent_h),
+    // never props — caught live 2026-08-31 00:xxZ: the first draft of this query
+    // read props.at and answered "no sited ground" for a tank that was standing
+    // right there, because the fixture had INVENTED a props-shaped schema
+    // instead of copying the hydration's real DDL. The fixture now carries the
+    // real columns; a schema a test invents is a schema a test cannot falsify.
     const place = db.prepare(`
-      SELECT CAST(json_extract(props,'$.at.x') AS REAL) AS x,
-             CAST(json_extract(props,'$.at.y') AS REAL) AS y,
-             CAST(json_extract(props,'$.extent.w') AS REAL) AS w,
-             CAST(json_extract(props,'$.extent.h') AS REAL) AS h
+      SELECT at_x AS x, at_y AS y, extent_w AS w, extent_h AS h
         FROM nodes WHERE id = ?`).get(String(placeId));
     if (!place || !Number.isFinite(place.x) || !Number.isFinite(place.w))
       { db.close(); return { error: `the store holds no sited ground "${placeId}"` }; }
     const marks = db.prepare(`
-      SELECT id, CAST(json_extract(props,'$.at.x') AS REAL) AS x,
-                 CAST(json_extract(props,'$.at.y') AS REAL) AS y,
-                 CAST(COALESCE(json_extract(props,'$.extent.w'), 1) AS REAL) AS w,
-                 CAST(COALESCE(json_extract(props,'$.extent.h'), 1) AS REAL) AS h
-        FROM nodes WHERE json_extract(props,'$.at.x') IS NOT NULL AND id != ?`).all(String(placeId));
+      SELECT id, at_x AS x, at_y AS y,
+             COALESCE(extent_w, 1) AS w, COALESCE(extent_h, 1) AS h
+        FROM nodes WHERE at_x IS NOT NULL AND id != ?`).all(String(placeId));
     db.close();
     const x0 = Math.ceil(place.x - place.w / 2 + 1.5), x1 = Math.floor(place.x + place.w / 2 - 1.5);
     const y0 = Math.ceil(place.y - place.h / 2 + 1.5), y1 = Math.floor(place.y + place.h / 2 - 1.5);
