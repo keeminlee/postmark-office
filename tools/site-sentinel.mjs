@@ -174,18 +174,20 @@ export const CONFIG = {
   //               reach prod within an hour of being cut.
   //   town data : sync-atlas runs every ~30 min and Deploy follows it.
   //   office    : the rehydrate timer fires at *:07,22,37,52 — every 15 min.
-  //               45m rang 6-7 false alarms a day (Keemin, 2026-08-31): at
-  //               ~150 letters/day the town's main tip moves every ~10 min,
-  //               so the As-Of almost always trails a fresh push, and one
-  //               slow or skipped rehydrate tick put an ordinary morning
-  //               over 45m. An hour is FOUR ticks — a real wedge still
-  //               alarms inside the hour it breaks, and a missed tick or
-  //               two no longer pages anyone.
+  //               30m under the divergence anchor is TWO DEAD TICKS behind a
+  //               known-newer tip (Keemin-tightened 2026-08-31, the same
+  //               night the anchor was fixed). History of the number: 45m
+  //               under the old served-value anchor rang 6-7 false alarms a
+  //               day — every quiet stretch plus one push — and was briefly
+  //               widened to 60m before the real bug was found in the
+  //               measurement, not the window. With the clock honest, tight
+  //               is cheap: a real wedge pages in half an hour and a quiet
+  //               hour pages nobody.
   //   daily     : sync + deploy, end to end.
   staleAfter: {
     site_code: 3 * HOUR,
     site_town_data: 3 * HOUR,
-    office_as_of: 60 * MINUTE,
+    office_as_of: 30 * MINUTE,
   },
   dailySlack: 90 * MINUTE,
 
