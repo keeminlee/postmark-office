@@ -827,8 +827,11 @@ export async function householdApex(args = {}, key = null, ctx = {}) {
     // the WORLD door `cards:` already means a TRIM DIAL (`cards: "names"`), so
     // the same key would have named two different operations depending on which
     // door you were standing at. Dropped whole rather than deprecated, because
-    // nothing outside ever coded to it — the branch never merged, so the
-    // correction is free today and expensive next week.
+    // nothing outside ever coded to it — the spellings were retired BEFORE this
+    // branch merged (2026-08-27, 916112b), so they never reached a caller and
+    // the correction was total. (Written 2026-08-26 as "the branch never
+    // merged"; trued 2026-08-31, because a reader taking that tense literally
+    // concludes the foyer is unlanded — one lane already did.)
     //
     // The answer shape is the world's, key for key: `read`, `card`, and the
     // reading law. No plural form. Two calls, or a plural shape adopted by both

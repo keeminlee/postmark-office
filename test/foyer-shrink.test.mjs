@@ -286,7 +286,8 @@ test("F6 · an ACT NAME is a read — household { read: \"send\" } answers that 
 
 test("F6b · the retired spellings are GONE, not aliased — `card:` and `cards:` resolve nothing", async () => {
   // A deprecation cycle is what you owe a caller who coded to a key. Nothing
-  // outside ever did: this branch never merged. So the correction is total.
+  // outside ever did: the spellings were retired BEFORE this branch merged
+  // (2026-08-27, 916112b). So the correction is total.
   const withCard = await householdApex({ card: "send" }, KEY, ctx({ slim: true }));
   const withCards = await householdApex({ cards: ["send"] }, KEY, ctx({ slim: true }));
   for (const r of [withCard, withCards]) {
