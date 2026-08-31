@@ -166,7 +166,18 @@ export function townLockHeld({ flock = useFlock(), path = townLockPath() } = {})
   return r.status !== 0;
 }
 
-const utcDate = (ms) => new Date(ms).toISOString().slice(0, 10);
+// THE TOWN'S DAY, NOT THE WIRE'S (found live 2026-08-30 ~20:22 EDT, the gift
+// blackout): this was `utcDate` — `toISOString().slice(0, 10)` — so the 00:00Z
+// crossing (8 PM in town) stamped its registry lines with TOMORROW's date
+// while the same crossing's mint lines carried the town day. The append-only
+// forward-dated gate then refused every town-dated writer (gifts first) for
+// the four hours until midnight ET, and the join's household binding read as
+// effective a day after the resident actually arrived. Every other dated
+// writer in this repo derives the day from TOWN_TZ (ops.townDay, declare,
+// residency, the mint engine itself); the drain now speaks the same clock.
+// `ms` stays injectable so the falsifier can stand AT the boundary instant.
+const townDayOf = (ms) => new Intl.DateTimeFormat("en-CA",
+  { timeZone: process.env.TOWN_TZ ?? "America/New_York" }).format(new Date(ms));
 
 /**
  * The one honest line a drain leaves behind, whatever it did.
@@ -219,7 +230,7 @@ export function runTownDrain(odb, {
     return done({ ran: false, refused: "unlocked", drained: 0,
       skipped: `nothing holds ${townLockPath()} — the drain writes the town clone and must run under the ferry's flock, as every unit in deploy/ does` });
 
-  const stamp = date ?? utcDate(now);
+  const stamp = date ?? townDayOf(now);
   const rows = pendingRows(odb);
 
   // ── THE TRIPWIRE, EXTENDED TO THE INVOKER ────────────────────────────────
