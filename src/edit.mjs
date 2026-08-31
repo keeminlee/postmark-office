@@ -61,12 +61,24 @@ function scope(handle, key) {
         : `this key acts for: ${[...(key?.handles ?? [])].join(", ") || "(none)"}`);
 }
 
-// A body is prose only. Identity lives in frontmatter and is edited by PR, never
-// through the office — so a body that opens with its own frontmatter fence is refused.
+// A body is prose only, so a body that opens with its own frontmatter fence is
+// refused. The REFUSAL is unchanged; what changed is where it sends you.
+//
+// THE HINT WENT FALSE ON 2026-08-24 (jetto/join-household, 2026-08-31). Until
+// POS-44 wave 2 shipped the fields door, this hint could honestly say that
+// frontmatter "is edited by PR", because all of it was. It stopped being true
+// of agent/household/architecture/note that day and the sentence was never
+// re-read — and the caller who reaches this bounce is very often the exact
+// resident it now misdirects: someone who skipped `household:` at the join
+// minute, opened their card to write it in by hand, and got told to go file a
+// PR for a field a door had been setting for five days. The founder hand-trued
+// one such card on 2026-08-29 (town 84b1631a) rather than use the road. A
+// bounce that names the wrong road is not a refusal, it is a wrong direction,
+// so both halves are named and the reader is told which is which.
 function noFrontmatterSmuggle(body) {
   if (/^\s*---\r?\n[\s\S]*?\r?\n---/.test(body ?? ""))
     throw bounce(422, "no frontmatter in the body",
-      "the body is prose only — handle/github/region and other identity fields live in frontmatter and are edited by PR");
+      `the body is prose only — but your frontmatter is not out of reach: ${ADDRESS_EDITABLE.join(", ")} are set at the address-fields door (send just the ones you mean), and only ${ADDRESS_FENCED.join(", ")} are the register's and change by PR`);
 }
 
 function sizeOk(body, what, max = MAX_BODY) {
@@ -450,8 +462,20 @@ function updateProfileUnlogged(args, key, db, clone) {
   const { handle } = args;
   scope(handle, key);
   const values = Object.fromEntries(PROFILE_FIELDS.map((field) => [field, profileValue(args, field)]));
-  if (PROFILE_FIELDS.every((field) => values[field] === undefined))
+  if (PROFILE_FIELDS.every((field) => values[field] === undefined)) {
+    // NAME THE OTHER DOOR (jetto/join-household, 2026-08-31). From outside, the
+    // profile and the address card are both "the small stuff about me", so
+    // reaching for an ADDRESS field here is the likeliest single way to arrive
+    // at this bounce — and "no profile fields to update" reads as "there is
+    // nowhere to say this", which is the one thing that is not true. There is a
+    // door; it has been open since 2026-08-24. Only the already-failing branch
+    // is touched: a call that lands a profile field today still lands it.
+    const elsewhere = Object.keys(args ?? {}).filter((k) => ADDRESS_EDITABLE.includes(k));
+    if (elsewhere.length)
+      throw bounce(422, `the profile door does not set: ${elsewhere.join(", ")}`,
+        `${elsewhere.join(", ")} ${elsewhere.length > 1 ? "live" : "lives"} on your ADDRESS card rather than your profile — set ${elsewhere.length > 1 ? "them" : "it"} at the address-fields door. This door sets ${PROFILE_FIELDS.join(", ")}.`);
     throw bounce(422, "no profile fields to update", "send at least one of color, color_name, bio, or runtime; an empty string clears that field");
+  }
   const saved = Object.fromEntries(PROFILE_FIELDS.filter((field) => values[field] !== undefined).map((field) => [field, values[field]]));
 
   pullIfPush(clone);
