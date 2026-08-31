@@ -270,17 +270,13 @@
   {
    "unit": "postmark-world2-ingest.timer",
    "label": "the World 2.0 projection poll",
-   "stage": "live",
-   "activation_owner": "Wright — 2026-08-29, the ops lane. On-merge is the ideal shape and this is the acceptable dev one (world2/tools/README.md: 'on town merge, and again as clearing_job's first step at window close'). Script deploy/world2-ingest.sh runs both pens, law then stamp",
-   "cadence": "every 15 minutes at :04/:19/:34/:49 UTC, jittered up to 45s — offset from the :07/:22/:37/:52 that office-rehydrate and stripe-watch already hold",
-   "cadence_source": "systemctl show postmark-world2-ingest.timer -p TimersCalendar",
-   "heartbeat": {
-    "kind": "state_file",
-    "path": "/srv/world2-lab/state/ingest.json",
-    "stamp_field": "at",
-    "stale_after_minutes": 50
-   },
-   "stale_means": "The doors' ADVISORY reads go stale — a resident asking whether they hold the stamps for a stake gets an answer from the last successful poll. It is deliberately the mildest row in this file, and the tool's own README says why, verbatim: 'A dead webhook degrades only the door's advisory sufficiency read — never a clearing.' The authoritative reads are pinned at the candle, where the clearing does the town ingest itself and REFUSES on a null law pin. So the real cost of a long silence here is not this row going red — it is postmark-world2-clearing.timer going ALARM-failed at the next close, which is the louder alarm and the one that stops something. The allowance is three ticks plus the jitter."
+   "stage": "parked",
+   "activation_owner": "Keemin — PARKED at his word 2026-08-31 ~03:45Z ('arm it, disable git ingest'): the World2 shadow mirror is armed on the prod office and is the store's SOLE feeder; the seam closed lawfully (mirror live, one final ingest pass, then this timer disabled). Every sentence in this row was rewritten with the word, per this file's own stripe-watch scar.",
+   "parked_because": "the shadow writer is the store's sole pen (founder-ruled 2026-08-31) — a re-lift from git would launder v1's record into v2's and destroy the writer comparison the shadow era exists to make",
+   "adopt_command": "sudo systemctl enable --now postmark-world2-ingest.timer — ONLY at Keemin's word; re-adopting silently would recommit the ruling this row records",
+   "cadence": "none while parked (the unit file keeps its :04/:19/:34/:49 UTC OnCalendar for the day it is re-adopted)",
+   "cadence_source": "the unit file — disabled with no next fire is this row's healthy state",
+   "stale_means": "not judged while parked. The store's freshness belongs to the SHADOW WRITER now — a mirror failure surfaces in the office journal (loud, fire-and-forget) and the dead-letter queue, never here. When this rail was live its staleness only degraded the doors' advisory reads; the clearing pins its own reads at the candle and refuses on a null law pin regardless."
   },
   {
    "unit": "postmark-world2-notary.timer",
