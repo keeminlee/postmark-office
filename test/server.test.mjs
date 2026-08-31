@@ -356,7 +356,11 @@ test("MCP tools/list, apex OFF: the full flat list — the slim's delist is apex
   // flat definitions show (delisting is listing-only, apex-conditioned).
   // 45 -> 46 (the lanes' pen, 2026-08-30 evening): town_post — town
   // { do: "post" }'s charge name, born delisted like the lane reads it writes.
-  assert.equal(names.length, 46);
+  // 46 -> 49 (the stake gesture, 2026-08-31): town_stake, town_unstake and
+  // town_stake_read — town { do: "stake" | "unstake" } and their shared read
+  // shadow, born delisted the same way. Three, not two, because the shadow is
+  // the door's grammar and not an extra: anything you can do here, you can read.
+  assert.equal(names.length, 49);
   assert.ok(names.includes("update_address_fields"), "the fields door stands regardless of the world flag");
   assert.ok(!names.includes("request_blessing"), "request_blessing's delist is unconditional");
   assert.ok(!names.includes("world"), "no apex tool with the flag off");

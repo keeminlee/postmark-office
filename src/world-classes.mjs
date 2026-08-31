@@ -195,6 +195,54 @@ export function bountyBoard({ worldDb = null } = {}) {
 export const classNames = (opts) => [...classRoster(opts).roster].sort();
 
 /**
+ * WHAT CLASS ONE MARK CARRIES — read from the record, never held.
+ *
+ * The town door's stake act is target-typed by class (bounty or idea, its own
+ * two lanes), so it needs to ask the record what a mark IS before it will put
+ * stamps behind it. This is that question, and it is deliberately a THIRD
+ * function beside classRoster/classDials rather than a filter over the lane
+ * reads: `bountyBoard` and `ideasTank` ask "what is standing on this ground",
+ * a listing question where the ground is half the answer; this asks "what is
+ * this mark", a typing question where the ground is not the answer at all. A
+ * bounty the worldkeeper tidied off the board is still a bounty.
+ *
+ * THE THREE RUNGS, the same as classRoster's and for the same reason:
+ *
+ *   store readable, mark present   { known: true, found: true, class }
+ *   store readable, mark absent    { known: true, found: false }
+ *   store unreadable               { known: false, disclosed }
+ *
+ * The middle and bottom rungs are DIFFERENT ANSWERS and the caller must not
+ * collapse them. "I read the record and this mark is not in it" is a 404 the
+ * caller can act on; "I could not read the record" is a 503 that says nothing
+ * about the mark. A door that answered both as "not a bounty" would refuse a
+ * lawful stake for a hydration blip and call it a lane rule — the silent
+ * fallback this file exists to refuse twice.
+ *
+ * `class` is null for a mark that carries none (an ordinary sited mark). That
+ * is `found: true` with no class, not `found: false`: the record answered.
+ */
+export function markClass(markId, { worldDb = null } = {}) {
+  const path = worldDb ?? storeDbPath();
+  try { statSync(path); }
+  catch {
+    return { known: false, path,
+      disclosed: `no world store at ${path} — this door could not read what class "${markId}" carries. Run: npm run hydrate:world` };
+  }
+  try {
+    const db = new DatabaseSync(path, { readOnly: true });
+    const row = db.prepare(
+      `SELECT json_extract(props, '$.class') AS class FROM nodes WHERE id = ?`).get(String(markId));
+    db.close();
+    if (!row) return { known: true, found: false, path };
+    return { known: true, found: true, class: row.class ?? null, path };
+  } catch (e) {
+    return { known: false, path,
+      disclosed: `the world store would not open (${String(e?.message ?? e).slice(0, 120)}) — this door could not read what class "${markId}" carries` };
+  }
+}
+
+/**
  * A free 1×1 cell inside a place's ground, computed FOR the author — the
  * town-door post's placement pen (founder-ruled 2026-08-30: "make it VERY EASY
  * to post ideas instead of having to place a whole ass mark"). The 2.0 write

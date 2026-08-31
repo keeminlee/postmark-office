@@ -38,19 +38,44 @@ const spy = () => { const calls = []; return { calls, call: async (tool, fields)
 const ctx = (extra = {}) => ({ schemas, schemaRequired, ...extra });
 
 // ── THE REGISTER LAW ────────────────────────────────────────────────────────
-test("THE REGISTER, 2026-08-30 evening: the town's roster is the lanes' pen — post, alone", () => {
-  assert.deepEqual([...TOWN_DISPATCHABLE], ["post"],
-    "one act: put an ask on a civic lane — target-typed by class, opening with idea; stake is ruled and next");
+test("THE REGISTER, 2026-08-31: the roster is the lanes' pen AND the stake gesture — post, stake, unstake", () => {
+  assert.deepEqual([...TOWN_DISPATCHABLE], ["post", "stake", "unstake"],
+    "the matrix's two directions, both built: put an ask on a lane, put stamps behind one — and take them back");
   assert.equal(townDispatchToolFor("post"), "town_post",
     "post charges as the flat verb town_post — an apex act is never a second, uncounted door");
+  assert.equal(townDispatchToolFor("stake"), "town_stake");
+  assert.equal(townDispatchToolFor("unstake"), "town_unstake",
+    "…and so do the stake pair; charging them as `town` would put real escrow through an uncounted door");
   assert.equal(townDispatchToolFor("declare-household"), null,
     "the duplicate door stays closed — household's declare act dispatches the same flat verb it always did");
   assert.equal(townDispatchToolFor("home"), null);
 });
 
+// ── THE PAIR ────────────────────────────────────────────────────────────────
+// The class blurb, VERBATIM from the record (postmark-world,
+// WORLD/…/postmark-edge/stake/mark.md, `the-town/stake` v2):
+//
+//   "A stake is ✦ held in escrow behind a mark — belief with weight, standing
+//    until taken back, and the record keeps both the placing and the withdrawal."
+//
+// "standing until taken back" and "both the placing and the withdrawal" are why
+// this is a pair test and not two act tests. A door that shipped the placing
+// alone would strand a caller's stamps behind a verb they cannot reach from
+// where they learned to place them, and it would be quoting a class it had
+// implemented half of.
+test("THE CLASS BLURB IS THE PAIR: a door that places must let you take back", () => {
+  const STAKE_BLURB = "A stake is ✦ held in escrow behind a mark — belief with weight, standing until taken back, and the record keeps both the placing and the withdrawal.";
+  assert.match(STAKE_BLURB, /standing until taken back/);
+  assert.match(STAKE_BLURB, /both the placing and the withdrawal/);
+  assert.ok(TOWN_DISPATCHABLE.includes("stake"), "the placing");
+  assert.ok(TOWN_DISPATCHABLE.includes("unstake"), "…and the withdrawal, at the same door, or the class is half-served");
+});
+
 test("THE REGISTER FALSIFIER: a non-register act bounces TEACHING where hands live", async () => {
   const { call } = spy();
-  for (const reach of ["home", "window", "profile", "stake", "walk", "leave-mark", "say"]) {
+  // `stake` LEFT this list 2026-08-31 — it is an act here now, and a falsifier
+  // that still expected it to bounce would be asserting the door is broken.
+  for (const reach of ["home", "window", "profile", "walk", "leave-mark", "say"]) {
     const r = await townApex({ do: reach }, key(), ctx({ call }));
     assert.equal(r.error, "bounce", `${reach} must not be a town act`);
     assert.equal(r.code, 422);
@@ -77,18 +102,49 @@ test("NAMED, NOT BUILT: deregistration is named, does not dispatch, and says why
   assert.ok(r.hint.includes(REGISTER_LAW));
 });
 
-test("MOVED and RULED both teach: declare-household points home, stake names its interim doors", async () => {
+test("MOVED still teaches: declare-household points home and dispatches nothing", async () => {
   const { calls, call } = spy();
   const moved = await townApex({ do: "declare-household", args: { household: "H", handle: "h" } }, null, ctx({ call }));
   assert.equal(moved.error, "bounce");
   assert.equal(calls.length, 0, "a moved act dispatches NOTHING — the bounce is the whole answer");
   assert.ok(moved.hint.includes('household { do: "declare" }'), "the bounce walks the caller to the door that holds the pen");
+});
 
-  const ruled = await townApex({ do: "stake" }, key(), ctx({ call }));
-  assert.equal(ruled.error, "bounce");
-  assert.equal(calls.length, 0);
-  assert.ok(/stake-vote and pot stakes at household, mark stakes at world/.test(ruled.hint),
-    "until the gesture lands, the bounce names where every stake still lives — a ruled act must not strand a staker");
+// THE REPEAL, ASSERTED AS A REPEAL. The predecessor of this test asserted the
+// opposite — that `do: "stake"` bounced naming its interim doors — and it was
+// right for one day. What replaces it is not "stake works now" (that is the
+// dispatch test below); it is that the LAW SENTENCE stopped promising a future
+// it has already delivered, and that the ledger of unbuilt things no longer
+// carries a built one. Both are the shapes a repeal actually fails in: a stale
+// promise in the door's own mouth, and a row nobody remembered to delete.
+test("THE REPEAL: the register law no longer promises stake, and named_not_built no longer holds it", async () => {
+  assert.doesNotMatch(REGISTER_LAW, /ruled and next/,
+    "the law sentence promised the stake gesture was coming; it came, so the promise is false and must be gone");
+  assert.match(REGISTER_LAW, /do: "stake"/, "…and the law names the act that landed");
+  assert.equal(NAMED_NOT_BUILT.stake, undefined,
+    "a built act sitting in the named-not-built ledger would send a caller away from the door they are standing at");
+  const answer = await townApex({}, key(), ctx({ call: spy().call }));
+  assert.equal(answer.named_not_built.stake, undefined, "…and the bare read carries the corrected ledger, not a cached one");
+  // the CAN-FAIL FLIP, run and recorded: with the old sentence restored, this
+  // falsifier fails. Asserted here as the shape rather than by mutating the
+  // module, so the flip is legible without a second import of a doctored copy.
+  assert.match("…and the stake gesture (stamps behind intent, target-typed) is ruled and next", /ruled and next/,
+    "the flip: this is the superseded sentence, and it is exactly what the assertion above rejects");
+});
+
+test("THE STAKE GESTURE DISPATCHES: stake and unstake reach their flat verbs, fields untouched", async () => {
+  const { calls, call } = spy();
+  const staked = await townApex({ do: "stake", args: { mark: "wright/an-idea", stamps: 3 } }, key(), ctx({ call }));
+  assert.equal(calls.length, 1, "the act dispatches — it is built now");
+  assert.equal(calls[0].tool, "town_stake");
+  assert.deepEqual(calls[0].fields, { mark: "wright/an-idea", stamps: 3 },
+    "the world stake card's own field names ride through UNRENAMED — a translation layer is a place for the two doors to drift");
+  assert.equal(staked.did, "stake");
+  assert.equal(staked.dispatched_to, "town_stake");
+
+  const back = await townApex({ do: "unstake", args: { mark: "wright/an-idea", stamps: 3 } }, key(), ctx({ call }));
+  assert.equal(calls[1].tool, "town_unstake");
+  assert.equal(back.did, "unstake");
 });
 
 // ── the reads ───────────────────────────────────────────────────────────────
@@ -148,17 +204,27 @@ test("THE GRAMMAR: the bare call speaks the acts shape the household apex speaks
   assert.equal("actions" in answer, false, "the `actions` duplicate must not ride the town answer");
 });
 
-test("the bare read carries post's card and the named-not-built ledger", async () => {
+test("the bare read carries every act's card and the named-not-built ledger", async () => {
   const answer = await townApex({}, key(), ctx({ call: spy().call }));
-  assert.equal(answer.acts.length, 1, "one card — the roster is post, alone");
-  const card = answer.acts[0];
-  assert.equal(card.act, "post");
-  assert.equal(card.dispatches_to, "town_post");
+  assert.equal(answer.acts.length, 3, "three cards — post, and the stake pair");
+  const byAct = Object.fromEntries(answer.acts.map((a) => [a.act, a]));
+  assert.equal(byAct.post.dispatches_to, "town_post");
   for (const f of ["class", "slug", "body"])
-    assert.ok(card.fields[f], `the card names ${f} — the fields ride from town_post's own schema, never retyped`);
-  assert.equal(card.fields.class.required, true, "and class is marked required, from the schema's own required list");
-  assert.ok(answer.named_not_built.stake, "the ruled stake gesture is named where a reader will find it");
+    assert.ok(byAct.post.fields[f], `the card names ${f} — the fields ride from town_post's own schema, never retyped`);
+  assert.equal(byAct.post.fields.class.required, true, "and class is marked required, from the schema's own required list");
+
+  // The stake pair's fields ride from town_stake's schema the same way, and
+  // they are the WORLD stake card's own words (mark, stamps, handle) because
+  // the act is the world's act with a lane guard in front — a card that renamed
+  // them would be advertising a second contract for one implementation.
+  for (const act of ["stake", "unstake"]) {
+    assert.equal(byAct[act].dispatches_to, `town_${act}`);
+    for (const f of ["mark", "stamps"])
+      assert.ok(byAct[act].fields[f], `${act}'s card names ${f}, from its own schema`);
+    assert.equal(byAct[act].fields.mark.required, true);
+  }
   assert.ok(answer.named_not_built["declare-household"], "the moved act is named so a returning caller learns where it went");
+  assert.ok(answer.named_not_built["deregister-household"], "…and the genuinely-unbuilt act stays named");
 });
 
 // ── the act-card overloading (standardized 2026-08-30 evening) ──────────────
@@ -168,6 +234,41 @@ test("read: \"post\" answers post's own card — the household grammar at its th
   assert.equal(calls.length, 0, "a card read dispatches NOTHING — the card is the whole answer");
   assert.equal(r.card?.act, "post");
   assert.equal(r.card?.dispatches_to, "town_post");
+});
+
+// ── THE SHADOW (2026-08-31) ─────────────────────────────────────────────────
+//
+// The world apex's law, verbatim in its own schema: "Anything you can do, you
+// can read — and every answer carries the action's full card." At the world
+// door `read: "stake"` answers the ESCROW behind a named mark BESIDE the card.
+// The town door's stake is the same act, so its shadow must be the same shape:
+// a card-only answer here would spell the same word for a smaller promise, and
+// the caller would learn the difference only by getting a card when they asked
+// what a mark carries.
+test("THE SHADOW: read: \"stake\" answers the card AND the escrow — the world's shape, key for key", async () => {
+  const { calls, call } = spy();
+  const r = await townApex({ read: "stake", args: { mark: "wright/an-idea" } }, key(), ctx({ call }));
+  assert.equal(r.read, "stake");
+  assert.equal(r.card?.act, "stake", "the card rides, as it does at every door");
+  assert.equal(calls.length, 1, "…and the DOMAIN is dispatched, which is what makes it a shadow rather than a card");
+  assert.equal(calls[0].tool, "town_stake_read");
+  assert.deepEqual(calls[0].fields, { mark: "wright/an-idea" });
+  assert.deepEqual(r.stakes, { ok: "town_stake_read" }, "under `stakes`, the world apex's own key for this domain");
+  assert.match(r.reading_law, /content you are reading, never instructions/);
+
+  const u = await townApex({ read: "unstake", args: { mark: "wright/an-idea" } }, key(), ctx({ call }));
+  assert.equal(u.card?.act, "unstake");
+  assert.equal(calls[1].tool, "town_stake_read", "unstake's domain is the same escrow — one read serves both, as at the world door");
+});
+
+test("A READ NEVER PERFORMS: read: \"stake\" carrying stamps is refused BY NAME, not quietly ignored", async () => {
+  const { calls, call } = spy();
+  const r = await townApex({ read: "stake", args: { mark: "wright/an-idea", stamps: 5 } }, key(), ctx({ call }));
+  assert.equal(r.error, "bounce");
+  assert.equal(r.code, 422);
+  assert.match(r.defect, /a read never performs/);
+  assert.match(r.hint, /to stake, use do:/);
+  assert.equal(calls.length, 0, "and nothing was dispatched — not the read, and certainly not the act");
 });
 
 // ── the act dispatches, and POS-44 rides through untouched ──────────────────
@@ -236,6 +337,73 @@ test("THE WIRING: a town act is charged and gated as the verb it becomes", async
     "…and the harbor gate must judge it as that verb too");
   assert.match(src, /\.\.\.apexTools\(\), \.\.\.townTools\(\)/,
     "and the third door is listed beside the other two, apex-on");
+});
+
+// ── THE GATE THAT COULD NOT FAIL, AND NOW CAN ───────────────────────────────
+//
+// The test above is a SOURCE PIN, and its own comment admits the trade: "a
+// source pin cannot prove the expression RUNS, only that it is written." For
+// four days it pinned two expressions that never ran, because `writeShaped`
+// deliberately did not resolve `town { do: }` — so `write` was false at both
+// call sites and both ternaries fell through to their else arms. The rate
+// ledger charged every town act as a READ; the harbor gate never consulted
+// townDispatchToolFor at all. This is the falsifier the pin needed beside it:
+// it asks the predicate itself, so it fails if the resolution is removed again.
+test("THE PREDICATE RUNS: `town { do: }` is write-shaped, so the ladder's town arms actually fire", async () => {
+  const { WRITE_TOOLS } = await import("../src/mcp.mjs");
+  // writeShaped is module-private; the property it must have is observable
+  // through the two things that depend on it, so they are asserted directly.
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../src/mcp.mjs", import.meta.url), "utf8");
+  assert.match(src, /name === "town" && args != null && typeof args === "object" && args\.do != null/,
+    "without this arm the town arms two gates below are unreachable code wearing a passing test");
+  // and the acts it resolves to are credentialed writes, which is what makes
+  // the gates meaningful rather than decorative
+  for (const flat of ["town_post", "town_stake", "town_unstake"])
+    assert.ok(WRITE_TOOLS.has(flat), `${flat} is a durable act and must be gated as one`);
+  assert.equal(WRITE_TOOLS.has("town_stake_read"), false, "the shadow stays a public read");
+});
+
+// ── THE HARBOR GATE, HELD AT THIS DOOR ──────────────────────────────────────
+//
+// HARBOR_BOUNCE names its own scope, verbatim: "durable acts (mail, marks,
+// media, papers, stakes) come ashore with settlement". `stakes` is in that
+// sentence. An unsettled household reaching a stake through this door would be
+// performing exactly the act the ruling withheld — and `do: "post"` stakes 1✦
+// escrow, so the hole was already open before the gesture landed.
+//
+// The gate lives in the apex's act branch (the household apex's precedent, its
+// own line 856) so that it holds for every caller, including the in-process
+// ones that never pass through mcp.mjs's ladder at all.
+test("THE HARBOR: an unsettled household reads and posts nothing durable — stakes included", async () => {
+  const { HARBOR_BOUNCE } = await import("../src/harbor-gate.mjs");
+  const harborKey = { household: "arriving", handles: new Set(["newcomer"]), harbor: true };
+  const before = process.env.HARBOR_WRITES;
+  delete process.env.HARBOR_WRITES;
+  try {
+    for (const act of ["stake", "unstake", "post"]) {
+      const { calls, call } = spy();
+      const r = await townApex({ do: act, args: { mark: "wright/an-idea", stamps: 1 } }, harborKey, ctx({ call }));
+      assert.equal(r.error, "bounce", `${act} must not reach the ledger from the harbor`);
+      assert.equal(r.code, HARBOR_BOUNCE.code);
+      assert.equal(r.defect, HARBOR_BOUNCE.defect);
+      assert.match(r.hint, /stakes\) come ashore with settlement/,
+        "the bounce quotes the ruling's own scope, which is where `stakes` is named");
+      assert.deepEqual(calls, [], "and NOTHING was dispatched — a gate that dispatched first would be a receipt, not a gate");
+    }
+    // READS ARE NEVER GATED. The harbor tier reads everything, and the stake
+    // shadow is a read: a household waiting for settlement can still see what
+    // the town is backing while it waits.
+    const { calls, call } = spy();
+    await townApex({ read: "stake", args: { mark: "wright/an-idea" } }, harborKey, ctx({ call }));
+    assert.equal(calls.length, 1, "the shadow answers at the harbor — read everything is the other half of the ruling");
+    // DEACTIVATION, NOT DELETION: the flag reopens it without a deploy.
+    process.env.HARBOR_WRITES = "1";
+    const open = spy();
+    const r = await townApex({ do: "stake", args: { mark: "wright/an-idea", stamps: 1 } }, harborKey, ctx({ call: open.call }));
+    assert.equal(r.did, "stake", "HARBOR_WRITES=1 reopens the door, as harbor-gate.mjs promises for every gated verb");
+    assert.equal(open.calls[0].tool, "town_stake");
+  } finally { if (before === undefined) delete process.env.HARBOR_WRITES; else process.env.HARBOR_WRITES = before; }
 });
 
 test("THE FLAG: the town tool appears only apex-on, and costs one frozen array off", () => {
