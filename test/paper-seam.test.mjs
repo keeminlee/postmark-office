@@ -245,8 +245,16 @@ test("P7 · A WHOLE CROSSING REPLAYS THE ACT AND WRITES NO NEW ROW", () => {
       // to hand it over.
       const r = runTownDrain(o, { db, clone, doors: TOWN_DOORS, date: "2026-08-25", lockHeld: () => true, log: () => {} });
       assert.equal(r.ran, true);
-      assert.equal(r.counts.update, 1, "the crossing did replay the paper act");
+      // "the crossing did replay the paper act" until #2302. It no longer does,
+      // and that is the fix rather than a regression: the row was written by a
+      // REAL door call against THIS clone, so its commit is already behind HEAD
+      // and re-imposing its args could only overwrite whatever landed since.
+      // What this test is actually about is untouched — the drain reached the
+      // row, and the log did not grow by one.
+      assert.equal(r.counts.update, 1, "the crossing read the paper act");
       assert.equal(r.updates[0].skipped, undefined);
+      assert.equal(r.updates[0].already, true,
+        "and recognised it as already applied — an act the door itself committed into this clone (#2302)");
 
       assert.deepEqual(readTownJournal(o).map((r2) => r2.seq), [before[0].seq],
         "STILL ONE ROW — the crossing settled the act and wrote nothing down");
