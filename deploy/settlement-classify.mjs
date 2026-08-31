@@ -304,8 +304,22 @@ export function run() {
   const ref = argOf("ref", "origin/main");
   let stderr = "";
   try { stderr = stderrPath ? readFileSync(stderrPath, "utf8") : ""; } catch { stderr = ""; }
-  const existsInCanon = clone ? canonProbe(clone, ref) : () => false;
-  process.stdout.write(`${JSON.stringify(classify({ stderr, existsInCanon, ref }), null, 1)}\n`);
+  // NO CLONE, NO VERDICT. A probe that cannot run must never report agreement:
+  // answering `false` for every path would make every refusal look input-bad and
+  // tell the operator to rerun a crossing that can never pass. The one honest
+  // answer is that the question was not asked.
+  if (!clone) {
+    process.stdout.write(`${JSON.stringify({
+      at: new Date().toISOString(), ref, cause: refusalOf(stderr)?.cause ?? "",
+      class: UNCLASSIFIED,
+      next_step:
+        `no clone was given, so nothing could be tested against ${ref} and the class is unknown — ` +
+        `re-run this classifier with --clone <the settlement clone> before acting on the refusal`,
+      faults: [], paths_in_canon: [], paths_in_inputs: [],
+    }, null, 1)}\n`);
+    return 0;
+  }
+  process.stdout.write(`${JSON.stringify(classify({ stderr, existsInCanon: canonProbe(clone, ref), ref }), null, 1)}\n`);
   return 0;
 }
 
