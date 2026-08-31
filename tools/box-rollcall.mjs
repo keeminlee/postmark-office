@@ -110,7 +110,7 @@
 // Exit: 0 = every row OK or PARKED · 1 = at least one ALARM · 2 = the roll-call
 // itself could not run (no manifest, unreadable manifest, systemctl absent).
 
-import { readFileSync, writeFileSync, existsSync, statSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, statSync, lstatSync, readdirSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -139,6 +139,14 @@ export const ALARM_NOHEARTBEAT = "ALARM-noheartbeat";
 export const ALARM_STALE = "ALARM-stale";
 export const ALARM_UNPARKED = "ALARM-unparked";
 export const ALARM_UNMANIFESTED = "ALARM-unmanifested";
+// A rail that ran, on time, and produced the wrong thing. Every verdict above
+// this one asks whether the machinery moved; this one is the first that reads
+// what came out of it. (2026-08-30 — the settlement row judged timer recency
+// alone, so a crossing refusing identically twice a day read as a green tick.)
+export const ALARM_OUTCOME = "ALARM-outcome";
+// Somebody else owns the files a service must write. Its own class because the
+// repair is `chown`, not `systemctl` — see §2b in the manifest's readme.
+export const ALARM_CUSTODY = "ALARM-custody";
 
 export function isAlarm(verdict) {
   return String(verdict).startsWith("ALARM");
@@ -160,6 +168,24 @@ export function loadManifest(path = DEFAULT_MANIFEST) {
       // decided it runs is a row nobody will fix when it goes red.
       throw new Error(`manifest row ${row.unit} names no activation_owner`);
     }
+  }
+  // §2b, the custody rows. Optional as a block, strict inside it: the same
+  // discipline as units, because a custody row that cannot say who should own
+  // the files is a row nobody can act on either.
+  for (const row of m.custody ?? []) {
+    if (!row.id) throw new Error(`custody row with no id: ${JSON.stringify(row)}`);
+    if (!row.path) throw new Error(`custody row ${row.id} names no path`);
+    if (!row.must_be_owned_by) throw new Error(`custody row ${row.id} names no must_be_owned_by`);
+    if (!row.why) throw new Error(`custody row ${row.id} does not say what breaks when custody slips`);
+  }
+  // The same discipline on an outcome block: the short sentence the board prints
+  // and the long one a reviewer weighs are different jobs, and a row that only
+  // has the long one puts a paragraph on the board every morning.
+  for (const row of m.units) {
+    if (!row.outcome) continue;
+    if (!row.outcome.history_path) throw new Error(`${row.unit} declares an outcome with no history_path`);
+    if (!row.outcome.means) throw new Error(`${row.unit} declares an outcome with no means — nothing to print on the alarm line`);
+    if (!row.outcome.why) throw new Error(`${row.unit} declares an outcome with no why — its thresholds are numbers nobody can review`);
   }
   return m;
 }
@@ -286,10 +312,56 @@ function readFile(path) {
   return { exists: true, mtime_ms: st.mtimeMs, size: st.size, text };
 }
 
+// ── §3b custody collection ──────────────────────────────────────────────────
+//
+// WHY THIS EXISTS (2026-08-30, the v1 sweep). On 2026-08-28 a `sudo git` touched
+// the settlement clone and left root-owned files inside it. The service runs as
+// `meepo`; root-owned refs, objects and a root-owned credential store each fail
+// LATER and SEPARATELY — a two-hour pen lockout one day, a refused 05:45Z
+// crossing the next — with nothing tying them to the one act that caused them.
+// No surface on the box could see the ownership of a working file at all.
+//
+// It is a scan, so it is BOUNDED and it says when it hit the bound. A scan that
+// could not finish is not a clean scan, and reporting one as clean is exactly
+// the failure this file exists to end.
+export const CUSTODY_SCAN_CAP = 50_000;
+
+/** The numeric uid a name resolves to on this box, or null. */
+function uidOf(user) {
+  try {
+    const out = execFileSync("id", ["-u", String(user)], { encoding: "utf8", timeout: 10_000 }).trim();
+    return /^\d+$/.test(out) ? Number(out) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function scanCustody(root, expectUid, { cap = CUSTODY_SCAN_CAP, readdir = readdirSync, lstat = lstatSync } = {}) {
+  const offenders = [];
+  let seen = 0;
+  let truncated = false;
+  const stack = [root];
+  while (stack.length) {
+    if (seen >= cap) { truncated = true; break; }
+    const path = stack.pop();
+    let st;
+    try { st = lstat(path); } catch { continue; }
+    seen += 1;
+    if (expectUid !== null && st.uid !== expectUid) offenders.push({ path, uid: st.uid });
+    if (st.isDirectory()) {
+      let names = [];
+      try { names = readdir(path); } catch { continue; }
+      for (const name of names) stack.push(join(path, name));
+    }
+  }
+  return { scanned: seen, truncated, offenders };
+}
+
 export function collect(manifest, { now = Date.now() } = {}) {
   const units = Object.create(null);
   const services = Object.create(null);
   const files = Object.create(null);
+  const custody = Object.create(null);
 
   const discovered = discoverUnits();
   const wanted = new Set([...discovered, ...manifest.units.map((r) => r.unit)]);
@@ -311,6 +383,22 @@ export function collect(manifest, { now = Date.now() } = {}) {
   for (const row of manifest.units) {
     const hb = row.heartbeat;
     if (hb && hb.kind === "state_file" && hb.path) files[hb.path] = readFile(hb.path);
+    // §9's input: the rolling receipt log, read like any other state file. A
+    // single receipt answers "what did the LAST crossing do"; only the log can
+    // answer "has it published anything in three days".
+    if (row.outcome && row.outcome.history_path) files[row.outcome.history_path] = readFile(row.outcome.history_path);
+  }
+
+  for (const row of manifest.custody ?? []) {
+    if (!existsSync(row.path)) { custody[row.id] = { exists: false, path: row.path }; continue; }
+    const expectUid = uidOf(row.must_be_owned_by);
+    custody[row.id] = {
+      exists: true,
+      path: row.path,
+      must_be_owned_by: row.must_be_owned_by,
+      expect_uid: expectUid,
+      ...scanCustody(row.path, expectUid),
+    };
   }
 
   return {
@@ -321,6 +409,7 @@ export function collect(manifest, { now = Date.now() } = {}) {
     units,
     services,
     files,
+    custody,
   };
 }
 
@@ -559,6 +648,15 @@ export function classifyRow(row, snapshot, now) {
     };
   }
 
+  // ── §9: THE RAIL RAN. WHAT CAME OUT OF IT. ───────────────────────────────
+  // Judged last, and that ordering is the point: staleness says the work did
+  // not happen, and this says it happened and was wrong. A stale row must not
+  // be relabelled by its own stale contents.
+  const outcome = judgeOutcome(row, snapshot);
+  if (outcome) {
+    return { unit: row.unit, label, verdict: ALARM_OUTCOME, reason: `${label} ${outcome}` };
+  }
+
   return {
     unit: row.unit,
     label,
@@ -567,8 +665,138 @@ export function classifyRow(row, snapshot, now) {
   };
 }
 
+// ── §5b judging a rail by its OUTPUT ────────────────────────────────────────
+//
+// WHY (2026-08-30, the v1 sweep). The settlement row judged timer recency and
+// nothing else, so on 2026-08-31 the board would have read a green tick over a
+// crossing that had refused identically at 02:39Z with `"phase":"unknown"` — the
+// clock was perfect and the town settled nothing. The same blindness had already
+// been named one layer up: "on 2026-08-26 a crossing left 42 marks drafted and
+// reported nothing; a starving crossing printed '0 published, 0 unpublished' and
+// read as a quiet day for two days."
+//
+// TWO SHAPES, because they fail differently. A TERMINAL CLASS is loud and
+// instantaneous — one canon-bad refusal is already forever, since no rerun can
+// clear it. STARVATION is quiet and only visible across crossings: each receipt
+// is individually honest and the pattern is the finding, which is exactly what a
+// file overwritten twice a day cannot hold.
+//
+// Every threshold is manifest data. A baseline compiled into this file is a
+// number nobody can review beside the reason for it.
+
+/** The parsed history rows for a row's outcome block, oldest first. */
+export function outcomeHistory(row, snapshot) {
+  const path = row.outcome && row.outcome.history_path;
+  if (!path) return [];
+  const f = (snapshot.files || {})[path];
+  if (!f || !f.exists || typeof f.text !== "string") return [];
+  const rows = [];
+  for (const line of f.text.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    try { rows.push(JSON.parse(line)); } catch { /* a torn line is not a crossing */ }
+  }
+  return rows;
+}
+
+/** The sentence to alarm with, or null when the output is fine. */
+export function judgeOutcome(row, snapshot) {
+  const spec = row.outcome;
+  if (!spec) return null;
+  const history = outcomeHistory(row, snapshot);
+  // `means` is the sentence the operator reads at 8am and `why` is the paragraph
+  // a reviewer reads once, in the manifest, beside the thresholds it argues for.
+  // Printing the paragraph on the board every morning is how a board teaches its
+  // reader to skim — the same mistake as an alarm with no reason, from the other
+  // side.
+  const means = spec.means ? ` ${spec.means}` : "";
+
+  if (!history.length) {
+    // Declared and empty. Reported rather than shrugged at: a row that says it
+    // is judged by its output and has no output is a row nobody is judging.
+    return `declares an outcome log at ${spec.history_path} and it is empty or unreadable — nothing here is judging what the rail produces.${means}`;
+  }
+
+  const latest = history[history.length - 1];
+  const terminal = new Set(spec.alarm_on_classes || []);
+  if (latest.class && terminal.has(latest.class)) {
+    return `last ran and REFUSED with class ${latest.class} at ${latest.at} — a class no rerun clears, so every crossing from here composes the same answer until the record is repaired.${means}`;
+  }
+
+  const runs = Number(spec.zero_published_runs);
+  if (Number.isFinite(runs) && runs > 0 && history.length >= runs) {
+    const window = history.slice(-runs);
+    const noneOut = window.every((r) => Number(r.published || 0) === 0);
+    const backedUp = Number(window[window.length - 1].left_drafted || 0) > Number(window[0].left_drafted || 0);
+    if (noneOut && backedUp) {
+      return (
+        `has published nothing across its last ${runs} crossings while left_drafted grew ` +
+        `${window[0].left_drafted} -> ${window[window.length - 1].left_drafted} — work is arriving and none is ` +
+        `getting out. Every one of those receipts is individually honest; the pattern is the finding.${means}`
+      );
+    }
+  }
+
+  return null;
+}
+
+// ── §5c judging custody ─────────────────────────────────────────────────────
+
+export function classifyCustody(row, snapshot) {
+  const seen = (snapshot.custody || {})[row.id];
+  const label = row.label || row.id;
+  const unit = `custody:${row.id}`;
+
+  if (!seen || !seen.exists) {
+    return {
+      unit,
+      label,
+      verdict: ALARM_CUSTODY,
+      reason: `${label} — ${row.path} is not on the box at all, so nothing can be said about who owns it. ${row.why}`,
+    };
+  }
+  if (seen.expect_uid === null || seen.expect_uid === undefined) {
+    return {
+      unit,
+      label,
+      verdict: ALARM_CUSTODY,
+      reason:
+        `${label} — the user ${row.must_be_owned_by} does not resolve to a uid on this box, so the check ` +
+        `cannot run and must not report clean. ${row.why}`,
+    };
+  }
+  if (seen.truncated) {
+    return {
+      unit,
+      label,
+      verdict: ALARM_CUSTODY,
+      reason:
+        `${label} — the ownership scan of ${row.path} hit its ${CUSTODY_SCAN_CAP}-entry bound after ` +
+        `${seen.scanned} entries and did not finish. A scan that could not finish is not a clean scan. ${row.why}`,
+    };
+  }
+  if (seen.offenders && seen.offenders.length) {
+    const named = seen.offenders.slice(0, 5).map((o) => `${o.path} (uid ${o.uid})`);
+    const more = seen.offenders.length > named.length ? ` …and ${seen.offenders.length - named.length} more` : "";
+    return {
+      unit,
+      label,
+      verdict: ALARM_CUSTODY,
+      reason:
+        `${label} — ${seen.offenders.length} path(s) under ${row.path} are NOT owned by ${row.must_be_owned_by}: ` +
+        `${named.join(", ")}${more}. ${row.why} Repair: ${row.repair || `sudo chown -R ${row.must_be_owned_by} ${row.path}`}`,
+    };
+  }
+  return {
+    unit,
+    label,
+    verdict: OK,
+    reason: `${label} — all ${seen.scanned} path${seen.scanned === 1 ? "" : "s"} under ${row.path} ${seen.scanned === 1 ? "is" : "are"} owned by ${row.must_be_owned_by}`,
+  };
+}
+
 export function rollcall(manifest, snapshot, now = Date.now()) {
   const rows = manifest.units.map((row) => classifyRow(row, snapshot, now));
+  for (const row of manifest.custody ?? []) rows.push(classifyCustody(row, snapshot));
 
   // RULE 4, the other direction. Anything the box carries that the manifest does
   // not name. Without this the roll-call silently becomes a snapshot of the day
