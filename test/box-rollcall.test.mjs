@@ -74,6 +74,45 @@ function manifest() {
   return loadManifest(MANIFEST_PATH);
 }
 
+// A manifest with a parked row PLANTED, used by every test about the PARKED
+// verdict.
+//
+// ── WHY THIS EXISTS (2026-08-30, the v1 sweep) ──────────────────────────────
+// These tests used to reach into the shipped manifest for a row that happened
+// to be parked, and postmark-stripe-watch was the one they found. It was ADOPTED
+// on 2026-08-27 — correctly, by the founder's word — and three tests here went
+// red at once, THE CONTROL among them, for a manifest that had become more true
+// rather than less. A control that reddens when the town changes lawfully is a
+// control nobody can read, and while it stands red every falsifier under it
+// proves nothing.
+//
+// Whether the town is carrying a parked rail on any given day is a fact about
+// the town. That PARKED is a verdict, is printed, is counted apart from OK, and
+// alarms when the box disagrees, is a property of THIS CHECKER — so it is
+// asserted against a row this file plants and owns.
+const PLANTED_PARKED_UNIT = "postmark-example-parked.timer";
+
+function parkedManifest(m = manifest()) {
+  return {
+    ...m,
+    units: [
+      ...m.units,
+      {
+        unit: PLANTED_PARKED_UNIT,
+        label: "a rail built and deliberately not adopted",
+        stage: "parked",
+        activation_owner: "planted by test/box-rollcall.test.mjs — this row is not on the box and never will be",
+        cadence: "would be hourly once adopted",
+        cadence_source: "systemctl show — once it exists",
+        parked_because: "built, reviewed, and not yet wanted; the founder has not called the manual path tedious",
+        adopt_command: "sudo systemctl enable --now postmark-example-parked.timer",
+        heartbeat: { kind: "state_file", path: "/srv/postmark-example/state.json", stamp_field: "last_run", stale_after_minutes: 90 },
+        stale_means: "nothing, while parked — a parked row is never alarmed for being inert",
+      },
+    ],
+  };
+}
+
 // The healthy state, planted. Everything green, by construction, at T0.
 function healthy(m = manifest()) {
   const units = {};
@@ -167,13 +206,22 @@ test("THE CONTROL: the planted healthy state is entirely green and exits 0", () 
   assert.equal(result.exitCode, 0);
   assert.equal(result.counts.ALARM, 0);
 
-  // Every live row accounted for, and every parked row still VISIBLE. "a
+  // Every row accounted for, and every parked row still VISIBLE. "a
   // built-but-parked rail must be visible forever" is the whole reason PARKED is
-  // a verdict rather than an omission.
+  // a verdict rather than an omission. Whether the SHIPPED manifest carries a
+  // parked row today is a fact about the town, not about this checker, so the
+  // PARKED path itself is proven below over a row this file plants.
   assert.equal(result.rows.length, m.units.length);
-  const parked = m.units.filter((u) => u.stage === "parked");
-  assert.ok(parked.length > 0, "the manifest carries no parked row, so the PARKED path is untested");
-  for (const p of parked) assert.equal(rowFor(result, p.unit).verdict, PARKED);
+  for (const p of m.units.filter((u) => u.stage === "parked")) {
+    assert.equal(rowFor(result, p.unit).verdict, PARKED);
+  }
+
+  // The planted-parked manifest must be green too, or the three PARKED tests
+  // below would each be measuring a fixture that was already broken.
+  const planted = parkedManifest(m);
+  const withParked = rollcall(planted, healthy(planted), T0);
+  assert.deepEqual(withParked.rows.filter((r) => isAlarm(r.verdict)).map((r) => `${r.verdict} ${r.unit}`), []);
+  assert.equal(rowFor(withParked, PLANTED_PARKED_UNIT).verdict, PARKED);
 });
 
 // ── §1 FALSIFIER (a): a manifest unit absent from the live list ─────────────
@@ -430,31 +478,37 @@ test("FALSIFIER (g): a PARKED row that the box has ENABLED is ALARM-unparked", (
   // updates the roll-call, the manifest and the box now disagree about whether a
   // rail that WRITES to the ledger is inert — and a checker that shrugged at
   // that would be underwriting the exact silence it exists to end.
-  const m = manifest();
+  //
+  // Which is exactly what happened to postmark-stripe-watch on 2026-08-27: it
+  // WAS adopted, the manifest's stage word was flipped, and the sentences
+  // around it went on describing a rail that is not on the box. This asserts
+  // the checker's half of that, over a planted row, so it keeps asserting it
+  // after the town's own parked rails come and go.
+  const m = parkedManifest();
   const adopted = mutate(healthy(m), (s) => {
-    s.units["postmark-stripe-watch.timer"] = {
+    s.units[PLANTED_PARKED_UNIT] = {
       load_state: "loaded",
       active_state: "active",
       unit_file_state: "enabled",
       last_trigger_ms: T0 - 5 * MINUTE,
-      triggers: "postmark-stripe-watch.service",
+      triggers: PLANTED_PARKED_UNIT.replace(/\.timer$/, ".service"),
     };
-    s.discovered.push("postmark-stripe-watch.timer");
+    s.discovered.push(PLANTED_PARKED_UNIT);
   });
 
-  const row = rowFor(rollcall(m, adopted, T0), "postmark-stripe-watch.timer");
+  const row = rowFor(rollcall(m, adopted, T0), PLANTED_PARKED_UNIT);
   assert.equal(row.verdict, ALARM_UNPARKED);
   assert.match(row.reason, /recorded PARKED in the manifest but the box has it/);
 });
 
 test("a PARKED row is printed, counted apart from OK, and never contributes to the exit code", () => {
-  const m = manifest();
+  const m = parkedManifest();
   const result = rollcall(m, healthy(m), T0);
   assert.ok(result.counts.PARKED >= 1);
   assert.equal(result.exitCode, 0);
 
   const lines = formatLines(result).join("\n");
-  assert.match(lines, /PARKED\s+postmark-stripe-watch\.timer/);
+  assert.match(lines, new RegExp(`PARKED\\s+${PLANTED_PARKED_UNIT.replace(/\./g, "\\.")}`));
   assert.match(lines, /parked by design/);
   // The summary line says the parked count out loud. A board that counts only
   // the green ones and then says "all clear" is how a rail shipped inert and

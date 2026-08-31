@@ -205,17 +205,15 @@
    "label": "the stripe watch (Stage B)",
    "stage": "live",
    "activation_owner": "Keemin — ADOPTED 2026-08-27 ~00:15 EDT (the founder's ON word, the night of the martina $20; enabled by Wright 06:23Z after review of wright/stripe-login-attribution). The Stage-B header's condition was met: the paste became the outage.",
-   "cadence": "would be every 15 minutes at :07/:22/:37/:52 once adopted — offset from usdc-watch so the two funding watchers never contend for town.lock",
-   "cadence_source": "deploy/postmark-stripe-watch.timer (the unit is not on the box, so systemctl has nothing to show)",
-   "parked_because": "Stage A (node tools/funding-report.mjs plus one pasted line per payment) is the default and the founder has not called it tedious yet. Unlike usdc-watch and harbor-watch, this unit WRITES — it takes the pen and town.lock — so adopting it is a real delegation, not a convenience.",
-   "adopt_command": "sudo systemctl enable --now postmark-stripe-watch.timer (after the install steps in deploy/DEPLOY.md § stripe-watch; installing is not adopting)",
+   "cadence": "every 15 minutes at :07/:22/:37/:52 — offset from usdc-watch so the two funding watchers never contend for town.lock",
+   "cadence_source": "systemctl show postmark-stripe-watch.timer -p TimersCalendar — measured on the box 2026-08-31T03:4xZ: '{ OnCalendar=*-*-* *:07/15:00 }', UnitFileState=enabled, ActiveState=active",
    "heartbeat": {
     "kind": "state_file",
     "path": "/srv/postmark-stripe/state.json",
     "stamp_field": "last_run",
     "stale_after_minutes": 45
    },
-   "stale_means": "Nothing, while parked — a parked row is never alarmed for being inert. The heartbeat is recorded now so that adoption is a one-word edit (parked -> live) rather than a fresh piece of thinking at the moment someone is in a hurry. NOTE FOR WHOEVER ADOPTS IT: on 2026-08-27 there was a file at /srv/postmark-office/.stripe-watch-state.json, four minutes fresh, written by a HAND-RUN of the tool's default state path — while no unit existed on the box at all. That file is not this row's heartbeat and must not become it: a hand-run's output is exactly the evidence that would make a rail with no runner look alive, which is why this checker judges the unit before it ever looks at a heartbeat."
+   "stale_means": "Stripe payments stop being attributed: a resident pays and the funding ledger does not learn, so the town's own record of who is paid up goes quietly wrong rather than loudly absent. The allowance is three ticks. WHAT THIS ROW HAS ALREADY CAUGHT ONCE, and the reason it judges the unit before the heartbeat: on 2026-08-27 a file at /srv/postmark-office/.stripe-watch-state.json was four minutes fresh, written by a HAND-RUN of the tool's default state path, while no unit existed on the box at all. That file is not this row's heartbeat and must never become it — a hand-run's output is exactly the evidence that makes a rail with no runner look alive. THE ROW'S OWN SCAR (2026-08-30, the v1 sweep): this rail was adopted on 08-27 by flipping stage parked -> live, and every sentence around that word stayed written for a rail that does not run — cadence said 'would be … once adopted', cadence_source said 'the unit is not on the box', and parked_because and adopt_command were both still standing. The suite went red for three weeks about a manifest that described the wrong box, which is this file's own failure class committed inside this file."
   },
   {
    "unit": "postmark-site-refresh.timer",
