@@ -301,11 +301,14 @@ SWEEP_JSON="$WORK/sweep.json"
   # ── WHOSE NIGHT IS THIS (v1 #4, 2026-08-30) ────────────────────────────────
   # The refusal used to reach the operator as {"cause": …, "phase":"unknown"} —
   # it named what tripped and never the one thing its reader needs at 3 AM: is
-  # this mine to RERUN or mine to REPAIR. The classifier answers it by the only
-  # fact that separates them — whether the offending path is in origin/main's
-  # own tree (no rerun can ever clear it) or only in this crossing's drained
-  # inputs (a repaired source reruns clean). It never guesses: a trip it cannot
-  # attribute is `unclassified` and says a human must read the stderr.
+  # this mine to RERUN or mine to REPAIR. The classifier answers it by the one
+  # fact that separates them — whether the file the lint REFUSED is in
+  # origin/main's own tree (no rerun can ever clear it) or only in this
+  # crossing's drained inputs (a repaired source reruns clean). It never
+  # guesses: a lint message names the offending file AND the reference it is
+  # held to, and the reference is in canon by construction, so a refusal whose
+  # subject cannot be told from its reference comes back `unclassified` rather
+  # than as advice that would send an operator to edit the wrong record.
   REFUSAL_JSON="$WORK/refusal.json"
   node "$OFFICE/deploy/settlement-classify.mjs" \
     --stderr "$WORK/sweep.err" --clone "$SWEEP" --ref origin/main > "$REFUSAL_JSON" 2>/dev/null \
