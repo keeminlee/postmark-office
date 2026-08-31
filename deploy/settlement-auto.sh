@@ -95,12 +95,16 @@ report() { # status detail
   SETTLEMENT_SWEEP_JSON="${SWEEP_JSON:-}" SETTLEMENT_DRAIN_JSON="${DRAIN_JSON:-}" \
   SETTLEMENT_ISOLATE_JSON="${ISOLATE_JSON:-}" SETTLEMENT_REFUSAL_JSON="${REFUSAL_JSON:-}" \
     node "$OFFICE/deploy/settlement-receipt.mjs" > "$OUT" 2>/dev/null || true
-  # THE HISTORY. One line per decided crossing, appended, bounded. A single
+  # THE HISTORY. One line per DECIDED crossing, appended, bounded. A single
   # receipt file answers "what did the last crossing do"; nothing on the box
   # could answer "has it published anything in three days", which is the shape
   # the 2026-08-26 starving crossing had while every individual receipt read
   # fine. The roll-call's settlement row reads this (tools/box-rollcall.mjs).
-  node "$OFFICE/deploy/settlement-history.mjs" --receipt "$OUT" --history "$HISTORY" >/dev/null 2>&1 || true
+  #
+  # `--attempt` is how the log knows a lost race inside the retry is not a
+  # DECISION yet; settlement-history.mjs carries that rule and its reason.
+  node "$OFFICE/deploy/settlement-history.mjs" \
+    --receipt "$OUT" --history "$HISTORY" --attempt "${SETTLEMENT_ATTEMPT:-}" >/dev/null 2>&1 || true
 }
 
 # ── THE RACE RETRY (v1 #7, 2026-08-30) ───────────────────────────────────────

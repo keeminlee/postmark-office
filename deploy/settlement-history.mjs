@@ -31,6 +31,24 @@ import { fileURLToPath } from "node:url";
 
 export const RETAIN = 60; // ~30 days at two crossings a day
 
+/**
+ * Is this receipt a DECISION, or an attempt that is about to be re-run?
+ *
+ * A lost race inside deploy/settlement-retry.sh is not a decision: the wrapper
+ * re-runs the whole crossing from fresh inputs and writes the crossing's real
+ * last word itself. A child logging its own race would put three lines in the
+ * log for one crossing — and `unsettled_runs` in the roll-call would then alarm
+ * on a crossing that went on to publish, which is the one wrong answer a
+ * starvation check must never give. The receipt FILE is still written by the
+ * child either way; only the log waits.
+ *
+ * `attempt` is SETTLEMENT_ATTEMPT: a number inside the retry, empty outside it.
+ */
+export function isDecision(receipt, attempt) {
+  const inRetry = attempt !== undefined && attempt !== null && String(attempt).trim() !== "";
+  return !(inRetry && String(receipt?.status) === "race");
+}
+
 /** The one line a crossing leaves in the log — the fields a pattern is made of. */
 export function lineFor(receipt) {
   const ch = receipt?.channels ?? {};
@@ -86,6 +104,7 @@ export function run() {
   if (!receiptPath || !historyPath) return 0;
   let receipt;
   try { receipt = JSON.parse(readFileSync(receiptPath, "utf8")); } catch { return 0; }
+  if (!isDecision(receipt, argOf("attempt", ""))) return 0;
   const existing = existsSync(historyPath) ? readFileSync(historyPath, "utf8") : "";
   try {
     writeFileSync(historyPath, append(existing, receipt, Number(argOf("retain", RETAIN)) || RETAIN));
