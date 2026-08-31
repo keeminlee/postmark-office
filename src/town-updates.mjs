@@ -58,23 +58,75 @@ export const PAPER_ACTS = Object.freeze({
 export const PAPER_ACT_NAMES = Object.freeze(Object.keys(PAPER_ACTS));
 
 /**
+ * THE ACT'S WHOLE OUTCOME, as commits — the shas this call actually landed.
+ *
+ * #2302: the row stores its args and the drain replays them, and the contract
+ * sentence below only holds if the file is still what it was. The sha the pen
+ * returned is the one thing that says "this act is already in the history",
+ * which is what lets the drain tell a resume from a re-imposition.
+ *
+ * ONE LEVEL DEEP, ON PURPOSE. A paper act is not always one commit: the w37
+ * profile door routes `display_name` to the ADDRESS card through
+ * `updateAddressFieldsUnlogged` and hands its result back nested (`named`), so
+ * that act's outcome is TWO commits under ONE row — and a call that was only a
+ * display name returns `commit: null, unchanged: true` at the top while
+ * `named.commit` holds a real sha. A guard that read only `out.commit` would
+ * call that act a no-op and re-impose it, which is this issue with a second
+ * face. Walking the answer's own object-valued properties covers `named` today
+ * and a third half tomorrow without a second edit here; a door that buries its
+ * pen deeper than one level must say so at that level or add its sha itself.
+ *
+ * Deduped and order-preserving; a door that returned no sha contributes none,
+ * which is how an EMPTY list comes to mean "this act wrote nothing".
+ */
+export function paperActCommits(out) {
+  if (!out || typeof out !== "object") return [];
+  const seen = new Set();
+  const take = (v) => { if (typeof v === "string" && v) seen.add(v); };
+  take(out.commit);
+  for (const v of Object.values(out))
+    if (v && typeof v === "object" && !Array.isArray(v)) take(v.commit);
+  return [...seen];
+}
+
+/**
  * Write one paper act to the town log. Returns the seq, or null flag-off.
  *
  * The row carries the door's arguments VERBATIM, because the drain's whole
  * contract is that replaying them through the door reproduces the commit. A row
  * that stored a rendered result instead would be a second copy of the render,
  * and the first divergence would be invisible.
+ *
+ * IT ALSO CARRIES THE OUTCOME (#2302), and the two are not the same kind of
+ * thing. The args are what to replay; `commits` is what this call already did,
+ * and it is the drain's resume key — the exact role `payload.file` plays for a
+ * letter row (town-bridge.mjs § idempotence). Storing it is not "a second copy
+ * of the render": a sha is not a rendering of anything, it is a name for a
+ * point in the history that either is or is not behind the clone's HEAD.
+ *
+ * A DOCUMENTED NO-OP IS NOT LOGGED. `commits: []` — the caller looked and the
+ * act landed nothing — writes no row, because a row that wrote nothing has
+ * nothing to settle and replaying it can only re-impose args against a file
+ * that has moved on. That is the whole of the 63a38162 instance: a "clear these
+ * four fields" call that was a no-op against a file without them, replayed at
+ * the crossing against a file that by then had them.
+ *
+ * ABSENT IS NOT EMPTY. `commits` undefined means the caller did not say what it
+ * landed — the direct callers in test/ and any future one — and such a row is
+ * logged and replayed exactly as before. The absent-reads-as-falsy shortcut is
+ * refused deliberately here and again in the drain's guard.
  */
-export function logPaperAct(odb, { act, handle, household, args, key }) {
+export function logPaperAct(odb, { act, handle, household, args, key, commits }) {
   if (!odb || !townLogEnabled()) return null;
   if (!PAPER_ACTS[act]) throw new Error(`"${act}" is not a paper act — the town log's update rows are ${PAPER_ACT_NAMES.join(", ")}`);
+  if (Array.isArray(commits) && commits.length === 0) return null;
   return appendTownJournal(odb, {
     cls: "update",
     act,
     household: String(household ?? key?.household ?? ""),
     handle,
     ghId: key?.ghId ?? null, ghLogin: key?.ghLogin ?? null,
-    payload: { args },
+    payload: Array.isArray(commits) ? { args, commits } : { args },
     channel: key?.channel ?? null,
   });
 }
@@ -101,6 +153,12 @@ export function logPaperAct(odb, { act, handle, household, args, key }) {
  * cannot write a row for the row it is draining. That is the same structural
  * guard wave 4 gave the mail door by binding `send_letter` to the flag-off pen:
  * the drain's safety is a shape, not a flag anybody has to check.
+ *
+ * AND IT RECORDS WHAT IT DID (#2302). The door is the only place that holds
+ * both halves at once — the args, and the sha its own pen just returned — so
+ * it is the only place that can hand the drain a resume key without a second
+ * reader inventing one. `out` is in scope here and was already being spread
+ * into the answer; the row now carries its shas too.
  */
 export function paperDoor(act, impl) {
   return function paperDoorCall(args, key, db, clone, odb = null) {
@@ -110,7 +168,8 @@ export function paperDoor(act, impl) {
     if (!odb || out?.error) return out;
     let seq = null;
     try {
-      seq = logPaperAct(odb, { act, handle: args?.handle, household: key?.household, args, key });
+      seq = logPaperAct(odb, { act, handle: args?.handle, household: key?.household, args, key,
+        commits: paperActCommits(out) });
     } catch (e) {
       // THE EDIT LANDED — the pen commit is already in the town clone, so
       // failing the call here would tell the caller a true thing about the log
