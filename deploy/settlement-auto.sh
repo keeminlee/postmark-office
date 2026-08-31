@@ -309,7 +309,16 @@ SWEEP_JSON="$WORK/sweep.json"
   if grep -q "SETTLEMENT-SWEEP-STARVING" "$WORK/sweep.err"; then
     report starving "$(grep -h "SETTLEMENT-SWEEP-STARVING" "$WORK/sweep.err" | head -c 400 | tr '\n"' ' .')"
     echo "[settlement-auto] STARVING CROSSING — the sweep found no candidates while sketchbooks hold escrow-backed marks" >&2
-    cat "$WORK/sweep.err" >&2; exit 1
+    cat "$WORK/sweep.err" >&2
+    # A starving crossing is the 2026-08-26 shape — the one that "read as a quiet
+    # day for two days" — so the third in a row gets the same escalation as a
+    # third refusal. Asked here as well as below because this branch exits first
+    # and the operator round is twelve hours away.
+    if node "$OFFICE/deploy/settlement-history.mjs" --history "$HISTORY" --recurring 3 >/dev/null 2>&1; then
+      echo "[settlement-auto] THIRD UNSETTLED CROSSING IN A ROW — escalating" >&2
+      node "$OFFICE/deploy/settlement-escalate.mjs" --class recurring-refusal --receipt "$OUT" >&2 || true
+    fi
+    exit 1
   fi
   # ── WHOSE NIGHT IS THIS (v1 #4, 2026-08-30) ────────────────────────────────
   # The refusal used to reach the operator as {"cause": …, "phase":"unknown"} —
