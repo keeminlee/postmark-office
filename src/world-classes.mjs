@@ -195,6 +195,72 @@ export function bountyBoard({ worldDb = null } = {}) {
 export const classNames = (opts) => [...classRoster(opts).roster].sort();
 
 /**
+ * A free 1×1 cell inside a place's ground, computed FOR the author — the
+ * town-door post's placement pen (founder-ruled 2026-08-30: "make it VERY EASY
+ * to post ideas instead of having to place a whole ass mark"). The 2.0 write
+ * doctrine already promises "computed-for-you"; this is that promise previewed
+ * at the 1.0 door, and it evaporates at the mark-lane flip.
+ *
+ * Geometry is the record's: the place's centre-anchored at/extent are read from
+ * the store, never held here. Candidate cells are integer points inset 1.5 from
+ * every edge (a 1×1 mark spans ±0.5, so every candidate stands strictly inside
+ * the ground — never edge-riding into the containment ambiguity that swallowed
+ * the wayfinder on 2026-08-30). The start cell is a hash of the seed
+ * (by/slug), so two authors spread instead of queueing at a corner; the probe
+ * walks forward past anything the store already knows.
+ *
+ * HONEST LIMIT, on purpose: drafts live on per-household sketchbook branches
+ * and are invisible here until a settlement folds them, so two residents
+ * posting between crossings CAN land on one cell. That costs nothing — no
+ * reader orders ideas by position (the tank read orders by date), and stacked
+ * pins are the worldkeeper's to tidy — so the door does not pretend to a
+ * perfect avoidance the draft architecture cannot give it.
+ *
+ * Answers { at } on success; { full: true } when every cell is taken; { error }
+ * when the store cannot be read (the caller owes the floor-honest bounce).
+ */
+export function freeCellIn(placeId, seed, { worldDb = null } = {}) {
+  const path = worldDb ?? storeDbPath();
+  try { statSync(path); } catch { return { error: `no world store at ${path} — the ground could not be read` }; }
+  let db;
+  try {
+    db = new DatabaseSync(path, { readOnly: true });
+    const place = db.prepare(`
+      SELECT CAST(json_extract(props,'$.at.x') AS REAL) AS x,
+             CAST(json_extract(props,'$.at.y') AS REAL) AS y,
+             CAST(json_extract(props,'$.extent.w') AS REAL) AS w,
+             CAST(json_extract(props,'$.extent.h') AS REAL) AS h
+        FROM nodes WHERE id = ?`).get(String(placeId));
+    if (!place || !Number.isFinite(place.x) || !Number.isFinite(place.w))
+      { db.close(); return { error: `the store holds no sited ground "${placeId}"` }; }
+    const marks = db.prepare(`
+      SELECT id, CAST(json_extract(props,'$.at.x') AS REAL) AS x,
+                 CAST(json_extract(props,'$.at.y') AS REAL) AS y,
+                 CAST(COALESCE(json_extract(props,'$.extent.w'), 1) AS REAL) AS w,
+                 CAST(COALESCE(json_extract(props,'$.extent.h'), 1) AS REAL) AS h
+        FROM nodes WHERE json_extract(props,'$.at.x') IS NOT NULL AND id != ?`).all(String(placeId));
+    db.close();
+    const x0 = Math.ceil(place.x - place.w / 2 + 1.5), x1 = Math.floor(place.x + place.w / 2 - 1.5);
+    const y0 = Math.ceil(place.y - place.h / 2 + 1.5), y1 = Math.floor(place.y + place.h / 2 - 1.5);
+    const cells = [];
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) cells.push({ x, y });
+    if (!cells.length) return { error: `the ground "${placeId}" is too small to hold a mark` };
+    const blocked = ({ x, y }) => marks.some((m) =>
+      Number.isFinite(m.x) && Math.abs(x - m.x) < (1 + m.w) / 2 && Math.abs(y - m.y) < (1 + m.h) / 2);
+    // djb2 — spread, not security; deterministic so a retry lands the same cell
+    let hsh = 5381; for (const c of String(seed)) hsh = ((hsh * 33) ^ c.charCodeAt(0)) >>> 0;
+    for (let i = 0; i < cells.length; i++) {
+      const cell = cells[(hsh + i) % cells.length];
+      if (!blocked(cell)) return { at: cell, cells: cells.length };
+    }
+    return { full: true, cells: cells.length };
+  } catch (e) {
+    try { db?.close(); } catch { /* already closed */ }
+    return { error: `the world store would not open (${String(e?.message ?? e).slice(0, 120)})` };
+  }
+}
+
+/**
  * One class's `dials:` — its params, which are its response boundaries.
  *
  * "Every class param is a response boundary — the line where the town's

@@ -327,7 +327,9 @@ test("MCP initialize → protocol + instructions", async () => {
   assert.match(body.result.instructions, /The reading law/, "the handshake carries the reading law");
 });
 
-test("MCP tools/list, apex OFF: the full 43 — the slim's delist is apex-conditioned and does not apply", async () => {
+// (the title carries no count on purpose — a name a routine addition can
+// falsify is a name that will lie; the ledger below is the count's home)
+test("MCP tools/list, apex OFF: the full flat list — the slim's delist is apex-conditioned and does not apply", async () => {
   const { body } = await rpc("tools/list");
   const names = body.result.tools.map((t) => t.name);
   // 38 → 40: world_hold + world_holdings (the object primitive, 2026-08-14).
@@ -352,7 +354,9 @@ test("MCP tools/list, apex OFF: the full 43 — the slim's delist is apex-condit
   // 43 -> 45 (the lane reads, 2026-08-30): read_bounties + read_blueprints —
   // born delisted behind the town apex, so the flag-OFF listing is where their
   // flat definitions show (delisting is listing-only, apex-conditioned).
-  assert.equal(names.length, 45);
+  // 45 -> 46 (the lanes' pen, 2026-08-30 evening): town_post — town
+  // { do: "post" }'s charge name, born delisted like the lane reads it writes.
+  assert.equal(names.length, 46);
   assert.ok(names.includes("update_address_fields"), "the fields door stands regardless of the world flag");
   assert.ok(!names.includes("request_blessing"), "request_blessing's delist is unconditional");
   assert.ok(!names.includes("world"), "no apex tool with the flag off");

@@ -723,7 +723,9 @@ test("send_letter FOLDS UNDER household — your pen lives where your standing d
   // 43 → 45: read_bounties + read_blueprints (the lane reads, 2026-08-30) —
   // born delisted behind the town apex, but the DEFINITIONS stand flat like
   // every delisted verb's, so the flag-off listing carries them.
-  assert.equal(names.length, 45, "no tool was added or removed beyond the paid ledger; the flag-off listing is untouched");
+  // 45 → 46: town_post (the lanes' pen, 2026-08-30 evening) — town
+  // { do: "post" }'s charge name, born delisted the same way.
+  assert.equal(names.length, 46, "no tool was added or removed beyond the paid ledger; the flag-off listing is untouched");
 
   assert.ok(HOUSEHOLD_DISPATCHABLE.includes("send"), "household do: \"send\" is the letter's apex verb");
   assert.equal(householdDispatchToolFor("send"), "send_letter",

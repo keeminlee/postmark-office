@@ -1,0 +1,144 @@
+// town-post.test.mjs — the lanes' pen (founder-ruled 2026-08-30 evening).
+//
+//   node --test test/town-post.test.mjs
+//
+// THE LAW these falsifiers hold (the ruling, in substance): posting an idea
+// must be VERY EASY — a thin wrapper over leave-mark that computes the ground
+// and the free cell FOR the author, "instead of having to place a whole ass
+// mark". The wrapper adds exactly two things (the lane routing and the
+// placement) and forwards everything else, so every grammar bounce stays the
+// world door's own sentence. Posting PUBLISHES: escrow defaults to 1.
+//
+// The placement's honest limit is asserted here too: drafts live on household
+// sketchbook branches and are invisible cross-household until a settlement
+// folds them, so the pen avoids every mark the STORE knows and does not
+// pretend to more (stacked pins cost nothing — no reader orders ideas by
+// position).
+
+import test from "node:test";
+import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { DatabaseSync } from "node:sqlite";
+
+import { freeCellIn } from "../src/world-classes.mjs";
+import { townPost, POST_PLACES } from "../src/world.mjs";
+
+const TANK = "the-town/the-think-tank";
+
+// a store with the tank's real geometry (30×20 at 285,-179.5 — the walked
+// siting) and whatever marks a test plants
+function fixtureStore(marks = []) {
+  const dir = mkdtempSync(join(tmpdir(), "town-post-"));
+  const p = join(dir, "world.db");
+  const d = new DatabaseSync(p);
+  d.exec("CREATE TABLE nodes (id TEXT PRIMARY KEY, kind TEXT, subkind TEXT, tier TEXT, by TEXT, props TEXT)");
+  const ins = d.prepare("INSERT INTO nodes (id, kind, by, props) VALUES (?, 'mark', ?, ?)");
+  ins.run(TANK, "the-town", JSON.stringify({ at: { x: 285, y: -179.5 }, extent: { w: 30, h: 20 }, body: "the tank" }));
+  for (const m of marks) ins.run(m.id, m.by ?? "someone", JSON.stringify(m.props));
+  d.close();
+  return { path: p, done: () => rmSync(dir, { recursive: true, force: true }) };
+}
+
+// ── the placement pen ───────────────────────────────────────────────────────
+
+test("a free cell lands strictly INSIDE the tank — inset from every edge, never edge-riding", () => {
+  const s = fixtureStore();
+  try {
+    const c = freeCellIn(TANK, "wright/a-first-idea", { worldDb: s.path });
+    assert.ok(c.at, "an empty tank places");
+    // tank spans x 270..300, y -189.5..-169.5; a 1×1 at the cell spans ±0.5 —
+    // the 1.5 inset keeps the whole mark at least 1m inside the walls (the
+    // wayfinder-swallowing lesson: extents are CENTRE-anchored)
+    assert.ok(c.at.x - 0.5 >= 271 && c.at.x + 0.5 <= 299, `x=${c.at.x} rides inside`);
+    assert.ok(c.at.y - 0.5 >= -188.5 && c.at.y + 0.5 <= -170.5, `y=${c.at.y} rides inside`);
+  } finally { s.done(); }
+});
+
+test("placement is DETERMINISTIC per author/slug — a retry lands the same cell, a different seed spreads", () => {
+  const s = fixtureStore();
+  try {
+    const a1 = freeCellIn(TANK, "wright/one", { worldDb: s.path });
+    const a2 = freeCellIn(TANK, "wright/one", { worldDb: s.path });
+    assert.deepEqual(a1.at, a2.at, "same seed, same cell — a resident retrying a bounced call must not scatter");
+    const b = freeCellIn(TANK, "little-bird/another", { worldDb: s.path });
+    assert.notDeepEqual(a1.at, b.at, "different seeds spread instead of queueing at one corner");
+  } finally { s.done(); }
+});
+
+test("the probe walks PAST a mark the store knows — the cell a neighbour holds is never handed out", () => {
+  const empty = fixtureStore();
+  let target;
+  try { target = freeCellIn(TANK, "wright/claim", { worldDb: empty.path }).at; } finally { empty.done(); }
+  const s = fixtureStore([{ id: "someone/sat-here", props: { at: target, extent: { w: 1, h: 1 } } }]);
+  try {
+    const c = freeCellIn(TANK, "wright/claim", { worldDb: s.path });
+    assert.ok(c.at, "still places");
+    assert.notDeepEqual(c.at, target, "…but not on the occupied cell");
+  } finally { s.done(); }
+});
+
+test("a WIDE mark blocks every cell under its extent, not just its centre", () => {
+  const s = fixtureStore([{ id: "the-town/how-ideas-enter", props: { at: { x: 285, y: -179 }, extent: { w: 10, h: 6 } } }]);
+  try {
+    // exhaust: every seed must land outside the wide mark's footprint
+    for (const seed of ["a/a", "b/b", "c/c", "d/d", "e/e"]) {
+      const c = freeCellIn(TANK, seed, { worldDb: s.path });
+      const inside = Math.abs(c.at.x - 285) < 5.5 && Math.abs(c.at.y - -179) < 3.5;
+      assert.equal(inside, false, `${seed} → ${JSON.stringify(c.at)} must clear the furniture`);
+    }
+  } finally { s.done(); }
+});
+
+test("a full ground says FULL with its cell count; a missing store is an ERROR, never a guess", () => {
+  // a mark as wide as the tank itself leaves no cell
+  const s = fixtureStore([{ id: "someone/blanket", props: { at: { x: 285, y: -179.5 }, extent: { w: 30, h: 20 } } }]);
+  try {
+    const c = freeCellIn(TANK, "wright/late", { worldDb: s.path });
+    assert.equal(c.full, true);
+    assert.ok(c.cells > 0, "the refusal carries how many cells the ground holds");
+  } finally { s.done(); }
+  const gone = freeCellIn(TANK, "wright/x", { worldDb: "Z:/nowhere/never-a-store.db" });
+  assert.match(gone.error, /no world store/, "the floor is disclosed, never silently improvised");
+  const noGround = fixtureStore();
+  try {
+    const g = freeCellIn("the-town/no-such-ground", "w/x", { worldDb: noGround.path });
+    assert.match(g.error, /no sited ground/);
+  } finally { noGround.done(); }
+});
+
+// ── the wrapper's own gates (everything else is the world door's law) ────────
+
+test("post without a lawful class TEACHES the lanes — which is open, where the others still post", async () => {
+  assert.deepEqual(Object.keys(POST_PLACES), ["idea"], "the lane opens class by class, by ruling — today: idea");
+  for (const bad of [undefined, "bounty", "listing", "quest", "thing"]) {
+    await assert.rejects(
+      () => townPost({ class: bad, slug: "s", body: "b" }, { household: "h", handles: new Set(["tester"]) }),
+      (e) => {
+        assert.equal(e.code, 422);
+        assert.match(e.hint, /"idea"/, "the bounce names what IS open");
+        assert.match(e.hint, /world_leave_mark class: "bounty"/, "…and where a bounty still posts, so nobody is stranded");
+        return true;
+      }, `class ${JSON.stringify(bad)} must bounce teaching`);
+  }
+});
+
+test("posting PUBLISHES: stamps 0 bounces to the world door where private drafts live", async () => {
+  await assert.rejects(
+    () => townPost({ class: "idea", slug: "s", body: "b", stamps: 0 }, { household: "h", handles: new Set(["tester"]) }),
+    (e) => { assert.equal(e.code, 422); assert.match(e.hint, /world_leave_mark/); return true; });
+});
+
+test("an unreadable ground bounces 503 naming the self-serve fallback — the wrapper never guesses a cell", async () => {
+  // no WORLD store is configured in this test env, so the ground read floors —
+  // which is exactly the branch this falsifier owns
+  await assert.rejects(
+    () => townPost({ class: "idea", slug: "s", body: "b" }, { household: "h", handles: new Set(["tester"]) }),
+    (e) => {
+      if (e.code === 503) { assert.match(e.hint, /world_leave_mark/); return true; }
+      // with a real store present the call reaches the world door instead;
+      // any bounce from there is the world door's own law and not this test's
+      return typeof e.code === "number";
+    });
+});

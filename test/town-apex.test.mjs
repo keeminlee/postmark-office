@@ -3,17 +3,22 @@
 //
 //   node --test test/town-apex.test.mjs
 //
-// THE LAW every falsifier here quotes, from the founder, 2026-08-24:
+// THE LAW every falsifier here quotes — twice superseded, both states recorded
+// (reasoning rides the artifact):
 //
-//   "THE TOWN'S HANDS TOUCH ONLY THE REGISTER. Household acts FROM standing
-//    (your pen, your stakes, your wall), world acts IN place (walks, marks,
-//    speech), town acts ON THE ROSTER (logistical/management: declaring a
-//    household in; later, deregistering out). Everything else stays read-pure
-//    at town."
+//   2026-08-24: "THE TOWN'S HANDS TOUCH ONLY THE REGISTER" — the one act was
+//   declare-household. Superseded 2026-08-30 morning when founding moved home
+//   to household { do: "declare" } and the town went read-pure.
 //
-// The quotable half rides in the door's own refusal as REGISTER_LAW, and this
-// file reads it from there rather than retyping it — a law the test spells for
-// itself is a law that can drift from the one the door speaks.
+//   2026-08-30 evening (the asks-matrix sitting): the town is the CIVIC apex
+//   and its acts are the LANES' PEN — do: "post", target-typed by class,
+//   opening with "idea" at the Think Tank. The read-pure state lasted part of
+//   one day, exactly as the schema comment promised ("the stake gesture
+//   re-adds do: when it lands" — post landed first).
+//
+// The current sentence rides in the door's own refusal as REGISTER_LAW, and
+// this file reads it from there rather than retyping it — a law the test
+// spells for itself is a law that can drift from the one the door speaks.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -33,11 +38,13 @@ const spy = () => { const calls = []; return { calls, call: async (tool, fields)
 const ctx = (extra = {}) => ({ schemas, schemaRequired, ...extra });
 
 // ── THE REGISTER LAW ────────────────────────────────────────────────────────
-test("THE REGISTER, 2026-08-30: the town takes NO acts — declare-household moved home", () => {
-  assert.deepEqual([...TOWN_DISPATCHABLE], [],
-    "the town's roster is empty today: founding is account genesis and lives at household { do: \"declare\" }; the stake gesture is ruled and arrives with this train");
+test("THE REGISTER, 2026-08-30 evening: the town's roster is the lanes' pen — post, alone", () => {
+  assert.deepEqual([...TOWN_DISPATCHABLE], ["post"],
+    "one act: put an ask on a civic lane — target-typed by class, opening with idea; stake is ruled and next");
+  assert.equal(townDispatchToolFor("post"), "town_post",
+    "post charges as the flat verb town_post — an apex act is never a second, uncounted door");
   assert.equal(townDispatchToolFor("declare-household"), null,
-    "the duplicate door is closed — household's declare act dispatches the same flat verb it always did");
+    "the duplicate door stays closed — household's declare act dispatches the same flat verb it always did");
   assert.equal(townDispatchToolFor("home"), null);
 });
 
@@ -133,20 +140,34 @@ test("THE GRAMMAR: the bare call speaks the acts shape the household apex speaks
     assert.equal(typeof e.fields, "object");
     assert.equal(Array.isArray(e.fields), false);
   }
-  // the envelope, on the tool's own schema — NO do: property while the roster
-  // is empty (a schema field would advertise a pen the door does not hold);
-  // the stake gesture re-adds it, with its enum, when it lands
-  assert.equal(TOWN_TOOL.inputSchema.properties.do, undefined);
+  // the envelope, on the tool's own schema — do: returned with the roster,
+  // enum'd, exactly as the read-pure commit's comment promised
+  assert.deepEqual(TOWN_TOOL.inputSchema.properties.do?.enum, [...TOWN_DISPATCHABLE]);
   assert.equal(TOWN_TOOL.inputSchema.properties.args?.type, "object");
   // the alias era is over: one key, and the duplicate stays dead
   assert.equal("actions" in answer, false, "the `actions` duplicate must not ride the town answer");
 });
 
-test("the bare read carries an EMPTY acts list and the named-not-built ledger", async () => {
+test("the bare read carries post's card and the named-not-built ledger", async () => {
   const answer = await townApex({}, key(), ctx({ call: spy().call }));
-  assert.deepEqual(answer.acts, [], "no act cards while the roster is empty — a card would advertise a pen the door does not hold");
+  assert.equal(answer.acts.length, 1, "one card — the roster is post, alone");
+  const card = answer.acts[0];
+  assert.equal(card.act, "post");
+  assert.equal(card.dispatches_to, "town_post");
+  for (const f of ["class", "slug", "body"])
+    assert.ok(card.fields[f], `the card names ${f} — the fields ride from town_post's own schema, never retyped`);
+  assert.equal(card.fields.class.required, true, "and class is marked required, from the schema's own required list");
   assert.ok(answer.named_not_built.stake, "the ruled stake gesture is named where a reader will find it");
   assert.ok(answer.named_not_built["declare-household"], "the moved act is named so a returning caller learns where it went");
+});
+
+// ── the act-card overloading (standardized 2026-08-30 evening) ──────────────
+test("read: \"post\" answers post's own card — the household grammar at its third door", async () => {
+  const { calls, call } = spy();
+  const r = await townApex({ read: "post" }, key(), ctx({ call }));
+  assert.equal(calls.length, 0, "a card read dispatches NOTHING — the card is the whole answer");
+  assert.equal(r.card?.act, "post");
+  assert.equal(r.card?.dispatches_to, "town_post");
 });
 
 // ── the act dispatches, and POS-44 rides through untouched ──────────────────
@@ -239,10 +260,11 @@ test("THE FLAG: the town tool appears only apex-on, and costs one frozen array o
 // catch. The values derive from the serving tables, so the menu cannot drift
 // from the door.
 
-test("town's read enum IS the serving table — closed, context-free, derived; do: is absent with the roster", () => {
+test("town's enums ARE the serving tables — read is READS ∪ ACTS (the card overloading makes act names lawful reads), do: is the roster", () => {
   const p = TOWN_TOOL.inputSchema.properties;
-  assert.deepEqual(p.read.enum, TOWN_READABLE);
-  assert.equal(p.do, undefined, "no acts, no do: field — the stake gesture re-adds it, enum'd, when it lands");
+  assert.deepEqual(p.read.enum, [...TOWN_READABLE, ...TOWN_DISPATCHABLE],
+    "a read enum without the act names would bounce the lawful read: \"post\" card read — the union is still closed and derived, so it stays an honest enum");
+  assert.deepEqual(p.do.enum, [...TOWN_DISPATCHABLE], "do: returned with the roster, enum'd, as the read-pure commit promised");
 });
 
 test("household: do is enum'd from ACTS; read carries NO enum (act-card grammar) and suggests the roster", async () => {
