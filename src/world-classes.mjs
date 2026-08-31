@@ -246,8 +246,18 @@ export function freeCellIn(placeId, seed, { worldDb = null } = {}) {
     const cells = [];
     for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) cells.push({ x, y });
     if (!cells.length) return { error: `the ground "${placeId}" is too small to hold a mark` };
-    const blocked = ({ x, y }) => marks.some((m) =>
-      Number.isFinite(m.x) && Math.abs(x - m.x) < (1 + m.w) / 2 && Math.abs(y - m.y) < (1 + m.h) / 2);
+    // FURNITURE ONLY, NEVER THE FLOOR (caught live 2026-08-31 ~04:00Z, third
+    // lesson at this door: the world root's extent overlaps every cell of every
+    // ground, so overlap-alone read an empty tank as "full — 486 cells"). A
+    // mark blocks placement only if it stands ON this ground — its whole
+    // centre-anchored extent inside the place's — because a container (the
+    // root, a district, the centre) is the floor you stand on, not a thing in
+    // the way.
+    const furniture = marks.filter((m) => Number.isFinite(m.x) &&
+      Math.abs(m.x - place.x) <= (place.w - m.w) / 2 &&
+      Math.abs(m.y - place.y) <= (place.h - m.h) / 2);
+    const blocked = ({ x, y }) => furniture.some((m) =>
+      Math.abs(x - m.x) < (1 + m.w) / 2 && Math.abs(y - m.y) < (1 + m.h) / 2);
     // djb2 — spread, not security; deterministic so a retry lands the same cell
     let hsh = 5381; for (const c of String(seed)) hsh = ((hsh * 33) ^ c.charCodeAt(0)) >>> 0;
     for (let i = 0; i < cells.length; i++) {

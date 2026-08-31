@@ -99,6 +99,21 @@ test("a WIDE mark blocks every cell under its extent, not just its centre", () =
   } finally { s.done(); }
 });
 
+test("an ANCESTOR ground never blocks placement — a container is the floor, not furniture", () => {
+  // The live lesson (2026-08-31 ~04:00Z): the world root's extent overlaps
+  // every cell of every ground, and overlap-alone read an empty tank as
+  // "full — 486 cells". Only a mark standing ON the ground (whole extent
+  // inside) is furniture.
+  const s = fixtureStore([
+    { id: "the-town/let-there-be-light", props: { at: { x: 0, y: 0 }, extent: { w: 4000, h: 4000 } } },
+    { id: "the-town/the-town-centre", props: { at: { x: 285, y: -150 }, extent: { w: 400, h: 300 } } },
+  ]);
+  try {
+    const c = freeCellIn(TANK, "wright/first", { worldDb: s.path });
+    assert.ok(c.at, "the empty tank places despite the root and the district overlapping every cell");
+  } finally { s.done(); }
+});
+
 test("a full ground says FULL with its cell count; a missing store is an ERROR, never a guess", () => {
   // a mark as wide as the tank itself leaves no cell
   const s = fixtureStore([{ id: "someone/blanket", props: { at: { x: 285, y: -179.5 }, extent: { w: 30, h: 20 } } }]);
