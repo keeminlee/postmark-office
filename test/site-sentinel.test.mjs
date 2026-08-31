@@ -95,43 +95,71 @@ test("classifyUp: dev's 302 to the Access login is INFO, and a 302 anywhere else
 test("classifyStamp: matching is OK, a fresh divergence is inside the window, a held one is STALE", () => {
   const base = { nowMs: T0, staleAfterMs: 45 * MINUTE, what: "the index", referenceName: "main" };
 
-  // Agreement is green regardless of clocks.
-  assert.equal(classifyStamp({ ...base, served: "aaa", reference: "aaa", seen: null }).verdict, "OK");
+  // Agreement is green regardless of clocks — and clears the divergence memory.
+  const ok = classifyStamp({ ...base, served: "aaa", reference: "aaa", seen: { value: "aaa", first_seen_at: T0 - 2 * HOUR, diverged_since: T0 - 30 * MINUTE } });
+  assert.equal(ok.verdict, "OK");
+  assert.equal(ok.seen.diverged_since, null, "agreement must clear the divergence clock, or a healed site stays pre-condemned");
 
-  // Diverged, but only for ten minutes: an ordinary deploy in flight.
-  const fresh = classifyStamp({ ...base, served: "aaa", reference: "bbb", seen: { value: "aaa", first_seen_at: T0 - 10 * MINUTE } });
+  // Diverged ten minutes ago: an ordinary deploy in flight.
+  const fresh = classifyStamp({ ...base, served: "aaa", reference: "bbb", seen: { value: "aaa", first_seen_at: T0 - 2 * HOUR, diverged_since: T0 - 10 * MINUTE } });
   assert.equal(fresh.verdict, "OK");
   assert.match(fresh.reason, /inside the 45m deploy window/);
 
-  // Diverged and HELD for over an hour — the stuck rehydrate tick, exactly the
-  // shape found by hand on 2026-08-25 (one distinct as-of across three tick
-  // slots). This is what "something is down on the site" looks like when
-  // nothing returns an error code.
-  const stale = classifyStamp({ ...base, served: "aaa", reference: "bbb", seen: { value: "aaa", first_seen_at: T0 - 70 * MINUTE } });
+  // The reference has been ahead for over an hour — the stuck rehydrate tick,
+  // the shape found by hand on 2026-08-25 (one distinct as-of across three
+  // tick slots). This is what "something is down" looks like with no error code.
+  const stale = classifyStamp({ ...base, served: "aaa", reference: "bbb", seen: { value: "aaa", first_seen_at: T0 - 2 * HOUR, diverged_since: T0 - 70 * MINUTE } });
   assert.equal(stale.verdict, "STALE");
   assert.match(stale.reason, /1h10m/);
-  assert.match(stale.reason, /stopped changing/);
+  assert.match(stale.reason, /moved on/);
 });
 
-test("classifyStamp: the clock is anchored to the SERVED value, so a busy repo cannot hide a frozen site", () => {
-  // The anchoring bug this test exists to prevent: if the clock were keyed on
-  // the (served, reference) PAIR, a repo that commits every 30 minutes would
-  // reset the clock every 30 minutes and could never accumulate an alarm even
-  // while every single deploy failed.
+test("classifyStamp: THE QUIET-HOUR INCIDENT (2026-08-31, 6-7 false alarms a day) — an old serve of a quiet repo is not stale", () => {
+  // The exact live shape, replayed: the town committed nothing for 59 minutes,
+  // so the served sha aged 49 minutes in perfect health; then one stake landed
+  // and NINE minutes later the old anchoring declared 49 minutes of staleness.
+  // The clock must start at the divergence, not at the served value's birth.
   const base = { nowMs: T0, staleAfterMs: 45 * MINUTE, what: "the index", referenceName: "main" };
-  const seen = { value: "frozen", first_seen_at: T0 - 3 * HOUR };
+  // Every quiet tick agreed, so the memory carries no divergence...
+  const quiet = { value: "8216f1ce", first_seen_at: T0 - 49 * MINUTE, diverged_since: null };
+  // ...and the first tick that sees the fresh push starts the clock NOW.
+  const v = classifyStamp({ ...base, served: "8216f1ce", reference: "1cf42d0d", seen: quiet });
+  assert.equal(v.verdict, "OK", "nine minutes behind a nine-minute-old tip is a deploy in flight, never an alarm");
+  assert.equal(v.seen.diverged_since, T0, "the divergence clock starts at the divergence");
+  // Had the push stayed unserved past the window, THEN it alarms:
+  const later = classifyStamp({ ...base, nowMs: T0 + 50 * MINUTE, served: "8216f1ce", reference: "1cf42d0d", seen: v.seen });
+  assert.equal(later.verdict, "STALE", "…and a divergence genuinely held past the window still fires");
+});
+
+test("classifyStamp: the divergence clock survives reference movement, so a busy repo cannot hide a frozen site", () => {
+  // The original anchoring law, kept under the new anchor: if the clock reset
+  // whenever the reference moved, a repo that commits every 30 minutes could
+  // never accumulate an alarm even while every single deploy failed.
+  const base = { nowMs: T0, staleAfterMs: 45 * MINUTE, what: "the index", referenceName: "main" };
+  let seen = { value: "frozen", first_seen_at: T0 - 3 * HOUR, diverged_since: T0 - 3 * HOUR };
 
   // Reference keeps moving; served value does not. Still stale, every time.
   for (const reference of ["r1", "r2", "r3"]) {
     const v = classifyStamp({ ...base, served: "frozen", reference, seen });
     assert.equal(v.verdict, "STALE", `reference ${reference} must not reset the clock`);
-    assert.equal(v.seen.first_seen_at, T0 - 3 * HOUR, "the memory must not advance while the served value is unchanged");
+    assert.equal(v.seen.diverged_since, T0 - 3 * HOUR, "the divergence memory must not advance while the served value is unchanged");
+    seen = v.seen;
   }
 
-  // And when the served value DOES change — a deploy landed — the clock resets.
-  const moved = classifyStamp({ ...base, served: "thawed", reference: "r3", seen });
-  assert.equal(moved.seen.first_seen_at, T0);
+  // And when the served value DOES change — a deploy landed — the clock resets:
+  // a progressing pipeline is never stale.
+  const moved = classifyStamp({ ...base, served: "thawed", reference: "r4", seen });
   assert.equal(moved.verdict, "OK");
+  assert.equal(moved.seen.first_seen_at, T0);
+  assert.equal(moved.seen.diverged_since, T0, "progress restarts the divergence clock");
+});
+
+test("classifyStamp: a pre-upgrade state file (no diverged_since) gets one tick of grace, not a false alarm", () => {
+  const base = { nowMs: T0, staleAfterMs: 45 * MINUTE, what: "the index", referenceName: "main" };
+  const old = { value: "aaa", first_seen_at: T0 - 2 * HOUR }; // written by the served-anchored era
+  const v = classifyStamp({ ...base, served: "aaa", reference: "bbb", seen: old });
+  assert.equal(v.verdict, "OK", "the watch does not know how long the divergence held — guessing would invent evidence");
+  assert.equal(v.seen.diverged_since, T0);
 });
 
 test("classifyStamp: a cold start is quiet, and an unreadable side is UNKNOWN rather than green", () => {
@@ -579,7 +607,7 @@ test("LOUDLY BE NOTIFIED: an outage and a frozen index both surface from one tic
     // the office answers, but with an index that has not moved
     "https://postmark.town/api/": { status: 200, headers: { "x-postmark-as-of": "frozen00000" }, body: "{}" },
   };
-  const state = { probes: {}, stamps: { office_as_of: { value: "frozen00000", first_seen_at: T0 - 2 * HOUR } } };
+  const state = { probes: {}, stamps: { office_as_of: { value: "frozen00000", first_seen_at: T0 - 2 * HOUR, diverged_since: T0 - 2 * HOUR } } };
   const { probes, alerts } = await tick({ fetchImpl: stubFetch(broken), exec: stubExec(), state, nowMs: T0, config: FIXTURE_CONFIG });
 
   const daily = probes.find((p) => p.key === "site_daily");
@@ -652,8 +680,8 @@ test("prod's code is compared against the RELEASE TAG, not main — lagging main
   // Both halves are seeded as long-held: a cold start is quiet by design, so a
   // test that wants the STALE branch must supply the memory that earns it.
   const state = { stamps: {
-    site_code: { value: "relsha00000", first_seen_at: T0 - 5 * HOUR },
-    site_town_data: { value: "sitetip0000", first_seen_at: T0 - 5 * HOUR },
+    site_code: { value: "relsha00000", first_seen_at: T0 - 5 * HOUR, diverged_since: T0 - 5 * HOUR },
+    site_town_data: { value: "sitetip0000", first_seen_at: T0 - 5 * HOUR, diverged_since: T0 - 5 * HOUR },
   } };
   const { probes } = await tick({ fetchImpl: stubFetch(GREEN_TABLE), exec, state, nowMs: T0 });
 
