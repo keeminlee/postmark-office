@@ -136,16 +136,59 @@ export function pathsIn(text) {
 export function classify({ stderr, existsInCanon, ref = "origin/main" }) {
   const refusal = refusalOf(stderr);
   const cause = refusal ? String(refusal.cause ?? "") : "";
-  const paths = refusal ? pathsIn(cause) : [];
+
+  // ── WHICH PATH IS THE FAULT, AND WHEN THAT IS KNOWABLE ─────────────────────
+  //
+  // A lint message names TWO paths and only one of them is the fault:
+  //
+  //   "this mark is filed at WORLD/…/the-mushroom-greenhouse, but the frozen
+  //    filing names WORLD/…/the-protected-grove/the-mushroom-greenhouse"
+  //
+  // The first is the offending file; the second is the reference it is being
+  // held to, and the reference is IN CANON BY CONSTRUCTION. A rule of "any named
+  // path that exists in main means canon-bad" would therefore have called the
+  // 02:39 refusal terminal — and it was not. The founder's own repair commit is
+  // the receipt (postmark-world 7f866059, 2026-08-30 22:40): "drop root-parked
+  // the-breakfast-table + the-mushroom-greenhouse … the drawer now matches the
+  // frozen filing" — a DRAWER repair, which is input-bad, cleared by a rerun.
+  //
+  // So the fault is read from `errors[].file` when the sweep forwards it, and
+  // from `errors[].file` ONLY: prose inside a message is a description, never a
+  // subject. Without that field there is no honest way to tell the offender from
+  // the reference, and the classifier says so rather than guessing — except in
+  // the one case where guessing is unnecessary, which is when NO named path is
+  // in canon at all. Then nothing in canon can be the fault, whichever path was
+  // meant, and input-bad is sound.
+  const forwarded = Array.isArray(refusal?.errors) ? refusal.errors : null;
+  const faults = forwarded ? [...new Set(forwarded.map((e) => e.file).filter(Boolean))] : [];
+  const mentioned = forwarded
+    ? [...new Set(forwarded.flatMap((e) => pathsIn(`${e.msg ?? ""} `)).filter((m) => !faults.includes(m)))]
+    : (refusal ? pathsIn(cause) : []);
 
   const base = {
     at: new Date().toISOString(),
     ref,
     cause,
     errors_claimed: errorsClaimed(cause),
-    errors_seen: paths.length ? 1 : 0, // the sweep forwards the FIRST error only (v1 #6)
+    // Without `errors[]` the sweep forwards its FIRST error only, so one is all
+    // there is to judge — said out loud rather than implied by a short list.
+    errors_seen: forwarded ? forwarded.length : (mentioned.length ? 1 : 0),
+    faults,
     paths_in_canon: [],
     paths_in_inputs: [],
+  };
+
+  const withheld = base.errors_claimed !== null && base.errors_claimed > base.errors_seen
+    ? ` (the sweep reported ${base.errors_claimed} error(s) and forwarded ${base.errors_seen} — this verdict ` +
+      `is drawn from the forwarded one only; postmark-world tools/settlement-sweep.mjs:1254)`
+    : "";
+
+  const probe = (p) => { try { return !!existsInCanon(p); } catch { return false; } };
+  const split = (list) => {
+    const inCanon = [];
+    const inInputs = [];
+    for (const p of list) (probe(p) ? inCanon : inInputs).push(p);
+    return { inCanon, inInputs };
   };
 
   if (!refusal) {
@@ -157,7 +200,40 @@ export function classify({ stderr, existsInCanon, ref = "origin/main" }) {
         `record finding — read the unit's stderr (journalctl -u postmark-settlement.service) before rerunning`,
     };
   }
-  if (!paths.length) {
+
+  // ── THE SURE PATH: the sweep named its faults ──────────────────────────────
+  if (faults.length) {
+    const { inCanon, inInputs } = split(faults);
+    if (inCanon.length) {
+      return {
+        ...base,
+        paths_in_canon: inCanon,
+        paths_in_inputs: inInputs,
+        class: CANON_BAD,
+        next_step:
+          `NO RERUN CAN CLEAR THIS. ${inCanon.join(", ")} ${inCanon.length === 1 ? "is" : "are"} in ${ref}'s own ` +
+          `tree and ${inCanon.length === 1 ? "is" : "are"} what the lint refused, so every crossing from now on ` +
+          `composes the same red from the same canon — twice a day, until somebody changes the record. Removal ` +
+          `lane: an operator-repair commit on world main (or on the drawer that keeps re-proposing the path), ` +
+          `then the next scheduled crossing.${withheld}`,
+      };
+    }
+    return {
+      ...base,
+      paths_in_canon: [],
+      paths_in_inputs: inInputs,
+      class: INPUT_BAD,
+      next_step:
+        `rerunnable AFTER the source is repaired, not before. ${inInputs.join(", ")} ` +
+        `${inInputs.length === 1 ? "is" : "are"} what the lint refused and ${inInputs.length === 1 ? "exists" : "exist"} ` +
+        `only in this crossing's drained inputs; ${ref} is clean of ${inInputs.length === 1 ? "it" : "them"}. Repair ` +
+        `the mark at its drawer (draft/<household>) — the shape of postmark-world 7f866059 — and rerun. A rerun ` +
+        `before the repair composes the same red.${withheld}`,
+    };
+  }
+
+  // ── THE PROSE PATH: no faults named, only a sentence ───────────────────────
+  if (!mentioned.length) {
     return {
       ...base,
       class: UNCLASSIFIED,
@@ -168,43 +244,35 @@ export function classify({ stderr, existsInCanon, ref = "origin/main" }) {
     };
   }
 
-  const inCanon = [];
-  const inInputs = [];
-  for (const p of paths) {
-    let found = false;
-    try { found = !!existsInCanon(p); } catch { found = false; }
-    (found ? inCanon : inInputs).push(p);
-  }
-
-  const withheld = base.errors_claimed !== null && base.errors_claimed > base.errors_seen
-    ? ` (the sweep reported ${base.errors_claimed} error(s) and forwarded ${base.errors_seen} — this verdict ` +
-      `is drawn from the forwarded one only; postmark-world tools/settlement-sweep.mjs:1254)`
-    : "";
-
-  if (inCanon.length) {
+  const { inCanon, inInputs } = split(mentioned);
+  if (!inCanon.length) {
+    // Sound without knowing which path was the subject: none of them is in
+    // canon, so canon cannot be the fault whichever one the lint meant.
     return {
       ...base,
-      paths_in_canon: inCanon,
+      paths_in_canon: [],
       paths_in_inputs: inInputs,
-      class: CANON_BAD,
+      class: INPUT_BAD,
       next_step:
-        `NO RERUN CAN CLEAR THIS. ${inCanon.join(", ")} ${inCanon.length === 1 ? "is" : "are"} in ${ref}'s own ` +
-        `tree, so every crossing from now on composes the same red from the same canon — twice a day, until ` +
-        `somebody changes the record. Removal lane: an operator-repair commit on world main (or on the drawer ` +
-        `that keeps re-proposing the path), then the next scheduled crossing.${withheld}`,
+        `rerunnable AFTER the source is repaired, not before. No path this refusal names is in ${ref} ` +
+        `(${inInputs.join(", ")}), so the fault is in this crossing's drained inputs whichever of them the lint ` +
+        `meant. Repair the mark at its drawer (draft/<household>) — the shape of postmark-world 7f866059 — and ` +
+        `rerun. A rerun before the repair composes the same red.${withheld}`,
     };
   }
 
   return {
     ...base,
-    paths_in_canon: [],
+    paths_in_canon: inCanon,
     paths_in_inputs: inInputs,
-    class: INPUT_BAD,
+    class: UNCLASSIFIED,
     next_step:
-      `rerunnable AFTER the source is repaired, not before. ${inInputs.join(", ")} ` +
-      `${inInputs.length === 1 ? "exists" : "exist"} only in this crossing's drained inputs; ${ref} is clean of ` +
-      `${inInputs.length === 1 ? "it" : "them"}. Repair the mark at its drawer (draft/<household>) — or let the ` +
-      `crossing that already withdrew it stand — and rerun. A rerun before the repair composes the same red.${withheld}`,
+      `the refusal names a path that IS in ${ref} (${inCanon.join(", ")}) and one that is not ` +
+      `(${inInputs.join(", ")}), and the sweep did not say which of them it refused — a lint message names the ` +
+      `offending file AND the reference it is held to, and the reference is in canon by construction. Read the ` +
+      `cause and decide: a fault in the drawer is rerunnable after repair (postmark-world 7f866059), a fault in ` +
+      `canon is not. This becomes decidable the day the sweep forwards errors[].file ` +
+      `(postmark-world tools/settlement-sweep.mjs:1254).${withheld}`,
   };
 }
 
