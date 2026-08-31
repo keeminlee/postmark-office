@@ -53,7 +53,7 @@
 set -eu
 
 CLONE="${1:?usage: shadow-refs-reset.sh <clone>}"
-TIPS="$(mktemp)"; trap 'rm -f "$TIPS"' EXIT
+TIPS="$(mktemp)"; trap 'rm -f "$TIPS" "$TIPS.local"' EXIT
 
 git -C "$CLONE" fetch -qp origin '+refs/heads/*:refs/remotes/origin/*'
 git -C "$CLONE" checkout -qf -B main origin/main
@@ -75,4 +75,3 @@ while read -r b; do
     git -C "$CLONE" branch -qD "$b"
   fi
 done < "$TIPS.local"
-rm -f "$TIPS.local"
