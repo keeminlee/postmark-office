@@ -877,6 +877,16 @@ export function updateHomeImage(args, key, db, clone) {
 // lines, and the wave-2 defect this commit repairs was ALREADY a
 // forgot-one-call-site bug. One wrapper is one place to be wrong.
 //
+// AND THE `unchanged: true` RETURN IS NOW LOAD-BEARING TWICE OVER (#2302). It
+// still means what it always meant to a caller — your edit changed nothing —
+// but the wrapper also reads the shas out of these answers and hands them to
+// the row, so a return that reports no commit writes no row and one that
+// reports a commit carries it as the drain's resume key. The one thing an
+// implementation here must not do is land a pen commit and return an answer
+// that does not name it: that sha would be invisible to the guard and the act
+// would be re-imposed at the crossing. `named` (the w37 display-name half) is
+// the shape that made this explicit — see town-updates.mjs § paperActCommits.
+//
 // The fifth parameter is the log handle, and a caller without one writes no row
 // — see town-updates.mjs § paperDoor for why the drain's replay depends on that
 // being true. The exported names and their first four arguments are unchanged,
