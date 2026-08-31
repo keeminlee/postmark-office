@@ -129,3 +129,44 @@ test("the green line names the exemption and the soonest backstop", () => {
   assert.match(line, new RegExp(`soonest ${MIRROR_EXPIRES}`));
   assert.match(line, /exempt by ruling: arena/);
 });
+
+// ── THE BACKSTOP IS A TOWN DAY (added 2026-08-30, the v1 dated-derivation sweep)
+
+test("a lane's backstop ends when the TOWN's day ends, not when the wire's does", () => {
+  // The law every dated derivation in this repo answers, quoted from the fix
+  // that bought it (src/town-bridge.mjs, the 2026-08-30 gift blackout):
+  //
+  //   "THE TOWN'S DAY, NOT THE WIRE'S ... the 00:00Z crossing (8 PM in town)
+  //    stamped its registry lines with TOMORROW's date ... Every other dated
+  //    writer in this repo derives the day from TOWN_TZ (ops.townDay, declare,
+  //    residency, the mint engine itself)."
+  //
+  // 2026-10-01T02:00Z is 2026-09-30, 22:00, in America/New_York. The town's own
+  // 09-30 has two hours left to run, so a lane whose backstop IS 09-30 is not
+  // past it. Under `toISOString().slice(0, 10)` this instant read 2026-10-01 and
+  // every governed lane reported expired — the backstop firing four hours early,
+  // on every single one of them, every night of its last day.
+  const townStillTheThirtieth = new Date("2026-10-01T02:00:00Z");
+  assert.equal(MIRROR_EXPIRES, "2026-09-30", "this test is written against that backstop specifically");
+
+  for (const lane of SIX) {
+    assert.equal(laneMirrorExpired(lane, townStillTheThirtieth), false,
+      `${lane} reported past its 2026-09-30 backstop while it is still 2026-09-30 in town`);
+  }
+  assert.deepEqual(expiredLanes(townStillTheThirtieth), []);
+
+  // …and it DOES fire once the town's day is actually over: 04:00Z is 00:00 ET.
+  const townNowTheFirst = new Date("2026-10-01T04:00:00Z");
+  assert.deepEqual(expiredLanes(townNowTheFirst), SIX,
+    "a backstop that never fires is not a backstop — the shim would become furniture");
+});
+
+test("a day already written down is not re-derived — a string passes through", () => {
+  // `new Date("2026-09-30")` is midnight UTC, which is 2026-09-29 in town. If a
+  // caller hands a DAY and the derivation treats it as an INSTANT, the day moves
+  // backwards by one and the backstop slips a whole extra day. A day is derived
+  // from an instant and only from an instant.
+  assert.equal(laneMirrorExpired("stance", "2026-09-30"), false, "its own backstop day is not past it");
+  assert.equal(laneMirrorExpired("stance", "2026-10-01"), true, "the day after is");
+  assert.equal(laneMirrorExpired("stance", "2026-09-29"), false);
+});

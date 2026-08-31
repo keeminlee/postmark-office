@@ -91,7 +91,24 @@ export const LANE_MIRROR = Object.freeze({
   }),
 });
 
-const dayOf = (today) => (today instanceof Date ? today : new Date(today)).toISOString().slice(0, 10);
+// THE BACKSTOP IS A TOWN DAY, NOT A WIRE DAY (2026-08-30, the v1 settlement
+// sweep of every dated derivation). This was `.toISOString().slice(0, 10)`, so
+// the whole 20:00–23:59 ET stretch of a lane's LAST lawful day already read as
+// tomorrow: `laneMirrorExpired` went true four hours before the town's own
+// 2026-09-30 was over, and `mirrorExpiryLine` would have told an operator six
+// lanes were past a backstop they were still inside. Same defect, same shape,
+// same night as town-bridge's `townDayOf` (the 00:00Z gift blackout) and
+// ops.townDay — every dated derivation in this repo now reads TOWN_TZ.
+//
+// A day STRING passes through untouched and that asymmetry is the point: "2026-
+// 09-30" is ALREADY a day somebody wrote down, and re-deriving it through a
+// timezone would move it — `new Date("2026-09-30")` is midnight UTC, which is
+// 2026-09-29 in town. A day is only derived from an INSTANT.
+const dayOf = (today) =>
+  typeof today === "string" && /^\d{4}-\d{2}-\d{2}$/.test(today)
+    ? today
+    : new Intl.DateTimeFormat("en-CA", { timeZone: process.env.TOWN_TZ ?? "America/New_York" })
+        .format(today instanceof Date ? today : new Date(today));
 
 /**
  * A lane's backstop date, or null when it is exempt by ruling.
