@@ -88,6 +88,16 @@ if (failures) {
 }
 
 if (wrote.length) {
+  // The office clone must be on main, or the telemetry commits onto whatever
+  // branch a hotfix left checked out and the dashboard reads stale while the
+  // run says exit 0 (2026-08-30/31: two days of snapshots landed on
+  // hotfix-w35-7, one of them with no upstream to push to). A capture that
+  // cannot be committed where it is read is a failed capture — exit 1.
+  const branch = run("git", ["-C", OFFICE, "rev-parse", "--abbrev-ref", "HEAD"]).trim();
+  if (branch !== "main" && !process.env.TRAFFIC_ALLOW_BRANCH) {
+    console.error(`! office clone is on '${branch}', not main — refusing to commit telemetry off-main (checkout main, or set TRAFFIC_ALLOW_BRANCH=1 knowingly). Files written: ${wrote.length}.`);
+    process.exit(1);
+  }
   run("git", ["-C", OFFICE, "add", "telemetry/github"]);
   const staged = run("git", ["-C", OFFICE, "diff", "--cached", "--name-only"]).trim();
   if (staged) {
