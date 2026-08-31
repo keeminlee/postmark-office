@@ -364,3 +364,53 @@ test("F6 · the contract sentence this fix makes true again is still in town-upd
     "the drain's whole contract is that replaying them through the door reproduces the commit"),
   "the falsifiers above are that sentence made checkable — if it is reworded, they are quoting a law that no longer exists");
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// F7 · THE REAL TWO-FILE ACT (w37 only — the display_name→agent sugar)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// F5/F5b hold the shape synthetically, because the hotfix branch is cut from
+// release/2026-w36.9 where `named` does not exist yet. Here it does, so this is
+// the same property proved against the door itself: one row, two files, two
+// commits, and a display-name-only call whose top level says `unchanged: true`
+// while its ADDRESS half really wrote. The forward-port exists so the train
+// does not regress the hotfix at the w37 release; this is the falsifier that
+// says it did not.
+
+test("F7 · the two-file profile act records BOTH commits, and a name-only call is not a no-op", () => {
+  const clone = postmasterClone();
+  withLog((o) => {
+    // a call that touches both files: a bio (PROFILE.md) and a shown name
+    // (ADDRESS.md's `agent`, through its own writer)
+    const both = updateProfile(
+      { handle: "postmaster", bio: "keeper of the paper", display_name: "The Postmaster" },
+      KEY, db, clone, o);
+    assert.ok(both.commit, "the PROFILE.md half committed");
+    assert.ok(both.named?.commit, "and the ADDRESS.md half committed too");
+    assert.notEqual(both.commit, both.named.commit, "two files, two commits, one act");
+
+    const [row] = readTownJournal(o);
+    assert.deepEqual(new Set(row.payload.commits), new Set([both.commit, both.named.commit]),
+      "the row records the act's WHOLE outcome, not just the half it thinks of as its own");
+
+    // a display-name-only call: `commit: null, unchanged: true` at the top
+    // level, and a real sha underneath. It must still be logged.
+    const nameOnly = updateProfile({ handle: "postmaster", display_name: "Postmaster General" },
+      KEY, db, clone, o);
+    assert.equal(nameOnly.commit, null, "the top level reports no commit");
+    assert.equal(nameOnly.unchanged, true, "and calls itself unchanged");
+    assert.ok(nameOnly.named?.commit, "while the shown name really landed");
+    const rows = readTownJournal(o);
+    assert.equal(rows.length, 2,
+      "a name-only call is NOT a documented no-op — dropping it would lose the resident's shown name");
+    assert.deepEqual(rows[1].payload.commits, [nameOnly.named.commit], "and it carries the sha that did land");
+
+    // the crossing: both rows are already in the history, so neither replays
+    const head = git(clone, "rev-parse", "HEAD");
+    const r = drain(o, clone);
+    assert.deepEqual(r.updates.map((u) => u.already), [true, true], "both acts are already applied");
+    assert.equal(git(clone, "rev-parse", "HEAD"), head, "and the crossing wrote nothing on top");
+    assert.ok(readFileSync(join(clone, "WHITE_PAGES", "postmaster", "ADDRESS.md"), "utf8")
+      .includes("Postmaster General"), "the shown name survived the crossing");
+  });
+});
