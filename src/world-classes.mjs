@@ -34,7 +34,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { statSync } from "node:fs";
 
-import { CLASS_ROSTER_GATE_SQL, worksClause } from "./world-store.mjs";
+import { CLASS_ROSTER_GATE_SQL, worksClause } from "./world-store.mjs"; // the roster gate is also the type/instance seam — see markClass
 import { storeDbPath } from "./world-serve.mjs";
 
 // THE FLOOR, not the law. Every name here is also in the record; this list is
@@ -193,6 +193,73 @@ export function bountyBoard({ worldDb = null } = {}) {
 
 /** The roster as a sorted array, for a schema `enum` or a bounce that lists it. */
 export const classNames = (opts) => [...classRoster(opts).roster].sort();
+
+/**
+ * WHAT CLASS ONE MARK CARRIES — read from the record, never held.
+ *
+ * The town door's stake act is target-typed by class (bounty or idea, its own
+ * two lanes), so it needs to ask the record what a mark IS before it will put
+ * stamps behind it. This is that question, and it is deliberately a THIRD
+ * function beside classRoster/classDials rather than a filter over the lane
+ * reads: `bountyBoard` and `ideasTank` ask "what is standing on this ground",
+ * a listing question where the ground is half the answer; this asks "what is
+ * this mark", a typing question where the ground is not the answer at all. A
+ * bounty the worldkeeper tidied off the board is still a bounty.
+ *
+ * THE THREE RUNGS, the same as classRoster's and for the same reason:
+ *
+ *   store readable, mark present   { known: true, found: true, class }
+ *   store readable, mark absent    { known: true, found: false }
+ *   store unreadable               { known: false, disclosed }
+ *
+ * The middle and bottom rungs are DIFFERENT ANSWERS and the caller must not
+ * collapse them. "I read the record and this mark is not in it" is a 404 the
+ * caller can act on; "I could not read the record" is a 503 that says nothing
+ * about the mark. A door that answered both as "not a bounty" would refuse a
+ * lawful stake for a hydration blip and call it a lane rule — the silent
+ * fallback this file exists to refuse twice.
+ *
+ * `class` is null for a mark that carries none (an ordinary sited mark). That
+ * is `found: true` with no class, not `found: false`: the record answered.
+ *
+ * ── `defines_class`: THE TYPE/INSTANCE SEAM ─────────────────────────────────
+ *
+ * Found live, 2026-08-31, against a freshly hydrated store: `the-town/idea`
+ * carries `class: idea` and `the-town/bounty` carries `class: bounty`, because
+ * a class mark declares the class it IS. So "what class does this mark carry"
+ * answers the same word for the constitution mark that DEFINES the idea lane
+ * and for an idea standing in the Think Tank — and any caller filtering on
+ * class alone silently sweeps the constitution in beside the instances. The
+ * lane reads never had this problem, because they also require the lane's
+ * ground; a caller that types by class alone needs the seam named for it.
+ *
+ * So it is named, and by the SAME predicate that decides what a class mark is
+ * everywhere else in this file — CLASS_ROSTER_GATE_SQL, not a retyped
+ * `tier === "constitution"`. One definition, so a change to what counts as a
+ * class mark moves this reader with it.
+ */
+export function markClass(markId, { worldDb = null } = {}) {
+  const path = worldDb ?? storeDbPath();
+  try { statSync(path); }
+  catch {
+    return { known: false, path,
+      disclosed: `no world store at ${path} — this door could not read what class "${markId}" carries. Run: npm run hydrate:world` };
+  }
+  try {
+    const db = new DatabaseSync(path, { readOnly: true });
+    const row = db.prepare(
+      `SELECT json_extract(props, '$.class') AS class,
+              (${CLASS_ROSTER_GATE_SQL}) AS defines_class
+         FROM nodes WHERE id = ?`).get(String(markId));
+    db.close();
+    if (!row) return { known: true, found: false, path };
+    return { known: true, found: true, class: row.class ?? null,
+      defines_class: Boolean(row.defines_class), path };
+  } catch (e) {
+    return { known: false, path,
+      disclosed: `the world store would not open (${String(e?.message ?? e).slice(0, 120)}) — this door could not read what class "${markId}" carries` };
+  }
+}
 
 /**
  * A free 1×1 cell inside a place's ground, computed FOR the author — the

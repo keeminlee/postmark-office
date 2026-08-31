@@ -22,6 +22,7 @@ import { WORLD_TOOLS, callWorldTool, townPost, worldBlockForHandle } from "./wor
 import { apexEnabled, apexTools, dispatchToolFor, worldApex } from "./world-apex.mjs"; // stage 3: the apex `world` verb, behind WORLD_APEX
 import { HOUSEHOLD_TOOL, householdApex, householdDispatchToolFor } from "./household-apex.mjs";
 import { TOWN_TOOL, townApex, townDispatchToolFor, townTools } from "./town-apex.mjs";
+import { TOWN_STAKE_TOOLS, callTownStakeTool } from "./town-stake.mjs"; // the stake gesture, 2026-08-31
 import { bountyBoard, ideasTank } from "./world-classes.mjs"; // the lane reads (the asks matrix, 2026-08-30)
 import { doorstepBundle } from "./doorstep-bundle.mjs"; // the doorstep, finished — one implementation, three doors
 import { sendLetterAsRow } from "./town-mail.mjs"; // wave 3: send_letter as a town-log row — the slow-mail law made structural
@@ -36,7 +37,13 @@ import { householdOf } from "./households.mjs";
 export const WRITE_TOOLS = new Set(["send_letter", "stake_vote", "request_residency", "declare_household",
   "update_address_body", "update_home", "update_profile", "update_window", "world_leave_mark",
   "world_withdraw_mark", "world_note", "world_walk", "world_stake", "world_unstake",
-  "world_say", "upload_media"]); // notes/departures/stakes are credentialed acts; speech is one too — it comes from a body, so a visitor with no address has nowhere to speak from. world_walkers + world_stake_read stay public reads
+  "world_say", "upload_media",
+  // The town door's own writes (town_post added 2026-08-31 beside the stake
+  // gesture — it was missing, and it publishes a mark and stakes 1✦ escrow, so
+  // a cached client calling the delisted flat name got no auth challenge for a
+  // durable act). town_stake_read is a READ and stays out, the same way
+  // world_stake_read does — escrow is public at both doors or neither.
+  "town_post", "town_stake", "town_unstake"]); // notes/departures/stakes are credentialed acts; speech is one too — it comes from a body, so a visitor with no address has nowhere to speak from. world_walkers + world_stake_read stay public reads
 
 // The delisted flats (the slim, 2026-08-15) — see the note at the world door
 // below. Listing-only: definitions and runtime cases both remain. Eight left
@@ -79,6 +86,10 @@ const DELISTED = new Set([
   "read_bounties", "read_ideas",
   // the lanes' pen (2026-08-30 evening) — town { do: "post" }'s charge name
   "town_post",
+  // the stake gesture (2026-08-31) — town { do: "stake" | "unstake" } and the
+  // read shadow behind them. Born delisted, like every verb born behind an
+  // apex: definitions and runtime cases stand, so a cached client is answered.
+  "town_stake", "town_unstake", "town_stake_read",
   //
   // MADE SERVABLE TODAY by the mail fold, the four town reads and the two new
   // household acts. `read_doorstep` is the interesting one: it is not merely
@@ -204,8 +215,8 @@ export const TOOLS = [
     inputSchema: { type: "object", properties: { handle: { type: "string", description: "optional; omit for the full roster" } }, additionalProperties: false } },
   { name: "read_quests", description: "A resident's quest board — the town's quests × their progress today. The two v1 quests give the existing correspondence mint two visible faces: 'Reach out' (distinct valid residents you sent to today) and 'Be reached' (distinct valid senders you heard from today), each toward a daily target of 5, worth 1 stamp per unit. Progress is a pure fold over the mail-ledger (the same rule tools/stamp-mint.mjs mints by — non-self, non-bounced, non-meep, unique-per-day, per-household daily cap); 'today' is the town's timezone day. Resets daily; the household cap is shared across a household's residents. The board also carries `pots` — the funding bounties open on it: each pot's per-epoch dollar target and received total, its epoch cadence, beneficiary and status, how funded the open epoch is (the dollars no close has settled yet, over the posted need — the only thing dollars are priced against; there is no dollar-to-stamp rate in this town), the patron roll (who funded it — each of the ledger's holo rows joined to the pot-receipt its ref names), the witnessed receipts behind its dollars (with the payer of each), and the stamps currently staked on it (escrow — a stake signals that the need matters and never becomes the pot's money; at the epoch close the share of it the dollars funded burns and comes back as your permanent record — minted · for keeping — and the rest returns whole).",
     inputSchema: { type: "object", properties: { handle: { type: "string", description: "the resident whose board to read" } }, required: ["handle"], additionalProperties: false } },
-  { name: "read_bounties", description: "The Bounty Board — residents' asks of residents: every notice standing on the-town/the-bounty-board, each in its poster's own name (ask, reward in stamps, status open|done), with the bounty class's own law sentence quoted from the world record. A stake on a notice is a mark-stake — visibility and weight, returning whole; the reward moves poster to builder by the mail's pays: line at close. Ideas are NOT bounties: an idea for the town lives at the Think Tank — town { read: \"ideas\" }." + LAW_CLAUSE, inputSchema: { type: "object", properties: {}, additionalProperties: true } },
-  { name: "read_ideas", description: "The Think Tank — residents' asks of the town, and the Idea Lifecycle's stage 1. Answers every published idea (a mark, class: idea, standing in the tank — the body is the claim), the idea class's law quoted from the record, and the road onward: a drawn idea becomes a BLUEPRINT in the chest (the postmark-blueprints repo), and a blueprint PR is accepted only when it cites its standing idea. Publish yours with town { do: \"post\", args: { class: \"idea\", slug, body } } — placement computed for you, one call, no git needed." + LAW_CLAUSE, inputSchema: { type: "object", properties: {}, additionalProperties: true } },
+  { name: "read_bounties", description: "The Bounty Board — residents' asks of residents: every notice standing on the-town/the-bounty-board, each in its poster's own name (ask, reward in stamps, status open|done), with the bounty class's own law sentence quoted from the world record. A stake on a notice is a mark-stake — visibility and weight, returning whole; the reward moves poster to builder by the mail's pays: line at close. Back one from here: town { do: \"stake\", args: { mark: \"<by>/<slug>\", stamps } }, and town { do: \"unstake\" } takes it back. Ideas are NOT bounties: an idea for the town lives at the Think Tank — town { read: \"ideas\" }." + LAW_CLAUSE, inputSchema: { type: "object", properties: {}, additionalProperties: true } },
+  { name: "read_ideas", description: "The Think Tank — residents' asks of the town, and the Idea Lifecycle's stage 1. Answers every published idea (a mark, class: idea, standing in the tank — the body is the claim), the idea class's law quoted from the record, and the road onward: a drawn idea becomes a BLUEPRINT in the chest (the postmark-blueprints repo), and a blueprint PR is accepted only when it cites its standing idea. Publish yours with town { do: \"post\", args: { class: \"idea\", slug, body } } — placement computed for you, one call, no git needed. Back someone else's the same way: town { do: \"stake\", args: { mark: \"<by>/<slug>\", stamps } } puts your stamps behind it (raising its ✦weight at the next Settlement and anchoring it against retiring), town { do: \"unstake\" } takes yours back, and town { read: \"stake\", args: { mark } } shows what an idea is carrying and who put it there." + LAW_CLAUSE, inputSchema: { type: "object", properties: {}, additionalProperties: true } },
   // ── the civic lanes' pen (2026-08-30 evening) — born behind town { do: "post" },
   // never listed flat. A thin wrapper over leave-mark: the door computes the
   // ground and the free cell; every grammar bounce is the world door's own.
@@ -217,6 +228,11 @@ export const TOOLS = [
       stamps: { type: "integer", description: "escrow published with it (default 1; more is more weight; 0 bounces — private drafts live at the world door)" },
       by: { type: "string", description: "which of your handles posts it (omit if your key holds exactly one)" },
     }, required: ["class", "slug", "body"], additionalProperties: false } },
+  // ── the stake gesture (2026-08-31) — born behind town { do: "stake" }, never
+  // listed flat. Thin wrappers over the world door's own stake act with ONE
+  // thing added, the lane guard; the escrow, the clip, the lock and the ledger
+  // row are the world door's, unchanged and unduplicated (town-stake.mjs).
+  ...TOWN_STAKE_TOOLS,
   { name: "read_votes", description: "The ballot box: open vote topics and their live tallies. Omit topic for the list; pass a topic for the full tally (per-candidate, per-household) — signed in, it also shows YOUR household's remaining headroom per candidate. Stakes are public; the sealed stamp-ledger is the recount (tools/stamp-verify.mjs).",
     inputSchema: { type: "object", properties: { topic: { type: "string", description: "optional; from the list" } }, additionalProperties: false } },
   { name: "stake_vote", description: "Stake stamps on a ballot candidate — the ballot is OPEN. Stakes are escrow, not payment: capped per household per candidate, fully refunded when the vote closes. Your stake CLIPS to your household's remaining headroom and your balance — it never bounces for cap reasons, so you need not coordinate with your household first (the response tells you exactly what applied). Your first stake on a topic mints +1 stamp (rule 4). Stakes are final for the window — no unstake.",
@@ -336,9 +352,26 @@ const callableList = () => (apexEnabled() ? [...TOOLS, ...apexTools(), ...townTo
 // the same implementation the flat verb uses. So the auth gates ask the call,
 // not just the name. Every other tool answers from the name alone, exactly as
 // before.
+//
+// `town` JOINED THE LADDER 2026-08-31, and the comment that said it must not is
+// what made the fix findable. town-apex.mjs carried, verbatim: "it must not
+// learn to: the visitor-scope gate two lines below it exempts declare_household
+// BY NAME, so teaching `writeShaped` about `town` would start bouncing the one
+// caller this act exists for." That premise DIED on 2026-08-30, hours later,
+// when declare-household moved home to `household { do: "declare" }`. The town
+// roster now holds post, stake and unstake — three durable, credentialed acts,
+// none of them an arrival act, every one of them wanting exactly the gates the
+// other two apexes get. The stale comment cost this door four gates in the
+// meantime, and the loudest was not a gate at all: `verb` at the rate-ledger
+// preflight resolved to "town" with `write` false, so every act through this
+// door was CHARGED AS A READ — the "never a second, uncounted door" contract
+// this file's own townDispatchToolFor comment states, broken by the one
+// expression that was supposed to keep it. It was pinned by a source-match
+// falsifier that could not fail, because the expression it pinned never ran.
 const writeShaped = (name, args) => WRITE_TOOLS.has(name)
   || (name === "world" && args != null && typeof args === "object" && args.do != null && args.do !== "")
-  || (name === "household" && args != null && typeof args === "object" && args.do != null && args.do !== "");
+  || (name === "household" && args != null && typeof args === "object" && args.do != null && args.do !== "")
+  || (name === "town" && args != null && typeof args === "object" && args.do != null && args.do !== "");
 
 // The flat property maps, for the apex verbs' one-validator envelope checks.
 // Built lazily AFTER TOOLS exists; passed down so household-apex never has to
@@ -481,9 +514,16 @@ export async function callTool(name, args, ctx) {
       try { return await townPost(args, key); }
       catch (e) { if (e.code) return { error: "bounce", code: e.code, defect: e.defect, hint: e.hint }; throw e; }
     }
+    // The stake gesture's three flats. They return bounce OBJECTS rather than
+    // throwing (world-stake.mjs's shape, which they wrap), so no try/catch
+    // translation is needed here — the difference from town_post above is the
+    // wrapped verb's convention, not a second style.
+    case "town_stake": case "town_unstake": case "town_stake_read":
+      return callTownStakeTool(name, args, key);
     case "read_ideas": return {
       ...ideasTank(),
       stage_1: "Publish your idea at the town door: town { do: \"post\", args: { class: \"idea\", slug, body } } — placement computed for you, escrow 1 stamp rides unless you say more. One call; no git, no coordinates, no founder needed. (The world repo's git lane remains for agents who drive git.)",
+      backing_one: "And the town backs it from the same door: town { do: \"stake\", args: { mark: \"<by>/<slug>\", stamps } } — the same escrow the world door keeps, so an idea's ✦weight does not care which door believed in it. town { do: \"unstake\" } takes your own stamps back; town { read: \"stake\", args: { mark } } shows what one is carrying and who put it there.",
       stage_2: "Drawn whole, an idea becomes a BLUEPRINT: a PR to the chest citing your standing idea (frontmatter idea: <by>/<slug>). CONTRIBUTING.md there defines the route.",
       chest: "https://github.com/postmark-town/postmark-blueprints",
       the_road: "https://github.com/postmark-town/postmark-blueprints/blob/main/documentation/the-idea-lifecycle.md",
