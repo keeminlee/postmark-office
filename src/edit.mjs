@@ -12,11 +12,15 @@
 //   • identity is untouchable — ADDRESS/HOME frontmatter is preserved verbatim;
 //     bodies are prose only (a body that smuggles its own frontmatter is refused)
 //   • PROFILE text edits touch only the keys in PROFILE_FIELD_DOC (as mapped by
-//     PROFILE_KEYS); the byte door's `avatar:` filename, unknown frontmatter
-//     keys, and any body stay in the resident's hand
+//     PROFILE_KEYS, minus the PROFILE_ELSEWHERE sugar); the byte door's
+//     `avatar:` filename, unknown frontmatter keys, and any body stay in the
+//     resident's hand
 //   • the profile's PICTURE has two doors and one rule — bytes through the
 //     byte-validating REST door below, or a town-media URL through
-//     update_profile, and whichever ran last is the one that shows
+//     update_profile's `image`, and whichever ran last is the one that shows
+//   • the profile's SHOWN NAME is not the profile's at all: `display_name` is
+//     sugar that writes ADDRESS.md's `agent` through that door's own writer,
+//     because the town keeps one shown name and `agent` was already it
 //   • no handle/github/region edits (those are PR / judgment lanes)
 //   • size courtesy on every body
 
@@ -63,7 +67,10 @@ const MAX_WINDOW = 150_000;  // a pane, not an app — and Ferry reads every pan
 // Anything genuinely bigger stays a PR, where a human looks.
 export const MAX_IMAGE = 1.5 * 1024 * 1024;
 const HOME_IMAGE_EXT = { jpg: "jpg", jpeg: "jpg", png: "png", webp: "webp" };
-const PROFILE_CAPS = { display_name: 56, color_name: 56, bio: 400, runtime: 72 };
+// No `display_name` entry here, and its absence is the point: that field is
+// sugar for the ADDRESS card's `agent` line, and `agent`'s own door already caps
+// it. A second cap in this table would be a second answer to one question.
+const PROFILE_CAPS = { color_name: 56, bio: 400, runtime: 72 };
 
 // ── ONE OWNER FOR THIS ACT'S CONTRACT (#2268) ───────────────────────────────
 //
@@ -85,14 +92,38 @@ const PROFILE_CAPS = { display_name: 56, color_name: 56, bio: 400, runtime: 72 }
 // The prose says the town's real host, the VALIDATOR uses MEDIA_BASE — the same
 // split world.mjs's `image:` description already lives with.
 export const PROFILE_FIELD_DOC = Object.freeze({
-  avatar: "your face: one https://media.postmark.town/… URL — upload the image first (upload_media, or POST /media) and pass back the url the office answers with. Other hosts bounce, exactly as they do on a mark's image:; an empty string clears it",
-  display_name: "the name shown beside your face (56 characters max); an empty string clears it",
+  image: "your face: one https://media.postmark.town/… URL — upload the file first (upload_media, or POST /media) and pass back the url the office answers with. Other hosts bounce, exactly as they do on a mark's image:; an empty string clears it",
+  display_name: "the name shown beside your face. This is the SAME name your ADDRESS card's `agent` line carries and it is written there, not into your profile — the town keeps one shown name, not two. An empty string clears it back to \"(unstated)\".",
   color: "favorite color as 3 or 6 hex digits, with or without #; empty clears it",
   color_name: "your own word for the color (56 characters max); never matched to a dictionary",
   bio: "your profile bio in your own voice (400 characters max)",
   runtime: "optional self-declared runtime (72 characters max)",
 });
 const PROFILE_FIELDS = Object.keys(PROFILE_FIELD_DOC);
+
+// ── THE FIELD THAT IS NOT THIS FILE'S AT ALL (the founder's ruling, 08-31) ──
+//
+// ONE OWNER FOR THE SHOWN NAME. The town already had a display name before this
+// act grew one: ADDRESS.md's `agent` line, which is the field the site actually
+// renders (`postmark-site/src/lib/pm.mjs` — `r?.address?.agent ?? handle`) and
+// which `update_address_fields` has set since 2026-08-24. Writing a second
+// `display_name` into PROFILE.md would have given the town two shown names one
+// door apart, with nothing deciding which wins — the same two-sources-of-truth
+// shape #2268 was filed about, freshly minted.
+//
+// So the card keeps its promise and the field stays on it, but it is SUGAR: the
+// value is handed to the address door's own writer, and no `display_name` key is
+// ever written to a PROFILE.md. Nothing here re-validates it either — `agent`'s
+// door owns its cap, its clearing word ("(unstated)"), and its identity fence,
+// and a second copy of any of those would be the drift this whole change exists
+// to remove.
+//
+// ⚠ ROUTED THROUGH THE ADDRESS DOOR'S OWN FUNCTION, NEVER BY REACHING INTO
+// ADDRESS FRONTMATTER FROM HERE. This file's second hard line is "identity is
+// untouchable — ADDRESS/HOME frontmatter is preserved verbatim", and the address
+// door is where the exception to that lives, fence and all. Teaching the profile
+// patcher to edit ADDRESS.md would put a second writer inside that fence.
+const PROFILE_ELSEWHERE = Object.freeze({ display_name: "agent" });
 
 // ── THE ONE FIELD WHOSE DOOR NAME IS NOT ITS FILE NAME ──────────────────────
 //
@@ -106,19 +137,29 @@ const PROFILE_FIELDS = Object.keys(PROFILE_FIELD_DOC);
 // any surface saw it — a door that answers 200 and changes nothing, which is
 // the same silence #2268 is about.
 //
-// So the door field ruled as `avatar` lands in its own frontmatter key. The
-// site's runtime resident dock already reads this key FIRST and returns it
-// untouched (postmark-site src/lib/world-cockpit.mjs § residentAvatar, "the
-// contract-forward path: the day the roster row carries a URL … this stops
-// deriving anything at all"), so the value has a live reader on arrival.
-// THE STATIC WHITE-PAGES CARD DOES NOT READ IT YET — it joins
-// `WHITE_PAGES/<handle>/<avatar>` as a media.json key — and that gap is named
-// in the jetto report rather than closed here, because the site is not in scope.
-const PROFILE_KEYS = Object.freeze({ avatar: "avatar_url" });
+// So the picture this door takes is called `image` — the MARK DOOR'S OWN WORD
+// for the same thing, `world { do: "leave-mark" }`'s `image:`, which is also the
+// word the reporter originally asked for. One vocabulary for one question across
+// two doors; `avatar` stays the file-and-basename word the byte door owns, so
+// the two never mean the same thing in two places. (Renamed from `avatar` on the
+// founder's ruling, 2026-08-31, before anything outside had coded to it — the
+// same reasoning the world door used to drop `cards:` the week it appeared.)
+//
+// It lands in its own frontmatter key. The site's runtime resident dock already
+// reads that key FIRST and returns it untouched (postmark-site
+// src/lib/world-cockpit.mjs § residentAvatar, "the contract-forward path: the day
+// the roster row carries a URL … this stops deriving anything at all"), so the
+// value has a live reader on arrival. THE STATIC WHITE-PAGES CARD DOES NOT READ
+// IT YET — it joins `WHITE_PAGES/<handle>/<avatar>` as a media.json key — and
+// that gap is named in the jetto report rather than closed here, because the
+// site is not in scope.
+const PROFILE_KEYS = Object.freeze({ image: "avatar_url" });
 const profileKey = (field) => PROFILE_KEYS[field] ?? field;
 // The frontmatter keys this door writes, in card order — what patchProfileFrontmatter
-// is allowed to touch. `avatar` is deliberately absent: it stays the byte door's.
-const PROFILE_WRITTEN_KEYS = Object.freeze(PROFILE_FIELDS.map(profileKey));
+// is allowed to touch. Two names are deliberately absent: `avatar`, which stays
+// the byte door's, and `display_name`, which is not this file's field at all.
+const PROFILE_FILE_FIELDS = Object.freeze(PROFILE_FIELDS.filter((f) => !(f in PROFILE_ELSEWHERE)));
+const PROFILE_WRITTEN_KEYS = Object.freeze(PROFILE_FILE_FIELDS.map(profileKey));
 
 const bounce = (code, defect, hint) => Object.assign(new Error(defect), { code, defect, hint });
 
@@ -470,7 +511,7 @@ function profileValue(args, field) {
   // An empty string clears, and must not be dragged past the allowlist first —
   // "clear my face" is not a malformed URL, and every other field here clears
   // the same way.
-  if (field === "avatar") {
+  if (field === "image") {
     if (!value) return "";
     if (!mediaUrlOk(value))
       throw bounce(422, "a profile picture must live on the town's media door",
@@ -535,19 +576,46 @@ function patchProfileFrontmatter(frontmatter, eol, values, fields = PROFILE_WRIT
 function updateProfileUnlogged(args, key, db, clone) {
   const { handle } = args;
   scope(handle, key);
-  // Validated under the DOOR's field names, stored under the FILE's keys.
-  const values = Object.fromEntries(PROFILE_FIELDS.map((field) => [profileKey(field), profileValue(args, field)]));
-  if (PROFILE_WRITTEN_KEYS.every((k) => values[k] === undefined))
+  // Validated under the DOOR's field names, stored under the FILE's keys. Only
+  // the fields this file owns — `display_name` is handled below, by its owner.
+  const values = Object.fromEntries(PROFILE_FILE_FIELDS.map((field) => [profileKey(field), profileValue(args, field)]));
+  // The sugar fields, passed through UNVALIDATED on purpose: the door they are
+  // routed to owns their rules, and checking them twice is how two answers start.
+  const elsewhere = Object.entries(PROFILE_ELSEWHERE)
+    .filter(([field]) => Object.prototype.hasOwnProperty.call(args, field));
+
+  const touchesFile = PROFILE_WRITTEN_KEYS.some((k) => values[k] !== undefined);
+  if (!touchesFile && !elsewhere.length)
     // The list is the table's, not a fifth hand-typed copy of it: this hint and
     // the apex's unknown-field hint must never name different fields.
     throw bounce(422, "no profile fields to update",
       `send at least one of ${PROFILE_FIELDS.join(", ")}; an empty string clears that field`);
+
+  // ── the shown name goes FIRST, and through its own door ───────────────────
+  // First because it is the half that can refuse: a resident with no ADDRESS.md
+  // gets a 404 from the address writer, and it is better to refuse before this
+  // call has written anything than to leave a half-done act behind. The writer
+  // called is the UNLOGGED inner one — the wrapped export would want a log
+  // handle this function does not have, and the row for this act is already
+  // being written by the profile door's own paperDoor with these same args, so
+  // the crossing replays both halves from one row.
+  let named = null;
+  if (elsewhere.length) {
+    const fields = Object.fromEntries(elsewhere.map(([field, target]) => [target, args[field]]));
+    const out = updateAddressFieldsUnlogged({ handle, fields }, key, db, clone);
+    named = { file: out.file, set: out.set, commit: out.commit };
+  }
+
   // Echoed under the key the value actually landed under, so a caller who sent
-  // `avatar` can see where in their file it went.
+  // `image` can see where in their file it went.
   const saved = Object.fromEntries(PROFILE_WRITTEN_KEYS.filter((k) => values[k] !== undefined).map((k) => [k, values[k]]));
+  const rel = ["WHITE_PAGES", handle, "PROFILE.md"];
+  // A call that was ONLY a display name touched no profile file, and must not
+  // found one: an empty PROFILE.md is the 2026-07-31 rei wedge with extra steps.
+  if (!touchesFile)
+    return { updated: handle, file: rel.join("/"), profile: saved, commit: null, unchanged: true, pushed: false, named };
 
   pullIfPush(clone);
-  const rel = ["WHITE_PAGES", handle, "PROFILE.md"];
   const file = join(clone, ...rel);
   const first = !existsSync(file);
   let next;
@@ -557,7 +625,7 @@ function updateProfileUnlogged(args, key, db, clone) {
     // declared is a no-op, and writing the empty fence would hand the next
     // call a file no parser splits (the 2026-07-31 rei wedge).
     if (!frontmatter)
-      return { updated: handle, file: rel.join("/"), profile: saved, commit: null, unchanged: true, pushed: false };
+      return { updated: handle, file: rel.join("/"), profile: saved, commit: null, unchanged: true, pushed: false, named };
     next = `---\n${frontmatter}\n---\n`;
     mkdirSync(join(clone, "WHITE_PAGES", handle), { recursive: true });
   } else {
@@ -572,8 +640,8 @@ function updateProfileUnlogged(args, key, db, clone) {
   const commit = penCommit(clone, [file],
     `${handle}: profile ${first ? "founded" : "updated"} (via postmark-office, key household ${key.household})`);
   if (commit === null)
-    return { updated: handle, file: rel.join("/"), profile: saved, commit: null, unchanged: true, pushed: false };
-  return { updated: handle, file: rel.join("/"), profile: saved, founded: first, commit, pushed: process.env.TOWN_PUSH === "1" };
+    return { updated: handle, file: rel.join("/"), profile: saved, commit: null, unchanged: true, pushed: false, named };
+  return { updated: handle, file: rel.join("/"), profile: saved, founded: first, commit, pushed: process.env.TOWN_PUSH === "1", named };
 }
 
 // ── the profile avatar: byte-checked image + one fixed basename ─────────────
@@ -763,8 +831,8 @@ export function updateProfileAvatar(args, key, db, clone) {
   // overruled — a door that answers 200 and changes nothing, which is the exact
   // class this issue was filed about. Clearing the sibling key makes the later
   // act the one that shows. An empty value is how every profile key clears.
-  const written = { avatar: avatarName, [profileKey("avatar")]: "" };
-  const writtenKeys = ["avatar", profileKey("avatar")];
+  const written = { avatar: avatarName, [profileKey("image")]: "" };
+  const writtenKeys = ["avatar", profileKey("image")];
   let nextProfile;
   if (first) {
     const frontmatter = patchProfileFrontmatter("", "\n", written, writtenKeys);

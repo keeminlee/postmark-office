@@ -20,7 +20,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
 // ⚠ MEDIA BEFORE EDIT, DELIBERATELY. edit.mjs now imports the mark door's URL
@@ -60,12 +60,12 @@ test('THE CARD\'S OWN PROMISE — "a display name and a picture": the act takes 
 
   assert.ok(/a display name/.test(BLURB) && declared.includes("display_name"),
     `the card promises a display name; update_profile declares ${declared.join(", ")}`);
-  assert.ok(/and a picture/.test(BLURB) && declared.includes("avatar"),
+  assert.ok(/and a picture/.test(BLURB) && declared.includes("image"),
     `the card promises a picture; update_profile declares ${declared.join(", ")}`);
 });
 
-test("Ferry's 422 is gone: the apex no longer refuses avatar or display_name by name", async () => {
-  const r = await householdApex({ do: "profile", args: { avatar: FACE, display_name: "Ferry" } },
+test("Ferry's 422 is gone: the apex no longer refuses image or display_name by name", async () => {
+  const r = await householdApex({ do: "profile", args: { image: FACE, display_name: "Ferry" } },
     key, { db, clone: null, schemas });
   // The old answer was `422 update_profile does not take: avatar, display_name`.
   // Anything may still fail downstream (no clone here) — what must NOT happen
@@ -77,7 +77,7 @@ test("Ferry's 422 is gone: the apex no longer refuses avatar or display_name by 
 test("the hint a resident is handed names the two new fields", async () => {
   const r = await householdApex({ do: "profile", args: { nonsense: 1 } }, key, { db, clone: null, schemas });
   assert.equal(r.code, 422);
-  assert.match(r.hint, /avatar/);
+  assert.match(r.hint, /image/);
   assert.match(r.hint, /display_name/);
 });
 
@@ -97,9 +97,11 @@ test("ONE OWNER: update_profile's MCP schema is exactly handle + PROFILE_FIELD_D
 test("a picture and a name are written, and the office's own reader can still see them", () => {
   const clone = editClone();
   try {
-    const r = updateProfile({ handle: "wright", avatar: FACE, display_name: "Ferry" }, fixtureKey, db, clone);
+    const r = updateProfile({ handle: "wright", image: FACE, display_name: "Ferry" }, fixtureKey, db, clone);
     assert.equal(r.profile.avatar_url, FACE);
-    assert.equal(r.profile.display_name, "Ferry");
+    // NOT r.profile.display_name — the name is not this file's. It is reported
+    // under `named`, which says which record actually took it.
+    assert.equal(r.named.set[0].value, "Ferry");
 
     // THE SEAM. A door that writes a value no reader can see has shipped
     // nothing — the whole shape of #2268. This is the probe that would have
@@ -107,7 +109,8 @@ test("a picture and a name are written, and the office's own reader can still se
     // any value carrying a separator.
     const seen = parseProfile(read(clone, "WHITE_PAGES", "wright", "PROFILE.md"));
     assert.equal(seen.avatar_url, FACE, "the URL survives the office's own profile reader");
-    assert.equal(seen.display_name, "Ferry", "the display name survives it too");
+    // and the name is visible where names are read, which is a different file
+    assert.equal(shownNameOf(clone, "wright"), "Ferry", "the shown name survives too, on the address card");
   } finally { rmSync(clone, { recursive: true, force: true }); }
 });
 
@@ -115,7 +118,7 @@ test("the picture does NOT land in `avatar:` — that key is the byte door's, an
   const clone = editClone();
   try {
     const before = parseProfile(read(clone, "WHITE_PAGES", "wright", "PROFILE.md"))?.avatar;
-    updateProfile({ handle: "wright", avatar: FACE }, fixtureKey, db, clone);
+    updateProfile({ handle: "wright", image: FACE }, fixtureKey, db, clone);
     const after = parseProfile(read(clone, "WHITE_PAGES", "wright", "PROFILE.md"));
     assert.equal(after.avatar, before, "the byte door's filename field is untouched by the URL door");
     assert.notEqual(after.avatar, FACE);
@@ -135,7 +138,7 @@ test("the avatar allowlist IS mediaUrlOk — the same one the mark door's image:
       "avatar.png",                                                          // the byte door's shape, not this door's
     ]) {
       assert.equal(mediaUrlOk(bad), false, `precondition: the mark door refuses ${bad}`);
-      const e = bounceOf(() => updateProfile({ handle: "wright", avatar: bad }, fixtureKey, db, clone));
+      const e = bounceOf(() => updateProfile({ handle: "wright", image: bad }, fixtureKey, db, clone));
       assert.equal(e.code, 422, bad);
       assert.match(e.hint, /media/, bad);
     }
@@ -152,7 +155,7 @@ test("LAST PICTURE WINS: uploading bytes clears a URL set through the act", () =
     0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
   ]);
   try {
-    updateProfile({ handle: "wright", avatar: FACE }, fixtureKey, db, clone);
+    updateProfile({ handle: "wright", image: FACE }, fixtureKey, db, clone);
     assert.equal(parseProfile(read(clone, "WHITE_PAGES", "wright", "PROFILE.md")).avatar_url, FACE);
 
     updateProfileAvatar({ handle: "wright", image: PNG.toString("base64") }, fixtureKey, db, clone);
@@ -163,27 +166,94 @@ test("LAST PICTURE WINS: uploading bytes clears a URL set through the act", () =
   } finally { rmSync(clone, { recursive: true, force: true }); }
 });
 
-// ── 6. the ordinary door manners the other fields already have ──────────────
+// ── 6. ONE SHOWN NAME: display_name is the address card's `agent` ────────────
 
-test("display_name is capped and clearable like every other profile text field", () => {
+// WHERE THE SITE ACTUALLY READS A RESIDENT'S NAME, quoted from the surface that
+// reads it (postmark-site src/lib/pm.mjs § displayName):
+//
+//     return r?.address?.agent ?? handle;
+//
+// So a display name that does not reach `address.agent` is a display name
+// nothing displays. That is what these assert — not that a field was stored.
+const shownNameOf = (clone, handle) => {
+  const src = read(clone, "WHITE_PAGES", handle, "ADDRESS.md");
+  return /^agent:[ \t]*(.*)$/m.exec(src)?.[1]?.trim();
+};
+
+test("a display name set at the PROFILE door is visible where the site reads names", () => {
   const clone = editClone();
   try {
-    const e = bounceOf(() => updateProfile({ handle: "wright", display_name: "x".repeat(57) }, fixtureKey, db, clone));
-    assert.equal(e.code, 422);
-    assert.match(e.defect, /display_name is longer than 56 characters/);
+    const before = shownNameOf(clone, "wright");
+    const r = updateProfile({ handle: "wright", display_name: "Ferry" }, fixtureKey, db, clone);
 
+    assert.equal(shownNameOf(clone, "wright"), "Ferry",
+      "the name reached ADDRESS.md's agent line — the field pm.mjs renders");
+    assert.notEqual(shownNameOf(clone, "wright"), before, "and it actually changed");
+    assert.equal(r.named?.file, "WHITE_PAGES/wright/ADDRESS.md",
+      "and the answer says which file took it, rather than implying the profile did");
+  } finally { rmSync(clone, { recursive: true, force: true }); }
+});
+
+test("ONE SHOWN NAME: no display_name key is ever written to a PROFILE.md", () => {
+  const clone = editClone();
+  try {
+    updateProfile({ handle: "wright", display_name: "Ferry", bio: "I carry the mail." }, fixtureKey, db, clone);
+    const profile = read(clone, "WHITE_PAGES", "wright", "PROFILE.md");
+    assert.equal(/^display_name:/m.test(profile), false,
+      "a second shown name one door from `agent` is the two-sources-of-truth shape #2268 is about");
+    assert.equal(parseProfile(profile).display_name, undefined);
+    assert.equal(parseProfile(profile).bio, "I carry the mail.", "the profile half still landed");
+    assert.equal(shownNameOf(clone, "wright"), "Ferry", "and the name half went to the address card");
+  } finally { rmSync(clone, { recursive: true, force: true }); }
+});
+
+test("display_name alone touches the address card and never founds a PROFILE.md", () => {
+  const clone = editClone();
+  try {
+    rmSync(join(clone, "WHITE_PAGES", "wright", "PROFILE.md"), { force: true });
+    const r = updateProfile({ handle: "wright", display_name: "Ferry" }, fixtureKey, db, clone);
+    assert.equal(existsSync(join(clone, "WHITE_PAGES", "wright", "PROFILE.md")), false,
+      "an empty PROFILE.md is the 2026-07-31 rei wedge with extra steps");
+    assert.equal(shownNameOf(clone, "wright"), "Ferry");
+    assert.ok(r.named?.commit, "the address half still committed");
+  } finally { rmSync(clone, { recursive: true, force: true }); }
+});
+
+test("`agent`'s own rules govern it — no second cap, and its own clearing word", () => {
+  const clone = editClone();
+  try {
+    // Cleared to the address door's word, NOT deleted the way profile keys are.
     updateProfile({ handle: "wright", display_name: "Ferry" }, fixtureKey, db, clone);
     updateProfile({ handle: "wright", display_name: "" }, fixtureKey, db, clone);
-    assert.equal(parseProfile(read(clone, "WHITE_PAGES", "wright", "PROFILE.md")).display_name, undefined,
-      "an empty string clears it, the way the card says every field clears");
+    assert.equal(shownNameOf(clone, "wright"), "(unstated)",
+      "the address door's clearing word wins, because this door does not own the field");
+
+    // 57 characters was the cap this door used to invent for itself. `agent`
+    // has no such cap, so the value must now simply land — a falsifier that
+    // fails if a second cap is ever reintroduced here.
+    const long = "x".repeat(57);
+    updateProfile({ handle: "wright", display_name: long }, fixtureKey, db, clone);
+    assert.equal(shownNameOf(clone, "wright"), long,
+      "a cap here would be a second answer to a question `agent`'s door already answers");
+  } finally { rmSync(clone, { recursive: true, force: true }); }
+});
+
+test("the sugar cannot smuggle past the address door's identity fence", () => {
+  const clone = editClone();
+  try {
+    // `handle` is fenced on the address door. The profile door's own `handle` is
+    // the standpoint, not a field, so it must never reach the fence as one.
+    const r = updateProfile({ handle: "wright", display_name: "Ferry" }, fixtureKey, db, clone);
+    assert.equal(r.named.set.length, 1, "exactly one address field was set");
+    assert.equal(r.named.set[0].field, "agent", "and it was agent, nothing else");
   } finally { rmSync(clone, { recursive: true, force: true }); }
 });
 
 test("an empty avatar clears the URL rather than bouncing on the allowlist", () => {
   const clone = editClone();
   try {
-    updateProfile({ handle: "wright", avatar: FACE }, fixtureKey, db, clone);
-    updateProfile({ handle: "wright", avatar: "" }, fixtureKey, db, clone);
+    updateProfile({ handle: "wright", image: FACE }, fixtureKey, db, clone);
+    updateProfile({ handle: "wright", image: "" }, fixtureKey, db, clone);
     assert.equal(parseProfile(read(clone, "WHITE_PAGES", "wright", "PROFILE.md")).avatar_url, undefined);
   } finally { rmSync(clone, { recursive: true, force: true }); }
 });
