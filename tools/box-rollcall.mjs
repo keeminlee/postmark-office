@@ -184,6 +184,7 @@ export function loadManifest(path = DEFAULT_MANIFEST) {
   for (const row of m.units) {
     if (!row.outcome) continue;
     if (!row.outcome.history_path) throw new Error(`${row.unit} declares an outcome with no history_path`);
+    if (!Number.isFinite(Number(row.outcome.unsettled_runs))) throw new Error(`${row.unit} declares an outcome with no unsettled_runs — a refusal that keeps returning would read green`);
     if (!row.outcome.means) throw new Error(`${row.unit} declares an outcome with no means — nothing to print on the alarm line`);
     if (!row.outcome.why) throw new Error(`${row.unit} declares an outcome with no why — its thresholds are numbers nobody can review`);
   }
@@ -720,6 +721,31 @@ export function judgeOutcome(row, snapshot) {
   const terminal = new Set(spec.alarm_on_classes || []);
   if (latest.class && terminal.has(latest.class)) {
     return `last ran and REFUSED with class ${latest.class} at ${latest.at} — a class no rerun clears, so every crossing from here composes the same answer until the record is repaired.${means}`;
+  }
+
+  // A REFUSAL THAT KEEPS COMING BACK. The class alarm above catches the one
+  // that announces itself as terminal; this catches the one that does not and
+  // is terminal anyway. The receipt is postmark-world 7f866059 (2026-08-30
+  // 22:40), whose own message says the fault "was the sweep's standing 2-error
+  // lint refusal (EVERY CROSSING SINCE 08-28 re-drained them, dropped one,
+  // tripped on the other)" — six input-bad refusals over three days, each one
+  // individually rerunnable and none of them ever cleared, because the thing
+  // producing them was upstream of the rerun. Judged on STATUS rather than on
+  // left_drafted, because a refused crossing never gets far enough to have
+  // channel counts at all: its receipt carries zeros, so the starvation rule
+  // below cannot see it.
+  const stuck = Number(spec.unsettled_runs);
+  const UNSETTLED = new Set(["refused", "starving", "race"]);
+  if (Number.isFinite(stuck) && stuck > 0 && history.length >= stuck) {
+    const window = history.slice(-stuck);
+    if (window.every((r) => UNSETTLED.has(String(r.status)))) {
+      const classes = [...new Set(window.map((r) => r.class).filter(Boolean))];
+      return (
+        `has not completed a crossing in its last ${stuck} attempts — ${window.map((r) => r.status).join(", ")}` +
+        `${classes.length ? ` (class ${classes.join(", ")})` : ""}. A refusal that keeps returning is terminal ` +
+        `whatever its class says: whatever produces it is upstream of the rerun.${means}`
+      );
+    }
   }
 
   const runs = Number(spec.zero_published_runs);

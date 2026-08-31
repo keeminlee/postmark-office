@@ -814,6 +814,79 @@ test("the outcome thresholds are MANIFEST DATA — the checker holds no baseline
     "at a window of 6, three crossings is not yet the pattern");
 });
 
+test("FALSIFIER (i3): a refusal that KEEPS COMING BACK is an alarm whatever its class says", () => {
+  // The class rule catches the refusal that announces itself terminal. This
+  // catches the one that does not and is terminal anyway, and the receipt is the
+  // repair that finally cleared it — postmark-world 7f866059, 2026-08-30 22:40,
+  // its own message, verbatim:
+  //
+  //   "operator repair (#1862 class, the S45 rebase residues) … These two were
+  //    the sweep's standing 2-error lint refusal (EVERY CROSSING SINCE 08-28
+  //    re-drained them, dropped one, tripped on the other)"
+  //
+  // Six input-bad refusals over three days. Each one individually rerunnable,
+  // each rerun composing the same red, because what produced them was upstream
+  // of the rerun. Judged on STATUS and not on left_drafted: a refused crossing
+  // never reaches the point of having channel counts, so its receipt carries
+  // zeros and the starvation rule is structurally blind to it.
+  const m = manifest();
+  const recurring = plantHistory(healthy(m), m, [
+    { at: "2026-08-29T17:45:00Z", status: "refused", class: "input-bad", published: 0, left_drafted: 0 },
+    { at: "2026-08-30T05:45:00Z", status: "refused", class: "input-bad", published: 0, left_drafted: 0 },
+    { at: "2026-08-30T17:45:00Z", status: "refused", class: "input-bad", published: 0, left_drafted: 0 },
+  ]);
+
+  const row = rowFor(rollcall(m, recurring, T0), SETTLEMENT);
+  assert.equal(row.verdict, ALARM_OUTCOME);
+  assert.match(row.reason, /has not completed a crossing in its last 3 attempts/);
+  assert.match(row.reason, /upstream of the rerun/,
+    "the alarm does not say why rerunning has stopped being the answer");
+});
+
+test("FALSIFIER (i4): a refusal with a SUCCESS between is not a recurrence", () => {
+  // The control for (i3), and it is what keeps the row usable. A refusal that a
+  // rerun cleared is the ordinary case — the 02:39 refusal and the 02:59:28Z
+  // publish that followed it. Alarming on that would put a red on the board
+  // every time the machinery fixed itself, which is the opposite of the point.
+  const m = manifest();
+  const recovered = plantHistory(healthy(m), m, [
+    { at: "2026-08-31T02:39:26Z", status: "refused", class: "input-bad", published: 0, left_drafted: 57 },
+    { at: "2026-08-31T02:59:28Z", status: "published", class: null, published: 8, left_drafted: 49 },
+    { at: "2026-08-31T05:45:00Z", status: "refused", class: "input-bad", published: 0, left_drafted: 0 },
+  ]);
+  assert.equal(rowFor(rollcall(m, recovered, T0), SETTLEMENT).verdict, OK);
+});
+
+test("FALSIFIER (i5): three raced-out crossings count as unsettled too", () => {
+  // A race that survives its retries is the other way a crossing ends without
+  // completing, and three of them in a row is contention nobody is watching.
+  const m = manifest();
+  const raced = plantHistory(healthy(m), m, [
+    { at: "a", status: "race", class: null, published: 0, left_drafted: 0 },
+    { at: "b", status: "race", class: null, published: 0, left_drafted: 0 },
+    { at: "c", status: "race", class: null, published: 0, left_drafted: 0 },
+  ]);
+  const row = rowFor(rollcall(m, raced, T0), SETTLEMENT);
+  assert.equal(row.verdict, ALARM_OUTCOME);
+  assert.match(row.reason, /race, race, race/);
+});
+
+test("a row judged by its output must declare unsettled_runs — the manifest refuses one that does not", () => {
+  // Without it a refusal that returns twice a day forever reads green, which is
+  // the exact silence this whole block exists to end.
+  const dir = mkdtempSync(join(tmpdir(), "rollcall-outcome-"));
+  const m = manifest();
+  const bad = {
+    ...m,
+    units: m.units.map((u) => (u.unit === SETTLEMENT
+      ? { ...u, outcome: { history_path: "/x", alarm_on_classes: [], zero_published_runs: 3, means: "m", why: "w" } }
+      : u)),
+  };
+  const p = join(dir, "manifest.json");
+  writeFileSync(p, JSON.stringify(bad));
+  assert.throws(() => loadManifest(p), /no unsettled_runs/);
+});
+
 // ── §2b WHO OWNS THE FILES A SERVICE HAS TO WRITE (v1 #2b, 2026-08-30) ──────
 //
 // On 2026-08-28 a `sudo git` touched the settlement clone and left root-owned
