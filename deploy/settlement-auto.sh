@@ -59,8 +59,11 @@
 #   OFFICE_ROOT        the office checkout (default /srv/postmark-office)
 #   SETTLEMENT_CLONE   the sweep's own clone (default $OFFICE_ROOT/settlement-clone)
 #   SETTLEMENT_REPORT  the receipt path (default /srv/postmark-harbor/settlement-auto.json)
+#   SETTLEMENT_HISTORY the rolling receipt log (default beside the receipt, .jsonl)
 #   SETTLEMENT_DRAIN   0 disables the drain step (the seam a falsifier pins)
 #   SETTLEMENT_ISOLATE 0 disables the isolation pass — a red suite refuses the town, as before
+#   SETTLEMENT_RACE_ATTEMPTS  how many times a LOST RACE re-runs the whole crossing (default 3)
+#   SETTLEMENT_ATTEMPT set by the retry wrapper on each child; never set it by hand
 # Cwd: $OFFICE_ROOT. Exit: 0 published/quiet · 1 refused · 2 race.
 
 set -eu
@@ -68,6 +71,7 @@ OFFICE="${OFFICE_ROOT:-/srv/postmark-office}"
 TOWN="${TOWN_CLONE:-$OFFICE/town-clone}"
 SWEEP="${SETTLEMENT_CLONE:-$OFFICE/settlement-clone}"
 OUT="${SETTLEMENT_REPORT:-/srv/postmark-harbor/settlement-auto.json}"
+HISTORY="${SETTLEMENT_HISTORY:-${OUT%.json}-history.jsonl}"
 STAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 
@@ -89,9 +93,56 @@ report() { # status detail
   SETTLEMENT_AT="$STAMP" SETTLEMENT_TOWN_SHA="${TOWN_SHA:-}" \
   SETTLEMENT_WORLD_FROM="${WORLD_FROM:-}" SETTLEMENT_WORLD_TO="${WORLD_TO:-}" \
   SETTLEMENT_SWEEP_JSON="${SWEEP_JSON:-}" SETTLEMENT_DRAIN_JSON="${DRAIN_JSON:-}" \
-  SETTLEMENT_ISOLATE_JSON="${ISOLATE_JSON:-}" \
+  SETTLEMENT_ISOLATE_JSON="${ISOLATE_JSON:-}" SETTLEMENT_REFUSAL_JSON="${REFUSAL_JSON:-}" \
     node "$OFFICE/deploy/settlement-receipt.mjs" > "$OUT" 2>/dev/null || true
+  # THE HISTORY. One line per decided crossing, appended, bounded. A single
+  # receipt file answers "what did the last crossing do"; nothing on the box
+  # could answer "has it published anything in three days", which is the shape
+  # the 2026-08-26 starving crossing had while every individual receipt read
+  # fine. The roll-call's settlement row reads this (tools/box-rollcall.mjs).
+  node "$OFFICE/deploy/settlement-history.mjs" --receipt "$OUT" --history "$HISTORY" >/dev/null 2>&1 || true
 }
+
+# ── THE RACE RETRY (v1 #7, 2026-08-30) ───────────────────────────────────────
+#
+# Three sites in this script exit 2 for a lost race — a lease refused delivering
+# the drain, main moved underneath the sweep, a sketchbook lease refused at the
+# end — and the receipt each one writes says "rerun". Nothing reran. On
+# 2026-08-30T17:54:23Z `draft/foundoutanyway` took a door write mid-sweep, the
+# push was rejected `(stale info)`, the unit exited 2, and the crossing's whole
+# 18 minutes of work sat unpublished until the next timer mark nine hours later.
+# An instruction the receipt gives and nothing carries out is not a mechanism.
+#
+# A race is transient BY DEFINITION: it means someone else wrote while we looked.
+# So the retry is the whole sweep from FRESH INPUTS — never a resume of a
+# half-done run, because the inputs that lost the race are exactly the ones that
+# must not be reused. Three attempts total; a race that survives all three is a
+# real exit 2 whose message says so, and that one goes to the operator queue.
+#
+# It re-execs THIS script, so every attempt is a clean process with a clean temp
+# dir and its own fetch. The retries stay inside the one unit invocation — same
+# ExecStart, same systemd job, so nothing about the unit's serialization changes
+# and a concurrent crossing is still impossible.
+#
+# The loop itself lives in deploy/settlement-retry.sh, and it lives there for one
+# reason: a loop inlined here can only be exercised by a real lost race on a real
+# box, which is to say never. As its own tiny script it is a falsifier's first
+# argument (test/settlement-retry.test.mjs drives it with commands that exit 2,
+# then 0, then 2 forever). What stays HERE is the part that needs this script's
+# context — the receipt, and the escalation of a race that outlived its retries.
+: "${SETTLEMENT_RACE_ATTEMPTS:=3}"
+if [ -z "${SETTLEMENT_ATTEMPT:-}" ]; then
+  sh "$OFFICE/deploy/settlement-retry.sh" "$SETTLEMENT_RACE_ATTEMPTS" sh "$0" "$@" && exit 0
+  rc=$?
+  # Only a RACE outlives the retries as a 2. Anything else — a refusal, a
+  # machinery trip — passed straight through, because a rerun composes the same
+  # answer and would burn the crossing's whole budget rediscovering one fact.
+  [ "$rc" = "2" ] || exit "$rc"
+  report race "raced on all $SETTLEMENT_RACE_ATTEMPTS attempts — a door write is landing on every pass, so this is contention and not a transient. The crossing published nothing; the next scheduled crossing will try again, and an operator wanting it sooner can run the unit by hand once the writes quiet down"
+  echo "[settlement-auto] RACED OUT after $SETTLEMENT_RACE_ATTEMPTS attempts — publishing nothing" >&2
+  node "$OFFICE/deploy/settlement-escalate.mjs" --class race --receipt "$OUT" >&2 || true
+  exit 2
+fi
 
 # Immutable inputs: the town at a pinned sha, in a frozen local snapshot.
 git -C "$TOWN" fetch -q origin
@@ -247,8 +298,30 @@ SWEEP_JSON="$WORK/sweep.json"
     echo "[settlement-auto] STARVING CROSSING — the sweep found no candidates while sketchbooks hold escrow-backed marks" >&2
     cat "$WORK/sweep.err" >&2; exit 1
   fi
+  # ── WHOSE NIGHT IS THIS (v1 #4, 2026-08-30) ────────────────────────────────
+  # The refusal used to reach the operator as {"cause": …, "phase":"unknown"} —
+  # it named what tripped and never the one thing its reader needs at 3 AM: is
+  # this mine to RERUN or mine to REPAIR. The classifier answers it by the only
+  # fact that separates them — whether the offending path is in origin/main's
+  # own tree (no rerun can ever clear it) or only in this crossing's drained
+  # inputs (a repaired source reruns clean). It never guesses: a trip it cannot
+  # attribute is `unclassified` and says a human must read the stderr.
+  REFUSAL_JSON="$WORK/refusal.json"
+  node "$OFFICE/deploy/settlement-classify.mjs" \
+    --stderr "$WORK/sweep.err" --clone "$SWEEP" --ref origin/main > "$REFUSAL_JSON" 2>/dev/null \
+    || REFUSAL_JSON=""
   report refused "sweep tripped: $(head -c 200 "$WORK/sweep.err" | tr '\n"' ' .')"
-  echo "[settlement-auto] SWEEP TRIPPED" >&2; cat "$WORK/sweep.err" >&2; exit 1
+  echo "[settlement-auto] SWEEP TRIPPED" >&2; cat "$WORK/sweep.err" >&2
+  if [ -n "$REFUSAL_JSON" ]; then
+    echo "[settlement-auto] REFUSAL CLASS: $(node -e 'const r=require(process.argv[1]);process.stdout.write(r.class+" — "+r.next_step)' "$REFUSAL_JSON" 2>/dev/null || echo unclassified)" >&2
+    # A canon-bad refusal is TERMINAL: nothing this box can do clears it, and the
+    # next crossing composes the same red. That is the one case that must reach a
+    # person rather than a log line nobody is watching at 02:39Z.
+    if [ "$(node -e 'const r=require(process.argv[1]);process.stdout.write(String(r.class))' "$REFUSAL_JSON" 2>/dev/null)" = "canon-bad" ]; then
+      node "$OFFICE/deploy/settlement-escalate.mjs" --class canon-bad --receipt "$OUT" >&2 || true
+    fi
+  fi
+  exit 1
 }
 
 # The FULL grammar suite is the gate — the keeper's own final gate, verbatim.
