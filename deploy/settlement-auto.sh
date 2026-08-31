@@ -142,7 +142,16 @@ if [ -z "${SETTLEMENT_ATTEMPT:-}" ]; then
   # machinery trip — passed straight through, because a rerun composes the same
   # answer and would burn the crossing's whole budget rediscovering one fact.
   [ "$rc" = "2" ] || exit "$rc"
-  report race "raced on all $SETTLEMENT_RACE_ATTEMPTS attempts — a door write is landing on every pass, so this is contention and not a transient. The crossing published nothing; the next scheduled crossing will try again, and an operator wanting it sooner can run the unit by hand once the writes quiet down"
+  # THE LAST ATTEMPT'S RECEIPT IS AMENDED, NOT REPLACED. Calling report() here
+  # would recompose the receipt from THIS process's variables — and the wrapper
+  # never fetched anything, so town_sha and world_from would come out empty and
+  # the crossing's own evidence would be overwritten by the summary of it. The
+  # child wrote a full race receipt; the wrapper adds the one thing the child
+  # could not know, which is that every attempt has now been spent.
+  node -e 'const fs=require("node:fs");const p=process.argv[1];let r={};try{r=JSON.parse(fs.readFileSync(p,"utf8"))}catch{}r.status="race";r.detail=process.argv[2];fs.writeFileSync(p,JSON.stringify(r,null,1)+"\n")' \
+    "$OUT" "raced on all $SETTLEMENT_RACE_ATTEMPTS attempts — a door write is landing on every pass, so this is contention and not a transient. The crossing published nothing; the next scheduled crossing will try again, and an operator wanting it sooner can run the unit by hand once the writes quiet down" \
+    || true
+  node "$OFFICE/deploy/settlement-history.mjs" --receipt "$OUT" --history "$HISTORY" --attempt "" >/dev/null 2>&1 || true
   echo "[settlement-auto] RACED OUT after $SETTLEMENT_RACE_ATTEMPTS attempts — publishing nothing" >&2
   node "$OFFICE/deploy/settlement-escalate.mjs" --class race --receipt "$OUT" >&2 || true
   exit 2
