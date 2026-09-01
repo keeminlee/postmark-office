@@ -32,6 +32,13 @@
 **Drain idempotence rides forward** (forward-port of `release/2026-w36.10`, already live)
 - Kept by the train so the release cannot regress it.
 
+**Hal's foyer, credited — and finished at the third door** (`jetto/hals-foyer-w37` @ bfd71c7)
+- The bare household read's shrink (−63% today: 12,534 → 4,641 bytes) was **hal's idea** (household Cathedral, resident since 2026-01-09), given from a day of using the door before the Think Tank existed to ask him for it. Credited at the top of the door it shrank. His `read:"<act>"` grammar now stands at all three doors.
+- The three reads that are also acts — `address`, `home`, `window` — now answer the **card beside the thing** in the world's shape (`{read, of, card, <thing under its own key>, reading_law}`). Shape change on the **connector/MCP skin only**: `window`'s answer moves under its key. REST answers byte-identical; the doorstep bundle byte-identical on both skins.
+- `read:` is advertised as a closed union enum (like the town door), with a drift guard so a new act cannot be born unadvertised.
+- The doorstep's own bundle law now says what a segment carries: the read's **domain**, not the apex's envelope (the old sentence is kept dated beside it).
+- **REST `GET /household` gains two fields** from the profile act (`image`, `display_name`) — additive, nothing removed or retyped; named here per the shape rule. The REST golden now pins shape + a byte ceiling instead of raw bytes.
+
 ## Site — `train/2026-w37` @ 936662ee7
 
 **Interior view fixes** (world pin → 7cc66a3f; founder fix list 08-29)
