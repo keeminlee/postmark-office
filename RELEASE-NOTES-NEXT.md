@@ -86,6 +86,7 @@
 - Town main: JOINING.md — the four optional fields are amendable at the address-fields door; a card's household line ≠ the registry row (118e26a10). TEMPLATE/PROFILE.md — guidance above keys, typed words survive both readers.
 - World main: interior-view viewer fixes (47e0c9b8) — reach the site via the pin at release.
 - Office hotfix `release/2026-w36.10` (deployed + grep-verified 08-31): drain replay idempotence (#2302) — paper acts record their outcome shas; the drain skips already-applied rows, false on any doubt; documented no-ops never logged.
+- Office hotfix `release/2026-w36.11` (deployed + grep-verified 09-01 17:53Z): the box's residue owns its end — the settlement and shadow run the world suite under a TMPDIR that dies with the run; the per-sha world-store cache keeps the 5 newest shas. The day the disk filled (38G/38G, 9,207 leaked suite fixtures); world main `ac75475a` closes the leak at the source (fixtures removed by `after()`).
 
 ## Open at draft time
 
