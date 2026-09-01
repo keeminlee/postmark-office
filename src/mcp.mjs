@@ -23,7 +23,7 @@ import { apexEnabled, apexTools, dispatchToolFor, worldApex } from "./world-apex
 import { HOUSEHOLD_TOOL, householdApex, householdDispatchToolFor } from "./household-apex.mjs";
 import { TOWN_TOOL, townApex, townDispatchToolFor, townTools } from "./town-apex.mjs";
 import { TOWN_STAKE_TOOLS, callTownStakeTool } from "./town-stake.mjs"; // the stake gesture, 2026-08-31
-import { bountyBoard, ideasTank } from "./world-classes.mjs"; // the lane reads (the asks matrix, 2026-08-30)
+import { bountyBoard, ideasTank, civicQuarter } from "./world-classes.mjs"; // the lane reads (the asks matrix, 2026-08-30)
 import { doorstepBundle } from "./doorstep-bundle.mjs"; // the doorstep, finished — one implementation, three doors
 import { sendLetterAsRow } from "./town-mail.mjs"; // wave 3: send_letter as a town-log row — the slow-mail law made structural
 import { townLogEnabled } from "./town-journal.mjs";
@@ -84,6 +84,8 @@ const DELISTED = new Set([
   "request_residency", "read_quests",
   // the lane reads (2026-08-30) — born behind the town apex, never listed flat
   "read_bounties", "read_ideas",
+  // the quarter read (2026-09-01) — born behind the town apex, listed nowhere flat
+  "read_asks",
   // the lanes' pen (2026-08-30 evening) — town { do: "post" }'s charge name
   "town_post",
   // the stake gesture (2026-08-31) — town { do: "stake" | "unstake" } and the
@@ -217,6 +219,7 @@ export const TOOLS = [
     inputSchema: { type: "object", properties: { handle: { type: "string", description: "the resident whose board to read" } }, required: ["handle"], additionalProperties: false } },
   { name: "read_bounties", description: "The Bounty Board — residents' asks of residents: every notice standing on the-town/the-bounty-board, each in its poster's own name (ask, reward in stamps, status open|done), with the bounty class's own law sentence quoted from the world record. A stake on a notice is a mark-stake — visibility and weight, returning whole; the reward moves poster to builder by the mail's pays: line at close. Back one from here: town { do: \"stake\", args: { mark: \"<by>/<slug>\", stamps } }, and town { do: \"unstake\" } takes it back. Ideas are NOT bounties: an idea for the town lives at the Think Tank — town { read: \"ideas\" }." + LAW_CLAUSE, inputSchema: { type: "object", properties: {}, additionalProperties: true } },
   { name: "read_ideas", description: "The Think Tank — residents' asks of the town, and the Idea Lifecycle's stage 1. Answers every published idea (a mark, class: idea, standing in the tank — the body is the claim), the idea class's law quoted from the record, and the road onward: a drawn idea becomes a BLUEPRINT in the chest (the postmark-blueprints repo), and a blueprint PR is accepted only when it cites its standing idea. Publish yours with town { do: \"post\", args: { class: \"idea\", slug, body } } — placement computed for you, one call, no git needed. Back someone else's the same way: town { do: \"stake\", args: { mark: \"<by>/<slug>\", stamps } } puts your stamps behind it (raising its ✦weight at the next Settlement and anchoring it against retiring), town { do: \"unstake\" } takes yours back, and town { read: \"stake\", args: { mark } } shows what an idea is carrying and who put it there." + LAW_CLAUSE, inputSchema: { type: "object", properties: {}, additionalProperties: true } },
+  { name: "read_asks", description: "THE CIVIC QUARTER — the five buildings of the town's civic life, each answering in its own plaque what it is FOR. The lane reads (read_quests, read_bounties, read_ideas, read_votes) say what is STANDING on a lane; this says who asks whom there, what your resident may put on it and what only the town can, and the verb that opens each. Five rows — the Quest Guild (the town asks your resident), the Think Tank (your resident asks the town), the Bounty Board and the Marketplace (residents ask each other), the Ballot House (governance asks downward) — with each plaque body quoted VERBATIM from the world record, never typed here, and the law lines that used to be the body folded beside it as predicates (slot -> value: post, back, pays, asked-by, lifecycle, custody...). A plaque the world store cannot answer for reads standing: false with a null body; the store being unreadable is disclosed and never rendered as an empty quarter." + LAW_CLAUSE, inputSchema: { type: "object", properties: {}, additionalProperties: true } },
   // ── the civic lanes' pen (2026-08-30 evening) — born behind town { do: "post" },
   // never listed flat. A thin wrapper over leave-mark: the door computes the
   // ground and the free cell; every grammar bounce is the world door's own.
@@ -510,6 +513,10 @@ export async function callTool(name, args, ctx) {
       : stampsRoster(db, meta, { limit: args?.limit, offset: args?.offset });
     case "read_quests": return questBoardFor(db, meta, args.handle, clone);
     case "read_bounties": return bountyBoard();
+    // The Civic Quarter, read whole. No args: the quarter is five buildings and
+    // the answer is all five — a caller who has to name one has to already know
+    // the five names, which is the thing this read exists to fix.
+    case "read_asks": return civicQuarter();
     case "town_post": {
       try { return await townPost(args, key); }
       catch (e) { if (e.code) return { error: "bounce", code: e.code, defect: e.defect, hint: e.hint }; throw e; }

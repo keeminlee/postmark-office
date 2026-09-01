@@ -153,8 +153,13 @@ test("THE STAKE GESTURE DISPATCHES: stake and unstake reach their flat verbs, fi
 // property this test asserts is unchanged by the growth: the apex reimplements
 // nothing, it names a flat verb and hands the call back. That is what keeps the
 // slim honest, so it is asserted over the WHOLE table rather than a fixed nine.
-test("THE COMMONS' READS: sixteen (thirteen + the three lanes), and each one SERVES a flat verb rather than reimplementing it", async () => {
-  assert.equal(TOWN_READABLE.length, 16);
+// SIXTEEN → SEVENTEEN (2026-09-01, the clarity round): `asks` — the Civic
+// Quarter itself. The three lane reads say what is STANDING on a lane; this one
+// says what each lane is FOR, in the five buildings' own plaques. The count is
+// the closed-union guard, so it is deliberately updated with the read rather
+// than loosened to a `>=`.
+test("THE COMMONS' READS: seventeen (thirteen + the three lanes + the quarter), and each one SERVES a flat verb rather than reimplementing it", async () => {
+  assert.equal(TOWN_READABLE.length, 17);
   for (const r of TOWN_READABLE) {
     const { calls, call } = spy();
     const out = await townApex({ read: r }, key(), ctx({ call }));

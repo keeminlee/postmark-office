@@ -360,7 +360,12 @@ test("MCP tools/list, apex OFF: the full flat list — the slim's delist is apex
   // town_stake_read — town { do: "stake" | "unstake" } and their shared read
   // shadow, born delisted the same way. Three, not two, because the shadow is
   // the door's grammar and not an extra: anything you can do here, you can read.
-  assert.equal(names.length, 49);
+  // 49 -> 50 (the quarter read, 2026-09-01): read_asks — town { read: "asks" },
+  // the Civic Quarter's five plaques. Born delisted behind the town apex like
+  // every lane read above it, so the flag-OFF listing is where its flat
+  // definition shows.
+  assert.equal(names.length, 50);
+  assert.ok(names.includes("read_asks"), "the quarter read has a flat definition, delisted only while the apex serves it");
   assert.ok(names.includes("update_address_fields"), "the fields door stands regardless of the world flag");
   assert.ok(!names.includes("request_blessing"), "request_blessing's delist is unconditional");
   assert.ok(!names.includes("world"), "no apex tool with the flag off");

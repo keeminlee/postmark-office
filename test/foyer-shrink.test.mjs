@@ -515,9 +515,21 @@ test("F7c5 · THE MORNING PAGE DID NOT FATTEN — the doorstep bundle is byte-id
   // about it. The parity change moved the page by exactly TWO paths —
   // `full.the_bundle` and `slim.the_bundle` — because the bundle LAW SENTENCE
   // is printed on the page and that sentence was re-strung by the same ruling.
-  // Nothing else differed (diffed path by path before regenerating). So the
-  // assertion below is the one that actually carries the promise, and it is
-  // stated separately so a future regeneration cannot quietly absorb a card:
+  // Nothing else differed (diffed path by path before regenerating).
+  //
+  // ⚠ AND REGENERATED A SECOND TIME, 2026-09-01, for the civic pointer. Same
+  // discipline, same note: the page moved by exactly FOUR paths —
+  // `full.civic.read`, `full.civic.note` and their two slim twins — diffed path
+  // by path against the previous golden BEFORE the capture, so this assertion
+  // is not saying my change equals my change about anything else. The ceiling
+  // it exists to hold: 12077 -> 12227 bytes on the full skin (+150, +1.2%),
+  // 11370 -> 11520 on the slim. That is a pointer — the five plaque BODIES it
+  // points at are ~630 bytes and stayed at `town read: "asks"`, which is the
+  // whole reason the block is two strings instead of a page. Hal's foyer bought
+  // that 63% and it is not being spent back a field at a time.
+  //
+  // So the assertion below is the one that actually carries the promise, and it
+  // is stated separately so a future regeneration cannot quietly absorb a card:
   assert.equal(JSON.stringify(now).includes('"card"'), false,
     "a card reached the doorstep — a token on every morning page ever served, and the cost this whole design was shaped to avoid");
 });

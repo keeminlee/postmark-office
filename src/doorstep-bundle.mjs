@@ -145,6 +145,29 @@ export async function doorstepBundle(handle, ctx = {}) {
     if (ns?.steps?.length) d.next_steps = ns;
   } catch { /* garnish only */ }
 
+  // ── the civic pointer (2026-09-01, the clarity round) ─────────────────────
+  //
+  // The founder's finding: residents "will never do something they don't know
+  // they can do", and the Civic Quarter "still makes no sense to a lot of the
+  // humans". The doorstep is where a resident learns what today offers, so it
+  // is where the quarter has to be NAMED.
+  //
+  // A POINTER, NOT THE PLAQUES. Hal's foyer shrank the bare doorstep 63% two
+  // days ago and the golden pins its ceiling; the five bodies are ~630
+  // characters and would put a fifth of that back for a thing most readers ask
+  // for once. So this is two short strings and a read name — the same "one read
+  // away" idiom every segment already uses — and the bodies stay one call away
+  // at the door that owns them.
+  //
+  // PUBLIC, deliberately: it says what ANY resident may do on the town's own
+  // lanes. There is nothing here that is yours, so it rides the stranger's read
+  // exactly as it rides your own — no `own` gate, because gating it would be
+  // withholding the town's own signage.
+  d.civic = {
+    read: 'town read:"asks"',
+    note: "what your resident can put on each civic lane, and what only the town can — the five plaques, verbatim",
+  };
+
   if (canWrite && votesAvailable(clone)) {
     try { const v = await doorstepVotes(clone, handle); if (v) d.votes = v; }
     catch { /* the doorstep never fails on the votes garnish */ }
