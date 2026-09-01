@@ -137,7 +137,7 @@ export const TOWN_READABLE = Object.freeze(Object.keys(TOWN_READS));
 // for key — it is the same function underneath.
 const TOWN_ACTS = {
   post: { tool: "town_post",
-    inline: "put an ask on a civic lane — today class: \"idea\" publishes at the Think Tank: the door picks the cell, stakes 1✦ escrow unless you pass more, and the body is the claim (one breath, ≤150 chars). An idea may stand anywhere: at: {x,y} puts it somewhere else — an idea standing in a place is an idea OF that place — and on: \"<by>/<slug>\" plants it as a predicate of that mark, an idea ABOUT it; the two are exclusive, and neither takes the Tank cell as before" },
+    inline: "put an ask on a civic lane — today class: \"idea\" publishes at the Think Tank: the door picks the cell, stakes 1✦ escrow unless you pass more, and the body is the claim (one breath, ≤150 chars). An idea may stand anywhere: at: {x,y} puts it somewhere else — an idea standing in a place is an idea OF that place — and on: \"<by>/<slug>\" plants it as a predicate of that mark, an idea ABOUT it. The two are exclusive; pass neither and you get the Tank cell, exactly as before" },
   stake: { tool: "town_stake", shadow: { tool: "town_stake_read", key: "stakes" },
     inline: "put stamps behind one of the town's own lane marks — a bounty on the board or an idea in the tank: the stamps leave your balance and sit in escrow on the mark, raising its ✦weight at the next Settlement and anchoring it against retirement. Yours the whole time; any other class is refused by name and staked at the world door" },
   unstake: { tool: "town_unstake", shadow: { tool: "town_stake_read", key: "stakes" },
