@@ -20,7 +20,7 @@
 
 import { DatabaseSync } from "node:sqlite";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync, readdirSync, statSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { MultiDirectedGraph } from "graphology";
@@ -377,7 +377,40 @@ export function materializeWorldAtSha(repo, sha, subdirs, cacheRoot = WORLD_CACH
     writeFileSync(file, body);
   }
   writeFileSync(stamp, `${sha}\n${new Date().toISOString()}\n${entries.length} blobs\n`);
+  pruneWorldCache(cacheRoot, dir);
   return dir;
+}
+
+// THE CACHE HAS A CEILING (founder-ruled 2026-09-01, the day the box filled).
+// This cache is keyed by sha and was never pruned: every hydration — each
+// settlement, each shadow, each hand-run — left its ~12 MB copy of the marks
+// tree behind, correct forever and growing forever. On 2026-09-01 it held 227
+// shas, 2.2 GB, beside a /tmp already full of the suite's own residue. A cache
+// is only a cache if something forgets: keep the newest few (by their stamp),
+// drop the rest on every entry. The one just materialised is never a
+// candidate. Pruning never fails a hydration — a cache that refuses to hydrate
+// because it could not tidy has inverted its own purpose.
+export const WORLD_CACHE_KEEP = Number(process.env.WORLD_CACHE_KEEP ?? 5);
+export function pruneWorldCache(cacheRoot = WORLD_CACHE, keepDir = null, keep = WORLD_CACHE_KEEP) {
+  let dropped = [];
+  try {
+    const rows = readdirSync(cacheRoot, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => {
+        const p = join(cacheRoot, d.name);
+        let t = 0;
+        try { t = statSync(join(p, ".materialized")).mtimeMs; } catch { try { t = statSync(p).mtimeMs; } catch {} }
+        return { p, t };
+      })
+      .sort((a, b) => b.t - a.t);
+    const survivors = new Set(rows.slice(0, keep).map((r) => r.p));
+    if (keepDir) survivors.add(resolve(keepDir));
+    for (const r of rows) {
+      if (survivors.has(r.p) || survivors.has(resolve(r.p))) continue;
+      try { rmSync(r.p, { recursive: true, force: true }); dropped.push(r.p); } catch { /* the next entry tries again */ }
+    }
+  } catch { /* no cache dir yet, or unreadable — nothing to prune */ }
+  return dropped;
 }
 
 // ── the runtime: world.db -> a Graphology multigraph ─────────────────────────
