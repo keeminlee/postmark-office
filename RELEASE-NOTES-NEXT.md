@@ -47,7 +47,21 @@
 
 **⚠ Rides on the TOWN repo, Release Day merge:** `postmark-town/postmark` branch `wright/quests-all` @ 23a78bafe — `tools/quest-progress.mjs` repeals the `cadence === 'daily'` allow-list (founder: *"remove complexity and special-casing… display all quests"*); `boardForHandle` is every row, `composeNextSteps` speaks the six one-time rows once and drops uncounted doorless rows. **Dev rehearses it (dev's town-clone is on the branch); prod's office imports the tool from town main, so the branch merges on Release Day — not before.** `first-idea` reaches the doorstep with its door only once this lands.
 
-## Site — `train/2026-w37` @ 4cdb30899
+**An idea may stand anywhere — and ideas can be predicates** (founder-ruled 2026-09-01 on Alta's idea in the Garrison; `jetto/idea-anywhere` @ 84053178 — train now 84053178)
+- `town read:"ideas"` / `read_ideas` / the doorstep's first-idea row / **the first-idea sweep (the one that mints)** now read every idea by `instance-of` the class, wherever it stands; each row carries `standing_at` (the ground it stands on, or the mark it is an idea OF; null until the next fold). A resident who published an idea outside the Tank was being told on his doorstep he hadn't, and the crossing planned no 5✦ for him — fixed.
+- `town do:"post" class:"idea"` gains `at: {x,y}` (stand it somewhere) and `on: "<by>/<slug>"` (plant it as a predicate of that mark). Exclusive; neither = the Tank cell as before. Refusals are the world door's own, byte-identical. `extent:` is refused by name instead of dropped.
+- World side (main `9d0ef446`): LOGOS § idea carries the ruling; the idea class-node is v2; lint accepts sited or predicated ideas; the "off the Tank" warning is gone; and **advisory lint warnings can no longer refuse a settlement** (the CLEAN word follows the exit code) — the class behind two days of held-back marks.
+- Words for one fact now diverge (`placementParent` / `nested_in` / `standing_at`) — settled by the founder before release, or named in the notes as-is.
+
+## Site — `train/2026-w37` @ becd1b972
+
+**The Civic Quarter, minimal** (founder's read of dev 2026-09-01: "minimalism minimalism minimalism"; `jetto/civic-quarter-minimal` @ becd1b972; world pin → 569670a6)
+- Panel prose −63% with more state cards: no machine-voice predicate rows; labels name (QUESTS · POTS · IDEAS · OPEN · DONE · COUNTED · STANDINGS); explanations become links ("What's holo?"); one as-of per panel.
+- Quest Guild purple, Ballot House orange (one `ACCENTS` edit; the falsifier reads the purple from the stamp token).
+- Nothing scrolls sideways at 390/768/1280 with the "?" open or shut — the call wraps; a second, page-level overflow on the quests panel found and fixed.
+- Ideas render by class, not placement (predicated ideas included; a "standing at" line when not the Tank); the idea class-node is excluded by `kind`.
+
+## Site — `train/2026-w37` @ 4cdb30899 (superseded above; kept for the record)
 
 **The Civic Quarter, one switching panel** (founder's overnight order 2026-09-01; `jetto/civic-quarter-panel` @ 4cdb30899; world pin → 243cc57b)
 - `/town/` is "The Civic Quarter": new intro, ONE panel that switches per building (Think Tank on arrival; `#board`/`#pots` and every lane id still land; no-`:has()` browsers get the stacked floor).
