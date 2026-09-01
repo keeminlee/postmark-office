@@ -140,7 +140,7 @@ async function ask(serves, args) {
 
 // ── the falsifier ───────────────────────────────────────────────────────────
 
-// ⚠ THE LAW THIS ASSERTS WAS RE-STRUNG 2026-08-31, founder-ruled. The sentence
+// ⚠ THE LAW THIS ASSERTS WAS RE-STRUNG 2026-08-31 — ruled by Wright in-lane under the founder's parity ruling, founder informed. The sentence
 // it used to quote, and the date it went stale:
 //
 //   STALE 2026-08-31 — "every segment IS the answer of the read its `serves`
