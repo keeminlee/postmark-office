@@ -384,7 +384,9 @@ test("F7b · the NINE acts that own their name answer their card; the THREE that
 // the shadow answers the act's DOMAIN beside its card, not the card alone.
 
 test('F7c · the shadow reads answer the CARD BESIDE THE THING — the world apex: "anything you can do, you can read"', async () => {
-  for (const what of ["address", "home"]) {
+  // ALL THREE now, window included — founder-ruled 2026-08-31, after the bundle
+  // law was re-strung to say a segment carries the read's DOMAIN.
+  for (const what of ACT_SHADOW_READS) {
     const r = await householdApex({ read: what, handle: "wright" }, KEY, ctx({ slim: true, schemas: SCHEMAS, schemaRequired: REQUIRED }));
     assert.equal(r.error, undefined, `read: "${what}" bounced`);
     assert.equal(r.read, what, "the answer names the read it is");
@@ -405,11 +407,19 @@ test("F7c2 · and the DOMAIN is byte-identical to what the read answered before 
   // branch: the card REPLACING the shadow read's payload instead of joining it
   // (M36, 2026-08-26). So the domain is compared against the REST answer, which
   // is the same computation with no card on it.
-  for (const what of ["address", "home"]) {
+  for (const what of ACT_SHADOW_READS) {
     const rest = await householdApex({ read: what, handle: "wright" }, KEY, ctx({ slim: false, schemas: SCHEMAS, schemaRequired: REQUIRED }));
     const mcp = await householdApex({ read: what, handle: "wright" }, KEY, ctx({ slim: true, schemas: SCHEMAS, schemaRequired: REQUIRED }));
-    assert.deepEqual(mcp[what], rest[what], `read: "${what}" — the connector's domain drifted from the frozen one`);
-    assert.equal(mcp.of, rest.of);
+    // ⚠ THE TWO READS RELATE TO THEIR REST ANSWER DIFFERENTLY, and pretending
+    // otherwise would make this test assert the wrong thing for one of them.
+    // `address` and `home` ALREADY answered an envelope before the parity
+    // ({read, of, <domain>}), so their domain is rest[what]. `window` answered
+    // the bare thing, so its whole REST answer IS the domain — and note it
+    // happens to contain a `window` key of its own, which is exactly the trap a
+    // uniform rest[what] would have fallen into.
+    const restDomain = what === "window" ? rest : rest[what];
+    assert.deepEqual(mcp[what], restDomain, `read: "${what}" — the connector's domain drifted from the frozen one`);
+    assert.equal(mcp.of, rest.of ?? mcp.of);
   }
 });
 
@@ -425,28 +435,32 @@ test('F7c3 · REST\'s shadow reads are FROZEN — OPERATIONS.md: "REST: stable/s
   }
 });
 
-test("F7c4 · THE WINDOW FORK, asserted rather than wished — `window` is a doorstep SEGMENT, so its read is NOT at parity yet", async () => {
-  // This test states the door's honest asymmetry so the next reader is not
-  // misled by a grammar that looks total and is not — the same discipline
-  // assertActCardsReachable was written with.
+test("F7c4 · THE FORK IS RULED — `window` is at parity AND its doorstep segment is the read's DOMAIN, both at once", async () => {
+  // ⚠ THIS TEST USED TO ASSERT THE FORK. Until the founder ruled on 2026-08-31
+  // it read "THE WINDOW FORK, asserted rather than wished — `window` is a
+  // doorstep SEGMENT, so its read is NOT at parity yet", and it asserted that
+  // read: "window" carried NO card. It was written to go red the day the ruling
+  // landed. The ruling landed; the reminder became the verdict.
   //
-  // `window` is one of the seven DOORSTEP_SEGMENTS and the bundle's law is that
-  // a segment IS the answer of the read its `serves` names
-  // (test/doorstep-bundle.test.mjs § "THE BUNDLE"). Giving this read a card
-  // would either fatten every morning page ever served, or redden that
-  // falsifier, or require refining the bundle's law to say a segment carries
-  // the read's DOMAIN rather than its envelope — a ruling, not a patch.
-  //
-  // WHEN THE FOUNDER RULES, THIS TEST GOES RED, and that is the point: it is
-  // the reminder, not the verdict.
+  // What was ruled: the bundle's law says a segment carries the read's DOMAIN,
+  // not its envelope. So both halves below are true together, which under the
+  // old law they could not be — and that simultaneity is the whole point.
   const { INDEX_SEGMENTS } = await import("../src/queries.mjs");
-  assert.ok(INDEX_SEGMENTS.includes("window"), "if window ever stops being a segment, the fork below dissolves and this test should be deleted");
-  for (const slim of [true, false]) {
-    const r = await householdApex({ read: "window", handle: "wright" }, KEY, ctx({ slim, schemas: SCHEMAS, schemaRequired: REQUIRED }));
-    if (r.error) continue;
-    assert.equal("card" in r, false,
-      "read: \"window\" grew a card — the doorstep segment does not, and until the bundle's law is refined they must be one answer");
-  }
+  const { doorstepBundle } = await import("../src/doorstep-bundle.mjs");
+  assert.ok(INDEX_SEGMENTS.includes("window"), "window is still a doorstep segment — if it stops being one, this test is testing nothing");
+
+  // HALF ONE: the read is at parity, card beside the thing.
+  const r = await householdApex({ read: "window", handle: "wright" }, KEY, ctx({ slim: true, schemas: SCHEMAS, schemaRequired: REQUIRED }));
+  assert.ok(r.card && r.card.act === "window", "read: \"window\" carries the window act's card");
+  assert.ok(r.window && typeof r.window === "object", "…and the thing, under its own key");
+
+  // HALF TWO: the segment the morning page carries IS that read's domain.
+  const meta = { as_of: "fixturesha000000000000000000000000000000" };
+  const bctx = { db, key: null, meta, asOf: meta.as_of, canWrite: false, clone: null, pen: null, odb: null, dbPath: null };
+  const d = await doorstepBundle("wright", bctx);
+  const seg = Object.fromEntries(Object.entries(d.window).filter(([k]) => !["serves", "args"].includes(k)));
+  assert.deepEqual(seg, r.window, "the segment is the read's DOMAIN — the envelope is the apex's and the page never sees it");
+  assert.equal("card" in seg, false, "and no card reached the morning page");
 });
 
 // ── (2c) THE READ ROSTER, ADVERTISED (founder-ruled 2026-08-31) ─────────────
@@ -496,7 +510,16 @@ test("F7c5 · THE MORNING PAGE DID NOT FATTEN — the doorstep bundle is byte-id
   const bctx = { db, key: null, meta, asOf: meta.as_of, canWrite: false, clone: null, pen: null, odb: null, dbPath: null };
   const now = { full: await doorstepBundle("wright", bctx), slim: await doorstepBundle("wright", { ...bctx, slim: true }) };
   assert.equal(JSON.stringify(now), readFileSync(GOLD, "utf8"),
-    "a card reached the doorstep — that is a token on every morning page ever served, and it is the cost this design exists to avoid");
+    "the morning page moved — every byte here is served on every doorstep, and this design exists to keep that number still");
+  // ⚠ THE GOLDEN WAS REGENERATED ONCE, 2026-08-31, and this is the honest note
+  // about it. The parity change moved the page by exactly TWO paths —
+  // `full.the_bundle` and `slim.the_bundle` — because the bundle LAW SENTENCE
+  // is printed on the page and that sentence was re-strung by the same ruling.
+  // Nothing else differed (diffed path by path before regenerating). So the
+  // assertion below is the one that actually carries the promise, and it is
+  // stated separately so a future regeneration cannot quietly absorb a card:
+  assert.equal(JSON.stringify(now).includes('"card"'), false,
+    "a card reached the doorstep — a token on every morning page ever served, and the cost this whole design was shaped to avoid");
 });
 
 test("F7d · and the REST bare answer keeps its shape — nothing in this grammar reached a frozen consumer", async () => {

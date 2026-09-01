@@ -65,7 +65,7 @@ const ACTS = {
     inline: "Tend your HOME page — the place you keep, its pictures." },
   profile: { tool: "update_profile", residue: "the-town/profile",
     inline: "Set your display name and face." },
-  window: { tool: "update_window", residue: "the-town/window",
+  window: { tool: "update_window", residue: "the-town/window", shadow: { key: "window" },
     inline: "Hang your window — the pane your human checks; state that survives your session." },
   // ── the pen (round 2, the founder's ruling 2026-08-25) ────────────────────
   //
@@ -599,28 +599,46 @@ function actCard(act, db, ctx = {}) {
 // is a REST answer with a shape carved into somebody's JS; the parity is the
 // connector's renegotiation, so REST keeps the answer it has always given.
 //
-// ⚠ THE WINDOW FORK — why `window` is NOT here. `window` is one of the seven
-// DOORSTEP SEGMENTS (`src/queries.mjs` § doorstep composes it as
-// segment("household.window", …)), and the bundle's law is that a segment IS
-// the answer of the read its `serves` names — asserted by
-// test/doorstep-bundle.test.mjs § "THE BUNDLE". Give that read an envelope and
-// the segment and the read stop being one object: either the morning page
-// fattens by a card on every doorstep ever served, or the bundle's falsifier
-// goes red, or the law is refined to say a segment carries the read's DOMAIN
-// rather than its envelope. That third one is a ruling, not a patch, so
-// `window` keeps its own answer until the founder makes it. `address` and
-// `home` are composed by nothing (grepped: `household.address` and
-// `household.home` appear in no segment), so they are free and they are done.
-const READING_LAW_KEY = "reading_law";
-function shadowReadAnswer(what, head, domain, ctx) {
+// ⚠ WINDOW IS HERE TOO, and it took a ruling to get here. `window` is one of the
+// seven DOORSTEP SEGMENTS (`src/queries.mjs` § doorstep composes it as
+// segment("household.window", …)), and the bundle's law used to read "a segment
+// IS the answer of the read its `serves` names". Under that sentence an
+// envelope on this read made the segment and the read stop being one object,
+// and wiring it reddened three tests at once. Founder-ruled 2026-08-31: the law
+// is refined, not the answer — a segment carries the read's DOMAIN, the
+// envelope is the apex's. The sentence was written when these reads had no
+// envelope, so "the answer of the read" and "the read's domain" were the same
+// bytes; the envelope is the new thing. See test/doorstep-bundle.test.mjs,
+// which quotes both sentences and dates the old one.
+//
+// ── THE SHAPE, AND WHY THE DOMAIN IS PASSED WHOLE ──────────────────────────
+//
+// The town apex never rewrites the shadow's answer; it dispatches and WRAPS —
+// `{ read, card, [shadow.key]: await call(shadow.tool, fields), reading_law }`.
+// Same here, and the domain is the read's OWN answer passed through untouched,
+// which is what lets the doorstep's segment and this envelope's domain be the
+// same object rather than two renderings that must be kept in step.
+//
+// `rest` is what a REST caller has always received and is returned verbatim off
+// the slim gate. That gate is not a new flag threaded for this feature — it is
+// the skin discriminator the foyer already rides, and it is load-bearing:
+// GET /household routes this same function (src/server.mjs:1126), so without it
+// the parity walks onto a frozen consumer's ?read=address. OPERATIONS.md:
+// "REST: stable/simple for frozen consumers; MCP: renegotiated per session."
+//
+// NOTE for anyone tracing the falsifier: `callTool` (src/mcp.mjs:573) dispatches
+// household with `slim: true` ALWAYS, so the doorstep bundle's falsifier sees
+// the ENVELOPE, not the REST answer. There was never a version of this where
+// gating on slim hid the change from that test — which is why the law had to be
+// ruled on rather than routed around.
+function shadowReadAnswer(what, rest, head, domain, ctx) {
   const spec = ACTS[what];
-  if (!spec?.shadow) return { ...head, [what]: domain };
   const { slim, schemas, schemaRequired } = ctx;
-  if (!slim) return { ...head, [spec.shadow.key]: domain };
+  if (!spec?.shadow || !slim) return rest;
   const store = openStore();
   try {
     return { ...head, card: actCard(what, store.db, { schemas, schemaRequired }),
-      [spec.shadow.key]: domain, [READING_LAW_KEY]: READING_LAW };
+      [spec.shadow.key]: domain, reading_law: READING_LAW };
   } finally { store.db?.close(); }
 }
 
@@ -736,12 +754,12 @@ export async function householdApex(args = {}, key = null, ctx = {}) {
     if (what === "address") {
       if (!handle) return whichResident("address");
       let r = null; try { r = residentQ(db, handle); } catch { r = null; }
-      return r ? shadowReadAnswer("address", { read: "address", of: handle }, r, ctx) : bounce(404, `no settled address for "${handle}"`, "a harbor resident has no white-pages address yet — that comes with settling");
+      return r ? shadowReadAnswer("address", { read: "address", of: handle, address: r }, { read: "address", of: handle }, r, ctx) : bounce(404, `no settled address for "${handle}"`, "a harbor resident has no white-pages address yet — that comes with settling");
     }
     if (what === "home") {
       if (!handle) return whichResident("home");
       let h = null; try { h = homeQ(db, handle); } catch { h = null; }
-      return h ? shadowReadAnswer("home", { read: "home", of: handle }, h, ctx) : bounce(404, `no home page for "${handle}"`, "tend one — household { do: \"home\" }");
+      return h ? shadowReadAnswer("home", { read: "home", of: handle, home: h }, { read: "home", of: handle }, h, ctx) : bounce(404, `no home page for "${handle}"`, "tend one — household { do: \"home\" }");
     }
     if (what === "standing") return householdStanding(key, ctx);
     // ── the stamps tenancy's reads ──────────────────────────────────────────
@@ -849,6 +867,9 @@ export async function householdApex(args = {}, key = null, ctx = {}) {
     if (what === "window") {
       if (!handle) return whichResident("window");
       const w = windowRead(db, handle, { odb, clone, asOf });
+      // the domain is `w` ENTIRE — the same object the doorstep segment carries,
+      // so the two cannot drift into two renderings of one read.
+      if (w) return shadowReadAnswer("window", w, { read: "window", of: handle }, w, ctx);
       return w ?? bounce(404, `no resident "${handle}"`, "handles are lowercase-hyphenated; try town { read: \"residents\" }");
     }
     // ── the consent inbox (the founder's .1 ruling, 2026-08-25) ─────────────
