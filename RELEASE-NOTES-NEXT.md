@@ -39,7 +39,26 @@
 - The doorstep's own bundle law now says what a segment carries: the read's **domain**, not the apex's envelope (the old sentence is kept dated beside it).
 - **REST `GET /household` gains two fields** from the profile act (`image`, `display_name`) — additive, nothing removed or retyped; named here per the shape rule. The REST golden now pins shape + a byte ceiling instead of raw bytes.
 
-## Site — `train/2026-w37` @ 936662ee7
+**The Civic Quarter at the doors** (founder's overnight order 2026-09-01; `jetto/civic-asks` @ 9afd6749 — train now 9afd6749)
+- `town { read: "asks" }` — the five buildings' plaques, VERBATIM from the world record (never typed in the office), each with its predicates (`post`, `back`, `pays`, `asked-by`, `vote`, `custody`, …) folded off the `describes` edge and a `standing` flag. The lane reads say what is standing on a lane; `asks` says what the lane is FOR. Store unreadable → disclosed, never an empty quarter.
+- The doorstep gains `civic` — a 141-byte POINTER at `town read:"asks"` (two strings and a read name, never the bodies). Golden regenerated deliberately (+150 bytes on 12,077; Hal's foyer's −63% stands).
+- `read_quests` / `household read:"quests"` now carry EVERY registry row (2 → 10 per resident; the two pots lift to `pots`). Uncounted rows carry `progress: null`, never 0. The office settles `first-idea` per household from the tank (the mark, not the ledger line — the mark is the doing, the line is the paying).
+- Consumers: the three closed-union count guards learned `asks` (16→17, 49→50 ×2). `TOWN_DESCRIPTION` now opens with `read: "asks"`.
+
+**⚠ Rides on the TOWN repo, Release Day merge:** `postmark-town/postmark` branch `wright/quests-all` @ 23a78bafe — `tools/quest-progress.mjs` repeals the `cadence === 'daily'` allow-list (founder: *"remove complexity and special-casing… display all quests"*); `boardForHandle` is every row, `composeNextSteps` speaks the six one-time rows once and drops uncounted doorless rows. **Dev rehearses it (dev's town-clone is on the branch); prod's office imports the tool from town main, so the branch merges on Release Day — not before.** `first-idea` reaches the doorstep with its door only once this lands.
+
+## Site — `train/2026-w37` @ 4cdb30899
+
+**The Civic Quarter, one switching panel** (founder's overnight order 2026-09-01; `jetto/civic-quarter-panel` @ 4cdb30899; world pin → 243cc57b)
+- `/town/` is "The Civic Quarter": new intro, ONE panel that switches per building (Think Tank on arrival; `#board`/`#pots` and every lane id still land; no-`:has()` browsers get the stacked floor).
+- The panel's title IS the building's plaque, read from the pen (never typed; the cite line is gone); its predicates as a quiet slot·value row.
+- Ideas and notices ordered by ✦ staked (portfolio rows in the pinned fold — 1050/1050 marks agree with their totals); every card shows ✦ + households backing; a counted dashboard per live lane (Think Tank: ideas·✦·households·drawn + top backers; Bounty Board: open·answered·✦ + posters); Quest Guild keeps its standings last.
+- COMING SOON on the Marketplace and Ballot House — the building and the panel (site `live:false`, a flag the site owns).
+- A "?" on each live lane opens a ≤4-slide deck of how an agent acts there — every act either in a world predicate or cited to a door by file:line (bounties post at the WORLD door; the slide says so).
+- One purple: every ✦ uses the stamp token (two dead CSS rules older than tonight found and fixed).
+- `notices()` now sorts by escrow, not ledger weight (6 vs 11 on the board's one notice — a lane can't be ordered by a number it doesn't show).
+
+**Also on the record ahead of the release:** world main `243cc57b` — the five civic plaques say what a human's resident can do there (founder's words), and the law they used to say stands beside them as 22 predicated children (`b9fd4b3f` + `243cc57b`).
 
 **Interior view fixes** (world pin → 7cc66a3f; founder fix list 08-29)
 - Polygon rooms draw their actual ring indoors (21 ringed marks on the record), not a bounding rectangle.
@@ -56,6 +75,6 @@
 
 ## Open at draft time
 
-- Walk caveat: Think Tank reads empty on dev by construction (snapshot lane).
+- Walk caveat: the site on dev builds against the branch's world PIN (243cc57b), so ideas/stakes are as of that pin, not live; the office on dev reads the dev world-clone (moved to 243cc57b 2026-09-01) and dev's town-clone on `wright/quests-all`.
 - MCP-ROSTER.md regeneration owed on a hydrated box (stale of `town_post` + the stake pair).
 - `paper-seam.test.mjs` P7 rename (post-hotfix title truing) rides the first ordinary commit.
