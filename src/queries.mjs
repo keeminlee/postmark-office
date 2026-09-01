@@ -699,7 +699,7 @@ export const DOORSTEP_SEGMENTS = Object.freeze([...INDEX_SEGMENTS, "stances"]);
  *  `serves` pointer names the read that walks the rest. */
 export const DOORSTEP_STANCES = 5;
 
-// ⚠ THE LAW WAS RE-STRUNG 2026-08-31 (founder-ruled), and the previous sentence
+// ⚠ THE LAW WAS RE-STRUNG 2026-08-31 (ruled by Wright in-lane under the founder's parity ruling; founder informed with an override window, no override), and the previous sentence
 // is kept here so the change is visible rather than silent. It read:
 //
 //   "This page is a BUNDLE: each segment below is the answer of another read,
