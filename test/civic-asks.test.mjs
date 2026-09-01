@@ -331,6 +331,22 @@ test("the office settles first-idea from the TANK, per household — the mark, n
   } finally { cleanup(); }
 });
 
+test("ONCE PER HOUSEHOLD: a HOUSEMATE's idea settles your row, and a stranger's does not", async () => {
+  // ⚠ THIS TEST EXISTS BECAUSE A MUTATION FOUND ITS ABSENCE. Replacing the
+  // whole household lookup with `[handle]` left the suite green: every other
+  // falsifier here runs where householdOf resolves to null (a worktree with no
+  // town clone), so the branch was never reached. The registry's own words are
+  // the law it was missing — first-idea is "once per household, ever".
+  const { injectedComplete } = await import("../src/queries.mjs");
+  const { path, cleanup } = tankWith([{ id: "rei/the-quay-at-dusk", by: "rei" }]);
+  try {
+    assert.deepEqual(injectedComplete("wright", { worldDb: path, house: ["wright", "rei"] }),
+      { "first-idea": true }, "rei published; wright shares her roof, so the household's row is settled");
+    assert.deepEqual(injectedComplete("wright", { worldDb: path, house: ["wright"] }),
+      { "first-idea": false }, "…and alone under his own roof it is not — the two answers differ, which is the whole point");
+  } finally { cleanup(); }
+});
+
 test("the store unreadable settles NOTHING — a hydration blip must not un-earn a paying row", async () => {
   const { injectedComplete } = await import("../src/queries.mjs");
   assert.equal(injectedComplete("wright", { worldDb: "Z:/nowhere/never-a-store.db" }), null,

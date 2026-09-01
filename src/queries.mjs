@@ -1367,12 +1367,18 @@ async function questTools(clone) {
  * doorstep, which already computes them (nextStepsFor), and they read null —
  * "not looked" — on the bare board. Named rather than left to be discovered.
  */
-export function injectedComplete(handle, { worldDb = null } = {}) {
+export function injectedComplete(handle, { worldDb = null, house = null } = {}) {
   try {
     const tank = ideasTank(worldDb ? { worldDb } : {});
     if (tank.source !== "store") return null;
-    const house = householdOf(handle)?.residents ?? [handle];
-    return { "first-idea": tank.ideas.some((i) => house.includes(i.by)) };
+    // `house` is a seam, not a parameter callers pass in anger — the office
+    // always resolves it here. It exists because a mutation pass caught the
+    // household branch UNCOVERED: every falsifier ran where householdOf resolves
+    // to null (a worktree with no town clone), so replacing the whole lookup
+    // with `[handle]` left the suite green. A branch a mutation can delete
+    // silently is a branch nothing was testing.
+    const residents = house ?? householdOf(handle)?.residents ?? [handle];
+    return { "first-idea": tank.ideas.some((i) => residents.includes(i.by)) };
   } catch { return null; }
 }
 
