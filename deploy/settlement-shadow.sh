@@ -72,7 +72,12 @@ if ! (cd "$SHADOW" && node tools/settlement-sweep.mjs --stakes "$WORK/stakes.jso
   exit 1
 fi
 
-if ! (cd "$SHADOW" && npm test --silent) > "$WORK/suite.log" 2>&1; then
+# The suite's scratch lives and dies with this run — see settlement-auto.sh's
+# note of the same date (2026-09-01): the world suite's fixture helpers leak
+# under the system TMPDIR, and this shadow runs the suite twice a day on top of
+# the settlement's own runs. $WORK is trap-removed at EXIT.
+SUITE_TMP="$WORK/tmp"; mkdir -p "$SUITE_TMP"
+if ! (cd "$SHADOW" && TMPDIR="$SUITE_TMP" TMP="$SUITE_TMP" TEMP="$SUITE_TMP" npm test --silent) > "$WORK/suite.log" 2>&1; then
   report would-refuse "grammar suite would go red"
   echo "[settlement-shadow] WOULD REFUSE (suite red)" >&2
   grep -E "^not ok" "$WORK/suite.log" >&2 || tail -20 "$WORK/suite.log" >&2

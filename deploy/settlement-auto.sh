@@ -368,8 +368,19 @@ SWEEP_JSON="$WORK/sweep.json"
 }
 
 # The FULL grammar suite is the gate — the keeper's own final gate, verbatim.
+#
+# THE SUITE'S SCRATCH LIVES AND DIES WITH THIS RUN (founder-ruled 2026-09-01,
+# the day the box filled). The world suite's older fixture helpers mkdtemp
+# under the system TMPDIR and never remove what they made; this script runs
+# that suite up to ten times per crossing (the isolate re-runs it per round).
+# On 2026-09-01 /tmp held 9,207 fixture directories — 1,247 of them whole
+# copies of WORLD/marks — 38G/38G used, 84% of inodes, and the office's
+# rehydrate died on `mktemp: No space left on device`. $WORK is already
+# trap-removed at EXIT, so pointing the suite's TMPDIR under it makes every
+# run own its residue whether or not the tests ever learn to.
+SUITE_TMP="$WORK/tmp"; mkdir -p "$SUITE_TMP"
 ISOLATE_JSON=""
-if ! (cd "$SWEEP" && npm test --silent) > "$WORK/suite.log" 2>&1; then
+if ! (cd "$SWEEP" && TMPDIR="$SUITE_TMP" TMP="$SUITE_TMP" TEMP="$SUITE_TMP" npm test --silent) > "$WORK/suite.log" 2>&1; then
   cp "$WORK/suite.log" "$OFFICE/settlement-last-suite.log" 2>/dev/null || true
   # ── THE ISOLATION PASS (2026-08-27) ────────────────────────────────────────
   # A red suite used to mean nobody settles. It now means: find out WHOSE mark
