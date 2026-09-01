@@ -3248,6 +3248,47 @@ export const POST_PLACES = Object.freeze({
   idea: "the-town/the-think-tank",
 });
 
+// ── `at` and `on` — AN IDEA MAY STAND ANYWHERE (founder-ruled 2026-09-01) ────
+//
+// "Class says what a mark is; the Think Tank is where ideas are READ, not a
+// container that makes them ideas." The lane read stopped filtering by ground
+// (world-classes.mjs § ideasTank), and this is the writing half: a poster who
+// knows where their idea belongs may say so, in the two shapes the record
+// already has for "somewhere".
+//
+//   at: { x, y }   the idea is a SITED mark standing there — an idea standing
+//                  in a place is an idea OF that place
+//   on: "<mark>"   the idea is a PREDICATED child of that mark — an idea ABOUT
+//                  that mark ("ideas can be predicates", the same morning)
+//   neither        the computed Tank cell, exactly as before
+//
+// EXCLUSIVE, because they are two answers to one question and a caller who
+// passed both has not decided where the idea stands.
+//
+// NOTHING HERE VALIDATES A PLACE. `at` is forwarded raw to leaveMarkViaOffice
+// and `on` becomes its `parent_id`, so the frame, the bounds, the parcel and
+// commons rules, the lane guard and the ownership question are all answered by
+// the world door in the world door's own words — one law, spoken once. A
+// refusal a poster earns here is byte-identical to the refusal the same input
+// earns at `world do: "leave-mark"`, and this file cannot drift from it because
+// it holds no copy of it. Whether a resident may predicate ANOTHER household's
+// mark is a world-side question (consent.mjs / mark-lint §8b); the office does
+// not answer it and must not invent a refusal for it.
+
+/** The claim's first clause — the predicate `value` for an idea posted `on` a
+ *  mark. The record's convention for a predicated mark is a compact value plus
+ *  the full sentence as the body ("slot: light / value: shifts with mood and
+ *  season"), and an idea's claim is already written that way by habit: "Parcel
+ *  post: let the ferry carry a thing". So the value is the text up to the first
+ *  clause break, and the SLUG is the fallback when there is none to take — a
+ *  value derived from nothing is worse than the id the mark already carries. */
+export const firstClauseOf = (body, slug) => {
+  const text = String(body ?? "").trim();
+  const cut = text.search(/[:;—.!?]/);
+  const clause = (cut === -1 ? text : text.slice(0, cut)).trim();
+  return clause && clause.length <= 60 ? clause : String(slug ?? "").trim();
+};
+
 export async function townPost(payload = {}, key = null) {
   const bounce = (code, defect, hint) => { const e = new Error(defect); Object.assign(e, { code, defect, hint }); return e; };
   const klass = String(payload.class ?? "").trim();
@@ -3261,9 +3302,55 @@ export async function townPost(payload = {}, key = null) {
   if (Number.isInteger(stakeN) && stakeN === 0)
     throw bounce(422, "posting publishes — stamps: 0 is a private draft",
       "escrow is what publishes a commons mark, so this door stakes 1 unless you say more; to keep a private draft, use world_leave_mark with stamps omitted");
+
+  const at = payload.at;
+  const on = payload.on === undefined || payload.on === null ? undefined : String(payload.on).trim();
+  if (at !== undefined && on !== undefined)
+    throw bounce(422, "at: and on: are two answers to one question",
+      'at puts your idea at coordinates (an idea OF that place); on makes it a predicated child of a mark (an idea ABOUT that mark) — pass one, or neither for the Think Tank cell');
+  // The footprint is the door's, the way the cell is: a poster who names `at`
+  // has said WHERE, not how big. Refused by name rather than dropped in silence
+  // — the world door's own habit with `tier:`, and for the same reason.
+  if (payload.extent !== undefined)
+    throw bounce(422, "extent: is not a field at this door", `posting sets the footprint (1×1); to choose your own, place the mark yourself: world_leave_mark { class: "${klass}", at, extent }`);
+
   // The seed only spreads placement; IDENTITY is judged by leaveMarkViaOffice,
   // which bounces an ambiguous or unauthorized by: before anything is written.
   const seedBy = payload.by ?? [...(key?.handles ?? [])][0] ?? "someone";
+  const shared = {
+    by: payload.by, slug: payload.slug, body: payload.body, class: klass, stamps: stakeN,
+    ...(payload.image !== undefined ? { image: payload.image } : {}),
+  };
+
+  // ── on: — the idea as a predicate of another mark ─────────────────────────
+  if (on !== undefined) {
+    const result = await leaveMarkViaOffice(WORLD_CLONE, {
+      ...shared, kind: "predicated", parent_id: on,
+      slot: "idea", value: firstClauseOf(payload.body, payload.slug),
+    }, key);
+    return {
+      posted: result.id, class: klass, stood_at: null, standing_at: on,
+      visible: TOWN_POST_VISIBLE, ...result,
+    };
+  }
+
+  // ── at: — the idea standing at coordinates the poster named ───────────────
+  if (at !== undefined) {
+    const result = await leaveMarkViaOffice(WORLD_CLONE, {
+      ...shared, kind: "sited", at, extent: { w: 1, h: 1 },
+    }, key);
+    return {
+      posted: result.id, class: klass, stood_at: result.at ?? at,
+      // NOT the door's to answer: nobody placed this on a ground — geometry
+      // does, and the containment map that says so is emitted at the fold. A
+      // guess here would be the one field on this receipt that could be wrong.
+      standing_at: null,
+      standing_at_note: "you named the coordinates, so which mark this stands on is the record's answer, not this door's — the settlement's fold decides it, and `town read: \"ideas\"` reads it back as standing_at",
+      visible: TOWN_POST_VISIBLE, ...result,
+    };
+  }
+
+  // ── neither — the computed Tank cell, unchanged ───────────────────────────
   const cell = freeCellIn(ground, `${seedBy}/${payload.slug ?? ""}`);
   if (cell.error)
     throw bounce(503, "the ground could not be read, so nothing was placed",
@@ -3272,19 +3359,19 @@ export async function townPost(payload = {}, key = null) {
     throw bounce(409, `${ground} is full — every one of its ${cell.cells} cells holds a mark`,
       "widening the ground is the town's act; say so in a letter to the-town and the founder pen answers");
   const result = await leaveMarkViaOffice(WORLD_CLONE, {
-    by: payload.by, slug: payload.slug, kind: "sited",
-    at: cell.at, extent: { w: 1, h: 1 },
-    body: payload.body, class: klass, stamps: stakeN,
-    ...(payload.image !== undefined ? { image: payload.image } : {}),
+    ...shared, kind: "sited", at: cell.at, extent: { w: 1, h: 1 },
   }, key);
   return {
-    posted: result.id, class: klass, stood_at: cell.at, in: ground,
-    // the receipt-honesty line (standardized this train): every do: receipt
-    // says when the change becomes visible.
-    visible: "your household's sketchbook holds it now; the town sees it at the next crossing, when the settlement publishes it",
+    posted: result.id, class: klass, stood_at: cell.at, standing_at: ground,
+    visible: TOWN_POST_VISIBLE,
     ...result,
   };
 }
+
+// the receipt-honesty line (standardized this train): every do: receipt says
+// when the change becomes visible. One constant, so the three post shapes
+// cannot drift into three sentences.
+const TOWN_POST_VISIBLE = "your household's sketchbook holds it now; the town sees it at the next crossing, when the settlement publishes it";
 
 // uses it today; it rides on a ctx rather than a positional arg so the next
 // door that needs a town-side fact does not re-open this signature.

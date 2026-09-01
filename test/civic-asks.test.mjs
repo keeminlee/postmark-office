@@ -360,7 +360,29 @@ test("the store unreadable settles NOTHING — a hydration blip must not un-earn
   } finally { cleanup(); }
 });
 
-// A store holding only a Think Tank with the given ideas standing in it.
+// A store holding the idea class's DECLARATION, a Think Tank, and the given
+// ideas — each edged `instance-of` to the declaration the way world-hydrate.mjs
+// § THE INSTANCE-OF RAILS edges one, and placed by `standing_at`:
+//
+//   { id, by }                    stands in the Tank      (contains edge)
+//   { id, by, ground }            stands on that ground   (contains edge)
+//   { id, by, about }             is a predicate OF that mark (describes edge)
+//   { id, by, standing_at: null } folded nowhere yet      (no placement edge)
+//
+// ⚠ THE DECLARATION IS THE PART A FIXTURE GETS WRONG. Until 2026-09-01 this
+// helper wrote a `contains` edge and nothing else, which was the whole shape
+// `ideasTank` then read. The reader now joins `instance-of` and resolves the
+// class node through CLASS_ROSTER_GATE_SQL — by: the-town, tier: constitution,
+// props.class, IN THE KEEPING WORKS — so a fixture that skips `in_works`
+// produces a store with no declaration, an empty tank, and a green suite about
+// nothing. Verified against a store hydrated from world main fdca66cc before it
+// was written; `the-town/idea` is the live id and is NOT written into the
+// reader, which finds it by that gate.
+//
+// The declaration also carries `class: "idea"` itself (a class mark declares
+// the class it IS) and deliberately gets NO instance-of edge to itself — that
+// is the type/instance seam `markClass` names, and it is what keeps the
+// constitution mark out of its own lane read.
 function tankWith(ideas) {
   const dir = mkdtempSync(join(tmpdir(), "civic-tank-"));
   const path = join(dir, "world.db");
@@ -371,10 +393,21 @@ function tankWith(ideas) {
            CREATE TABLE edges (seq INTEGER PRIMARY KEY AUTOINCREMENT,
                                src TEXT, dst TEXT, type TEXT, props TEXT, born_at TEXT)`);
   db.prepare("INSERT INTO meta (key, value) VALUES ('hydration_status','OK')").run();
+  db.prepare(`INSERT INTO nodes (id, kind, subkind, tier, by, props)
+              VALUES ('the-town/idea','mark','class','constitution','the-town',
+                      '{"class":"idea","in_works":1,"body":"the idea class law"}')`).run();
   db.prepare("INSERT INTO nodes (id, kind, tier, by, props) VALUES ('the-town/the-think-tank','mark','constitution','the-town','{}')").run();
-  const n = db.prepare("INSERT INTO nodes (id, kind, tier, by, props) VALUES (?, 'mark', 'market', ?, ?)");
-  const e = db.prepare("INSERT INTO edges (src, dst, type) VALUES ('the-town/the-think-tank', ?, 'contains')");
-  for (const i of ideas) { n.run(i.id, i.by, JSON.stringify({ class: "idea", body: "an idea", date: "2026-09-01" })); e.run(i.id); }
+  const n = db.prepare("INSERT INTO nodes (id, kind, subkind, tier, by, props) VALUES (?, 'mark', ?, 'market', ?, ?)");
+  const inst = db.prepare("INSERT INTO edges (src, dst, type) VALUES (?, 'the-town/idea', 'instance-of')");
+  const place = db.prepare("INSERT INTO edges (src, dst, type) VALUES (?, ?, ?)");
+  for (const i of ideas) {
+    const predicated = i.about !== undefined;
+    n.run(i.id, predicated ? "predicated" : "sited", i.by,
+      JSON.stringify({ class: "idea", body: "an idea", date: "2026-09-01" }));
+    inst.run(i.id);
+    if (predicated) place.run(i.about, i.id, "describes");
+    else if (i.standing_at !== null) place.run(i.ground ?? "the-town/the-think-tank", i.id, "contains");
+  }
   db.close();
   return { path, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }

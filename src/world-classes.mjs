@@ -120,12 +120,60 @@ export function classRoster({ worldDb = null } = {}) {
 export function resetClassRosterCache() { _snap = null; }
 
 /**
- * The Think Tank, read from the store: every class:idea mark standing on
- * the-town/the-think-tank — the Idea Lifecycle's stage-1 surface. The idea
- * grammar has no ask/reward/status: the BODY is the claim, and the stage
- * lives in the blueprint repo (one writer per fact). Same floor honesty as
- * the board read below; the idea class's own law sentence rides the answer,
- * quoted from the record.
+ * EVERY PUBLISHED IDEA, WHEREVER IT STANDS — the Idea Lifecycle's stage-1
+ * surface, read from the store by INSTANCE, not by geometry.
+ *
+ * THE LAW (founder-ruled 2026-09-01, on Alta's idea planted in the Garrison —
+ * feature, not bug): "class says what a mark is; the Think Tank is where ideas
+ * are READ, not a container that makes them ideas."
+ *
+ * REPEALED, kept dated beside it (the house style). Until 2026-09-01 this read
+ * said: "every class:idea mark standing on the-town/the-think-tank" and joined
+ * `contains` from the tank's ground. That sentence made the TANK'S GROUND the
+ * thing that made an idea an idea, so an idea an author stood anywhere else was
+ * not merely filed oddly — it was invisible to the tank read, to the doorstep's
+ * first-idea row, and to the sweep that MINTS 5✦ for it. The world's mark-lint
+ * retired the matching "idea off the Think Tank" warning in the same ruling
+ * (world main 569670a6).
+ *
+ * WHAT THE JOIN IS NOW. The `instance-of` edge (world-hydrate.mjs § THE
+ * INSTANCE-OF RAILS) — a class-carrying mark that does not DECLARE the class
+ * edges to its class's declaration. That edge is the store's own answer to
+ * "what is this mark", which is exactly the founder's sentence, and it is also
+ * the type/instance seam `markClass` names: the declaration gets no edge to
+ * itself, so `the-town/idea` cannot appear among its own instances (the class
+ * mark carries `class: idea` too — a filter on the class VALUE alone sweeps the
+ * constitution in beside the ideas).
+ *
+ * THE CLASS NODE IS FOUND, NEVER ASSUMED. Its id is resolved by the same gate
+ * that already yields the law sentence (`CLASS_ROSTER_GATE_SQL` + class='idea'),
+ * so one definition answers both — and a record that moves or re-files the
+ * declaration moves this reader with it. `the-town/idea` today; the id is not
+ * written down here.
+ *
+ * INSTANCE-OF DOES NOT CARE ABOUT KIND, and that is deliberate under the second
+ * half of the ruling ("ideas can be predicates", founder, same morning): a
+ * `kind: predicated` idea — slot/value, the body still the claim — edges to the
+ * same declaration and is returned by the same query with no kind clause to
+ * loosen later.
+ *
+ * `standing_at` — ONE FIELD, ONE MEANING: what this idea stands on or under.
+ * For a sited idea it is the containing ground (the `contains` edge the fold's
+ * containment map writes); for a predicated idea it is the mark it is an idea
+ * OF (the `describes` edge the directory nesting writes). `null` when the store
+ * carries neither, which is the honest answer for a mark the last fold has not
+ * seen yet — containment is emitted at the settlement, so a freshly published
+ * idea reads `null` until the crossing folds it, and a reader must not take
+ * that for "it stands nowhere".
+ *
+ * The idea grammar still has no ask/reward/status: the BODY is the claim, and
+ * the stage lives in the blueprint repo (one writer per fact). Same floor
+ * honesty as the board read below; the idea class's own law sentence rides the
+ * answer, quoted from the record.
+ *
+ * `tank` still names the-town/the-think-tank, and now means what the ruling
+ * says it means: the place these are READ, and the cell the town door computes
+ * when a poster names nowhere else. It is no longer a filter.
  */
 export function ideasTank({ worldDb = null } = {}) {
   const path = worldDb ?? storeDbPath();
@@ -138,14 +186,23 @@ export function ideasTank({ worldDb = null } = {}) {
   catch { return answer([], "floor", `no world store at ${path} — the tank could not be read from the record. Run: npm run hydrate:world`); }
   try {
     const db = new DatabaseSync(path, { readOnly: true });
-    const law = db.prepare(`SELECT json_extract(props,'$.body') AS body FROM nodes WHERE ${CLASS_ROSTER_GATE_SQL} AND json_extract(props,'$.class')='idea'`).get()?.body ?? null;
+    const decl = db.prepare(`SELECT id, json_extract(props,'$.body') AS body FROM nodes WHERE ${CLASS_ROSTER_GATE_SQL} AND json_extract(props,'$.class')='idea'`).get() ?? null;
+    const law = decl?.body ?? null;
+    // No declaration in the record → no instances to join to. The floor rung is
+    // for an unreadable STORE; this is a readable store answering "the idea
+    // class is not declared here", which is an empty tank, not a fallback.
+    if (!decl?.id) return answer([], "store", null, law);
     const rows = db.prepare(`
       SELECT n.id, n.by, json_extract(n.props,'$.body') AS body,
-             json_extract(n.props,'$.date') AS date
+             json_extract(n.props,'$.date') AS date,
+             COALESCE(
+               (SELECT c.src FROM edges c WHERE c.dst = n.id AND c.type = 'contains'  LIMIT 1),
+               (SELECT d.src FROM edges d WHERE d.dst = n.id AND d.type = 'describes' LIMIT 1)
+             ) AS standing_at
         FROM nodes n
-        JOIN edges e ON e.dst = n.id AND e.type = 'contains' AND e.src = 'the-town/the-think-tank'
+        JOIN edges e ON e.src = n.id AND e.type = 'instance-of' AND e.dst = ?
        WHERE json_extract(n.props,'$.class') = 'idea'
-       ORDER BY COALESCE(json_extract(n.props,'$.date'), ''), n.id`).all();
+       ORDER BY COALESCE(json_extract(n.props,'$.date'), ''), n.id`).all(decl.id);
     db.close();
     return answer(rows, "store", null, law);
   } catch (e) {
@@ -273,6 +330,14 @@ export function civicQuarter({ worldDb = null } = {}) {
  * answer, quoted from the world record — never retyped here, so the door and
  * the works cannot disagree. Floor behaviour mirrors classRoster: a missing
  * or failed store answers honestly with zero notices and says why.
+ *
+ * DELIBERATELY NOT MOVED WITH THE IDEA LANE (2026-09-01). The founder ruled
+ * that an idea may stand anywhere and `ideasTank` above now reads by instance
+ * rather than by ground. He has ruled NOTHING about bounties, and the sentence
+ * two paragraphs up is the reason this reader is not swept along by symmetry: a
+ * bounty is a NOTICE ON A BOARD — the board's ground is half of what it is —
+ * where an idea is a claim its author made. If that turns out to be wrong it is
+ * one clause here, and it should change by ruling rather than by tidiness.
  */
 export function bountyBoard({ worldDb = null } = {}) {
   const path = worldDb ?? storeDbPath();

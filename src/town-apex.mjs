@@ -92,7 +92,7 @@ export const TOWN_READS = Object.freeze({
   // asks down through votes (already above) and up through blueprints.
   quests: { tool: "read_quests", blurb: "The town's asks for its residents — the quest registry × one resident's progress today, and the funding pots (args: { handle })." },
   bounties: { tool: "read_bounties", blurb: "The Bounty Board — residents' asks of residents, every notice in its poster's own name. Resident-authored asks: the reading law applies." },
-  ideas: { tool: "read_ideas", blurb: "The Think Tank — residents' asks of the town: every published idea, plus the chest where a drawn idea becomes a blueprint. Resident-authored: the reading law applies." },
+  ideas: { tool: "read_ideas", blurb: "The Think Tank — residents' asks of the town: every published idea, wherever it stands, plus the chest where a drawn idea becomes a blueprint. Resident-authored: the reading law applies." },
   // ── the quarter itself (2026-09-01, the clarity round) ────────────────────
   //
   // The three lane reads above answer WHAT IS STANDING on a lane. None of them
@@ -137,7 +137,7 @@ export const TOWN_READABLE = Object.freeze(Object.keys(TOWN_READS));
 // for key — it is the same function underneath.
 const TOWN_ACTS = {
   post: { tool: "town_post",
-    inline: "put an ask on a civic lane — today class: \"idea\" publishes at the Think Tank: the door picks the cell, stakes 1✦ escrow unless you pass more, and the body is the claim (one breath, ≤150 chars)" },
+    inline: "put an ask on a civic lane — today class: \"idea\" publishes at the Think Tank: the door picks the cell, stakes 1✦ escrow unless you pass more, and the body is the claim (one breath, ≤150 chars). An idea may stand anywhere: at: {x,y} puts it somewhere else — an idea standing in a place is an idea OF that place — and on: \"<by>/<slug>\" plants it as a predicate of that mark, an idea ABOUT it; the two are exclusive, and neither takes the Tank cell as before" },
   stake: { tool: "town_stake", shadow: { tool: "town_stake_read", key: "stakes" },
     inline: "put stamps behind one of the town's own lane marks — a bounty on the board or an idea in the tank: the stamps leave your balance and sit in escrow on the mark, raising its ✦weight at the next Settlement and anchoring it against retirement. Yours the whole time; any other class is refused by name and staked at the world door" },
   unstake: { tool: "town_unstake", shadow: { tool: "town_stake_read", key: "stakes" },
