@@ -435,12 +435,38 @@ test("town's enums ARE the serving tables — read is READS ∪ ACTS (the card o
   assert.deepEqual(p.do.enum, [...TOWN_DISPATCHABLE], "do: returned with the roster, enum'd, as the read-pure commit promised");
 });
 
-test("household: do is enum'd from ACTS; read carries NO enum (act-card grammar) and suggests the roster", async () => {
-  const { HOUSEHOLD_TOOL, HOUSEHOLD_DISPATCHABLE, HOUSEHOLD_READABLE } = await import("../src/household-apex.mjs");
+test("household: BOTH do and read are enum'd from the tables — the same union the town door advertises", async () => {
+  // ⚠ THIS TEST USED TO ASSERT THE OPPOSITE: `p.read.enum === undefined`, with
+  // the reason "an enum here would bounce lawful act-card reads like read:
+  // \"send\"". The premise was true and the conclusion did not follow — an enum
+  // of the READS alone would bounce them, but the accepted set is reads ∪ acts,
+  // both known and both closed. The town door directly above advertises exactly
+  // that union, so the same grammar was being advertised two ways at two doors:
+  // one handing connectors a real enum, the other non-constraining `examples`.
+  // Founder-ruled 2026-08-31: one grammar, advertised once.
+  const { HOUSEHOLD_TOOL, HOUSEHOLD_DISPATCHABLE, HOUSEHOLD_READ_ENUM } = await import("../src/household-apex.mjs");
   const p = HOUSEHOLD_TOOL.inputSchema.properties;
   assert.deepEqual(p.do.enum, HOUSEHOLD_DISPATCHABLE);
-  assert.equal(p.read.enum, undefined, "an enum here would bounce lawful act-card reads like read: \"send\"");
-  assert.deepEqual(p.read.examples, HOUSEHOLD_READABLE);
+  assert.deepEqual(p.read.enum, [...HOUSEHOLD_READ_ENUM], "the reads AND the act names — the roster the door actually accepts");
+  assert.equal(p.read.examples, undefined, "`examples` was the weaker advertisement; it does not ride beside the enum that replaced it");
+});
+
+test("CROSS-DOOR: town and household advertise read: the same way, and the world door's difference is principled", async () => {
+  // The standing review rule, made a test: two doors naming one question two
+  // ways is the class being removed. Town and household are both
+  // STANDING-scoped — what you may read is a property of your key, so the
+  // roster is knowable and is closed. The WORLD door is STANDPOINT-scoped and
+  // keeps no enum on purpose: "which acts are afforded depends on where you
+  // stand — an enum would promise acts the ground refuses". That is a
+  // different question, so a different answer is not drift.
+  const { TOWN_TOOL, TOWN_READABLE, TOWN_DISPATCHABLE } = await import("../src/town-apex.mjs");
+  const { HOUSEHOLD_TOOL, HOUSEHOLD_READ_ENUM } = await import("../src/household-apex.mjs");
+  for (const [name, tool] of [["town", TOWN_TOOL], ["household", HOUSEHOLD_TOOL]])
+    assert.ok(Array.isArray(tool.inputSchema.properties.read?.enum), `the ${name} door advertises read: as a closed roster`);
+  assert.deepEqual(TOWN_TOOL.inputSchema.properties.read.enum, [...TOWN_READABLE, ...TOWN_DISPATCHABLE]);
+  // ...and the household's is DEDUPED, because at that door three names are
+  // both an act and a read. Same rule, one door's own arithmetic.
+  assert.equal(HOUSEHOLD_READ_ENUM.length, new Set(HOUSEHOLD_READ_ENUM).size);
 });
 
 test("world: do/read carry NO enum (standpoint decides) and suggest the dispatch roster; as: is the closed pair", async () => {

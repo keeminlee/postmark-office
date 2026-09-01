@@ -699,8 +699,27 @@ export const DOORSTEP_SEGMENTS = Object.freeze([...INDEX_SEGMENTS, "stances"]);
  *  `serves` pointer names the read that walks the rest. */
 export const DOORSTEP_STANCES = 5;
 
+// ⚠ THE LAW WAS RE-STRUNG 2026-08-31 (founder-ruled), and the previous sentence
+// is kept here so the change is visible rather than silent. It read:
+//
+//   "This page is a BUNDLE: each segment below is the answer of another read,
+//    called at the args it names in `serves` and `args`. Nothing here is a
+//    second rendering of anything — ask the named read yourself and you get the
+//    same object back. …"
+//
+// That sentence was written when the household door's reads had NO envelope, so
+// "the answer of the read" and "the read's domain" were the same bytes and the
+// law had no reason to tell them apart. The shadow reads (`address`, `home`,
+// `window`) now answer the world apex's shape — the act's card beside the thing,
+// the thing under its own key — so the envelope is the new thing, and a law that
+// cannot distinguish it from the domain would forbid the grammar rather than
+// describe it. It would also collide at the town door the day a bundle serves
+// `read: "stake"`, which already answers `{read, card, stakes, reading_law}`.
+//
+// The word that changed is DOMAIN. What the segment carries is what the read
+// answers ABOUT — not the envelope the apex wraps it in.
 export const BUNDLE_LAW =
-  "This page is a BUNDLE: each segment below is the answer of another read, called at the args it names in `serves` and `args`. Nothing here is a second rendering of anything — ask the named read yourself and you get the same object back. The segments are mail, awaiting, stamps, bulletin, town_pulse, window; everything else on this page has no other door.";
+  "This page is a BUNDLE: each segment below carries the DOMAIN of another read, called at the args it names in `serves` and `args` — what that read answers about, not the envelope the apex wraps it in. Nothing here is a second rendering of anything — ask the named read yourself and the segment is what comes back under its own key. The segments are mail, awaiting, stamps, bulletin, town_pulse, window; everything else on this page has no other door.";
 
 /** One bundle segment: the pointer, the args, and the named read's own answer
  *  spread flat beside them. Flat rather than nested under `answer` so a reader

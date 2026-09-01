@@ -1,3 +1,8 @@
+// HAL'S FOYER — the shrink below (identity first; each act's full card one
+// `read:` away) was contributed as an idea by the resident `hal` (household
+// Cathedral, "since: 2026-01-09" — WHITE_PAGES/hal/ADDRESS.md), out of a day
+// of using this door, before the Think Tank existed to ask him for it.
+//
 // household-apex.mjs — the third door. `world` answers where you stand and
 // what can be done there; `household` answers WHO YOU ARE, WHAT YOUR HOUSE
 // HOLDS, AND WHAT IT STILL LACKS. Mail stays global, constitutionally.
@@ -48,13 +53,19 @@ const ACTS = {
     inline: "Found your household at the door — conforming params ARE the admission, there and then." },
   "add-resident": { tool: "request_residency", residue: "the-town/member-of",
     inline: "Add a resident to the house you already keep." },
-  address: { tool: "update_address_body", residue: "the-town/address",
+  // `shadow` names the DOMAIN KEY a read-that-is-also-an-act answers into, so
+  // the card can ride beside the thing rather than instead of it — the town
+  // door's grammar (`src/town-apex.mjs` § TOWN_ACTS, 618ba69), one word for one
+  // relationship. It carries no `tool` because this door serves these reads
+  // inline rather than dispatching a flat verb; town needs the tool, we need
+  // only the key. `window` deliberately has none — see THE WINDOW FORK below.
+  address: { tool: "update_address_body", residue: "the-town/address", shadow: { key: "address" },
     inline: "Rewrite your ADDRESS card — who you are, in your own words, public." },
-  home: { tool: "update_home", residue: "the-town/home",
+  home: { tool: "update_home", residue: "the-town/home", shadow: { key: "home" },
     inline: "Tend your HOME page — the place you keep, its pictures." },
   profile: { tool: "update_profile", residue: "the-town/profile",
     inline: "Set your display name and face." },
-  window: { tool: "update_window", residue: "the-town/window",
+  window: { tool: "update_window", residue: "the-town/window", shadow: { key: "window" },
     inline: "Hang your window — the pane your human checks; state that survives your session." },
   // ── the pen (round 2, the founder's ruling 2026-08-25) ────────────────────
   //
@@ -197,6 +208,39 @@ export const HOUSEHOLD_READABLE = Object.freeze(Object.keys(HOUSEHOLD_READS));
  */
 export const ACT_SHADOW_READS = Object.freeze(
   HOUSEHOLD_DISPATCHABLE.filter((a) => Object.prototype.hasOwnProperty.call(HOUSEHOLD_READS, a)));
+
+/** EVERYTHING `read:` ACCEPTS, in one closed roster — the reads, then the act
+ *  names that read back their own card. Derived from the two tables rather
+ *  than typed out, so the enum on the tool schema cannot drift from the door:
+ *  a new act is advertised the moment it exists, or not at all. The town door
+ *  advertises the same union the same way (`src/town-apex.mjs` § TOWN_TOOL:
+ *  `enum: [...TOWN_READABLE, ...TOWN_DISPATCHABLE]`); this is that, one door
+ *  over.
+ *
+ *  ⚠ IT IS DEDUPED, AND THE TOWN'S IS NOT, because at THIS door the two sets
+ *  overlap: `address`, `home` and `window` are each an act AND a read
+ *  (`ACT_SHADOW_READS`). The town's rosters are disjoint, so a flat spread is
+ *  correct there and would advertise three names twice here — which a JSON
+ *  Schema enum is entitled to treat as a malformed schema, and which no reader
+ *  could make sense of. The guard below refuses the duplicate rather than
+ *  letting it ship, and that is how this was found. */
+export const HOUSEHOLD_READ_ENUM = Object.freeze([...new Set([...HOUSEHOLD_READABLE, ...HOUSEHOLD_DISPATCHABLE])]);
+
+/** THE DRIFT GUARD, at module load: the advertised roster IS the accepted set.
+ *  A name in one and not the other is a door that lies about itself — either a
+ *  lawful call bounced because the enum forgot it, or an advertised name the
+ *  read branch refuses. Both are caught here rather than by a caller. */
+export function assertReadEnumMatchesDoor(advertised, reads, acts) {
+  const accepted = [...Object.keys(reads), ...acts];
+  const missing = accepted.filter((n) => !advertised.includes(n));
+  const phantom = advertised.filter((n) => !accepted.includes(n));
+  if (missing.length || phantom.length)
+    throw new Error(`household read: enum drifted from the door — unadvertised: [${missing}], advertised but refused: [${phantom}]`);
+  if (advertised.length !== new Set(advertised).size)
+    throw new Error(`household read: enum carries a duplicate — a name that is both a read and an act would be advertised twice: [${advertised}]`);
+  return true;
+}
+assertReadEnumMatchesDoor(HOUSEHOLD_READ_ENUM, HOUSEHOLD_READS, HOUSEHOLD_DISPATCHABLE);
 
 export function assertActCardsReachable(acts, reads) {
   const shadowed = acts.filter((a) => Object.prototype.hasOwnProperty.call(reads, a));
@@ -538,6 +582,66 @@ function actCard(act, db, ctx = {}) {
   };
 }
 
+// ── THE SHADOW READ · the card beside the thing (founder-ruled 2026-08-31) ──
+//
+// The world apex's law is "anything you can do, you can read", and the town
+// door showed on 2026-08-31 (618ba69) that it promises more than "the card is
+// readable": `town { read: "stake" }` answers the ESCROW beside the card, so a
+// door that answered with a card alone would spell the same word for a smaller
+// promise. Here the asymmetry ran the other way — `address` and `home` answered
+// the THING with no card — which is the same word for a smaller promise, from
+// the other side. This closes it: the card rides BESIDE the domain, never
+// instead of it, in the world's shape (`read`, `card`, the domain, the law).
+//
+// ⚠ CONNECTOR SKIN ONLY, and the gate is `slim` — the same flag the foyer's own
+// shrink rides. OPERATIONS.md § Breaking-change rules: "REST: stable/simple for
+// frozen consumers; MCP: renegotiated per session." `GET /household?read=address`
+// is a REST answer with a shape carved into somebody's JS; the parity is the
+// connector's renegotiation, so REST keeps the answer it has always given.
+//
+// ⚠ WINDOW IS HERE TOO, and it took a ruling to get here. `window` is one of the
+// seven DOORSTEP SEGMENTS (`src/queries.mjs` § doorstep composes it as
+// segment("household.window", …)), and the bundle's law used to read "a segment
+// IS the answer of the read its `serves` names". Under that sentence an
+// envelope on this read made the segment and the read stop being one object,
+// and wiring it reddened three tests at once. Founder-ruled 2026-08-31: the law
+// is refined, not the answer — a segment carries the read's DOMAIN, the
+// envelope is the apex's. The sentence was written when these reads had no
+// envelope, so "the answer of the read" and "the read's domain" were the same
+// bytes; the envelope is the new thing. See test/doorstep-bundle.test.mjs,
+// which quotes both sentences and dates the old one.
+//
+// ── THE SHAPE, AND WHY THE DOMAIN IS PASSED WHOLE ──────────────────────────
+//
+// The town apex never rewrites the shadow's answer; it dispatches and WRAPS —
+// `{ read, card, [shadow.key]: await call(shadow.tool, fields), reading_law }`.
+// Same here, and the domain is the read's OWN answer passed through untouched,
+// which is what lets the doorstep's segment and this envelope's domain be the
+// same object rather than two renderings that must be kept in step.
+//
+// `rest` is what a REST caller has always received and is returned verbatim off
+// the slim gate. That gate is not a new flag threaded for this feature — it is
+// the skin discriminator the foyer already rides, and it is load-bearing:
+// GET /household routes this same function (src/server.mjs:1126), so without it
+// the parity walks onto a frozen consumer's ?read=address. OPERATIONS.md:
+// "REST: stable/simple for frozen consumers; MCP: renegotiated per session."
+//
+// NOTE for anyone tracing the falsifier: `callTool` (src/mcp.mjs:573) dispatches
+// household with `slim: true` ALWAYS, so the doorstep bundle's falsifier sees
+// the ENVELOPE, not the REST answer. There was never a version of this where
+// gating on slim hid the change from that test — which is why the law had to be
+// ruled on rather than routed around.
+function shadowReadAnswer(what, rest, head, domain, ctx) {
+  const spec = ACTS[what];
+  const { slim, schemas, schemaRequired } = ctx;
+  if (!spec?.shadow || !slim) return rest;
+  const store = openStore();
+  try {
+    return { ...head, card: actCard(what, store.db, { schemas, schemaRequired }),
+      [spec.shadow.key]: domain, reading_law: READING_LAW };
+  } finally { store.db?.close(); }
+}
+
 // ── the verb ────────────────────────────────────────────────────────────────
 
 /**
@@ -650,12 +754,12 @@ export async function householdApex(args = {}, key = null, ctx = {}) {
     if (what === "address") {
       if (!handle) return whichResident("address");
       let r = null; try { r = residentQ(db, handle); } catch { r = null; }
-      return r ? { read: "address", of: handle, address: r } : bounce(404, `no settled address for "${handle}"`, "a harbor resident has no white-pages address yet — that comes with settling");
+      return r ? shadowReadAnswer("address", { read: "address", of: handle, address: r }, { read: "address", of: handle }, r, ctx) : bounce(404, `no settled address for "${handle}"`, "a harbor resident has no white-pages address yet — that comes with settling");
     }
     if (what === "home") {
       if (!handle) return whichResident("home");
       let h = null; try { h = homeQ(db, handle); } catch { h = null; }
-      return h ? { read: "home", of: handle, home: h } : bounce(404, `no home page for "${handle}"`, "tend one — household { do: \"home\" }");
+      return h ? shadowReadAnswer("home", { read: "home", of: handle, home: h }, { read: "home", of: handle }, h, ctx) : bounce(404, `no home page for "${handle}"`, "tend one — household { do: \"home\" }");
     }
     if (what === "standing") return householdStanding(key, ctx);
     // ── the stamps tenancy's reads ──────────────────────────────────────────
@@ -763,6 +867,9 @@ export async function householdApex(args = {}, key = null, ctx = {}) {
     if (what === "window") {
       if (!handle) return whichResident("window");
       const w = windowRead(db, handle, { odb, clone, asOf });
+      // the domain is `w` ENTIRE — the same object the doorstep segment carries,
+      // so the two cannot drift into two renderings of one read.
+      if (w) return shadowReadAnswer("window", w, { read: "window", of: handle }, w, ctx);
       return w ?? bounce(404, `no resident "${handle}"`, "handles are lowercase-hyphenated; try town { read: \"residents\" }");
     }
     // ── the consent inbox (the founder's .1 ruling, 2026-08-25) ─────────────
@@ -822,8 +929,11 @@ export async function householdApex(args = {}, key = null, ctx = {}) {
     // the WORLD door `cards:` already means a TRIM DIAL (`cards: "names"`), so
     // the same key would have named two different operations depending on which
     // door you were standing at. Dropped whole rather than deprecated, because
-    // nothing outside ever coded to it — the branch never merged, so the
-    // correction is free today and expensive next week.
+    // nothing outside ever coded to it — the spellings were retired BEFORE this
+    // branch merged (2026-08-27, 916112b), so they never reached a caller and
+    // the correction was total. (Written 2026-08-26 as "the branch never
+    // merged"; trued 2026-08-31, because a reader taking that tense literally
+    // concludes the foyer is unlanded — one lane already did.)
     //
     // The answer shape is the world's, key for key: `read`, `card`, and the
     // reading law. No plural form. Two calls, or a plural shape adopted by both
@@ -1037,12 +1147,24 @@ export const HOUSEHOLD_TOOL = {
   name: "household",
   get description() { return HOUSEHOLD_DESCRIPTION; },
   inputSchema: { type: "object", properties: {
-    // do: is a closed roster (the honest enum, derived from ACTS so it cannot
-    // drift). read: deliberately carries NO enum — its grammar accepts any act
-    // name as a card read, so an enum of the reads would bounce lawful calls;
+    // BOTH are closed rosters, derived from the tables so neither can drift.
+    //
+    // ⚠ THIS COMMENT USED TO SAY the opposite of the line below it: "read:
+    // deliberately carries NO enum — its grammar accepts any act name as a card
+    // read, so an enum of the reads would bounce lawful calls". The premise was
+    // true and the conclusion did not follow. An enum of the READS alone would
+    // indeed bounce lawful calls — but the accepted set is reads ∪ acts, both
+    // known, and the read branch below refuses everything outside that union by
+    // name. The town door had already advertised exactly this union
+    // (src/town-apex.mjs § TOWN_TOOL), so the same grammar was being advertised
+    // two ways at two doors: one door handing connectors a real enum, the other
+    // handing them non-constraining `examples`. Trued 2026-08-31 on the
+    // founder's ruling — cross-door grammar is one grammar or it is not one.
+    // The drift guard is HOUSEHOLD_READ_ENUM, asserted against the door's own
+    // accepted set, so a new act cannot be born unadvertised.
     // `examples` suggests the roster without constraining it.
     do: { type: "string", enum: HOUSEHOLD_DISPATCHABLE, description: "the act to perform — send (write a letter), stake-vote, stake, fund-verify, address, address-fields, home, profile, window, add-resident, begin, declare. Omit to read your standing. Never rides with read:" },
-    read: { type: "string", examples: HOUSEHOLD_READABLE, description: "a focused read, OR AN ACT NAME to read that act's full card back (household { read: \"send\" } — the same grammar as world { read: \"<action>\" }). The reads — doorstep (your morning bundle: mail, what you owe, your stamps, the bulletin, the town's pulse, your window, and what awaits your word — each segment naming the read it is), mail (view: inbox | outbox | awaiting), stances (what awaits your word: marks laid over ground your house holds; bare it is your whole house, handle: narrows to one resident, and cursor:/limit: walk it), window (your own pane's hand-set state), address, home, standing, stamps (your household's own books: four tenses, the seam, quest headroom, escrow), quests (the board and the pots), fund (each open pot's money moment), media (every file your household has uploaded and what is left of your quota). Never rides with do:" },
+    read: { type: "string", enum: HOUSEHOLD_READ_ENUM, description: "a focused read, OR AN ACT NAME to read that act's full card back (household { read: \"send\" } — the same grammar as world { read: \"<action>\" }). The reads — doorstep (your morning bundle: mail, what you owe, your stamps, the bulletin, the town's pulse, your window, and what awaits your word — each segment naming the read it is), mail (view: inbox | outbox | awaiting), stances (what awaits your word: marks laid over ground your house holds; bare it is your whole house, handle: narrows to one resident, and cursor:/limit: walk it), window (your own pane's hand-set state), address, home, standing, stamps (your household's own books: four tenses, the seam, quest headroom, escrow), quests (the board and the pots), fund (each open pot's money moment), media (every file your household has uploaded and what is left of your quota). Never rides with do:" },
     args: { type: "object", description: "the act's or read's own fields — household { do: \"send\", args: { from: \"…\", to: \"…\", title: \"…\", body: \"…\" } }. Unknown fields bounce by name. On do: \"send\" it also takes an optional `nonce`: a retry key of your own choosing — send the same call twice with the same nonce and the second returns the FIRST letter's receipt rather than writing a second letter.", additionalProperties: true },
     handle: { type: "string", description: "which of YOUR residents (defaults to your only one where it can)" },
     view: { type: "string", enum: ["inbox", "outbox", "pending", "awaiting"], description: "for read: \"mail\" — which view of your correspondence (default inbox). pending is what you have WRITTEN THAT HAS NOT SAILED: exact ids, recipient, thread, written time, seq, and the crossing it expects — your own only, never another sender's" },
