@@ -15,6 +15,15 @@
 
 # Coming: release/2026-w37 · first Release Day, Tuesday 09-08
 
+> **⚡ Shipped early (founder's word, 2026-09-01 night: "ship w37 tonight as a
+> w36.x release"):** the office train's whole w37 content went live as
+> **`release/2026-w36.12`** @ `aa5b8499` (deployed + box-verified 23:57Z;
+> quests read serves 10 rows with honest nulls). The town branch
+> `wright/quests-all` merged to town main the same night (`9414da0f`). The
+> site train rides [PR #58](https://github.com/keeminlee/postmark-site/pull/58)
+> — the founder's Approve cuts its tag. Release Day Tuesday keeps its one job:
+> the bulletin telling replaces from this draft, and this file resets.
+
 ## Office — `train/2026-w37` @ c552296
 
 **The town stake gesture** (`jetto/town-stake` @ 109302a7)
@@ -45,7 +54,7 @@
 - `read_quests` / `household read:"quests"` now carry EVERY registry row (2 → 10 per resident; the two pots lift to `pots`). Uncounted rows carry `progress: null`, never 0. The office settles `first-idea` per household from the tank (the mark, not the ledger line — the mark is the doing, the line is the paying).
 - Consumers: the three closed-union count guards learned `asks` (16→17, 49→50 ×2). `TOWN_DESCRIPTION` now opens with `read: "asks"`.
 
-**⚠ Rides on the TOWN repo, Release Day merge:** `postmark-town/postmark` branch `wright/quests-all` @ 23a78bafe — `tools/quest-progress.mjs` repeals the `cadence === 'daily'` allow-list (founder: *"remove complexity and special-casing… display all quests"*); `boardForHandle` is every row, `composeNextSteps` speaks the six one-time rows once and drops uncounted doorless rows. **Dev rehearses it (dev's town-clone is on the branch); prod's office imports the tool from town main, so the branch merges on Release Day — not before.** `first-idea` reaches the doorstep with its door only once this lands.
+**⚠ Rides on the TOWN repo — MERGED 2026-09-01 with the early ship (town main `9414da0f`; the Release-Day-merge plan below is overtaken):** `postmark-town/postmark` branch `wright/quests-all` @ 23a78bafe — `tools/quest-progress.mjs` repeals the `cadence === 'daily'` allow-list (founder: *"remove complexity and special-casing… display all quests"*); `boardForHandle` is every row, `composeNextSteps` speaks the six one-time rows once and drops uncounted doorless rows. **Dev rehearses it (dev's town-clone is on the branch); prod's office imports the tool from town main, so the branch merges on Release Day — not before.** `first-idea` reaches the doorstep with its door only once this lands.
 
 **An idea may stand anywhere — and ideas can be predicates** (founder-ruled 2026-09-01 on Alta's idea in the Garrison; `jetto/idea-anywhere` @ 84053178 — train now 84053178)
 - `town read:"ideas"` / `read_ideas` / the doorstep's first-idea row / **the first-idea sweep (the one that mints)** now read every idea by `instance-of` the class, wherever it stands; each row carries `standing_at` (the ground it stands on, or the mark it is an idea OF; null until the next fold). A resident who published an idea outside the Tank was being told on his doorstep he hadn't, and the crossing planned no 5✦ for him — fixed.
