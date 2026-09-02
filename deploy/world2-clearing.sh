@@ -106,6 +106,19 @@ due_window() {
     "SELECT id FROM windows WHERE status = 'open' AND closes_at <= now() ORDER BY id LIMIT 1" 2>/dev/null
 }
 
+# ── THE BOUNDARY WAIT (the founder's clock catch, 2026-09-02) ───────────────
+# The windows' boundaries ride at :45:40 — the genesis offset — while the
+# timer fires on the :45:00 marks. So "the open window whose closes_at has
+# passed" found only the PREVIOUS window, and every close ran a full cycle
+# late: 163 closed 09-02 05:45Z, twelve hours after its own boundary; 164 the
+# same at 17:45Z. The marks stay the timer's (census Decision 3 is law); this
+# waits out the offset instead of moving the marks. Bounded at 90s, and a run
+# that starts with a window already due (catch-up, a hand run) waits zero.
+for _ in $(seq 1 18); do
+  [ -n "$(due_window)" ] && break
+  sleep 5
+done
+
 closed=0
 last_out=""
 rc=0
