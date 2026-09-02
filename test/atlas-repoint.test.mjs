@@ -23,7 +23,7 @@ import { tmpdir } from "node:os";
 import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-import { regionList, regionResidents, home } from "../src/queries.mjs";
+import { regionList, regionResidents, home, townSummary } from "../src/queries.mjs";
 import { bearingOf, slugifyRegion, deriveFromFold } from "../src/atlas-fold.mjs";
 
 const HERE = resolve(fileURLToPath(import.meta.url), "..");
@@ -295,6 +295,18 @@ test("FALSIFIER: identical facts produce byte-identical rows and answers on both
   // the key ORDER, which deepEqual does not check
   assert.deepEqual(Object.keys(JSON.parse(shared(fromWorld)[0].json)), Object.keys(JSON.parse(shared(fromLedger)[0].json)));
   assert.deepEqual(Object.keys(JSON.parse(homeRow(fromWorld, "bob").json)), Object.keys(JSON.parse(homeRow(fromLedger, "bob").json)));
+
+  // read_town is the fourth shape the brief names, and it is the one this lane
+  // must leave ALONE rather than merely leave equal: it reads meta.as_of,
+  // meta.hydrated_counts and the residents table, and touches neither regions
+  // nor homes. Asserted rather than reasoned about — this build adds meta keys
+  // (atlas_source, atlas_world_sha, atlas_diff), and a summary that widened to
+  // pick them up would be a shape change nobody asked for.
+  const metaOfDb = (db) => Object.fromEntries(db.prepare("SELECT key, value FROM meta").all().map((r) => [r.key, r.value]));
+  assert.deepEqual(townSummary(fromWorld, metaOfDb(fromWorld)), townSummary(fromLedger, metaOfDb(fromLedger)),
+    "read_town must be byte-identical on both paths — it reads neither table this lane rebuilds");
+  assert.ok(!JSON.stringify(townSummary(fromWorld, metaOfDb(fromWorld))).includes("atlas_"),
+    "…and must not have grown a field from the meta keys this build adds");
 
   fromWorld.close(); fromLedger.close();
 
