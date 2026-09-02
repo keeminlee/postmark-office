@@ -60,6 +60,13 @@ export function mirrorAct(row, seq, env = process.env) {
   state.queue = state.queue.then(async () => {
     try {
       const p = await pool(env);
+      // ONE SPELLING (enforced 2026-08-29; see world2-pen.insertAct for the
+      // whole argument): the resolved household KEY, via the docket pen's own
+      // resolver on the docket pen's own input — never the key's name, never a
+      // gh:<id>, or acts and claims spell one fact two ways and every reader
+      // joining them loses rows silently (the guards lane measured it live).
+      const { householdKeyFor } = await import("./world2-claims.mjs");
+      const household = row.household == null ? null : await householdKeyFor(p, row.household);
       await p.query(
         `INSERT INTO acts (at, crossing, actor, action, object,
                            at_anchor, at_dx, at_dy, witnesses, class,
@@ -67,7 +74,7 @@ export function mirrorAct(row, seq, env = process.env) {
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
         [row.written_at, row.crossing, row.actor, row.action, row.object,
          row.at_anchor, row.at_dx, row.at_dy, row.witnesses, row.class,
-         row.payload, row.effect, row.household, seq],
+         row.payload, row.effect, household, seq],
       );
       state.written += 1;
     } catch (err) {

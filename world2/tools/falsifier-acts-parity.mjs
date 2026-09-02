@@ -122,6 +122,33 @@ const ownerPool2 = new pg.Pool({ connectionString: process.env.W2_OWNER_URL, max
 const { rows: liveDrafts } = await ownerPool2.query(
   "SELECT slug FROM claims WHERE status = 'draft'");
 const stillPrivate = new Set(liveDrafts.map((r) => r.slug));
+
+// ── DEPARTURE 4 — ONE SPELLING OF THE HOUSEHOLD (enforced 2026-08-29) ───────
+//
+// The journal keeps 1.0's spelling (the office key's NAME); `acts` carries the
+// RESOLVED household key, via the docket pen's own resolver — Wright's
+// one-spelling ruling, enforced in the mirror after the guards lane measured
+// the drift live ('darko' ×12 in acts while claims held the key, and the
+// draft overlay silently lost every deleted mark at the join). So the
+// comparator applies the SAME mapping to the journal side: identities'
+// answer, else solo:<name>, null preserved. Applying it here rather than
+// widening the equality keeps a WRONG spelling red — an acts row holding a
+// name, a gh:<id>, or anything but the mapped value still fails.
+//
+// THE TWELVE PRE-ENFORCEMENT ROWS, dated and named: acts ids 2926, 2928–2938
+// were mirrored before the enforcement deploy and hold the old name spelling.
+// acts is append-only by trigger (a superuser UPDATE is refused — proven day
+// one), so they cannot be repaired in place; they are compared under the OLD
+// rule BY ID, exactly as the lane-closure falsifier carries its one lost say.
+// The store's phase-6 rebuild retires this list; a thirteenth id here without
+// a dated receipt is a red flag in review, not a maintenance step.
+const PRE_ENFORCEMENT_IDS = new Set([2926, 2928, 2929, 2930, 2931, 2932, 2933, 2934, 2935, 2936, 2937, 2938]);
+const { rows: identRows } = await ownerPool2.query("SELECT handle, household FROM identities");
+const identMap = new Map(identRows.map((r) => [r.handle, r.household]));
+const mapHousehold = (h) => (h == null ? null : (identMap.get(h) ?? `solo:${h}`));
+const journalSide = (j, actsId) => PRE_ENFORCEMENT_IDS.has(Number(actsId))
+  ? j
+  : { ...j, household: mapHousehold(j.household) };
 const substanceUndated = (r) => {
   const { written_at: _drop, ...rest } = JSON.parse(substance(r));
   return JSON.stringify(rest);
@@ -160,8 +187,9 @@ for (const j of jrows) {
     "SELECT * FROM acts WHERE journal_seq = $1 AND at = $2", [j.seq, j.written_at]);
   if (rows.length === 1) {
     const twin = { ...rows[0], written_at: rows[0].at };
-    if (substance(j) !== substance(twin)) {
-      console.error(`RED: journal seq ${j.seq} substance drift:\n  journal: ${substance(j)}\n  acts:    ${substance(twin)}`);
+    const jj = journalSide(j, rows[0].id); // departure 4: the household mapping
+    if (substance(jj) !== substance(twin)) {
+      console.error(`RED: journal seq ${j.seq} substance drift:\n  journal: ${substance(jj)}\n  acts:    ${substance(twin)}`);
       red++;
     }
     continue;
@@ -172,8 +200,9 @@ for (const j of jrows) {
     : { rows: [] };
   if (late.length === 1) {
     const twin = { ...late[0], written_at: late[0].at };
-    if (substanceUndated(j) !== substanceUndated(twin)) {
-      console.error(`RED: journal seq ${j.seq} substance drift (released deferred act):\n  journal: ${substanceUndated(j)}\n  acts:    ${substanceUndated(twin)}`);
+    const jj = journalSide(j, late[0].id); // departure 4 applies here too
+    if (substanceUndated(jj) !== substanceUndated(twin)) {
+      console.error(`RED: journal seq ${j.seq} substance drift (released deferred act):\n  journal: ${substanceUndated(jj)}\n  acts:    ${substanceUndated(twin)}`);
       red++;
     } else if (new Date(twin.written_at) < new Date(j.written_at)) {
       console.error(`RED: journal seq ${j.seq} (${j.object}) was mirrored EARLIER than it was composed — a released act is dated at the putting-forward, which is never before the writing`);
