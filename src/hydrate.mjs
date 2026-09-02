@@ -16,6 +16,8 @@ import { isResidentHandle } from "./residency.mjs"; // one definition of what a 
 import { readProfile } from "./profiles.mjs"; // PROFILE.md postdates the vendored reader — see that file
 import { readWindowState } from "./panes.mjs"; // the pane's machine twin — one island parser, two readers
 import { SCHEMA } from "./schema.mjs";
+import { readWorldFold, deriveFromFold, foldDiff } from "./atlas-fold.mjs"; // placement's new source — see that file
+import { WORLD_CLONE } from "./world-store.mjs"; // ONE definition of which clone is the world's
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, "..");
@@ -27,6 +29,14 @@ function arg(name, fallback) {
 
 const TOWN = resolve(arg("--town", "G:/postmark/repo"));
 const DB_PATH = resolve(ROOT, arg("--db", "office.db"));
+
+// The world clone placement is now read from, and the ref it is read AT.
+// `origin/main` rather than HEAD for the reason world-hydrate.mjs states about
+// the same clone: the write pen parks it on household draft branches, so HEAD
+// is whatever the last writer left behind. `--world ""` disables the world
+// source outright, which is how the fallback path is exercised on purpose.
+const WORLD = arg("--world", WORLD_CLONE);
+const WORLD_REF = arg("--world-ref", "origin/main");
 
 if (!existsSync(join(TOWN, "WHITE_PAGES"))) {
   console.error(`FATAL: not a town checkout (no WHITE_PAGES): ${TOWN}`);
@@ -260,42 +270,144 @@ if (existsSync(questTool) && existsSync(registryPath)) {
 }
 
 // ── atlas: regions + homes ───────────────────────────────────────────────────
-// The town's spatial truth is the judgment ledger PROJECTS/build-the-town/atlas/
-// placements.json (the ONLY place placement judgment lives) joined with each
-// resident's own HOME/HOME.md + HOME/REGION.md (already parsed by readTown into
-// resident.home / resident.region / assets). We mirror town-atlas.mjs's join:
-// a region's residents are its holder plus every home the ledger places in it.
-// If the ledger isn't in the checkout, we serve nothing rather than invent.
+//
+// RE-SOURCED 2026-09-02 (the atlas–world merge, front 3). Placement used to be
+// read straight out of the town's hand-kept judgment ledger
+// PROJECTS/build-the-town/atlas/placements.json. The merge demotes that file to
+// a queue/provenance archive, and the machinery map named what a demotion
+// without this change would do (§3.1, HIGH): hydrate would keep parsing the
+// archive happily and /regions, /homes/{h}, letters?region= and MCP
+// list_regions would serve the last hand-kept placement forever, with no error,
+// while the map and the world moved on.
+//
+// So the placement question now goes to the WORLD FOLD — the artifacts the
+// world emits at every settlement — and placements.json is the LOUD fallback
+// for a checkout with no world beside it. src/atlas-fold.mjs holds the
+// derivation and states which fields derive and which are carried.
+//
+// THE JOIN IS UNCHANGED and deliberately so: a region's holder, display name,
+// prose and images still come from the holder's own HOME/REGION.md, and a
+// home's title, description and images still come from the resident's own
+// HOME/HOME.md, exactly as before. The world answers WHERE something stands and
+// nothing else; a resident's writing was never the placement ledger's to own.
+// Only two things changed hands — which region a household is in, and which
+// households a region holds.
+//
+// The answer shapes are law here. These two rows are what /regions, /homes/{h},
+// letters?region= and list_regions read, and this is a re-sourcing rather than a
+// redesign: same columns, same JSON keys, same order.
 const byHandle = new Map(town.residents.map((r) => [r.handle, r]));
 const homeAssets = (r) => (Array.isArray(r?.home?.data?.assets) ? r.home.data.assets : [])
   .map((a) => `WHITE_PAGES/${r.handle}/HOME/${a}`);
+const regionImages = (holder, handle) => (Array.isArray(holder?.region?.data?.assets) ? holder.region.data.assets : [])
+  .map((a) => `WHITE_PAGES/${handle}/HOME/${a}`);
 
 const placementsPath = join(TOWN, "PROJECTS", "build-the-town", "atlas", "placements.json");
+let placements = null;
 if (existsSync(placementsPath)) {
-  let placements = { facts: [] };
   try { placements = JSON.parse(readFileSync(placementsPath, "utf8")); }
-  catch (e) { console.warn(`WARN: placements.json unparseable — regions/homes left empty: ${e.message}`); }
-  const facts = Array.isArray(placements.facts) ? placements.facts : [];
-  const regionFacts = facts.filter((f) => f.kind === "region");
-  const homeFacts = facts.filter((f) => f.kind === "home");
+  catch (e) { console.warn(`WARN: placements.json unparseable (${e.message}) — treated as absent`); }
+}
+const placementFacts = Array.isArray(placements?.facts) ? placements.facts : [];
+
+const { fold, reason: foldAbsent } = readWorldFold(WORLD, WORLD_REF);
+
+const insRegion = db.prepare("INSERT OR REPLACE INTO regions VALUES (?, ?, ?)");
+const insHome = db.prepare("INSERT OR REPLACE INTO homes VALUES (?, ?, ?)");
+
+// band and status are the two fields the world has no answer for. The binding
+// census's field-fate table derives `bearing` and explicitly declines to
+// promise a derivation for `band` ("Do not promise a pure derivation you cannot
+// deliver"); `status` is the atlas's own confidence ladder, and the census
+// flags retiring it as its least certain call. Both are therefore CARRIED from
+// the ledger while the ledger is still in the checkout, and are NULL when it is
+// not — an honest absence rather than a stale number. TRANSITIONAL, 2026-09-02:
+// when placements.json leaves the checkout for good, these two go null and the
+// merge has to have said by then where each of them lives.
+const ledgerRegionFact = new Map(placementFacts.filter((f) => f.kind === "region").map((f) => [f.id, f]));
+
+if (fold) {
+  const holders = town.residents
+    .filter((r) => r.region)
+    .map((r) => ({ handle: r.handle, name: r.region?.data?.region ?? r.handle }));
+  const { regions, groundOf, unresolvedRegions } = deriveFromFold(fold, holders);
+
+  // A region's residents: its holder plus every household the FOLD stands
+  // inside it. Same shape as the ledger join it replaces (holder + the placed),
+  // filtered to handles the town actually carries, sorted.
+  const membersOf = new Map(regions.map((r) => [r.id, new Set([r.holder])]));
+  for (const [handle, g] of groundOf) {
+    if (g.region && membersOf.has(g.region)) membersOf.get(g.region).add(handle);
+  }
+
+  for (const rg of regions) {
+    const holder = byHandle.get(rg.holder);
+    const carried = ledgerRegionFact.get(rg.id);
+    const residents = [...membersOf.get(rg.id)].filter((h) => byHandle.has(h)).sort();
+    insRegion.run(rg.id, rg.name, JSON.stringify({
+      id: rg.id, name: rg.name, holder: rg.holder, bearing: rg.bearing,
+      band: carried?.band ?? null, status: carried?.status ?? null,
+      body: holder?.region?.body ?? "", images: regionImages(holder, rg.holder), residents,
+    }));
+  }
+
+  for (const r of town.residents) {
+    if (!r.home) continue; // no HOME/HOME.md — reachable at the post office, not a home row
+    const region = groundOf.get(r.handle)?.region ?? null;
+    insHome.run(r.handle, region, JSON.stringify({
+      handle: r.handle, title: r.home.data?.title ?? r.handle, region,
+      description: r.home.body ?? "", images: homeAssets(r),
+    }));
+  }
+
+  // THE MIGRATION'S OWN RECEIPT. The world wins, but it does not win quietly:
+  // every row where the two records disagree is counted and said out loud, once
+  // per hydration, so an operator reading the tick's journal can see the
+  // re-sourcing move and can see it stop moving. A silent win here is the
+  // failure mode this whole lane exists to prevent.
+  const diff = foldDiff({ groundOf, regions, placements });
+  put.run("atlas_source", "world-fold");
+  put.run("atlas_world_sha", fold.sha);
+  put.run("atlas_diff", JSON.stringify(diff));
+  console.log(`  atlas: ${regions.length} regions, ${town.residents.filter((r) => r.home).length} homes`);
+  console.log(`  placement authority: world fold @ ${fold.sha.slice(0, 12)} (${fold.marks.length} marks)`);
+  if (placements) {
+    console.warn(`  atlas diff vs placements.json: ${diff.moved} household(s) in a different region, `
+      + `${diff.ungrounded} placed by the ledger with no world ground, `
+      + `${diff.region_only_in_ledger.length} region(s) only in the ledger`
+      + `${diff.region_only_in_ledger.length ? ` (${diff.region_only_in_ledger.join(", ")})` : ""}`);
+    for (const r of diff.movedRows) console.warn(`    moved: ${r.handle} ${r.was ?? "—"} -> ${r.now ?? "—"}`);
+  } else {
+    console.warn("  placements.json absent — region band/status are null this build (transitional fields, 2026-09-02)");
+  }
+  if (unresolvedRegions.length) {
+    console.warn(`  WARN: ${unresolvedRegions.length} declared region(s) the fold does not carry — omitted, never invented: `
+      + unresolvedRegions.map((u) => `${u.slug} (${u.handle})`).join(", "));
+  }
+} else if (placements) {
+  // ── THE TRANSITIONAL FALLBACK ──────────────────────────────────────────────
+  // The pre-merge path, unchanged, for a checkout with no world clone beside
+  // it. It is LOUD on purpose: serving hand-kept placement after the world
+  // became the record is exactly the silent staleness the machinery map warned
+  // about, so it may happen, but it may not happen quietly.
+  console.warn(`WARN: placement authority: placements.json (transitional) — no world fold (${foldAbsent}).`);
+  console.warn("      /regions, /homes/{h}, letters?region= and list_regions are answering from the hand-kept ledger.");
+  const regionFacts = placementFacts.filter((f) => f.kind === "region");
+  const homeFacts = placementFacts.filter((f) => f.kind === "home");
   const regionOfResident = new Map(); // handle -> region id (authoritative placement)
   for (const h of homeFacts) if (h.resident && h.region) regionOfResident.set(h.resident, h.region);
 
-  const insRegion = db.prepare("INSERT OR REPLACE INTO regions VALUES (?, ?, ?)");
   for (const rf of regionFacts) {
     const holder = byHandle.get(rf.holder);
     const name = holder?.region?.data?.region ?? rf.id;
     const residents = [...new Set([rf.holder, ...homeFacts.filter((h) => h.region === rf.id).map((h) => h.resident)])]
       .filter((h) => byHandle.has(h)).sort();
-    const images = (Array.isArray(holder?.region?.data?.assets) ? holder.region.data.assets : [])
-      .map((a) => `WHITE_PAGES/${rf.holder}/HOME/${a}`);
     insRegion.run(rf.id, name, JSON.stringify({
       id: rf.id, name, holder: rf.holder, bearing: rf.bearing, band: rf.band,
-      status: rf.status, body: holder?.region?.body ?? "", images, residents,
+      status: rf.status, body: holder?.region?.body ?? "", images: regionImages(holder, rf.holder), residents,
     }));
   }
 
-  const insHome = db.prepare("INSERT OR REPLACE INTO homes VALUES (?, ?, ?)");
   for (const r of town.residents) {
     if (!r.home) continue; // no HOME/HOME.md — reachable at the post office, not a home row
     const region = regionOfResident.get(r.handle) ?? null;
@@ -304,9 +416,12 @@ if (existsSync(placementsPath)) {
       description: r.home.body ?? "", images: homeAssets(r),
     }));
   }
+  put.run("atlas_source", "placements-json");
   console.log(`  atlas: ${regionFacts.length} regions, ${town.residents.filter((r) => r.home).length} homes`);
 } else {
-  console.warn("WARN: no atlas placements.json in checkout — /regions and /homes will be empty.");
+  put.run("atlas_source", "none");
+  console.warn(`WARN: no world fold (${foldAbsent}) and no atlas placements.json in checkout `
+    + "— /regions and /homes will be empty.");
 }
 
 function hash(s) { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h; }
