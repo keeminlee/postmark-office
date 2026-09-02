@@ -185,6 +185,19 @@ export function readAtRef(repo, ref, path, encoding = "utf8") {
 // (deliberately: a pull would move the pen's checkout mid-write), so local main
 // only advances when some resident's walk happens to pull it. Reading engine
 // modules off that is reading whatever the last walker left behind.
+// ⚑ THIS FUNCTION IS DELIBERATELY NOT MEMOISED, and the first version of the
+// party relief memoised it — which broke `freshestMainRef prefers origin/main
+// when the local branch lags`, a test that moves the ref and asks again in the
+// same breath. That test is right: this reading is a LAW ("the tick fetches and
+// never pulls, so origin is the published truth") and a law that answers from
+// five seconds ago is not the law.
+//
+// It costs up to three git subprocesses, and the relief it was blocking is real
+// — but the cost belongs to the CALLER that asks per request, not to the
+// reading itself. `worldToolModule` is where the memo went instead: it asks
+// this once per window rather than once per read, which removes the same
+// subprocess storm without touching what the answer means. Fix the caller's
+// cadence, not the answer's truth.
 export function freshestMainRef(repo) {
   const local = refExists(repo, "refs/heads/main");
   const remote = refExists(repo, "refs/remotes/origin/main");

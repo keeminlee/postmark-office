@@ -21,6 +21,7 @@
 // option. These falsifiers are therefore mostly PER-SKIN — the bug was never in
 // the logging rule, it was in how many places had to remember it.
 
+import "./helpers/drain-pen.mjs"; // #2040: fixtures get a real ledger pen
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
@@ -244,8 +245,25 @@ test("P7 · A WHOLE CROSSING REPLAYS THE ACT AND WRITES NO NEW ROW", () => {
       // to hand it over.
       const r = runTownDrain(o, { db, clone, doors: TOWN_DOORS, date: "2026-08-25", lockHeld: () => true, log: () => {} });
       assert.equal(r.ran, true);
-      assert.equal(r.counts.update, 1, "the crossing did replay the paper act");
+      // "the crossing did replay the paper act" until #2302. It no longer does,
+      // and that is the fix rather than a regression: the row was written by a
+      // REAL door call against THIS clone, so its commit is already behind HEAD
+      // and re-imposing its args could only overwrite whatever landed since.
+      // What this test is actually about is untouched — the drain reached the
+      // row, and the log did not grow by one.
+      //
+      // THE TEST'S OWN TITLE carries the same stale half ("REPLAYS THE ACT"),
+      // and it is deliberately NOT renamed here: this hotfix is being judged by
+      // a by-name suite comparison against a control at release/2026-w36.9 (the
+      // #2040 protocol), and a rename would read in that diff as one test
+      // vanishing and another appearing — noise in the one instrument the
+      // review is using. The accurate half of the title, "AND WRITES NO NEW
+      // ROW", is the half this test exists for. Rename it in the first ordinary
+      // commit after the hotfix lands, not inside it.
+      assert.equal(r.counts.update, 1, "the crossing read the paper act");
       assert.equal(r.updates[0].skipped, undefined);
+      assert.equal(r.updates[0].already, true,
+        "and recognised it as already applied — an act the door itself committed into this clone (#2302)");
 
       assert.deepEqual(readTownJournal(o).map((r2) => r2.seq), [before[0].seq],
         "STILL ONE ROW — the crossing settled the act and wrote nothing down");

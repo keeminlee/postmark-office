@@ -12,7 +12,8 @@ runs the other way — it is the only one that reads the DB and writes the repo.
 | `seed-import.mjs` | the frozen sandbox settlement → `windows` + `claims` + `marks` (+ legacy `acts`) |
 | `snapshot-export.mjs` | the DB → notary certifications, event archives and mark bodies in git (`snapshot_exporter`) |
 | `standing.mjs` | 1.0's standing walk over `marks` rows — the library `clearing-job.mjs` step 7 recomputes with |
-| `falsifier-standing-equality.mjs` | the port vs 1.0's own fold, over the same state, slug by slug |
+| `falsifier-standing-equality.mjs` | the port vs 1.0's own fold, slug by slug — and, since 2026-08-29, honest about the two states not being the same one: divergences the store-only ground explains are ATTRIBUTED with their cause named, not red |
+| `falsifier-candle-tiling.mjs` | the candle's tiling invariant against the write paths that can break it — the same statement on either side of 011, on a throwaway database |
 | `live-reads.mjs` | 1.0's movement/presence/sound/containment reads, ported to `acts` rows — what the LIVE doors serve |
 | `falsifier-live-equality.mjs` | those ports vs 1.0's own imported functions, on identical inputs |
 | `falsifier-pen-flip.mjs` | the FLIPPED pen's two laws (ruled 2026-08-29): reverse parity — every journal_seq-NULL act on a flipped lane has its reverse-mirror journal twin (iterates ACTS, the direction acts-parity is blind in) — and `--prove-refusal`, which points the pen at an unreachable Postgres on a throwaway sqlite and proves the refusal fires with the ruled sentence AND writes nothing anywhere (the R2 ordering, demonstrated not asserted). Lanes via `--lanes`; a vacuous green says so out loud. |
@@ -22,7 +23,7 @@ runs the other way — it is the only one that reads the DB and writes the repo.
 | `falsifier-review-closure.mjs` | a ruled claim ends in exactly one lawful state, with a receipt naming who ruled |
 | `conversations.mjs` | 1.0's thread derivation over voice `acts` — what `/world/conversations` becomes when the voices log dies |
 | `falsifier-conversations-equality.mjs` | that port vs `voices.mjs` itself, on identical inputs, era by era |
-| `falsifier-acts-lane-closure.mjs` | every WRITE lane reaches `acts`, checked from each lane's own pen — and a census that reds when a new act appears that nobody has ruled on. STANDING INVOCATION CARRIES `--since 2026-08-29T00:20Z` (the fix's lab deploy): exactly ONE act was lost before the lanes closed — wright's say at 2026-08-28T16:18:38.744Z, the lab's first witnessed act, which lives in voices-log.jsonl and never reached `acts`. The exclusion is dated at the deploy so it excuses only the pre-fix era and nothing after; the loss itself is recorded here, in the merge commit (87f4fe65), and in the epic — a red nobody can act on is a falsifier nobody reads (the discarded-draft lesson), but a loss nobody wrote down is worse. |
+| `falsifier-acts-lane-closure.mjs` | every WRITE lane reaches `acts`, checked from each lane's own pen — and a census that reds when a new act appears that nobody has ruled on. STANDING INVOCATION CARRIES `--since 2026-08-29T00:20Z` (the fix's lab deploy): exactly ONE act was lost before the lanes closed — wright's say at 2026-08-28T16:18:38.744Z, the lab's first witnessed act, which lives in voices-log.jsonl and never reached `acts`. The exclusion is dated at the deploy so it excuses only the pre-fix era and nothing after; the loss itself is recorded here, in the merge commit (87f4fe65), and in the epic — a red nobody can act on is a falsifier nobody reads (the discarded-draft lesson), but a loss nobody wrote down is worse. THE MIRROR EXPIRY IS PER LANE (DEC-2, ruled 2026-08-29): this tool and `falsifier-acts-parity.mjs` red past a lane's own backstop in `LANE_MIRROR` (`src/world2-acts.mjs`) and NAME the lanes, and the arena is exempt by P-143's ruling. A lane's obligation ends by removing its row — its read ports landed, its deletion ruled — never by moving a date. |
 
 The law these implement is quoted verbatim in each file's header, from the gold
 plan (`G:/Starstory/PULSE/gold-plans/postmark-world-2/postmark-world-2.md` §3, §4)
@@ -1129,6 +1130,39 @@ SEED's, and a hand-bootstrapped window is a state with no receipt. `--verify`
 reds if the successor is missing, closed, or does not open where its predecessor
 closed.
 
+### The candle tiles on UPDATE too (011)
+
+005's trigger fired `BEFORE INSERT` only. The A/B re-verification lane read the
+live definition on 2026-08-29 and named the gap: *"a hole can no longer be
+inserted, but it can still be updated into existence — and 005's own repair of
+window 151 was an `UPDATE windows SET opens_at = …`"*. It could not prove it,
+because firing a trigger needs a write and that lane was SELECT-only.
+
+`011_candle_tiling_update.sql` recreates the trigger `BEFORE INSERT OR UPDATE`
+and checks **both edges**: a window must open where its predecessor closed *and*
+close where its successor opens. The second half is unreachable on INSERT (ids
+ascend, so there is no successor yet) and load-bearing on UPDATE — guarding
+`opens_at` alone would close the path 005 used and leave its mirror image open.
+It is inert on every write path the repo has today, which is the point: it costs
+nothing until someone reaches for the edit that would have been silent.
+`replay-ingest.mjs:990` already told the reader `opens_at` was safe because
+"005's trigger owns it"; that sentence is true now.
+
+Repairs that RESTORE tiling are still welcome — the check is on the resulting
+state, not on the act of updating — so 005's own fix would pass unchanged.
+
+`falsifier-candle-tiling.mjs` is the write-capable proof the read-only lane could
+not run, and the flip is the whole design: **phase A applies 005 alone and the
+hole-making UPDATE must SUCCEED; phase B applies 011 and the identical statement
+must be REFUSED.** A phase-A refusal exits 2, not 0 — a fixture that never had
+the defect proves nothing about the fix. It runs on a throwaway database only and
+refuses any name without `scratch` in it.
+
+```sh
+WORLD2_SCRATCH_URL=postgres://world2_owner:…@127.0.0.1:5432/world2_scratch_x \
+  node world2/tools/falsifier-candle-tiling.mjs
+```
+
 ### Re-flooring
 
 The replay leaves the store past the floor, and `acts` is append-only for every
@@ -1234,7 +1268,49 @@ asks two questions and reds on either:
 | | |
 |---|---|
 | THE WALK | does the port over `marks` rows say what the fold says over the checkout? |
-| THE STORE | does the `data.tier` actually stored equal it? (finding 4 itself) |
+| THE STORE | does the `data.tier` actually stored equal **what the walk says**? (finding 4 itself) |
+
+### Corrected 2026-08-29 — the two states were not the same state
+
+This falsifier ran RED live on `berthillon/le-petit-berthillon` ("fold says:
+market · port says: home"), and that red was carried upward as evidence that the
+clearing job's recompute re-introduces the repaired tier defect. **It does not.**
+The port was right and the oracle was old.
+
+`berthillon/chez-antoine` is a 25×25 parcel held by `solo:berthillon` standing
+exactly under the shop, so the shop is `_sovereign`, the walk stops there,
+holder === house, and the verdict is `home` — the sovereignty law working. It is
+2.0-born: present in the store, absent from the frozen tag *and* from world
+`main`, because a mark born in 2.0 has no file for a checkout to hold.
+
+The rule that failed is this section's own — *"a falsifier that runs BOTH over
+the same state"*. It was not. The store held 17 marks the checkout did not, and
+the file already knew that; it excused them **by membership**. Standing is
+**relational** — one store-only parcel re-answers every mark inside it — so a
+slug in *both* sets can have its verdict changed by a mark in only one. Two of
+nineteen findings, one cause. Three changes close it:
+
+- **The attribution rule.** A WALK divergence is attributable to state the oracle
+  cannot see if re-walking *without* the store-only marks makes the port agree
+  with the fold. Attributed divergences print with their cause named and do not
+  red. Anything surviving the removal is a real port defect and stays RED — it
+  cannot launder one, because the removal only withdraws rows the checkout
+  provably lacks.
+- **THE STORE is asked against THE WALK**, which is what the table above always
+  said it was for and not what the code did (it compared to the fold, so every
+  attributable walk divergence was double-reported as a second, independent-
+  looking finding). Store-vs-walk has no checkout in it and cannot go stale.
+- **The store-only marks get a frontier in time.** The latest admission among
+  marks the register *does* hold; a store-only mark admitted after it was born
+  after the state the checkout describes and is a receipt, not a finding. One
+  admitted at or before it — or carrying **no locking claim at all** — is RED.
+  `locked_window` was tried first and is wrong: window 152 straddles
+  `settlement/S47`, so 4 marks the register holds and 10 it does not share one
+  window number.
+
+Proven on a restored scratch copy of `world2_dev`: green with all 17 born-after
+marks and the one attribution disclosed, and `--can-fail-proof` still red on all
+five mangles — the forged mark now caught by the sharper *no locking claim* limb.
 
 Exit codes are the siblings': **0** green · **1** RED · **2** cannot run. An
 empty `marks`, a checkout with no register, or a comparison with zero slugs in
@@ -1423,11 +1499,42 @@ than leaving it to the runner. A dump inside `office/` would be committed by the
 next pen that ran `git add -A`, and this file is precisely the thing that must
 never be committed. Restore with `pg_restore --clean --if-exists -d <db>`.
 
-**No timer, by manifest law** — nothing here schedules itself, and this is a
-hand-run before anything that could lose the store (a migration touching
-`claims`, a box move, a Postgres upgrade). When drafts are load-bearing enough
-that a hand-run is not enough, that is a ruling to bring to Keemin with the
-instance that made it true, not a cron to add quietly.
+~~**No timer, by manifest law**~~ — **SUPERSEDED 2026-08-29.** Both states are
+left standing here rather than one overwriting the other, because the sentence
+below was right when it was written and a reader needs to see what changed and
+on whose word:
+
+> **No timer, by manifest law** — nothing here schedules itself, and this is a
+> hand-run before anything that could lose the store (a migration touching
+> `claims`, a box move, a Postgres upgrade). When drafts are load-bearing enough
+> that a hand-run is not enough, that is a ruling to bring to Keemin with the
+> instance that made it true, not a cron to add quietly.
+
+The ruling arrived on 2026-08-29: **prod Postgres lives on the box, with shipped
+backups and no managed service.** That is the instance. A store that is about to
+be the production world cannot have its only durability lane be a person
+remembering — so the timer exists now, and it was added the way that paragraph
+demanded rather than in spite of it: **with its manifest row**
+(`postmark-world2-backup.timer` in `deploy/box-rollcall-manifest.json`), which is
+what "by manifest law" was protecting in the first place.
+
+What the hand-run section above still governs is the SHAPE of the dump — owner
+role, full database, no `--table`, landing outside every checkout and webroot.
+The timer runs exactly that command. Three things it adds, none of which change
+the shape:
+
+- the dump is **shipped off-box** (`deploy/world2-backup.sh` § the off-box
+  destination, which discloses where and records what was refused and why);
+- a `pg_basebackup` rides along, because **WAL cannot be replayed onto a
+  `pg_dump` restore** — a logical dump and a physical redo journal are not a
+  restore path in company, and archived WAL with no base backup is a spool
+  nothing can consume;
+- a **rehearsed restore** (`deploy/world2-restore-rehearse.sh`) exists and is
+  expected to be run, because until a dump has been restored it is a file that
+  has never been asked to be a backup.
+
+The hand-run is still the right move before a migration that touches `claims`.
+It is no longer the only thing standing between this store and a dead disk.
 
 ## Merge rulings (Wright, 2026-08-28 night — the drafts lane's teed decisions)
 

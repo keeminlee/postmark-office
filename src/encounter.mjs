@@ -112,7 +112,7 @@ export function rollOf({ at, actId, actor, die, salt = "" }) {
  * skipped: the wheel does not stop for someone who cannot act, and it does not
  * hold a seat for someone who walked out.
  */
-export function wheelOf({ joins = [], turnsTaken = 0, downed = new Set(), left = new Set() } = {}) {
+export function wheelOf({ joins = [], turnsTaken = 0, downed = new Set(), left = new Set(), lastActor = null } = {}) {
   // Round 1 is whoever was in at the open, ordered by initiative (ties by the
   // seq they joined at — the log's own order, so a tie is broken by a fact and
   // not by a sort's accident).
@@ -121,15 +121,30 @@ export function wheelOf({ joins = [], turnsTaken = 0, downed = new Set(), left =
     (b.initiative - a.initiative) || (a.seq - b.seq));
   const late = joins.filter((j) => j.round_joined > 1).sort((a, b) => a.seq - b.seq);
 
-  const active = [...order, ...late].filter((j) => !left.has(j.who));
+  // ⚑ THE SEATING CHART KEEPS THE DEPARTED; the wheel does not.
+  //
+  // `active` is who may be counted. `seats` is every hand that ever took a slot
+  // in this attempt, in wheel order, INCLUDING those who walked out — because
+  // the turn is derived by walking forward from whoever acted last, and that
+  // hand may be the one who has since left. Without their empty chair there is
+  // nowhere to walk forward FROM, and the pointer would fall back to the top of
+  // the order and hand the round to whoever sits there.
+  const seats = [...order, ...late];
+  const active = seats.filter((j) => !left.has(j.who));
   if (!active.length) return { order: [], round: 0, turn: null, index: 0, active: [] };
 
-  // Walk the wheel `turnsTaken` times, skipping the downed and the departed.
-  // Walking is how a skip stays DERIVED — the alternative is storing a cursor,
-  // and a stored cursor is the private grammar atom 1 refuses.
-  let i = 0, round = 1, taken = 0, guard = 0;
   const canAct = (j) => !downed.has(j.who) && !left.has(j.who);
-  if (!active.some(canAct)) return { order: active, round, turn: null, index: 0, active, all_down: true };
+  if (!active.some(canAct)) return { order: active, round: 1, turn: null, index: 0, active, all_down: true };
+
+  // ── THE ROUND, unchanged ────────────────────────────────────────────────
+  //
+  // Still the count-replay walk, and still carrying the wobble that walk has
+  // when membership changes under it — the founder's round-14-then-round-11.
+  // Explicitly OUT OF SCOPE tonight (Wright's call): the round is display, the
+  // TURN is who may act, and only one of those was handing keith repeat turns.
+  // Counting the round forward at fold time is the real fix and it changes
+  // every round number in every answer, which is not a party-night change.
+  let i = 0, round = 1, taken = 0, guard = 0;
   while (!canAct(active[i])) { i = (i + 1) % active.length; if (++guard > active.length * 4) break; }
   while (taken < turnsTaken) {
     do {
@@ -138,7 +153,45 @@ export function wheelOf({ joins = [], turnsTaken = 0, downed = new Set(), left =
     } while (!canAct(active[i]));
     taken += 1;
   }
-  return { order: active, round, turn: active[i]?.who ?? null, index: i, active };
+
+  // ── THE TURN: THE SUCCESSOR OF WHOEVER ACTED LAST ───────────────────────
+  //
+  // ⚑ THE COUNT-REPLAY ABOVE IS NOT A SAFE WAY TO FIND THE TURN, and this is
+  // the bug the founder hit live: replaying `turnsTaken` steps over the CURRENT
+  // list means every join, leave, down and lift RETRO-REMAPS every past wrap.
+  // The pointer can land backwards onto the hand who just acted — keith struck
+  // at 20:13, 20:18 and 20:22 with two joins bracketed between, and the wheel
+  // offered him another turn at 20:30.
+  //
+  // The record already knows the answer without any replaying: the last
+  // turn-ending act names its actor, and the next turn is the next hand after
+  // them who can act. Walking FORWARD from a fact instead of REPLAYING a count
+  // is what makes membership changes shift only the future — a hand added or
+  // removed elsewhere in the ring cannot move where the last actor sat.
+  //
+  // Three properties this buys, and each has a falsifier:
+  //   · after X acts it cannot be X again unless nobody else can act;
+  //   · a join or a leave changes only who comes next, never who came before;
+  //   · it is still pure derivation from the journal — no stored cursor, so the
+  //     fold, the wipe and the replay invariants are untouched.
+  //
+  // The walk is over `seats`, not `active`, so a last actor who has since left
+  // is still found in their old chair and the successor is read from THERE.
+  const from = lastActor == null ? -1 : seats.findIndex((j) => j.who === lastActor);
+  let seat = null;
+  if (from < 0) {
+    // No last actor (the open), or a last actor this attempt no longer knows —
+    // the opening rule, which is the first hand in the order who can act. This
+    // is the same answer the old walk gave for turn one, unchanged.
+    seat = seats.find(canAct) ?? null;
+  } else {
+    for (let n = 1; n <= seats.length; n += 1) {
+      const cand = seats[(from + n) % seats.length];
+      if (canAct(cand)) { seat = cand; break; }
+    }
+  }
+  const at = seat ? active.findIndex((j) => j.who === seat.who) : -1;
+  return { order: active, round, turn: seat?.who ?? null, index: at < 0 ? 0 : at, active };
 }
 
 // ── THE DIALS ───────────────────────────────────────────────────────────────
@@ -258,9 +311,47 @@ export function foldEncounter(rows = [], { dials = {}, weaponOf = () => null } =
   const looted = new Set();
   let turnsTaken = 0;
   let lastAt = null;
+  // WHO ACTED LAST, which is what the turn is now derived FROM. It is a fact
+  // the log already carries — the actor of the most recent turn-ending act —
+  // and tracking it here costs nothing because this fold already walks the rows
+  // in seq order. No stored cursor: it is recomputed from the journal on every
+  // fold, exactly as the hit points are.
+  let lastTurnActor = null;
 
   const hpOf = (a) => (hp.has(a) ? hp.get(a) : D.guestHp);
-  const wheelNow = () => wheelOf({ joins, turnsTaken, downed, left });
+  const wheelNow = () => wheelOf({ joins, turnsTaken, downed, left, lastActor: lastTurnActor });
+
+  // ── THE QUEUE (founder-asked 2026-08-29) ──────────────────────────────────
+  //
+  // "let agents QUEUE their actions (1 at a time, requeue just replaces)
+  // instead of bouncing and saying it's not your turn."
+  //
+  // ONE SLOT PER HAND, and the Map IS the rule: a later row from the same actor
+  // overwrites the earlier one, so requeue-replaces needs no separate branch. A
+  // queue with depth would need an eviction policy and would let a hand bank a
+  // whole round of acts; one slot is the founder's number and it is also the
+  // one that needs no policy.
+  const pending = new Map();     // actor -> the row they are waiting to have resolved
+  const queued = [];             // what the answer reports as waiting, newest state per hand
+
+  // ⚑ RESOLUTION IS RE-ENTRY, NOT A SECOND IMPLEMENTATION. A queued row is put
+  // back at the FRONT of the work list, so it runs through the very same gate
+  // and the very same verb handling as any other row — by then it IS that
+  // hand's turn, so the gate passes it. Writing a separate "apply a queued act"
+  // path would be two readings of one law, and they would drift the first time
+  // a verb changed.
+  //
+  // The chain falls out for free: a resolved act ends its actor's turn, which
+  // moves the pointer, which flushes again. A ring where everyone has queued
+  // resolves the whole way round in one fold.
+  const work = [...rows];
+  const flushPending = () => {
+    const t = wheelNow().turn;
+    if (!t || !pending.has(t)) return;
+    const q = pending.get(t);
+    pending.delete(t);
+    work.unshift(q);
+  };
 
   const roll = (r, die, salt) => {
     const out = rollOf({ at: r.seq, actId: r.action, actor: r.actor, die, salt });
@@ -268,7 +359,8 @@ export function foldEncounter(rows = [], { dials = {}, weaponOf = () => null } =
     return out.value;
   };
 
-  for (const r of rows) {
+  while (work.length) {
+    const r = work.shift();
     const actor = String(r.actor ?? "");
     const verb = String(r.action ?? "");
     if (!actor || !verb) { ignored.push({ seq: r.seq, why: "a row with no actor or no action is not an act" }); continue; }
@@ -340,6 +432,11 @@ export function foldEncounter(rows = [], { dials = {}, weaponOf = () => null } =
     if (verb === "leave") {
       if (!joins.some((j) => j.who === actor) || left.has(actor)) { ignored.push({ seq: r.seq, actor, why: "not in the wheel" }); continue; }
       left.add(actor);
+      // A HAND WHO WALKS OUT TAKES THEIR QUEUE WITH THEM. The wheel stops
+      // counting them, so a held act would sit forever waiting for a turn that
+      // is never coming — and if they walked back in, it would fire an intent
+      // from before they left.
+      pending.delete(actor);
       beats.push({ seq: r.seq, actor, act: "leave", kept_hp: hpOf(actor) });
       continue;
     }
@@ -371,12 +468,16 @@ export function foldEncounter(rows = [], { dials = {}, weaponOf = () => null } =
       // reason; whose turn it is, is a symptom of it.
       if (downed.has(actor)) { ignored.push({ seq: r.seq, actor, why: `${actor} is down — someone has to lift you` }); continue; }
       if (w.turn && w.turn !== actor) {
-        ignored.push({ seq: r.seq, actor, why: `it is ${w.turn}'s turn` });
+        // NOT A REFUSAL ANY MORE — the act is held and resolves when the wheel
+        // reaches this hand. The row is kept whole, so the roll it will throw
+        // is derived from its OWN seq exactly as it would have been had it
+        // landed in turn: a queued act is the same act, waiting.
+        pending.set(actor, r);
         continue;
       }
     }
 
-    if (verb === "pass") { turnsTaken += 1; beats.push({ seq: r.seq, actor, act: "pass", round: w.round }); continue; }
+    if (verb === "pass") { turnsTaken += 1; lastTurnActor = actor; beats.push({ seq: r.seq, actor, act: "pass", round: w.round }); flushPending(); continue; }
 
     if (verb === "loot") {
       if (bossHp > 0) { ignored.push({ seq: r.seq, actor, why: "the loot was not open yet" }); continue; }
@@ -388,7 +489,9 @@ export function foldEncounter(rows = [], { dials = {}, weaponOf = () => null } =
     if (verb === "guard") {
       guarded.add(actor);
       turnsTaken += 1;
+      lastTurnActor = actor;
       beats.push({ seq: r.seq, actor, act: "guard", round: w.round });
+      flushPending();
       continue;
     }
 
@@ -398,14 +501,21 @@ export function foldEncounter(rows = [], { dials = {}, weaponOf = () => null } =
       downed.delete(target);
       hp.set(target, D.liftTo);
       turnsTaken += 1;
+      lastTurnActor = actor;
       beats.push({ seq: r.seq, actor, act: "lift", lifted: target, to: D.liftTo, round: w.round });
+      flushPending();
       continue;
     }
 
     if (verb !== "strike" && verb !== "cast") { ignored.push({ seq: r.seq, actor, why: `"${verb}" is not one of this ground's verbs` }); continue; }
 
     const spec = verb === "strike" ? D.strike : D.cast;
+    // The prior is kept because the "nothing left standing to hit" branch below
+    // UNDOES this turn — and a turn that did not count must not leave its actor
+    // sitting as the one the next turn is derived from.
+    const priorTurnActor = lastTurnActor;
     turnsTaken += 1;
+    lastTurnActor = actor;
 
     if (isHostile) {
       // ── the creature's turn ────────────────────────────────────────────────
@@ -429,6 +539,17 @@ export function foldEncounter(rows = [], { dials = {}, weaponOf = () => null } =
         b.damage = dmg; if (halved) b.guarded = true;
         if (leftHp === 0) {
           downed.add(target);
+          // ⚑ GOING DOWN DROPS THE QUEUE, and this is the rule Wright left to
+          // me. LOGOS § Downed, not dead: "You lose your acts." A held act is
+          // an intent, and the wheel skips the downed — so a kept one could
+          // only fire after a lift, which may be many rounds and a whole
+          // different board later: a strike queued at a cake that is now down,
+          // a lift queued on a hand who is already up. An act that fires from a
+          // stale intent, without its author looking, is the silent class this
+          // engine keeps killing. Dropping is also what the clause literally
+          // says, and the queue is visible in the answer, so its absence is the
+          // telling.
+          pending.delete(target);
           b.downed = true;
           const held = weaponOf(target, r.seq);
           if (held) {
@@ -444,7 +565,7 @@ export function foldEncounter(rows = [], { dials = {}, weaponOf = () => null } =
       }
     } else {
       // ── a hand's turn ──────────────────────────────────────────────────────
-      if (bossHp <= 0) { ignored.push({ seq: r.seq, actor, why: "there was nothing left standing to hit" }); turnsTaken -= 1; continue; }
+      if (bossHp <= 0) { ignored.push({ seq: r.seq, actor, why: "there was nothing left standing to hit" }); turnsTaken -= 1; lastTurnActor = priorTurnActor; continue; }   // no flush: the turn did not move
       const toHit = roll(r, spec.hit, "to-hit");
       const b = { seq: r.seq, actor, act: verb, to_hit: toHit, round: w.round };
       if (toHit < spec.ac) { b.missed = true; beats.push(b); }
@@ -500,9 +621,32 @@ export function foldEncounter(rows = [], { dials = {}, weaponOf = () => null } =
       for (const j of hands) { downed.delete(j.who); hp.set(j.who, D.guestHp); left.add(j.who); }
       guarded.clear();
       turnsTaken = 0;
+      // A new attempt has no last actor: the next turn is the opening rule
+      // again, exactly as it was at the first join.
+      lastTurnActor = null;
+      // ...and no queue. Everyone woke in the antechamber; nothing anyone
+      // meant to do in the attempt that just ended is still true.
+      //
+      // ⚑ UNREACHABLE BY CONSTRUCTION TODAY, and said so rather than left to
+      // look load-bearing. A wipe requires EVERY hand downed, and going down
+      // already drops that hand's queue — so `pending` is always empty by the
+      // time this runs. The flip runner proved it: a flip that deleted this
+      // line could not turn any assertion red, and a flip that cannot fail was
+      // removed rather than kept as decoration.
+      //
+      // It stays as a belt. If the down-drop rule is ever revisited — Wright
+      // left that choice open and it could reasonably go the other way — this
+      // is what keeps a dead attempt's intent from firing in the next one, and
+      // whoever changes that rule should not also have to remember this.
+      pending.clear();
       joins.length = 0;
       for (const j of hands) left.delete(j.who);   // they are in the antechamber, not banished
     }
+
+    // The strike/cast path is the only one that reaches here — every other verb
+    // continues above with its own flush. A wipe has already cleared the queue,
+    // so this finds nothing after one, which is right.
+    flushPending();
   }
 
   const w = wheelNow();
@@ -555,6 +699,11 @@ export function foldEncounter(rows = [], { dials = {}, weaponOf = () => null } =
       }];
     })),
     downed: [...downed].sort(),
+    // WHAT IS STILL WAITING, so a hand can see their own held act and a page can
+    // show it. One entry per hand by construction — the Map is the slot.
+    queued: [...pending.entries()].map(([who, q]) => ({
+      who, seq: q.seq, act: String(q.action ?? ""), ...(q.object != null ? { object: String(q.object) } : {}),
+    })).sort((a, b) => a.seq - b.seq),
     dropped,
     looted: [...looted].sort(),
     attempts,
@@ -602,9 +751,18 @@ export function pendingHostileTurns(state) {
  * and the function has nowhere to put one.
  */
 export function hostileAct(state, who, { at }) {
+  // ⚑ THE DEPARTED ARE NOT TARGETS (found live 2026-08-29, the founder watching
+  // his own cake whiff: "cake is hitting nothing on its turn"). This filtered
+  // the downed and not the GONE, so at a party where hands strike and then
+  // drift home, "the most recent hand that struck it" was a leaver — journal
+  // seq 288 chose rowan-archive ten minutes after rowan-archive left, and the
+  // fold rightly answered "nobody to hit". The rule is unchanged (most recent
+  // striker, no favourites — atom 8); the pool it draws from now excludes the
+  // hands the fold itself says are gone.
+  const gone = (a) => state.hands?.[a]?.gone === true;
   const struck = [...(state.beats ?? [])].reverse()
-    .find((b) => b.act === "strike" && b.kind !== HOSTILE && !state.downed.includes(b.actor));
-  const standing = (state.wheel?.order ?? []).filter((j) => j.kind !== HOSTILE && !j.downed);
+    .find((b) => b.act === "strike" && b.kind !== HOSTILE && !state.downed.includes(b.actor) && !gone(b.actor));
+  const standing = (state.wheel?.order ?? []).filter((j) => j.kind !== HOSTILE && !j.downed && !gone(j.who));
   const target = struck?.actor ?? standing[0]?.who ?? null;
   return {
     actor: who, action: "strike", object: target,

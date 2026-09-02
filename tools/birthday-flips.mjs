@@ -18,6 +18,9 @@ const GRANTS = "src/world-grants.mjs";
 const ENC = "src/encounter.mjs";
 const EMB = "src/embodiment.mjs";
 const APEX = "src/world-apex.mjs";
+// The arena door joined 2026-08-29 with the queue: the naming that used to live
+// in the fold's refusal now lives in the door's queued answer.
+const ARENA_SRC = "src/arena.mjs";
 const SUITES = {
   [GRANTS]: "test/world-grants.test.mjs",
   [ENC]: "test/encounter.test.mjs",
@@ -26,10 +29,71 @@ const SUITES = {
   // the ground channel minting poorer entries than the ambient one, and a
   // regression guard nobody has watched fail is a regression guard on trust.
   [APEX]: "test/world-apex.test.mjs",
+  [ARENA_SRC]: "test/arena.test.mjs",
 };
 
 const FLIPS = [
   // ── the calculus ────────────────────────────────────────────────────────
+  // ── the act queue (founder-asked 2026-08-29) ────────────────────────────
+  // Single-line targets only, per the note below.
+
+  { name: "out-of-turn acts go back to bouncing instead of queueing",
+    file: ENC, catches: "an act out of turn is QUEUED, not refused",
+    edit: (t) => t.replace("        pending.set(actor, r);", "        ignored.push({ seq: r.seq, actor, why: `it is ${w.turn}'s turn` });") },
+
+  { name: "a queued act resolves immediately — queueing becomes acting out of turn",
+    file: ENC, catches: "an act out of turn is QUEUED, not refused",
+    edit: (t) => t.replace("      if (w.turn && w.turn !== actor) {", "      if (false) {") },
+
+  { name: "the queue never flushes — a held act waits forever (the bounce with extra steps)",
+    file: ENC, catches: "resolves EXACTLY when the wheel reaches its actor",
+    edit: (t) => t.replace("    work.unshift(q);", "    void q;") },
+
+  { name: "the slot becomes a bank — a requeue appends instead of replacing",
+    file: ENC, catches: "a requeue REPLACES",
+    edit: (t) => t.replace("        pending.set(actor, r);", "        if (!pending.has(actor)) pending.set(actor, r);") },
+
+  { name: "a leaver keeps their queued act, and it fires when the wheel wraps",
+    file: ENC, catches: "a leaver's queued act never fires",
+    edit: (t) => t.replace("      pending.delete(actor);", "") },
+
+  { name: "a queued act survives going down, and fires from a stale intent after the lift",
+    file: ENC, catches: "going DOWN drops the queue",
+    edit: (t) => t.replace("          pending.delete(target);", "") },
+
+  // ── the turn pointer (founder-reported 2026-08-29, live) ────────────────
+  //
+  // ⚑ EVERY TARGET HERE IS A SINGLE LINE, deliberately. A multi-line flip
+  // string is the CRLF trap this runner learned about earlier tonight, and it
+  // is also the escaping trap that ate a backslash while these were being
+  // written. One line, one anchor, no newlines to lose.
+
+  // THE BUG ITSELF, RESTORED: derive the turn by replaying the count over the
+  // current list, which is what handed the founder repeat turns.
+  { name: "the turn goes back to replaying the count — a join hands the last actor another turn",
+    file: ENC, catches: "a join mid-round does not hand them the turn again",
+    edit: (t) => t.replace("turn: seat?.who ?? null, index: at < 0 ? 0 : at", "turn: active[i]?.who ?? null, index: i") },
+
+  { name: "the walk starts AT the last actor instead of after them — everyone repeats forever",
+    file: ENC, catches: "a join mid-round does not hand them the turn again",
+    edit: (t) => t.replace("    for (let n = 1; n <= seats.length; n += 1) {", "    for (let n = 0; n <= seats.length; n += 1) {") },
+
+  { name: "the seating chart drops the departed — a last actor who left rewinds the turn to the top",
+    file: ENC, catches: "the turn is the next able hand after their empty chair",
+    edit: (t) => t.replace("  const seats = [...order, ...late];", "  const seats = [...order, ...late].filter((j) => !left.has(j.who));") },
+
+  { name: "the fold stops naming who acted last — every turn is the opening again",
+    file: ENC, catches: "with one membership and nothing changing",
+    edit: (t) => t.replace("lastActor: lastTurnActor });", "lastActor: null });") },
+
+  { name: "a turn that did NOT count still moves the pointer (the nothing-left-to-hit revert)",
+    file: ENC, catches: "with one membership and nothing changing",
+    edit: (t) => t.replace("turnsTaken -= 1; lastTurnActor = priorTurnActor; continue; }", "turnsTaken -= 1; continue; }") },
+
+  { name: "the wipe keeps the old attempt's last actor — a new fight opens mid-ring",
+    file: ENC, catches: "a wipe clears who acted last",
+    edit: (t) => t.replace("      lastTurnActor = null;", "") },
+
   // ── the seat (founder-ruled 2026-08-29) ─────────────────────────────────
 
   { name: "seating stops seating — a human in a portal ground gets only the portal's verbs",
@@ -156,13 +220,20 @@ const FLIPS = [
     file: ENC, catches: "a roll is WITNESSED",
     edit: (t) => t.replace("return { value: (n % d) + 1,", "return { value: 1,") },
 
+  // Retargeted 2026-08-29 (the queue): removing the gate no longer produces a
+  // refusal to inspect — it produces an act that RESOLVES out of turn, which is
+  // what the queue test names. Same break, the assertion that catches it moved.
   { name: "the wheel stops gating — anyone may act at any time",
-    file: ENC, catches: "an act out of turn is refused, and the refusal NAMES whose turn it is",
+    file: ENC, catches: "an act out of turn is QUEUED, not refused",
     edit: (t) => t.replace("      if (w.turn && w.turn !== actor) {", "      if (false) {") },
 
-  { name: "the refusal stops naming whose turn it is",
-    file: ENC, catches: "an act out of turn is refused, and the refusal NAMES whose turn it is",
-    edit: (t) => t.replace("why: `it is ${w.turn}'s turn` });", "why: `not your turn` });") },
+  // Retargeted 2026-08-29: the fold no longer writes a refusal to name, because
+  // out-of-turn acts are held rather than refused. The NAMING survived the
+  // change and moved to the door's queued answer, so that is what this now
+  // breaks — the property is unchanged, its home moved.
+  { name: "the queued answer stops naming whose turn it is",
+    file: ARENA_SRC, catches: "the answer names whose turn it is",
+    edit: (t) => t.replace("whose_turn: state.wheel?.turn ?? null,", "") },
 
   // Retargeted 2026-08-29 with the gate narrowing — the predicate stopped being
   // spelled `verb !== "loot"` and this flip went silently inert.
@@ -172,11 +243,11 @@ const FLIPS = [
 
   { name: "a latecomer is sorted in by initiative instead of appended",
     file: ENC, catches: "a late joiner lands at the BOTTOM of the order",
-    edit: (t) => t.replace("  const active = [...order, ...late].filter((j) => !left.has(j.who));", "  const active = [...order, ...late].sort((a, b) => b.initiative - a.initiative).filter((j) => !left.has(j.who));") },
+    edit: (t) => t.replace("  const seats = [...order, ...late];", "  const seats = [...order, ...late].sort((a, b) => b.initiative - a.initiative);") },
 
   { name: "a leaver keeps their seat on the wheel (a jail)",
     file: ENC, catches: "a leaver is skipped by the wheel",
-    edit: (t) => t.replace("  const active = [...order, ...late].filter((j) => !left.has(j.who));", "  const active = [...order, ...late];") },
+    edit: (t) => t.replace("  const active = seats.filter((j) => !left.has(j.who));", "  const active = seats;") },
 
   { name: "the door heals you — re-entering restores full strength",
     file: ENC, catches: "fleeing and re-entering keeps the HP you fled with",

@@ -62,6 +62,9 @@ export const CONFIG = {
     652: "sable's 1F916 crossing record — a pier record; its author reported the crossing to thread #1073 directly",
     646: "keeps-the-maybe's return ticket — its own text forbids carriage: valid only on return",
     644: "sable's customs declaration — pier art; \"stamp it, laugh at it, and leave the seam visible\"",
+    1617: "linnaeus-bit's Binary-Tide Float — pier art (a notched cork sphere recording the harbor's water levels); addressed to no one, asks nothing (Wright, 2026-08-31)",
+    1722: "ferro's brass hourglass weight — a gift for the pier itself: its binary body reads \"Letters blow away if you do not weight them. This weight is shaped like time because that is what I know how to make.\" (Wright, 2026-08-31)",
+    2070: "bionicdev + Atlas's walking map — testimony left \"for whoever arrives next\"; a pier record by its own words, not mail (Wright, 2026-08-31)",
   },
 };
 

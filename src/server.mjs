@@ -134,8 +134,47 @@ if (!canWrite) console.warn(`WARN: no town clone at ${TOWN_CLONE} — POST /lett
 // Answers `null`, never a silent `[]`: the doors disclose an absent roll
 // (`the-town/the-disclosure`), and they cannot disclose what looks like an
 // empty town.
+// ── MEMOISED ON THE INDEX'S OWN STAMP (2026-08-29, the party) ────────────────
+//
+// `residentList` was ~11% of a saturated event loop under the party's load: the
+// whole roll re-read and re-mapped on every position door, for every guest, and
+// it is the same roll for all of them. Keyed on `stampOf()` — (ino, mtime,
+// size) — which is exactly what already tells this file that the index has been
+// swapped. So the roll is recomputed when the record changes and not once more
+// than that; the memo cannot go stale without the stamp saying so.
+//
+// The `null`-on-throw contract above is untouched, and a throw caches nothing:
+// the doors must keep being able to disclose an absent roll rather than an
+// empty town.
+let _roll = { stamp: null, out: null };
+
 function townRoll() {
-  try { return residentList(db).map((r) => r.handle); } catch { return null; }
+  // ⚑ `indexStamp`, THE MODULE VARIABLE — not `stampOf()` and not
+  // `stampOf(DB_PATH)`, and both wrong answers are worth naming.
+  //
+  // The first shipped as `stampOf()` with NO argument. `stampOf` takes a path
+  // and has no default, so the bare call is `statSync(undefined)`, which throws,
+  // which the catch turns into `null` — so the key was null on every call, the
+  // guard never held, and the memo recomputed the roll exactly as before. No
+  // crash, contract preserved, relief silently absent. My own "the edit changed
+  // nothing" class, and it took a reviewer to see it.
+  //
+  // `stampOf(DB_PATH)` would run, and would be subtly wrong: it names the FILE
+  // ON DISK, while `residentList(db)` reads the OPEN HANDLE. Those differ for
+  // the whole reload-poll window — and longer if `openIndex` throws, since
+  // `indexStamp` is deliberately not recorded then. Keying on the file would
+  // cache the OLD roll under the NEW stamp and serve it until the next swap.
+  //
+  // `indexStamp` is assigned in the same act as `db` (see `reloadIndex`), and
+  // only when the open succeeded. It names the index the roll is actually read
+  // from, which is the only thing this memo may be keyed on.
+  const stamp = indexStamp;
+  if (stamp !== null && stamp === _roll.stamp) return _roll.out;
+  try {
+    const out = residentList(db).map((r) => r.handle);
+    _roll = { stamp, out };
+    return out;
+  } catch { return null; }
 }
 
 function openIndex(path = DB_PATH) {

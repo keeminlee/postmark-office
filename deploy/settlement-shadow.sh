@@ -53,14 +53,15 @@ TOWN_SHA="$(git -C "$TOWN" rev-parse origin/main)"
 git clone -q --local --no-checkout "$TOWN" "$WORK/town"
 git -C "$WORK/town" checkout -qf "$TOWN_SHA"
 
-git -C "$SHADOW" fetch -qp origin '+refs/heads/*:refs/remotes/origin/*'
+# THE CLONE IS PUT BACK TO EXACTLY WHAT ORIGIN HOLDS — including the drawers
+# origin no longer has. The reset used to walk origin's refs and reset each one,
+# which leaves a local sketchbook whose origin ref was pruned standing forever;
+# the sweep unions refs/heads/draft/* with refs/remotes/origin/draft/* when it
+# looks for candidates, so that residue is swept as though it were a live drawer
+# and the rehearsal's verdict is about a town that does not exist. Its own script
+# says why a hard reset is right here and wrong in settlement-auto.sh.
+sh "$(dirname "$0")/shadow-refs-reset.sh" "$SHADOW"
 WORLD_FROM="$(git -C "$SHADOW" rev-parse origin/main)"
-git -C "$SHADOW" checkout -qf -B main origin/main
-git -C "$SHADOW" clean -fdq
-git -C "$SHADOW" for-each-ref --format='%(refname:short) %(objectname)' 'refs/remotes/origin/draft/*' > "$WORK/tips"
-while read -r ref sha; do
-  git -C "$SHADOW" branch -qf "${ref#origin/}" "$sha"
-done < "$WORK/tips"
 
 (cd "$WORK/town" && node tools/world-stake.mjs --escrow --json) > "$WORK/stakes.json"
 
@@ -71,7 +72,12 @@ if ! (cd "$SHADOW" && node tools/settlement-sweep.mjs --stakes "$WORK/stakes.jso
   exit 1
 fi
 
-if ! (cd "$SHADOW" && npm test --silent) > "$WORK/suite.log" 2>&1; then
+# The suite's scratch lives and dies with this run — see settlement-auto.sh's
+# note of the same date (2026-09-01): the world suite's fixture helpers leak
+# under the system TMPDIR, and this shadow runs the suite twice a day on top of
+# the settlement's own runs. $WORK is trap-removed at EXIT.
+SUITE_TMP="$WORK/tmp"; mkdir -p "$SUITE_TMP"
+if ! (cd "$SHADOW" && TMPDIR="$SUITE_TMP" TMP="$SUITE_TMP" TEMP="$SUITE_TMP" npm test --silent) > "$WORK/suite.log" 2>&1; then
   report would-refuse "grammar suite would go red"
   echo "[settlement-shadow] WOULD REFUSE (suite red)" >&2
   grep -E "^not ok" "$WORK/suite.log" >&2 || tail -20 "$WORK/suite.log" >&2

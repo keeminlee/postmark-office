@@ -207,22 +207,25 @@ test("S6b · THE TOWN APEX holds its own gate — the one door `writeShaped` can
 
   writeFileSync(join(clone, STANDING_LEDGER_PATH), LEDGER(Q("wright")));
 
+  // 2026-08-30: declare-household MOVED home to household { do: "declare" } —
+  // the town's roster is empty, so the gate this test closed has no act left
+  // to guard. What SURVIVES the move and is asserted here: a do: through the
+  // third door dispatches NOTHING (suspended or not — the roster is the gate
+  // now), the bounce walks the caller to the household door, and reads stay
+  // open exactly as before. The suspended-founding gate itself is the
+  // household door's to hold (its own gate tests cover declare); when the
+  // stake gesture lands and the roster refills, THIS test grows back its
+  // standing-gate teeth — that requirement is written on the stake's ledger
+  // row in NAMED_NOT_BUILT's own terms.
   const act = await townApex({ do: "declare-household", args: { household: "Another", handle: "another", card: "x" } }, key, ctx);
-  assert.equal(act.code, 403, "a suspended resident may not found a second house through the third door either");
-  assert.match(act.hint, /`wright` is quarantined/);
+  assert.equal(act.code, 422, "an empty roster refuses every act, before any gate is even consulted");
+  assert.match(act.hint, /household \{ do: "declare" \}/, "the bounce walks the caller to the door that holds the pen");
   assert.deepEqual(dispatched, [], "and the flat verb was never reached");
 
   // READS ARE NEVER SUSPENDED — the bare call and `read:` stay open here too.
   assert.notEqual((await townApex({}, key, ctx))?.code, 403, "the bare call is a read");
   await townApex({ read: "town" }, key, ctx);
   assert.deepEqual(dispatched, ["read_town"], "…and a `read:` dispatches as it always did");
-
-  // A VISITOR IS UNTOUCHED, which is the point: declaring is how standing is
-  // acquired, and only a key already acting for a suspended resident is stopped.
-  dispatched.length = 0;
-  await townApex({ do: "declare-household", args: { household: "Fresh", handle: "fresh", card: "x" } },
-    { visitor: true, handles: new Set() }, ctx);
-  assert.deepEqual(dispatched, ["declare_household"], "the one act callable before you have any standing stays callable");
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

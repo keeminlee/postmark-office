@@ -252,7 +252,7 @@ test("striking in the antechamber is refused BY NAME, not folded against a phant
 
 // ── ruling 1 · TURN-BASED, AND THE REFUSAL NAMES THE TURN ───────────────────
 
-test("an act out of turn is REFUSED, naming whose turn it is", async () => {
+test("an act out of turn is QUEUED at the door, and the answer names whose turn it is", async () => {
   // LOGOS/classes.md § The arena, verbatim:
   //   "The wheel gates every act, and movement with them. While an encounter is
   //    live, an arena affords its verbs — and walking — only to whoever the
@@ -274,14 +274,28 @@ test("an act out of turn is REFUSED, naming whose turn it is", async () => {
     assert.ok(turn, "the wheel must be on somebody for this test to discriminate");
     const notTurn = (s.wheel.order.map((o) => o.who)).find((w) => w !== turn && w !== CAKE);
     if (!notTurn) return; // single-hand wheel: nothing to be out of turn about
-    await assert.rejects(
-      () => act(b, notTurn, "strike"),
-      (e) => {
-        assert.equal(e.code, 409);
-        assert.equal(e.defect, `it is ${turn}'s turn`, "the refusal must NAME the turn — 'no' without a name is a door tried again immediately");
-        assert.equal(e.whose_turn, turn);
-        return true;
-      });
+    // ⚠ SUPERSEDED IN PLACE, 2026-08-29. This asserted a 409 naming the turn.
+    // The founder replaced the refusal with a QUEUE — "let agents QUEUE their
+    // actions ... instead of bouncing and saying it's not your turn" — so the
+    // door now TAKES the act and holds it. What this test was really for
+    // survives and is asserted below: the out-of-turn act reaches the caller
+    // with an answer that NAMES whose turn it is, rather than vanishing into
+    // `ignored` where no door could see it. The name was always the point; the
+    // refusal was only how it used to be carried.
+    const r = await act(b, notTurn, "strike");
+    assert.ok(r.queued, "the door refused instead of queueing — the founder's ask is that it takes the act");
+    assert.equal(r.queued.whose_turn, turn,
+      "the queued answer does not name whose turn it is — a hand told only 'held' has learned nothing about when");
+    assert.equal(r.queued.act, "strike");
+    assert.ok(String(r.queued.you_are).length, "nor where they stand in the order");
+    assert.equal(r.beat, undefined, "the queued act RESOLVED — queueing must not become acting out of turn");
+
+    // AND IT IS ONE SLOT: a second act REPLACES the first rather than banking.
+    const again = await act(b, notTurn, "guard");
+    assert.ok(again.queued, "the requeue was refused");
+    const held = state(b).queued.filter((q) => q.who === notTurn);
+    assert.equal(held.length, 1, "the hand is holding two acts — one slot per hand, and a requeue replaces");
+    assert.equal(held[0].act, "guard", "the LAST queued act must be the one held; the first is replaced, not kept");
   } finally { b.close(); }
 });
 
@@ -568,12 +582,17 @@ test("every dial the fold reads comes off a mark, and the INSTANCE outranks its 
 
 // ── the timeout ─────────────────────────────────────────────────────────────
 
-test("an absent hand's turn resolves as a PASS at the next door touch, by anyone", async () => {
-  // LOGOS § The arena, verbatim:
-  //   "An absent hand cannot freeze the room. `turn_timeout` is a dial on the
-  //    arena; once it has expired, that hand's turn resolves as a pass at the
-  //    next door touch — by anyone. The turn is skipped when someone arrives to
-  //    notice, never by a process watching a clock."
+test("an absent hand's turn resolves as a STRIKE at the next door touch, by anyone", async () => {
+  // ⚑ SUPERSEDED IN PLACE (founder-called, 2026-08-29, mid-party): this test
+  // asserted the timeout resolved as a PASS, quoting LOGOS § The arena as it
+  // then stood. The founder's ruling at the party: "have them STRIKE at the end
+  // of the timer" — a timed-out turn swings, so the room's pace stops depending
+  // on who wandered off. The clauses that SURVIVE from the old law are still
+  // asserted here: the timeout is a dial, it resolves at the next door touch by
+  // anyone, never by a process watching a clock, and the act belongs to the
+  // absent hand. Only the resolving verb changed: pass → strike, rolled by the
+  // fold from the row like any chosen swing, payload kind "timeout" so the
+  // record never pretends the hand chose it.
   const b = bottle();
   try {
     await act(b, "darko", "guard");
@@ -588,10 +607,19 @@ test("an absent hand's turn resolves as a PASS at the next door touch, by anyone
     // no other test gets a timeout it did not ask for.
     const late = Date.now() + 2 * 3600 * 1000;
     const r = await act(b, other, "guard", {}, { nowMs: late }).catch((e) => e);
-    const passRows = arenaRows(b.dyn, VAULT).filter((x) => x.action === "pass" && x.payload?.kind === "timeout");
-    assert.ok(passRows.length >= 1,
-      "an hour past a ten-minute dial, the arriving hand's own door touch must resolve the absent turn as a pass");
-    assert.equal(passRows[0].actor, turn, "the pass belongs to the hand who was absent, not to whoever noticed");
+    const timerRows = arenaRows(b.dyn, VAULT).filter((x) => x.payload?.kind === "timeout");
+    assert.ok(timerRows.length >= 1,
+      "an hour past a ten-minute dial, the arriving hand's own door touch must resolve the absent turn");
+    assert.equal(timerRows[0].action, "strike",
+      "the timer swings — a timed-out turn resolves as a strike, not a pass");
+    assert.equal(timerRows[0].actor, turn, "the swing belongs to the hand who was absent, not to whoever noticed");
+    // And the fold rolls it like any chosen swing: the beat carries a real
+    // to-hit, proving it resolved as a strike rather than merely being spelled
+    // like one.
+    const after = state(b);
+    const beat = (after.beats ?? []).find((bt) => bt.actor === turn && bt.act === "strike");
+    assert.ok(beat && Number.isFinite(beat.to_hit),
+      "the fold must roll the timer's swing — a strike beat with a to-hit, not a silent skip");
     void r;
   } finally { b.close(); }
 });
@@ -1018,9 +1046,14 @@ test("the wheel gates ARENA verbs only — an ordinary verb is never refused for
 
     // THE PRECONDITION LEG: the wheel really is standing in this hand's way.
     // Without it every assertion below passes against a door with no gate.
-    const gated = await act(b, outOfTurn, "strike", { object: CAKE }).then(() => null, (e) => e);
-    assert.equal(gated?.code, 409, "an out-of-turn STRIKE was not refused — until it is, the legs below discriminate nothing");
-    assert.match(String(gated.defect), /'s turn/, "and the refusal names whose turn it is");
+    //
+    // ⚠ AMENDED 2026-08-29 with the queue — the arena verb is HELD out of turn
+    // rather than refused. The precondition is unchanged in substance: the door
+    // still treats this hand's arena act differently from an ordinary verb, and
+    // until it does, the ordinary-verb legs below discriminate nothing.
+    const gated = await act(b, outOfTurn, "strike", { object: CAKE });
+    assert.ok(gated?.queued, "an out-of-turn STRIKE was neither held nor refused — until the wheel does something with it, the legs below discriminate nothing");
+    assert.equal(gated.queued.whose_turn, s.wheel.turn, "and the queued answer names whose turn it is");
 
     // THE RULING: an ordinary verb reaching this door is refused for being the
     // WRONG VERB FOR THIS GROUND, never for the wheel. 422, not 409 — a

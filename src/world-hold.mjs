@@ -140,7 +140,8 @@ export function declareHolding({ db, thing, to = null, actor, roster = null, gro
 
   if (act === "take") {
     // ✔ THE TAKE RULE — RATIFIED 2026-08-14 (Wright), as argued here rather than
-    // as briefed (PLAN-things.md § 4). Neutral is the resting state everywhere, so
+    // as briefed (PLAN-things.md § 4 — the plan retired from the root 2026-09-01;
+    // it lives in git history and the Starstory day docs). Neutral is the resting state everywhere, so
     // a take stands unless the ground has spoken against it; requiring an
     // affirmative welcome would invert the law's own default. Kept as a CLASS DIAL
     // so the town can contest it without touching code — flipping
@@ -326,7 +327,8 @@ export async function callHoldTool(name, args = {}, key = null) {
     }
     // ── TWO INPUTS THIS DOOR DOES NOT YET COMPUTE ──────────────────────────
     //
-    // Both are `null` on purpose, and both are named in PLAN-things.md §8 rather than
+    // Both are `null` on purpose, and both are named in PLAN-things.md §8 (retired
+    // from the root 2026-09-01; git history + Starstory day docs) rather than
     // left to be discovered by whoever next reads `declareHolding`'s signature
     // and assumes the door fills it.
     //

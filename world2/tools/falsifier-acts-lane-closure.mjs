@@ -60,7 +60,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 
-import { MIRROR_EXPIRES, mirrorExpired } from "../../src/world2-acts.mjs";
+// LAW (parity matrix P-143, verbatim): "The 09-30 reverse-mirror expiry does NOT
+// apply to an unflipped lane." The dates live PER LANE in `LANE_MIRROR`
+// (src/world2-acts.mjs) since DEC-2 was ruled; this file's expiry gate names the
+// lanes it reds on and never counts one exempt by ruling.
+import { mirrorExpiresFor, expiredLanes, exemptLanes, mirrorExpiryLine } from "../../src/world2-acts.mjs";
 
 const arg = (name) => {
   const i = process.argv.indexOf(name);
@@ -214,10 +218,23 @@ if (has("--prove-can-fail")) {
   if (matchAct(acts, { actor: "wright", action: "say", at: "2026-08-28T12:09:00.000Z" }) != null)
     fails.push("matcher: an act nine minutes away was accepted as a twin");
 
+  // the expiry gate (DEC-2), proved on the same `expiredLanes` the gate calls
+  const far = new Date("2099-01-01T00:00:00Z");
+  const mixed = { stance: { expires: "2026-09-30" }, arena: { expires: null } };
+  if (!expiredLanes(far, mixed).includes("stance"))
+    fails.push("expiry: a governed lane past its backstop was NOT caught (rule 5 defeated)");
+  if (expiredLanes(far, mixed).includes("arena"))
+    fails.push("expiry: a lane exempt BY RULING (P-143) was counted expired");
+  if (expiredLanes(far, { arena: { expires: null } }).length)
+    fails.push("expiry: with every governed lane closed, the gate still claims an expiry");
+  if (!expiredLanes(far, { "brand-new": {} }).includes("brand-new"))
+    fails.push("expiry: an unnamed lane did NOT inherit the shared backstop");
+
   if (fails.length) { for (const f of fails) console.error(`RED (falsifier broken): ${f}`); process.exit(1); }
   console.log(
     "can-fail proof: the verb census catches an unnamed verb and a stale row; the class census catches an unruled journal class and passes a ruled one; "
-    + "the matcher rejects a wrong actor, a wrong action, and a nine-minute drift.");
+    + "the matcher rejects a wrong actor, a wrong action, and a nine-minute drift; "
+    + "the per-lane expiry catches a governed lane past its backstop, exempts the arena by P-143's ruling, goes quiet once every governed row is removed, and fails closed on an unnamed lane.");
   process.exit(0);
 }
 
@@ -243,8 +260,18 @@ function matchAct(acts, { actor, action, at, object = undefined }) {
   return null;
 }
 
-if (mirrorExpired()) {
-  console.error(`RED: the shadow mirror expired ${MIRROR_EXPIRES} — cut over (delete the journal) or have Keemin move the date. No immortal twins.`);
+// THE EXPIRY, PER LANE (DEC-2) — same gate, same words, as falsifier-acts-parity.
+const expired = expiredLanes();
+if (expired.length) {
+  for (const lane of expired) {
+    console.error(
+      `RED: the "${lane}" lane's reverse mirror passed its backstop ${mirrorExpiresFor(lane)} — `
+      + "land that lane's read ports, rule its deletion (rule 6), and remove its row from LANE_MIRROR "
+      + "in src/world2-acts.mjs. Moving the date is how a shim becomes furniture. No immortal twins.");
+  }
+  const exempt = exemptLanes();
+  console.error(`RED: ${expired.length} lane(s) expired — ${expired.join(", ")}. `
+    + `Not counted, exempt by ruling: ${exempt.length ? exempt.join(", ") : "none"}.`);
   process.exit(1);
 }
 
@@ -355,4 +382,4 @@ if (reds.length) {
 const line = (k) => `${k} ${counts[k][0]}/${counts[k][1]}`;
 console.log(
   `GREEN: every write lane reaches acts since ${since} — ${line("say")}, ${line("holding")}, ${line("walk")} twinned; `
-  + `census clean (${DISPATCHABLE.length} apex actions, each answering which pen writes it). Expiry ${MIRROR_EXPIRES} not reached.`);
+  + `census clean (${DISPATCHABLE.length} apex actions, each answering which pen writes it). ${mirrorExpiryLine()}`);

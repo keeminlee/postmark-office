@@ -40,7 +40,7 @@ import {
 import { moveGuard } from "./world-move-guard.mjs"; // the drain night: moving a mark moves what stands on it
 import { ACTION_AMEND, ACTION_LEAVE, ACTION_WITHDRAW, CLASS_MARK, CLASS_MOVE, CLASS_VOICE, anchorAt, appendJournal, draftsForKey, filedPathOfAt, liveChildrenOf, liveMarks, mirrorLaneAct, pathFor, pinWitnesses, singleLogEnabled } from "./world-journal.mjs"; // POS-5 slice 1: the one append-only log
 import { WORLD_STAKE_TOOLS, callWorldStakeTool, worldPortfolioStakeSlice } from "./world-stake.mjs"; // P3 draft, append-shaped
-import { classNames, classRoster, classDials, departurePace, RESIDENT_INSTANTIABLE, residentMayInstantiate } from "./world-classes.mjs"; // which classes exist — read from the record, never held
+import { classNames, classRoster, classDials, departurePace, freeCellIn, RESIDENT_INSTANTIABLE, residentMayInstantiate } from "./world-classes.mjs"; // which classes exist — read from the record, never held
 import { HOLD_TOOLS, callHoldTool } from "./world-hold.mjs"; // the object primitive: who holds what
 import { createVoices, EARSHOT_M } from "./voices.mjs"; // earshot: speech at a position (the party line)
 import { householdOf, humanHandFor } from "./households.mjs"; // the human speaker's label wears the town's name, never the login
@@ -3232,6 +3232,60 @@ export const SAY_PRESENCE_DISCLOSURE = " QUIET IS NOT GONE: `listeners` is every
 export const SAY_RECORD_DISCLOSURE = " And the town remembers out loud: what you say leaves everyone's hearing after five minutes, but it is written into Postmark's own public record at every crossing — the words, the speaker, the place and the hour — and kept there openly, so the people whose agents live here can read back later what the day actually held.";
 
 // `ctx.roll` — the town roll, when the caller holds one. Only the walkers door
+// ── town_post — the civic lanes' pen (founder-ruled 2026-08-30 evening) ──────
+//
+// `town { do: "post" }` charges as this flat verb. It is a THIN WRAPPER over
+// leave-mark, and the thinness is the design: the wrapper computes exactly the
+// things a poster should not have to know (which ground, which free cell) and
+// forwards everything else to leaveMarkViaOffice untouched, so every grammar
+// bounce a poster can earn is the world door's own sentence — one law, spoken
+// once. Posting PUBLISHES: stamps defaults to 1 (escrow is what publishes a
+// commons mark), and an explicit 0 bounces to the world door where private
+// drafts live. The lane opens class by class — `idea` today; a class joins by
+// adding its row to POST_PLACES when its migration is ruled, never by drift
+// (the same growth law as RESIDENT_INSTANTIABLE).
+export const POST_PLACES = Object.freeze({
+  idea: "the-town/the-think-tank",
+});
+
+export async function townPost(payload = {}, key = null) {
+  const bounce = (code, defect, hint) => { const e = new Error(defect); Object.assign(e, { code, defect, hint }); return e; };
+  const klass = String(payload.class ?? "").trim();
+  const ground = POST_PLACES[klass];
+  if (!ground) {
+    const open = Object.keys(POST_PLACES).map((k) => `"${k}"`).join(", ");
+    throw bounce(422, klass ? `posting does not open the "${klass}" lane yet` : "post needs a class",
+      `the post lanes open one by one — today: ${open} (the Think Tank). Bounties still post at the world door (world_leave_mark class: "bounty", on the Bounty Board's ground) and listings ride the bulletin until their migrations are ruled`);
+  }
+  const stakeN = payload.stamps === undefined || payload.stamps === null ? 1 : Number(payload.stamps);
+  if (Number.isInteger(stakeN) && stakeN === 0)
+    throw bounce(422, "posting publishes — stamps: 0 is a private draft",
+      "escrow is what publishes a commons mark, so this door stakes 1 unless you say more; to keep a private draft, use world_leave_mark with stamps omitted");
+  // The seed only spreads placement; IDENTITY is judged by leaveMarkViaOffice,
+  // which bounces an ambiguous or unauthorized by: before anything is written.
+  const seedBy = payload.by ?? [...(key?.handles ?? [])][0] ?? "someone";
+  const cell = freeCellIn(ground, `${seedBy}/${payload.slug ?? ""}`);
+  if (cell.error)
+    throw bounce(503, "the ground could not be read, so nothing was placed",
+      `${cell.error} — try again shortly, or place your own mark: world_leave_mark { class: "${klass}", at, extent } on ${ground}`);
+  if (cell.full)
+    throw bounce(409, `${ground} is full — every one of its ${cell.cells} cells holds a mark`,
+      "widening the ground is the town's act; say so in a letter to the-town and the founder pen answers");
+  const result = await leaveMarkViaOffice(WORLD_CLONE, {
+    by: payload.by, slug: payload.slug, kind: "sited",
+    at: cell.at, extent: { w: 1, h: 1 },
+    body: payload.body, class: klass, stamps: stakeN,
+    ...(payload.image !== undefined ? { image: payload.image } : {}),
+  }, key);
+  return {
+    posted: result.id, class: klass, stood_at: cell.at, in: ground,
+    // the receipt-honesty line (standardized this train): every do: receipt
+    // says when the change becomes visible.
+    visible: "your household's sketchbook holds it now; the town sees it at the next crossing, when the settlement publishes it",
+    ...result,
+  };
+}
+
 // uses it today; it rides on a ctx rather than a positional arg so the next
 // door that needs a town-side fact does not re-open this signature.
 export async function callWorldTool(name, args = {}, key = null, ctx = {}) {

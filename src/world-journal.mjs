@@ -375,12 +375,38 @@ export function appendJournal(db, entry = {}) {
  * The mark lane is refused here BY NAME until its claim path is wired through
  * `penWrite`'s claimFn at the call site — flipping it via the env flag alone
  * would write acts with no docket, which is F2 self-inflicted.
+ *
+ * The ARENA lane is refused BY RULING, not by unreadiness (founder, 2026-08-29,
+ * the birthday party's own night: "we can just keep the arena on sqlite for
+ * now"). The combat machinery is scheduled to be rebuilt hardened and
+ * 2.0-native rather than ported, so its lane stays sqlite-first deliberately —
+ * no read port exists, no reverse-mirror deadline applies to it, and a
+ * `W2_PEN=all` sweep must not carry it along by accident. Lifting this refusal
+ * is a founder ruling plus the arena read ports, together.
+ *
+ * "No reverse-mirror deadline applies to it" was a sentence this file asserted
+ * and no mechanism kept: `MIRROR_EXPIRES` was one date for the whole store, so
+ * the parity falsifier would have reded the arena on 2026-10-01 with everything
+ * else (the cutover runbook §8 named it; DEC-2 ruled it 2026-08-29 evening). It
+ * is now true where it is checked: `LANE_MIRROR.arena.expires` is null in
+ * src/world2-acts.mjs, carrying this same ruling in its own words.
+ *
+ * THE TWO REFUSALS ARE NOT THE SAME KIND, and the expiry is where the
+ * difference bites. `mark` is refused for UNREADINESS, so it is governed by its
+ * backstop exactly like the five wired lanes — DEC-2, verbatim: "a lane in
+ * `FLIP_REFUSED` by ruling is exempt; a lane refused by unreadiness is not."
+ * Being un-wired must never be the thing that buys a lane immortality.
  */
+const FLIP_REFUSED = Object.freeze({
+  mark: "its candle half must ride penWrite's own transaction; unset it from W2_PEN",
+  arena: "the arena stays sqlite-first by founder ruling (2026-08-29) — the hardened rebuild lands 2.0-native instead; unset it from W2_PEN",
+});
+
 export async function appendActFlipped(db, entry = {}) {
   const row = normalizeRow(entry);
   const lane = laneOf(row);
-  if (lane === "mark" || privateDraftAct(row)) {
-    throw new Error(`the "${lane}" lane's flip is not wired yet — its candle half must ride penWrite's own transaction; unset it from W2_PEN`);
+  if (FLIP_REFUSED[lane] || privateDraftAct(row)) {
+    throw new Error(`the "${lane}" lane's flip is not wired — ${FLIP_REFUSED[lane] ?? "private drafts never ride the flip"}`);
   }
   const { actId } = await penWrite(row); // throws PenUnreachableError — the door bounces, nothing was written
   let seq = null;

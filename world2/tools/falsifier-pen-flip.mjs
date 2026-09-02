@@ -66,6 +66,32 @@ if (has("--prove-refusal")) {
     process.exit(1);
   }
   console.log(`GREEN (refusal proof): the unreachable pen refused with the ruled sentence ("${refused.message}") and the journal holds 0 rows — nothing was written, and nothing was lost.`);
+
+  // ── the lanes refused BY NAME, each with its own reason ───────────────────
+  //
+  // `mark` is refused by UNREADINESS (its candle half must ride penWrite's
+  // transaction); `arena` is refused by RULING (founder, 2026-08-29: "we can
+  // just keep the arena on sqlite for now" — the hardened rebuild lands
+  // 2.0-native instead of a port). Both must refuse BEFORE the pen is even
+  // tried — a W2_PEN=all sweep must not carry either along — so this probe
+  // points the pen at the same dead port and asserts the refusal is the named
+  // one, not PenUnreachableError: proof the lane never reached the pen at all.
+  for (const [cls, why] of [["mark", "candle half"], ["arena-act", "founder ruling"]]) {
+    let named = null;
+    try {
+      await appendActFlipped(db, { actor: "probe", action: "probe", object: "x/y", cls });
+    } catch (err) { named = err; }
+    const n = db.prepare("SELECT count(*) AS n FROM journal").get().n;
+    if (!named || named.name === "PenUnreachableError" || !/lane's flip is not wired/.test(named.message)) {
+      console.error(`RED (by-name refusal): the "${cls}" lane must refuse the flip by name before the pen is tried (${why}); got: ${named ? named.name + " — " + named.message : "no error at all"}`);
+      process.exit(1);
+    }
+    if (Number(n) !== 0) {
+      console.error(`RED (by-name refusal): the "${cls}" refusal left ${n} row(s) in the journal`);
+      process.exit(1);
+    }
+  }
+  console.log("GREEN (by-name refusals): mark (unreadiness) and arena (founder ruling, 2026-08-29) both refuse before the pen is tried, and the journal holds 0 rows.");
   process.exit(0);
 }
 

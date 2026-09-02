@@ -42,6 +42,7 @@
 // that relaxes the fence (or a hand-run migration, or a restored backup — the
 // foreign-class tripwire's own stated reasons) and a household eaten in silence.
 
+import "./helpers/drain-pen.mjs"; // #2040: fixtures get a real ledger pen
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";

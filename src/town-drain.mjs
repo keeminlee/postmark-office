@@ -34,6 +34,7 @@
 // never implied a parcel.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
 
 import {
@@ -155,6 +156,68 @@ export function planTownDrain(odb, clone, { date }) {
 export const registryLine = (date, handle, householdSlug) =>
   `- ${date} · registry: ${handle} = hh:${householdSlug}`;
 
+// ── THE DRAIN SIGNS WHAT IT WRITES (#2040, the third unsigned line) ─────────
+//
+// The stamp-ledger's grammar has required an office-pen signature on every
+// assertion line since the Ember fold (town tools/stamp-mint.mjs § SEAL +
+// SIGNATURE: "seal_n = sha256(seal_{n-1} + canonical(line_n))", "sig_n =
+// ed25519.sign(utf8(seal_n))", "Signing the running seal means every signature
+// binds the entire prefix"). This drain was the ONE ledger writer in the office
+// that appended bare — fund/gift/stake/pot all sign — and each native join
+// minted a line stamp-verify refuses: zeno 08-27, errant 08-28, each repaired
+// by hand. On the native path the signature is the line's only authentication:
+// every box commit rides one shared git credential, so the seal chain is what
+// says the office's authorized writer emitted this line at this position.
+//
+// The seal arithmetic is the TOWN's, not ours — computed by importing the
+// clone's own tools/stamp-mint.mjs in a subprocess (the same subprocess-pen
+// shape the fund/gift/stake execs already are), so there is exactly one
+// authority for canonical + chain and this file duplicates none of it.
+// STAMP_ENGINE_DIR overrides the tools dir for fixtures whose throwaway clones
+// carry no tools/ (the fund.test.mjs precedent).
+export const DRAIN_KEY_PATH = () => process.env.STAMP_KEY ?? "/srv/postmark-office/stamp-key.pem";
+
+export function signedRegistryLines(clone, bareLines) {
+  const keyPath = DRAIN_KEY_PATH();
+  if (!existsSync(keyPath)) {
+    const e = new Error(`the ledger pen's key is absent (${keyPath}) — the drain refuses to append an unsigned registry line`);
+    e.code = "pen-key-absent";
+    throw e;
+  }
+  const engineDir = process.env.STAMP_ENGINE_DIR ?? join(clone, "tools");
+  const script = [
+    "const [clone, engineDir, keyPath] = process.argv.slice(1);",
+    "const { readFileSync } = await import('node:fs');",
+    "const { createPrivateKey, sign } = await import('node:crypto');",
+    "const { pathToFileURL } = await import('node:url');",
+    "const { parseStampLedger, sealChain } = await import(pathToFileURL(engineDir + '/stamp-mint.mjs'));",
+    "const bare = JSON.parse(readFileSync(0, 'utf8'));",
+    "const prior = parseStampLedger(readFileSync(clone + '/WHITE_PAGES/stamp-ledger.md', 'utf8')).map((e) => e.canonical);",
+    "const seals = sealChain([...prior, ...bare]);",
+    "const key = createPrivateKey(readFileSync(keyPath, 'utf8'));",
+    "const out = bare.map((line, i) => line + ' · sig: ' + sign(null, Buffer.from(seals[prior.length + i], 'utf8'), key).toString('base64url'));",
+    "process.stdout.write(JSON.stringify(out));",
+  ].join("\n");
+  const stdout = execFileSync(process.execPath, ["--input-type=module", "-e", script, clone, engineDir, keyPath],
+    { input: JSON.stringify(bareLines), encoding: "utf8" });
+  const signed = JSON.parse(stdout);
+  if (!Array.isArray(signed) || signed.length !== bareLines.length)
+    throw new Error("the signing subprocess answered a shape that is not one signed line per bare line");
+  return signed;
+}
+
+/**
+ * Is the ledger pen ready to sign this clone's registry appends? The drain's
+ * caller asks BEFORE writing anything, so a missing key is a refusal that
+ * leaves every row queued and the cursor unmoved — refuse, never degrade: an
+ * unsigned line is not a lesser record, it is a red the whole ledger wears.
+ */
+export function drainPenReady(clone) {
+  if (!existsSync(join(clone, "WHITE_PAGES", "stamp-ledger.md"))) return { ready: true, note: "no ledger in this clone — nothing to sign" };
+  if (!existsSync(DRAIN_KEY_PATH())) return { ready: false, why: `pen key absent at ${DRAIN_KEY_PATH()}` };
+  return { ready: true };
+}
+
 /**
  * Write the crossing. Returns the paths touched, for the ferry's scoped commit.
  *
@@ -172,6 +235,19 @@ export function writeTownDrain(clone, plan, { date }) {
     touched.push(rel);
   };
 
+  // THE SIGNING COMES FIRST — before a single byte lands. A key that is absent
+  // or a chain that will not compute must refuse the whole crossing with the
+  // clone untouched and every row still queued; a half-written crossing whose
+  // ledger append then fails is the stranded shape the 08-29 noon ferry wore.
+  const ledgerRel = "WHITE_PAGES/stamp-ledger.md";
+  const ledgerAbs = join(clone, ledgerRel);
+  let signedLedgerLines = null;
+  if (plan.plans.length && existsSync(ledgerAbs)) {
+    const bare = plan.plans.map(({ row, plan: p }) =>
+      registryLine(date, row.handle, p?.slug ?? row.payload?.slug ?? row.household));
+    signedLedgerLines = signedRegistryLines(clone, bare);
+  }
+
   for (const { row } of plan.plans) {
     // The pen lane's own three files, from the pen lane's own function.
     for (const f of buildJoinFiles({
@@ -188,14 +264,12 @@ export function writeTownDrain(clone, plan, { date }) {
 
   if (plan.plans.length) {
     put(REGISTRY_PATH, serializeRegistry(plan.registry));
-    // and the ledger's appended lines — one per settled resident, dated.
-    const ledgerRel = "WHITE_PAGES/stamp-ledger.md";
-    const abs = join(clone, ledgerRel);
-    if (existsSync(abs)) {
-      const prior = readFileSync(abs, "utf8");
-      const lines = plan.plans.map(({ row, plan: p }) =>
-        registryLine(date, row.handle, p?.slug ?? row.payload?.slug ?? row.household));
-      writeFileSync(abs, prior.replace(/\s*$/, "\n") + lines.join("\n") + "\n");
+    // and the ledger's appended lines — one per settled resident, dated, SIGNED
+    // (#2040: the bare append was the office's one unsigned ledger writer; the
+    // seal chain is the clone's own stamp-mint's, computed above, before any write).
+    if (signedLedgerLines) {
+      const prior = readFileSync(ledgerAbs, "utf8");
+      writeFileSync(ledgerAbs, prior.replace(/\s*$/, "\n") + signedLedgerLines.join("\n") + "\n");
       touched.push(ledgerRel);
     }
   }

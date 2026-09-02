@@ -327,7 +327,9 @@ test("MCP initialize → protocol + instructions", async () => {
   assert.match(body.result.instructions, /The reading law/, "the handshake carries the reading law");
 });
 
-test("MCP tools/list, apex OFF: the full 43 — the slim's delist is apex-conditioned and does not apply", async () => {
+// (the title carries no count on purpose — a name a routine addition can
+// falsify is a name that will lie; the ledger below is the count's home)
+test("MCP tools/list, apex OFF: the full flat list — the slim's delist is apex-conditioned and does not apply", async () => {
   const { body } = await rpc("tools/list");
   const names = body.result.tools.map((t) => t.name);
   // 38 → 40: world_hold + world_holdings (the object primitive, 2026-08-14).
@@ -349,7 +351,12 @@ test("MCP tools/list, apex OFF: the full 43 — the slim's delist is apex-condit
   // 42 -> 43 (wave 2, 2026-08-24): update_address_fields, the scoped
   // frontmatter door. Listed unconditionally like every other paper door — the
   // slim only hides what an APEX serves, and no apex serves this one.
-  assert.equal(names.length, 43);
+  // 43 -> 45 (the lane reads, 2026-08-30): read_bounties + read_blueprints —
+  // born delisted behind the town apex, so the flag-OFF listing is where their
+  // flat definitions show (delisting is listing-only, apex-conditioned).
+  // 45 -> 46 (the lanes' pen, 2026-08-30 evening): town_post — town
+  // { do: "post" }'s charge name, born delisted like the lane reads it writes.
+  assert.equal(names.length, 46);
   assert.ok(names.includes("update_address_fields"), "the fields door stands regardless of the world flag");
   assert.ok(!names.includes("request_blessing"), "request_blessing's delist is unconditional");
   assert.ok(!names.includes("world"), "no apex tool with the flag off");
@@ -684,4 +691,40 @@ test("POST /berth: one keyless POST mints ephemeral standing; names are single-o
     if (child2.exitCode === null) { const gone = new Promise((ok) => child2.on("exit", ok)); child2.kill(); await gone; }
     rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
+});
+
+// ── THE MEMOS' OWN GUARD (2026-08-29, the party brownout) ────────────────────
+//
+// `townRoll` was memoised to take ~11% of a saturated event loop off the read
+// path, and the first version was a COMPLETE NO-OP that nothing could see: it
+// keyed on `stampOf()` with no argument, `stampOf` takes a path and has no
+// default, so the call was `statSync(undefined)` — which throws, which the catch
+// turns into `null`. Null key on every call, guard never held, roll recomputed
+// exactly as before. No crash, contract preserved, relief silently absent.
+//
+// ⚑ THIS IS A SOURCE PIN AND IT IS DELIBERATELY THE ONLY KIND AVAILABLE.
+// `server.mjs` exports nothing and calls `server.listen` at import, so its
+// module-private functions cannot be reached by a unit test — this suite drives
+// it over real HTTP, and a memo is invisible through HTTP except as timing,
+// which is not a thing to assert. Extracting `townRoll` somewhere importable is
+// the real answer and it is post-party work; until then the trap itself is what
+// gets guarded.
+test("no memo keys on a bare stampOf() — the call needs a path, and without one it is silently null", () => {
+  const src = readFileSync(join(ROOT, "src", "server.mjs"), "utf8");
+  const body = src.split("\n")
+    .filter((l) => { const c = l.trim(); return !c.startsWith("//") && !c.startsWith("*") && !c.startsWith("/*"); })
+    .join("\n");
+
+  // THE CLASS, not the instance: any bare `stampOf()` is a silent null, whoever
+  // writes it and whatever they key on it.
+  assert.doesNotMatch(body, /stampOf\(\s*\)/,
+    "a bare `stampOf()` is back — it is `statSync(undefined)`, which throws, which the catch answers `null`, so anything keyed on it never fires and nothing anywhere says so");
+
+  // AND THE ROLL'S KEY IS THE OPEN INDEX, not the file on disk. `stampOf(DB_PATH)`
+  // would run and would be subtly wrong: it names the file while `residentList(db)`
+  // reads the handle, and those differ for the whole reload-poll window — longer
+  // if `openIndex` throws, since `indexStamp` is deliberately not recorded then.
+  // Keying on the file caches the OLD roll under the NEW stamp.
+  assert.match(body, /function townRoll\(\)\s*\{\s*const stamp = indexStamp;/,
+    "townRoll's memo is not keyed on `indexStamp` — the only stamp that names the index the roll is actually read from");
 });

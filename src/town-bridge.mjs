@@ -82,8 +82,30 @@
 //   · JOINS already do. planTownDrain skips a handle that "already stands in
 //     the white pages", and the registry fold is planned against the registry
 //     as it now reads.
-//   · PAPER ACTS already do. The door rewrites the file with the same bytes and
-//     penCommit returns null for a diff that is empty.
+//   · PAPER ACTS DO NOT EITHER, and this line used to say they did — "the door
+//     rewrites the file with the same bytes and penCommit returns null for a
+//     diff that is empty". True of the file the door wrote, and the premise it
+//     hid is that the file is still that file. #2302 is what happens when it is
+//     not: on 2026-08-30 a `update_profile` call carrying empty strings was a
+//     documented no-op against a PROFILE.md that did not have those keys; four
+//     fields were then hand-added by their owner (the road TOWN_BULLETIN's
+//     build-your-profile.md advertises); and the 12:00Z crossing replayed the
+//     same "clear" against a file that by then HAD them, deleting all four
+//     (63a38162). Rewriting with the same bytes is only harmless when nothing
+//     else has written in between, and nothing was checking.
+//     So the update branch now carries the same shape the letter branch has
+//     always had: the row records what the act ALREADY LANDED — the shas the
+//     door's own pen returned, `payload.commits` — and a row whose every sha is
+//     an ancestor of the clone's HEAD is `already`, not replayed. The companion
+//     half is that a documented no-op writes no row at all (town-updates.mjs §
+//     logPaperAct): a call that landed nothing has nothing to settle.
+//     TWO LIMITS, STATED. A row logged before this fix carries no `commits`
+//     field, and is replayed exactly as before — the guard skips only on a
+//     POSITIVE match, never on an absent one, because reading absence as "no
+//     commits, therefore nothing to redo" would silently un-settle every row
+//     already in the log. And the ancestor question is asked of THIS clone: a
+//     sha it has never seen answers "not applied" and the row replays, which is
+//     the safe direction.
 //   · LETTERS DO NOT, and this is the one place the bridge must think. The pen
 //     lane throws 409 "that letter file already exists" on a second write — the
 //     right answer for a resident sending the same letter twice, and the wrong
@@ -121,7 +143,8 @@ import {
 import {
   pendingRows, townDrainCursor, townJournalHead, townLogEnabled, TOWN_CLASSES,
 } from "./town-journal.mjs";
-import { advanceTownCursor, planTownDrain, writeTownDrain } from "./town-drain.mjs";
+import { advanceTownCursor, drainPenReady, planTownDrain, writeTownDrain } from "./town-drain.mjs";
+import { planFirstIdeaSweep, writeFirstIdeaSweep } from "./first-idea-sweep.mjs";
 import { replayPaperAct } from "./town-updates.mjs";
 import { replayLetter } from "./town-mail.mjs";
 import { townLockPath, useFlock } from "./town-lock.mjs";
@@ -165,7 +188,41 @@ export function townLockHeld({ flock = useFlock(), path = townLockPath() } = {})
   return r.status !== 0;
 }
 
-const utcDate = (ms) => new Date(ms).toISOString().slice(0, 10);
+/**
+ * Is this sha already behind the clone's HEAD? (#2302 — the update resume key.)
+ *
+ * `merge-base --is-ancestor` is the same question penCommit asks of origin/main
+ * after a push, in the same words, and it is asked here rather than in
+ * town-updates.mjs for the reason that module states about itself: it never
+ * imports the pen and never learns what a clone is. The bridge is where the
+ * clone lives.
+ *
+ * FALSE ON ANY DOUBT, and that asymmetry is the whole safety of the guard. A
+ * missing git, an unreadable clone, a sha this clone has never heard of — every
+ * one of them answers "not applied", and the row replays exactly as it did
+ * before the fix. The guard can therefore cost a redundant replay (which is
+ * what the drain already did every crossing) and can never cost a lost act.
+ * `spawnSync` rather than execFileSync for the same reason: a non-zero exit is
+ * an answer here, not an exception to catch and interpret.
+ */
+export function isAncestorOfHead(clone, sha) {
+  if (!clone || typeof sha !== "string" || !/^[0-9a-f]{7,64}$/i.test(sha)) return false;
+  const r = spawnSync("git", ["-C", clone, "merge-base", "--is-ancestor", sha, "HEAD"], { stdio: "ignore" });
+  return !r.error && r.status === 0;
+}
+
+// THE TOWN'S DAY, NOT THE WIRE'S (found live 2026-08-30 ~20:22 EDT, the gift
+// blackout): this was `utcDate` — `toISOString().slice(0, 10)` — so the 00:00Z
+// crossing (8 PM in town) stamped its registry lines with TOMORROW's date
+// while the same crossing's mint lines carried the town day. The append-only
+// forward-dated gate then refused every town-dated writer (gifts first) for
+// the four hours until midnight ET, and the join's household binding read as
+// effective a day after the resident actually arrived. Every other dated
+// writer in this repo derives the day from TOWN_TZ (ops.townDay, declare,
+// residency, the mint engine itself); the drain now speaks the same clock.
+// `ms` stays injectable so the falsifier can stand AT the boundary instant.
+const townDayOf = (ms) => new Intl.DateTimeFormat("en-CA",
+  { timeZone: process.env.TOWN_TZ ?? "America/New_York" }).format(new Date(ms));
 
 /**
  * The one honest line a drain leaves behind, whatever it did.
@@ -218,7 +275,7 @@ export function runTownDrain(odb, {
     return done({ ran: false, refused: "unlocked", drained: 0,
       skipped: `nothing holds ${townLockPath()} — the drain writes the town clone and must run under the ferry's flock, as every unit in deploy/ does` });
 
-  const stamp = date ?? utcDate(now);
+  const stamp = date ?? townDayOf(now);
   const rows = pendingRows(odb);
 
   // ── THE TRIPWIRE, EXTENDED TO THE INVOKER ────────────────────────────────
@@ -368,6 +425,22 @@ export function runTownDrain(odb, {
       skipped_rows: plan.skipped.filter(({ row }) => row.cls === "join").map(({ row, why }) => ({ seq: row.seq, handle: row.handle, why })),
       updates: [], letters: [], remaining: rows.length });
 
+  // THE PEN GATE (#2040): a settle that would append a registry line refuses
+  // BEFORE writing when the ledger pen cannot sign it. Refuse, never degrade —
+  // an unsigned registry line is not a lesser record, it is a red the whole
+  // ledger wears at the next verify, and it has cost three hand-repairs.
+  // Rows stay queued, the cursor does not move, and the crossing says why.
+  if (plan.plans.length) {
+    const pen = drainPenReady(clone);
+    if (!pen.ready)
+      return done({ ran: false, refused: "ledger-pen-not-ready", drained: 0, counts, head,
+        cursor: townDrainCursor(odb), ...gangwayFields,
+        skipped: `the drain would append ${plan.plans.length} registry line(s) and cannot sign them — ${pen.why}. `
+          + `Nothing was written and the cursor did not move: every row is still here. (#2040)`,
+        settled: [], waiting: plan.settle.map((r) => ({ handle: r.handle, why: "pen not ready" })),
+        updates: [], letters: [], remaining: rows.length });
+  }
+
   const touched = writeTownDrain(clone, plan, { date: stamp });
 
   // The join files are the only bytes the bridge itself put on disk, so they
@@ -413,6 +486,12 @@ export function runTownDrain(odb, {
 
   for (const row of rows) {
     if (row.cls === "update") {
+      // the resume check — see § idempotence in this file's header
+      const applied = row.payload?.commits;
+      if (Array.isArray(applied) && applied.length && applied.every((sha) => isAncestorOfHead(clone, sha))) {
+        updates.push({ seq: row.seq, act: row.act, handle: row.handle, already: true, commits: applied });
+        continue;
+      }
       let entry;
       try {
         const out = replayPaperAct(row, { doors, db, clone });
@@ -437,12 +516,43 @@ export function runTownDrain(odb, {
     letters.push({ seq: row.seq, id, file, ...entry });
   }
 
+  // ── the first-idea sweep (the Think Tank, 2026-08-30) ────────────────────
+  // Rides every crossing beside the join drain: a household's first published
+  // idea mark earns its witnessed 5 (once, ever — idempotent by ledger, so a
+  // re-run costs nothing; the engine of the town clone answers every law
+  // question, and a clone whose engine predates the rule no-ops by name). The
+  // pen gate mirrors the join half's with one difference in temper: a quest
+  // mint held by an unready pen SKIPS with a name and the mail still sails —
+  // refusing the whole crossing is the join half's duty, never this rider's.
+  let firstIdea = null;
+  try {
+    const ideaPen = drainPenReady(clone);
+    if (!ideaPen.ready) firstIdea = { ran: false, skipped: `pen not ready — ${ideaPen.why}` };
+    else {
+      const ideaPlan = planFirstIdeaSweep(clone, { date: stamp });
+      if (ideaPlan.refused) firstIdea = { ran: false, skipped: ideaPlan.refused };
+      else {
+        const ideaTouched = writeFirstIdeaSweep(clone, ideaPlan);
+        if (ideaTouched.length)
+          penCommit(clone, ideaTouched.map((rel) => join(clone, rel)),
+            `first-idea: ${ideaPlan.mints.length} household(s) paid for their first published idea (the Think Tank)`);
+        firstIdea = { ran: true, minted: ideaPlan.mints.map((m) => ({ handle: m.handle, mark: m.mark })),
+          skipped_ideas: ideaPlan.skipped, note: ideaPlan.note ?? null };
+      }
+    }
+  } catch (e) {
+    // A sweep that dies must not hold the mail — record and sail (the bounced-
+    // replay reasoning above; every candidate is re-derived from the world and
+    // the ledger next crossing, so passing over loses nothing).
+    firstIdea = { ran: false, error: String(e?.message ?? e) };
+  }
+
   // ── the cursor, LAST — and not at all while the gangway holds a row ──────
   if (!gangwayHold) advanceTownCursor(odb, head);
 
   return done({
     ran: true, date: stamp, drained: rows.length, counts, head,
-    cursor: townDrainCursor(odb), commit, ...gangwayFields,
+    cursor: townDrainCursor(odb), commit, first_idea: firstIdea, ...gangwayFields,
     settled: plan.plans.map(({ row }) => row.handle),
     waiting: plan.waiting.map(({ row, why }) => ({ seq: row.seq, handle: row.handle, why })),
     // JOIN ROWS ONLY. planTownDrain reads the WHOLE pending log and files every

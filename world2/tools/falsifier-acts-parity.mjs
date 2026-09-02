@@ -6,21 +6,31 @@
 // `acts` twin with identical substance. Drift = red, named row by row.
 //
 // LAW (anti-rebake rule 5, verbatim): "Every shim ships with its own death — an
-// expiry falsifier that reds past its date. No immortal twins." The mirror's
-// date is MIRROR_EXPIRES in src/world2-acts.mjs; past it this tool is red
-// regardless of parity, until the cutover deletes the journal or Keemin moves
-// the date.
+// expiry falsifier that reds past its date. No immortal twins."
+//
+// LAW (parity matrix P-143, verbatim): "The 09-30 reverse-mirror expiry does NOT
+// apply to an unflipped lane." Until DEC-2 this file read ONE constant for the
+// whole store and reded on 2026-10-01 regardless of lane, arena included — the
+// ruling and the mechanism disagreed and the mechanism is what fires. The dates
+// now live PER LANE in `LANE_MIRROR` (src/world2-acts.mjs); past a governed
+// lane's backstop this tool is red regardless of parity, naming that lane, until
+// its read ports land and its deletion is ruled. A lane exempt by ruling is
+// never counted, and when the governed rows are gone this tool is green past any
+// date — which is the shim being dead rather than the clock being moved.
 //
 // Run ON THE BOX (both stores live there):
 //   WORLD2_PG_URL=... W2_OWNER_URL=... node world2/tools/falsifier-acts-parity.mjs --db <dynamic.db>
 // W2_OWNER_URL is required since Phase 5.6: private drafts are lawfully
 // unmirrored, and only the owner's credential can tell one from a lost row.
 // Exit 0 green · exit 1 red (parity drift or expiry).
-// CAN-FAIL PROOF: run with --prove-can-fail to check one deliberately mangled
-// in-memory row is caught (no store is touched).
+// CAN-FAIL PROOF: run with --prove-can-fail to check that one deliberately
+// mangled in-memory row is caught, and that the per-lane expiry gate catches a
+// governed lane past its backstop, exempts one ruled exempt, goes quiet when
+// every governed row is closed, and fails closed on an unnamed lane (no store is
+// touched).
 
 import { DatabaseSync } from "node:sqlite";
-import { MIRROR_EXPIRES, mirrorExpired } from "../../src/world2-acts.mjs";
+import { mirrorExpiresFor, expiredLanes, exemptLanes, mirrorExpiryLine } from "../../src/world2-acts.mjs";
 
 const arg = (name) => {
   const i = process.argv.indexOf(name);
@@ -52,12 +62,47 @@ if (has("--prove-can-fail")) {
   const a = { crossing: 1, actor: "x", action: "say", object: null, at_anchor: null, at_dx: null, at_dy: null, witnesses: null, class: "c", payload: null, effect: null, household: null, written_at: "2026-08-28T00:00:00.000Z" };
   const b = { ...a, actor: "y" };
   if (substance(a) === substance(b)) { console.error("RED (falsifier broken): mangled row not caught"); process.exit(1); }
-  console.log("can-fail proof: a mangled twin IS caught (actor x vs y differ)");
+
+  // DEC-2's three arms, proved on the SAME `expiredLanes` the gate below calls,
+  // against synthetic maps and a far-future clock. No store is touched, and no
+  // date in the shipped map can make any of these vacuous.
+  const far = new Date("2099-01-01T00:00:00Z");
+  const mixed = { stance: { expires: "2026-09-30" }, arena: { expires: null } };
+  const fails = [];
+  // (b) a flipped lane's expiry still fires — the shim cannot become furniture
+  if (!expiredLanes(far, mixed).includes("stance"))
+    fails.push("a governed lane past its backstop was NOT caught (rule 5 defeated)");
+  // (a) a lane exempt by ruling never expires (P-143)
+  if (expiredLanes(far, mixed).includes("arena"))
+    fails.push("a lane exempt BY RULING (P-143) was counted expired — the defect DEC-2 fixed");
+  // the closure: obligations end by removing rows, not by moving a date
+  if (expiredLanes(far, { arena: { expires: null } }).length)
+    fails.push("with every governed lane closed, the tool still claims an expiry");
+  // and an unnamed lane must fail CLOSED, never buy immortality by being unnamed
+  if (!expiredLanes(far, { "brand-new": {} }).includes("brand-new"))
+    fails.push("an unnamed lane did NOT inherit the shared backstop");
+  if (fails.length) { for (const f of fails) console.error(`RED (falsifier broken): ${f}`); process.exit(1); }
+
+  console.log("can-fail proof: a mangled twin IS caught (actor x vs y differ); "
+    + "the per-lane expiry catches a governed lane past its backstop, exempts the arena by P-143's ruling, "
+    + "goes quiet once every governed row is removed, and fails closed on an unnamed lane.");
   process.exit(0);
 }
 
-if (mirrorExpired()) {
-  console.error(`RED: the shadow mirror expired ${MIRROR_EXPIRES} — cut over (delete the journal) or have Keemin move the date. No immortal twins.`);
+// THE EXPIRY, PER LANE (DEC-2). A red names the lanes, because a red that could
+// not say WHICH lane is the defect this replaced: it swept the arena in with the
+// six it should govern, against P-143's ruling.
+const expired = expiredLanes();
+if (expired.length) {
+  for (const lane of expired) {
+    console.error(
+      `RED: the "${lane}" lane's reverse mirror passed its backstop ${mirrorExpiresFor(lane)} — `
+      + "land that lane's read ports, rule its deletion (rule 6), and remove its row from LANE_MIRROR "
+      + "in src/world2-acts.mjs. Moving the date is how a shim becomes furniture. No immortal twins.");
+  }
+  const exempt = exemptLanes();
+  console.error(`RED: ${expired.length} lane(s) expired — ${expired.join(", ")}. `
+    + `Not counted, exempt by ruling: ${exempt.length ? exempt.join(", ") : "none"}.`);
   process.exit(1);
 }
 
@@ -216,4 +261,4 @@ for (const j of jrows) {
 }
 await pool.end();
 if (red) { console.error(`RED: ${red}/${jrows.length} rows fail parity`); process.exit(1); }
-console.log(`GREEN: ${jrows.length} undrained journal rows — ${jrows.length - skipped - released} twinned directly, ${released} released late (staked drafts, dated at the putting-forward), ${skipped} lawfully unmirrored (still private drafts), ${discarded} private start to finish (composed and discarded without ever being staked). Expiry ${MIRROR_EXPIRES} not reached.`);
+console.log(`GREEN: ${jrows.length} undrained journal rows — ${jrows.length - skipped - released} twinned directly, ${released} released late (staked drafts, dated at the putting-forward), ${skipped} lawfully unmirrored (still private drafts), ${discarded} private start to finish (composed and discarded without ever being staked). ${mirrorExpiryLine()}`);

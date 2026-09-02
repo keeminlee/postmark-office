@@ -6,7 +6,9 @@
 // locks at 17:45" (gold §1). clearing_job alone transitions it at the close;
 // retraction stays free until then (claims_update_guard, 002_grants.sql).
 //
-// SHADOW-ERA SHIM like world2-acts.mjs, same death date (MIRROR_EXPIRES): during
+// SHADOW-ERA SHIM like world2-acts.mjs, dying with the same lane it serves —
+// the mark lane's row in `LANE_MIRROR` (world2-acts.mjs), per-lane since DEC-2
+// was ruled 2026-08-29 rather than one date for the whole store: during
 // the shadow era the sketchbook drain is still 1.0's truth; the docket is the
 // lane being proven. Same serialized fire-and-forget queue, loud on failure.
 //

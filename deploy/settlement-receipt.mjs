@@ -56,6 +56,11 @@ const CHANNELS = ["published", "unpublished", "left_drafted", "withdrawn", "quar
 const sweep = readJson(env("SETTLEMENT_SWEEP_JSON"));
 const drain = readJson(env("SETTLEMENT_DRAIN_JSON"));
 const isolate = readJson(env("SETTLEMENT_ISOLATE_JSON"));
+// The refusal's CLASS — deploy/settlement-classify.mjs's verdict, when this
+// crossing refused. Added 2026-08-30 to retire `"phase":"unknown"`: a refusal
+// that cannot say whether a rerun could ever clear it makes the operator guess,
+// and on 2026-08-31T02:39Z the guess (rerun) happened to be right.
+const refusal = readJson(env("SETTLEMENT_REFUSAL_JSON"));
 
 const channels = {};
 let unnamed = null;
@@ -118,6 +123,22 @@ const receipt = {
           household: q.household ?? null, id: q.id ?? null, path: q.path ?? null,
         })),
         suite_red_before: isolate.suite_red_before ?? null,
+      }
+    : null,
+
+  // ── WHOSE NIGHT IS THIS. Top-level because it is the first thing read, and
+  // null on a crossing that did not refuse — an absent field and a field saying
+  // "we could not tell" are different states and the receipt must keep them so.
+  class: refusal?.class ?? null,
+  next_step: refusal?.next_step ?? null,
+  refusal: refusal
+    ? {
+        cause: refusal.cause ?? "",
+        ref: refusal.ref ?? null,
+        paths_in_canon: refusal.paths_in_canon ?? [],
+        paths_in_inputs: refusal.paths_in_inputs ?? [],
+        errors_claimed: refusal.errors_claimed ?? null,
+        errors_seen: refusal.errors_seen ?? null,
       }
     : null,
 

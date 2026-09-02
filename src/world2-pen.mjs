@@ -33,8 +33,11 @@
 // ── THE REVERSE MIRROR (D3) ─────────────────────────────────────────────────
 // After a flipped lane's COMMIT, the sqlite journal still receives its row —
 // best-effort, AFTER the record, never with a vote (DESIGN §3 step 7: "a
-// rollback convenience, not a record"). It rides MIRROR_EXPIRES exactly as the
-// forward mirror does and dies at the replay-parity gate. While it holds,
+// rollback convenience, not a record"). It rides the mirror expiry exactly as
+// the forward mirror does and dies at the replay-parity gate — and since DEC-2
+// was ruled (2026-08-29 evening) that expiry is PER LANE: this lane's reverse
+// mirror dies when THIS lane's read ports land and its deletion is ruled, not on
+// a store-wide date (src/world2-acts.mjs § LANE_MIRROR). While it holds,
 // every 1.0 read — guards included — stays valid, which is what lets a lane
 // flip before the R3 read ports land: the ports gate the DELETION (rule 6),
 // not the flag.
@@ -46,7 +49,7 @@
 // fallback's coat" (DESIGN §5 D2). The cost is chosen knowingly: after the
 // flip a Postgres outage is a visible town outage (DESIGN §4 F1).
 
-import { world2Enabled, MIRROR_EXPIRES } from "./world2-acts.mjs";
+import { world2Enabled, MIRROR_EXPIRES, LANE_MIRROR, mirrorExpiresFor } from "./world2-acts.mjs";
 
 const state = {
   pool: null,
@@ -222,7 +225,12 @@ export function penStatus() {
   return {
     flipped_lanes: [...flippedLanes()],
     written, failed, refused, lastError,
+    // `expires` keeps its scalar shape — the governed lanes' shared backstop —
+    // and `lane_expiry` carries the per-lane truth beside it (DEC-2), null where
+    // a lane is exempt by ruling. Same pair mirrorStatus() answers with.
     expires: MIRROR_EXPIRES,
+    lane_expiry: Object.fromEntries(
+      Object.keys(LANE_MIRROR).map((lane) => [lane, mirrorExpiresFor(lane)])),
   };
 }
 

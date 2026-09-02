@@ -11,6 +11,7 @@
 // test; a suite that only kept testing those halves would go on being green
 // while the record never moved.
 
+import "./helpers/drain-pen.mjs"; // #2040: fixtures get a real ledger pen
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
@@ -189,6 +190,30 @@ const flagOn = (fn) => {
 const HELD = () => true;
 const silent = () => {};
 const run = (o, over = {}) => runTownDrain(o, { db, doors: TOWN_DOORS, lockHeld: HELD, log: silent, ...over });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// F0 · THE DRAIN SPEAKS THE TOWN'S CLOCK — found live 2026-08-30 (the gift
+// blackout): the 00:00Z crossing stamped registry lines with the UTC day
+// (tomorrow, in town time) while the same crossing's mints carried the town
+// day, and the forward-dated gate then refused every town-dated writer until
+// midnight ET. The drain's default date must be TOWN_TZ's day, like every
+// other dated writer in this repo.
+// ═══════════════════════════════════════════════════════════════════════════
+
+test("F0 · AT THE BOUNDARY INSTANT the drain stamps the TOWN day, never the wire's", () => {
+  const o = liveShapeOdb();
+  try {
+    flagOn(() => {
+      // 2026-08-31T00:22Z is 8:22 PM EDT on 08-30 — the exact instant the live
+      // bug fired. The UTC derivation this falsifier retired said 2026-08-31.
+      const r = run(o, { clone: "unused-no-rows", now: Date.UTC(2026, 7, 31, 0, 22) });
+      assert.equal(r.ran, true);
+      assert.equal(r.drained, 0, "an empty log drains nothing — the date is the whole assertion");
+      assert.equal(r.date, "2026-08-30", "the town day, from TOWN_TZ");
+      assert.notEqual(r.date, "2026-08-31", "…never the UTC day that armed the gift blackout");
+    });
+  } finally { o.close?.(); }
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // F1 · THE BRIDGE DRAINS ALL THREE CLASSES — the town log gets a live consumer

@@ -104,13 +104,23 @@
 // clock every 30 minutes and can never accumulate an alarm even while every
 // deploy fails.
 //
-// So the clock is anchored to the SERVED value alone: how long has the site been
-// answering with THIS value? If the pipeline is healthy the served value keeps
-// changing and the clock keeps resetting. If it is broken the served value
-// freezes and the clock runs. And a quiet repo never alarms, because when
-// nothing is pushed the served value equals the reference and the comparison
-// never opens. That is the outcome question — "has the site stopped changing
-// while its source moved on" — asked directly.
+// So the clock is anchored to the DIVERGENCE: how long has the reference been
+// somewhere the served value is not? It starts the moment the two first differ,
+// PERSISTS while the reference keeps moving (a busy repo cannot hide a frozen
+// site — the original anchoring law, kept), and clears the moment they agree
+// or the served value advances (a progressing pipeline is never stale).
+//
+// HISTORY, because the previous anchor rang 6-7 false alarms a day and its
+// header note claimed it couldn't (found 2026-08-31, Keemin's challenge): the
+// clock used to be anchored to the SERVED value alone — "how long has the site
+// answered with THIS value" — on the argument that a quiet repo never alarms
+// since served equals reference. True while quiet; false at the first commit
+// AFTER the quiet: the town sat unchanged for 59 minutes (01:32-02:31Z, an
+// ordinary quiet hour), one stake landed, and nine minutes later the sentinel
+// declared 49 minutes of staleness — the age of a perfectly current serve of a
+// perfectly quiet repo. Serving an old sha of a repo that hasn't moved is
+// health; only trailing a KNOWN-NEWER reference is staleness, and the clock
+// now measures exactly that.
 //
 // Usage:
 //   node tools/site-sentinel.mjs [--state <state.json>] [--out <status.json>]
@@ -164,11 +174,20 @@ export const CONFIG = {
   //               reach prod within an hour of being cut.
   //   town data : sync-atlas runs every ~30 min and Deploy follows it.
   //   office    : the rehydrate timer fires at *:07,22,37,52 — every 15 min.
+  //               30m under the divergence anchor is TWO DEAD TICKS behind a
+  //               known-newer tip (Keemin-tightened 2026-08-31, the same
+  //               night the anchor was fixed). History of the number: 45m
+  //               under the old served-value anchor rang 6-7 false alarms a
+  //               day — every quiet stretch plus one push — and was briefly
+  //               widened to 60m before the real bug was found in the
+  //               measurement, not the window. With the clock honest, tight
+  //               is cheap: a real wedge pages in half an hour and a quiet
+  //               hour pages nobody.
   //   daily     : sync + deploy, end to end.
   staleAfter: {
     site_code: 3 * HOUR,
     site_town_data: 3 * HOUR,
-    office_as_of: 45 * MINUTE,
+    office_as_of: 30 * MINUTE,
   },
   dailySlack: 90 * MINUTE,
 
@@ -252,16 +271,22 @@ export function classifyUp({ status = null, location = null, error = null, infoO
 
 /**
  * Compare a SERVED value against a REFERENCE, with the clock anchored to the
- * served value (see the header's staleness-clock note for why not the pair).
+ * DIVERGENCE (see the header's staleness-clock note, and its history — the
+ * served-value anchor this replaces alarmed on every quiet-hour-then-one-push).
  *
- * `seen` is the caller's memory of this served value: { value, first_seen_at }.
- * It is returned updated, so a falsifier can run the whole comparison and prove
- * the memory advanced (or did not) without owning a filesystem.
+ * `seen` is the caller's memory: { value, first_seen_at, diverged_since }.
+ * `diverged_since` is when the reference was first observed somewhere the
+ * served value is not; null while they agree. It persists while the reference
+ * keeps moving (a busy repo cannot hide a frozen site) and clears when the
+ * served value advances (a progressing pipeline is never stale). Returned
+ * updated, so a falsifier can run the whole comparison and prove the memory
+ * advanced (or did not) without owning a filesystem.
  *
- * A served value the watch has never seen before starts its clock NOW and
- * cannot be stale on that tick — which is correct and is the reason a cold
- * start is quiet: the watch genuinely does not know how long that value has
- * been up, and guessing would be inventing evidence.
+ * A divergence the watch has never seen before starts its clock NOW and cannot
+ * be stale on that tick — the same cold-start honesty as before: the watch
+ * genuinely does not know how long the reference has been ahead, and guessing
+ * would be inventing evidence. (A pre-upgrade state file, which carries no
+ * diverged_since, gets the same one-tick grace for the same reason.)
  */
 export function classifyStamp({ served, reference, seen = null, nowMs, staleAfterMs, what, referenceName }) {
   if (served == null) {
@@ -270,23 +295,31 @@ export function classifyStamp({ served, reference, seen = null, nowMs, staleAfte
   if (reference == null) {
     return { verdict: "UNKNOWN", reason: `could not read ${referenceName} to compare ${what} against`, seen: seen ?? null };
   }
-  const nextSeen = seen && seen.value === served ? seen : { value: served, first_seen_at: nowMs };
+  const sameValue = seen && seen.value === served;
+  const firstSeenAt = sameValue ? seen.first_seen_at : nowMs;
   const shortS = String(served).slice(0, 10);
   const shortR = String(reference).slice(0, 10);
 
-  if (served === reference) return { verdict: "OK", reason: `${what} matches ${referenceName} (${shortS})`, seen: nextSeen };
+  if (served === reference) {
+    return { verdict: "OK", reason: `${what} matches ${referenceName} (${shortS})`,
+      seen: { value: served, first_seen_at: firstSeenAt, diverged_since: null } };
+  }
 
-  const heldFor = nowMs - nextSeen.first_seen_at;
-  if (heldFor < staleAfterMs) {
+  // Diverged. The clock starts at the first observed divergence and survives
+  // further reference movement; a changed served value restarts it (progress).
+  const divergedSince = (sameValue ? seen.diverged_since : null) ?? nowMs;
+  const nextSeen = { value: served, first_seen_at: firstSeenAt, diverged_since: divergedSince };
+  const behindFor = nowMs - divergedSince;
+  if (behindFor < staleAfterMs) {
     return {
       verdict: "OK",
-      reason: `${what} is ${shortS} and ${referenceName} has moved to ${shortR}, ${humanDuration(heldFor)} ago — inside the ${humanDuration(staleAfterMs)} deploy window`,
+      reason: `${what} is ${shortS} and ${referenceName} moved ahead to ${shortR} ${humanDuration(behindFor)} ago — inside the ${humanDuration(staleAfterMs)} deploy window`,
       seen: nextSeen,
     };
   }
   return {
     verdict: "STALE",
-    reason: `${what} has been ${shortS} for ${humanDuration(heldFor)} while ${referenceName} is at ${shortR} — the site has stopped changing and its source has not`,
+    reason: `${what} has trailed ${referenceName} for ${humanDuration(behindFor)} (serving ${shortS}, source at ${shortR}) — the source moved on and the site has not followed`,
     seen: nextSeen,
   };
 }
