@@ -134,8 +134,25 @@ export async function officeWrite(fn, { household = null, env = process.env } = 
 }
 
 /** The one acts INSERT, both eras. `seq` is null for a flipped or lane act —
- *  001's own words: the shadow-era pairing key, dying at cutover. */
+ *  001's own words: the shadow-era pairing key, dying at cutover.
+ *
+ *  ── ONE SPELLING OF THE HOUSEHOLD (Wright-ruled 2026-08-28, ENFORCED here
+ *  2026-08-29 after the guards lane measured the drift live: acts held the
+ *  office key's NAME — 'darko' ×12 — while claims held the resolved KEY, and
+ *  the draft overlay reading both tables lost every deleted mark silently).
+ *  The row's `household` is resolved through `householdKeyFor` — the docket
+ *  pen's own resolver — so the two columns cannot spell one fact two ways.
+ *  NULL-PRESERVING, deliberately: a row that named no household stays NULL
+ *  rather than being backfilled from the actor (the claims pen backfills
+ *  because a claimant must have a household; an act need not, and inventing
+ *  one here would break parity with every null-household journal row). The
+ *  journal keeps 1.0's name spelling; the parity falsifier applies this
+ *  mapping as its fourth lawful departure. A gh:<id> can no longer enter by this road either
+ *  (the arena tee): whatever a caller passes, the identities projection
+ *  answers, and a non-roster name resolves to solo:<name>, never verbatim. */
 export async function insertAct(client, row, seq = null) {
+  const { householdKeyFor } = await import("./world2-claims.mjs");
+  const household = row.household == null ? null : await householdKeyFor(client, row.household);
   const { rows: [r] } = await client.query(
     `INSERT INTO acts (at, crossing, actor, action, object,
                        at_anchor, at_dx, at_dy, witnesses, class,
@@ -144,7 +161,7 @@ export async function insertAct(client, row, seq = null) {
      RETURNING id`,
     [row.written_at, row.crossing, row.actor, row.action, row.object,
      row.at_anchor, row.at_dx, row.at_dy, row.witnesses, row.class,
-     row.payload, row.effect, row.household, seq]);
+     row.payload, row.effect, household, seq]);
   return r.id;
 }
 
