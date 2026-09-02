@@ -94,6 +94,16 @@ const LANE_OF = Object.freeze({
   // has drifted from the door, and it cannot catch drift in a constant it
   // shares with the door. It caught this one on the first run.
   "declare-stance-on": "journal",
+  // THE ARENA'S BEATS — all five land as `arena-act` journal rows
+  // (src/arena.mjs; parity matrix P-143: "state derived from the dynamic.db
+  // journal … mirrored to PG `acts` by the all-lanes shadow"), so the parity
+  // falsifier carries them like any journalled lane. Do not confuse this with
+  // the PEN flip, which is refused BY RULING for this lane (Keemin,
+  // 2026-08-29, P-143): the refusal is a fact about `W2_PEN`, not about the
+  // mirror — a beat still reaches `acts` the journalled way. Named
+  // 2026-09-02, the first census run against an apex that dispatches them
+  // (the C1 flip night); until then check 0 had never been asked.
+  strike: "journal", cast: "journal", guard: "journal", lift: "journal", loot: "journal",
 
   // own pen, mirrored by mirrorLaneAct — checked below
   say: "lane",   // check 1 · voices-log.jsonl
@@ -138,9 +148,10 @@ const READ_ONLY_VERBS = new Set([]);
 // one" — and it reads the journal, so it can only ever be answered by what the
 // world has really written.
 //
-// `arena-act` is named here although src/arena.mjs is NOT on this branch (it
-// rides the birthday-dungeon proto, which the gold plan §6 says not to
-// entangle). Naming it early is deliberate: the plan already ruled arena in —
+// `arena-act` was named here BEFORE src/arena.mjs reached this branch (it rode
+// the birthday-dungeon proto until the party-night merge, 2026-08-29 — office
+// 37037aa; the apex has dispatched the five beat verbs since, and check 0
+// names them above). Naming it early was deliberate: the plan already ruled arena in —
 // gold §1's LIVE lane is "walks, says, enters/exits, throws, ARENA BEATS" — and
 // it writes journal rows, so `appendJournal`'s mirror carries it the day it
 // merges. A census that only learns about a lane after it lands is a census
