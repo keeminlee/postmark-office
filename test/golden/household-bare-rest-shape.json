@@ -298,6 +298,31 @@
     }
    },
    "teaches": "string"
+  },
+  {
+   "act": "string",
+   "blurb": "string",
+   "dispatches_to": "string",
+   "fields": {
+    "handle": {
+     "description": "string",
+     "type": "string"
+    },
+    "on": {
+     "description": "string",
+     "required": "boolean",
+     "type": "string"
+    },
+    "stance": {
+     "description": "string",
+     "enum": [
+      "string"
+     ],
+     "required": "boolean",
+     "type": "string"
+    }
+   },
+   "teaches": "string"
   }
  ],
  "credential": {
