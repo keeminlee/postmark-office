@@ -698,6 +698,61 @@ export function portalBlockAt(db, spineIds = []) {
   finally { try { dyn?.close(); } catch { /* same */ } }
 }
 
+// ── THE CONSENT DOOR'S ONE DERIVATION ───────────────────────────────────────
+//
+// The stance act's arguments, assembled once. Two doors call this and neither
+// assembles them itself: the world apex below (from a standpoint) and the
+// household apex (from STANDING — household-apex.mjs § the consent door). See
+// the DISPATCH row's note for why the second door may not build its own.
+//
+// It is a THIN wrapper on purpose: no check, no default, no reshaping of args
+// lives here. `declareStanceViaOffice` is the whole door — the freeze gate, the
+// single-log gate, the speaker check, the ground's-holder rule, the pen — and a
+// line of that logic copied here would be a second door wearing the first one's
+// name.
+export const declareStanceAtOffice = (args, key) =>
+  declareStanceViaOffice(WORLD_CLONE, args, key, { witnessStamp, crossing: currentCrossing() });
+
+// ── THE STANDING-SCOPED DOORS ───────────────────────────────────────────────
+//
+// An act whose grant hangs on a class that NOBODY IS and NOTHING SITES cannot
+// be delivered by a standpoint. `declare-stance-on` is granted by the
+// `household` class node; the apex delivers a grant through `yours` (the class
+// you ARE — `resident`) or `here` (a class mark on ground in reach), and a
+// household is neither: no resident IS a household, and there are zero marks of
+// kind `household` anywhere in the world record. So both rails are dead and the
+// verb was afforded at no standpoint that exists (#2392, reproduced 2026-09-02).
+//
+// The fix is a door at the tier where standing lives, and this table is what
+// the WORLD side owes it: when the act is asked for here, the refusal must name
+// the door that works. It used to say "It is afforded at the-town/household
+// (null, null) — walk there and it appears", which is a set of coordinates
+// nobody can walk to and a promise that cannot be kept.
+//
+// THE BOUNCE IS NOT SUPPRESSED. The act genuinely is not afforded where the
+// caller stands, and the world's read keeps its own meaning: what you find
+// standing on your own ground. What changes is only that the sentence points
+// somewhere real.
+//
+// Keys are apex action names; each value names the door and the exact call. The
+// household falsifier asserts every entry here is a real household act, so the
+// verb cannot be renamed at one door and left standing at the other.
+export const STANDING_SCOPED_DOORS = Object.freeze({
+  [ACTION_STANCE]: Object.freeze({
+    door: "household",
+    perform: `household { do: "${ACTION_STANCE}", args: { on: …, stance: "welcomed"|"opposed" } }`,
+    observe: 'household { read: "stances" }',
+    why: "what awaits your word is derived from the ground your HOUSE holds, never from where your feet are — so it is spoken at the door where standing lives",
+  }),
+});
+
+/** The sentence a world-side refusal owes an act that has a standing door. */
+export function standingDoorHint(action) {
+  const d = STANDING_SCOPED_DOORS[String(action ?? "").trim()];
+  if (!d) return null;
+  return `This act is not walked to — it is spoken from STANDING: ${d.perform}, and ${d.observe} shows what is waiting. ${d.why[0].toUpperCase()}${d.why.slice(1)}.`;
+}
+
 // ── the dispatch table · the apex is a door to doors ────────────────────────
 //
 // v0 mints no write machinery. Each action names an implementation that
@@ -788,10 +843,16 @@ const DISPATCH = {
   // re-derived: a stance row carries the-witnessed-line exactly as a mark row
   // does, and a second answer to "where did the actor stand" is the split-brain
   // this office keeps a museum of.
-  [ACTION_STANCE]: {
-    tool: "world_declare_stance",
-    run: (args, key) => declareStanceViaOffice(WORLD_CLONE, args, key, { witnessStamp, crossing: currentCrossing() }),
-  },
+  //
+  // ⚑ LIFTED OUT OF THE TABLE AS A NAMED EXPORT (the consent door's second
+  // door, 2026-09-02 / #2392). The household apex performs this same act from
+  // STANDING rather than from a standpoint, and it must not assemble the
+  // door's arguments a second time: `WORLD_CLONE`, the caller's key, the
+  // witness reader and the crossing are the act's own inputs, and a second
+  // assembly one door over is a second answer to "where did the actor stand"
+  // — the split-brain this office keeps a museum of. ONE DERIVATION, TWO
+  // DOORS, and here that is literally one function with two callers.
+  [ACTION_STANCE]: { tool: "world_declare_stance", run: (args, key) => declareStanceAtOffice(args, key) },
   // ── the arena's five verbs (2026-08-27) ───────────────────────────────────
   //
   // ⚑ THESE FIVE WERE THE 501. The class marks granted them from the day the
@@ -2002,6 +2063,18 @@ async function apexDo(args, key) {
       const elsewhere = affordableAt(store.db, action);
       const here = entries.map((e) => e.action);
       const canDo = `From here you can: ${here.join(", ") || "(nothing yet)"}.`;
+      // ⚑ A THIRD CONDITION (#2392, 2026-09-02): the act has a STANDING door.
+      //
+      // `affordable_at` answers truthfully and uselessly for one of these — the
+      // grant sits on a de-sited class node, so the coordinates are (null, null)
+      // and "walk there and it appears" is a direction to nowhere. It is
+      // checked FIRST because it is the only branch that can be acted on: where
+      // a door exists, naming a place is not an answer.
+      const standing = standingDoorHint(action);
+      if (standing)
+        return bounce(422, `"${action}" is not afforded where you stand — and it is not a standpoint's act`,
+          `${standing} ${canDo}`,
+          { standing_door: STANDING_SCOPED_DOORS[action], affordable_at: elsewhere, affordable_here: here });
       return elsewhere.length
         ? bounce(422, `"${action}" is not afforded where you stand`,
           `It is afforded at ${elsewhere.map((w) => `${w.mark} (${w.at.x}, ${w.at.y})`).join("; ")} — walk there and it appears. ${canDo}`,
@@ -2327,6 +2400,15 @@ async function apexReadAction(args, key, ctx = {}) {
     if (!match) {
       const elsewhere = affordableAt(store.db, action);
       const here = entries.map((e) => e.action);
+      // The same third condition the act branch grew (#2392). A shadow read of
+      // a standing-scoped act is not readable from any standpoint either — this
+      // is the bounce a resident with candidates waiting actually met, and it
+      // pointed at the class node's own id, which is a name and not a door.
+      const standing = standingDoorHint(action);
+      if (standing)
+        return bounce(422, `"${action}" is not an action anywhere in your view — it is not read from a standpoint`,
+          `${standing} Readable from here: ${here.join(", ") || "(nothing)"}.`,
+          { standing_door: STANDING_SCOPED_DOORS[action], readable_here: here, affordable_at: elsewhere });
       return bounce(422, `"${action}" is not an action anywhere in your view — nothing to read`,
         `Readable from here: ${here.join(", ") || "(nothing)"}${elsewhere.length ? ` — and "${action}" stands at ${elsewhere.map((w) => w.mark).join(", ")}` : ""}.`,
         { readable_here: here, affordable_at: elsewhere });

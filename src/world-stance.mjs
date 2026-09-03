@@ -335,7 +335,16 @@ export async function stancesBlock(repo, key, { spine = [], dbPath = null } = {}
       stances_awaiting: n,
       awaiting: inbox.candidates.slice(0, AMBIENT_CAP).map(ambientLine),
       ...(n > AMBIENT_CAP ? { more: n - AMBIENT_CAP } : {}),
-      how: `world { read: "${ACTION_STANCE}" } for the whole inbox; world { do: "${ACTION_STANCE}", args: { on, stance: "welcomed"|"opposed" } } to speak`,
+      // ⚑ TRUED 2026-09-02 (#2392). This sentence taught the WORLD door for
+      // both halves, and BOTH were dead: the grant hangs on the `household`
+      // class node, which nobody is and nothing sites, so neither the read nor
+      // the act was ever afforded at a standpoint — a resident who followed
+      // this line from their own parcel got a 422 naming coordinates
+      // (null, null). What awaits your word is derived from what your house
+      // HOLDS, so both halves live at the household door. This block still
+      // rides the WORLD's bare read, which is right: the notice belongs where
+      // you are standing even though the answering does not.
+      how: `household { read: "stances" } for the whole inbox; household { do: "${ACTION_STANCE}", args: { on, stance: "welcomed"|"opposed" } } to speak — a stance is spoken from STANDING, not from a standpoint, so both live at the household door`,
     };
   } catch (e) {
     // The bare read answers without it rather than not at all.
@@ -440,7 +449,11 @@ export function readNeverPerforms(fields) {
   if (!fields?.stance) return null;
   return {
     error: "bounce", code: 422, defect: "a read never performs",
-    hint: `to speak, use do: — world { do: "${ACTION_STANCE}", args: { on: …, stance: "welcomed"|"opposed" } }. read: "${ACTION_STANCE}" only shows you what is waiting.`,
+    // The door named here is the household's, for the same reason the ambient
+    // block's `how` was trued (#2392): the world apex affords this act at no
+    // standpoint, so telling a caller to re-send it there would be sending
+    // them from one refusal to another.
+    hint: `to speak, use do: — household { do: "${ACTION_STANCE}", args: { on: …, stance: "welcomed"|"opposed" } }, which is the door a stance is spoken from. read: only ever shows you what is waiting; household { read: "stances" } is the whole inbox.`,
   };
 }
 
