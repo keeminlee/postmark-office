@@ -46,26 +46,33 @@ if (has("--prove-refusal")) {
   const { appendActFlipped } = await import("../../src/world-journal.mjs");
   process.env.WORLD2_PG = "1";
   process.env.WORLD2_PG_URL = "postgres://nobody:wrong@127.0.0.1:1/refused"; // port 1: nothing listens
-  process.env.W2_PEN = "stance";
   const db = new DatabaseSync(":memory:");
   db.exec(`CREATE TABLE journal (
     seq INTEGER PRIMARY KEY AUTOINCREMENT, crossing INTEGER, actor TEXT, action TEXT,
     object TEXT, at_anchor TEXT, at_dx REAL, at_dy REAL, witnesses TEXT, class TEXT,
     payload TEXT, effect TEXT, household TEXT, written_at TEXT)`);
-  let refused = null;
-  try {
-    await appendActFlipped(db, { actor: "probe", action: "declare-stance-on", object: "x/y", cls: "stance" });
-  } catch (err) { refused = err; }
-  const rows = db.prepare("SELECT count(*) AS n FROM journal").get();
-  if (!refused || refused.name !== "PenUnreachableError") {
-    console.error(`RED (refusal): an unreachable pen did not refuse with PenUnreachableError (got: ${refused ? refused.name + " — " + refused.message : "no error at all"})`);
-    process.exit(1);
+  // Every WIRED lane, each under its own flag: the ordering is a property of
+  // appendActFlipped, but the flag is read per lane, so each is proven with
+  // W2_PEN naming it alone (a lane proven only under W2_PEN=all would not
+  // prove its own name is read). hold + say wired 2026-09-03 (runbook C2/C4).
+  for (const [lane, cls, action] of [["stance", "stance", "declare-stance-on"], ["hold", "holding", "take"], ["say", "voice", "say"]]) {
+    process.env.W2_PEN = lane;
+    let refused = null;
+    try {
+      await appendActFlipped(db, { actor: "probe", action, object: "x/y", cls });
+    } catch (err) { refused = err; }
+    const rows = db.prepare("SELECT count(*) AS n FROM journal").get();
+    if (!refused || refused.name !== "PenUnreachableError") {
+      console.error(`RED (refusal, ${lane}): an unreachable pen did not refuse with PenUnreachableError (got: ${refused ? refused.name + " — " + refused.message : "no error at all"})`);
+      process.exit(1);
+    }
+    if (Number(rows.n) !== 0) {
+      console.error(`RED (ordering, ${lane}): the refusal left ${rows.n} row(s) in the journal — "nothing was written" was a lie, which is the exact state R2 forbids`);
+      process.exit(1);
+    }
+    console.log(`GREEN (refusal proof, ${lane}): the unreachable pen refused with the ruled sentence ("${refused.message}") and the journal holds 0 rows — nothing was written, and nothing was lost.`);
   }
-  if (Number(rows.n) !== 0) {
-    console.error(`RED (ordering): the refusal left ${rows.n} row(s) in the journal — "nothing was written" was a lie, which is the exact state R2 forbids`);
-    process.exit(1);
-  }
-  console.log(`GREEN (refusal proof): the unreachable pen refused with the ruled sentence ("${refused.message}") and the journal holds 0 rows — nothing was written, and nothing was lost.`);
+  process.env.W2_PEN = "stance";
 
   // ── the lanes refused BY NAME, each with its own reason ───────────────────
   //
