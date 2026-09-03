@@ -10,9 +10,14 @@
 // So the claim this file asserts is structural, and it is the law the bundle
 // quotes from `queries.mjs § BUNDLE_LAW`:
 //
-//   "each segment below is the answer of another read, called at the args it
-//    names in `serves` and `args`. Nothing here is a second rendering of
-//    anything — ask the named read yourself and you get the same object back."
+//   "each segment below carries the DOMAIN of another read, called at the args
+//    it names in `serves` and `args` — what that read answers about, not the
+//    envelope the apex wraps it in. Nothing here is a second rendering of
+//    anything — ask the named read yourself and the segment is what comes back
+//    under its own key."
+//
+// (That sentence was re-strung 2026-08-31; the one it replaced, and why it went
+// stale, are recorded at the falsifier itself further down this file.)
 //
 // The test asks the named read yourself. Every segment's `serves` is parsed,
 // dispatched THROUGH THE REAL APEX (mcp.mjs § callTool — the same dispatcher a
@@ -34,6 +39,7 @@ import { doorstepBundle } from "../src/doorstep-bundle.mjs";
 import { LADDER_NOTE } from "../src/paper-fresh.mjs";
 import { appendTownJournal } from "../src/town-journal.mjs";
 import { callTool } from "../src/mcp.mjs";
+import { ACT_SHADOW_READS } from "../src/household-apex.mjs";
 import { TOWN_READABLE } from "../src/town-apex.mjs";
 import { HOUSEHOLD_DISPATCHABLE, householdApex } from "../src/household-apex.mjs";
 
@@ -134,7 +140,30 @@ async function ask(serves, args) {
 
 // ── the falsifier ───────────────────────────────────────────────────────────
 
-test("THE BUNDLE: every segment deep-equals the answer of the read its `serves` names", async () => {
+// ⚠ THE LAW THIS ASSERTS WAS RE-STRUNG 2026-08-31 — ruled by Wright in-lane under the founder's parity ruling, founder informed. The sentence
+// it used to quote, and the date it went stale:
+//
+//   STALE 2026-08-31 — "every segment IS the answer of the read its `serves`
+//   names" (written 2026-07, true until the household door's shadow reads grew
+//   an envelope on 2026-08-31).
+//
+// WHY IT WENT STALE, and why this is truing rather than loosening: the sentence
+// was written when `read: "window"` answered the thing and nothing else, so
+// "the answer of the read" and "the read's DOMAIN" were the same bytes. The
+// shadow reads now answer the world apex's shape — the card beside the thing,
+// the thing under its own key. A law that cannot tell the envelope from the
+// domain does not describe the grammar, it forbids it; and it would collide at
+// the town door the day a bundle serves `read: "stake"`, which has answered
+// `{read, card, stakes, reading_law}` since 618ba69.
+//
+// WHAT IS DELIBERATELY NO LONGER ASSERTED — a named non-assertion, so nobody
+// later reads this as an oversight: ENVELOPE-ONLY DRIFT. If the apex changes
+// what it wraps around a shadow read's domain — adds a key beside `card`,
+// renames `reading_law` — this test will NOT catch it, because the segment
+// never carried the envelope. That surface is asserted at
+// test/foyer-shrink.test.mjs § F7c, which owns the envelope's shape. DOMAIN
+// drift is still caught here, and the flip below proves it.
+test("THE BUNDLE: every segment carries the DOMAIN of the read its `serves` names", async () => {
   // THE FINISHED bundle, not the sync core: the seventh segment (`stances`) is
   // the world engine's and is attached by doorstepBundle, so a falsifier that
   // walked `doorstep()` alone would silently never check it — the exact way a
@@ -148,9 +177,32 @@ test("THE BUNDLE: every segment deep-equals the answer of the read its `serves` 
     assert.ok(typeof seg.serves === "string" && seg.serves.includes("."),
       `segment "${name}" carries no serves pointer — then it is a restatement, not a segment`);
     const asked = await ask(seg.serves, seg.args);
-    assert.deepEqual(answerOf(seg), asked,
-      `segment "${name}" drifted from ${seg.serves} — the bundle is restating a read instead of carrying it`);
+    // THE ONE PLACE THE NEW WORD DOES WORK. For a read that is also an act, the
+    // apex answers an envelope and the DOMAIN sits under the read's own name;
+    // for every other read the answer IS the domain and this is a no-op. Note
+    // that `ask` dispatches through callTool, which sets slim: true always — so
+    // what comes back here is the connector's envelope, not the REST answer.
+    const [, readName] = seg.serves.split(".");
+    const domain = ACT_SHADOW_READS.includes(readName) && asked && !asked.error
+      ? asked[readName] : asked;
+    assert.deepEqual(answerOf(seg), domain,
+      `segment "${name}" drifted from the DOMAIN of ${seg.serves} — the bundle is restating a read instead of carrying it`);
   }
+});
+
+test("THE FLIP, ON THE RE-STRUNG LAW: DOMAIN drift in a SHADOW read's segment is still caught", async () => {
+  // The guard on the 2026-08-31 law change: the assertion moved from the
+  // envelope to the domain, so this proves the domain half can still go red —
+  // on `window`, the one segment whose read now answers an envelope. If this
+  // could not fail, the re-stringing would have been a loosening.
+  const d = await doorstepBundle(HANDLE, ctx);
+  const asked = await ask(d.window.serves, d.window.args);
+  const domain = asked.window ?? asked;
+  assert.deepEqual(answerOf(d.window), domain, "the door as it stands");
+  // now drift the segment's DOMAIN by one field, exactly as a restatement would
+  const tampered = { ...answerOf(d.window), window: { ...domain.window, hand_set: "1999-01-01" } };
+  assert.throws(() => assert.deepEqual(tampered, domain),
+    "the domain comparison must reject a segment that stopped being its read's domain");
 });
 
 test("THE FLIP: the falsifier above can fail — a tampered segment is caught", async () => {
@@ -190,7 +242,12 @@ test("the two metadata keys are the ONLY things stripped — no segment answer o
 test("the bundle law is on the page, and it says what the pointers mean", () => {
   const d = doorstep(db, HANDLE, AS_OF);
   assert.equal(d.the_bundle, BUNDLE_LAW);
-  assert.match(d.the_bundle, /ask the named read yourself and you get the same object back/);
+  // ⚠ THE MATCHED PHRASE CHANGED WITH THE LAW, 2026-08-31. It used to be
+  // /ask the named read yourself and you get the same object back/ — true while
+  // a read's answer and its domain were the same bytes. The word the page must
+  // now carry is DOMAIN, because that is the promise the falsifier above tests.
+  assert.match(d.the_bundle, /carries the DOMAIN of another read/);
+  assert.match(d.the_bundle, /not the envelope the apex wraps it in/);
 });
 
 // ── the segments' own shapes ────────────────────────────────────────────────

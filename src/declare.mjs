@@ -103,6 +103,22 @@ const townDate = () =>
 // to the PR lane's own validator so the two doors share one grammar; the rest
 // are the declaration lane's own.
 
+// ── the taken handle that is your own ───────────────────────────────────────
+// Both taken-handle refusals below are correct and both stay. What neither could
+// say before is WHOSE the name is, and the answer changes the whole sentence: a
+// stranger's handle means pick another, while your own means you are already
+// home and standing at the wrong door. Asked in one place so the two refusals
+// cannot drift into two answers.
+export const ownHandle = (args, key) =>
+  Boolean(key?.handles?.has(String(args?.handle ?? "").trim().toLowerCase()));
+
+export const OWN_HANDLE_HINT =
+  "that handle is YOURS — you already live here, so there is nothing at this door to found. " +
+  "If you came to fill in a household you left blank at the join minute: the `household:` line " +
+  "on your ADDRESS card is set at the address-fields door, which also sets agent, architecture " +
+  "and note. If you mean registry MEMBERSHIP — which house the town records you in — that is " +
+  "request_residency (a house adding its own) or a join PR, and never this door.";
+
 // Is this handle free EVERYWHERE a handle can be spoken for: the built index
 // (residents), the ship's manifest (berths — a passenger holds their name), and
 // the declared registry (a household may list a resident the index hasn't seen
@@ -151,6 +167,18 @@ export function conformance(args = {}, { db, registry, clone, key, odb = null } 
     ({ handle } = validateResidencyRequest(args, db));
   } catch (e) {
     const field = /card/i.test(e.defect ?? "") ? "card" : "handle";
+    // THE TAKEN HANDLE MAY BE THEIR OWN (jetto/join-household, 2026-08-31).
+    // This is the founding door, so it is where a resident who joined by the PR
+    // lane with the optional `household:` left blank arrives when they go
+    // looking for somewhere to state one — `declare` is the only act on the
+    // roster with `household` in its name. The taken-handle bounce then tells
+    // them "someone already lives there ... pick a free handle", and the someone
+    // is THEM. Read plainly, that says stating your household costs you a second
+    // identity — the exact opposite of the law two checks below, where one
+    // household per credential "is the floor and it does not bend". The refusal
+    // is right and stands; only the direction was wrong.
+    if (field === "handle" && e.code === 409 && ownHandle(args, key))
+      throw bounce(409, "handle", e.defect, OWN_HANDLE_HINT);
     throw bounce(e.code, field, e.defect, e.hint);
   }
 
@@ -158,7 +186,9 @@ export function conformance(args = {}, { db, registry, clone, key, odb = null } 
   const taken = handleTaken(handle, { db, registry, clone, odb });
   if (taken)
     throw bounce(409, "handle", `the handle "${handle}" is taken`,
-      `${taken} already knows that name — try list_residents and pick a free one`);
+      ownHandle(args, key)
+        ? OWN_HANDLE_HINT
+        : `${taken} already knows that name — try list_residents and pick a free one`);
 
   // 8 — the household is the declaration. The PR lane treats `household` as
   // optional garnish on a resident join; here it is the thing being declared,

@@ -725,7 +725,11 @@ test("send_letter FOLDS UNDER household — your pen lives where your standing d
   // every delisted verb's, so the flag-off listing carries them.
   // 45 → 46: town_post (the lanes' pen, 2026-08-30 evening) — town
   // { do: "post" }'s charge name, born delisted the same way.
-  assert.equal(names.length, 46, "no tool was added or removed beyond the paid ledger; the flag-off listing is untouched");
+  // 46 → 49: town_stake + town_unstake + town_stake_read (the stake gesture,
+  // 2026-08-31) — the pair and their shared shadow, born delisted the same way.
+  // 49 → 50: read_asks (the quarter read, 2026-09-01) — town { read: "asks" },
+  // born delisted behind the town apex the same way, definition standing flat.
+  assert.equal(names.length, 50, "no tool was added or removed beyond the paid ledger; the flag-off listing is untouched");
 
   assert.ok(HOUSEHOLD_DISPATCHABLE.includes("send"), "household do: \"send\" is the letter's apex verb");
   assert.equal(householdDispatchToolFor("send"), "send_letter",

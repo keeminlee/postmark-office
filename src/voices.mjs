@@ -256,6 +256,12 @@ export function createVoices({
   standpoint,
   place = async () => null,
   onSpoke = null,
+  // `beforeSpoke(voice, { standAs, household })` — the PEN that must commit
+  // BEFORE the log line lands (World 2.0's flipped say lane, W2_PEN=say). It
+  // may return a bounce, and a bounce here means the voice was never spoken:
+  // no log line, no listener, no presence touch. Null when nothing gates the
+  // write (the unflipped town), and the say path is what it was.
+  beforeSpoke = null,
   nearby = null,
   vesselAt = null,
   heardFrom = null,
@@ -555,7 +561,14 @@ export function createVoices({
     }
     const here = await standing(standAs);
     if (here.bounce) return here.bounce;
-    append({ handle, text: body, at: t, x: here.at.x, y: here.at.y, place: here.place, aboard: here.aboard }, { standAs, household });
+    const voice = { handle, text: body, at: t, x: here.at.x, y: here.at.y, place: here.place, aboard: here.aboard };
+    if (beforeSpoke) {
+      // The pen first, refusable: a refusal here is the answer, and the log
+      // never learns the voice existed (R2: nothing written anywhere else).
+      const refused = await beforeSpoke(voice, { standAs, household });
+      if (refused) return refused;
+    }
+    append(voice, { standAs, household });
     touch(handle, here.at, t);
     return reply(handle, here, t, true, since);
   }

@@ -194,12 +194,17 @@ test("S6 · THE APEX: `do:` bounces for a quarantined resident, `read:` and the 
   assert.notEqual(after?.code, 403, "a Registrar commit lifting a quarantine costs a pull, not an office restart");
 });
 
-test("S6b · THE TOWN APEX holds its own gate — the one door `writeShaped` cannot speak for", async () => {
+test("S6b · THE TOWN APEX holds its own gate — and now it has an act to hold it over", async () => {
   // THE HOLE THIS CLOSES. mcp.mjs gates every write-shaped call in one line,
-  // and `writeShaped` resolves `world { do: }` and `household { do: }` but not
+  // and `writeShaped` resolved `world { do: }` and `household { do: }` but not
   // `town { do: }` — so the town apex's one act, declare-household, dispatched
   // straight past it to the same flat verb the gated door refuses. Same act,
   // two doors, two answers: the paper seam's defect wearing a different hat.
+  // (`writeShaped` learnt `town` on 2026-08-31, when its stated reason for not
+  // doing so — the declare_household exemption — turned out to have expired the
+  // day the act moved. The apex keeps its own gate anyway: two gates that agree
+  // is the household door's shape, and this one covers the in-process callers
+  // that never pass through mcp.mjs's ladder.)
   const clone = townClone();
   const key = { household: "keemin", handles: new Set(["wright"]), ghId: "42", ghLogin: "keeminlee" };
   const dispatched = [];
@@ -208,24 +213,48 @@ test("S6b · THE TOWN APEX holds its own gate — the one door `writeShaped` can
   writeFileSync(join(clone, STANDING_LEDGER_PATH), LEDGER(Q("wright")));
 
   // 2026-08-30: declare-household MOVED home to household { do: "declare" } —
-  // the town's roster is empty, so the gate this test closed has no act left
-  // to guard. What SURVIVES the move and is asserted here: a do: through the
-  // third door dispatches NOTHING (suspended or not — the roster is the gate
-  // now), the bounce walks the caller to the household door, and reads stay
-  // open exactly as before. The suspended-founding gate itself is the
-  // household door's to hold (its own gate tests cover declare); when the
-  // stake gesture lands and the roster refills, THIS test grows back its
-  // standing-gate teeth — that requirement is written on the stake's ledger
-  // row in NAMED_NOT_BUILT's own terms.
+  // the town's roster went empty and this test lost its teeth, with the note
+  // that it would grow them back "when the stake gesture lands and the roster
+  // refills". IT LANDED, 2026-08-31, and the teeth are the two blocks below.
+  // A moved act still dispatches nothing, whatever the caller's standing:
   const act = await townApex({ do: "declare-household", args: { household: "Another", handle: "another", card: "x" } }, key, ctx);
-  assert.equal(act.code, 422, "an empty roster refuses every act, before any gate is even consulted");
+  assert.equal(act.code, 422, "an act not on the roster is refused before any gate is even consulted");
   assert.match(act.hint, /household \{ do: "declare" \}/, "the bounce walks the caller to the door that holds the pen");
   assert.deepEqual(dispatched, [], "and the flat verb was never reached");
 
-  // READS ARE NEVER SUSPENDED — the bare call and `read:` stay open here too.
+  // ── THE TEETH, GROWN BACK ─────────────────────────────────────────────────
+  //
+  // `wright` is quarantined in the ledger written above. The town's roster now
+  // holds three durable acts, and every one of them must meet the standing gate
+  // AT THIS DOOR — not because mcp.mjs would also catch it (it would, since
+  // 2026-08-31), but because the apex is dispatched from callers that never
+  // reach that ladder, and a suspended resident staking real stamps through the
+  // quiet path is the exact shape of the hole this file exists to close.
+  for (const [what, args] of [
+    ["post", { class: "idea", slug: "s", body: "b" }],
+    ["stake", { mark: "wright/a-newcomers-first-hour", stamps: 1 }],
+    ["unstake", { mark: "wright/a-newcomers-first-hour", stamps: 1 }],
+  ]) {
+    const r = await townApex({ do: what, args }, key, ctx);
+    assert.equal(r.code, 403, `a quarantined resident's ${what} is refused by STANDING, not by argument shape`);
+    assert.deepEqual(dispatched, [], `…and ${what} reached no flat verb — the escrow machinery was never touched`);
+  }
+
+  // READS ARE NEVER SUSPENDED — the bare call and `read:` stay open here too,
+  // the stake shadow included: the reason for the suspension is one of the
+  // things a suspended resident is reading, and so is what the town is backing.
   assert.notEqual((await townApex({}, key, ctx))?.code, 403, "the bare call is a read");
   await townApex({ read: "town" }, key, ctx);
   assert.deepEqual(dispatched, ["read_town"], "…and a `read:` dispatches as it always did");
+  await townApex({ read: "stake", args: { mark: "wright/a-newcomers-first-hour" } }, key, ctx);
+  assert.deepEqual(dispatched, ["read_town", "town_stake_read"], "…the act's shadow included");
+
+  // …and a lift reopens the acts, live, with no restart — the same property S6a
+  // asserts for the household door, now asserted for the third one.
+  writeFileSync(join(clone, STANDING_LEDGER_PATH), LEDGER(Q("wright"), LIFT("wright")));
+  const after = await townApex({ do: "stake", args: { mark: "wright/a-newcomers-first-hour", stamps: 1 } }, key, ctx);
+  assert.notEqual(after?.code, 403, "a Registrar commit lifting a quarantine costs a pull, not an office restart");
+  assert.equal(dispatched.at(-1), "town_stake", "…and the act reaches its flat verb the moment standing returns");
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

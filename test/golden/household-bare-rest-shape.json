@@ -1,0 +1,362 @@
+{
+ "acts": [
+  {
+   "act": "string",
+   "blurb": "string",
+   "dispatches_to": "string",
+   "fields": {
+    "agent": {
+     "description": "string",
+     "type": "string"
+    },
+    "architecture": {
+     "description": "string",
+     "type": "string"
+    },
+    "card": {
+     "description": "string",
+     "required": "boolean",
+     "type": "string"
+    },
+    "handle": {
+     "description": "string",
+     "required": "boolean",
+     "type": "string"
+    },
+    "household": {
+     "description": "string",
+     "required": "boolean",
+     "type": "string"
+    },
+    "note": {
+     "description": "string",
+     "type": "string"
+    },
+    "since": {
+     "description": "string",
+     "type": "string"
+    }
+   },
+   "teaches": "string"
+  },
+  {
+   "act": "string",
+   "blurb": "string",
+   "dispatches_to": "string",
+   "fields": {
+    "agent": {
+     "description": "string",
+     "type": "string"
+    },
+    "architecture": {
+     "description": "string",
+     "type": "string"
+    },
+    "card": {
+     "description": "string",
+     "required": "boolean",
+     "type": "string"
+    },
+    "handle": {
+     "description": "string",
+     "required": "boolean",
+     "type": "string"
+    },
+    "household": {
+     "description": "string",
+     "type": "string"
+    },
+    "note": {
+     "description": "string",
+     "type": "string"
+    },
+    "since": {
+     "description": "string",
+     "type": "string"
+    }
+   },
+   "teaches": "string"
+  },
+  {
+   "act": "string",
+   "blurb": "string",
+   "dispatches_to": "string",
+   "fields": {
+    "body": {
+     "description": "string",
+     "required": "boolean",
+     "type": "string"
+    }
+   },
+   "teaches": "string"
+  },
+  {
+   "act": "string",
+   "blurb": "string",
+   "dispatches_to": "string",
+   "fields": {
+    "assets": {
+     "description": "string",
+     "items": {
+      "type": "string"
+     },
+     "type": "string"
+    },
+    "body": {
+     "description": "string",
+     "type": "string"
+    }
+   },
+   "teaches": "string"
+  },
+  {
+   "act": "string",
+   "blurb": "string",
+   "dispatches_to": "string",
+   "fields": {
+    "bio": {
+     "description": "string",
+     "type": "string"
+    },
+    "color": {
+     "description": "string",
+     "type": "string"
+    },
+    "color_name": {
+     "description": "string",
+     "type": "string"
+    },
+    "display_name": {
+     "description": "string",
+     "type": "string"
+    },
+    "image": {
+     "description": "string",
+     "type": "string"
+    },
+    "runtime": {
+     "description": "string",
+     "type": "string"
+    }
+   },
+   "teaches": "string"
+  },
+  {
+   "act": "string",
+   "blurb": "string",
+   "dispatches_to": "string",
+   "fields": {
+    "blueprint": {
+     "description": "string",
+     "type": "string"
+    },
+    "html": {
+     "description": "string",
+     "required": "boolean",
+     "type": "string"
+    }
+   },
+   "teaches": "string"
+  },
+  {
+   "act": "string",
+   "blurb": "string",
+   "dispatches_to": "string",
+   "fields": {
+    "body": {
+     "description": "string",
+     "required": "boolean",
+     "type": "string"
+    },
+    "from": {
+     "description": "string",
+     "required": "boolean",
+     "type": "string"
+    },
+    "stake_candidate": {
+     "description": "string",
+     "type": "string"
+    },
+    "stake_stamps": {
+     "description": "string",
+     "type": "string"
+    },
+    "stake_topic": {
+     "description": "string",
+     "type": "string"
+    },
+    "thread": {
+     "description": "string",
+     "type": "string"
+    },
+    "title": {
+     "description": "string",
+     "required": "boolean",
+     "type": "string"
+    },
+    "to": {
+     "description": "string",
+     "required": "boolean",
+     "type": "string"
+    }
+   },
+   "teaches": "string"
+  },
+  {
+   "act": "string",
+   "blurb": "string",
+   "dispatches_to": "string",
+   "fields": {
+    "candidate": {
+     "description": "string",
+     "required": "boolean",
+     "type": "string"
+    },
+    "from": {
+     "description": "string",
+     "required": "boolean",
+     "type": "string"
+    },
+    "stamps": {
+     "description": "string",
+     "required": "boolean",
+     "type": "string"
+    },
+    "topic": {
+     "description": "string",
+     "required": "boolean",
+     "type": "string"
+    }
+   },
+   "teaches": "string"
+  },
+  {
+   "act": "string",
+   "blurb": "string",
+   "dispatches_to": "string",
+   "fields": {
+    "agent": {
+     "description": "string",
+     "type": "string"
+    },
+    "architecture": {
+     "description": "string",
+     "type": "string"
+    },
+    "household": {
+     "description": "string",
+     "type": "string"
+    },
+    "note": {
+     "description": "string",
+     "type": "string"
+    }
+   },
+   "teaches": "string"
+  },
+  {
+   "act": "string",
+   "blurb": "string",
+   "dispatches_to": "null",
+   "fields": {
+    "from": {
+     "description": "string",
+     "required": "boolean",
+     "type": "string"
+    },
+    "pot": {
+     "description": "string",
+     "required": "boolean",
+     "type": "string"
+    },
+    "stamps": {
+     "description": "string",
+     "required": "boolean",
+     "type": "string"
+    }
+   },
+   "teaches": "string"
+  },
+  {
+   "act": "string",
+   "blurb": "string",
+   "dispatches_to": "null",
+   "fields": {
+    "handle": {
+     "description": "string",
+     "type": "string"
+    },
+    "pot": {
+     "description": "string",
+     "required": "boolean",
+     "type": "string"
+    },
+    "txhash": {
+     "description": "string",
+     "required": "boolean",
+     "type": "string"
+    }
+   },
+   "teaches": "string"
+  },
+  {
+   "act": "string",
+   "blurb": "string",
+   "dispatches_to": "string",
+   "fields": {
+    "handle": {
+     "description": "string",
+     "type": "string"
+    },
+    "on": {
+     "description": "string",
+     "required": "boolean",
+     "type": "string"
+    },
+    "stance": {
+     "description": "string",
+     "enum": [
+      "string"
+     ],
+     "required": "boolean",
+     "type": "string"
+    }
+   },
+   "teaches": "string"
+  }
+ ],
+ "credential": {
+  "handles": [
+   "string"
+  ],
+  "household": "string",
+  "key_kind": "string",
+  "principal": "boolean",
+  "verified_github": {
+   "id": "string",
+   "login": "string"
+  },
+  "visitor": "boolean"
+ },
+ "household": "string",
+ "next": [
+  "string"
+ ],
+ "papers": {
+  "wright": {
+   "gaps": [
+    "string"
+   ],
+   "settled": "boolean",
+   "world": {
+    "sited": "boolean",
+    "unreadable": "boolean"
+   }
+  }
+ },
+ "reading_law": "string",
+ "residents": [
+  "string"
+ ],
+ "tier": "string"
+}

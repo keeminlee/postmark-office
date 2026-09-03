@@ -6,7 +6,7 @@ import { isPrincipal } from "./ops.mjs";
 import { householdOf } from "./households.mjs";
 import { HOLO_CAPTION, TEACH, postingsWithoutPots } from "./funding.mjs";
 import { isResidentHandle } from "./residency.mjs"; // the door's own admission grammar — one definition of what a handle is
-import { dialNumber } from "./world-classes.mjs"; // the doorstep's own dials, read off the record — never held here
+import { dialNumber, ideasTank } from "./world-classes.mjs"; // the doorstep's own dials, read off the record — never held here; the tank is the first-idea fact (questBoardFor)
 import { freshnessFor, composeResidentCard, composeHome, composeWindow } from "./paper-fresh.mjs"; // the freshness ladder
 import { readPane, paneRelPath } from "./panes.mjs"; // the pane's frame — one owner, read by this door and by the act
 
@@ -699,8 +699,27 @@ export const DOORSTEP_SEGMENTS = Object.freeze([...INDEX_SEGMENTS, "stances"]);
  *  `serves` pointer names the read that walks the rest. */
 export const DOORSTEP_STANCES = 5;
 
+// ⚠ THE LAW WAS RE-STRUNG 2026-08-31 (ruled by Wright in-lane under the founder's parity ruling; founder informed with an override window, no override), and the previous sentence
+// is kept here so the change is visible rather than silent. It read:
+//
+//   "This page is a BUNDLE: each segment below is the answer of another read,
+//    called at the args it names in `serves` and `args`. Nothing here is a
+//    second rendering of anything — ask the named read yourself and you get the
+//    same object back. …"
+//
+// That sentence was written when the household door's reads had NO envelope, so
+// "the answer of the read" and "the read's domain" were the same bytes and the
+// law had no reason to tell them apart. The shadow reads (`address`, `home`,
+// `window`) now answer the world apex's shape — the act's card beside the thing,
+// the thing under its own key — so the envelope is the new thing, and a law that
+// cannot distinguish it from the domain would forbid the grammar rather than
+// describe it. It would also collide at the town door the day a bundle serves
+// `read: "stake"`, which already answers `{read, card, stakes, reading_law}`.
+//
+// The word that changed is DOMAIN. What the segment carries is what the read
+// answers ABOUT — not the envelope the apex wraps it in.
 export const BUNDLE_LAW =
-  "This page is a BUNDLE: each segment below is the answer of another read, called at the args it names in `serves` and `args`. Nothing here is a second rendering of anything — ask the named read yourself and you get the same object back. The segments are mail, awaiting, stamps, bulletin, town_pulse, window; everything else on this page has no other door.";
+  "This page is a BUNDLE: each segment below carries the DOMAIN of another read, called at the args it names in `serves` and `args` — what that read answers about, not the envelope the apex wraps it in. Nothing here is a second rendering of anything — ask the named read yourself and the segment is what comes back under its own key. The segments are mail, awaiting, stamps, bulletin, town_pulse, window; everything else on this page has no other door.";
 
 /** One bundle segment: the pointer, the args, and the named read's own answer
  *  spread flat beside them. Flat rather than nested under `answer` so a reader
@@ -1312,6 +1331,57 @@ async function questTools(clone) {
   _questTools = await import(pathToFileURL(join(clone, "tools", "quest-progress.mjs")));
   return _questTools;
 }
+/**
+ * THE FACTS THE OFFICE CAN SETTLE for the board's uncounted rows.
+ *
+ * The town's boardForHandle is PURE — it joins the registry against a daily
+ * progress entry and nothing else. Rows the daily mint cannot measure come back
+ * `complete: null`, which reads "this surface did not look". The office CAN
+ * look, for one of them, so it does.
+ *
+ * `first-idea` — the registry's own derivation sentence names the receipt:
+ * "the household's first class:idea mark standing on the-town/the-think-tank".
+ * That is exactly what `ideasTank()` answers, and it is the fact this office
+ * already reads to plan the crossing's first-idea mints (first-idea-sweep.mjs
+ * § planFirstIdeaSweep). THE MARK, NOT THE LEDGER LINE, and the choice is
+ * deliberate: the signed line is the PAYMENT and it lands at the next crossing,
+ * so a resident who published an idea five minutes ago would be told to go
+ * publish one for up to twelve hours. The mark is the doing; the line is the
+ * paying. The row says whether they did it.
+ *
+ * PER HOUSEHOLD, because the quest is ("once per household, ever"): the tank
+ * row carries `by`, and the household's residents come from the office's own
+ * registry resolution. A handle the resolver does not know falls back to itself
+ * — one resident is a household of one, which is the same default householdOf's
+ * callers already take.
+ *
+ * STORE UNREADABLE → NOT INJECTED, so the row stays null. A floor read here
+ * would say "you have not published an idea" on the strength of a hydration
+ * blip, which is the silent-substitution failure world-classes.mjs exists to
+ * refuse — and it is worse in this direction, because the row it would falsify
+ * is a row that PAYS.
+ *
+ * The six one-time onboarding rows are deliberately NOT injected here: their
+ * facts need `onboardingFactsFor`, which parses the whole mail ledger, and
+ * read_quests is a hot read. They are voiced by the onboarding line on the
+ * doorstep, which already computes them (nextStepsFor), and they read null —
+ * "not looked" — on the bare board. Named rather than left to be discovered.
+ */
+export function injectedComplete(handle, { worldDb = null, house = null } = {}) {
+  try {
+    const tank = ideasTank(worldDb ? { worldDb } : {});
+    if (tank.source !== "store") return null;
+    // `house` is a seam, not a parameter callers pass in anger — the office
+    // always resolves it here. It exists because a mutation pass caught the
+    // household branch UNCOVERED: every falsifier ran where householdOf resolves
+    // to null (a worktree with no town clone), so replacing the whole lookup
+    // with `[handle]` left the suite green. A branch a mutation can delete
+    // silently is a branch nothing was testing.
+    const residents = house ?? householdOf(handle)?.residents ?? [handle];
+    return { "first-idea": tank.ideas.some((i) => residents.includes(i.by)) };
+  } catch { return null; }
+}
+
 export async function questBoardFor(db, meta, handle, clone) {
   const registry = JSON.parse(meta.quest_registry ?? '{"quests":[]}');
   const { boardForHandle, townDay } = await questTools(clone);
@@ -1327,7 +1397,7 @@ export async function questBoardFor(db, meta, handle, clone) {
     sentTo: names(row.sent_to), heardFrom: names(row.heard_from),
     household: { key: "", size: row.house_size, send: row.house_send, receive: row.house_receive },
   } : null;
-  const board = boardForHandle(registry, prog, handle, today);
+  const board = boardForHandle(registry, prog, handle, today, { complete: injectedComplete(handle) });
   // The funding pots ride the same board (funding seam, 2026-08-21) — pots are
   // bounty files ON the quest board, so the board read carries them rather than
   // growing a new verb. Same section for every handle (a pot is the town's, not
@@ -1335,12 +1405,21 @@ export async function questBoardFor(db, meta, handle, clone) {
   // pots table and says so honestly until the next rehydrate.
   //
   // A pot's registry row is a BOARD POSTING, never a resident card (the town's
-  // own word, seam/ledger-legs-aligned @ 3668881b): it carries subtype "bounty" and a dollar
-  // target, and the town's boardForHandle filters only `cadence: milestone`, so
-  // left alone it would render to every resident as a daily quest sitting at
-  // 0/150 — a number nothing they can do will move. It comes off the card deck
-  // and goes where it belongs, into `pots`; a posting whose pot file is missing
-  // is surfaced by name rather than dropped between the two reads.
+  // own word, seam/ledger-legs-aligned @ 3668881b): it carries subtype "bounty"
+  // and a dollar target, so left alone it would render to every resident as a
+  // quest sitting at 0/150 — a number nothing they can do will move. It comes
+  // off the card deck and goes where it belongs, into `pots`; a posting whose
+  // pot file is missing is surfaced by name rather than dropped between the two
+  // reads.
+  //
+  // ⚠ THE COMMENT THAT STOOD HERE WAS FALSE AND THE LIFT WAS DEAD CODE. It
+  // said "the town's boardForHandle filters only `cadence: milestone`" — the
+  // town filtered `cadence === 'daily'`, an ALLOW-LIST, so a bounty posting
+  // never reached the deck and this line removed nothing for ten days. The
+  // town's board became EVERY registry row on 2026-09-01 (BOARD_LAW), so the
+  // postings arrive here now and the lift is load-bearing for the first time.
+  // A guard nobody could observe working is a guard nobody would have noticed
+  // breaking.
   const bountyIds = (registry.quests ?? []).filter((q) => q.subtype === "bounty").map((q) => q.id);
   board.quests = (board.quests ?? []).filter((q) => !bountyIds.includes(q.id));
   try { board.pots = potBoard(db, postingsWithoutPots(bountyIds, db.prepare("SELECT id FROM pots").all().map((r) => r.id))); }
