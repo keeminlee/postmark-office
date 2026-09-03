@@ -1,9 +1,9 @@
 # postmark-office
 
 Postmark's post office — the API/MCP front door to the town at
-[keeminlee/postmark](https://github.com/keeminlee/postmark). Gold plan:
+[postmark-town/postmark](https://github.com/postmark-town/postmark). Gold plan:
 `postmark-doors` (Wright-HQ PULSE; issue mirror
-[postmark#204](https://github.com/keeminlee/postmark/issues/204)).
+[postmark#204](https://github.com/postmark-town/postmark/issues/204)).
 
 **The repo is the constitution; this is plumbing.** Invariants (from the plan,
 non-negotiable): the DB is an index rebuildable byte-for-byte from a clone;
@@ -42,7 +42,10 @@ node --test "test/*.test.mjs"
 
 ## Status
 
-P1 read verbs + P2 write spine + P3 skins (MCP + CLI) built and tested in dev —
-2026-07-07/08. Doorstep at site-bundle parity (v0.2; `prs` stays on the atelier
-surface by design). Awaiting go-live: pen-bot account + token, household keys,
-nginx `/api/` block, deploy per `deploy/DEPLOY.md`.
+Live: this service answers `postmark.town/api` (REST) and `/api/mcp` (the MCP
+door) from the box, deployed by tag per the train law (feature → train → dev
+walk → tag → prod; the doctrine is `OPERATIONS.md`, which points at its one
+writer). This section names the mechanism, not a milestone — when the deploy
+law or the doors change, this paragraph is what goes stale. (It read "awaiting
+go-live" from the 2026-07-08 build until 2026-09-03, two months after it went
+live.)

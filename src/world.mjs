@@ -1624,10 +1624,12 @@ async function foldConstants() {
  * whatever its parent stands on.
  *
  * TODO(standing): this is the MINIMAL own-ground check the ruling authorised,
- * and it asks the question the sibling standing lane is porting properly —
- * "whose ground is this". When `world2/tools/standing.mjs` lands, this reads
- * from it instead: the containment walk there handles nesting, retired ground,
- * and the overlay cases that this flat parcel scan does not. Until then the
+ * and it asks the question the standing lane answers properly — "whose ground
+ * is this". `world2/tools/standing.mjs` LANDED 2026-08-24 (doors read standing
+ * via src/standing.mjs; recompute at the candle's close since 08-28), but this
+ * reader has not been cut over to it: the containment walk there handles
+ * nesting, retired ground, and the overlay cases that this flat parcel scan
+ * does not. This comment retires when this function reads standing.mjs. Until then the
  * conservative direction is deliberate — an unrecognised ground reads as
  * commons, so the failure mode is "your mark stayed private", never "your
  * mark published for free on someone else's land".
