@@ -54,10 +54,10 @@ test("keyless GET backstop is per IP and permits the configured burst", () => {
   assert.equal(bouncer.checkKeyless({ ip: "192.0.2.11", verb: "GET" }), null);
 });
 
-test("household cap counts only world writes and resets at the New York town-day boundary", () => {
-  let now = Date.parse("2026-07-30T03:59:00Z"); // 23:59 on July 29 in New York
+test("household cap counts only world writes and resets at the top of the hour (founder-ruled 2026-09-03: 200/hour, not /day)", () => {
+  let now = Date.parse("2026-07-30T03:59:00Z"); // one minute before the hour turns
   const bouncer = new Bouncer({
-    limits: { household: { worldWritesPerDay: 2 } },
+    limits: { household: { worldWritesPerHour: 2 } },
     now: () => now,
     log: quiet,
   });
@@ -79,16 +79,16 @@ test("household cap counts only world writes and resets at the New York town-day
   assert.match(rate.defect, /cap is 2/);
   assert.match(rate.defect, /count is 2/);
   assert.match(rate.defect, /2026-07-30T04:00:00\.000Z/);
-  assert.match(rate.defect, /America\/New_York/);
+  assert.match(rate.defect, /per hour/);
 
   assert.equal(bouncer.checkHouseholdWorldWrite({
     household: "another-house", verb: "world_unstake",
-  }), null, "households have independent daily counts");
+  }), null, "households have independent hourly counts");
 
   now = Date.parse("2026-07-30T04:00:00Z");
   assert.equal(bouncer.checkHouseholdWorldWrite({
     household: "keemin", verb: "world_note",
-  }), null, "the new town-day begins exactly at New York midnight");
+  }), null, "the new hour begins exactly at the top of the hour");
 });
 
 test("town-day reset calculation follows daylight-saving boundaries", () => {
@@ -113,7 +113,7 @@ test("throttle telemetry counts by layer and verb and emits one safe log line pe
     limits: {
       key: { readPerMinute: 1 },
       keyless: { perMinute: 1, burst: 1 },
-      household: { worldWritesPerDay: 1 },
+      household: { worldWritesPerHour: 1 },
     },
     now: () => Date.parse("2026-07-29T16:00:00Z"),
     log: (line) => lines.push(line),

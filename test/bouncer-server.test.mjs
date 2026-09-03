@@ -30,7 +30,7 @@ before(async () => {
       OFFICE_KEYS: `${KEY}=keemin:wright`,
       OFFICE_BOUNCER_KEY_READ_PER_MINUTE: "2",
       OFFICE_BOUNCER_KEY_WRITE_PER_MINUTE: "3",
-      OFFICE_BOUNCER_WORLD_WRITES_PER_DAY: "1",
+      OFFICE_BOUNCER_WORLD_WRITES_PER_HOUR: "1",
       TOWN_CLONE: join(tmp, "no-clone-here"),
       WORLD_CLONE: join(tmp, "no-world-clone"),
     },
