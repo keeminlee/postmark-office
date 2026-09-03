@@ -52,7 +52,7 @@ import { cannotAnswer, pointAnswerable, servedRead, storeEpoch, storeShadowEnabl
 // and never world.mjs, so this edge closes no cycle.
 import { arenaGroundAt, adversaryIn, arrivalOnGround, groundAtPoint } from "./arena.mjs";
 import { emissionsEnabled, openDynamic } from "./dynamic-store.mjs"; // stage 2: the dynamic layer's flag
-import { declareMovement } from "./dynamic-entities.mjs"; // stage D: the pen after the ledger's freeze
+import { declareMovement, declareMovementFlipped } from "./dynamic-entities.mjs"; // stage D: the pen after the ledger's freeze
 import { emissionFromVoice } from "./dynamic-emissions.mjs"; // stage 2: speech also becomes an emission instance
 import { world2Enabled } from "./world2-acts.mjs"; // the write-path closure: is the shadow mirror on at all
 import { VESSEL_HANDLE, ridesTheVessel } from "./dynamic-entities.mjs"; // the aboard test, one home for two readers
@@ -644,6 +644,23 @@ const EARSHOT_PRESENCE_CAP = 500;
 // postmark.town/conversations, and the say path has no household scoping of any
 // kind. This mirror publishes nothing that the conversations page does not
 // already publish.
+/** ONE ROW SHAPE for a walk act, whichever pen records it. THE MOVEMENTS ROW'S
+ * OWN COLUMN VOCABULARY — `within` and `to`, not `targetExtent`/`targetMarkId`:
+ * that is 1.0's one converter for this exact record (world-movement.mjs §
+ * storedDepartures: "`within` and `to` are the store's column names"), and using
+ * it here is what lets live-reads.mjs read this pen with the mapping it already
+ * has rather than a fifth spelling of one departure. */
+function walkEntry({ crossing, who, targetMarkId, stampAt, witnesses, from, toward, pace, targetExtent, household }) {
+  return {
+    crossing, actor: who, action: "walk",
+    object: targetMarkId ?? null,
+    at: stampAt, witnesses, cls: CLASS_MOVE,
+    payload: { from, toward, pace, within: targetExtent ?? null, to: targetMarkId ?? null },
+    effect: "the walk is declared; the record receives it at the save",
+    household,
+  };
+}
+
 function voiceEntry(voice, spoken, { at, witnesses, crossing }) {
   const household = spoken?.household ?? null;
   const standAs = spoken?.standAs && spoken.standAs !== voice.handle ? spoken.standAs : null;
@@ -2746,12 +2763,35 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
     // pace read via departurePace — the record's class is `depart`; asking for
     // "departure" here was the 2026-08-21 slow-walk bug (30 min for 650 m).
     const pace = departurePace();
+    const movement = {
+      actor: who, from, toward, crossing: at,
+      within: targetExtent, toMark: targetMarkId, declaredBy: who, pace,
+    };
+    // ── LANE THREE OF THE PEN FLIP (W2_PEN=walk; runbook C3, 2026-09-03) ────
+    // Flipped, the record is Postgres `acts`, committed and awaited BEFORE the
+    // movements row may stand; movements + the reverse-mirror journal row commit
+    // in one sqlite transaction after the pen has (declareMovementFlipped,
+    // dynamic-entities.mjs). Unreachable Postgres = the ruled refusal, and
+    // nothing was written — the resident is exactly where they were. Unflipped,
+    // the pen is what it was and the mirror below carries the act.
+    const walkFlipped = laneFlipped("walk");
+    let flippedRow = null;
     const store = openDynamic();
     try {
-      declareMovement(store, {
-        actor: who, from, toward, crossing: at,
-        within: targetExtent, toMark: targetMarkId, declaredBy: who, pace,
-      });
+      if (walkFlipped) {
+        const { at: stampAt, witnesses } = await witnessStampAt(who, from);
+        try {
+          flippedRow = await declareMovementFlipped(store, movement,
+            walkEntry({ crossing: at, who, targetMarkId, stampAt, witnesses, from, toward, pace, targetExtent, household: resolvedWorldHousehold(key) }));
+        } catch (err) {
+          if (err?.name === "PenUnreachableError")
+            throw bounce(503, err.message,
+              "this lane's pen is the office's record (W2_PEN=walk); when it cannot be reached the door refuses rather than writing anywhere else — you are exactly where you were, and the walk is safe to declare again");
+          throw err;
+        }
+      } else {
+        declareMovement(store, movement);
+      }
     } finally { store.close(); }
 
     // ── THE WALK GAP, CLOSED (2026-08-28) ───────────────────────────────────
@@ -2776,30 +2816,23 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
     // Privacy: a departure is public — it crystallizes into `STATE/log/` in the
     // public world repo at the next crossing-save, by this branch's own
     // `movement.crystallizes`. Nothing new leaves the box.
-    if (world2Enabled()) {
+    if (world2Enabled() && !walkFlipped) { // flipped, the pen already holds this act (declareMovementFlipped above)
       void (async () => {
         try {
           const { at: stampAt, witnesses } = await witnessStampAt(who, from);
-          await mirrorLaneAct({
-            crossing: at, actor: who, action: "walk",
-            object: targetMarkId ?? null,
-            at: stampAt, witnesses, cls: CLASS_MOVE,
-            // THE MOVEMENTS ROW'S OWN COLUMN VOCABULARY — `within` and `to`,
-            // not `targetExtent`/`targetMarkId`. That is 1.0's one converter
-            // for this exact record (world-movement.mjs § storedDepartures:
-            // "`within` and `to` are the store's column names"), and using it
-            // here is what lets live-reads.mjs read this pen with the mapping
-            // it already has rather than a fifth spelling of one departure.
-            payload: { from, toward, pace, within: targetExtent ?? null, to: targetMarkId ?? null },
-            effect: "the walk is declared; the record receives it at the save",
-            household: resolvedWorldHousehold(key),
-          });
+          await mirrorLaneAct(walkEntry({ crossing: at, who, targetMarkId, stampAt, witnesses, from, toward, pace, targetExtent, household: resolvedWorldHousehold(key) }));
         } catch (e) {
           console.error(`[world2-acts] a walk did not reach acts (${String(e?.message ?? e).slice(0, 160)}) — dynamic.db/movements is unaffected`);
         }
       })();
     }
-    result = { position: positionAt({ from, toward, at, targetExtent, targetMarkId, pace }, at), pace, movement: { record: "dynamic.db/movements", crystallizes: "STATE/log/ at the next crossing-save" } };
+    result = {
+      position: positionAt({ from, toward, at, targetExtent, targetMarkId, pace }, at), pace,
+      movement: { record: walkFlipped ? "acts (Postgres; dynamic.db/movements is the reverse-mirror copy)" : "dynamic.db/movements", crystallizes: "STATE/log/ at the next crossing-save" },
+      // Which store is the RECORD for this act — said in the answer, as every
+      // flipped door says it.
+      ...(walkFlipped ? { log: "acts", seq: flippedRow?.seq ?? null } : {}),
+    };
   } else {
     const exec = join(HERE, "walk-exec.mjs");
     const env = { ...process.env, WORLD_CLONE: worldClone };
