@@ -85,18 +85,52 @@ export function orderByParent(claims, { label = "this batch" } = {}) {
  *
  * `amends` maps a claim id (as a string) to the standing mark row it continues.
  */
+/**
+ * THE OWNERSHIP GRAIN IS THE CLAIMANT'S, RESOLVED — never the claim's scope
+ * label (2026-09-02, the flip week's first catch; the standing falsifier's
+ * symmetric attribution exposed it same morning it landed).
+ *
+ * `claims.household` answers a DIFFERENT question: whose eyes may see this
+ * draft — the acting KEY's household name, and for a human-credentialed act
+ * that is the human's GitHub login (world2-claims.mjs § THE ONE RESOLVER:
+ * flipping it would break my-drafts parity). Copying it into `marks.household`
+ * made the login the ownership grain on 26 standing rows across 12 households
+ * (berthillon's cones as solo:devadavisson, sage-reeves' welcomes as
+ * solo:kristinashoultz-wq, pando-peak-home as solo:FluffUPando …), and the
+ * standing walk then refused sovereignty on the resident's own parcel —
+ * fold says home, port says market, and the PORT was right about a store that
+ * was wrong. Two questions, one column, exactly the words-for-one-fact class.
+ *
+ * So the mark's household resolves from the CLAIMANT (the resident who owns
+ * the mark), by the 08-28 ruling's own spelling: the roster's household KEY,
+ * else solo:<handle>, never NULL, positive answers cached, misses never
+ * cached (registry lag resolves itself — the fold's own comment). The sibling
+ * resolver in world2-claims.mjs stays untouched and keeps its lane.
+ */
+const ownerKeys = new Map();
+export async function ownerHouseholdFor(q, owner) {
+  const handle = String(owner ?? "").trim();
+  if (!handle) return null;
+  if (ownerKeys.has(handle)) return ownerKeys.get(handle);
+  const { rows } = await q("SELECT household FROM identities WHERE handle = $1", [handle]);
+  const key = rows[0]?.household ?? `solo:${handle}`;
+  if (rows[0]?.household) ownerKeys.set(handle, key);
+  return key;
+}
+
 export async function materializeClaims(q, { claims, amends = new Map(), windowId, label }) {
   const named = claims.filter((c) => slugOf(c));   // a stake or escrow claim names no mark
   const ordered = orderByParent(named, { label: label ?? `window ${windowId}` });
   for (const c of ordered) {
     const slug = slugOf(c);
     const amended = amends.get(String(c.id));
+    const grain = await ownerHouseholdFor(q, c.claimant); // NOT c.household — § the ownership grain above
     if (amended) {
       await q(
         `UPDATE marks SET kind = $2, owner = $3, household = $4, body = $5, geometry = $6,
                           bbox = $7, data = $8, parent = $9, locked_window = $10
            WHERE id = $1`,
-        [amended.id, c.class, c.claimant, c.household, c.body, c.geometry, c.bbox,
+        [amended.id, c.class, c.claimant, grain, c.body, c.geometry, c.bbox,
          c.data, c.parent, windowId]);
       continue;
     }
@@ -104,7 +138,7 @@ export async function materializeClaims(q, { claims, amends = new Map(), windowI
       `INSERT INTO marks (id, slug, kind, owner, household, body, geometry, bbox, status,
                           locked_window, data, parent)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'standing',$9,$10,$11)`,
-      [c.id, slug, c.class, c.claimant, c.household,
+      [c.id, slug, c.class, c.claimant, grain,
        c.body, c.geometry, c.bbox, windowId, c.data, c.parent]);
   }
   return ordered.length;

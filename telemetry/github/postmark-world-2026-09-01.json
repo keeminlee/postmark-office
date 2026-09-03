@@ -1,0 +1,230 @@
+{
+  "repo": "keeminlee/postmark-world",
+  "captured_at": "2026-09-01T08:36:13-04:00",
+  "views": {
+    "count": 32,
+    "uniques": 7,
+    "views": [
+      {
+        "timestamp": "2026-08-18T00:00:00Z",
+        "count": 1,
+        "uniques": 1
+      },
+      {
+        "timestamp": "2026-08-19T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-08-20T00:00:00Z",
+        "count": 12,
+        "uniques": 1
+      },
+      {
+        "timestamp": "2026-08-21T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-08-22T00:00:00Z",
+        "count": 5,
+        "uniques": 1
+      },
+      {
+        "timestamp": "2026-08-23T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-08-24T00:00:00Z",
+        "count": 1,
+        "uniques": 1
+      },
+      {
+        "timestamp": "2026-08-25T00:00:00Z",
+        "count": 1,
+        "uniques": 1
+      },
+      {
+        "timestamp": "2026-08-26T00:00:00Z",
+        "count": 5,
+        "uniques": 4
+      },
+      {
+        "timestamp": "2026-08-27T00:00:00Z",
+        "count": 2,
+        "uniques": 2
+      },
+      {
+        "timestamp": "2026-08-28T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-08-29T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-08-30T00:00:00Z",
+        "count": 3,
+        "uniques": 1
+      },
+      {
+        "timestamp": "2026-08-31T00:00:00Z",
+        "count": 2,
+        "uniques": 1
+      }
+    ]
+  },
+  "clones": {
+    "count": 4092,
+    "uniques": 649,
+    "clones": [
+      {
+        "timestamp": "2026-08-18T00:00:00Z",
+        "count": 217,
+        "uniques": 54
+      },
+      {
+        "timestamp": "2026-08-19T00:00:00Z",
+        "count": 267,
+        "uniques": 52
+      },
+      {
+        "timestamp": "2026-08-20T00:00:00Z",
+        "count": 114,
+        "uniques": 44
+      },
+      {
+        "timestamp": "2026-08-21T00:00:00Z",
+        "count": 249,
+        "uniques": 81
+      },
+      {
+        "timestamp": "2026-08-22T00:00:00Z",
+        "count": 941,
+        "uniques": 173
+      },
+      {
+        "timestamp": "2026-08-23T00:00:00Z",
+        "count": 328,
+        "uniques": 78
+      },
+      {
+        "timestamp": "2026-08-24T00:00:00Z",
+        "count": 267,
+        "uniques": 48
+      },
+      {
+        "timestamp": "2026-08-25T00:00:00Z",
+        "count": 316,
+        "uniques": 57
+      },
+      {
+        "timestamp": "2026-08-26T00:00:00Z",
+        "count": 258,
+        "uniques": 93
+      },
+      {
+        "timestamp": "2026-08-27T00:00:00Z",
+        "count": 289,
+        "uniques": 64
+      },
+      {
+        "timestamp": "2026-08-28T00:00:00Z",
+        "count": 182,
+        "uniques": 42
+      },
+      {
+        "timestamp": "2026-08-29T00:00:00Z",
+        "count": 125,
+        "uniques": 55
+      },
+      {
+        "timestamp": "2026-08-30T00:00:00Z",
+        "count": 184,
+        "uniques": 43
+      },
+      {
+        "timestamp": "2026-08-31T00:00:00Z",
+        "count": 355,
+        "uniques": 66
+      }
+    ]
+  },
+  "popular_paths": [
+    {
+      "path": "/keeminlee/postmark-world/blob/main/ECONOMY.md",
+      "title": "/blob/main/ECONOMY.md",
+      "count": 7,
+      "uniques": 5
+    },
+    {
+      "path": "/keeminlee/postmark-world",
+      "title": "Overview",
+      "count": 5,
+      "uniques": 1
+    },
+    {
+      "path": "/keeminlee/postmark-world/blob/draft/foundoutanyway/WORLD/marks/little-bird/the-spork-with-the-ribbon/mark.md",
+      "title": "/blob/draft/foundoutanyway/WORLD/marks/little-bird/the-spork-with-the-ribbon/mark.md",
+      "count": 3,
+      "uniques": 1
+    },
+    {
+      "path": "/keeminlee/postmark-world/issues/5",
+      "title": "/issues/5",
+      "count": 3,
+      "uniques": 1
+    },
+    {
+      "path": "/keeminlee/postmark-world/blob/draft/foundoutanyway/WORLD/marks/let-there-be-light/the-town-centre/a-bowl-at-the-foot-of-the-steps/mark.md",
+      "title": "/blob/draft/foundoutanyway/WORLD/marks/let-there-be-light/the-town-centre/a-bowl-at-the-foot-of-the-steps/mark.md",
+      "count": 2,
+      "uniques": 1
+    },
+    {
+      "path": "/keeminlee/postmark-world/issues",
+      "title": "/issues",
+      "count": 2,
+      "uniques": 1
+    },
+    {
+      "path": "/keeminlee/postmark-world/tree/main",
+      "title": "/tree/main",
+      "count": 2,
+      "uniques": 1
+    },
+    {
+      "path": "/keeminlee/postmark-world/blob/main/WORLD/region-outsiders.md",
+      "title": "/blob/main/WORLD/region-outsiders.md",
+      "count": 1,
+      "uniques": 1
+    },
+    {
+      "path": "/keeminlee/postmark-world/blob/main/WRITES.md",
+      "title": "/blob/main/WRITES.md",
+      "count": 1,
+      "uniques": 1
+    },
+    {
+      "path": "/keeminlee/postmark-world/commits/jetto/region-polygons",
+      "title": "/commits/jetto/region-polygons",
+      "count": 1,
+      "uniques": 1
+    }
+  ],
+  "popular_referrers": [
+    {
+      "referrer": "postmark.town",
+      "count": 9,
+      "uniques": 4
+    },
+    {
+      "referrer": "github.com",
+      "count": 1,
+      "uniques": 1
+    }
+  ]
+}

@@ -38,7 +38,7 @@ import {
   resolvedWorldHousehold,
 } from "./world-branches.mjs";
 import { moveGuard } from "./world-move-guard.mjs"; // the drain night: moving a mark moves what stands on it
-import { ACTION_AMEND, ACTION_LEAVE, ACTION_WITHDRAW, CLASS_MARK, CLASS_MOVE, CLASS_VOICE, anchorAt, appendJournal, draftsForKey, filedPathOfAt, liveChildrenOf, liveMarks, mirrorLaneAct, pathFor, pinWitnesses, singleLogEnabled } from "./world-journal.mjs"; // POS-5 slice 1: the one append-only log
+import { ACTION_AMEND, ACTION_LEAVE, ACTION_WITHDRAW, CLASS_MARK, CLASS_MOVE, CLASS_VOICE, anchorAt, appendActFlipped, appendJournal, draftsForKey, filedPathOfAt, laneFlipped, liveChildrenOf, liveMarks, mirrorLaneAct, pathFor, pinWitnesses, singleLogEnabled } from "./world-journal.mjs"; // POS-5 slice 1: the one append-only log
 import { WORLD_STAKE_TOOLS, callWorldStakeTool, worldPortfolioStakeSlice } from "./world-stake.mjs"; // P3 draft, append-shaped
 import { classNames, classRoster, classDials, departurePace, freeCellIn, RESIDENT_INSTANTIABLE, residentMayInstantiate } from "./world-classes.mjs"; // which classes exist — read from the record, never held
 import { HOLD_TOOLS, callHoldTool } from "./world-hold.mjs"; // the object primitive: who holds what
@@ -644,33 +644,73 @@ const EARSHOT_PRESENCE_CAP = 500;
 // postmark.town/conversations, and the say path has no household scoping of any
 // kind. This mirror publishes nothing that the conversations page does not
 // already publish.
+function voiceEntry(voice, spoken, { at, witnesses, crossing }) {
+  const household = spoken?.household ?? null;
+  const standAs = spoken?.standAs && spoken.standAs !== voice.handle ? spoken.standAs : null;
+  return {
+    crossing,
+    actor: voice.handle,
+    action: "say",
+    object: null,
+    at, witnesses, cls: CLASS_VOICE, household,
+    payload: {
+      text: voice.text,
+      place: voice.place ?? null,
+      ...(voice.aboard ? { aboard: true } : {}),
+      ...(standAs ? { stood_with: standAs } : {}),
+    },
+    effect: "the words were spoken where the actor stood and heard by whoever was within earshot; hearing fades, the record does not",
+    writtenAt: new Date(voice.at).toISOString(),
+  };
+}
+
 function mirrorVoiceAct(voice, spoken = null) {
   if (!world2Enabled()) return;
+  if (laneFlipped("say")) return; // the flipped pen already holds this act (penVoiceAct, before the log line)
   void (async () => {
     try {
       const here = { x: voice.x, y: voice.y };
       const { at, witnesses } = await witnessStampAt(voice.handle, here);
-      const household = spoken?.household ?? null;
-      const standAs = spoken?.standAs && spoken.standAs !== voice.handle ? spoken.standAs : null;
-      await mirrorLaneAct({
-        crossing: currentCrossing(),
-        actor: voice.handle,
-        action: "say",
-        object: null,
-        at, witnesses, cls: CLASS_VOICE, household,
-        payload: {
-          text: voice.text,
-          place: voice.place ?? null,
-          ...(voice.aboard ? { aboard: true } : {}),
-          ...(standAs ? { stood_with: standAs } : {}),
-        },
-        effect: "the words were spoken where the actor stood and heard by whoever was within earshot; hearing fades, the record does not",
-        writtenAt: new Date(voice.at).toISOString(),
-      });
+      await mirrorLaneAct(voiceEntry(voice, spoken, { at, witnesses, crossing: currentCrossing() }));
     } catch (e) {
       console.error(`[world2-acts] a voice did not reach acts (${String(e?.message ?? e).slice(0, 160)}) — the voices log is unaffected`);
     }
   })();
+}
+
+// ── LANE FOUR OF THE PEN FLIP (W2_PEN=say; runbook C4, 2026-09-03) ────────────
+//
+// The say lane's 1.0 pen is the voices log, appended inside `voices.say` AFTER
+// the standpoint is derived. Flipped, the record is Postgres `acts`, committed
+// and awaited BEFORE that line lands — `createVoices`' `beforeSpoke` is where
+// this runs, with the voice exactly as the log would hold it. An unreachable
+// pen returns the ruled bounce and the voice is never spoken: no log line, no
+// emission, no listener, no presence. The reverse-mirror journal row rides the
+// same call (appendActFlipped), so the parity falsifiers see the twin.
+//
+// What `voices-log.jsonl` still is: the 1.0 read source for /conversations
+// until the read flip (runbook C4: "voices-log.jsonl keeps being written
+// until the read flip") — so a log append failing AFTER the pen committed is
+// the reverse-mirror class (loud, never a refusal), not a lost act.
+//
+// `deps` exist so the refusal ordering can be proven on a hand-built store
+// with no world db and no Postgres; the door injects the real ones.
+export async function penVoiceAct(voice, spoken = null, deps = {}) {
+  const stamp = deps.witnessStampAt ?? witnessStampAt;
+  const append = deps.appendActFlipped ?? appendActFlipped;
+  const crossing = deps.currentCrossing ? deps.currentCrossing() : currentCrossing();
+  const open = deps.openDynamic ?? openDynamic;
+  const db = open();
+  try {
+    const { at, witnesses } = await stamp(voice.handle, { x: voice.x, y: voice.y });
+    const row = await append(db, voiceEntry(voice, spoken, { at, witnesses, crossing }));
+    return { ok: true, seq: row.seq ?? null, actId: row.actId ?? null };
+  } catch (err) {
+    if (err?.name === "PenUnreachableError")
+      return { error: "bounce", defect: err.message,
+        hint: "this lane's pen is the office's record (W2_PEN=say); when it cannot be reached the door refuses rather than writing anywhere else — nothing was said, and your words are safe to speak again" };
+    throw err;
+  } finally { try { db.close(); } catch { /* already gone */ } }
 }
 
 const voices = createVoices({
@@ -716,6 +756,13 @@ const voices = createVoices({
   onSpoke: (voice, spoken) => {
     emissionFromVoice(voice, { standAs: spoken?.standAs ?? null, repo: WORLD_CLONE });
     mirrorVoiceAct(voice, spoken);
+  },
+  // The flipped say lane's pen, before the log line (penVoiceAct above). Off
+  // the flag it returns null and nothing here changes.
+  beforeSpoke: async (voice, spoken) => {
+    if (!laneFlipped("say")) return null;
+    const r = await penVoiceAct(voice, spoken);
+    return r?.error ? r : null;
   },
   // WHO IS HERE, BY POSITION (issue #5 §2, behind WORLD_PRESENCE). `presentNear`
   // returns null on its first line with the flag off, so `nearby` answers null
@@ -799,6 +846,9 @@ export async function worldSay(args = {}, key = null) {
     // resolver the mark lane uses (mirrorVoiceAct § household). It reaches only
     // the `onSpoke` listener; nothing about hearing or the voices log changes.
     const r = text.trim() ? await voices.say(choice.handle, text, { since, household: resolvedWorldHousehold(key) }) : await voices.hear(choice.handle, { since });
+    // Which store is the RECORD for a spoken voice — said in the answer when the
+    // lane is flipped, as the stance door says it.
+    if (r && !r.error && r.spoke && laneFlipped("say")) r.log = "acts";
     withNoticeBoard(r);
     return r;
   } catch (e) {
@@ -1624,10 +1674,12 @@ async function foldConstants() {
  * whatever its parent stands on.
  *
  * TODO(standing): this is the MINIMAL own-ground check the ruling authorised,
- * and it asks the question the sibling standing lane is porting properly —
- * "whose ground is this". When `world2/tools/standing.mjs` lands, this reads
- * from it instead: the containment walk there handles nesting, retired ground,
- * and the overlay cases that this flat parcel scan does not. Until then the
+ * and it asks the question the standing lane answers properly — "whose ground
+ * is this". `world2/tools/standing.mjs` LANDED 2026-08-24 (doors read standing
+ * via src/standing.mjs; recompute at the candle's close since 08-28), but this
+ * reader has not been cut over to it: the containment walk there handles
+ * nesting, retired ground, and the overlay cases that this flat parcel scan
+ * does not. This comment retires when this function reads standing.mjs. Until then the
  * conservative direction is deliberate — an unrecognised ground reads as
  * commons, so the failure mode is "your mark stayed private", never "your
  * mark published for free on someone else's land".

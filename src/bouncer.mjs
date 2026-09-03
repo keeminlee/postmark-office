@@ -28,7 +28,11 @@ export const BOUNCER_LIMITS = Object.freeze({
     burst: positiveInt("OFFICE_BOUNCER_KEYLESS_BURST", 240),
   }),
   household: Object.freeze({
-    worldWritesPerDay: positiveInt("OFFICE_BOUNCER_WORLD_WRITES_PER_DAY", 200),
+    // PER CLOCK-HOUR, not per town-day (founder-ruled 2026-09-03: "200/hour
+    // instead of day"). The window is the UTC hour the write lands in; the
+    // count resets at the top of the next hour. `timeZone` stays for
+    // `townDayWindow`, which other callers still read.
+    worldWritesPerHour: positiveInt("OFFICE_BOUNCER_WORLD_WRITES_PER_HOUR", 200),
     timeZone: "America/New_York",
   }),
 });
@@ -136,6 +140,11 @@ export const townDayWindow = (instantMs, timeZone = BOUNCER_LIMITS.household.tim
   };
 };
 
+export const hourWindow = (instantMs) => {
+  const h = Math.floor(instantMs / 3_600_000);
+  return { hour: String(h), resetAtMs: (h + 1) * 3_600_000 };
+};
+
 export const keyIdForToken = (token) =>
   `sha256:${createHash("sha256").update(token).digest("hex").slice(0, 16)}`;
 
@@ -221,11 +230,11 @@ export class Bouncer {
     if (!WORLD_WRITE_VERBS.has(verb)) return null;
 
     const now = this.now();
-    const window = townDayWindow(now, this.limits.household.timeZone);
+    const window = hourWindow(now);
     let state = this.households.get(household);
-    if (!state || state.day !== window.day) state = { day: window.day, count: 0 };
+    if (!state || state.hour !== window.hour) state = { hour: window.hour, count: 0 };
 
-    const cap = this.limits.household.worldWritesPerDay;
+    const cap = this.limits.household.worldWritesPerHour;
     if (state.count >= cap) {
       this.households.set(household, state);
       const retryAfterS = Math.max(1, Math.ceil((window.resetAtMs - now) / 1000));
@@ -233,7 +242,7 @@ export class Bouncer {
         "household",
         verb,
         household,
-        `the household world-write cap is ${cap} per town-day; count is ${state.count}; resets at ${new Date(window.resetAtMs).toISOString()} (${this.limits.household.timeZone}).`,
+        `the household world-write cap is ${cap} per hour; count is ${state.count}; resets at ${new Date(window.resetAtMs).toISOString()} (the top of the UTC hour).`,
         retryAfterS
       );
     }

@@ -351,18 +351,26 @@ test("F7 · an unknown read bounces naming BOTH namespaces — the reads and the
   assert.match(r.hint, /reads back its own full card/);
 });
 
-test("F7b · the NINE acts that own their name answer their card; the THREE that are also reads keep their read", async () => {
+test("F7b · the TEN acts that own their name answer their card; the THREE that are also reads keep their read", async () => {
   // ⚠ THE ROUND ASKED FOR A DISJOINTNESS GUARD. It fired on the live door:
   // `address`, `home` and `window` have been both an act and a read since long
   // before this branch, because a read here IS that act's shadow. At the world
   // door the shadow read carries the card too; I tried that and the doorstep
   // bundle's falsifier refused it — a segment must BE the answer of the read it
   // names, and the doorstep composes `window` itself. So the grammar is total
-  // for nine acts and not for three, and this asserts exactly that rather than
-  // a tidier sentence that is not true.
+  // for the bare acts and not for three, and this asserts exactly that rather
+  // than a tidier sentence that is not true.
+  //
+  // ⚑ NINE → TEN, 2026-09-02 (#2392): `declare-stance-on` joined the roster as
+  // a BARE act — its inbox read is `stances`, a different name, so it does not
+  // shadow. The literal is kept rather than derived from the roster's own
+  // length, which would assert only that the function can subtract: what this
+  // number catches is an act quietly becoming a read (or the reverse), and a
+  // census that moves with the thing it counts catches nothing. Update it in
+  // the commit that changes the roster, and say why — as this line does.
   const { bare, shadowed } = assertActCardsReachable([...HOUSEHOLD_DISPATCHABLE], HOUSEHOLD_READS);
   assert.deepEqual(shadowed, ["address", "home", "window"]);
-  assert.equal(bare.length, 9);
+  assert.equal(bare.length, 10);
   for (const act of bare) {
     const r = await householdApex({ read: act }, KEY, ctx({ slim: true, schemas: SCHEMAS, schemaRequired: REQUIRED }));
     assert.equal(r.error, undefined, `read: "${act}" bounced — an act nobody can read is an act nobody can learn`);

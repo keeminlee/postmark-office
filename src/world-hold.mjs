@@ -140,7 +140,8 @@ export function declareHolding({ db, thing, to = null, actor, roster = null, gro
 
   if (act === "take") {
     // ✔ THE TAKE RULE — RATIFIED 2026-08-14 (Wright), as argued here rather than
-    // as briefed (PLAN-things.md § 4). Neutral is the resting state everywhere, so
+    // as briefed (PLAN-things.md § 4 — the plan retired from the root 2026-09-01;
+    // it lives in git history and the Starstory day docs). Neutral is the resting state everywhere, so
     // a take stands unless the ground has spoken against it; requiring an
     // affirmative welcome would invert the law's own default. Kept as a CLASS DIAL
     // so the town can contest it without touching code — flipping
@@ -326,7 +327,8 @@ export async function callHoldTool(name, args = {}, key = null) {
     }
     // ── TWO INPUTS THIS DOOR DOES NOT YET COMPUTE ──────────────────────────
     //
-    // Both are `null` on purpose, and both are named in PLAN-things.md §8 rather than
+    // Both are `null` on purpose, and both are named in PLAN-things.md §8 (retired
+    // from the root 2026-09-01; git history + Starstory day docs) rather than
     // left to be discovered by whoever next reads `declareHolding`'s signature
     // and assumes the door fills it.
     //
@@ -368,6 +370,15 @@ export async function callHoldTool(name, args = {}, key = null) {
     // visible nor takeable" and costs nothing to hold.
     await refuseShroudedLoot(args.thing);
     const dials = thingDials();
+    // ── LANE TWO OF THE PEN FLIP (W2_PEN=hold; runbook C2, 2026-09-03) ────────
+    // Flipped, the record is Postgres `acts`, committed and awaited BEFORE the
+    // attachments edge is allowed to stand; sqlite gets the edge + the
+    // reverse-mirror copy in ONE transaction that commits only after the pen
+    // has. Unreachable Postgres = the ruled refusal, and nothing was written —
+    // the thing is exactly where it was. Unflipped, the door is what it was.
+    const { laneFlipped } = await import("./world-journal.mjs");
+    if (laneFlipped("hold"))
+      return await declareHoldingFlipped({ db, thing: args.thing, to: args.to ?? null, actor, dials, key });
     const did = declareHolding({ db, thing: args.thing, to: args.to ?? null, actor, roster: null, groundOwner: null, dials });
     mirrorHoldingAct(did, key);
     return did;
@@ -416,27 +427,78 @@ function mirrorHoldingAct(did, key) {
       // the ACTOR stood (the-witnessed-line), and a held thing has no position
       // of its own — "it is wherever its holder is, derived on read".
       const { at, witnesses } = await witnessStamp(did.declared_by);
-      await mirrorLaneAct({
-        crossing: currentCrossing(),
-        actor: did.declared_by,
-        action: did.did,                 // give | drop | take — the face, as the resident named it
-        object: did.thing,
-        at, witnesses, cls: CLASS_HOLDING,
-        household: resolvedWorldHousehold(key),
-        payload: {
-          thing: did.thing,
-          holder: did.holder ?? null,
-          previous_holder: did.previous_holder ?? null,
-          made_by: did.made_by,
-          policy: did.policy,
-        },
-        effect: did.did === "drop"
-          ? "it stands on the ground where the holder set it down; the edge they authored is nullified"
-          : `${did.holder} holds it now — authorship did not move, and where it stands is derived from whoever is holding it`,
-        writtenAt: did.at,               // the declaration's own stamp, strictly ordered by the door
-      });
+      await mirrorLaneAct(holdingEntry(did, { crossing: currentCrossing(), at, witnesses, cls: CLASS_HOLDING, household: resolvedWorldHousehold(key) }));
     } catch (e) {
       console.error(`[world2-acts] a holding did not reach acts (${String(e?.message ?? e).slice(0, 160)}) — the attachments edge is unaffected`);
     }
   })();
+}
+
+/** ONE ROW SHAPE for a holding act, whichever pen records it — the mirror
+ * (unflipped) and the flipped pen must describe the same act the same way, or
+ * the two eras of `acts` disagree about what a give looks like. */
+export function holdingEntry(did, { crossing, at, witnesses, cls, household }) {
+  return {
+    crossing,
+    actor: did.declared_by,
+    action: did.did,                 // give | drop | take — the face, as the resident named it
+    object: did.thing,
+    at, witnesses, cls,
+    household,
+    payload: {
+      thing: did.thing,
+      holder: did.holder ?? null,
+      previous_holder: did.previous_holder ?? null,
+      made_by: did.made_by,
+      policy: did.policy,
+    },
+    effect: did.did === "drop"
+      ? "it stands on the ground where the holder set it down; the edge they authored is nullified"
+      : `${did.holder} holds it now — authorship did not move, and where it stands is derived from whoever is holding it`,
+    writtenAt: did.at,               // the declaration's own stamp, strictly ordered by the door
+  };
+}
+
+// ── THE FLIPPED HOLD (W2_PEN=hold) ───────────────────────────────────────────
+//
+// R2's ordering, in sqlite's own terms. `declareHolding` adjudicates AND
+// writes the attachments edge in one call, and the pen must commit before
+// that edge may stand — so the edge is written inside a sqlite transaction
+// that COMMITs only after `appendActFlipped` returns (Postgres committed; the
+// reverse-mirror journal row is in the same sqlite transaction) and ROLLs BACK
+// on any refusal. The three outcomes, each with one truth:
+//
+//   the door refuses (403/409/422)  → nothing in either store
+//   the pen is unreachable          → 503, the ruled sentence, nothing in either store
+//   the pen commits                 → acts holds the record; attachments + journal commit together
+//
+// A sqlite write transaction held across the pen's round-trip is deliberate
+// and short (one INSERT-sized window); it is exactly the property that makes
+// "nothing was written" true rather than asserted. `deps` exist so the ordering
+// can be proven on a hand-built store with no world db and no Postgres — the
+// door injects the real ones.
+export async function declareHoldingFlipped({ db, thing, to = null, actor, dials = {}, key = null, deps = {} }) {
+  const journal = await import("./world-journal.mjs");
+  const appendActFlipped = deps.appendActFlipped ?? journal.appendActFlipped;
+  const CLASS_HOLDING = journal.CLASS_HOLDING;
+  const witnessStamp = deps.witnessStamp ?? (await import("./world.mjs")).witnessStamp;
+  const resolvedWorldHousehold = deps.resolvedWorldHousehold ?? (await import("./world-branches.mjs")).resolvedWorldHousehold;
+  const currentCrossing = deps.currentCrossing ?? (await import("./crossings.mjs")).currentCrossing;
+
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const did = declareHolding({ db, thing, to, actor, roster: null, groundOwner: null, dials }); // throws the door's own bounce on refusal
+    const { at, witnesses } = await witnessStamp(did.declared_by);
+    const row = await appendActFlipped(db, holdingEntry(did, { crossing: currentCrossing(), at, witnesses, cls: CLASS_HOLDING, household: resolvedWorldHousehold(key) }));
+    db.exec("COMMIT");
+    // Which store is the RECORD for this act — said in the answer, as the stance
+    // door says it (the journal row behind it is the reverse-mirror copy).
+    return { ...did, log: "acts", seq: row.seq ?? null };
+  } catch (err) {
+    try { db.exec("ROLLBACK"); } catch { /* no transaction to roll back — the BEGIN itself failed */ }
+    if (err?.name === "PenUnreachableError")
+      throw bounce(503, err.message,
+        "this lane's pen is the office's record (W2_PEN=hold); when it cannot be reached the door refuses rather than writing anywhere else — the thing is exactly where it was, and your act is safe to make again");
+    throw err;
+  }
 }

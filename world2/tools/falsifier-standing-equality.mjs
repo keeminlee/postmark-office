@@ -87,6 +87,27 @@
 // the checkout provably does not have, so a defect in the walk itself, or a
 // mangled shared row, is untouched by it and still diverges.
 //
+// ── EXTENDED 2026-09-02 · THE OTHER DIRECTION, WHICH THE PARKED INGEST OPENED ─
+//
+// The 08-29 correction attributed divergences to STORE-only ground. The shadow
+// era then created the mirror case at scale: the git ingest is PARKED by ruling
+// (2026-08-31 — "the shadow writer is the store's sole pen; the v1-vs-v2 store
+// diff IS the writer comparison"), so ground that enters the world by the GIT
+// pen (a founder-seated parcel, a settlement-published draft) reaches the
+// CHECKOUT and never the store. Standing is relational in this direction too:
+// a parcel the store cannot see re-answers every mark standing on it (the
+// 09-02 live case: the parcel drain's 17 seats moved seven shared slugs).
+//
+// So attribution is now symmetric. A WALK divergence not excused by removing
+// the store-only ground is re-tried by ADDING the checkout-only ground (the
+// oracle's world, expressed in rows): if the port then agrees with the fold,
+// the two were answering about different worlds and the port is not what is
+// wrong. Same discipline as before — attributed rows are REPORTED with their
+// cause named, never dropped, and never red; anything surviving BOTH re-walks
+// is a real defect of the walk and stays RED. It cannot launder one: the
+// addition only supplies rows the checkout provably holds, so a mangled shared
+// row or a broken walk still diverges with them present.
+//
 // AND THE STORE IS ASKED AGAINST THE WALK, which is what the paragraph above
 // says it was always for ("does the `data.tier` actually stored equal what the
 // walk says?") and not what the code did — it compared the stored value to the
@@ -143,10 +164,18 @@ const MARKS_SELECT =
  * loader records, which is what tells us a slug the DB is missing is a CLASS mark
  * (law, and rightly absent) rather than a mark 2.0 lost.
  */
-export function standingFindings(rows, { records, derive }) {
+export function standingFindings(rows, { records, derive }, { shadowEra = false } = {}) {
   const findings = [];
   const attributed = [];
   const born = [];
+  // § extended 2026-09-02: under --shadow-era, MEMBERSHIP differences between
+  // the two worlds are the writer comparison the era exists to make (the
+  // 08-31 parking ruling) — reported in full, never red. Everything that
+  // convicts the PORT or the STORE stays red in every era, and a store row
+  // with no locking claim stays red in every era too: a mark that never came
+  // through the candle is illegitimate regardless of what the git world holds.
+  const worldDiff = [];
+  const diffPush = (m) => (shadowEra ? worldDiff : findings).push(m);
   const walk = computeStanding(rows);
   const byRecordId = new Map(records.map((r) => [r.id, r]));
 
@@ -173,10 +202,40 @@ export function standingFindings(rows, { records, derive }) {
   // thing a divergence is allowed to be excused by.
   const storeOnly = rows.filter((r) => !byRecordId.has(r.slug));
   const shared = rows.filter((r) => byRecordId.has(r.slug));
-  // Both re-walks are LAZY. They cost a full walk each and are consulted only
+  // The ground the STORE cannot see — the parked-ingest direction (§ extended
+  // 2026-09-02). Class marks are law, never rows; errored records never count.
+  const inStoreSlugs = new Set(rows.map((r) => r.slug));
+  const checkoutOnly = records.filter((r) => !r._error && r.kind !== "class" && !inStoreSlugs.has(r.id));
+  // A checkout record expressed as a store-row, so the walk can be run over the
+  // oracle's own world. `derive` supplies the resolved household (the fold's
+  // answer — never the raw frontmatter, the seed's own correction).
+  const rowOfRecord = (rec) => {
+    let hh = null;
+    try { hh = derive(rec).household; } catch { /* a record the fold cannot answer for adds no ground */ }
+    return {
+      slug: rec.id, kind: rec.kind, owner: rec.by ?? rec.handle ?? null,
+      household: hh, parent: null,
+      geometry: (rec.at || rec.extent || rec.points)
+        ? { at: rec.at ?? undefined, extent: rec.extent ?? undefined, ...(Array.isArray(rec.points) ? { points: rec.points } : {}) }
+        : null,
+      data: { tier: null, _parentMarkId: rec._parentMarkId ?? null },
+    };
+  };
+  // All re-walks are LAZY. They cost a full walk each and are consulted only
   // when something actually disagrees, so a green run pays nothing for them.
   let withoutStoreOnly = null;
   const sharedWalk = () => (withoutStoreOnly ??= computeStanding(shared));
+  let withCheckoutOnly = null;
+  const oracleWalk = () => (withCheckoutOnly ??= computeStanding([...shared, ...checkoutOnly.map(rowOfRecord)]));
+  // Naming the one checkout-only mark whose ADDITION restores agreement —
+  // the same courtesy as `culpritFor`, in the other direction, same cap.
+  const supplierFor = (slug, foldTier) => {
+    if (checkoutOnly.length > CULPRIT_CAP) return null;
+    for (const rec of checkoutOnly) {
+      if (computeStanding([...shared, rowOfRecord(rec)]).get(slug) === foldTier) return rec;
+    }
+    return null;
+  };
   // Naming the culprit: the single store-only mark whose removal restores
   // agreement. Capped, because this is one walk per candidate and the receipt is
   // a courtesy — the attribution itself is decided by `sharedWalk`, not by this.
@@ -201,7 +260,7 @@ export function standingFindings(rows, { records, derive }) {
         findings.push(`store carries ${row.slug}, which the checkout's register does not, AND it has no locking claim ` +
           `— a mark in \`marks\` that never came through the candle is not a mark the town admitted`);
       else if (frontier == null || t <= frontier)
-        findings.push(`store carries ${row.slug}, which the checkout's register does not — and it was admitted ` +
+        diffPush(`store carries ${row.slug}, which the checkout's register does not — and it was admitted ` +
           `${new Date(t).toISOString()}, at or before the register's own frontier ` +
           `(${frontier == null ? "unknown" : new Date(frontier).toISOString()}), so the checkout should have carried it`);
       else
@@ -225,8 +284,23 @@ export function standingFindings(rows, { records, derive }) {
           (who ? `\n    the ground the checkout cannot see: ${who.slug} (${who.kind}, household ${who.household ?? `solo:${who.owner}`})`
                 : `\n    no single store-only mark accounts for it on its own — the cause is more than one of them together`));
       } else {
-        findings.push(`THE WALK disagrees with the fold at ${row.slug}\n    fold says: ${foldTier}\n    port says: ${walkTier}` +
-          (storeOnly.length ? `\n    and it still disagrees (${onSharedGround}) with the store-only ground removed — this is the walk, not the oracle's age` : ""));
+        // § extended 2026-09-02 — the parked-ingest direction: does the port
+        // agree once it can see the ground the checkout holds and the store
+        // does not?
+        const onOracleGround = checkoutOnly.length ? oracleWalk().get(row.slug) : walkTier;
+        if (onOracleGround === foldTier) {
+          const who = supplierFor(row.slug, foldTier);
+          attributed.push(
+            `${row.slug}: the fold says ${foldTier} and the port says ${walkTier}, and the port agrees again ` +
+            `(${onOracleGround}) once the ${checkoutOnly.length} checkout-only mark(s) are added — ground the store ` +
+            `cannot see while the ingest is parked` +
+            (who ? `\n    the ground the store cannot see: ${who.id} (${who.kind})`
+                  : `\n    no single checkout-only mark accounts for it on its own — the cause is more than one of them together`));
+        } else {
+          findings.push(`THE WALK disagrees with the fold at ${row.slug}\n    fold says: ${foldTier}\n    port says: ${walkTier}` +
+            `\n    and it still disagrees with the store-only ground removed (${onSharedGround}) AND with the ` +
+            `checkout-only ground added (${onOracleGround}) — this is the walk, not the two worlds' difference`);
+        }
       }
     }
     // Against the WALK, not the fold — see § the same state. This question has
@@ -242,10 +316,10 @@ export function standingFindings(rows, { records, derive }) {
   const inStore = new Set(rows.map((r) => r.slug));
   const missing = records.filter((r) => !r._error && r.kind !== "class" && !inStore.has(r.id)).map((r) => r.id);
   for (const slug of missing.slice(0, 10))
-    findings.push(`the checkout's register carries ${slug}, which the store does not`);
-  if (missing.length > 10) findings.push(`… and ${missing.length - 10} more marks the store does not carry`);
+    diffPush(`the checkout's register carries ${slug}, which the store does not`);
+  if (missing.length > 10) diffPush(`… and ${missing.length - 10} more marks the store does not carry`);
 
-  return { findings, attributed, born, compared, notes: admissionNotes(rows) };
+  return { findings, attributed, born, compared, worldDiff, notes: admissionNotes(rows) };
 }
 
 /**
@@ -292,7 +366,8 @@ try {
   try { geomBlob = execFileSync("git", ["-C", resolve(worldRepo), "rev-parse", `HEAD:${GEOMETRY_SOURCE.path}`], { encoding: "utf8" }).trim(); } catch { /* not a git checkout */ }
   const vendorMoved = geomBlob && geomBlob !== GEOMETRY_SOURCE.blob;
 
-  const { findings, attributed, born, compared, notes } = standingFindings(rows, oracle);
+  const shadowEra = has("--shadow-era");
+  const { findings, attributed, born, compared, worldDiff, notes } = standingFindings(rows, oracle, { shadowEra });
   if (!compared) die("no slug is in both the store and the checkout — the two are not the same world, and an empty comparison is not a pass");
 
   const idem = has("--idempotence") ? idempotenceFindings(rows) : [];
@@ -300,7 +375,7 @@ try {
 
   out = {
     world_sha: sha, standing_rows: rows.length, register_records: oracle.records.length,
-    compared, findings: all, attributed, born, notes,
+    compared, findings: all, attributed, born, world_diff: worldDiff, shadow_era: shadowEra, notes,
     vendored_geometry: { ...GEOMETRY_SOURCE, checkout_blob: geomBlob, moved: !!vendorMoved },
   };
 
@@ -328,7 +403,7 @@ try {
         const res = await client.query(sql, params);
         if (!res.rowCount) { results.push({ mangle: label, touched: 0, findings: null, first: null }); return; }
         const { rows: mangled } = await client.query(MARKS_SELECT);
-        const r = standingFindings(mangled, oracle);
+        const r = standingFindings(mangled, oracle, { shadowEra });
         results.push({ mangle: label, touched: res.rowCount, findings: r.findings.length, first: r.findings[0]?.split("\n")[0] ?? null });
       } finally { await client.query("ROLLBACK"); }
     };
@@ -356,7 +431,7 @@ try {
               box(point(8987.5, 8987.5), point(9012.5, 9012.5)), 'standing', locked_window, data
          FROM marks WHERE id = $1`, [parcel.id]);
 
-    const after = standingFindings((await client.query(MARKS_SELECT)).rows, oracle);
+    const after = standingFindings((await client.query(MARKS_SELECT)).rows, oracle, { shadowEra });
     out.can_fail = {
       results, restored: after.findings.length === 0,
       silent: results.filter((r) => r.findings === 0).map((r) => r.mangle),
@@ -380,10 +455,14 @@ else {
   // divergence is a real difference between the two answers, and the reader is
   // owed it. What it is not is evidence against the port.
   for (const a of out.attributed ?? [])
-    console.log(`  ~ ATTRIBUTED to ground the checkout cannot hold · ${a}`);
+    console.log(`  ~ ATTRIBUTED to the two worlds' difference · ${a}`);
   if (out.born?.length) {
     console.log(`  · ${out.born.length} mark(s) born after the register's frontier — the town moved on, which is not a divergence:`);
     for (const b of out.born) console.log(`      ${b}`);
+  }
+  if (out.world_diff?.length) {
+    console.log(`  ≠ WORLD DIFF, ${out.world_diff.length} row(s) — the writer comparison the shadow era exists to make (--shadow-era; the parking ruling, 2026-08-31). Reported, never red:`);
+    for (const w of out.world_diff) console.log(`      ${w}`);
   }
   for (const f of out.findings) console.log(`  ✗ ${f}`);
   if (out.can_fail) {
@@ -397,7 +476,8 @@ else {
       ? `  can-fail NOT PROVEN: ${out.can_fail.silent.length} mangle(s) went unnoticed, ${out.can_fail.inert.length} changed nothing`
       : "  can-fail PROVEN: every mangle turned the falsifier red, and rollback restored green");
   }
-  const tail = out.attributed?.length ? `, with ${out.attributed.length} divergence(s) attributed to store-only ground` : "";
+  const tail = (out.attributed?.length ? `, with ${out.attributed.length} divergence(s) attributed to the two worlds' difference` : "")
+    + (out.world_diff?.length ? ` · ${out.world_diff.length} world-diff row(s) reported` : "");
   console.log(out.findings.length
     ? `\nRED · ${out.findings.length} finding(s)${tail}`
     : `\nGREEN · the port, the fold and the store agree on every slug the two states share${tail}`);
