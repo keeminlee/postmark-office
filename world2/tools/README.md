@@ -850,7 +850,26 @@ digest = "sha256:" + sha256(those lines, concatenated)
 ### The red-proof carries the run
 
 A falsifier nobody has watched fail is not a falsifier. These were run on
-`world2_dev` on 2026-08-28, against a scratch local repo — never a real remote.
+`world2_dev` on 2026-08-28, against a scratch local repo.
+
+**Re-run against a real remote, 2026-09-03** (E1/DEC-7 gave the notary its own
+push target). A clone pulled from `wright-starforge/postmark-world2-notary` onto
+a machine that is not the box, checked against `CERTIFICATION.json` with **no
+database consulted** — every archive's sha, the `archives_sha` over all of them,
+and `marks_content_sha` over 873 mark bodies: **18 of 18 green.** The can-fail
+flip: one byte changed inside `archives/acts/164.jsonl` in that clone turned it
+red naming the file and its two shas, and restoring the byte turned it green
+again. The same clone under `--verify --spot-check 200` reported the same 19
+findings as the box's own checkout, finding for finding — the copy adds none and
+hides none — with **0 disagreements across 919 archived lines read back against
+`acts`**.
+
+One trap belongs beside that green. Git converts LF to CRLF at checkout wherever
+`core.autocrlf` is true, the Windows default, and a converted archive fails its
+certified sha. The first clone went red on **every non-empty file and green on
+every empty one**, which is the tell, and it looks exactly like catastrophic
+drift. The repository carries a `.gitattributes` (`* -text`) so a plain clone is
+byte-faithful anywhere.
 
 **The append-only refusal**, which is the pen's whole reason to exist. Edit one
 line of a closed window's archive and run the exporter again:

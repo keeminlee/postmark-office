@@ -5,12 +5,21 @@
 #  WHAT IS BACKED UP WHERE, AND THE RPO OF EACH — say the number, not "nightly"
 # ════════════════════════════════════════════════════════════════════════════
 #
-#  OFF-BOX (git, private)          pg_dump --format=custom + a bundle of the
-#                                  notary checkout, pushed to
+#  OFF-BOX (git, private)          pg_dump --format=custom, pushed to
 #                                  wright-starforge/postmark-world2-backups.
 #                                  RPO ≤ 24h. THIS IS THE ONE THAT SURVIVES
 #                                  LOSING THE BOX, and it is the one the
 #                                  restore rehearsal exercises.
+#
+#  THE NOTARY, ELSEWHERE ON PURPOSE  Until 2026-09-03 this lane also shipped a
+#                                  git bundle of the notary checkout, because
+#                                  the notary had no remote of its own. It has
+#                                  one now — wright-starforge/postmark-world2-notary,
+#                                  pushed by world2-notary.sh over its own key —
+#                                  and the bundle is GONE from this lane rather
+#                                  than kept as redundancy. See § 3 below for
+#                                  why keeping it would have been the wrong kind
+#                                  of spare.
 #
 #  ON-BOX (spool)                  pg_basebackup + archived WAL.
 #                                  RPO ≈ one WAL segment. Survives a bad
@@ -144,30 +153,84 @@ else
   BASE_BYTES=0; BASE_OK=false
 fi
 
-# ── 3 · the notary, which has nowhere else to go ────────────────────────────
-# world2-notary.sh § the gap: /srv/world2-lab/notary has no git remote, so its
-# certifications live only on the box they certify. A bundle is a whole
-# repository in one file — clone it back with `git clone <bundle> notary`.
-NOTARY_BUNDLE=""
+# ── 3 · the notary, which now has somewhere of its own to go ────────────────
+# This section used to build a git bundle of /srv/world2-lab/notary and ship it
+# inside this lane's repository, because the notary had no remote. DEC-7 closed
+# that on 2026-09-03: the notary pushes to wright-starforge/postmark-world2-notary
+# over its own deploy key, in world2-notary.sh.
+#
+# THE BUNDLE IS NOT KEPT AS A SPARE, and that is the decision worth reading
+# rather than the code that is gone. DEC-7's stated reason:
+#
+#   "If the certification ships inside the same bundle as the backup, one
+#    compromised lane loses both halves of the check."
+#
+# A second copy of the certifications living in the backup repo does not lose
+# anything — but it makes this repo a place where a dump and a certification of
+# that dump sit side by side, which is the one arrangement that lets a forged
+# pair look self-consistent to whoever reaches for it. The check has to come
+# from somewhere the backup lane cannot write. So it does, and it does not also
+# come from here.
+#
+# WHAT THIS LANE STILL SAYS ABOUT THE NOTARY, and the credential rule that
+# shapes it: it reads the notary checkout's OWN record of its last push —
+# refs/remotes/origin/main, a local ref — and reports whether the certifications
+# are off-box. It does NOT ls-remote the notary's repository, because that would
+# require w2-notary, and a backup lane holding the notary's key is exactly the
+# "one compromised lane loses both halves" this whole split exists to prevent.
+# The honest sentence is therefore "as of its last push", not "right now", and
+# the notary's own unit is the one that reddens when a push fails.
+NOTARY_OFFBOX=unknown
+NOTARY_LOCAL=""
+NOTARY_PUSHED=""
 if [ -d "$WORLD2_LAB/notary/.git" ]; then
-  NOTARY_BUNDLE="$DUMPS/notary-$STAMP.bundle"
-  git -C "$WORLD2_LAB/notary" bundle create "$NOTARY_BUNDLE" --all >/dev/null 2>&1 \
-    || { echo "[world2-backup] notary bundle failed" >&2; NOTARY_BUNDLE=""; }
+  NOTARY_LOCAL="$(git -C "$WORLD2_LAB/notary" rev-parse --short HEAD 2>/dev/null)"
+  NOTARY_PUSHED="$(git -C "$WORLD2_LAB/notary" rev-parse --short refs/remotes/origin/main 2>/dev/null)"
+  if [ -z "$NOTARY_PUSHED" ]; then NOTARY_OFFBOX=no-remote
+  elif [ "$NOTARY_LOCAL" = "$NOTARY_PUSHED" ]; then NOTARY_OFFBOX=current
+  else NOTARY_OFFBOX=behind
+  fi
 fi
 
 # ── 4 · off-box ─────────────────────────────────────────────────────────────
 [ -d "$REPO/.git" ] || fail "no backup checkout at $REPO — see DEPLOY.md § The world2 backup lane" ship
 git -C "$REPO" fetch -q origin main   || fail "backup repo fetch failed (deploy key? network?)" ship
 git -C "$REPO" reset -q --hard origin/main
-mkdir -p "$REPO/dumps" "$REPO/notary"
+mkdir -p "$REPO/dumps"
 cp "$DUMP" "$REPO/dumps/"
-[ -n "$NOTARY_BUNDLE" ] && cp "$NOTARY_BUNDLE" "$REPO/notary/"
+
+# The bundles this lane shipped before 2026-09-03 stay in the repo's history and
+# in its tree, untouched. They are a closed record, not a stale copy pretending
+# to be current, and a marker beside them says so — written once, after the
+# reset so it lands in the tree this run commits, because a reader who finds
+# notary/ in a clone three months from now must not have to date the filenames
+# to learn which repo is live.
+if [ -d "$REPO/notary" ] && [ ! -f "$REPO/notary/RETIRED.md" ]; then
+  cat > "$REPO/notary/RETIRED.md" <<'RETIRED'
+# These bundles are a closed record (frozen 2026-09-03)
+
+Until 2026-09-03 the World 2.0 notary had no git remote, so `world2-backup.sh`
+shipped its checkout here as a git bundle. That stopgap ended with DEC-7.
+
+**The live certifications are at `wright-starforge/postmark-world2-notary`** —
+a separate private repository, written by `world2-notary.sh` over a deploy key
+scoped to that repo alone. It is separate ON PURPOSE: a certification stored
+beside the backup it certifies cannot be the thing that catches the backup.
+
+The bundles beside this file are whole repositories in one file each and still
+open with `git clone <bundle> notary`, but they stopped at 2026-09-03 and
+nothing adds to them. Verify against the notary repository, not against these.
+RETIRED
+fi
 
 # Working-tree retention. History keeps every dump forever — that is the point
 # of a git destination — but the tree stays small so a clone is quick when it
 # matters, which is the one night anybody clones it.
 ls -1 "$REPO/dumps"  2>/dev/null | sort | head -n -"$KEEP_DUMPS" | while read -r f; do git -C "$REPO" rm -q --cached "dumps/$f" >/dev/null 2>&1; rm -f "$REPO/dumps/$f"; done
-ls -1 "$REPO/notary" 2>/dev/null | sort | head -n -"$KEEP_DUMPS" | while read -r f; do git -C "$REPO" rm -q --cached "notary/$f" >/dev/null 2>&1; rm -f "$REPO/notary/$f"; done
+# NO retention pass over $REPO/notary any more, and its absence is deliberate:
+# nothing adds to that directory now, so a count-based prune would only ever
+# delete from a closed record — and RETIRED.md sorts before every bundle
+# filename, so the first thing it would eat is the note explaining the rest.
 
 WAL_BYTES=$(du -sb "$WAL" 2>/dev/null | cut -f1); WAL_BYTES=${WAL_BYTES:-0}
 WAL_FILES=$(find "$WAL" -type f 2>/dev/null | wc -l)
@@ -179,7 +242,13 @@ cat > "$REPO/LATEST.json" <<JSON
   "dump": "dumps/$(basename "$DUMP")",
   "dump_bytes": $DUMP_BYTES,
   "dump_toc_entries": $TOC_ENTRIES,
-  "notary_bundle": "$([ -n "$NOTARY_BUNDLE" ] && echo "notary/$(basename "$NOTARY_BUNDLE")")",
+  "notary": {
+    "repo": "github.com/wright-starforge/postmark-world2-notary (private, separate by DEC-7)",
+    "offbox": "$NOTARY_OFFBOX",
+    "checkout_head": "$NOTARY_LOCAL",
+    "last_pushed": "$NOTARY_PUSHED",
+    "read": "the notary checkout's own refs/remotes/origin/main — as of its last push, not a live probe; this lane holds no credential for that repo on purpose"
+  },
   "on_box_only": {
     "basebackup_ok": $BASE_OK,
     "basebackup_bytes": $BASE_BYTES,
@@ -202,7 +271,12 @@ REMOTE_TIP=$(git -C "$REPO" ls-remote origin refs/heads/main | cut -f1)
 
 # ── 5 · local retention ─────────────────────────────────────────────────────
 ls -1t "$DUMPS"/world2-*.dump 2>/dev/null | tail -n +$((KEEP_DUMPS + 1)) | xargs -r rm -f
-ls -1t "$DUMPS"/notary-*.bundle 2>/dev/null | tail -n +$((KEEP_DUMPS + 1)) | xargs -r rm -f
+# The notary bundles this lane stopped making on 2026-09-03. A count-based rule
+# would keep the newest fourteen of them on the disk forever, which is the
+# residue class exactly — a cache with no ceiling, left behind by a lane that
+# closed. Every one of them is in the backup repo's history already, so they are
+# swept whole rather than trimmed to a number nothing will ever refresh.
+ls -1 "$DUMPS"/notary-*.bundle 2>/dev/null | xargs -r rm -f
 # Base backups, and the WAL that predates the OLDEST one kept. Pruning WAL past
 # the oldest surviving base backup would leave a base backup that cannot be
 # rolled forward — a backup that exists and cannot be used, which is the shape

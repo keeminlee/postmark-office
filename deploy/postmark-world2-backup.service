@@ -1,5 +1,5 @@
 [Unit]
-Description=World 2.0 durability — pg_dump + notary bundle shipped off-box, pg_basebackup + WAL kept on-box
+Description=World 2.0 durability — pg_dump shipped off-box, pg_basebackup + WAL kept on-box
 Documentation=file:///srv/world2-lab/ops/world2-backup.sh
 After=network.target postgresql.service
 Wants=postgresql.service
