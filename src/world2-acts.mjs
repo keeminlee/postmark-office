@@ -138,8 +138,16 @@ export const LANE_FLIPPED_AT = Object.freeze({
   // 2026-09-03 18:58:05Z").
   hold: "2026-09-03T18:58:05Z",
   say: "2026-09-03T18:58:05Z",
-  // Not flipped. C3 (walk) is the next lane; C5 (frame) waits on DEC-5; C6
-  // (mark) is refused for unreadiness and the arena by ruling (P-143).
+  // Not flipped. C3 (walk) is the next lane; C5 (frame) waits on DEC-5; the
+  // arena is exempt by ruling (P-143).
+  //
+  // C6 (mark) IS WIRED as of 2026-09-04 and is still null here, and the two
+  // facts are not in tension — this table records when a lane's pen ACTUALLY
+  // flipped on a box, which is a fact about `W2_PEN`, not about the code. A
+  // wired lane whose flag has never named it has no flipped era, and writing a
+  // date here before the flag moved would hand the reverse-parity arm a window
+  // in which every `journal_seq`-NULL row is the mirror's — finding 2, planted
+  // by hand. The founder's flip sets this line, in the same change as the flag.
   walk: null,
   frame: null,
   mark: null,

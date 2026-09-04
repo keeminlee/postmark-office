@@ -1870,7 +1870,7 @@ async function journalLeaveMark(clean, { crossing = currentCrossing() } = {}) {
     const declaration = { ...rest, ...(staking ? { stamps: stakeN } : {}), ...(putForward ? { put_forward: true } : {}) };
 
     const { at, witnesses } = await witnessStamp(clean.by);
-    const row = appendJournal(db, {
+    const entry = {
       crossing, actor: clean.by, household,
       action: amending ? ACTION_AMEND : ACTION_LEAVE,
       object: id, at, witnesses, cls: CLASS_MARK,
@@ -1878,7 +1878,36 @@ async function journalLeaveMark(clean, { crossing = currentCrossing() } = {}) {
       effect: amending
         ? "the prior declaration is superseded — every version stays in the log; canon shows the latest at the next crossing"
         : "a draft stands in the live layer; it enters canon at the next crossing that ratifies it",
-    });
+    };
+    // ── LANE SIX OF THE PEN FLIP (W2_PEN=…,mark; runbook C6) ────────────────
+    //
+    // The candle lane, and the one the flip refused longest — not by ruling but
+    // because a mark is TWO facts and only one of them had a home in
+    // `penWrite`'s transaction. Flipped, `appendActFlipped` carries the docket
+    // half in with the deed on one client (world-journal § THE CANDLE HALF), so
+    // the runbook's named failure — "would write acts with no docket, which is
+    // F2 self-inflicted" — cannot happen by flag.
+    //
+    // NO SQLITE TRANSACTION AROUND IT, unlike the hold lane, and the difference
+    // is the lane rather than the care taken: `declareHoldingFlipped` wraps a
+    // BEGIN IMMEDIATE because it has a SECOND sqlite write (the attachments
+    // edge) that must commit with the journal row or not at all. This door's
+    // only sqlite write IS the journal row, which `appendActFlipped` performs
+    // itself after the awaited pen; a transaction around one insert would be
+    // ceremony that reads like a guarantee. The stance and walk lanes are the
+    // shape being followed here (world-stance.mjs, walk-exec.mjs).
+    let row;
+    if (laneFlipped("mark")) {
+      try { row = await appendActFlipped(db, entry); }
+      catch (err) {
+        if (err?.name === "PenUnreachableError")
+          throw bounce(503, err.message,
+            "this lane's pen is the office's record (W2_PEN=mark); when it cannot be reached the door refuses rather than writing anywhere else — nothing was declared, and your mark is safe to leave again");
+        throw err;
+      }
+    } else {
+      row = appendJournal(db, entry);
+    }
 
     // THE ANSWER SHAPE HOLDS ACROSS THE FLAG, for the reason the §1c contract
     // does: a client that learns the office changed pens has been told about
@@ -1910,7 +1939,12 @@ async function journalLeaveMark(clean, { crossing = currentCrossing() } = {}) {
       at: clean.at ?? null, extent: clean.extent ?? null,
       dir: String(willLandAt).replace(/^WORLD\/marks\//, "").replace(/\/mark\.md$/, ""),
       branch: draftBranch(household),
-      seq: row.seq, crossing: row.crossing, log: "journal",
+      // Which store is the RECORD for this act, as every flipped lane's answer
+      // says it. `record` comes from the write itself rather than from
+      // `flipped`, because a PRIVATE DRAFT on a flipped lane has no deed by law
+      // — its act rides the claim until a stake releases it — and answering
+      // "acts" for one would name a table that does not hold it.
+      seq: row.seq, crossing: row.crossing, log: row.record ?? "journal",
       witnesses: row.witnesses ? JSON.parse(row.witnesses) : null,
       ...(amending ? { amended: true, moved: false,
         superseded: "the prior declaration — every version stays in the log; canon shows the latest at the next crossing" } : {}),
@@ -1952,15 +1986,33 @@ async function journalWithdraw({ by, slug, household }, { crossing = currentCros
       "withdraw or move the children first — a withdrawal may not strand what stands on it");
 
     const { at, witnesses } = await witnessStamp(by);
-    const row = appendJournal(db, {
+    const entry = {
       crossing, actor: by, household, action: ACTION_WITHDRAW,
       object: id, at, witnesses, cls: CLASS_MARK,
       payload: { by, slug, was_published: wasPublished },
       effect: wasPublished
         ? "your sketchbook lets it go now; canon lets it go at the next crossing — the settlement unpublishes it, and its whole life stays in the log"
         : "the draft is gone — it never crossed, so there is nothing to unpublish; its life stays in the log",
-    });
-    return { id, withdrawn: true, was_published: wasPublished, effect: row.effect, seq: row.seq, crossing: row.crossing, log: "journal" };
+    };
+    // Lane six, withdraw's half (runbook C6). The docket half of a withdrawal
+    // is the one that decides whether the SLUG IS FREE again — a retraction for
+    // a claim that stood publicly, a deletion for one that never did
+    // (world2-claims § withdraw, "the one deletion this town performs") — so
+    // committing the deed without it would tell a resident their mark is gone
+    // while the docket still holds their name against it.
+    let row;
+    if (laneFlipped("mark")) {
+      try { row = await appendActFlipped(db, entry); }
+      catch (err) {
+        if (err?.name === "PenUnreachableError")
+          throw bounce(503, err.message,
+            "this lane's pen is the office's record (W2_PEN=mark); when it cannot be reached the door refuses rather than writing anywhere else — your mark is exactly as it was, and the withdrawal is safe to make again");
+        throw err;
+      }
+    } else {
+      row = appendJournal(db, entry);
+    }
+    return { id, withdrawn: true, was_published: wasPublished, effect: row.effect, seq: row.seq, crossing: row.crossing, log: row.record ?? "journal" };
   } finally { try { db.close(); } catch { /* already gone */ } }
 }
 

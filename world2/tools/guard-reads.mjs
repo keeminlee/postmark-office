@@ -262,11 +262,18 @@ export function liveMarkOf(row) {
   }
   const data = row.data && typeof row.data === "object" ? row.data : {};
   const geometry = row.geometry && typeof row.geometry === "object" ? row.geometry : {};
-  // `_journal_seq` and `_deferred_act` are the docket pen's own plumbing, not
-  // anything the resident declared. `_deferred_act` especially: it is a whole
-  // copy of the journal row, and spreading it into a mark record would put a
-  // second `payload` inside the mark.
-  const { _journal_seq, _deferred_act, ...declared } = data;
+  // `_journal_seq`, `_act_id` and `_deferred_act` are the docket pen's own
+  // plumbing, not anything the resident declared. `_deferred_act` especially:
+  // it is a whole copy of the journal row, and spreading it into a mark record
+  // would put a second `payload` inside the mark.
+  //
+  // `_act_id` joined them 2026-09-04 with the mark lane's flip (world2-claims §
+  // `_act_id`), and it is named here rather than filtered by prefix on purpose:
+  // an underscore convention is a rule nothing enforces, and the field that
+  // slips through it is the one nobody thought to name. Every field the pen
+  // adds to `data` gets a line in this destructure, or it reaches the doors as
+  // something the resident wrote.
+  const { _journal_seq, _act_id, _deferred_act, ...declared } = data;
 
   const payload = {
     ...declared,
