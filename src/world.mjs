@@ -38,7 +38,8 @@ import {
   resolvedWorldHousehold,
 } from "./world-branches.mjs";
 import { moveGuard } from "./world-move-guard.mjs"; // the drain night: moving a mark moves what stands on it
-import { ACTION_AMEND, ACTION_LEAVE, ACTION_WITHDRAW, CLASS_MARK, CLASS_MOVE, CLASS_VOICE, anchorAt, appendActFlipped, appendJournal, draftsForKey, filedPathOfAt, laneFlipped, liveChildrenOf, liveMarks, mirrorLaneAct, pathFor, pinWitnesses, singleLogEnabled } from "./world-journal.mjs"; // POS-5 slice 1: the one append-only log
+import { ACTION_AMEND, ACTION_LEAVE, ACTION_WITHDRAW, CLASS_MARK, CLASS_MOVE, CLASS_VOICE, anchorAt, appendActFlipped, appendJournal, filedPathOfAt, laneFlipped, mirrorLaneAct, pathFor, pinWitnesses, singleLogEnabled } from "./world-journal.mjs"; // POS-5 slice 1: the one append-only log
+import { guardedDraftsForKey, guardedLiveChildrenOf, guardedLiveMarks } from "./world2-guards.mjs"; // B1: the door guards' own reads, behind W2_GUARDS (runbook §4 B1)
 import { WORLD_STAKE_TOOLS, callWorldStakeTool, worldPortfolioStakeSlice } from "./world-stake.mjs"; // P3 draft, append-shaped
 import { classNames, classRoster, classDials, departurePace, freeCellIn, RESIDENT_INSTANTIABLE, residentMayInstantiate } from "./world-classes.mjs"; // which classes exist — read from the record, never held
 import { HOLD_TOOLS, callHoldTool } from "./world-hold.mjs"; // the object primitive: who holds what
@@ -1332,7 +1333,11 @@ export async function worldInvestigate(args = {}, key = null) {
 // to every caller, which is what makes them cacheable and what §1c settled.
 export async function worldStateRaw() { return (await world())._raw.worldState; }
 export async function worldSkeletonRaw() { return (await world())._raw.skeleton; }
-export function worldMyDrafts(key = null) { return draftsForKey(WORLD_CLONE, key); }
+// B1: the signed-in draft overlay's journal half comes from `claims` + the
+// withdraw acts under W2_GUARDS=1; the SKETCHBOOK half is unchanged either way
+// (world2-guards.mjs § GUARD 2 — dropping it would vanish a resident's pre-flag
+// work from their own overlay on the day the guard flipped).
+export async function worldMyDrafts(key = null) { return guardedDraftsForKey(WORLD_CLONE, key); }
 
 // How many of your own marks this read renders per list. ✎ A proposal, no
 // history behind it. The rest are not dropped — they are NAMED, as ids, which
@@ -1359,7 +1364,7 @@ export function markPage(rows, offset = 0) {
 }
 
 export async function worldMyMarks(key = null, { offset = 0 } = {}) {
-  const delta = draftsForKey(WORLD_CLONE, key);
+  const delta = await guardedDraftsForKey(WORLD_CLONE, key);   // B1: the overlay's journal half, behind W2_GUARDS
   if (delta?.error) return delta;
 
   const main = publishedState(WORLD_CLONE).state;
@@ -1720,7 +1725,14 @@ async function journalLeaveMark(clean, { crossing = currentCrossing() } = {}) {
   const canon = canonForGuards();
   const db = openDynamic();
   try {
-    const live = liveMarks(db, { household: clean.household });
+    // ── B1: THE READ FLIP (W2_GUARDS=1; runbook §4 B1) ──────────────────────
+    // The slug collision, the move guard's `prior`, and the parcel cap all read
+    // ONE live layer, so this is the one round trip that decides all three.
+    // Flipped, it is `claims` where status ∈ (draft, pending) — DESIGN §2 R3's
+    // sentence made true at the door: "A pen flip without a read flip produces
+    // an office that writes to Postgres and validates against sqlite — a split
+    // brain with a switch on it." Unflipped, `liveMarks` byte for byte.
+    const live = await guardedLiveMarks(db, { household: clean.household });
     const liveById = new Map(live.map((m) => [m.id, m]));
     const priorLive = liveById.get(id) ?? null;
     const priorCanon = canon.byId.get(id) ?? null;
@@ -1895,7 +1907,9 @@ async function journalWithdraw({ by, slug, household }, { crossing = currentCros
   const canon = canonForGuards();
   const db = openDynamic();
   try {
-    const live = liveMarks(db, { household });
+    // B1: the read flip, withdraw's half — the existence check and the
+    // stranding check both read the live layer (runbook §4 B1).
+    const live = await guardedLiveMarks(db, { household });
     const wasPublished = canon.ids.has(id);
     if (!live.some((m) => m.id === id) && !wasPublished)
       throw bounce(404, `no mark "${id}" in your world`, "ids are <by>/<slug> — you can withdraw your drafts and your published marks; check world_my_marks");
@@ -1904,7 +1918,7 @@ async function journalWithdraw({ by, slug, household }, { crossing = currentCros
     // stands on it. Canon's children count too — a published description of
     // this mark does not stop being stranded because it is not in the journal.
     const kids = [
-      ...liveChildrenOf(db, id, { household }).map((m) => m.id),
+      ...(await guardedLiveChildrenOf(db, id, { household })).map((m) => m.id),
       ...canon.marks.filter((m) => m.parent_id === id).map((m) => m.id),
     ];
     if (kids.length) throw bounce(409, `"${id}" still holds marks inside it`,
