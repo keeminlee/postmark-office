@@ -22,7 +22,7 @@ import { join } from "node:path";
 
 import {
   erasBetween, commitOf, eraActs, eraClaims, eraWindow, authoredSubstance,
-  sixCountOf, amendId, assertReplayable, logCensus, doorWitness, SUBSTANCE_COLUMNS,
+  sixCountOf, amendId, assertReplayable, logCensus, doorWitness, SUBSTANCE_COLUMNS, windowFindings,
   standingOnly, actObject, isWithdrawAct,
 } from "../world2/tools/replay-ingest.mjs";
 import { uuid5, deriveActs, LOG_FILE, compareMarks } from "../world2/tools/seed-import.mjs";
@@ -188,13 +188,106 @@ test("an annotated tag resolves to its COMMIT, not to the tag object", () => {
   } finally { w.cleanup(); }
 });
 
-test("erasBetween pairs each settlement with its predecessor, in the order the town made them", () => {
+test("F-5: an era is a PUBLISH, so a tag on a crossing-save is no longer a boundary", () => {
   const w = THREE();
   try {
+    // S2 is tagged, but its subject is `crossing-save 8: …` — it published
+    // nothing, so it closes no era. Under the old TAG pairing this was two eras
+    // and the first had no six-count to check itself against.
     const eras = erasBetween(w.dir, "settlement/S1", "settlement/S3");
     assert.deepEqual(eras.map((e) => [e.from.tag, e.to.tag]),
-      [["settlement/S1", "settlement/S2"], ["settlement/S2", "settlement/S3"]]);
+      [["settlement/S1", "settlement/S3"]]);
   } finally { w.cleanup(); }
+});
+
+// ── F-5: the era is a publish, and the windows must walk the clock ───────────
+//
+// The receipt that opened this lane: between settlement/S50 and settlement/S51
+// the world carries SEVEN `settlement: sweep …` commits. The Worldkeeper mints a
+// tag when his judgment lands; the box publishes at every crossing and on demand
+// in between. Pairing tags made one era out of seven publishes.
+
+const SWEEP = (n) => `settlement: sweep ${n} published, 0 unpublished, 0 left drafted, 0 withdrawn, 0 quarantined, 0 dropped`;
+
+/** Two publishes between two tags, the middle one UNTAGGED, one window each. */
+const TWO_PUBLISHES = () => world([
+  { tag: "a", subject: SWEEP(0), at: "2026-08-26T00:00:00+00:00",
+    register: [M({ by: "wren", slug: "the-shed" })], log: { "7.jsonl": [] } },
+  { subject: SWEEP(1), at: "2026-08-26T06:00:00+00:00",              // no tag — the box published anyway
+    register: [M({ by: "wren", slug: "the-shed" }), M({ by: "wren", slug: "the-lamp" })],
+    log: { "7.jsonl": [], "8.jsonl": [] } },
+  { tag: "b", subject: SWEEP(1), at: "2026-08-26T18:00:00+00:00",
+    register: [M({ by: "wren", slug: "the-shed" }), M({ by: "wren", slug: "the-lamp" }), M({ by: "wren", slug: "the-yard" })],
+    log: { "7.jsonl": [], "8.jsonl": [], "9.jsonl": [] } },
+]);
+
+test("F-5: two publishes between two tags are TWO eras, on contiguous windows, each with its own six-count", async () => {
+  const w = TWO_PUBLISHES();
+  try {
+    const eras = erasBetween(w.dir, "a", "b");
+    assert.equal(eras.length, 2, "the untagged publish is a boundary — a tag is judgment, a sweep is an era");
+    assert.equal(eras[0].from.tag, "a");
+    assert.match(eras[0].to.tag, /^publish\//, "an untagged boundary is named for the commit that is it");
+    assert.equal(eras[1].to.tag, "b");
+    assert.equal(eras[1].from.sha, eras[0].to.sha, "the eras are contiguous — no commit falls between them");
+
+    // Each era's window is its OWN publish's clock, and they count.
+    const withWindows = [];
+    for (const e of eras) {
+      const c = checkout(w.dir, e.to.sha);
+      try { withWindows.push({ ...e, window: eraWindow({ toDir: c.dir, lawSha: e.to.sha, townSha: null }) }); }
+      finally { c.dispose(); }
+    }
+    assert.deepEqual(withWindows.map((e) => e.window.id), [8, 9]);
+    assert.deepEqual(windowFindings(withWindows), [], "contiguous windows are no finding at all");
+
+    // And each holds itself to its OWN receipt, not the tag's.
+    for (const e of withWindows) assert.equal(sixCountOf(e.to.subject).published, 1);
+  } finally { w.cleanup(); }
+});
+
+test("F-5: a retirement in the FIRST of two publishes files at that publish's window, not the tag's", async () => {
+  const w = world([
+    { tag: "a", subject: SWEEP(0), at: "2026-08-26T00:00:00+00:00",
+      register: [M({ by: "wren", slug: "the-shed" }), M({ by: "wren", slug: "the-lamp" })], log: { "7.jsonl": [] } },
+    { subject: SWEEP(0), at: "2026-08-26T06:00:00+00:00",            // the shed leaves HERE, at window 8
+      register: [M({ by: "wren", slug: "the-lamp" })], log: { "7.jsonl": [], "8.jsonl": [] } },
+    { tag: "b", subject: SWEEP(0), at: "2026-08-26T18:00:00+00:00",
+      register: [M({ by: "wren", slug: "the-lamp" })], log: { "7.jsonl": [], "8.jsonl": [], "9.jsonl": [] } },
+  ]);
+  try {
+    const eras = erasBetween(w.dir, "a", "b");
+    assert.equal(eras.length, 2);
+    const c = await claimsForShas(w, eras[0]);
+    assert.equal(c.retired.length, 1, "the retirement belongs to the era it happened in");
+    assert.equal(c.retired[0].slug, "wren/the-shed");
+    // THE POINT OF THE LANE: the synthesised act carries window 8, the crossing
+    // it happened at. Under the tag model it would have filed at 9 — the tag's.
+    assert.equal(c.retired[0].synthesised.crossing, 8);
+
+    const later = await claimsForShas(w, eras[1]);
+    assert.equal(later.retired.length, 0, "and it does not happen twice");
+  } finally { w.cleanup(); }
+});
+
+test("F-5: a window with no publish behind it, and a publish that closed no window, are both NAMED", () => {
+  const era = (id, tag) => ({ to: { tag }, window: { id } });
+  const skipped = windowFindings([era(153, "p1"), era(155, "p2")]);
+  assert.equal(skipped.length, 1);
+  assert.equal(skipped[0].kind, "skipped");
+  assert.deepEqual(skipped[0].missing, [154]);
+  assert.match(skipped[0].text, /closed with no publish behind them/);
+
+  const same = windowFindings([era(163, "p1"), era(163, "p2")]);
+  assert.equal(same[0].kind, "same");
+  assert.match(same[0].text, /closed no window/);
+
+  // The town's clock does not run backwards, and a sequence that says it does is
+  // its own finding rather than a very large skip.
+  assert.equal(windowFindings([era(164, "p1"), era(163, "p2")])[0].kind, "backwards");
+
+  assert.deepEqual(windowFindings([era(160, "p1"), era(161, "p2"), era(162, "p3")]), [],
+    "the shape the store expects: one window at a time");
 });
 
 test("a range with no settlement between its ends has nothing to replay, and says so", () => {
@@ -644,6 +737,19 @@ function checkout(repo, sha) {
   rmSync(dir, { recursive: true, force: true });
   execFileSync("git", ["-C", repo, "worktree", "add", "--detach", "--quiet", dir, sha], { encoding: "utf8" });
   return { dir, dispose: () => execFileSync("git", ["-C", repo, "worktree", "remove", "--force", dir]) };
+}
+
+/** The same as `claimsFor`, but for an era `erasBetween` already resolved (F-5). */
+async function claimsForShas(w, era) {
+  const a = checkout(w.dir, era.from.sha), b = checkout(w.dir, era.to.sha);
+  try {
+    const window = eraWindow({ toDir: b.dir, lawSha: era.to.sha, townSha: null });
+    return await eraClaims({
+      fromDir: a.dir, toDir: b.dir, window,
+      acts: eraActs({ fromDir: a.dir, toDir: b.dir }),
+      worldRepo: w.dir, fromSha: era.from.sha, toSha: era.to.sha,
+    });
+  } finally { b.dispose(); a.dispose(); }
 }
 
 async function claimsFor(w, fromTag, toTag) {

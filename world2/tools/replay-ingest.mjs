@@ -24,6 +24,28 @@
 //       the store OVERLAP; `insertActs` dedupes by (actor, action, written_at)
 //       and reports what it skipped. See its own note.
 //
+// ── AN ERA IS ONE PUBLISH, NOT ONE TAG (F-5, 2026-09-04) ────────────────────
+//
+// The Worldkeeper mints a `settlement/S<n>` tag when his JUDGMENT lands. The box
+// publishes at every crossing and on demand between them, committing a
+// `settlement: sweep N published, …` each time with its own six-count. Those were
+// the same thing through S50 and have not been since: SEVEN publishes sit between
+// the S50 and S51 tags. Pairing tags made one era out of seven, so six sweeps'
+// worth of claims were derived against the seventh's receipt and every retirement
+// filed at the last window instead of the one it happened at.
+//
+// So the boundaries are the publish commits; the tags are the RANGE's ends, the
+// seed's floor, and the names an era wears when it has one. `erasBetween` walks
+// `--first-parent` and takes every commit whose subject is a sweep.
+//
+// WHAT THIS DID NOT FIX, because the record says otherwise: a publish is not a
+// window either. Five sweeps landed inside window 163 on 2026-09-01 (14:07,
+// 14:28, 14:38, 14:47, then the 17:45Z crossing), and windows 154, 156–158 and
+// 166 closed with no sweep behind them at all. A CROSSING closes a window; a
+// sweep publishes into whichever one is open. `windowFindings` names every such
+// departure and the run refuses, because the store clears exactly one candle at a
+// time. See the report's F-5 section for the three readings and their costs.
+//
 //   (b) CLAIMS — the era's claim set is derived from the settlement's OWN
 //       OUTCOME: the difference between the marks registers at S(k-1) and S(k),
 //       read by `deriveSeed` at each tag. A mark that appeared is a claim that
@@ -184,32 +206,114 @@ export function commitOf(repo, ref) {
  * tag whose commit is a descendant of it and an ancestor of `--to-tag` is an era,
  * and they are ordered by commit date, which is when the settlement landed.
  */
+export const PUBLISH_SUBJECT = /^settlement: sweep \d+ published, \d+ unpublished/;
+
 export function erasBetween(repo, fromRef, toRef) {
   const from = commitOf(repo, fromRef), to = commitOf(repo, toRef);
   if (from === to) {
     throw new Error(`${fromRef} and ${toRef} are the same commit (${from.slice(0, 8)}) — there is nothing to replay`);
   }
-  const tags = git(repo, "tag", "--list", "settlement/*").split("\n").map((s) => s.trim()).filter(Boolean);
-  const reachable = new Set(git(repo, "rev-list", to).split("\n"));
-  const found = new Map([[to, toRef]]);                      // the end of the range is always a boundary
-  for (const tag of tags) {
-    const sha = commitOf(repo, tag);
-    if (sha === from || found.has(sha)) continue;
-    if (!reachable.has(sha)) continue;                       // not on the way to --to-tag
-    // `--is-ancestor` communicates by EXIT STATUS and prints nothing, so the
-    // answer is whether execFileSync threw. Reading its stdout would call every
-    // tag an ancestor, which is the shape of bug that puts the whole history in
-    // one era and then reports parity against the wrong tag.
-    try { git(repo, "merge-base", "--is-ancestor", from, sha); }
-    catch { continue; }
-    found.set(sha, tag);
+
+  // Which commits a settlement tag points at, so an era that has a name is called
+  // by it. ONE `for-each-ref` rather than a `rev-parse` per tag: `*objectname`
+  // is the ANNOTATED tag's dereferenced commit, which is the whole reason
+  // `commitOf` exists, and the world carries fifty-odd of these.
+  //
+  // SPACE-SEPARATED, and not `%x1f`, because `for-each-ref` and `log` do NOT
+  // speak the same format dialect: `log --format` expands `%x1f` to the byte,
+  // `for-each-ref` emits the four characters verbatim. Caught by a test that
+  // expected a tag name and got `publish/3b432768` — a silent miss, since a map
+  // keyed on garbage simply never matches and every era looks untagged. A
+  // refname carries no whitespace and an objectname is hex, so a space is a
+  // sound separator here; `*objectname` is EMPTY for a lightweight tag, which is
+  // why the refname goes FIRST and the optional field last.
+  //
+  // EVERY tag, not just `settlement/*`, and that widening is safe BECAUSE the
+  // tags no longer decide anything. Under the tag model this scan chose the era
+  // boundaries and had to be exact; now the boundaries are the publish subjects
+  // and this map only supplies a NAME, so a commit carrying any tag is better
+  // reported by it than by `publish/<sha8>`. A `settlement/` tag still wins when
+  // two point at one commit — that is the name the town uses.
+  const tagOf = new Map();
+  for (const line of git(repo, "for-each-ref", "--format=%(refname:short) %(objectname) %(*objectname)",
+    "refs/tags/**").split("\n").filter(Boolean)) {
+    const [name, obj, deref] = line.trim().split(/\s+/);
+    const sha = deref || obj;
+    const had = tagOf.get(sha);
+    if (!had || (!had.startsWith("settlement/") && name.startsWith("settlement/"))) tagOf.set(sha, name);
   }
-  const dated = [...found].map(([sha, tag]) => ({ tag, sha, at: commitDate2(repo, sha) }))
-    .sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+
+  // FIRST-PARENT, and in the order the town made them. `--first-parent` walks the
+  // mainline the sweep commits onto; date order was right while every boundary
+  // was a hand-made tag and is not a property of history — a merge can carry a
+  // commit whose date precedes the one before it, and an era pair in the wrong
+  // order compares a register against the wrong tag.
+  const walk = git(repo, "log", "--first-parent", "--reverse",
+    `--format=%H${UNIT_SEP}%cI${UNIT_SEP}%s`, `${from}..${to}`)
+    .split("\n").filter(Boolean)
+    .map((l) => { const [sha, at, subject] = l.split(UNIT_SEP); return { sha, at: new Date(at).toISOString(), subject }; });
+
+  if (!walk.length) {
+    throw new Error(
+      `${toRef} (${to.slice(0, 8)}) is not ahead of ${fromRef} (${from.slice(0, 8)}) on the first-parent line — ` +
+      `there is nothing to replay between them.`);
+  }
+
   const eras = [];
   let prev = { tag: fromRef, sha: from };
-  for (const t of dated) { eras.push({ from: prev, to: t }); prev = t; }
+  for (const c of walk) {
+    // Every publish is a boundary; so is the end of the range, whatever it is.
+    if (!PUBLISH_SUBJECT.test(c.subject) && c.sha !== to) continue;
+    const t = { tag: tagOf.get(c.sha) ?? `publish/${c.sha.slice(0, 8)}`, sha: c.sha, at: c.at, subject: c.subject };
+    eras.push({ from: prev, to: t });
+    prev = t;
+  }
   return eras;
+}
+
+/**
+ * THE WINDOWS AN ERA SEQUENCE WALKS, AND THE TWO SHAPES THIS LANE HAS NOT SEEN.
+ *
+ * Under the publish model the windows should count: 153, 154, … 160, one per
+ * sweep, because a sweep is what closes a window. Two departures from that are
+ * possible and neither is a thing to guess at:
+ *
+ *   SAME     two consecutive publishes resolving to one window — a sweep that
+ *            closed no window. The store cannot hold it either: the era write
+ *            demands the store's open window BE the era's, so the second one
+ *            would clear a candle already cleared.
+ *   SKIPPED  a window with no publish behind it. It may be a run that refused,
+ *            in which case that window's acts belong to the NEXT era and the
+ *            receipt for that era is counting a sweep it did not derive. It may
+ *            also be a window the checkout's log has simply pruned.
+ *
+ * Reported here, refused at the write — the same shape as the unruled
+ * departures, and for the same reason: one dry run should show the founder the
+ * whole class rather than stopping at its first member. The store's own guard
+ * ("the store has N open window(s)" / "is window X and the store's open window
+ * is Y") would catch both anyway; this names them before a connection is opened.
+ */
+export function windowFindings(eras) {
+  const out = [];
+  for (let i = 1; i < eras.length; i++) {
+    const prev = eras[i - 1], cur = eras[i];
+    const a = prev.window.id, b = cur.window.id;
+    if (b === a) {
+      out.push({ era: cur, kind: "same", text:
+        `${cur.to.tag} resolves to window ${b}, the same window as ${prev.to.tag} — a publish that closed no window` });
+    } else if (b < a) {
+      out.push({ era: cur, kind: "backwards", text:
+        `${cur.to.tag} resolves to window ${b}, BEHIND ${prev.to.tag}'s ${a} — the town's clock does not run backwards` });
+    } else if (b > a + 1) {
+      const missing = [];
+      for (let n = a + 1; n < b; n++) missing.push(n);
+      out.push({ era: cur, kind: "skipped", missing, text:
+        `${cur.to.tag} resolves to window ${b} and ${prev.to.tag} to ${a} — window(s) ${missing.join(", ")} closed with ` +
+        `no publish behind them. If a run refused there, those acts belong to THIS era and its six-count is counting a ` +
+        `sweep this era did not derive` });
+    }
+  }
+  return out;
 }
 
 // `commitDate` in seed-import reads the checkout's HEAD; here we ask about a sha
@@ -725,6 +829,40 @@ export function commitTouching(worldRepo, { fromSha, toSha, path, filter }) {
 
 /** DEC-15's hand: the commit that DELETED the record. */
 export const removingCommit = (worldRepo, opts) => commitTouching(worldRepo, { ...opts, filter: "D" });
+
+/**
+ * WHICH OF AN ERA'S ADDITIONS NOBODY PUBLISHED — the receipt's diagnosis (F-5).
+ *
+ * A six-count that disagrees is a finding, and "the era boundary is wrong" was
+ * the first guess. It was the wrong guess, and this is the probe that says so.
+ * Between `08689e81` and `69b2d442` the sweep's own receipt reads `9 published`
+ * while the replay derives 36 — and thirty mark FILES are added in that range by
+ * commits that are not sweeps at all: `243cc57` alone plants twenty-two ("civic
+ * quarter: the law the five plaques used to say returns as predicated children
+ * (22 marks)"). The founder put them in the register by hand, on `main`. No door
+ * saw them, no sweep published them, and the six-count never counted them.
+ *
+ * That is the exact MIRROR of DEC-15 case (b), which ruled the founder's
+ * REMOVALS. His ADDITIONS are unruled, and the replay currently reads each one as
+ * a resident's CLAIM — a pending row for the clearing job to adjudicate as though
+ * somebody filed it in that window. This function does not decide that; it counts
+ * it, so the receipt says WHY it disagrees instead of leaving a number hanging.
+ *
+ * Only asked when a receipt disagrees: it costs a loader read plus one `git log`
+ * per added mark, which is not a price every green era should pay.
+ */
+export async function plantedByHand({ worldRepo, toDir, fromSha, toSha, added }) {
+  const owners = await filingOwners(toDir);
+  const pathOf = new Map([...owners].map(([p, id]) => [id, p]));
+  const hand = [];
+  for (const m of added) {
+    const path = pathOf.get(m.slug);
+    if (!path) continue;                       // no file to ask about; not a claim about the hand
+    const c = commitTouching(worldRepo, { fromSha, toSha, path, filter: "A" });
+    if (c && !PUBLISH_SUBJECT.test(c.subject)) hand.push({ slug: m.slug, sha: c.sha, subject: c.subject });
+  }
+  return hand;
+}
 
 /**
  * The `transfer` the founder's commit never wrote (DEC-16).
@@ -1442,7 +1580,8 @@ async function main() {
 
   const headBefore = git(worldRepo, "rev-parse", "HEAD");
   const bounds = erasBetween(worldRepo, fromTag, toTag);
-  console.log(`replay ${fromTag} → ${toTag} · ${bounds.length} era(s): ${bounds.map((e) => e.to.tag).join(", ")}`);
+  console.log(`replay ${fromTag} → ${toTag} · ${bounds.length} era(s), one per PUBLISH (F-5): ` +
+    `${bounds.map((e) => e.to.tag).join(", ")}`);
 
   // Derive every era first, from the checkouts, before a single row is written.
   // The derivation is pure (seed-import's own contract), and doing it up front is
@@ -1463,7 +1602,9 @@ async function main() {
         worldRepo, fromSha: b.from.sha, toSha: b.to.sha,
       });
       // The settlement's own receipt, held against what we derived from its outcome.
-      const subject = git(worldRepo, "log", "-1", "--format=%s", b.to.sha);
+      // The boundary already read its own subject in `erasBetween` — asking git a
+      // second time is a second reading of the same fact, and the two could drift.
+      const subject = b.to.subject ?? git(worldRepo, "log", "-1", "--format=%s", b.to.sha);
       const six = sixCountOf(subject);
       const receipt = six == null
         ? { checked: false, why: `${b.to.tag} is not on a settlement commit ("${subject}") — no six-count to check against` }
@@ -1471,6 +1612,12 @@ async function main() {
           ? { checked: true, ok: true, six }
           : { checked: true, ok: false, six,
               why: `${b.to.tag} published ${six.published} by its own receipt; this replay derives ${claims.claims.length} claim(s)` };
+      // A disagreement gets a DIAGNOSIS, not just a number. See `plantedByHand`.
+      if (receipt.checked && !receipt.ok) {
+        receipt.hand = await plantedByHand({
+          worldRepo, toDir: to.dir, fromSha: b.from.sha, toSha: b.to.sha, added: claims.added,
+        });
+      }
       eras.push({ ...b, window, acts, ...claims, subject, receipt });
       // The register at S(k) is the parity oracle and is kept; the checkouts are not.
     } finally { to.dispose(); from.dispose(); }
@@ -1501,6 +1648,14 @@ async function main() {
             : `⚠ UNRULED — ${r.why}: ${r.detail}`}`);
       }
     }
+    if (e.receipt.hand?.length) {
+      const by = [...new Set(e.receipt.hand.map((h) => h.sha.slice(0, 9)))];
+      console.log(`   ⚑ ${e.receipt.hand.length} of this era's additions were planted BY HAND on main, by ` +
+        `${by.length} non-sweep commit(s) — no door saw them and no sweep counted them, which is most of the gap ` +
+        `below. The replay currently derives each one as a resident's CLAIM. Mirror of DEC-15 case (b), UNRULED.`);
+      for (const h of e.receipt.hand.slice(0, 3)) console.log(`      ${h.slug} — ${h.sha.slice(0, 9)} ${h.subject.slice(0, 72)}`);
+      if (e.receipt.hand.length > 3) console.log(`      … and ${e.receipt.hand.length - 3} more`);
+    }
     console.log(`   receipt ${e.receipt.checked ? (e.receipt.ok ? `AGREES — the settlement's six-count says ${e.receipt.six.published} published` : `DISAGREES — ${e.receipt.why}`) : `UNCHECKABLE — ${e.receipt.why}`}`);
     const w = doorWitness(e);
     if (w.total) {
@@ -1528,7 +1683,20 @@ async function main() {
       })), null, 2));
     }
     // A dry run whose eras cannot be written must not read like one that can.
+    const clock = windowFindings(eras);
+    if (clock.length) {
+      console.log(`\nTHE TOWN'S CLOCK · ${clock.length} finding(s) — under F-5 an era is one publish and the windows ` +
+        `should count without gaps:`);
+      for (const f of clock) console.log(`  ${f.kind.toUpperCase().padEnd(9)} ${f.text}`);
+    }
     const blocked = eras.filter((e) => e.unruled.length);
+    if (clock.length) {
+      console.log(`\nREFUSED · the era sequence does not walk the town's clock one window at a time, so it cannot ` +
+        `be written. The store's own guard would refuse at the first of these ("${eras[0]?.to.tag} is window N and ` +
+        `the store's open window is M"); this names all ${clock.length} before a connection is opened.`);
+      assertHeadUnmoved(worldRepo, headBefore);
+      process.exit(1);
+    }
     if (blocked.length) {
       console.log(`\nREFUSED · ${blocked.reduce((n, e) => n + e.unruled.length, 0)} departure(s) in ` +
         `${blocked.length} era(s) are NOT the transition DEC-15 ruled on, and no era carrying one can be written:`);
@@ -1584,6 +1752,18 @@ async function main() {
       await client.end();
       assertHeadUnmoved(worldRepo, headBefore);
       process.exit(ok ? 0 : 1);
+    }
+
+    // F-5: the eras must walk the clock one window at a time before a single row
+    // is written. The per-era guard below would catch it too, but only after the
+    // eras before it had COMMITTED — and `acts` is append-only, so a run that
+    // discovers this halfway through leaves a half-replayed world with no repair
+    // path. Asked once, up front, for the same reason `assertReplayable` is.
+    const clock = windowFindings(eras);
+    if (clock.length) {
+      throw new Error(
+        `the era sequence does not walk the town's clock one window at a time — ${clock.length} finding(s), and a ` +
+        `replay clears exactly one candle at a time:\n` + clock.map((f) => `  ${f.kind.toUpperCase()}  ${f.text}`).join("\n"));
     }
 
     const skip = assertReplayable(state0, { eras, cont });
