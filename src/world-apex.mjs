@@ -1034,6 +1034,18 @@ export function fieldsFor(action, declared = null) {
 // with no room behind it, and L6 goes red the moment one appears.
 export const DISPATCHABLE = Object.freeze(Object.keys(DISPATCH));
 
+// The same table, action → handler TOOL NAME, for a reader outside this file.
+//
+// `entriesFrom` above stamps `dispatches_to: DISPATCH[action].tool` on every
+// action card, and that field is part of the door's grammar — a card without it
+// is a poorer card (the ground-channel bug of 2026-08-26 was exactly that).
+// `world2/tools/apex-reads.mjs` mints the same cards out of `law_projection`
+// and needs the same map. It is DERIVED from `DISPATCH` rather than re-listed,
+// so the 2.0 door cannot answer a tool name the 1.0 door does not dispatch to;
+// a second list would be the one thing lint L6 exists to make impossible.
+export const DISPATCH_TOOLS = Object.freeze(
+  Object.fromEntries(Object.entries(DISPATCH).map(([action, d]) => [action, d.tool])));
+
 // The actor kinds this door can resolve — the seam's own list (the act-as-human
 // packet, dev/act-as-human/DESIGN.md). An action the law mints `for:` a kind
 // not named here is law with no room behind it: L6's actor-kind red. "human"
