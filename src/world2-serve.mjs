@@ -602,8 +602,11 @@ export async function world2Apex(searchParams, { p: injected = null } = {}) {
 
   // ── the live half ────────────────────────────────────────────────────────
   //
-  // `?roster=` — and the default is 1.0's, deliberately. See § apexPresent.
-  const roster = searchParams?.get("roster") === "roll" ? "roll" : "apex";
+  // `?roster=` — the DEFAULT is the town roll (DEC-11, founder-ruled 2026-09-03;
+  // 1.0's apex reads the roll from the same day, so the two doors stay
+  // byte-equal). `?roster=apex` serves the older two-term union, named, for
+  // anyone comparing against a pre-DEC-11 answer. See § apexPresent.
+  const roster = searchParams?.get("roster") === "apex" ? "apex" : "roll";
   const present = await apexPresent(p, { world, at: { x: near.x, y: near.y }, engine: eng, roster });
 
   // ── THE SHORE SIDE OF THE CARRIAGE CONTRACT ──────────────────────────────
@@ -696,7 +699,7 @@ export async function world2Apex(searchParams, { p: injected = null } = {}) {
  * default would have made the new door disagree with the old one by 48
  * residents at the town's front door and called it a fix.
  */
-async function apexPresent(p, { world, at, engine: eng, roster = "apex" }) {
+async function apexPresent(p, { world, at, engine: eng, roster = "roll" }) {
   const { bearingDeg, quantizeBearing, distanceBand } = eng.engine;
   const [{ rows: depRows }, { rows: rollRows }] = await Promise.all([
     p.query(`SELECT id, at, crossing, actor, action, payload FROM acts
@@ -730,8 +733,8 @@ async function apexPresent(p, { world, at, engine: eng, roster = "apex" }) {
     count: hits.length, shown: shown.length, capped: hits.length > shown.length,
     residents: shown,
     roster: roster === "roll"
-      ? "walk records ∪ parcel households ∪ the town roll (the 2026-08-29 ruling; ?roster=roll)"
-      : "walk records ∪ parcel households — 1.0's own apex roster, which carries no roll (world.mjs § worldOrient). ?roster=roll for the wider one.",
+      ? "walk records ∪ parcel households ∪ the town roll (the 2026-08-29 ruling; DEC-11 made it the default on both doors, 2026-09-04)"
+      : "walk records ∪ parcel households — the pre-DEC-11 two-term union, served by name (?roster=apex); the default is the roll.",
     disclosed: [live.DISCLOSURES.frames,
       "`standing` and `aboard` are absent, not false: both are the frame fold, which the 2.0 live port refuses rather than approximates."],
   };

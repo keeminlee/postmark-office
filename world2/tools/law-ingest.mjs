@@ -134,7 +134,24 @@ const isClassDeclaration = (m, byId) =>
 // which is the column's whole job. Everything else the parser produced rides
 // through untouched (the brief's rule: `data` is the parser's own output).
 const relPath = (repo, abs) => relative(resolve(repo), abs).replace(/\\/g, "/");
-const recordData = (rec) => { const { _dir, ...rest } = rec; return rest; };
+// ONE SPELLING OF `ambient`, NORMALISED AT THE PEN (2026-09-04, the B2 lane's
+// finding, taken as the runbook's own item). The world's loader
+// (marks-fold.mjs § parseRecord) "coerces objects, arrays and numbers but has
+// NO boolean case", so `ambient: true` in a class mark reaches here as the
+// STRING "true"; the sqlite hydrator normalises it (world-hydrate.mjs:457) and
+// this ingester did not, so `nodes` held a boolean and `law_projection` held a
+// string, and the first cut of the 2.0 apex read every ambient class as
+// non-ambient. The hydrator's own pair, applied once, here — never truthiness:
+// `1`, `"yes"`, `"TRUE"` stay what they were, because one spelling is the rule.
+export const recordData = (rec) => {
+  const { _dir, ...rest } = rec;
+  if (Object.prototype.hasOwnProperty.call(rest, "ambient")) {
+    rest.ambient = rest.ambient === true || rest.ambient === "true" ? true
+      : rest.ambient === false || rest.ambient === "false" ? false
+      : rest.ambient;
+  }
+  return rest;
+};
 
 // THE STORAGE ROUND-TRIP, APPLIED AT DERIVATION. Every row's `data` goes through
 // this before it is either stored or compared, so what the deriver returns is

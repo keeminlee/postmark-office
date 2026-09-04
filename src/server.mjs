@@ -812,7 +812,7 @@ const server = createServer((req, res) => {
       if (path === "/world/orient" || path === "/world/eyes" || path === "/world/investigate") {
         const p = url.searchParams;
         const args = { x: p.get("x") ?? undefined, y: p.get("y") ?? undefined, crossing: p.get("crossing") ?? undefined, mark: p.get("mark") ?? undefined, depth: p.get("depth") ?? undefined, name: p.get("name") ?? undefined, handle: p.get("handle") ?? undefined, diagnostic: p.get("diagnostic") === "true" };
-        const fn = path === "/world/orient" ? worldOrient(args, key) : path === "/world/eyes" ? worldEyes(args, key) : worldInvestigate(args, key);
+        const fn = path === "/world/orient" ? worldOrient(args, key, { roll: townRoll() }) : path === "/world/eyes" ? worldEyes(args, key, { roll: townRoll() }) : worldInvestigate(args, key);
         return fn.then((r) => j(res, r?.error === "bounce" ? 422 : 200, r)).catch((e) => bounce(res, 500, "the world door tripped", String(e?.message ?? e).slice(0, 200)));
       }
       // GET /world/apex — the apex verb's READ half, anonymous (Stage 3,

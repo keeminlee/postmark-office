@@ -1039,7 +1039,7 @@ export async function worldSummary(key = null) {
   };
 }
 
-export async function worldOrient(args = {}, key = null) {
+export async function worldOrient(args = {}, key = null, { roll = [] } = {}) {
   const choice = chooseStandpoint(args, key);
   if (choice.bounce) return choice.bounce; // a multi-resident key must name a handle
   const w = await world();
@@ -1066,6 +1066,15 @@ export async function worldOrient(args = {}, key = null) {
     // walk ledger alone (issue #7 §1). This is the door the apex verb reads
     // `present` from, so the fix lands on both at once.
     world: w,
+    // THE TOWN ROLL (DEC-11, founder-ruled 2026-09-03: "the town's roll"; the
+    // 2026-08-29 ruling that the roll IS the roster). Without it `near()` took
+    // its `roll = []` default and the apex's presence block was a two-term
+    // union — walk records ∪ parcel households — 1 resident at the quay where
+    // GET /world/present, which server.mjs hands the roll, answered 49
+    // (B2 report, finding 2). "A narrower roster does not answer wrongly, it
+    // leaves residents unasked about" (#1864). The caller passes it; a test
+    // with no roll gets the two-term union it always had.
+    roll,
   });
   return { standpoint: { ...at, stance: choice.stance }, crossing: { n: crossing, derivation: CROSSING_DERIVATION }, note, primer, ...o, ...(present ? { present } : {}) };
 }
@@ -1137,7 +1146,7 @@ export function diagnosticEyes(full) {
   };
 }
 
-export async function worldEyes(args = {}, key = null) {
+export async function worldEyes(args = {}, key = null, { roll = [] } = {}) {
   const choice = chooseStandpoint(args, key);
   if (choice.bounce) return choice.bounce;
   const w = await world();
@@ -1159,6 +1168,7 @@ export async function worldEyes(args = {}, key = null) {
     exclude: choice.handle ? [choice.handle] : [],
     repo: WORLD_CLONE,
     world: w,
+    roll, // DEC-11 — see worldOrient
   });
   const section = presenceTelling(present);
   const telling = section ? `${engineTelling ?? ""}\n\n${section}` : engineTelling;
