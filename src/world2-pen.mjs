@@ -50,6 +50,42 @@
 // flip a Postgres outage is a visible town outage (DESIGN §4 F1).
 
 import { world2Enabled, MIRROR_EXPIRES, LANE_MIRROR, mirrorExpiresFor } from "./world2-acts.mjs";
+import { currentCrossing } from "./crossings.mjs";
+
+// ── A LATE ROW MAY NOT ENTER A CERTIFIED WINDOW (the act-4171 class, 2026-09-04) ─
+//
+// The notary freezes each window's archive on write and certifies it nightly
+// (gold §2: "frozen-on-write, an input never re-derived-into"). On 2026-09-03 a
+// replayed journal line (act 4171, seq 869) was written into window 164 a day
+// after that window closed and was certified; the notary refused to rewrite
+// the archive — correctly — and could certify nothing new until a human deleted
+// the row (notary-history/164-act-4171-repair). Then a backfill the same night
+// nearly did it again with "historically correct" crossings into windows 157/160.
+//
+// The rule, at the pen where every row enters: a row's `crossing` may be the
+// open window or the one just closed (a live act written at the boundary), never
+// older. Anything older is a late arrival, and a late arrival is stamped with
+// the window it ARRIVED in — the caller says so by naming the reason in
+// W2_LATE_ARRIVAL, and the pen then writes `currentCrossing()` with the row's
+// original crossing kept on the payload (`late_from_crossing`). `at` always
+// keeps the act's true time; the crossing is where the row files, and frozen
+// history is not a place a row can file into.
+export class LateCrossingError extends Error {
+  constructor(crossing, open) {
+    super(`a row for crossing ${crossing} may not enter the record while the open window is ${open}: that window is certified history and the notary refuses to rewrite it (the act-4171 class). A late arrival files into the window it ARRIVES in — set W2_LATE_ARRIVAL="<reason>" and the pen stamps ${open}, keeping the original crossing on the payload.`);
+    this.name = "LateCrossingError"; this.crossing = crossing; this.open = open;
+  }
+}
+export function lateCrossingGuard(row, { now = Date.now(), env = process.env } = {}) {
+  const open = currentCrossing(now);
+  const c = row.crossing == null ? null : Number(row.crossing);
+  if (c == null || !Number.isFinite(c)) return row;
+  if (Math.floor(c) >= open - 1) return row;            // the open window, or the one just closed at the boundary
+  const reason = String(env.W2_LATE_ARRIVAL ?? "").trim();
+  if (!reason) throw new LateCrossingError(c, open);
+  const payload = { ...(typeof row.payload === "string" ? JSON.parse(row.payload) : (row.payload ?? {})), late_from_crossing: c, late_arrival: reason };
+  return { ...row, crossing: open, payload: typeof row.payload === "string" ? JSON.stringify(payload) : payload };
+}
 
 const state = {
   pool: null,
@@ -187,7 +223,8 @@ export async function officeRead(fn, { env = process.env } = {}) {
   }
 }
 
-export async function insertAct(client, row, seq = null) {
+export async function insertAct(client, rowIn, seq = null) {
+  const row = lateCrossingGuard(rowIn); // throws LateCrossingError — never a pen-unreachable, never silent
   const { householdKeyFor } = await import("./world2-claims.mjs");
   const household = row.household == null ? null : await householdKeyFor(client, row.household);
   const { rows: [r] } = await client.query(
@@ -220,6 +257,7 @@ export async function penWrite(row, { claimFn = null, household = null, env = pr
       return { actId };
     }, { household, env });
   } catch (err) {
+    if (err?.name === "LateCrossingError") throw err; // the pen REFUSED, it was not unreachable — the door says which
     state.refused += 1;
     state.lastError = String(err?.message ?? err);
     console.error(`[world2-pen] FLIPPED WRITE REFUSED (${row.actor} ${row.action}): ${state.lastError}`);
