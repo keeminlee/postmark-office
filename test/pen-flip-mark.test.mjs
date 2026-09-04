@@ -109,7 +109,22 @@ const withdrawRow = ({ by = "guards-alfa", slug = "the-doomed-sketch" } = {}) =>
   effect: "the draft is gone",
 });
 
-const settle = async () => { await docketSettled(); await penSettled(); await docketSettled(); };
+// QUIESCENCE, NOT A NAMED QUEUE. Awaiting `penSettled()`/`docketSettled()` is
+// awaiting the queues this tree HAS — and the defect under test is a tree with
+// one more queue than that. The first draft of this file did exactly that and
+// (c) passed against a deliberately re-broken tree, because the write it was
+// asserting the absence of simply had not landed yet: the probe could not fail,
+// which is the one thing a falsifier must be able to do.
+//
+// So the settle drains real time as well as the known promises. 250 ms is four
+// times the widest statement delay this file installs, and the flip proof is
+// what sets it: with the second queue restored, the compose's INSERT lands
+// inside this window and (c) goes red naming the row it found.
+const settle = async () => {
+  await docketSettled(); await penSettled(); await docketSettled();
+  await new Promise((r) => setTimeout(r, 250));
+  await docketSettled(); await penSettled();
+};
 
 // THE ADVERSARY, and it is the mechanism rather than a thumb on the scale. A
 // compose writes a body, a geometry and a bbox; a withdrawal writes a
