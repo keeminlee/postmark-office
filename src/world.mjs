@@ -53,11 +53,11 @@ import { cannotAnswer, pointAnswerable, servedRead, storeEpoch, storeShadowEnabl
 // and never world.mjs, so this edge closes no cycle.
 import { arenaGroundAt, adversaryIn, arrivalOnGround, groundAtPoint } from "./arena.mjs";
 import { emissionsEnabled, openDynamic } from "./dynamic-store.mjs"; // stage 2: the dynamic layer's flag
-import { declareMovement } from "./dynamic-entities.mjs"; // stage D: the pen after the ledger's freeze
+import { declareMovement, declareMovementFlipped } from "./dynamic-entities.mjs"; // stage D: the pen after the ledger's freeze
 import { emissionFromVoice } from "./dynamic-emissions.mjs"; // stage 2: speech also becomes an emission instance
 import { world2Enabled } from "./world2-acts.mjs"; // the write-path closure: is the shadow mirror on at all
 import { VESSEL_HANDLE, ridesTheVessel } from "./dynamic-entities.mjs"; // the aboard test, one home for two readers
-import { carriersFrom, carriersWithDisclosure, carrierReader, heardFromV2, inRect, movementStandpoint, movementV2Enabled, recordsAcrossEras, roadTerms, storedDepartures, storedRecordsFor, vesselPositionAt as vesselFromTimetable, vesselServiceFrom } from "./world-movement.mjs"; // stage D: carriers carry, frames compose
+import { carriersFrom, carriersWithDisclosure, carrierReader, heardFromV2, inRect, movementStandpoint, leavingWhileOccupying, movementV2Enabled, recordsAcrossEras, roadTerms, storedDepartures, storedRecordsFor, vesselPositionAt as vesselFromTimetable, vesselServiceFrom } from "./world-movement.mjs"; // stage D: carriers carry, frames compose
 import { byBand, presenceEnabled, presentNear, near as presenceNear, everyone as presenceEveryone, PRESENCE_DIALS } from "./dynamic-presence.mjs"; // stage 2: residents revealed to each other
 import { MEDIA_BASE, mediaUrlOk } from "./media.mjs"; // the mark door's image allowlist: only the town's own media hangs on marks
 import { imageFormat, MEDIA_FORMATS } from "./edit.mjs"; // the bytes decide the type, never the filename (with_image, below)
@@ -645,6 +645,23 @@ const EARSHOT_PRESENCE_CAP = 500;
 // postmark.town/conversations, and the say path has no household scoping of any
 // kind. This mirror publishes nothing that the conversations page does not
 // already publish.
+/** ONE ROW SHAPE for a walk act, whichever pen records it. THE MOVEMENTS ROW'S
+ * OWN COLUMN VOCABULARY — `within` and `to`, not `targetExtent`/`targetMarkId`:
+ * that is 1.0's one converter for this exact record (world-movement.mjs §
+ * storedDepartures: "`within` and `to` are the store's column names"), and using
+ * it here is what lets live-reads.mjs read this pen with the mapping it already
+ * has rather than a fifth spelling of one departure. */
+function walkEntry({ crossing, who, targetMarkId, stampAt, witnesses, from, toward, pace, targetExtent, household }) {
+  return {
+    crossing, actor: who, action: "walk",
+    object: targetMarkId ?? null,
+    at: stampAt, witnesses, cls: CLASS_MOVE,
+    payload: { from, toward, pace, within: targetExtent ?? null, to: targetMarkId ?? null },
+    effect: "the walk is declared; the record receives it at the save",
+    household,
+  };
+}
+
 function voiceEntry(voice, spoken, { at, witnesses, crossing }) {
   const household = spoken?.household ?? null;
   const standAs = spoken?.standAs && spoken.standAs !== voice.handle ? spoken.standAs : null;
@@ -2601,6 +2618,7 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
 
   // WHERE TO — ruling 2's order.
   let toward = null, targetExtent = null, targetMarkId = null, targetFrom = "";
+  let exitedFirst = null; // DEC-5: the marks exited on this walker's own `exit: true`, for the answer
   const px = Number(payload.x), py = Number(payload.y);
   if (payload.mark_id) {
     const id = String(payload.mark_id);
@@ -2733,6 +2751,45 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
   // The centre remains the interpolation target, while the immutable extent
   // makes arrival mean "the derived point entered the target's ground." It
   // rides the ledger line so a later move/resize cannot rewrite this walk.
+  // ── DEC-5, THE WALK GUARD (founder-ruled 2026-09-03): occupancy implies
+  // geometry, never the reverse. If this walk would carry the resident OUT of a
+  // mark they are within, it is refused with directions (#2164's own shape) —
+  // unless `exit: true` rides the walk, in which case the exits are performed
+  // first, innermost outward, and the walk follows. The pure test lives in
+  // world-movement.mjs § leavingWhileOccupying; the occupancy and the
+  // point-in-mark law are the clone's own (crossingLaw), the same instruments
+  // the enter door adjudicates with — one derivation, two doors.
+  {
+    const { crossingLaw, exitViaOffice } = await import("./world-crossings.mjs");
+    const { crossingDeps } = await import("./world-apex.mjs");
+    const law = await crossingLaw(worldClone).catch(() => null);
+    if (law?.thresholds && typeof law.verbs?.pointWithinMark === "function") {
+      const deps = crossingDeps();
+      const atNow = law.thresholds.stampAt(Date.now() / 43200000);
+      const acts = law.thresholds.parseEnterExitLedger(await deps.ledger()).acts;
+      const stack = [...(law.thresholds.occupancyAt(acts, atNow).get(who) ?? [])];
+      // pointWithinMark takes the MARK OBJECT (world-verbs.mjs:92), resolved from
+      // the same world the enter door adjudicates against (deps.world().marks).
+      const w = stack.length ? await deps.world() : null;
+      const byId = new Map((w?.marks ?? []).map((m) => [m.id, m]));
+      const leaving = leavingWhileOccupying(stack, toward, (pt, id) => { const m = byId.get(id); return m ? law.verbs.pointWithinMark(pt, m) : null; });
+      if (leaving.length) {
+        if (payload.exit !== true) {
+          throw bounce(409, `you are within ${leaving[0]} — this walk would carry you out of it without leaving`,
+            `the-town/the-occupancy-invariant: "You occupy a mark only by entering, and only while your feet stand inside it; a walk that would carry you out is refused until you exit." Step out first — world { do: "exit"${leaving.length > 1 ? ", args: { mark }" : ""} } — or pass exit: true on this walk to exit (${leaving.join(" → ")}) and walk in one call.`,
+            { law: "the-town/the-occupancy-invariant (DEC-5, founder-ruled 2026-09-03)", within: stack, leaving });
+        }
+        for (const markId of leaving) {
+          const stepped = await exitViaOffice(worldClone, { handle: who, mark: markId }, key, deps);
+          if (stepped?.error) throw bounce(stepped.error.code ?? 409, `could not exit ${markId} before walking: ${stepped.error.defect ?? stepped.error}`, stepped.error.hint ?? "exit first, then walk");
+        }
+        // The exits stand as their own acts on the record; the walk below is the
+        // second act of one call. If the walk's pen refuses, the exits remain —
+        // said here and in the answer, never smoothed over.
+        exitedFirst = leaving;
+      }
+    }
+  }
   const clean = { handle: who, from, toward, at, targetExtent, targetMarkId };
 
   // ── WHERE THE DEPARTURE IS WRITTEN (Stage D, WORLD_MOVEMENT_V2) ───────────
@@ -2760,12 +2817,35 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
     // pace read via departurePace — the record's class is `depart`; asking for
     // "departure" here was the 2026-08-21 slow-walk bug (30 min for 650 m).
     const pace = departurePace();
+    const movement = {
+      actor: who, from, toward, crossing: at,
+      within: targetExtent, toMark: targetMarkId, declaredBy: who, pace,
+    };
+    // ── LANE THREE OF THE PEN FLIP (W2_PEN=walk; runbook C3, 2026-09-03) ────
+    // Flipped, the record is Postgres `acts`, committed and awaited BEFORE the
+    // movements row may stand; movements + the reverse-mirror journal row commit
+    // in one sqlite transaction after the pen has (declareMovementFlipped,
+    // dynamic-entities.mjs). Unreachable Postgres = the ruled refusal, and
+    // nothing was written — the resident is exactly where they were. Unflipped,
+    // the pen is what it was and the mirror below carries the act.
+    const walkFlipped = laneFlipped("walk");
+    let flippedRow = null;
     const store = openDynamic();
     try {
-      declareMovement(store, {
-        actor: who, from, toward, crossing: at,
-        within: targetExtent, toMark: targetMarkId, declaredBy: who, pace,
-      });
+      if (walkFlipped) {
+        const { at: stampAt, witnesses } = await witnessStampAt(who, from);
+        try {
+          flippedRow = await declareMovementFlipped(store, movement,
+            walkEntry({ crossing: at, who, targetMarkId, stampAt, witnesses, from, toward, pace, targetExtent, household: resolvedWorldHousehold(key) }));
+        } catch (err) {
+          if (err?.name === "PenUnreachableError")
+            throw bounce(503, err.message,
+              "this lane's pen is the office's record (W2_PEN=walk); when it cannot be reached the door refuses rather than writing anywhere else — you are exactly where you were, and the walk is safe to declare again");
+          throw err;
+        }
+      } else {
+        declareMovement(store, movement);
+      }
     } finally { store.close(); }
 
     // ── THE WALK GAP, CLOSED (2026-08-28) ───────────────────────────────────
@@ -2790,30 +2870,24 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
     // Privacy: a departure is public — it crystallizes into `STATE/log/` in the
     // public world repo at the next crossing-save, by this branch's own
     // `movement.crystallizes`. Nothing new leaves the box.
-    if (world2Enabled()) {
+    if (world2Enabled() && !walkFlipped) { // flipped, the pen already holds this act (declareMovementFlipped above)
       void (async () => {
         try {
           const { at: stampAt, witnesses } = await witnessStampAt(who, from);
-          await mirrorLaneAct({
-            crossing: at, actor: who, action: "walk",
-            object: targetMarkId ?? null,
-            at: stampAt, witnesses, cls: CLASS_MOVE,
-            // THE MOVEMENTS ROW'S OWN COLUMN VOCABULARY — `within` and `to`,
-            // not `targetExtent`/`targetMarkId`. That is 1.0's one converter
-            // for this exact record (world-movement.mjs § storedDepartures:
-            // "`within` and `to` are the store's column names"), and using it
-            // here is what lets live-reads.mjs read this pen with the mapping
-            // it already has rather than a fifth spelling of one departure.
-            payload: { from, toward, pace, within: targetExtent ?? null, to: targetMarkId ?? null },
-            effect: "the walk is declared; the record receives it at the save",
-            household: resolvedWorldHousehold(key),
-          });
+          await mirrorLaneAct(walkEntry({ crossing: at, who, targetMarkId, stampAt, witnesses, from, toward, pace, targetExtent, household: resolvedWorldHousehold(key) }));
         } catch (e) {
           console.error(`[world2-acts] a walk did not reach acts (${String(e?.message ?? e).slice(0, 160)}) — dynamic.db/movements is unaffected`);
         }
       })();
     }
-    result = { position: positionAt({ from, toward, at, targetExtent, targetMarkId, pace }, at), pace, movement: { record: "dynamic.db/movements", crystallizes: "STATE/log/ at the next crossing-save" } };
+    result = {
+      position: positionAt({ from, toward, at, targetExtent, targetMarkId, pace }, at), pace,
+      movement: { record: walkFlipped ? "acts (Postgres; dynamic.db/movements is the reverse-mirror copy)" : "dynamic.db/movements", crystallizes: "STATE/log/ at the next crossing-save" },
+      // Which store is the RECORD for this act — said in the answer, as every
+      // flipped door says it.
+      ...(walkFlipped ? { log: "acts", seq: flippedRow?.seq ?? null } : {}),
+      ...(exitedFirst ? { exited_first: exitedFirst, note: "DEC-5: you stepped out of these before walking (exit: true); each exit stands as its own act on the record" } : {}),
+    };
   } else {
     const exec = join(HERE, "walk-exec.mjs");
     const env = { ...process.env, WORLD_CLONE: worldClone };
@@ -3226,6 +3300,7 @@ export const WORLD_TOOLS = [
       y: { type: "number", description: "grid meters south of Ferry's crossing" },
       mode: { type: "string", enum: ["rim", "center"], description: "where ON the destination you stop — NOT the destination itself (that is mark_id: or x:/y:). \"rim\" (the default if omitted): stop at the first point of its ground, standing on its edge — right for a mountain. \"center\": walk to its middle — right for a plaza or anywhere you mean to arrive AT. Meaningless for x/y targets; a coordinate is already a point." },
       handle: { type: "string", description: "which of YOUR residents is walking (omit if your key holds one; a multi-resident key must name one, or it bounces with the list)" },
+      exit: { type: "boolean", description: "DEC-5: if this walk would carry you OUT of a mark you are within, pass true to step out of it (innermost outward) and walk in one call; without it such a walk is refused and names the mark. Walking INTO a footprint never enters — entry stays your own act." },
       enter_on_arrival: { type: "boolean", description: "step inside the mark you are walking to, at the moment you arrive. Only meaningful with mark_id — a coordinate is not enterable, and pairing it with x/y bounces by name. The entry fires AS ITSELF: its own threshold law, its own terms, its own consent-at-thresholds delivery, adjudicated at the ARRIVAL instant rather than this one, so nothing is bypassed by riding a walk. A door that declares a counter-edge still shows you its terms and records nothing until you pass accept: true. IF THE ENTRY REFUSES, THE WALK STILL STANDS — you arrived, and the answer says so alongside the door's own words." },
       accept: { type: "boolean", description: "your explicit word at the threshold, for use with enter_on_arrival where the door declares a counter-edge (the Post Office's `aboard`). Walk once without it to READ the terms on arrival; walk again with it to cross." },
     }, additionalProperties: false } },
