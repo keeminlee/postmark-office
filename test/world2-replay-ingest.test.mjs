@@ -23,7 +23,7 @@ import { join } from "node:path";
 import {
   erasBetween, commitOf, eraActs, eraClaims, eraWindow, authoredSubstance,
   sixCountOf, amendId, assertReplayable, logCensus, doorWitness, SUBSTANCE_COLUMNS, windowFindings,
-  standingOnly, actObject, isWithdrawAct,
+  standingOnly, actObject, isWithdrawAct, eraReceipt,
 } from "../world2/tools/replay-ingest.mjs";
 import { uuid5, deriveActs, LOG_FILE, compareMarks } from "../world2/tools/seed-import.mjs";
 
@@ -188,15 +188,21 @@ test("an annotated tag resolves to its COMMIT, not to the tag object", () => {
   } finally { w.cleanup(); }
 });
 
-test("F-5: an era is a PUBLISH, so a tag on a crossing-save is no longer a boundary", () => {
+test("F-5 reading 3: a crossing-save closes a window with NO sweep — an era, and not a six-count of 0", () => {
   const w = THREE();
   try {
-    // S2 is tagged, but its subject is `crossing-save 8: …` — it published
-    // nothing, so it closes no era. Under the old TAG pairing this was two eras
-    // and the first had no six-count to check itself against.
+    // S2's subject is `crossing-save 8: …`. It published nothing, and under the
+    // TAG model it was an era whose receipt read "UNCHECKABLE — not on a
+    // settlement commit". It is still an era, because the town's clock moved and
+    // the store must clear that candle — but it is a NO SWEEP era now, which is a
+    // different statement from "a sweep published 0" and prints as one.
     const eras = erasBetween(w.dir, "settlement/S1", "settlement/S3");
     assert.deepEqual(eras.map((e) => [e.from.tag, e.to.tag]),
-      [["settlement/S1", "settlement/S3"]]);
+      [["settlement/S1", "settlement/S2"], ["settlement/S2", "settlement/S3"]]);
+    assert.equal(eras[0].publishes.length, 0, "the crossing-save's window held no sweep");
+    assert.equal(eraReceipt({ publishes: eras[0].publishes, derived: 0 }).noSweep, true);
+    assert.equal(eras[1].publishes.length, 1, "and the sweep after it is its own window's era");
+    assert.equal(eraReceipt({ publishes: eras[1].publishes, derived: 3 }).ok, true);
   } finally { w.cleanup(); }
 });
 
@@ -221,15 +227,19 @@ const TWO_PUBLISHES = () => world([
     log: { "7.jsonl": [], "8.jsonl": [], "9.jsonl": [] } },
 ]);
 
-test("F-5: two publishes between two tags are TWO eras, on contiguous windows, each with its own six-count", async () => {
+test("F-5: two publishes in two WINDOWS are two eras, contiguous, each with its own six-count", async () => {
   const w = TWO_PUBLISHES();
   try {
     const eras = erasBetween(w.dir, "a", "b");
-    assert.equal(eras.length, 2, "the untagged publish is a boundary — a tag is judgment, a sweep is an era");
+    assert.equal(eras.length, 2, "the untagged publish opened a new window — a tag is judgment, a window is an era");
     assert.equal(eras[0].from.tag, "a");
-    assert.match(eras[0].to.tag, /^publish\//, "an untagged boundary is named for the commit that is it");
+    assert.match(eras[0].to.tag, /^window\//, "an untagged boundary is named for the window it closed");
     assert.equal(eras[1].to.tag, "b");
     assert.equal(eras[1].from.sha, eras[0].to.sha, "the eras are contiguous — no commit falls between them");
+    // The split came from the LOG, not from a `crossing-save` subject: this
+    // fixture has none, and a segmentation that trusted subjects alone would
+    // have collapsed both publishes into one era and said nothing about it.
+    assert.equal(eras[0].statedWindow, null);
 
     // Each era's window is its OWN publish's clock, and they count.
     const withWindows = [];
@@ -246,7 +256,7 @@ test("F-5: two publishes between two tags are TWO eras, on contiguous windows, e
   } finally { w.cleanup(); }
 });
 
-test("F-5: a retirement in the FIRST of two publishes files at that publish's window, not the tag's", async () => {
+test("F-5: a retirement in the FIRST of two windows files at THAT window, not the tag's", async () => {
   const w = world([
     { tag: "a", subject: SWEEP(0), at: "2026-08-26T00:00:00+00:00",
       register: [M({ by: "wren", slug: "the-shed" }), M({ by: "wren", slug: "the-lamp" })], log: { "7.jsonl": [] } },
@@ -267,6 +277,96 @@ test("F-5: a retirement in the FIRST of two publishes files at that publish's wi
 
     const later = await claimsForShas(w, eras[1]);
     assert.equal(later.retired.length, 0, "and it does not happen twice");
+  } finally { w.cleanup(); }
+});
+
+// ── F-5 reading 3: the era is the WINDOW, derived as a run of publishes ──────
+//
+// A publish is not a crossing. The town commits `crossing-save <N>` when its
+// clock advances and NAMES the window; sweeps publish into whichever window is
+// open, and several may run inside one — five did on 2026-09-01, between 14:07
+// and 17:45, all inside window 163. The store's unit is the window (one row per
+// crossing, one candle cleared at a time), so the era is the window and the
+// publishes inside it are a run.
+
+/** One window holding two sweeps, then a window holding none. */
+const TWO_SWEEPS_ONE_WINDOW = () => world([
+  { tag: "a", subject: SWEEP(0), at: "2026-08-26T00:00:00+00:00",
+    register: [M({ by: "wren", slug: "the-shed" })], log: { "7.jsonl": [] } },
+  { subject: "crossing-save 8: 2 entities, 1 events", at: "2026-08-26T06:00:00+00:00",
+    register: [M({ by: "wren", slug: "the-shed" })], log: { "7.jsonl": [], "8.jsonl": [] } },
+  { subject: SWEEP(1), at: "2026-08-26T07:00:00+00:00",
+    register: [M({ by: "wren", slug: "the-shed" }), M({ by: "wren", slug: "the-lamp" })],
+    log: { "7.jsonl": [], "8.jsonl": [] } },
+  { subject: SWEEP(1), at: "2026-08-26T08:00:00+00:00",
+    register: [M({ by: "wren", slug: "the-shed" }), M({ by: "wren", slug: "the-lamp" }), M({ by: "wren", slug: "the-yard" })],
+    log: { "7.jsonl": [], "8.jsonl": [] } },
+  { tag: "b", subject: "crossing-save 9: 3 entities, 0 events", at: "2026-08-26T18:00:00+00:00",
+    register: [M({ by: "wren", slug: "the-shed" }), M({ by: "wren", slug: "the-lamp" }), M({ by: "wren", slug: "the-yard" })],
+    log: { "7.jsonl": [], "8.jsonl": [], "9.jsonl": [] } },
+]);
+
+test("F-5 reading 3: two sweeps inside one window are ONE era, held to the SUM of their six-counts", async () => {
+  const w = TWO_SWEEPS_ONE_WINDOW();
+  try {
+    const eras = erasBetween(w.dir, "a", "b");
+    assert.equal(eras.length, 2, "one era per WINDOW — not one per sweep, and not one per tag");
+
+    const [first] = eras;
+    assert.equal(first.statedWindow, 8, "the town names its own window in the crossing-save subject");
+    assert.equal(first.publishes.length, 2, "both sweeps ran inside window 8 and belong to its era");
+
+    // The era's claim set is the WHOLE-WINDOW diff, one row per slug — not the
+    // union of per-sweep sets. It has to be: `amendId(slug, window)` is derived
+    // from the slug and the window, so two amends of one slug in one window would
+    // collide on the claims primary key.
+    const c = await claimsForShas(w, first);
+    assert.deepEqual(c.claims.map((x) => x.slug).sort(), ["wren/the-lamp", "wren/the-yard"]);
+
+    const r = eraReceipt({ publishes: first.publishes, derived: c.claims.length });
+    assert.equal(r.checked, true);
+    assert.equal(r.ok, true, "1 + 1 = 2, and the era derives 2");
+    assert.equal(r.six.published, 2, "the SUM is what the window is judged on");
+    assert.equal(r.sweeps, 2, "and the count of sweeps is reported, so a sum is never mistaken for one receipt");
+
+    // The sum alone would be a weaker check than the one it replaces — 5+1+1+1+1
+    // and a single 9 both total nine. Each sweep keeps its own count.
+    assert.deepEqual(first.publishes.map((p) => sixCountOf(p.subject).published), [1, 1]);
+  } finally { w.cleanup(); }
+});
+
+test("F-5 reading 3: a window with NO sweep is an era of its own, and its receipt says 'no sweep', not 0", async () => {
+  const w = TWO_SWEEPS_ONE_WINDOW();
+  try {
+    const second = erasBetween(w.dir, "a", "b")[1];
+    assert.equal(second.statedWindow, 9);
+    assert.equal(second.publishes.length, 0);
+
+    const c = await claimsForShas(w, second);
+    assert.deepEqual(c.claims, [], "the crossing closed with the register unchanged");
+
+    const r = eraReceipt({ publishes: second.publishes, derived: 0 });
+    assert.equal(r.noSweep, true);
+    assert.equal(r.checked, false, "'no sweep ran' and 'a sweep published 0' are different statements");
+    assert.equal(r.ok, undefined, "so it must not read as a passing receipt either");
+    assert.match(r.why, /no sweep ran/);
+  } finally { w.cleanup(); }
+});
+
+test("F-5 reading 3: the windows walk the clock one at a time, so nothing is left for the store to refuse", async () => {
+  const w = TWO_SWEEPS_ONE_WINDOW();
+  try {
+    const eras = erasBetween(w.dir, "a", "b");
+    const withWindows = [];
+    for (const e of eras) {
+      const c = checkout(w.dir, e.to.sha);
+      try { withWindows.push({ ...e, window: eraWindow({ toDir: c.dir, lawSha: e.to.sha, townSha: null }) }); }
+      finally { c.dispose(); }
+    }
+    assert.deepEqual(withWindows.map((e) => e.window.id), [8, 9]);
+    // The town's stated number and the log rule are two readings of one fact.
+    for (const e of withWindows) assert.equal(e.window.id, e.statedWindow, "the subject and the log must agree");
+    assert.deepEqual(windowFindings(withWindows), []);
   } finally { w.cleanup(); }
 });
 

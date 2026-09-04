@@ -259,16 +259,119 @@ export function erasBetween(repo, fromRef, toRef) {
       `there is nothing to replay between them.`);
   }
 
+  // ── SEGMENT BY THE TOWN'S OWN CLOCK ──────────────────────────────────────
+  //
+  // The town commits `crossing-save <N>` at every crossing and NAMES the window
+  // in the subject, so the partition is read rather than inferred: everything
+  // after `crossing-save N` and before `crossing-save N+1` happened in window N.
+  // Verified against the record — `crossing-save 163` lands 12:03Z on 09-01 and
+  // the five sweeps that follow it (14:07, 14:28, 14:38, 14:47, 17:45) all
+  // resolve to 163 by the log rule, while `settlement: sweep 9 …` at 06:11Z,
+  // before it, resolves to 162.
+  //
+  // The era's `to` is the LAST COMMIT of the segment, whatever kind it is. Not
+  // the last publish: a `drain:` commit after it photographs more log rows into
+  // the same window, and stopping at the publish would push those acts into the
+  // NEXT era — filing them at a crossing they did not happen in, which is the
+  // exact defect this lane exists to remove. The register is unchanged by a
+  // drain, so the parity oracle reads the same world either way.
+  // The window is read from the LOG, not from the subject, and the subject is
+  // kept as a second opinion. A repo whose crossing-saves are spelled differently
+  // — or absent — would otherwise collapse its whole range into one era and say
+  // nothing, which is the silent-wrong-answer shape this file exists to refuse.
+  // `ls-tree` rather than a worktree: the segmentation needs one number per
+  // boundary commit, and a checkout per commit would cost minutes for a fact the
+  // tree already states. Asked only of the commits that can BE a boundary.
+  const windowAt = (sha) => {
+    let hi = null;
+    for (const f of git(repo, "ls-tree", "--name-only", sha, "STATE/log/").split("\n")) {
+      const m = /^STATE\/log\/(\d+)\.jsonl$/.exec(f.trim());
+      if (m) { const n = Number(m[1]); if (hi == null || n > hi) hi = n; }
+    }
+    return hi;
+  };
+
+  const segments = [];
+  let cur = null;
+  for (const c of walk) {
+    const save = CROSSING_SAVE.exec(c.subject);
+    const isBoundary = save || PUBLISH_SUBJECT.test(c.subject);
+    if (isBoundary) {
+      const w = windowAt(c.sha);
+      if (!cur || (w != null && w !== cur.window)) {
+        cur = { window: w, statedWindow: save ? Number(save[1]) : null, commits: [], publishes: [] };
+        segments.push(cur);
+      } else if (save && cur.statedWindow == null) {
+        cur.statedWindow = Number(save[1]);
+      }
+    }
+    if (!cur) {                                   // before the range's first boundary
+      cur = { window: null, statedWindow: null, commits: [], publishes: [] };
+      segments.push(cur);
+    }
+    cur.commits.push(c);
+    if (PUBLISH_SUBJECT.test(c.subject)) cur.publishes.push(c);
+  }
+
   const eras = [];
   let prev = { tag: fromRef, sha: from };
-  for (const c of walk) {
-    // Every publish is a boundary; so is the end of the range, whatever it is.
-    if (!PUBLISH_SUBJECT.test(c.subject) && c.sha !== to) continue;
-    const t = { tag: tagOf.get(c.sha) ?? `publish/${c.sha.slice(0, 8)}`, sha: c.sha, at: c.at, subject: c.subject };
-    eras.push({ from: prev, to: t });
+  for (const seg of segments) {
+    // A segment with no commits at all cannot be an era; a LEADING segment with
+    // no publish is the tail of a window the floor already holds, and skipping it
+    // is not a loss — its `to` would be the same tree as `from`.
+    if (!seg.commits.length) continue;
+    if (seg.window == null && !seg.publishes.length) continue;
+    const c = seg.commits[seg.commits.length - 1];
+    const t = { tag: tagOf.get(c.sha) ?? `window/${seg.window ?? c.sha.slice(0, 8)}`,
+      sha: c.sha, at: c.at, subject: c.subject };
+    eras.push({ from: prev, to: t, publishes: seg.publishes, statedWindow: seg.statedWindow });
     prev = t;
   }
+
+  // The range's end must be an era boundary even if the town's last crossing-save
+  // is behind it — `--to-tag` is where the caller said to stop.
+  const last = eras[eras.length - 1];
+  if (!last || last.to.sha !== to) {
+    const c = walk[walk.length - 1];
+    eras.push({
+      from: prev,
+      to: { tag: tagOf.get(to) ?? toRef, sha: to, at: c.at, subject: c.subject },
+      publishes: [], statedWindow: null,
+    });
+  }
   return eras;
+}
+
+/** The town's own statement that its clock advanced, and to what. */
+export const CROSSING_SAVE = /^crossing-save (\d+)\b/;
+
+/**
+ * THE ERA'S RECEIPT WHEN A WINDOW HELD SEVERAL SWEEPS (F-5 reading 3).
+ *
+ * A window is the store's unit and a six-count belongs to a SWEEP, so an era that
+ * holds five sweeps is held to the SUM of their counts. The sum alone would be a
+ * weaker check than the one it replaces, though — five sweeps publishing 5, 1, 1,
+ * 1, 1 and one publishing 9 both total nine, and the le-petit-berthillon miscount
+ * was caught by exactly the precision the sum throws away. So each sweep is ALSO
+ * held to its own count, as an inner probe over the same interval it published
+ * in, and the era reports both.
+ *
+ * `sum` is what the era is judged on; `probes` is where a disagreement is located.
+ * A window with no sweep at all gets neither: its receipt is "no sweep", which is
+ * not the same statement as "published 0" and must not be printed as one.
+ */
+export function eraReceipt({ publishes, derived }) {
+  if (!publishes.length) return { checked: false, noSweep: true, why: "no sweep ran in this window — the crossing closed with the register unchanged" };
+  const six = publishes.map((p) => sixCountOf(p.subject)).filter(Boolean);
+  if (six.length !== publishes.length) {
+    return { checked: false, why: `${publishes.length - six.length} of this window's sweep commits carry no readable six-count` };
+  }
+  const sum = six.reduce((n, s) => n + s.published, 0);
+  return {
+    checked: true, ok: sum === derived, six: { published: sum }, sweeps: publishes.length,
+    why: sum === derived ? null
+      : `this window's ${publishes.length} sweep(s) published ${sum} between them by their own receipts; this replay derives ${derived} claim(s)`,
+  };
 }
 
 /**
@@ -852,14 +955,49 @@ export const removingCommit = (worldRepo, opts) => commitTouching(worldRepo, { .
  * per added mark, which is not a price every green era should pay.
  */
 export async function plantedByHand({ worldRepo, toDir, fromSha, toSha, added }) {
+  return byHand({ worldRepo, toDir, fromSha, toSha, filter: "A", slugs: added.map((m) => m.slug) });
+}
+
+/**
+ * THE THIRD FACE OF THE SAME HAND — and it closes the accounting (F-5, evening).
+ *
+ * `plantedByHand` explained most of each receipt gap and left four small
+ * remainders (4, 3, 5, 1 claims across four eras). They are not a fourth shape.
+ * They are the founder AMENDING an existing mark on `main`, and counting them
+ * makes every disagreeing era add up EXACTLY:
+ *
+ *     derived = the sweeps' own published + additions by hand + amends by hand
+ *
+ *   publish/eb67b7d4   1 + 3 + 4 =  8   ✓
+ *   publish/c1f26410   7 + 4 + 3 = 14   ✓
+ *   publish/69b2d442   9 + 22 + 5 = 36  ✓
+ *   publish/a8fe0e35   5 + 0 + 1 =  6   ✓
+ *
+ * So the founder's hand on `main` has three faces and they are the same act:
+ * REMOVE a record (DEC-15, ruled), ADD one (DEC-17, proposed), AMEND one (this —
+ * unnamed). One commit does all three: `6b235216d`, the three-asks ruling, is
+ * where DEC-15's `the-town/pledges` removal came from, and it also amends
+ * `the-town/the-bounty-board` and `wright/furnish-ferrys-waiting-room`. DEC-15
+ * ruled a third of that commit.
+ *
+ * Counted here, not decided. An amend by hand is currently derived as a resident's
+ * amend claim carrying `supersedes` — a claim the clearing job will adjudicate as
+ * though a resident filed it.
+ */
+export async function amendedByHand({ worldRepo, toDir, fromSha, toSha, amended }) {
+  return byHand({ worldRepo, toDir, fromSha, toSha, filter: "M", slugs: amended.map((a) => a.mark.slug) });
+}
+
+async function byHand({ worldRepo, toDir, fromSha, toSha, filter, slugs }) {
+  if (!slugs.length) return [];
   const owners = await filingOwners(toDir);
   const pathOf = new Map([...owners].map(([p, id]) => [id, p]));
   const hand = [];
-  for (const m of added) {
-    const path = pathOf.get(m.slug);
+  for (const slug of slugs) {
+    const path = pathOf.get(slug);
     if (!path) continue;                       // no file to ask about; not a claim about the hand
-    const c = commitTouching(worldRepo, { fromSha, toSha, path, filter: "A" });
-    if (c && !PUBLISH_SUBJECT.test(c.subject)) hand.push({ slug: m.slug, sha: c.sha, subject: c.subject });
+    const c = commitTouching(worldRepo, { fromSha, toSha, path, filter });
+    if (c && !PUBLISH_SUBJECT.test(c.subject)) hand.push({ slug, sha: c.sha, subject: c.subject });
   }
   return hand;
 }
@@ -1580,7 +1718,7 @@ async function main() {
 
   const headBefore = git(worldRepo, "rev-parse", "HEAD");
   const bounds = erasBetween(worldRepo, fromTag, toTag);
-  console.log(`replay ${fromTag} → ${toTag} · ${bounds.length} era(s), one per PUBLISH (F-5): ` +
+  console.log(`replay ${fromTag} → ${toTag} · ${bounds.length} era(s), one per WINDOW the town's clock closed (F-5): ` +
     `${bounds.map((e) => e.to.tag).join(", ")}`);
 
   // Derive every era first, from the checkouts, before a single row is written.
@@ -1605,17 +1743,22 @@ async function main() {
       // The boundary already read its own subject in `erasBetween` — asking git a
       // second time is a second reading of the same fact, and the two could drift.
       const subject = b.to.subject ?? git(worldRepo, "log", "-1", "--format=%s", b.to.sha);
-      const six = sixCountOf(subject);
-      const receipt = six == null
-        ? { checked: false, why: `${b.to.tag} is not on a settlement commit ("${subject}") — no six-count to check against` }
-        : six.published === claims.claims.length
-          ? { checked: true, ok: true, six }
-          : { checked: true, ok: false, six,
-              why: `${b.to.tag} published ${six.published} by its own receipt; this replay derives ${claims.claims.length} claim(s)` };
+      const receipt = eraReceipt({ publishes: b.publishes ?? [], derived: claims.claims.length });
+
+      // THE TOWN SAID THE NUMBER; the log rule derived it. Two independent
+      // readings of one fact, so they are compared rather than one being trusted.
+      if (b.statedWindow != null && b.statedWindow !== window.id) {
+        receipt.clockDisagrees =
+          `the town's own commit says \`crossing-save ${b.statedWindow}\` and the log rule reads window ${window.id}`;
+      }
+
       // A disagreement gets a DIAGNOSIS, not just a number. See `plantedByHand`.
       if (receipt.checked && !receipt.ok) {
         receipt.hand = await plantedByHand({
           worldRepo, toDir: to.dir, fromSha: b.from.sha, toSha: b.to.sha, added: claims.added,
+        });
+        receipt.handAmends = await amendedByHand({
+          worldRepo, toDir: to.dir, fromSha: b.from.sha, toSha: b.to.sha, amended: claims.amended,
         });
       }
       eras.push({ ...b, window, acts, ...claims, subject, receipt });
@@ -1656,7 +1799,30 @@ async function main() {
       for (const h of e.receipt.hand.slice(0, 3)) console.log(`      ${h.slug} — ${h.sha.slice(0, 9)} ${h.subject.slice(0, 72)}`);
       if (e.receipt.hand.length > 3) console.log(`      … and ${e.receipt.hand.length - 3} more`);
     }
-    console.log(`   receipt ${e.receipt.checked ? (e.receipt.ok ? `AGREES — the settlement's six-count says ${e.receipt.six.published} published` : `DISAGREES — ${e.receipt.why}`) : `UNCHECKABLE — ${e.receipt.why}`}`);
+    if (e.receipt.handAmends?.length) {
+      console.log(`   ⚑ ${e.receipt.handAmends.length} of this era's amends were made BY HAND on main — the same ` +
+        `hand, its third face (remove = DEC-15 ruled, add = DEC-17 proposed, amend = unnamed). Derived as a ` +
+        `resident's amend claim carrying \`supersedes\`.`);
+      for (const h of e.receipt.handAmends.slice(0, 2)) console.log(`      ${h.slug} — ${h.sha.slice(0, 9)} ${h.subject.slice(0, 68)}`);
+    }
+    if (e.receipt.checked && !e.receipt.ok) {
+      const acc = (e.receipt.hand?.length ?? 0) + (e.receipt.handAmends?.length ?? 0);
+      const gap = e.claims.length - e.receipt.six.published;
+      console.log(`   = ${e.receipt.six.published} published + ${e.receipt.hand?.length ?? 0} added by hand + ` +
+        `${e.receipt.handAmends?.length ?? 0} amended by hand ${acc === gap ? "= EXACTLY the derived count" :
+          `leaves ${gap - acc} claim(s) this pen cannot yet account for`}`);
+    }
+    if (e.receipt.clockDisagrees) console.log(`   ⚠ ${e.receipt.clockDisagrees}`);
+    console.log(`   receipt ${e.receipt.noSweep ? `NO SWEEP — ${e.receipt.why}`
+      : e.receipt.checked
+        ? (e.receipt.ok
+          ? `AGREES — this window's ${e.receipt.sweeps} sweep(s) published ${e.receipt.six.published} between them`
+          : `DISAGREES — ${e.receipt.why}`)
+        : `UNCHECKABLE — ${e.receipt.why}`}`);
+    if (e.receipt.sweeps > 1) {
+      console.log(`          the window's sweeps, each with its own count: ` +
+        e.publishes.map((p) => `${p.sha.slice(0, 8)}×${sixCountOf(p.subject)?.published ?? "?"}`).join(" + "));
+    }
     const w = doorWitness(e);
     if (w.total) {
       console.log(`   door    ${w.matched.length}/${w.total} leave-mark act(s) name a mark this era's claim set carries` +
@@ -1685,8 +1851,8 @@ async function main() {
     // A dry run whose eras cannot be written must not read like one that can.
     const clock = windowFindings(eras);
     if (clock.length) {
-      console.log(`\nTHE TOWN'S CLOCK · ${clock.length} finding(s) — under F-5 an era is one publish and the windows ` +
-        `should count without gaps:`);
+      console.log(`\nTHE TOWN'S CLOCK · ${clock.length} finding(s) — an era is one WINDOW, so the windows must ` +
+        `count without gaps:`);
       for (const f of clock) console.log(`  ${f.kind.toUpperCase().padEnd(9)} ${f.text}`);
     }
     const blocked = eras.filter((e) => e.unruled.length);
