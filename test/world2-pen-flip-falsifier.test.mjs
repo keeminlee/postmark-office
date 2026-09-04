@@ -239,6 +239,22 @@ test("the fractional .journal filenames ARE seen — seed-import's own pattern",
   });
 });
 
+test("an empty photograph is readable but has no horizon — the caller must refuse it", () => {
+  // A STATE/log directory with nothing in it is worse than no clone at all:
+  // horizon is null, the newer-than-the-photograph escape never fires, and every
+  // drained act reads as a loss. readStateLog reports the emptiness rather than
+  // hiding it, and the CLI exits 2 on it.
+  const dir = mkdtempSync(join(tmpdir(), "penflip-empty-"));
+  try {
+    mkdirSync(join(dir, "STATE", "log"), { recursive: true });
+    const photo = readStateLog(dir);
+    assert.equal(photo.lines, 0);
+    assert.equal(photo.horizon, null);
+    const v = twinSideOf(ACT_3867, { journalTwin: null, logIndex: photo.index, horizon: photo.horizon });
+    assert.equal(v.side, null, "which is exactly the false RED the CLI must not print");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("a malformed log line is REFUSED, not skipped", () => {
   // seed-import's rule, and for its reason: a reader that drops the one line it
   // could not parse calls an act lost by exactly the amount nobody will look

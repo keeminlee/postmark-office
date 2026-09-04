@@ -355,8 +355,18 @@ async function reverseParity() {
     // means "an act was lost"; a mistyped path must never say that.
     try { photo = readStateLog(clonePath); }
     catch (err) { console.error(`CANNOT RUN · ${err.message}`); process.exit(2); }
+    // A clone with a STATE/log directory and nothing in it is worse than no
+    // clone at all: `horizon` is null, so the newer-than-the-photograph escape
+    // never fires and EVERY drained act reads as a loss. That is a false-RED
+    // factory, and a falsifier that can be made to cry wolf by pointing it at
+    // an empty checkout is one nobody will believe when it is right.
+    if (!photo.lines) {
+      console.error(`CANNOT RUN · ${clonePath} has a STATE/log with no readable lines. ` +
+        "Every drained act would read as lost. Fetch the clone, or drop the flag and take the UNDECIDABLE answer.");
+      process.exit(2);
+    }
     console.log(`photograph: ${photo.lines} line(s) across ${photo.files} STATE/log file(s) in ${clonePath}` +
-      `${photo.horizon ? `, newest ${photo.horizon}` : ""}`);
+      `, newest ${photo.horizon}`);
   } else {
     console.log("photograph: NONE — no --world-clone / WORLD_CLONE. An act the drain already took will read as unpaired, " +
       "and this run will refuse to call that either green or red.");
