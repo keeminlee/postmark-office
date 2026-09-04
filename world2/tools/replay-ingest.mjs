@@ -33,6 +33,12 @@
 //       record of what was claimed, and it is the only record that survives (the
 //       sketchbook branches the claims actually lived on are rebased away, which
 //       is gold §1's "rebased → ceases to exist: git mechanics, not a decision").
+//       A mark that LEFT the register is a RETIREMENT, not a claim (DEC-15,
+//       2026-09-04): `marks.status = 'retired'` at the era's window, with the
+//       `withdraw` act either found in the era's log or synthesised by `the-town`
+//       from the commit that removed the record. See `eraClaims`. A departure of
+//       any OTHER shape still refuses the era, now at the write rather than at
+//       derivation, so one dry run shows the founder the whole class.
 //
 //   (c) LAW + STAMPS at the era's sha, by the ingester's own pen — `law_ingest`
 //       against the S(k) checkout, so `law_projection` carries a row set stamped
@@ -116,8 +122,12 @@
 //   --can-fail-proof         mangle the replayed register inside a ROLLED-BACK
 //                            transaction and require the gate to go red for each;
 //                            also injects a duplicate act, in the PEN's spelling,
-//                            and requires the ingest's dedupe to catch it
-//   --dry-run                derive and report; open no connection, write nothing
+//                            and requires the ingest's dedupe to catch it, and
+//                            un-retires a retired mark and requires DEC-15's
+//                            standing-only filter to notice it standing again
+//   --dry-run                derive and report; open no connection, write nothing.
+//                            Exits 1 when an era carries a departure DEC-15 does
+//                            not rule on, and names every one of them
 //   --json                   machine-readable verdict
 //
 // Re-running without `--continue` on a store that has moved past the floor is
@@ -129,7 +139,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
@@ -393,17 +403,56 @@ export function sixCountOf(subject) {
  *   ADDED     a slug the previous settlement did not carry → a claim, pending.
  *   AMENDED   a slug both carry, whose record differs → a claim that supersedes
  *             the standing mark (its locking claim's id).
- *   REMOVED   a slug the previous settlement carried and this one does not.
+ *   RETIRED   a slug the previous settlement carried and this one does not.
  *
- * REMOVED STOPS THE REPLAY, and that is a ruling rather than an omission. The
- * six-count's "unpublished/quarantined" is about a DRAFT that failed to publish —
- * it never stood — and none of its five siblings describes a standing mark
- * leaving the register. 1.0 has no retirement ceremony in this range, so a
- * removal would be a state change with no rule behind it, and inventing one here
- * would make the parity verdict a statement about our invention. There are none
- * between S47 and S50; the refusal exists so that the first one is seen.
+ * REMOVED USED TO STOP THE REPLAY, and the refusal was right until it fired:
+ * "the refusal exists so that the first one is seen." It was seen on 2026-09-04,
+ * on the first full-range dry run (S47 → S55): `the-town/pledges`, removed by the
+ * founder's own commit 6b235216d, the three-asks ruling of 2026-08-30. DEC-15
+ * (runbook § 9) is the ruling that answers it, and this is that ruling:
+ *
+ *   A standing mark that leaves the register between settlements is a
+ *   RETIREMENT — the revision family's TERMINAL SUPERSESSION, founder-ruled
+ *   2026-08-19: "the record leaves canon, its whole life stays in the log."
+ *   It is not an invention: the store already spells it (001_tables:
+ *   `marks.status IN ('standing','retired')`) and the door already performs it
+ *   (`withdrawMarkViaOffice` — "the node leaves your sketchbook now and canon at
+ *   the next crossing"). What was missing was the replay's reading of it.
+ *
+ * A retirement is NOT A CLAIM and does not enter the docket. A claim is something
+ * a resident submitted into a window for the clearing to rule on; a retirement is
+ * the register having already lost the row by the time the settlement landed. So
+ * it rides beside `claims` rather than inside it, and the six-count receipt is
+ * untouched — 1.0 never counted founder removals in `published`.
+ *
+ * TWO CASES, AND THE REPLAY MUST SAY WHICH:
+ *   (a) WITHDRAWN IN THE LOG — the era's acts carry a `withdraw` naming the slug.
+ *       That act IS the retirement; it is already replayed by `eraActs` and this
+ *       synthesises nothing. A resident's own hand, and the log already has it.
+ *
+ *       AND 1.0 ALREADY COUNTED IT. The refusal this replaces said "1.0's
+ *       six-count has no transition that describes a STANDING mark leaving" —
+ *       that sentence was wrong, and `sixCountOf` three functions up has always
+ *       parsed the counter that proves it: `(\d+) withdrawn`. S55's own receipt
+ *       reads "sweep 7 published, 1 unpublished, 45 left drafted, 1 WITHDRAWN",
+ *       and that one is `vermillion/the-track-garage`, whose `withdraw` act sits
+ *       in the era's log at 2026-09-02T17:32:06.898Z. So case (a) is not a rule
+ *       DEC-15 adds to 1.0; it is a transition 1.0 has been counting all along
+ *       and 2.0 had no reading for. Only case (b) — the founder's hand on `main`,
+ *       which passes no door and enters no sweep — is genuinely uncounted, and
+ *       that is why the six-count check stays exactly as it was.
+ *   (b) THE FOUNDER'S HAND — no act exists, because the removal was a commit on
+ *       world `main` and never passed a door. The log would then be missing the
+ *       one event that explains the register, which is exactly what 08-19 forbids
+ *       ("its whole life stays in the log"), so the replay SYNTHESISES a
+ *       `withdraw` by `the-town` carrying the removing commit's sha and subject.
+ *
+ * Case (b) needs the removing commit, which needs the mark's FILE, which is a
+ * fact of the checkout and not of the register — hence `worldRepo`/`fromSha`/
+ * `toSha`. A removal this pen cannot attribute to a commit is still a refusal: a
+ * retirement with no hand behind it is the invention DEC-15 was careful not to be.
  */
-export async function eraClaims({ fromDir, toDir, window }) {
+export async function eraClaims({ fromDir, toDir, window, acts = null, worldRepo = null, fromSha = null, toSha = null }) {
   const before = await deriveSeed({ worldRepo: fromDir, lawSha: window.law_sha, townSha: window.town_sha });
   const after = await deriveSeed({ worldRepo: toDir, lawSha: window.law_sha, townSha: window.town_sha });
 
@@ -418,13 +467,58 @@ export async function eraClaims({ fromDir, toDir, window }) {
   }
   for (const slug of b.keys()) if (!a.has(slug)) removed.push(slug);
 
+  const retired = [];
   if (removed.length) {
-    throw new Error(
-      `${removed.length} mark(s) left the register between the two settlements ` +
-      `(e.g. ${removed.slice(0, 3).join(", ")}), and 1.0's six-count has no transition that ` +
-      `describes a STANDING mark leaving: "unpublished/quarantined" is a draft that never stood. ` +
-      `Replaying this era would require inventing a retirement rule, and the parity verdict would ` +
-      `then be a statement about the invention. This needs a ruling before the era can be replayed.`);
+    // The filing is only read when something actually left; a checkout's loader
+    // is not cheap and every green era would otherwise pay for the rare one.
+    const wasFiled = await markFilingAt(fromDir);
+    const nowFiles = await filingOwners(toDir);
+    for (const slug of removed) {
+      const was = b.get(slug);
+      const path = wasFiled.get(slug) ?? null;
+
+      const act = (acts?.rows ?? []).find((r) => isWithdrawAct(r) && actObject(r) === slug) ?? null;
+      if (act) {
+        retired.push({ slug, was, path, case: "a", why: "withdrawn in the log", act, commit: null, synthesised: null });
+        continue;
+      }
+
+      // THE FILE IS STILL THERE, UNDER A NEW NAME. Not a retirement, and this pen
+      // will not call it one — see `reidentified`.
+      const nowStands = path ? nowFiles.get(path) ?? null : null;
+      if (nowStands && nowStands !== slug) {
+        retired.push({
+          slug, was, path, case: "unruled", why: "the id refolded — the same file, a new `by`",
+          act: null, commit: null, synthesised: null, becomes: nowStands,
+          detail: `the record at ${path} still stands, as ${nowStands}` +
+            (a.has(nowStands) ? ` — a slug this same era ADDS` : ` — a slug this era's register does not carry either`),
+        });
+        continue;
+      }
+
+      if (!worldRepo || !fromSha || !toSha) {
+        throw new Error(
+          `${slug} left the register between the two settlements with no \`withdraw\` act in the era, so ` +
+          `DEC-15 case (b) applies and the retirement must name the commit that removed it — but this call ` +
+          `passed no worldRepo/fromSha/toSha to look it up in. Pass them, or hand the era its acts.`);
+      }
+      const commit = path ? removingCommit(worldRepo, { fromSha, toSha, path }) : null;
+      if (!commit) {
+        retired.push({
+          slug, was, path, case: "unruled", why: "no hand this pen can name", act: null, commit: null,
+          synthesised: null, becomes: null,
+          detail: path
+            ? `no commit in ${fromSha.slice(0, 8)}..${toSha.slice(0, 8)} deletes ${path}, and no file at that path ` +
+              `stands under another id`
+            : `the checkout's own loader files no directory for it, so there is no path to ask git about`,
+        });
+        continue;
+      }
+      retired.push({
+        slug, was, path, case: "b", why: "the founder's hand", act: null, commit,
+        synthesised: synthesisedWithdraw({ slug, window, commit }),
+      });
+    }
   }
 
   const claim = (m, extra) => ({
@@ -443,7 +537,149 @@ export async function eraClaims({ fromDir, toDir, window }) {
     ...amended.map(({ mark }) => claim(mark, { id: amendId(mark.slug, window.id), supersedes: mark.id })),
   ].sort((x, y) => (x.slug < y.slug ? -1 : x.slug > y.slug ? 1 : 0));
 
-  return { claims, added, amended, removed, registerAfter: after, registerBefore: before };
+  return { claims, added, amended, retired, unruled: retired.filter(isUnruled), registerAfter: after, registerBefore: before };
+}
+
+/**
+ * A DEPARTURE DEC-15 DID NOT RULE ON. It refuses at the WRITE, not at derivation.
+ *
+ * DEC-15 is a ruling about ONE transition — a standing mark that leaves the
+ * register — and the first full-range dry run turned up two shapes wearing that
+ * one description:
+ *
+ *   `the-town/pledges`      the file was DELETED (founder commit 6b235216d). The
+ *                           record left canon. That is the retirement DEC-15 ruled.
+ *   `the-town/the-lit-name` the file was MODIFIED — world 17103dc37, 2026-08-31,
+ *                           "the Lit Name passes to wright … restake on
+ *                           wright/the-lit-name owed after the next crossing
+ *                           REFOLDS THE ID". `by:` changed, and since a mark's id
+ *                           is `by + leaf` (marks-fold § walkMarks) the slug moved
+ *                           with it. The record never left canon; it changed hands.
+ *
+ * Calling the second one a retirement would put a `withdraw` in the log for a mark
+ * nobody withdrew and would retire a row whose record is still standing three
+ * directories away — the invention DEC-15 spent a paragraph not being. And 2.0
+ * has no word for it yet: `marks.slug` is the identity and `uuid5(slug)` the id,
+ * so a re-identification is a new row and an orphaned old one, which is a RULING
+ * about ownership transfer and not a thing a replay may decide on its own.
+ *
+ * SO THE REFUSAL MOVED RATHER THAN LEAVING. The old code threw inside `eraClaims`,
+ * which meant the very first unruled departure hid every one after it — the S47 →
+ * S55 dry run stopped at S51 and told the founder about one mark when there were
+ * two shapes to rule on. Derivation now CLASSIFIES all of them and the write
+ * refuses; `--dry-run` exits non-zero and names them. "The refusal exists so that
+ * the first one is seen" — and a refusal that shows the founder the whole class
+ * sees it better than one that shows him its first member.
+ */
+export const isUnruled = (r) => r.case === "unruled";
+
+// ── DEC-15's three small facts: the act's object, the mark's file, the hand ───
+
+/**
+ * The slug an act names.
+ *
+ * BOTH SPELLINGS, because the two pens that write this table spell it in two
+ * places and only one of them is the column. `deriveActs` sets `object` NULL by
+ * design and carries the whole original event in `payload` (its documented
+ * shallowness), and the town's pen rows state `object` at the TOP LEVEL of that
+ * event — verified against the real log: a `withdraw` line is
+ * `{"at":…,"type":"withdraw","actor":"neth","class":"mark","object":"neth/test-verify",…}`.
+ * A `departure` nests its own fields under `payload` instead, which is why
+ * `deriveActs` reads `payload.crossing` there and finds nothing here. So an act
+ * arriving from `insertActs`' own row shape answers on `object`, and one arriving
+ * from `deriveActs` answers on `payload.object`, and this asks both rather than
+ * betting on which side of the seam the caller is standing.
+ */
+export const actObject = (a) => a?.object ?? a?.payload?.object ?? null;
+
+/** `legacy:withdraw` and `withdraw` are the same verb — `actDedupeKey`'s rule, reused. */
+export const isWithdrawAct = (a) => String(a?.action ?? "").replace(/^legacy:/, "") === "withdraw";
+
+/**
+ * Where each mark's record lives in this checkout, asked of the CHECKOUT'S OWN
+ * LOADER — seed-import's `readersOf` technique and its reason, one file over:
+ * "the code that parses sha X is the code that shipped at sha X."
+ *
+ * It has to be the loader and not a rule of ours, because a mark's slug is NOT
+ * its path. `the-town/pledges` is filed at
+ * `WORLD/marks/let-there-be-light/the-town-centre/the-bounty-board/pledges/mark.md`
+ * — `id = by + leaf`, and everything between is the historical filing that
+ * `WORLD/filing-freeze.json` retired as a claim. Any slug→path rule we wrote here
+ * would be a second copy of `walkMarks`, drifting silently, which is the class
+ * gold § 3 rule 5 forbids. The loader already states it: `rec._dir`.
+ */
+async function markFilingAt(worldDir) {
+  return new Map([...(await filingOwners(worldDir))].map(([path, id]) => [id, path]));
+}
+
+/** The same reading the other way: which id stands at each file, in this checkout. */
+async function filingOwners(worldDir) {
+  const repo = resolve(worldDir);
+  const { loadMarks } = await import(pathToFileURL(join(repo, "tools", "marks-fold.mjs")).href);
+  const out = new Map();
+  for (const rec of loadMarks(join(repo, "WORLD", "marks"))) {
+    if (!rec?.id || !rec?._dir) continue;              // a reader that files no directories states no path
+    out.set(`${relative(repo, rec._dir).split(sep).join("/")}/mark.md`, rec.id);
+  }
+  return out;
+}
+
+/**
+ * The commit that deleted a mark's file inside this era, and what its author said.
+ *
+ * `--diff-filter=D` over the era's range, newest first, one result: the hand that
+ * took the record out of canon. `%x1f` separates the three fields because a commit
+ * SUBJECT may contain anything a founder types, `|` and `\t` included — the
+ * three-asks subject that removed `the-town/pledges` is 500 characters of prose
+ * with semicolons and parentheses in it.
+ */
+const UNIT_SEP = String.fromCharCode(0x1f);
+
+export function removingCommit(worldRepo, { fromSha, toSha, path }) {
+  const out = git(worldRepo, "log", "--diff-filter=D", "--format=%H%x1f%cI%x1f%s", "-1",
+    `${fromSha}..${toSha}`, "--", path);
+  if (!out) return null;
+  const [sha, at, subject] = out.split("\n")[0].split(UNIT_SEP);
+  return { sha, at: new Date(at).toISOString(), subject };
+}
+
+/**
+ * The `withdraw` the founder's commit never wrote, written for it (DEC-15 case b).
+ *
+ * "The record leaves canon, its whole life stays in the log" (founder-ruled
+ * 2026-08-19). A removal on `main` passed no door, so the log has no event that
+ * explains why the register lost a row — and a store whose `marks` says `retired`
+ * with nothing in `acts` to point at is precisely the half-record the 08-19 rule
+ * is against. This is the other half, and every field of it is a fact of the
+ * record rather than a choice: the actor is `the-town` because the town's own
+ * hand is what moved, the time is when the commit landed, and `retired_by` is the
+ * sha a reader can go and check.
+ *
+ * THE ACTION IS SPELLED BARE — `withdraw`, not `legacy:withdraw` — and the reason
+ * is `actsCompleteness`. That check counts `action LIKE 'legacy:%'` rows per
+ * crossing against the checkout's own STATE/log census, and this row is in no
+ * log: spelling it `legacy:` would make every era carrying a founder removal read
+ * as one act OVER-carried, a red manufactured by our own bookkeeping. The bare
+ * verb is also the true one — this is not a photograph of a 1.0 log row, it is
+ * 2.0's own act — and `actDedupeKey` strips the prefix anyway, so the dedupe sees
+ * the two spellings as one act regardless.
+ *
+ * `_synthesised` is on the payload so the row says out loud that no resident and
+ * no door wrote it. A synthesised act that looked exactly like a witnessed one
+ * would be the reading this whole tool refuses to make.
+ */
+export function synthesisedWithdraw({ slug, window, commit }) {
+  return {
+    at: commit.at, crossing: window.id, actor: "the-town", action: "withdraw", object: slug,
+    at_anchor: null, at_dx: null, at_dy: null, witnesses: null,
+    class: "mark",
+    payload: {
+      type: "withdraw", at: commit.at, actor: "the-town", class: "mark", object: slug,
+      crossing: window.id, retired_by: commit.sha, subject: commit.subject,
+      _synthesised: "world2/tools/replay-ingest.mjs · DEC-15 case (b) — no door wrote this; a commit on main did",
+    },
+    effect: null, household: null, journal_seq: null,
+  };
 }
 
 /**
@@ -661,6 +897,29 @@ const MARKS_SELECT =
      FROM marks ORDER BY slug`;
 
 /**
+ * THE HALF THE GATE COMPARES (DEC-15) — the store's STANDING register.
+ *
+ * 1.0's register is a set of files, and a file that is gone is gone: there is no
+ * row in `deriveSeed`'s output for a retired mark, and there cannot be. 2.0 keeps
+ * the row and flips `status`, because "its whole life stays in the log" and the
+ * mark's id is what a later claim supersedes. Those two are the SAME register
+ * said two ways, and comparing them without this filter would report every
+ * lawfully retired mark as EXTRA in DB — a red manufactured by the ruling that
+ * made the era replayable, which is the worst kind.
+ *
+ * It is done here rather than in the SQL on purpose: WHICH ROWS THE GATE SEES is
+ * a decision, and a decision that only exists inside a query string cannot be
+ * asked a question without a database. This one can (the test feeds it both
+ * shapes), which is the same contract `partitionNewActs` is held to.
+ *
+ * The two directions the gate still refuses, unchanged:
+ *   - a retired store row the register STILL CARRIES → MISSING in DB → RED. The
+ *     replay retired something 1.0 never removed.
+ *   - a standing store row the register lacks → EXTRA in DB → RED, as today.
+ */
+export const standingOnly = (rows) => rows.filter((r) => r.status === "standing");
+
+/**
  * Does 2.0's standing register say what 1.0's says at this settlement's tag?
  *
  * The oracle is `deriveSeed` at S(k) — 1.0's register read by 1.0's own loader
@@ -676,7 +935,8 @@ const MARKS_SELECT =
  * separately, by name and by count, in `provenance`.
  */
 export async function parityFindings(client, { registerAfter }) {
-  const db = (await client.query(MARKS_SELECT)).rows.map((r) => ({
+  const all = (await client.query(MARKS_SELECT)).rows;
+  const db = standingOnly(all).map((r) => ({
     ...r,
     geometry: stripSlug(r.geometry),
   }));
@@ -737,6 +997,15 @@ export async function parityFindings(client, { registerAfter }) {
   if (slugInGeometry.length)
     provenance.push(`${slugInGeometry.length} mark(s) carry their own slug inside \`geometry\` — the pre-006 ` +
       `identity, which the clearing job had nowhere else to read from, e.g. ${slugInGeometry.slice(0, 4).join(", ")}`);
+
+  // REPORTED, never gated, and named rather than merely filtered. `standingOnly`
+  // takes these rows out of the comparison; a filter nobody can see is how a
+  // count goes quietly wrong, so the number the gate stopped comparing is stated
+  // beside the verdict it is not part of.
+  const retiredRows = all.filter((r) => r.status === "retired");
+  if (retiredRows.length)
+    provenance.push(`${retiredRows.length} mark(s) stand RETIRED and are absent from 1.0's register by DEC-15 — ` +
+      `terminal supersession, compared as absent, their life in \`acts\`: ${retiredRows.slice(0, 4).map((r) => r.slug).join(", ")}`);
 
   return { substance: [...substance, ...staleTier], provenance };
 }
@@ -831,6 +1100,32 @@ export async function canFailProof(client, era, worldRepo) {
      VALUES (gen_random_uuid(), 'forged/never-published', 'sited', 'nobody', NULL, '',
              '{"at":{"x":0,"y":0},"extent":{"w":1,"h":1}}'::jsonb, '((-0.5,-0.5),(0.5,0.5))'::box,
              'standing', $1, '{}'::jsonb)`, [era.window.id]);
+  // ── DEC-15'S OWN BREAK: UN-RETIRE ONE (2026-09-04) ─────────────────────────
+  //
+  // The four mangles above prove the gate sees a mark's SUBSTANCE. The
+  // retirement is a fifth thing it must see and none of them touches it:
+  // `standingOnly` narrows what the comparator is handed, and a narrowing is
+  // exactly the shape of change that can go green for the wrong reason — a
+  // filter that dropped too much would hide a real divergence and look like a
+  // passing gate.
+  //
+  // So put the mark back on its feet. A mark 1.0's register does not carry,
+  // standing in the store, must read EXTRA in DB. If it does not, the filter is
+  // hiding rows rather than classifying them, and the whole ruling's parity
+  // claim is unfounded.
+  //
+  // UN-retire rather than retire: retiring an extra mark would also be caught by
+  // the MISSING half, so it could pass on the older code. This one cannot.
+  const retiredRow = (await client.query(
+    "SELECT slug FROM marks WHERE status = 'retired' ORDER BY slug LIMIT 1")).rows[0];
+  const retirement = { checked: false };
+  if (retiredRow) {
+    retirement.checked = true;
+    retirement.slug = retiredRow.slug;
+    await mangle(`UN-RETIRE ${retiredRow.slug} (DEC-15's terminal supersession undone — the mark stands again)`,
+      "UPDATE marks SET status = 'standing' WHERE slug = $1", [retiredRow.slug]);
+  }
+
   // The acts half. `acts` refuses UPDATE and DELETE from every pen (002's
   // `acts_append_only` trigger), which is the law working — so the only shape of
   // act drift the owner can provoke is an EXTRA row, and that is the one this
@@ -885,7 +1180,7 @@ export async function canFailProof(client, era, worldRepo) {
 
   const after = await parityFindings(client, era);
   const silent = results.filter((r) => !r.findings.length);
-  return { results, restored: after.substance.length === 0, silent, dedupe };
+  return { results, restored: after.substance.length === 0, silent, dedupe, retirement };
 }
 
 // ── the store's state, and the refusal ───────────────────────────────────────
@@ -1018,7 +1313,13 @@ async function main() {
       const window = eraWindow({ toDir: to.dir, lawSha: b.to.sha, townSha });
       window.closes_at = commitDate2(worldRepo, b.to.sha);
       const acts = eraActs({ fromDir: from.dir, toDir: to.dir });
-      const claims = await eraClaims({ fromDir: from.dir, toDir: to.dir, window });
+      // The acts go IN as well as out: DEC-15 case (a) is decided by whether this
+      // era's own log already carries the `withdraw`, and the shas are what case
+      // (b) attributes the removal to.
+      const claims = await eraClaims({
+        fromDir: from.dir, toDir: to.dir, window, acts,
+        worldRepo, fromSha: b.from.sha, toSha: b.to.sha,
+      });
       // The settlement's own receipt, held against what we derived from its outcome.
       const subject = git(worldRepo, "log", "-1", "--format=%s", b.to.sha);
       const six = sixCountOf(subject);
@@ -1039,6 +1340,18 @@ async function main() {
     console.log(`   acts   ${String(e.acts.rows.length).padStart(4)}  ${JSON.stringify(e.acts.byType)} · crossings ${e.acts.crossings.join(", ") || "—"}`);
     console.log(`   claims ${String(e.claims.length).padStart(4)}  ${e.added.length} added · ${e.amended.length} amended`);
     if (e.amended.length) console.log(`          amended: ${e.amended.map((x) => x.mark.slug).join(", ")}`);
+    if (e.retired.length) {
+      const ruled = e.retired.filter((r) => !isUnruled(r));
+      console.log(`   retired ${String(ruled.length).padStart(4)}  (DEC-15 — a standing mark that left the register)` +
+        (e.unruled.length ? ` · ${e.unruled.length} UNRULED` : ""));
+      for (const r of e.retired) {
+        console.log(`          ${r.slug} — ${r.case === "a"
+          ? `(a) withdrawn in the log · ${r.act.actor} @ ${r.act.at}`
+          : r.case === "b"
+            ? `(b) the founder's hand · ${r.commit.sha.slice(0, 9)} (${r.commit.at}) — one \`withdraw\` by the-town synthesised`
+            : `⚠ UNRULED — ${r.why}: ${r.detail}`}`);
+      }
+    }
     console.log(`   receipt ${e.receipt.checked ? (e.receipt.ok ? `AGREES — the settlement's six-count says ${e.receipt.six.published} published` : `DISAGREES — ${e.receipt.why}`) : `UNCHECKABLE — ${e.receipt.why}`}`);
     const w = doorWitness(e);
     if (w.total) {
@@ -1054,7 +1367,24 @@ async function main() {
         tag: e.to.tag, sha: e.to.sha, window: e.window.id, closes_at: e.window.closes_at,
         acts: e.acts.rows.length, acts_by_type: e.acts.byType,
         claims: e.claims.length, added: e.added.map((m) => m.slug), amended: e.amended.map((x) => x.mark.slug),
+        retired: e.retired.map((r) => ({
+          slug: r.slug, case: r.case, why: r.why, path: r.path,
+          retired_by: r.commit?.sha ?? null, subject: r.commit?.subject ?? null,
+          synthesises_act: Boolean(r.synthesised), becomes: r.becomes ?? null, detail: r.detail ?? null,
+        })),
       })), null, 2));
+    }
+    // A dry run whose eras cannot be written must not read like one that can.
+    const blocked = eras.filter((e) => e.unruled.length);
+    if (blocked.length) {
+      console.log(`\nREFUSED · ${blocked.reduce((n, e) => n + e.unruled.length, 0)} departure(s) in ` +
+        `${blocked.length} era(s) are NOT the transition DEC-15 ruled on, and no era carrying one can be written:`);
+      for (const e of blocked) {
+        for (const r of e.unruled) console.log(`  ${e.to.tag}  ${r.slug} — ${r.why}: ${r.detail}`);
+      }
+      console.log(`\nEach one wants a ruling of its own. Nothing was written; nothing could have been.`);
+      assertHeadUnmoved(worldRepo, headBefore);
+      process.exit(1);
     }
     console.log("\ndry-run · nothing written, no connection opened");
     assertHeadUnmoved(worldRepo, headBefore);
@@ -1080,6 +1410,10 @@ async function main() {
         for (const f of r.findings.slice(0, 2)) console.log(`  ${f.split("\n").join("\n  ")}`);
       }
       console.log(proof.restored ? "GREEN after rollback — the mangles left no trace" : "RED after rollback — THE PROOF DID NOT CLEAN UP");
+      if (!proof.retirement.checked) {
+        console.log("SKIPPED the retirement break — this store holds no retired mark to un-retire " +
+          "(no era replayed so far removed a standing mark; DEC-15's filter is UNPROVED here)");
+      }
       if (!proof.dedupe.checked) {
         console.log("SKIPPED the dedupe proof — this era derived no acts to inject a duplicate of");
       } else {
@@ -1130,6 +1464,19 @@ async function main() {
         continue;
       }
 
+      // DEC-15 rules ONE transition, and an era carrying a departure of any other
+      // shape is not replayable by it. This is the old `eraClaims` throw, moved to
+      // where it costs nothing to have seen the whole range first.
+      if (e.unruled.length) {
+        throw new Error(
+          `${e.to.tag}: ${e.unruled.length} mark(s) left the register in a way DEC-15 does not rule on, so this ` +
+          `era cannot be replayed:\n` +
+          e.unruled.map((r) => `  ${r.slug} — ${r.why}: ${r.detail}`).join("\n") +
+          `\n\nDEC-15 rules a standing mark whose RECORD LEFT CANON. Writing these as retirements would put a ` +
+          `\`withdraw\` in the log for a mark nobody withdrew. Run --dry-run for the whole range's list, and take ` +
+          `it to a ruling.`);
+      }
+
       // The window this era clears must be the one the store has open — asked
       // FRESH each era, because the previous era's clearing opened its successor.
       const live = (await client.query("SELECT id, opens_at, status FROM windows WHERE status = 'open'")).rows;
@@ -1145,16 +1492,50 @@ async function main() {
       }
 
       // (a) + (b), one transaction: the era's acts and its docket, or neither.
+      // Since DEC-15 the retirements ride in it too — the log line and the flipped
+      // status are one event and must not be separable by a crash.
       let acted = { inserted: 0, skipped: 0, byAction: {} };
+      const synthesised = e.retired.map((r) => r.synthesised).filter(Boolean);
       await client.query("BEGIN");
       try {
         // The window closed when the settlement landed. `opens_at` is not touched:
         // 005_candle_tiling's trigger owns it, and it is already the predecessor's close.
         await client.query("UPDATE windows SET closes_at = $2 WHERE id = $1", [e.window.id, e.window.closes_at]);
-        acted = await insertActs(client, e.acts.rows);
+        // The synthesised withdraws go through the SAME `insertActs` — not a
+        // second INSERT beside it — so the dedupe judges them like any row and a
+        // re-run of an era cannot write a founder's retirement twice.
+        acted = await insertActs(client, [...e.acts.rows, ...synthesised]);
         await insertClaims(client, e.claims);
+
+        // THE RETIREMENT, last, and refusing rather than skipping. A row the
+        // register says left must be STANDING here: anything else means the store
+        // and the register disagree about what the world was before this era, and
+        // that is a finding, not a no-op. `UPDATE … WHERE status = 'standing'`
+        // alone would report the disagreement as zero rows changed, which is the
+        // silence this whole tool is against — so the row is read first and the
+        // refusal says which of the two shapes it is.
+        for (const r of e.retired) {
+          const cur = (await client.query("SELECT status FROM marks WHERE slug = $1", [r.slug])).rows[0];
+          if (!cur) {
+            throw new Error(`${e.to.tag}: 1.0's register carried ${r.slug} at ${e.from.tag} and this era retires it, ` +
+              `but the store holds no such mark at all — the store is not where its checkout says it is.`);
+          }
+          if (cur.status !== "standing") {
+            throw new Error(`${e.to.tag}: ${r.slug} is '${cur.status}' in the store and DEC-15 retires a STANDING mark. ` +
+              `The store disagrees with the register about this row; that is a finding, and this era refuses ` +
+              `rather than writing over it.`);
+          }
+          await client.query(
+            "UPDATE marks SET status = 'retired', locked_window = $2 WHERE slug = $1 AND status = 'standing'",
+            [r.slug, e.window.id]);
+        }
         await client.query("COMMIT");
       } catch (err) { await client.query("ROLLBACK"); throw err; }
+      for (const r of e.retired) {
+        console.log(`  retired ${r.slug} at window ${e.window.id} — ${r.case === "a"
+          ? `(a) the era's own \`withdraw\` act is the retirement`
+          : `(b) the founder's hand, ${r.commit.sha.slice(0, 9)}; one \`withdraw\` by the-town synthesised into the log`}`);
+      }
       console.log(`  ingested: ${acted.inserted} act(s), ${e.claims.length} claim(s) pending` +
         (acted.skipped
           ? `\n  skipped ${acted.skipped} act(s) the store already holds — the pen wrote them on a flipped lane and ` +
@@ -1188,6 +1569,7 @@ async function main() {
         tag: e.to.tag, window: e.window.id, skipped: false,
         acts_ingested: e.acts.rows.length, claims_ingested: e.claims.length,
         added: e.added.map((m) => m.slug), amended: e.amended.map((x) => x.mark.slug),
+        retired: e.retired.map((r) => ({ slug: r.slug, case: r.case, retired_by: r.commit?.sha ?? null })),
         clearing: cleared.out, clearing_ok: cleared.ok,
         refusals: refusals.map((r) => ({ slug: r.slug, status: r.status, check: r.refusal_check })),
         substance: parity.substance, provenance: parity.provenance, acts: actsF,

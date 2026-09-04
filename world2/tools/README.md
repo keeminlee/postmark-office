@@ -1032,10 +1032,47 @@ a row, and a Set would let a dropped copy hide.
 **The claim set comes from the settlement's own outcome** — the register diff at
 S(k-1) vs S(k), read by `deriveSeed` at each tag, so a claim and the mark it
 materializes are one record wearing two table names. Added → a claim; changed →
-a claim carrying `supersedes`; **removed → the replay STOPS**, because the
-six-count has no transition for a standing mark leaving (its
-"unpublished/quarantined" is a draft that never stood) and inventing one would
-make the verdict a statement about the invention.
+a claim carrying `supersedes`; **removed → a RETIREMENT** (DEC-15, 2026-09-04 —
+PROPOSED, awaiting the founder's word).
+
+That last one stopped the replay until 2026-09-04, and the refusal was right for
+as long as it lasted: "the refusal exists so that the first one is seen." It was
+seen on the first full-range dry run (S47 → S55), and DEC-15 is the ruling —
+a standing mark that leaves the register is the revision family's **terminal
+supersession** (founder-ruled 2026-08-19: *"the record leaves canon, its whole
+life stays in the log"*), which the store already spells
+(`marks.status IN ('standing','retired')`) and the door already performs
+(`withdrawMarkViaOffice`). The replay marks the row `retired` at the era's
+window, and the log keeps the whole life either way:
+
+| case | what happened | what the replay writes |
+|---|---|---|
+| **(a)** withdrawn in the log | a resident's own `withdraw` act names the slug | nothing extra — that act **is** the retirement, already replayed |
+| **(b)** the founder's hand | a commit on world `main` deleted the record; no door, no act | one `withdraw` by `the-town`, carrying `payload.retired_by = <sha>` and the commit's subject |
+
+The old refusal's stated reason was **wrong on the record**, and the correction
+matters: the six-count *does* have a transition for a standing mark leaving —
+`(\d+) withdrawn`, which `sixCountOf` has always parsed. S55's receipt reads
+`1 withdrawn`, and that one is `vermillion/the-track-garage`, whose `withdraw`
+act sits in the era's log. Only case (b) — a hand on `main`, which passes no door
+and enters no sweep — is genuinely uncounted, which is why the `published` check
+is untouched.
+
+**The refusal did not go away; it moved and got narrower.** A departure of any
+*other* shape is UNRULED and its era cannot be written. The first one is already
+here: `the-town/the-lit-name` at S52, where world `17103dc37` *modified* the file
+rather than deleting it — `by:` changed, and since a mark's id is `by + leaf` the
+slug refolded while the record stayed in canon. That is a re-identification, not
+a retirement, and it wants a ruling of its own. Derivation now classifies every
+departure and `--dry-run` exits 1 naming them all, so one run shows the founder
+the whole class instead of stopping at its first member.
+
+The parity gate compares **standing rows only** (`standingOnly`): 1.0's register
+is a set of files and a removed file leaves no row, while 2.0 keeps the row and
+flips `status` — the same register said two ways. Both refusals survive the
+narrowing: a retired row the register still carries reads MISSING in DB, and a
+standing row the register lacks reads EXTRA in DB. `--can-fail-proof` un-retires
+one retired mark and requires the gate to go red for it.
 
 Two receipts hold the derivation to the town's own record, and one of them
 already earned its keep:
