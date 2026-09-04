@@ -242,20 +242,55 @@ export async function insertAct(client, rowIn, seq = null) {
 /**
  * THE FLIPPED WRITE — Postgres first, awaited, refusable.
  *
- * `claimFn(client, actId)` is the candle half when the act is mark-class:
- * same client, same transaction (R1). Throws PenUnreachableError on any
- * failure to reach or commit — by which point NOTHING is written: the
+ * `claimFn(client, actId, household)` is the candle half when the act is
+ * mark-class: same client, same transaction (R1). Throws PenUnreachableError on
+ * any failure to reach or commit — by which point NOTHING is written: the
  * transaction rolled back, and the sqlite reverse mirror has not run because
  * the caller only runs it after this returns.
+ *
+ * ── THREE ARGUMENTS, NOT TWO (the mark lane, 2026-09-04) ────────────────────
+ *
+ * `claimFn` is handed the household as its third argument, which is the shape
+ * `shadowWrite` has always used. Before the mark lane needed this path the two
+ * spellings could differ unnoticed, because the only claimFn in the tree rode
+ * the shadow arm; the flipped arm's two-argument call would have handed
+ * `claimTxFromJournal` an `undefined` household and written a draft row scoped
+ * to nobody — which 007's `claims_insert` WITH CHECK refuses outright, so the
+ * first live private draft on a flipped lane would have bounced. One spelling,
+ * both eras, and the falsifier's own lesson about one fact spelled two ways.
+ *
+ * ── `act: false` — A CLAIM WITH NO DEED, ON PURPOSE ─────────────────────────
+ *
+ * Phase 5.6's private draft is the one row this pen writes that must NOT reach
+ * `acts`: `acts` is the table that leaves the box (the notary exports
+ * archives/acts/<window>.jsonl into a public git repo, frozen on write) and a
+ * leave-mark's payload carries the mark's BODY. The act is carried on the claim
+ * instead (`data._deferred_act`) and released at the stake.
+ *
+ * That arm used to be a SECOND QUEUE on a second pool — `submitClaimFromJournal`
+ * — and DESIGN §2 R1's own header claimed to have ended exactly that: "the
+ * two-queue disease … ends here: both eras' Postgres writes route through
+ * `officeWrite`." It did not end for this one, and the cost was measured rather
+ * than theorised: a withdrawal's DELETE ran 113 ms ahead of the INSERT it was
+ * meant to remove, five times out of five on fresh stores, leaving the
+ * resident's withdrawn draft standing on the docket with its slug still taken
+ * (jetto-b1-guards-report 2026-09-03 § Finding 1). `act: false` is what lets
+ * the private arm ride THIS queue and THIS transaction, so a compose and its
+ * own withdrawal cannot overtake each other in either era.
  */
-export async function penWrite(row, { claimFn = null, household = null, env = process.env } = {}) {
+export async function penWrite(row, { claimFn = null, household = null, act = true, env = process.env } = {}) {
   try {
+    // A resolver, resolved BEFORE the transaction opens — same reason
+    // `shadowWrite` does it there: officeWrite declares `app.household` at
+    // BEGIN, and a resolver running inside would be a query on a second
+    // connection while this one holds the transaction open.
+    const hh = typeof household === "function" ? await household() : household;
     return await officeWrite(async (client) => {
-      const actId = await insertAct(client, row, null);
-      if (claimFn) await claimFn(client, actId);
+      const actId = act ? await insertAct(client, row, null) : null;
+      if (claimFn) await claimFn(client, actId, hh);
       state.written += 1;
       return { actId };
-    }, { household, env });
+    }, { household: hh, env });
   } catch (err) {
     if (err?.name === "LateCrossingError") throw err; // the pen REFUSED, it was not unreachable — the door says which
     state.refused += 1;
@@ -272,7 +307,7 @@ export async function penWrite(row, { claimFn = null, household = null, env = pr
  * sqlite journal is still the SoT on an unflipped lane (world2-acts.mjs §
  * WRITE DISCIPLINE — that sentence keeps governing this path).
  */
-export function shadowWrite(row, seq, { claimFn = null, household = null, env = process.env } = {}) {
+export function shadowWrite(row, seq, { claimFn = null, household = null, act = true, env = process.env } = {}) {
   if (!world2Enabled(env)) return;
   state.queue = state.queue.then(async () => {
     try {
@@ -282,7 +317,10 @@ export function shadowWrite(row, seq, { claimFn = null, household = null, env = 
       // would be a query on a second connection while this one holds BEGIN.
       const hh = typeof household === "function" ? await household() : household;
       await officeWrite(async (client) => {
-        const actId = await insertAct(client, row, seq);
+        // `act: false` is the private draft (penWrite § the same option): its
+        // claim rides this queue so it is ORDERED against its own withdrawal,
+        // and its body never reaches the table that leaves the box.
+        const actId = act ? await insertAct(client, row, seq) : null;
         if (claimFn) await claimFn(client, actId, hh);
       }, { household: hh, env });
       state.written += 1;

@@ -89,7 +89,14 @@ const arg = (name) => {
 };
 const has = (name) => process.argv.includes(name);
 
-export const LANE_CLASSES = { stance: ["stance"], say: ["voice"], hold: ["holding"], walk: ["move"] };
+// The act classes each lane owns, for the reverse-parity arm's `--lanes`.
+// `mark` added 2026-09-04 with C6's wiring: without a row here the arm answers
+// "no known lane in mark" and exits 2, so the lane would have been flippable and
+// uncheckable in the same breath.
+//
+// NOTE, not fixed here because it is C5's lane and DEC-5 gates it: `frame` has
+// no row either, so `--lanes frame` cannot run today.
+export const LANE_CLASSES = { stance: ["stance"], say: ["voice"], hold: ["holding"], walk: ["move"], mark: ["mark"] };
 
 // ── finding 2: the since each lane is asked about ────────────────────────────
 
@@ -261,8 +268,10 @@ async function proveRefusal() {
   // Every WIRED lane, each under its own flag: the ordering is a property of
   // appendActFlipped, but the flag is read per lane, so each is proven with
   // W2_PEN naming it alone (a lane proven only under W2_PEN=all would not
-  // prove its own name is read). hold + say wired 2026-09-03 (runbook C2/C4).
-  for (const [lane, cls, action] of [["stance", "stance", "declare-stance-on"], ["hold", "holding", "take"], ["say", "voice", "say"], ["walk", "move", "walk"], ["frame", "frame", "enter"]]) {
+  // prove its own name is read). hold + say wired 2026-09-03 (runbook C2/C4);
+  // mark wired 2026-09-04 (C6) — the candle lane, moved here out of the
+  // by-name refusals below in the same change that wired its call site.
+  for (const [lane, cls, action] of [["stance", "stance", "declare-stance-on"], ["hold", "holding", "take"], ["say", "voice", "say"], ["walk", "move", "walk"], ["frame", "frame", "enter"], ["mark", "mark", "leave-mark"]]) {
     process.env.W2_PEN = lane;
     let refused = null;
     try {
@@ -279,18 +288,56 @@ async function proveRefusal() {
     }
     console.log(`GREEN (refusal proof, ${lane}): the unreachable pen refused with the ruled sentence ("${refused.message}") and the journal holds 0 rows — nothing was written, and nothing was lost.`);
   }
+  // ── THE MARK LANE WITH ITS CANDLE LIT (C6, 2026-09-04) ────────────────────
+  //
+  // The loop above proves the mark lane's ordering with the docket switched
+  // off, which is the easy half: with no `claimFn` the write is one INSERT and
+  // the refusal is the same refusal every other lane makes. C6's actual claim
+  // is about the HARD half — that the candle rides `penWrite`'s own transaction
+  // — and a probe that never lights the candle cannot fail on it. So the same
+  // row is put again with WORLD2_CANDLE=1: the household resolver and the
+  // docket write are both inside the refusable region now, and an unreachable
+  // pen must still leave the journal empty rather than half-written.
+  {
+    process.env.W2_PEN = "mark";
+    process.env.WORLD2_CANDLE = "1";
+    let refused = null;
+    try {
+      await appendActFlipped(db, {
+        actor: "probe", action: "leave-mark", object: "probe/x", cls: "mark",
+        payload: { by: "probe", slug: "x", kind: "sited", body: "probe", stamps: 1, put_forward: true },
+      });
+    } catch (err) { refused = err; }
+    const n = db.prepare("SELECT count(*) AS n FROM journal").get().n;
+    delete process.env.WORLD2_CANDLE;
+    if (!refused || refused.name !== "PenUnreachableError") {
+      console.error(`RED (refusal, mark+candle): an unreachable pen did not refuse with PenUnreachableError (got: ${refused ? refused.name + " — " + refused.message : "no error at all"})`);
+      process.exit(1);
+    }
+    if (Number(n) !== 0) {
+      console.error(`RED (ordering, mark+candle): the refusal left ${n} row(s) in the journal — an act with no docket is F2 self-inflicted, by the flip's own hand`);
+      process.exit(1);
+    }
+    console.log("GREEN (refusal proof, mark+candle): with WORLD2_CANDLE=1 the docket half rides the same refusable transaction — the unreachable pen refused and the journal holds 0 rows.");
+  }
+
   process.env.W2_PEN = "stance";
 
-  // ── the lanes refused BY NAME, each with its own reason ───────────────────
+  // ── the lane refused BY NAME, with its reason ─────────────────────────────
   //
-  // `mark` is refused by UNREADINESS (its candle half must ride penWrite's
-  // transaction); `arena` is refused by RULING (founder, 2026-08-29: "we can
-  // just keep the arena on sqlite for now" — the hardened rebuild lands
-  // 2.0-native instead of a port). Both must refuse BEFORE the pen is even
-  // tried — a W2_PEN=all sweep must not carry either along — so this probe
-  // points the pen at the same dead port and asserts the refusal is the named
-  // one, not PenUnreachableError: proof the lane never reached the pen at all.
-  for (const [cls, why] of [["mark", "candle half"], ["arena-act", "founder ruling"]]) {
+  // `arena` is refused by RULING (founder, 2026-08-29: "we can just keep the
+  // arena on sqlite for now" — the hardened rebuild lands 2.0-native instead of
+  // a port). It must refuse BEFORE the pen is even tried — a W2_PEN=all sweep
+  // must not carry it along — so this probe points the pen at the same dead
+  // port and asserts the refusal is the named one, not PenUnreachableError:
+  // proof the lane never reached the pen at all.
+  //
+  // `mark` USED TO STAND HERE, refused for unreadiness ("its candle half must
+  // ride penWrite's own transaction"). It was wired on 2026-09-04 and moved
+  // into the loop above in the same change, because a refusal left standing
+  // over a wired path is a lie in the other direction. What is left in this
+  // loop is exactly the set DEC-2 calls exempt BY RULING.
+  for (const [cls, why] of [["arena-act", "founder ruling"]]) {
     let named = null;
     try {
       await appendActFlipped(db, { actor: "probe", action: "probe", object: "x/y", cls });
@@ -305,7 +352,7 @@ async function proveRefusal() {
       process.exit(1);
     }
   }
-  console.log("GREEN (by-name refusals): mark (unreadiness) and arena (founder ruling, 2026-08-29) both refuse before the pen is tried, and the journal holds 0 rows.");
+  console.log("GREEN (by-name refusal): arena (founder ruling, 2026-08-29) refuses before the pen is tried, and the journal holds 0 rows. mark no longer stands here — it was wired 2026-09-04 (C6) and is proven in the ordering loop above.");
   process.exit(0);
 }
 

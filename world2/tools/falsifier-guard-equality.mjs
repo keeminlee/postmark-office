@@ -302,6 +302,43 @@ function sameMark(a, b) {
   for (const k of keys) {
     if (k in SEAM_KEYS || PORT_ONLY_KEYS.has(k)) continue;
     const x = a[k], y = b[k];
+    // ── `seq` ON A FLIPPED LANE: 1.0 HAS ONE, 2.0 CANNOT (C6, 2026-09-04) ──
+    //
+    // Held out NARROWLY — only where the port has no seq and 1.0 does, which is
+    // exactly the flipped-era row and nothing else. On the shadow lane both
+    // sides carry the number and it is still compared, so this buys the flip
+    // nothing it did not have to pay for.
+    //
+    // Why the port cannot have it: on a flipped lane the claim is written
+    // INSIDE the pen's transaction, and the sqlite reverse-mirror row does not
+    // exist yet — `appendActFlipped` inserts it only after that transaction
+    // commits. So at the moment the claim is written there is no seq to carry,
+    // and inventing one would need a second write to the claim after the
+    // commit: the atomicity hole R1 closed, reopened to satisfy a comparison.
+    //
+    // And it is bookkeeping rather than a fact about the mark. 001_tables.sql
+    // calls journal_seq "the shadow-era pairing key, dying at cutover", and the
+    // journal itself dies with the reverse mirror — a column scheduled to stop
+    // existing is not the thing to red a guard-equality run over. The act↔claim
+    // pairing that DOES matter moved to `data->>'_act_id'` in the same change
+    // (src/world2-claims.mjs § `_act_id`).
+    //
+    // WITHOUT THIS the first guard-equality run after the mark lane flips goes
+    // red on every live mark, for a difference that is the flip working.
+    //
+    // WHAT IT COSTS, said rather than glossed: the mark shape alone cannot tell
+    // a flipped-era claim from a shadow-era claim whose `_journal_seq` went
+    // missing, so this also stops catching that second thing. It is a real
+    // weakening of a real check, accepted knowingly — the pairing this was
+    // protecting is `_act_id`'s job now, and the column it turns on dies at the
+    // cutover. If a narrower discriminator ever exists, tighten it.
+    //
+    // test/guard-equality-flipped-seq.test.mjs pins the fact underneath this at
+    // the layer that causes it (`guard-reads.liveMarkOf`), because this file is
+    // a script with no entry guard and cannot be imported to test the line
+    // itself. `falsifier-pen-flip.mjs` has such a guard; giving this one the
+    // same would make its pure halves testable.
+    if (k === "seq" && y == null && x != null) continue;
     // `null` and absent are the SAME. 1.0 spreads a payload that simply lacks a
     // key; the port reassembles from columns that hold NULL. Treating those as a
     // divergence would make every row red for a difference that is not one.
