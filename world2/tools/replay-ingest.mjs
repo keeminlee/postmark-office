@@ -15,10 +15,14 @@
 // same register. So for each settlement S(k) the harness does four things:
 //
 //   (a) ACTS — the era's STATE/log rows become `acts`, by seed-import's own
-//       `deriveActs`. The era is the multiset DIFFERENCE between the two tags,
-//       because 1.0 appends to a crossing's log file AFTER the settlement that
-//       preceded it (S47→S48 adds 34 rows to `150.jsonl`, a file that already
-//       existed at S47 — see `eraActs`).
+//       `deriveActs`, MINUS the ones the store already holds. The era is the
+//       multiset DIFFERENCE between the two tags, because 1.0 appends to a
+//       crossing's log file AFTER the settlement that preceded it (S47→S48 adds
+//       34 rows to `150.jsonl`, a file that already existed at S47 — see
+//       `eraActs`). Since the first pen flip (stance, 2026-09-02) the log is
+//       also a photograph of rows Postgres already wrote, so the derived set and
+//       the store OVERLAP; `insertActs` dedupes by (actor, action, written_at)
+//       and reports what it skipped. See its own note.
 //
 //   (b) CLAIMS — the era's claim set is derived from the settlement's OWN
 //       OUTCOME: the difference between the marks registers at S(k-1) and S(k),
@@ -110,7 +114,9 @@
 //   --town-sha <sha>         the town half of the pin, when a receipt names one
 //   --continue               eras already in the store are VERIFIED, then skipped
 //   --can-fail-proof         mangle the replayed register inside a ROLLED-BACK
-//                            transaction and require the gate to go red for each
+//                            transaction and require the gate to go red for each;
+//                            also injects a duplicate act, in the PEN's spelling,
+//                            and requires the ingest's dedupe to catch it
 //   --dry-run                derive and report; open no connection, write nothing
 //   --json                   machine-readable verdict
 //
@@ -494,9 +500,114 @@ export function eraWindow({ toDir, lawSha, townSha }) {
 
 const CHUNK = 500;
 
+// ── THE PEN'S OWN ROWS ARE ALREADY IN THE STORE (the flip's seam, 2026-09-03) ─
+//
+// From w2-hold-say-flip-report.md § Gate 5 item 2, verbatim: "`world-drain`'s
+// logs half photographs EVERY row into `STATE/log/<crossing>.jsonl` at the
+// crossing-save. So the public world repo's log gains say/holding lines it never
+// carried. ⚠ The consumer that assumes otherwise: `replay-ingest` (a) 'the era's
+// STATE/log rows become `acts`' via `deriveActs` (journal_seq NULL, no dedupe
+// against the pen's rows). At F1 (cutover-eve replay-parity) a flipped-era row
+// would be derived a second time."
+//
+// It is the STANCE lane's seam too, since 2026-09-02, and it widens with every
+// lane that flips. `deriveActs` reads a photograph of the journal; a flipped
+// lane's journal row is the REVERSE MIRROR of an act Postgres already holds. So
+// after a flip, one act exists twice in the sources this tool reads, and without
+// this dedupe the replay would write it twice — silently, because `acts` is
+// append-only and has no uniqueness the store could refuse on.
+//
+// THE DROPPED ALTERNATIVE, and why: have the drain skip flipped lanes' rows.
+// That keeps the ingest naive at the cost of tearing holes in 1.0's photograph —
+// the public record of the town would stop carrying what residents said. The
+// report's recommendation was "dedupe in replay; the photograph stays whole",
+// and this is that.
+
+/**
+ * THE KEY, AND THE ONE NORMALIZATION IT MAKES.
+ *
+ * (actor, action, written_at) — the lane-closure way, quoted from that
+ * falsifier's matcher rather than reinvented, and the shape the flip report
+ * teed.
+ *
+ * `legacy:` IS STRIPPED, and that is the whole reason a naive key would not
+ * work. `deriveActs` spells a derived row's action `legacy:<type>` ("a census
+ * keeps 2,400 imported rows from voting in a vocabulary they predate"), while
+ * the pen writes the verb bare — `say`, `take`, `declare-stance-on`. The two
+ * spellings ARE the same act; a key that did not know that would call every
+ * flipped-era row fresh and insert it, which is the defect. Stripping on both
+ * sides also makes the key idempotent against a store that already holds
+ * previously-derived `legacy:` rows.
+ *
+ * `object` is deliberately NOT in the key. The drain photographs it and
+ * `deriveActs` sets it NULL by design (the log states an emission's own id, not
+ * a thing acted upon), so including it would make every pair miss. Actor +
+ * action + instant is already tight: two acts by one actor of one verb in the
+ * same millisecond are one act, and the town's clock has never produced
+ * otherwise. If it ever does, this dedupe would drop a real row — so the count
+ * it reports is not decoration, it is the number an operator checks.
+ */
+export const actDedupeKey = (actor, action, at) => JSON.stringify([
+  String(actor),
+  String(action).replace(/^legacy:/, ""),
+  new Date(at).toISOString(),
+]);
+
+/**
+ * Split derived rows into the ones the store does not have and the ones it does.
+ *
+ * Pure, and separately testable for that reason: the DB half of this tool is
+ * proved on the box, but WHICH ROWS ARE DUPLICATES is a decision that must be
+ * readable without a database (test/world2-replay-ingest.test.mjs's own contract).
+ *
+ * Duplicates WITHIN `rows` are kept, all of them. The multiset difference in
+ * `eraActs` exists because "the town's record genuinely repeats a row (the
+ * frozen walk ledger carries one departure twice, byte for byte)" — collapsing
+ * those here would undo AB-P3's lesson one file over. This skips only what the
+ * STORE already holds.
+ */
+export function partitionNewActs(rows, existingKeys) {
+  const fresh = [];
+  const skipped = [];
+  for (const a of rows) {
+    if (existingKeys.has(actDedupeKey(a.actor, a.action, a.at))) skipped.push(a);
+    else fresh.push(a);
+  }
+  const byAction = {};
+  for (const a of skipped) byAction[a.action] = (byAction[a.action] ?? 0) + 1;
+  return { fresh, skipped, byAction };
+}
+
+/**
+ * The keys `acts` already holds for the instants these rows cover.
+ *
+ * Bounded by the rows' own time span rather than reading the whole table: the
+ * store carries ~3,000 legacy rows and grows, and an era is tens. The bound is
+ * the min/max of the batch, inclusive, so a row cannot be missed by it.
+ */
+export async function existingActKeys(client, rows) {
+  const keys = new Set();
+  if (!rows.length) return keys;
+  const times = rows.map((a) => new Date(a.at).toISOString()).sort();
+  const { rows: have } = await client.query(
+    "SELECT actor, action, at FROM acts WHERE at >= $1 AND at <= $2", [times[0], times[times.length - 1]]);
+  for (const h of have) keys.add(actDedupeKey(h.actor, h.action, h.at));
+  return keys;
+}
+
+/**
+ * Insert the era's acts, skipping what the store already holds.
+ *
+ * Returns `{ inserted, skipped, byAction }` — a count, not a silence. A dedupe
+ * that reported nothing would be indistinguishable from a derivation that came
+ * up short, and the number of rows the pen already wrote for an era is exactly
+ * the number an operator needs to sanity-check against that era's flipped lanes.
+ */
 export async function insertActs(client, rows) {
-  for (let i = 0; i < rows.length; i += CHUNK) {
-    const slice = rows.slice(i, i + CHUNK);
+  const existing = await existingActKeys(client, rows);
+  const { fresh, skipped, byAction } = partitionNewActs(rows, existing);
+  for (let i = 0; i < fresh.length; i += CHUNK) {
+    const slice = fresh.slice(i, i + CHUNK);
     const values = []; const params = [];
     slice.forEach((a, n) => {
       const b = n * 13;
@@ -509,6 +620,7 @@ export async function insertActs(client, rows) {
                          witnesses, class, payload, effect, household)
        VALUES ${values.join(", ")}`, params);
   }
+  return { inserted: fresh.length, skipped: skipped.length, byAction };
 }
 
 /**
@@ -729,9 +841,51 @@ export async function canFailProof(client, era, worldRepo) {
      VALUES (now(), $1, 'nobody', 'legacy:forged', 'legacy', '{}'::jsonb)`,
     [era.acts.crossings[0] ?? era.window.id], "acts");
 
+  // ── THE DEDUPE'S OWN CAN-FAIL (the flip's seam, 2026-09-03) ────────────────
+  //
+  // The mangles above prove the PARITY gate can go red. The dedupe is a second
+  // gate with its own failure mode, and it needs its own flip: `insertActs`
+  // skipping nothing would look identical to a store that genuinely held
+  // nothing, and the only observable difference is a duplicate row nobody sees
+  // until F1 double-counts an era.
+  //
+  // So: take a row shape the store does NOT hold, watch the partition call it
+  // fresh; INSERT it with the PEN'S SPELLING of the action (bare verb, no
+  // `legacy:` prefix — the exact shape a flipped lane writes); watch the
+  // partition now call it a duplicate. Both directions, because a partition
+  // that answered "duplicate" to everything would pass the second half alone.
+  //
+  // The injected row is the pen's spelling on purpose: that is the join the
+  // naive key gets wrong, and a proof that only ever injected `legacy:say`
+  // would go green against a dedupe that never strips the prefix — proving the
+  // opposite of what F1 needs.
+  const victimAct = era.acts.rows[0];
+  const dedupe = { checked: false };
+  if (victimAct) {
+    const probe = {
+      ...victimAct,
+      actor: `${victimAct.actor}-canfail`,
+      at: new Date(victimAct.at).toISOString(),
+    };
+    const before = partitionNewActs([probe], await existingActKeys(client, [probe]));
+    await client.query("BEGIN");
+    try {
+      await client.query(
+        `INSERT INTO acts (at, crossing, actor, action, class, payload)
+         VALUES ($1, $2, $3, $4, 'legacy', '{}'::jsonb)`,
+        [probe.at, probe.crossing, probe.actor, String(probe.action).replace(/^legacy:/, "")]);
+      const during = partitionNewActs([probe], await existingActKeys(client, [probe]));
+      dedupe.checked = true;
+      dedupe.freshBefore = before.fresh.length === 1;
+      dedupe.skippedDuring = during.skipped.length === 1;
+      dedupe.ok = dedupe.freshBefore && dedupe.skippedDuring;
+      dedupe.probe = `${probe.actor} ${probe.action} @ ${probe.at}`;
+    } finally { await client.query("ROLLBACK"); }
+  }
+
   const after = await parityFindings(client, era);
   const silent = results.filter((r) => !r.findings.length);
-  return { results, restored: after.substance.length === 0, silent };
+  return { results, restored: after.substance.length === 0, silent, dedupe };
 }
 
 // ── the store's state, and the refusal ───────────────────────────────────────
@@ -926,7 +1080,14 @@ async function main() {
         for (const f of r.findings.slice(0, 2)) console.log(`  ${f.split("\n").join("\n  ")}`);
       }
       console.log(proof.restored ? "GREEN after rollback — the mangles left no trace" : "RED after rollback — THE PROOF DID NOT CLEAN UP");
-      const ok = proof.silent.length === 0 && proof.restored;
+      if (!proof.dedupe.checked) {
+        console.log("SKIPPED the dedupe proof — this era derived no acts to inject a duplicate of");
+      } else {
+        console.log(`${proof.dedupe.ok ? "GREEN" : "RED  "} dedupe: ${proof.dedupe.probe} read FRESH before the ` +
+          `duplicate was injected (${proof.dedupe.freshBefore}) and SKIPPED after it, with the pen's spelling of the ` +
+          `action rather than the derived one (${proof.dedupe.skippedDuring})`);
+      }
+      const ok = proof.silent.length === 0 && proof.restored && (!proof.dedupe.checked || proof.dedupe.ok);
       console.log(ok ? `\ncan-fail PROVEN at ${era.to.tag}: every mangle turned the gate red, and rollback restored green.`
         : `\ncan-fail NOT PROVEN: ${proof.silent.length} mangle(s) the gate did not notice.`);
       await client.end();
@@ -984,16 +1145,22 @@ async function main() {
       }
 
       // (a) + (b), one transaction: the era's acts and its docket, or neither.
+      let acted = { inserted: 0, skipped: 0, byAction: {} };
       await client.query("BEGIN");
       try {
         // The window closed when the settlement landed. `opens_at` is not touched:
         // 005_candle_tiling's trigger owns it, and it is already the predecessor's close.
         await client.query("UPDATE windows SET closes_at = $2 WHERE id = $1", [e.window.id, e.window.closes_at]);
-        await insertActs(client, e.acts.rows);
+        acted = await insertActs(client, e.acts.rows);
         await insertClaims(client, e.claims);
         await client.query("COMMIT");
       } catch (err) { await client.query("ROLLBACK"); throw err; }
-      console.log(`  ingested: ${e.acts.rows.length} act(s), ${e.claims.length} claim(s) pending`);
+      console.log(`  ingested: ${acted.inserted} act(s), ${e.claims.length} claim(s) pending` +
+        (acted.skipped
+          ? `\n  skipped ${acted.skipped} act(s) the store already holds — the pen wrote them on a flipped lane and ` +
+            `the drain photographed them into STATE/log, so this era derives them a second time: ` +
+            `${Object.entries(acted.byAction).map(([k, n]) => `${k}×${n}`).join(", ")}`
+          : ""));
 
       // (c) the law at this era's sha, by its own pen.
       const dir = checkoutAt(worldRepo, e.to.sha, "law");
