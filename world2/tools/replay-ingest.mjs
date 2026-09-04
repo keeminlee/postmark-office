@@ -66,6 +66,18 @@
 //       A departure of any OTHER shape still refuses the era, at the write rather
 //       than at derivation, so one dry run shows the founder the whole class.
 //
+//       AND WHERE THE HAND IS THE FOUNDER'S OWN, THE CLAIM IS AN ADMISSION
+//       (DEC-17, ruled 2026-09-04). A mark his commit on `main` put into the
+//       register — no door, no sweep — is not a resident's claim for the clearing
+//       job to adjudicate; it is canon already published, and a job that never
+//       saw it must not be allowed to refuse it. So the claim goes in `locked`,
+//       decided at the commit's own time, naming the commit in `data`, and the
+//       mark materialises in the same transaction through the clearing job's own
+//       `materializeClaims`. The same for an amend by that hand, superseding the
+//       standing mark. The six-count receipt is UNCHANGED by this: 1.0 never
+//       counted hand plantings either, which is why the disagreements it names
+//       are the accounting and not a fault.
+//
 //   (c) LAW + STAMPS at the era's sha, by the ingester's own pen — `law_ingest`
 //       against the S(k) checkout, so `law_projection` carries a row set stamped
 //       with that settlement's sha and the clearing computes against law as-of
@@ -171,6 +183,11 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   deriveSeed, deriveActs, genesisWindow, uuid5, compareMarks, canonicalJson, LOG_FILE,
 } from "./seed-import.mjs";
+// DEC-17's marks are materialised by THE SAME function the clearing job and the
+// review lane call, never a third way of turning a claim into a mark. See
+// `materialize.mjs`' own header: it was extracted the day a second lawful writer
+// of `marks` appeared, precisely so a third would import it instead of copying.
+import { materializeClaims } from "./materialize.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -828,16 +845,55 @@ export async function eraClaims({ fromDir, toDir, window, acts = null, worldRepo
     if (t.amended) amended.push({ mark: t.now, was: t.was, transfer: t });
   }
 
+  // ── DEC-17: THE HAND IS ASKED OF EVERY ERA, NOT ONLY A DISAGREEING ONE ─────
+  //
+  // `plantedByHand` was the receipt's DIAGNOSIS: it ran only when a six-count
+  // disagreed, because it costs a loader read plus a `git log` per added mark.
+  // That was right for a probe explaining a number and is wrong for a ruling:
+  // whether a mark is the founder's is a fact about the mark, not about whether
+  // its era's arithmetic happened to come out even.
+  //
+  // MEASURED BEFORE IT WAS BUILT (2026-09-04), because the brief asked whether
+  // an era with an agreeing receipt could carry a hand. Across S47 → S55 none
+  // does — but TWO ERAS THAT CARRY THE HAND ARE NEVER ASKED AT ALL, and neither
+  // is an agreeing one: windows 157 and 158 held NO SWEEP, so their receipt is
+  // unchecked (`checked: false`), the diagnosis never ran, and thirteen marks the
+  // founder planted derived as pending resident claims with nothing in the run
+  // naming them. A gate is not only blind where it disagrees; it is blind where
+  // it never looked.
+  //
+  // The shas are REQUIRED now, and the refusal says so, for the same reason the
+  // removals' refusal does: a call that cannot ask the question must not answer
+  // it by silence.
+  if ((added.length || amended.length) && (!worldRepo || !fromSha || !toSha)) {
+    throw new Error(
+      `this era carries ${added.length} addition(s) and ${amended.length} amend(s), and DEC-17 asks of each whether ` +
+      `the founder's own commit put it in the register — but this call passed no worldRepo/fromSha/toSha to ask git in.`);
+  }
+  const hand = await plantedByHand({ worldRepo, toDir, fromSha, toSha, added });
+  const handAmends = await amendedByHand({ worldRepo, toDir, fromSha, toSha, amended });
+  const plantedAt = new Map(hand.map((h) => [h.slug, h]));
+  const amendedAt = new Map(handAmends.map((h) => [h.slug, h]));
+
   const claim = (m, extra) => ({
     id: extra.id, window_id: window.id, class: m.kind, claimant: m.owner, household: m.household,
-    submitted_at: window.opens_at, status: "pending",
-    body: m.body, geometry: m.geometry, bbox: m.bbox, stake: 0, data: m.data, parent: m.parent,
+    submitted_at: window.opens_at,
+    // `pending` stays the default and every resident claim still gets it. Only a
+    // claim carrying an admission overrides, and it overrides all three together
+    // — a locked status with no `decided_at` would be a decision with no date.
+    status: extra.status ?? "pending",
+    decided_at: extra.decided_at ?? null,
+    body: m.body, geometry: m.geometry, bbox: m.bbox, stake: 0,
+    data: extra.data ?? m.data, parent: m.parent,
     slug: m.slug, supersedes: extra.supersedes ?? null,
     _mark: m,
   });
 
   const claims = [
-    ...added.map((m) => claim(m, { id: m.id })),
+    ...added.map((m) => {
+      const h = plantedAt.get(m.slug);
+      return claim(m, h ? { id: m.id, ...founderAdmission(m, h) } : { id: m.id });
+    }),
     // The mark's id IS its first locking claim's id, so it is what a later claim
     // supersedes — and the FK `claims.supersedes REFERENCES claims(id)` resolves,
     // because the seed wrote that claim row.
@@ -849,13 +905,22 @@ export async function eraClaims({ fromDir, toDir, window, acts = null, worldRepo
     // number no claim in the store carries, so the FK would refuse — and if it
     // somehow did not, the amend would supersede nothing. The rule was always
     // "supersedes the STANDING mark's locking claim"; `was` is the standing mark.
-    ...amended.map(({ mark, was }) => claim(mark, { id: amendId(mark.slug, window.id), supersedes: was.id })),
+    ...amended.map(({ mark, was }) => {
+      const h = amendedAt.get(mark.slug);
+      const base = { id: amendId(mark.slug, window.id), supersedes: was.id };
+      return claim(mark, h ? { ...base, ...founderAdmission(mark, h) } : base);
+    }),
   ].sort((x, y) => (x.slug < y.slug ? -1 : x.slug > y.slug ? 1 : 0));
 
   for (const t of transferred) t.synthesised = synthesisedTransfer({ ...t, window });
 
+  // The hand is NOT hung on the `added` / `amended` entries themselves, and that
+  // is a measurement rather than a taste: `added` holds the very objects in
+  // `after.marks`, which is returned below as `registerAfter` and IS the parity
+  // oracle. Annotating them would write our finding onto the thing we compare
+  // against. So the hand rides beside them, keyed by slug.
   return {
-    claims, added, amended, retired, transferred,
+    claims, added, amended, retired, transferred, hand, handAmends,
     unruled: retired.filter(isUnruled), registerAfter: after, registerBefore: before,
   };
 }
@@ -1030,10 +1095,66 @@ async function byHand({ worldRepo, toDir, fromSha, toSha, filter, slugs }) {
     const path = pathOf.get(slug);
     if (!path) continue;                       // no file to ask about; not a claim about the hand
     const c = commitTouching(worldRepo, { fromSha, toSha, path, filter });
-    if (c && !PUBLISH_SUBJECT.test(c.subject)) hand.push({ slug, sha: c.sha, subject: c.subject });
+    // `at` RIDES SINCE DEC-17. It was dropped here while the hand was only a
+    // count for the receipt's diagnosis; the admission needs it, because a claim
+    // the founder's hand locked is decided WHEN HIS COMMIT LANDED and not at
+    // replay time. `commitTouching` has carried it all along.
+    if (c && !PUBLISH_SUBJECT.test(c.subject)) hand.push({ slug, sha: c.sha, subject: c.subject, at: c.at });
   }
   return hand;
 }
+
+/**
+ * THE ADMISSION A FOUNDER'S COMMIT MAKES (DEC-17, RULED 2026-09-04).
+ *
+ * Verbatim, and it is the ruling this function implements:
+ *
+ *   "A founder's hand on main is an ADMISSION in every face — an added mark
+ *    materialises directly (a claim LOCKED at that window by the founder's hand
+ *    naming the commit, the mark standing), an amended mark supersedes directly
+ *    (the same locked shape, `supersedes` the standing one), a removed mark
+ *    retires (DEC-15). The clearing job never re-judges canon."
+ *
+ * WHERE THE PROVENANCE LIVES, and why not `claims.ruling`. 009 gives `claims` a
+ * `ruling` column and its own COMMENT says what it is for: "the REVIEW lane's
+ * receipt … a fact about a contest a mind was asked to settle, not a field every
+ * claim has". An admission is not a contest and no mind was asked. So it goes in
+ * `data`, which 004 added as the record's remainder and which
+ * `materializeClaims` already copies onto the mark — so the row and the claim
+ * carry the same sentence without a second write saying it twice.
+ *
+ * `decided_at` IS THE COMMIT'S TIME, not `now()`. `clearing-job.mjs` writes
+ * `now()` because a candle decides when it burns; this claim was decided when
+ * the founder's commit landed, months of replay ago, and a replay that stamped
+ * itself would make every admission look like it happened tonight.
+ */
+export const founderAdmission = (m, hand) => ({
+  status: "locked",
+  decided_at: hand.at,
+  data: {
+    ...(m.data ?? {}),
+    locked_by: "founder",
+    founder_commit: { sha: hand.sha, subject: hand.subject, at: hand.at },
+  },
+});
+
+/**
+ * The two 2.0-only keys a founder admission puts in `marks.data`, plus DEC-16's.
+ *
+ * 1.0's mark file cannot carry any of them: `formerly` is the list of names a
+ * record has worn (DEC-16), and these two are how the row got here (DEC-17).
+ * `parityFindings` compares `marks.data` against the checkout's, so without this
+ * list every re-identified and every admitted mark would be reported as "a
+ * `data` that differs beyond tier" — the line that exists to catch a
+ * MATERIALIZER LOSING PART OF THE RECORD. Ninety-two rows of known-good
+ * provenance in it would bury the one row that matters.
+ *
+ * NAMED, NOT SILENTLY FILTERED, and counted in `provenance` beside the verdict —
+ * the same contract `standingOnly` is held to. What remains after removing them
+ * is still compared, so a materializer that dropped `date` or `image` still
+ * lands in `otherData` exactly as before.
+ */
+export const REPLAY_ONLY_DATA_KEYS = ["formerly", "locked_by", "founder_commit"];
 
 /**
  * The `transfer` the founder's commit never wrote (DEC-16).
@@ -1300,11 +1421,24 @@ export async function insertActs(client, rows) {
  */
 export async function insertClaims(client, claims) {
   for (const c of claims) {
+    // `status` AND `decided_at` COME FROM THE CLAIM SINCE DEC-17. They used to be
+    // `'pending'` written literally into the INSERT, which was true of every
+    // claim a replay could derive until a founder's admission arrived already
+    // decided. The default has not moved — `eraClaims` still stamps `pending` on
+    // every resident claim — but it is now the DERIVATION's default and not the
+    // writer's, so the one place that decides a claim's status is the one place
+    // that knows why.
+    //
+    // It is INSERTed locked rather than inserted pending and updated: 002's
+    // `claims_update_guard` exempts only `clearing_job`, and this pen connects as
+    // `world2_owner`, so an UPDATE here would raise. The guard is right and the
+    // INSERT is the honest door.
     await client.query(
-      `INSERT INTO claims (id, window_id, slug, class, claimant, household, submitted_at, status,
+      `INSERT INTO claims (id, window_id, slug, class, claimant, household, submitted_at, status, decided_at,
                            body, geometry, bbox, stake, data, parent, supersedes)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,'pending',$8,$9,$10,$11,$12,$13,$14)`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
       [c.id, c.window_id, c.slug, c.class, c.claimant, c.household, c.submitted_at,
+        c.status ?? "pending", c.decided_at ?? null,
         c.body, c.geometry ? JSON.stringify(c.geometry) : null, c.bbox, c.stake,
         JSON.stringify(c.data), c.parent, c.supersedes]);
   }
@@ -1375,39 +1509,7 @@ export async function parityFindings(client, { registerAfter }) {
   // is the judge" — and a judge that only makes a note is not a judge. It joins
   // `substance` below, in compareMarks' own voice, and the gate goes red on it.
   const provenance = [];
-  const bySlug = new Map(db.map((r) => [r.slug, r]));
-  const noData = [], staleTier = [], otherData = [], missingParent = [];
-  for (const m of registerAfter.marks) {
-    const r = bySlug.get(m.slug);
-    if (!r) continue;
-    if (r.parent == null && m.parent != null) missingParent.push(m.slug);
-    if (r.data == null) { if (m.data != null) noData.push(m.slug); continue; }
-    if (canonicalJson(r.data) === canonicalJson(m.data)) continue;
-    // THE STALE-STANDING CLASS, isolated on purpose — and, since the ruling,
-    // GATED. `data.tier` is not a field of the record: it is what the FOLD says
-    // about the record after resolving the whole world (seed-import §
-    // foldOracle), and 1.0 recomputes it for all 960 records at every settlement.
-    // 2.0 used to write it once, at materialization, and never revisit it, so a
-    // mark's standing went stale the moment a NEIGHBOUR's parcel landed.
-    //
-    // `clearing-job.mjs` step 7 now recomputes every standing mark's tier inside
-    // the window transaction (Wright's ruling, per the dials' own cadence —
-    // "derived weight moves at the next Settlement"). This is the check that says
-    // whether it worked, so it counts: a stale standing is 2.0 failing to reach
-    // 1.0's state, which is the one thing this gate exists to refuse.
-    //
-    // It stays SEPARATE from `otherData` rather than being folded into the
-    // substance comparison wholesale, because the two findings mean different
-    // things and a reader acts differently on them: a stale tier is the recompute
-    // not having run or not agreeing; a `data` that differs beyond tier is the
-    // materializer having lost part of the record.
-    const { tier: rt, ...rrest } = r.data;     // eslint-disable-line no-unused-vars
-    const { tier: mt, ...mrest } = m.data ?? {}; // eslint-disable-line no-unused-vars
-    if (canonicalJson(rrest) === canonicalJson(mrest))
-      staleTier.push(`marks DIFFERS at ${m.slug} · field data.tier (the fold's standing, recomputed at close)` +
-        `\n    repo says: ${mt}\n    DB says:   ${rt}`);
-    else otherData.push(m.slug);
-  }
+  const { noData, staleTier, otherData, missingParent, replayOnly } = dataFindings(db, registerAfter.marks);
   const slugInGeometry = (await client.query("SELECT slug FROM marks WHERE geometry ? 'slug'")).rows.map((r) => r.slug);
 
   if (noData.length)
@@ -1416,6 +1518,11 @@ export async function parityFindings(client, { registerAfter }) {
   if (otherData.length)
     provenance.push(`${otherData.length} mark(s) carry a \`data\` that differs from the checkout's beyond tier, ` +
       `e.g. ${otherData.slice(0, 4).join(", ")}`);
+  if (replayOnly.length)
+    provenance.push(`${replayOnly.length} mark(s) carry 2.0-only \`data\` keys 1.0's file cannot have and which are ` +
+      `therefore NOT compared — \`formerly\` (DEC-16, the names a record has worn) and \`locked_by\`/` +
+      `\`founder_commit\` (DEC-17, the founder's hand that admitted it). Everything else in \`data\` is still ` +
+      `compared, so a materializer that lost part of the record still lands above: ${replayOnly.slice(0, 4).join(", ")}`);
   if (missingParent.length)
     provenance.push(`${missingParent.length} mark(s) lost the continuation edge \`parent\`, e.g. ${missingParent.slice(0, 4).join(", ")}`);
   if (slugInGeometry.length)
@@ -1440,6 +1547,74 @@ const stripSlug = (g) => {
   const { slug, ...rest } = g;                 // eslint-disable-line no-unused-vars
   return rest;
 };
+
+const without = (o, keys) => {
+  const out = {};
+  for (const [k, v] of Object.entries(o ?? {})) if (!keys.includes(k)) out[k] = v;
+  return out;
+};
+
+/**
+ * WHAT `marks.data` SAYS THAT THE CHECKOUT'S RECORD DOES NOT — the four classes.
+ *
+ * Extracted from `parityFindings` by DEC-17 for the reason `standingOnly` was
+ * exported by DEC-15: this is a DECISION about what the gate compares, and a
+ * decision that only exists inside a function holding a database connection
+ * cannot be asked a question. It is pure, so a test can feed it both shapes.
+ *
+ *   `noData`       the row has no `data` at all and the record has one — 004's
+ *                  column empty, the whole remainder lost.
+ *   `staleTier`    the ONLY difference is `data.tier`. GATED (returned into
+ *                  `substance` by the caller): the fold recomputes standing for
+ *                  every record at every settlement and `clearing-job.mjs` step 7
+ *                  is 2.0's answer to that; a stale tier is 2.0 failing to reach
+ *                  1.0's state, which is the one thing this gate exists to refuse.
+ *   `replayOnly`   the only difference beyond tier is one of the keys 1.0's file
+ *                  CANNOT carry (`REPLAY_ONLY_DATA_KEYS`). Reported, not gated,
+ *                  and named rather than silently filtered.
+ *   `otherData`    anything else — the materializer having lost part of the
+ *                  record. This is the finding the two exclusions above exist to
+ *                  keep legible: 92 rows of known provenance sitting in it would
+ *                  bury the one row that means something.
+ *
+ * The order matters and is the whole shape of the function: tier first, because
+ * it is the gated class and must not be swallowed by an exclusion; then the
+ * replay-only keys; then, if a difference survives BOTH removals, the real one.
+ */
+export function dataFindings(db, registerMarks) {
+  const bySlug = new Map(db.map((r) => [r.slug, r]));
+  const noData = [], staleTier = [], otherData = [], missingParent = [], replayOnly = [];
+  for (const m of registerMarks) {
+    const r = bySlug.get(m.slug);
+    if (!r) continue;
+    if (r.parent == null && m.parent != null) missingParent.push(m.slug);
+    if (r.data == null) { if (m.data != null) noData.push(m.slug); continue; }
+    if (canonicalJson(r.data) === canonicalJson(m.data)) continue;
+
+    const { tier: rt, ...rrest } = r.data;       // eslint-disable-line no-unused-vars
+    const { tier: mt, ...mrest } = m.data ?? {}; // eslint-disable-line no-unused-vars
+    if (canonicalJson(rrest) === canonicalJson(mrest)) {
+      staleTier.push(`marks DIFFERS at ${m.slug} · field data.tier (the fold's standing, recomputed at close)` +
+        `\n    repo says: ${mt}\n    DB says:   ${rt}`);
+      continue;
+    }
+    // A row the replay re-identified or admitted carries keys the file cannot.
+    // Strip exactly those, from BOTH sides — the checkout side never has them,
+    // so a repo record that somehow did would still be compared and would still
+    // differ — and ask again.
+    if (canonicalJson(without(rrest, REPLAY_ONLY_DATA_KEYS)) === canonicalJson(without(mrest, REPLAY_ONLY_DATA_KEYS))) {
+      // The tier may ALSO have moved on such a row; it is still the gated class
+      // and is not excused by the row's provenance.
+      if (canonicalJson(rt ?? null) !== canonicalJson(mt ?? null))
+        staleTier.push(`marks DIFFERS at ${m.slug} · field data.tier (the fold's standing, recomputed at close)` +
+          `\n    repo says: ${mt}\n    DB says:   ${rt}`);
+      replayOnly.push(m.slug);
+      continue;
+    }
+    otherData.push(m.slug);
+  }
+  return { noData, staleTier, otherData, missingParent, replayOnly };
+}
 
 /**
  * Every act the era's checkout holds is in `acts`, crossing by crossing.
@@ -1577,6 +1752,52 @@ export async function canFailProof(client, era, worldRepo) {
       "UPDATE marks SET slug = $2 WHERE slug = $1", [moved.slug, moved.was]);
   }
 
+  // ── DEC-17'S OWN BREAK: UN-ADMIT ONE (2026-09-04) ──────────────────────────
+  //
+  // The ruling names its own falsifier: "a fixture era with a hand-planted mark
+  // replays to a locked claim + standing mark, receipt unchanged; MANGLING IT TO
+  // `pending` REDDENS THE GATE."
+  //
+  // Read literally that is two facts and only one of them is a parity finding.
+  // The gate compares `marks`, so flipping the CLAIM's status alone moves nothing
+  // it looks at. What "still pending" MEANS in a replay is that the mark was
+  // never materialised at all — the claim sat on the docket for the clearing job
+  // to adjudicate, which is exactly the pre-DEC-17 state. So the mangle is the
+  // state, not the column: take the admitted mark away and require the gate to
+  // say MISSING in DB.
+  //
+  // The victim is a row that WAS admitted (`data->>'locked_by' = 'founder'`),
+  // never an arbitrary one. A proof that deleted any mark would prove
+  // `compareMarks` notices a missing row, which was never in doubt and is already
+  // the `DELETE gone` mangle above; what is unproved is that an admission the
+  // replay wrote can be caught when it goes wrong.
+  const admittedRow = (await client.query(
+    `SELECT slug, id::text, data->'founder_commit'->>'sha' AS sha FROM marks
+      WHERE data->>'locked_by' = 'founder' ORDER BY slug LIMIT 1`)).rows[0];
+  const admission = { checked: false };
+  if (admittedRow) {
+    admission.checked = true;
+    admission.slug = admittedRow.slug;
+    admission.sha = admittedRow.sha;
+    await mangle(`UN-ADMIT ${admittedRow.slug} (DEC-17's founder admission undone — the mark the hand planted at ` +
+      `${String(admittedRow.sha ?? "?").slice(0, 9)} is gone, which is the register a still-pending claim would leave)`,
+      "DELETE FROM marks WHERE slug = $1", [admittedRow.slug]);
+
+    // And the ruling's literal words, asked in their own rolled-back transaction
+    // because a refused statement aborts the one it is in. This pen connects as
+    // `world2_owner` and 002's `claims_update_guard` exempts only `clearing_job`,
+    // so the expected answer is a REFUSAL — the admission cannot be un-locked
+    // from here at all, which is stronger than the ruling asked for and is worth
+    // saying out loud rather than leaving as an untested assumption.
+    await client.query("BEGIN");
+    try {
+      await client.query("UPDATE claims SET status = 'pending', decided_at = NULL WHERE id = $1", [admittedRow.id]);
+      admission.pendingFlip = "PERMITTED — the guard let this pen un-lock a founder's admission";
+    } catch (err) {
+      admission.pendingFlip = `REFUSED by the store — ${String(err.message).split("\n")[0]}`;
+    } finally { await client.query("ROLLBACK"); }
+  }
+
   // The acts half. `acts` refuses UPDATE and DELETE from every pen (002's
   // `acts_append_only` trigger), which is the law working — so the only shape of
   // act drift the owner can provoke is an EXTRA row, and that is the one this
@@ -1631,7 +1852,7 @@ export async function canFailProof(client, era, worldRepo) {
 
   const after = await parityFindings(client, era);
   const silent = results.filter((r) => !r.findings.length);
-  return { results, restored: after.substance.length === 0, silent, dedupe, retirement, transfer };
+  return { results, restored: after.substance.length === 0, silent, dedupe, retirement, transfer, admission };
 }
 
 // ── the store's state, and the refusal ───────────────────────────────────────
@@ -1805,15 +2026,13 @@ async function main() {
           `window's log wrote its neighbour's too, so no tree stands between them`;
       }
 
-      // A disagreement gets a DIAGNOSIS, not just a number. See `plantedByHand`.
-      if (receipt.checked && !receipt.ok) {
-        receipt.hand = await plantedByHand({
-          worldRepo, toDir: to.dir, fromSha: b.from.sha, toSha: b.to.sha, added: claims.added,
-        });
-        receipt.handAmends = await amendedByHand({
-          worldRepo, toDir: to.dir, fromSha: b.from.sha, toSha: b.to.sha, amended: claims.amended,
-        });
-      }
+      // THE HAND IS ALREADY FOUND (DEC-17). It used to be asked here, and only
+      // when a receipt disagreed, because it was a diagnosis of a number.
+      // `eraClaims` now asks it of every era because the answer decides how the
+      // claim is written, so this reads what the derivation already knows rather
+      // than walking git a second time and risking a second answer.
+      receipt.hand = claims.hand;
+      receipt.handAmends = claims.handAmends;
       eras.push({ ...b, window, acts, ...claims, subject, receipt });
       // The register at S(k) is the parity oracle and is kept; the checkouts are not.
     } finally { to.dispose(); from.dispose(); }
@@ -1823,7 +2042,9 @@ async function main() {
     console.log(`\n── ERA ${e.to.tag} (window ${e.window.id}) ─────────────────────────`);
     console.log(`   world ${e.to.sha.slice(0, 8)} · closes ${e.window.closes_at}`);
     console.log(`   acts   ${String(e.acts.rows.length).padStart(4)}  ${JSON.stringify(e.acts.byType)} · crossings ${e.acts.crossings.join(", ") || "—"}`);
-    console.log(`   claims ${String(e.claims.length).padStart(4)}  ${e.added.length} added · ${e.amended.length} amended`);
+    const locked = e.claims.filter((c) => c.data?.locked_by === "founder").length;
+    console.log(`   claims ${String(e.claims.length).padStart(4)}  ${e.added.length} added · ${e.amended.length} amended` +
+      (locked ? ` · ${e.claims.length - locked} pending, ${locked} LOCKED by the founder's hand (DEC-17)` : ""));
     if (e.amended.length) console.log(`          amended: ${e.amended.map((x) => x.mark.slug).join(", ")}`);
     if (e.transferred.length) {
       console.log(`   transferred ${String(e.transferred.length).padStart(1)}  (DEC-16 — the record changed hands; the same row keeps its id)`);
@@ -1846,17 +2067,30 @@ async function main() {
     }
     if (e.receipt.hand?.length) {
       const by = [...new Set(e.receipt.hand.map((h) => h.sha.slice(0, 9)))];
-      console.log(`   ⚑ ${e.receipt.hand.length} of this era's additions were planted BY HAND on main, by ` +
-        `${by.length} non-sweep commit(s) — no door saw them and no sweep counted them, which is most of the gap ` +
-        `below. The replay currently derives each one as a resident's CLAIM. Mirror of DEC-15 case (b), UNRULED.`);
-      for (const h of e.receipt.hand.slice(0, 3)) console.log(`      ${h.slug} — ${h.sha.slice(0, 9)} ${h.subject.slice(0, 72)}`);
-      if (e.receipt.hand.length > 3) console.log(`      … and ${e.receipt.hand.length - 3} more`);
+      console.log(`   ${e.receipt.hand.length} planted by hand → locked  (DEC-17 — an ADMISSION, by ` +
+        `${by.length} non-sweep commit(s); no door saw them and no sweep counted them. The claim is LOCKED at this ` +
+        `window by the founder's hand and the mark stands; the clearing job never re-judges canon.)`);
+      for (const h of e.receipt.hand.slice(0, 3)) console.log(`          ${h.slug} — ${h.sha.slice(0, 9)} ${h.subject.slice(0, 68)}`);
+      if (e.receipt.hand.length > 3) console.log(`          … and ${e.receipt.hand.length - 3} more`);
     }
     if (e.receipt.handAmends?.length) {
-      console.log(`   ⚑ ${e.receipt.handAmends.length} of this era's amends were made BY HAND on main — the same ` +
-        `hand, its third face (remove = DEC-15 ruled, add = DEC-17 proposed, amend = unnamed). Derived as a ` +
-        `resident's amend claim carrying \`supersedes\`.`);
-      for (const h of e.receipt.handAmends.slice(0, 2)) console.log(`      ${h.slug} — ${h.sha.slice(0, 9)} ${h.subject.slice(0, 68)}`);
+      const by = [...new Set(e.receipt.handAmends.map((h) => h.sha.slice(0, 9)))];
+      console.log(`   ${e.receipt.handAmends.length} amended by hand → locked  (DEC-17 — the same hand, its second ` +
+        `face, by ${by.length} non-sweep commit(s); the locked claim SUPERSEDES the standing mark.)`);
+      for (const h of e.receipt.handAmends.slice(0, 2)) console.log(`          ${h.slug} — ${h.sha.slice(0, 9)} ${h.subject.slice(0, 64)}`);
+      if (e.receipt.handAmends.length > 2) console.log(`          … and ${e.receipt.handAmends.length - 2} more`);
+    }
+    // THE RULING'S OWN CLAIM, ASKED RATHER THAN ASSERTED: "the clearing job never
+    // re-judges canon." The job selects `status = 'pending'` and nothing else
+    // (`clearing-job.mjs` :89), so what it would re-judge of the founder's hand is
+    // exactly the pending claims whose slug the hand touched. Expected zero, and
+    // it is PRINTED rather than assumed — a number that can only be zero if the
+    // admission actually reached the claim.
+    const handSlugs = new Set([...(e.receipt.hand ?? []), ...(e.receipt.handAmends ?? [])].map((h) => h.slug));
+    if (handSlugs.size) {
+      const left = e.claims.filter((c) => handSlugs.has(c.slug) && c.status !== "locked").map((c) => c.slug);
+      console.log(`          of the ${handSlugs.size} slug(s) the hand touched, ${left.length} would reach the ` +
+        `clearing job as a resident's pending claim` + (left.length ? `: ${left.slice(0, 4).join(", ")}` : " (none)"));
     }
     if (e.receipt.checked && !e.receipt.ok) {
       const acc = (e.receipt.hand?.length ?? 0) + (e.receipt.handAmends?.length ?? 0);
@@ -1958,6 +2192,14 @@ async function main() {
         console.log("SKIPPED the transfer break — this store holds no re-identified mark (no `data.formerly`) " +
           "to hand back its old name; DEC-16's write is UNPROVED here");
       }
+      if (!proof.admission.checked) {
+        console.log("SKIPPED the admission break — this store holds no mark the founder's hand admitted " +
+          "(no `data.locked_by = founder`); DEC-17's write is UNPROVED here");
+      } else {
+        console.log(`       the admission break took ${proof.admission.slug} ` +
+          `(planted at ${String(proof.admission.sha ?? "?").slice(0, 9)}); ` +
+          `un-locking its claim from this pen: ${proof.admission.pendingFlip}`);
+      }
       if (!proof.dedupe.checked) {
         console.log("SKIPPED the dedupe proof — this era derived no acts to inject a duplicate of");
       } else {
@@ -2053,6 +2295,11 @@ async function main() {
       let acted = { inserted: 0, skipped: 0, byAction: {} };
       const synthesised = [...e.retired, ...e.transferred].map((r) => r.synthesised).filter(Boolean);
       const claimsMoved = [];
+      // DEC-17: the claims the founder's own commit decided. Read off the claim
+      // rather than re-derived from `e.hand`, because the claim is what the store
+      // receives and a second derivation could disagree with the first.
+      const founderLocked = e.claims.filter((c) => c.data?.locked_by === "founder");
+      let admitted = 0;
       await client.query("BEGIN");
       try {
         // The window closed when the settlement landed. `opens_at` is not touched:
@@ -2159,6 +2406,50 @@ async function main() {
             "UPDATE marks SET status = 'retired', retired_window = $2 WHERE slug = $1 AND status = 'standing'",
             [r.slug, e.window.id]);
         }
+
+        // ── THE ADMISSION (DEC-17), LAST ──────────────────────────────────────
+        //
+        // "A founder's hand on main is an ADMISSION in every face … the clearing
+        // job never re-judges canon." The claims went in already `locked` above;
+        // this is the other half — the mark standing, materialised HERE, in the
+        // era's own transaction, so a founder's record and the log line that
+        // explains it are one event.
+        //
+        // LAST, after the transfers and the retirements, and the order is the
+        // reason: `marks.slug` is UNIQUE, a transfer frees a name and a
+        // retirement flips a status, and a mark planted into a name this same era
+        // released must meet the register as it finally stands rather than as it
+        // stood mid-transaction.
+        //
+        // `materializeClaims` IS THE CLEARING JOB'S OWN, imported. Two things
+        // follow for free and neither is ours to re-decide: `marks.household`
+        // resolves from the CLAIMANT through `identities` (the 08-28 ownership-
+        // grain ruling — copying `claims.household` put GitHub logins on 26 rows),
+        // and an amend REWRITES the standing row in place keeping its id rather
+        // than inserting a second one. `recomputeStanding` is deliberately NOT
+        // called: the clearing job runs it for every standing mark at (d), which
+        // is after this, and writing tier twice is how it went stale before.
+        if (founderLocked.length) {
+          const amends = new Map();
+          for (const c of founderLocked) {
+            if (!c.supersedes) continue;
+            const { rows: [standing] } = await client.query(
+              "SELECT id::text, locked_window FROM marks WHERE slug = $1 AND status = 'standing'", [c.slug]);
+            if (!standing) {
+              throw new Error(`${e.to.tag}: the founder's hand amended ${c.slug} at ${c.data.founder_commit.sha.slice(0, 9)} ` +
+                `and DEC-17 supersedes the STANDING mark, but the store holds no standing row at that slug — the store ` +
+                `is not where its checkout says it is.`);
+            }
+            if (String(standing.id) !== String(c.supersedes)) {
+              throw new Error(`${e.to.tag}: ${c.slug} supersedes claim ${String(c.supersedes).slice(0, 8)} and the ` +
+                `standing mark's id is ${standing.id.slice(0, 8)}. A mark's id IS its first locking claim's id, so ` +
+                `these must be the same number; this era refuses rather than amending a row it cannot name.`);
+            }
+            amends.set(String(c.id), standing);
+          }
+          admitted = await materializeClaims(client.query.bind(client),
+            { claims: founderLocked, amends, windowId: e.window.id, label: `${e.to.tag} · the founder's hand` });
+        }
         await client.query("COMMIT");
       } catch (err) { await client.query("ROLLBACK"); throw err; }
       for (const t of e.transferred) {
@@ -2175,7 +2466,17 @@ async function main() {
           ? `(a) the era's own \`withdraw\` act is the retirement`
           : `(b) the founder's hand, ${r.commit.sha.slice(0, 9)}; one \`withdraw\` by the-town synthesised into the log`}`);
       }
-      console.log(`  ingested: ${acted.inserted} act(s), ${e.claims.length} claim(s) pending` +
+      for (const c of founderLocked) {
+        console.log(`  admitted ${c.slug} at window ${e.window.id} — DEC-17, the founder's hand, ` +
+          `${c.data.founder_commit.sha.slice(0, 9)}; the claim is LOCKED and the mark stands` +
+          (c.supersedes ? `, superseding ${String(c.supersedes).slice(0, 8)}` : ""));
+      }
+      if (founderLocked.length && admitted !== founderLocked.length) {
+        console.log(`  ⚑ ${founderLocked.length} founder-locked claim(s) went in and ${admitted} materialised — ` +
+          `a claim naming no mark does not materialise (a stake or an escrow), and none of these should be one.`);
+      }
+      console.log(`  ingested: ${acted.inserted} act(s), ${e.claims.length - founderLocked.length} claim(s) pending` +
+        (founderLocked.length ? `, ${founderLocked.length} LOCKED by the founder's hand (DEC-17)` : "") +
         (acted.skipped
           ? `\n  skipped ${acted.skipped} act(s) the store already holds — the pen wrote them on a flipped lane and ` +
             `the drain photographed them into STATE/log, so this era derives them a second time: ` +

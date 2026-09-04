@@ -23,7 +23,7 @@ import { join } from "node:path";
 import {
   erasBetween, commitOf, eraActs, eraClaims, eraWindow, authoredSubstance,
   sixCountOf, amendId, assertReplayable, logCensus, doorWitness, SUBSTANCE_COLUMNS, windowFindings,
-  standingOnly, actObject, isWithdrawAct, eraReceipt,
+  standingOnly, actObject, isWithdrawAct, eraReceipt, dataFindings,
 } from "../world2/tools/replay-ingest.mjs";
 import { uuid5, deriveActs, LOG_FILE, compareMarks } from "../world2/tools/seed-import.mjs";
 
@@ -887,6 +887,135 @@ test("DEC-16: after a transfer the comparator needs no special case — and catc
   // substance column, so it is caught on its own.
   assert.match(compareMarks([row("wright/the-lit-name", "the-town")], register, { columns: SUBSTANCE_COLUMNS })[0],
     /field owner/);
+});
+
+// ── the admission (DEC-17, RULED 2026-09-04) ─────────────────────────────────
+//
+// The ruling, verbatim, and these four tests are its falsifier:
+//
+//   "A founder's hand on main is an ADMISSION in every face — an added mark
+//    materialises directly (a claim LOCKED at that window by the founder's hand
+//    naming the commit, the mark standing), an amended mark supersedes directly
+//    (the same locked shape, `supersedes` the standing one), a removed mark
+//    retires (DEC-15). The clearing job never re-judges canon. … Falsifier: a
+//    fixture era with a hand-planted mark replays to a locked claim + standing
+//    mark, receipt unchanged; mangling it to `pending` reddens the gate."
+//
+// The middle step of each world below is the founder's hand: a commit between
+// the two tags whose subject is NOT a sweep, which is the entire test for
+// "no door saw it and no sweep counted it" (`PUBLISH_SUBJECT`).
+
+const HAND = "civic quarter: the law the five plaques used to say returns as predicated children";
+
+/** a → (the founder's hand, or a sweep) → b. `subject` decides which. */
+const planted = (subject, second) => world([
+  { tag: "a", subject: "settlement: sweep 0 published, 0 unpublished", at: "2026-08-26T00:00:00+00:00",
+    register: [M({ by: "wren", slug: "the-lamp" })], log: { "7.jsonl": [] } },
+  { subject, at: "2026-08-26T00:30:00+00:00", register: second, log: { "7.jsonl": [] } },
+  { tag: "b", subject: SWEEP(1), at: "2026-08-26T01:00:00+00:00",
+    register: second, log: { "7.jsonl": [], "8.jsonl": [] } },
+]);
+
+test("DEC-17: a mark added by a NON-SWEEP commit is the founder's hand — a LOCKED claim naming that commit", async () => {
+  const w = planted(HAND, [M({ by: "wren", slug: "the-lamp" }), M({ by: "the-town", slug: "the-bounty-board" })]);
+  try {
+    const c = await claimsFor(w, "a", "b");
+
+    // The hand is found, and it rides beside `added` rather than on it — `added`
+    // holds the very objects `registerAfter` returns, and that is the oracle.
+    assert.equal(c.hand.length, 1);
+    assert.equal(c.hand[0].slug, "the-town/the-bounty-board");
+    assert.match(c.hand[0].subject, /civic quarter/);
+    assert.ok(c.hand[0].at, "the commit's own time, which is what `decided_at` becomes");
+    assert.deepEqual(c.handAmends, []);
+    assert.equal(c.added.length, 1);
+    assert.equal(c.added[0].hand, undefined, "the parity oracle's own mark objects stay unannotated");
+
+    const claim = c.claims.find((x) => x.slug === "the-town/the-bounty-board");
+    assert.equal(claim.status, "locked", "an admission is decided; the clearing job never re-judges canon");
+    assert.equal(claim.decided_at, c.hand[0].at, "decided when the founder's commit landed, not at replay time");
+    assert.equal(claim.data.locked_by, "founder");
+    assert.equal(claim.data.founder_commit.sha, c.hand[0].sha);
+    assert.match(claim.data.founder_commit.subject, /civic quarter/);
+    assert.equal(claim.supersedes, null, "an addition supersedes nothing");
+    assert.equal(claim.id, uuid5("the-town/the-bounty-board"),
+      "and its id is still the mark's, so the materialised row's id is its first locking claim's");
+  } finally { w.cleanup(); }
+});
+
+test("DEC-17: a mark AMENDED by the founder's hand is the same locked shape, and supersedes the standing one", async () => {
+  const w = planted(HAND, [M({ by: "wren", slug: "the-lamp", body: "A rebuilt thing." })]);
+  try {
+    const c = await claimsFor(w, "a", "b");
+    assert.deepEqual(c.hand, [], "nothing was added — this is the hand's second face");
+    assert.equal(c.handAmends.length, 1);
+    assert.equal(c.handAmends[0].slug, "wren/the-lamp");
+
+    const claim = c.claims.find((x) => x.slug === "wren/the-lamp");
+    assert.equal(claim.status, "locked");
+    assert.equal(claim.decided_at, c.handAmends[0].at);
+    assert.equal(claim.data.locked_by, "founder");
+    assert.equal(claim.data.founder_commit.sha, c.handAmends[0].sha);
+    assert.equal(claim.supersedes, uuid5("wren/the-lamp"), "supersedes the STANDING mark's locking claim");
+    assert.equal(claim.id, amendId("wren/the-lamp", 8), "and carries its own amend id, as any amend does");
+    // The record itself is untouched by the admission — only how it arrived.
+    assert.equal(claim.body, "A rebuilt thing.");
+  } finally { w.cleanup(); }
+});
+
+test("DEC-17: a mark added by a SWEEP commit stays a PENDING resident claim — the negative control", async () => {
+  // The same world, the same shape, one thing different: the middle commit's
+  // subject IS a sweep. Without this the two tests above would pass against a
+  // pen that locked everything.
+  const w = planted(SWEEP(1), [M({ by: "wren", slug: "the-lamp" }), M({ by: "the-town", slug: "the-bounty-board" })]);
+  try {
+    const c = await claimsFor(w, "a", "b");
+    assert.deepEqual(c.hand, [], "a sweep published it; no hand to find");
+    assert.deepEqual(c.handAmends, []);
+
+    const claim = c.claims.find((x) => x.slug === "the-town/the-bounty-board");
+    assert.equal(claim.status, "pending", "a resident's claim goes on the docket for the clearing job");
+    assert.equal(claim.decided_at, null, "and is not decided by anyone yet");
+    assert.equal(claim.data?.locked_by, undefined, "and carries no admission");
+  } finally { w.cleanup(); }
+});
+
+test("DEC-17: the gate NAMES the replay-only `data` keys and still reds on a record the materializer lost", () => {
+  // The write path itself — `insertClaims`' locked INSERT, `materializeClaims`
+  // in the era transaction, and the un-admit mangle — has no database in this
+  // suite (nothing here opens a connection; see the file header), and is proved
+  // by `--can-fail-proof` on the box. What IS pure is the decision this ruling
+  // forced on the parity side, so it is extracted and asked here.
+  const row = (slug, data) => ({ slug, kind: "sited", owner: "wren", household: "gh:1",
+    body: "A thing.", geometry: {}, bbox: "((0,0),(2,2))", status: "standing", parent: null, data });
+  const register = [row("the-town/the-bounty-board", { date: "2026-07-01", tier: "market" })];
+
+  // GREEN-ish: the admitted row carries two keys 1.0's file cannot have. Named
+  // in `replayOnly`, and NOT reported as a record the materializer lost.
+  const admitted = [row("the-town/the-bounty-board",
+    { date: "2026-07-01", tier: "market", locked_by: "founder", founder_commit: { sha: "243cc57b9" } })];
+  const named = dataFindings(admitted, register);
+  assert.deepEqual(named.replayOnly, ["the-town/the-bounty-board"]);
+  assert.deepEqual(named.otherData, [], "known provenance must not sit in the finding that means a lost record");
+  assert.deepEqual(named.staleTier, []);
+
+  // DEC-16's `formerly` is the same class and is named the same way.
+  assert.deepEqual(dataFindings([row("the-town/the-bounty-board",
+    { date: "2026-07-01", tier: "market", formerly: ["the-town/old"] })], register).replayOnly,
+  ["the-town/the-bounty-board"]);
+
+  // CAN-FAIL 1: the exclusion is exactly those keys. Lose `date` as well and the
+  // row lands in `otherData`, which is what that line exists to catch.
+  assert.deepEqual(dataFindings([row("the-town/the-bounty-board",
+    { tier: "market", locked_by: "founder" })], register).otherData, ["the-town/the-bounty-board"]);
+
+  // CAN-FAIL 2: the tier is still GATED on an admitted row. A stale standing is
+  // not excused by how the mark arrived.
+  const stale = dataFindings([row("the-town/the-bounty-board",
+    { date: "2026-07-01", tier: "home", locked_by: "founder" })], register);
+  assert.deepEqual(stale.replayOnly, ["the-town/the-bounty-board"]);
+  assert.equal(stale.staleTier.length, 1);
+  assert.match(stale.staleTier[0], /data\.tier/);
 });
 
 // ── helpers ──────────────────────────────────────────────────────────────────
