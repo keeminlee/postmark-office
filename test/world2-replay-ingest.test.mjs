@@ -23,6 +23,7 @@ import { join } from "node:path";
 import {
   erasBetween, commitOf, eraActs, eraClaims, eraWindow, authoredSubstance,
   sixCountOf, amendId, assertReplayable, logCensus, doorWitness, SUBSTANCE_COLUMNS,
+  standingOnly, actObject, isWithdrawAct,
 } from "../world2/tools/replay-ingest.mjs";
 import { uuid5, deriveActs, LOG_FILE, compareMarks } from "../world2/tools/seed-import.mjs";
 
@@ -54,7 +55,14 @@ export function fold({ marks, households }) {
 
 export function loadMarks(marksDir) {
   const repo = dirname(dirname(marksDir));
-  return JSON.parse(readFileSync(join(repo, "WORLD", "register.json"), "utf8"));
+  const recs = JSON.parse(readFileSync(join(repo, "WORLD", "register.json"), "utf8"));
+  // \`_dir\` IS PART OF THE LOADER'S CONTRACT, and since DEC-15 the replay reads it:
+  // a retirement has to name the FILE that left, and a mark's slug is not its path
+  // (\`the-town/pledges\` is filed four directories deep under let-there-be-light).
+  // The real loader states it at marks-fold.mjs § walkMarks — \`rec._dir = nodeDir\` —
+  // so this reader states it too, or the fixture would be modelling a seam the
+  // shipped loader does not have.
+  return recs.map((r) => ({ ...r, _dir: join(marksDir, ...(r.dir ?? r.by + "/" + r.slug).split("/")) }));
 }
 `;
 
@@ -87,6 +95,20 @@ function world(steps) {
   const tags = {};
   for (const s of steps) {
     writeFileSync(join(dir, "WORLD", "register.json"), JSON.stringify(s.register ?? []));
+    // THE REGISTER'S FILING, WRITTEN AS FILES. The reader above still answers out
+    // of register.json — one piece of code across every tag, which is the whole
+    // fixture technique — but DEC-15 asks git a question the register cannot
+    // answer: WHICH COMMIT removed the record. That only means anything if the
+    // record is a file a commit can remove. So the tree is rebuilt each step, and
+    // a mark that leaves the register leaves a real deletion behind it.
+    rmSync(join(dir, "WORLD", "marks"), { recursive: true, force: true });
+    mkdirSync(join(dir, "WORLD", "marks"), { recursive: true });
+    writeFileSync(join(dir, "WORLD", "marks", ".keep"), "");
+    for (const m of s.register ?? []) {
+      const nodeDir = join(dir, "WORLD", "marks", ...(m.dir ?? `${m.by}/${m.slug}`).split("/"));
+      mkdirSync(nodeDir, { recursive: true });
+      writeFileSync(join(nodeDir, "mark.md"), `---\nkind: ${m.kind}\nby: ${m.by}\n---\n\n${m.body ?? ""}\n`);
+    }
     for (const [name, lines] of Object.entries(s.log ?? {})) {
       writeFileSync(join(dir, "STATE", "log", name),
         (lines ?? []).map((l) => JSON.stringify(l)).join("\n"));
@@ -104,7 +126,16 @@ function world(steps) {
   return { dir, tags, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }
 
+// The two shapes the town's log actually carries, and they are NOT the same.
+//   `ev`  the walk lane's rows — a `departure` nests its own fields under
+//         `payload` (that is where `deriveActs` reads `crossing` from).
+//   `pen` the door's rows — a `leave-mark` or a `withdraw` states `class` and
+//         `object` at the TOP LEVEL, verbatim from the real log:
+//         {"at":…,"type":"withdraw","actor":"neth","class":"mark","object":"neth/test-verify",…}
+// DEC-15's case (a) reads `object`, so a fixture that only had `ev` could not
+// state a withdrawal the way the town does.
 const ev = (type, at, actor, over = {}) => ({ type, at, actor, payload: { ...over } });
+const pen = (type, at, actor, object, over = {}) => ({ type, at, actor, class: "mark", object, ...over });
 
 // A three-settlement world: nothing published in the first era, one mark added
 // and one amended in the second, and a third mark whose tier moves because a
@@ -294,15 +325,105 @@ test("amendId is deterministic, and a different window gives a different claim",
   assert.notEqual(amendId("wren/the-shed", 9), uuid5("wren/the-shed"));
 });
 
-test("a mark that LEAVES the register stops the replay — 1.0's six-count has no such transition", async () => {
+// ── the retirement (DEC-15, 2026-09-04) ──────────────────────────────────────
+//
+// These three replace "a mark that LEAVES the register stops the replay", which
+// passed for as long as it should have. Its refusal existed "so that the first
+// one is seen"; it was seen on the S47 → S55 dry run, and DEC-15 is the ruling.
+// The refusal has not gone — the third test below is it, standing over the
+// departures DEC-15 does NOT rule on.
+
+test("DEC-15 (b): a standing mark removed by a commit RETIRES, and the synthesised withdraw names that commit", async () => {
   const w = world([
     { tag: "a", subject: "settlement: sweep 0 published, 0 unpublished", at: "2026-08-26T00:00:00+00:00",
-      register: [M({ by: "wren", slug: "the-shed" })], log: { "7.jsonl": [] } },
-    { tag: "b", subject: "settlement: sweep 0 published, 0 unpublished", at: "2026-08-26T01:00:00+00:00",
-      register: [], log: { "7.jsonl": [] } },
+      register: [M({ by: "wren", slug: "the-shed" }), M({ by: "wren", slug: "the-lamp" })], log: { "7.jsonl": [] } },
+    // A settlement advances the town's clock by one, and the era's window IS that
+    // number — so the retirement has a window to be filed at.
+    { tag: "b", subject: "settlement: sweep 0 published, 0 unpublished, 0 left drafted, 0 withdrawn, 0 quarantined, 0 dropped",
+      at: "2026-08-26T01:00:00+00:00",
+      register: [M({ by: "wren", slug: "the-lamp" })], log: { "7.jsonl": [], "8.jsonl": [] } },
   ]);
   try {
-    await assert.rejects(() => claimsFor(w, "a", "b"), /left the register|needs a ruling/);
+    const c = await claimsFor(w, "a", "b");
+    assert.equal(c.retired.length, 1);
+    assert.equal(c.unruled.length, 0, "a deleted record is exactly the transition DEC-15 rules on");
+
+    const r = c.retired[0];
+    assert.equal(r.slug, "wren/the-shed");
+    assert.equal(r.case, "b");
+    assert.equal(r.path, "WORLD/marks/wren/the-shed/mark.md", "the FILE that left, from the checkout's own loader");
+    assert.equal(r.commit.sha, w.tags.b, "the commit that deleted the record is the hand behind the retirement");
+    assert.equal(r.act, null, "no resident withdrew it, so the era's log carries nothing to find");
+
+    // The act the founder's commit never wrote, written for it — "the record
+    // leaves canon, its whole life stays in the log" (founder-ruled 08-19).
+    const s = r.synthesised;
+    assert.equal(s.actor, "the-town");
+    assert.equal(s.class, "mark");
+    assert.equal(s.object, "wren/the-shed");
+    assert.equal(s.crossing, 8, "the era's window, so the act files where the retirement happened");
+    assert.equal(s.at, r.commit.at, "written_at is when the commit landed — the act's own time, not now()");
+    assert.equal(s.payload.retired_by, w.tags.b);
+    assert.match(s.payload.subject, /sweep 0 published/);
+    assert.match(s.payload._synthesised, /DEC-15/, "a row no door wrote must say so on its face");
+    // Bare, not `legacy:` — `actsCompleteness` counts `legacy:%` against the
+    // checkout's STATE/log census, and this row is in no log.
+    assert.equal(s.action, "withdraw");
+
+    // A retirement is not a claim and never enters the docket.
+    assert.deepEqual(c.claims.map((x) => x.slug), []);
+  } finally { w.cleanup(); }
+});
+
+test("DEC-15 (a): a removal the era's log already WITHDREW is that act, and synthesises nothing", async () => {
+  const withdraw = pen("withdraw", "2026-08-26T00:30:00.000Z", "wren", "wren/the-shed");
+  const w = world([
+    { tag: "a", subject: "settlement: sweep 0 published, 0 unpublished", at: "2026-08-26T00:00:00+00:00",
+      register: [M({ by: "wren", slug: "the-shed" }), M({ by: "wren", slug: "the-lamp" })], log: { "7.jsonl": [] } },
+    { tag: "b", subject: "settlement: sweep 0 published, 0 unpublished, 0 left drafted, 1 withdrawn, 0 quarantined, 0 dropped",
+      at: "2026-08-26T01:00:00+00:00",
+      register: [M({ by: "wren", slug: "the-lamp" })], log: { "7.jsonl": [], "8.jsonl": [withdraw] } },
+  ]);
+  try {
+    const c = await claimsFor(w, "a", "b");
+    assert.equal(c.retired.length, 1);
+    const r = c.retired[0];
+    assert.equal(r.case, "a", "the log's own act is the retirement");
+    assert.equal(r.synthesised, null, "and nothing may be invented beside it");
+    assert.equal(r.commit, null, "the commit is not even looked up — the resident's hand is on the record");
+    assert.equal(actObject(r.act), "wren/the-shed");
+    assert.equal(r.act.action, "legacy:withdraw", "as `deriveActs` spells a row it read out of the log");
+
+    // 1.0 COUNTED THIS ALL ALONG. The refusal this ruling replaced said the
+    // six-count had no transition for a standing mark leaving; `withdrawn` is it.
+    assert.equal(sixCountOf(
+      "settlement: sweep 0 published, 0 unpublished, 0 left drafted, 1 withdrawn, 0 quarantined, 0 dropped").withdrawn, 1);
+  } finally { w.cleanup(); }
+});
+
+test("a departure DEC-15 does NOT rule on is UNRULED — the id refolded, the record never left", async () => {
+  // world 17103dc37, 2026-08-31: "the Lit Name passes to wright … restake on
+  // wright/the-lit-name owed after the next crossing REFOLDS THE ID". One file,
+  // modified not deleted; `by` changed, and the id is `by + leaf`.
+  const filed = "wright/the-unlit-cake/the-lit-name";
+  const w = world([
+    { tag: "a", subject: "settlement: sweep 0 published, 0 unpublished", at: "2026-08-26T00:00:00+00:00",
+      register: [M({ by: "the-town", slug: "the-lit-name", dir: filed })], log: { "7.jsonl": [] } },
+    { tag: "b", subject: "settlement: sweep 1 published, 0 unpublished", at: "2026-08-26T01:00:00+00:00",
+      register: [M({ by: "wright", slug: "the-lit-name", dir: filed })], log: { "7.jsonl": [] } },
+  ]);
+  try {
+    const c = await claimsFor(w, "a", "b");
+    assert.equal(c.unruled.length, 1, "this is not a retirement and the pen must not call it one");
+    const r = c.unruled[0];
+    assert.equal(r.slug, "the-town/the-lit-name");
+    assert.equal(r.case, "unruled");
+    assert.equal(r.becomes, "wright/the-lit-name", "the same file, standing under a new id");
+    assert.equal(r.synthesised, null, "no `withdraw` for a mark nobody withdrew");
+    assert.match(r.detail, /still stands/);
+    // It is classified, not thrown — one dry run has to show the founder the
+    // whole class, not stop at its first member. The write is what refuses.
+    assert.equal(c.retired.filter((x) => x.case === "b").length, 0);
   } finally { w.cleanup(); }
 });
 
@@ -376,6 +497,30 @@ test("the parity comparator is the seed's own, and every substance column can tu
   assert.match(compareMarks([...repo, { ...repo[0], slug: "forged/thing" }], repo, { columns: SUBSTANCE_COLUMNS })[0], /EXTRA in DB/);
 });
 
+test("DEC-15: the gate compares STANDING rows only — a retired store row reads as absent, both ways", () => {
+  // 1.0's register is a set of files and a removed file leaves no row; 2.0 keeps
+  // the row and flips `status`. The same register, said two ways.
+  const standing = (slug) => ({ slug, kind: "sited", owner: "wren", household: "gh:1",
+    body: "A thing.", geometry: { at: { x: 0, y: 0 } }, bbox: "((0,0),(2,2))", status: "standing" });
+  const register = [standing("wren/the-lamp")];
+  const store = [standing("wren/the-lamp"), { ...standing("wren/the-shed"), status: "retired" }];
+
+  // GREEN: the retired row is not compared, so a lawful retirement is not a finding.
+  assert.deepEqual(standingOnly(store).map((r) => r.slug), ["wren/the-lamp"]);
+  assert.deepEqual(compareMarks(standingOnly(store), register, { columns: SUBSTANCE_COLUMNS }), [],
+    "a retired row must not read as EXTRA — that would make the ruling its own red");
+
+  // CAN-FAIL, direction 1: un-retire it and the gate must see a mark 1.0 never had.
+  const unretired = store.map((r) => ({ ...r, status: "standing" }));
+  assert.match(compareMarks(standingOnly(unretired), register, { columns: SUBSTANCE_COLUMNS })[0], /EXTRA in DB/,
+    "the filter must classify rows, not hide them");
+
+  // CAN-FAIL, direction 2: retire one the register STILL carries → MISSING in DB.
+  const overRetired = [{ ...standing("wren/the-lamp"), status: "retired" }];
+  assert.match(compareMarks(standingOnly(overRetired), register, { columns: SUBSTANCE_COLUMNS })[0], /MISSING in DB/,
+    "a mark 1.0 still publishes may not be retired by the replay");
+});
+
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 function checkout(repo, sha) {
@@ -389,7 +534,14 @@ async function claimsFor(w, fromTag, toTag) {
   const a = checkout(w.dir, w.tags[fromTag]), b = checkout(w.dir, w.tags[toTag]);
   try {
     const window = eraWindow({ toDir: b.dir, lawSha: w.tags[toTag], townSha: null });
-    return await eraClaims({ fromDir: a.dir, toDir: b.dir, window });
+    // The same four things the CLI hands it: the two trees, the era's derived
+    // acts (DEC-15 case (a) is decided out of them), and the repo + shas that
+    // case (b) attributes a removal to.
+    return await eraClaims({
+      fromDir: a.dir, toDir: b.dir, window,
+      acts: eraActs({ fromDir: a.dir, toDir: b.dir }),
+      worldRepo: w.dir, fromSha: w.tags[fromTag], toSha: w.tags[toTag],
+    });
   } finally { b.dispose(); a.dispose(); }
 }
 
