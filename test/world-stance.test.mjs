@@ -464,3 +464,50 @@ test("an unreadable engine DISCLOSES rather than guessing at overlap", async () 
   assert.ok(block.unavailable, "the integer says zero and the block says why — never a silent zero");
   resetStanceGeometry();
 });
+
+// ── postmark#2454: A STANCE OUTLIVES THE WINDOW IT WAS SPOKEN IN ─────────────
+// The law, quoted (this module's own header): "absence is the third state and it
+// is expressed by never appearing here." A drain is not absence. lupi declared
+// seq 920 in crossing 167, read it back, and found it gone after the 05:45Z
+// crossing-save — the act stood in the photograph and in the record; the read
+// folded the live journal alone. CAN-FAIL: with the photograph union removed,
+// the first assertion below goes red.
+test("#2454 FALSIFIER: a stance drained into a photograph still STANDS — the read folds STATE/log ∪ the live journal", async () => {
+  const dbPath = join(scratch, "drained.sqlite");
+  const logDir = join(repo, "STATE", "log");
+  mkdirSync(logDir, { recursive: true });
+  const photo = join(logDir, "167.journal.jsonl");
+  // the drain's own shape: the journal's vocabulary, one window per file
+  writeFileSync(photo, JSON.stringify({
+    at: "2026-09-03T19:04:47.702Z", type: ACTION_STANCE, actor: "alpha", seq: 920, class: CLASS_STANCE,
+    object: "beta/on-alphas-edge", household: "alpha", crossing: 167,
+    payload: { on: "beta/on-alphas-edge", stance: "welcomed", by: "alpha", on_your_ground: ["alpha/alphas-parcel"] },
+  }) + "\n");
+  try {
+    const db = openDynamic(dbPath); db.close(); // a fresh, EMPTY live journal — the window has been drained
+    const inbox = await stanceInbox(repo, houseA, { dbPath });
+    assert.deepEqual(inbox.standing.map((s) => [s.on, s.stance, s.seq, s.crossing]), [["beta/on-alphas-edge", "welcomed", 920, 167]],
+      "the drained stance stands — it was spoken, and a drain is not a withdrawal");
+    assert.ok(!inbox.candidates.some((c) => c.id === "beta/on-alphas-edge"), "and the mark is no longer awaiting a word");
+
+    // the live journal wins the same seq (the fresher copy), and later seqs join the fold
+    const db2 = openDynamic(dbPath);
+    appendJournal(db2, { crossing: 168, actor: "alpha", action: ACTION_STANCE, object: "gamma/well-inside", cls: CLASS_STANCE,
+      payload: { on: "gamma/well-inside", stance: "declined", by: "alpha" }, household: "alpha" });
+    db2.close();
+    const again = await stanceInbox(repo, houseA, { dbPath });
+    assert.deepEqual(again.standing.map((s) => s.on).sort(), ["beta/on-alphas-edge", "gamma/well-inside"], "photograph + live, one fold");
+  } finally {
+    rmSync(photo, { force: true });
+    rmSync(dbPath, { force: true });
+  }
+});
+
+test("#2454 CONTROL: no photograph, no stance — the union adds nothing that was never spoken", async () => {
+  const dbPath = join(scratch, "silent.sqlite");
+  try {
+    const db = openDynamic(dbPath); db.close();
+    const inbox = await stanceInbox(repo, houseA, { dbPath });
+    assert.deepEqual(inbox.standing, [], "an empty record stands nothing");
+  } finally { rmSync(dbPath, { force: true }); }
+});
