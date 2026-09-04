@@ -1018,6 +1018,258 @@ test("DEC-17: the gate NAMES the replay-only `data` keys and still reds on a rec
   assert.match(stale.staleTier[0], /data\.tier/);
 });
 
+// ── the rename half of DEC-16's tell (M-8, ruled 2026-09-04) ─────────────────
+//
+// DEC-16 asks "is the file still at its OLD PATH under a new id?", which is the
+// whole tell for `the-town/the-lit-name` (world `17103dc37`, whose file never
+// moved) and not the whole tell for the record. `61c5fdfbc` — "the cake, the
+// vault, and the cellar door PASS FROM THE-TOWN TO WRIGHT" — moves each file into
+// the new owner's directory and changes its `by:` in one commit, and git calls it
+// a rename (R098, R098, R096, R100). Ruled as plumbing under DEC-16: the tell is
+// path identity OR a rename with the same leaf.
+//
+// The body is long on purpose. Git's rename detection is a similarity score, and
+// a five-line file whose one changed line is `by:` scores too low to pair.
+
+const LONG = [
+  "The cake stands in the cellar, unlit, and the dungeon is built around it.",
+  "Whoever holds the wick holds the room; whoever holds the room owes the town a door.",
+  "This body is long so that changing one frontmatter line leaves the file mostly itself,",
+  "which is what a rename score measures and what a transfer actually is.",
+].join("\n");
+
+/**
+ * a → (a commit that MOVES the file) → b. `to` is the new owner, `over` any edit.
+ *
+ * NO `dir` FIELD. The fixture's `dir` is a register-record field and rides into
+ * `data`, so setting it on one side only would derive an amend the record does
+ * not have. The default filing IS `by/slug`, so changing `by` moves the file on
+ * its own — which is exactly what the founder's commit does.
+ */
+const handedOver = ({ to = "wright", over = {}, child = null, leaf = "the-unlit-cake" } = {}) => {
+  const before = [M({ by: "the-town", slug: "the-unlit-cake", body: LONG })];
+  const after = [M({ by: to, slug: leaf, body: LONG, ...over })];
+  if (child) {
+    before.push(M({ by: "the-town", slug: "the-lit-name", kind: "predicated",
+      parent: "the-town/the-unlit-cake", body: LONG }));
+    after.push(M({ by: "the-town", slug: "the-lit-name", kind: "predicated",
+      parent: `${to}/${leaf}`, body: LONG }));
+  }
+  return world([
+    { tag: "a", subject: SWEEP(0), at: "2026-08-26T00:00:00+00:00", register: before, log: { "7.jsonl": [] } },
+    { subject: HAND, at: "2026-08-26T00:30:00+00:00", register: after, log: { "7.jsonl": [] } },
+    { tag: "b", subject: SWEEP(0), at: "2026-08-26T01:00:00+00:00", register: after, log: { "7.jsonl": [], "8.jsonl": [] } },
+  ]);
+};
+
+test("M-8: a founder commit that MOVES a mark's file to a new owner is a TRANSFER, not a retirement", async () => {
+  const w = handedOver();
+  try {
+    const c = await claimsFor(w, "a", "b");
+    assert.equal(c.retired.length, 0, "the record never left canon — it walked into another directory");
+    assert.equal(c.unruled.length, 0);
+    assert.equal(c.transferred.length, 1);
+
+    const t = c.transferred[0];
+    assert.equal(t.from_slug, "the-town/the-unlit-cake");
+    assert.equal(t.to_slug, "wright/the-unlit-cake");
+    assert.equal(t.amended, false, "only the owner moved, so there is nothing to claim");
+    assert.ok(t.moved, "a rename-transfer says on its face that the FILE moved");
+    assert.equal(t.moved.from, "WORLD/marks/the-town/the-unlit-cake/mark.md");
+    assert.equal(t.moved.to, "WORLD/marks/wright/the-unlit-cake/mark.md");
+    assert.match(t.moved.score, /^R\d+$/, "git's own similarity index, carried rather than re-derived");
+    assert.equal(t.commit.subject, HAND, "the rename map already named the commit; git is not asked twice");
+
+    // The addition half is not a claim, and it is not the founder's hand either —
+    // it is spliced out of `added` before DEC-17 ever asks who planted it.
+    assert.deepEqual(c.claims.map((x) => x.slug), []);
+    assert.deepEqual(c.hand, []);
+    assert.equal(t.synthesised.action, "transfer");
+    assert.equal(t.synthesised.object, "wright/the-unlit-cake");
+  } finally { w.cleanup(); }
+});
+
+test("M-8: a move that ALSO edits the record carries one amend claim, under the new slug", async () => {
+  const w = handedOver({ over: { body: `${LONG}\nAnd a line the new owner added.` } });
+  try {
+    const c = await claimsFor(w, "a", "b");
+    assert.equal(c.transferred.length, 1);
+    assert.equal(c.transferred[0].amended, true);
+    assert.ok(c.transferred[0].moved, "still a rename-transfer, edit and all");
+
+    const claim = c.claims.find((x) => x.slug === "wright/the-unlit-cake");
+    assert.equal(c.claims.length, 1, "one claim, not two — the record changed hands and was edited once");
+    assert.equal(claim.supersedes, uuid5("the-town/the-unlit-cake"), "supersedes the STANDING mark's locking claim");
+    assert.equal(claim.id, amendId("wright/the-unlit-cake", 8));
+  } finally { w.cleanup(); }
+});
+
+test("M-8: a move that RENAMES THE LEAF is not a transfer — the pen does not decide that", async () => {
+  // A mark's id is `by` + leaf, so a move that keeps the leaf changes only the
+  // owner half of the identity, which is what changing hands means. A move that
+  // renames the leaf is a different record wearing a moved file, and it falls
+  // through to the retirement branch where an unruled shape belongs.
+  const w = handedOver({ leaf: "the-relit-cake" });
+  try {
+    const c = await claimsFor(w, "a", "b");
+    assert.equal(c.transferred.length, 0, "same owner-move, different leaf — not DEC-16's subject");
+    assert.equal(c.retired.length, 1);
+    assert.equal(c.retired[0].slug, "the-town/the-unlit-cake");
+  } finally { w.cleanup(); }
+});
+
+test("M-8: a move that does NOT change the owner is no transfer at all — the mark never left", async () => {
+  // The live control, and it is on the record: `319aa3c` moves three mark files
+  // from `…/the-three-asks/<leaf>/` to `…/the-asks/<leaf>/` with `by: the-town`
+  // unchanged on both sides. Same leaf, real rename, and no transfer — because
+  // the slug never moved, so nothing was ever removed and the rename map is not
+  // consulted. The removal is the gate; the leaf only narrows inside it.
+  //
+  // (1.0 has never had a SWEEP commit rename a mark file — zero across the whole
+  // history — so the publish-commit control the brief asked for cannot be built
+  // from the record, and the widened tell does not ask whose hand it was anyway:
+  // DEC-16 never has. This is the control that exists.)
+  const w = world([
+    { tag: "a", subject: SWEEP(0), at: "2026-08-26T00:00:00+00:00",
+      register: [M({ by: "the-town", slug: "blueprint", dir: "the-three-asks/blueprint", body: LONG })],
+      log: { "7.jsonl": [] } },
+    { subject: HAND, at: "2026-08-26T00:30:00+00:00",
+      register: [M({ by: "the-town", slug: "blueprint", dir: "the-asks/blueprint", body: LONG })],
+      log: { "7.jsonl": [] } },
+    { tag: "b", subject: SWEEP(0), at: "2026-08-26T01:00:00+00:00",
+      register: [M({ by: "the-town", slug: "blueprint", dir: "the-asks/blueprint", body: LONG })],
+      log: { "7.jsonl": [], "8.jsonl": [] } },
+  ]);
+  try {
+    const c = await claimsFor(w, "a", "b");
+    assert.deepEqual(c.transferred, [], "a rename is only ever consulted for a slug that LEFT the register");
+    assert.deepEqual(c.retired, []);
+    // The era does derive one amend here, and it is the FIXTURE's doing rather
+    // than the record's: `dir` is a register-record field in this harness and
+    // rides into `data`, so moving the file changes the record. On the real
+    // record `319aa3c` produced no amend for these three marks (window 159's
+    // amend list does not name them). Asserted as the artifact it is rather than
+    // asserted around.
+    assert.deepEqual(c.claims.map((x) => x.slug), ["the-town/blueprint"]);
+  } finally { w.cleanup(); }
+});
+
+// ── a reference follows the ROW, not the NAME (ruled 2026-09-04) ─────────────
+//
+// The test that stood here one lap ago asserted the OPPOSITE — that the child's
+// claim carries `uuid5(new slug)`, "a number no row carries". It was right about
+// the record and wrong about what should happen. The law moved, so the assertion
+// moved with it, and that is said out loud rather than quietly rewritten:
+//
+//   "a claim's `parent` resolves through the STANDING row for the parent's slug,
+//    never through uuid5(name) — the same law DEC-16 already gives `supersedes`."
+//
+// `deriveSeed` cannot do this and must not: it reads a checkout, it is shared
+// with `seed-import.mjs`, and it IS the parity oracle — an oracle that consulted
+// the store about this column could never disagree with the store about it.
+
+test("the child of a transferred mark carries the parent's ORIGINAL id, so the foreign key holds", async () => {
+  const w = handedOver({ child: true });
+  try {
+    const c = await claimsFor(w, "a", "b");
+    assert.equal(c.transferred.length, 1);
+    assert.deepEqual(c.transferred[0].children, ["the-town/the-lit-name"],
+      "the receipt still names which rows the rule moved");
+
+    const child = c.claims.find((x) => x.slug === "the-town/the-lit-name");
+    assert.ok(child, "the child is an amend, because its parent moved under it");
+    assert.equal(child.parent, uuid5("the-town/the-unlit-cake"),
+      "the id the row KEPT — `marks.parent REFERENCES marks(id)` resolves");
+    assert.notEqual(child.parent, uuid5("wright/the-unlit-cake"),
+      "and NOT the one the checkout derived from the new name");
+
+    assert.deepEqual(c.parentResolved, [{
+      slug: "the-town/the-lit-name",
+      derived: uuid5("wright/the-unlit-cake"),
+      standing: uuid5("the-town/the-unlit-cake"),
+    }], "and the run says what it moved, with both numbers");
+  } finally { w.cleanup(); }
+
+  // The same transfer WITHOUT a child names none, or `children` is measuring
+  // nothing and the assertion above is about a truthy array.
+  const alone = handedOver();
+  try {
+    const c = await claimsFor(alone, "a", "b");
+    assert.deepEqual(c.transferred[0].children, []);
+    assert.deepEqual(c.parentResolved, []);
+  } finally { alone.cleanup(); }
+});
+
+test("a child whose parent did NOT move resolves to the same id as before — the negative control", async () => {
+  // Same shape, same child, and the parent stays `the-town`. Nothing is
+  // re-identified, so nothing is resolved and the claim carries exactly what the
+  // checkout derived. Without this the rule could be rewriting every parent it
+  // sees and the test above would not notice.
+  const w = world([
+    { tag: "a", subject: SWEEP(0), at: "2026-08-26T00:00:00+00:00",
+      register: [M({ by: "the-town", slug: "the-unlit-cake", body: LONG }),
+        M({ by: "the-town", slug: "the-lit-name", kind: "predicated", parent: "the-town/the-unlit-cake", body: LONG })],
+      log: { "7.jsonl": [] } },
+    { tag: "b", subject: SWEEP(0), at: "2026-08-26T01:00:00+00:00",
+      register: [M({ by: "the-town", slug: "the-unlit-cake", body: LONG }),
+        M({ by: "the-town", slug: "the-lit-name", kind: "predicated", parent: "the-town/the-unlit-cake",
+          body: LONG + "\nAnd a line the owner added." })],
+      log: { "7.jsonl": [], "8.jsonl": [] } },
+  ]);
+  try {
+    const c = await claimsFor(w, "a", "b");
+    assert.deepEqual(c.transferred, []);
+    assert.deepEqual(c.parentResolved, [], "nothing moved, so nothing is resolved");
+    const child = c.claims.find((x) => x.slug === "the-town/the-lit-name");
+    assert.equal(child.parent, uuid5("the-town/the-unlit-cake"), "byte-identical to what the checkout derived");
+  } finally { w.cleanup(); }
+});
+
+test("the resolution outlives the era it happened in, and chains across two changes of hands", async () => {
+  // A transfer's consequences do not stop at its own era: a child amended three
+  // eras later still derives the parent's CURRENT name. The map is the caller's
+  // and is threaded, so this asks `eraClaims` the way `main()` asks it.
+  const carried = new Map([[uuid5("wright/the-unlit-cake"), uuid5("the-town/the-unlit-cake")]]);
+  const w = world([
+    { tag: "a", subject: SWEEP(0), at: "2026-08-26T00:00:00+00:00",
+      register: [M({ by: "wright", slug: "the-unlit-cake", body: LONG }),
+        M({ by: "the-town", slug: "the-lit-name", kind: "predicated", parent: "wright/the-unlit-cake", body: LONG })],
+      log: { "7.jsonl": [] } },
+    { tag: "b", subject: SWEEP(0), at: "2026-08-26T01:00:00+00:00",
+      register: [M({ by: "wright", slug: "the-unlit-cake", body: LONG }),
+        M({ by: "the-town", slug: "the-lit-name", kind: "predicated", parent: "wright/the-unlit-cake",
+          body: LONG + "\nEdited a whole era later." })],
+      log: { "7.jsonl": [], "8.jsonl": [] } },
+  ]);
+  try {
+    const a = checkout(w.dir, w.tags.a), b = checkout(w.dir, w.tags.b);
+    try {
+      const window = eraWindow({ toDir: b.dir, lawSha: w.tags.b, townSha: null });
+      const c = await eraClaims({
+        fromDir: a.dir, toDir: b.dir, window, acts: eraActs({ fromDir: a.dir, toDir: b.dir }),
+        worldRepo: w.dir, fromSha: w.tags.a, toSha: w.tags.b, reidentified: carried,
+      });
+      assert.deepEqual(c.transferred, [], "this era transfers nothing — the change of hands was earlier");
+      const child = c.claims.find((x) => x.slug === "the-town/the-lit-name");
+      assert.equal(child.parent, uuid5("the-town/the-unlit-cake"),
+        "and the earlier era's re-identification still governs");
+    } finally { b.dispose(); a.dispose(); }
+  } finally { w.cleanup(); }
+
+  // CHAINED, because a mark may change hands twice: the second entry must point
+  // at the ORIGINAL id and not at an intermediate name, which no row carries
+  // either. Asked of a real transfer rather than of a hand-built map.
+  const twice = handedOver({ child: true });
+  try {
+    const c = await claimsFor(twice, "a", "b");
+    const again = new Map(c.reidentified);
+    const standing = (id) => again.get(String(id)) ?? String(id);
+    again.set(uuid5("keith/the-unlit-cake"), standing(uuid5("wright/the-unlit-cake")));
+    assert.equal(again.get(uuid5("keith/the-unlit-cake")), uuid5("the-town/the-unlit-cake"),
+      "two changes of hands, and the row's own id is still what a reference finds");
+  } finally { twice.cleanup(); }
+});
+
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 function checkout(repo, sha) {

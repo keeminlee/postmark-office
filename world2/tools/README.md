@@ -1128,6 +1128,54 @@ Three consequences worth stating outright:
 - **`household` moves with the owner.** It is a substance column and nothing else
   would move it: the clearing job's step 7 recomputes `tier` and only `tier`.
 
+**The tell is path identity OR a rename (M-8, ruled 2026-09-04 as plumbing under
+DEC-16).** "Is the file still at its old path under a new id?" is the whole tell
+for the Lit Name, whose file never moved, and not the whole tell for the record.
+`61c5fdfbc` — *"the cake, the vault, and the cellar door pass from the-town to
+wright"* — moves each file into the new owner's directory and changes its `by:`
+in one commit. Git calls that a rename (R098, R098, R096); path identity cannot
+see it, so three records changing hands read as three retirements plus three
+additions and lost their ids. `renamesBetween` asks the whole `WORLD/marks` tree
+once per era — a pathspec naming only the old path finds nothing, because a
+rename is detected by comparing the two sides of a diff and the new path is
+outside it. **The leaf must match**: a mark's id is `by` + leaf, so a move that
+keeps the leaf changes only the owner half of the identity, and a move that
+renames the leaf falls through to the retirement branch where an unruled shape
+belongs. The removal is the gate — a rename that does not move the slug (world
+`319aa3c`, `…/the-three-asks/<leaf>/` → `…/the-asks/<leaf>/` with `by:` unchanged)
+never reaches the map at all. 1.0 has never had a **sweep** rename a mark file,
+zero across the whole history, and the tell does not ask whose hand it was —
+DEC-16 never has.
+
+### A reference follows the ROW, not the NAME (ruled 2026-09-04)
+
+> A claim's `parent` resolves through the STANDING row for the parent's slug,
+> never through `uuid5(name)` — the same law DEC-16 already gives `supersedes`.
+
+The rename half surfaced the case that made this reachable: a transferred mark's
+**predicated children**. DEC-16's seam table says `marks.parent` "follows for
+free … this is what the fixed id buys", which is true of the **store** — the
+child's row still points at the parent's kept id — and false of the **oracle**,
+which re-derives a child's parent from the parent's **slug** at every checkout.
+`the-town/the-unlit-cake` keeps `a6cfdfdb…`; its child `the-town/the-lit-name`
+derives its parent as `c4549660…`, a number no row carries, and
+`marks.parent uuid REFERENCES marks(id)` (004) is not deferrable — so before this
+rule the era was refused rather than written wrong.
+
+**The reconciliation is in `eraClaims`, and it cannot be in `deriveSeed`.**
+`deriveSeed` takes a checkout and no connection; it is shared with
+`seed-import.mjs`, which runs before any store exists; and it **is** the parity
+oracle — an oracle that consulted the store about this column could never
+disagree with the store about it, which is the one thing an oracle is for. So the
+resolution happens where the era's transfers are known and the claim is built.
+
+The map is `Map(derived id → the id the row keeps)`, **owned by the caller and
+threaded across eras**, because a transfer's consequences outlive its own era: a
+child added under `wright/the-unlit-cake` three eras later still derives
+`uuid5("wright/the-unlit-cake")`. It **chains** on insert, so a mark that changes
+hands twice points at the original id and not at an intermediate name that no row
+carries either. The dry run prints every claim it moved, with both numbers.
+
 `012_reidentification.sql` is the schema half. It does not "make `slug` mutable"
 — `UPDATE marks SET slug` was always legal — it enforces the half with teeth: a
 trigger refusing any change to `marks.id`, because "every reference by id follows

@@ -732,7 +732,10 @@ export function sixCountOf(subject) {
  * a different id standing there. Removal alone cannot distinguish the two, and
  * the register alone cannot either — only the file can say the record survived.
  */
-export async function eraClaims({ fromDir, toDir, window, acts = null, worldRepo = null, fromSha = null, toSha = null }) {
+export async function eraClaims({
+  fromDir, toDir, window, acts = null, worldRepo = null, fromSha = null, toSha = null,
+  reidentified = new Map(),
+}) {
   const before = await deriveSeed({ worldRepo: fromDir, lawSha: window.law_sha, townSha: window.town_sha });
   const after = await deriveSeed({ worldRepo: toDir, lawSha: window.law_sha, townSha: window.town_sha });
 
@@ -753,6 +756,9 @@ export async function eraClaims({ fromDir, toDir, window, acts = null, worldRepo
     // is not cheap and every green era would otherwise pay for the rare one.
     const wasFiled = await markFilingAt(fromDir);
     const nowFiles = await filingOwners(toDir);
+    // The era's renames, asked once (M-8). Same guard as the filing reads above:
+    // nothing left the register, nothing to ask about.
+    const renamed = (worldRepo && fromSha && toSha) ? renamesBetween(worldRepo, { fromSha, toSha }) : new Map();
     for (const slug of removed) {
       const was = b.get(slug);
       const path = wasFiled.get(slug) ?? null;
@@ -765,7 +771,28 @@ export async function eraClaims({ fromDir, toDir, window, acts = null, worldRepo
 
       // THE FILE IS STILL THERE, UNDER A NEW NAME — a RE-IDENTIFICATION (DEC-16).
       // Not a retirement, and this pen does not call it one.
-      const nowStands = path ? nowFiles.get(path) ?? null : null;
+      //
+      // "STILL THERE" IS TWO THINGS SINCE M-8: at the same path, or at the path
+      // the era MOVED it to. The second is the founder handing a record to its
+      // builder — the file walks into the new owner's directory and its `by:`
+      // changes in the same commit — and it is DEC-16's subject in the founder's
+      // own words ("pass from the-town to wright"), not a retirement.
+      //
+      // THE LEAF MUST MATCH. A mark's id is `by` + leaf (`marks-fold` § walkMarks),
+      // so a move that keeps the leaf changes only the owner half of the identity,
+      // which is exactly what changing hands means. A move that also renamed the
+      // leaf would be a different record wearing a moved file, and this pen does
+      // not get to decide that: it falls through to the retirement branch, which
+      // is where an unruled shape belongs.
+      let renameOf = null;
+      let nowStands = path ? nowFiles.get(path) ?? null : null;
+      if (!nowStands && path) {
+        const r = renamed.get(path);
+        if (r && leafOf(r.to) === leafOf(path)) {
+          const movedTo = nowFiles.get(r.to) ?? null;
+          if (movedTo && movedTo !== slug) { nowStands = movedTo; renameOf = r; }
+        }
+      }
       if (nowStands && nowStands !== slug) {
         // The register must actually CARRY the new name. If it does not, the file
         // says one thing and the settlement's outcome says another, and this pen
@@ -784,7 +811,13 @@ export async function eraClaims({ fromDir, toDir, window, acts = null, worldRepo
             `${slug} changed hands to ${nowStands} between the two settlements, and DEC-16 names the commit that ` +
             `did it — but this call passed no worldRepo/fromSha/toSha to look it up in.`);
         }
-        const commit = commitTouching(worldRepo, { fromSha, toSha, path, filter: "M" });
+        // A rename ALREADY NAMED ITS COMMIT — the rename map carries the sha, the
+        // date and the subject of the very commit that moved the file, so asking
+        // git a second time would be a second reading of one fact, and the two
+        // could differ. A same-path refold still has to be looked up.
+        const commit = renameOf
+          ? { sha: renameOf.sha, at: renameOf.at, subject: renameOf.subject }
+          : commitTouching(worldRepo, { fromSha, toSha, path, filter: "M" });
         if (!commit) {
           retired.push({
             slug, was, path, case: "unruled", why: "the id refolded with no commit this pen can name",
@@ -794,7 +827,10 @@ export async function eraClaims({ fromDir, toDir, window, acts = null, worldRepo
           });
           continue;
         }
-        transferred.push({ from_slug: slug, to_slug: nowStands, was, now: a.get(nowStands), path, commit });
+        transferred.push({
+          from_slug: slug, to_slug: nowStands, was, now: a.get(nowStands), path, commit,
+          moved: renameOf ? { from: path, to: renameOf.to, score: renameOf.score } : null,
+        });
         continue;
       }
 
@@ -843,7 +879,65 @@ export async function eraClaims({ fromDir, toDir, window, acts = null, worldRepo
     if (i !== -1) added.splice(i, 1);
     t.amended = authoredSubstance({ ...t.was, owner: t.now.owner }) !== authoredSubstance(t.now);
     if (t.amended) amended.push({ mark: t.now, was: t.was, transfer: t });
+
+    // A RENAME-TRANSFER'S EDIT HALF IS NOT ADMITTED, and it does not need to be.
+    // `amendedByHand` asks `--diff-filter=M` at the mark's CURRENT path, and a
+    // rename registers there as an addition, so the founder's hand is invisible to
+    // that probe even though the transfer act beside it names the very same
+    // commit. `wright/the-candle-vault` is the live case: one amend claim, pending.
+    // It reaches the right answer anyway — the clearing job's step 1 finds a
+    // standing mark at the new slug whose id IS this claim's `supersedes` (the
+    // transferred row kept it), so it locks as an amend rather than refusing as a
+    // duplicate. Named because it is residual exposure of the exact kind DEC-17
+    // removes: the candle judges it, and a candle that judges can refuse.
+
+    // ── WHAT A TRANSFER'S PREDICATED CHILDREN NEED, WHICH DEC-16 DOES NOT CARRY
+    //
+    // DEC-16's seam table says `marks.parent` "names a mark by id … follows for
+    // free. This is what the fixed id buys." That sentence is true of the STORE
+    // and false of the ORACLE, and M-8 is the first era where the difference is
+    // reachable, because it is the first transfer with a child.
+    //
+    // The store's child row points at the parent's kept id and stays right. But
+    // `deriveSeed` RE-DERIVES a child's parent from the parent's SLUG at each
+    // checkout, so at S(k+1) the child's parent reads `uuid5(new slug)` — a
+    // number no row carries, because the transferred row kept `uuid5(old slug)`.
+    // Measured on the record rather than reasoned:
+    //
+    //   the-town/the-unlit-cake   a6cfdfdb-ae34-5778-9c9a-3e733841eb53  (kept)
+    //   wright/the-unlit-cake     c4549660-3491-5d91-b48c-699716e9ca13  (derived)
+    //   the-town/the-lit-name's `parent` moves from the first to the second
+    //
+    // `marks.parent uuid REFERENCES marks(id)` (004) is a real, non-deferrable
+    // foreign key, so materializing that child's amend does not go wrong quietly
+    // — it is REFUSED, mid-era, by the clearing job. This pen says so up front
+    // instead, before a connection is opened: a green dry run on a range the
+    // store would refuse is the exact falsehood § 9 traded away.
+    //
+    // RULED (Wright, 2026-09-04, as DEC-16 plumbing): "a claim's `parent`
+    // resolves through the STANDING row for the parent's slug, never through
+    // uuid5(name) — the same law DEC-16 already gives `supersedes`." Built below;
+    // `children` stays as the receipt that says which rows the rule moved.
+    t.children = after.marks
+      .filter((m) => m.parent && String(m.parent) === uuid5(t.to_slug))
+      .map((m) => m.slug);
   }
+
+  // ── A REFERENCE FOLLOWS THE ROW, NOT THE NAME ──────────────────────────────
+  //
+  // `reidentified` maps the id a checkout DERIVES for a re-identified mark to the
+  // id its row actually KEEPS. It is the caller's, threaded across eras and
+  // mutated here, because a transfer's consequences outlive its own era: a child
+  // added under `wright/the-unlit-cake` three eras later still derives
+  // `uuid5("wright/the-unlit-cake")` while the row has carried
+  // `uuid5("the-town/the-unlit-cake")` since window 158. Only the caller sees the
+  // sequence, so only the caller can own the accumulator.
+  //
+  // CHAINED on insert, because a mark may change hands twice: if `from` was
+  // itself a new name, its entry already points at the original, and this points
+  // there too rather than at an intermediate that no row carries either.
+  const standingId = (id) => (id == null ? null : (reidentified.get(String(id)) ?? String(id)));
+  for (const t of transferred) reidentified.set(uuid5(t.to_slug), standingId(uuid5(t.from_slug)));
 
   // ── DEC-17: THE HAND IS ASKED OF EVERY ERA, NOT ONLY A DISAGREEING ONE ─────
   //
@@ -875,6 +969,15 @@ export async function eraClaims({ fromDir, toDir, window, acts = null, worldRepo
   const plantedAt = new Map(hand.map((h) => [h.slug, h]));
   const amendedAt = new Map(handAmends.map((h) => [h.slug, h]));
 
+  // What the rule actually moved, so the run can print it rather than assert it.
+  const parentResolved = [];
+  const resolveParentId = (m) => {
+    const was = m.parent == null ? null : String(m.parent);
+    const is = standingId(was);
+    if (was !== null && is !== was) parentResolved.push({ slug: m.slug, derived: was, standing: is });
+    return is;
+  };
+
   const claim = (m, extra) => ({
     id: extra.id, window_id: window.id, class: m.kind, claimant: m.owner, household: m.household,
     submitted_at: window.opens_at,
@@ -884,7 +987,15 @@ export async function eraClaims({ fromDir, toDir, window, acts = null, worldRepo
     status: extra.status ?? "pending",
     decided_at: extra.decided_at ?? null,
     body: m.body, geometry: m.geometry, bbox: m.bbox, stake: 0,
-    data: extra.data ?? m.data, parent: m.parent,
+    data: extra.data ?? m.data,
+    // THROUGH THE ROW, NOT THE NAME (ruled 2026-09-04). `deriveSeed` answers
+    // `uuid5(parent slug)` and cannot answer anything else: it reads a checkout,
+    // it is shared with `seed-import.mjs`, and it IS the parity oracle — an
+    // oracle that consulted the store to fix this column could never disagree
+    // with the store about it, which is the one thing an oracle is for. So the
+    // reconciliation is here, where the era's transfers are known and the claim
+    // is built. Same law as `supersedes` above, one column down.
+    parent: resolveParentId(m),
     slug: m.slug, supersedes: extra.supersedes ?? null,
     _mark: m,
   });
@@ -920,7 +1031,7 @@ export async function eraClaims({ fromDir, toDir, window, acts = null, worldRepo
   // oracle. Annotating them would write our finding onto the thing we compare
   // against. So the hand rides beside them, keyed by slug.
   return {
-    claims, added, amended, retired, transferred, hand, handAmends,
+    claims, added, amended, retired, transferred, hand, handAmends, parentResolved, reidentified,
     unruled: retired.filter(isUnruled), registerAfter: after, registerBefore: before,
   };
 }
@@ -1030,6 +1141,56 @@ export function commitTouching(worldRepo, { fromSha, toSha, path, filter }) {
 
 /** DEC-15's hand: the commit that DELETED the record. */
 export const removingCommit = (worldRepo, opts) => commitTouching(worldRepo, { ...opts, filter: "D" });
+
+/**
+ * EVERY MARK FILE THE ERA MOVED — the rename half of DEC-16's tell (M-8).
+ *
+ * DEC-16 asks "is the file still at its old path under a new id?", which is the
+ * whole tell for `the-town/the-lit-name`, whose file never moved. It is not the
+ * whole tell for the record. `61c5fdfbc` — "the cake, the vault, and the cellar
+ * door PASS FROM THE-TOWN TO WRIGHT" — is a git RENAME: the file moved to the new
+ * owner's path AND its `by:` changed in the same commit. Path identity cannot see
+ * it, so three records changing hands read as three retirements plus three
+ * additions, and the escrow and by-id history DEC-16 exists to preserve are lost
+ * under three orphaned ids. Ruled (Wright, 2026-09-04, as plumbing under DEC-16):
+ * the tell is path identity OR a rename.
+ *
+ * ASKED ONCE PER ERA OVER THE WHOLE `WORLD/marks` TREE, not once per departure,
+ * and that is not only a cost decision — it is the only way that works. Git
+ * detects a rename by comparing the two SIDES of a diff, so a pathspec naming the
+ * old path alone finds nothing: the new path is outside it and there is nothing
+ * to pair with. Measured, both ways, before this was written.
+ *
+ * Returns `Map(oldPath -> { to, sha, at, subject, score })`. `score` is git's own
+ * similarity index (R100 = byte-identical, R096 = the `by:` line and nothing
+ * else), carried because it is the record's own statement of how much of the file
+ * moved unchanged and a reader should not have to re-run git to see it.
+ */
+export function renamesBetween(worldRepo, { fromSha, toSha }) {
+  const out = git(worldRepo, "log", "--diff-filter=R", "--find-renames", "--name-status",
+    `--format=C${UNIT_SEP}%H${UNIT_SEP}%cI${UNIT_SEP}%s`, `${fromSha}..${toSha}`, "--", "WORLD/marks");
+  const renames = new Map();
+  let commit = null;
+  for (const line of out.split("\n")) {
+    if (line.startsWith(`C${UNIT_SEP}`)) {
+      const [, sha, at, subject] = line.split(UNIT_SEP);
+      commit = { sha, at: new Date(at).toISOString(), subject };
+      continue;
+    }
+    if (!commit || !line.startsWith("R")) continue;
+    const [score, from, to] = line.split("\t");
+    if (!from || !to) continue;
+    // FIRST WRITER WINS. The walk is newest-first, so an older commit that moved
+    // the same path must not overwrite the move that actually landed it where it
+    // now stands. (A path renamed twice inside one era is not in this range; the
+    // rule is stated because the loop order alone would decide it silently.)
+    if (!renames.has(from)) renames.set(from, { to, score, ...commit });
+  }
+  return renames;
+}
+
+/** The leaf directory a mark's file sits in — `.../<leaf>/mark.md`. */
+const leafOf = (p) => (p ?? "").split("/").slice(-2, -1)[0] ?? null;
 
 /**
  * WHICH OF AN ERA'S ADDITIONS NOBODY PUBLISHED — the receipt's diagnosis (F-5).
@@ -1979,6 +2140,10 @@ async function main() {
   // The derivation is pure (seed-import's own contract), and doing it up front is
   // what lets --dry-run ask exactly the questions the real run will ask.
   const eras = [];
+  // Every re-identification the range has seen, derived id → the id the row keeps.
+  // Owned here because only this loop sees the eras in order, and a transfer's
+  // consequences outlive its own era (ruled 2026-09-04; see `eraClaims`).
+  const reidentified = new Map();
   for (const b of bounds) {
     const from = checkoutAt(worldRepo, b.from.sha, "from");
     const to = checkoutAt(worldRepo, b.to.sha, "to");
@@ -2002,7 +2167,7 @@ async function main() {
       // (b) attributes the removal to.
       const claims = await eraClaims({
         fromDir: from.dir, toDir: to.dir, window, acts,
-        worldRepo, fromSha: b.from.sha, toSha: b.to.sha,
+        worldRepo, fromSha: b.from.sha, toSha: b.to.sha, reidentified,
       });
       // The settlement's own receipt, held against what we derived from its outcome.
       // The boundary already read its own subject in `erasBetween` — asking git a
@@ -2050,7 +2215,13 @@ async function main() {
       console.log(`   transferred ${String(e.transferred.length).padStart(1)}  (DEC-16 — the record changed hands; the same row keeps its id)`);
       for (const t of e.transferred) {
         console.log(`          ${t.from_slug} → ${t.to_slug} · ${t.commit.sha.slice(0, 9)} (${t.commit.at})` +
+          `${t.moved ? ` · the FILE MOVED (${t.moved.score}, M-8) ${t.moved.from} → ${t.moved.to}` : ""}` +
           `${t.amended ? " · ALSO edited this era → one amend claim under the new slug" : " · nothing else changed, so no claim"}`);
+        if (t.children?.length) {
+          console.log(`          ${t.children.join(", ")} name this mark as their PARENT: derived ` +
+            `${uuid5(t.to_slug).slice(0, 8)} from the new name, resolved to ${uuid5(t.from_slug).slice(0, 8)}, ` +
+            `the id the row kept`);
+        }
       }
     }
     if (e.retired.length) {
@@ -2159,6 +2330,19 @@ async function main() {
       console.log(`\nEach one wants a ruling of its own. Nothing was written; nothing could have been.`);
       assertHeadUnmoved(worldRepo, headBefore);
       process.exit(1);
+    }
+    // The rule's own receipt, printed rather than asserted: every claim whose
+    // parent was re-identified, and the two numbers. Zero of these on a range with
+    // no transfer is the honest answer; a number here is the foreign key that did
+    // not fire.
+    const resolved = eras.flatMap((e) => e.parentResolved.map((p) => ({ ...p, tag: e.to.tag })));
+    if (resolved.length) {
+      console.log(`\nPARENT RESOLVED THROUGH THE STANDING ROW · ${resolved.length} claim(s) — a reference follows ` +
+        `the row, not the name (ruled 2026-09-04, DEC-16's \`supersedes\` law one column down):`);
+      for (const p of resolved) {
+        console.log(`  ${p.tag}  ${p.slug} · parent ${p.derived.slice(0, 8)} (derived from the new name) ` +
+          `→ ${p.standing.slice(0, 8)} (the id the row kept)`);
+      }
     }
     console.log("\ndry-run · nothing written, no connection opened");
     assertHeadUnmoved(worldRepo, headBefore);
@@ -2274,6 +2458,7 @@ async function main() {
           `\`withdraw\` in the log for a mark nobody withdrew. Run --dry-run for the whole range's list, and take ` +
           `it to a ruling.`);
       }
+
 
       // The window this era clears must be the one the store has open — asked
       // FRESH each era, because the previous era's clearing opened its successor.
