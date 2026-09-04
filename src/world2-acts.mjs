@@ -91,6 +91,79 @@ export const LANE_MIRROR = Object.freeze({
   }),
 });
 
+// ── WHEN EACH LANE'S PEN FLIPPED — DATES AS DATA, NOT AS PROSE ───────────────
+//
+// THE DEFECT THIS EXISTS TO KILL (w2-hold-say-flip-report.md § Findings 2,
+// 2026-09-03, verbatim): "`--since` is one clock for every lane, and lanes flip
+// on different days. Asked for `--lanes stance,hold,say --since <the stance
+// flip>`, it read 81 mirror-era say acts (`journal_seq` NULL by the mirror's
+// design, never flipped) as 'flipped acts lacking twins'. The pairing key
+// 'journal_seq NULL' does not distinguish a flipped row from a mirror-written
+// row of a lane that never had journal rows."
+//
+// The pairing key CANNOT distinguish them and never will: before a lane flips,
+// its mirror writes `acts` rows with `journal_seq` NULL too (the say gap and the
+// holding gap were closed by the mirror, not by the journal — the lane simply
+// had no journal row to carry a seq). The only thing that separates a flipped
+// row from a mirror row of the same lane is WHEN — so the moment each lane's pen
+// flipped is a fact the store needs written down, and this is where it lives:
+// beside LANE_MIRROR, which is already the one home for per-lane truth about the
+// shim. A falsifier that carried these dates in its own argv would make every
+// operator re-type them, and a date re-typed is a date eventually mistyped.
+//
+// THE VALUE IS THE SERVICE-RESTART MOMENT, from that lane's own flip report —
+// not the first act observed after it. An act is evidence the flip happened
+// BEFORE it; the restart is the flip.
+//
+// `null` means THIS LANE HAS NOT FLIPPED. It is not "unknown" and it is not a
+// backstop: a lane with a null here has no flipped era at all, so a reverse-
+// parity check over it is a comparison with nothing to compare (its
+// `journal_seq`-NULL rows are the mirror's, and pairing them against a journal
+// that never held them manufactures exactly the 81 false reds above). A lane
+// ABSENT from this map is also unflipped — nothing becomes "flipped" by being
+// unnamed, which is LANE_MIRROR's own fail-closed rule pointed the other way.
+//
+// A lane's row changes ONCE, when its pen flips, and the change carries the
+// report that names the restart. Rolling a lane back (removing it from `W2_PEN`)
+// does NOT clear its row: the flipped-era acts it wrote still exist and still
+// need pairing. A second flip after a rollback is a second era, and the honest
+// shape for that is a list rather than a scalar — deliberately not built until
+// a rollback actually happens, because a shape nobody needs is furniture.
+export const LANE_FLIPPED_AT = Object.freeze({
+  // C1 · `W2_PEN=stance`, postmark-office.service restarted 21:01:58Z
+  // (G:/Starstory/docs/2026-09-02/w2-stance-flip-report.md).
+  stance: "2026-09-02T21:01:58Z",
+  // C2 + C4 · `W2_PEN=stance,hold,say`, one restart, both lanes
+  // (G:/Starstory/docs/2026-09-03/w2-hold-say-flip-report.md: "FLIPPED ON PROD
+  // 2026-09-03 18:58:05Z").
+  hold: "2026-09-03T18:58:05Z",
+  say: "2026-09-03T18:58:05Z",
+  // Not flipped. C3 (walk) is the next lane; C5 (frame) waits on DEC-5; C6
+  // (mark) is refused for unreadiness and the arena by ruling (P-143).
+  walk: null,
+  frame: null,
+  mark: null,
+  arena: null,
+});
+
+/**
+ * The instant this lane's pen flipped, or null when it never has.
+ *
+ * Fail-closed the way `mirrorExpiresFor` is, and toward the opposite answer for
+ * the opposite reason: an unnamed lane there must not buy IMMORTALITY, an
+ * unnamed lane here must not buy a FLIPPED ERA it never had. Both defaults are
+ * the answer that cannot manufacture a passing check out of an omission.
+ */
+export function laneFlippedAt(lane, lanes = LANE_FLIPPED_AT) {
+  const at = Object.prototype.hasOwnProperty.call(lanes, lane) ? lanes[lane] : null;
+  return at ?? null;
+}
+
+/** The lanes whose pen has flipped — what a reverse-parity check can ask about. */
+export function flippedLanesAt(lanes = LANE_FLIPPED_AT) {
+  return Object.keys(lanes).filter((lane) => laneFlippedAt(lane, lanes) !== null);
+}
+
 // THE BACKSTOP IS A TOWN DAY, NOT A WIRE DAY (2026-08-30, the v1 settlement
 // sweep of every dated derivation). This was `.toISOString().slice(0, 10)`, so
 // the whole 20:00–23:59 ET stretch of a lane's LAST lawful day already read as
