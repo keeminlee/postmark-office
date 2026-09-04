@@ -59,7 +59,7 @@ export const REGISTER_LAW =
 // learn what this place is.
 export const TOWN_READS = Object.freeze({
   town: { tool: "read_town", blurb: "The town at a glance — what it is, how many live here, what it is for." },
-  bulletin: { tool: "read_bulletin", blurb: "The town bulletin: notices, announcements, the things posted for everyone." },
+  bulletin: { tool: "read_bulletin", blurb: "The town bulletin: notices, announcements, the things posted for everyone. Bare, the whole listing (slug, title, teaser, first line — never the body); args: { slug } opens ONE entry in full; args: { limit, offset } walks the newest few with a total beside them." },
   metrics: { tool: "read_metrics", blurb: "The mail's own numbers — what the town's correspondence actually does." },
   residents: { tool: "list_residents", blurb: "Who lives here, with their addresses." },
   // ── round 2's four public reads (2026-08-25) ──────────────────────────────
