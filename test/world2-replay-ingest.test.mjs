@@ -1154,35 +1154,120 @@ test("M-8: a move that does NOT change the owner is no transfer at all — the m
   } finally { w.cleanup(); }
 });
 
-test("M-8: a transfer with a PREDICATED CHILD is named — the child's parent is a number no row carries", async () => {
-  // DEC-16's seam table says `marks.parent` "follows for free … this is what the
-  // fixed id buys". True of the STORE, false of the ORACLE: `deriveSeed`
-  // re-derives a child's parent from the parent's SLUG, so at S(k+1) the child
-  // points at `uuid5(new slug)` while the transferred row keeps `uuid5(old slug)`.
-  // `marks.parent uuid REFERENCES marks(id)` (004) is not deferrable, so this is
-  // refused mid-era rather than written wrong — and the refusal belongs up front.
+// ── a reference follows the ROW, not the NAME (ruled 2026-09-04) ─────────────
+//
+// The test that stood here one lap ago asserted the OPPOSITE — that the child's
+// claim carries `uuid5(new slug)`, "a number no row carries". It was right about
+// the record and wrong about what should happen. The law moved, so the assertion
+// moved with it, and that is said out loud rather than quietly rewritten:
+//
+//   "a claim's `parent` resolves through the STANDING row for the parent's slug,
+//    never through uuid5(name) — the same law DEC-16 already gives `supersedes`."
+//
+// `deriveSeed` cannot do this and must not: it reads a checkout, it is shared
+// with `seed-import.mjs`, and it IS the parity oracle — an oracle that consulted
+// the store about this column could never disagree with the store about it.
+
+test("the child of a transferred mark carries the parent's ORIGINAL id, so the foreign key holds", async () => {
   const w = handedOver({ child: true });
   try {
     const c = await claimsFor(w, "a", "b");
     assert.equal(c.transferred.length, 1);
-    assert.deepEqual(c.transferred[0].children, ["the-town/the-lit-name"]);
+    assert.deepEqual(c.transferred[0].children, ["the-town/the-lit-name"],
+      "the receipt still names which rows the rule moved");
 
-    // The two numbers, asserted rather than described — this is the whole finding.
     const child = c.claims.find((x) => x.slug === "the-town/the-lit-name");
     assert.ok(child, "the child is an amend, because its parent moved under it");
-    assert.equal(child.parent, uuid5("wright/the-unlit-cake"), "the oracle derives the NEW name");
-    assert.notEqual(uuid5("wright/the-unlit-cake"), uuid5("the-town/the-unlit-cake"),
-      "and the row keeps the old one, so the two cannot both be right");
+    assert.equal(child.parent, uuid5("the-town/the-unlit-cake"),
+      "the id the row KEPT — `marks.parent REFERENCES marks(id)` resolves");
+    assert.notEqual(child.parent, uuid5("wright/the-unlit-cake"),
+      "and NOT the one the checkout derived from the new name");
 
+    assert.deepEqual(c.parentResolved, [{
+      slug: "the-town/the-lit-name",
+      derived: uuid5("wright/the-unlit-cake"),
+      standing: uuid5("the-town/the-unlit-cake"),
+    }], "and the run says what it moved, with both numbers");
   } finally { w.cleanup(); }
 
-  // CAN-FAIL: the same transfer WITHOUT a child names none, or the assertion
-  // above is about `children` being truthy rather than about a real edge.
+  // The same transfer WITHOUT a child names none, or `children` is measuring
+  // nothing and the assertion above is about a truthy array.
   const alone = handedOver();
   try {
     const c = await claimsFor(alone, "a", "b");
     assert.deepEqual(c.transferred[0].children, []);
+    assert.deepEqual(c.parentResolved, []);
   } finally { alone.cleanup(); }
+});
+
+test("a child whose parent did NOT move resolves to the same id as before — the negative control", async () => {
+  // Same shape, same child, and the parent stays `the-town`. Nothing is
+  // re-identified, so nothing is resolved and the claim carries exactly what the
+  // checkout derived. Without this the rule could be rewriting every parent it
+  // sees and the test above would not notice.
+  const w = world([
+    { tag: "a", subject: SWEEP(0), at: "2026-08-26T00:00:00+00:00",
+      register: [M({ by: "the-town", slug: "the-unlit-cake", body: LONG }),
+        M({ by: "the-town", slug: "the-lit-name", kind: "predicated", parent: "the-town/the-unlit-cake", body: LONG })],
+      log: { "7.jsonl": [] } },
+    { tag: "b", subject: SWEEP(0), at: "2026-08-26T01:00:00+00:00",
+      register: [M({ by: "the-town", slug: "the-unlit-cake", body: LONG }),
+        M({ by: "the-town", slug: "the-lit-name", kind: "predicated", parent: "the-town/the-unlit-cake",
+          body: LONG + "\nAnd a line the owner added." })],
+      log: { "7.jsonl": [], "8.jsonl": [] } },
+  ]);
+  try {
+    const c = await claimsFor(w, "a", "b");
+    assert.deepEqual(c.transferred, []);
+    assert.deepEqual(c.parentResolved, [], "nothing moved, so nothing is resolved");
+    const child = c.claims.find((x) => x.slug === "the-town/the-lit-name");
+    assert.equal(child.parent, uuid5("the-town/the-unlit-cake"), "byte-identical to what the checkout derived");
+  } finally { w.cleanup(); }
+});
+
+test("the resolution outlives the era it happened in, and chains across two changes of hands", async () => {
+  // A transfer's consequences do not stop at its own era: a child amended three
+  // eras later still derives the parent's CURRENT name. The map is the caller's
+  // and is threaded, so this asks `eraClaims` the way `main()` asks it.
+  const carried = new Map([[uuid5("wright/the-unlit-cake"), uuid5("the-town/the-unlit-cake")]]);
+  const w = world([
+    { tag: "a", subject: SWEEP(0), at: "2026-08-26T00:00:00+00:00",
+      register: [M({ by: "wright", slug: "the-unlit-cake", body: LONG }),
+        M({ by: "the-town", slug: "the-lit-name", kind: "predicated", parent: "wright/the-unlit-cake", body: LONG })],
+      log: { "7.jsonl": [] } },
+    { tag: "b", subject: SWEEP(0), at: "2026-08-26T01:00:00+00:00",
+      register: [M({ by: "wright", slug: "the-unlit-cake", body: LONG }),
+        M({ by: "the-town", slug: "the-lit-name", kind: "predicated", parent: "wright/the-unlit-cake",
+          body: LONG + "\nEdited a whole era later." })],
+      log: { "7.jsonl": [], "8.jsonl": [] } },
+  ]);
+  try {
+    const a = checkout(w.dir, w.tags.a), b = checkout(w.dir, w.tags.b);
+    try {
+      const window = eraWindow({ toDir: b.dir, lawSha: w.tags.b, townSha: null });
+      const c = await eraClaims({
+        fromDir: a.dir, toDir: b.dir, window, acts: eraActs({ fromDir: a.dir, toDir: b.dir }),
+        worldRepo: w.dir, fromSha: w.tags.a, toSha: w.tags.b, reidentified: carried,
+      });
+      assert.deepEqual(c.transferred, [], "this era transfers nothing — the change of hands was earlier");
+      const child = c.claims.find((x) => x.slug === "the-town/the-lit-name");
+      assert.equal(child.parent, uuid5("the-town/the-unlit-cake"),
+        "and the earlier era's re-identification still governs");
+    } finally { b.dispose(); a.dispose(); }
+  } finally { w.cleanup(); }
+
+  // CHAINED, because a mark may change hands twice: the second entry must point
+  // at the ORIGINAL id and not at an intermediate name, which no row carries
+  // either. Asked of a real transfer rather than of a hand-built map.
+  const twice = handedOver({ child: true });
+  try {
+    const c = await claimsFor(twice, "a", "b");
+    const again = new Map(c.reidentified);
+    const standing = (id) => again.get(String(id)) ?? String(id);
+    again.set(uuid5("keith/the-unlit-cake"), standing(uuid5("wright/the-unlit-cake")));
+    assert.equal(again.get(uuid5("keith/the-unlit-cake")), uuid5("the-town/the-unlit-cake"),
+      "two changes of hands, and the row's own id is still what a reference finds");
+  } finally { twice.cleanup(); }
 });
 
 // ── helpers ──────────────────────────────────────────────────────────────────

@@ -732,7 +732,10 @@ export function sixCountOf(subject) {
  * a different id standing there. Removal alone cannot distinguish the two, and
  * the register alone cannot either — only the file can say the record survived.
  */
-export async function eraClaims({ fromDir, toDir, window, acts = null, worldRepo = null, fromSha = null, toSha = null }) {
+export async function eraClaims({
+  fromDir, toDir, window, acts = null, worldRepo = null, fromSha = null, toSha = null,
+  reidentified = new Map(),
+}) {
   const before = await deriveSeed({ worldRepo: fromDir, lawSha: window.law_sha, townSha: window.town_sha });
   const after = await deriveSeed({ worldRepo: toDir, lawSha: window.law_sha, townSha: window.town_sha });
 
@@ -911,16 +914,30 @@ export async function eraClaims({ fromDir, toDir, window, acts = null, worldRepo
     // instead, before a connection is opened: a green dry run on a range the
     // store would refuse is the exact falsehood § 9 traded away.
     //
-    // NAMED, NOT INVENTED, per the ruling. The fix is one rule and it is DEC-16's
-    // own, one column down: an amend "supersedes the STANDING mark's locking
-    // claim, not a re-derivation from the new slug", and a child's `parent` is
-    // the same shape — resolve it through the row that stands rather than
-    // through the name. That is a rule about how a predicated child follows its
-    // parent's re-identification, and it is DEC-16's to make, not this pen's.
+    // RULED (Wright, 2026-09-04, as DEC-16 plumbing): "a claim's `parent`
+    // resolves through the STANDING row for the parent's slug, never through
+    // uuid5(name) — the same law DEC-16 already gives `supersedes`." Built below;
+    // `children` stays as the receipt that says which rows the rule moved.
     t.children = after.marks
       .filter((m) => m.parent && String(m.parent) === uuid5(t.to_slug))
       .map((m) => m.slug);
   }
+
+  // ── A REFERENCE FOLLOWS THE ROW, NOT THE NAME ──────────────────────────────
+  //
+  // `reidentified` maps the id a checkout DERIVES for a re-identified mark to the
+  // id its row actually KEEPS. It is the caller's, threaded across eras and
+  // mutated here, because a transfer's consequences outlive its own era: a child
+  // added under `wright/the-unlit-cake` three eras later still derives
+  // `uuid5("wright/the-unlit-cake")` while the row has carried
+  // `uuid5("the-town/the-unlit-cake")` since window 158. Only the caller sees the
+  // sequence, so only the caller can own the accumulator.
+  //
+  // CHAINED on insert, because a mark may change hands twice: if `from` was
+  // itself a new name, its entry already points at the original, and this points
+  // there too rather than at an intermediate that no row carries either.
+  const standingId = (id) => (id == null ? null : (reidentified.get(String(id)) ?? String(id)));
+  for (const t of transferred) reidentified.set(uuid5(t.to_slug), standingId(uuid5(t.from_slug)));
 
   // ── DEC-17: THE HAND IS ASKED OF EVERY ERA, NOT ONLY A DISAGREEING ONE ─────
   //
@@ -952,6 +969,15 @@ export async function eraClaims({ fromDir, toDir, window, acts = null, worldRepo
   const plantedAt = new Map(hand.map((h) => [h.slug, h]));
   const amendedAt = new Map(handAmends.map((h) => [h.slug, h]));
 
+  // What the rule actually moved, so the run can print it rather than assert it.
+  const parentResolved = [];
+  const resolveParentId = (m) => {
+    const was = m.parent == null ? null : String(m.parent);
+    const is = standingId(was);
+    if (was !== null && is !== was) parentResolved.push({ slug: m.slug, derived: was, standing: is });
+    return is;
+  };
+
   const claim = (m, extra) => ({
     id: extra.id, window_id: window.id, class: m.kind, claimant: m.owner, household: m.household,
     submitted_at: window.opens_at,
@@ -961,7 +987,15 @@ export async function eraClaims({ fromDir, toDir, window, acts = null, worldRepo
     status: extra.status ?? "pending",
     decided_at: extra.decided_at ?? null,
     body: m.body, geometry: m.geometry, bbox: m.bbox, stake: 0,
-    data: extra.data ?? m.data, parent: m.parent,
+    data: extra.data ?? m.data,
+    // THROUGH THE ROW, NOT THE NAME (ruled 2026-09-04). `deriveSeed` answers
+    // `uuid5(parent slug)` and cannot answer anything else: it reads a checkout,
+    // it is shared with `seed-import.mjs`, and it IS the parity oracle — an
+    // oracle that consulted the store to fix this column could never disagree
+    // with the store about it, which is the one thing an oracle is for. So the
+    // reconciliation is here, where the era's transfers are known and the claim
+    // is built. Same law as `supersedes` above, one column down.
+    parent: resolveParentId(m),
     slug: m.slug, supersedes: extra.supersedes ?? null,
     _mark: m,
   });
@@ -997,7 +1031,7 @@ export async function eraClaims({ fromDir, toDir, window, acts = null, worldRepo
   // oracle. Annotating them would write our finding onto the thing we compare
   // against. So the hand rides beside them, keyed by slug.
   return {
-    claims, added, amended, retired, transferred, hand, handAmends,
+    claims, added, amended, retired, transferred, hand, handAmends, parentResolved, reidentified,
     unruled: retired.filter(isUnruled), registerAfter: after, registerBefore: before,
   };
 }
@@ -2106,6 +2140,10 @@ async function main() {
   // The derivation is pure (seed-import's own contract), and doing it up front is
   // what lets --dry-run ask exactly the questions the real run will ask.
   const eras = [];
+  // Every re-identification the range has seen, derived id → the id the row keeps.
+  // Owned here because only this loop sees the eras in order, and a transfer's
+  // consequences outlive its own era (ruled 2026-09-04; see `eraClaims`).
+  const reidentified = new Map();
   for (const b of bounds) {
     const from = checkoutAt(worldRepo, b.from.sha, "from");
     const to = checkoutAt(worldRepo, b.to.sha, "to");
@@ -2129,7 +2167,7 @@ async function main() {
       // (b) attributes the removal to.
       const claims = await eraClaims({
         fromDir: from.dir, toDir: to.dir, window, acts,
-        worldRepo, fromSha: b.from.sha, toSha: b.to.sha,
+        worldRepo, fromSha: b.from.sha, toSha: b.to.sha, reidentified,
       });
       // The settlement's own receipt, held against what we derived from its outcome.
       // The boundary already read its own subject in `erasBetween` — asking git a
@@ -2180,8 +2218,9 @@ async function main() {
           `${t.moved ? ` · the FILE MOVED (${t.moved.score}, M-8) ${t.moved.from} → ${t.moved.to}` : ""}` +
           `${t.amended ? " · ALSO edited this era → one amend claim under the new slug" : " · nothing else changed, so no claim"}`);
         if (t.children?.length) {
-          console.log(`          ⚠ ${t.children.join(", ")} name this mark as their PARENT and derive it as ` +
-            `${uuid5(t.to_slug).slice(0, 8)}, while the row keeps ${uuid5(t.from_slug).slice(0, 8)} — see REFUSED below`);
+          console.log(`          ${t.children.join(", ")} name this mark as their PARENT: derived ` +
+            `${uuid5(t.to_slug).slice(0, 8)} from the new name, resolved to ${uuid5(t.from_slug).slice(0, 8)}, ` +
+            `the id the row kept`);
         }
       }
     }
@@ -2292,30 +2331,18 @@ async function main() {
       assertHeadUnmoved(worldRepo, headBefore);
       process.exit(1);
     }
-    // M-8's own refusal, and it is a WRITE fact rather than a derivation one: the
-    // era derives perfectly and the store's foreign key refuses it. Named here so
-    // the dry run says it, because the alternative is discovering it halfway
-    // through an append-only replay.
-    const orphaning = eras.filter((e) => e.transferred.some((t) => t.children?.length));
-    if (orphaning.length) {
-      console.log(`\nREFUSED · a transfer in ${orphaning.length} era(s) carries a PREDICATED CHILD, and ` +
-        `\`marks.parent uuid REFERENCES marks(id)\` (004) is not deferrable:`);
-      for (const e of orphaning) {
-        for (const t of e.transferred.filter((x) => x.children?.length)) {
-          console.log(`  ${e.to.tag}  ${t.from_slug} → ${t.to_slug} keeps id ${uuid5(t.from_slug).slice(0, 8)}, ` +
-            `and ${t.children.length} child(ren) derive their parent as ${uuid5(t.to_slug).slice(0, 8)} ` +
-            `(a number no row carries): ${t.children.join(", ")}`);
-        }
+    // The rule's own receipt, printed rather than asserted: every claim whose
+    // parent was re-identified, and the two numbers. Zero of these on a range with
+    // no transfer is the honest answer; a number here is the foreign key that did
+    // not fire.
+    const resolved = eras.flatMap((e) => e.parentResolved.map((p) => ({ ...p, tag: e.to.tag })));
+    if (resolved.length) {
+      console.log(`\nPARENT RESOLVED THROUGH THE STANDING ROW · ${resolved.length} claim(s) — a reference follows ` +
+        `the row, not the name (ruled 2026-09-04, DEC-16's \`supersedes\` law one column down):`);
+      for (const p of resolved) {
+        console.log(`  ${p.tag}  ${p.slug} · parent ${p.derived.slice(0, 8)} (derived from the new name) ` +
+          `→ ${p.standing.slice(0, 8)} (the id the row kept)`);
       }
-      console.log(`\nDEC-16's seam table says \`marks.parent\` "follows for free … this is what the fixed id buys".\n` +
-        `That is true of the STORE — the child's row still points at the parent's kept id — and false of the\n` +
-        `ORACLE, which re-derives a child's parent from the parent's SLUG at every checkout. The fix is one rule\n` +
-        `and it is DEC-16's own, one column down: an amend "supersedes the STANDING mark's locking claim, not a\n` +
-        `re-derivation from the new slug", and a child's \`parent\` is the same shape — resolve it through the row\n` +
-        `that stands rather than through the name. A ruling about how a predicated child follows its parent's\n` +
-        `re-identification, and not a thing this pen may decide. Nothing was written; nothing could have been.`);
-      assertHeadUnmoved(worldRepo, headBefore);
-      process.exit(1);
     }
     console.log("\ndry-run · nothing written, no connection opened");
     assertHeadUnmoved(worldRepo, headBefore);
@@ -2432,22 +2459,6 @@ async function main() {
           `it to a ruling.`);
       }
 
-      // M-8: a transfer with a predicated child. The FK would refuse it inside the
-      // clearing job, mid-era, after this era's acts had already gone into an
-      // append-only table. Refused here instead, with the same words the dry run
-      // uses so a reader meets one sentence rather than two.
-      const orphaning = e.transferred.filter((t) => t.children?.length);
-      if (orphaning.length) {
-        throw new Error(
-          `${e.to.tag}: ${orphaning.length} transfer(s) carry a predicated CHILD, and \`marks.parent uuid ` +
-          `REFERENCES marks(id)\` (004) is not deferrable:\n` +
-          orphaning.map((t) => `  ${t.from_slug} → ${t.to_slug} keeps id ${uuid5(t.from_slug).slice(0, 8)}; ` +
-            `${t.children.join(", ")} derive their parent as ${uuid5(t.to_slug).slice(0, 8)}, which no row carries`)
-            .join("\n") +
-          `\n\nDEC-16's "every reference by id follows for free" is true of the store and false of the oracle, ` +
-          `which re-derives a child's parent from the parent's SLUG. Resolving a claim's \`parent\` through the ` +
-          `standing row — DEC-16's own \`supersedes\` rule, one column down — is the fix, and it is a ruling.`);
-      }
 
       // The window this era clears must be the one the store has open — asked
       // FRESH each era, because the previous era's clearing opened its successor.
