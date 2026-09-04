@@ -400,8 +400,25 @@ const brief = (v) => { const s = typeof v === "string" ? v : JSON.stringify(v); 
 
 // ── the two answers ─────────────────────────────────────────────────────────
 
+// THE ROLL, ONCE, FROM THE STORE — and handed to BOTH sides. DEC-11 (2026-09-03)
+// made the town roll the default roster of `present` on both doors on
+// 2026-09-04; server.mjs hands 1.0's apex `townRoll()` from the office index,
+// and the 2.0 door reads `town_roll` at the town head. This falsifier has no
+// office index, so it reads the same `town_roll` rows the port reads and hands
+// them to 1.0 — otherwise A6 compares a two-term roster against a three-term
+// one and "compared 0" is the only honest answer it can give (seen 09-04).
+let ROLL = null;
+async function townRollFromStore() {
+  if (ROLL) return ROLL;
+  const { rows } = await pool.query(`SELECT r.handle FROM town_roll r
+     JOIN projection_heads h ON h.repo = 'town' AND h.sha = r.town_sha
+    ORDER BY r.handle`);
+  ROLL = rows.map((r) => r.handle);
+  return ROLL;
+}
+
 async function oracleAt({ x, y }) {
-  const r = await worldApex({ x: String(x), y: String(y) }, null, {});
+  const r = await worldApex({ x: String(x), y: String(y) }, null, { roll: await townRollFromStore() });
   if (r?.error) throw new Error(`1.0 apex bounced at ${x},${y}: ${r.defect ?? r.error}`);
   return r;
 }
