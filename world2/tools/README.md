@@ -1029,6 +1029,41 @@ crossing's log *after* the settlement that precedes it: S48's tag sits on
 already there at S47. Multiset for AB-P3's reason — the record genuinely repeats
 a row, and a Set would let a dropped copy hide.
 
+### An era is one PUBLISH, not one tag (F-5, 2026-09-04)
+
+The Worldkeeper mints a `settlement/S<n>` tag when his **judgment** lands; the box
+publishes at every crossing and on demand between them, committing a
+`settlement: sweep N published, …` each time with its own six-count. Those were
+the same thing through S50 and have not been since — **seven publishes sit between
+the S50 and S51 tags**. Pairing tags derived six sweeps' worth of claims against
+the seventh's receipt and filed every retirement at the last window instead of the
+one it happened at.
+
+`erasBetween` now walks `--first-parent` and takes every commit whose subject is a
+sweep. Tags remain the range's ends, the seed's floor, the parity oracle's
+checkpoints, and the name an era wears when it has one. Measured over S47 → S55:
+
+| | eras | receipt agrees | disagrees | uncheckable |
+|---|---|---|---|---|
+| tag model | 8 | 2 | 5 | 1 |
+| publish model | 20 | 14 | 6 | 0 |
+
+**A publish is not a window either, and that is the finding this lane leaves open.**
+Five sweeps landed inside window 163 on 2026-09-01; windows 154, 156–158 and 166
+closed with no sweep behind them. A *crossing* closes a window; a sweep publishes
+into whichever one is open. `windowFindings` names every such departure and the
+run refuses — the store clears exactly one candle at a time, and its own guard
+would refuse anyway, but only after earlier eras had committed into an
+append-only table.
+
+**And the receipt gaps are not a boundary artifact.** `plantedByHand` counts, for
+any era whose six-count disagrees, how many of its additions were put in the
+register by a commit that is not a sweep. Eighty-nine marks across the range —
+one commit plants twenty-two, another fifty. The founder's hand on `main`: no door
+saw them, no sweep counted them, and the replay currently derives each as a
+resident's **claim**. That is the exact mirror of DEC-15 case (b), which ruled his
+removals. His additions are unruled.
+
 **The claim set comes from the settlement's own outcome** — the register diff at
 S(k-1) vs S(k), read by `deriveSeed` at each tag, so a claim and the mark it
 materializes are one record wearing two table names. Added → a claim; changed →
