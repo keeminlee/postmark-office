@@ -87,5 +87,5 @@ test("the legacy mirror path runs the guard too — mirrorAct hands the pool a r
   await mirrorAct({ ...row(157), household: null }, 1, env);
   assert.equal(seen.length, 1, "one INSERT reached the pool");
   assert.equal(seen[0][1], currentCrossing(), "the crossing written is the ARRIVAL window, not 157");
-  assert.match(String(seen[0][10]), /late_from_crossing/, "the original crossing rides the payload");
+  assert.match(JSON.stringify(seen[0][10]), /late_from_crossing/, "the original crossing rides the payload");
 });
