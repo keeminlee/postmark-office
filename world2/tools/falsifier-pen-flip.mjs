@@ -55,7 +55,7 @@ if (has("--prove-refusal")) {
   // appendActFlipped, but the flag is read per lane, so each is proven with
   // W2_PEN naming it alone (a lane proven only under W2_PEN=all would not
   // prove its own name is read). hold + say wired 2026-09-03 (runbook C2/C4).
-  for (const [lane, cls, action] of [["stance", "stance", "declare-stance-on"], ["hold", "holding", "take"], ["say", "voice", "say"], ["walk", "move", "walk"]]) {
+  for (const [lane, cls, action] of [["stance", "stance", "declare-stance-on"], ["hold", "holding", "take"], ["say", "voice", "say"], ["walk", "move", "walk"], ["frame", "frame", "enter"]]) {
     process.env.W2_PEN = lane;
     let refused = null;
     try {

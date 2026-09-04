@@ -56,7 +56,7 @@ import { declareMovement, declareMovementFlipped } from "./dynamic-entities.mjs"
 import { emissionFromVoice } from "./dynamic-emissions.mjs"; // stage 2: speech also becomes an emission instance
 import { world2Enabled } from "./world2-acts.mjs"; // the write-path closure: is the shadow mirror on at all
 import { VESSEL_HANDLE, ridesTheVessel } from "./dynamic-entities.mjs"; // the aboard test, one home for two readers
-import { carriersFrom, carriersWithDisclosure, carrierReader, heardFromV2, inRect, movementStandpoint, movementV2Enabled, recordsAcrossEras, roadTerms, storedDepartures, storedRecordsFor, vesselPositionAt as vesselFromTimetable, vesselServiceFrom } from "./world-movement.mjs"; // stage D: carriers carry, frames compose
+import { carriersFrom, carriersWithDisclosure, carrierReader, heardFromV2, inRect, movementStandpoint, leavingWhileOccupying, movementV2Enabled, recordsAcrossEras, roadTerms, storedDepartures, storedRecordsFor, vesselPositionAt as vesselFromTimetable, vesselServiceFrom } from "./world-movement.mjs"; // stage D: carriers carry, frames compose
 import { byBand, presenceEnabled, presentNear, near as presenceNear, everyone as presenceEveryone, PRESENCE_DIALS } from "./dynamic-presence.mjs"; // stage 2: residents revealed to each other
 import { MEDIA_BASE, mediaUrlOk } from "./media.mjs"; // the mark door's image allowlist: only the town's own media hangs on marks
 import { imageFormat, MEDIA_FORMATS } from "./edit.mjs"; // the bytes decide the type, never the filename (with_image, below)
@@ -2604,6 +2604,7 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
 
   // WHERE TO — ruling 2's order.
   let toward = null, targetExtent = null, targetMarkId = null, targetFrom = "";
+  let exitedFirst = null; // DEC-5: the marks exited on this walker's own `exit: true`, for the answer
   const px = Number(payload.x), py = Number(payload.y);
   if (payload.mark_id) {
     const id = String(payload.mark_id);
@@ -2736,6 +2737,45 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
   // The centre remains the interpolation target, while the immutable extent
   // makes arrival mean "the derived point entered the target's ground." It
   // rides the ledger line so a later move/resize cannot rewrite this walk.
+  // ── DEC-5, THE WALK GUARD (founder-ruled 2026-09-03): occupancy implies
+  // geometry, never the reverse. If this walk would carry the resident OUT of a
+  // mark they are within, it is refused with directions (#2164's own shape) —
+  // unless `exit: true` rides the walk, in which case the exits are performed
+  // first, innermost outward, and the walk follows. The pure test lives in
+  // world-movement.mjs § leavingWhileOccupying; the occupancy and the
+  // point-in-mark law are the clone's own (crossingLaw), the same instruments
+  // the enter door adjudicates with — one derivation, two doors.
+  {
+    const { crossingLaw, exitViaOffice } = await import("./world-crossings.mjs");
+    const { crossingDeps } = await import("./world-apex.mjs");
+    const law = await crossingLaw(worldClone).catch(() => null);
+    if (law?.thresholds && typeof law.verbs?.pointWithinMark === "function") {
+      const deps = crossingDeps();
+      const atNow = law.thresholds.stampAt(Date.now() / 43200000);
+      const acts = law.thresholds.parseEnterExitLedger(await deps.ledger()).acts;
+      const stack = [...(law.thresholds.occupancyAt(acts, atNow).get(who) ?? [])];
+      // pointWithinMark takes the MARK OBJECT (world-verbs.mjs:92), resolved from
+      // the same world the enter door adjudicates against (deps.world().marks).
+      const w = stack.length ? await deps.world() : null;
+      const byId = new Map((w?.marks ?? []).map((m) => [m.id, m]));
+      const leaving = leavingWhileOccupying(stack, toward, (pt, id) => { const m = byId.get(id); return m ? law.verbs.pointWithinMark(pt, m) : null; });
+      if (leaving.length) {
+        if (payload.exit !== true) {
+          throw bounce(409, `you are within ${leaving[0]} — this walk would carry you out of it without leaving`,
+            `the-town/the-occupancy-invariant: "You occupy a mark only by entering, and only while your feet stand inside it; a walk that would carry you out is refused until you exit." Step out first — world { do: "exit"${leaving.length > 1 ? ", args: { mark }" : ""} } — or pass exit: true on this walk to exit (${leaving.join(" → ")}) and walk in one call.`,
+            { law: "the-town/the-occupancy-invariant (DEC-5, founder-ruled 2026-09-03)", within: stack, leaving });
+        }
+        for (const markId of leaving) {
+          const stepped = await exitViaOffice(worldClone, { handle: who, mark: markId }, key, deps);
+          if (stepped?.error) throw bounce(stepped.error.code ?? 409, `could not exit ${markId} before walking: ${stepped.error.defect ?? stepped.error}`, stepped.error.hint ?? "exit first, then walk");
+        }
+        // The exits stand as their own acts on the record; the walk below is the
+        // second act of one call. If the walk's pen refuses, the exits remain —
+        // said here and in the answer, never smoothed over.
+        exitedFirst = leaving;
+      }
+    }
+  }
   const clean = { handle: who, from, toward, at, targetExtent, targetMarkId };
 
   // ── WHERE THE DEPARTURE IS WRITTEN (Stage D, WORLD_MOVEMENT_V2) ───────────
@@ -2832,6 +2872,7 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
       // Which store is the RECORD for this act — said in the answer, as every
       // flipped door says it.
       ...(walkFlipped ? { log: "acts", seq: flippedRow?.seq ?? null } : {}),
+      ...(exitedFirst ? { exited_first: exitedFirst, note: "DEC-5: you stepped out of these before walking (exit: true); each exit stands as its own act on the record" } : {}),
     };
   } else {
     const exec = join(HERE, "walk-exec.mjs");
@@ -3245,6 +3286,7 @@ export const WORLD_TOOLS = [
       y: { type: "number", description: "grid meters south of Ferry's crossing" },
       mode: { type: "string", enum: ["rim", "center"], description: "where ON the destination you stop — NOT the destination itself (that is mark_id: or x:/y:). \"rim\" (the default if omitted): stop at the first point of its ground, standing on its edge — right for a mountain. \"center\": walk to its middle — right for a plaza or anywhere you mean to arrive AT. Meaningless for x/y targets; a coordinate is already a point." },
       handle: { type: "string", description: "which of YOUR residents is walking (omit if your key holds one; a multi-resident key must name one, or it bounces with the list)" },
+      exit: { type: "boolean", description: "DEC-5: if this walk would carry you OUT of a mark you are within, pass true to step out of it (innermost outward) and walk in one call; without it such a walk is refused and names the mark. Walking INTO a footprint never enters — entry stays your own act." },
       enter_on_arrival: { type: "boolean", description: "step inside the mark you are walking to, at the moment you arrive. Only meaningful with mark_id — a coordinate is not enterable, and pairing it with x/y bounces by name. The entry fires AS ITSELF: its own threshold law, its own terms, its own consent-at-thresholds delivery, adjudicated at the ARRIVAL instant rather than this one, so nothing is bypassed by riding a walk. A door that declares a counter-edge still shows you its terms and records nothing until you pass accept: true. IF THE ENTRY REFUSES, THE WALK STILL STANDS — you arrived, and the answer says so alongside the door's own words." },
       accept: { type: "boolean", description: "your explicit word at the threshold, for use with enter_on_arrival where the door declares a counter-edge (the Post Office's `aboard`). Walk once without it to READ the terms on arrival; walk again with it to cross." },
     }, additionalProperties: false } },

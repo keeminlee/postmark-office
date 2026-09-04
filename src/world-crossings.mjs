@@ -41,7 +41,7 @@ const bounce = (code, defect, hint, extra = {}) => {
  *
  *  The parser is aliased over to one name so the call sites stay single-named:
  *  a caller should not have to know which era of the module answered. */
-async function crossingLaw(worldClone) {
+export async function crossingLaw(worldClone) {
   const load = (name) => import(pathToFileURL(join(worldClone, "tools", name)));
   try {
     const law = await load("enter-exit.mjs").catch(() => load("thresholds.mjs"));
