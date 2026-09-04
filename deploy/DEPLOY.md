@@ -694,9 +694,14 @@ does that belongs on a clock.
     /srv/world2-lab/state/          one JSON per lane — the roll-call heartbeats
     /srv/world2-lab/private-dumps/  pg_dump output, 0700, outside every checkout
     /srv/world2-lab/basebackups/    pg_basebackup output, 0700
-    /srv/world2-lab/backup-repo/    the off-box repo's checkout
+    /srv/world2-lab/backup-repo/    the off-box dump repo's checkout
+    /srv/world2-lab/notary/         the notary checkout, pushed to its OWN repo
     /srv/world2-lab/ingest-clones/  persistent world/town checkouts, reset per run
-    /srv/world2-lab/.ssh/           the backup deploy key + a pinned known_hosts
+    /srv/world2-lab/.ssh/           two deploy keys + a pinned known_hosts:
+                                    w2-backups -> postmark-world2-backups
+                                    w2-notary  -> postmark-world2-notary
+                                    NEITHER key can read the other's repo, and
+                                    that is DEC-7 rather than tidiness (below)
     /srv/world2-wal/                the WAL archive spool, 2770 postgres:meepo
 
 ### Install
@@ -747,13 +752,49 @@ the unit is the mechanism, the env file is which store it points at. The
 `list-unit-files postmark*`, so a unit named otherwise would be invisible to the
 roll-call and could never be held to the manifest law.
 
-### Two things this lane owes
+### The notary's push target, and why it is a second repository (DEC-7, 2026-09-03)
 
-1. **The notary has no push target.** `/srv/world2-lab/notary` is a git repo with
-   no remote, so its certifications live only on the box they certify — which is
-   most of what a notary is for. `world2-backup.sh` ships it as a git bundle as a
-   stopgap. The fix is a remote.
-2. **The WAL does not ride off-box.** Measured at ~163 MB/day raw (2026-08-29,
+`world2-notary.sh` pushes after every certification — branch and both tag
+namespaces (`notary/*`, `notary-history/*`) — to
+**`wright-starforge/postmark-world2-notary`**, private, `keeminlee` admin.
+
+It is a *separate* repository from `postmark-world2-backups`, and the separation
+is the whole point rather than an organisational preference. DEC-7's own words:
+*"If the certification ships inside the same bundle as the backup, one
+compromised lane loses both halves of the check."* A certification stored beside
+the backup it certifies cannot be the thing that catches that backup.
+
+The separation is enforced by two scoped deploy keys, and **neither can reach the
+other's repository** — measured on the box the night the remote landed:
+
+    key=w2-notary    repo=postmark-world2-notary     exit=0
+    key=w2-notary    repo=postmark-world2-backups    exit=128  Repository not found.
+    key=w2-backups   repo=postmark-world2-backups    exit=0
+    key=w2-backups   repo=postmark-world2-notary     exit=128  Repository not found.
+
+**Do not give one process both keys.** The moment a single lane holds both, a
+compromise of it loses both halves again and the second repository is decoration.
+That is why `world2-backup.sh` reports the notary's off-box state by reading the
+notary checkout's own `refs/remotes/origin/main` — a local ref, no credential —
+rather than asking GitHub.
+
+A push that does not land is its own red, even behind a green certification: the
+lane exits 1 and says *the certification is on the box it certifies and nowhere
+else*. `state/notary.json` carries `push` and `remote_tip`.
+
+**Verifying the copy, and the one trap.** A stranger clones and runs
+`snapshot-export.mjs --verify <clone> --spot-check 200`, or the database-free
+half: recompute each archive's sha256 and compare it to `CERTIFICATION.json`.
+The trap is line endings — git converts LF to CRLF at checkout wherever
+`core.autocrlf` is true, which is the Windows default, and a converted archive
+fails its certified sha. Every non-empty file goes red at once and the empty ones
+pass, which is the tell. The repository now carries a `.gitattributes` with
+`* -text` so a plain `git clone` is byte-faithful anywhere; the note in that file
+records the measurement.
+
+### One thing this lane still owes
+
+1. **The WAL does not ride off-box.** Measured at ~163 MB/day raw (2026-08-29,
    a heavy build day), which no git history survives. The dump ships; the WAL and
    the base backups stay on the box. Giving the box a private object-storage
    bucket turns that into about a dozen lines — see `world2-backup.sh` § *the
