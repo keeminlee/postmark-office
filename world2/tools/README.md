@@ -1059,13 +1059,53 @@ and enters no sweep — is genuinely uncounted, which is why the `published` che
 is untouched.
 
 **The refusal did not go away; it moved and got narrower.** A departure of any
-*other* shape is UNRULED and its era cannot be written. The first one is already
-here: `the-town/the-lit-name` at S52, where world `17103dc37` *modified* the file
-rather than deleting it — `by:` changed, and since a mark's id is `by + leaf` the
-slug refolded while the record stayed in canon. That is a re-identification, not
-a retirement, and it wants a ruling of its own. Derivation now classifies every
-departure and `--dry-run` exits 1 naming them all, so one run shows the founder
-the whole class instead of stopping at its first member.
+*other* shape is UNRULED and its era cannot be written. Derivation classifies
+every departure and `--dry-run` exits 1 naming them all, so one run shows the
+founder the whole class instead of stopping at its first member.
+
+### A mark may change hands — RE-IDENTIFICATION (DEC-16, ruled 2026-09-04)
+
+The first unruled departure was not a departure. `the-town/the-lit-name` at S52:
+world `17103dc37` *modified* the file rather than deleting it — `by:` changed,
+and since a mark's id is `by` + leaf the slug refolded while the record stayed in
+canon. The register reads one removal plus one addition for one record changing
+hands.
+
+DEC-16 rules it a **re-identification**: the same row keeps its `id`, `slug` and
+`owner` move together, `data.formerly` keeps the old slug (a list — a mark may
+change hands twice), and one `transfer` act by `the-town` names the commit. The
+rejected alternative, retire-and-claim, costs the mark its escrow and its whole
+history under the old identity, and orphans every by-id reference.
+
+Three consequences worth stating outright:
+
+- **The addition half is NOT a claim.** Left in the claim set it would derive a
+  claim whose id is `uuid5(new slug)` and materialize a second row under the slug
+  the transferred row is about to take. **1.0's own receipt confirms this**: S52's
+  six-count says `4 published`, the replay derived 5 before DEC-16 and derives
+  exactly 4 after it. A probe that could have failed, and did not.
+- **An amend in the same era supersedes the OLD id.** A mark that changed hands
+  *and* was edited carries one amend claim under the new slug whose `supersedes`
+  is the standing row's locking claim — `was.id`, not a re-derivation from the
+  new name, which no claim in the store carries.
+- **`household` moves with the owner.** It is a substance column and nothing else
+  would move it: the clearing job's step 7 recomputes `tier` and only `tier`.
+
+`012_reidentification.sql` is the schema half. It does not "make `slug` mutable"
+— `UPDATE marks SET slug` was always legal — it enforces the half with teeth: a
+trigger refusing any change to `marks.id`, because "every reference by id follows
+for free" is true only while nothing renumbers the row. `--can-fail-proof` hands a
+re-identified mark its old name back and requires the gate to go red at both
+names.
+
+**What DEC-16 does not carry: escrow.** The town's stake ledger keys every
+position by the string `<mark slug>|<handle>`, in the *town* repo, outside this
+store. A transfer cannot rewrite it, and the founder has already met this seam
+and answered it by hand — the transferring commit's own words: *"Stake handled
+first so no record orphans: wright's 1✦ unstaked … restake on
+wright/the-lit-name owed after the next crossing refolds the id."* Unstake
+before, restake after, is the current ceremony and the only answer with a
+precedent.
 
 The parity gate compares **standing rows only** (`standingOnly`): 1.0's register
 is a set of files and a removed file leaves no row, while 2.0 keeps the row and

@@ -104,7 +104,10 @@ function world(steps) {
     rmSync(join(dir, "WORLD", "marks"), { recursive: true, force: true });
     mkdirSync(join(dir, "WORLD", "marks"), { recursive: true });
     writeFileSync(join(dir, "WORLD", "marks", ".keep"), "");
-    for (const m of s.register ?? []) {
+    // `files` writes a mark file the register does NOT carry — the one case where
+    // the tree and the settlement's outcome are allowed to disagree, which is what
+    // the "still UNRULED" falsifier is about.
+    for (const m of [...(s.register ?? []), ...(s.files ?? [])]) {
       const nodeDir = join(dir, "WORLD", "marks", ...(m.dir ?? `${m.by}/${m.slug}`).split("/"));
       mkdirSync(nodeDir, { recursive: true });
       writeFileSync(join(nodeDir, "mark.md"), `---\nkind: ${m.kind}\nby: ${m.by}\n---\n\n${m.body ?? ""}\n`);
@@ -401,31 +404,120 @@ test("DEC-15 (a): a removal the era's log already WITHDREW is that act, and synt
   } finally { w.cleanup(); }
 });
 
-test("a departure DEC-15 does NOT rule on is UNRULED — the id refolded, the record never left", async () => {
-  // world 17103dc37, 2026-08-31: "the Lit Name passes to wright … restake on
-  // wright/the-lit-name owed after the next crossing REFOLDS THE ID". One file,
-  // modified not deleted; `by` changed, and the id is `by + leaf`.
-  const filed = "wright/the-unlit-cake/the-lit-name";
+// ── the re-identification (DEC-16, ruled 2026-09-04) ─────────────────────────
+//
+// The id refold was UNRULED for one afternoon and refused S52. These are its
+// successors. The refusal has not gone: the third test is the shape DEC-16 still
+// does not cover, and it still stops the era.
+
+// world 17103dc37, 2026-08-31: "the Lit Name passes to wright … restake on
+// wright/the-lit-name owed after the next crossing REFOLDS THE ID". One file,
+// MODIFIED not deleted; `by` changed, and a mark's id is `by + leaf`.
+const FILED = "wright/the-unlit-cake/the-lit-name";
+const refold = (over = {}) => world([
+  { tag: "a", subject: "settlement: sweep 0 published, 0 unpublished", at: "2026-08-26T00:00:00+00:00",
+    register: [M({ by: "the-town", slug: "the-lit-name", dir: FILED }), M({ by: "wren", slug: "the-lamp" })],
+    log: { "7.jsonl": [] } },
+  { tag: "b", subject: "settlement: sweep 0 published, 0 unpublished", at: "2026-08-26T01:00:00+00:00",
+    register: [M({ by: "wright", slug: "the-lit-name", dir: FILED, ...over }), M({ by: "wren", slug: "the-lamp" })],
+    log: { "7.jsonl": [], "8.jsonl": [] } },
+]);
+
+test("DEC-16: a mark whose FILE stayed and whose `by` changed is a TRANSFER, not a retirement plus a claim", async () => {
+  const w = refold();
+  try {
+    const c = await claimsFor(w, "a", "b");
+    assert.equal(c.retired.length, 0, "the record never left canon — nothing is retired");
+    assert.equal(c.unruled.length, 0, "and nothing is unruled: DEC-16 is the reading");
+    assert.equal(c.transferred.length, 1);
+
+    const t = c.transferred[0];
+    assert.equal(t.from_slug, "the-town/the-lit-name");
+    assert.equal(t.to_slug, "wright/the-lit-name");
+    assert.equal(t.path, `WORLD/marks/${FILED}/mark.md`, "the SAME file at both tags — that is the tell");
+    assert.equal(t.commit.sha, w.tags.b, "the commit that changed hands, found by --diff-filter=M");
+    assert.equal(t.amended, false, "only the identity moved, so the author claimed nothing");
+
+    // THE SHARP END: the addition is NOT a claim. Left in, it would derive a
+    // claim whose id is uuid5(new slug) and materialize a SECOND row under a slug
+    // the transferred row is about to take.
+    assert.deepEqual(c.claims.map((x) => x.slug), [], "nobody claimed this mark; it changed hands");
+    assert.ok(!c.added.some((m) => m.slug === "wright/the-lit-name"), "the addition half is consumed by the transfer");
+
+    const s = t.synthesised;
+    assert.equal(s.action, "transfer", "bare, like the withdraw — `actsCompleteness` counts `legacy:%` only");
+    assert.equal(s.actor, "the-town");
+    assert.equal(s.class, "mark");
+    assert.equal(s.object, "wright/the-lit-name", "acts.object is how a mark's history is found; the row is the new one now");
+    assert.equal(s.crossing, 8);
+    assert.equal(s.at, t.commit.at);
+    assert.equal(s.payload.from_slug, "the-town/the-lit-name");
+    assert.equal(s.payload.to_slug, "wright/the-lit-name");
+    assert.equal(s.payload.retired_by, w.tags.b);
+    assert.match(s.payload._synthesised, /DEC-16/);
+  } finally { w.cleanup(); }
+});
+
+test("DEC-16: a transfer that ALSO edits the record carries ONE amend claim, under the new slug, superseding the OLD id", async () => {
+  const w = refold({ body: "A rebuilt thing." });
+  try {
+    const c = await claimsFor(w, "a", "b");
+    assert.equal(c.transferred.length, 1);
+    assert.equal(c.transferred[0].amended, true, "`was` wearing the new owner no longer equals `now`");
+
+    // ONE claim, not two: the transfer is not a claim, the edit is.
+    assert.deepEqual(c.claims.map((x) => x.slug), ["wright/the-lit-name"]);
+    const amend = c.claims[0];
+    assert.equal(amend.id, amendId("wright/the-lit-name", 8), "the amend's own id is derived from the name it lands under");
+    // THE ONE THAT WOULD HAVE BROKEN THE FK. `uuid5(new slug)` is a number no
+    // claim in the store carries; the standing mark's locking claim is the OLD id.
+    assert.equal(amend.supersedes, uuid5("the-town/the-lit-name"), "supersedes the STANDING mark's locking claim");
+    assert.notEqual(amend.supersedes, uuid5("wright/the-lit-name"), "and NOT a re-derivation from the new slug");
+    assert.equal(amend.body, "A rebuilt thing.");
+    assert.equal(amend.claimant, "wright", "the claim is the new owner's — the record is his by the time it lands");
+  } finally { w.cleanup(); }
+});
+
+test("an ordinary amend still supersedes its own id — the DEC-16 change is a no-op where the slug did not move", async () => {
+  const w = THREE();
+  try {
+    const c = await claimsFor(w, "settlement/S2", "settlement/S3");
+    const shed = c.claims.find((x) => x.slug === "wren/the-shed");
+    assert.equal(shed.supersedes, uuid5("wren/the-shed"));
+  } finally { w.cleanup(); }
+});
+
+test("a mark that leaves the register while its FILE stays put is still UNRULED — the refusal survives DEC-16", async () => {
+  // Neither ruling covers this. Nothing withdrew it (no act), nothing deleted it
+  // (the file is still on disk, unchanged), and nothing renamed it (no other id
+  // stands at that path). The register and the tree simply disagree, and choosing
+  // between two sources is not a transition a replay may write.
   const w = world([
     { tag: "a", subject: "settlement: sweep 0 published, 0 unpublished", at: "2026-08-26T00:00:00+00:00",
-      register: [M({ by: "the-town", slug: "the-lit-name", dir: filed })], log: { "7.jsonl": [] } },
-    { tag: "b", subject: "settlement: sweep 1 published, 0 unpublished", at: "2026-08-26T01:00:00+00:00",
-      register: [M({ by: "wright", slug: "the-lit-name", dir: filed })], log: { "7.jsonl": [] } },
+      register: [M({ by: "the-town", slug: "the-lit-name", dir: FILED }), M({ by: "wren", slug: "the-lamp" })],
+      log: { "7.jsonl": [] } },
+    { tag: "b", subject: "settlement: sweep 0 published, 0 unpublished", at: "2026-08-26T01:00:00+00:00",
+      register: [M({ by: "wren", slug: "the-lamp" })],       // the register drops it …
+      files: [{ dir: FILED, kind: "sited", by: "the-town", body: "A thing." }],   // … the file stays
+      log: { "7.jsonl": [], "8.jsonl": [] } },
   ]);
   try {
     const c = await claimsFor(w, "a", "b");
-    assert.equal(c.unruled.length, 1, "this is not a retirement and the pen must not call it one");
-    const r = c.unruled[0];
-    assert.equal(r.slug, "the-town/the-lit-name");
-    assert.equal(r.case, "unruled");
-    assert.equal(r.becomes, "wright/the-lit-name", "the same file, standing under a new id");
-    assert.equal(r.synthesised, null, "no `withdraw` for a mark nobody withdrew");
-    assert.match(r.detail, /still stands/);
-    // It is classified, not thrown — one dry run has to show the founder the
-    // whole class, not stop at its first member. The write is what refuses.
-    assert.equal(c.retired.filter((x) => x.case === "b").length, 0);
+    assert.equal(c.transferred.length, 0, "no other id stands at that path, so nothing changed hands");
+    assert.equal(c.retired.filter((r) => r.case === "b").length, 0, "and no commit deleted it, so nothing retired");
+    assert.equal(c.unruled.length, 1);
+    assert.match(c.unruled[0].detail, /deletes|no file at that path/);
+    assert.equal(c.unruled[0].synthesised, null, "an unruled departure writes nothing, ever");
   } finally { w.cleanup(); }
 });
+
+// NOT COVERED HERE, and stated rather than implied: `eraClaims` has a third
+// unruled branch — the file stands under a NEW id that the settlement's register
+// does not carry. This fixture's reader answers out of `register.json`, so the
+// filing map and the register are derived from the same list and cannot disagree
+// that way; only the shipped loader, which walks the tree, can produce it. The
+// branch is reachable in production and unreachable here, and pretending
+// otherwise would be a test that proves the fixture rather than the code.
 
 test("authoredSubstance sees the author's hand and ignores the fold's", () => {
   const base = { kind: "sited", owner: "wren", household: "gh:1", body: "A thing.",
@@ -519,6 +611,30 @@ test("DEC-15: the gate compares STANDING rows only — a retired store row reads
   const overRetired = [{ ...standing("wren/the-lamp"), status: "retired" }];
   assert.match(compareMarks(standingOnly(overRetired), register, { columns: SUBSTANCE_COLUMNS })[0], /MISSING in DB/,
     "a mark 1.0 still publishes may not be retired by the replay");
+});
+
+test("DEC-16: after a transfer the comparator needs no special case — and catches a half-applied one", () => {
+  const row = (slug, owner) => ({ slug, kind: "sited", owner, household: `solo:${owner}`,
+    body: "A thing.", geometry: { at: { x: 0, y: 0 } }, bbox: "((0,0),(2,2))", status: "standing" });
+
+  // The register at S(k+1) carries the NEW name; so does the store row. The same
+  // record, one name, and `compareMarks` keys on slug — nothing to special-case.
+  const register = [row("wright/the-lit-name", "wright")];
+  assert.deepEqual(compareMarks([row("wright/the-lit-name", "wright")], register, { columns: SUBSTANCE_COLUMNS }), [],
+    "a completed transfer is simply agreement");
+
+  // HALF-APPLIED, the shape `--can-fail-proof`'s un-transfer break provokes: the
+  // slug did not move. Two findings, and both matter — the new name is missing
+  // and the old one is a mark 1.0 no longer carries.
+  const stuck = compareMarks([row("the-town/the-lit-name", "wright")], register, { columns: SUBSTANCE_COLUMNS });
+  assert.equal(stuck.length, 2, `a stuck slug must be reported at both names; got ${stuck.join(" | ")}`);
+  assert.ok(stuck.some((f) => /MISSING in DB: wright\/the-lit-name/.test(f)));
+  assert.ok(stuck.some((f) => /EXTRA in DB.*the-town\/the-lit-name/.test(f)));
+
+  // The other half-application: the slug moved, the owner did not. `owner` is a
+  // substance column, so it is caught on its own.
+  assert.match(compareMarks([row("wright/the-lit-name", "the-town")], register, { columns: SUBSTANCE_COLUMNS })[0],
+    /field owner/);
 });
 
 // ── helpers ──────────────────────────────────────────────────────────────────

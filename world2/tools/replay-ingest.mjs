@@ -36,9 +36,13 @@
 //       A mark that LEFT the register is a RETIREMENT, not a claim (DEC-15,
 //       2026-09-04): `marks.status = 'retired'` at the era's window, with the
 //       `withdraw` act either found in the era's log or synthesised by `the-town`
-//       from the commit that removed the record. See `eraClaims`. A departure of
-//       any OTHER shape still refuses the era, now at the write rather than at
-//       derivation, so one dry run shows the founder the whole class.
+//       from the commit that removed the record. See `eraClaims`. A mark whose
+//       FILE stayed while its `by:` changed did not leave at all — it CHANGED
+//       HANDS (DEC-16, ruled 2026-09-04): the same row keeps its id, `slug` and
+//       `owner` move together, `data.formerly` keeps the old name, one `transfer`
+//       act by `the-town` names the commit, and the addition half is NOT a claim.
+//       A departure of any OTHER shape still refuses the era, at the write rather
+//       than at derivation, so one dry run shows the founder the whole class.
 //
 //   (c) LAW + STAMPS at the era's sha, by the ingester's own pen — `law_ingest`
 //       against the S(k) checkout, so `law_projection` carries a row set stamped
@@ -451,6 +455,25 @@ export function sixCountOf(subject) {
  * fact of the checkout and not of the register — hence `worldRepo`/`fromSha`/
  * `toSha`. A removal this pen cannot attribute to a commit is still a refusal: a
  * retirement with no hand behind it is the invention DEC-15 was careful not to be.
+ *
+ * ── AND A DEPARTURE MAY NOT BE A DEPARTURE AT ALL (DEC-16, RULED 2026-09-04) ──
+ *
+ * The first full-range dry run turned up a third shape wearing the same
+ * description, and it is not a retirement: `the-town/the-lit-name`, whose FILE
+ * stayed exactly where it was while its `by:` changed (world 17103dc37 — "the Lit
+ * Name passes to wright … refolds the id"). A mark's id is `by` + leaf, so the
+ * slug moved with the owner and the register read one removal plus one addition
+ * for one record changing hands.
+ *
+ * DEC-16 rules that a TRANSFER IS A RE-IDENTIFICATION: the same row keeps its
+ * `id`, `slug` and `owner` move together, `data.formerly` keeps the old slug, and
+ * one `transfer` act by `the-town` names the commit. The alternative — retire the
+ * old and claim a new one — was rejected for what it costs: the mark's escrow and
+ * its whole history hang off the old identity, and a new row inherits none of it.
+ *
+ * The tell is the FILING, which is why this pen reads it: same path at both tags,
+ * a different id standing there. Removal alone cannot distinguish the two, and
+ * the register alone cannot either — only the file can say the record survived.
  */
 export async function eraClaims({ fromDir, toDir, window, acts = null, worldRepo = null, fromSha = null, toSha = null }) {
   const before = await deriveSeed({ worldRepo: fromDir, lawSha: window.law_sha, townSha: window.town_sha });
@@ -467,7 +490,7 @@ export async function eraClaims({ fromDir, toDir, window, acts = null, worldRepo
   }
   for (const slug of b.keys()) if (!a.has(slug)) removed.push(slug);
 
-  const retired = [];
+  const retired = [], transferred = [];
   if (removed.length) {
     // The filing is only read when something actually left; a checkout's loader
     // is not cheap and every green era would otherwise pay for the rare one.
@@ -483,16 +506,38 @@ export async function eraClaims({ fromDir, toDir, window, acts = null, worldRepo
         continue;
       }
 
-      // THE FILE IS STILL THERE, UNDER A NEW NAME. Not a retirement, and this pen
-      // will not call it one — see `reidentified`.
+      // THE FILE IS STILL THERE, UNDER A NEW NAME — a RE-IDENTIFICATION (DEC-16).
+      // Not a retirement, and this pen does not call it one.
       const nowStands = path ? nowFiles.get(path) ?? null : null;
       if (nowStands && nowStands !== slug) {
-        retired.push({
-          slug, was, path, case: "unruled", why: "the id refolded — the same file, a new `by`",
-          act: null, commit: null, synthesised: null, becomes: nowStands,
-          detail: `the record at ${path} still stands, as ${nowStands}` +
-            (a.has(nowStands) ? ` — a slug this same era ADDS` : ` — a slug this era's register does not carry either`),
-        });
+        // The register must actually CARRY the new name. If it does not, the file
+        // says one thing and the settlement's outcome says another, and this pen
+        // has no business choosing between them.
+        if (!a.has(nowStands)) {
+          retired.push({
+            slug, was, path, case: "unruled", why: "the id refolded, but the register does not carry the new name",
+            act: null, commit: null, synthesised: null, becomes: nowStands,
+            detail: `the record at ${path} stands as ${nowStands}, which this era's register does not carry either — ` +
+              `the file and the settlement's outcome disagree`,
+          });
+          continue;
+        }
+        if (!worldRepo || !fromSha || !toSha) {
+          throw new Error(
+            `${slug} changed hands to ${nowStands} between the two settlements, and DEC-16 names the commit that ` +
+            `did it — but this call passed no worldRepo/fromSha/toSha to look it up in.`);
+        }
+        const commit = commitTouching(worldRepo, { fromSha, toSha, path, filter: "M" });
+        if (!commit) {
+          retired.push({
+            slug, was, path, case: "unruled", why: "the id refolded with no commit this pen can name",
+            act: null, commit: null, synthesised: null, becomes: nowStands,
+            detail: `no commit in ${fromSha.slice(0, 8)}..${toSha.slice(0, 8)} modifies ${path}, so DEC-16 has no ` +
+              `hand to name in the \`transfer\` act`,
+          });
+          continue;
+        }
+        transferred.push({ from_slug: slug, to_slug: nowStands, was, now: a.get(nowStands), path, commit });
         continue;
       }
 
@@ -521,6 +566,28 @@ export async function eraClaims({ fromDir, toDir, window, acts = null, worldRepo
     }
   }
 
+  // ── DEC-16: THE ADDITION HALF OF A TRANSFER IS NOT A CLAIM ─────────────────
+  //
+  // A transfer reads as one removal AND one addition, and the addition is the
+  // sharp end of the ruling. Left in `added` it would derive a claim whose id is
+  // the mark's own — `uuid5(new slug)` — and the clearing job would materialize a
+  // SECOND marks row under a slug the transferred row is about to take, colliding
+  // on `UNIQUE(slug)`. Worse if it did not collide: two rows for one record, the
+  // old one orphaned with every by-id reference still pointing at it. Nobody
+  // claimed this mark; it changed hands.
+  //
+  // WHAT SURVIVES AS A CLAIM is anything the author ALSO did in the same era. The
+  // comparison is `was` wearing the new owner against `now`: if they agree, the
+  // only thing that moved is the identity and there is nothing to claim; if they
+  // differ, someone edited the record as well, and that edit is an amend like any
+  // other — under the NEW slug, superseding the standing mark's locking claim.
+  for (const t of transferred) {
+    const i = added.findIndex((m) => m.slug === t.to_slug);
+    if (i !== -1) added.splice(i, 1);
+    t.amended = authoredSubstance({ ...t.was, owner: t.now.owner }) !== authoredSubstance(t.now);
+    if (t.amended) amended.push({ mark: t.now, was: t.was, transfer: t });
+  }
+
   const claim = (m, extra) => ({
     id: extra.id, window_id: window.id, class: m.kind, claimant: m.owner, household: m.household,
     submitted_at: window.opens_at, status: "pending",
@@ -534,10 +601,23 @@ export async function eraClaims({ fromDir, toDir, window, acts = null, worldRepo
     // The mark's id IS its first locking claim's id, so it is what a later claim
     // supersedes — and the FK `claims.supersedes REFERENCES claims(id)` resolves,
     // because the seed wrote that claim row.
-    ...amended.map(({ mark }) => claim(mark, { id: amendId(mark.slug, window.id), supersedes: mark.id })),
+    //
+    // `was.id`, NOT `mark.id`, and since DEC-16 the difference is real. For an
+    // ordinary amend they are the same number, because the slug did not move and
+    // both are `uuid5(slug)`. For a mark that ALSO changed hands this era they are
+    // not: `mark` is the after-register's row and its id is `uuid5(NEW slug)`, a
+    // number no claim in the store carries, so the FK would refuse — and if it
+    // somehow did not, the amend would supersede nothing. The rule was always
+    // "supersedes the STANDING mark's locking claim"; `was` is the standing mark.
+    ...amended.map(({ mark, was }) => claim(mark, { id: amendId(mark.slug, window.id), supersedes: was.id })),
   ].sort((x, y) => (x.slug < y.slug ? -1 : x.slug > y.slug ? 1 : 0));
 
-  return { claims, added, amended, retired, unruled: retired.filter(isUnruled), registerAfter: after, registerBefore: before };
+  for (const t of transferred) t.synthesised = synthesisedTransfer({ ...t, window });
+
+  return {
+    claims, added, amended, retired, transferred,
+    unruled: retired.filter(isUnruled), registerAfter: after, registerBefore: before,
+  };
 }
 
 /**
@@ -635,12 +715,47 @@ async function filingOwners(worldDir) {
  */
 const UNIT_SEP = String.fromCharCode(0x1f);
 
-export function removingCommit(worldRepo, { fromSha, toSha, path }) {
-  const out = git(worldRepo, "log", "--diff-filter=D", "--format=%H%x1f%cI%x1f%s", "-1",
+export function commitTouching(worldRepo, { fromSha, toSha, path, filter }) {
+  const out = git(worldRepo, "log", `--diff-filter=${filter}`, "--format=%H%x1f%cI%x1f%s", "-1",
     `${fromSha}..${toSha}`, "--", path);
   if (!out) return null;
   const [sha, at, subject] = out.split("\n")[0].split(UNIT_SEP);
   return { sha, at: new Date(at).toISOString(), subject };
+}
+
+/** DEC-15's hand: the commit that DELETED the record. */
+export const removingCommit = (worldRepo, opts) => commitTouching(worldRepo, { ...opts, filter: "D" });
+
+/**
+ * The `transfer` the founder's commit never wrote (DEC-16).
+ *
+ * Same shape and same reasons as `synthesisedWithdraw` — an act by `the-town`,
+ * timed to the commit, spelled BARE so `actsCompleteness` (which counts
+ * `legacy:%` against the checkout's STATE/log census) does not read it as an
+ * over-carried row, and marked `_synthesised` so a reader knows no door wrote it.
+ *
+ * `object` IS THE NEW SLUG. `acts.object` is how a mark's history is found
+ * (`acts_object_idx`), and the row this act explains is, from the moment the act
+ * lands, the new one. The old name is not lost — it is in `payload.from_slug`,
+ * and it is in `data.formerly` on the row itself, which is the durable copy.
+ *
+ * `payload.retired_by` carries the commit's sha because DEC-16 names that key,
+ * and one key meaning "the commit whose hand did this" reads the same across both
+ * synthesised acts. The word is a poor fit here — nothing is retired by a
+ * transfer — and that is reported to the founder rather than renamed by this pen.
+ */
+export function synthesisedTransfer({ from_slug, to_slug, window, commit }) {
+  return {
+    at: commit.at, crossing: window.id, actor: "the-town", action: "transfer", object: to_slug,
+    at_anchor: null, at_dx: null, at_dy: null, witnesses: null,
+    class: "mark",
+    payload: {
+      type: "transfer", at: commit.at, actor: "the-town", class: "mark", object: to_slug,
+      crossing: window.id, from_slug, to_slug, retired_by: commit.sha, subject: commit.subject,
+      _synthesised: "world2/tools/replay-ingest.mjs · DEC-16 re-identification — the record changed hands on main",
+    },
+    effect: null, household: null, journal_seq: null,
+  };
 }
 
 /**
@@ -1126,6 +1241,33 @@ export async function canFailProof(client, era, worldRepo) {
       "UPDATE marks SET status = 'standing' WHERE slug = $1", [retiredRow.slug]);
   }
 
+  // ── DEC-16'S OWN BREAK: PUT THE OLD SLUG BACK (2026-09-04) ─────────────────
+  //
+  // The retirement break above proves the gate sees a row that should be gone.
+  // A transfer is the opposite shape — the row stays and its NAME moves — and no
+  // mangle so far touches a name. If the era write half-applied a transfer (the
+  // owner moved, the slug did not; or the whole UPDATE silently matched zero
+  // rows) the store would hold a mark under a name 1.0's register no longer
+  // carries, and the gate must say so twice: MISSING at the new name, EXTRA at
+  // the old.
+  //
+  // The victim is a row that has actually been re-identified — `data ? 'formerly'`
+  // is the durable mark of one — and the mangle rolls it back to the last name in
+  // that list. A proof that renamed an arbitrary row would prove `compareMarks`
+  // notices renames, which was never in doubt; what is unproved is that a
+  // TRANSFER the replay wrote can be caught if it goes wrong.
+  const moved = (await client.query(
+    `SELECT slug, data->'formerly'->>-1 AS was FROM marks
+      WHERE data ? 'formerly' AND jsonb_array_length(data->'formerly') > 0 ORDER BY slug LIMIT 1`)).rows[0];
+  const transfer = { checked: false };
+  if (moved?.was) {
+    transfer.checked = true;
+    transfer.slug = moved.slug;
+    transfer.was = moved.was;
+    await mangle(`UN-TRANSFER ${moved.slug} back to ${moved.was} (DEC-16's re-identification undone)`,
+      "UPDATE marks SET slug = $2 WHERE slug = $1", [moved.slug, moved.was]);
+  }
+
   // The acts half. `acts` refuses UPDATE and DELETE from every pen (002's
   // `acts_append_only` trigger), which is the law working — so the only shape of
   // act drift the owner can provoke is an EXTRA row, and that is the one this
@@ -1180,7 +1322,7 @@ export async function canFailProof(client, era, worldRepo) {
 
   const after = await parityFindings(client, era);
   const silent = results.filter((r) => !r.findings.length);
-  return { results, restored: after.substance.length === 0, silent, dedupe, retirement };
+  return { results, restored: after.substance.length === 0, silent, dedupe, retirement, transfer };
 }
 
 // ── the store's state, and the refusal ───────────────────────────────────────
@@ -1340,6 +1482,13 @@ async function main() {
     console.log(`   acts   ${String(e.acts.rows.length).padStart(4)}  ${JSON.stringify(e.acts.byType)} · crossings ${e.acts.crossings.join(", ") || "—"}`);
     console.log(`   claims ${String(e.claims.length).padStart(4)}  ${e.added.length} added · ${e.amended.length} amended`);
     if (e.amended.length) console.log(`          amended: ${e.amended.map((x) => x.mark.slug).join(", ")}`);
+    if (e.transferred.length) {
+      console.log(`   transferred ${String(e.transferred.length).padStart(1)}  (DEC-16 — the record changed hands; the same row keeps its id)`);
+      for (const t of e.transferred) {
+        console.log(`          ${t.from_slug} → ${t.to_slug} · ${t.commit.sha.slice(0, 9)} (${t.commit.at})` +
+          `${t.amended ? " · ALSO edited this era → one amend claim under the new slug" : " · nothing else changed, so no claim"}`);
+      }
+    }
     if (e.retired.length) {
       const ruled = e.retired.filter((r) => !isUnruled(r));
       console.log(`   retired ${String(ruled.length).padStart(4)}  (DEC-15 — a standing mark that left the register)` +
@@ -1371,6 +1520,10 @@ async function main() {
           slug: r.slug, case: r.case, why: r.why, path: r.path,
           retired_by: r.commit?.sha ?? null, subject: r.commit?.subject ?? null,
           synthesises_act: Boolean(r.synthesised), becomes: r.becomes ?? null, detail: r.detail ?? null,
+        })),
+        transferred: e.transferred.map((t) => ({
+          from_slug: t.from_slug, to_slug: t.to_slug, path: t.path,
+          commit: t.commit.sha, subject: t.commit.subject, also_amended: Boolean(t.amended),
         })),
       })), null, 2));
     }
@@ -1413,6 +1566,10 @@ async function main() {
       if (!proof.retirement.checked) {
         console.log("SKIPPED the retirement break — this store holds no retired mark to un-retire " +
           "(no era replayed so far removed a standing mark; DEC-15's filter is UNPROVED here)");
+      }
+      if (!proof.transfer.checked) {
+        console.log("SKIPPED the transfer break — this store holds no re-identified mark (no `data.formerly`) " +
+          "to hand back its old name; DEC-16's write is UNPROVED here");
       }
       if (!proof.dedupe.checked) {
         console.log("SKIPPED the dedupe proof — this era derived no acts to inject a duplicate of");
@@ -1495,7 +1652,8 @@ async function main() {
       // Since DEC-15 the retirements ride in it too — the log line and the flipped
       // status are one event and must not be separable by a crash.
       let acted = { inserted: 0, skipped: 0, byAction: {} };
-      const synthesised = e.retired.map((r) => r.synthesised).filter(Boolean);
+      const synthesised = [...e.retired, ...e.transferred].map((r) => r.synthesised).filter(Boolean);
+      const claimsMoved = [];
       await client.query("BEGIN");
       try {
         // The window closed when the settlement landed. `opens_at` is not touched:
@@ -1506,6 +1664,70 @@ async function main() {
         // re-run of an era cannot write a founder's retirement twice.
         acted = await insertActs(client, [...e.acts.rows, ...synthesised]);
         await insertClaims(client, e.claims);
+
+        // ── THE RE-IDENTIFICATION (DEC-16), BEFORE THE RETIREMENTS ────────────
+        //
+        // The same row, renamed. Not a delete and an insert — the id stays, so
+        // `marks.parent`, `claims.supersedes` and every other by-id reference
+        // follow without being touched, which is the entire point of the ruling.
+        //
+        // Four things move together, and each is a fact of the settlement's own
+        // outcome rather than a choice of ours:
+        //   slug       the register's new name for this record
+        //   owner      `by:`, the thing that actually changed in the file
+        //   household  the FOLD's answer for the new owner. `household` is in
+        //              SUBSTANCE_COLUMNS, so leaving it behind would turn the
+        //              parity gate red on a lawful transfer — and nothing else
+        //              would move it: `clearing-job.mjs` step 7 recomputes `tier`
+        //              inside the window transaction and only `tier`.
+        //   formerly   the old slug, APPENDED — a mark may change hands twice, and
+        //              a scalar would lose the first owner silently (012's CHECK
+        //              is the schema half of the same sentence).
+        //
+        // `data.tier` is deliberately NOT written here: it is the fold's standing,
+        // the clearing job recomputes it for every standing mark at the close, and
+        // writing it twice is how it went stale in the first place.
+        for (const t of e.transferred) {
+          const cur = (await client.query(
+            "SELECT id::text, status, owner FROM marks WHERE slug = $1", [t.from_slug])).rows[0];
+          if (!cur) {
+            throw new Error(`${e.to.tag}: 1.0's register carried ${t.from_slug} at ${e.from.tag} and this era hands it ` +
+              `to ${t.to_slug}, but the store holds no such mark — the store is not where its checkout says it is.`);
+          }
+          if (cur.status !== "standing") {
+            throw new Error(`${e.to.tag}: ${t.from_slug} is '${cur.status}' in the store and DEC-16 re-identifies a ` +
+              `STANDING mark. The store disagrees with the register about this row; that is a finding, and this era ` +
+              `refuses rather than writing over it.`);
+          }
+          const taken = (await client.query("SELECT id::text FROM marks WHERE slug = $1", [t.to_slug])).rows[0];
+          if (taken) {
+            throw new Error(`${e.to.tag}: ${t.from_slug} is handed to ${t.to_slug}, and the store already holds a mark ` +
+              `at that slug (${taken.id}). One name would mean two records; this era refuses rather than choosing ` +
+              `which one it means.`);
+          }
+          await client.query(
+            `UPDATE marks
+                SET slug = $2, owner = $3, household = $4,
+                    data = COALESCE(data, '{}'::jsonb) || jsonb_build_object(
+                             'formerly', COALESCE(data->'formerly', '[]'::jsonb) || to_jsonb($1::text)),
+                    geometry = CASE WHEN geometry ? 'slug'
+                                    THEN jsonb_set(geometry, '{slug}', to_jsonb($2::text))
+                                    ELSE geometry END
+              WHERE slug = $1 AND status = 'standing'`,
+            [t.from_slug, t.to_slug, t.now.owner, t.now.household]);
+
+          // A PENDING claim naming the old slug names this row, and the row has
+          // moved. History does not move: a LOCKED claim was submitted under the
+          // name the mark had then, and rewriting it would forge the record of
+          // what a resident actually filed. Expected to be zero in a replay — the
+          // era's own amend claim is derived under the NEW slug — so a nonzero
+          // count is reported rather than absorbed, and it carries a question this
+          // pen does not answer: a claim filed by the OLD owner on a mark that now
+          // belongs to someone else is an ownership matter, not a rename.
+          const moved = await client.query(
+            "UPDATE claims SET slug = $2 WHERE slug = $1 AND status = 'pending'", [t.from_slug, t.to_slug]);
+          if (moved.rowCount) claimsMoved.push({ ...t, n: moved.rowCount });
+        }
 
         // THE RETIREMENT, last, and refusing rather than skipping. A row the
         // register says left must be STANDING here: anything else means the store
@@ -1525,12 +1747,30 @@ async function main() {
               `The store disagrees with the register about this row; that is a finding, and this era refuses ` +
               `rather than writing over it.`);
           }
+          // `retired_window`, NOT `locked_window` — 001 gives `marks` a column for
+          // exactly this and `snapshot-export.mjs` already emits it. The first cut
+          // of DEC-15 wrote the window into `locked_window`, which would have
+          // ERASED the window the mark was locked in: the one column the parity
+          // report calls different "BY CONSTRUCTION (a replayed mark locks in the
+          // window that actually cleared it, which is the point)". A retirement
+          // that overwrote it would have made that sentence false and left nothing
+          // able to notice. The two windows are two different facts about a mark
+          // and the schema has always had two columns for them.
           await client.query(
-            "UPDATE marks SET status = 'retired', locked_window = $2 WHERE slug = $1 AND status = 'standing'",
+            "UPDATE marks SET status = 'retired', retired_window = $2 WHERE slug = $1 AND status = 'standing'",
             [r.slug, e.window.id]);
         }
         await client.query("COMMIT");
       } catch (err) { await client.query("ROLLBACK"); throw err; }
+      for (const t of e.transferred) {
+        console.log(`  re-identified ${t.from_slug} → ${t.to_slug} at window ${e.window.id} — DEC-16, the same row ` +
+          `keeps its id; ${t.commit.sha.slice(0, 9)}; one \`transfer\` by the-town synthesised` +
+          (t.amended ? `; the record was ALSO edited this era, so an amend claim rides under the new slug` : ""));
+      }
+      for (const c of claimsMoved) {
+        console.log(`  ⚑ ${c.n} PENDING claim(s) named ${c.from_slug} and now name ${c.to_slug}. Expected zero in a ` +
+          `replay. Whether a claim filed under the old owner survives the transfer is an ownership question, not a rename.`);
+      }
       for (const r of e.retired) {
         console.log(`  retired ${r.slug} at window ${e.window.id} — ${r.case === "a"
           ? `(a) the era's own \`withdraw\` act is the retirement`
@@ -1570,6 +1810,7 @@ async function main() {
         acts_ingested: e.acts.rows.length, claims_ingested: e.claims.length,
         added: e.added.map((m) => m.slug), amended: e.amended.map((x) => x.mark.slug),
         retired: e.retired.map((r) => ({ slug: r.slug, case: r.case, retired_by: r.commit?.sha ?? null })),
+        transferred: e.transferred.map((t) => ({ from_slug: t.from_slug, to_slug: t.to_slug, commit: t.commit.sha })),
         clearing: cleared.out, clearing_ok: cleared.ok,
         refusals: refusals.map((r) => ({ slug: r.slug, status: r.status, check: r.refusal_check })),
         substance: parity.substance, provenance: parity.provenance, acts: actsF,
