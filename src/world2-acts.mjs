@@ -251,6 +251,9 @@ export function world2Enabled(env = process.env) {
   return env.WORLD2_PG === "1" && !!env.WORLD2_PG_URL;
 }
 
+/** Test seam: hand the module a pool (the late-crossing test uses a recording stub). Never used by the office. */
+export function __setPoolForTest(p) { state.pool = p; }
+
 async function pool(env = process.env) {
   if (state.pool) return state.pool;
   const { default: pg } = await import("pg");
@@ -276,15 +279,22 @@ export function mirrorAct(row, seq, env = process.env) {
       // gh:<id>, or acts and claims spell one fact two ways and every reader
       // joining them loses rows silently (the guards lane measured it live).
       const { householdKeyFor } = await import("./world2-claims.mjs");
-      const household = row.household == null ? null : await householdKeyFor(p, row.household);
+      // THE LATE-CROSSING GUARD RUNS HERE TOO (2026-09-04). This path inserted
+      // straight into acts and, that evening, filed four backfilled holding rows
+      // at crossing 157 — certified history — while the pen's insertAct would
+      // have refused or re-stamped them. One guard, both pens: a row that may
+      // not file through the door may not file through the mirror either.
+      const { lateCrossingGuard } = await import("./world2-pen.mjs");
+      const guarded = lateCrossingGuard(row, { env });
+      const household = guarded.household == null ? null : await householdKeyFor(p, guarded.household);
       await p.query(
         `INSERT INTO acts (at, crossing, actor, action, object,
                            at_anchor, at_dx, at_dy, witnesses, class,
                            payload, effect, household, journal_seq)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
-        [row.written_at, row.crossing, row.actor, row.action, row.object,
-         row.at_anchor, row.at_dx, row.at_dy, row.witnesses, row.class,
-         row.payload, row.effect, household, seq],
+        [guarded.written_at, guarded.crossing, guarded.actor, guarded.action, guarded.object,
+         guarded.at_anchor, guarded.at_dx, guarded.at_dy, guarded.witnesses, guarded.class,
+         guarded.payload, guarded.effect, household, seq],
       );
       state.written += 1;
     } catch (err) {

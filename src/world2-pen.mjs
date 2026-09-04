@@ -72,7 +72,9 @@ import { currentCrossing } from "./crossings.mjs";
 // history is not a place a row can file into.
 export class LateCrossingError extends Error {
   constructor(crossing, open) {
-    super(`a row for crossing ${crossing} may not enter the record while the open window is ${open}: that window is certified history and the notary refuses to rewrite it (the act-4171 class). A late arrival files into the window it ARRIVES in — set W2_LATE_ARRIVAL="<reason>" and the pen stamps ${open}, keeping the original crossing on the payload.`);
+    super(crossing > open
+      ? `a row for crossing ${crossing} may not enter the record while the open window is ${open}: that window has not opened, and a crossing that large is almost always a raw clock (epoch ÷ 12h) rather than the town's count — the 2026-09-04 backfill class. Stamp the true crossing (crossings.mjs § currentCrossing(at)) and let the pen file it.`
+      : `a row for crossing ${crossing} may not enter the record while the open window is ${open}: that window is certified history and the notary refuses to rewrite it (the act-4171 class). A late arrival files into the window it ARRIVES in — set W2_LATE_ARRIVAL="<reason>" and the pen stamps ${open}, keeping the original crossing on the payload.`);
     this.name = "LateCrossingError"; this.crossing = crossing; this.open = open;
   }
 }
@@ -80,6 +82,7 @@ export function lateCrossingGuard(row, { now = Date.now(), env = process.env } =
   const open = currentCrossing(now);
   const c = row.crossing == null ? null : Number(row.crossing);
   if (c == null || !Number.isFinite(c)) return row;
+  if (Math.floor(c) > open) throw new LateCrossingError(c, open); // the future is not a place a row can file into either (2026-09-04: a raw epoch count sailed through here)
   if (Math.floor(c) >= open - 1) return row;            // the open window, or the one just closed at the boundary
   const reason = String(env.W2_LATE_ARRIVAL ?? "").trim();
   if (!reason) throw new LateCrossingError(c, open);

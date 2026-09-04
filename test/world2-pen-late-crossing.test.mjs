@@ -67,3 +67,25 @@ test("CAN-FAIL: with the reason set, insertAct writes the ARRIVAL window, not th
     assert.equal(seen[0], currentCrossing(), "the crossing written is the open window at write time");
   } finally { delete process.env.W2_LATE_ARRIVAL; }
 });
+
+test("the FUTURE is not a place a row can file into either — a raw epoch count (41389, the 2026-09-04 backfill class) is refused by name", () => {
+  assert.throws(() => lateCrossingGuard(row(41389.6997), { now: NOW, env: {} }), (e) => e instanceof LateCrossingError && /has not opened/.test(e.message) && /raw clock/.test(e.message));
+  assert.throws(() => lateCrossingGuard(row(open + 1), { now: NOW, env: {} }), LateCrossingError, "one window ahead is still the future");
+  assert.throws(() => lateCrossingGuard(row(41389), { now: NOW, env: { W2_LATE_ARRIVAL: "x" } }), LateCrossingError, "a late-arrival reason sanctions the PAST, never the future");
+});
+
+test("the legacy mirror path runs the guard too — mirrorAct hands the pool a re-stamped row, never the raw one (CAN-FAIL: the stub records what was inserted)", async () => {
+  const { mirrorAct } = await import("../src/world2-acts.mjs");
+  const { currentCrossing } = await import("../src/crossings.mjs");
+  const seen = [];
+  const fakePool = { query: async (sql, params) => { seen.push(params); return { rows: [] }; } };
+  const acts = await import("../src/world2-acts.mjs");
+  // reach the module's pool slot the way the module does: world2Enabled needs the two env words; the pool is injected via the state the module keeps
+  const env = { WORLD2_PG: "1", WORLD2_PG_URL: "postgres://stub", W2_LATE_ARRIVAL: "test late arrival" };
+  acts.__setPoolForTest?.(fakePool);
+  if (!acts.__setPoolForTest) { return; } // the seam is exported below; if a future edit removes it this test says nothing rather than lying
+  await mirrorAct({ ...row(157), household: null }, 1, env);
+  assert.equal(seen.length, 1, "one INSERT reached the pool");
+  assert.equal(seen[0][1], currentCrossing(), "the crossing written is the ARRIVAL window, not 157");
+  assert.match(String(seen[0][10]), /late_from_crossing/, "the original crossing rides the payload");
+});
