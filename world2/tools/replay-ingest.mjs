@@ -275,40 +275,72 @@ export function erasBetween(repo, fromRef, toRef) {
   // NEXT era — filing them at a crossing they did not happen in, which is the
   // exact defect this lane exists to remove. The register is unchanged by a
   // drain, so the parity oracle reads the same world either way.
-  // The window is read from the LOG, not from the subject, and the subject is
-  // kept as a second opinion. A repo whose crossing-saves are spelled differently
-  // — or absent — would otherwise collapse its whole range into one era and say
-  // nothing, which is the silent-wrong-answer shape this file exists to refuse.
-  // `ls-tree` rather than a worktree: the segmentation needs one number per
-  // boundary commit, and a checkout per commit would cost minutes for a fact the
-  // tree already states. Asked only of the commits that can BE a boundary.
-  const windowAt = (sha) => {
-    let hi = null;
-    for (const f of git(repo, "ls-tree", "--name-only", sha, "STATE/log/").split("\n")) {
-      const m = /^STATE\/log\/(\d+)\.jsonl$/.exec(f.trim());
-      if (m) { const n = Number(m[1]); if (hi == null || n > hi) hi = n; }
+  // ── A WINDOW BEGINS WHERE ITS LOG FILE DOES (ruled 2026-09-04, § 9) ────────
+  //
+  // The first cut of this read the HIGHEST INTEGER `<n>.jsonl` at each boundary
+  // commit. That is what `genesisWindow` does, and it is right whenever the town
+  // saves on time — but it LAGS a missed save, and this range carries one. There
+  // is no `crossing-save 154` anywhere in the repository: `154.jsonl` was not
+  // written until `c701988f9` (crossing-save 155) at 13:27Z on 08-28, hours after
+  // window 154 had come and gone. So the integer scan saw the clock go 153 → 155,
+  // reported a hole, and filed two sweeps that published INSIDE 154 under 153.
+  //
+  // The `.journal` form does not lag. A drain, `a31796fac` at 06:05Z that
+  // morning, wrote `154.journal.jsonl` while the integer log still said 153 — and
+  // 06:05Z is inside window 154's own declared span (`154.meta.json`: covers_from
+  // 08-28T00:00, covers_to 08-28T12:00, complete). The journal tracks the real
+  // clock; the integer file is a save's record of it, and a save can be missed.
+  //
+  // So a window's boundary is the FIRST commit naming either form of its log,
+  // whatever that commit's subject says. `crossing-save N` is the common case, a
+  // drain the honest exception, and the exception is reported by name rather than
+  // smoothed. One `git log` answers it for every window at once — cheaper than
+  // the per-commit `ls-tree` it replaces, and it sees a window the tree cannot.
+  const opensAt = new Map();                       // window → the sha that first names it
+  {
+    const MARK = String.fromCharCode(0x01);        // no path or sha begins with it
+    const out = git(repo, "log", "--first-parent", "--reverse", "--diff-filter=A",
+      `--format=${MARK}%H`, "--name-only", `${from}..${to}`, "--", "STATE/log/");
+    let sha = null;
+    for (const line of out.split("\n")) {
+      const l = line.trim();
+      if (!l) continue;
+      if (l.startsWith(MARK)) { sha = l.slice(1); continue; }
+      const m = /^STATE\/log\/(\d+)(?:\.journal)?\.jsonl$/.exec(l);
+      if (m && sha && !opensAt.has(Number(m[1]))) opensAt.set(Number(m[1]), sha);
     }
-    return hi;
-  };
+  }
+  const opensHere = new Map();                     // sha → the window(s) it first names
+  for (const [w, sha] of opensAt) {
+    if (!opensHere.has(sha)) opensHere.set(sha, []);
+    opensHere.get(sha).push(w);
+  }
+  for (const list of opensHere.values()) list.sort((a, b) => a - b);
 
   const segments = [];
   let cur = null;
   for (const c of walk) {
-    const save = CROSSING_SAVE.exec(c.subject);
-    const isBoundary = save || PUBLISH_SUBJECT.test(c.subject);
-    if (isBoundary) {
-      const w = windowAt(c.sha);
-      if (!cur || (w != null && w !== cur.window)) {
-        cur = { window: w, statedWindow: save ? Number(save[1]) : null, commits: [], publishes: [] };
+    const opened = opensHere.get(c.sha);
+    if (opened) {
+      // One commit may name several windows at once — the save that finally wrote
+      // a completed window's log also wrote its successor's. Each still gets its
+      // own era, in order, because the store clears one candle at a time; every
+      // window but the last closes WHERE IT OPENS, which is what a folded save
+      // means. That era is real and empty, and empty is the only honest shape:
+      // no tree ever stood between them, so there is no world to put in it.
+      for (const w of opened) {
+        cur = { window: w, statedWindow: null, opensAt: c.sha,
+          foldedWith: opened.length > 1 ? opened : null, commits: [], publishes: [] };
         segments.push(cur);
-      } else if (save && cur.statedWindow == null) {
-        cur.statedWindow = Number(save[1]);
+        if (w !== opened[opened.length - 1]) cur.commits.push(c);
       }
     }
     if (!cur) {                                   // before the range's first boundary
-      cur = { window: null, statedWindow: null, commits: [], publishes: [] };
+      cur = { window: null, statedWindow: null, opensAt: null, foldedWith: null, commits: [], publishes: [] };
       segments.push(cur);
     }
+    const save = CROSSING_SAVE.exec(c.subject);
+    if (save && cur.statedWindow == null) cur.statedWindow = Number(save[1]);
     cur.commits.push(c);
     if (PUBLISH_SUBJECT.test(c.subject)) cur.publishes.push(c);
   }
@@ -324,7 +356,8 @@ export function erasBetween(repo, fromRef, toRef) {
     const c = seg.commits[seg.commits.length - 1];
     const t = { tag: tagOf.get(c.sha) ?? `window/${seg.window ?? c.sha.slice(0, 8)}`,
       sha: c.sha, at: c.at, subject: c.subject };
-    eras.push({ from: prev, to: t, publishes: seg.publishes, statedWindow: seg.statedWindow });
+    eras.push({ from: prev, to: t, publishes: seg.publishes, statedWindow: seg.statedWindow,
+      window: seg.window, opensAt: seg.opensAt, foldedWith: seg.foldedWith });
     prev = t;
   }
 
@@ -1731,6 +1764,17 @@ async function main() {
     try {
       const window = eraWindow({ toDir: to.dir, lawSha: b.to.sha, townSha });
       window.closes_at = commitDate2(worldRepo, b.to.sha);
+
+      // THE RULED WINDOW WINS, and the disagreement is reported rather than
+      // hidden. `eraWindow` reads the highest INTEGER log, which lags a missed
+      // save; the era's number comes from the commit that first named the window
+      // in either form. They agree on every window the town saved on time, and
+      // where they do not, the reason IS the finding.
+      let ruledWindow = null;
+      if (b.window != null && b.window !== window.id) {
+        ruledWindow = { was: window.id, is: b.window };
+        window.id = b.window;
+      }
       const acts = eraActs({ fromDir: from.dir, toDir: to.dir });
       // The acts go IN as well as out: DEC-15 case (a) is decided by whether this
       // era's own log already carries the `withdraw`, and the shas are what case
@@ -1747,9 +1791,18 @@ async function main() {
 
       // THE TOWN SAID THE NUMBER; the log rule derived it. Two independent
       // readings of one fact, so they are compared rather than one being trusted.
-      if (b.statedWindow != null && b.statedWindow !== window.id) {
+      if (ruledWindow) {
+        const opener = git(worldRepo, "log", "-1", "--format=%h (%s)", b.opensAt ?? b.to.sha);
+        receipt.clockDisagrees =
+          `window ${ruledWindow.is} is named first by ${opener.slice(0, 74)} — the highest INTEGER log there still ` +
+          `reads ${ruledWindow.was}, because the save that would have written \`${ruledWindow.is}.jsonl\` never ran`;
+      } else if (b.statedWindow != null && b.statedWindow !== window.id) {
         receipt.clockDisagrees =
           `the town's own commit says \`crossing-save ${b.statedWindow}\` and the log rule reads window ${window.id}`;
+      }
+      if (b.foldedWith) {
+        receipt.folded = `windows ${b.foldedWith.join(" and ")} were named by ONE commit — the save that wrote this ` +
+          `window's log wrote its neighbour's too, so no tree stands between them`;
       }
 
       // A disagreement gets a DIAGNOSIS, not just a number. See `plantedByHand`.

@@ -370,6 +370,65 @@ test("F-5 reading 3: the windows walk the clock one at a time, so nothing is lef
   } finally { w.cleanup(); }
 });
 
+// ── §9: a window begins where its log file does, in EITHER form ──────────────
+//
+// The town has no `crossing-save 154`. `154.jsonl` was not written until
+// `c701988f9` (crossing-save 155), hours after the window had elapsed — so a
+// scan of the highest INTEGER log saw the clock go 153 → 155 and reported a hole,
+// and two sweeps that published inside 154 were filed under 153. The `.journal`
+// form does not lag: a drain wrote `154.journal.jsonl` at 06:05Z that morning,
+// inside window 154's own declared span. The boundary is the first commit to name
+// the window in EITHER form.
+
+test("§9: a window named only by its `.journal` log still gets an era, and the ruled number beats the lagging integer", () => {
+  const w = world([
+    { tag: "a", subject: SWEEP(0), at: "2026-08-26T00:00:00+00:00",
+      register: [M({ by: "wren", slug: "the-shed" })], log: { "7.jsonl": [] } },
+    // The drain: window 8 exists and only the journal form says so. The highest
+    // integer log here is still 7 — this is the real `a31796fac` shape.
+    { subject: "drain: journal windows 7, 7.66, 8", at: "2026-08-26T06:00:00+00:00",
+      register: [M({ by: "wren", slug: "the-shed" })],
+      log: { "7.jsonl": [], "8.journal.jsonl": [] } },
+    { tag: "b", subject: "crossing-save 9: 1 entities, 0 events", at: "2026-08-26T18:00:00+00:00",
+      register: [M({ by: "wren", slug: "the-shed" })],
+      log: { "7.jsonl": [], "8.journal.jsonl": [], "9.jsonl": [] } },
+  ]);
+  try {
+    const eras = erasBetween(w.dir, "a", "b");
+    assert.deepEqual(eras.map((e) => e.window), [8, 9], "the clock counts 8 then 9 — no hole where a save was missed");
+    assert.match(eras[0].to.tag, /^window\/8$/);
+
+    // The ruled number and the integer scan DISAGREE here, which is the finding.
+    // `eraWindow` reads the highest integer log and still says 7.
+    const c = checkout(w.dir, eras[0].to.sha);
+    try { assert.equal(eraWindow({ toDir: c.dir, lawSha: eras[0].to.sha, townSha: null }).id, 7,
+      "the integer log lags, which is exactly why the rule does not use it alone"); }
+    finally { c.dispose(); }
+
+    assert.deepEqual(windowFindings(eras.map((e) => ({ ...e, window: { id: e.window } }))), [],
+      "and with the journal form read, the clock has no gap to report");
+  } finally { w.cleanup(); }
+});
+
+test("§9: one commit naming TWO windows gives two eras, and the first closes where it opens", () => {
+  // `c701988f9` wrote a completed window's log and the newly opened one's in the
+  // same commit. No tree ever stood between them, so the earlier era is real and
+  // empty — the store gets its candle without a world being invented to fill it.
+  const w = world([
+    { tag: "a", subject: SWEEP(0), at: "2026-08-26T00:00:00+00:00",
+      register: [M({ by: "wren", slug: "the-shed" })], log: { "7.jsonl": [] } },
+    { tag: "b", subject: "crossing-save 9: 1 entities, 0 events", at: "2026-08-26T18:00:00+00:00",
+      register: [M({ by: "wren", slug: "the-shed" })],
+      log: { "7.jsonl": [], "8.jsonl": [], "9.jsonl": [] } },
+  ]);
+  try {
+    const eras = erasBetween(w.dir, "a", "b");
+    assert.deepEqual(eras.map((e) => e.window), [8, 9], "both windows get a candle, in order");
+    assert.equal(eras[0].to.sha, eras[1].to.sha, "one commit closed both, so they end at the same tree");
+    assert.deepEqual(eras[0].foldedWith, [8, 9], "and the era says so rather than pretending it stood alone");
+  } finally { w.cleanup(); }
+});
+
 test("F-5: a window with no publish behind it, and a publish that closed no window, are both NAMED", () => {
   const era = (id, tag) => ({ to: { tag }, window: { id } });
   const skipped = windowFindings([era(153, "p1"), era(155, "p2")]);
