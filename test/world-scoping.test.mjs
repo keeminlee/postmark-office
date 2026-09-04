@@ -175,11 +175,11 @@ test("ruling 9 scopes reads by household and every write lands off main", async 
   assert.deepEqual(other, anonymous, "unresolved household and anonymous both read published main");
   assert.deepEqual(owner, anonymous, "and so does the author: one world, one payload, cacheable");
 
-  const delta = worldMyDrafts(houseA);
+  const delta = await worldMyDrafts(houseA);
   assert.equal(delta.household, "house-a");
   assert.deepEqual(delta.counts, { added: 1, modified: 0, deleted: 0 });
   assert.equal(delta.marks[0].id, "alpha/private-note");
-  assert.equal(worldMyDrafts(null).error, "bounce");
+  assert.equal((await worldMyDrafts(null)).error, "bounce");
 
   const portfolio = await worldMyMarks(houseA);
   assert.equal(portfolio.household, "house-a");
@@ -277,7 +277,7 @@ test("world_note overwrites one resident note on the household draft and orient 
 
 test("the draft delta carries WORLD-framed geometry — the overlay's whole contract (2026-08-22)", async () => {
   // Root-level draft: file numbers ARE world numbers, verbatim.
-  const rootDraft = worldMyDrafts(houseA).marks.find((m) => m.id === "alpha/private-note");
+  const rootDraft = (await worldMyDrafts(houseA)).marks.find((m) => m.id === "alpha/private-note");
   assert.deepEqual(rootDraft.at, { x: 0, y: 0 }, "a root-level record ships its at verbatim");
   assert.deepEqual(rootDraft.extent, { w: 4, h: 4 });
 
@@ -291,7 +291,7 @@ test("the draft delta carries WORLD-framed geometry — the overlay's whole cont
   git("-c", "user.name=fixture", "-c", "user.email=fixture@test.invalid", "commit", "-q", "-m", "nested draft");
   git("switch", "-q", "--ignore-other-worktrees", "main");
 
-  const nested = worldMyDrafts(houseA).marks.find((m) => m.id === "alpha/nested-draft");
+  const nested = (await worldMyDrafts(houseA)).marks.find((m) => m.id === "alpha/nested-draft");
   assert.ok(nested, "the nested draft is in the delta");
   assert.deepEqual(nested.at, { x: 13, y: 14 },
     "town-square's composed world centre (10,10) + the file's offset (3,4) — world frame, not file frame");
@@ -317,15 +317,15 @@ test("§1c (a) — the author still sees their own draft, by DELTA, with no env 
     "no tourniquet is set: what follows is the architecture, not a switch position");
 
   // the stake gate — the door that bounced 404 on the morning of the party
-  assert.equal(markExists("alpha/published-note", houseA).exists, true, "published marks unchanged");
-  assert.equal(markExists("alpha/private-note", houseA).exists, true,
+  assert.equal((await markExists("alpha/published-note", houseA)).exists, true, "published marks unchanged");
+  assert.equal((await markExists("alpha/private-note", houseA)).exists, true,
     "your own draft counts — the delta is the second look, no fold");
-  assert.equal(markExists("alpha/private-note", houseB).exists, false,
+  assert.equal((await markExists("alpha/private-note", houseB)).exists, false,
     "another household's draft stays unstakeable: you cannot back what you cannot see");
-  assert.equal(markExists("alpha/private-note", null).exists, false, "and no key sees no sketchbook");
+  assert.equal((await markExists("alpha/private-note", null)).exists, false, "and no key sees no sketchbook");
 
   // the delta doors themselves — the author's whole sketchbook, declarations only
-  const ids = worldMyDrafts(houseA).marks.map((m) => m.id);
+  const ids = (await worldMyDrafts(houseA)).marks.map((m) => m.id);
   for (const id of ["alpha/private-note", "alpha/nested-draft"])
     assert.ok(ids.includes(id), `world_my_drafts hands the author ${id}`);
   const mine = await worldMyMarks(houseA);
@@ -344,7 +344,7 @@ test("§1c (b) — anonymous and other households read published main; no draft 
     assert.deepEqual(state.marks.filter((m) => !PUBLISHED.has(m.id)), [],
       `${who} reads canon: nothing but published main's own marks appears in the world payload`);
   assert.deepEqual(author, anonymous, "one world, byte for byte, whoever asks");
-  assert.equal(worldMyDrafts(houseB).marks.some((m) => m.by === "alpha"), false,
+  assert.equal((await worldMyDrafts(houseB)).marks.some((m) => m.by === "alpha"), false,
     "and the delta door is scoped to its own household — the leak has no second route");
 });
 
@@ -375,10 +375,10 @@ test("§1c (c) — NO read folds a draft branch: the fold arm is gone and the wi
     await worldSkeletonRaw(houseA);
     await worldOrient({}, houseA);
     await worldEyes({ x: 0, y: 0 }, houseA);
-    worldMyDrafts(houseA);
+    await worldMyDrafts(houseA);
     await worldMyMarks(houseA);
     const { markExists } = await import("../src/world-stake.mjs");
-    markExists("alpha/private-note", houseA);
+    await markExists("alpha/private-note", houseA);
   } finally {
     delete process.env.FOLD_WITNESS;
   }

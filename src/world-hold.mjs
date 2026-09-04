@@ -118,12 +118,23 @@ export const heldPositionOf = (holderAt, offset = { x: 0, y: 0 }) =>
  * act differently. Current state before history — the guard ordering the
  * escalation lane already pays for.
  */
-export function declareHolding({ db, thing, to = null, actor, roster = null, groundOwner = null, dials = {} }) {
+//
+// `rows` IS INJECTABLE SINCE B1 (runbook §4 B1), and the injection is what keeps
+// this function pure. Under `W2_GUARDS=1` the holder check reads `acts` — a
+// Postgres round trip — and this adjudicator must stay synchronous and
+// store-agnostic for the reason its own header already gives about the mirror:
+// "it takes a db and no key, it is tested directly on hand-built stores, and
+// giving it a mirror would give every one of those tests a Postgres dependency
+// it has no business having." The DOOR reads the rows; this reads the rows it is
+// given, and falls back to `readAttachments(db)` when nobody hands it any, so
+// every existing caller and every hand-built-store test is byte for byte what it
+// was.
+export function declareHolding({ db, thing, to = null, actor, roster = null, groundOwner = null, dials = {}, rows: injected = null }) {
   if (!thing || !String(thing).includes("/"))
     throw bounce(422, "which thing?", "a thing's mark id, <by>/<slug> — the id as it appears in the telling");
   if (!actor) throw bounce(422, "which resident acts?", "a multi-resident key must name one with handle:");
 
-  const rows = readAttachments(db);
+  const rows = injected ?? readAttachments(db);
   const holder = liveHolder(rows, thing);
 
   // ── the three faces, derived ───────────────────────────────────────────────
@@ -296,7 +307,10 @@ export async function callHoldTool(name, args = {}, key = null) {
   const db = openDynamic();
   try {
     if (name === "world_holdings") {
-      const rows = readAttachments(db);
+      // B1: give/drop/take's own holder fold, read from `acts` under W2_GUARDS=1.
+      // This read is the SHADOW of those three verbs — one answer, one source.
+      const { guardedAttachments } = await import("./world2-guards.mjs");
+      const rows = await guardedAttachments(db);
       const held = holdingsOf(rows, actor);
       // ── THE HOLDINGS BOUND (2026-08-25) ─────────────────────────────
       //
@@ -379,7 +393,12 @@ export async function callHoldTool(name, args = {}, key = null) {
     const { laneFlipped } = await import("./world-journal.mjs");
     if (laneFlipped("hold"))
       return await declareHoldingFlipped({ db, thing: args.thing, to: args.to ?? null, actor, dials, key });
-    const did = declareHolding({ db, thing: args.thing, to: args.to ?? null, actor, roster: null, groundOwner: null, dials });
+    // B1: the same guard read on the unflipped pen path — the read flip and the
+    // write flip are independent flags (runbook §4: "the ports gate the
+    // DELETION, not the flag"), so W2_GUARDS=1 with W2_PEN unset is a real and
+    // supported state, and it is the one this lane is proven in.
+    const { guardedAttachments } = await import("./world2-guards.mjs");
+    const did = declareHolding({ db, thing: args.thing, to: args.to ?? null, actor, roster: null, groundOwner: null, dials, rows: await guardedAttachments(db) });
     mirrorHoldingAct(did, key);
     return did;
   } finally { db.close(); }
@@ -485,9 +504,20 @@ export async function declareHoldingFlipped({ db, thing, to = null, actor, dials
   const resolvedWorldHousehold = deps.resolvedWorldHousehold ?? (await import("./world-branches.mjs")).resolvedWorldHousehold;
   const currentCrossing = deps.currentCrossing ?? (await import("./crossings.mjs")).currentCrossing;
 
+  const { guardedAttachments } = await import("./world2-guards.mjs");
+
   db.exec("BEGIN IMMEDIATE");
   try {
-    const did = declareHolding({ db, thing, to, actor, roster: null, groundOwner: null, dials }); // throws the door's own bounce on refusal
+    // ── B1: THE HOLDER CHECK, INSIDE THE TRANSACTION SHAPE ─────────────────
+    // Read AFTER `BEGIN IMMEDIATE`, never before it. The sqlite write lock is
+    // already held here, so the state this guard adjudicates against is the
+    // state the edge commits against; a read taken before the BEGIN would open
+    // exactly the window where another writer hands the thing on between the
+    // check and the write, and "current state before history" (the three faces
+    // above) would be answering about a past. Flipped, the rows come from
+    // `acts`, both eras, latest-wins; unflipped, `readAttachments(db)`.
+    const rows = await guardedAttachments(db);
+    const did = declareHolding({ db, thing, to, actor, roster: null, groundOwner: null, dials, rows }); // throws the door's own bounce on refusal
     const { at, witnesses } = await witnessStamp(did.declared_by);
     const row = await appendActFlipped(db, holdingEntry(did, { crossing: currentCrossing(), at, witnesses, cls: CLASS_HOLDING, household: resolvedWorldHousehold(key) }));
     db.exec("COMMIT");

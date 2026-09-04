@@ -150,6 +150,43 @@ export async function officeWrite(fn, { household = null, env = process.env } = 
  *  mapping as its fourth lawful departure. A gh:<id> can no longer enter by this road either
  *  (the arena tee): whatever a caller passes, the identities projection
  *  answers, and a non-roster name resolves to solo:<name>, never verbatim. */
+/**
+ * R1's home, read side. Run `fn(client)` inside ONE `BEGIN READ ONLY` — the
+ * shape B1's guard reads take (`src/world2-guards.mjs`).
+ *
+ * It lives here beside `officeWrite` rather than growing a third pool in the
+ * guards module, and R1's reason is the reason: the two-queue disease was "two
+ * independent pools with nothing joining them", and a guard read is the office
+ * asking the same store the same question the pen is about to write to. One
+ * pool, one place.
+ *
+ * `BEGIN READ ONLY` is not decoration. `app.household` is transaction-scoped
+ * (`set_config(…, true)`), so a guard read NEEDS a transaction to declare it for
+ * 007's row policy — and a transaction that can also write is a transaction that
+ * could. The read-only marker makes "a guard never writes" a property Postgres
+ * enforces rather than one this file asserts, which is the same standard
+ * `003_falsifier_roles.sql` holds the pens to.
+ *
+ * The household is NOT declared here: the guards module resolves the NAME to the
+ * KEY through world2-claims.mjs's one resolver and declares it inside `fn`, so
+ * there is exactly one place the two spellings meet.
+ */
+export async function officeRead(fn, { env = process.env } = {}) {
+  const p = await pool(env);
+  const client = await p.connect();
+  try {
+    await client.query("BEGIN READ ONLY");
+    const out = await fn(client);
+    await client.query("COMMIT");
+    return out;
+  } catch (err) {
+    try { await client.query("ROLLBACK"); } catch { /* connection already gone */ }
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 export async function insertAct(client, row, seq = null) {
   const { householdKeyFor } = await import("./world2-claims.mjs");
   const household = row.household == null ? null : await householdKeyFor(client, row.household);
