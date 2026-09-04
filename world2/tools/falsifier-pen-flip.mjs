@@ -96,7 +96,7 @@ const has = (name) => process.argv.includes(name);
 //
 // NOTE, not fixed here because it is C5's lane and DEC-5 gates it: `frame` has
 // no row either, so `--lanes frame` cannot run today.
-export const LANE_CLASSES = { stance: ["stance"], say: ["voice"], hold: ["holding"], walk: ["move"], mark: ["mark"] };
+export const LANE_CLASSES = { stance: ["stance"], say: ["voice"], hold: ["holding"], walk: ["move"], frame: ["frame"], mark: ["mark"] }; // frame (C5): CLASS_FRAME — added 2026-09-04 so Sunday's flip of walk+frame is checkable, not just flippable (the C6 lane's finding 6)
 
 // ── finding 2: the since each lane is asked about ────────────────────────────
 
