@@ -447,4 +447,39 @@ export function docketStatus() {
   return { enabled: candleEnabled(), written, failed, submitted, lastError };
 }
 
-export function docketSettled() { return state.queue; }
+/**
+ * Every docket write issued so far has landed — and it has to be true about the
+ * queue those writes ACTUALLY RIDE, which is no longer this module's.
+ *
+ * ── THE LIVE DEFECT THAT TAUGHT THIS (2026-09-04 night, on the box) ─────────
+ *
+ * This returned `state.queue` alone. That was right while `submitClaimFromJournal`
+ * owned a queue here; it stopped being right the moment the mark lane's
+ * private-draft arm joined the pen's one queue (C6) and that function was
+ * deleted. Nothing enqueues onto `state.queue` any more, so it resolves
+ * instantly — and a caller that asked whether the docket was settled was told
+ * yes before a single row had been written.
+ *
+ * `falsifier-guard-equality.mjs` is that caller, and it had written the reason
+ * it waits directly above the wait: *"reading `claims` before it settles would
+ * compare 1.0's finished journal against a docket still being written, and the
+ * diff would be timing."* It then did exactly that — G1_a/G2_a/G4_a
+ * `compared 0`, findings 4/4/5, every one of the form *"1.0's live layer holds
+ * guards-alfa/the-quiet-shed and the port does not — a slug-collision guard
+ * reading the port would PERMIT a duplicate."* Nothing was wrong with the port.
+ *
+ * FIXED HERE RATHER THAN AT THE CALL SITE, because the call site was not wrong:
+ * it asked the honest question and got a false receipt. `settleShadowPens`
+ * survived only by awaiting all three queues by hand, and nothing marked the
+ * difference between the caller that happened to be safe and the one that was
+ * not. A function named for the docket that knows only about a queue the docket
+ * abandoned is the states-with-no-receipt class, wearing a receipt's coat.
+ *
+ * `state.queue` is still awaited beside the pen's. It is empty today, and
+ * keeping it costs one already-resolved promise — where dropping it would mean
+ * this answer silently stops covering anything that enqueues here again.
+ */
+export async function docketSettled() {
+  const { penSettled } = await import("./world2-pen.mjs");
+  await Promise.all([state.queue, penSettled()]);
+}
