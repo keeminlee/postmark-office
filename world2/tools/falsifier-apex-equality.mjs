@@ -118,6 +118,10 @@ process.env.WORLD_CLONE ??= REPO;
 // ran against a disabled door would compare a bounce to an answer and call it a
 // divergence. Set it here, loudly, rather than requiring the caller to know.
 if (process.env.WORLD_APEX !== "1") process.env.WORLD_APEX = "1";
+// And the presence flag, for the same reason: without it 1.0 composes no `present` block at all,
+// A6 compares 0 handles, and the run ends CANNOT RUN — twice on 2026-09-04 before this line.
+// A falsifier that needs a flag sets the flag; a recipe in a report is not a guard.
+if (process.env.WORLD_PRESENCE !== "1") process.env.WORLD_PRESENCE = "1";
 
 // ── the oracles, imported live out of this office ───────────────────────────
 let apexMod, grantsMod, serveMod, portMod, pg;
