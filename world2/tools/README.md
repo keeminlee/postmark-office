@@ -2390,3 +2390,148 @@ can-fail proof:
    a property of a process, not of the record, so there is nothing to reproduce —
    and it is a REAL divergence that bites the day the record passes 2,000. Named
    on the answer rather than matched.
+
+## The apex, served from the store (B2 · P-089)
+
+The A/B report's largest gap: *"`GET /world/apex` — the whole orientation
+answer, and with it every A2 read shadow (P-016…P-034) | P-089 | `law_projection`
++ a spine/reach query. The door's grammar is the contract the viewer speaks."*
+Twelve `/world2/*` doors existed and `/world2/apex` was not one of them.
+
+```
+GET /world2/apex?x=<m>&y=<m>[&crossing=<n>][&law_sha=<sha>][&roster=roll]
+```
+
+Keyless, like 1.0's `GET /world/apex?x=&y=`, and ADDITIVE — the 1.0 apex is
+untouched, so rollback is not routing to this one.
+
+`apex-reads.mjs` is the derivation half and `src/world2-serve.mjs § world2Apex`
+owns the queries and the render, the same split the live lane uses. Three
+sources, and each says what it could not do:
+
+| half | source | what stands in for the import |
+|---|---|---|
+| `actions` · `granted` · `not_yours` · `actors` | `law_projection` at ONE pinned `law_sha` | the grant law is **imported**, not ported — `world-grants.mjs` is already pure ("rows in, entries out"), so `resolveForActor` / `entriesOfClass` / `classOfInstance` are the same functions 1.0 runs |
+| `within` · `nearby` · `departures` | `marks` + `kind='skeleton'` rows | the world ENGINE's own `orient` / `openYourEyes` / `stopDepartures`, run over a world **assembled** from rows — gold §Phase 3 read literally: "the engine's verbs/geometry/adjudication port as pure functions over queries" |
+| `present` | `acts` | `live-reads.mjs`, already on trial at `/world2/present`, in the apex's `near()` render |
+
+**The law pin.** `windows.law_sha` is written AT THE CLEARING, so the OPEN window
+carries NULL (world2_dev 2026-09-03: window 168 open unpinned, 167 closed pinned
+`cba817d7`). `lawShaFor` resolves asked → open window → **last closed window** →
+`projection_heads`, and the answer names the rung it used. Last-closed before
+head is deliberate: the head is whatever the ingester last pushed and may be law
+no window has cleared against.
+
+**`?roster=`.** 1.0's apex `present` reads a two-term union — `world.mjs §
+worldOrient` calls `presentNear` with no `roll:`, so `near()` takes its
+`roll = []` default — while `GET /world/present` gets the town roll. The default
+here REPRODUCES 1.0 (the GO is equality); `?roster=roll` serves the 2026-08-29
+ruling's wider one. At the quay that is 1 resident against 49.
+
+### The equalities
+
+```sh
+export WORLD2_PG_URL="postgres://snapshot_reader:…@localhost:5432/world2_dev"
+export WORLD2_PG=1 WORLD_APEX=1 WORLD_PRESENCE=1 WORLD_EMISSIONS=1 WORLD_MOVEMENT_V2=1
+export WORLD_CLONE=/srv/world2-lab/world-frozen
+export WORLD_STORE_DB=/srv/world2-lab/office/world.db LEDGER_FREEZE=1
+node world2/tools/falsifier-apex-equality.mjs --world-repo /srv/world2-lab/world-frozen --prove-can-fail
+```
+
+Run 2026-09-03 against `world2_dev` + the frozen lab office, 14 standpoints
+derived from the store (a berth, the vessel, Ferry's crossing, the commons, a
+minting ground, a mark inside a parcel, a parcel centre, open ground, six spread
+parcels):
+
+```
+  ·  A1   compared    14  granted, per standpoint
+  ·  A2   compared   168  the whole card set, field by field
+  ·  A2b  compared    14  the card ORDER
+  ·  A3   compared    53  the containment spine
+  AMBER A4/A4b       182  the field of view — AD-1
+  ·  A5   compared   168  terms, built by 1.0's own buildTerms from BOTH laws
+  ·  A6   compared     5  the rendered resident, over shared handles
+  ·  A6b  compared    14  the presence bound
+  ·  A7   compared    14  the top-level KEY SET
+GREEN · every equality holds (100 acknowledged divergences; --strict makes them red)
+```
+
+Exit **0** green · **1** RED · **2** cannot run. Every equality reports its own
+`compared`; any that compared zero exits 2. `--strict` promotes every
+acknowledged divergence to RED and the same run then exits 1 — which is what
+keeps the acknowledgements from becoming a blindfold.
+
+**The sample is DERIVED, never typed in.** A hardcoded coordinate list rots the
+first time a mark relocates and would keep reporting greens for a class it had
+stopped testing. Each standpoint is a requirement with a finder, and a
+requirement that finds nothing REFUSES.
+
+**The human lane does not exist at this law, and the run says so.** The only
+`for: "human"` grant at `cba817d7` sits on the `human` class itself — an ACTOR
+class, not a ground — so no standpoint in this world hands a human feet. S5
+stands in for what that standpoint was chosen to test (the ground channel) and
+the absence is printed.
+
+### The can-fail proof
+
+Nine breaks, each a plausible defect of this port, applied in memory. The proof
+runs with acknowledgements SUSPENDED and against a per-equality baseline
+SIGNATURE — not a count. Both were defects in the proof itself: A4's break came
+back MISSED because its divergences are acknowledged, then came back falsely
+caught because dropping a mark happened to emit the same NUMBER of diff paths.
+
+```
+caught  A1     0 ->  14  a class the projection admits that the store's gate refuses
+caught  A2     0 ->   1  a blurb quoted from the wrong residue
+caught  A2b    0 ->  12  the ground/ambient precedence resolving the other way
+caught  A3     0 ->   2  a lost `points:` ring, so the spine falls back to the bbox
+caught  A4    11 ->  11  a mark dropped from the field of view (caught by signature)
+caught  A5     0 ->  60  the residue pointer moved, so `means` quotes the wrong class
+caught  A6     0 ->   2  a resident rendered at the wrong bearing
+caught  A6b    0 ->   1  the presence bound moved
+caught  A7     0 ->   9  a top-level key going quietly missing
+```
+
+### The acknowledged divergences
+
+Declared as DATA so the report prints them, `--strict` promotes them, and a
+reader sees the whole list without reading the comparator. Each names the 1.0
+line that produces it.
+
+- **AD-1 · `nearby` membership and order.** `world-engine.mjs § lodScore` ranks
+  by angular size MODULATED BY STAMPS; `stamp_projection` holds per-HANDLE
+  balances, not per-mark escrow, so the port emits `weight: 0`. Closes with
+  parity **P-006**'s escrow view (RULED, unbuilt).
+- **AD-2 · `present.residents[].standing` / `.aboard`.** The FRAME half, which
+  `live-reads.mjs` refuses rather than approximates. Absent, never `false`.
+- **AD-3 · `law.hydrated_at` / `as_of_world` / `source`.** 1.0 names the bake;
+  there is no bake here, so the block names the law PIN. The one field where
+  equality would be the defect.
+- **AD-4 · `present` aggregates.** The two stores hold different amounts of one
+  record (1774 departure acts over 80 handles in `acts` against 317 over 50 in
+  the frozen clone, PG a strict superset). A6 compares the render over shared
+  handles and prints its scope.
+
+Two exclusions are computed rather than acknowledged, so A6 can still fail:
+handles whose governing departure differs between the records, and handles the
+1.0 PRESENCE BAKE has not caught up to — `dynamic-presence.mjs:99` reads the
+crystallized `entities` table, "refreshed on a tick", not the ledger. 80 of 80
+on this pair, printed every run.
+
+### What this lane found
+
+1. **`ambient` is stored as a STRING in `law_projection` and as a BOOLEAN in the
+   sqlite store.** `marks-fold`'s `parseRecord` has no boolean case, so
+   `ambient: true` arrives as `"true"`; `world-hydrate.mjs:457` NORMALISES
+   (`(m.ambient === true || m.ambient === "true") ? true : null`) and
+   `law-ingest.mjs` stores `recordData(m)` raw. Any consumer carrying 1.0's
+   `json_type(props,'$.ambient') = 'true'` test to the projection reads every
+   ambient class as non-ambient — twelve resident grants at every standpoint
+   became zero on this door's first run. **The fix belongs in the ingester**
+   (normalise once, at the pen); this door reads the hydrator's own two
+   spellings meanwhile. `falsifier-projection-equality.mjs` cannot see this by
+   design — falsifier and ingester share the deriver.
+2. **`stopDepartures` needed no port at all**, only the call: the timetable
+   rides on a mark and marks are in the store. A7 (the key-set equality) is what
+   found it missing — twelve keys against eleven at the vessel. No value
+   comparison could have.
