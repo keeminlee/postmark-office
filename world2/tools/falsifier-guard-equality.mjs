@@ -250,9 +250,21 @@ async function plantPopulation(ownerClient, dbPath) {
       effect: "written by falsifier-guard-equality's population script",
     });
   }
-  // THE AWAITED WRITE. `submitClaimFromJournal` is fire-and-forget on a serial
-  // queue; reading `claims` before it settles would compare 1.0's finished
-  // journal against a docket still being written, and the diff would be timing.
+  // THE AWAITED WRITE. The docket pen is fire-and-forget on a serial queue;
+  // reading `claims` before it settles would compare 1.0's finished journal
+  // against a docket still being written, and the diff would be timing.
+  //
+  // THIS COMMENT USED TO NAME `submitClaimFromJournal`, and that name outlived
+  // the function: the mark lane's private-draft arm joined the pen's one queue
+  // (C6, 2026-09-04) and the old docket queue stopped being enqueued onto. The
+  // wait below did not change, and it did not have to — but `docketSettled()`
+  // was still answering about the abandoned queue, so it returned instantly and
+  // this run reported G1_a/G2_a/G4_a `compared 0` with every declaration missing
+  // from the port. The diff was timing, exactly as the sentence above says.
+  //
+  // `docketSettled()` now covers the queue the docket's writes actually ride
+  // (src/world2-claims.mjs), so this line is correct again and stays as it is.
+  // Naming a specific writer here is what went stale, so it names none.
   await docketSettled();
   return db;
 }

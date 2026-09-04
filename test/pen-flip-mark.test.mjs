@@ -173,24 +173,30 @@ test("(c2) UNFLIPPED · both halves of one slug's life ride ONE queue — the or
   candleOn(null);
   const db = freshDb();
   try {
-    // The queue IS a promise chain, so "was this queue extended?" is asked by
-    // identity: `state.queue = state.queue.then(…)` replaces it, and a queue
-    // nothing enqueued onto hands back the very same promise. Counters cannot
-    // answer this — `claimTxFromJournal` increments world2-claims' `written`
-    // whichever queue ran it, which is correct (it is the DOCKET's count, not a
-    // queue's) and is why the first draft of this test asserted nothing.
-    const docketQueueBefore = docketSettled();
+    // `world2-pen`'s `written` counts ONE PER QUEUED TRANSACTION, and on an
+    // unflipped lane `shadowWrite` is the only thing that increments it. So a
+    // delta of exactly 2 says both the compose and the withdrawal were
+    // serialized by that one queue — which IS the ordering guarantee, since
+    // `state.queue = state.queue.then(…)` is strict FIFO. A tree that gives the
+    // private arm its own queue reaches 1 here.
+    //
+    // An earlier draft asked this by the identity of the promise `docketSettled()`
+    // hands back. That probe is gone, and its removal is itself a finding:
+    // `docketSettled()` no longer returns a bare queue at all (it awaits the
+    // pen's queue too, because that is where the docket's writes ride —
+    // src/world2-claims.mjs). A test that reaches into a function's return
+    // identity is a test coupled to plumbing rather than to the claim, and this
+    // one broke the moment the plumbing told the truth.
     const penWrittenBefore = penStatus().written;
 
     appendJournal(db, composeRow());
     appendJournal(db, withdrawRow());
     await settle();
 
-    assert.equal(docketSettled(), docketQueueBefore,
-      "the private-draft arm extended world2-claims' own queue — that SECOND queue is the disease, "
-      + "and nothing orders it against world2-pen's (DESIGN §2 R1: two independent pools with nothing joining them)");
     assert.equal(penStatus().written - penWrittenBefore, 2,
-      "both the compose and the withdrawal must be counted by the ONE queue that serializes them");
+      "both the compose and the withdrawal must be counted by the ONE queue that serializes them — "
+      + "a delta of 1 means the private-draft arm rode a SECOND queue, with nothing ordering it against "
+      + "world2-pen's (DESIGN §2 R1: two independent pools with nothing joining them)");
     assert.ok(docketStatus().written >= 1,
       "and the docket still counts its own rows — the count belongs to the table, not to the queue that reached it");
   } finally { db.close(); unflip(); }
