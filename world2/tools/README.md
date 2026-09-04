@@ -1056,19 +1056,21 @@ run refuses — the store clears exactly one candle at a time, and its own guard
 would refuse anyway, but only after earlier eras had committed into an
 append-only table.
 
-**And the receipt gaps are not a boundary artifact.** `plantedByHand` counts, for
-any era whose six-count disagrees, how many of its additions were put in the
-register by a commit that is not a sweep. Eighty-nine marks across the range —
-one commit plants twenty-two, another fifty. The founder's hand on `main`: no door
-saw them, no sweep counted them, and the replay currently derives each as a
-resident's **claim**. That is the exact mirror of DEC-15 case (b), which ruled his
-removals. His additions are unruled.
+**And the receipt gaps are not a boundary artifact.** `plantedByHand` counts how
+many of an era's additions were put in the register by a commit that is not a
+sweep, and `amendedByHand` does the same for its amends. Ninety-two additions and
+eleven amends across S47 → S55 under the window model — one commit plants
+twenty-two, another fifty. The founder's hand on `main`: no door saw them, no
+sweep counted them. That is the exact mirror of DEC-15 case (b), which ruled his
+removals; **his additions and amends are DEC-17**, below.
 
 **The claim set comes from the settlement's own outcome** — the register diff at
 S(k-1) vs S(k), read by `deriveSeed` at each tag, so a claim and the mark it
 materializes are one record wearing two table names. Added → a claim; changed →
-a claim carrying `supersedes`; **removed → a RETIREMENT** (DEC-15, 2026-09-04 —
-PROPOSED, awaiting the founder's word).
+a claim carrying `supersedes`; **removed → a RETIREMENT** (DEC-15, ruled
+2026-09-04). Where the hand behind the addition or the change is the FOUNDER's
+own commit on `main`, the claim goes in `locked` and the mark materialises
+directly (DEC-17, ruled 2026-09-04 — below).
 
 That last one stopped the replay until 2026-09-04, and the refusal was right for
 as long as it lasted: "the refusal exists so that the first one is seen." It was
@@ -1142,12 +1144,68 @@ wright/the-lit-name owed after the next crossing refolds the id."* Unstake
 before, restake after, is the current ceremony and the only answer with a
 precedent.
 
+### The founder's hand PLANTING is an ADMISSION (DEC-17, ruled 2026-09-04)
+
+DEC-15 ruled the hand's removals. DEC-17 rules the other two faces, and it is
+one act with three of them — `6b235216d` retires `the-town/pledges`, amends
+`the-town/the-bounty-board` and `wright/furnish-ferrys-waiting-room`, and adds.
+The ruling, verbatim:
+
+> A founder's hand on main is an ADMISSION in every face — an added mark
+> materialises directly (a claim LOCKED at that window by the founder's hand
+> naming the commit, the mark standing), an amended mark supersedes directly
+> (the same locked shape, `supersedes` the standing one), a removed mark retires
+> (DEC-15). The clearing job never re-judges canon.
+
+What it changes:
+
+- **The hand is asked of EVERY era**, in `eraClaims`, not only of one whose
+  six-count disagrees. That used to be a diagnosis of a number and is now a fact
+  about a mark. It is not an optimisation that was undone for tidiness: windows
+  157 and 158 held **no sweep**, so their receipt is never checked, the diagnosis
+  never ran, and thirteen marks the founder planted derived as pending resident
+  claims with nothing in the run naming them.
+- **The claim goes in `locked`**, `decided_at` = the commit's own time (not
+  `now()`; that claim was decided when the commit landed), with
+  `data.locked_by = "founder"` and `data.founder_commit = { sha, subject, at }`.
+  `claims.ruling` is deliberately **not** the home: 009's own comment says it is
+  "a fact about a contest a mind was asked to settle, not a field every claim
+  has", and an admission is not a contest.
+- **The mark materialises in the era's transaction**, through
+  `materialize.mjs`'s `materializeClaims` — the same function the clearing job
+  and the review lane call, never a third way of turning a claim into a mark. It
+  runs **last**, after the transfers and the retirements, because `marks.slug` is
+  unique and a name this era freed must be free before it is taken.
+- **The clearing job sees nothing to re-judge.** It selects `status = 'pending'`
+  and nothing else, so a locked claim is invisible to it. The dry run prints the
+  count per era rather than asserting it: *"of the N slug(s) the hand touched, 0
+  would reach the clearing job as a resident's pending claim"*.
+- **The receipt is unchanged.** 1.0 never counted hand plantings, so the
+  `published` check still disagrees on exactly the eras it disagreed on before,
+  and for exactly the reason the accounting line names.
+
+`--can-fail-proof` gains DEC-17's own break: delete the mark an admitted claim
+materialised (the register a still-pending claim would have left) and require the
+gate to go red. It also *attempts* the ruling's literal words — flipping that
+claim back to `pending` — in its own rolled-back transaction, and reports what
+the store answers: `002_grants.sql`'s `claims_update_guard` exempts only
+`clearing_job` and this pen connects as `world2_owner`, so an admission cannot be
+un-locked from here at all.
+
 The parity gate compares **standing rows only** (`standingOnly`): 1.0's register
 is a set of files and a removed file leaves no row, while 2.0 keeps the row and
 flips `status` — the same register said two ways. Both refusals survive the
 narrowing: a retired row the register still carries reads MISSING in DB, and a
 standing row the register lacks reads EXTRA in DB. `--can-fail-proof` un-retires
 one retired mark and requires the gate to go red for it.
+
+**`marks.data` carries three keys 1.0's file cannot** — `formerly` (DEC-16) and
+`locked_by` / `founder_commit` (DEC-17) — so `dataFindings` names them
+(`REPLAY_ONLY_DATA_KEYS`) instead of reporting a hundred rows of known provenance
+as "a `data` that differs beyond tier", which is the line that means *the
+materializer lost part of the record*. They are named and counted in
+`provenance`, never silently filtered; everything else in `data` is still
+compared, and `data.tier` stays **gated** on an admitted row like any other.
 
 Two receipts hold the derivation to the town's own record, and one of them
 already earned its keep:
