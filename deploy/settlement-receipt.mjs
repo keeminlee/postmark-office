@@ -110,9 +110,9 @@ const receipt = {
   channels: sweep ? channels : null,
   ...(unnamed ? { channels_unnamed: unnamed } : {}),
 
-  // The rows an operator has to act on, in full rather than as a count — these
-  // are the two channels where somebody is waiting to be told something.
-  // THE ROWS AN OPERATOR — AND NOW A HOUSEHOLD — HAS TO ACT ON.
+  // THE ROWS AN OPERATOR — AND NOW A HOUSEHOLD — HAS TO ACT ON, in full rather
+  // than as a count. These are the two channels where somebody is waiting to be
+  // told something.
   //
   // `by` and `detail` were dropped here, and dropping them is what made the
   // receipt unactionable (postmark#2516). `detail` is the only place the fold's
