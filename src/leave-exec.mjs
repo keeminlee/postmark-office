@@ -85,6 +85,7 @@ async function main() {
   const tools = join(CLONE, "tools");
   const tEngine = performance.now();
   const { loadMarks, marksContain, containmentParents, PARCEL_CLAIM_CAP, PARCEL_CAP_LAW_DATE, PARCEL_EXTENT_M,
+          parcelClaimRefusalIn,
           worldToFile, ringToFile, COORDS_FIELD, COORDS_RELATIVE } =
     await import(pathToFileURL(join(tools, "marks-fold.mjs")));
   phases.push(`engine=${Math.round(performance.now() - tEngine)}ms`);
@@ -183,11 +184,27 @@ async function main() {
       "a slug is unique per author — pass amend: true to supersede it (a newer declaration on your own node, edit-law's revision family), or pick another slug");
   const priorRec = amending ? byId.get(id) : null;
 
-  // The parcel-claim cap (Keemin's ruling 2026-07-30): a credential household —
-  // handles grouped by WORLD/households.json, the town-pin registry — may claim
-  // at most 3 parcels; holdings predating the law stand as prior estate. The
-  // fold enforces this too (marks-fold § admissibility); bouncing here gives
-  // the resident the honest sentence before anything is written.
+  // ── THE PARCEL RULE, AND THE DOOR IS NO LONGER ITS SECOND AUTHOR ─────────
+  //
+  // The rule is TWO clauses: one parcel per HANDLE (written law) and at most
+  // `PARCEL_CLAIM_CAP` per CREDENTIAL household (Keemin's ruling 2026-07-30,
+  // prior estate standing). This door spelled out only the second, and said so
+  // in a comment that named the fold as its co-enforcer — which is how a door
+  // implementing half a rule read as a door agreeing with the fold.
+  //
+  // What that cost (postmark#2514): berthillon holds `chez-antoine` and is
+  // alone under their credential, so the cap read 1 of 3 and this door said yes
+  // to three cones declared `kind: parcel` on 09-03, 09-04 and 09-05. The
+  // crossing refused every one of them on the clause this door never had, and
+  // because the drawer is shared with `current-the-reader`, eleven of a
+  // neighbour's admissible marks sat behind them for five crossings.
+  //
+  // Now the door asks the FOLD'S OWN function (marks-fold § MAY THIS HANDLE
+  // CLAIM THIS PARCEL) and refuses with the fold's own sentence, so the
+  // resident reads at the door the exact words the crossing would have used.
+  // The import rides the same dynamic import of the world clone's
+  // `tools/marks-fold.mjs` this file already does for `loadMarks` — the seam is
+  // not new, only the function crossing it.
   if (p.kind === "parcel") {
     // The dial, not a declaration: every parcel is the town's square (Keemin,
     // 2026-07-31). The door already bounced any passed extent; this writes the
@@ -195,15 +212,28 @@ async function main() {
     // that has not yet pulled the constant.
     const side = PARCEL_EXTENT_M ?? 25;
     p.extent = { w: side, h: side };
-    const cap = PARCEL_CLAIM_CAP ?? 3;
     let registry = null;
     try { registry = JSON.parse(readFileSync(join(CLONE, "WORLD", "households.json"), "utf8")).households ?? null; } catch { /* no registry → solo grain */ }
-    const credOf = (handle) => registry?.[handle] ?? `solo:${handle}`;
-    const cred = credOf(p.by);
-    const held = marks.filter((m) => m.kind === "parcel" && credOf(m.by ?? m.household) === cred).length;
-    if (held >= cap)
-      return err(403, `your household already holds ${held} parcel${held === 1 ? "" : "s"}`,
-        `parcel claiming is capped at ${cap} per household (ruled ${PARCEL_CAP_LAW_DATE ?? "2026-07-30"}; prior holdings stand) — new ground for this household is the founder's word, not the door's`);
+    // A CLONE THAT HAS NOT PULLED THE PREDICATE STILL GETS THE OLD GATE, never
+    // no gate. Same discipline as `containmentParents` above: a stale guard
+    // beats an absent one, and this door is read out of whatever world clone
+    // the box happens to be holding.
+    let why;
+    if (typeof parcelClaimRefusalIn === "function") {
+      why = parcelClaimRefusalIn(marks, { by: p.by, id, date: p.date, households: registry, replacing: amending });
+    } else {
+      const cap = PARCEL_CLAIM_CAP ?? 3;
+      const credOf = (handle) => registry?.[handle] ?? `solo:${handle}`;
+      const cred = credOf(p.by);
+      const held = marks.filter((m) => m.kind === "parcel" && credOf(m.by ?? m.household) === cred).length;
+      why = held >= cap
+        ? `parcel claim capped — this credential household already holds ${held} (cap ${cap} per household, ruled ${PARCEL_CAP_LAW_DATE ?? "2026-07-30"}; prior estate stands, new claims wait on the founder's word)`
+        : null;
+    }
+    if (why)
+      return err(403, why, why.startsWith("household already holds a parcel")
+        ? `a handle keeps one parcel and moves it rather than adding another — amend your existing parcel (same slug, amend: true) to relocate it, or leave this mark as kind: sited, which is what a thing standing on your ground is`
+        : `new ground for this household is the founder's word, not the door's`);
   }
 
   // decide the directory. sited/parcel file BY IDENTITY — `WORLD/marks/<by>/
