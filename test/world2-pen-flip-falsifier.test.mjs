@@ -344,6 +344,107 @@ test("FINDING 3 · the released pass runs BEFORE the horizon excuse — that ord
   });
 });
 
+// ── finding 3, cardinality: ONE COMPOSE ROW MAY ANSWER FOR ONE ACT ──────────
+//
+// The reviewer's catch on the fix above, and it is the seam re-entering through
+// its own repair. `looseKey` drops the instant, so its answer is "the newest
+// compose of this (actor, action, object) at or before you". Asked by TWO
+// released acts on one object, it hands both the SAME row — and the check
+// reports GREEN twice while one of the two acts has no twin at all. A loosened
+// key that says green about an act it never paired is exactly the class this
+// whole file exists to stop.
+//
+// It is reachable: `promoteDraftOnStake` promotes one draft per (claimant, slug,
+// household), so two drafts cannot stand at once — but compose, stake, compose
+// again, stake again gives two acts over two composes, and an out-of-order
+// release dates the second act at or after BOTH composes. The exact key is
+// untouched by any of this; only the loose pass can do it, so only the loose
+// pass is policed.
+
+const TWO_COMPOSES = {
+  "171.journal.jsonl": [
+    { at: "2026-09-05T19:10:00.000Z", type: "amend", actor: "wright", seq: 1110, class: "mark", object: "wright/the-twice-composed" },
+    { at: "2026-09-05T19:13:13.805Z", type: "amend", actor: "wright", seq: 1120, class: "mark", object: "wright/the-twice-composed" },
+  ],
+};
+const releasedAct = (id, at) => ({
+  id, at, actor: "wright", action: "amend", object: "wright/the-twice-composed", class: "mark",
+});
+
+test("FINDING 3 · CARDINALITY: two released acts cannot share one compose row — the second is RED, by name", () => {
+  withStateLog(TWO_COMPOSES, (dir) => {
+    const photo = readStateLog(dir);
+    const claimed = new Map();
+    const ask = (act) => twinSideOf(act, {
+      journalTwin: null, logIndex: photo.index, looseIndex: photo.loose, horizon: photo.horizon, claimed,
+    });
+
+    // Out of order: the LATER act is asked first and takes the newest compose.
+    const first = ask(releasedAct("4496", "2026-09-05T19:20:00.000Z"));
+    assert.equal(first.side, "state-log");
+    assert.equal(first.seq, 1120, "the newest compose at or before it");
+
+    // A second act on the same object, also dated after both composes, would be
+    // handed seq 1120 again by the newest-at-or-before rule alone.
+    const second = ask(releasedAct("4497", "2026-09-05T19:21:00.000Z"));
+    assert.equal(second.side, null, "it must NOT be paired to a row another act already owns");
+    assert.equal(second.undecidable, undefined, "and it is not excused as undrained — the store was read");
+    assert.match(second.conflict, /already the twin of acts 4496/,
+      "the finding names the act that took the row, or an operator cannot see what happened");
+    assert.match(second.conflict, /one of them has no twin/);
+  });
+});
+
+test("FINDING 3 · CARDINALITY: the SAME act asked twice is not a conflict with itself", () => {
+  // A re-ask (a retry, a second pass) must be idempotent. Keying the ledger on
+  // the act id rather than on "has this row been claimed at all" is what makes
+  // that true, and without this test the rule would look correct while being
+  // one re-entrant call away from a false red.
+  withStateLog(TWO_COMPOSES, (dir) => {
+    const photo = readStateLog(dir);
+    const claimed = new Map();
+    const act = releasedAct("4496", "2026-09-05T19:20:00.000Z");
+    const opts = { journalTwin: null, logIndex: photo.index, looseIndex: photo.loose, horizon: photo.horizon, claimed };
+    assert.equal(twinSideOf(act, opts).seq, 1120);
+    const again = twinSideOf(act, opts);
+    assert.equal(again.seq, 1120, "the same act gets the same answer");
+    assert.equal(again.conflict, undefined, "and is not accused of stealing from itself");
+  });
+});
+
+test("FINDING 3 · CARDINALITY: two acts that pair to DIFFERENT composes are both green", () => {
+  // The control. Without it the rule above would pass against a check that
+  // refused every second act on an object, which is a different bug wearing the
+  // same green. Dated so that each act's newest-at-or-before is its own row.
+  withStateLog(TWO_COMPOSES, (dir) => {
+    const photo = readStateLog(dir);
+    const claimed = new Map();
+    const ask = (act) => twinSideOf(act, {
+      journalTwin: null, logIndex: photo.index, looseIndex: photo.loose, horizon: photo.horizon, claimed,
+    });
+    const a = ask(releasedAct("4496", "2026-09-05T19:11:00.000Z"));
+    const b = ask(releasedAct("4497", "2026-09-05T19:20:00.000Z"));
+    assert.equal(a.seq, 1110, "the earlier act takes the earlier compose");
+    assert.equal(b.seq, 1120, "the later act takes the later one");
+    assert.equal(a.conflict, undefined);
+    assert.equal(b.conflict, undefined);
+  });
+});
+
+test("FINDING 3 · CARDINALITY: with no ledger passed, behaviour is exactly what it was", () => {
+  // `claimed` defaults to null, which disables the rule — the shape every
+  // single-act unit test above relies on. Stated as an assertion so a future
+  // change that made the ledger mandatory reds here rather than in six other
+  // tests for a reason nobody would connect to this one.
+  withStateLog(TWO_COMPOSES, (dir) => {
+    const photo = readStateLog(dir);
+    const opts = { journalTwin: null, logIndex: photo.index, looseIndex: photo.loose, horizon: photo.horizon };
+    assert.equal(twinSideOf(releasedAct("4496", "2026-09-05T19:20:00.000Z"), opts).seq, 1120);
+    assert.equal(twinSideOf(releasedAct("4497", "2026-09-05T19:21:00.000Z"), opts).seq, 1120,
+      "no ledger, no cardinality rule — and that is the documented default, not an accident");
+  });
+});
+
 test("FINDING 1 · with NO clone an unpaired act is UNDECIDABLE — never a green", () => {
   const v = twinSideOf(ACT_3867, { journalTwin: null, logIndex: null, horizon: null });
   assert.equal(v.side, null);

@@ -296,7 +296,7 @@ export const looseKey = (actor, action, object) =>
  * and a check that called it GREEN would be the blindness this fix is removing,
  * one store over.
  */
-export function twinSideOf(act, { journalTwin, logIndex, horizon, looseIndex = null, releasedTwin = null }) {
+export function twinSideOf(act, { journalTwin, logIndex, horizon, looseIndex = null, releasedTwin = null, claimed = null }) {
   if (journalTwin) return { side: "journal", seq: journalTwin.seq };
   if (logIndex) {
     const hit = logIndex.get(twinKey(act.actor, act.action, act.at, act.object));
@@ -310,18 +310,69 @@ export function twinSideOf(act, { journalTwin, logIndex, horizon, looseIndex = n
     // calling that undecidable is the blind spot. So both stores are asked the
     // loose way first, and only a genuine absence falls through to the horizon.
     if (releasedOK(act)) {
-      if (releasedTwin) return { side: "journal", seq: releasedTwin.seq, released: releasedTwin.at };
+      if (releasedTwin) {
+        return oneTwinOnly(act, { side: "journal", seq: releasedTwin.seq, released: releasedTwin.at }, claimed);
+      }
       const rows = looseIndex?.get(looseKey(act.actor, act.action, act.object)) ?? null;
       // Newest at or before the act's own instant: a twin cannot be composed
       // after the release that published it.
       const hit2 = rows ? [...rows].reverse().find((r) => r.at <= act.at) : null;
-      if (hit2) return { side: "state-log", seq: hit2.seq, file: hit2.file, released: hit2.at };
+      if (hit2) {
+        return oneTwinOnly(act, { side: "state-log", seq: hit2.seq, file: hit2.file, released: hit2.at }, claimed);
+      }
     }
 
     if (horizon && act.at > horizon) return { side: null, undecidable: `newer than the photograph's horizon ${horizon}` };
     return { side: null };
   }
   return { side: null, undecidable: "no world clone supplied, so a drained twin cannot be looked for" };
+}
+
+/**
+ * ONE COMPOSE ROW MAY ANSWER FOR ONE ACT — the cardinality the loose key lost.
+ *
+ * `looseKey` drops the instant, so its answer is "the newest compose of this
+ * (actor, action, object) at or before you". Asked by TWO released acts on one
+ * object, it hands both the SAME row, and the check reports GREEN twice while
+ * one of the two acts has no twin at all. That is the failure this whole seam
+ * exists to stop, re-entering through the fix for it: a loosened key that says
+ * green about an act it never actually paired.
+ *
+ * It is reachable. `promoteDraftOnStake` promotes ONE draft per (claimant, slug,
+ * household), so two drafts of one slug cannot stand at once — but a compose, a
+ * stake, a second compose of the same slug and a second stake produce two acts
+ * over two composes, and if the second act is dated at or after both composes
+ * (which an out-of-order release does), the newest-at-or-before rule hands it
+ * the same row the first act already took. The exact key is unaffected; only the
+ * loose pass can do this, so only the loose pass is policed.
+ *
+ * A candidate already spoken for is therefore a RED FINDING, printed with both
+ * act ids, and never a quiet re-use. It is RED rather than UNDECIDABLE because
+ * the store has been read and the arithmetic does not work: two acts, one row.
+ *
+ * `claimed` is a Map the caller owns and this function WRITES INTO, which is a
+ * wart worth naming rather than hiding — the alternative was splitting the rule
+ * between this function and its caller, and a cardinality rule enforced in two
+ * places is a cardinality rule with two answers. Passing `null` (the default)
+ * disables the ledger entirely, which is what the direct unit tests of single
+ * acts do; the run itself always passes one.
+ */
+export const candidateId = (v) => `${v.side}:${v.file ?? ""}:${v.seq ?? ""}:${v.released ?? ""}`;
+
+export function oneTwinOnly(act, verdict, claimed) {
+  if (!claimed) return verdict;
+  const id = candidateId(verdict);
+  const taken = claimed.get(id);
+  if (taken !== undefined && String(taken) !== String(act.id)) {
+    return {
+      side: null,
+      conflict: `its released-draft candidate (${verdict.side} seq ${verdict.seq ?? "?"}` +
+        `${verdict.file ? `, ${verdict.file}` : ""} @ ${verdict.released}) is already the twin of acts ${taken} — ` +
+        `two released acts cannot share one compose row, so one of them has no twin`,
+    };
+  }
+  claimed.set(id, act.id);
+  return verdict;
 }
 
 /**
@@ -520,6 +571,11 @@ async function reverseParity() {
   }
   const counts = { journal: 0, "state-log": 0 };
   const releasedRows = [];
+  // ONE COMPOSE ROW, ONE ACT (see `oneTwinOnly`). Owned by the run so the
+  // ledger spans every lane asked about: two released acts on one object are
+  // the same defect whether or not they arrived in the same lane.
+  const claimed = new Map();
+  const conflicts = [];
   const red = [];
   const undecidable = [];
   let total = 0;
@@ -544,7 +600,7 @@ async function reverseParity() {
       // for an instant; renamed here so `twinSideOf` reads one vocabulary.
       const releasedTwin = looseHit ? { seq: looseHit.seq, at: looseHit.written_at } : null;
       const verdict = twinSideOf(probe, {
-        journalTwin, releasedTwin,
+        journalTwin, releasedTwin, claimed,
         logIndex: photo?.index ?? null, looseIndex: photo?.loose ?? null, horizon: photo?.horizon ?? null,
       });
       const who = `acts ${probe.id} (${probe.actor} ${probe.action} ${probe.object ?? ""} @ ${probe.at}, lane ${lane})`;
@@ -562,13 +618,21 @@ async function reverseParity() {
         if (verdict.released) releasedRows.push(`${who} — paired as a STAKE-RELEASED draft: the act is dated at the putting-forward, its twin at the compose (${verdict.released}), on the ${verdict.side} side`);
         continue;
       }
-      if (verdict.undecidable) undecidable.push(`${who} — ${verdict.undecidable}`);
+      if (verdict.conflict) conflicts.push(`${who} — ${verdict.conflict}`);
+      else if (verdict.undecidable) undecidable.push(`${who} — ${verdict.undecidable}`);
       else red.push(who);
     }
   }
   await pool.end();
 
   for (const line of releasedRows) console.log(`  released-draft pairing · ${line}`);
+
+  // A CONFLICT IS ITS OWN RED, with its own sentence. Folding it into the
+  // "stands in neither store" line would say the wrong thing about it: the twin
+  // EXISTS, and the defect is that two acts want the same one.
+  for (const line of conflicts) {
+    console.error(`RED (released-draft cardinality): ${line}`);
+  }
 
   for (const line of red) {
     console.error(`RED (reverse): ${line} stands in NEITHER the journal nor the drained photograph — ` +
@@ -589,6 +653,11 @@ async function reverseParity() {
     process.exit(0);
   }
 
+  if (conflicts.length) {
+    console.error(`RED: ${conflicts.length}/${total} flipped act(s) were handed a compose row another act had already taken — ` +
+      `the loose released-draft key cannot tell them apart, and one of each pair has no twin at all`);
+    process.exit(1);
+  }
   if (red.length) {
     console.error(`RED: ${red.length}/${total} flipped acts have no twin on either side`);
     process.exit(1);
