@@ -327,8 +327,14 @@ BLOCKED BY A PARENT IN ANOTHER CLASS ${plan.blockedByParent.length} — \`marks.
     await client.query("COMMIT");
     console.log(`\nWROTE ${materialized} mark(s) under window ${windowId}, each behind a locked claim naming its ` +
       `source commit.`);
+    // `recomputeStanding` returns ARRAYS (`standing`, `moved`) and notes, not
+    // counts. Printing them straight put `[object Object]` three hundred times
+    // into the rehearsal receipt; length is what a reader wants and the moved
+    // rows are what a reviewer wants, so print both, bounded.
     console.log(standing
-      ? `standing recomputed: ${standing.moved ?? 0} tier(s) moved across ${standing.standing ?? "?"} standing mark(s)`
+      ? `standing recomputed: ${standing.moved.length} tier(s) moved across ${standing.standing.length} standing ` +
+        `mark(s)${standing.moved.length ? ` — ${standing.moved.slice(0, 5).map((m) => `${m.slug ?? m.id}:${m.from ?? "?"}→${m.to ?? m.tier ?? "?"}`).join(", ")}` : ""}` +
+        `${standing.notes?.length ? `\n  ${standing.notes.length} standing note(s): ${standing.notes.slice(0, 2).join("; ")}` : ""}`
       : `standing NOT recomputed (pass --recompute-standing to close \`stale-tier\` in this commit); the next ` +
         `clearing candle recomputes tier for every standing mark anyway.`);
   } catch (err) {
