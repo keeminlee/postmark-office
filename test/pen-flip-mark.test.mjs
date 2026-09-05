@@ -38,6 +38,7 @@
 //
 //   node --test --test-reporter=tap test/pen-flip-mark.test.mjs
 
+import { currentCrossing } from "../src/crossings.mjs";
 import { registerHooks } from "node:module";
 import { fileURLToPath } from "node:url";
 import { join, dirname } from "node:path";
@@ -91,7 +92,7 @@ const freshDb = () => openDynamic(join(tmp, `mark-${++dbn}.db`));
 // The two rows one slug's life is made of. `put_forward` is the DOOR's verdict
 // (world.mjs § THE STAKE IS THE BOUNDARY); its absence is a private draft.
 const composeRow = ({ by = "guards-alfa", slug = "the-doomed-sketch", stamps = null } = {}) => ({
-  crossing: 168, actor: by, household: by, action: "leave-mark",
+  crossing: currentCrossing(), actor: by, household: by, action: "leave-mark",
   object: `${by}/${slug}`, cls: "mark",
   at: { anchor: "the-town/the-quay", dx: 1, dy: 2 },
   payload: {
@@ -102,7 +103,7 @@ const composeRow = ({ by = "guards-alfa", slug = "the-doomed-sketch", stamps = n
   effect: "a draft stands in the live layer",
 });
 const withdrawRow = ({ by = "guards-alfa", slug = "the-doomed-sketch" } = {}) => ({
-  crossing: 168, actor: by, household: by, action: "withdraw",
+  crossing: currentCrossing(), actor: by, household: by, action: "withdraw",
   object: `${by}/${slug}`, cls: "mark",
   at: { anchor: "the-town/the-quay", dx: 1, dy: 2 },
   payload: { by, slug, was_published: false },
