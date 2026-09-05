@@ -729,7 +729,17 @@ test("send_letter FOLDS UNDER household — your pen lives where your standing d
   // 2026-08-31) — the pair and their shared shadow, born delisted the same way.
   // 49 → 50: read_asks (the quarter read, 2026-09-01) — town { read: "asks" },
   // born delisted behind the town apex the same way, definition standing flat.
-  assert.equal(names.length, 50, "no tool was added or removed beyond the paid ledger; the flag-off listing is untouched");
+  // 50 → 51: read_trace (the feature trace, 2026-09-05) — town
+  // { read: "trace" }, the pilot for Rei's `trace-a-feature-from-idea-to-
+  // opening`, born delisted behind the town apex the same way.
+  //
+  // ⚑ THIS COUNT IS THE SECOND COPY OF ITSELF. `test/server.test.mjs`
+  // § "MCP tools/list, apex OFF" keeps the same total with its own ledger, and
+  // neither comment mentions the other — so adding one tool reddens two suites
+  // in two files and the second red looks unrelated to the first. Worth
+  // collapsing to one owner; noted here rather than refactored from a pilot
+  // lane.
+  assert.equal(names.length, 51, "no tool was added or removed beyond the paid ledger; the flag-off listing is untouched");
 
   assert.ok(HOUSEHOLD_DISPATCHABLE.includes("send"), "household do: \"send\" is the letter's apex verb");
   assert.equal(householdDispatchToolFor("send"), "send_letter",
