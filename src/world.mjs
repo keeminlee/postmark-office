@@ -38,7 +38,8 @@ import {
   resolvedWorldHousehold,
 } from "./world-branches.mjs";
 import { moveGuard } from "./world-move-guard.mjs"; // the drain night: moving a mark moves what stands on it
-import { ACTION_AMEND, ACTION_LEAVE, ACTION_WITHDRAW, CLASS_MARK, CLASS_MOVE, CLASS_VOICE, anchorAt, appendActFlipped, appendJournal, draftsForKey, filedPathOfAt, laneFlipped, liveChildrenOf, liveMarks, mirrorLaneAct, pathFor, pinWitnesses, singleLogEnabled } from "./world-journal.mjs"; // POS-5 slice 1: the one append-only log
+import { ACTION_AMEND, ACTION_LEAVE, ACTION_WITHDRAW, CLASS_MARK, CLASS_MOVE, CLASS_VOICE, anchorAt, appendActFlipped, appendJournal, filedPathOfAt, laneFlipped, mirrorLaneAct, pathFor, pinWitnesses, singleLogEnabled } from "./world-journal.mjs"; // POS-5 slice 1: the one append-only log
+import { guardedDraftsForKey, guardedLiveChildrenOf, guardedLiveMarks } from "./world2-guards.mjs"; // B1: the door guards' own reads, behind W2_GUARDS (runbook §4 B1)
 import { WORLD_STAKE_TOOLS, callWorldStakeTool, worldPortfolioStakeSlice } from "./world-stake.mjs"; // P3 draft, append-shaped
 import { classNames, classRoster, classDials, departurePace, freeCellIn, RESIDENT_INSTANTIABLE, residentMayInstantiate } from "./world-classes.mjs"; // which classes exist — read from the record, never held
 import { HOLD_TOOLS, callHoldTool } from "./world-hold.mjs"; // the object primitive: who holds what
@@ -52,11 +53,11 @@ import { cannotAnswer, pointAnswerable, servedRead, storeEpoch, storeShadowEnabl
 // and never world.mjs, so this edge closes no cycle.
 import { arenaGroundAt, adversaryIn, arrivalOnGround, groundAtPoint } from "./arena.mjs";
 import { emissionsEnabled, openDynamic } from "./dynamic-store.mjs"; // stage 2: the dynamic layer's flag
-import { declareMovement } from "./dynamic-entities.mjs"; // stage D: the pen after the ledger's freeze
+import { declareMovement, declareMovementFlipped } from "./dynamic-entities.mjs"; // stage D: the pen after the ledger's freeze
 import { emissionFromVoice } from "./dynamic-emissions.mjs"; // stage 2: speech also becomes an emission instance
 import { world2Enabled } from "./world2-acts.mjs"; // the write-path closure: is the shadow mirror on at all
 import { VESSEL_HANDLE, ridesTheVessel } from "./dynamic-entities.mjs"; // the aboard test, one home for two readers
-import { carriersFrom, carriersWithDisclosure, carrierReader, heardFromV2, inRect, movementStandpoint, movementV2Enabled, recordsAcrossEras, roadTerms, storedDepartures, storedRecordsFor, vesselPositionAt as vesselFromTimetable, vesselServiceFrom } from "./world-movement.mjs"; // stage D: carriers carry, frames compose
+import { carriersFrom, carriersWithDisclosure, carrierReader, heardFromV2, inRect, movementStandpoint, leavingWhileOccupying, movementV2Enabled, recordsAcrossEras, roadTerms, storedDepartures, storedRecordsFor, vesselPositionAt as vesselFromTimetable, vesselServiceFrom } from "./world-movement.mjs"; // stage D: carriers carry, frames compose
 import { byBand, presenceEnabled, presentNear, near as presenceNear, everyone as presenceEveryone, PRESENCE_DIALS } from "./dynamic-presence.mjs"; // stage 2: residents revealed to each other
 import { MEDIA_BASE, mediaUrlOk } from "./media.mjs"; // the mark door's image allowlist: only the town's own media hangs on marks
 import { imageFormat, MEDIA_FORMATS } from "./edit.mjs"; // the bytes decide the type, never the filename (with_image, below)
@@ -644,6 +645,23 @@ const EARSHOT_PRESENCE_CAP = 500;
 // postmark.town/conversations, and the say path has no household scoping of any
 // kind. This mirror publishes nothing that the conversations page does not
 // already publish.
+/** ONE ROW SHAPE for a walk act, whichever pen records it. THE MOVEMENTS ROW'S
+ * OWN COLUMN VOCABULARY — `within` and `to`, not `targetExtent`/`targetMarkId`:
+ * that is 1.0's one converter for this exact record (world-movement.mjs §
+ * storedDepartures: "`within` and `to` are the store's column names"), and using
+ * it here is what lets live-reads.mjs read this pen with the mapping it already
+ * has rather than a fifth spelling of one departure. */
+function walkEntry({ crossing, who, targetMarkId, stampAt, witnesses, from, toward, pace, targetExtent, household }) {
+  return {
+    crossing, actor: who, action: "walk",
+    object: targetMarkId ?? null,
+    at: stampAt, witnesses, cls: CLASS_MOVE,
+    payload: { from, toward, pace, within: targetExtent ?? null, to: targetMarkId ?? null },
+    effect: "the walk is declared; the record receives it at the save",
+    household,
+  };
+}
+
 function voiceEntry(voice, spoken, { at, witnesses, crossing }) {
   const household = spoken?.household ?? null;
   const standAs = spoken?.standAs && spoken.standAs !== voice.handle ? spoken.standAs : null;
@@ -1021,7 +1039,7 @@ export async function worldSummary(key = null) {
   };
 }
 
-export async function worldOrient(args = {}, key = null) {
+export async function worldOrient(args = {}, key = null, { roll = [] } = {}) {
   const choice = chooseStandpoint(args, key);
   if (choice.bounce) return choice.bounce; // a multi-resident key must name a handle
   const w = await world();
@@ -1048,6 +1066,15 @@ export async function worldOrient(args = {}, key = null) {
     // walk ledger alone (issue #7 §1). This is the door the apex verb reads
     // `present` from, so the fix lands on both at once.
     world: w,
+    // THE TOWN ROLL (DEC-11, founder-ruled 2026-09-03: "the town's roll"; the
+    // 2026-08-29 ruling that the roll IS the roster). Without it `near()` took
+    // its `roll = []` default and the apex's presence block was a two-term
+    // union — walk records ∪ parcel households — 1 resident at the quay where
+    // GET /world/present, which server.mjs hands the roll, answered 49
+    // (B2 report, finding 2). "A narrower roster does not answer wrongly, it
+    // leaves residents unasked about" (#1864). The caller passes it; a test
+    // with no roll gets the two-term union it always had.
+    roll,
   });
   return { standpoint: { ...at, stance: choice.stance }, crossing: { n: crossing, derivation: CROSSING_DERIVATION }, note, primer, ...o, ...(present ? { present } : {}) };
 }
@@ -1119,7 +1146,7 @@ export function diagnosticEyes(full) {
   };
 }
 
-export async function worldEyes(args = {}, key = null) {
+export async function worldEyes(args = {}, key = null, { roll = [] } = {}) {
   const choice = chooseStandpoint(args, key);
   if (choice.bounce) return choice.bounce;
   const w = await world();
@@ -1141,6 +1168,7 @@ export async function worldEyes(args = {}, key = null) {
     exclude: choice.handle ? [choice.handle] : [],
     repo: WORLD_CLONE,
     world: w,
+    roll, // DEC-11 — see worldOrient
   });
   const section = presenceTelling(present);
   const telling = section ? `${engineTelling ?? ""}\n\n${section}` : engineTelling;
@@ -1332,7 +1360,11 @@ export async function worldInvestigate(args = {}, key = null) {
 // to every caller, which is what makes them cacheable and what §1c settled.
 export async function worldStateRaw() { return (await world())._raw.worldState; }
 export async function worldSkeletonRaw() { return (await world())._raw.skeleton; }
-export function worldMyDrafts(key = null) { return draftsForKey(WORLD_CLONE, key); }
+// B1: the signed-in draft overlay's journal half comes from `claims` + the
+// withdraw acts under W2_GUARDS=1; the SKETCHBOOK half is unchanged either way
+// (world2-guards.mjs § GUARD 2 — dropping it would vanish a resident's pre-flag
+// work from their own overlay on the day the guard flipped).
+export async function worldMyDrafts(key = null) { return guardedDraftsForKey(WORLD_CLONE, key); }
 
 // How many of your own marks this read renders per list. ✎ A proposal, no
 // history behind it. The rest are not dropped — they are NAMED, as ids, which
@@ -1359,7 +1391,7 @@ export function markPage(rows, offset = 0) {
 }
 
 export async function worldMyMarks(key = null, { offset = 0 } = {}) {
-  const delta = draftsForKey(WORLD_CLONE, key);
+  const delta = await guardedDraftsForKey(WORLD_CLONE, key);   // B1: the overlay's journal half, behind W2_GUARDS
   if (delta?.error) return delta;
 
   const main = publishedState(WORLD_CLONE).state;
@@ -1720,7 +1752,14 @@ async function journalLeaveMark(clean, { crossing = currentCrossing() } = {}) {
   const canon = canonForGuards();
   const db = openDynamic();
   try {
-    const live = liveMarks(db, { household: clean.household });
+    // ── B1: THE READ FLIP (W2_GUARDS=1; runbook §4 B1) ──────────────────────
+    // The slug collision, the move guard's `prior`, and the parcel cap all read
+    // ONE live layer, so this is the one round trip that decides all three.
+    // Flipped, it is `claims` where status ∈ (draft, pending) — DESIGN §2 R3's
+    // sentence made true at the door: "A pen flip without a read flip produces
+    // an office that writes to Postgres and validates against sqlite — a split
+    // brain with a switch on it." Unflipped, `liveMarks` byte for byte.
+    const live = await guardedLiveMarks(db, { household: clean.household });
     const liveById = new Map(live.map((m) => [m.id, m]));
     const priorLive = liveById.get(id) ?? null;
     const priorCanon = canon.byId.get(id) ?? null;
@@ -1831,7 +1870,7 @@ async function journalLeaveMark(clean, { crossing = currentCrossing() } = {}) {
     const declaration = { ...rest, ...(staking ? { stamps: stakeN } : {}), ...(putForward ? { put_forward: true } : {}) };
 
     const { at, witnesses } = await witnessStamp(clean.by);
-    const row = appendJournal(db, {
+    const entry = {
       crossing, actor: clean.by, household,
       action: amending ? ACTION_AMEND : ACTION_LEAVE,
       object: id, at, witnesses, cls: CLASS_MARK,
@@ -1839,7 +1878,36 @@ async function journalLeaveMark(clean, { crossing = currentCrossing() } = {}) {
       effect: amending
         ? "the prior declaration is superseded — every version stays in the log; canon shows the latest at the next crossing"
         : "a draft stands in the live layer; it enters canon at the next crossing that ratifies it",
-    });
+    };
+    // ── LANE SIX OF THE PEN FLIP (W2_PEN=…,mark; runbook C6) ────────────────
+    //
+    // The candle lane, and the one the flip refused longest — not by ruling but
+    // because a mark is TWO facts and only one of them had a home in
+    // `penWrite`'s transaction. Flipped, `appendActFlipped` carries the docket
+    // half in with the deed on one client (world-journal § THE CANDLE HALF), so
+    // the runbook's named failure — "would write acts with no docket, which is
+    // F2 self-inflicted" — cannot happen by flag.
+    //
+    // NO SQLITE TRANSACTION AROUND IT, unlike the hold lane, and the difference
+    // is the lane rather than the care taken: `declareHoldingFlipped` wraps a
+    // BEGIN IMMEDIATE because it has a SECOND sqlite write (the attachments
+    // edge) that must commit with the journal row or not at all. This door's
+    // only sqlite write IS the journal row, which `appendActFlipped` performs
+    // itself after the awaited pen; a transaction around one insert would be
+    // ceremony that reads like a guarantee. The stance and walk lanes are the
+    // shape being followed here (world-stance.mjs, walk-exec.mjs).
+    let row;
+    if (laneFlipped("mark")) {
+      try { row = await appendActFlipped(db, entry); }
+      catch (err) {
+        if (err?.name === "PenUnreachableError")
+          throw bounce(503, err.message,
+            "this lane's pen is the office's record (W2_PEN=mark); when it cannot be reached the door refuses rather than writing anywhere else — nothing was declared, and your mark is safe to leave again");
+        throw err;
+      }
+    } else {
+      row = appendJournal(db, entry);
+    }
 
     // THE ANSWER SHAPE HOLDS ACROSS THE FLAG, for the reason the §1c contract
     // does: a client that learns the office changed pens has been told about
@@ -1871,7 +1939,12 @@ async function journalLeaveMark(clean, { crossing = currentCrossing() } = {}) {
       at: clean.at ?? null, extent: clean.extent ?? null,
       dir: String(willLandAt).replace(/^WORLD\/marks\//, "").replace(/\/mark\.md$/, ""),
       branch: draftBranch(household),
-      seq: row.seq, crossing: row.crossing, log: "journal",
+      // Which store is the RECORD for this act, as every flipped lane's answer
+      // says it. `record` comes from the write itself rather than from
+      // `flipped`, because a PRIVATE DRAFT on a flipped lane has no deed by law
+      // — its act rides the claim until a stake releases it — and answering
+      // "acts" for one would name a table that does not hold it.
+      seq: row.seq, crossing: row.crossing, log: row.record ?? "journal",
       witnesses: row.witnesses ? JSON.parse(row.witnesses) : null,
       ...(amending ? { amended: true, moved: false,
         superseded: "the prior declaration — every version stays in the log; canon shows the latest at the next crossing" } : {}),
@@ -1895,7 +1968,9 @@ async function journalWithdraw({ by, slug, household }, { crossing = currentCros
   const canon = canonForGuards();
   const db = openDynamic();
   try {
-    const live = liveMarks(db, { household });
+    // B1: the read flip, withdraw's half — the existence check and the
+    // stranding check both read the live layer (runbook §4 B1).
+    const live = await guardedLiveMarks(db, { household });
     const wasPublished = canon.ids.has(id);
     if (!live.some((m) => m.id === id) && !wasPublished)
       throw bounce(404, `no mark "${id}" in your world`, "ids are <by>/<slug> — you can withdraw your drafts and your published marks; check world_my_marks");
@@ -1904,22 +1979,40 @@ async function journalWithdraw({ by, slug, household }, { crossing = currentCros
     // stands on it. Canon's children count too — a published description of
     // this mark does not stop being stranded because it is not in the journal.
     const kids = [
-      ...liveChildrenOf(db, id, { household }).map((m) => m.id),
+      ...(await guardedLiveChildrenOf(db, id, { household })).map((m) => m.id),
       ...canon.marks.filter((m) => m.parent_id === id).map((m) => m.id),
     ];
     if (kids.length) throw bounce(409, `"${id}" still holds marks inside it`,
       "withdraw or move the children first — a withdrawal may not strand what stands on it");
 
     const { at, witnesses } = await witnessStamp(by);
-    const row = appendJournal(db, {
+    const entry = {
       crossing, actor: by, household, action: ACTION_WITHDRAW,
       object: id, at, witnesses, cls: CLASS_MARK,
       payload: { by, slug, was_published: wasPublished },
       effect: wasPublished
         ? "your sketchbook lets it go now; canon lets it go at the next crossing — the settlement unpublishes it, and its whole life stays in the log"
         : "the draft is gone — it never crossed, so there is nothing to unpublish; its life stays in the log",
-    });
-    return { id, withdrawn: true, was_published: wasPublished, effect: row.effect, seq: row.seq, crossing: row.crossing, log: "journal" };
+    };
+    // Lane six, withdraw's half (runbook C6). The docket half of a withdrawal
+    // is the one that decides whether the SLUG IS FREE again — a retraction for
+    // a claim that stood publicly, a deletion for one that never did
+    // (world2-claims § withdraw, "the one deletion this town performs") — so
+    // committing the deed without it would tell a resident their mark is gone
+    // while the docket still holds their name against it.
+    let row;
+    if (laneFlipped("mark")) {
+      try { row = await appendActFlipped(db, entry); }
+      catch (err) {
+        if (err?.name === "PenUnreachableError")
+          throw bounce(503, err.message,
+            "this lane's pen is the office's record (W2_PEN=mark); when it cannot be reached the door refuses rather than writing anywhere else — your mark is exactly as it was, and the withdrawal is safe to make again");
+        throw err;
+      }
+    } else {
+      row = appendJournal(db, entry);
+    }
+    return { id, withdrawn: true, was_published: wasPublished, effect: row.effect, seq: row.seq, crossing: row.crossing, log: row.record ?? "journal" };
   } finally { try { db.close(); } catch { /* already gone */ } }
 }
 
@@ -2587,6 +2680,7 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
 
   // WHERE TO — ruling 2's order.
   let toward = null, targetExtent = null, targetMarkId = null, targetFrom = "";
+  let exitedFirst = null; // DEC-5: the marks exited on this walker's own `exit: true`, for the answer
   const px = Number(payload.x), py = Number(payload.y);
   if (payload.mark_id) {
     const id = String(payload.mark_id);
@@ -2719,6 +2813,45 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
   // The centre remains the interpolation target, while the immutable extent
   // makes arrival mean "the derived point entered the target's ground." It
   // rides the ledger line so a later move/resize cannot rewrite this walk.
+  // ── DEC-5, THE WALK GUARD (founder-ruled 2026-09-03): occupancy implies
+  // geometry, never the reverse. If this walk would carry the resident OUT of a
+  // mark they are within, it is refused with directions (#2164's own shape) —
+  // unless `exit: true` rides the walk, in which case the exits are performed
+  // first, innermost outward, and the walk follows. The pure test lives in
+  // world-movement.mjs § leavingWhileOccupying; the occupancy and the
+  // point-in-mark law are the clone's own (crossingLaw), the same instruments
+  // the enter door adjudicates with — one derivation, two doors.
+  {
+    const { crossingLaw, exitViaOffice } = await import("./world-crossings.mjs");
+    const { crossingDeps } = await import("./world-apex.mjs");
+    const law = await crossingLaw(worldClone).catch(() => null);
+    if (law?.thresholds && typeof law.verbs?.pointWithinMark === "function") {
+      const deps = crossingDeps();
+      const atNow = law.thresholds.stampAt(Date.now() / 43200000);
+      const acts = law.thresholds.parseEnterExitLedger(await deps.ledger()).acts;
+      const stack = [...(law.thresholds.occupancyAt(acts, atNow).get(who) ?? [])];
+      // pointWithinMark takes the MARK OBJECT (world-verbs.mjs:92), resolved from
+      // the same world the enter door adjudicates against (deps.world().marks).
+      const w = stack.length ? await deps.world() : null;
+      const byId = new Map((w?.marks ?? []).map((m) => [m.id, m]));
+      const leaving = leavingWhileOccupying(stack, toward, (pt, id) => { const m = byId.get(id); return m ? law.verbs.pointWithinMark(pt, m) : null; });
+      if (leaving.length) {
+        if (payload.exit !== true) {
+          throw bounce(409, `you are within ${leaving[0]} — this walk would carry you out of it without leaving`,
+            `the-town/the-occupancy-invariant: "You occupy a mark only by entering, and only while your feet stand inside it; a walk that would carry you out is refused until you exit." Step out first — world { do: "exit"${leaving.length > 1 ? ", args: { mark }" : ""} } — or pass exit: true on this walk to exit (${leaving.join(" → ")}) and walk in one call.`,
+            { law: "the-town/the-occupancy-invariant (DEC-5, founder-ruled 2026-09-03)", within: stack, leaving });
+        }
+        for (const markId of leaving) {
+          const stepped = await exitViaOffice(worldClone, { handle: who, mark: markId }, key, deps);
+          if (stepped?.error) throw bounce(stepped.error.code ?? 409, `could not exit ${markId} before walking: ${stepped.error.defect ?? stepped.error}`, stepped.error.hint ?? "exit first, then walk");
+        }
+        // The exits stand as their own acts on the record; the walk below is the
+        // second act of one call. If the walk's pen refuses, the exits remain —
+        // said here and in the answer, never smoothed over.
+        exitedFirst = leaving;
+      }
+    }
+  }
   const clean = { handle: who, from, toward, at, targetExtent, targetMarkId };
 
   // ── WHERE THE DEPARTURE IS WRITTEN (Stage D, WORLD_MOVEMENT_V2) ───────────
@@ -2746,12 +2879,35 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
     // pace read via departurePace — the record's class is `depart`; asking for
     // "departure" here was the 2026-08-21 slow-walk bug (30 min for 650 m).
     const pace = departurePace();
+    const movement = {
+      actor: who, from, toward, crossing: at,
+      within: targetExtent, toMark: targetMarkId, declaredBy: who, pace,
+    };
+    // ── LANE THREE OF THE PEN FLIP (W2_PEN=walk; runbook C3, 2026-09-03) ────
+    // Flipped, the record is Postgres `acts`, committed and awaited BEFORE the
+    // movements row may stand; movements + the reverse-mirror journal row commit
+    // in one sqlite transaction after the pen has (declareMovementFlipped,
+    // dynamic-entities.mjs). Unreachable Postgres = the ruled refusal, and
+    // nothing was written — the resident is exactly where they were. Unflipped,
+    // the pen is what it was and the mirror below carries the act.
+    const walkFlipped = laneFlipped("walk");
+    let flippedRow = null;
     const store = openDynamic();
     try {
-      declareMovement(store, {
-        actor: who, from, toward, crossing: at,
-        within: targetExtent, toMark: targetMarkId, declaredBy: who, pace,
-      });
+      if (walkFlipped) {
+        const { at: stampAt, witnesses } = await witnessStampAt(who, from);
+        try {
+          flippedRow = await declareMovementFlipped(store, movement,
+            walkEntry({ crossing: at, who, targetMarkId, stampAt, witnesses, from, toward, pace, targetExtent, household: resolvedWorldHousehold(key) }));
+        } catch (err) {
+          if (err?.name === "PenUnreachableError")
+            throw bounce(503, err.message,
+              "this lane's pen is the office's record (W2_PEN=walk); when it cannot be reached the door refuses rather than writing anywhere else — you are exactly where you were, and the walk is safe to declare again");
+          throw err;
+        }
+      } else {
+        declareMovement(store, movement);
+      }
     } finally { store.close(); }
 
     // ── THE WALK GAP, CLOSED (2026-08-28) ───────────────────────────────────
@@ -2776,30 +2932,24 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
     // Privacy: a departure is public — it crystallizes into `STATE/log/` in the
     // public world repo at the next crossing-save, by this branch's own
     // `movement.crystallizes`. Nothing new leaves the box.
-    if (world2Enabled()) {
+    if (world2Enabled() && !walkFlipped) { // flipped, the pen already holds this act (declareMovementFlipped above)
       void (async () => {
         try {
           const { at: stampAt, witnesses } = await witnessStampAt(who, from);
-          await mirrorLaneAct({
-            crossing: at, actor: who, action: "walk",
-            object: targetMarkId ?? null,
-            at: stampAt, witnesses, cls: CLASS_MOVE,
-            // THE MOVEMENTS ROW'S OWN COLUMN VOCABULARY — `within` and `to`,
-            // not `targetExtent`/`targetMarkId`. That is 1.0's one converter
-            // for this exact record (world-movement.mjs § storedDepartures:
-            // "`within` and `to` are the store's column names"), and using it
-            // here is what lets live-reads.mjs read this pen with the mapping
-            // it already has rather than a fifth spelling of one departure.
-            payload: { from, toward, pace, within: targetExtent ?? null, to: targetMarkId ?? null },
-            effect: "the walk is declared; the record receives it at the save",
-            household: resolvedWorldHousehold(key),
-          });
+          await mirrorLaneAct(walkEntry({ crossing: at, who, targetMarkId, stampAt, witnesses, from, toward, pace, targetExtent, household: resolvedWorldHousehold(key) }));
         } catch (e) {
           console.error(`[world2-acts] a walk did not reach acts (${String(e?.message ?? e).slice(0, 160)}) — dynamic.db/movements is unaffected`);
         }
       })();
     }
-    result = { position: positionAt({ from, toward, at, targetExtent, targetMarkId, pace }, at), pace, movement: { record: "dynamic.db/movements", crystallizes: "STATE/log/ at the next crossing-save" } };
+    result = {
+      position: positionAt({ from, toward, at, targetExtent, targetMarkId, pace }, at), pace,
+      movement: { record: walkFlipped ? "acts (Postgres; dynamic.db/movements is the reverse-mirror copy)" : "dynamic.db/movements", crystallizes: "STATE/log/ at the next crossing-save" },
+      // Which store is the RECORD for this act — said in the answer, as every
+      // flipped door says it.
+      ...(walkFlipped ? { log: "acts", seq: flippedRow?.seq ?? null } : {}),
+      ...(exitedFirst ? { exited_first: exitedFirst, note: "DEC-5: you stepped out of these before walking (exit: true); each exit stands as its own act on the record" } : {}),
+    };
   } else {
     const exec = join(HERE, "walk-exec.mjs");
     const env = { ...process.env, WORLD_CLONE: worldClone };
@@ -3212,6 +3362,7 @@ export const WORLD_TOOLS = [
       y: { type: "number", description: "grid meters south of Ferry's crossing" },
       mode: { type: "string", enum: ["rim", "center"], description: "where ON the destination you stop — NOT the destination itself (that is mark_id: or x:/y:). \"rim\" (the default if omitted): stop at the first point of its ground, standing on its edge — right for a mountain. \"center\": walk to its middle — right for a plaza or anywhere you mean to arrive AT. Meaningless for x/y targets; a coordinate is already a point." },
       handle: { type: "string", description: "which of YOUR residents is walking (omit if your key holds one; a multi-resident key must name one, or it bounces with the list)" },
+      exit: { type: "boolean", description: "DEC-5: if this walk would carry you OUT of a mark you are within, pass true to step out of it (innermost outward) and walk in one call; without it such a walk is refused and names the mark. Walking INTO a footprint never enters — entry stays your own act." },
       enter_on_arrival: { type: "boolean", description: "step inside the mark you are walking to, at the moment you arrive. Only meaningful with mark_id — a coordinate is not enterable, and pairing it with x/y bounces by name. The entry fires AS ITSELF: its own threshold law, its own terms, its own consent-at-thresholds delivery, adjudicated at the ARRIVAL instant rather than this one, so nothing is bypassed by riding a walk. A door that declares a counter-edge still shows you its terms and records nothing until you pass accept: true. IF THE ENTRY REFUSES, THE WALK STILL STANDS — you arrived, and the answer says so alongside the door's own words." },
       accept: { type: "boolean", description: "your explicit word at the threshold, for use with enter_on_arrival where the door declares a counter-edge (the Post Office's `aboard`). Walk once without it to READ the terms on arrival; walk again with it to cross." },
     }, additionalProperties: false } },

@@ -467,3 +467,30 @@ export async function movementHealth(worldState, { repo = WORLD_CLONE, atMs = Da
     evaluated_at: new Date(atMs).toISOString(),
   };
 }
+
+// ── DEC-5, THE WALK GUARD (founder-ruled 2026-09-03) ──────────────────────────
+//
+// The law, planted first as the-town/the-occupancy-invariant (a clause of the
+// enter class): "You occupy a mark only by entering, and only while your feet
+// stand inside it; a walk that would carry you out is refused until you exit."
+// Occupancy implies geometry, never the reverse. The founder's words: "prevent
+// walking out of the geometry of a mark without exiting … and make enter
+// voluntary even if you're technically standing in a geometric region."
+//
+// Pure: given the resident's occupancy stack (outermost first, innermost last —
+// enter-exit.mjs § occupancyAt's own order), the destination point, and the
+// clone's own point-in-mark test, answer the marks the walk would carry the
+// occupant OUT of, innermost first. Empty = the walk is lawful as it stands.
+// A walk INTO a footprint never enters (R15: "walk … NEVER implies entry") — so
+// only the leaving direction is guarded, which is exactly the asymmetry ruled.
+export function leavingWhileOccupying(stack, toward, pointWithinMark) {
+  const out = [];
+  for (const markId of [...(stack ?? [])].reverse()) {
+    if (!markId) continue;
+    let inside = null;
+    try { inside = pointWithinMark(toward, markId); } catch { inside = null; }
+    if (inside === null || inside === undefined) continue; // the clone cannot answer for this mark — nothing to refuse on
+    if (!inside) out.push(markId);
+  }
+  return out;
+}

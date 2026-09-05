@@ -72,7 +72,7 @@ import { execFileSync } from "node:child_process";
 
 import { openDynamic, dynamicDbPath, singleLogEnabled } from "./dynamic-store.mjs";
 import { mirrorAct, mirrorSettled, world2Enabled } from "./world2-acts.mjs";
-import { candleEnabled, claimEligible, claimHouseholdFor, claimTxFromJournal, docketSettled, submitClaimFromJournal } from "./world2-claims.mjs";
+import { candleEnabled, claimEligible, claimHouseholdFor, claimTxFromJournal, docketSettled } from "./world2-claims.mjs";
 import { PenUnreachableError, laneFlipped, laneOf, penSettled, penWrite, shadowWrite } from "./world2-pen.mjs";
 
 /**
@@ -346,11 +346,29 @@ export function appendJournal(db, entry = {}) {
   // lane acts stays where it has always been. (The two queues can interleave
   // acts ids across lanes now; D6 already ruled replay order is `(at, id)`,
   // so id order carries no meaning a reader may lean on.)
-  if (privateDraftAct(row)) submitClaimFromJournal(row, seq);
-  else if (claimEligible(row)) {
+  //
+  // ── THE PRIVATE ARM JOINS THE ONE QUEUE (2026-09-04, the mark lane's flip) ─
+  //
+  // It used to read `if (privateDraftAct(row)) submitClaimFromJournal(row, seq)`
+  // — a SECOND queue on a second pool, which is the disease R1's own header
+  // says it ended. It had not ended for this arm, and the cost was measured:
+  // an unstaked compose and its own withdrawal rode different queues with
+  // nothing ordering them, so the withdrawal's DELETE ran 113 ms ahead of the
+  // INSERT it was meant to remove — five fresh stores, five times — and the
+  // resident's withdrawn draft kept its docket row with the slug still taken
+  // (jetto-b1-guards-report 2026-09-03 § Finding 1).
+  //
+  // Now every mark-class row takes ONE `shadowWrite`, and the private arm is
+  // told apart by `act: false` rather than by a different pen: its claim rides
+  // the same client and the same serialized queue, and NOTHING about it touches
+  // `acts` — which is the whole of Phase 5.6's promise and is now a property of
+  // one option rather than of a whole separate code path.
+  if (claimEligible(row)) {
+    const draft = privateDraftAct(row);
     shadowWrite(row, seq, {
+      act: !draft,
       household: () => claimHouseholdFor(row),
-      claimFn: (client, _actId, household) => claimTxFromJournal(client, row, seq, { household }),
+      claimFn: (client, actId, household) => claimTxFromJournal(client, row, seq, { household, actId }),
     });
   } else mirrorAct(row, seq);
 
@@ -372,9 +390,15 @@ export function appendJournal(db, entry = {}) {
  * DELETION, not this flag. A reverse write that fails is loud and the parity
  * falsifier's reverse arm reds at the next check.
  *
- * The mark lane is refused here BY NAME until its claim path is wired through
- * `penWrite`'s claimFn at the call site — flipping it via the env flag alone
- * would write acts with no docket, which is F2 self-inflicted.
+ * THE MARK LANE IS NO LONGER REFUSED HERE (wired 2026-09-04, runbook C6). It
+ * was refused by name for UNREADINESS — "its candle half must ride penWrite's
+ * own transaction" — and that is now what happens: a mark-class row carries a
+ * `claimFn` and a household resolver into `penWrite`, so the act and its claim
+ * commit on one client in one transaction, and an unstaked declaration rides
+ * the same client with `act: false` so its body never reaches the table that
+ * leaves the box. The refusal is removed in the same change that wires the
+ * path, because a refusal left standing over a wired path is a lie in the other
+ * direction.
  *
  * The ARENA lane is refused BY RULING, not by unreadiness (founder, 2026-08-29,
  * the birthday party's own night: "we can just keep the arena on sqlite for
@@ -391,24 +415,53 @@ export function appendJournal(db, entry = {}) {
  * is now true where it is checked: `LANE_MIRROR.arena.expires` is null in
  * src/world2-acts.mjs, carrying this same ruling in its own words.
  *
- * THE TWO REFUSALS ARE NOT THE SAME KIND, and the expiry is where the
- * difference bites. `mark` is refused for UNREADINESS, so it is governed by its
- * backstop exactly like the five wired lanes — DEC-2, verbatim: "a lane in
+ * THE TWO REFUSALS WERE NOT THE SAME KIND, and the expiry is where the
+ * difference bit. `mark` was refused for UNREADINESS, so it was governed by its
+ * backstop exactly like the wired lanes — DEC-2, verbatim: "a lane in
  * `FLIP_REFUSED` by ruling is exempt; a lane refused by unreadiness is not."
- * Being un-wired must never be the thing that buys a lane immortality.
+ * Being un-wired must never be the thing that buys a lane immortality. With the
+ * mark lane wired only the ruled refusal is left, which is the state DEC-2
+ * describes: this table now holds exactly the lanes that are exempt BY RULING,
+ * and `LANE_MIRROR.arena.expires` is null for the same reason and in its own
+ * words (src/world2-acts.mjs). `mark` keeps its ordinary expiry.
  */
 const FLIP_REFUSED = Object.freeze({
-  mark: "its candle half must ride penWrite's own transaction; unset it from W2_PEN",
   arena: "the arena stays sqlite-first by founder ruling (2026-08-29) — the hardened rebuild lands 2.0-native instead; unset it from W2_PEN",
 });
 
 export async function appendActFlipped(db, entry = {}) {
   const row = normalizeRow(entry);
   const lane = laneOf(row);
-  if (FLIP_REFUSED[lane] || privateDraftAct(row)) {
-    throw new Error(`the "${lane}" lane's flip is not wired — ${FLIP_REFUSED[lane] ?? "private drafts never ride the flip"}`);
+  if (FLIP_REFUSED[lane]) {
+    throw new Error(`the "${lane}" lane's flip is not wired — ${FLIP_REFUSED[lane]}`);
   }
-  const { actId } = await penWrite(row); // throws PenUnreachableError — the door bounces, nothing was written
+  // ── THE CANDLE HALF, ON THE PEN'S OWN CLIENT (runbook C6) ─────────────────
+  //
+  // A mark-class row is two facts, not one: the deed and its place on the
+  // public docket. `claimFn` carries the second into `penWrite`'s transaction
+  // so they commit together or not at all — the runbook's whole reason this
+  // lane could not flip by flag: doing so "would write acts with no docket,
+  // which is F2 self-inflicted."
+  //
+  // `seq` IS NULL HERE, AND THAT IS THE POINT. The reverse mirror runs after
+  // the awaited pen, so at this line the sqlite row does not exist and has no
+  // seq to carry. 001's own words: `journal_seq` is "the shadow-era pairing
+  // key, dying at cutover" — and "journal_seq is not an identity" is a lesson
+  // this store has now learned three times. The closure falsifier pairs an act
+  // to its claim by the claim's own slug and claimant, never by this column.
+  //
+  // An unstaked declaration takes `act: false`: the claim is written, the deed
+  // is not, and the row rides on the draft (`data._deferred_act`) until a stake
+  // makes it public. Phase 5.6, unchanged by the flip — the privacy promise is
+  // not something a flag may quietly spend.
+  const draft = privateDraftAct(row);
+  const { actId } = await penWrite(row, claimEligible(row)
+    ? {
+      act: !draft,
+      household: () => claimHouseholdFor(row),
+      claimFn: (client, actId, household) => claimTxFromJournal(client, row, null, { household, actId }),
+    }
+    : {}); // throws PenUnreachableError — the door bounces, nothing was written
   let seq = null;
   try {
     const stmt = db.prepare(
@@ -426,7 +479,12 @@ export async function appendActFlipped(db, entry = {}) {
     // happen, which is the exact lie R2 exists to prevent (in mirror image).
     console.error(`[world-journal] REVERSE MIRROR FAILED (act ${actId}, ${row.actor} ${row.action}): ${String(err?.message ?? err)}`);
   }
-  return { seq, actId, flipped: true, ...row };
+  // `record` is what the door's `log:` field should say, decided HERE because
+  // this is the line that knows which table actually received the row. A
+  // private draft has no deed by law, so answering "acts" for one would name a
+  // record that does not hold it — the same small dishonesty `composed_at`
+  // exists to avoid on the drafts read. Every other flipped row is an act.
+  return { seq, actId, flipped: true, record: draft ? "claims" : "acts", ...row };
 }
 
 /** Which pen a lane's call site should use — the one switch the doors read. */

@@ -195,6 +195,16 @@ const SCRIPT = [
 const PUBLISHED = { slug: `${ACTORS.a}/the-standing-stone`, kind: "sited", owner: ACTORS.a, household: HOUSEHOLD_KEY.a,
                     body: "a stone that stands in canon", geometry: { at: { x: 10, y: 10 }, extent: { w: 3, h: 3 } } };
 
+// THE SCRATCH KEEPS THE TOWN'S CLOCK (2026-09-04). This population used to plant
+// its open window as 999999 and stamp its rows 999999.5 — a sentinel far from any
+// real crossing. The pen's late-crossing guard now refuses a crossing beyond the
+// open window (a raw epoch count is the class it catches), and it judges by the
+// town's clock, not the store's, because it runs before any SQL. So the scratch
+// plants the REAL open crossing and files its rows half a step into it: the
+// guard passes them, and the scratch is honest about when it was made.
+import { currentCrossing } from "../../src/crossings.mjs";
+const SCRATCH_WINDOW = currentCrossing();
+
 async function plantPopulation(ownerClient, dbPath) {
   // identities — `householdKeyFor` reads this to resolve the household KEY, and
   // an unseeded roster would make every claim `solo:<handle>` and G2 red for a
@@ -207,17 +217,18 @@ async function plantPopulation(ownerClient, dbPath) {
   // an open window — the docket pen refuses without one ("no open window — the
   // candle is dark"), and that refusal would be swallowed by its own queue.
   await ownerClient.query(
-    `INSERT INTO windows (id, opens_at, closes_at, status) VALUES (999999, now() - interval '1 hour', now() + interval '1 day', 'open')
-     ON CONFLICT (id) DO UPDATE SET status = 'open'`);
+    `INSERT INTO windows (id, opens_at, closes_at, status) VALUES ($1, now() - interval '1 hour', now() + interval '1 day', 'open')
+     ON CONFLICT (id) DO UPDATE SET status = 'open'`, [SCRATCH_WINDOW]);
 
   await ownerClient.query(
     `INSERT INTO marks (id, slug, kind, owner, household, body, geometry, bbox, status, locked_window)
-     VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, box(point($7,$8), point($9,$10)), 'standing', 999999)
+     VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, box(point($7,$8), point($9,$10)), 'standing', $11)
      ON CONFLICT (slug) DO NOTHING`,
     [PUBLISHED.slug, PUBLISHED.kind, PUBLISHED.owner, PUBLISHED.household, PUBLISHED.body,
      JSON.stringify(PUBLISHED.geometry),
      PUBLISHED.geometry.at.x - PUBLISHED.geometry.extent.w / 2, PUBLISHED.geometry.at.y - PUBLISHED.geometry.extent.h / 2,
-     PUBLISHED.geometry.at.x + PUBLISHED.geometry.extent.w / 2, PUBLISHED.geometry.at.y + PUBLISHED.geometry.extent.h / 2]);
+     PUBLISHED.geometry.at.x + PUBLISHED.geometry.extent.w / 2, PUBLISHED.geometry.at.y + PUBLISHED.geometry.extent.h / 2,
+     SCRATCH_WINDOW]);
 
   // THE LOCKED CLAIM BEHIND THE PUBLISHED MARK. Planted as the owner, because
   // only `clearing_job` may transition one and the candle is not on trial here.
@@ -230,15 +241,15 @@ async function plantPopulation(ownerClient, dbPath) {
   // claim behind it is not a store this town ever produces.
   await ownerClient.query(
     `INSERT INTO claims (window_id, class, claimant, household, status, body, geometry, slug, stake)
-     VALUES (999999, $1, $2, $3, 'locked', $4, $5, $6, 1)
+     VALUES ($7, $1, $2, $3, 'locked', $4, $5, $6, 1)
      ON CONFLICT DO NOTHING`,
     [PUBLISHED.kind, PUBLISHED.owner, HOUSEHOLD_KEY.a, PUBLISHED.body,
-     JSON.stringify({ slug: PUBLISHED.slug, ...PUBLISHED.geometry }), PUBLISHED.slug]);
+     JSON.stringify({ slug: PUBLISHED.slug, ...PUBLISHED.geometry }), PUBLISHED.slug, SCRATCH_WINDOW]);
 
   const db = openDynamic(dbPath);
   for (const step of SCRIPT) {
     appendJournal(db, {
-      crossing: 999999.5,
+      crossing: SCRATCH_WINDOW + 0.5,
       actor: ACTORS[step.who],
       household: JOURNAL_HOUSEHOLD[step.who],
       action: step.action,
@@ -250,9 +261,21 @@ async function plantPopulation(ownerClient, dbPath) {
       effect: "written by falsifier-guard-equality's population script",
     });
   }
-  // THE AWAITED WRITE. `submitClaimFromJournal` is fire-and-forget on a serial
-  // queue; reading `claims` before it settles would compare 1.0's finished
-  // journal against a docket still being written, and the diff would be timing.
+  // THE AWAITED WRITE. The docket pen is fire-and-forget on a serial queue;
+  // reading `claims` before it settles would compare 1.0's finished journal
+  // against a docket still being written, and the diff would be timing.
+  //
+  // THIS COMMENT USED TO NAME `submitClaimFromJournal`, and that name outlived
+  // the function: the mark lane's private-draft arm joined the pen's one queue
+  // (C6, 2026-09-04) and the old docket queue stopped being enqueued onto. The
+  // wait below did not change, and it did not have to — but `docketSettled()`
+  // was still answering about the abandoned queue, so it returned instantly and
+  // this run reported G1_a/G2_a/G4_a `compared 0` with every declaration missing
+  // from the port. The diff was timing, exactly as the sentence above says.
+  //
+  // `docketSettled()` now covers the queue the docket's writes actually ride
+  // (src/world2-claims.mjs), so this line is correct again and stays as it is.
+  // Naming a specific writer here is what went stale, so it names none.
   await docketSettled();
   return db;
 }
@@ -302,6 +325,43 @@ function sameMark(a, b) {
   for (const k of keys) {
     if (k in SEAM_KEYS || PORT_ONLY_KEYS.has(k)) continue;
     const x = a[k], y = b[k];
+    // ── `seq` ON A FLIPPED LANE: 1.0 HAS ONE, 2.0 CANNOT (C6, 2026-09-04) ──
+    //
+    // Held out NARROWLY — only where the port has no seq and 1.0 does, which is
+    // exactly the flipped-era row and nothing else. On the shadow lane both
+    // sides carry the number and it is still compared, so this buys the flip
+    // nothing it did not have to pay for.
+    //
+    // Why the port cannot have it: on a flipped lane the claim is written
+    // INSIDE the pen's transaction, and the sqlite reverse-mirror row does not
+    // exist yet — `appendActFlipped` inserts it only after that transaction
+    // commits. So at the moment the claim is written there is no seq to carry,
+    // and inventing one would need a second write to the claim after the
+    // commit: the atomicity hole R1 closed, reopened to satisfy a comparison.
+    //
+    // And it is bookkeeping rather than a fact about the mark. 001_tables.sql
+    // calls journal_seq "the shadow-era pairing key, dying at cutover", and the
+    // journal itself dies with the reverse mirror — a column scheduled to stop
+    // existing is not the thing to red a guard-equality run over. The act↔claim
+    // pairing that DOES matter moved to `data->>'_act_id'` in the same change
+    // (src/world2-claims.mjs § `_act_id`).
+    //
+    // WITHOUT THIS the first guard-equality run after the mark lane flips goes
+    // red on every live mark, for a difference that is the flip working.
+    //
+    // WHAT IT COSTS, said rather than glossed: the mark shape alone cannot tell
+    // a flipped-era claim from a shadow-era claim whose `_journal_seq` went
+    // missing, so this also stops catching that second thing. It is a real
+    // weakening of a real check, accepted knowingly — the pairing this was
+    // protecting is `_act_id`'s job now, and the column it turns on dies at the
+    // cutover. If a narrower discriminator ever exists, tighten it.
+    //
+    // test/guard-equality-flipped-seq.test.mjs pins the fact underneath this at
+    // the layer that causes it (`guard-reads.liveMarkOf`), because this file is
+    // a script with no entry guard and cannot be imported to test the line
+    // itself. `falsifier-pen-flip.mjs` has such a guard; giving this one the
+    // same would make its pure halves testable.
+    if (k === "seq" && y == null && x != null) continue;
     // `null` and absent are the SAME. 1.0 spreads a payload that simply lacks a
     // key; the port reassembles from columns that hold NULL. Treating those as a
     // divergence would make every row red for a difference that is not one.

@@ -77,10 +77,16 @@ test("`by` falls back to the id's prefix, exactly as 1.0's liveMarks does", () =
 
 test("the plumbing keys never reach a mark record", () => {
   const { mark } = guards.liveMarkOf(claim({
-    data: { by: "alfa", _journal_seq: 7, _deferred_act: { actor: "alfa", payload: "{}" } },
+    data: { by: "alfa", _journal_seq: 7, _act_id: "4242", _deferred_act: { actor: "alfa", payload: "{}" } },
   }));
   assert.equal("_deferred_act" in mark, false, "_deferred_act is a whole journal row; spreading it would put a second payload inside the mark");
   assert.equal("_journal_seq" in mark, false);
+  // `_act_id` is the mark lane's flip adding a field to `data` (2026-09-04,
+  // world2-claims § `_act_id`). Every field the docket pen adds has to be named
+  // in the strip, or the guards hand the doors a pen's plumbing as something
+  // the resident declared — and B1's guards are what PERMIT, so a stray field
+  // there travels straight into a door's answer.
+  assert.equal("_act_id" in mark, false);
 });
 
 test("the stake seam: stamps appears only when there is a stake", () => {

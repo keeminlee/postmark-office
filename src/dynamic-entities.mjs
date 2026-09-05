@@ -448,6 +448,37 @@ export function declareMovement(db, {
   return { actor, at: iso, from, toward, crossing, within, to: toMark, pace, declared_by: declaredBy ?? actor, note };
 }
 
+// ── THE FLIPPED WALK (W2_PEN=walk; runbook C3, 2026-09-03) ──────────────────
+//
+// R2's ordering in sqlite's own terms, the hold lane's shape (world-hold.mjs §
+// declareHoldingFlipped): the movements row is written inside a sqlite
+// transaction that COMMITs only after `appendActFlipped` returns — Postgres
+// committed, the reverse-mirror journal row on the same handle — and ROLLs BACK
+// on any refusal. The three outcomes, each with one truth:
+//
+//   the door refuses before this        → nothing in either store (never reaches here)
+//   the pen is unreachable              → PenUnreachableError thrown; movements + journal untouched
+//   the pen commits                     → acts holds the record; movements + journal commit together
+//
+// `entry` is the act as the mirror would have described it (the caller builds
+// it with the same field vocabulary — `within`/`to`, the movements row's own
+// column names). `deps.appendActFlipped` exists so the ordering can be proven
+// on a hand-built store with no world db and no Postgres; the door injects the
+// real one. Throws; the door turns PenUnreachableError into the ruled 503.
+export async function declareMovementFlipped(db, movement, entry, deps = {}) {
+  const appendActFlipped = deps.appendActFlipped ?? (await import("./world-journal.mjs")).appendActFlipped;
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const declared = declareMovement(db, movement);
+    const row = await appendActFlipped(db, entry);
+    db.exec("COMMIT");
+    return { ...declared, log: "acts", seq: row.seq ?? null };
+  } catch (err) {
+    try { db.exec("ROLLBACK"); } catch { /* no transaction to roll back — the BEGIN itself failed */ }
+    throw err;
+  }
+}
+
 /**
  * Every declared movement, in world.db's `events` row shape.
  *

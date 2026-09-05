@@ -1,5 +1,5 @@
 [Unit]
-Description=World 2.0 notary — certified snapshot into the notary checkout (snapshot_reader only)
+Description=World 2.0 notary — certified snapshot into the notary checkout, pushed off-box (snapshot_reader only)
 Documentation=file:///srv/world2-lab/ops/world2-notary.sh
 After=network.target postgresql.service
 Wants=postgresql.service
@@ -14,7 +14,9 @@ User=meepo
 # WORLD2_DB says `world2`, and every unit here follows without another edit.
 EnvironmentFile=/etc/postmark-world2-dev.env
 # Exit 0 green · 1 RED (drift, or the frozen-archive refusal naming a diff —
-# the finding the notary exists to produce) · 2 could not run.
+# the finding the notary exists to produce; ALSO a certification that could not
+# be pushed, which since DEC-7 is its own red: a certification that stayed on
+# the box it certifies catches nothing) · 2 could not run.
 ExecStart=/bin/bash /srv/world2-lab/ops/world2-notary.sh
 TimeoutStartSec=1800
 Nice=10

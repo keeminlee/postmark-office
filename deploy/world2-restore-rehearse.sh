@@ -35,6 +35,11 @@
 # nothing'."
 
 set -uo pipefail
+# A FIXED /tmp NAME IS A UID TRAP (2026-09-04): the 08-29 run left /tmp/w2-restore.err owned by
+# root; the timer now runs as meepo, and the first --from-remote rehearsal since failed with
+# "Permission denied" on the redirect, which starved pg_restore of its stdin ("end of file") and
+# read as a broken dump. mktemp, so a stale file from another user can never be the failure.
+ERRF="$(mktemp -t w2-restore.XXXXXX)"; trap 'rm -f "$ERRF"' EXIT
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/world2-lib.sh"
 
@@ -100,11 +105,11 @@ trap cleanup EXIT
 say "== pg_restore --clean --if-exists --no-owner --no-acl -d $SCRATCH <dump>"
 r0=$(date +%s)
 pg_restore --host "$PGH" --port "$PGP" --username world2_owner --dbname "$SCRATCH" \
-  --no-owner --no-acl --exit-on-error "$DUMP" 2>/tmp/w2-restore.err
+  --no-owner --no-acl --exit-on-error "$DUMP" 2>"$ERRF"
 rrc=$?
 r1=$(date +%s)
 if [ "$rrc" -ne 0 ]; then
-  say "!! pg_restore exit $rrc"; sed -n '1,40p' /tmp/w2-restore.err; exit 1
+  say "!! pg_restore exit $rrc"; sed -n '1,40p' "$ERRF"; exit 1
 fi
 say "   restored in $((r1 - r0))s"
 

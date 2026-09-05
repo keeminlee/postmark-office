@@ -804,3 +804,155 @@ test("THE DOOR, flag off — the same call still spends a commit on the sketchbo
   assert.equal(withDb((db) => journalHead(db)), 0,
     "not one row — flag off, the log is not merely ignored at the read, it is never written");
 });
+
+// ═════════════════════════════════════════════════════════════════════════════
+// B1 · THE READ FLIP — `W2_GUARDS=1`, the door's guards over `claims`
+// ═════════════════════════════════════════════════════════════════════════════
+//
+// Runbook §4 B1's third GO, verbatim: "a deliberate duplicate-slug submission is
+// refused at the door with the reason named."
+//
+// The equality falsifier (`falsifier-guard-equality.mjs`) is the proof that the
+// PORT and 1.0 agree, and it needs Postgres, a world checkout and a scratch
+// database — so it runs on the box and only there. What it cannot reach is the
+// DOOR: whether `journalLeaveMark`'s collision branch is actually fed by the
+// port under the flag. That is what these three assert, over the same hand-built
+// store the flag-off control above uses — same repo, same door, same payload,
+// and the live layer coming from `claims` instead of the journal.
+//
+// The store is a hand-built CLIENT rather than a database, exactly as
+// `world2-guard-reads.test.mjs` hand-builds rows rather than a store: what is
+// under test is the WIRE, and a real Postgres would test the port a second time
+// while proving nothing more about the door.
+//
+// CAN-FAIL: the third test IS the flip. It breaks the household spelling — the
+// bare handle instead of the resolved key, which is
+// `DISCLOSURES.two_household_spellings` and the falsifier's own second injected
+// fault — and asserts that the duplicate is then PERMITTED. Both directions are
+// asserted, so a wire that is not there cannot pass the pair.
+
+/**
+ * A `claims` row as `submitClaimFromJournal` writes one, plus the `identities`
+ * line `householdKeyFor` resolves through. Nothing here is arranged to please
+ * the port: the field names are the columns' own.
+ */
+const guardStore = ({ claims = [], identities = { alpha: "gh:1", beta: "gh:2" }, scopeAs = (h) => h } = {}) => {
+  let declared = null;
+  const calls = { claims: 0 };
+  return {
+    calls,
+    client: {
+      async query(sql, args = []) {
+        if (/set_config\(.app\.household./.test(sql)) { declared = args[0]; return { rows: [{}] }; }
+        if (/current_setting\(.app\.household./.test(sql)) return { rows: [{ declared }] };
+        if (/FROM identities/.test(sql)) return { rows: identities[args[0]] ? [{ household: identities[args[0]] }] : [] };
+        if (/FROM claims/.test(sql)) {
+          calls.claims += 1;
+          const [statuses, asked] = args;
+          const household = asked == null ? null : scopeAs(asked);
+          return { rows: claims.filter((c) => statuses.includes(c.status) && (household == null || c.household === household)) };
+        }
+        if (/^(BEGIN|COMMIT|ROLLBACK)/.test(sql.trim())) return { rows: [] };
+        throw new Error(`the hand-built store was asked something it does not know: ${sql.slice(0, 80)}`);
+      },
+    },
+  };
+};
+
+/** One live draft of alpha's, filed under the RESOLVED KEY, as the docket pen files it. */
+const draftClaim = (slug, over = {}) => ({
+  id: "00000000-0000-0000-0000-000000000001",
+  slug: `alpha/${slug}`, class: "sited", claimant: "alpha", household: "gh:1", status: "draft",
+  body: "the docket already holds this one",
+  geometry: { slug: `alpha/${slug}`, at: { x: 110, y: 105 }, extent: { w: 2, h: 2 } },
+  stake: 0, data: { by: "alpha", kind: "sited", date: "2026-09-03", _journal_seq: 1 },
+  submitted_at: new Date("2026-09-03T00:00:00Z"),
+  ...over,
+});
+
+const withGuardsFlipped = async (store, fn) => {
+  const guards = await import("../src/world2-guards.mjs");
+  const prev = { pg: process.env.WORLD2_PG, url: process.env.WORLD2_PG_URL, flag: process.env.W2_GUARDS };
+  process.env.WORLD2_PG = "1";
+  process.env.WORLD2_PG_URL = "postgres://hand-built/none";   // never dialled — the reader is replaced
+  process.env.W2_GUARDS = "1";
+  const restore = guards.useGuardReader((run) => run(store.client));
+  try {
+    assert.equal(guards.guardsFlipped(), true, "the flag is READ, not merely set — B1's gate 1");
+    return await fn(guards);
+  } finally {
+    restore();
+    for (const [k, v] of [["WORLD2_PG", prev.pg], ["WORLD2_PG_URL", prev.url], ["W2_GUARDS", prev.flag]])
+      if (v === undefined) delete process.env[k]; else process.env[k] = v;
+  }
+};
+
+test("B1 — the duplicate slug is refused at the DOOR, from `claims`, with the reason named", async () => {
+  process.env.WORLD_SINGLE_LOG = "1";
+  const { leaveMarkViaOffice } = await import("../src/world.mjs");
+  const store = guardStore({ claims: [draftClaim("the-docketed-one")] });
+
+  await withGuardsFlipped(store, async () => {
+    await assert.rejects(
+      leaveMarkViaOffice(repo, {
+        slug: "the-docketed-one", kind: "sited", at: { x: 110, y: 105 }, extent: { w: 2, h: 2 },
+        body: "a second declaration of a slug the docket already holds",
+      }, houseA),
+      (e) => {
+        assert.equal(e.code, 409, "the door's own collision bounce, unchanged across the flag");
+        assert.match(e.defect, /you already have a mark "the-docketed-one"/,
+          "and the REASON IS NAMED — the resident is told which slug, not that something went wrong");
+        assert.match(e.hint, /a slug is unique per author/);
+        return true;
+      });
+  });
+
+  assert.ok(store.calls.claims > 0, "and the answer came from `claims` — the guard read really ran");
+  assert.equal(withDb((db) => journalHead(db)), 0,
+    "the journal never held this slug: the refusal is the port's, not the sqlite layer's");
+});
+
+test("B1 — the guard is the only thing that changed: the same door still admits a slug nobody holds", async () => {
+  process.env.WORLD_SINGLE_LOG = "1";
+  const { leaveMarkViaOffice } = await import("../src/world.mjs");
+  const store = guardStore({ claims: [draftClaim("the-docketed-one")] });
+
+  const result = await withGuardsFlipped(store, () => leaveMarkViaOffice(repo, {
+    slug: "nobody-holds-this", kind: "sited", at: { x: 110, y: 105 }, extent: { w: 2, h: 2 },
+    body: "a slug the docket has never seen",
+  }, houseA));
+
+  assert.equal(result.id, "alpha/nobody-holds-this");
+  assert.equal(result.log, "journal", "the READ flipped; the PEN did not — B1 and the C-series are two flags");
+});
+
+test("B1 CAN-FAIL — scope the guard by the bare handle and the duplicate is PERMITTED", async () => {
+  // `DISCLOSURES.two_household_spellings`: `claims.household` holds the RESOLVED
+  // KEY, and 1.0's guards are scoped by the household NAME. A guard scoped by
+  // the wrong spelling reads an EMPTY live layer and permits everything, with
+  // nothing on any page to show for it.
+  //
+  // The break is injected IN MEMORY, the way `--prove-can-fail` injects its
+  // seven: the scoping of the `claims` read is bent to the bare handle while the
+  // rows keep the key the docket pen actually files them under. It is the
+  // equality falsifier's own second fault ("claims.household read as the bare
+  // handle (the resolved-key edge) — 4"), made at the door instead of at the
+  // port.
+  //
+  // NOT by dropping the `identities` line, which was the first attempt and read
+  // INERT: `householdKeyFor` memoises positive answers for the life of the
+  // process, so the earlier test's resolution answered this one too. An inert
+  // break proves nothing (the standing lane's finding), so it is named here
+  // rather than left as a green.
+  process.env.WORLD_SINGLE_LOG = "1";
+  const { leaveMarkViaOffice } = await import("../src/world.mjs");
+  const store = guardStore({ claims: [draftClaim("the-docketed-one")], scopeAs: () => "alpha" });
+
+  const permitted = await withGuardsFlipped(store, () => leaveMarkViaOffice(repo, {
+    slug: "the-docketed-one", kind: "sited", at: { x: 110, y: 105 }, extent: { w: 2, h: 2 },
+    body: "the same duplicate, past a guard reading the wrong spelling",
+  }, houseA));
+
+  assert.equal(permitted.id, "alpha/the-docketed-one",
+    "RED, deliberately: the wrong household spelling lets the duplicate through. The first test is this one, flipped back.");
+});

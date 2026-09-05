@@ -799,7 +799,7 @@ const server = createServer((req, res) => {
       }
       if (path.startsWith("/world2/")) {
         return world2Serve(path, url.searchParams)
-          .then((r) => (r ? j(res, r.code, r.body) : bounce(res, 404, "no such world2 door", "reads: /world2/docket /world2/marks /world2/mark?slug= /world2/windows /world2/status /world2/my-drafts (yours, keyed)")))
+          .then((r) => (r ? j(res, r.code, r.body) : bounce(res, 404, "no such world2 door", "reads: /world2/apex?x=&y= /world2/docket /world2/marks /world2/mark?slug= /world2/windows /world2/law /world2/walks /world2/positions /world2/present /world2/say /world2/conversations /world2/occupancy /world2/status /world2/my-drafts (yours, keyed)")))
           .catch((e) => bounce(res, 500, "the world2 door tripped", String(e?.message ?? e).slice(0, 200)));
       }
       if (path === "/world") return worldSummary(key).then((r) => j(res, 200, r)).catch((e) => bounce(res, 500, "the world door tripped", String(e?.message ?? e).slice(0, 200)));
@@ -812,7 +812,7 @@ const server = createServer((req, res) => {
       if (path === "/world/orient" || path === "/world/eyes" || path === "/world/investigate") {
         const p = url.searchParams;
         const args = { x: p.get("x") ?? undefined, y: p.get("y") ?? undefined, crossing: p.get("crossing") ?? undefined, mark: p.get("mark") ?? undefined, depth: p.get("depth") ?? undefined, name: p.get("name") ?? undefined, handle: p.get("handle") ?? undefined, diagnostic: p.get("diagnostic") === "true" };
-        const fn = path === "/world/orient" ? worldOrient(args, key) : path === "/world/eyes" ? worldEyes(args, key) : worldInvestigate(args, key);
+        const fn = path === "/world/orient" ? worldOrient(args, key, { roll: townRoll() }) : path === "/world/eyes" ? worldEyes(args, key, { roll: townRoll() }) : worldInvestigate(args, key);
         return fn.then((r) => j(res, r?.error === "bounce" ? 422 : 200, r)).catch((e) => bounce(res, 500, "the world door tripped", String(e?.message ?? e).slice(0, 200)));
       }
       // GET /world/apex — the apex verb's READ half, anonymous (Stage 3,

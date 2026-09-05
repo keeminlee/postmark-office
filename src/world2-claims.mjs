@@ -170,7 +170,7 @@ export async function claimHouseholdFor(row, env = process.env) {
  *
  * All the shadow-era semantics below are unchanged — only the plumbing moved.
  */
-export async function claimTxFromJournal(client, row, seq, { household, env = process.env } = {}) {
+export async function claimTxFromJournal(client, row, seq, { household, actId = null, env = process.env } = {}) {
       const payload = row.payload == null ? {} : JSON.parse(row.payload);
       const { rows: [win] } = await client.query(
         "SELECT id FROM windows WHERE status = 'open' ORDER BY id DESC LIMIT 1");
@@ -231,8 +231,30 @@ export async function claimTxFromJournal(client, row, seq, { household, env = pr
       // moment a stake makes it public. Carried in the DATABASE rather than in
       // process memory on purpose: a draft composed before a restart and staked
       // after it must still be able to become an act.
+      // ── `_act_id` · THE IDENTITY `_journal_seq` NEVER WAS (2026-09-04) ────
+      //
+      // The closure falsifier pairs an act to its claim, and it paired on
+      // `_journal_seq` — a column 001_tables.sql already warns about in its own
+      // comment ("the journal truncates at each drain, so (journal_seq, at)
+      // pairs a row only within its window") and which this store has now had
+      // to un-learn three times. The mark lane's flip retires it outright: a
+      // FLIPPED act carries `journal_seq` NULL by design, so a check pairing on
+      // it would have gone red on every act the moment W2_PEN named this lane —
+      // the lane's own GO criterion failing for a reason that has nothing to do
+      // with the lane.
+      //
+      // `acts.id` is the identity that was always missing. It is the act's
+      // primary key, it exists in both eras, and it is handed to this function
+      // by whichever pen holds the transaction. `_journal_seq` stays beside it,
+      // unused for pairing, because the shadow era's own tools still read it
+      // and dropping a written field is a separate change from ceasing to
+      // depend on it.
+      //
+      // NULL for a private draft, and lawfully so: a draft has no deed yet. The
+      // act it is holding arrives at the stake, and `promoteDraftOnStake`
+      // stamps this field in the same statement that releases it.
       const data = JSON.stringify({
-        ...rest, _journal_seq: seq,
+        ...rest, _journal_seq: seq, ...(actId == null ? {} : { _act_id: String(actId) }),
         ...(status === "draft" ? { _deferred_act: { ...row, _seq: seq } } : {}),
       });
 
@@ -286,31 +308,32 @@ export async function claimTxFromJournal(client, row, seq, { household, env = pr
       state.written += 1;
 }
 
-/**
- * The standalone shadow entry — claims WITHOUT an acts row, which since the
- * R1 unification means exactly one thing: a PRIVATE DRAFT (the deferral —
- * the act is carried on the claim and mirrored at the stake). Public
- * mark-class rows ride the unified act+claim transaction in world-journal's
- * routing instead; this path keeps the privacy law's shape: nothing about a
- * private compose touches `acts`.
- */
-export function submitClaimFromJournal(row, seq, env = process.env) {
-  if (!claimEligible(row, env)) return;
-  state.queue = state.queue.then(async () => {
-    try {
-      const household = await claimHouseholdFor(row, env);
-      const { officeWrite } = await import("./world2-pen.mjs");
-      await officeWrite(
-        (client) => claimTxFromJournal(client, row, seq, { household, env }),
-        { household, env });
-    } catch (err) {
-      state.failed += 1;
-      state.lastError = String(err?.message ?? err);
-      console.error(`[world2-claims] DOCKET WRITE FAILED (seq ${seq}): ${state.lastError}`);
-    }
-  });
-  return state.queue;
-}
+// ── `submitClaimFromJournal` IS GONE (2026-09-04, the mark lane's flip) ──────
+//
+// It was the standalone shadow entry for a private draft: a claim with no acts
+// row, on THIS module's own `state.queue` and its own pool. R1's header said
+// the two-queue disease "ends here: both eras' Postgres writes route through
+// `officeWrite`" — and it did not end for this one arm, because routing through
+// the same FUNCTION is not the same as riding the same QUEUE. Two serialized
+// queues with nothing between them are still two orderings.
+//
+// The cost was measured, not theorised: an unstaked compose and its own
+// withdrawal rode different queues, so the withdrawal's DELETE ran 113 ms ahead
+// of the INSERT it was meant to remove — five fresh stores, five times — and the
+// resident's withdrawn draft kept its docket row with the slug still taken
+// (jetto-b1-guards-report 2026-09-03 § Finding 1).
+//
+// The private arm now rides `shadowWrite(row, seq, { act: false, … })` in both
+// eras (src/world-journal.mjs § THE PRIVATE ARM JOINS THE ONE QUEUE), which
+// keeps the privacy law's shape — nothing about a private compose touches
+// `acts` — while putting a compose and its withdrawal in one order.
+//
+// DELETED RATHER THAN LEFT UNCALLED, deliberately. A second queue standing
+// beside a unified one, exported and callerless, is the next author's readiest
+// mistake; this file's own history is the argument (one column, three
+// spellings). `state.queue` survives it because `claimTxFromJournal` still
+// counts through this module's `state`, so `docketStatus()`/`docketSettled()`
+// keep answering about the docket exactly as before.
 
 /**
  * A later `world_stake` on a draft: the boundary act, arriving on its own.
@@ -360,20 +383,35 @@ export async function promoteDraftOnStake({ actor, householdName, slug, stamps =
         WHERE status = 'draft' AND claimant = $1 AND slug = $2 AND household = $3`,
       [actor, slug, household]);
     if (!draft) return null;
-    await c.query(
-      `UPDATE claims SET status = 'pending', window_id = $1, submitted_at = now(),
-              stake = GREATEST(stake, $2), data = data - '_deferred_act'
-        WHERE id = $3`,
-      [win.id, Number(stamps) || 0, draft.id]);
     // The released deferred act, in the SAME transaction (F3 closed): dated at
     // the putting-forward exactly as before — the world witnessed the resident
     // put it forward, not think about it — and journal_seq carried from the
     // compose so the parity falsifier's released-late arm keeps its key.
+    //
+    // IT RUNS BEFORE THE PROMOTION NOW, and the reordering is the whole reason
+    // it can be one statement. The claim must come out of this transaction
+    // carrying `_act_id` (§ the identity `_journal_seq` never was), and the act
+    // has no id until it is inserted — so a promotion that updated first would
+    // need a SECOND write to stamp it. This file already paid for that once:
+    // "a second `UPDATE ... SET data = data - '_deferred_act'` on the
+    // now-PENDING row is not one of the four transitions 007 permits, so it
+    // raised — after the promotion had already committed." Insert, then promote
+    // and stamp in one statement, and there is nothing left for a second write
+    // to do.
+    let releasedActId = null;
     if (draft.held) {
       const { insertAct } = await import("./world2-pen.mjs");
       const { _seq, ...actRow } = draft.held;
-      await insertAct(c, { ...actRow, written_at: new Date().toISOString() }, _seq ?? null);
+      releasedActId = await insertAct(c, { ...actRow, written_at: new Date().toISOString() }, _seq ?? null);
     }
+    await c.query(
+      `UPDATE claims SET status = 'pending', window_id = $1, submitted_at = now(),
+              stake = GREATEST(stake, $2),
+              data = (data - '_deferred_act')
+                     || CASE WHEN $4::text IS NULL THEN '{}'::jsonb
+                             ELSE jsonb_build_object('_act_id', $4::text) END
+        WHERE id = $3`,
+      [win.id, Number(stamps) || 0, draft.id, releasedActId == null ? null : String(releasedActId)]);
     return draft;
   });
   if (!out) return { promoted: false, claim: null };
@@ -409,4 +447,39 @@ export function docketStatus() {
   return { enabled: candleEnabled(), written, failed, submitted, lastError };
 }
 
-export function docketSettled() { return state.queue; }
+/**
+ * Every docket write issued so far has landed — and it has to be true about the
+ * queue those writes ACTUALLY RIDE, which is no longer this module's.
+ *
+ * ── THE LIVE DEFECT THAT TAUGHT THIS (2026-09-04 night, on the box) ─────────
+ *
+ * This returned `state.queue` alone. That was right while `submitClaimFromJournal`
+ * owned a queue here; it stopped being right the moment the mark lane's
+ * private-draft arm joined the pen's one queue (C6) and that function was
+ * deleted. Nothing enqueues onto `state.queue` any more, so it resolves
+ * instantly — and a caller that asked whether the docket was settled was told
+ * yes before a single row had been written.
+ *
+ * `falsifier-guard-equality.mjs` is that caller, and it had written the reason
+ * it waits directly above the wait: *"reading `claims` before it settles would
+ * compare 1.0's finished journal against a docket still being written, and the
+ * diff would be timing."* It then did exactly that — G1_a/G2_a/G4_a
+ * `compared 0`, findings 4/4/5, every one of the form *"1.0's live layer holds
+ * guards-alfa/the-quiet-shed and the port does not — a slug-collision guard
+ * reading the port would PERMIT a duplicate."* Nothing was wrong with the port.
+ *
+ * FIXED HERE RATHER THAN AT THE CALL SITE, because the call site was not wrong:
+ * it asked the honest question and got a false receipt. `settleShadowPens`
+ * survived only by awaiting all three queues by hand, and nothing marked the
+ * difference between the caller that happened to be safe and the one that was
+ * not. A function named for the docket that knows only about a queue the docket
+ * abandoned is the states-with-no-receipt class, wearing a receipt's coat.
+ *
+ * `state.queue` is still awaited beside the pen's. It is empty today, and
+ * keeping it costs one already-resolved promise — where dropping it would mean
+ * this answer silently stops covering anything that enqueues here again.
+ */
+export async function docketSettled() {
+  const { penSettled } = await import("./world2-pen.mjs");
+  await Promise.all([state.queue, penSettled()]);
+}

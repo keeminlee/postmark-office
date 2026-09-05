@@ -27,7 +27,7 @@ import { existsSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { publishedState } from "./world-branches.mjs";
-import { draftsForKey } from "./world-journal.mjs"; // the §1c delta, over the sketchbook and the journal both (POS-5 slice 1)
+import { guardedDraftsForKey } from "./world2-guards.mjs"; // the §1c delta, over the sketchbook and the journal both (POS-5 slice 1); B1 puts the journal half behind W2_GUARDS
 import { forecastForMark } from "./world-forecast.mjs";
 import { execUnderTownLock, lockTimedOut, LOCK_BUSY } from "./town-lock.mjs";
 
@@ -64,7 +64,10 @@ function actingAs(named, key) {
 // purpose: you cannot back what you cannot see. Canon is read at the REF, never
 // from the checkout's working-tree file (the checkout sits on whatever branch
 // the pen last wrote — its file is nobody's truth).
-export function markExists(mark, key = null) {
+// ASYNC since B1 (runbook §4 B1): the second look reads the draft overlay, and
+// under `W2_GUARDS=1` that overlay's journal half is a Postgres round trip. The
+// one caller (`worldStakeAct` below) was already async.
+export async function markExists(mark, key = null) {
   if (!existsSync(join(WORLD_CLONE, ".git")))
     return { known: false, reason: "the office has no world clone to check against" };
   try {
@@ -78,7 +81,7 @@ export function markExists(mark, key = null) {
     // then the delta (a git diff plus a few file reads, O(k), no fold), which
     // only ever shows the caller their OWN sketchbook.
     if (key) {
-      const delta = draftsForKey(WORLD_CLONE, key);
+      const delta = await guardedDraftsForKey(WORLD_CLONE, key);
       if (!delta?.error && (delta?.marks ?? []).some((m) => m.id === mark && m.status !== "deleted"))
         return { known: true, exists: true };
     }
@@ -235,7 +238,7 @@ export async function worldStakeViaOffice(args = {}, key = null) {
   if (!Number.isInteger(n) || n < 0) return bounce(422, "how many stamps?", "pass stamps: a whole number — at least 1 on the commons, or 0 on your own household's ground, where a zero stake still puts the mark forward");
 
   // the door's own gate: the ledger cannot see the world record
-  const ex = markExists(args.mark, key);
+  const ex = await markExists(args.mark, key);
   if (ex.known && !ex.exists)
     return bounce(404, `no mark "${args.mark}" in the world you can see`,
       "ids are <by>/<slug> as the telling shows them — you can back published marks and your own household's drafts; another household's draft becomes stakeable when Settlement publishes it");

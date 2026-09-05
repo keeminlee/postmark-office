@@ -79,6 +79,7 @@ import { appendActFlipped, appendJournal, laneFlipped, liveMarks, readJournal } 
 import { mainRef, materializeAtRef, publishedState, resolvedWorldHousehold } from "./world-branches.mjs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 
 /** The journal class for a resident's word. The single log's first new verb. */
 export const CLASS_STANCE = "stance";
@@ -257,14 +258,70 @@ export function worldForStances(repo, { dbPath = null } = {}) {
   return [...byId.values()];
 }
 
-/** Every stance row in the live layer. Empty (never a throw) when there is no journal to read. */
-export function stanceRows({ dbPath = null } = {}) {
+// ── A STANCE OUTLIVES THE WINDOW IT WAS SPOKEN IN (postmark#2454, 2026-09-04) ──
+//
+// The crossing-save drains the live journal into `STATE/log/<n>.journal.jsonl`
+// and truncates it. This read used to fold the live journal ALONE, so every
+// stance vanished from `standing` the moment its window closed and the mark
+// went back to `stances_awaiting` — lupi's seq 920 (crossing 167) was declared,
+// read back, and "gone the next morning" while the act sat safe in the record
+// and in the photograph. Absence is the third state; a drain is not absence.
+//
+// So the rows are the photographs ∪ the live journal, merged by seq — the same
+// union the reverse-parity falsifier calls the record. Photographs are read
+// from the world checkout the drain writes into (WORLD_CLONE by default; the
+// caller's repo in tests) and cached per file by size+mtime, because a window
+// once written is only ever rewritten by the drain itself. At cutover this
+// read moves to the acts record (G2); until then the mirror + the photographs
+// ARE the record on 1.0.
+const PHOTO_CACHE = new Map(); // path → { key, rows }
+function photographStanceRows(worldClone) {
+  const dir = join(worldClone, "STATE", "log");
+  if (!existsSync(dir)) return [];
+  const out = [];
+  let names;
+  try { names = readdirSync(dir).filter((n) => /^\d+\.journal\.jsonl$/.test(n)); } catch { return []; }
+  for (const name of names) {
+    const path = join(dir, name);
+    let st; try { st = statSync(path); } catch { continue; }
+    const key = `${st.size}:${st.mtimeMs}`;
+    const hit = PHOTO_CACHE.get(path);
+    if (hit && hit.key === key) { out.push(...hit.rows); continue; }
+    const rows = [];
+    let text; try { text = readFileSync(path, "utf8"); } catch { continue; }
+    for (const raw of text.split("\n")) {
+      const line = raw.trim();
+      if (!line || !line.includes('"class":"stance"')) continue;
+      try {
+        const l = JSON.parse(line);
+        if (l?.class !== CLASS_STANCE || !Number.isFinite(l?.seq)) continue;
+        // the photograph keeps the journal's own vocabulary (`type`, `at`);
+        // the read speaks hydrateRow's (`action`, `written_at`) — one shape out
+        rows.push({
+          seq: Number(l.seq), crossing: l.crossing == null ? null : Number(l.crossing),
+          actor: l.actor, action: l.type ?? l.action ?? null, object: l.object ?? null,
+          class: l.class, payload: l.payload ?? null, household: l.household ?? null,
+          written_at: l.at ?? l.written_at ?? null, photograph: name,
+        });
+      } catch { /* a bent line is not a reason to lose the window */ }
+    }
+    PHOTO_CACHE.set(path, { key, rows });
+    out.push(...rows);
+  }
+  return out;
+}
+
+/** Every stance row in the record: the drained photographs ∪ the live journal, by seq. Empty (never a throw) when neither can be read. */
+export function stanceRows({ dbPath = null, worldClone = WORLD_CLONE } = {}) {
   if (!singleLogEnabled()) return [];
+  const bySeq = new Map();
+  for (const r of photographStanceRows(worldClone)) bySeq.set(r.seq, r);
   try {
     const db = openDynamic(dbPath ?? undefined, { readOnly: true });
-    try { return readJournal(db, { cls: CLASS_STANCE }); }
+    try { for (const r of readJournal(db, { cls: CLASS_STANCE })) bySeq.set(r.seq, r); } // the live row is the fresher copy of the same seq
     finally { try { db.close(); } catch { /* already gone */ } }
-  } catch { return []; }
+  } catch { /* no live layer → the photographs alone are an honest record */ }
+  return [...bySeq.values()].sort((a, b) => a.seq - b.seq);
 }
 
 /** The handles a key acts for — whose marks are "mine". */
@@ -286,7 +343,7 @@ export async function stanceInbox(repo, key, { dbPath = null } = {}) {
 
   const all = worldForStances(repo, { dbPath });
   const mine = all.filter((m) => mineHandles.has(m.by) && m.at && m.extent);
-  const rows = stanceRows({ dbPath });
+  const rows = stanceRows({ dbPath, worldClone: repo });
   const standing = standingStances(rows).filter((s) => mineHandles.has(s.by));
   const spoken = new Set(standing.map((s) => s.on));
 

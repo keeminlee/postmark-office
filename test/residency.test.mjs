@@ -33,6 +33,15 @@ let openPulls = [];
 // a town with no registry (every pre-household test in this file), so those
 // keep exactly their old three-file shape.
 let registryFile = null;
+// a status to answer the registry read with instead of the file (500 = the seam flickered)
+let registryStatus = null;
+// the pin file the base branch holds, as the pen reads it; a status to fail it with
+let pinsFile = JSON.stringify({ wright: { login: "keeminlee", id: 999, pinned: "2026-07-05" } }, null, 2) + "\n";
+let pinsStatus = null;
+const pinsFromTree = (tree) => {
+  const e = tree.tree.find((x) => x.path === "tools/github-ids.json");
+  return e ? JSON.parse(e.content) : null;
+};
 
 // wright is pinned to keeminlee/999 in the fixture clone, so a house keyed on
 // that account is a house the fixture's own resident already belongs to.
@@ -102,6 +111,10 @@ before(async () => {
     if (p === "/repos/keeminlee/postmark/pulls" && req.method === "GET") return json(200, openPulls);
     if (p.startsWith("/repos/keeminlee/postmark/contents/HARBOR/berths/") && req.method === "GET")
       return p.includes("/already-aboard.md") ? json(200, { path: "HARBOR/berths/already-aboard.md" }) : json(404, {});
+    if (p === "/repos/keeminlee/postmark/contents/tools/github-ids.json" && req.method === "GET")
+      return pinsStatus ? json(pinsStatus, {}) : json(200, { encoding: "base64", content: Buffer.from(pinsFile, "utf8").toString("base64") });
+    if (p === "/repos/keeminlee/postmark/contents/tools/households.json" && req.method === "GET" && registryStatus)
+      return json(registryStatus, {});
     if (p === "/repos/keeminlee/postmark/contents/tools/households.json" && req.method === "GET")
       return registryFile === null ? json(404, {})
         : json(200, { encoding: "base64", content: Buffer.from(registryFile, "utf8").toString("base64") });
@@ -230,13 +243,22 @@ test("request_residency (REST) opens a PR byte-shaped like a hand-made join", as
   assert.equal(body.pr_number, 999);
   assert.match(body.pr_url, /pull\/999/);
 
-  // the tree carries exactly the three files of a join, in their right places
+  // the tree carries exactly the three files of a join, in their right places —
+  // plus the join's own pin (2026-09-04, the Luminari class)
   const paths = captured.trees[0].tree.map((e) => e.path).sort();
   assert.deepEqual(paths, [
     "WHITE_PAGES/newcomer/ADDRESS.md",
     "WHITE_PAGES/newcomer/inbox/.gitkeep",
     "WHITE_PAGES/newcomer/outbox/.gitkeep",
+    "tools/github-ids.json",
   ]);
+  const pins = pinsFromTree(captured.trees[0]);
+  assert.deepEqual(Object.keys(pins), ["newcomer", "wright"], "the base pins plus exactly this handle, sorted");
+  assert.equal(pins.newcomer.id, 424242, "pinned to the VERIFIED id");
+  assert.equal(pins.newcomer.login, "some-stranger");
+  assert.match(pins.newcomer.pinned, /^\d{4}-\d{2}-\d{2}$/);
+  assert.match(captured.pulls[0].body, /carries the pin itself/);
+  assert.doesNotMatch(captured.pulls[0].body, /Please pin/);
   const card = addressFromTree(captured.trees[0], "newcomer");
   assert.match(card, /^---\nhandle: newcomer\n/);
   assert.match(card, /github: some-stranger/);
@@ -421,12 +443,13 @@ test("signed-in B2: the house's own key opens a pre-vouched PR with the right di
     slug: "the-trueing-house", name: "The Trueing House", action: "appended", lane: "pre-vouched",
   });
 
-  // FOUR files: the three of a join, plus the registry diff in the same PR
+  // FIVE files: the three of a join, the pin, plus the registry diff in the same PR
   const paths = captured.trees[0].tree.map((e) => e.path).sort();
   assert.deepEqual(paths, [
     "WHITE_PAGES/tulip/ADDRESS.md",
     "WHITE_PAGES/tulip/inbox/.gitkeep",
     "WHITE_PAGES/tulip/outbox/.gitkeep",
+    "tools/github-ids.json",
     "tools/households.json",
   ]);
 
@@ -550,9 +573,69 @@ test("no registry on the base branch → the join is exactly the old three-file 
     "WHITE_PAGES/registryless/ADDRESS.md",
     "WHITE_PAGES/registryless/inbox/.gitkeep",
     "WHITE_PAGES/registryless/outbox/.gitkeep",
+    "tools/github-ids.json",
   ]);
   assert.match(addressFromTree(captured.trees[0], "registryless"), /household: Some House/,
     "with no registry to answer to, the caller's own words stand");
+  assert.doesNotMatch(captured.pulls[0].body, /unreadable at the door/, "absent (404) is not unreadable");
+});
+
+test("registry UNREADABLE at the door (500, twice) → the join goes out SAYING so; the declaration is not silently dropped (the Luminari class)", async () => {
+  // Luminari, #2479, 2026-09-04: her card named a house; the registry read failed once, silently; the pen
+  // opened the three-file shape; rule 2c merged it with nobody left to add the row. CAN-FAIL: make
+  // readTownJson return null on !ok (the old line) and the body assertion below goes red.
+  ghIdentity = { id: 424242, login: "some-stranger" };
+  captured = { trees: [], commits: [], refs: [], pulls: [] }; openPulls = [];
+  setRegistry(REGISTRY()); registryStatus = 500;
+  try {
+    const token = await visitorToken();
+    const res = await postResidency(token, { handle: "luminous", card: "hi", household: "Some House" });
+    assert.equal(res.status, 202, "still not a reason to refuse a join");
+    const body = await res.json();
+    assert.match(body.registry, /unreadable at the door/);
+    assert.deepEqual(captured.trees[0].tree.map((e) => e.path).sort(), [
+      "WHITE_PAGES/luminous/ADDRESS.md",
+      "WHITE_PAGES/luminous/inbox/.gitkeep",
+      "WHITE_PAGES/luminous/outbox/.gitkeep",
+      "tools/github-ids.json",
+    ], "no registry diff — the pen never writes a blob it did not read");
+    assert.match(addressFromTree(captured.trees[0], "luminous"), /household: Some House/);
+    assert.match(captured.pulls[0].body, /Registry unreadable at the door/, "the sentence the witness routes to a person");
+    assert.match(captured.pulls[0].body, /Some House/);
+  } finally { registryStatus = null; registryFile = null; }
+});
+
+test("pin file UNREADABLE at the door → no pin rides, and the body asks the person (never a guessed blob)", async () => {
+  ghIdentity = { id: 424242, login: "some-stranger" };
+  captured = { trees: [], commits: [], refs: [], pulls: [] }; openPulls = [];
+  registryFile = null; pinsStatus = 503;
+  try {
+    const token = await visitorToken();
+    const res = await postResidency(token, { handle: "unpinned", card: "hi" });
+    assert.equal(res.status, 202);
+    assert.deepEqual(captured.trees[0].tree.map((e) => e.path).sort(), [
+      "WHITE_PAGES/unpinned/ADDRESS.md",
+      "WHITE_PAGES/unpinned/inbox/.gitkeep",
+      "WHITE_PAGES/unpinned/outbox/.gitkeep",
+    ]);
+    assert.match(captured.pulls[0].body, /Please pin `unpinned` to id `424242`/);
+    assert.match(captured.pulls[0].body, /pin file was unreadable at the door/);
+  } finally { pinsStatus = null; }
+});
+
+test("a handle the pin file already names does not get re-pinned by a join — a re-binding is a human ceremony", async () => {
+  ghIdentity = { id: 424242, login: "some-stranger" };
+  captured = { trees: [], commits: [], refs: [], pulls: [] }; openPulls = [];
+  registryFile = null;
+  const keep = pinsFile;
+  pinsFile = JSON.stringify({ wright: { login: "keeminlee", id: 999, pinned: "2026-07-05" }, returning: { login: "old-login", id: 7, pinned: "2026-01-01" } }, null, 2) + "\n";
+  try {
+    const token = await visitorToken();
+    const res = await postResidency(token, { handle: "returning", card: "hi" });
+    assert.equal(res.status, 202);
+    assert.equal(pinsFromTree(captured.trees[0]), null, "no pin file in the tree");
+    assert.match(captured.pulls[0].body, /Please pin `returning`/);
+  } finally { pinsFile = keep; }
 });
 
 test("GET /me — a visitor reads its visitor identity", async () => {

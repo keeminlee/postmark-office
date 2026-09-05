@@ -850,7 +850,26 @@ digest = "sha256:" + sha256(those lines, concatenated)
 ### The red-proof carries the run
 
 A falsifier nobody has watched fail is not a falsifier. These were run on
-`world2_dev` on 2026-08-28, against a scratch local repo — never a real remote.
+`world2_dev` on 2026-08-28, against a scratch local repo.
+
+**Re-run against a real remote, 2026-09-03** (E1/DEC-7 gave the notary its own
+push target). A clone pulled from `wright-starforge/postmark-world2-notary` onto
+a machine that is not the box, checked against `CERTIFICATION.json` with **no
+database consulted** — every archive's sha, the `archives_sha` over all of them,
+and `marks_content_sha` over 873 mark bodies: **18 of 18 green.** The can-fail
+flip: one byte changed inside `archives/acts/164.jsonl` in that clone turned it
+red naming the file and its two shas, and restoring the byte turned it green
+again. The same clone under `--verify --spot-check 200` reported the same 19
+findings as the box's own checkout, finding for finding — the copy adds none and
+hides none — with **0 disagreements across 919 archived lines read back against
+`acts`**.
+
+One trap belongs beside that green. Git converts LF to CRLF at checkout wherever
+`core.autocrlf` is true, the Windows default, and a converted archive fails its
+certified sha. The first clone went red on **every non-empty file and green on
+every empty one**, which is the tell, and it looks exactly like catastrophic
+drift. The repository carries a `.gitattributes` (`* -text`) so a plain clone is
+byte-faithful anywhere.
 
 **The append-only refusal**, which is the pen's whole reason to exist. Edit one
 line of a closed window's archive and run the exporter again:
@@ -1010,13 +1029,231 @@ crossing's log *after* the settlement that precedes it: S48's tag sits on
 already there at S47. Multiset for AB-P3's reason — the record genuinely repeats
 a row, and a Set would let a dropped copy hide.
 
+### An era is one PUBLISH, not one tag (F-5, 2026-09-04)
+
+The Worldkeeper mints a `settlement/S<n>` tag when his **judgment** lands; the box
+publishes at every crossing and on demand between them, committing a
+`settlement: sweep N published, …` each time with its own six-count. Those were
+the same thing through S50 and have not been since — **seven publishes sit between
+the S50 and S51 tags**. Pairing tags derived six sweeps' worth of claims against
+the seventh's receipt and filed every retirement at the last window instead of the
+one it happened at.
+
+`erasBetween` now walks `--first-parent` and takes every commit whose subject is a
+sweep. Tags remain the range's ends, the seed's floor, the parity oracle's
+checkpoints, and the name an era wears when it has one. Measured over S47 → S55:
+
+| | eras | receipt agrees | disagrees | uncheckable |
+|---|---|---|---|---|
+| tag model | 8 | 2 | 5 | 1 |
+| publish model | 20 | 14 | 6 | 0 |
+
+**A publish is not a window either, and that is the finding this lane leaves open.**
+Five sweeps landed inside window 163 on 2026-09-01; windows 154, 156–158 and 166
+closed with no sweep behind them. A *crossing* closes a window; a sweep publishes
+into whichever one is open. `windowFindings` names every such departure and the
+run refuses — the store clears exactly one candle at a time, and its own guard
+would refuse anyway, but only after earlier eras had committed into an
+append-only table.
+
+**And the receipt gaps are not a boundary artifact.** `plantedByHand` counts how
+many of an era's additions were put in the register by a commit that is not a
+sweep, and `amendedByHand` does the same for its amends. Ninety-two additions and
+eleven amends across S47 → S55 under the window model — one commit plants
+twenty-two, another fifty. The founder's hand on `main`: no door saw them, no
+sweep counted them. That is the exact mirror of DEC-15 case (b), which ruled his
+removals; **his additions and amends are DEC-17**, below.
+
 **The claim set comes from the settlement's own outcome** — the register diff at
 S(k-1) vs S(k), read by `deriveSeed` at each tag, so a claim and the mark it
 materializes are one record wearing two table names. Added → a claim; changed →
-a claim carrying `supersedes`; **removed → the replay STOPS**, because the
-six-count has no transition for a standing mark leaving (its
-"unpublished/quarantined" is a draft that never stood) and inventing one would
-make the verdict a statement about the invention.
+a claim carrying `supersedes`; **removed → a RETIREMENT** (DEC-15, ruled
+2026-09-04). Where the hand behind the addition or the change is the FOUNDER's
+own commit on `main`, the claim goes in `locked` and the mark materialises
+directly (DEC-17, ruled 2026-09-04 — below).
+
+That last one stopped the replay until 2026-09-04, and the refusal was right for
+as long as it lasted: "the refusal exists so that the first one is seen." It was
+seen on the first full-range dry run (S47 → S55), and DEC-15 is the ruling —
+a standing mark that leaves the register is the revision family's **terminal
+supersession** (founder-ruled 2026-08-19: *"the record leaves canon, its whole
+life stays in the log"*), which the store already spells
+(`marks.status IN ('standing','retired')`) and the door already performs
+(`withdrawMarkViaOffice`). The replay marks the row `retired` at the era's
+window, and the log keeps the whole life either way:
+
+| case | what happened | what the replay writes |
+|---|---|---|
+| **(a)** withdrawn in the log | a resident's own `withdraw` act names the slug | nothing extra — that act **is** the retirement, already replayed |
+| **(b)** the founder's hand | a commit on world `main` deleted the record; no door, no act | one `withdraw` by `the-town`, carrying `payload.retired_by = <sha>` and the commit's subject |
+
+The old refusal's stated reason was **wrong on the record**, and the correction
+matters: the six-count *does* have a transition for a standing mark leaving —
+`(\d+) withdrawn`, which `sixCountOf` has always parsed. S55's receipt reads
+`1 withdrawn`, and that one is `vermillion/the-track-garage`, whose `withdraw`
+act sits in the era's log. Only case (b) — a hand on `main`, which passes no door
+and enters no sweep — is genuinely uncounted, which is why the `published` check
+is untouched.
+
+**The refusal did not go away; it moved and got narrower.** A departure of any
+*other* shape is UNRULED and its era cannot be written. Derivation classifies
+every departure and `--dry-run` exits 1 naming them all, so one run shows the
+founder the whole class instead of stopping at its first member.
+
+### A mark may change hands — RE-IDENTIFICATION (DEC-16, ruled 2026-09-04)
+
+The first unruled departure was not a departure. `the-town/the-lit-name` at S52:
+world `17103dc37` *modified* the file rather than deleting it — `by:` changed,
+and since a mark's id is `by` + leaf the slug refolded while the record stayed in
+canon. The register reads one removal plus one addition for one record changing
+hands.
+
+DEC-16 rules it a **re-identification**: the same row keeps its `id`, `slug` and
+`owner` move together, `data.formerly` keeps the old slug (a list — a mark may
+change hands twice), and one `transfer` act by `the-town` names the commit. The
+rejected alternative, retire-and-claim, costs the mark its escrow and its whole
+history under the old identity, and orphans every by-id reference.
+
+Three consequences worth stating outright:
+
+- **The addition half is NOT a claim.** Left in the claim set it would derive a
+  claim whose id is `uuid5(new slug)` and materialize a second row under the slug
+  the transferred row is about to take. **1.0's own receipt confirms this**: S52's
+  six-count says `4 published`, the replay derived 5 before DEC-16 and derives
+  exactly 4 after it. A probe that could have failed, and did not.
+- **An amend in the same era supersedes the OLD id.** A mark that changed hands
+  *and* was edited carries one amend claim under the new slug whose `supersedes`
+  is the standing row's locking claim — `was.id`, not a re-derivation from the
+  new name, which no claim in the store carries.
+- **`household` moves with the owner.** It is a substance column and nothing else
+  would move it: the clearing job's step 7 recomputes `tier` and only `tier`.
+
+**The tell is path identity OR a rename (M-8, ruled 2026-09-04 as plumbing under
+DEC-16).** "Is the file still at its old path under a new id?" is the whole tell
+for the Lit Name, whose file never moved, and not the whole tell for the record.
+`61c5fdfbc` — *"the cake, the vault, and the cellar door pass from the-town to
+wright"* — moves each file into the new owner's directory and changes its `by:`
+in one commit. Git calls that a rename (R098, R098, R096); path identity cannot
+see it, so three records changing hands read as three retirements plus three
+additions and lost their ids. `renamesBetween` asks the whole `WORLD/marks` tree
+once per era — a pathspec naming only the old path finds nothing, because a
+rename is detected by comparing the two sides of a diff and the new path is
+outside it. **The leaf must match**: a mark's id is `by` + leaf, so a move that
+keeps the leaf changes only the owner half of the identity, and a move that
+renames the leaf falls through to the retirement branch where an unruled shape
+belongs. The removal is the gate — a rename that does not move the slug (world
+`319aa3c`, `…/the-three-asks/<leaf>/` → `…/the-asks/<leaf>/` with `by:` unchanged)
+never reaches the map at all. 1.0 has never had a **sweep** rename a mark file,
+zero across the whole history, and the tell does not ask whose hand it was —
+DEC-16 never has.
+
+### A reference follows the ROW, not the NAME (ruled 2026-09-04)
+
+> A claim's `parent` resolves through the STANDING row for the parent's slug,
+> never through `uuid5(name)` — the same law DEC-16 already gives `supersedes`.
+
+The rename half surfaced the case that made this reachable: a transferred mark's
+**predicated children**. DEC-16's seam table says `marks.parent` "follows for
+free … this is what the fixed id buys", which is true of the **store** — the
+child's row still points at the parent's kept id — and false of the **oracle**,
+which re-derives a child's parent from the parent's **slug** at every checkout.
+`the-town/the-unlit-cake` keeps `a6cfdfdb…`; its child `the-town/the-lit-name`
+derives its parent as `c4549660…`, a number no row carries, and
+`marks.parent uuid REFERENCES marks(id)` (004) is not deferrable — so before this
+rule the era was refused rather than written wrong.
+
+**The reconciliation is in `eraClaims`, and it cannot be in `deriveSeed`.**
+`deriveSeed` takes a checkout and no connection; it is shared with
+`seed-import.mjs`, which runs before any store exists; and it **is** the parity
+oracle — an oracle that consulted the store about this column could never
+disagree with the store about it, which is the one thing an oracle is for. So the
+resolution happens where the era's transfers are known and the claim is built.
+
+The map is `Map(derived id → the id the row keeps)`, **owned by the caller and
+threaded across eras**, because a transfer's consequences outlive its own era: a
+child added under `wright/the-unlit-cake` three eras later still derives
+`uuid5("wright/the-unlit-cake")`. It **chains** on insert, so a mark that changes
+hands twice points at the original id and not at an intermediate name that no row
+carries either. The dry run prints every claim it moved, with both numbers.
+
+`012_reidentification.sql` is the schema half. It does not "make `slug` mutable"
+— `UPDATE marks SET slug` was always legal — it enforces the half with teeth: a
+trigger refusing any change to `marks.id`, because "every reference by id follows
+for free" is true only while nothing renumbers the row. `--can-fail-proof` hands a
+re-identified mark its old name back and requires the gate to go red at both
+names.
+
+**What DEC-16 does not carry: escrow.** The town's stake ledger keys every
+position by the string `<mark slug>|<handle>`, in the *town* repo, outside this
+store. A transfer cannot rewrite it, and the founder has already met this seam
+and answered it by hand — the transferring commit's own words: *"Stake handled
+first so no record orphans: wright's 1✦ unstaked … restake on
+wright/the-lit-name owed after the next crossing refolds the id."* Unstake
+before, restake after, is the current ceremony and the only answer with a
+precedent.
+
+### The founder's hand PLANTING is an ADMISSION (DEC-17, ruled 2026-09-04)
+
+DEC-15 ruled the hand's removals. DEC-17 rules the other two faces, and it is
+one act with three of them — `6b235216d` retires `the-town/pledges`, amends
+`the-town/the-bounty-board` and `wright/furnish-ferrys-waiting-room`, and adds.
+The ruling, verbatim:
+
+> A founder's hand on main is an ADMISSION in every face — an added mark
+> materialises directly (a claim LOCKED at that window by the founder's hand
+> naming the commit, the mark standing), an amended mark supersedes directly
+> (the same locked shape, `supersedes` the standing one), a removed mark retires
+> (DEC-15). The clearing job never re-judges canon.
+
+What it changes:
+
+- **The hand is asked of EVERY era**, in `eraClaims`, not only of one whose
+  six-count disagrees. That used to be a diagnosis of a number and is now a fact
+  about a mark. It is not an optimisation that was undone for tidiness: windows
+  157 and 158 held **no sweep**, so their receipt is never checked, the diagnosis
+  never ran, and thirteen marks the founder planted derived as pending resident
+  claims with nothing in the run naming them.
+- **The claim goes in `locked`**, `decided_at` = the commit's own time (not
+  `now()`; that claim was decided when the commit landed), with
+  `data.locked_by = "founder"` and `data.founder_commit = { sha, subject, at }`.
+  `claims.ruling` is deliberately **not** the home: 009's own comment says it is
+  "a fact about a contest a mind was asked to settle, not a field every claim
+  has", and an admission is not a contest.
+- **The mark materialises in the era's transaction**, through
+  `materialize.mjs`'s `materializeClaims` — the same function the clearing job
+  and the review lane call, never a third way of turning a claim into a mark. It
+  runs **last**, after the transfers and the retirements, because `marks.slug` is
+  unique and a name this era freed must be free before it is taken.
+- **The clearing job sees nothing to re-judge.** It selects `status = 'pending'`
+  and nothing else, so a locked claim is invisible to it. The dry run prints the
+  count per era rather than asserting it: *"of the N slug(s) the hand touched, 0
+  would reach the clearing job as a resident's pending claim"*.
+- **The receipt is unchanged.** 1.0 never counted hand plantings, so the
+  `published` check still disagrees on exactly the eras it disagreed on before,
+  and for exactly the reason the accounting line names.
+
+`--can-fail-proof` gains DEC-17's own break: delete the mark an admitted claim
+materialised (the register a still-pending claim would have left) and require the
+gate to go red. It also *attempts* the ruling's literal words — flipping that
+claim back to `pending` — in its own rolled-back transaction, and reports what
+the store answers: `002_grants.sql`'s `claims_update_guard` exempts only
+`clearing_job` and this pen connects as `world2_owner`, so an admission cannot be
+un-locked from here at all.
+
+The parity gate compares **standing rows only** (`standingOnly`): 1.0's register
+is a set of files and a removed file leaves no row, while 2.0 keeps the row and
+flips `status` — the same register said two ways. Both refusals survive the
+narrowing: a retired row the register still carries reads MISSING in DB, and a
+standing row the register lacks reads EXTRA in DB. `--can-fail-proof` un-retires
+one retired mark and requires the gate to go red for it.
+
+**`marks.data` carries three keys 1.0's file cannot** — `formerly` (DEC-16) and
+`locked_by` / `founder_commit` (DEC-17) — so `dataFindings` names them
+(`REPLAY_ONLY_DATA_KEYS`) instead of reporting a hundred rows of known provenance
+as "a `data` that differs beyond tier", which is the line that means *the
+materializer lost part of the record*. They are named and counted in
+`provenance`, never silently filtered; everything else in `data` is still
+compared, and `data.tier` stays **gated** on an admitted row like any other.
 
 Two receipts hold the derivation to the town's own record, and one of them
 already earned its keep:
@@ -2371,3 +2608,148 @@ can-fail proof:
    a property of a process, not of the record, so there is nothing to reproduce —
    and it is a REAL divergence that bites the day the record passes 2,000. Named
    on the answer rather than matched.
+
+## The apex, served from the store (B2 · P-089)
+
+The A/B report's largest gap: *"`GET /world/apex` — the whole orientation
+answer, and with it every A2 read shadow (P-016…P-034) | P-089 | `law_projection`
++ a spine/reach query. The door's grammar is the contract the viewer speaks."*
+Twelve `/world2/*` doors existed and `/world2/apex` was not one of them.
+
+```
+GET /world2/apex?x=<m>&y=<m>[&crossing=<n>][&law_sha=<sha>][&roster=roll]
+```
+
+Keyless, like 1.0's `GET /world/apex?x=&y=`, and ADDITIVE — the 1.0 apex is
+untouched, so rollback is not routing to this one.
+
+`apex-reads.mjs` is the derivation half and `src/world2-serve.mjs § world2Apex`
+owns the queries and the render, the same split the live lane uses. Three
+sources, and each says what it could not do:
+
+| half | source | what stands in for the import |
+|---|---|---|
+| `actions` · `granted` · `not_yours` · `actors` | `law_projection` at ONE pinned `law_sha` | the grant law is **imported**, not ported — `world-grants.mjs` is already pure ("rows in, entries out"), so `resolveForActor` / `entriesOfClass` / `classOfInstance` are the same functions 1.0 runs |
+| `within` · `nearby` · `departures` | `marks` + `kind='skeleton'` rows | the world ENGINE's own `orient` / `openYourEyes` / `stopDepartures`, run over a world **assembled** from rows — gold §Phase 3 read literally: "the engine's verbs/geometry/adjudication port as pure functions over queries" |
+| `present` | `acts` | `live-reads.mjs`, already on trial at `/world2/present`, in the apex's `near()` render |
+
+**The law pin.** `windows.law_sha` is written AT THE CLEARING, so the OPEN window
+carries NULL (world2_dev 2026-09-03: window 168 open unpinned, 167 closed pinned
+`cba817d7`). `lawShaFor` resolves asked → open window → **last closed window** →
+`projection_heads`, and the answer names the rung it used. Last-closed before
+head is deliberate: the head is whatever the ingester last pushed and may be law
+no window has cleared against.
+
+**`?roster=`.** 1.0's apex `present` reads a two-term union — `world.mjs §
+worldOrient` calls `presentNear` with no `roll:`, so `near()` takes its
+`roll = []` default — while `GET /world/present` gets the town roll. The default
+here REPRODUCES 1.0 (the GO is equality); `?roster=roll` serves the 2026-08-29
+ruling's wider one. At the quay that is 1 resident against 49.
+
+### The equalities
+
+```sh
+export WORLD2_PG_URL="postgres://snapshot_reader:…@localhost:5432/world2_dev"
+export WORLD2_PG=1 WORLD_APEX=1 WORLD_PRESENCE=1 WORLD_EMISSIONS=1 WORLD_MOVEMENT_V2=1
+export WORLD_CLONE=/srv/world2-lab/world-frozen
+export WORLD_STORE_DB=/srv/world2-lab/office/world.db LEDGER_FREEZE=1
+node world2/tools/falsifier-apex-equality.mjs --world-repo /srv/world2-lab/world-frozen --prove-can-fail
+```
+
+Run 2026-09-03 against `world2_dev` + the frozen lab office, 14 standpoints
+derived from the store (a berth, the vessel, Ferry's crossing, the commons, a
+minting ground, a mark inside a parcel, a parcel centre, open ground, six spread
+parcels):
+
+```
+  ·  A1   compared    14  granted, per standpoint
+  ·  A2   compared   168  the whole card set, field by field
+  ·  A2b  compared    14  the card ORDER
+  ·  A3   compared    53  the containment spine
+  AMBER A4/A4b       182  the field of view — AD-1
+  ·  A5   compared   168  terms, built by 1.0's own buildTerms from BOTH laws
+  ·  A6   compared     5  the rendered resident, over shared handles
+  ·  A6b  compared    14  the presence bound
+  ·  A7   compared    14  the top-level KEY SET
+GREEN · every equality holds (100 acknowledged divergences; --strict makes them red)
+```
+
+Exit **0** green · **1** RED · **2** cannot run. Every equality reports its own
+`compared`; any that compared zero exits 2. `--strict` promotes every
+acknowledged divergence to RED and the same run then exits 1 — which is what
+keeps the acknowledgements from becoming a blindfold.
+
+**The sample is DERIVED, never typed in.** A hardcoded coordinate list rots the
+first time a mark relocates and would keep reporting greens for a class it had
+stopped testing. Each standpoint is a requirement with a finder, and a
+requirement that finds nothing REFUSES.
+
+**The human lane does not exist at this law, and the run says so.** The only
+`for: "human"` grant at `cba817d7` sits on the `human` class itself — an ACTOR
+class, not a ground — so no standpoint in this world hands a human feet. S5
+stands in for what that standpoint was chosen to test (the ground channel) and
+the absence is printed.
+
+### The can-fail proof
+
+Nine breaks, each a plausible defect of this port, applied in memory. The proof
+runs with acknowledgements SUSPENDED and against a per-equality baseline
+SIGNATURE — not a count. Both were defects in the proof itself: A4's break came
+back MISSED because its divergences are acknowledged, then came back falsely
+caught because dropping a mark happened to emit the same NUMBER of diff paths.
+
+```
+caught  A1     0 ->  14  a class the projection admits that the store's gate refuses
+caught  A2     0 ->   1  a blurb quoted from the wrong residue
+caught  A2b    0 ->  12  the ground/ambient precedence resolving the other way
+caught  A3     0 ->   2  a lost `points:` ring, so the spine falls back to the bbox
+caught  A4    11 ->  11  a mark dropped from the field of view (caught by signature)
+caught  A5     0 ->  60  the residue pointer moved, so `means` quotes the wrong class
+caught  A6     0 ->   2  a resident rendered at the wrong bearing
+caught  A6b    0 ->   1  the presence bound moved
+caught  A7     0 ->   9  a top-level key going quietly missing
+```
+
+### The acknowledged divergences
+
+Declared as DATA so the report prints them, `--strict` promotes them, and a
+reader sees the whole list without reading the comparator. Each names the 1.0
+line that produces it.
+
+- **AD-1 · `nearby` membership and order.** `world-engine.mjs § lodScore` ranks
+  by angular size MODULATED BY STAMPS; `stamp_projection` holds per-HANDLE
+  balances, not per-mark escrow, so the port emits `weight: 0`. Closes with
+  parity **P-006**'s escrow view (RULED, unbuilt).
+- **AD-2 · `present.residents[].standing` / `.aboard`.** The FRAME half, which
+  `live-reads.mjs` refuses rather than approximates. Absent, never `false`.
+- **AD-3 · `law.hydrated_at` / `as_of_world` / `source`.** 1.0 names the bake;
+  there is no bake here, so the block names the law PIN. The one field where
+  equality would be the defect.
+- **AD-4 · `present` aggregates.** The two stores hold different amounts of one
+  record (1774 departure acts over 80 handles in `acts` against 317 over 50 in
+  the frozen clone, PG a strict superset). A6 compares the render over shared
+  handles and prints its scope.
+
+Two exclusions are computed rather than acknowledged, so A6 can still fail:
+handles whose governing departure differs between the records, and handles the
+1.0 PRESENCE BAKE has not caught up to — `dynamic-presence.mjs:99` reads the
+crystallized `entities` table, "refreshed on a tick", not the ledger. 80 of 80
+on this pair, printed every run.
+
+### What this lane found
+
+1. **`ambient` is stored as a STRING in `law_projection` and as a BOOLEAN in the
+   sqlite store.** `marks-fold`'s `parseRecord` has no boolean case, so
+   `ambient: true` arrives as `"true"`; `world-hydrate.mjs:457` NORMALISES
+   (`(m.ambient === true || m.ambient === "true") ? true : null`) and
+   `law-ingest.mjs` stores `recordData(m)` raw. Any consumer carrying 1.0's
+   `json_type(props,'$.ambient') = 'true'` test to the projection reads every
+   ambient class as non-ambient — twelve resident grants at every standpoint
+   became zero on this door's first run. **The fix belongs in the ingester**
+   (normalise once, at the pen); this door reads the hydrator's own two
+   spellings meanwhile. `falsifier-projection-equality.mjs` cannot see this by
+   design — falsifier and ingester share the deriver.
+2. **`stopDepartures` needed no port at all**, only the call: the timetable
+   rides on a mark and marks are in the store. A7 (the key-set equality) is what
+   found it missing — twelve keys against eleven at the vessel. No value
+   comparison could have.

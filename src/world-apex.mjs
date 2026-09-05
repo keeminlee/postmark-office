@@ -594,7 +594,7 @@ async function spawnOnEnter(args, key, who) {
   }
 }
 
-async function wheelOnCrossing(action, args, key, preSpineIds = [], hand = null) {
+async function wheelOnCrossing(action, args, key, preSpineIds = [], hand = null, ctx = {}) {
   // ⚑ WHOEVER CROSSED IS WHO THE WHEEL COUNTS, and for an embodied human that
   // is the HAND, not the housemate whose standpoint oriented the act. The
   // resident's name was the only one this could write, so a human stepping into
@@ -623,7 +623,7 @@ async function wheelOnCrossing(action, args, key, preSpineIds = [], hand = null)
     // Placing them after would leave the join reading the stale spine and fix
     // nothing — which is the version that looks identical in a diff.
     placed = await spawnOnEnter(args, key, who);
-    const after = await worldOrient(args, key);
+    const after = await worldOrient(args, key, { roll: ctx.roll ?? [] });
     if (after?.error) return null;
     spineIds = (after.you?.within ?? []).map((m) => m.id);
   }
@@ -1033,6 +1033,18 @@ export function fieldsFor(action, declared = null) {
 // kept beside it. An action the law exposes and this set does not hold is a door
 // with no room behind it, and L6 goes red the moment one appears.
 export const DISPATCHABLE = Object.freeze(Object.keys(DISPATCH));
+
+// The same table, action → handler TOOL NAME, for a reader outside this file.
+//
+// `entriesFrom` above stamps `dispatches_to: DISPATCH[action].tool` on every
+// action card, and that field is part of the door's grammar — a card without it
+// is a poorer card (the ground-channel bug of 2026-08-26 was exactly that).
+// `world2/tools/apex-reads.mjs` mints the same cards out of `law_projection`
+// and needs the same map. It is DERIVED from `DISPATCH` rather than re-listed,
+// so the 2.0 door cannot answer a tool name the 1.0 door does not dispatch to;
+// a second list would be the one thing lint L6 exists to make impossible.
+export const DISPATCH_TOOLS = Object.freeze(
+  Object.fromEntries(Object.entries(DISPATCH).map(([action, d]) => [action, d.tool])));
 
 // The actor kinds this door can resolve — the seam's own list (the act-as-human
 // packet, dev/act-as-human/DESIGN.md). An action the law mints `for:` a kind
@@ -1676,10 +1688,10 @@ async function happenedFor(oriented, args, key) {
   }
 }
 
-async function apexRead(args, key) {
+async function apexRead(args, key, ctx = {}) {
   // The standpoint decision, the spine, the note and presence are orient's
   // answers — the apex composes the existing verb rather than re-deriving it.
-  const oriented = await worldOrient(args, key);
+  const oriented = await worldOrient(args, key, { roll: ctx.roll ?? [] }); // DEC-11: the town roll rides into `present`
   if (oriented?.error) return oriented;
 
   // Salience is open-your-eyes' ranking, unchanged: the FOV build already
@@ -1918,7 +1930,7 @@ async function apexRead(args, key) {
 
 // ── the act ─────────────────────────────────────────────────────────────────
 
-async function apexDo(args, key) {
+async function apexDo(args, key, ctx = {}) {
   const action = String(args.do ?? "").trim();
 
   // ── the actor seam ────────────────────────────────────────────────────────
@@ -1943,7 +1955,7 @@ async function apexDo(args, key) {
       { mail_is_global: true });
   }
 
-  const oriented = await worldOrient(args, key);
+  const oriented = await worldOrient(args, key, { roll: ctx.roll ?? [] }); // DEC-11: the town roll rides into `present`
   if (oriented?.error) return oriented;
   const seen = await worldEyes(args, key);
   if (seen?.error) return seen;
@@ -2263,7 +2275,7 @@ async function apexDo(args, key) {
     // happen, and joining somebody to a fight they were refused entry to would
     // be the door writing a fact the world does not hold.
     if ((action === "enter" || action === "exit") && !result?.error) {
-      const wheeled = await wheelOnCrossing(action, args, key, spineIds, hand);
+      const wheeled = await wheelOnCrossing(action, args, key, spineIds, hand, ctx);
       if (wheeled) return { ...done, result, [action === "enter" ? "joined" : "left"]: wheeled };
     }
     return result?.error === "bounce" ? { ...result, ...done } : { ...done, result };
@@ -2366,7 +2378,7 @@ async function apexReadAction(args, key, ctx = {}) {
     return bounce(422, "`args` must be an object", `narrowing fields ride inside it — world { read: "${action}", args: { … } }`);
   }
 
-  const oriented = await worldOrient(args, key);
+  const oriented = await worldOrient(args, key, { roll: ctx.roll ?? [] }); // DEC-11: the town roll rides into `present`
   if (oriented?.error) return oriented;
   const seen = await worldEyes(args, key);
   if (seen?.error) return seen;
@@ -2464,7 +2476,7 @@ export async function worldApex(args = {}, key = null, ctx = {}) {
       `call twice: world { mark: "${String(args.mark)}" } for the close look, and world { ${doing ? `do: "${args.do}"` : `read: "${args.read}"`}, … } for the ${doing ? "act" : "shadow"}. To investigate a mark inside a read, that read's own args carry it — world { read: "leave-mark", args: { mark: … } }.`);
   }
   if (reading) return apexReadAction(args, key, ctx);
-  return doing ? apexDo(args, key) : apexRead(args, key);
+  return doing ? apexDo(args, key, ctx) : apexRead(args, key, ctx);
 }
 
 // ── the door ────────────────────────────────────────────────────────────────

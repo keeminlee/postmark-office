@@ -31,7 +31,7 @@ import { pathToFileURL, fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { penCommit } from "./write.mjs";
 import { openDynamic, singleLogEnabled } from "./dynamic-store.mjs";
-import { CLASS_FRAME, appendJournal, settleShadowPens } from "./world-journal.mjs";
+import { CLASS_FRAME, appendActFlipped, appendJournal, laneFlipped, settleShadowPens } from "./world-journal.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CLONE = process.env.WORLD_CLONE ?? resolve(HERE, "..", "world-clone");
@@ -101,16 +101,33 @@ async function main() {
     const { acts: actsJ, unrecognized: unrecJ } = parseEnterExitLedger(`${prevJ}${sepJ}${p.lines.join("\n")}\n`);
     const db = openDynamic();
     let seq = null;
+    let flipped = false;
+    const entry = {
+      crossing: p.at, actor: p.handle, action: p.act ?? "enter", object: p.mark ?? null,
+      cls: CLASS_FRAME, at: null, witnesses: null,
+      payload: { ledger: LEDGER_NAME.replace(/\\/g, "/"), lines: p.lines, summary: p.summary },
+      effect: "the crossing is declared; the record receives it at the save",
+    };
     try {
-      seq = appendJournal(db, {
-        crossing: p.at, actor: p.handle, action: p.act ?? "enter", object: p.mark ?? null,
-        cls: CLASS_FRAME, at: null, witnesses: null,
-        payload: { ledger: LEDGER_NAME.replace(/\\/g, "/"), lines: p.lines, summary: p.summary },
-        effect: "the crossing is declared; the record receives it at the save",
-      }).seq;
+      // LANE FIVE OF THE PEN FLIP (W2_PEN=frame; runbook C5, 2026-09-03 — after
+      // DEC-5 was ruled: occupancy implies geometry, never the reverse). Under
+      // WORLD_SINGLE_LOG the journal IS the frame lane's 1.0 pen, so
+      // appendActFlipped's own ordering — Postgres first, awaited, the journal
+      // row after — is the whole shape. An unreachable pen is the ruled refusal
+      // and nothing was written: the resident is exactly where they were.
+      if (laneFlipped("frame")) {
+        try { const row = await appendActFlipped(db, entry); seq = row.seq; flipped = true; }
+        catch (e) {
+          if (e?.name === "PenUnreachableError")
+            return err(503, e.message, "this lane's pen is the office's record (W2_PEN=frame); when it cannot be reached the door refuses rather than writing anywhere else — you are exactly where you were, and the crossing is safe to declare again");
+          throw e;
+        }
+      } else {
+        seq = appendJournal(db, entry).seq;
+      }
     } finally { try { db.close(); } catch { /* already gone */ } }
     return answer({ lines: p.lines, at: p.at, within: occupancyAt(actsJ, p.at).get(p.handle) ?? [],
-                    commit: null, pushed: false, push_error: null, log: "journal", seq,
+                    commit: null, pushed: false, push_error: null, log: flipped ? "acts" : "journal", seq,
                     settles: "at the save — this crossing spends no commit of its own (WORLD_SINGLE_LOG)",
                     ledger_lines: actsJ.length, ledger_unrecognized: unrecJ.length });
   }
