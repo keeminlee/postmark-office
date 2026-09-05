@@ -138,19 +138,23 @@ export const LANE_FLIPPED_AT = Object.freeze({
   // 2026-09-03 18:58:05Z").
   hold: "2026-09-03T18:58:05Z",
   say: "2026-09-03T18:58:05Z",
-  // Not flipped. C3 (walk) is the next lane; C5 (frame) waits on DEC-5; the
-  // arena is exempt by ruling (P-143).
-  //
-  // C6 (mark) IS WIRED as of 2026-09-04 and is still null here, and the two
-  // facts are not in tension — this table records when a lane's pen ACTUALLY
-  // flipped on a box, which is a fact about `W2_PEN`, not about the code. A
-  // wired lane whose flag has never named it has no flipped era, and writing a
-  // date here before the flag moved would hand the reverse-parity arm a window
-  // in which every `journal_seq`-NULL row is the mirror's — finding 2, planted
-  // by hand. The founder's flip sets this line, in the same change as the flag.
-  walk: null,
-  frame: null,
-  mark: null,
+  // C3, C5, C6 flipped on prod 2026-09-05, one lane at a time, each with the
+  // refusal proof before the flag and the reverse-parity arm after its first
+  // live act (walk 1/1, frame 3/3; mark's amend paired by hand — see the
+  // report's finding on the held-act release instant). The arena stays null by
+  // ruling (P-143). This table records when a lane's pen ACTUALLY flipped on a
+  // box, which is a fact about `W2_PEN`, not about the code: a wired lane whose
+  // flag has never named it has no flipped era, and a date written before the
+  // flag moved would hand the reverse-parity arm a window in which every
+  // `journal_seq`-NULL row is the mirror's — finding 2, planted by hand. The
+  // founder's flip sets each line, in the same change as the flag.
+  // C3 · `W2_PEN=stance,hold,say,walk`, postmark-office.service restarted 19:09:37Z
+  // (G:/Starstory/docs/2026-09-05/w2-walk-frame-mark-flip-report.md).
+  walk: "2026-09-05T19:09:37Z",
+  // C5 · `W2_PEN=stance,hold,say,walk,frame`, restarted 19:11:01Z (same report).
+  frame: "2026-09-05T19:11:01Z",
+  // C6 · `W2_PEN=stance,hold,say,walk,frame,mark`, restarted 19:12:06Z (same report).
+  mark: "2026-09-05T19:12:06Z",
   arena: null,
 });
 

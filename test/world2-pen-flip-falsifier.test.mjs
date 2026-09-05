@@ -54,9 +54,9 @@ test("LANE_FLIPPED_AT speaks laneOf's vocabulary exactly, both directions", () =
 
 test("an unnamed lane has not flipped — nothing gains a flipped era by omission", () => {
   assert.equal(laneFlippedAt("brand-new-lane"), null);
-  assert.equal(laneFlippedAt("walk"), null, "C3 has not flipped");
+  assert.equal(laneFlippedAt("arena"), null, "the arena has not flipped (P-143: exempt by ruling)");
   assert.equal(laneFlippedAt("arena"), null, "refused by ruling, P-143");
-  assert.deepEqual(flippedLanesAt().sort(), ["hold", "say", "stance"]);
+  assert.deepEqual(flippedLanesAt().sort(), ["frame", "hold", "mark", "say", "stance", "walk"]);
 });
 
 test("the three flipped lanes carry the instant their SERVICE restarted", () => {
@@ -122,14 +122,14 @@ test("FINDING 2 · --since names lanes, and an unnamed lane falls to its own row
 });
 
 test("FINDING 2 · an unflipped lane is set aside, not compared", () => {
-  const { since, unflipped } = sinceForLanes(["stance", "walk"], null);
-  assert.deepEqual(unflipped, ["walk"]);
-  assert.equal(since.walk, undefined,
-    "walk's journal_seq-NULL rows are the mirror's; pairing them against a journal that never held them IS finding 2");
+  const { since, unflipped } = sinceForLanes(["stance", "arena"], null);
+  assert.deepEqual(unflipped, ["arena"]);
+  assert.equal(since.arena, undefined,
+    "the arena's journal_seq-NULL rows are the mirror's; pairing them against a journal that never held them IS finding 2");
   // …unless the operator names it, which is how the NEXT lane is checked at the
   // moment of its flip, before its row is written down.
-  const named = sinceForLanes(["walk"], "walk=2026-09-04T00:00:00Z");
-  assert.equal(named.since.walk, "2026-09-04T00:00:00.000Z");
+  const named = sinceForLanes(["walk"], "walk=2026-09-05T20:00:00Z");
+  assert.equal(named.since.walk, "2026-09-05T20:00:00.000Z");
   assert.deepEqual(named.unflipped, []);
 });
 
