@@ -278,6 +278,48 @@ test("the exclusion list names every pilot file that mentions a traced slug", ()
     assert.ok(PILOT_OWN_FILES.includes(f), `${f} is excluded by name`);
 });
 
+// ── the door's grammar, bound the way its siblings are ──────────────────────
+//
+// The town door's own rule, stated twice in town-apex.mjs: "the apex serves the
+// flat verbs, it does not reimplement them". So a read is lawful only as a row
+// pointing at a flat verb that exists, is DELISTED (born behind the apex, like
+// read_asks and the three lane reads before it), and dispatches to one reader.
+// Same three assertions civic-asks.test.mjs makes of read_asks.
+
+test("`read: \"trace\"` dispatches to the flat verb, and only to it", async () => {
+  const { townApex, TOWN_READS, TOWN_READABLE } = await import("../src/town-apex.mjs");
+  const calls = [];
+  const call = async (tool, fields) => { calls.push({ tool, fields }); return { ok: tool, got: fields }; };
+  const out = await townApex({ read: "trace", args: { slug: SLUG } }, null, { call });
+  assert.equal(calls.length, 1, "dispatched exactly once");
+  assert.equal(calls[0].tool, "read_trace");
+  assert.equal(calls[0].fields.slug, SLUG, "the envelope's slug reaches the flat verb");
+  assert.deepEqual(out, { ok: "read_trace", got: { slug: SLUG } }, "…and returns what the flat verb returned, untouched");
+  assert.ok(TOWN_READABLE.includes("trace"), "trace stands on the menu");
+  assert.equal(TOWN_READS.trace.tool, "read_trace");
+});
+
+test("the flat verb exists, is DELISTED, and dispatches to the one reader", async () => {
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../src/mcp.mjs", import.meta.url), "utf8");
+  assert.ok(src.includes('{ name: "read_trace"'), "read_trace has a tool definition");
+  assert.match(src, /"read_trace",/, "…and rides the delisted list — born behind the apex, listed nowhere flat");
+  assert.match(src, /case "read_trace":/, "…and dispatches to the one reader");
+});
+
+test("the door's blurb tells the reader this is NOT the settlement trace", async () => {
+  // The homonym is live: `the-town/the-settlement-trace` stands in the Keeping
+  // Works meaning the settlement's payment walk. Until the lexicon carries an
+  // entry (the founder's call, not this file's), the blurb and the tool
+  // description are the only thing standing between a reader and the wrong
+  // mechanism. If either stops saying so, this reddens.
+  const { TOWN_READS } = await import("../src/town-apex.mjs");
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../src/mcp.mjs", import.meta.url), "utf8");
+  assert.match(TOWN_READS.trace.blurb, /settlement trace/i, "the menu blurb disambiguates");
+  assert.match(src, /the-town\/the-settlement-trace/, "the tool description names the other sense by its mark id");
+});
+
 test("the seven connections are the blueprint's own table, in its order", () => {
   assert.equal(CONNECTIONS.length, 7);
   assert.equal(CONNECTIONS[0].label, "Blueprint answers idea");
