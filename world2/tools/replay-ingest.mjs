@@ -206,14 +206,21 @@ const HERE = dirname(fileURLToPath(import.meta.url));
  */
 export async function classifyParity(findings, { worldRepo, sha, client }) {
   if (!findings.length || !worldRepo || !sha) return null;
+  // The records must come from the world AT `sha`, not from whatever the clone's
+  // working tree is sitting at — the same binding `planBackfill` was returned for
+  // missing. A detached worktree, disposed either way.
+  let co = null;
   try {
-    const record = await historyFor({ worldRepo, sha });
+    co = checkoutAt(worldRepo, sha, "causes");
+    const record = await historyFor({ worldRepo, checkoutDir: co.dir, sha });
     const slugs = findings.map((f) => parseFinding(f)?.slug).filter(Boolean);
     const claim = client ? await claimsFor(client, [...new Set(slugs)]) : () => null;
     return findings.map((f) => classifyFinding(f, { record, claim }));
   } catch (err) {
     console.log(`  (causes unavailable: ${String(err.message).split("\n")[0]} — every finding above still reds)`);
     return null;
+  } finally {
+    co?.dispose();
   }
 }
 
@@ -507,7 +514,7 @@ const commitDate2 = (repo, sha) => new Date(git(repo, "log", "-1", "--format=%cI
  * (the shared-node_modules lesson: a `worktree remove` over a junction empties
  * the junction's target). Nothing is ever linked into these trees.
  */
-function checkoutAt(repo, sha, label) {
+export function checkoutAt(repo, sha, label) {
   const dir = mkdtempSync(join(tmpdir(), `w2replay-${label}-`));
   // mkdtemp made the directory; `worktree add` wants to make it itself.
   rmSync(dir, { recursive: true, force: true });

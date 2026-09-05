@@ -15,7 +15,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  CAUSES, isOutOfScope, parseFinding, classifyFinding, isSweepCommit, summarizeByCause,
+  CAUSES, isOutOfScope, parseFinding, classifyFinding, isSweepCommit, summarizeByCause, historyFor,
 } from "../world2/tools/parity-causes.mjs";
 import { stripSlug } from "../world2/tools/replay-ingest.mjs";
 import { compareMarks } from "../world2/tools/seed-import.mjs";
@@ -254,24 +254,144 @@ test("stripSlug: an object emptied BY the strip becomes null; a genuinely empty 
     "and a genuinely empty geometry still reds");
 });
 
-// ── the backfill plan: it may only ever propose what the GATE is red about ────
-//
-// THE BUG THIS EXISTS FOR. `planBackfill` first asked "does the store's row
-// differ from the register's" in its own words — `!==` over body, geometry,
-// bbox, kind, owner. Its first dry run against a clone of the live store
-// proposed 466 amends where the gate reports 15, because Postgres renders a
-// `box` in its own spelling (so every bbox looked different) and because it did
-// not `stripSlug` the DB's geometry (so all 46 pre-006 rows looked moved). Run
-// on prod that would have rewritten most of the register to close fifteen
-// findings, and the dry run would have looked like a thorough one.
-//
-// `compareMarks`' header names the mechanism exactly — "a second copy of this
-// loop is the twin that drifts silently" — and it drifted inside a day. The plan
-// now comes from `compareMarks` under the gate's own columns, filter and strip.
-// These two tests are that rule's falsifier, and they need no database: the
-// client is a stub, because `planBackfill` asks it exactly two questions.
 
-import { planBackfill } from "../world2/tools/backfill-register.mjs";
+// ── the backfill PLAN, called for real ───────────────────────────────────────
+//
+// WHAT THESE REPLACE, AND WHY. The first two tests under this heading built a
+// stub client, never called `planBackfill`, re-ran the gate's pipeline inline and
+// closed on `assert.ok(typeof planBackfill === "function")`. Reverting the bbox
+// comparison to a string left all sixteen green. They were a probe that could not
+// fail, standing where the falsifier for the most dangerous bug in this lane was
+// supposed to be — and the report claimed the bug was pinned. Returned in review.
+//
+// These CALL it, against a real fixture world repo (a git repo with real commits
+// and a `tools/marks-fold.mjs` the deriver imports out of it — the same technique
+// and the same reason as `world2-replay-ingest.test.mjs`) and a stub client
+// standing in for the store. What they assert is the plan's exact add and amend
+// counts, so re-introducing either original bug moves a number.
+
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { execFileSync } from "node:child_process";
+import {
+  planBackfill, refusalFor, HELD_AMEND_CLASSES, AMEND_FLAG,
+} from "../world2/tools/backfill-register.mjs";
+
+const READER = `
+import { readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+export function fold({ marks }) {
+  return { marks: marks.map((m) => ({ id: m.id, tier: "market", declared_household: "solo:" + m.by })) };
+}
+export function loadMarks(marksDir) {
+  const repo = dirname(dirname(marksDir));
+  const recs = JSON.parse(readFileSync(join(repo, "WORLD", "register.json"), "utf8"));
+  return recs.map((r) => ({ ...r, _dir: join(marksDir, r.by, r.slug) }));
+}
+`;
+
+const rec = (by, slug, over = {}) => ({
+  id: `${by}/${slug}`, by, slug, kind: "sited", body: "A thing.",
+  at: { x: 0, y: 0 }, extent: { w: 2, h: 2 }, ...over,
+});
+
+/** A world repo whose commits carry the two authorships the classifier splits on. */
+function fixtureWorld(steps) {
+  const dir = mkdtempSync(join(tmpdir(), "dec18-bf-"));
+  mkdirSync(join(dir, "tools"), { recursive: true });
+  mkdirSync(join(dir, "WORLD", "marks"), { recursive: true });
+  // `deriveSeed` reads the town's clock out of STATE/log before it reads a single
+  // mark ("cannot read the town's clock"), so a world with no log is not a world.
+  // One crossing is enough: nothing here asks the log a question, but the fixture
+  // has to be a shape the shipped deriver accepts, not a shape it tolerates.
+  mkdirSync(join(dir, "STATE", "log"), { recursive: true });
+  writeFileSync(join(dir, "tools", "marks-fold.mjs"), READER);
+  const g = (env, ...a) => execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", env }).trim();
+  const base = { ...process.env };
+  g(base, "init", "-q");
+  try { g(base, "checkout", "-q", "-b", "main"); } catch { /* already main */ }
+  const shas = {};
+  for (const s of steps) {
+    writeFileSync(join(dir, "WORLD", "register.json"), JSON.stringify(s.register));
+    writeFileSync(join(dir, "STATE", "log", "1.jsonl"),
+      JSON.stringify({ at: s.at, type: "legacy:emission", actor: "nobody", payload: { crossing: 1 } }));
+    writeFileSync(join(dir, "STATE", "log", "1.meta.json"),
+      JSON.stringify({ crossing: 1, covers_from: "2026-08-26T00:00:00.000Z" }));
+    rmSync(join(dir, "WORLD", "marks"), { recursive: true, force: true });
+    mkdirSync(join(dir, "WORLD", "marks"), { recursive: true });
+    writeFileSync(join(dir, "WORLD", "marks", ".keep"), "");
+    for (const m of s.register) {
+      const nodeDir = join(dir, "WORLD", "marks", m.by, m.slug);
+      mkdirSync(nodeDir, { recursive: true });
+      writeFileSync(join(nodeDir, "mark.md"), `---\nkind: ${m.kind}\nby: ${m.by}\n---\n\n${m.body}\n`);
+    }
+    const env = {
+      ...base,
+      GIT_AUTHOR_NAME: s.author, GIT_AUTHOR_EMAIL: "a@a",
+      GIT_COMMITTER_NAME: s.author, GIT_COMMITTER_EMAIL: "a@a",
+      GIT_AUTHOR_DATE: s.at, GIT_COMMITTER_DATE: s.at,
+    };
+    g(env, "add", "-A");
+    g(env, "commit", "-qm", s.subject);
+    shas[s.name] = g(base, "rev-parse", "HEAD");
+  }
+  return { dir, shas, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+}
+
+const SWEEP_SUBJ =
+  "settlement: sweep 3 published, 0 unpublished, 41 left drafted, 0 withdrawn, 0 quarantined";
+
+/**
+ * The world every plan test below is derived from.
+ *
+ *   hand/only-in-repo    added by a HAND commit, absent from the store  -> an ADD
+ *   swept/amended-later  added, then its body changed by a SWEEP commit -> an AMEND
+ *   spelling/agrees      identical in substance; the STORE's row differs only in how
+ *                        Postgres spells the box and by the pre-006 slug smuggled
+ *                        into geometry. The gate calls this identical, so no plan
+ *                        may propose it. THIS is the row the flips move.
+ */
+const theWorld = () => fixtureWorld([
+  {
+    name: "first", author: "Postmark Pen", subject: SWEEP_SUBJ, at: "2026-08-28T00:00:00Z",
+    register: [rec("swept", "amended-later", { body: "OLD." }), rec("spelling", "agrees")],
+  },
+  {
+    name: "sweepAmend", author: "Postmark Pen", subject: SWEEP_SUBJ, at: "2026-08-29T00:00:00Z",
+    register: [
+      rec("swept", "amended-later", { body: "NEW, published by the sweep." }),
+      rec("spelling", "agrees"),
+    ],
+  },
+  {
+    name: "hand", author: "Keemin Lee", at: "2026-09-01T00:00:00Z",
+    subject: "parcel drain resumed: 17 households seated (founder's word)",
+    register: [
+      rec("swept", "amended-later", { body: "NEW, published by the sweep." }),
+      rec("spelling", "agrees"),
+      rec("hand", "only-in-repo"),
+    ],
+  },
+]);
+
+/** The store: two of the three marks, one of them stale, one only spelled differently. */
+const storeRows = () => [
+  {
+    id: "11111111-1111-5111-8111-111111111111", slug: "swept/amended-later", kind: "sited",
+    owner: "swept", household: "solo:swept", body: "OLD.",
+    geometry: { at: { x: 0, y: 0 }, extent: { w: 2, h: 2 } },
+    bbox: "((-1,-1),(1,1))", status: "standing", data: {},
+  },
+  {
+    id: "22222222-2222-5222-8222-222222222222", slug: "spelling/agrees", kind: "sited",
+    owner: "spelling", household: "solo:spelling", body: "A thing.",
+    // Postgres' own spelling of the same box, and the pre-006 slug the clearing
+    // job smuggled into geometry because the column is NOT NULL.
+    geometry: { at: { x: 0, y: 0 }, extent: { w: 2, h: 2 }, slug: "spelling/agrees" },
+    bbox: "(1,1),(-1,-1)", status: "standing", data: {},
+  },
+];
 
 const stubClient = (marks, claims = []) => ({
   query: async (sql) => {
@@ -281,55 +401,106 @@ const stubClient = (marks, claims = []) => ({
   },
 });
 
-test("BACKFILL — a bbox the store SPELLS differently and a smuggled pre-006 slug are NOT drift, and must not be proposed", async () => {
-  const repoMark = {
-    id: "11111111-1111-5111-8111-111111111111", slug: "a/one", kind: "sited", owner: "a",
-    household: "solo:a", body: "b", geometry: { at: { x: 1, y: 2 } },
-    bbox: "((0.5,0.5),(1.5,1.5))", status: "standing", data: {}, parent: null,
-  };
-  // The same mark as the store holds it: the box rendered Postgres' way (same
-  // NUMBERS, different string), and the clearing job's slug smuggled into
-  // geometry. The gate calls this identical. So must the plan.
-  const dbRow = {
-    ...repoMark,
-    bbox: "(1.5,1.5),(0.5,0.5)",
-    geometry: { at: { x: 1, y: 2 }, slug: "a/one" },
-  };
+const planFor = (w, cls, marks = storeRows(), claims = []) =>
+  planBackfill(stubClient(marks, claims), {
+    worldRepo: w.dir, sha: w.shas.hand, windowId: 172, cls,
+    lawSha: "0".repeat(40), townSha: null,
+  });
 
-  const { standingOnly: only, stripSlug: strip, SUBSTANCE_COLUMNS: cols } =
-    await import("../world2/tools/replay-ingest.mjs");
-  const gate = compareMarks(only([dbRow]).map((r) => ({ ...r, geometry: strip(r.geometry) })), [repoMark], { columns: cols });
-  assert.deepEqual(gate, [], "the GATE calls these identical — this is the premise the plan must inherit");
+test("BACKFILL — the plan is CALLED, and each class proposes exactly its own rows", async () => {
+  const w = theWorld();
+  try {
+    const add = await planFor(w, "hand-planted-on-main");
+    assert.equal(add.adds.length, 1, "the hand-planted mark is the one add");
+    assert.equal(add.adds[0].slug, "hand/only-in-repo");
+    assert.equal(add.amends.length, 0, "an ADD class can never emit an amend");
 
-  // And the naive comparison the first version used says the opposite, which is
-  // the whole finding: two answers to one question.
-  const naive = [];
-  if (String(dbRow.bbox ?? "") !== String(repoMark.bbox ?? "")) naive.push("bbox");
-  if (JSON.stringify(dbRow.geometry) !== JSON.stringify(repoMark.geometry)) naive.push("geometry");
-  assert.deepEqual(naive, ["bbox", "geometry"],
-    "the hand-rolled diff disagrees with the gate on both columns — a second copy is not the same comparison");
+    const amend = await planFor(w, "sweep-amend-unmirrored");
+    assert.equal(amend.adds.length, 0);
+    assert.equal(amend.amends.length, 1, "the sweep-published body change is the one amend");
+    assert.equal(amend.amends[0].slug, "swept/amended-later");
+    assert.deepEqual(amend.amends[0].fields, ["body"]);
+
+    // THE ROW THE FLIPS MOVE. `spelling/agrees` differs from the store only in how
+    // Postgres spells its box and by the smuggled pre-006 slug. The gate calls it
+    // identical, so NO class may propose it — and both original bugs did.
+    for (const cls of ["hand-planted-on-main", "sweep-published-unmirrored",
+      "sweep-amend-unmirrored", "hand-amend-on-main"]) {
+      const p = await planFor(w, cls);
+      assert.equal([...p.adds, ...p.amends].filter((r) => r.slug === "spelling/agrees").length, 0,
+        `${cls} must not propose a row the gate is silent about`);
+    }
+  } finally { w.cleanup(); }
 });
 
-test("BACKFILL — the plan proposes exactly the gate's MISSING rows for its class, and nothing else", async () => {
-  // A real register of two marks, one of which the store lacks. No stubbing of
-  // deriveSeed: the checkout is the one the fixture writes, so this exercises the
-  // plan's actual path from findings to rows.
-  const inBoth = {
-    id: "11111111-1111-5111-8111-111111111111", slug: "a/one", kind: "sited", owner: "a",
-    household: "solo:a", body: "b", geometry: null, bbox: null, status: "standing", data: {}, parent: null,
-  };
-  const onlyInRepo = { ...inBoth, id: "22222222-2222-5222-8222-222222222222", slug: "a/two" };
+test("BACKFILL — the oracle is bound to --sha, not to the clone's working tree", async () => {
+  const w = theWorld();
+  try {
+    // The repo's HEAD is the LAST commit, which carries `hand/only-in-repo`.
+    // Deriving at the SWEEP-AMEND sha must not see it. Before this binding the
+    // register came from the working tree while the header printed the sha, so
+    // this assertion could not have failed however wrong the answer was.
+    const atSweep = await planBackfill(stubClient(storeRows()), {
+      worldRepo: w.dir, sha: w.shas.sweepAmend, windowId: 172,
+      cls: "hand-planted-on-main", lawSha: "0".repeat(40), townSha: null,
+    });
+    assert.equal(atSweep.adds.length, 0,
+      "at the sweep-amend sha the hand's mark does not exist yet, so there is nothing to add");
+    assert.equal(atSweep.registerSize, 2, "the register at that sha holds two marks, not three");
 
+    const atHead = await planFor(w, "hand-planted-on-main");
+    assert.equal(atHead.adds.length, 1);
+    assert.equal(atHead.registerSize, 3, "and at HEAD it holds three — the two shas differ");
+  } finally { w.cleanup(); }
+});
 
-  const { standingOnly: only, stripSlug: strip, SUBSTANCE_COLUMNS: cols } =
-    await import("../world2/tools/replay-ingest.mjs");
-  const findings = compareMarks(only([inBoth]).map((r) => ({ ...r, geometry: strip(r.geometry) })),
-    [inBoth, onlyInRepo], { columns: cols });
-  assert.equal(findings.length, 1);
-  assert.equal(parseFinding(findings[0]).kind, "missing");
-  assert.equal(parseFinding(findings[0]).slug, "a/two");
-  // planBackfill is exercised end to end on the box (§4 of the lane report); what
-  // is pinned here is the invariant it now inherits: one finding in, at most one
-  // row out, and never a row the gate is silent about.
-  assert.ok(typeof planBackfill === "function");
+test("BACKFILL — an unknown sha REFUSES rather than falling back to the working tree", async () => {
+  const w = theWorld();
+  try {
+    await assert.rejects(
+      () => planBackfill(stubClient(storeRows()), {
+        worldRepo: w.dir, sha: "0".repeat(40), windowId: 172,
+        cls: "hand-planted-on-main", lawSha: "0".repeat(40), townSha: null,
+      }),
+      /.+/,
+      "a sha the repo does not have must throw, never quietly read whatever is checked out");
+  } finally { w.cleanup(); }
+});
+
+test("BACKFILL — historyFor refuses to be handed the repo in place of the checkout", async () => {
+  await assert.rejects(
+    () => historyFor({ worldRepo: "/nonexistent", sha: "deadbeef" }),
+    /checkoutDir/,
+    "the argument exists to make the working-tree bug impossible, so its absence is an error");
+});
+
+// ── the amend guard ──────────────────────────────────────────────────────────
+//
+// An add is reversible by id list; an amend is an in-place rewrite whose prior
+// value exists nowhere in the store. The founder's authorization was given for
+// the first. Until this guard the hold on the amends was a discipline: an add
+// class could never emit an amend, but nothing stopped someone typing an amend
+// class with the same three flags.
+
+test("GUARD — a plan carrying an amend refuses --write unless the flag names the risk", () => {
+  const r = refusalFor({ amendCount: 8 });
+  assert.ok(r, "eight amends under --write must refuse");
+  assert.match(r, /NOT reversible/);
+  assert.match(r, /dump restore/);
+  for (const cls of HELD_AMEND_CLASSES) assert.ok(r.includes(cls), `the refusal names ${cls}`);
+  assert.ok(r.includes(`--${AMEND_FLAG}`), "and names the flag that lifts it");
+  assert.equal(refusalFor({ amendCount: 8, accepted: true }), null, "and the flag lifts it");
+});
+
+test("GUARD — --recompute-standing is behind the same flag, for the same reason", () => {
+  const r = refusalFor({ recompute: true });
+  assert.ok(r, "an in-place tier rewrite must refuse too");
+  assert.match(r, /REWRITES/);
+  assert.match(r, /closes itself at the next/, "and says what waiting costs: nothing");
+  assert.equal(refusalFor({ recompute: true, accepted: true }), null);
+});
+
+test("GUARD — a pure ADD plan is never refused, which is what makes the refusal mean something", () => {
+  assert.equal(refusalFor({ amendCount: 0, recompute: false }), null,
+    "tonight's two classes must pass with the three flags they already have");
 });

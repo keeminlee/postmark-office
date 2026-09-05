@@ -49,11 +49,65 @@ import { historyFor, isSweepCommit, parseFinding } from "./parity-causes.mjs";
 // The gate's own scope, filter and strip — imported, never restated. See
 // § THE BACKFILL IS DRIVEN BY THE GATE'S OWN FINDINGS below for what it cost
 // to learn that a second copy of this comparison is not the same comparison.
-import { SUBSTANCE_COLUMNS, standingOnly, stripSlug } from "./replay-ingest.mjs";
+import { SUBSTANCE_COLUMNS, standingOnly, stripSlug, checkoutAt } from "./replay-ingest.mjs";
 import { uuid5 } from "./seed-import.mjs";
 
 /** HELD by the founder's word. Not a class, not a filter — a name. */
 export const REFUSED_BY_NAME = new Set(["wright/the-lit-name"]);
+
+// ── AN AMEND IS NOT REVERSIBLE, AND THE TOOL NOW SAYS SO BEFORE IT WRITES ────
+//
+// The founder's pre-authorization rested on the conductor's description
+// "additive rows, reversible by id list". Measured (2026-09-05, on a scratch
+// clone): TRUE of the ADD classes — the mark row is new, `marks.id` is the
+// locking claim's id, and it can be deleted back out. FALSE of the AMEND
+// classes — `materializeClaims` REWRITES the standing row in place keeping its
+// id, so the prior body and geometry exist nowhere in the store and the only
+// recovery is a dump restore with the office stopped.
+//
+// Until now nothing said so at the point of action. An add class could never
+// emit an amend (a non-MISSING slug is given an `-amend-` cause by construction,
+// so the class filter drops it), which made the tool structurally safe against
+// the wrong thing: the danger was never a class quietly containing amends, it
+// was someone TYPING an amend class and the tool running it with the same three
+// flags as an add. The hold was a discipline, not a guard. This makes it a guard.
+//
+// The check is on THE PLAN, not on the class name — a class list would go stale
+// the first time a cause is added, and a plan that carries an amend is the fact
+// that matters however it got there.
+export const HELD_AMEND_CLASSES = ["sweep-amend-unmirrored", "hand-amend-on-main"];
+export const AMEND_FLAG = "amends-are-not-reversible";
+
+/**
+ * Why a `--write` may not proceed, or null. Pure, so the refusal can be proved
+ * without a database, a repo, or a plan that took four minutes to derive.
+ *
+ * `--recompute-standing` sits behind the same flag and for the same reason: it
+ * adds no row, it runs an UPDATE of `data.tier` across every standing mark whose
+ * tier moved — including rows this backfill never touched — and the prior tier is
+ * nowhere in the store afterwards. By the same test it is an in-place rewrite.
+ * Holding it costs nothing: the clearing job recomputes tier at every window
+ * close, so `stale-tier` closes itself at the next candle.
+ */
+export function refusalFor({ amendCount = 0, recompute = false, accepted = false }) {
+  if (accepted) return null;
+  if (amendCount > 0) {
+    return `--write refuses: this plan carries ${amendCount} AMEND(s), and an amend is NOT reversible — ` +
+      `\`materializeClaims\` rewrites the standing row in place keeping its id, so the prior body and ` +
+      `geometry exist nowhere in the store and the only way back is a dump restore with the office ` +
+      `stopped. The founder's authorization was given for "additive rows, reversible by id list", which ` +
+      `is true of the ADD classes and false of these. HELD classes: ${HELD_AMEND_CLASSES.join(", ")}. ` +
+      `Pass --${AMEND_FLAG} as WELL if the sitting has ruled otherwise.`;
+  }
+  if (recompute) {
+    return `--write refuses --recompute-standing: it writes no new row, it REWRITES \`data.tier\` across ` +
+      `every standing mark whose tier moved — including rows this backfill never touched — and the prior ` +
+      `tier is nowhere in the store afterwards. Same test, same hold. Nothing is lost by waiting: the ` +
+      `clearing job recomputes tier at every window close, so \`stale-tier\` closes itself at the next ` +
+      `candle. Pass --${AMEND_FLAG} as WELL if the sitting has ruled otherwise.`;
+  }
+  return null;
+}
 
 /** The classes this tool knows how to close. One per invocation, one per commit. */
 export const BACKFILL_CLASSES = [
@@ -76,8 +130,31 @@ const flag = (n) => process.argv.includes(`--${n}`);
  * writes what this returns; a rehearsal that measured a different set from the
  * one the write applies is not a rehearsal.
  */
-export async function planBackfill(client, { worldRepo, sha, windowId, cls, lawSha, townSha }) {
-  const derived = await deriveSeed({ worldRepo, lawSha, townSha });
+export async function planBackfill(client, { worldRepo, sha, windowId, cls, lawSha, townSha, checkoutDir }) {
+  // ── THE ORACLE IS BOUND TO `--sha`, NOT TO WHATEVER THE CLONE IS SITTING AT ──
+  //
+  // This function used to call `deriveSeed({ worldRepo })` — the clone's WORKING
+  // TREE — while `sha` fed only the history lookup, and then printed `world <sha>`
+  // in the header. Pointed at a full clone parked on world main it derived a
+  // different register from the one it claimed, and said nothing. The rehearsal
+  // did not catch it because I happened to pass a checkout already at S58, which
+  // is exactly the accident that hides this class of bug.
+  //
+  // Now the register is derived from a detached worktree at `sha`, the same
+  // `checkoutAt` the gate uses (`replay-ingest.mjs § checkoutAt`), disposed on
+  // every path. A caller that already holds a checkout at that sha may pass
+  // `checkoutDir` and own its lifetime; nobody may pass neither.
+  const own = checkoutDir ? null : checkoutAt(worldRepo, sha, "backfill");
+  const at = checkoutDir ?? own.dir;
+  try {
+    return await planFrom(client, { worldRepo, checkoutDir: at, sha, windowId, cls, lawSha, townSha });
+  } finally {
+    own?.dispose();
+  }
+}
+
+async function planFrom(client, { worldRepo, checkoutDir, sha, windowId, cls, lawSha, townSha }) {
+  const derived = await deriveSeed({ worldRepo: checkoutDir, lawSha, townSha });
   const register = new Map(derived.marks.map((m) => [m.slug, m]));
 
   const dbRows = (await client.query(
@@ -88,7 +165,7 @@ export async function planBackfill(client, { worldRepo, sha, windowId, cls, lawS
   const claimRows = (await client.query("SELECT slug, status FROM claims")).rows;
   const draftSlugs = new Set(claimRows.filter((c) => c.status === "draft").map((c) => c.slug));
 
-  const record = await historyFor({ worldRepo, sha });
+  const record = await historyFor({ worldRepo, checkoutDir, sha });
 
   // ── THE BACKFILL IS DRIVEN BY THE GATE'S OWN FINDINGS, NOT BY A SECOND DIFF ──
   //
@@ -313,11 +390,27 @@ BLOCKED BY A PARENT IN ANOTHER CLASS ${plan.blockedByParent.length} — \`marks.
     for (const s of plan.skipped) console.log(`  · ${s.slug} — ${s.why}`);
   }
 
+  // THE AMEND REFUSAL IS CHECKED AFTER THE PLAN AND BEFORE THE TRANSACTION, so a
+  // refused run still prints the whole dry-run listing above — the operator sees
+  // exactly what was refused rather than a bare error.
+  const refusal = refusalFor({
+    amendCount: plan.amends.length,
+    recompute: flag("recompute-standing"),
+    accepted: flag(AMEND_FLAG),
+  });
+
   if (!write) {
     console.log(`\n--dry-run: nothing was written. Re-run with --write --i-have-the-founders-word` +
-      `${looksLab ? "" : " --prod"} to apply.`);
+      `${looksLab ? "" : " --prod"}${refusal ? ` --${AMEND_FLAG}` : ""} to apply.`);
+    if (refusal) console.log(`\nNOTE — under --write this plan would be REFUSED:\n  ${refusal}`);
     await client.end();
     process.exit(0);
+  }
+
+  if (refusal) {
+    console.error(`\n${refusal}`);
+    await client.end();
+    process.exit(2);
   }
 
   await client.query("BEGIN");

@@ -237,10 +237,23 @@ const git = (repo, ...args) => {
  *    answers "no such file" and a classifier built on it puts 116 findings in
  *    one silent bucket. Walking `sha` answers for every one of them.
  */
-export async function historyFor({ worldRepo, sha, mainRef = "main" }) {
-  const { records } = await foldDerivedFor(worldRepo);
+export async function historyFor({ worldRepo, checkoutDir, sha, mainRef = "main" }) {
+  // THE RECORDS COME FROM THE CHECKOUT, THE HISTORY FROM THE REPO. Two different
+  // trees and they are not interchangeable: `checkoutDir` is the world AT `sha`
+  // (a detached worktree the caller made and disposes), while `worldRepo` is the
+  // full clone whose HEAD is wherever the operator left it and whose object
+  // database is the only thing that can answer a `git log`.
+  //
+  // Passing `worldRepo` for both — which this function did until it was caught in
+  // review — reads the register out of the WORKING TREE while printing the sha it
+  // was asked about. On a clone sitting at world main that is a different world,
+  // silently. The caller is required to say which tree the records come from.
+  if (!checkoutDir) throw new Error(
+    "historyFor needs `checkoutDir` — the world AT the compared sha. Passing the repo itself reads " +
+    "whatever its working tree happens to be, which is the bug this argument exists to make impossible.");
+  const { records } = await foldDerivedFor(checkoutDir);
   const dirBySlug = new Map(
-    records.map((r) => [r.id, r._dir ? relative(worldRepo, r._dir).split("\\").join("/") : null]));
+    records.map((r) => [r.id, r._dir ? relative(checkoutDir, r._dir).split("\\").join("/") : null]));
   const mainPaths = new Set(git(worldRepo, "ls-tree", "-r", "--name-only", mainRef).split("\n").filter(Boolean));
   const cache = new Map();
 
