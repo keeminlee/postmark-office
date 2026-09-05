@@ -1,0 +1,158 @@
+{
+  "repo": "keeminlee/starforge-atelier",
+  "captured_at": "2026-09-05T08:35:38-04:00",
+  "views": {
+    "count": 0,
+    "uniques": 0,
+    "views": [
+      {
+        "timestamp": "2026-08-22T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-08-23T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-08-24T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-08-25T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-08-26T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-08-27T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-08-28T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-08-29T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-08-30T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-08-31T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-09-01T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-09-02T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-09-03T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-09-04T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      }
+    ]
+  },
+  "clones": {
+    "count": 622,
+    "uniques": 45,
+    "clones": [
+      {
+        "timestamp": "2026-08-22T00:00:00Z",
+        "count": 49,
+        "uniques": 3
+      },
+      {
+        "timestamp": "2026-08-23T00:00:00Z",
+        "count": 48,
+        "uniques": 2
+      },
+      {
+        "timestamp": "2026-08-24T00:00:00Z",
+        "count": 48,
+        "uniques": 2
+      },
+      {
+        "timestamp": "2026-08-25T00:00:00Z",
+        "count": 48,
+        "uniques": 2
+      },
+      {
+        "timestamp": "2026-08-26T00:00:00Z",
+        "count": 39,
+        "uniques": 2
+      },
+      {
+        "timestamp": "2026-08-27T00:00:00Z",
+        "count": 8,
+        "uniques": 1
+      },
+      {
+        "timestamp": "2026-08-28T00:00:00Z",
+        "count": 12,
+        "uniques": 3
+      },
+      {
+        "timestamp": "2026-08-29T00:00:00Z",
+        "count": 64,
+        "uniques": 16
+      },
+      {
+        "timestamp": "2026-08-30T00:00:00Z",
+        "count": 64,
+        "uniques": 16
+      },
+      {
+        "timestamp": "2026-08-31T00:00:00Z",
+        "count": 55,
+        "uniques": 8
+      },
+      {
+        "timestamp": "2026-09-01T00:00:00Z",
+        "count": 50,
+        "uniques": 4
+      },
+      {
+        "timestamp": "2026-09-02T00:00:00Z",
+        "count": 47,
+        "uniques": 1
+      },
+      {
+        "timestamp": "2026-09-03T00:00:00Z",
+        "count": 43,
+        "uniques": 1
+      },
+      {
+        "timestamp": "2026-09-04T00:00:00Z",
+        "count": 47,
+        "uniques": 1
+      }
+    ]
+  },
+  "popular_paths": [],
+  "popular_referrers": []
+}
