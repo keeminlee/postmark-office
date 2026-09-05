@@ -175,7 +175,17 @@ export function resolveHumanActor({ action, as: kind, beside, key, fence = "ambi
     // it; that is a small lane of its own and is named here rather than
     // silently left, because a stale copy that reads as law is worse than an
     // honest note beside it.
-    says: "The household's human: a voice anywhere, beside their resident — and on their own household's ground, feet of their own, at a resident's pace.",
+    // DRIFTED, AND RE-QUOTED 2026-09-05. The copy below said "on their OWN
+    // household's ground … at A RESIDENT'S pace" and the record says neither.
+    // World `43d083ed` — "the walk pace stops being written three times: the
+    // two dead copies become pointers at the one live declaration" — moved the
+    // pace to the dial it names, and this copy did not follow. That is the drift
+    // the note above predicted, arriving; it is re-quoted verbatim from the class
+    // mark rather than re-worded, and test/human-actor.test.mjs asserts the
+    // record CONTAINS this string, so the next divergence reds instead of
+    // shipping. The lane that makes the door read the store rather than hold a
+    // copy is still the right answer and is still not this change.
+    says: "The household's human: a voice anywhere, beside their resident — and on their household's ground, feet of their own, at the-town/resident's pace.",
     note: `${COMPANIONED}. The words land under the human's own hand; the resident lends the standing they are heard from.`,
   };
 }
