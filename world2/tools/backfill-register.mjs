@@ -56,6 +56,8 @@ import { uuid5 } from "./seed-import.mjs";
 /** HELD by the founder's word. Not a class, not a filter — a name. */
 export const REFUSED_BY_NAME = new Set(["wright/the-lit-name"]);
 
+const NL = String.fromCharCode(10);
+
 // ── AN AMEND IS NOT REVERSIBLE, AND THE TOOL NOW SAYS SO BEFORE IT WRITES ────
 //
 // The founder's pre-authorization rested on the conductor's description
@@ -291,6 +293,79 @@ export function privilegeRefusal(p) {
     `grant exists. Connect as the owner role (\`world2_owner\`), which is what replay-ingest itself ` +
     `uses. Checked BEFORE any dump or write, because a grant error found mid-transaction reads as one ` +
     `failed statement rather than as the wrong role for the whole task.`;
+}
+
+// ── THE ONE PLACE `held` FLOWS, so the CLI cannot compute it and drop it ─────
+//
+// THE BUG THIS EXISTS FOR (reviewer, on the pin): the CLI read the file, used the
+// set to LIFT the visibility refusal, and then built `planBackfill`'s options
+// WITHOUT it. So `--drafts-held-by-name` looked like it worked — the refusal went
+// away, the run proceeded — and held nothing: as `office_api` with all five slugs
+// in the file, prod planned ADD 32 and printed no SKIPPED block at all. The
+// escape hatch for the worst bug in the lane was itself inert.
+//
+// The unit test could not have caught it. It called `planBackfill` directly with
+// `heldByName`, which is the function the CLI was failing to pass it to — a test
+// aimed one layer below the mistake. So the fix is not another assertion, it is
+// to REMOVE THE PLACE THE MISTAKE LIVES: preflight and plan happen in one
+// function, `held` is its argument, and there is no longer a step between reading
+// the file and using it where a caller could forget.
+//
+// Returns `{ refused, vis, plan }`. `refused` is a string the caller prints and
+// exits on; the caller does not decide whether to refuse.
+export async function preflightAndPlan(client, {
+  worldRepo, sha, windowId, cls, lawSha, townSha, heldByName = null,
+}) {
+  const vis = await visibilityProbe(client);
+  const refused = visibilityRefusal(vis, { heldByName });
+  if (refused) return { refused, vis, plan: null };
+  const plan = await planBackfill(client, {
+    worldRepo, sha, windowId, cls, lawSha, townSha, heldByName,
+  });
+  plan.cls = cls;
+  return { refused: null, vis, plan };
+}
+
+/**
+ * The receipt, as a string rather than a pile of `console.log`s.
+ *
+ * A receipt nobody can assert on is a receipt nobody checks. This is what makes
+ * "the SKIPPED block names the held slug" a test rather than a hope, and it is
+ * the same reasoning as `visibilityLine`: the run's own words, available to the
+ * run's own tests.
+ */
+export function renderPlan(plan, { sha, dbName, windowId }) {
+  const out = [];
+  out.push(`class ${plan.cls} · world ${String(sha).slice(0, 9)} · db ${dbName} · window ${windowId}`);
+  out.push(`register ${plan.registerSize} · store ${plan.storeSize}`);
+  out.push(`
+ADD ${plan.adds.length}:`);
+  for (const a of plan.adds) {
+    out.push(`  + ${a.slug}  [${a.mark.kind}/${a.mark.data?.tier ?? "-"}]  ${a.commit.sha} ` +
+      `${a.commit.author} — ${String(a.commit.subject).slice(0, 60)}`);
+  }
+  out.push(`
+AMEND ${plan.amends.length}:`);
+  for (const a of plan.amends) {
+    out.push(`  ~ ${a.slug}  fields: ${a.fields.join(", ")}  ${a.commit.sha} ` +
+      `${a.commit.author} — ${String(a.commit.subject).slice(0, 60)}`);
+  }
+  if (plan.blockedByParent.length) {
+    out.push(`
+BLOCKED BY A PARENT IN ANOTHER CLASS ${plan.blockedByParent.length} — \`marks.parent\` ` +
+      `is a non-deferrable FK, so these WILL refuse and roll the whole class back unless the ` +
+      `parent's class runs first:`);
+    for (const b of plan.blockedByParent) {
+      out.push(`  ! ${b.slug} — parent ${b.parentSlug} is neither in the store nor in this batch ` +
+        `(its class: ${b.parentClass})`);
+    }
+  }
+  if (plan.skipped.length) {
+    out.push(`
+SKIPPED ${plan.skipped.length} (each says why; none of these is a silent drop):`);
+    for (const s of plan.skipped) out.push(`  · ${s.slug} — ${s.why}`);
+  }
+  return out.join(NL);
 }
 
 /** The classes this tool knows how to close. One per invocation, one per commit. */
@@ -584,43 +659,21 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].split(/[\\/]/).p
   // the same eyes — which is the only way to know the dry run described the
   // write, given that a role which bypasses RLS and one that does not will
   // honestly report different plans from the same store.
-  const vis = await visibilityProbe(client);
-  console.log(visibilityLine(vis, held));
-  const vr = visibilityRefusal(vis, { heldByName: held });
-  if (vr) { console.error(`
-${vr}`); await client.end(); process.exit(2); }
-
   const w = await client.query("SELECT id, law_sha, town_sha FROM windows WHERE status = 'open' ORDER BY id DESC LIMIT 1");
   const windowId = Number(arg("window", w.rows[0]?.id));
-  const plan = await planBackfill(client, {
+
+  // ONE CALL. The preflight and the plan are the same step, and `held` is its
+  // argument — see `preflightAndPlan` for the bug that shape exists to make
+  // impossible. The CLI no longer has a place to compute the hold and forget it.
+  const { refused, vis, plan } = await preflightAndPlan(client, {
     worldRepo, sha, windowId, cls, heldByName: held,
     lawSha: arg("law-sha", w.rows[0]?.law_sha ?? "0".repeat(40)),
     townSha: arg("town-sha", w.rows[0]?.town_sha ?? null),
   });
-  plan.cls = cls;
+  console.log(visibilityLine(vis, held));
+  if (refused) { console.error(`\n${refused}`); await client.end(); process.exit(2); }
 
-  console.log(`class ${cls} · world ${sha.slice(0, 9)} · db ${dbName} · window ${windowId}`);
-  console.log(`register ${plan.registerSize} · store ${plan.storeSize}`);
-  console.log(`\nADD ${plan.adds.length}:`);
-  for (const a of plan.adds) {
-    console.log(`  + ${a.slug}  [${a.mark.kind}/${a.mark.data?.tier ?? "-"}]  ${a.commit.sha} ${a.commit.author} — ${String(a.commit.subject).slice(0, 60)}`);
-  }
-  console.log(`\nAMEND ${plan.amends.length}:`);
-  for (const a of plan.amends) {
-    console.log(`  ~ ${a.slug}  fields: ${a.fields.join(", ")}  ${a.commit.sha} ${a.commit.author} — ${String(a.commit.subject).slice(0, 60)}`);
-  }
-  if (plan.blockedByParent.length) {
-    console.log(`
-BLOCKED BY A PARENT IN ANOTHER CLASS ${plan.blockedByParent.length} — \`marks.parent\` is a ` +
-      `non-deferrable FK, so these WILL refuse and roll the whole class back unless the parent's class runs first:`);
-    for (const b of plan.blockedByParent) {
-      console.log(`  ! ${b.slug} — parent ${b.parentSlug} is neither in the store nor in this batch (its class: ${b.parentClass})`);
-    }
-  }
-  if (plan.skipped.length) {
-    console.log(`\nSKIPPED ${plan.skipped.length} (each says why; none of these is a silent drop):`);
-    for (const s of plan.skipped) console.log(`  · ${s.slug} — ${s.why}`);
-  }
+  console.log(renderPlan(plan, { sha, dbName, windowId }));
 
   // THE AMEND REFUSAL IS CHECKED AFTER THE PLAN AND BEFORE THE TRANSACTION, so a
   // refused run still prints the whole dry-run listing above — the operator sees

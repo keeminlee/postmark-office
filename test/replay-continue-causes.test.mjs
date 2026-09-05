@@ -741,3 +741,99 @@ test("RULE — the probe asks the database only for the privileges that shape ne
   assert.equal(amendProbe.shape, "ADD+AMEND");
   assert.ok(asked[0].includes("'marks', 'UPDATE'"), "the AMEND probe does");
 });
+
+// ── the layer the bug actually lived on ──────────────────────────────────────
+//
+// THE BUG: the CLI read `--drafts-held-by-name`, used the set to LIFT the
+// visibility refusal, and then built `planBackfill`'s options WITHOUT it. So the
+// flag looked like it worked — the refusal went away, the run proceeded — and it
+// held nothing: as `office_api` with all five slugs in the file, prod planned
+// ADD 32 and printed no SKIPPED block. The escape hatch for the worst bug in this
+// lane was itself inert.
+//
+// AND MY EXISTING TEST COULD NOT HAVE CAUGHT IT. "the plan HOLDS a by-name slug"
+// calls `planBackfill` directly with `heldByName` — which is precisely the call
+// the CLI was failing to make. A test aimed one layer below the mistake passes
+// while the mistake ships. That is the same shape as the falsifier that could not
+// fail, one layer over: the assertion was real and it was pointed at the wrong
+// seam.
+//
+// So these test `preflightAndPlan` — the function the CLI now calls, where the
+// preflight and the plan are one step and `held` is its argument — and they
+// assert on the RENDERED RECEIPT, because "the SKIPPED block names the slug" is
+// what an operator actually reads.
+
+import { preflightAndPlan, renderPlan } from "../world2/tools/backfill-register.mjs";
+
+/** A store that reports no drafts at all — exactly what office_api sees on prod. */
+const blindStore = (visRow) => ({
+  query: async (sql) => {
+    if (/pg_class/.test(sql)) return { rows: [visRow] };
+    if (/FROM claims/.test(sql)) return { rows: [] };
+    if (/FROM marks/.test(sql)) return { rows: storeRows() };
+    throw new Error(`unexpected query: ${sql}`);
+  },
+});
+
+const OFFICE_ROW = {
+  whoami: "office_api", db: "world2_dev", bypassrls: false,
+  rls_enabled: true, rls_forced: false, table_owner: "world2_owner", visible_drafts: 0,
+};
+const OWNER_ROW = { ...OFFICE_ROW, whoami: "world2_owner", visible_drafts: 11 };
+
+test("SEAM — the by-name hold reaches the PLAN, and the receipt shows the SKIPPED block", async () => {
+  const w = theWorld();
+  try {
+    const { refused, plan } = await preflightAndPlan(blindStore(OFFICE_ROW), {
+      worldRepo: w.dir, sha: w.shas.hand, windowId: 172, cls: "hand-planted-on-main",
+      lawSha: "0".repeat(40), townSha: null,
+      heldByName: new Set(["hand/only-in-repo"]),
+    });
+    assert.equal(refused, null, "the file lifts the refusal");
+    assert.equal(plan.adds.length, 0, "and the named slug is NOT planned as an add");
+
+    // What the operator reads. The bug printed no SKIPPED block at all.
+    const receipt = renderPlan(plan, { sha: w.shas.hand, dbName: "world2_dev", windowId: 172 });
+    assert.match(receipt, /ADD 0:/);
+    assert.match(receipt, /SKIPPED 1/, "the receipt states the hold");
+    assert.match(receipt, /hand\/only-in-repo/);
+    assert.match(receipt, /held BY NAME/);
+  } finally { w.cleanup(); }
+});
+
+test("SEAM — without the file, the same blind store refuses and plans NOTHING", async () => {
+  const w = theWorld();
+  try {
+    const { refused, plan } = await preflightAndPlan(blindStore(OFFICE_ROW), {
+      worldRepo: w.dir, sha: w.shas.hand, windowId: 172, cls: "hand-planted-on-main",
+      lawSha: "0".repeat(40), townSha: null, heldByName: null,
+    });
+    assert.ok(refused, "a connection that cannot see drafts and was given no names must refuse");
+    assert.equal(plan, null,
+      "and it must not derive a plan at all — a refusal that still hands back a plan invites a caller to use it");
+  } finally { w.cleanup(); }
+});
+
+test("SEAM — a connection that sees the true count needs no file, and holds by what it can read", async () => {
+  const w = theWorld();
+  try {
+    const seeing = {
+      query: async (sql) => {
+        if (/pg_class/.test(sql)) return { rows: [OWNER_ROW] };
+        if (/FROM claims/.test(sql)) return { rows: [{ slug: "hand/only-in-repo", status: "draft" }] };
+        if (/FROM marks/.test(sql)) return { rows: storeRows() };
+        throw new Error(`unexpected query: ${sql}`);
+      },
+    };
+    const { refused, plan } = await preflightAndPlan(seeing, {
+      worldRepo: w.dir, sha: w.shas.hand, windowId: 172, cls: "hand-planted-on-main",
+      lawSha: "0".repeat(40), townSha: null, heldByName: null,
+    });
+    assert.equal(refused, null);
+    assert.equal(plan.adds.length, 0, "the draft it can actually read is held");
+    const receipt = renderPlan(plan, { sha: w.shas.hand, dbName: "world2_dev", windowId: 172 });
+    assert.match(receipt, /SKIPPED 1/);
+    assert.doesNotMatch(receipt, /held BY NAME/,
+      "and the skip does NOT claim a name did it — the store said so itself");
+  } finally { w.cleanup(); }
+});
