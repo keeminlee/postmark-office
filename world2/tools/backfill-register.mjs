@@ -43,9 +43,13 @@ import pg from "pg";
 import { resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 
-import { deriveSeed, canonicalJson } from "./seed-import.mjs";
+import { deriveSeed, compareMarks } from "./seed-import.mjs";
 import { materializeClaims, recomputeStanding } from "./materialize.mjs";
-import { historyFor, isSweepCommit } from "./parity-causes.mjs";
+import { historyFor, isSweepCommit, parseFinding } from "./parity-causes.mjs";
+// The gate's own scope, filter and strip — imported, never restated. See
+// § THE BACKFILL IS DRIVEN BY THE GATE'S OWN FINDINGS below for what it cost
+// to learn that a second copy of this comparison is not the same comparison.
+import { SUBSTANCE_COLUMNS, standingOnly, stripSlug } from "./replay-ingest.mjs";
 import { uuid5 } from "./seed-import.mjs";
 
 /** HELD by the founder's word. Not a class, not a filter — a name. */
@@ -86,10 +90,41 @@ export async function planBackfill(client, { worldRepo, sha, windowId, cls, lawS
 
   const record = await historyFor({ worldRepo, sha });
 
+  // ── THE BACKFILL IS DRIVEN BY THE GATE'S OWN FINDINGS, NOT BY A SECOND DIFF ──
+  //
+  // The first version of this function asked "does the store's row differ from
+  // the register's" in its own words — a handful of `!==` over body, geometry,
+  // bbox, kind, owner. It looked equivalent and it was not. Its first dry run on
+  // a clone of the live store proposed **466 amends** where the gate reports
+  // **15**, because it compared `bbox` as a STRING (Postgres' own rendering of a
+  // `box` almost never matches the repo's spelling) and compared `geometry`
+  // without `stripSlug` (so all 46 pre-006 rows carrying their own slug read as
+  // drift). Run on prod it would have rewritten most of the register to close
+  // fifteen findings.
+  //
+  // `compareMarks`' own header says why, and says it about exactly this: "a
+  // second copy of this loop is the twin that drifts silently". So the plan is
+  // now derived from `compareMarks` under `SUBSTANCE_COLUMNS`, through
+  // `standingOnly` and `stripSlug`, which is character for character what
+  // `parityFindings` hands the gate. A row this tool proposes to touch is a row
+  // the gate is red about, and there is no other way for one to get in here.
+  const dbForGate = standingOnly(dbRows).map((r) => ({ ...r, geometry: stripSlug(r.geometry) }));
+  const findings = compareMarks(dbForGate, derived.marks, { columns: SUBSTANCE_COLUMNS });
+  const fieldsBySlug = new Map();
+  for (const line of findings) {
+    const f = parseFinding(line);
+    if (!f || f.kind !== "differs") continue;
+    if (!fieldsBySlug.has(f.slug)) fieldsBySlug.set(f.slug, new Set());
+    fieldsBySlug.get(f.slug).add(f.field);
+  }
+  const missingSlugs = new Set(
+    findings.map((l) => parseFinding(l)).filter((f) => f?.kind === "missing").map((f) => f.slug));
+
   const adds = [], amends = [], skipped = [];
-  for (const [slug, m] of register) {
-    const standing = db.get(slug);
-    const isMissing = !standing || standing.status !== "standing";
+  for (const slug of [...missingSlugs, ...fieldsBySlug.keys()]) {
+    const m = register.get(slug);
+    if (!m) continue;                                   // EXTRA is never a backfill
+    const isMissing = missingSlugs.has(slug);
     const rec = record(slug);
     const commit = isMissing ? rec?.addedBy : rec?.changedBy;
     if (!commit) { skipped.push({ slug, why: "no commit on the compared tag's ancestry names this mark's file" }); continue; }
@@ -104,17 +139,10 @@ export async function planBackfill(client, { worldRepo, sha, windowId, cls, lawS
     if (isMissing) {
       adds.push({ slug, mark: m, commit, cause });
     } else {
-      // Only the columns the gate compares. A backfill that also rewrote a column
-      // nobody is comparing would be changing the store for reasons no finding
-      // asked for.
-      const diff = [];
-      if (standing.body !== m.body) diff.push("body");
-      if (canonicalJson(standing.geometry) !== canonicalJson(m.geometry)) diff.push("geometry");
-      if (String(standing.bbox ?? "") !== String(m.bbox ?? "")) diff.push("bbox");
-      if (standing.kind !== m.kind) diff.push("kind");
-      if (standing.owner !== m.owner) diff.push("owner");
-      if (!diff.length) continue;
-      amends.push({ slug, mark: m, was: standing, commit, cause, fields: diff });
+      amends.push({
+        slug, mark: m, was: db.get(slug), commit, cause,
+        fields: [...fieldsBySlug.get(slug)].sort(),
+      });
     }
   }
 

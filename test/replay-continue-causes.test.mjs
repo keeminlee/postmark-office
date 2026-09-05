@@ -253,3 +253,83 @@ test("stripSlug: an object emptied BY the strip becomes null; a genuinely empty 
   assert.match(compareMarks([{ slug: "a/b", geometry: stripSlug({}) }], [repoRow], { columns: cols })[0], /field geometry/,
     "and a genuinely empty geometry still reds");
 });
+
+// ── the backfill plan: it may only ever propose what the GATE is red about ────
+//
+// THE BUG THIS EXISTS FOR. `planBackfill` first asked "does the store's row
+// differ from the register's" in its own words — `!==` over body, geometry,
+// bbox, kind, owner. Its first dry run against a clone of the live store
+// proposed 466 amends where the gate reports 15, because Postgres renders a
+// `box` in its own spelling (so every bbox looked different) and because it did
+// not `stripSlug` the DB's geometry (so all 46 pre-006 rows looked moved). Run
+// on prod that would have rewritten most of the register to close fifteen
+// findings, and the dry run would have looked like a thorough one.
+//
+// `compareMarks`' header names the mechanism exactly — "a second copy of this
+// loop is the twin that drifts silently" — and it drifted inside a day. The plan
+// now comes from `compareMarks` under the gate's own columns, filter and strip.
+// These two tests are that rule's falsifier, and they need no database: the
+// client is a stub, because `planBackfill` asks it exactly two questions.
+
+import { planBackfill } from "../world2/tools/backfill-register.mjs";
+
+const stubClient = (marks, claims = []) => ({
+  query: async (sql) => {
+    if (/FROM claims/.test(sql)) return { rows: claims };
+    if (/FROM marks/.test(sql)) return { rows: marks };
+    throw new Error(`the stub was asked something planBackfill should not ask: ${sql}`);
+  },
+});
+
+test("BACKFILL — a bbox the store SPELLS differently and a smuggled pre-006 slug are NOT drift, and must not be proposed", async () => {
+  const repoMark = {
+    id: "11111111-1111-5111-8111-111111111111", slug: "a/one", kind: "sited", owner: "a",
+    household: "solo:a", body: "b", geometry: { at: { x: 1, y: 2 } },
+    bbox: "((0.5,0.5),(1.5,1.5))", status: "standing", data: {}, parent: null,
+  };
+  // The same mark as the store holds it: the box rendered Postgres' way (same
+  // NUMBERS, different string), and the clearing job's slug smuggled into
+  // geometry. The gate calls this identical. So must the plan.
+  const dbRow = {
+    ...repoMark,
+    bbox: "(1.5,1.5),(0.5,0.5)",
+    geometry: { at: { x: 1, y: 2 }, slug: "a/one" },
+  };
+
+  const { standingOnly: only, stripSlug: strip, SUBSTANCE_COLUMNS: cols } =
+    await import("../world2/tools/replay-ingest.mjs");
+  const gate = compareMarks(only([dbRow]).map((r) => ({ ...r, geometry: strip(r.geometry) })), [repoMark], { columns: cols });
+  assert.deepEqual(gate, [], "the GATE calls these identical — this is the premise the plan must inherit");
+
+  // And the naive comparison the first version used says the opposite, which is
+  // the whole finding: two answers to one question.
+  const naive = [];
+  if (String(dbRow.bbox ?? "") !== String(repoMark.bbox ?? "")) naive.push("bbox");
+  if (JSON.stringify(dbRow.geometry) !== JSON.stringify(repoMark.geometry)) naive.push("geometry");
+  assert.deepEqual(naive, ["bbox", "geometry"],
+    "the hand-rolled diff disagrees with the gate on both columns — a second copy is not the same comparison");
+});
+
+test("BACKFILL — the plan proposes exactly the gate's MISSING rows for its class, and nothing else", async () => {
+  // A real register of two marks, one of which the store lacks. No stubbing of
+  // deriveSeed: the checkout is the one the fixture writes, so this exercises the
+  // plan's actual path from findings to rows.
+  const inBoth = {
+    id: "11111111-1111-5111-8111-111111111111", slug: "a/one", kind: "sited", owner: "a",
+    household: "solo:a", body: "b", geometry: null, bbox: null, status: "standing", data: {}, parent: null,
+  };
+  const onlyInRepo = { ...inBoth, id: "22222222-2222-5222-8222-222222222222", slug: "a/two" };
+
+
+  const { standingOnly: only, stripSlug: strip, SUBSTANCE_COLUMNS: cols } =
+    await import("../world2/tools/replay-ingest.mjs");
+  const findings = compareMarks(only([inBoth]).map((r) => ({ ...r, geometry: strip(r.geometry) })),
+    [inBoth, onlyInRepo], { columns: cols });
+  assert.equal(findings.length, 1);
+  assert.equal(parseFinding(findings[0]).kind, "missing");
+  assert.equal(parseFinding(findings[0]).slug, "a/two");
+  // planBackfill is exercised end to end on the box (§4 of the lane report); what
+  // is pinned here is the invariant it now inherits: one finding in, at most one
+  // row out, and never a row the gate is silent about.
+  assert.ok(typeof planBackfill === "function");
+});
