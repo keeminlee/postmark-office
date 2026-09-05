@@ -146,48 +146,84 @@ export const DRAFTS_FLAG = "drafts-held-by-name";
 export const heldSlugsFrom = (text) =>
   String(text).split(/\r?\n/).map((l) => l.replace(/#.*$/, "").trim()).filter(Boolean);
 
-/** What the connection is, and whether the policy applies to it. One query. */
+/**
+ * WHAT THIS CONNECTION CAN SEE, and what would be there if nothing were hiding.
+ *
+ * THE CONDITION IS A COUNT, NOT A ROLE (reviewer, 2026-09-05). The first version
+ * of this asked "is this connection privileged", which gives the right answer
+ * today and is the wrong sentence: it describes the connection instead of the
+ * thing that matters, which is whether the draft count this connection sees is
+ * the true one. The two come apart the moment a policy changes — `FORCE ROW
+ * LEVEL SECURITY` takes the owner's exemption away without touching any grant —
+ * and they would come apart again for any future policy nobody here anticipated.
+ *
+ * So the structural facts below are the EXPLANATION, and `visibleDrafts` is the
+ * measurement. Both are printed, in both arms, so a dry run's receipt and a
+ * write's receipt can be held against each other and seen to be the same eyes.
+ */
 export async function visibilityProbe(client) {
   const { rows } = await client.query(`
     SELECT current_user::text                                   AS whoami,
+           current_database()::text                             AS db,
            (SELECT rolbypassrls FROM pg_roles WHERE rolname = current_user) AS bypassrls,
            c.relrowsecurity                                     AS rls_enabled,
            c.relforcerowsecurity                                AS rls_forced,
-           pg_get_userbyid(c.relowner)::text                    AS table_owner
+           pg_get_userbyid(c.relowner)::text                    AS table_owner,
+           (SELECT count(*)::int FROM claims WHERE status = 'draft') AS visible_drafts
       FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
      WHERE c.relname = 'claims' AND n.nspname = 'public'`);
   const r = rows[0] ?? {};
   return {
     whoami: r.whoami ?? null,
+    db: r.db ?? null,
     bypassrls: Boolean(r.bypassrls),
     rlsEnabled: Boolean(r.rls_enabled),
     rlsForced: Boolean(r.rls_forced),
     tableOwner: r.table_owner ?? null,
+    visibleDrafts: r.visible_drafts ?? 0,
   };
 }
 
 /**
- * Can this connection see a draft claim? Pure, so it is provable from a fixture.
+ * Is the draft count this connection sees the TRUE one?
  *
- * An owner bypasses a policy only while it is not FORCEd — 007 says why it is not
- * ("WHY NOT `FORCE ROW LEVEL SECURITY`"), and that exemption is the only reason my
- * rehearsal saw anything. Stated here rather than assumed, so that the day someone
- * adds FORCE, this answers no instead of answering yesterday's answer.
+ * `claims_read` filters `status = 'draft'` for every session the policy applies
+ * to, so "the policy does not apply to me" and "my count is the whole count" are
+ * the same statement — but only the second one is what the caller needs, and only
+ * the second one stays true if the policy is rewritten. Stated in that order.
+ *
+ * The policy does not apply when RLS is off, when the role bypasses it, or when
+ * the role owns the table AND the policy is not FORCEd. 007 says why it is not
+ * FORCEd; that exemption is the only reason the first rehearsal saw anything, so
+ * it is written down rather than relied on silently.
  */
-export const canSeeDrafts = (v) =>
+export const seesAllDrafts = (v) =>
   !v.rlsEnabled || v.bypassrls || (v.whoami === v.tableOwner && !v.rlsForced);
 
+/** Kept as the older name for one release; `seesAllDrafts` is what it means. */
+export const canSeeDrafts = seesAllDrafts;
+
+/** The one line both arms print, so two receipts can be checked against each other. */
+export const visibilityLine = (v, held) =>
+  `connection ${v.whoami}@${v.db} · claims RLS ${v.rlsEnabled ? "ON" : "off"}` +
+  `${v.rlsForced ? " (FORCED)" : ""} · bypassrls ${v.bypassrls} · table owner ${v.tableOwner}` +
+  ` · drafts visible to this connection: ${v.visibleDrafts}` +
+  ` (${seesAllDrafts(v) ? "the true count — no policy filters this connection"
+    : "A FILTERED SUBSET — the true count is unknown from here"})` +
+  `${held ? ` · ${held.size} slug(s) held BY NAME` : ""}`;
+
 export function visibilityRefusal(v, { heldByName = null } = {}) {
-  if (canSeeDrafts(v)) return null;
-  if (heldByName) return null;
-  return `--refusing to plan: this connection is \`${v.whoami}\`, row-level security is ON for ` +
-    `\`claims\`${v.rlsForced ? " and FORCEd" : ""}, and ${v.whoami} neither bypasses it nor owns the ` +
-    `table (owner: ${v.tableOwner}). Policy \`claims_read\` hides every row whose status is 'draft' ` +
-    `from a session that has not set \`app.household\`, so a plain SELECT returns ZERO drafts and the ` +
-    `hold on residents' private drafts CANNOT FIRE. A zero meaning "there are none" and a zero meaning ` +
+  if (seesAllDrafts(v)) return null;
+  if (heldByName) return null;                 // a name is sufficient on its own
+  return `refusing to plan: this connection is \`${v.whoami}\` and it can see ${v.visibleDrafts} draft ` +
+    `claim(s), which is A FILTERED SUBSET, not the true count. Row-level security is ON for \`claims\`` +
+    `${v.rlsForced ? " and FORCEd" : ""}, ${v.whoami} neither bypasses it nor owns the table ` +
+    `(owner: ${v.tableOwner}), and policy \`claims_read\` hides every row whose status is 'draft' from a ` +
+    `session that has not set \`app.household\`. So the hold on residents' private drafts CANNOT FIRE, ` +
+    `and it would report SKIPPED 0 while doing it. A zero meaning "there are none" and a zero meaning ` +
     `"you are not permitted to look" must not be spelled the same way, so this refuses rather than ` +
-    `planning against an empty set. Either connect as a role that can see them (\`world2_owner\` owns ` +
-    `these tables) or pass --${DRAFTS_FLAG} <file>, one slug per line — a name survives a policy.`;
+    `planning against a subset. Either connect as a role whose count is the true one (\`world2_owner\` ` +
+    `owns these tables) or pass --${DRAFTS_FLAG} <file>, one slug per line — a name survives a policy.`;
 }
 
 // ── AND WHETHER THIS CONNECTION MAY WRITE AT ALL ────────────────────────────
@@ -203,32 +239,58 @@ export function visibilityRefusal(v, { heldByName = null } = {}) {
 // this preflight the failure lands mid-transaction, after the operator has taken
 // two dumps and typed three flags, and reads as a permission error on one
 // statement rather than as "you are the wrong role for this whole task".
-export const WRITE_PRIVILEGES = [
-  ["marks", "INSERT"], ["marks", "UPDATE"], ["marks", "SELECT"],
-  ["claims", "INSERT"], ["claims", "SELECT"],
+//
+// AND IT IS CHECKED BY PLAN SHAPE, NOT BY THE UNION (reviewer, 2026-09-05). The
+// first version asked for `UPDATE marks` on every run, so a pure-ADD class would
+// have been refused for a grant it never uses. What each shape actually needs:
+//
+//   ADD    INSERT claims (the admission) + INSERT marks (materializeClaims)
+//   AMEND  the above, plus UPDATE marks — the in-place rewrite, and the only
+//          reason an amend is not reversible in the first place
+//
+// Neither shape needs UPDATE on `claims`: an amend INSERTs a new claim that
+// supersedes the standing one, it never edits a row. Worth saying because 002's
+// `claims_update_guard` exempts only `clearing_job`, so a design that DID update
+// claims would be refused by the store no matter which role ran it.
+export const READ_PRIVILEGES = [
+  ["marks", "SELECT"], ["claims", "SELECT"],
   ["identities", "SELECT"],   // materializeClaims → ownerHouseholdFor
   ["windows", "SELECT"],
 ];
+export const ADD_PRIVILEGES = [["claims", "INSERT"], ["marks", "INSERT"]];
+export const AMEND_PRIVILEGES = [["marks", "UPDATE"]];
 
-export async function privilegeProbe(client) {
-  const checks = WRITE_PRIVILEGES.map(([t, p], i) =>
-    `has_table_privilege('${t}', '${p}') AS p${i}`).join(", ");
+/** What this plan needs, in the order a reader would ask it. */
+export const privilegesForShape = ({ hasAmends = false } = {}) =>
+  [...READ_PRIVILEGES, ...ADD_PRIVILEGES, ...(hasAmends ? AMEND_PRIVILEGES : [])];
+
+/** Kept for callers that want the union; the shape-aware list is the one used. */
+export const WRITE_PRIVILEGES = privilegesForShape({ hasAmends: true });
+
+export async function privilegeProbe(client, { hasAmends = false } = {}) {
+  const need = privilegesForShape({ hasAmends });
+  const checks = need.map(([t, p], i) => `has_table_privilege('${t}', '${p}') AS p${i}`).join(", ");
   const { rows } = await client.query(`SELECT current_user::text AS whoami, ${checks}`);
   const r = rows[0] ?? {};
   return {
     whoami: r.whoami ?? null,
-    missing: WRITE_PRIVILEGES.filter((_, i) => !r[`p${i}`]).map(([t, p]) => `${p} on ${t}`),
+    shape: hasAmends ? "ADD+AMEND" : "ADD",
+    checked: need.map(([t, p]) => `${p} ${t}`),
+    missing: need.filter((_, i) => !r[`p${i}`]).map(([t, p]) => `${p} on ${t}`),
   };
 }
 
 export function privilegeRefusal(p) {
   if (!p.missing.length) return null;
-  return `--write refuses: the connection is \`${p.whoami}\` and it lacks ${p.missing.join(", ")}. ` +
-    `A backfill INSERTs claims and INSERTs/UPDATEs marks, and 002_grants gives those two halves to ` +
-    `DIFFERENT roles — office_api may write claims and not marks, clearing_job may write marks and ` +
-    `not claims — so neither can do this job. Connect as the owner role (\`world2_owner\`), which is ` +
-    `what replay-ingest itself uses. Checked BEFORE any dump or write, because a grant error found ` +
-    `mid-transaction reads as one failed statement rather than as the wrong role for the whole task.`;
+  return `--write refuses: the connection is \`${p.whoami}\` and, for a ${p.shape} plan, it lacks ` +
+    `${p.missing.join(", ")}. A backfill INSERTs claims and INSERTs marks (an AMEND plan also UPDATEs ` +
+    `marks), and 002_grants gives those halves to DIFFERENT roles — office_api may write claims and ` +
+    `not marks, clearing_job may write marks and has UPDATE-only on claims — so neither can do this ` +
+    `job. 007 points the same way: \`claims_insert\` is written FOR INSERT TO office_api, so under RLS ` +
+    `a role that is neither the owner nor a bypass is refused the insert by POLICY even where the ` +
+    `grant exists. Connect as the owner role (\`world2_owner\`), which is what replay-ingest itself ` +
+    `uses. Checked BEFORE any dump or write, because a grant error found mid-transaction reads as one ` +
+    `failed statement rather than as the wrong role for the whole task.`;
 }
 
 /** The classes this tool knows how to close. One per invocation, one per commit. */
@@ -512,26 +574,26 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].split(/[\\/]/).p
     ? new Set(heldSlugsFrom(readFileSync(arg(DRAFTS_FLAG), "utf8")))
     : null;
 
+  // ── THE VISIBILITY PREFLIGHT — BOTH ARMS, ALWAYS ─────────────────────────
+  //
+  // Runs before a plan is derived, on the dry run exactly as on the write. A
+  // preflight that fired only on the dry run would be backwards: the run that
+  // can do harm would be the unchecked one. And the line it prints carries
+  // `current_user` beside the database and the visible draft count, so a dry
+  // run's receipt and a write's receipt can be laid side by side and SEEN to be
+  // the same eyes — which is the only way to know the dry run described the
+  // write, given that a role which bypasses RLS and one that does not will
+  // honestly report different plans from the same store.
   const vis = await visibilityProbe(client);
-  console.log(`connection ${vis.whoami} · claims RLS ${vis.rlsEnabled ? "ON" : "off"}` +
-    `${vis.rlsForced ? " (FORCED)" : ""} · bypassrls ${vis.bypassrls} · table owner ${vis.tableOwner}` +
-    ` · drafts ${canSeeDrafts(vis) ? "VISIBLE" : "HIDDEN from this role"}` +
-    `${held ? ` · ${held.size} slug(s) held BY NAME` : ""}`);
+  console.log(visibilityLine(vis, held));
   const vr = visibilityRefusal(vis, { heldByName: held });
   if (vr) { console.error(`
 ${vr}`); await client.end(); process.exit(2); }
 
-  if (flag("write")) {
-    const priv = await privilegeProbe(client);
-    const pr = privilegeRefusal(priv);
-    if (pr) { console.error(`
-${pr}`); await client.end(); process.exit(2); }
-    console.log(`privileges OK for ${priv.whoami}: ${WRITE_PRIVILEGES.map(([t, g]) => `${g} ${t}`).join(", ")}`);
-  }
   const w = await client.query("SELECT id, law_sha, town_sha FROM windows WHERE status = 'open' ORDER BY id DESC LIMIT 1");
   const windowId = Number(arg("window", w.rows[0]?.id));
   const plan = await planBackfill(client, {
-    worldRepo, sha, windowId, cls,
+    worldRepo, sha, windowId, cls, heldByName: held,
     lawSha: arg("law-sha", w.rows[0]?.law_sha ?? "0".repeat(40)),
     townSha: arg("town-sha", w.rows[0]?.town_sha ?? null),
   });
@@ -582,6 +644,25 @@ BLOCKED BY A PARENT IN ANOTHER CLASS ${plan.blockedByParent.length} — \`marks.
     await client.end();
     process.exit(2);
   }
+
+  // ── THE PRIVILEGE PREFLIGHT — AFTER THE PLAN, BECAUSE IT ASKS BY SHAPE ────
+  //
+  // A pure-ADD plan needs INSERT on claims and marks; only an AMEND plan needs
+  // UPDATE on marks. Checking the union would refuse a class for a grant it never
+  // uses, which is a false refusal and teaches an operator to reach for a bigger
+  // role than the work wants. So it runs here, where `plan.amends.length` is
+  // known — still before the transaction, and still before the dumps are spent.
+  // It REPORTS on both arms and REFUSES only on `--write`: a dry run needs no
+  // grant beyond SELECT, so refusing one would be a false refusal — but a dry run
+  // that stays silent about a grant the write will need has told the operator
+  // nothing until the moment it costs something.
+  const priv = await privilegeProbe(client, { hasAmends: plan.amends.length > 0 });
+  const pr = privilegeRefusal(priv);
+  console.log(pr
+    ? `privileges for ${priv.whoami} · ${priv.shape} plan · MISSING ${priv.missing.join(", ")}` +
+      `${write ? "" : " — this dry run does not need them; the write would be refused"}`
+    : `privileges OK for ${priv.whoami} · ${priv.shape} plan · ${priv.checked.join(", ")}`);
+  if (pr && write) { console.error(`\n${pr}`); await client.end(); process.exit(2); }
 
   await client.query("BEGIN");
   try {

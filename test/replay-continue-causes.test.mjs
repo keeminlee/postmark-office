@@ -643,3 +643,101 @@ test("PRIVILEGE — the checked set covers every table the write path touches", 
   assert.equal(privilegeRefusal({ whoami: "world2_owner", missing: [] }), null,
     "and a role holding all of them is not refused — the case that makes the others mean something");
 });
+
+// ── the three interaction rules ──────────────────────────────────────────────
+//
+// From the reviewer, 2026-09-05, after the visibility preflight landed. Each is
+// a rule about how the checks relate to each other rather than about any one of
+// them, which is exactly the kind that goes untested and then goes wrong.
+
+import {
+  seesAllDrafts, visibilityLine, privilegesForShape, privilegeProbe,
+  READ_PRIVILEGES, ADD_PRIVILEGES, AMEND_PRIVILEGES,
+} from "../world2/tools/backfill-register.mjs";
+
+const V = (over) => ({
+  whoami: "office_api", db: "world2_dev", bypassrls: false,
+  rlsEnabled: true, rlsForced: false, tableOwner: "world2_owner", visibleDrafts: 0, ...over,
+});
+
+test("RULE — the condition is the DRAFT COUNT, not the role: a filtered subset refuses even when non-zero", () => {
+  // The sharp case. A session that HAS set `app.household` sees its own drafts —
+  // a non-zero count — and is still not the true count. "I can see some drafts"
+  // is not the question; "is what I see all of them" is.
+  const partial = V({ visibleDrafts: 3 });
+  assert.equal(seesAllDrafts(partial), false,
+    "three drafts visible under a policy is still a subset");
+  const r = visibilityRefusal(partial);
+  assert.ok(r);
+  assert.match(r, /3 draft/, "the refusal states the count it can see");
+  assert.match(r, /FILTERED SUBSET/);
+
+  // And zero drafts under a role that sees everything is a real zero — it must
+  // NOT refuse, or the preflight would block a store that simply has no drafts.
+  const trulyNone = V({ whoami: "world2_owner", visibleDrafts: 0 });
+  assert.equal(seesAllDrafts(trulyNone), true);
+  assert.equal(visibilityRefusal(trulyNone), null,
+    "a true zero is a fact about the store; a filtered zero is a fact about the connection");
+});
+
+test("RULE — the receipt line carries current_user, the database and the visible count, in both arms", () => {
+  const owner = visibilityLine(V({ whoami: "world2_owner", visibleDrafts: 11 }), null);
+  assert.match(owner, /world2_owner@world2_dev/, "role AND database, so two receipts are comparable");
+  assert.match(owner, /drafts visible to this connection: 11/);
+  assert.match(owner, /the true count/);
+
+  const blind = visibilityLine(V({ visibleDrafts: 0 }), null);
+  assert.match(blind, /office_api@world2_dev/);
+  assert.match(blind, /drafts visible to this connection: 0/);
+  assert.match(blind, /A FILTERED SUBSET/,
+    "the same line says which kind of zero this is — that is the whole point of printing it");
+
+  // The two lines differ where it matters, which is what makes a dry-run receipt
+  // and a write receipt checkable against each other rather than merely similar.
+  assert.notEqual(owner, blind);
+});
+
+test("RULE — a plan's privileges are asked BY SHAPE, so a pure ADD is not refused for UPDATE it never uses", () => {
+  const add = privilegesForShape({ hasAmends: false }).map(([t, p]) => `${p} ${t}`);
+  const amend = privilegesForShape({ hasAmends: true }).map(([t, p]) => `${p} ${t}`);
+
+  assert.ok(add.includes("INSERT claims") && add.includes("INSERT marks"),
+    "an ADD needs the admission and the mark");
+  assert.ok(!add.includes("UPDATE marks"),
+    "and it does NOT need the in-place rewrite — asking for it is a false refusal");
+  assert.ok(amend.includes("UPDATE marks"), "an AMEND does");
+
+  // Neither shape edits a claims row. Worth pinning: 002's claims_update_guard
+  // exempts only clearing_job, so a design that DID update claims would be
+  // refused by the store whichever role ran it.
+  assert.ok(!amend.includes("UPDATE claims"));
+  assert.deepEqual(AMEND_PRIVILEGES, [["marks", "UPDATE"]]);
+  for (const [t, p] of READ_PRIVILEGES) assert.ok(add.includes(`${p} ${t}`), `${p} ${t} is needed to read`);
+  for (const [t, p] of ADD_PRIVILEGES) assert.ok(amend.includes(`${p} ${t}`), "an amend plan also adds");
+});
+
+test("RULE — the probe asks the database only for the privileges that shape needs", async () => {
+  // A stub that records the SQL, so what is asked is provable rather than assumed.
+  const asked = [];
+  const stub = (shape) => ({
+    query: async (sql) => {
+      asked.push(sql);
+      const n = (sql.match(/has_table_privilege/g) ?? []).length;
+      const row = { whoami: "world2_owner" };
+      for (let i = 0; i < n; i++) row[`p${i}`] = true;
+      return { rows: [row] };
+    },
+    shape,
+  });
+
+  const addProbe = await privilegeProbe(stub("add"), { hasAmends: false });
+  assert.equal(addProbe.shape, "ADD");
+  assert.ok(!asked[0].includes("'marks', 'UPDATE'"),
+    "the ADD probe does not even ASK about UPDATE marks");
+  assert.deepEqual(addProbe.missing, []);
+
+  asked.length = 0;
+  const amendProbe = await privilegeProbe(stub("amend"), { hasAmends: true });
+  assert.equal(amendProbe.shape, "ADD+AMEND");
+  assert.ok(asked[0].includes("'marks', 'UPDATE'"), "the AMEND probe does");
+});
