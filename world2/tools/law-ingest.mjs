@@ -40,10 +40,11 @@
 //   loadMarks / parseRecord   world  tools/marks-fold.mjs   the marks register reader
 //                                    (world-hydrate.mjs imports the identical pair)
 //   termsAt / entryLawOf      world  tools/enter-exit.mjs   the threshold entry law
-//   actionEntriesOf           office src/world-store.mjs    what a class GRANTS —
-//                                    the door's own reader, so the projection says
-//                                    exactly what the door says (a static in-repo
-//                                    import; this file ships in the office)
+//   actionEntriesOf           VENDORED world2/tools/action-entries.mjs — what a
+//                                    class GRANTS. Copied from the door's own reader
+//                                    (office src/world-store.mjs, P-138) so the pen
+//                                    does not import a module G2 deletes; an agreement
+//                                    falsifier holds the copy to the original
 //
 // The ONE exception is documented at `isClassDeclaration` below, which the world
 // keeps private to its lint. It is vendored as four lines with its source named.
@@ -61,7 +62,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { join, resolve, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { actionEntriesOf } from "../../src/world-store.mjs";
+import { actionEntriesOf } from "./action-entries.mjs"; // vendored 2026-09-05 — see action-entries.mjs; the office module is P-138
 
 export const LAW_REPO_KEY = "world-law"; // projection_heads.repo for this pen
 
