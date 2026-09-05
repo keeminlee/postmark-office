@@ -16,6 +16,8 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { readReleaseStamp } from "./release.mjs";
+
 const git = (cwd, args) => execFileSync("git", args, { cwd, encoding: "utf8", maxBuffer: 32 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] }).trim();
 
 // ── THE TRACER MUST NOT FIND ITSELF ─────────────────────────────────────────
@@ -225,13 +227,20 @@ export function releaseSource(root, ref = "HEAD") {
     name: "office release record",
     revision: sha,
     releaseFor(slug) {
-      const stamp = join(root, "RELEASE.json");
-      if (!existsSync(stamp))
-        return { found: false, why: `this tree carries no release stamp, so no release can be said to contain \`${slug}\`; a merged branch is not a release` };
-      const body = readFileSync(stamp, "utf8");
-      if (!body.includes(slug))
-        return { found: false, why: `the release stamp at ${sha ? sha.slice(0, 8) : "this tree"} does not name \`${slug}\`` };
-      return { found: true, detail: "named in the release stamp", method: "release artifact source revision" };
+      // THE OFFICE'S OWN READER, not a second lookup. This first hardcoded
+      // "RELEASE.json" — wrong case, and a duplicate of a name release.mjs
+      // already owns as RELEASE_STAMP_FILE. Windows hid it; the box would not
+      // have. A router points at living source instead of paraphrasing it.
+      const stamp = readReleaseStamp(root);
+      if (!stamp.deployed)
+        return { found: false, why: `${stamp.reason} — so no release can be said to contain \`${slug}\`. A merged branch is not a release, and a passing suite is not a deploy.` };
+      // A stamp names a TAG and a SHA, never a feature. Whether that release
+      // contains this feature is a question about the sha's contents, and this
+      // pilot does not open the tag — so the honest answer is partial, with the
+      // receipt it does hold named.
+      return { found: true, partial: true,
+        detail: `release ${stamp.tag} at sha ${stamp.sha}${stamp.deployed_at ? `, deployed ${stamp.deployed_at}` : ""}`,
+        uncovered: `the stamp is a tag-and-sha receipt for the OFFICE, not a manifest of features: it does not say whether \`${slug}\` is inside ${stamp.sha.slice(0, 8)}. Deciding that needs the tag opened and the feature's code located in it, which this pilot does not do.` };
     },
   };
 }
