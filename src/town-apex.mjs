@@ -28,7 +28,7 @@
 // fires on this door for free because the shape is the shape, not because
 // anything downstream learned the word "town".
 
-import { actionFields, apexEnabled } from "./world-apex.mjs";
+import { actionFields } from "./world-apex.mjs";
 import { standingBounce } from "./standing.mjs";
 import { harborGated, HARBOR_BOUNCE } from "./harbor-gate.mjs";
 
@@ -377,4 +377,4 @@ export const TOWN_TOOL = {
 
 /** Frozen empty, the same shape world-apex uses, so the flag costs one array. */
 const NO_TOOLS = Object.freeze([]);
-export const townTools = () => (apexEnabled() ? [TOWN_TOOL] : NO_TOOLS);
+export const townTools = () => [TOWN_TOOL];

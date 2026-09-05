@@ -19,7 +19,7 @@ import { harborGated, HARBOR_BOUNCE } from "./harbor-gate.mjs";
 import { standingBounce } from "./standing.mjs";
 import { roleGate, ROLE_SUBSCRIBER } from "./roles.mjs";
 import { WORLD_TOOLS, callWorldTool, townPost, worldBlockForHandle } from "./world.mjs";
-import { apexEnabled, apexTools, dispatchToolFor, worldApex } from "./world-apex.mjs"; // stage 3: the apex `world` verb, behind WORLD_APEX
+import { apexTools, dispatchToolFor, worldApex } from "./world-apex.mjs"; // stage 3: the apex `world` verb, behind WORLD_APEX
 import { HOUSEHOLD_TOOL, householdApex, householdDispatchToolFor } from "./household-apex.mjs";
 import { TOWN_TOOL, townApex, townDispatchToolFor, townTools } from "./town-apex.mjs";
 import { TOWN_STAKE_TOOLS, callTownStakeTool } from "./town-stake.mjs"; // the stake gesture, 2026-08-31
@@ -350,11 +350,11 @@ export const TOOLS = [
 // nineteen a connector paid for on connect this morning. The three boundaries
 // above are unchanged: every delisted verb still answers, the whole delist
 // lifts with WORLD_APEX unset, and nothing was unplugged.
-export const toolList = () => (apexEnabled() ? [...TOOLS.filter((t) => !DELISTED.has(t.name)), ...apexTools(), ...townTools()] : TOOLS);
+export const toolList = () => [...TOOLS.filter((t) => !DELISTED.has(t.name)), ...apexTools(), ...townTools()];
 
 // What may be CALLED is wider than what is LISTED — the whole point of a
 // listing-only delist. The call path looks up here, never in toolList.
-const callableList = () => (apexEnabled() ? [...TOOLS, ...apexTools(), ...townTools()] : TOOLS);
+const callableList = () => [...TOOLS, ...apexTools(), ...townTools()];
 
 // The apex is the one tool whose SHAPE depends on its arguments: bare it is a
 // read anyone may make, and with `do:` it performs a write-shaped act through

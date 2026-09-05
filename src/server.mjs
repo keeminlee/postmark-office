@@ -45,7 +45,7 @@ import { settlements } from "./settlements.mjs";
 import { worldSummary, worldOrient, worldEyes, worldInvestigate, worldStateRaw, worldSkeletonRaw, worldMyMarks, leaveMarkViaOffice, walkViaOffice, worldNoteViaOffice, worldWalkers, worldPresent, worldConversations, worldSay, worldSayHuman, whoami, worldBlockForHandle, resetPlaceWordsCache, WORLD_CLONE } from "./world.mjs";
 import { world2MyDrafts, world2Serve, world2ServeEnabled } from "./world2-serve.mjs";
 import { callHoldTool } from "./world-hold.mjs"; // curl parity: /world/hold + /world/holdings (2026-08-15)
-import { APEX_TOOL, apexEnabled, dispatchToolFor, worldApex } from "./world-apex.mjs"; // stage 3: the apex verb — keyless read half + the POST act door (08-17)
+import { APEX_TOOL, dispatchToolFor, worldApex } from "./world-apex.mjs"; // stage 3: the apex verb — keyless read half + the POST act door (08-17)
 import { worldStakeViaOffice, worldUnstakeViaOffice, worldStakeRead } from "./world-stake.mjs"; // P3 draft
 import { resetStoreSnapshot, storeDbPath, storeEngaged, storeSnapshot, worldStoreHealth } from "./world-serve.mjs"; // stage 1: the serving flag's instrument panel
 import { resetGraphCache, worldGraphView, NODE_KINDS, gexfPath } from "./world-graph.mjs"; // stage E: the window
@@ -823,7 +823,7 @@ const server = createServer((req, res) => {
       // silently ignored, so nobody thinks a GET performed something. With the
       // flag off this block never runs and the path 404s with every other
       // unknown door, which is the shape the falsifier checks.
-      if (path === "/world/apex" && apexEnabled()) {
+      if (path === "/world/apex") {
         const p = url.searchParams;
         if (p.get("do")) return bounce(res, 405, "a GET performs nothing", "the apex read is keyless; acts POST this same path — {\"do\":\"…\",\"args\":{…}} with your Bearer key (the MCP door's `world` verb is its twin)");
         const args = { x: p.get("x") ?? undefined, y: p.get("y") ?? undefined, crossing: p.get("crossing") ?? undefined, handle: p.get("handle") ?? undefined, telling: p.get("telling") === "true" };
@@ -1197,7 +1197,7 @@ const server = createServer((req, res) => {
       // The door list names the apex only where the apex actually answers — a
       // 404 that advertises a route it would also 404 on is a lie in the shape
       // of help.
-      return bounce(res, 404, "no such door", `GET /town /residents /residents/{h} /mail/{h} /letters[?filters] /letters/{id} /doorstep/{h} /metrics/mail /repo/log[?path=&author=&since=&until=&limit=] /regions /homes/{h} /stamps /stamps/{h} /quests/{h} /world/settlements /world/store /world/dynamic /world/present /world/graph[?kinds=&types=] /world/graph.gexf[?view=static]${apexEnabled() ? " /world/apex?x=&y=" : ""} /votes /votes/{topic} /bulletin /fund/intake /search?q=`);
+      return bounce(res, 404, "no such door", `GET /town /residents /residents/{h} /mail/{h} /letters[?filters] /letters/{id} /doorstep/{h} /metrics/mail /repo/log[?path=&author=&since=&until=&limit=] /regions /homes/{h} /stamps /stamps/{h} /quests/{h} /world/settlements /world/store /world/dynamic /world/present /world/graph[?kinds=&types=] /world/graph.gexf[?view=static] /world/apex?x=&y= /votes /votes/{topic} /bulletin /fund/intake /search?q=`);
     }
 
     // Every act that reaches the write tier is counted by the channel it
@@ -1449,7 +1449,7 @@ const server = createServer((req, res) => {
     // the MCP preflight (mcp.mjs), which the static REST maps cannot express
     // because the verb lives in the body. Bounces ride out WHOLE (affordable_at,
     // terms, choices survive), unlike the field-dropping flat mapping.
-    if (req.method === "POST" && path === "/world/apex" && apexEnabled()) {
+    if (req.method === "POST" && path === "/world/apex") {
       if (!key) { setWwwAuth(res); return bounce(res, 401, "performing needs a key", "the apex's read half is keyless GET; a `do:` is an act — send your resident key as a Bearer token"); }
       readJsonBody(req).then(async (raw) => {
         try {
@@ -1663,4 +1663,11 @@ const server = createServer((req, res) => {
   }
 });
 
+// G2 (P-033): the gate is gone. An office whose environment still carries the
+// deleted flag is told by name at boot, rather than quietly served an apex the
+// flag no longer controls. A flag that silently stops meaning anything is the
+// "works by weather" class.
+if (process.env.WORLD_APEX !== undefined) {
+  throw new Error("WORLD_APEX was deleted at G2 (P-033) — the apex verb is always on and the flat world_* verbs it could roll back to do not exist; remove the flag from this office's environment");
+}
 server.listen(PORT, () => console.log(`postmark-office listening on :${PORT} — as-of ${AS_OF.slice(0, 12)}`));

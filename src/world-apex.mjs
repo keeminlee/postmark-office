@@ -98,7 +98,11 @@ import {
   cockpitPortal, encounterOn, joinOnCrossing, leaveOnCrossing, looseIn, publicState,
 } from "./arena.mjs";
 
-export const apexEnabled = () => process.env.WORLD_APEX === "1";
+// G2 (P-033): the WORLD_APEX gate is deleted — 2.0 has no pre-apex office, so
+// the apex is unconditional and there is no flag left to read. The operator
+// warning for a stale flag lives at the office's BOOT (server.mjs), not here:
+// a throw at import time would fire inside every test that legitimately sets
+// the flag for its own fixture.
 
 // ── the crossings' office plumbing (DEMO SLICE, step 5) ─────────────────────
 //
@@ -2446,7 +2450,6 @@ async function apexReadAction(args, key, ctx = {}) {
 }
 
 export async function worldApex(args = {}, key = null, ctx = {}) {
-  if (!apexEnabled()) return bounce(404, "the apex verb is not switched on at this office", "the operator runs it behind WORLD_APEX=1; the flat world_* verbs answer meanwhile");
   const doing = args.do != null && args.do !== "";
   const reading = args.read != null && args.read !== "";
 
@@ -2521,4 +2524,4 @@ export const APEX_TOOL = {
 // callers spread this, so an office running without WORLD_APEX serves exactly
 // the list it served before this file existed.
 const NO_TOOLS = Object.freeze([]);
-export const apexTools = () => (apexEnabled() ? [APEX_TOOL] : NO_TOOLS);
+export const apexTools = () => [APEX_TOOL];
