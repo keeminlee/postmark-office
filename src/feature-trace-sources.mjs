@@ -40,13 +40,25 @@ const git = (cwd, args) => execFileSync("git", args, { cwd, encoding: "utf8", ma
 // exclusion says so in its own answer — an undisclosed filter would be a second
 // way to lie, just quieter than the first.
 export const PILOT_OWN_FILES = Object.freeze([
-  "feature-trace.mjs",
-  "feature-trace-sources.mjs",
-  "feature-trace-demo.mjs",
-  "feature-trace.test.mjs",
+  "src/feature-trace.mjs",
+  "src/feature-trace-sources.mjs",
+  "tools/feature-trace-demo.mjs",
+  "test/feature-trace.test.mjs",
 ]);
 
-const isPilotOwn = (file) => PILOT_OWN_FILES.some((p) => String(file).endsWith(p));
+// Matched on the EXACT relative path, never a suffix. This was
+// `String(file).endsWith(p)` over bare basenames, which drops any path ending
+// in one of those literals — `src/events-feature-trace.mjs` or
+// `src/settlement-feature-trace.mjs` would have been silently excluded from
+// EVERY trace, for every slug, forever. That is the exclusion failing in the
+// direction nobody tests for: not firing when it should, but HIDING A REAL
+// CONSUMER. A filter that can erase evidence must name exactly what it erases.
+//
+// No path normalisation here on purpose: both callers build the argument
+// themselves with forward slashes (`${dir}/${f}` and `test/${f}`), so a
+// separator fix would be guarding against an input this function cannot
+// receive — and a guard for an impossible case is a guard nobody can test.
+const isPilotOwn = (relPath) => PILOT_OWN_FILES.includes(String(relPath));
 const EXCLUSION_NOTE = `the trace pilot's own files (${PILOT_OWN_FILES.join(", ")}) are excluded: they name this slug because they TRACE it, not because they implement or inspect it`;
 
 // ── the world store ─────────────────────────────────────────────────────────
@@ -133,10 +145,27 @@ export function blueprintsSource(repoDir, ref = "HEAD") {
     revision: sha,
 
     blueprintCitesIdea(slug) {
+      // ── THE SWALLOW THIS LOOP USED TO HAVE ────────────────────────────────
+      //
+      // This was `catch { continue; }`. A directory whose `ls-tree` failed was
+      // skipped with no record — so if the one directory that WOULD have
+      // matched was the one that failed, the loop fell out the bottom and
+      // answered `found: false` → **`absent`**: a failed read wearing an
+      // absence's clothes, which is the single defect this whole pilot exists
+      // to prevent. Its own criterion 3, failing inside it, on a path no
+      // fixture walked. Found by review, not by me.
+      //
+      // Now failures are COLLECTED. A match still wins — a directory that
+      // failed is irrelevant once the answer is found elsewhere. But a no-match
+      // with any failure behind it THROWS, and `probe` turns that into
+      // `unreadable` with the error, because "I looked everywhere and it is not
+      // there" is a claim this reader has not earned when part of the search
+      // never ran.
+      const unread = [];
       for (const d of dirs) {
         let files;
         try { files = git(repoDir, ["ls-tree", "--name-only", `${sha}:BLUEPRINTS/${d}`]).split("\n").filter(Boolean); }
-        catch { continue; }
+        catch (e) { unread.push({ dir: d, error: String(e?.message ?? e).slice(0, 120) }); continue; }
         if (!files.includes("proposal.md")) continue;
         const fm = at(`BLUEPRINTS/${d}/proposal.md`).split("\n").slice(0, 20);
         const idea = fm.find((l) => l.startsWith("idea:"))?.slice(5).trim();
@@ -150,7 +179,13 @@ export function blueprintsSource(repoDir, ref = "HEAD") {
           ? { found: true, detail: `BLUEPRINTS/${d}/ cites \`idea: ${slug}\`, stage "${stage}", with a bounded drawing`, method: "authored frontmatter citation, read at the sha" }
           : { found: true, partial: true, detail: `BLUEPRINTS/${d}/proposal.md cites \`idea: ${slug}\`, stage "${stage}"`, uncovered: "the directory holds proposal.md only — no blueprint.md, so the bounded drawing this idea would be answered by does not exist at this sha" };
       }
-      return { found: false, why: `no blueprint directory at ${sha.slice(0, 8)} cites \`idea: ${slug}\` (${dirs.length} directories read)` };
+      // A denominator may only count what was actually READ. The old string
+      // said `${dirs.length} directories read` while counting directories the
+      // catch above had skipped — a silent denominator, the small lie standing
+      // beside the big one.
+      if (unread.length)
+        throw new Error(`${unread.length} of ${dirs.length} blueprint directories could not be read at ${sha.slice(0, 8)} (${unread.map((u) => `${u.dir}: ${u.error}`).join("; ")}) — the search was incomplete, so "no blueprint cites this idea" is not an answer this read can give`);
+      return { found: false, why: `no blueprint directory at ${sha.slice(0, 8)} cites \`idea: ${slug}\` (${dirs.length - unread.length} of ${dirs.length} directories read)` };
     },
   };
 }
@@ -179,7 +214,7 @@ export function officeSource(root, ref = "HEAD") {
         if (!existsSync(d)) continue;
         for (const f of readdirSync(d)) {
           if (!f.endsWith(".mjs")) continue;
-          if (isPilotOwn(f)) continue;                 // the tracer never counts itself
+          if (isPilotOwn(`${dir}/${f}`)) continue;     // the tracer never counts itself
           const body = readFileSync(join(d, f), "utf8");
           // The feature's own slug, not the bare stem — "event" appears in
           // unrelated prose across this tree, and a name-match that cannot
@@ -205,12 +240,20 @@ export function testsSource(root, ref = "HEAD") {
     name: "office test receipts",
     revision: sha,
     inspectionFor(slug) {
-      const files = readdirSync(d).filter((f) => f.endsWith(".test.mjs") && !isPilotOwn(f));
+      const files = readdirSync(d).filter((f) => f.endsWith(".test.mjs") && !isPilotOwn(`test/${f}`));
       const hits = files.filter((f) => readFileSync(join(d, f), "utf8").includes(slug));
       if (!hits.length)
         return { found: false, why: `no suite under test/ names \`${slug}\` at ${sha ? sha.slice(0, 8) : "this tree"} (${files.length} suites read); there is no inspection result tied to a criterion for this feature. Also: ${EXCLUSION_NOTE}` };
+      // 3a — THE ONE BRANCH THAT DID NOT DISCLOSE. Three of the four exclusion
+      // paths carried the note and this one did not, so a reader who got a
+      // resolved-or-partial inspection row was the only reader never told a
+      // filter had run. That is exactly the "second way to lie, just quieter"
+      // the comment above the list warns about, surviving in the single branch
+      // nobody exercised (the events slug returns absent, so the live demo
+      // never reached it). Found by review.
       return { found: true, partial: true, detail: hits.join(", "),
-        uncovered: "a suite names the feature, but no authored criterion-to-test binding exists, so which acceptance criterion this covers is not recorded anywhere" };
+        method: `literal slug occurrence in the office test tree — ${EXCLUSION_NOTE}`,
+        uncovered: `a suite names the feature, but no authored criterion-to-test binding exists, so which acceptance criterion this covers is not recorded anywhere. Also: ${EXCLUSION_NOTE}` };
     },
   };
 }

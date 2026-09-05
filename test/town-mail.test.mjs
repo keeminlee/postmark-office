@@ -729,8 +729,8 @@ test("send_letter FOLDS UNDER household — your pen lives where your standing d
   // 2026-08-31) — the pair and their shared shadow, born delisted the same way.
   // 49 → 50: read_asks (the quarter read, 2026-09-01) — town { read: "asks" },
   // born delisted behind the town apex the same way, definition standing flat.
-  // 50 → 51: read_trace (the feature trace, 2026-09-05) — town
-  // { read: "trace" }, the pilot for Rei's `trace-a-feature-from-idea-to-
+  // 50 → 51: read_feature_trace (the feature trace, 2026-09-05) — town
+  // { read: "feature-trace" }, the pilot for Rei's `trace-a-feature-from-idea-to-
   // opening`, born delisted behind the town apex the same way.
   //
   // ⚑ THIS COUNT IS THE SECOND COPY OF ITSELF. `test/server.test.mjs`

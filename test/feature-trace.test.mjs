@@ -1,4 +1,4 @@
-// feature-trace.test.mjs — the pilot behind `town { read: "trace", args: { slug } }`.
+// feature-trace.test.mjs — the pilot behind `town { read: "feature-trace", args: { slug } }`.
 //
 //   node --test test/feature-trace.test.mjs
 //
@@ -44,7 +44,8 @@ import assert from "node:assert/strict";
 import { traceFeature, reverseLookup, renderHuman, STATES, CONNECTIONS } from "../src/feature-trace.mjs";
 import { officeSource, testsSource, PILOT_OWN_FILES } from "../src/feature-trace-sources.mjs";
 import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
+import { dirname, resolve, join } from "node:path";
+import { writeFileSync, rmSync, existsSync, readFileSync } from "node:fs";
 
 const OFFICE = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -247,6 +248,68 @@ test("the reader stores nothing — the answer is computed at need", () => {
   );
 });
 
+// ── criterion 3, INSIDE the sources · the swallow review found ──────────────
+//
+// `blueprintCitesIdea` walks the chest's directories and used to `catch
+// { continue; }` on a per-directory `ls-tree` failure. If the ONE directory
+// that would have matched was the one that failed, the loop fell out the bottom
+// and answered `found: false` → `absent`. A failed read wearing an absence's
+// clothes: the pilot's own headline property, failing inside the pilot, on a
+// path no fixture walked. The live demo never hit it because every directory
+// read fine.
+//
+// These use a stub `git` shape rather than the real chest, because the defect
+// is about what the LOOP does with a failure and reproducing it against a real
+// repo would mean breaking a repo.
+
+const chestWhere = ({ failOn = null, dirs = ["events-as-first-class-town-objects", "trace-a-feature-from-idea-to-opening"] } = {}) => {
+  // Mirrors blueprintsSource's loop over a fixed directory list, with one
+  // directory's listing throwing — the exact shape of a per-directory git
+  // failure.
+  const unread = [];
+  const why = [];
+  for (const d of dirs) {
+    if (d === failOn) { unread.push(d); continue; }
+    if (d === "events-as-first-class-town-objects") return { found: true, partial: true, detail: `BLUEPRINTS/${d}/proposal.md cites the idea` };
+  }
+  if (unread.length) throw new Error(`${unread.length} of ${dirs.length} blueprint directories could not be read — the search was incomplete`);
+  return { found: false, why: `no blueprint directory cites it (${dirs.length - unread.length} of ${dirs.length} directories read)` };
+};
+
+test("criterion 3 in the sources — a failed directory listing is unreadable, never absent", () => {
+  const src = { name: "postmark-blueprints", revision: "33f290c",
+    blueprintCitesIdea: () => chestWhere({ failOn: "events-as-first-class-town-objects" }) };
+  const res = traceFeature({ slug: SLUG, sources: { ...bench(), blueprints: src } });
+  const row = res.connections.find((c) => c.id === "blueprint-answers-idea");
+  assert.equal(row.state, "unreadable",
+    "the directory that WOULD have matched failed to read — that is a failed search, not an absent blueprint");
+  assert.match(row.error, /search was incomplete/, "the error rides, naming why the answer cannot be given");
+});
+
+test("criterion 3 in the sources — a failure elsewhere does not spoil a real match", () => {
+  const src = { name: "postmark-blueprints", revision: "33f290c",
+    blueprintCitesIdea: () => chestWhere({ failOn: "trace-a-feature-from-idea-to-opening" }) };
+  const res = traceFeature({ slug: SLUG, sources: { ...bench(), blueprints: src } });
+  const row = res.connections.find((c) => c.id === "blueprint-answers-idea");
+  assert.equal(row.state, "partial", "a directory that failed is irrelevant once the answer is found elsewhere");
+});
+
+test("the 'directories read' denominator counts only directories actually read", () => {
+  // The old string said `${dirs.length} directories read` while counting ones
+  // the catch had skipped — a silent denominator beside the silent absence.
+  //
+  // Asserted on the RETURN STATEMENT alone, not the whole file: the comment
+  // above it quotes the old string on purpose, and a whole-file grep for the
+  // old shape therefore matches the explanation of the bug as if it were the
+  // bug. (My first version of this test did exactly that and went red against
+  // correct code — a probe that cannot tell the fix from its own footnote.)
+  const src = readFileSync(new URL("../src/feature-trace-sources.mjs", import.meta.url), "utf8");
+  const line = src.split("\n").find((l) => l.includes("return { found: false") && l.includes("directories read"));
+  assert.ok(line, "the no-match return still names its denominator");
+  assert.match(line, /of \$\{dirs\.length\} directories read/, "…as a fraction");
+  assert.match(line, /dirs\.length - unread\.length/, "…whose numerator subtracts what could not be read");
+});
+
 // ── criterion 10 · the tracer must not find itself ──────────────────────────
 //
 // Found by RUNNING the demo, not by reasoning. The first live answer for the
@@ -273,9 +336,63 @@ test("criterion 10 — the pilot's own suite is not an inspection of the feature
   assert.match(got.why, /excluded/);
 });
 
-test("the exclusion list names every pilot file that mentions a traced slug", () => {
-  for (const f of ["feature-trace.mjs", "feature-trace-sources.mjs", "feature-trace-demo.mjs", "feature-trace.test.mjs"])
-    assert.ok(PILOT_OWN_FILES.includes(f), `${f} is excluded by name`);
+// The old version of this test was named "the exclusion list names every pilot
+// file that mentions a traced slug" and asserted four literals were in a
+// hardcoded four-item list — a tautology, and two of the four contain no slug
+// at all, so the NAME was false as well. Review caught the overclaim. What is
+// actually worth binding is that the list holds EXACT PATHS, because the whole
+// false-negative defect below turns on paths versus suffixes.
+test("the exclusion list holds exact relative paths, not basenames or suffixes", () => {
+  for (const p of PILOT_OWN_FILES) {
+    assert.match(p, /^(src|test|tools)\//, `${p} is an exact relative path`);
+    assert.ok(!p.startsWith("/") && !p.includes(".."), `${p} is repo-relative and does not climb`);
+  }
+  assert.equal(PILOT_OWN_FILES.length, 4);
+});
+
+// ── THE FALSIFIER FOR THE OTHER DIRECTION (found by review) ─────────────────
+//
+// Every criterion-10 test above asserts the exclusion FIRES. None asserted it
+// does not fire when it should not — and under the old `endsWith` match on bare
+// basenames, ANY path ending in one of the four literals was dropped, for every
+// slug, forever. A real consumer named `src/events-feature-trace.mjs` would have
+// been erased from every trace with the filter cheerfully disclosing itself.
+//
+// An exclusion that hides a real match is worse than one that fails to fire:
+// the first silently subtracts evidence, the second only adds noise. This test
+// builds exactly that file, in the real tree, and requires it to be REPORTED.
+
+test("criterion 10 — the exclusion must not hide a REAL consumer whose name resembles the pilot's", () => {
+  const decoy = join(OFFICE, "src", "events-feature-trace.mjs");
+  const slug = "rei/events-as-first-class-town-objects";
+  // A file that would have been swallowed by `endsWith("feature-trace.mjs")`.
+  writeFileSync(decoy, `// a real consumer of ${slug}\nexport const x = 1;\n`, "utf8");
+  try {
+    const got = officeSource(OFFICE).consumersOf(slug);
+    assert.equal(got.found, true, "a genuine consumer is reported, not erased by a name that resembles the pilot's");
+    assert.match(got.detail, /events-feature-trace\.mjs/, "…and it is named in the answer");
+  } finally {
+    rmSync(decoy, { force: true });   // never leave a fixture on the tree (the box-residue class)
+  }
+  // and the tree is left exactly as found
+  assert.equal(existsSync(decoy), false, "the decoy is removed");
+});
+
+test("criterion 10 — every branch that ran the exclusion discloses it, including found:true", () => {
+  // 3a: three of four paths carried the note and inspectionFor's found:true did
+  // not — the one branch a reader reaches with evidence in hand.
+  const decoy = join(OFFICE, "test", "zz-decoy-consumer.test.mjs");
+  const slug = "rei/events-as-first-class-town-objects";
+  writeFileSync(decoy, `// names ${slug}\n`, "utf8");
+  try {
+    const got = testsSource(OFFICE).inspectionFor(slug);
+    assert.equal(got.found, true, "the decoy suite is found");
+    assert.match(got.method ?? "", /excluded/, "the found:true branch discloses the exclusion");
+    assert.match(got.uncovered ?? "", /excluded/, "…in the uncovered sentence too");
+  } finally {
+    rmSync(decoy, { force: true });
+  }
+  assert.equal(existsSync(decoy), false, "the decoy is removed");
 });
 
 // ── the door's grammar, bound the way its siblings are ──────────────────────
@@ -286,25 +403,26 @@ test("the exclusion list names every pilot file that mentions a traced slug", ()
 // read_asks and the three lane reads before it), and dispatches to one reader.
 // Same three assertions civic-asks.test.mjs makes of read_asks.
 
-test("`read: \"trace\"` dispatches to the flat verb, and only to it", async () => {
+test("`read: \"feature-trace\"` dispatches to the flat verb, and only to it", async () => {
   const { townApex, TOWN_READS, TOWN_READABLE } = await import("../src/town-apex.mjs");
   const calls = [];
   const call = async (tool, fields) => { calls.push({ tool, fields }); return { ok: tool, got: fields }; };
-  const out = await townApex({ read: "trace", args: { slug: SLUG } }, null, { call });
+  const out = await townApex({ read: "feature-trace", args: { slug: SLUG } }, null, { call });
   assert.equal(calls.length, 1, "dispatched exactly once");
-  assert.equal(calls[0].tool, "read_trace");
+  assert.equal(calls[0].tool, "read_feature_trace");
   assert.equal(calls[0].fields.slug, SLUG, "the envelope's slug reaches the flat verb");
-  assert.deepEqual(out, { ok: "read_trace", got: { slug: SLUG } }, "…and returns what the flat verb returned, untouched");
-  assert.ok(TOWN_READABLE.includes("trace"), "trace stands on the menu");
-  assert.equal(TOWN_READS.trace.tool, "read_trace");
+  assert.deepEqual(out, { ok: "read_feature_trace", got: { slug: SLUG } }, "…and returns what the flat verb returned, untouched");
+  assert.ok(TOWN_READABLE.includes("feature-trace"), "feature-trace stands on the menu");
+  assert.ok(!TOWN_READABLE.includes("trace"), "and the BARE word does not — it is the settlement's payment walk in the Keeping Works");
+  assert.equal(TOWN_READS["feature-trace"].tool, "read_feature_trace");
 });
 
 test("the flat verb exists, is DELISTED, and dispatches to the one reader", async () => {
   const { readFileSync } = await import("node:fs");
   const src = readFileSync(new URL("../src/mcp.mjs", import.meta.url), "utf8");
-  assert.ok(src.includes('{ name: "read_trace"'), "read_trace has a tool definition");
-  assert.match(src, /"read_trace",/, "…and rides the delisted list — born behind the apex, listed nowhere flat");
-  assert.match(src, /case "read_trace":/, "…and dispatches to the one reader");
+  assert.ok(src.includes('{ name: "read_feature_trace"'), "read_feature_trace has a tool definition");
+  assert.match(src, /"read_feature_trace",/, "…and rides the delisted list — born behind the apex, listed nowhere flat");
+  assert.match(src, /case "read_feature_trace":/, "…and dispatches to the one reader");
 });
 
 test("the door's blurb tells the reader this is NOT the settlement trace", async () => {
@@ -316,7 +434,7 @@ test("the door's blurb tells the reader this is NOT the settlement trace", async
   const { TOWN_READS } = await import("../src/town-apex.mjs");
   const { readFileSync } = await import("node:fs");
   const src = readFileSync(new URL("../src/mcp.mjs", import.meta.url), "utf8");
-  assert.match(TOWN_READS.trace.blurb, /settlement trace/i, "the menu blurb disambiguates");
+  assert.match(TOWN_READS["feature-trace"].blurb, /settlement trace/i, "the menu blurb disambiguates");
   assert.match(src, /the-town\/the-settlement-trace/, "the tool description names the other sense by its mark id");
 });
 

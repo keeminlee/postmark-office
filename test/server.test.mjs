@@ -364,13 +364,13 @@ test("MCP tools/list, apex OFF: the full flat list — the slim's delist is apex
   // the Civic Quarter's five plaques. Born delisted behind the town apex like
   // every lane read above it, so the flag-OFF listing is where its flat
   // definition shows.
-  // 50 -> 51 (the feature trace, 2026-09-05): read_trace — town
-  // { read: "trace" }, the pilot for Rei's `trace-a-feature-from-idea-to-
+  // 50 -> 51 (the feature trace, 2026-09-05): read_feature_trace — town
+  // { read: "feature-trace" }, the pilot for Rei's `trace-a-feature-from-idea-to-
   // opening`. Born delisted behind the town apex like every read above it, so
   // the flag-OFF listing is where its flat definition shows.
   assert.equal(names.length, 51);
   assert.ok(names.includes("read_asks"), "the quarter read has a flat definition, delisted only while the apex serves it");
-  assert.ok(names.includes("read_trace"), "the feature trace has a flat definition, delisted only while the apex serves it");
+  assert.ok(names.includes("read_feature_trace"), "the feature trace has a flat definition, delisted only while the apex serves it");
   assert.ok(names.includes("update_address_fields"), "the fields door stands regardless of the world flag");
   assert.ok(!names.includes("request_blessing"), "request_blessing's delist is unconditional");
   assert.ok(!names.includes("world"), "no apex tool with the flag off");

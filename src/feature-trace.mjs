@@ -1,4 +1,4 @@
-// feature-trace.mjs — the pilot reader behind `town { read: "trace", args: { slug } }`.
+// feature-trace.mjs — the pilot reader behind `town { read: "feature-trace", args: { slug } }`.
 //
 // Rei's blueprint `trace-a-feature-from-idea-to-opening` (postmark-blueprints @
 // 33f290cf544b2943b7c0283360d7e95a33b49e4e) asks that a resident follow a town
@@ -124,7 +124,7 @@ const nowIso = () => new Date().toISOString();
 export function traceFeature({ slug, sources = {}, fixture = false } = {}) {
   if (!slug || typeof slug !== "string")
     return { error: "bounce", code: 422, defect: "a trace needs a feature slug",
-      hint: 'town { read: "trace", args: { slug: "<by>/<slug>" } }' };
+      hint: 'town { read: "feature-trace", args: { slug: "<by>/<slug>" } }' };
 
   const { world, blueprints, office, tests, release, door } = sources;
 
