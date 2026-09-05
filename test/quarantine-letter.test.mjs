@@ -218,6 +218,32 @@ test("the parts, each able to fail on its own", () => {
   assert.match(whatClearsIt("something nobody has read yet"), /withdraw or amend the row named above/);
 });
 
+test("THE RECEIPT CARRIES WHAT THE LETTER READS — the gap that made this whole lane possible", () => {
+  // I nearly shipped this file green against a receipt shape the box does not
+  // produce. `deploy/settlement-receipt.mjs` DROPPED `by` and `detail`, so the
+  // live receipt on 2026-09-05 read, in full:
+  //
+  //   { household: "devadavisson", ref: "draft/devadavisson", reason: "…", row: null }
+  //
+  // — a drawer, a login, and nothing naming a person or a row. Every fixture
+  // above would still have passed while the writer, run against a real
+  // crossing, produced nothing at all. So the two files are bound here: the
+  // receipt writer's own map is read out of the source and asserted to carry
+  // the four fields `setAsideRows` depends on.
+  const src = readFileSync(new URL("../deploy/settlement-receipt.mjs", import.meta.url), "utf8");
+  const map = src.match(/quarantined: \(sweep\?\.quarantined[\s\S]*?\}\)\),/)?.[0] ?? "";
+  assert.ok(map, "the receipt's quarantined map is still where this test looks for it");
+  for (const field of ["by", "row", "detail", "ref"])
+    assert.match(map, new RegExp(`\\b${field}:`), `the receipt must carry \`${field}\` — the letter cannot be addressed without it`);
+
+  // and the reader really does depend on all of them, so the assertion above is
+  // not decoration
+  const bare = setAsideRows({ quarantined: [{ household: "devadavisson", ref: "draft/devadavisson", reason: "r", row: null }] });
+  assert.equal(bare[0].to, null, "the pre-fix shape addresses nobody");
+  assert.equal(bare[0].row, null);
+  assert.equal(bare[0].sentence, null);
+});
+
 test("THE SUITE CHANNEL IS A DIFFERENT FINDING AND SAYS SO", () => {
   const root = town({ handles: ["vermillion", "postmaster"] });
   const out = writeLetters({
