@@ -222,7 +222,7 @@ export async function deriveLaw({ lawRepo }) {
   for (const m of declarations) {
     const path = relPath(repo, join(m._dir, "mark.md"));
     for (const entry of actionEntriesOf({ props: m })) {
-      push("grant", path, `${m.class}/${entry.action}`,
+      push("grant", path, grantKey(m.class, entry),
         { class: String(m.class), ...entry, from: m.id });
     }
   }
@@ -316,6 +316,21 @@ export async function deriveLaw({ lawRepo }) {
  * it is what the `[object Object]` grant collision looked like from the DB's
  * side, and the message it would have printed instead.)
  */
+/**
+ * A grant's key: the (class, action) pair — and the actor kind it is granted FOR
+ * when that is not the resident. The arena's class mark (the 2026-08-29 dungeon
+ * law) grants `strike`, `cast`, `guard` … to residents and AGAIN `for: human`;
+ * two rows, one pair, and this pen refused world main on 2026-09-05 as "the law
+ * states the same thing twice" — it did not; the key was too coarse. A resident
+ * grant keeps the key it always had (`for:` absent means resident, the door's
+ * own reading), so no projected row moves; a grant for another kind carries it.
+ */
+export function grantKey(cls, entry) {
+  const base = `${cls}/${entry.action}`;
+  const kind = entry.for == null ? "" : String(entry.for).trim();
+  return kind && kind !== "resident" ? `${base}/for:${kind}` : base;
+}
+
 export function assertUniqueKeys(rows) {
   const seen = new Map();
   for (const r of rows) {
