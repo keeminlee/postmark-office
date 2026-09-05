@@ -233,12 +233,12 @@ export async function insertAct(client, rowIn, seq = null) {
   const { rows: [r] } = await client.query(
     `INSERT INTO acts (at, crossing, actor, action, object,
                        at_anchor, at_dx, at_dy, witnesses, class,
-                       payload, effect, household, journal_seq)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+                       payload, effect, household)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
      RETURNING id`,
     [row.written_at, row.crossing, row.actor, row.action, row.object,
      row.at_anchor, row.at_dx, row.at_dy, row.witnesses, row.class,
-     row.payload, row.effect, household, seq]);
+     row.payload, row.effect, household]);
   return r.id;
 }
 

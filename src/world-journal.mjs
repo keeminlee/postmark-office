@@ -301,15 +301,9 @@ const ROW_COLUMNS = "crossing, actor, action, object, at_anchor, at_dx, at_dy, w
 export function appendJournal(db, entry = {}) {
   const row = normalizeRow(entry);
 
-  const stmt = db.prepare(
-    `INSERT INTO journal (${ROW_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
-  const res = stmt.run(
-    row.crossing, row.actor, row.action, row.object,
-    row.at_anchor, row.at_dx, row.at_dy,
-    row.witnesses, row.class, row.payload, row.effect,
-    row.household, row.written_at);
+    throw new Error("the journal INSERT was deleted at G2 — `acts` is the record now; a caller that needs a receipt reads acts.id, and journal.seq no longer exists to be returned");
 
-  const seq = Number(res.lastInsertRowid);
+  const seq = null; // unreachable — kept so the rest of the function still parses
   // World 2.0 shadow pens (dev era): mirror the row into Postgres `acts`, and
   // a mark-class declaration also onto the public docket (`claims`). No-ops
   // unless WORLD2_PG=1 (+ WORLD2_CANDLE=1 for the docket); fire-and-forget for
@@ -463,15 +457,12 @@ export async function appendActFlipped(db, entry = {}) {
     }
     : {}); // throws PenUnreachableError — the door bounces, nothing was written
   let seq = null;
+  // G2: the flipped path's journal INSERT is REMOVED, not made to throw — the
+  // catch below is documented never to refuse, so a throw here would be
+  // swallowed silently, which is the exact class the deletion must avoid.
+  // `seq` stays null, the value the 2.0 design already carries for a flipped act.
   try {
-    const stmt = db.prepare(
-      `INSERT INTO journal (${ROW_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
-    const res = stmt.run(
-      row.crossing, row.actor, row.action, row.object,
-      row.at_anchor, row.at_dx, row.at_dy,
-      row.witnesses, row.class, row.payload, row.effect,
-      row.household, row.written_at);
-    seq = Number(res.lastInsertRowid);
+    seq = null;
   } catch (err) {
     // The record is already committed; the convenience copy failed. Loud, and
     // the reverse-parity check names the row — never a refusal, because

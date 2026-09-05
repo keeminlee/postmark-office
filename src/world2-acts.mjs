@@ -294,11 +294,11 @@ export function mirrorAct(row, seq, env = process.env) {
       await p.query(
         `INSERT INTO acts (at, crossing, actor, action, object,
                            at_anchor, at_dx, at_dy, witnesses, class,
-                           payload, effect, household, journal_seq)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+                           payload, effect, household)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
         [guarded.written_at, guarded.crossing, guarded.actor, guarded.action, guarded.object,
          guarded.at_anchor, guarded.at_dx, guarded.at_dy, guarded.witnesses, guarded.class,
-         guarded.payload, guarded.effect, household, seq],
+         guarded.payload, guarded.effect, household],
       );
       state.written += 1;
     } catch (err) {
