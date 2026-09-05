@@ -194,6 +194,7 @@ export function readStateLog(worldClone) {
   const dir = join(resolve(worldClone), "STATE", "log");
   if (!existsSync(dir)) throw new Error(`no STATE/log under ${worldClone} — is this a world clone?`);
   const index = new Map();
+  const loose = new Map();
   let horizon = null;
   let lines = 0;
   let files = 0;
@@ -223,14 +224,67 @@ export function readStateLog(worldClone) {
       const at = new Date(e.at).toISOString();
       if (horizon === null || at > horizon) horizon = at;
       index.set(twinKey(e.actor, e.type, at, e.object ?? null), { file: f, seq: e.seq ?? null });
+      const lk = looseKey(e.actor, e.type, e.object ?? null);
+      if (!loose.has(lk)) loose.set(lk, []);
+      loose.get(lk).push({ at, file: f, seq: e.seq ?? null });
     }
   }
-  return { index, horizon, files, lines };
+  for (const rows of loose.values()) rows.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+  return { index, loose, horizon, files, lines };
 }
 
 /** (actor, action, written_at) with object as the tiebreaker — the lane-closure way. */
 export const twinKey = (actor, action, at, object) =>
   JSON.stringify([String(actor), String(action), at, object == null ? null : String(object)]);
+
+// ── THE RELEASED-DRAFT KEY (finding 3, 2026-09-05) ──────────────────────────
+//
+// `twinKey` assumes one declaration has one instant. A stake-released mark has
+// TWO, and both are correct.
+//
+// Phase 5.6 defers an unstaked mark: `world-journal.mjs § privateDraftAct` writes
+// the sqlite row at the COMPOSE and mirrors no act, "because an unstaked
+// declaration is the resident composing, not the town acting". The act rides on
+// the claim as `data._deferred_act` until a stake puts it forward, and
+// `world2-claims.mjs § promoteDraftOnStake` then inserts it under its own
+// heading: "THE ACT IS DATED AT THE PUTTING-FORWARD, not at the composing. The
+// world witnessed a resident put this mark forward; it did not witness them
+// thinking about it."
+//
+// So the two stores hold the same declaration under two instants ON PURPOSE, and
+// the tuple cannot pair them. Measured on prod, 2026-09-05:
+//
+//   sqlite journal 1120   wright amend wright/the-flip-day-plumb-line  19:13:13.805Z
+//   acts 4496             wright amend wright/the-flip-day-plumb-line  19:13:28.218Z
+//
+// 14.4 seconds, one stake. The falsifier reported it as "newer than the
+// photograph's horizon" — UNDECIDABLE, which is a blind spot wearing a soft
+// word; and the moment a clone is fetched past 19:13:28 the same row becomes
+// RED, "a rollback would lose this act", which is FALSE. Both failure modes, one
+// row.
+//
+// WHY THE PAIRING MOVED AND NOT THE DATA. Carrying the compose instant on the
+// released act would be exact, and it is worth doing as well — but it cannot
+// reach acts already written, and act 4496 was written before this was found. A
+// pairing fix repairs the record that exists.
+//
+// WHAT THIS KEY GIVES UP, said plainly: the instant. It pairs on (actor, action,
+// object) and then takes the NEWEST candidate at or before the act's own time —
+// never a later one, because a twin cannot be composed after the release that
+// published it. That is looser than the tuple and it is not free, so it is
+// applied ONLY to mark-class acts (the only lane Phase 5.6 defers), only after
+// the exact key has missed, and every row paired this way is COUNTED AND NAMED
+// in the output. A check that quietly loosens is the thing this file exists to
+// stop being.
+//
+// NO TIME WINDOW, deliberately. A bounded one would be the obvious guard and it
+// would be wrong: `promoteDraftOnStake`'s own words are "you composed something,
+// slept on it, and now you back it", and the deferred act is carried IN THE
+// DATABASE precisely "so a draft composed before a restart and staked after it
+// must still be able to become an act". Any window short enough to be a check
+// would red on the case the design was built for.
+export const looseKey = (actor, action, object) =>
+  JSON.stringify([String(actor), String(action), object == null ? null : String(object)]);
 
 /**
  * Where this act's twin stands: "journal", "state-log", or nowhere.
@@ -242,16 +296,95 @@ export const twinKey = (actor, action, at, object) =>
  * and a check that called it GREEN would be the blindness this fix is removing,
  * one store over.
  */
-export function twinSideOf(act, { journalTwin, logIndex, horizon }) {
+export function twinSideOf(act, { journalTwin, logIndex, horizon, looseIndex = null, releasedTwin = null, claimed = null }) {
   if (journalTwin) return { side: "journal", seq: journalTwin.seq };
   if (logIndex) {
     const hit = logIndex.get(twinKey(act.actor, act.action, act.at, act.object));
     if (hit) return { side: "state-log", seq: hit.seq, file: hit.file };
+
+    // ── the released-draft pass, and it runs BEFORE the horizon excuse ───────
+    //
+    // Order matters here. "Newer than the photograph's horizon" is the answer
+    // for an act whose twin may simply not have been drained yet — but a
+    // stake-released mark's twin IS in a store, under its compose instant, and
+    // calling that undecidable is the blind spot. So both stores are asked the
+    // loose way first, and only a genuine absence falls through to the horizon.
+    if (releasedOK(act)) {
+      if (releasedTwin) {
+        return oneTwinOnly(act, { side: "journal", seq: releasedTwin.seq, released: releasedTwin.at }, claimed);
+      }
+      const rows = looseIndex?.get(looseKey(act.actor, act.action, act.object)) ?? null;
+      // Newest at or before the act's own instant: a twin cannot be composed
+      // after the release that published it.
+      const hit2 = rows ? [...rows].reverse().find((r) => r.at <= act.at) : null;
+      if (hit2) {
+        return oneTwinOnly(act, { side: "state-log", seq: hit2.seq, file: hit2.file, released: hit2.at }, claimed);
+      }
+    }
+
     if (horizon && act.at > horizon) return { side: null, undecidable: `newer than the photograph's horizon ${horizon}` };
     return { side: null };
   }
   return { side: null, undecidable: "no world clone supplied, so a drained twin cannot be looked for" };
 }
+
+/**
+ * ONE COMPOSE ROW MAY ANSWER FOR ONE ACT — the cardinality the loose key lost.
+ *
+ * `looseKey` drops the instant, so its answer is "the newest compose of this
+ * (actor, action, object) at or before you". Asked by TWO released acts on one
+ * object, it hands both the SAME row, and the check reports GREEN twice while
+ * one of the two acts has no twin at all. That is the failure this whole seam
+ * exists to stop, re-entering through the fix for it: a loosened key that says
+ * green about an act it never actually paired.
+ *
+ * It is reachable. `promoteDraftOnStake` promotes ONE draft per (claimant, slug,
+ * household), so two drafts of one slug cannot stand at once — but a compose, a
+ * stake, a second compose of the same slug and a second stake produce two acts
+ * over two composes, and if the second act is dated at or after both composes
+ * (which an out-of-order release does), the newest-at-or-before rule hands it
+ * the same row the first act already took. The exact key is unaffected; only the
+ * loose pass can do this, so only the loose pass is policed.
+ *
+ * A candidate already spoken for is therefore a RED FINDING, printed with both
+ * act ids, and never a quiet re-use. It is RED rather than UNDECIDABLE because
+ * the store has been read and the arithmetic does not work: two acts, one row.
+ *
+ * `claimed` is a Map the caller owns and this function WRITES INTO, which is a
+ * wart worth naming rather than hiding — the alternative was splitting the rule
+ * between this function and its caller, and a cardinality rule enforced in two
+ * places is a cardinality rule with two answers. Passing `null` (the default)
+ * disables the ledger entirely, which is what the direct unit tests of single
+ * acts do; the run itself always passes one.
+ */
+export const candidateId = (v) => `${v.side}:${v.file ?? ""}:${v.seq ?? ""}:${v.released ?? ""}`;
+
+export function oneTwinOnly(act, verdict, claimed) {
+  if (!claimed) return verdict;
+  const id = candidateId(verdict);
+  const taken = claimed.get(id);
+  if (taken !== undefined && String(taken) !== String(act.id)) {
+    return {
+      side: null,
+      conflict: `its released-draft candidate (${verdict.side} seq ${verdict.seq ?? "?"}` +
+        `${verdict.file ? `, ${verdict.file}` : ""} @ ${verdict.released}) is already the twin of acts ${taken} — ` +
+        `two released acts cannot share one compose row, so one of them has no twin`,
+    };
+  }
+  claimed.set(id, act.id);
+  return verdict;
+}
+
+/**
+ * May this act be paired the loose way?
+ *
+ * ONLY the mark lane, because only the mark lane is deferred: `privateDraftAct`
+ * is `class === "mark" && (leave-mark | amend) && candleEnabled && !put_forward`,
+ * and nothing else in the town has a compose instant that differs from its act's.
+ * Keyed on the CLASS the act carries rather than on the lane name the operator
+ * typed, so `--lanes` cannot widen it by accident.
+ */
+export const releasedOK = (act) => String(act?.class ?? "") === "mark";
 
 // ── the refusal-ordering arm ─────────────────────────────────────────────────
 
@@ -415,6 +548,14 @@ async function reverseParity() {
   const stmt = sqlite.prepare(
     `SELECT seq FROM journal WHERE actor = ? AND action = ? AND written_at = ?
       AND (object = ? OR (object IS NULL AND ? IS NULL))`);
+  // The journal's half of the released-draft key (see `looseKey`). Newest row at
+  // or before the act's own instant; `written_at <= ?` is the whole of the
+  // discipline that keeps this from pairing forwards in time.
+  const released = sqlite.prepare(
+    `SELECT seq, written_at FROM journal
+      WHERE actor = ? AND action = ? AND (object = ? OR (object IS NULL AND ? IS NULL))
+        AND written_at <= ?
+      ORDER BY written_at DESC LIMIT 1`);
 
   // --prove-can-fail: the FIRST act of the run is asked about under an actor
   // name nothing ever wrote, and dated below the photograph's horizon so its
@@ -429,6 +570,12 @@ async function reverseParity() {
     process.exit(2);
   }
   const counts = { journal: 0, "state-log": 0 };
+  const releasedRows = [];
+  // ONE COMPOSE ROW, ONE ACT (see `oneTwinOnly`). Owned by the run so the
+  // ledger spans every lane asked about: two released acts on one object are
+  // the same defect whether or not they arrived in the same lane.
+  const claimed = new Map();
+  const conflicts = [];
   const red = [];
   const undecidable = [];
   let total = 0;
@@ -446,19 +593,46 @@ async function reverseParity() {
         ? { ...act, actor: `${act.actor}-NEVER-WRITTEN`, at: "2026-01-01T00:00:00.000Z" }
         : act;
       const journalTwin = stmt.get(probe.actor, probe.action, probe.at, probe.object, probe.object);
-      const verdict = twinSideOf(probe, { journalTwin, logIndex: photo?.index ?? null, horizon: photo?.horizon ?? null });
+      const looseHit = journalTwin || !releasedOK(probe)
+        ? null
+        : (released.get(probe.actor, probe.action, probe.object, probe.object, probe.at) ?? null);
+      // `written_at` is the journal's column name and `at` is this file's word
+      // for an instant; renamed here so `twinSideOf` reads one vocabulary.
+      const releasedTwin = looseHit ? { seq: looseHit.seq, at: looseHit.written_at } : null;
+      const verdict = twinSideOf(probe, {
+        journalTwin, releasedTwin, claimed,
+        logIndex: photo?.index ?? null, looseIndex: photo?.loose ?? null, horizon: photo?.horizon ?? null,
+      });
       const who = `acts ${probe.id} (${probe.actor} ${probe.action} ${probe.object ?? ""} @ ${probe.at}, lane ${lane})`;
       if (isProbe) {
         probeWentRed = !verdict.side && !verdict.undecidable;
         console.log(`  can-fail probe · ${who} → ${probeWentRed ? "RED, as it must be" : `NOT red (${verdict.side ?? verdict.undecidable})`}`);
         continue;
       }
-      if (verdict.side) { counts[verdict.side]++; continue; }
-      if (verdict.undecidable) undecidable.push(`${who} — ${verdict.undecidable}`);
+      if (verdict.side) {
+        counts[verdict.side]++;
+        // NAMED, NOT FOLDED INTO THE GREEN. A row paired the loose way is a row
+        // whose instants disagreed, and an operator who cannot see which rows
+        // those were cannot judge the answer — the same reason `--since` says
+        // out loud which clock it used.
+        if (verdict.released) releasedRows.push(`${who} — paired as a STAKE-RELEASED draft: the act is dated at the putting-forward, its twin at the compose (${verdict.released}), on the ${verdict.side} side`);
+        continue;
+      }
+      if (verdict.conflict) conflicts.push(`${who} — ${verdict.conflict}`);
+      else if (verdict.undecidable) undecidable.push(`${who} — ${verdict.undecidable}`);
       else red.push(who);
     }
   }
   await pool.end();
+
+  for (const line of releasedRows) console.log(`  released-draft pairing · ${line}`);
+
+  // A CONFLICT IS ITS OWN RED, with its own sentence. Folding it into the
+  // "stands in neither store" line would say the wrong thing about it: the twin
+  // EXISTS, and the defect is that two acts want the same one.
+  for (const line of conflicts) {
+    console.error(`RED (released-draft cardinality): ${line}`);
+  }
 
   for (const line of red) {
     console.error(`RED (reverse): ${line} stands in NEITHER the journal nor the drained photograph — ` +
@@ -479,6 +653,11 @@ async function reverseParity() {
     process.exit(0);
   }
 
+  if (conflicts.length) {
+    console.error(`RED: ${conflicts.length}/${total} flipped act(s) were handed a compose row another act had already taken — ` +
+      `the loose released-draft key cannot tell them apart, and one of each pair has no twin at all`);
+    process.exit(1);
+  }
   if (red.length) {
     console.error(`RED: ${red.length}/${total} flipped acts have no twin on either side`);
     process.exit(1);
@@ -494,7 +673,8 @@ async function reverseParity() {
     process.exit(0);
   }
   console.log(`GREEN: ${total}/${total} flipped acts on [${asked.join(", ")}] carry their reverse twin — ` +
-    `${counts.journal} still in the journal, ${counts["state-log"]} already drained into STATE/log.`);
+    `${counts.journal} still in the journal, ${counts["state-log"]} already drained into STATE/log` +
+    `${releasedRows.length ? `, of which ${releasedRows.length} paired as stake-released drafts (named above)` : ""}.`);
 }
 
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {

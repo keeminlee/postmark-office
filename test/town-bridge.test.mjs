@@ -32,7 +32,7 @@ import {
 import { openOauthDb } from "../src/oauth.mjs";
 import { PAPER_ACTS } from "../src/town-updates.mjs";
 import { MAIL_ACT, MAIL_DOOR } from "../src/town-mail.mjs";
-import { outboxRelPath } from "../src/write.mjs";
+import { letterDate, outboxRelPath } from "../src/write.mjs";
 import { declareStanceViaOffice } from "../src/world-stance.mjs";
 import { worldFreezeBounce } from "../src/freeze.mjs";
 import { TOOLS } from "../src/mcp.mjs";
@@ -152,7 +152,18 @@ function seedThreeClasses(o) {
 }
 
 /** A letter row carrying the pen's own computed identity, exactly as logLetter writes it. */
-function seedLetter(o, { from = "wright", to = "limen", title = "a fine hat", date = "2026-08-24", slug = "a-fine-hat" } = {}) {
+// `date` DEFAULTS TO THE DOOR'S OWN ANSWER, not to a literal. It used to be
+// pinned at "2026-08-24" and that pin decayed the moment the calendar moved:
+// `validateLetter` dates a letter from the live clock in the town's timezone, so
+// the row this seeded disclosed an AUGUST path while the door wrote today's
+// file. Every test here survived that except the one that exercises the drain's
+// resume check, which looked for the August path, missed, replayed the letter
+// and got a 409 back instead of `already: true`. Green on 2026-08-24, red every
+// day since. `letterDate()` is the door's own derivation, exported so this
+// fixture can ASK rather than re-spell — the same rule `enqueueLetter` already
+// states about the path ("two spellings of it would be two things that can
+// drift"). Pass an explicit date only to test a date, never to name today.
+function seedLetter(o, { from = "wright", to = "limen", title = "a fine hat", date = letterDate(), slug = "a-fine-hat" } = {}) {
   const id = `${from}-${date}-to-${to}-${slug}`;
   return appendTownJournal(o, {
     cls: "letter", act: MAIL_ACT, household: "keemin", handle: from,

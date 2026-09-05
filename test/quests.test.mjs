@@ -98,6 +98,102 @@ test("a resident absent from the index reads a clean zero with empty lists", asy
   }
 });
 
+// ── `measured` — the door's own answer to "can this row be counted?" ─────────
+//
+// BOARD_LAW puts two kinds of row on one board and tells them apart by a TYPE,
+// not a field: a countable row's `progress` is a number, an uncounted row's is
+// null. So every consumer wrote `typeof q.progress === "number"` for itself, and
+// the site's own note says why it had to key on the field rather than an id list
+// ("the allow-list again wearing a different name"). A predicate two doors each
+// re-derive is a predicate two doors can come to disagree about. The door states
+// it now, and these pin what it states.
+//
+// The registry here carries a THIRD row the daily fold has no field for, which
+// is the whole point: `COUNTABLE_FIELD` names `send` and `receive` and nothing
+// else, so any other registry row comes back uncounted. That is the town's own
+// mechanism, not a shape invented for the test.
+const MIXED_REGISTRY = JSON.stringify({
+  version: 1,
+  quests: [
+    { id: "correspond-send", title: "Reach out", cadence: "daily", validation: "automatic", target: 5, reward: "1 stamp per unit" },
+    { id: "correspond-receive", title: "Be reached", cadence: "daily", validation: "automatic", target: 5, reward: "1 stamp per unit" },
+    { id: "first-idea", title: "Put an idea up", cadence: "once", validation: "manual", target: 1, reward: "1 stamp", door: { tool: "leave_mark" } },
+  ],
+});
+const mixedMeta = (day) => ({ quest_registry: MIXED_REGISTRY, quest_day: day });
+
+test("every quest row says whether it is measured — a number is measured, a null is not", async () => {
+  const day = await today();
+  const db = dbWith({
+    handle: "alice", send: 2, receive: 1, house_size: 1, house_send: 2, house_receive: 1,
+    sent_to: JSON.stringify(["bob", "carol"]), heard_from: JSON.stringify(["dave"]),
+  }, day);
+  const board = await questBoardFor(db, mixedMeta(day), "alice", TOWN);
+
+  assert.equal(board.quests.length, 3, "the board is every registry row (BOARD_LAW), or this proves nothing");
+  assert.equal(q(board, "correspond-send").measured, true);
+  assert.equal(q(board, "correspond-receive").measured, true);
+  assert.equal(q(board, "first-idea").measured, false,
+    "the daily fold names no field for this row, so it cannot be counted and the door must say so");
+
+  // TWO ORACLES, and the second is the one that will still be doing work in six
+  // months. Stated plainly because the obvious flip does NOT catch it: replacing
+  // the derivation with the id list `["correspond-send", "correspond-receive"]`
+  // leaves every assertion in this file green, and it is entitled to — that list
+  // IS `COUNTABLE_FIELD`'s key set today, so the two agree by arithmetic and no
+  // fixture can pull them apart while the table holds two rows. Claiming
+  // otherwise would be a falsifier taking credit for a red it cannot produce.
+  //
+  // What can be bound is the AGREEMENT ITSELF, against the town's own table
+  // rather than a copy of it. `COUNTABLE_FIELD` is exported, so it is imported
+  // here and asked directly. The day the town names a third countable row, an
+  // office deriving `measured` from a hardcoded pair reds on this line — which
+  // is the divergence worth catching, and the only one that exists.
+  const { COUNTABLE_FIELD } = await import("file:///G:/Wright-HQ/postmark/tools/quest-progress.mjs");
+  assert.ok(Object.keys(COUNTABLE_FIELD).length, "the town's countable table is empty — this oracle has stopped saying anything");
+  for (const quest of board.quests) {
+    assert.equal(quest.measured, typeof quest.progress === "number",
+      `${quest.id}: the door's answer and the row's own shape disagree`);
+    assert.equal(quest.measured, Object.prototype.hasOwnProperty.call(COUNTABLE_FIELD, quest.id),
+      `${quest.id}: the door's answer and the TOWN's own COUNTABLE_FIELD disagree`);
+  }
+});
+
+test("`measured` is ADDITIVE — progress survives, null and all, for the readers that already use it", async () => {
+  // The site's guard reads `q.progress`, the doorstep's next-steps lane rides
+  // these rows, and household-stamps maps `q.progress ?? null`. None of them
+  // asked for the key to go, and a key removed is a shape change every reader
+  // has to survive.
+  const day = await today();
+  const board = await questBoardFor(dbWith(null, day), mixedMeta(day), "nobody", TOWN);
+
+  const uncounted = q(board, "first-idea");
+  assert.ok("progress" in uncounted, "the `progress` key is still on the row");
+  assert.equal(uncounted.progress, null, "and it is still null — the shape the site's guard reads");
+  assert.equal(uncounted.household.total, null, "the daily cap is a daily fact; inventing 0 is the lie the null exists to avoid");
+  assert.deepEqual(uncounted.counted, [], "`counted` still holds correspondents, which is why the field is `measured` and not `counted`");
+
+  const counted = q(board, "correspond-send");
+  assert.equal(counted.progress, 0, "a countable row with no entry is a CLEAN ZERO, first-class");
+  assert.equal(counted.measured, true, "so zero is measured — `measured` is not `progress > 0`");
+});
+
+test("a stale snapshot does not make a countable row unmeasured — the two are different facts", async () => {
+  // The distinction the field is for. A stale index means the office served
+  // yesterday's numbers as zero; it does not mean the row cannot be counted.
+  // If `measured` ever went false here it would be saying "this kind of quest is
+  // unmeasurable" about a row the fold measures perfectly well.
+  const day = await today();
+  const db = dbWith({
+    handle: "alice", send: 4, receive: 0, house_size: 1, house_send: 4, house_receive: 0,
+    sent_to: JSON.stringify(["bob", "carol", "dave", "erin"]), heard_from: JSON.stringify([]),
+  }, day);
+  const board = await questBoardFor(db, mixedMeta("2000-01-01"), "alice", TOWN);
+  assert.equal(q(board, "correspond-send").progress, 0, "the stale snapshot is zeroed");
+  assert.equal(q(board, "correspond-send").measured, true, "and it is still a row the fold can count");
+  assert.equal(q(board, "first-idea").measured, false, "while the uncounted row is unchanged by the staleness");
+});
+
 test("a stale snapshot across midnight zeroes the names too, not just the bars", async () => {
   const day = await today();
   const db = dbWith({

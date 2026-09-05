@@ -209,6 +209,242 @@ test("FINDING 1 · an act newer than the photograph is UNDECIDABLE, not red and 
   });
 });
 
+// ── finding 3: a stake-released mark has TWO instants, and both are right ────
+//
+// Reproduced on the live store, 2026-09-05, by running the falsifier itself:
+//
+//   since (table): mark=2026-09-05T19:12:06.000Z
+//   photograph: 6489 line(s) across 471 STATE/log file(s), newest 17:09:09.155Z
+//   UNDECIDABLE: acts 4496 (wright amend wright/the-flip-day-plumb-line
+//     @ 2026-09-05T19:13:28.218Z, lane mark) — newer than the photograph's horizon
+//   CANNOT RUN · 1/4 flipped act(s) this store cannot answer for.
+//
+// and the twin was there the whole time, in sqlite, at a different instant:
+//
+//   journal seq 1120   wright amend wright/the-flip-day-plumb-line  19:13:13.805Z
+//   acts    4496       wright amend wright/the-flip-day-plumb-line  19:13:28.218Z
+//
+// 14.4 seconds and one stake. Phase 5.6 defers an unstaked mark — the journal
+// row is the COMPOSE, no act is mirrored — and `promoteDraftOnStake` inserts the
+// act at the RELEASE, under its own heading: "THE ACT IS DATED AT THE
+// PUTTING-FORWARD, not at the composing." Both instants are correct and the
+// tuple cannot pair them.
+//
+// The word it came back wearing is the finding. UNDECIDABLE is a blind spot in a
+// soft word, and it only stayed soft because the clone's horizon was behind; the
+// moment a clone is fetched past 19:13:28 the same row goes RED with "a rollback
+// would lose this act", which is false. The last two tests below are those two
+// failure modes, run against the fix.
+
+const PLUMB_LINE = {
+  "171.journal.jsonl": [
+    { at: "2026-09-05T19:12:46.416Z", type: "leave-mark", actor: "wright", seq: 1119, class: "mark", object: "wright/the-flip-day-plumb-line" },
+    { at: "2026-09-05T19:13:13.805Z", type: "amend", actor: "wright", seq: 1120, class: "mark", object: "wright/the-flip-day-plumb-line" },
+  ],
+};
+/** acts 4496, verbatim: the release instant, and `class` because the pass is keyed on it. */
+const ACT_4496 = {
+  id: "4496", at: "2026-09-05T19:13:28.218Z", actor: "wright", action: "amend",
+  object: "wright/the-flip-day-plumb-line", class: "mark",
+};
+
+test("FINDING 3 · a stake-released mark pairs with its COMPOSE row, and says that it did", () => {
+  withStateLog(PLUMB_LINE, (dir) => {
+    const photo = readStateLog(dir);
+    const v = twinSideOf(ACT_4496, {
+      journalTwin: null, logIndex: photo.index, looseIndex: photo.loose, horizon: photo.horizon,
+    });
+    assert.equal(v.side, "state-log", "the twin is there — 14 seconds earlier, under the compose instant");
+    assert.equal(v.seq, 1120, "and it is the AMEND's row, not the leave-mark that preceded it");
+    assert.equal(v.released, "2026-09-05T19:13:13.805Z",
+      "the compose instant is REPORTED, so an operator can see this row was paired the loose way");
+  });
+});
+
+test("FINDING 3 · the exact tuple still wins when it matches — the loose pass is a fallback, not a replacement", () => {
+  withStateLog(PLUMB_LINE, (dir) => {
+    const photo = readStateLog(dir);
+    const exact = { ...ACT_4496, at: "2026-09-05T19:13:13.805Z" };
+    const v = twinSideOf(exact, {
+      journalTwin: null, logIndex: photo.index, looseIndex: photo.loose, horizon: photo.horizon,
+    });
+    assert.equal(v.side, "state-log");
+    assert.equal(v.seq, 1120);
+    assert.equal(v.released, undefined, "an exact pairing is not announced as a loose one");
+  });
+});
+
+test("FINDING 3 · CAN FAIL — an act in neither store is still RED, loose pass and all", () => {
+  // The whole risk of a looser key is that it turns a real loss green. Same flip
+  // as finding 1's, on a mark-class act so the released pass actually runs.
+  withStateLog(PLUMB_LINE, (dir) => {
+    const photo = readStateLog(dir);
+    // Dated BELOW the fixture's horizon (19:13:13.805Z), because above it the
+    // honest answer really is "not drained yet" and the flip would be proving
+    // the horizon rule rather than this one.
+    const lost = { ...ACT_4496, actor: "nobody-ever-wrote-this", at: "2026-09-05T19:13:00.000Z" };
+    const v = twinSideOf(lost, {
+      journalTwin: null, logIndex: photo.index, looseIndex: photo.loose, horizon: photo.horizon,
+    });
+    assert.equal(v.side, null, "a twin found nowhere is still the only RED");
+    assert.equal(v.undecidable, undefined, "and it is RED, not excused by the horizon");
+  });
+});
+
+test("FINDING 3 · CAN FAIL — the loose pass never pairs FORWARDS in time", () => {
+  // A twin cannot be composed after the release that published it. Without the
+  // `<= act.at` bound this act would pair with a row 27 seconds in its future,
+  // which is not a compose and not its twin.
+  withStateLog(PLUMB_LINE, (dir) => {
+    const photo = readStateLog(dir);
+    const early = { ...ACT_4496, at: "2026-09-05T19:12:00.000Z" };
+    const v = twinSideOf(early, {
+      journalTwin: null, logIndex: photo.index, looseIndex: photo.loose, horizon: photo.horizon,
+    });
+    assert.equal(v.side, null, "nothing at or before this instant, so nothing pairs");
+  });
+});
+
+test("FINDING 3 · the loose pass is the MARK lane's alone — no other class is deferred", () => {
+  // Phase 5.6 defers `class === "mark"` and nothing else, so nothing else has a
+  // compose instant that differs from its act's. Keyed on the class the act
+  // carries, not on the lane name the operator typed, so `--lanes` cannot widen
+  // it by accident. Same rows, same near-miss instant, a different class.
+  withStateLog({
+    "171.journal.jsonl": [
+      { at: "2026-09-05T19:13:13.805Z", type: "amend", actor: "wright", seq: 1120, class: "stance", object: "wright/the-flip-day-plumb-line" },
+    ],
+  }, (dir) => {
+    const photo = readStateLog(dir);
+    const stanceAct = { ...ACT_4496, class: "stance" };
+    const v = twinSideOf(stanceAct, {
+      journalTwin: null, logIndex: photo.index, looseIndex: photo.loose, horizon: photo.horizon,
+    });
+    assert.equal(v.side, null, "a stance act 14 seconds off its row is a real miss, and stays one");
+  });
+});
+
+test("FINDING 3 · the released pass runs BEFORE the horizon excuse — that ordering IS the finding", () => {
+  // The live reproduction only said UNDECIDABLE because the clone's horizon was
+  // behind. If the loose pass ran after the horizon check, the fix would do
+  // nothing on exactly the run that found the defect.
+  withStateLog({
+    "170.journal.jsonl": [
+      { at: "2026-09-05T19:13:13.805Z", type: "amend", actor: "wright", seq: 1120, class: "mark", object: "wright/the-flip-day-plumb-line" },
+    ],
+  }, (dir) => {
+    const photo = readStateLog(dir);
+    // A horizon BEHIND the act — the live condition, 17:09 against 19:13.
+    const v = twinSideOf(ACT_4496, {
+      journalTwin: null, logIndex: photo.index, looseIndex: photo.loose,
+      horizon: "2026-09-05T17:09:09.155Z",
+    });
+    assert.equal(v.side, "state-log", "paired, not excused as newer than the photograph");
+    assert.equal(v.undecidable, undefined);
+  });
+});
+
+// ── finding 3, cardinality: ONE COMPOSE ROW MAY ANSWER FOR ONE ACT ──────────
+//
+// The reviewer's catch on the fix above, and it is the seam re-entering through
+// its own repair. `looseKey` drops the instant, so its answer is "the newest
+// compose of this (actor, action, object) at or before you". Asked by TWO
+// released acts on one object, it hands both the SAME row — and the check
+// reports GREEN twice while one of the two acts has no twin at all. A loosened
+// key that says green about an act it never paired is exactly the class this
+// whole file exists to stop.
+//
+// It is reachable: `promoteDraftOnStake` promotes one draft per (claimant, slug,
+// household), so two drafts cannot stand at once — but compose, stake, compose
+// again, stake again gives two acts over two composes, and an out-of-order
+// release dates the second act at or after BOTH composes. The exact key is
+// untouched by any of this; only the loose pass can do it, so only the loose
+// pass is policed.
+
+const TWO_COMPOSES = {
+  "171.journal.jsonl": [
+    { at: "2026-09-05T19:10:00.000Z", type: "amend", actor: "wright", seq: 1110, class: "mark", object: "wright/the-twice-composed" },
+    { at: "2026-09-05T19:13:13.805Z", type: "amend", actor: "wright", seq: 1120, class: "mark", object: "wright/the-twice-composed" },
+  ],
+};
+const releasedAct = (id, at) => ({
+  id, at, actor: "wright", action: "amend", object: "wright/the-twice-composed", class: "mark",
+});
+
+test("FINDING 3 · CARDINALITY: two released acts cannot share one compose row — the second is RED, by name", () => {
+  withStateLog(TWO_COMPOSES, (dir) => {
+    const photo = readStateLog(dir);
+    const claimed = new Map();
+    const ask = (act) => twinSideOf(act, {
+      journalTwin: null, logIndex: photo.index, looseIndex: photo.loose, horizon: photo.horizon, claimed,
+    });
+
+    // Out of order: the LATER act is asked first and takes the newest compose.
+    const first = ask(releasedAct("4496", "2026-09-05T19:20:00.000Z"));
+    assert.equal(first.side, "state-log");
+    assert.equal(first.seq, 1120, "the newest compose at or before it");
+
+    // A second act on the same object, also dated after both composes, would be
+    // handed seq 1120 again by the newest-at-or-before rule alone.
+    const second = ask(releasedAct("4497", "2026-09-05T19:21:00.000Z"));
+    assert.equal(second.side, null, "it must NOT be paired to a row another act already owns");
+    assert.equal(second.undecidable, undefined, "and it is not excused as undrained — the store was read");
+    assert.match(second.conflict, /already the twin of acts 4496/,
+      "the finding names the act that took the row, or an operator cannot see what happened");
+    assert.match(second.conflict, /one of them has no twin/);
+  });
+});
+
+test("FINDING 3 · CARDINALITY: the SAME act asked twice is not a conflict with itself", () => {
+  // A re-ask (a retry, a second pass) must be idempotent. Keying the ledger on
+  // the act id rather than on "has this row been claimed at all" is what makes
+  // that true, and without this test the rule would look correct while being
+  // one re-entrant call away from a false red.
+  withStateLog(TWO_COMPOSES, (dir) => {
+    const photo = readStateLog(dir);
+    const claimed = new Map();
+    const act = releasedAct("4496", "2026-09-05T19:20:00.000Z");
+    const opts = { journalTwin: null, logIndex: photo.index, looseIndex: photo.loose, horizon: photo.horizon, claimed };
+    assert.equal(twinSideOf(act, opts).seq, 1120);
+    const again = twinSideOf(act, opts);
+    assert.equal(again.seq, 1120, "the same act gets the same answer");
+    assert.equal(again.conflict, undefined, "and is not accused of stealing from itself");
+  });
+});
+
+test("FINDING 3 · CARDINALITY: two acts that pair to DIFFERENT composes are both green", () => {
+  // The control. Without it the rule above would pass against a check that
+  // refused every second act on an object, which is a different bug wearing the
+  // same green. Dated so that each act's newest-at-or-before is its own row.
+  withStateLog(TWO_COMPOSES, (dir) => {
+    const photo = readStateLog(dir);
+    const claimed = new Map();
+    const ask = (act) => twinSideOf(act, {
+      journalTwin: null, logIndex: photo.index, looseIndex: photo.loose, horizon: photo.horizon, claimed,
+    });
+    const a = ask(releasedAct("4496", "2026-09-05T19:11:00.000Z"));
+    const b = ask(releasedAct("4497", "2026-09-05T19:20:00.000Z"));
+    assert.equal(a.seq, 1110, "the earlier act takes the earlier compose");
+    assert.equal(b.seq, 1120, "the later act takes the later one");
+    assert.equal(a.conflict, undefined);
+    assert.equal(b.conflict, undefined);
+  });
+});
+
+test("FINDING 3 · CARDINALITY: with no ledger passed, behaviour is exactly what it was", () => {
+  // `claimed` defaults to null, which disables the rule — the shape every
+  // single-act unit test above relies on. Stated as an assertion so a future
+  // change that made the ledger mandatory reds here rather than in six other
+  // tests for a reason nobody would connect to this one.
+  withStateLog(TWO_COMPOSES, (dir) => {
+    const photo = readStateLog(dir);
+    const opts = { journalTwin: null, logIndex: photo.index, looseIndex: photo.loose, horizon: photo.horizon };
+    assert.equal(twinSideOf(releasedAct("4496", "2026-09-05T19:20:00.000Z"), opts).seq, 1120);
+    assert.equal(twinSideOf(releasedAct("4497", "2026-09-05T19:21:00.000Z"), opts).seq, 1120,
+      "no ledger, no cardinality rule — and that is the documented default, not an accident");
+  });
+});
+
 test("FINDING 1 · with NO clone an unpaired act is UNDECIDABLE — never a green", () => {
   const v = twinSideOf(ACT_3867, { journalTwin: null, logIndex: null, horizon: null });
   assert.equal(v.side, null);
