@@ -322,9 +322,15 @@ BLOCKED BY A PARENT IN ANOTHER CLASS ${plan.blockedByParent.length} — \`marks.
 
   await client.query("BEGIN");
   try {
-    const n = await applyBackfill(client, plan, { windowId });
+    const { materialized, standing } = await applyBackfill(
+      client, plan, { windowId, recompute: flag("recompute-standing") });
     await client.query("COMMIT");
-    console.log(`\nWROTE ${n} mark(s) under window ${windowId}, each behind a locked claim naming its source commit.`);
+    console.log(`\nWROTE ${materialized} mark(s) under window ${windowId}, each behind a locked claim naming its ` +
+      `source commit.`);
+    console.log(standing
+      ? `standing recomputed: ${standing.moved ?? 0} tier(s) moved across ${standing.standing ?? "?"} standing mark(s)`
+      : `standing NOT recomputed (pass --recompute-standing to close \`stale-tier\` in this commit); the next ` +
+        `clearing candle recomputes tier for every standing mark anyway.`);
   } catch (err) {
     await client.query("ROLLBACK");
     console.error(`\nROLLED BACK — nothing was written: ${err.message}`);
