@@ -504,3 +504,142 @@ test("GUARD — a pure ADD plan is never refused, which is what makes the refusa
   assert.equal(refusalFor({ amendCount: 0, recompute: false }), null,
     "tonight's two classes must pass with the three flags they already have");
 });
+
+// ── the visibility preflight ─────────────────────────────────────────────────
+//
+// THE BUG THESE EXIST FOR, and it is the worst this lane produced because no line
+// of code was wrong. `claims` carries RLS since 007, policy `claims_read` hides
+// every `draft` row from a session that has not set `app.household`, and
+// `WORLD2_PG_URL` connects as `office_api`, which never sets it. So the plain
+// SELECT behind `draftSlugs` returns an EMPTY SET on prod, the skip that holds
+// five residents' private drafts cannot fire, and `sweep-published-unmirrored`
+// plans 32 adds with no SKIPPED block. The five would have been published.
+//
+// My rehearsal saw them only because the scratch clone was queried as `postgres`,
+// the table owner, and 007 deliberately does not FORCE the policy. The clone was
+// faithful and the CONNECTION was not — every number I measured about drafts was
+// measured through eyes prod does not have.
+//
+// A zero meaning "there are none" and a zero meaning "you are not permitted to
+// look" must not be spelled the same way.
+
+import {
+  visibilityRefusal, canSeeDrafts, privilegeRefusal, heldSlugsFrom,
+  WRITE_PRIVILEGES, DRAFTS_FLAG,
+} from "../world2/tools/backfill-register.mjs";
+
+/** The four shapes the probe can report, named. */
+const OFFICE_API = { whoami: "office_api", bypassrls: false, rlsEnabled: true, rlsForced: false, tableOwner: "world2_owner" };
+const OWNER = { whoami: "world2_owner", bypassrls: false, rlsEnabled: true, rlsForced: false, tableOwner: "world2_owner" };
+const OWNER_FORCED = { ...OWNER, rlsForced: true };
+const SUPERUSER = { whoami: "postgres", bypassrls: true, rlsEnabled: true, rlsForced: false, tableOwner: "world2_owner" };
+const RLS_OFF = { whoami: "office_api", bypassrls: false, rlsEnabled: false, rlsForced: false, tableOwner: "world2_owner" };
+
+test("VISIBILITY — RLS on and no bypass: the plan is REFUSED, not run against an empty set", () => {
+  assert.equal(canSeeDrafts(OFFICE_API), false);
+  const r = visibilityRefusal(OFFICE_API);
+  assert.ok(r, "office_api cannot see drafts, so it must not plan");
+  assert.match(r, /office_api/);
+  assert.match(r, /claims_read/);
+  assert.match(r, /you are not permitted to look/,
+    "the refusal states the class, not just the symptom");
+  assert.ok(r.includes(`--${DRAFTS_FLAG}`), "and names the escape hatch");
+});
+
+test("VISIBILITY — a role that bypasses, or owns the table, may plan", () => {
+  assert.equal(canSeeDrafts(SUPERUSER), true);
+  assert.equal(visibilityRefusal(SUPERUSER), null);
+  assert.equal(canSeeDrafts(OWNER), true, "an owner bypasses a policy that is not FORCEd");
+  assert.equal(visibilityRefusal(OWNER), null);
+  assert.equal(canSeeDrafts(RLS_OFF), true, "and with RLS off the question does not arise");
+});
+
+test("VISIBILITY — FORCE ROW LEVEL SECURITY takes the owner's exemption away", () => {
+  // 007 says why it does not FORCE the policy today. The owner's exemption is the
+  // ONLY reason my rehearsal saw anything, so it is stated rather than assumed:
+  // the day someone adds FORCE, this must answer no rather than yesterday's yes.
+  assert.equal(canSeeDrafts(OWNER_FORCED), false);
+  const r = visibilityRefusal(OWNER_FORCED);
+  assert.ok(r);
+  assert.match(r, /FORCEd/);
+});
+
+test("VISIBILITY — the by-name file lets a blind connection plan, and those slugs are held", () => {
+  const held = new Set(["vermillion/pagani-huayra"]);
+  assert.equal(visibilityRefusal(OFFICE_API, { heldByName: held }), null,
+    "a name survives a policy; a status does not");
+});
+
+test("VISIBILITY — the by-name file is parsed so an operator can say WHO these people are", () => {
+  const parsed = heldSlugsFrom([
+    "# the five the sweep published and the store still holds as private drafts",
+    "rook-of-garrison/goldies-dog-bed",
+    "",
+    "vermillion/pagani-huayra   # two of vermillion's",
+    "vermillion/pagani-zonda",
+    "   ",
+    "neth/bug-reports-welcome",
+    "rei/garden-water-dish-keeping-custom",
+  ].join("\n"));
+  assert.deepEqual(parsed, [
+    "rook-of-garrison/goldies-dog-bed",
+    "vermillion/pagani-huayra",
+    "vermillion/pagani-zonda",
+    "neth/bug-reports-welcome",
+    "rei/garden-water-dish-keeping-custom",
+  ]);
+  // The failure mode that matters: a mis-parse looks like an empty file, and an
+  // empty file publishes a resident's draft while every flag was typed correctly.
+  assert.deepEqual(heldSlugsFrom("# only a comment\n\n   \n"), []);
+});
+
+test("VISIBILITY — the plan HOLDS a by-name slug the connection cannot see", async () => {
+  const w = theWorld();
+  try {
+    // The store answers with NO draft rows — exactly what office_api sees on prod —
+    // and the hold has to come from the name instead.
+    const blind = await planBackfill(stubClient(storeRows(), []), {
+      worldRepo: w.dir, sha: w.shas.hand, windowId: 172, cls: "hand-planted-on-main",
+      lawSha: "0".repeat(40), townSha: null,
+      heldByName: new Set(["hand/only-in-repo"]),
+    });
+    assert.equal(blind.adds.length, 0, "the named slug is not added");
+    assert.equal(blind.skipped.filter((s) => s.slug === "hand/only-in-repo").length, 1);
+    assert.match(blind.skipped.find((s) => s.slug === "hand/only-in-repo").why, /held BY NAME/,
+      "and the skip says the hold came from a name, not from a claim it could read");
+
+    // Without the name, and with the same blind store, it is added — which is the
+    // whole finding: the store's silence is not evidence of absence.
+    const sighted = await planFor(w, "hand-planted-on-main");
+    assert.equal(sighted.adds.length, 1);
+  } finally { w.cleanup(); }
+});
+
+// ── the privilege preflight ──────────────────────────────────────────────────
+//
+// Measured from 002_grants.sql: office_api may write claims and NOT marks;
+// clearing_job may write marks and NOT claims. A backfill does both, so NEITHER
+// role an operator would reach for can do this job — it needs the owner. Without
+// this check the failure lands mid-transaction, after two dumps and three flags,
+// and reads as one permission error rather than as the wrong role for the task.
+
+test("PRIVILEGE — a role missing a grant is refused BEFORE any dump or write", () => {
+  const asOffice = { whoami: "office_api", missing: ["INSERT on marks", "UPDATE on marks"] };
+  const r = privilegeRefusal(asOffice);
+  assert.ok(r);
+  assert.match(r, /office_api/);
+  assert.match(r, /INSERT on marks/);
+  assert.match(r, /world2_owner/, "and names the role that can");
+  assert.match(r, /BEFORE any dump or write/);
+});
+
+test("PRIVILEGE — the checked set covers every table the write path touches", () => {
+  const need = new Set(WRITE_PRIVILEGES.map(([t, p]) => `${p} ${t}`));
+  // `applyBackfill` INSERTs claims; `materializeClaims` INSERTs and UPDATEs marks
+  // and SELECTs `identities` through `ownerHouseholdFor`; the arm reads `windows`.
+  for (const x of ["INSERT claims", "INSERT marks", "UPDATE marks", "SELECT identities", "SELECT windows"]) {
+    assert.ok(need.has(x), `the preflight must check ${x}`);
+  }
+  assert.equal(privilegeRefusal({ whoami: "world2_owner", missing: [] }), null,
+    "and a role holding all of them is not refused — the case that makes the others mean something");
+});
