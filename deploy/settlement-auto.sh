@@ -105,6 +105,40 @@ report() { # status detail
   # DECISION yet; settlement-history.mjs carries that rule and its reason.
   node "$OFFICE/deploy/settlement-history.mjs" \
     --receipt "$OUT" --history "$HISTORY" --attempt "${SETTLEMENT_ATTEMPT:-}" >/dev/null 2>&1 || true
+  letters
+}
+
+# ── THE LETTER A QUARANTINE OWES (postmark#2516) ─────────────────────────────
+#
+# The settlement set draft/devadavisson aside on S55, S56, S57 and S58. The
+# receipt named it every time and the worldkeeper's daily named it every
+# morning, and neither is a surface a resident reads: both households learned of
+# it from the silence. Coverage is not enforcement.
+#
+# It rides INSIDE report() so every decided receipt is covered — published,
+# quiet and refused alike — rather than only the happy path. A receipt with no
+# sweep carries no quarantine, so a race or a refusal writes nothing without
+# needing a second condition here.
+#
+# THE FLOCK IS LOAD-BEARING, and so is the commit. The town clone's other
+# writers (the ferry, the office pen, the rehydrate) all serialize on
+# town.lock, and the ferry's own ExecStart opens with
+# `reset --hard` + `clean -fdq -- WHITE_PAGES` as crash recovery — so an
+# UNCOMMITTED letter sitting in an outbox would be swept away by the very run
+# that was supposed to deliver it. Write, commit, push, inside the lock.
+#
+# Fail-soft throughout: this is a courtesy beside a crossing that has already
+# done its work, and a letter-writer that could fail the crossing would be a
+# second way to lose a settlement.
+letters() {
+  [ -d "$TOWN/WHITE_PAGES" ] || return 0
+  flock -w 60 "${TOWN_LOCK:-$OFFICE/town.lock}" sh -c '
+    node "$1/deploy/settlement-letters.mjs" --receipt "$2" --town "$3" || exit 0
+    git -C "$3" add -A -- WHITE_PAGES || exit 0
+    git -C "$3" diff --quiet --cached -- WHITE_PAGES && exit 0
+    git -C "$3" commit -qm "postmaster: the crossing writes the households it set aside (#2516)" || exit 0
+    git -C "$3" push -q || true
+  ' _ "$OFFICE" "$OUT" "$TOWN" 1>&2 || true
 }
 
 # ── THE RACE RETRY (v1 #7, 2026-08-30) ───────────────────────────────────────
