@@ -178,15 +178,12 @@ export function traceFeature({ slug, sources = {}, fixture = false } = {}) {
  */
 export function reverseLookup(trace, { changed } = {}) {
   const rows = trace?.connections ?? [];
-  const src = (r) => r.source;
-  const matches = (r) =>
-    src(r) === changed || (trace?.source_revisions && Object.keys(trace.source_revisions).includes(changed) && r.__bag === changed);
 
-  // Rows are matched on the SOURCE NAME the row carries and on the bag key, so a
-  // caller may name either "world" or "world.db" and get the same answer.
-  const bagKey = {};
-  for (const [k, v] of Object.entries(trace?.source_revisions ?? {})) bagKey[k] = v;
-
+  // Rows are matched two ways, so a caller may name either the BAG KEY the
+  // trace was built with ("world") or the SOURCE NAME the row carries
+  // ("world.db") and get the same answer. Both spellings are real: the bag key
+  // is what a caller who built the trace knows, the source name is what a
+  // caller reading the response back sees.
   const byBag = new Map([
     ["blueprints", ["blueprint-answers-idea"]],
     ["world", ["feature-depends-on-concept", "implementation-enforces-rule"]],
@@ -196,7 +193,7 @@ export function reverseLookup(trace, { changed } = {}) {
     ["door", ["door-exposes-behaviour"]],
   ]);
   const idsForBag = byBag.get(changed) ?? [];
-  const hit = (r) => matches(r) || idsForBag.includes(r.id);
+  const hit = (r) => r.source === changed || idsForBag.includes(r.id);
 
   const affected = [];
   const unknown = [];
