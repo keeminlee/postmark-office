@@ -42,7 +42,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { traceFeature, reverseLookup, renderHuman, STATES, CONNECTIONS } from "../src/feature-trace.mjs";
-import { officeSource, testsSource, PILOT_OWN_FILES } from "../src/feature-trace-sources.mjs";
+import { officeSource, testsSource, blueprintsSource, PILOT_OWN_FILES } from "../src/feature-trace-sources.mjs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve, join } from "node:path";
 import { writeFileSync, rmSync, existsSync, readFileSync } from "node:fs";
@@ -262,36 +262,67 @@ test("the reader stores nothing — the answer is computed at need", () => {
 // is about what the LOOP does with a failure and reproducing it against a real
 // repo would mean breaking a repo.
 
-const chestWhere = ({ failOn = null, dirs = ["events-as-first-class-town-objects", "trace-a-feature-from-idea-to-opening"] } = {}) => {
-  // Mirrors blueprintsSource's loop over a fixed directory list, with one
-  // directory's listing throwing — the exact shape of a per-directory git
-  // failure.
-  const unread = [];
-  const why = [];
-  for (const d of dirs) {
-    if (d === failOn) { unread.push(d); continue; }
-    if (d === "events-as-first-class-town-objects") return { found: true, partial: true, detail: `BLUEPRINTS/${d}/proposal.md cites the idea` };
+// A FAKE CHEST, but the REAL LOOP. `blueprintsSource` takes an injectable git
+// runner precisely so these can drive the actual function; my first attempt
+// wrote a stub that mirrored the loop, and the flip proof exposed it — reverting
+// the real fix left the suite green, because the test was bound to my copy of
+// the logic instead of the logic. These now fail if the swallow returns.
+//
+// The runner answers like git against a two-directory chest, and throws for one
+// named directory the way a per-directory `ls-tree` failure does.
+const chestRunner = ({ failOn = null } = {}) => (cwd, args) => {
+  const [cmd, ...rest] = args;
+  if (cmd === "rev-parse") return "33f290cf544b2943b7c0283360d7e95a33b49e4e";
+  const target = rest[rest.length - 1];
+  if (cmd === "ls-tree" && rest.includes("-d")) return "events-as-first-class-town-objects\ntrace-a-feature-from-idea-to-opening";
+  if (cmd === "ls-tree") {
+    const dir = String(target).split("BLUEPRINTS/")[1];
+    if (dir === failOn) throw new Error(`fatal: not a tree object (simulated failure on ${dir})`);
+    return "proposal.md";
   }
-  if (unread.length) throw new Error(`${unread.length} of ${dirs.length} blueprint directories could not be read — the search was incomplete`);
-  return { found: false, why: `no blueprint directory cites it (${dirs.length - unread.length} of ${dirs.length} directories read)` };
+  // Each directory cites its OWN idea. The first version of this runner handed
+  // the same frontmatter to every `show`, so the decoy directory also "cited"
+  // the events slug and the loop found a legitimate match — the test went red
+  // against correct code. A fixture that answers the same for every input
+  // cannot tell the code apart from itself.
+  if (cmd === "show") {
+    const dir = String(target).split("BLUEPRINTS/")[1].split("/")[0];
+    const idea = dir === "events-as-first-class-town-objects"
+      ? "rei/events-as-first-class-town-objects"
+      : "rei/trace-a-feature-from-idea-to-opening";
+    return `---\ntitle: ${dir}\nidea: ${idea}\nstatus: drawn up\n---\n`;
+  }
+  throw new Error("unexpected git call: " + args.join(" "));
 };
 
+const BP_DIR = OFFICE;   // any directory with a .git — the runner never touches it
+
 test("criterion 3 in the sources — a failed directory listing is unreadable, never absent", () => {
-  const src = { name: "postmark-blueprints", revision: "33f290c",
-    blueprintCitesIdea: () => chestWhere({ failOn: "events-as-first-class-town-objects" }) };
+  const src = blueprintsSource(BP_DIR, "HEAD", { run: chestRunner({ failOn: "events-as-first-class-town-objects" }) });
   const res = traceFeature({ slug: SLUG, sources: { ...bench(), blueprints: src } });
   const row = res.connections.find((c) => c.id === "blueprint-answers-idea");
   assert.equal(row.state, "unreadable",
     "the directory that WOULD have matched failed to read — that is a failed search, not an absent blueprint");
-  assert.match(row.error, /search was incomplete/, "the error rides, naming why the answer cannot be given");
+  assert.match(row.error, /could not be read|search was incomplete/,
+    "the error rides, naming why the answer cannot be given");
 });
 
 test("criterion 3 in the sources — a failure elsewhere does not spoil a real match", () => {
-  const src = { name: "postmark-blueprints", revision: "33f290c",
-    blueprintCitesIdea: () => chestWhere({ failOn: "trace-a-feature-from-idea-to-opening" }) };
+  const src = blueprintsSource(BP_DIR, "HEAD", { run: chestRunner({ failOn: "trace-a-feature-from-idea-to-opening" }) });
   const res = traceFeature({ slug: SLUG, sources: { ...bench(), blueprints: src } });
   const row = res.connections.find((c) => c.id === "blueprint-answers-idea");
-  assert.equal(row.state, "partial", "a directory that failed is irrelevant once the answer is found elsewhere");
+  assert.equal(row.state, "partial",
+    "a directory that failed is irrelevant once the answer is found elsewhere");
+});
+
+test("criterion 3 in the sources — with nothing failing, a genuine absence is still absent", () => {
+  // The can-fail flip's other half: the fix must not turn every no-match into
+  // unreadable. A clean search that finds nothing is an ABSENCE, and says so.
+  const src = blueprintsSource(BP_DIR, "HEAD", { run: chestRunner() });
+  const res = traceFeature({ slug: "nobody/no-such-idea", sources: { ...bench(), blueprints: src } });
+  const row = res.connections.find((c) => c.id === "blueprint-answers-idea");
+  assert.equal(row.state, "absent", "a complete search that found nothing is an absence");
+  assert.match(row.why, /2 of 2 directories read/, "and the denominator says the search was complete");
 });
 
 test("the 'directories read' denominator counts only directories actually read", () => {

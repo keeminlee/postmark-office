@@ -129,8 +129,20 @@ export function worldSource(dbPath) {
 // revision the answer claims is the revision the bytes came from — never the
 // working tree, which may be anything.
 
-export function blueprintsSource(repoDir, ref = "HEAD") {
+// `run` is injectable for ONE reason, and it is not convenience: the swallow
+// this loop used to have can only be reproduced by making a SINGLE directory's
+// listing fail, and the alternative to injecting the runner is breaking a real
+// git repository in order to test a reader.
+//
+// It is here because the flip proof caught the first attempt. That version's
+// falsifiers drove a STUB that mirrored this loop, so reverting the real fix
+// left the suite green — a test bound to my copy of the logic instead of to the
+// logic. A test that cannot see the code it protects is a claim standing beside
+// machinery that does not back it, which is the exact defect class this pilot
+// exists to expose. The seam is the fix; the falsifiers now drive this function.
+export function blueprintsSource(repoDir, ref = "HEAD", { run = git } = {}) {
   if (!existsSync(join(repoDir, ".git"))) throw new Error(`no blueprints clone at ${repoDir}`);
+  const git = run;                                   // the injected runner, or the real one
   const sha = git(repoDir, ["rev-parse", ref]);
   const at = (p) => git(repoDir, ["show", `${sha}:${p}`]);
   // `-d` so only TREES come back. Listing names and then asking for each one's
