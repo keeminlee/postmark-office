@@ -1797,23 +1797,39 @@ async function journalLeaveMark(clean, { crossing = currentCrossing() } = {}) {
 
     // ── the parcel dial and the claim cap, as lookups ────────────────────────
     if (clean.kind === "parcel") {
-      const { PARCEL_CLAIM_CAP, PARCEL_CAP_LAW_DATE, PARCEL_EXTENT_M, marksContain } = await foldConstants();
+      const { PARCEL_CLAIM_CAP, PARCEL_CAP_LAW_DATE, PARCEL_EXTENT_M, marksContain, parcelClaimRefusalIn } = await foldConstants();
       const main = mainRef(WORLD_CLONE);
       const side = PARCEL_EXTENT_M ?? 25;
       clean.extent = { w: side, h: side };   // the town's dial, never the claimant's
-      const cap = PARCEL_CLAIM_CAP ?? 3;
       let registry = null;
       try { registry = readJsonAtRef(WORLD_CLONE, main, "WORLD/households.json")?.households ?? null; } catch { /* no registry → solo grain */ }
-      const credOf = (h) => registry?.[h] ?? `solo:${h}`;
-      const cred = credOf(clean.by);
-      // Canon plus the live layer, deduped by id: a household that claimed two
-      // parcels since the last save is at two, and a cap that could not see the
-      // journal would let them claim past it until the drain.
+      // THE SAME OWNER THE GIT-ERA DOOR READS (postmark#2514). This guard was
+      // the second of two office copies of a rule the world owns, and it
+      // carried the same half: the CAP, without the one-parcel-per-HANDLE
+      // clause. Whichever door the flag routes through, the resident now reads
+      // the crossing's own sentence. Canon plus the live layer, deduped by id —
+      // a household that claimed two parcels since the last save is at two, and
+      // a cap that could not see the journal would let them claim past it until
+      // the drain.
       const held = new Map([...canon.marks, ...live].filter((m) => m.kind === "parcel").map((m) => [m.id, m]));
-      const mine = [...held.values()].filter((m) => credOf(m.by ?? m.household) === cred && m.id !== id).length;
-      if (mine >= cap)
-        throw bounce(403, `your household already holds ${mine} parcel${mine === 1 ? "" : "s"}`,
-          `parcel claiming is capped at ${cap} per household (ruled ${PARCEL_CAP_LAW_DATE ?? "2026-07-30"}; prior holdings stand) — new ground for this household is the founder's word, not the door's`);
+      let why;
+      if (typeof parcelClaimRefusalIn === "function") {
+        why = parcelClaimRefusalIn([...held.values()], { by: clean.by, id, date: clean.date, households: registry });
+      } else {
+        // A clone that has not pulled the predicate keeps the old gate rather
+        // than none — a stale guard beats an absent one.
+        const cap = PARCEL_CLAIM_CAP ?? 3;
+        const credOf = (h) => registry?.[h] ?? `solo:${h}`;
+        const cred = credOf(clean.by);
+        const mine = [...held.values()].filter((m) => credOf(m.by ?? m.household) === cred && m.id !== id).length;
+        why = mine >= cap
+          ? `parcel claim capped — this credential household already holds ${mine} (cap ${cap} per household, ruled ${PARCEL_CAP_LAW_DATE ?? "2026-07-30"}; prior estate stands, new claims wait on the founder's word)`
+          : null;
+      }
+      if (why)
+        throw bounce(403, why, why.startsWith("household already holds a parcel")
+          ? `a handle keeps one parcel and moves it rather than adding another — amend your existing parcel (same slug, amend: true) to relocate it, or leave this mark as kind: sited, which is what a thing standing on your ground is`
+          : `new ground for this household is the founder's word, not the door's`);
 
       // ── the sovereignty guard, still standing for GROUND ─────────────────
       // Repealed for sited marks 2026-08-17 (the consent law supersedes it);
