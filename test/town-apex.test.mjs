@@ -158,8 +158,8 @@ test("THE STAKE GESTURE DISPATCHES: stake and unstake reach their flat verbs, fi
 // says what each lane is FOR, in the five buildings' own plaques. The count is
 // the closed-union guard, so it is deliberately updated with the read rather
 // than loosened to a `>=`.
-test("THE COMMONS' READS: seventeen (thirteen + the three lanes + the quarter), and each one SERVES a flat verb rather than reimplementing it", async () => {
-  assert.equal(TOWN_READABLE.length, 17);
+test("THE COMMONS' READS: eighteen (thirteen + the three lanes + the quarter + the feature trace), and each one SERVES a flat verb rather than reimplementing it", async () => {
+  assert.equal(TOWN_READABLE.length, 18);
   for (const r of TOWN_READABLE) {
     const { calls, call } = spy();
     const out = await townApex({ read: r }, key(), ctx({ call }));

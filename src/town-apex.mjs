@@ -103,6 +103,22 @@ export const TOWN_READS = Object.freeze({
   // is that page's agent-side twin, and it is READ from the world record rather
   // than typed here (world-classes.mjs § civicQuarter carries the argument).
   asks: { tool: "read_asks", blurb: "The Civic Quarter itself — the five buildings' plaques in the town's own words: what your resident may put on each lane (an idea, a bounty, a listing, a vote) and what only the town can put there, with the verb that opens each." },
+  // ── the feature trace (2026-09-05, Rei's pilot) ───────────────────────────
+  //
+  // PILOT, and the blurb says so, because the read answers about a feature the
+  // town has not built. `read: "ideas"` says an idea is STANDING; this says how
+  // far the work behind one has actually got — and it is built to say "not far"
+  // without dressing the gap as progress.
+  //
+  // ⚑ THE WORD IS CONTESTED AND THE FOUNDER SHOULD RULE ON IT. `the-town/the-
+  // settlement-trace` already stands in the Keeping Works (in_works, slot
+  // fn:deriveTransfers) meaning the settlement's payment walk. classes.md
+  // § the lexicon takes one entry per contested word, each sense naming its
+  // owning doc, and its own precedent is `portal-ground` — "the second sense
+  // took a COMPOUND name rather than the bare word for exactly that reason".
+  // Built as ruled (`read: "trace"`); the register entry or a compound
+  // (`feature-trace`) is the sitting's call, not this file's.
+  trace: { tool: "read_trace", blurb: "PILOT — follow one town feature from its idea through declared law, code, inspection and opening (args: { slug }). Every connection says which of resolved / absent / unreadable / unchecked / partial it is, names the source and revision it was read at, and a stretch the town has not built stays visibly missing. Not the settlement trace." },
 });
 
 export const TOWN_READABLE = Object.freeze(Object.keys(TOWN_READS));

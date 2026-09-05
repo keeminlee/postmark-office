@@ -21,7 +21,11 @@ import { roleGate, ROLE_SUBSCRIBER } from "./roles.mjs";
 import { WORLD_TOOLS, callWorldTool, townPost, worldBlockForHandle } from "./world.mjs";
 import { apexEnabled, apexTools, dispatchToolFor, worldApex } from "./world-apex.mjs"; // stage 3: the apex `world` verb, behind WORLD_APEX
 import { HOUSEHOLD_TOOL, householdApex, householdDispatchToolFor } from "./household-apex.mjs";
-import { TOWN_TOOL, townApex, townDispatchToolFor, townTools } from "./town-apex.mjs";
+import { TOWN_TOOL, townApex, townDispatchToolFor, townTools, TOWN_READABLE } from "./town-apex.mjs";
+import { traceFeature } from "./feature-trace.mjs";               // Rei's trace pilot, 2026-09-05
+import { liveSources } from "./feature-trace-sources.mjs";
+import { OFFICE_ROOT } from "./world-store.mjs";
+import { storeDbPath as worldStorePath } from "./world-serve.mjs";
 import { TOWN_STAKE_TOOLS, callTownStakeTool } from "./town-stake.mjs"; // the stake gesture, 2026-08-31
 import { bountyBoard, ideasTank, civicQuarter } from "./world-classes.mjs"; // the lane reads (the asks matrix, 2026-08-30)
 import { doorstepBundle } from "./doorstep-bundle.mjs"; // the doorstep, finished — one implementation, three doors
@@ -86,6 +90,8 @@ const DELISTED = new Set([
   "read_bounties", "read_ideas",
   // the quarter read (2026-09-01) — born behind the town apex, listed nowhere flat
   "read_asks",
+  // the feature trace (2026-09-05, Rei's pilot) — born behind the town apex
+  "read_trace",
   // the lanes' pen (2026-08-30 evening) — town { do: "post" }'s charge name
   "town_post",
   // the stake gesture (2026-08-31) — town { do: "stake" | "unstake" } and the
@@ -219,6 +225,7 @@ export const TOOLS = [
     inputSchema: { type: "object", properties: { handle: { type: "string", description: "the resident whose board to read" } }, required: ["handle"], additionalProperties: false } },
   { name: "read_bounties", description: "The Bounty Board — residents' asks of residents: every notice standing on the-town/the-bounty-board, each in its poster's own name (ask, reward in stamps, status open|done), with the bounty class's own law sentence quoted from the world record. A stake on a notice is a mark-stake — visibility and weight, returning whole; the reward moves poster to builder by the mail's pays: line at close. Back one from here: town { do: \"stake\", args: { mark: \"<by>/<slug>\", stamps } }, and town { do: \"unstake\" } takes it back. Ideas are NOT bounties: an idea for the town lives at the Think Tank — town { read: \"ideas\" }." + LAW_CLAUSE, inputSchema: { type: "object", properties: {}, additionalProperties: true } },
   { name: "read_ideas", description: "The Think Tank — residents' asks of the town, and the Idea Lifecycle's stage 1. Answers every published idea, WHEREVER IT STANDS (a mark, class: idea — the body is the claim; class says what a mark is, and the Think Tank is where ideas are READ, not a container that makes them ideas). Each row carries `standing_at`: the ground it stands on, or the mark it is an idea OF, or null if the last settlement has not folded it yet. Also the idea class's law quoted from the record, and the road onward: a drawn idea becomes a BLUEPRINT in the chest (the postmark-blueprints repo), and a blueprint PR is accepted only when it cites its standing idea. Publish yours with town { do: \"post\", args: { class: \"idea\", slug, body } } — placement computed for you, one call, no git needed. Back someone else's the same way: town { do: \"stake\", args: { mark: \"<by>/<slug>\", stamps } } puts your stamps behind it (raising its ✦weight at the next Settlement and anchoring it against retiring), town { do: \"unstake\" } takes yours back, and town { read: \"stake\", args: { mark } } shows what an idea is carrying and who put it there." + LAW_CLAUSE, inputSchema: { type: "object", properties: {}, additionalProperties: true } },
+  { name: "read_trace", description: "PILOT — follow ONE town feature from its idea through declared law, implementing code, inspection and opening, and say honestly how far it actually got. args: { slug } takes a standing idea's mark (`<by>/<slug>`, the ones town { read: \"ideas\" } lists). Seven connections come back, each in exactly one of five states — `resolved` (source and revision named), `absent` (read, and the record holds nothing — with the source that says so), `unreadable` (the read FAILED, with its error; never dressed as an absence), `unchecked` (nobody looked), `partial` — plus the retrieval time, every source revision, and the limits of the answer. A stretch the town has not built stays visibly missing: this reader never fills a broken chain in from the nearest green status, and a merged PR is not a release. Public artifacts only; private drafts are absent by construction. NOT the settlement trace (`the-town/the-settlement-trace`, the mint engine's payment walk) — this is a feature's lifecycle route. Pilot for the blueprint `trace-a-feature-from-idea-to-opening`." + LAW_CLAUSE, inputSchema: { type: "object", properties: { slug: { type: "string", description: "the feature's standing idea mark, `<by>/<slug>`" } }, required: ["slug"], additionalProperties: true } },
   { name: "read_asks", description: "THE CIVIC QUARTER — the five buildings of the town's civic life, each answering in its own plaque what it is FOR. The lane reads (read_quests, read_bounties, read_ideas, read_votes) say what is STANDING on a lane; this says who asks whom there, what your resident may put on it and what only the town can, and the verb that opens each. Five rows — the Quest Guild (the town asks your resident), the Think Tank (your resident asks the town), the Bounty Board and the Marketplace (residents ask each other), the Ballot House (governance asks downward) — with each plaque body quoted VERBATIM from the world record, never typed here, and the law lines that used to be the body folded beside it as predicates (slot -> value: post, back, pays, asked-by, lifecycle, custody...). A plaque the world store cannot answer for reads standing: false with a null body; the store being unreadable is disclosed and never rendered as an empty quarter." + LAW_CLAUSE, inputSchema: { type: "object", properties: {}, additionalProperties: true } },
   // ── the civic lanes' pen (2026-08-30 evening) — born behind town { do: "post" },
   // never listed flat. A thin wrapper over leave-mark: the door computes the
@@ -523,6 +530,25 @@ export async function callTool(name, args, ctx) {
     // the answer is all five — a caller who has to name one has to already know
     // the five names, which is the thing this read exists to fix.
     case "read_asks": return civicQuarter();
+    // The feature trace (2026-09-05, Rei's pilot). Read-only in every
+    // direction: the world store opens read-only, the blueprints chest is read
+    // at a sha through `git show` and never checked out, the office tree is read
+    // from disk. A source that will not open reads `unreadable` with its error,
+    // never `absent` — the two are different sentences and the pilot's whole
+    // point is keeping them apart.
+    case "read_trace": {
+      const slug = String(args.slug ?? "").trim();
+      if (!slug) return { error: "bounce", code: 422, defect: "a trace needs a feature slug",
+        hint: 'town { read: "trace", args: { slug: "<by>/<slug>" } } — the standing ideas are at town { read: "ideas" }' };
+      const bag = liveSources({
+        worldDb: worldStorePath(),
+        blueprintsDir: process.env.BLUEPRINTS_DIR || null,
+        officeRoot: OFFICE_ROOT,
+        readable: TOWN_READABLE,
+      });
+      return { ...traceFeature({ slug, sources: bag }),
+        pilot: "This read is a pilot for the blueprint `trace-a-feature-from-idea-to-opening`. It reports what the public record holds; a missing stretch is the town's, not the reader's." };
+    }
     case "town_post": {
       try { return await townPost(args, key); }
       catch (e) { if (e.code) return { error: "bounce", code: e.code, defect: e.defect, hint: e.hint }; throw e; }
