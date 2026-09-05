@@ -880,16 +880,21 @@ export async function eraClaims({
     t.amended = authoredSubstance({ ...t.was, owner: t.now.owner }) !== authoredSubstance(t.now);
     if (t.amended) amended.push({ mark: t.now, was: t.was, transfer: t });
 
-    // A RENAME-TRANSFER'S EDIT HALF IS NOT ADMITTED, and it does not need to be.
-    // `amendedByHand` asks `--diff-filter=M` at the mark's CURRENT path, and a
-    // rename registers there as an addition, so the founder's hand is invisible to
-    // that probe even though the transfer act beside it names the very same
-    // commit. `wright/the-candle-vault` is the live case: one amend claim, pending.
-    // It reaches the right answer anyway — the clearing job's step 1 finds a
-    // standing mark at the new slug whose id IS this claim's `supersedes` (the
-    // transferred row kept it), so it locks as an amend rather than refusing as a
-    // duplicate. Named because it is residual exposure of the exact kind DEC-17
-    // removes: the candle judges it, and a candle that judges can refuse.
+    // A RENAME-TRANSFER'S EDIT HALF IS ADMITTED (M-10, closed 2026-09-05).
+    // It was not, and this comment used to say it did not need to be:
+    // `amendedByHand` asks `--diff-filter=M` at the mark's CURRENT path, a rename
+    // does not register as a modification there, and so the founder's hand was
+    // invisible on the one commit that both moved the record and edited it —
+    // `wright/the-candle-vault`, one amend claim, pending. It reached the right
+    // answer anyway, because the clearing job's step 1 finds a standing mark at
+    // the new slug whose id IS the claim's `supersedes`. That was the argument
+    // for leaving it, and it was the wrong argument: a claim that arrives at the
+    // right verdict BY WAY OF A JUDGEMENT is a claim a judgement can refuse, which
+    // is the residual exposure DEC-17 exists to remove.
+    //
+    // `t.commit` is handed to `amendedByHand` now (see its `known` map), so the
+    // edit half locks as a founder's admission naming the rename's own commit —
+    // the same sha the `transfer` act beside it already names.
 
     // ── WHAT A TRANSFER'S PREDICATED CHILDREN NEED, WHICH DEC-16 DOES NOT CARRY
     //
@@ -1244,18 +1249,58 @@ export async function plantedByHand({ worldRepo, toDir, fromSha, toSha, added })
  * though a resident filed it.
  */
 export async function amendedByHand({ worldRepo, toDir, fromSha, toSha, amended }) {
-  return byHand({ worldRepo, toDir, fromSha, toSha, filter: "M", slugs: amended.map((a) => a.mark.slug) });
+  return byHand({
+    worldRepo, toDir, fromSha, toSha, filter: "M",
+    slugs: amended.map((a) => a.mark.slug),
+    // ── M-10: A RENAME-TRANSFER'S EDIT HALF, ADMITTED ───────────────────────
+    //
+    // This probe asks `--diff-filter=M` at the mark's CURRENT path, and a
+    // rename does not register as a modification there — git files the change
+    // under R, against a path pair, and a pathspec naming one side alone has
+    // nothing to pair with. So the founder's hand was invisible on exactly the
+    // commits that both MOVED a record and EDITED it, and the edit half of a
+    // rename-transfer was derived as a resident's ordinary amend claim: pending,
+    // for the candle to adjudicate. `wright/the-candle-vault` is the live case.
+    //
+    // It reached the right answer anyway, through the transfer — the clearing
+    // job's step 1 finds a standing mark at the new slug whose id IS the claim's
+    // `supersedes`, so it locks as an amend rather than refusing as a duplicate.
+    // That is why this was "not a blocker" and not why it was safe: a claim that
+    // arrives at the right verdict by way of a judgement is a claim a judgement
+    // can REFUSE, which is the residual exposure DEC-17 exists to remove.
+    //
+    // THE COMMIT WAS ALREADY IN HAND, which is why the fix is a lookup and not
+    // another `git log`. `eraClaims` builds each transfer from `renamesBetween`,
+    // whose map carries the sha, the date and the subject of the very commit
+    // that moved the file — and that function's own words, one screen up, are
+    // the law this reuses rather than a new idea: "A rename ALREADY NAMED ITS
+    // COMMIT … asking git a second time would be a second reading of one fact,
+    // and the two could differ."
+    //
+    // Passed for every transfer, not only the renamed ones. A same-path refold's
+    // `commit` IS `commitTouching(…, filter: "M")` at that same path — the
+    // identical call this loop would make — so handing it over changes nothing
+    // there and spares a duplicate read. The publish-subject guard below still
+    // runs on it: a commit that published is not the founder's hand, however
+    // this probe came by it.
+    known: new Map(amended.filter((a) => a.transfer?.commit?.sha)
+      .map((a) => [a.mark.slug, a.transfer.commit])),
+  });
 }
 
-async function byHand({ worldRepo, toDir, fromSha, toSha, filter, slugs }) {
+async function byHand({ worldRepo, toDir, fromSha, toSha, filter, slugs, known = new Map() }) {
   if (!slugs.length) return [];
   const owners = await filingOwners(toDir);
   const pathOf = new Map([...owners].map(([p, id]) => [id, p]));
   const hand = [];
   for (const slug of slugs) {
+    // A commit the caller already holds is used as it stands. Only when there is
+    // none does this ask git, and only then does a missing file mean there is
+    // nothing to ask about.
+    const carried = known.get(slug) ?? null;
     const path = pathOf.get(slug);
-    if (!path) continue;                       // no file to ask about; not a claim about the hand
-    const c = commitTouching(worldRepo, { fromSha, toSha, path, filter });
+    if (!carried && !path) continue;           // no file to ask about; not a claim about the hand
+    const c = carried ?? commitTouching(worldRepo, { fromSha, toSha, path, filter });
     // `at` RIDES SINCE DEC-17. It was dropped here while the hand was only a
     // count for the receipt's diagnosis; the admission needs it, because a claim
     // the founder's hand locked is decided WHEN HIS COMMIT LANDED and not at
