@@ -18,6 +18,10 @@
 // tier 1) so two households do not queue behind one working tree.
 
 import { worldFreezeBounce } from "./freeze.mjs";
+import {
+  PARCEL_RULE_SOURCE, PARCEL_RULE_UNREADABLE_SOURCE, PARCEL_RULE_UNREADABLE,
+  PARCEL_RULE_UNREADABLE_HINT, PARCEL_RULE_UNREADABLE_CODE, warnParcelRuleUnreadable,
+} from "./parcel-rule.mjs";
 import { existsSync, readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { dirname, join } from "node:path";
@@ -1749,6 +1753,9 @@ async function groundMinimumStake(clean, canon) {
 async function journalLeaveMark(clean, { crossing = currentCrossing() } = {}) {
   const bounce = (code, defect, hint) => { const e = new Error(defect); Object.assign(e, { code, defect, hint }); return e; };
   const id = `${clean.by}/${clean.slug}`;
+  // Which rule judged a parcel claim, filled in by the parcel branch below and
+  // carried onto the answer. Null for every other kind of mark.
+  let ruleSource = null;
   const canon = canonForGuards();
   const db = openDynamic();
   try {
@@ -1811,25 +1818,28 @@ async function journalLeaveMark(clean, { crossing = currentCrossing() } = {}) {
       // a household that claimed two parcels since the last save is at two, and
       // a cap that could not see the journal would let them claim past it until
       // the drain.
+      //
+      // AND IT FAILS CLOSED, exactly as the git-era door does (the review lap,
+      // 2026-09-05; src/parcel-rule.mjs carries the reasoning). Both doors used
+      // to fall back to the old cap-only gate, which restores the WRONG half of
+      // a two-clause rule and leaves #2514 open on the case it is about. Only
+      // PARCEL claims are refused; every other kind of mark is unaffected.
       const held = new Map([...canon.marks, ...live].filter((m) => m.kind === "parcel").map((m) => [m.id, m]));
-      let why;
-      if (typeof parcelClaimRefusalIn === "function") {
-        why = parcelClaimRefusalIn([...held.values()], { by: clean.by, id, date: clean.date, households: registry });
-      } else {
-        // A clone that has not pulled the predicate keeps the old gate rather
-        // than none — a stale guard beats an absent one.
-        const cap = PARCEL_CLAIM_CAP ?? 3;
-        const credOf = (h) => registry?.[h] ?? `solo:${h}`;
-        const cred = credOf(clean.by);
-        const mine = [...held.values()].filter((m) => credOf(m.by ?? m.household) === cred && m.id !== id).length;
-        why = mine >= cap
-          ? `parcel claim capped — this credential household already holds ${mine} (cap ${cap} per household, ruled ${PARCEL_CAP_LAW_DATE ?? "2026-07-30"}; prior estate stands, new claims wait on the founder's word)`
-          : null;
+      if (typeof parcelClaimRefusalIn !== "function") {
+        warnParcelRuleUnreadable("world.mjs journal door", WORLD_CLONE);
+        const stale = bounce(PARCEL_RULE_UNREADABLE_CODE, PARCEL_RULE_UNREADABLE, PARCEL_RULE_UNREADABLE_HINT);
+        stale.rule_source = PARCEL_RULE_UNREADABLE_SOURCE;
+        throw stale;
       }
-      if (why)
-        throw bounce(403, why, why.startsWith("household already holds a parcel")
+      ruleSource = PARCEL_RULE_SOURCE;
+      const why = parcelClaimRefusalIn([...held.values()], { by: clean.by, id, date: clean.date, households: registry });
+      if (why) {
+        const refusal = bounce(403, why, why.startsWith("household already holds a parcel")
           ? `a handle keeps one parcel and moves it rather than adding another — amend your existing parcel (same slug, amend: true) to relocate it, or leave this mark as kind: sited, which is what a thing standing on your ground is`
           : `new ground for this household is the founder's word, not the door's`);
+        refusal.rule_source = PARCEL_RULE_SOURCE;
+        throw refusal;
+      }
 
       // ── the sovereignty guard, still standing for GROUND ─────────────────
       // Repealed for sited marks 2026-08-17 (the consent law supersedes it);
@@ -1962,6 +1972,11 @@ async function journalLeaveMark(clean, { crossing = currentCrossing() } = {}) {
       // "acts" for one would name a table that does not hold it.
       seq: row.seq, crossing: row.crossing, log: row.record ?? "journal",
       witnesses: row.witnesses ? JSON.parse(row.witnesses) : null,
+      // WHICH RULE ADMITTED THIS PARCEL. Set only on the parcel branch, so
+      // every other kind answers exactly what it answered before. On the
+      // admission as well as the refusal: a silent success is the shape that
+      // hid #2514 for four days (postmark#2514, the review lap).
+      ...(ruleSource ? { rule_source: ruleSource } : {}),
       ...(amending ? { amended: true, moved: false,
         superseded: "the prior declaration — every version stays in the log; canon shows the latest at the next crossing" } : {}),
       // ── which side of the boundary this act left the mark on ──────────────
@@ -2201,7 +2216,17 @@ export async function leaveMarkViaOffice(worldClone, payload = {}, key = null) {
       if (lockTimedOut(e)) throw bounce(LOCK_BUSY.code, LOCK_BUSY.defect, LOCK_BUSY.hint);
       throw bounce(500, "the mark pass tripped", String(e.stderr ?? e.message ?? e).slice(0, 300));
     }
-    if (result.error) throw bounce(result.error.code ?? 500, result.error.defect, result.error.hint);
+    // WHICH RULE JUDGED IT SURVIVES THE UNWRAP (postmark#2514, the review lap).
+    // The exec answers `rule_source` at the top level beside `error`, and a
+    // bounce built from `error` alone would drop it — so a resident refused
+    // because the parcel law could not be read would be told the sentence and
+    // not which rule (or non-rule) produced it. The one field is carried across
+    // deliberately; every other kind of mark leaves it null and is unchanged.
+    if (result.error) {
+      const b = bounce(result.error.code ?? 500, result.error.defect, result.error.hint);
+      if (result.rule_source) b.rule_source = result.rule_source;
+      throw b;
+    }
   }
   await discloseOverhang(result, by, key);
   await disclosePublishing(result, by);
