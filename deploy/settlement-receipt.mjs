@@ -110,10 +110,26 @@ const receipt = {
   channels: sweep ? channels : null,
   ...(unnamed ? { channels_unnamed: unnamed } : {}),
 
-  // The rows an operator has to act on, in full rather than as a count — these
-  // are the two channels where somebody is waiting to be told something.
+  // THE ROWS AN OPERATOR — AND NOW A HOUSEHOLD — HAS TO ACT ON, in full rather
+  // than as a count. These are the two channels where somebody is waiting to be
+  // told something.
+  //
+  // `by` and `detail` were dropped here, and dropping them is what made the
+  // receipt unactionable (postmark#2516). `detail` is the only place the fold's
+  // own sentence and the poisoned mark's id appear; `by` is the handle a letter
+  // is addressed to. Without them the live receipt reads:
+  //
+  //   { household: "devadavisson", ref: "draft/devadavisson", reason: "…", row: null }
+  //
+  // — a drawer, a login, and nothing that names a person or a row. That is the
+  // exact shape S55 through S58 carried while the crossing itself knew both.
+  //
+  // Both are pass-through of what the sweep already computed; `detail` is
+  // capped there at 400 characters, so this widens the receipt by a bounded
+  // amount and only on the crossings that actually set something aside.
   quarantined: (sweep?.quarantined ?? []).map((q) => ({
-    household: q.household ?? null, ref: q.ref ?? null, reason: q.reason ?? null, row: q.row ?? null,
+    household: q.household ?? null, by: q.by ?? null, ref: q.ref ?? null,
+    reason: q.reason ?? null, row: q.row ?? null, detail: q.detail ?? null,
   })),
   isolated: isolate
     ? {
