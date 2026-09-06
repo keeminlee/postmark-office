@@ -1667,12 +1667,18 @@ const server = createServer((req, res) => {
 // deleted flag is told by name at boot, rather than quietly served an apex the
 // flag no longer controls. A flag that silently stops meaning anything is the
 // "works by weather" class.
-// Keyed on the MEANINGFUL value, not on presence. The first cut of this guard
-// fired on `!== undefined` and killed every child office whose env merely named
-// the flag — including nine tests that set WORLD_APEX="1" to exercise the apex
-// door G2 KEEPS. A proof branch whose guard reddens tests of the thing being
-// KEPT measures the guard, not the line.
-if (process.env.WORLD_APEX === "1") {
-  throw new Error("WORLD_APEX was deleted at G2 (P-033) — the apex verb is always on and the flat world_* verbs it could roll back to do not exist; remove the flag from this office's environment");
-}
+// G2 (P-033): THE OPERATOR WARNING LIVES ON THE DELETION PR, NOT HERE.
+//
+// This branch exists to measure what deleting the gate costs. A boot-time throw
+// on the flag cannot do that, and the run proves it rather than the reasoning:
+// keyed on presence it killed 11 child offices; re-keyed on `=== "1"` it killed
+// 10, because the nine tests it kills SPAWN the office with WORLD_APEX="1" to
+// exercise the apex door G2 keeps. The meaningful value IS the value they pass,
+// so no predicate over this variable separates the instrument from the line.
+//
+// The warning is still owed to whoever deploys the deletion — an office whose
+// environment still names WORLD_APEX must have that line removed first, or it
+// will boot into an apex it can no longer switch off. That belongs in the PR
+// that deletes the gate for real, next to the env change, where no fixture
+// spawns an office carrying a flag the change is retiring.
 server.listen(PORT, () => console.log(`postmark-office listening on :${PORT} — as-of ${AS_OF.slice(0, 12)}`));
