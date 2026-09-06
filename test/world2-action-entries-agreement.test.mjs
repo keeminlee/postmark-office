@@ -52,6 +52,30 @@ const CORPUS = [
   ["null entries survive without throwing", { props: { actions: [null, { action: "ok" }] } }],
   ["non-string action is coerced", { props: { actions: [{ action: 42 }] } }],
   ["non-string for is coerced", { props: { actions: [{ action: "x", for: 7 }] } }],
+
+  // ── THE REAL TREE'S KEY SIGNATURES ──────────────────────────────────────────
+  //
+  // Everything above is a shape I imagined. Over all 1159 marks at world a23a8d17
+  // there are 28 real action entries, and their keys are: `action` 28, `residue`
+  // 28, `for` 9, `scope` 2. NOT ONE of the hand shapes above carries `residue` or
+  // `scope`, so the corpus tested the reader's branches and none of the tree's
+  // actual rows — and a wrong reader keyed on `scope` passes all 22 of them.
+  //
+  // These are lifted VERBATIM from the record, residue keys intact:
+  //   the-good-lighter (WORLD/marks/the-town/the-good-lighter/mark.md) — the only
+  //   two scope-bearing grants in the world.
+  ["REAL: the-good-lighter, both scope-bearing grants, verbatim", { props: { actions: [
+    { action: "walk", for: "human", scope: "own-ground", residue: "the-town/depart" },
+    { action: "say",  for: "human", scope: "own-ground", residue: "the-town/say" },
+  ] } }],
+  //   berth (postmark-node/entity/berth) — the common shape: residue, no scope.
+  ["REAL: berth's say grant, residue and no scope", { props: { actions: [
+    { action: "say", for: "berth", residue: "the-town/say" },
+  ] } }],
+  // And the shape 19 of the 28 take: residue with no `for` at all.
+  ["REAL: residue with no `for` — the commonest real entry", { props: { actions: [
+    { action: "leave-mark", residue: "the-town/leave-mark" },
+  ] } }],
 ];
 
 for (const [name, attr] of CORPUS) {
@@ -83,7 +107,13 @@ test("the corpus exercises every branch the reader has", () => {
   // A corpus can rot into agreeing-about-nothing. These are the branches:
   // actions-vs-affordances, array-vs-not, action-vs-subverb, the `for` default,
   // trimming, and the empty-action filter. Each is named in CORPUS above.
-  assert.ok(CORPUS.length >= 20, "the corpus shrank — check what stopped being covered");
+  assert.ok(CORPUS.length >= 25, "the corpus shrank — check what stopped being covered");
+  // The corpus must keep carrying the tree's own key signatures, not only my
+  // invented shapes. `residue` rides all 28 real entries and `scope` rides two;
+  // a corpus without them is green against a reader that mishandles either.
+  const flat = CORPUS.flatMap(([, a]) => a?.props?.actions ?? []);
+  assert.ok(flat.some((e) => "residue" in e), "no real `residue` entry left in the corpus");
+  assert.ok(flat.some((e) => "scope" in e), "no real `scope` entry left in the corpus");
   const nonEmpty = CORPUS.filter(([, a]) => original(a).length > 0);
   assert.ok(nonEmpty.length >= 8,
     "most of the corpus now returns empty, so agreement is mostly about the empty case");
