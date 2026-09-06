@@ -270,10 +270,8 @@ async function main() {
   // The pen stands on main before it writes. The clone is shared with the write
   // pen, which parks it on household draft branches; the walk ledger once lost
   // 17 public lines to exactly that.
-  try { execFileSync("git", ["-C", CLONE, "switch", "-q", "main"], { encoding: "utf8" }); }
-  catch (e) { db.close(); return die(5, "world-main", `the world clone would not stand on main (${String(e?.message ?? e).slice(0, 160)})`); }
-  if (process.env.TOWN_PUSH === "1")
-    try { execFileSync("git", ["-C", CLONE, "pull", "--rebase", "-q"], { encoding: "utf8" }); } catch { /* offline or behind — save locally */ }
+  db.close();
+  throw new Error("crossing-save's git half was deleted at G2 (P-134) — `acts` is the log and the archives lane exports each closed window; there is no world clone to stand on, pull, or push");
 
   for (const s of saves) {
     const snapPath = join(STATE_DIR, "snapshot", String(s.snapshot.crossing), "entities.json");
@@ -332,8 +330,7 @@ async function main() {
       `crossing-save ${last.meta.crossing}: ${last.snapshot.entity_count} entities, ${saves.reduce((n, s) => n + s.meta.event_count, 0)} events`);
     committed = true;                      // the ceremony ran; `null` means nothing had changed
     if (process.env.TOWN_PUSH === "1" && commit) {
-      try { execFileSync("git", ["-C", CLONE, "push", "-q", "origin", "main"], { encoding: "utf8" }); pushed = true; }
-      catch (e) { push_error = String(e?.message ?? e).slice(0, 200); }
+      throw new Error("crossing-save's git half was deleted at G2 (P-134) — the snapshot is not delivered by a push any more; the archives lane exports the closed window");
     }
   }
 
