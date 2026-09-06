@@ -111,7 +111,14 @@ test("the corpus exercises every branch the reader has", () => {
   // The corpus must keep carrying the tree's own key signatures, not only my
   // invented shapes. `residue` rides all 28 real entries and `scope` rides two;
   // a corpus without them is green against a reader that mishandles either.
-  const flat = CORPUS.flatMap(([, a]) => a?.props?.actions ?? []);
+  // Only ARRAYS of objects: one corpus row deliberately holds `actions: "walk"`,
+  // and flatMap spreads a string into characters, so an unguarded `in` throws
+  // TypeError on "w". That is what this guard did on its first run — the guard
+  // was wrong, every agreement test was green, and the suite said so.
+  const flat = CORPUS.flatMap(([, a]) => {
+    const list = a?.props?.actions ?? a?.props?.affordances;
+    return Array.isArray(list) ? list.filter((e) => e && typeof e === "object") : [];
+  });
   assert.ok(flat.some((e) => "residue" in e), "no real `residue` entry left in the corpus");
   assert.ok(flat.some((e) => "scope" in e), "no real `scope` entry left in the corpus");
   const nonEmpty = CORPUS.filter(([, a]) => original(a).length > 0);
