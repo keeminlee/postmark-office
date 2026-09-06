@@ -111,10 +111,14 @@ test("the corpus exercises every branch the reader has", () => {
   // The corpus must keep carrying the tree's own key signatures, not only my
   // invented shapes. `residue` rides all 28 real entries and `scope` rides two;
   // a corpus without them is green against a reader that mishandles either.
-  // Only ARRAYS of objects: one corpus row deliberately holds `actions: "walk"`,
-  // and flatMap spreads a string into characters, so an unguarded `in` throws
-  // TypeError on "w". That is what this guard did on its first run — the guard
-  // was wrong, every agreement test was green, and the suite said so.
+  // Only ARRAYS of objects. One corpus row deliberately holds `actions: "walk"`
+  // to exercise the not-an-array branch, and `flatMap` flattens ARRAYS one level
+  // — a string returned from the callback is not an array, so "walk" lands WHOLE
+  // as a single element. `"residue" in "walk"` is then a TypeError naming `walk`.
+  // That is what this guard did on its first run: every agreement test green, the
+  // one red being the guard itself. (An earlier version of this comment said the
+  // string was spread into characters and the throw named "w". Both false — the
+  // run's own message says `in walk`.)
   const flat = CORPUS.flatMap(([, a]) => {
     const list = a?.props?.actions ?? a?.props?.affordances;
     return Array.isArray(list) ? list.filter((e) => e && typeof e === "object") : [];
