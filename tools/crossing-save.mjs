@@ -270,8 +270,16 @@ async function main() {
   // The pen stands on main before it writes. The clone is shared with the write
   // pen, which parks it on household draft branches; the walk ledger once lost
   // 17 public lines to exactly that.
-  db.close();
-  throw new Error("crossing-save's git half was deleted at G2 (P-134) — `acts` is the log and the archives lane exports each closed window; there is no world clone to stand on, pull, or push");
+  // G2 (P-134): THE GIT HALF, AT ITS OWN CALL SITES.
+  //
+  // Each of the three git acts refuses by name where it is made, so the
+  // snapshot-and-log half this line KEEPS runs to whatever point the deletion
+  // actually reaches. The first cut threw here, above the loop, and killed the
+  // kept half outright — which measured the instrument, not the line.
+  try {
+    throw new Error("crossing-save's git half was deleted at G2 (P-134) — there is no world clone to stand on main; `acts` is the log and the archives lane exports each closed window");
+  }
+  catch (e) { db.close(); return die(5, "world-main", `the world clone would not stand on main (${String(e?.message ?? e).slice(0, 160)})`); }
 
   for (const s of saves) {
     const snapPath = join(STATE_DIR, "snapshot", String(s.snapshot.crossing), "entities.json");
