@@ -1667,7 +1667,12 @@ const server = createServer((req, res) => {
 // deleted flag is told by name at boot, rather than quietly served an apex the
 // flag no longer controls. A flag that silently stops meaning anything is the
 // "works by weather" class.
-if (process.env.WORLD_APEX !== undefined) {
+// Keyed on the MEANINGFUL value, not on presence. The first cut of this guard
+// fired on `!== undefined` and killed every child office whose env merely named
+// the flag — including nine tests that set WORLD_APEX="1" to exercise the apex
+// door G2 KEEPS. A proof branch whose guard reddens tests of the thing being
+// KEPT measures the guard, not the line.
+if (process.env.WORLD_APEX === "1") {
   throw new Error("WORLD_APEX was deleted at G2 (P-033) — the apex verb is always on and the flat world_* verbs it could roll back to do not exist; remove the flag from this office's environment");
 }
 server.listen(PORT, () => console.log(`postmark-office listening on :${PORT} — as-of ${AS_OF.slice(0, 12)}`));
