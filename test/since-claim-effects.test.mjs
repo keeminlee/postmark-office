@@ -254,6 +254,34 @@ test("`household read: \"crossings\"` is a real door, advertised and accepted", 
     "the door's own blurb carries the promise it keeps");
 });
 
+// ── the class: three prose surfaces enumerating one list ───────────────────
+//
+// TWO OF THE THREE HAD ALREADY DRIFTED when this lane arrived: `BUNDLE_LAW`
+// (printed ON the page a resident reads) and `read_doorstep`'s tool description
+// both said six segments while the page served seven — `stances` shipped
+// 2026-08-15 and neither learned it. A door that lies about itself, for three
+// weeks, on the surface it lies to a reader through. Both are derived now, and
+// this is what keeps them derived.
+
+test("THE PAGE'S OWN SENTENCE names every segment the manifest names — no hand-typed list", async () => {
+  const { BUNDLE_LAW, DOORSTEP_SEGMENTS } = await import("../src/queries.mjs");
+  for (const name of DOORSTEP_SEGMENTS)
+    assert.ok(BUNDLE_LAW.includes(name), `the bundle law does not name "${name}" — the page is telling residents a wrong list`);
+  assert.ok(BUNDLE_LAW.includes(DOORSTEP_SEGMENTS.join(", ")),
+    "and it names them in the manifest's own order, because it is built from the manifest");
+});
+
+test("the MCP tool description counts the segments the manifest counts", async () => {
+  const { TOOLS } = await import("../src/mcp.mjs");
+  const { DOORSTEP_SEGMENTS } = await import("../src/queries.mjs");
+  const tool = (TOOLS ?? []).find((t) => t.name === "read_doorstep");
+  assert.ok(tool, "read_doorstep must be a listed tool for this assertion to mean anything");
+  assert.ok(tool.description.includes(`${DOORSTEP_SEGMENTS.length} segments`),
+    `the description advertises a different number than the page serves (${DOORSTEP_SEGMENTS.length})`);
+  for (const name of DOORSTEP_SEGMENTS)
+    assert.ok(tool.description.includes(name), `read_doorstep does not name "${name}"`);
+});
+
 test("A QUIET MORNING IS CHEAP: no events means no teaching prose", async () => {
   const { doorstepCrossings } = await import("../src/claim-effects.mjs");
   // No store configured → readable, no events. The common case, on every

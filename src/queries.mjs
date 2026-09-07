@@ -729,8 +729,18 @@ export const DOORSTEP_STANCES = 5;
 //
 // The word that changed is DOMAIN. What the segment carries is what the read
 // answers ABOUT — not the envelope the apex wraps it in.
+//
+// ⚑ AND THE LIST IS DERIVED, NOT TYPED (2026-09-07, lane-a). This sentence
+// enumerated six segments while the page served seven: `stances` shipped
+// 2026-08-15 and this line never learned it, so the page has been telling every
+// resident a wrong list for three weeks — a door lying about itself on the one
+// surface a resident actually reads. It is now built from `DOORSTEP_SEGMENTS`,
+// which is also what `d.segments` is built from, so a ninth segment cannot ship
+// with a page that says eight.
 export const BUNDLE_LAW =
-  "This page is a BUNDLE: each segment below carries the DOMAIN of another read, called at the args it names in `serves` and `args` — what that read answers about, not the envelope the apex wraps it in. Nothing here is a second rendering of anything — ask the named read yourself and the segment is what comes back under its own key. The segments are mail, awaiting, stamps, bulletin, town_pulse, window; everything else on this page has no other door.";
+  "This page is a BUNDLE: each segment below carries the DOMAIN of another read, called at the args it names in `serves` and `args` — what that read answers about, not the envelope the apex wraps it in. Nothing here is a second rendering of anything — ask the named read yourself and the segment is what comes back under its own key. The segments are "
+  + DOORSTEP_SEGMENTS.join(", ")
+  + "; everything else on this page has no other door.";
 
 /** One bundle segment: the pointer, the args, and the named read's own answer
  *  spread flat beside them. Flat rather than nested under `answer` so a reader
