@@ -336,7 +336,7 @@ test("A QUIET MORNING IS CHEAP: no events means no teaching prose", async () => 
 });
 
 test("an unreadable docket says so on the doorstep, and never as a quiet zero", () => {
-  // The shape `doorstepCrossings` returns when the store refuses, asserted on
+  // The shape `doorstepRulings` returns when the store refuses, asserted on
   // the branch that builds it rather than through a store this suite has none of.
   const shelf = toYou({ sinceCrossing: 170, nowCrossing: 174,
     claimEffects: { readable: false, events: [], reason: "ECONNREFUSED" } });

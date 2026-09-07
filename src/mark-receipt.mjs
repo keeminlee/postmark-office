@@ -118,9 +118,30 @@ const CAUSE_OF_CHECK = Object.freeze({
   // Not enough liquid stamps behind the stake at the pinned candle read.
   "insufficient-stamps": "unbacked",
   // ── the REVIEW lane's writer (world2/tools/review-rule.mjs) ───────────────
-  // A mind ruled, which is exactly what the bulletin's "held" describes: it did
-  // not ride and it was not the machine that stopped it.
-  "review-ruling": "held",
+  //
+  // ⚑ `contested`, NOT `held` (repaired 2026-09-07, reviewer-found — and it is
+  // the SAME MISTAKE AS THE 0-of-8, one level deeper). The first mapping read
+  // the writer's NAME — "a mind ruled, so: held" — instead of the STATE that
+  // writer leaves the row in. `review-rule.mjs:245-248` is explicit:
+  //
+  //     const check = next !== "refused" ? null
+  //       : kind === "refuse" ? `review-ruling: ${by} refused this contest — …`
+  //                           : `review-ruling: ${by} granted ${slug} — …`;
+  //
+  // The check is written ONLY on `refused`. The `hold` arm (`kind === "hold"` →
+  // `held_review`) writes NO check at all. So a `review-ruling:` string never
+  // sits on a held row — it always sits on a row a mind has definitively ruled
+  // AGAINST, either refusing the contest or granting it to somebody else.
+  //
+  // Mapping it to `held` printed "refused at window N — held" on one object,
+  // while the `held_review` arm below spends `held` on the opposite state and
+  // defines it as "it did not ride and IT WAS NOT REFUSED". A resident told
+  // "refused — held" reasonably concludes a mind is still deciding, when a mind
+  // has decided against them and the contest is over.
+  //
+  // Both shapes are contest outcomes, so `contested` is the word — which leaves
+  // `held` meaning exactly `held_review`. One word, one state.
+  "review-ruling": "contested",
   // ── the SWEEP's own channels (world tools/settlement-sweep.mjs) ───────────
   // Kept: the 1.0 sweep still refuses on these, and a mark can be refused by
   // either lane. Measured against the sweep's source, not guessed.

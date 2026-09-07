@@ -220,8 +220,8 @@ const REAL_REFUSAL_CHECKS = [
   ["insufficient-stamps: staked 3, liquid 1 at town 9f2a1b0c", "unbacked", "clearing-job.mjs:158"],
   ['parcel-overlap: standing parcel "k-of-garrison/the-long-field"', "contested", "clearing-job.mjs:176"],
   ["counterclaim: collides with 77 — a mind rules (census D2)", "contested", "clearing-job.mjs:190-191"],
-  ["review-ruling: wright refused this contest — the ground was already spoken for", "held", "review-rule.mjs:247"],
-  ["review-ruling: wright granted the-long-field — the elder claim stands", "held", "review-rule.mjs:248"],
+  ["review-ruling: wright refused this contest — the ground was already spoken for", "contested", "review-rule.mjs:247"],
+  ["review-ruling: wright granted the-long-field — the elder claim stands", "contested", "review-rule.mjs:248"],
 ];
 
 test("EVERY refusal string the town can write maps to one of the bulletin's five words", () => {
@@ -256,7 +256,47 @@ test("A CHECK NOBODY HAS CLASSIFIED STILL ANSWERS NULL — the discipline that s
 });
 
 test("a colon inside the DETAIL cannot be read as the check — the split is on the FIRST colon", () => {
-  assert.equal(causeOf("review-ruling: wright refused this: it collides").cause, "held");
+  assert.equal(causeOf("review-ruling: wright refused this: it collides").cause, "contested");
+});
+
+// ── ONE WORD, ONE STATE (repair 8) ─────────────────────────────────────────
+//
+// `review-ruling` was mapped to `held` from the WRITER'S NAME — "a mind ruled,
+// so: held" — rather than from the STATE that writer leaves the row in.
+// `review-rule.mjs:245-248` writes the check ONLY on `refused`; the hold arm
+// writes none. So the receipt said "refused at window N — held" on one object,
+// while the `held_review` arm defines `held` as "it did not ride and IT WAS NOT
+// REFUSED" — the literal opposite. This is the leg that keeps the two apart.
+
+test("a REVIEW refusal and a HELD claim never share a word", () => {
+  const refused = receiptFrom({ id: ID, canon: null, settlement: S59, claims: [claim({
+    status: "refused", refusal_check: "review-ruling: wright refused this contest — the ground was spoken for" })] });
+  const held = receiptFrom({ id: ID, canon: null, settlement: S59, claims: [claim({ status: "held_review" })] });
+
+  assert.equal(refused.cause, "contested", "a mind ruled AGAINST it — the contest is over");
+  assert.equal(held.cause, "held", "a mind has not ruled yet");
+  assert.notEqual(refused.cause, held.cause,
+    "one bulletin word on two opposite states is the defect: a resident told \"refused — held\" concludes a mind is still deciding");
+  assert.match(refused.says, /refused at window 174 — contested/);
+  assert.match(held.says, /did not ride and it was not refused/);
+});
+
+test("a GRANT to somebody else is contested too — you lost the contest, you were not held", () => {
+  const r = receiptFrom({ id: ID, canon: null, settlement: S59, claims: [claim({
+    status: "refused", refusal_check: "review-ruling: wright granted the-long-field — the elder claim stands" })] });
+  assert.equal(r.cause, "contested");
+  assert.equal(r.cause_row, 'claims.refusal_check = "review-ruling: wright granted the-long-field — the elder claim stands"',
+    "and the row still rides beside the word, so a resident can read who ruled and why");
+});
+
+test("`held` is now reachable ONLY from held_review — the word names one state", () => {
+  // Every mapped check, and the only one that may answer `held` is the status
+  // arm. If a future check earns the word, this leg says so out loud rather
+  // than letting two states share it again.
+  const viaCheck = REAL_REFUSAL_CHECKS.map(([raw]) => causeOf(raw).cause);
+  assert.ok(!viaCheck.includes("held"),
+    `a refusal_check mapped to "held": ${JSON.stringify(REAL_REFUSAL_CHECKS.filter(([r]) => causeOf(r).cause === "held").map(([r]) => r))}`);
+  assert.equal(receiptFrom({ id: ID, canon: null, settlement: S59, claims: [claim({ status: "held_review" })] }).cause, "held");
 });
 
 // ── WHICH SETTLEMENT CARRIED IT — derived, because nothing records it ───────
