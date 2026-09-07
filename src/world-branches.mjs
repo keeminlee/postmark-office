@@ -225,12 +225,38 @@ export function readAtRef(repo, ref, path, encoding = "utf8") {
 //    the DESCENDANT when the two disagree; a truly diverged pair falls to
 //    origin, because published truth is what the world can clone."
 //
-// This function answered only half of that: "is local behind origin" is the
-// descendant test in one direction, and it returned the LOCAL branch for a
-// diverged pair — a state the box reaches whenever a settlement's push is in
-// flight against a keeper's PC push. The two readers now answer the same
-// question the same way; `test/published-ref-follows-the-settlement.test.mjs`
-// binds them across all four states so they cannot drift apart again.
+// ⚑ AND THE FIRST VERSION OF THIS COMMENT CLAIMED A DEFECT THAT DID NOT EXIST
+// (withdrawn 2026-09-07, reviewer-caught). It said this function "returned the
+// LOCAL branch for a diverged pair". It did not. The arm it replaced was
+//
+//     const behind = Number(git(repo, ["rev-list", "--count",
+//       "refs/heads/main..refs/remotes/origin/main"]).trim());
+//     return behind > 0 ? "refs/remotes/origin/main" : "refs/heads/main";
+//
+// and on a diverged pair `LOCAL..ORIGIN` is non-empty, so `behind > 0`, so it
+// ALREADY returned origin. I "proved" otherwise by flipping to a paraphrase —
+// a bare `return LOCAL` — rather than to the base text, so the red I recorded
+// was my own wrong idea of the base failing, not the base. Restoring the base
+// arm verbatim and re-running leaves `BOUND · DIVERGED` GREEN, which is the
+// measurement that settles it. Measuring the premise is this lane's whole
+// charter and this is where I did not.
+//
+// THE REWRITE IS KEPT, on its real merits and no others: it is a behavioural
+// NO-OP in all four ref states, and it is clearer (three named branches instead
+// of one count), and it makes the agreement with `publishedMainSha` legible
+// rather than coincidental. `test/published-ref-follows-the-settlement.test.mjs`
+// binds the two readers across all four states so they cannot drift apart —
+// which is a guard worth having whether or not there was ever a bug.
+//
+// FOUR CALLERS read this function, and the report's first consumer table named
+// none of them. Because the arm is a no-op none of their answers changed and no
+// different engine code is materialised — but a shared ref-resolver was
+// rewritten and its callers went unlisted, which is this lane's own seam rule 1
+// failing on this lane's own change:
+//   src/world.mjs:101            engineDir()
+//   src/dynamic-entities.mjs:107 worldToolModule()
+//   src/world2-serve.mjs:97
+//   src/world-happened.mjs:295   latestSettlement()
 export function freshestMainRef(repo) {
   const LOCAL = "refs/heads/main", ORIGIN = "refs/remotes/origin/main";
   const local = refExists(repo, LOCAL);
