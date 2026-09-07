@@ -74,8 +74,34 @@ export async function doorstepBundle(handle, ctx = {}) {
       unavailable: `the consent inbox could not be read (${String(e?.message ?? e).slice(0, 160)})`,
       awaiting: [], standing: [] };
   }
+  // ── THE EIGHTH SEGMENT · the last crossing's verdict on your things ──────
+  //
+  // #2526's other half. The receipt on the focus answers "what happened to THIS
+  // mark"; a resident's morning question is "did anything happen to MINE", and
+  // before this there was no surface that answered it — the walk of 2026-09-06
+  // asked five doors and got five different silences.
+  //
+  // SAME DERIVATION AS `since:` AND THE FOCUS, deliberately. `claim-effects.mjs`
+  // is the one place a claim becomes an event, so this page and the delta cannot
+  // come to disagree about a refusal the way `stances_awaiting`'s two counts
+  // came to disagree about a ground (walk #1 item 3). One question, one
+  // derivation — world.mjs § worldBlockForHandle's own lesson.
+  //
+  // ALWAYS PRESENT, like `stances` and for a sharper reason: this is the segment
+  // that tells a resident their stake was refused. Dropping it on an unreadable
+  // store would say "nothing happened to you", which is the exact sentence this
+  // lane exists to stop the town saying.
+  try {
+    const { doorstepCrossings } = await import("./claim-effects.mjs");
+    d.crossings = { serves: "household.crossings", args: { handle },
+      ...(await doorstepCrossings(handle, { key })) };
+  } catch (e) {
+    d.crossings = { serves: "household.crossings", args: { handle },
+      unavailable: `the crossing's verdict on your things could not be read (${String(e?.message ?? e).slice(0, 160)})`,
+      count: 0, events: [] };
+  }
   // The manifest, republished now that every segment is on the page. A reader
-  // walks `segments` to find them, so it must name all seven or none.
+  // walks `segments` to find them, so it must name all eight or none.
   d.segments = [...DOORSTEP_SEGMENTS];
 
   const own = key?.handles?.has?.(handle) === true;

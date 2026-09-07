@@ -533,3 +533,62 @@ export async function claimRowsForSlug(slug, { key = null, env = process.env } =
   if (!household) return (await p.query(sql, [slug])).rows;
   return (await withHousehold(p, household, (c) => c.query(sql, [slug]))).rows;
 }
+
+/**
+ * EVERY CLAIM THAT MOVED SINCE AN INSTANT, for a named set of authors and slugs
+ * — the backlog's half.
+ *
+ * `the-response-function § Residents: words, at their own pace` calls the
+ * resident's loop "a replayable, cursor-ordered read of every effect on your own
+ * node since you last looked", and a crossing publishing or refusing a mark IS
+ * an effect on that node. This is the read that makes that clause answerable;
+ * `claim-effects.mjs` turns the rows into events.
+ *
+ * TWO AXES, ONE QUERY, and the second is not decorative: a resident is owed the
+ * claims laid over GROUND THEY HOLD as much as their own — that is what the
+ * consent inbox is about, and the slug list is where those ids arrive.
+ *
+ * `since` bounds on `submitted_at` OR `decided_at` because a claim moves twice:
+ * once when its author puts it forward and once when the candle rules. Bounding
+ * on one would silently drop the other half of the resident's own history.
+ *
+ * Scoping is `claimRowsForSlug`'s, for its reasons: the household is resolved
+ * through `householdKeyForKey`, drafts are the caller's own by 007's policy, and
+ * every other status is a public fact.
+ */
+/**
+ * EVERY CLAIM THE CANDLE RULED ON SINCE AN INSTANT — the town's news.
+ *
+ * Keyless and unscoped, and lawfully so: a `locked` or `refused` claim is a
+ * public fact, and 007's row policy says which row is not
+ * (`USING (status <> 'draft' OR household = …)`). No `withHousehold` here means
+ * `app.household` is undeclared, so the policy compares against NULL and every
+ * draft in town — including the caller's own — is invisible to this query. That
+ * is the right answer for a shelf that describes what the TOWN did.
+ */
+export async function claimRowsDecidedSince(since, { env = process.env } = {}) {
+  const p = await pool(env);
+  const { rows } = await p.query(
+    `SELECT slug, status, window_id, decided_at, refusal_check
+       FROM claims
+      WHERE status IN ('locked','refused') AND decided_at >= $1
+      ORDER BY decided_at DESC, slug ASC
+      LIMIT 500`, [since]);
+  return rows;
+}
+
+export async function claimRowsSince(since, { claimants = [], slugs = [], key = null, env = process.env } = {}) {
+  if (!(claimants.length || slugs.length)) return [];
+  const p = await pool(env);
+  const sql = `SELECT id, slug, class, claimant, household, status, window_id,
+                      submitted_at, decided_at, refusal_check, stake, supersedes
+                 FROM claims
+                WHERE (claimant = ANY($1::text[]) OR slug = ANY($2::text[]))
+                  AND (submitted_at >= $3 OR decided_at >= $3)
+                ORDER BY COALESCE(decided_at, submitted_at) ASC, id ASC`;
+  const args = [claimants, slugs, since];
+  if (!key) return (await p.query(sql, args)).rows;
+  const household = await householdKeyForKey(p, key);
+  if (!household) return (await p.query(sql, args)).rows;
+  return (await withHousehold(p, household, (c) => c.query(sql, args))).rows;
+}

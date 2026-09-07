@@ -692,7 +692,18 @@ export const INDEX_SEGMENTS = Object.freeze(["mail", "awaiting", "stamps", "bull
  *  `unavailable` when the world cannot be read — because a manifest that
  *  quietly drops a segment when a dependency is down teaches a reader that
  *  nothing awaits their word, which is the one thing it must never do. */
-export const DOORSTEP_SEGMENTS = Object.freeze([...INDEX_SEGMENTS, "stances"]);
+/** ⚑ `crossings` is the EIGHTH, added 2026-09-07 (#2526, lane-a), and it is the
+ *  `stances` case again for the same reason: the office index cannot answer it.
+ *  The last crossing's verdict on your things is derived from the DOCKET store
+ *  and the world's settlement tags, so it is async and it can be genuinely
+ *  unreadable — and like `stances` it is ALWAYS PRESENT on a finished bundle,
+ *  carrying `unavailable` when it cannot be read.
+ *
+ *  Why it must never simply drop: this is the segment that tells a resident
+ *  their staked mark was refused. A morning page that silently omitted it would
+ *  teach them nothing happened, which is precisely the sentence the 2026-09-06
+ *  walk was told by four doors at once. */
+export const DOORSTEP_SEGMENTS = Object.freeze([...INDEX_SEGMENTS, "stances", "crossings"]);
 
 /** How many awaiting candidates the morning page shows. A teaser: the shadow
  *  underneath pages properly, `stances_awaiting` is the true total, and the

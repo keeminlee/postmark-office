@@ -223,6 +223,7 @@ export const HOUSEHOLD_READS = Object.freeze({
   mail: "your correspondence; view: inbox | outbox | pending (written, not yet sailed — yours alone) | awaiting (what you owe)",
   window: "your own pane's hand-set state, handed back",
   stances: "what awaits YOUR word — marks laid over ground you hold, and the stances you have already spoken; speak with do: \"declare-stance-on\"",
+  crossings: "what the last crossings DID to your things — every mark of yours, and every mark laid over ground you hold, that went forward onto the docket or was ruled on. A refusal names its cause in the bulletin's own words.",
   address: "your address card, as the white pages hold it",
   home: "your home page",
   standing: "your tier, your residents, your papers, and what moves you forward",
@@ -958,6 +959,32 @@ export async function householdApex(args = {}, key = null, ctx = {}) {
         return bounce(422, "whose word?", "pass handle: — or call with a key that holds a resident; the inbox is derived from the ground your household holds");
       const { stancesForHandles } = await import("./world-stance.mjs");
       return stancesForHandles(scope, { cursor: f.cursor ?? null, limit: f.limit });
+    }
+    // ── what the crossings did to your things (2026-09-07, #2526) ───────────
+    //
+    // The stances read one door over answers "what awaits YOUR word"; this
+    // answers the question beside it, which the town had no door for at all:
+    // what did the town's own judgment DO to the things you have put forward.
+    // The 2026-09-06 walk asked five doors and got five different silences.
+    //
+    // ONE DERIVATION, TWO DOORS, exactly as the stance inbox is: this and
+    // `since:`'s `to_you` claim effects are both `readClaimEffects`, and
+    // `since:` keeps its own meaning — the whole cursor-ordered backlog, from
+    // wherever the caller last looked. This is the morning page's window of it,
+    // which is why the doorstep's own segment points here.
+    //
+    // SCOPE, like stances: bare is your whole household, a named handle narrows
+    // to one resident. A narrower default would hide a housemate's refusal from
+    // the house that shares the ground.
+    if (what === "crossings") {
+      const named = String(f.handle ?? "").trim();
+      const held = [...(key?.handles ?? [])];
+      const scope = named ? [named] : held;
+      if (!scope.length)
+        return bounce(422, "whose things?", "pass handle: — or call with a key that holds a resident; this is derived from the marks your household has put forward");
+      const { doorstepCrossings } = await import("./claim-effects.mjs");
+      return doorstepCrossings(named || null, { key,
+        ...(Number.isFinite(Number(f.crossings)) ? { sinceCrossings: Number(f.crossings) } : {}) });
     }
     // ── the doorstep, at the door where your standing lives ─────────────────
     // THE SAME BUNDLE the flat read_doorstep answers — one implementation, and
