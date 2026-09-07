@@ -7,7 +7,7 @@
 //   the grant          with #18 UNMERGED the verb is afforded nowhere and the
 //                      door says so in those words; with the grant in the store
 //                      the same call reaches the handler. Two fixture worlds,
-//                      one差 line apart, because "the office needs no change
+//                      one line apart, because "the office needs no change
 //                      beyond the handler" is a claim about the STORE and can
 //                      only be shown by changing the store.
 //   the card           the subscribe card quotes the subscription class's own
@@ -227,7 +227,7 @@ const ENDPOINT_B = "https://beta.example/wake?t=beta-secret-token";
 
 test("with #18 unmerged the verb is afforded NOWHERE, and the door says so in those words", async () => {
   on();
-  const r = await worldApex({ do: "subscribe", handle: "alpha", args: { wake_on: "addressed-say", deliver_to: ENDPOINT_A } }, KEY_ALPHA);
+  const r = await worldApex({ do: "subscribe", handle: "alpha", args: { wake_on: "say-names-me", deliver_to: ENDPOINT_A } }, KEY_ALPHA);
   assert.equal(r.error, "bounce");
   assert.equal(r.code, 422);
   assert.match(r.defect, /"subscribe" is afforded nowhere in the world — no place grants it/);
@@ -240,11 +240,11 @@ test("with #18 unmerged the verb is afforded NOWHERE, and the door says so in th
 
 test("with the grant in the store, the SAME call reaches the handler — one mark's `actions:` is the whole difference", async () => {
   on();
-  const r = await granted(() => worldApex({ do: "subscribe", handle: "alpha", args: { wake_on: "addressed-say", deliver_to: ENDPOINT_A } }, KEY_ALPHA));
+  const r = await granted(() => worldApex({ do: "subscribe", handle: "alpha", args: { wake_on: "say-names-me", deliver_to: ENDPOINT_A } }, KEY_ALPHA));
   assert.equal(r.error, undefined, JSON.stringify(r).slice(0, 300));
   assert.equal(r.did, "subscribe");
   assert.equal(r.dispatched_to, "world_subscribe");
-  assert.equal(r.result.subscribed, "addressed-say");
+  assert.equal(r.result.subscribed, "say-names-me");
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -300,7 +300,7 @@ test("THE ACT ROW CARRIES A FINGERPRINT AND NEVER THE URL — asserted on what t
 
 test("the receipt tells the resident what the town kept, and quotes the wake law", async () => {
   on();
-  const r = await granted(() => worldApex({ do: "subscribe", handle: "alpha", args: { wake_on: "addressed-say", ttl_h: 3, deliver_to: ENDPOINT_A } }, KEY_ALPHA));
+  const r = await granted(() => worldApex({ do: "subscribe", handle: "alpha", args: { wake_on: "say-names-me", ttl_h: 3, deliver_to: ENDPOINT_A } }, KEY_ALPHA));
   const a = r.result;
   assert.equal(a.endpoint.fingerprint, subs.fingerprint(ENDPOINT_A));
   assert.match(a.endpoint.note, /frozen on write/);
@@ -325,10 +325,10 @@ test("a dormant wake_on is ACCEPTED — law outranks the office — and the rece
 
 test("the caps are applied, not merely advertised", () => {
   const caps = subs.capsFrom({ ttl_max_h: 168, earshot_max_m: 500 });
-  assert.equal(subs.readDeclaration({ wake_on: "addressed-say", ttl_h: 100000, deliver_to: ENDPOINT_A }, caps).ttl_h, 168);
+  assert.equal(subs.readDeclaration({ wake_on: "say-names-me", ttl_h: 100000, deliver_to: ENDPOINT_A }, caps).ttl_h, 168);
   assert.equal(subs.readDeclaration({ wake_on: "say-in-earshot", earshot_m: 99999, deliver_to: ENDPOINT_A }, caps).earshot_m, 500);
   // omitted means the cap, not zero and not undefined
-  assert.equal(subs.readDeclaration({ wake_on: "addressed-say", deliver_to: ENDPOINT_A }, caps).ttl_h, 168);
+  assert.equal(subs.readDeclaration({ wake_on: "say-names-me", deliver_to: ENDPOINT_A }, caps).ttl_h, 168);
 });
 
 test("a cap from the office's FALLBACK is not a cap the town declared, and the answer says which", () => {
@@ -342,13 +342,13 @@ test("a cap from the office's FALLBACK is not a cap the town declared, and the a
 test("the enum is closed, earshot_m rides say-in-earshot alone, and deliver_to must be https", () => {
   const caps = subs.capsFrom(null);
   assert.throws(() => subs.readDeclaration({ wake_on: "whenever", deliver_to: ENDPOINT_A }, caps), /is not one of the five/);
-  assert.throws(() => subs.readDeclaration({ wake_on: "addressed-say", earshot_m: 50, deliver_to: ENDPOINT_A }, caps), /earshot_m means nothing/);
-  assert.throws(() => subs.readDeclaration({ wake_on: "addressed-say", deliver_to: "http://plain.example/w" }, caps), /must be an https URL/);
-  assert.throws(() => subs.readDeclaration({ wake_on: "addressed-say" }, caps), /where should the wake be sent/);
+  assert.throws(() => subs.readDeclaration({ wake_on: "say-names-me", earshot_m: 50, deliver_to: ENDPOINT_A }, caps), /earshot_m means nothing/);
+  assert.throws(() => subs.readDeclaration({ wake_on: "say-names-me", deliver_to: "http://plain.example/w" }, caps), /must be an https URL/);
+  assert.throws(() => subs.readDeclaration({ wake_on: "say-names-me" }, caps), /where should the wake be sent/);
 });
 
 test("a read never performs — a declaration field on the shadow bounces BY NAME", () => {
-  const r = subs.subscribeReadNeverPerforms({ wake_on: "addressed-say", deliver_to: ENDPOINT_A });
+  const r = subs.subscribeReadNeverPerforms({ wake_on: "say-names-me", deliver_to: ENDPOINT_A });
   assert.equal(r.code, 422);
   assert.match(r.hint, /wake_on, deliver_to/);
   assert.equal(subs.subscribeReadNeverPerforms({ handle: "alpha" }), null);
@@ -370,7 +370,7 @@ const unsub = (id, atH, actor, payload = {}, household = "gh:a") => ({
 });
 
 test("AN EXPIRED SUBSCRIPTION WAKES NOBODY — expiry is arithmetic on the row, and nothing runs to end it", () => {
-  const rows = [sub(1, 0, "alpha", { wake_on: "addressed-say", ttl_h: 2, deliver_to_fp: "aaaa" })];
+  const rows = [sub(1, 0, "alpha", { wake_on: "say-names-me", ttl_h: 2, deliver_to_fp: "aaaa" })];
   assert.equal(subs.liveSubscriptions(rows, T0 + 1 * H).length, 1, "inside the ttl it stands");
   assert.equal(subs.liveSubscriptions(rows, T0 + 2 * H).length, 0, "at the instant it expires it has stopped");
   assert.equal(subs.liveSubscriptions(rows, T0 + 3 * H).length, 0);
@@ -378,21 +378,21 @@ test("AN EXPIRED SUBSCRIPTION WAKES NOBODY — expiry is arithmetic on the row, 
 
 test("latest wins per (actor, wake_on); a second KIND is a second subscription", () => {
   const rows = [
-    sub(1, 0, "alpha", { wake_on: "addressed-say", ttl_h: 10, deliver_to_fp: "old" }),
-    sub(2, 1, "alpha", { wake_on: "addressed-say", ttl_h: 10, deliver_to_fp: "new" }),
+    sub(1, 0, "alpha", { wake_on: "say-names-me", ttl_h: 10, deliver_to_fp: "old" }),
+    sub(2, 1, "alpha", { wake_on: "say-names-me", ttl_h: 10, deliver_to_fp: "new" }),
     sub(3, 1, "alpha", { wake_on: "claim-effect", ttl_h: 10, deliver_to_fp: "new" }),
   ];
   const live = subs.liveSubscriptions(rows, T0 + 2 * H);
   assert.equal(live.length, 2);
-  assert.equal(live.find((s) => s.wake_on === "addressed-say").deliver_to_fp, "new");
+  assert.equal(live.find((s) => s.wake_on === "say-names-me").deliver_to_fp, "new");
 });
 
 test("unsubscribe naming a kind withdraws that one; bare, it withdraws them all", () => {
   const base = [
-    sub(1, 0, "alpha", { wake_on: "addressed-say", ttl_h: 10, deliver_to_fp: "a" }),
+    sub(1, 0, "alpha", { wake_on: "say-names-me", ttl_h: 10, deliver_to_fp: "a" }),
     sub(2, 0, "alpha", { wake_on: "claim-effect", ttl_h: 10, deliver_to_fp: "a" }),
   ];
-  assert.deepEqual(subs.liveSubscriptions([...base, unsub(3, 1, "alpha", { wake_on: "claim-effect" })], T0 + 2 * H).map((s) => s.wake_on), ["addressed-say"]);
+  assert.deepEqual(subs.liveSubscriptions([...base, unsub(3, 1, "alpha", { wake_on: "claim-effect" })], T0 + 2 * H).map((s) => s.wake_on), ["say-names-me"]);
   assert.deepEqual(subs.liveSubscriptions([...base, unsub(3, 1, "alpha")], T0 + 2 * H), []);
 });
 
@@ -403,8 +403,8 @@ test("a row whose wake_on is not one of the five is NOT a subscription — the e
 
 test("rows of another CLASS or another ACTION are not swept in", () => {
   const rows = [
-    { id: 1, at: new Date(T0).toISOString(), actor: "alpha", action: "subscribe", class: "voice", household: "gh:a", payload: { wake_on: "addressed-say", ttl_h: 10 } },
-    { id: 2, at: new Date(T0).toISOString(), actor: "alpha", action: "say", class: "subscription", household: "gh:a", payload: { wake_on: "addressed-say", ttl_h: 10 } },
+    { id: 1, at: new Date(T0).toISOString(), actor: "alpha", action: "subscribe", class: "voice", household: "gh:a", payload: { wake_on: "say-names-me", ttl_h: 10 } },
+    { id: 2, at: new Date(T0).toISOString(), actor: "alpha", action: "say", class: "subscription", household: "gh:a", payload: { wake_on: "say-names-me", ttl_h: 10 } },
   ];
   assert.deepEqual(subs.liveSubscriptions(rows, T0 + H), []);
 });
@@ -424,8 +424,8 @@ test("subscriptionsFor SCOPES IN THE SQL by household AND by handle — a second
     // filter applied in JS after an unscoped SELECT is a filter a future
     // `LIMIT` can silently defeat.
     const rows = [
-      { id: 1, at: new Date(T0).toISOString(), actor: "alpha", action: "subscribe", class: "subscription", household: "gh:a", payload: { wake_on: "addressed-say", ttl_h: 10, deliver_to_fp: "a" } },
-      { id: 2, at: new Date(T0).toISOString(), actor: "beta", action: "subscribe", class: "subscription", household: "gh:b", payload: { wake_on: "addressed-say", ttl_h: 10, deliver_to_fp: "b" } },
+      { id: 1, at: new Date(T0).toISOString(), actor: "alpha", action: "subscribe", class: "subscription", household: "gh:a", payload: { wake_on: "say-names-me", ttl_h: 10, deliver_to_fp: "a" } },
+      { id: 2, at: new Date(T0).toISOString(), actor: "beta", action: "subscribe", class: "subscription", household: "gh:b", payload: { wake_on: "say-names-me", ttl_h: 10, deliver_to_fp: "b" } },
     ];
     const read = async (fn) => fn({
       async query(sql, params) {
@@ -510,17 +510,17 @@ test("EARSHOT 50 m FIRES AT 50 AND DOES NOT FIRE AT 51", async () => {
   assert.equal((await subs.wakesFor(sayAct("hello"), live, at(51))).length, 0, "51 is not");
 });
 
-test("an addressed say wakes EXACTLY the subscribed resident and no other", async () => {
+test("a say that NAMES a subscriber wakes exactly that one and no other", async () => {
   const live = subs.liveSubscriptions([
-    sub(1, 0, "alpha", { wake_on: "addressed-say", ttl_h: 10, deliver_to_fp: "a" }),
-    sub(2, 0, "gamma", { wake_on: "addressed-say", ttl_h: 10, deliver_to_fp: "g" }, "gh:g"),
+    sub(1, 0, "alpha", { wake_on: "say-names-me", ttl_h: 10, deliver_to_fp: "a" }),
+    sub(2, 0, "gamma", { wake_on: "say-names-me", ttl_h: 10, deliver_to_fp: "g" }, "gh:g"),
   ], T0 + H);
   const woken = await subs.wakesFor(sayAct("morning @alpha, the ferry is late"), live, {});
   assert.deepEqual(woken.map((w) => w.sub.actor), ["alpha"]);
 });
 
 test("nobody is woken by their OWN act — you are not your own audience", async () => {
-  const live = subs.liveSubscriptions([sub(1, 0, "beta", { wake_on: "addressed-say", ttl_h: 10, deliver_to_fp: "b" }, "gh:b")], T0 + H);
+  const live = subs.liveSubscriptions([sub(1, 0, "beta", { wake_on: "say-names-me", ttl_h: 10, deliver_to_fp: "b" }, "gh:b")], T0 + H);
   assert.deepEqual(await subs.wakesFor(sayAct("@beta talking to myself"), live, {}), []);
 });
 
@@ -537,7 +537,7 @@ test("namesHandle is a word match, not a substring — `alpha` does not fire on 
 
 test("A WAKE CARRIES NO CONTENT — the POST body is grepped for the say's own text", async () => {
   const SECRET = "the-thing-that-was-said-out-loud";
-  const live = subs.liveSubscriptions([sub(1, 0, "alpha", { wake_on: "addressed-say", ttl_h: 10, deliver_to_fp: subs.fingerprint(ENDPOINT_A) })], T0 + H);
+  const live = subs.liveSubscriptions([sub(1, 0, "alpha", { wake_on: "say-names-me", ttl_h: 10, deliver_to_fp: subs.fingerprint(ENDPOINT_A) })], T0 + H);
   subs.rememberEndpoint(ENDPOINT_A, { by: "alpha" });
 
   const act = sayAct(`@alpha ${SECRET}`, 4812);
@@ -552,11 +552,11 @@ test("A WAKE CARRIES NO CONTENT — the POST body is grepped for the say's own t
   assert.equal(posted.length, 1);
   assert.equal(posted[0].url, ENDPOINT_A, "the endpoint came from the book, keyed by the fingerprint the act carried");
   assert.ok(!posted[0].body.includes(SECRET), `the wake carried the say's text: ${posted[0].body}`);
-  assert.deepEqual(JSON.parse(posted[0].body), { seq: 4812, kind: "addressed-say", read: 'world { read: "say" }' });
+  assert.deepEqual(JSON.parse(posted[0].body), { seq: 4812, kind: "say-names-me", read: 'world { read: "say" }' });
 });
 
 test("an endpoint the box's book has lost is NAMED and dropped, never sent and never silent", async () => {
-  const live = subs.liveSubscriptions([sub(1, 0, "alpha", { wake_on: "addressed-say", ttl_h: 10, deliver_to_fp: "0000000000000000" })], T0 + H);
+  const live = subs.liveSubscriptions([sub(1, 0, "alpha", { wake_on: "say-names-me", ttl_h: 10, deliver_to_fp: "0000000000000000" })], T0 + H);
   const lines = [];
   const client = { query: async () => ({ rows: [sayAct("@alpha hello", 7)] }) };
   const sent = await dispatcher.onNotification({ id: 7 }, {
@@ -568,7 +568,7 @@ test("an endpoint the box's book has lost is NAMED and dropped, never sent and n
 });
 
 test("a failing endpoint is logged and DROPPED — no retry, no queue", async () => {
-  const live = subs.liveSubscriptions([sub(1, 0, "alpha", { wake_on: "addressed-say", ttl_h: 10, deliver_to_fp: subs.fingerprint(ENDPOINT_A) })], T0 + H);
+  const live = subs.liveSubscriptions([sub(1, 0, "alpha", { wake_on: "say-names-me", ttl_h: 10, deliver_to_fp: subs.fingerprint(ENDPOINT_A) })], T0 + H);
   subs.rememberEndpoint(ENDPOINT_A, { by: "alpha" });
   let calls = 0;
   const client = { query: async () => ({ rows: [sayAct("@alpha hello", 8)] }) };
@@ -588,8 +588,8 @@ test("a failing endpoint is logged and DROPPED — no retry, no queue", async ()
 
 test("THE DISPATCHER'S BOOT REBUILD EQUALS THE PURE PROJECTION OVER THE SAME ROWS", async () => {
   const rows = [
-    sub(1, 0, "alpha", { wake_on: "addressed-say", ttl_h: 10, deliver_to_fp: "a" }),
-    sub(2, 1, "alpha", { wake_on: "addressed-say", ttl_h: 10, deliver_to_fp: "a2" }),
+    sub(1, 0, "alpha", { wake_on: "say-names-me", ttl_h: 10, deliver_to_fp: "a" }),
+    sub(2, 1, "alpha", { wake_on: "say-names-me", ttl_h: 10, deliver_to_fp: "a2" }),
     sub(3, 0, "beta", { wake_on: "say-in-earshot", earshot_m: 90, ttl_h: 1, deliver_to_fp: "b" }, "gh:b"),
     sub(4, 0, "gamma", { wake_on: "claim-effect", ttl_h: 10, deliver_to_fp: "g" }, "gh:g"),
     unsub(5, 2, "gamma", {}, "gh:g"),
@@ -616,7 +616,7 @@ test("THE DISPATCHER'S BOOT REBUILD EQUALS THE PURE PROJECTION OVER THE SAME ROW
   // and it is not vacuously equal — beta's expired, gamma's withdrawn, alpha's
   // second declaration wins, delta's stands
   assert.deepEqual(fromDispatcher.map((s) => [s.actor, s.wake_on, s.deliver_to_fp]),
-    [["alpha", "addressed-say", "a2"], ["delta", "claim-effect", "d"]]);
+    [["alpha", "say-names-me", "a2"], ["delta", "claim-effect", "d"]]);
 });
 
 test("THE ONE SEAM LANE B DOES NOT OWN: `near()`'s envelope, asserted against the real function", async () => {

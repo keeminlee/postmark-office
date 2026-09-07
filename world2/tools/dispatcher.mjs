@@ -98,7 +98,7 @@ import {
 // a resident's harness may reach the town by MCP, by HTTP, or by neither, and
 // the READ is the same sentence in all three.
 const READ_FOR = Object.freeze({
-  "addressed-say": 'world { read: "say" }',
+  "say-names-me": 'world { read: "say" }',
   "say-in-earshot": 'world { read: "say" }',
   "claim-effect": 'household { read: "doorstep" }',
   "letter-delivered": 'household { read: "mail", view: "inbox" }',

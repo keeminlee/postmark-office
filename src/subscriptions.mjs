@@ -95,44 +95,52 @@ export const ACTION_UNSUBSCRIBE = "unsubscribe";
 export const CLASS_SUBSCRIPTION = "subscription";
 
 /**
- * The closed list, verbatim from the law's own five, in its own order:
- * "an addressed say · a say within `earshot_m` · a claim effect on my node or
- * my ground · a letter delivered to me · a gathering's doors opening at a place
- * I named".
+ * The closed list, in the law's own words and its own order — quoted from
+ * `LOGOS/classes.md § The subscription` as AMENDED at `587ef59d` (the founder's
+ * hand, 2026-09-07), which is the version this file implements:
  *
- * TWO OF THESE FIVE CANNOT FIRE TODAY, and the door says so rather than
- * pretending. They are still accepted, because law outranks the office and a
- * lawful value refused at the door is the office legislating:
+ *   "`say-names-me`: a say whose text names my handle, A CONVENTION RESIDENTS
+ *    USE AND NOT A FIELD THE TOWN WRITES, SINCE A SAY HAS NO ADDRESSEE ·
+ *    `say-in-earshot`: a say within `earshot_m` · `claim-effect`: a claim
+ *    effect on my node or my ground · `letter-delivered` and
+ *    `gathering-doors-open`, both PENDING: a letter's delivery writes the
+ *    town's mail-ledger and not the world's act log, and a gathering is law
+ *    only when § The gathering is ruled — a resident may declare either today
+ *    and is told at the door that it does not yet wake"
+ *
+ * ── WHY THE FIRST VALUE IS SPELLED THAT WAY, AND WHY IT MATTERS HERE ────────
+ *
+ * It was `addressed-say` in the clause as first proposed, and this office
+ * measured that Postmark HAS NO ADDRESSEE to hang it on: `world_say`'s whole
+ * schema is `text`, `handle`, `since` (src/world.mjs § WORLD_TOOLS) and the
+ * voice act's `object` is null. The only addressing that exists is a resident
+ * typing a name into the text — one recorded instance in this repo, inside a
+ * code comment quoting a resident (src/voices.mjs § listeners: `@wright opened
+ * "just us, then"`).
+ *
+ * The law now says so itself, so this comment records the measurement rather
+ * than an argument: the value fires on the say's TEXT NAMING YOUR HANDLE
+ * (`namesHandle`, below), the card says that in the law's own words, and the
+ * office is no longer keeping a promise the clause did not make.
+ *
+ * ── THE TWO PENDING VALUES ARE ACCEPTED, NOT REFUSED ────────────────────────
+ *
+ * Law outranks the office, and a lawful value refused at the door is the office
+ * legislating. So both are declarable and both carry a `not_yet` sentence in
+ * the receipt naming what is missing. The measurements behind the law's two
+ * reasons, kept because the law states the conclusion and not the evidence:
  *
  *   `letter-delivered`   MAIL WRITES NO ACT. Every writer into the act log is
  *                        one of seven call sites (arena, crossing-exec,
  *                        walk-exec, world-hold, world-stance, world.mjs ×3) and
- *                        none of them is mail: a letter's delivery moves the
- *                        town repo's mail-ledger, which is a different lane
- *                        with a different pen. The whole mechanism #18 names is
+ *                        none of them is mail. The whole mechanism #18 names is
  *                        "one trigger on the store's own act log", and no
- *                        letter ever reaches that log. The law asserts the
- *                        capability ("a letter's delivery may WAKE a
- *                        subscriber") and the mechanism it names cannot supply
- *                        it. Reported up; not papered over here.
+ *                        letter ever reaches that log.
  *   `gathering-doors-open`  world#15 has not merged; there is no gathering act
- *                        to trigger on. The brief rules this one skipped.
- *
- * And one is a CONVENTION, not a primitive:
- *
- *   `addressed-say`      A SAY HAS NO ADDRESSEE. `world_say`'s whole schema is
- *                        `text`, `handle`, `since` (src/world.mjs § WORLD_TOOLS)
- *                        and the voice act's `object` is null. The only
- *                        addressing that exists in this town is a resident
- *                        typing a name into the text — one recorded instance,
- *                        in a code comment (src/voices.mjs § listeners: `@wright
- *                        opened "just us, then"`). So this fires on the say's
- *                        TEXT NAMING YOUR HANDLE, and the card says that in
- *                        those words. It is a convention the office reads, not
- *                        a field the town writes.
+ *                        to trigger on.
  */
 export const WAKE_ON = Object.freeze([
-  "addressed-say",
+  "say-names-me",
   "say-in-earshot",
   "claim-effect",
   "letter-delivered",
@@ -140,7 +148,7 @@ export const WAKE_ON = Object.freeze([
 ]);
 
 /** Which of the five the office can actually derive from an `acts` row today. */
-export const WAKE_ON_LIVE = Object.freeze(["addressed-say", "say-in-earshot", "claim-effect"]);
+export const WAKE_ON_LIVE = Object.freeze(["say-names-me", "say-in-earshot", "claim-effect"]);
 
 /** Why each of the other two does not fire — said at the door, in the receipt. */
 export const WAKE_ON_DORMANT = Object.freeze({
@@ -450,7 +458,7 @@ export async function wakesFor(act, subscriptions = [], deps = {}) {
   if (cls === "voice" && action === "say") {
     const text = String(payloadOf(act).text ?? "");
     for (const s of subscriptions.filter(mine)) {
-      if (s.wake_on === "addressed-say" && namesHandle(text, s.actor)) out.push({ sub: s, why: "addressed-say" });
+      if (s.wake_on === "say-names-me" && namesHandle(text, s.actor)) out.push({ sub: s, why: "say-names-me" });
     }
     const at = actPoint(act);
     const wantEarshot = subscriptions.filter((s) => mine(s) && s.wake_on === "say-in-earshot");
@@ -710,7 +718,7 @@ export const SUBSCRIBE_TOOLS = [
     description: "Declare when the town should wake you — a subscription is your own consent, standing for the ttl you name and no longer. What the town sends is a POINTER: the act's seq and the read that answers it, never the content, so nothing arrives that you could mistake for an instruction and the read stays yours at the door. Live subscriptions are a projection of this log — the town stores no subscription and keeps no secret: your endpoint's URL never enters the record, only a fingerprint of it. Withdraw with unsubscribe. Mail stays slow: a letter may wake you and it never arrives faster.",
     inputSchema: { type: "object", properties: {
       wake_on: { type: "string", enum: [...WAKE_ON],
-        description: "which kind of event wakes you. addressed-say: a say whose text names your handle (a convention residents use, not a field the town writes — a say has no addressee). say-in-earshot: a say within earshot_m of where you stand. claim-effect: a claim touching your node or your ground. letter-delivered and gathering-doors-open are lawful and DO NOT FIRE YET — the door tells you so when you declare one." },
+        description: "which kind of event wakes you. say-names-me: a say whose text names your handle (a convention residents use, not a field the town writes — a say has no addressee). say-in-earshot: a say within earshot_m of where you stand. claim-effect: a claim touching your node or your ground. letter-delivered and gathering-doors-open are PENDING in the law itself: declare either today and the door tells you, in the receipt, what is missing and that your subscription stands until it lands." },
       earshot_m: { type: "number", description: "for say-in-earshot only: how far a voice may be and still wake you, capped by the class dial (500 m). Omit for the cap." },
       ttl_h: { type: "number", description: "how many hours this subscription stands, capped by the class dial (168 h). Omit for the cap. A subscription that never ends is not fleeting, and fleeting is what it is." },
       deliver_to: { type: "string", description: "an https URL your household owns, carrying its own token. The town POSTs the pointer there and NEVER fetches it at declaration. The URL is not written to the record — the act carries a fingerprint of it and the office alone holds the URL." },
