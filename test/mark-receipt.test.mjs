@@ -196,6 +196,69 @@ test("causeOf maps every check it knows into the bulletin's five, and nothing el
   assert.deepEqual(causeOf("  "), { cause: null, cause_row: null });
 });
 
+// ── THE STRINGS THE TOWN ACTUALLY WRITES ───────────────────────────────────
+//
+// The first version of this map was built from the SWEEP's channel names and
+// never measured against the CANDLE's writers — so it matched none of the eight
+// strings `refusal_check` can actually hold, and every live refusal answered
+// `cause: null`. The lane's own charter is "measure the premise first", and the
+// premise here was a vocabulary nobody had read.
+//
+// EVERY WRITER EMITS `<name>: <detail>`. These eight are copied VERBATIM from
+// the two files that write the column, with the line each came from, so the leg
+// cannot drift into asserting a shape this file invented:
+//
+//   world2/tools/clearing-job.mjs  lines 129, 131, 141, 158, 176, 190-191
+//   world2/tools/review-rule.mjs   line  247, 248
+//
+// If a writer gains a ninth prefix, this table does not know about it and the
+// receipt answers `null` — which is the honest failure and is asserted below.
+const REAL_REFUSAL_CHECKS = [
+  ["duplicate: a standing mark already carries this slug", "contested", "clearing-job.mjs:131"],
+  ["duplicate: a standing mark carries this slug, and this claim supersedes ab12cd34, which is not it", "contested", "clearing-job.mjs:129"],
+  ["superseded: a later claim in this window amends this one", "contested", "clearing-job.mjs:141"],
+  ["insufficient-stamps: staked 3, liquid 1 at town 9f2a1b0c", "unbacked", "clearing-job.mjs:158"],
+  ['parcel-overlap: standing parcel "k-of-garrison/the-long-field"', "contested", "clearing-job.mjs:176"],
+  ["counterclaim: collides with 77 — a mind rules (census D2)", "contested", "clearing-job.mjs:190-191"],
+  ["review-ruling: wright refused this contest — the ground was already spoken for", "held", "review-rule.mjs:247"],
+  ["review-ruling: wright granted the-long-field — the elder claim stands", "held", "review-rule.mjs:248"],
+];
+
+test("EVERY refusal string the town can write maps to one of the bulletin's five words", () => {
+  const misses = [];
+  for (const [raw, expected, where] of REAL_REFUSAL_CHECKS) {
+    const { cause, cause_row } = causeOf(raw);
+    if (cause !== expected) misses.push(`${where} → ${JSON.stringify(raw.slice(0, 48))} gave ${JSON.stringify(cause)}, wanted ${JSON.stringify(expected)}`);
+    assert.equal(cause_row, `claims.refusal_check = ${JSON.stringify(raw)}`,
+      "the whole stored row rides beside the word, so a reader can go check the translation");
+  }
+  assert.deepEqual(misses, [],
+    `${misses.length} of ${REAL_REFUSAL_CHECKS.length} real refusal strings do not map — a promise kept in appearance only`);
+});
+
+test("the detail after the colon does not change the word — the PREFIX is the check", () => {
+  // Every one of these is `insufficient-stamps` with different arithmetic in it.
+  for (const detail of ["staked 3, liquid 1 at town 9f2a1b0c", "staked 1, liquid 0 at town ?", ""]) {
+    assert.equal(causeOf(`insufficient-stamps:${detail ? " " + detail : ""}`).cause, "unbacked");
+  }
+});
+
+test("A CHECK NOBODY HAS CLASSIFIED STILL ANSWERS NULL — the discipline that saved this map", () => {
+  for (const invented of [
+    "a-check-that-does-not-exist: with a detail",
+    "a-check-that-does-not-exist",
+    "notaprefix",
+  ]) {
+    const { cause, cause_row } = causeOf(invented);
+    assert.equal(cause, null, "guessing one of five promised words for an unclassified refusal is worse than an absent one");
+    assert.equal(cause_row, `claims.refusal_check = ${JSON.stringify(invented)}`);
+  }
+});
+
+test("a colon inside the DETAIL cannot be read as the check — the split is on the FIRST colon", () => {
+  assert.equal(causeOf("review-ruling: wright refused this: it collides").cause, "held");
+});
+
 // ── WHICH SETTLEMENT CARRIED IT — derived, because nothing records it ───────
 //
 // `WORLD/settlement-publications.json` names which marks are published and, in
@@ -243,4 +306,97 @@ test("a path the repo never held answers null, and does not throw out of a read"
   assert.equal(settlementThatCarried(repo, "WORLD/marks/nobody/never-was/mark.md", { ref: "refs/heads/main" }), null);
   assert.equal(settlementThatCarried(null, "x"), null);
   assert.equal(settlementThatCarried(repo, null), null);
+});
+
+// ── THE THREE LIVES A MARK'S FILE CAN HAVE ─────────────────────────────────
+//
+// Repaired 2026-09-07 on the reviewer's measurement. The first version ran
+// `git log --diff-filter=A -1 <ref> -- <path>` and called the answer "the FIRST
+// settlement that carried it". `-1` returns the NEWEST add, not the first, and
+// without `--follow` a rename reads as an add at the new path. Measured on a
+// tagged fixture:
+//
+//   amended after publication   truth S2 · answered S2   ok
+//   withdrawn and re-left       truth S4 · answered S6   WRONG
+//   file MOVED                  truth S7 · answered S8   WRONG
+//
+// The third is the live one: the filing freeze says a mark is written once and
+// nothing moves it after, and the-town's own class marks were moved in August —
+// so the receipt printed the settlement that MOVED the file as the settlement
+// that CARRIED the mark, with a real sha, on a receipt whose whole argument is
+// that an invented number is worse than an absent one.
+//
+// Both flags are needed and each fixes a different case: `--follow` fixes the
+// move, oldest-add fixes the re-leave.
+
+const lives = mkdtempSync(join(tmpdir(), "postmark-carried-lives-"));
+after(() => rmSync(lives, { recursive: true, force: true }));
+const lgit = (...a) => execFileSync("git", ["-C", lives, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+const lput = (p, t) => { const f = join(lives, p); mkdirSync(dirname(f), { recursive: true }); writeFileSync(f, t); };
+const lsettle = (n, msg) => {
+  lgit("add", "-A");
+  lgit("-c", "user.name=f", "-c", "user.email=f@t.invalid", "commit", "-q", "-m", `settlement: ${msg}`);
+  lgit("tag", `settlement/S${n}`);
+};
+const shaOfS = (n) => lgit("rev-parse", `settlement/S${n}^{commit}`).trim();
+
+const AMENDED = "WORLD/marks/wright/the-amended-thing/mark.md";
+const RELEFT = "WORLD/marks/wright/the-re-left-thing/mark.md";
+const MOVED_TO = "WORLD/marks/let-there-be-light/the-garden/the-moved-thing/mark.md";
+const MOVED_FROM = "WORLD/marks/wright/the-moved-thing/mark.md";
+
+lgit("init", "-q", "-b", "main");
+lput("WORLD/README.md", "the world\n");
+lsettle(1, "the town begins");
+
+lput(AMENDED, "the first declaration\n");
+lsettle(2, "sweep 1 published — the amended thing arrives");          // ← truth for A
+
+lput(AMENDED, "a newer declaration on my own node\n");
+lsettle(3, "sweep 0 published — an amend, in place");
+
+lput(RELEFT, "left once\n");
+lsettle(4, "sweep 1 published — the re-left thing arrives");          // ← truth for B
+
+rmSync(join(lives, RELEFT));
+lsettle(5, "sweep 0 published, 1 withdrawn");
+
+lput(RELEFT, "left again, same slug\n");
+lsettle(6, "sweep 1 published — and again");
+
+lput(MOVED_FROM, "a thing on open ground\n");
+lsettle(7, "sweep 1 published — the moved thing arrives");            // ← truth for C
+
+mkdirSync(dirname(join(lives, MOVED_TO)), { recursive: true });
+lgit("mv", MOVED_FROM, MOVED_TO);
+lsettle(8, "operator repair: re-home by geometry");
+
+test("RED CONTROL: the fixture really is three different lives, tagged apart", () => {
+  const at = (n, p) => { try { lgit("cat-file", "-e", `settlement/S${n}:${p}`); return true; } catch { return false; } };
+  assert.equal(at(2, AMENDED), true, "A must be present from S2");
+  assert.equal(at(1, AMENDED), false);
+  assert.equal(at(4, RELEFT), true, "B must be present at S4");
+  assert.equal(at(5, RELEFT), false, "and GONE at S5 — that is the withdrawal");
+  assert.equal(at(6, RELEFT), true, "and back at S6");
+  assert.equal(at(7, MOVED_FROM), true, "C must arrive at its ORIGINAL path at S7");
+  assert.equal(at(8, MOVED_TO), true, "and stand at the new path at S8");
+  assert.equal(at(8, MOVED_FROM), false, "the old path is gone at S8 — that is the move");
+});
+
+test("A · a mark AMENDED after publication names the settlement that carried it, not the amend", () => {
+  const c = settlementThatCarried(lives, AMENDED, { ref: "refs/heads/main" });
+  assert.equal(c.s, 2);
+  assert.equal(c.sha, shaOfS(2));
+});
+
+test("B · a mark WITHDRAWN and RE-LEFT names the FIRST settlement, not the newest add", () => {
+  const c = settlementThatCarried(lives, RELEFT, { ref: "refs/heads/main" });
+  assert.equal(c.s, 4, "`-1` answered S6 here — the newest add, not the first");
+  assert.equal(c.sha, shaOfS(4));
+});
+
+test("C · a mark whose FILE MOVED names the settlement that carried the MARK, not the move", () => {
+  const c = settlementThatCarried(lives, MOVED_TO, { ref: "refs/heads/main" });
+  assert.equal(c.s, 7, "without --follow the rename read as an add, and the receipt printed S8 with a real sha");
+  assert.equal(c.sha, shaOfS(7));
 });

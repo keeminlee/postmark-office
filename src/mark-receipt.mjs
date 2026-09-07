@@ -76,17 +76,58 @@ export const RECEIPT_CLOCK =
  * ⚑ AN UNMAPPED CHECK IS NOT "malformed". It answers `null` with the raw check
  * beside it, because guessing one of five promised words for a refusal nobody
  * has classified would be the town keeping its promise in appearance only.
+ *
+ * ── THE COLUMN HOLDS `<name>: <detail>`, AND THE FIRST MAP READ THE WHOLE
+ *    STRING (repaired 2026-09-07, reviewer-measured) ─────────────────────────
+ *
+ * The first version of this map was built from the SWEEP's channel names and
+ * never measured against the writers that actually fill the column. Every one
+ * of them — `world2/tools/clearing-job.mjs` at 129, 131, 141, 158, 176, 190-191
+ * and `world2/tools/review-rule.mjs` at 247-248 — writes `<name>: <detail>`:
+ *
+ *     duplicate: a standing mark already carries this slug
+ *     superseded: a later claim in this window amends this one
+ *     insufficient-stamps: staked 3, liquid 1 at town 9f2a1b0c
+ *     parcel-overlap: standing parcel "k-of-garrison/the-long-field"
+ *     counterclaim: collides with 77 — a mind rules (census D2)
+ *     review-ruling: wright refused this contest — <because>
+ *
+ * A map keyed on whole strings matched **0 of 8**. So every refusal the town
+ * can currently produce answered `cause: null` — the `null`-rather-than-guess
+ * discipline is the only reason that was an honest silence rather than a lie,
+ * and it is the reason this was a repair and not an incident.
+ *
+ * THE CHECK IS THE PREFIX. Split on the FIRST colon: the detail carries commas,
+ * quotes, em-dashes and its own colons ("review-ruling: wright refused this:
+ * it collides"), and only the segment before the first one is a check name.
+ *
+ * `test/mark-receipt.test.mjs § REAL_REFUSAL_CHECKS` holds all eight verbatim
+ * with the line each came from. A ninth prefix is not guessed at — it answers
+ * `null` and says so, which is asserted there too.
  */
 export const CAUSE_WORDS = Object.freeze(["held", "contested", "unbacked", "malformed", "quarantined"]);
 
 const CAUSE_OF_CHECK = Object.freeze({
-  // the sweep's own channels (world tools/settlement-sweep.mjs)
+  // ── the CANDLE's writers (world2/tools/clearing-job.mjs) ──────────────────
+  // A slug already standing, or a claim a later one amends: two claims for one
+  // thing, which is what "contested" means to a resident.
+  "duplicate": "contested",
+  "superseded": "contested",
+  "parcel-overlap": "contested",
+  "counterclaim": "contested",
+  // Not enough liquid stamps behind the stake at the pinned candle read.
+  "insufficient-stamps": "unbacked",
+  // ── the REVIEW lane's writer (world2/tools/review-rule.mjs) ───────────────
+  // A mind ruled, which is exactly what the bulletin's "held" describes: it did
+  // not ride and it was not the machine that stopped it.
+  "review-ruling": "held",
+  // ── the SWEEP's own channels (world tools/settlement-sweep.mjs) ───────────
+  // Kept: the 1.0 sweep still refuses on these, and a mark can be refused by
+  // either lane. Measured against the sweep's source, not guessed.
   "suite-quarantine": "held",
   "grammar-suite": "held",
   "held-review": "held",
   "collision": "contested",
-  "counterclaim": "contested",
-  "parcel-overlap": "contested",
   "escrow": "unbacked",
   "no-stake": "unbacked",
   "unstaked": "unbacked",
@@ -99,10 +140,18 @@ const CAUSE_OF_CHECK = Object.freeze({
   "registrar-quarantine": "quarantined",
 });
 
+/** The check name a stored `refusal_check` carries — everything before the FIRST colon. */
+export function checkNameOf(refusalCheck) {
+  const raw = String(refusalCheck ?? "").trim();
+  if (!raw) return null;
+  const i = raw.indexOf(":");
+  return (i === -1 ? raw : raw.slice(0, i)).trim().toLowerCase() || null;
+}
+
 export function causeOf(refusalCheck) {
   const raw = String(refusalCheck ?? "").trim();
   if (!raw) return { cause: null, cause_row: null };
-  const key = raw.toLowerCase();
+  const key = checkNameOf(raw);
   const word = CAUSE_OF_CHECK[key]
     ?? CAUSE_WORDS.find((w) => key === w)
     ?? null;
@@ -259,12 +308,43 @@ const git = (repo, args) => execFileSync("git", ["-C", repo, ...args], {
  * Two git calls, on the clone the office already keeps. Null — never a guess —
  * when either is unreadable: an invented S-number on a receipt is worse than an
  * absent one, because the resident has no way to tell it is invented.
+ *
+ * ── THE OLDEST ADD, AND `--follow` (repaired 2026-09-07, reviewer-measured) ──
+ *
+ * The first version ran `--diff-filter=A **-1**` and called the answer "the
+ * FIRST settlement that carried it". Both halves of that were wrong, and each
+ * broke a different real case, measured on a tagged fixture:
+ *
+ *   a mark AMENDED after publication   truth S2 · answered S2   ok
+ *   a mark WITHDRAWN and RE-LEFT       truth S4 · answered S6   wrong
+ *   a mark whose FILE MOVED            truth S7 · answered S8   wrong
+ *
+ *   `-1` returns git's FIRST output line, which is the NEWEST add — so a slug
+ *        let go and taken up again named the second arrival.
+ *   no `--follow` makes a rename read as an add at the new path — so the
+ *        receipt printed the settlement that MOVED the file as the settlement
+ *        that CARRIED the mark, with a real sha.
+ *
+ * The move is the live one: the filing freeze says "the settlement writes a
+ * mark once; nothing moves it after", and the-town's own class marks were moved
+ * in August anyway. A wrong S-number with a real sha behind it is exactly what
+ * this function's own null-rather-than-guess rule exists to prevent, so it was
+ * failing at the one thing it was written to do.
+ *
+ * Each flag fixes a different case and BOTH are needed: `--follow` alone still
+ * answers S6 for the re-leave, oldest-add alone still answers S8 for the move.
+ * `test/mark-receipt.test.mjs § THE THREE LIVES A MARK'S FILE CAN HAVE`.
  */
 export function settlementThatCarried(repo, path, { tags = null, ref = "HEAD" } = {}) {
   if (!repo || !path) return null;
   let added;
   try {
-    added = git(repo, ["log", "--diff-filter=A", "-1", "--format=%H", ref, "--", path]).trim();
+    // --follow so a rename is one life, not two; no -1 so every add is listed
+    // (newest first) and the OLDEST is taken below. `--follow` takes exactly one
+    // pathspec, which is what this function is handed.
+    const adds = git(repo, ["log", "--follow", "--diff-filter=A", "--format=%H", ref, "--", path])
+      .split("\n").map((s) => s.trim()).filter(Boolean);
+    added = adds.length ? adds[adds.length - 1] : "";
   } catch { return null; }
   if (!added) return null;
   let containing;
@@ -278,7 +358,11 @@ export function settlementThatCarried(repo, path, { tags = null, ref = "HEAD" } 
     .map((m) => Number(m[1]))
     .filter((n) => Number.isInteger(n));
   if (!ns.length) return null;
-  const s = Math.min(...ns);          // the FIRST settlement that carried it
+  // The lowest S-number among the tags that CONTAIN the oldest add — every
+  // later settlement contains it too, and the receipt wants the one that
+  // carried the mark. True now that `added` is the oldest add of one followed
+  // life; it was false while `-1` handed this the newest.
+  const s = Math.min(...ns);
   const known = (tags ?? []).find((t) => t.n === s) ?? null;
   // ⚑ THE WHOLE SHA, NOT THE SETTLEMENTS DOOR'S. `readSettlementTags` resolves
   // its shas with `rev-parse --short` — right for that door, which RENDERS a
