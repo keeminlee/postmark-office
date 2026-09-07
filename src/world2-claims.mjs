@@ -90,6 +90,26 @@ const householdKeys = new Map();
  * would be working perfectly and the answer would still be wrong. Routing both
  * through this function is what makes that unrepresentable, so do not inline
  * either half.
+ *
+ * ── "THE TWO NETS ARE ONE NET" — ASKED AND ANSWERED (2026-09-07) ───────────
+ *
+ * Lane A observed that the WHERE clause in `pgLiveMarks` and 007's row policy
+ * both key off this function's output, so a wrong row in `identities` defeats
+ * both at once and there is no independent check. That observation is true and
+ * it is ACCEPTED DESIGN, not a defect to file — written down here rather than
+ * opened as an issue, on the reviewer's reading, which is the better one:
+ *
+ *   the IDENTITY is one fact, and the two mechanisms enforce two different
+ *   things over it. The WHERE clause bounds the result set; the row policy
+ *   bounds what the credential may return AT ALL — and only the second survives
+ *   a new reading surface written by somebody who did not know it was needed.
+ *   That is exactly 007's own argument for the policy ("enforced structurally,
+ *   not by vigilance"), and it is why the two are not redundant.
+ *
+ * A wrong row in `identities` does defeat both. It also defeats every other
+ * notion of who you are in this town, which is what makes this function's
+ * single-resolver discipline the right shape rather than a shared weakness:
+ * one fact, one place to be wrong, one place to fix.
  */
 export async function householdKeyForKey(p, key) {
   const named = String(key?.household ?? "").trim();

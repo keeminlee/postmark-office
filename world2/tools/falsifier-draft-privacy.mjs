@@ -262,13 +262,25 @@ try {
   // so a leak in `guardedDraftsForKey` shows here. That the sibling is
   // unreachable from any probe of this shape is recorded rather than papered
   // over; closing it needs an MCP-speaking leg, which is not this file's shape.
-  for (const [path, control] of [["/world/my-marks", "drafts"]]) {
+  // ⚑ THE CONTROL IS A FIELD THE OVERLAY PRODUCED, NOT ONE THE DOOR PRINTS
+  // ANYWAY (tightened 2026-09-07, reviewer-found). It was `"drafts"` — a key
+  // `worldMyMarks` emits on EVERY successful answer, together with its
+  // `labels.drafts` prose, including one where `log.readable` is false and the
+  // overlay was never consulted at all. So the control proved the door answered
+  // and nothing about whether the thing being hunted was even looked for.
+  //
+  // `"log"` is the block `guardedDraftsForKey` attaches when it has actually
+  // read the live layer (`{ readable, source, ... }`) — present on the overlay's
+  // own path and on nothing else this answer carries. A leg that finds it has
+  // proved the overlay ran; a leg that does not is ASLEEP and says so, which by
+  // this file's own standard is the only honest alternative to a red.
+  for (const [path, control] of [["/world/my-marks", '"log"']]) {
     if (OTHER_KEY) {
       const { code, text } = await door(path, OTHER_KEY);
       if (text.includes(SECRET) || text.includes(NONCE))
         red(`door ${path} as ANOTHER household`, `the answer carries the draft (HTTP ${code}) — this is the door a resident reads`);
       else if (!text.includes(control))
-        dead(`door ${path} as ANOTHER household`, `neither the draft NOR this leg's control ("${control}") is in the answer (HTTP ${code}: ${text.slice(0, 120)}) — this leg proved nothing`);
+        dead(`door ${path} as ANOTHER household`, `the draft is absent, but so is this leg's control (${control} — the overlay's own block, present only when the live layer was actually read) at HTTP ${code}: ${text.slice(0, 120)} — so this leg proved the door ANSWERED, not that the overlay was consulted`);
     } else dead(`door ${path} as ANOTHER household`, "no --other-key given — the cross-household read was not exercised");
 
     if (KEY) {
