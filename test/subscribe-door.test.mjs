@@ -588,6 +588,63 @@ test("THE DISPATCHER'S BOOT REBUILD EQUALS THE PURE PROJECTION OVER THE SAME ROW
     [["alpha", "addressed-say", "a2"], ["delta", "claim-effect", "d"]]);
 });
 
+test("THE ONE SEAM LANE B DOES NOT OWN: `near()`'s envelope, asserted against the real function", async () => {
+  // The earshot derivation calls `near()` from src/dynamic-presence.mjs —
+  // imported, never copied, because a second answer to who-is-near-a-point is
+  // the split-brain this office keeps a museum of. Lane C owns that file this
+  // week, and the conductor asked Lane C to name any change to its shape.
+  //
+  // THE PROBLEM THIS LEG EXISTS FOR: `wakesFor` wraps the call in a try and
+  // degrades to "nobody in earshot" rather than throwing, so a CHANGED SHAPE
+  // makes `say-in-earshot` silently wake nobody. And the earshot falsifier
+  // above injects a stub, so it would stay green through the rename. A stub
+  // proves the arithmetic; it cannot prove the contract.
+  const presence = await import("../src/dynamic-presence.mjs");
+  assert.equal(typeof presence.near, "function", "`near` is the export this lane reads; a rename here kills say-in-earshot silently");
+
+  const r = await presence.near({ x: 0, y: 0, radiusM: 137 });
+
+  // TWO ARMS, AND THIS LEG FOUND THE SECOND ONE. `near()` returns
+  // `{ at, radius_m, count, residents, … }` when the presence read succeeds and
+  // `{ error, detail, residents: [], count: 0 }` — NO `radius_m` — when it does
+  // not (src/dynamic-presence.mjs § near, first line after readPresence). The
+  // first version of this assertion checked `radius_m` unconditionally and went
+  // red here, which is how the error arm got noticed at all: in this fixture
+  // there is no presence table, so `near()` takes it every time.
+  //
+  // `residents` is an array in BOTH arms and is the only thing the derivation
+  // reads off the envelope, so that is what is asserted unconditionally.
+  assert.ok(Array.isArray(r?.residents), "`residents` is an array in both of near()'s arms, and it is what this lane reads");
+  if (!r.error) assert.equal(r.radius_m, 137, "`radiusM` BOUNDS the answer and is echoed — if it becomes advisory, earshot stops meaning anything");
+  else assert.ok(typeof r.error === "string" && r.error.length, "the error arm names its error, which is what the dispatcher now logs");
+
+  // ⚠ WHAT THIS LEG CANNOT REACH, said out loud rather than left to be assumed
+  // covered: `residents[].distance_m`, the other field the derivation reads.
+  // This worktree has no rebuilt presence table, so no row exists to check a
+  // field on. Rebuilding one would make this leg depend on a world fold and a
+  // walk ledger — a heavier fixture than the claim is worth. So: the export,
+  // both envelope arms, and the radius echo are covered; the row's own field is
+  // not, and the Lane B report says the same in § 4 rather than implying more.
+  assert.equal(r.residents.length, 0, "no presence table here — if this ever fails, ADD the distance_m check, because a row finally exists to check it on");
+});
+
+test("A PRESENCE READ THAT ERRORS IS LOGGED, NOT SWALLOWED — earshot waking nobody must say why", async () => {
+  // Found by the leg above. `near()`'s error arm returns an empty `residents`,
+  // which is indistinguishable from "nobody is near" — so a presence read that
+  // is BROKEN and a room that is genuinely EMPTY produced the same silence, and
+  // say-in-earshot would have gone dead with nothing anywhere saying so. That
+  // is the states-with-no-receipt class, and the repair is one line.
+  const live = subs.liveSubscriptions([sub(1, 0, "alpha", { wake_on: "say-in-earshot", earshot_m: 50, ttl_h: 10, deliver_to_fp: "a" })], T0 + H);
+  const lines = [];
+  const woken = await subs.wakesFor(sayAct("hello"), live, {
+    nearHandles: async () => { throw new Error("the presence table has never been filled"); },
+    log: (l) => lines.push(l),
+  });
+  assert.deepEqual(woken, [], "nobody is woken, which is correct");
+  assert.ok(lines.some((l) => /presence read failed/.test(l) && /the presence table has never been filled/.test(l)),
+    `the failure must be NAMED, not silent: ${JSON.stringify(lines)}`);
+});
+
 test("EVERY WAKE POINTS AT A DOOR THAT EXISTS — a pointer to a read nobody can type is worse than no wake", async () => {
   // A wake is a form: its whole content is `read`, the sentence that answers
   // it. So the sentence has to name a door the town actually has, and this

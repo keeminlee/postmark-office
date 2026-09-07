@@ -457,7 +457,25 @@ export async function wakesFor(act, subscriptions = [], deps = {}) {
       // saw a walk the next one did not.
       const widest = Math.max(...wantEarshot.map((s) => Number(s.earshot_m) || 0));
       let rows = [];
-      try { rows = await deps.nearHandles(at, widest) ?? []; } catch { rows = []; }
+      // ⚠ A BROKEN PRESENCE READ AND AN EMPTY ROOM ARE THE SAME SILENCE, so the
+      // failure is NAMED. `near()` has two arms and only one of them throws:
+      // when its own presence read fails it RETURNS `{ error, residents: [] }`
+      // (src/dynamic-presence.mjs § near), which reaches here as an empty list
+      // and is indistinguishable from nobody standing nearby. Both arms are
+      // logged, because say-in-earshot going dead with nothing anywhere saying
+      // so is the states-with-no-receipt class — and this lane's own falsifier
+      // for earshot injects a stub, so it would stay green right through it.
+      try {
+        const answer = await deps.nearHandles(at, widest);
+        rows = answer ?? [];
+        if (answer?.error) {
+          (deps.log ?? (() => {}))(`say-in-earshot: presence read failed (${String(answer.error)}) — ${wantEarshot.length} subscription(s) woken nobody, and this is not the same as an empty room`);
+          rows = [];
+        }
+      } catch (e) {
+        (deps.log ?? (() => {}))(`say-in-earshot: presence read failed (${String(e?.message ?? e).slice(0, 160)}) — ${wantEarshot.length} subscription(s) woken nobody, and this is not the same as an empty room`);
+        rows = [];
+      }
       const distOf = new Map(rows.map((r) => [String(r.handle), Number(r.distance_m)]));
       for (const s of wantEarshot) {
         const d = distOf.get(s.actor);

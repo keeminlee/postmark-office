@@ -170,11 +170,18 @@ export async function deliver(wake, url, { fetchImpl = fetch, timeoutMs = 4000, 
 // of. `groundFor` is the consent door's own overlap rule, pure and exported,
 // and it is what "the ground's holders" means anywhere else in this office.
 
-async function makeDeps({ repo = null } = {}) {
+async function makeDeps({ repo = null, log = console.log } = {}) {
   return {
+    log,
     async nearHandles(at, radiusM) {
       const { near } = await import("../../src/dynamic-presence.mjs");
       const r = await near({ x: at.x, y: at.y, radiusM, ...(repo ? { repo } : {}) });
+      // ⚠ `near()` HAS TWO ARMS AND ONLY ONE OF THEM THROWS. When its own
+      // presence read fails it RETURNS `{ error, detail, residents: [] }`, and
+      // an empty `residents` here is indistinguishable from nobody standing
+      // nearby — so say-in-earshot would go dead with nothing anywhere saying
+      // so. Raised into the arm that IS logged, rather than mapped away.
+      if (r?.error) throw new Error(`${r.error}${r.detail ? ` — ${r.detail}` : ""}`);
       return (r?.residents ?? []).map((p) => ({ handle: p.handle, distance_m: p.distance_m }));
     },
     async interestedIn(act) {
@@ -225,7 +232,7 @@ export async function onNotification(payload, {
   const { rows: [act] } = await client.query(ACT_ROW, [id]);
   if (!act) { log(`act ${id}: the notification named a row this reader cannot see — dropped`); return []; }
 
-  const woken = await wakesFor(act, subscriptions, deps ?? await makeDeps());
+  const woken = await wakesFor(act, subscriptions, deps ?? await makeDeps({ log }));
   const sent = [];
   for (const { sub, why } of woken) {
     const body = wakeBody(act, why);
@@ -268,7 +275,7 @@ export async function run({ argv = [], log = console.log, env = process.env } = 
   log(`boot: ${subscriptions.length} live subscription(s), rebuilt from the log${dryRun ? " — DRY RUN, nothing will be POSTed" : ""}`);
   for (const s of subscriptions) log(`  ${s.actor}  ${s.wake_on}${s.earshot_m ? ` ${s.earshot_m}m` : ""}  until ${s.expires_at}  -> ${s.deliver_to_fp}`);
 
-  const deps = await makeDeps();
+  const deps = await makeDeps({ log });
   let idle = null;
 
   client.on("notification", (msg) => {
