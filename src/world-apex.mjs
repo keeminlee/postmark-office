@@ -72,6 +72,14 @@ import { servedEnterExitLedger } from "./enter-exit-ledger.mjs";
 // POS-5's consent verb. STANCE_TOOLS ride the schema lookup without joining
 // the flat tool list, exactly as CROSSING_TOOLS do and for the same reason.
 import { ACTION_STANCE, STANCE_TOOLS, declareStanceViaOffice, readNeverPerforms, stanceShadow, stancesBlock } from "./world-stance.mjs";
+// Rei-1's subscription (world#18, PROPOSED). SUBSCRIBE_TOOLS ride the schema
+// lookup without joining the flat tool list — the same precedent again, and
+// here it also keeps the office from advertising a public tool for a clause the
+// founder has not ruled on.
+import {
+  ACTION_SUBSCRIBE, ACTION_UNSUBSCRIBE, SUBSCRIBE_TOOLS,
+  subscribeReadNeverPerforms, subscribeViaOffice, subscriptionShadow, unsubscribeViaOffice,
+} from "./subscriptions.mjs";
 import { callHoldTool, holdingsOf, liveHolder } from "./world-hold.mjs";
 import { openDynamic } from "./dynamic-store.mjs";
 import { declareMovement, readAttachments } from "./dynamic-entities.mjs";
@@ -713,6 +721,31 @@ export function portalBlockAt(db, spineIds = []) {
 export const declareStanceAtOffice = (args, key) =>
   declareStanceViaOffice(WORLD_CLONE, args, key, { witnessStamp, crossing: currentCrossing() });
 
+// ── THE SUBSCRIPTION'S DIALS, READ OFF THE MARK ─────────────────────────────
+//
+// `ttl_max_h` and `earshot_max_m` live on `the-town/subscription` (world#18).
+// They are READ, never restated: a cap this file spelled out would be a second
+// copy of a number the town declared, and dec18-parity measured what a second
+// copy costs — a comparison drifted from the gate's in a day and proposed 466
+// amends where the gate reported 15.
+//
+// The store may not hold the class at all — #18 is PROPOSED and the office
+// builds against a world train that does not carry it — so this returns null
+// and the door falls back to the same numbers with `from:` saying it did. A cap
+// that came from a default is not a cap the town declared, and the resident is
+// owed the difference in the receipt.
+export function subscriptionDials() {
+  const store = openStore();
+  try { return residueOf(store.db, "the-town/subscription")?.dials ?? null; }
+  catch { return null; }
+  finally { try { store.db?.close(); } catch { /* already gone */ } }
+}
+
+const subscribeAtOffice = (args, key) =>
+  subscribeViaOffice(args, key, { witnessStamp, crossing: currentCrossing(), dials: subscriptionDials });
+const unsubscribeAtOffice = (args, key) =>
+  unsubscribeViaOffice(args, key, { witnessStamp, crossing: currentCrossing() });
+
 // ── THE STANDING-SCOPED DOORS ───────────────────────────────────────────────
 //
 // An act whose grant hangs on a class that NOBODY IS and NOTHING SITES cannot
@@ -853,6 +886,23 @@ const DISPATCH = {
   // — the split-brain this office keeps a museum of. ONE DERIVATION, TWO
   // DOORS, and here that is literally one function with two callers.
   [ACTION_STANCE]: { tool: "world_declare_stance", run: (args, key) => declareStanceAtOffice(args, key) },
+  // ── the subscription (Rei-1; world#18, PROPOSED) ──────────────────────────
+  //
+  // THESE TWO ROWS ARE UNREACHABLE UNTIL #18 MERGES, and that is the point of
+  // landing them first. `apexDo` admits an action when `gatherActions` returns
+  // it, and nothing on the world train grants `subscribe`, so today both rows
+  // are law-less machinery: a resident asking for the act gets the ordinary
+  // "afforded nowhere in the world" bounce and never reaches here.
+  //
+  // The day the resident class's `actions:` gains the pair (it does on
+  // `wright/law-subscribe`, version 10 -> 11), the grant arrives from the store
+  // with no office change at all — and lint L6 ("every exposed action has a
+  // live handler", src/world-lints.mjs) goes GREEN rather than red, which is
+  // what these rows are for. The five arena verbs were the opposite order and
+  // it cost the town a 501 on every call for a fortnight (see the ARENA_VERBS
+  // note below, in this same table).
+  [ACTION_SUBSCRIBE]: { tool: "world_subscribe", run: (args, key) => subscribeAtOffice(args, key) },
+  [ACTION_UNSUBSCRIBE]: { tool: "world_unsubscribe", run: (args, key) => unsubscribeAtOffice(args, key) },
   // ── the arena's five verbs (2026-08-27) ───────────────────────────────────
   //
   // ⚑ THESE FIVE WERE THE 501. The class marks granted them from the day the
@@ -962,7 +1012,7 @@ function flatSchemas() {
   // fields an act takes must still come from the act's own schema — the seam-4
   // discipline — and inventing a second grammar here for two verbs would be
   // exactly the drift that seam exists to close.
-  for (const tool of [...WORLD_TOOLS, ...WORLD_STAKE_TOOLS, ...CROSSING_TOOLS, ...STANCE_TOOLS, ...ARENA_TOOLS]) {
+  for (const tool of [...WORLD_TOOLS, ...WORLD_STAKE_TOOLS, ...CROSSING_TOOLS, ...STANCE_TOOLS, ...SUBSCRIBE_TOOLS, ...ARENA_TOOLS]) {
     _flatSchemas.set(tool.name, actionFields(tool?.inputSchema?.properties, tool?.inputSchema?.required));
   }
   return _flatSchemas;
@@ -975,7 +1025,7 @@ let _fullProps = null;
 function fullPropsFor(toolName) {
   if (!_fullProps) {
     _fullProps = new Map();
-    for (const t of [...WORLD_TOOLS, ...WORLD_STAKE_TOOLS, ...CROSSING_TOOLS, ...STANCE_TOOLS, ...ARENA_TOOLS]) _fullProps.set(t.name, t?.inputSchema?.properties ?? {});
+    for (const t of [...WORLD_TOOLS, ...WORLD_STAKE_TOOLS, ...CROSSING_TOOLS, ...STANCE_TOOLS, ...SUBSCRIBE_TOOLS, ...ARENA_TOOLS]) _fullProps.set(t.name, t?.inputSchema?.properties ?? {});
   }
   return _fullProps.get(toolName) ?? null;
 }
@@ -2393,6 +2443,20 @@ async function readDomainFor(action, fields, key, oriented, ctx = {}) {
       const performing = readNeverPerforms(fields);
       if (performing) return performing;
       return await stanceShadow(WORLD_CLONE, key, { cursor: fields?.cursor ?? null, limit: fields?.limit });
+    }
+    // THE SUBSCRIPTION'S SHADOW (Rei-1). Both verbs read the same thing — the
+    // caller's own live subscriptions — because `unsubscribe`'s domain IS the
+    // set it can withdraw from, and answering it with anything else would make
+    // a resident guess which name to pass to see what they hold.
+    //
+    // A read never performs, so an envelope carrying declaration fields is
+    // refused by name rather than quietly ignored — the stance door's own rule,
+    // reused rather than re-argued.
+    case ACTION_SUBSCRIBE:
+    case ACTION_UNSUBSCRIBE: {
+      const performing = subscribeReadNeverPerforms(fields);
+      if (performing) return performing;
+      return await subscriptionShadow(key, { handle: fields?.handle ?? null });
     }
     default:
       return { domain: { unavailable: `no shadow read is wired for "${action}" yet — its card above is the law that stands` } };

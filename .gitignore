@@ -29,3 +29,12 @@ world-shadow-diff.jsonl*
 # each, and rebuildable from world.db at any moment
 *.gexf
 .probe/
+# the subscription endpoint book (world#18 § The subscription). The act log
+# carries a FINGERPRINT of each `deliver_to` and never the URL — `acts` is
+# exported to a public archive, frozen on write, so a bearer URL in a payload
+# would be a credential published permanently. The URL lives here, box-local,
+# read by world2/tools/dispatcher.mjs and by nothing else. It is not a store
+# table (the law forbids one) and it is not the record: the record is the log,
+# and this book is the office procedure the law puts outside itself.
+.subscription-endpoints.json
+.subscription-endpoints.json.tmp
