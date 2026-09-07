@@ -473,7 +473,9 @@ const sayAct = (text, id = 900) => ({
 
 test("EARSHOT 50 m FIRES AT 50 AND DOES NOT FIRE AT 51", async () => {
   const live = subs.liveSubscriptions([sub(1, 0, "alpha", { wake_on: "say-in-earshot", earshot_m: 50, ttl_h: 10, deliver_to_fp: "a" })], T0 + H);
-  const at = (d) => ({ nearHandles: async () => [{ handle: "alpha", distance_m: d }] });
+  // The stub speaks `near()`'s OWN shape, because that is the contract
+  // `wakesFor` reads — see the seam note in src/subscriptions.mjs § wakesFor.
+  const at = (d) => ({ nearHandles: async () => ({ residents: [{ handle: "alpha", distance_m: d }] }) });
   assert.equal((await subs.wakesFor(sayAct("hello"), live, at(50))).length, 1, "50 is within 50");
   assert.equal((await subs.wakesFor(sayAct("hello"), live, at(49))).length, 1);
   assert.equal((await subs.wakesFor(sayAct("hello"), live, at(51))).length, 0, "51 is not");
@@ -636,13 +638,34 @@ test("A PRESENCE READ THAT ERRORS IS LOGGED, NOT SWALLOWED — earshot waking no
   // is the states-with-no-receipt class, and the repair is one line.
   const live = subs.liveSubscriptions([sub(1, 0, "alpha", { wake_on: "say-in-earshot", earshot_m: 50, ttl_h: 10, deliver_to_fp: "a" })], T0 + H);
   const lines = [];
-  const woken = await subs.wakesFor(sayAct("hello"), live, {
+  // BOTH ARMS, because `near()` has two and only one of them throws. The
+  // returned-error arm is the one that actually happens on a box with no
+  // presence table, and it is the one a flattening mapper used to erase.
+  const returned = await subs.wakesFor(sayAct("hello"), live, {
+    nearHandles: async () => ({ error: "entities-never-derived", detail: "the presence table has never been filled", residents: [] }),
+    log: (l) => lines.push(l),
+  });
+  assert.deepEqual(returned, [], "nobody is woken, which is correct");
+  assert.ok(lines.some((l) => /presence read failed \(entities-never-derived\)/.test(l) && /not the same as an empty room/.test(l)),
+    `the RETURNED error must be NAMED, not silent: ${JSON.stringify(lines)}`);
+
+  const thrown = await subs.wakesFor(sayAct("hello"), live, {
     nearHandles: async () => { throw new Error("the presence table has never been filled"); },
     log: (l) => lines.push(l),
   });
-  assert.deepEqual(woken, [], "nobody is woken, which is correct");
-  assert.ok(lines.some((l) => /presence read failed/.test(l) && /the presence table has never been filled/.test(l)),
-    `the failure must be NAMED, not silent: ${JSON.stringify(lines)}`);
+  assert.deepEqual(thrown, [], "nobody is woken, which is correct");
+  assert.ok(lines.some((l) => /the presence table has never been filled/.test(l)),
+    `the THROWN error must be NAMED too: ${JSON.stringify(lines)}`);
+
+  // AND AN EMPTY ROOM IS NOT LOGGED, because it is not a failure. Without this
+  // the leg above would pass on a function that logged every call.
+  const quiet = [];
+  const empty = await subs.wakesFor(sayAct("hello"), live, {
+    nearHandles: async () => ({ residents: [] }),
+    log: (l) => quiet.push(l),
+  });
+  assert.deepEqual(empty, []);
+  assert.deepEqual(quiet, [], "an empty room says nothing — only a broken read does");
 });
 
 test("EVERY WAKE POINTS AT A DOOR THAT EXISTS — a pointer to a read nobody can type is worse than no wake", async () => {

@@ -423,10 +423,14 @@ export function readDeclaration(args = {}, caps = capsFrom(null)) {
  * `deps` supply the two facts this cannot derive alone, both injected so the
  * whole derivation is provable on a hand-built store:
  *
- *   `nearHandles(at, radiusM)` -> handles within radiusM of a point. The door
- *      passes src/dynamic-presence.mjs's `near()` — READ, never re-implemented;
- *      Lane C owns that file this week and a second answer to who-is-near is
- *      the split-brain this office keeps a museum of.
+ *   `nearHandles(at, radiusM)` -> `near()`'s OWN answer shape,
+ *      `{ error?, residents: [{ handle, distance_m }] }`. Deliberately not
+ *      pre-flattened: `near()` has two arms and only one of them throws, so a
+ *      caller that mapped `residents` away would hand this function an empty
+ *      list for a BROKEN read and an empty list for an EMPTY ROOM, which are
+ *      different facts. The door passes src/dynamic-presence.mjs's `near()` —
+ *      READ, never re-implemented; Lane C owns that file this week and a second
+ *      answer to who-is-near is the split-brain this office keeps a museum of.
  *   `interestedIn(act)` -> handles a claim effect concerns. The door passes
  *      Lane A's `readClaimEffects` reading — the mark's author and the ground's
  *      holders — for the same reason.
@@ -465,16 +469,27 @@ export async function wakesFor(act, subscriptions = [], deps = {}) {
       // logged, because say-in-earshot going dead with nothing anywhere saying
       // so is the states-with-no-receipt class — and this lane's own falsifier
       // for earshot injects a stub, so it would stay green right through it.
-      try {
-        const answer = await deps.nearHandles(at, widest);
-        rows = answer ?? [];
-        if (answer?.error) {
-          (deps.log ?? (() => {}))(`say-in-earshot: presence read failed (${String(answer.error)}) — ${wantEarshot.length} subscription(s) woken nobody, and this is not the same as an empty room`);
-          rows = [];
-        }
-      } catch (e) {
-        (deps.log ?? (() => {}))(`say-in-earshot: presence read failed (${String(e?.message ?? e).slice(0, 160)}) — ${wantEarshot.length} subscription(s) woken nobody, and this is not the same as an empty room`);
+      // ── THE SEAM IS HERE, AND IT MOVED TO GET HERE ────────────────────────
+      //
+      // `nearHandles` hands back `near()`'s OWN SHAPE — `{ error?, residents }`
+      // — and this is the one place that decides what an error means. It was
+      // briefly the other way round: the dispatcher mapped `residents` to an
+      // array and raised the error arm itself, and a flip that deleted that
+      // raise stayed GREEN, because the falsifier for it lived here and this
+      // function could no longer see the difference. A fix whose falsifier is
+      // aimed one layer below the mistake ships the mistake; the repair is to
+      // move the seam, not to add a second test.
+      //
+      // So `near()` has two arms and ONE reader of them. A broken presence read
+      // and an empty room are different facts and are logged differently.
+      let answer = null;
+      try { answer = await deps.nearHandles(at, widest); }
+      catch (e) { answer = { error: String(e?.message ?? e).slice(0, 160) }; }
+      if (answer?.error) {
+        (deps.log ?? (() => {}))(`say-in-earshot: presence read failed (${String(answer.error)}) — ${wantEarshot.length} subscription(s) woken nobody, and this is not the same as an empty room`);
         rows = [];
+      } else {
+        rows = answer?.residents ?? [];
       }
       const distOf = new Map(rows.map((r) => [String(r.handle), Number(r.distance_m)]));
       for (const s of wantEarshot) {

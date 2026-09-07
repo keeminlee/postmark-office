@@ -175,14 +175,14 @@ async function makeDeps({ repo = null, log = console.log } = {}) {
     log,
     async nearHandles(at, radiusM) {
       const { near } = await import("../../src/dynamic-presence.mjs");
-      const r = await near({ x: at.x, y: at.y, radiusM, ...(repo ? { repo } : {}) });
-      // ⚠ `near()` HAS TWO ARMS AND ONLY ONE OF THEM THROWS. When its own
-      // presence read fails it RETURNS `{ error, detail, residents: [] }`, and
-      // an empty `residents` here is indistinguishable from nobody standing
-      // nearby — so say-in-earshot would go dead with nothing anywhere saying
-      // so. Raised into the arm that IS logged, rather than mapped away.
-      if (r?.error) throw new Error(`${r.error}${r.detail ? ` — ${r.detail}` : ""}`);
-      return (r?.residents ?? []).map((p) => ({ handle: p.handle, distance_m: p.distance_m }));
+      // HANDED BACK WHOLE, not flattened. `near()` has two arms and only one
+      // of them throws: a failed presence read RETURNS `{ error, detail,
+      // residents: [] }`. `wakesFor` is the ONE reader of that difference, and
+      // a mapper here that kept only `residents` would make a broken read and
+      // an empty room the same silence — which is exactly what it did until a
+      // flip that deleted the check stayed green. This function now decides
+      // nothing; it fetches.
+      return await near({ x: at.x, y: at.y, radiusM, ...(repo ? { repo } : {}) });
     },
     async interestedIn(act) {
       // The author, always — the act's own actor, and the `<by>` half of the
