@@ -74,21 +74,39 @@ const put = (path, text) => {
 
 // ── the fixture world ────────────────────────────────────────────────────────
 //
-// Two marks and two worlds. `the-town/resident` is the ambient class every
-// resident is an instance of; the TRAIN world's copy grants what the train
-// grants today, and the GRANTED world's copy is that same mark with #18's two
-// entries appended — which is exactly the diff `wright/law-subscribe` makes to
-// it (version 10 -> 11, `actions:` + subscribe + unsubscribe).
+// Two worlds, one mark apart. `the-town/resident` is the ambient class every
+// resident is an instance of; the TRAIN world's copy grants nothing, and the
+// GRANTED world's copy is that same mark with #18's two entries and only those
+// — the diff the STANDALONE re-cut makes (v8 -> v9). See the block below for
+// why it is pinned to the standalone cut and not to the stacked branch.
 
 const FRAME = "the-town/let-there-be-light";
-const TRAIN_ACTIONS = [
-  { action: "say", residue: "the-town/sound" },
-];
+
+// ── THE RESIDENT MARK, AT THE VERSIONS THE RE-CUT #18 ACTUALLY MOVES ────────
+//
+// The first version of this fixture had the resident granting `say` at version
+// 10 → 11, following `d4fe35a6` — the commit as it stood on the STACKED branch
+// (#18 on #16 on #15). The reviewer's note 3 is why that was the wrong pin to
+// build a census fixture on: the branch's resident mark is 8 → 11 against
+// `origin/main` and gains FOUR actions, because `gather` and `hand-to-human`
+// ride along from Lanes D.1 and D.2 — and L6 reds on those two, whose office
+// halves do not exist here. That red reads as Lane B's on the day it fires.
+//
+// The conductor is re-cutting #18 as a STANDALONE PR off the train: resident
+// 8 → 9, `subscribe` and `unsubscribe` and nothing else. This fixture is that,
+// so the census answers and the L6 arithmetic match what will actually merge.
+//
+// `say` is granted by `the-town/sound` (say's own residue class, ambient),
+// exactly as it is in the real world — so the resident mark carrying no
+// actions at v8 costs the fixture nothing and keeps it honest about which mark
+// grants what.
+const TRAIN_ACTIONS = [];
 const GRANTED_ACTIONS = [
-  ...TRAIN_ACTIONS,
   { action: "subscribe", residue: "the-town/subscription" },
   { action: "unsubscribe", residue: "the-town/subscription" },
 ];
+const TRAIN_RESIDENT_VERSION = 8;
+const GRANTED_RESIDENT_VERSION = 9;
 
 // The residue class, verbatim from the mark on `wright/law-subscribe`:
 //   dials: {"ttl_max_h": 168, "earshot_max_m": 500}
@@ -97,20 +115,20 @@ const GRANTED_ACTIONS = [
 //           the log."
 const SUBSCRIPTION_BODY = "A subscription is a resident's consent to be woken by a form that points, never by content, for a ttl — stored nowhere, rebuilt from the log.";
 
-const marksFor = (actions) => [
+const marksFor = (actions, residentVersion = GRANTED_RESIDENT_VERSION) => [
   { id: FRAME, by: "the-town", kind: "sited", tier: "constitution", at: { x: 0, y: 0 }, extent: { w: 100000, h: 100000 }, body: "Let there be light." },
   { id: "the-town/sound", by: "the-town", kind: "sited", tier: "constitution", at: { x: 0, y: 0 }, extent: { w: 200, h: 200 },
     body: "A voice carries sixty metres and is heard for five minutes.",
     props: { class: "sound", class_version: 1, ambient: true, dials: { radius_m: 60 }, actions: [{ action: "say", residue: "the-town/sound" }] } },
   { id: "the-town/resident", by: "the-town", kind: "class", tier: "constitution", at: { x: 0, y: 0 }, extent: { w: 10, h: 10 },
     body: "A resident of the town.",
-    props: { class: "resident", class_version: 11, ambient: true, dials: { pace_km_per_crossing: 60 }, actions } },
+    props: { class: "resident", class_version: residentVersion, ambient: true, dials: { pace_km_per_crossing: 60 }, actions } },
   { id: "the-town/subscription", by: "the-town", kind: "class", tier: "constitution", at: { x: 0, y: 0 }, extent: { w: 10, h: 10 },
     body: SUBSCRIPTION_BODY,
     props: { class: "subscription", class_version: 0, dials: { ttl_max_h: 168, earshot_max_m: 500 } } },
 ];
 
-put("WORLD/world-state.json", JSON.stringify({ tick: 0, dials: {}, marks: marksFor(GRANTED_ACTIONS), parcels: [], determined: {}, vague: [], rivalries: [], portfolios: {}, terrain_weight: {}, errors: [] }));
+put("WORLD/world-state.json", JSON.stringify({ tick: 0, dials: {}, marks: marksFor(GRANTED_ACTIONS, GRANTED_RESIDENT_VERSION), parcels: [], determined: {}, vague: [], rivalries: [], portfolios: {}, terrain_weight: {}, errors: [] }));
 put("WORLD/skeleton.json", JSON.stringify({ features: [], physics_registry: {} }));
 put("seeding/manifest.json", JSON.stringify({ homes: [] }));
 put("WORLD/walk-ledger.md", "# walks\n");
@@ -196,8 +214,8 @@ function buildStore(marks, path) {
   }
   db.close();
 }
-buildStore(marksFor(TRAIN_ACTIONS), dbPath);        // the world train, today
-buildStore(marksFor(GRANTED_ACTIONS), grantedPath); // the same world with #18 merged
+buildStore(marksFor(TRAIN_ACTIONS, TRAIN_RESIDENT_VERSION), dbPath);          // the world train, today: resident v8, no subscribe
+buildStore(marksFor(GRANTED_ACTIONS, GRANTED_RESIDENT_VERSION), grantedPath); // #18 re-cut standalone: resident v9, exactly the two
 
 const apex = await import("../src/world-apex.mjs");
 const { worldApex } = apex;
@@ -247,6 +265,40 @@ test("with the grant in the store, the SAME call reaches the handler — one mar
   assert.equal(r.result.subscribed, "say-names-me");
 });
 
+test("LINT L6 IS GREEN ON THE STANDALONE CUT, with exactly the two rows — the merge-day alarm, answered", async () => {
+  // The reviewer's note 3 measured L6 RED on the STACKED branch: its resident
+  // mark is v8 -> v11 against main and carries `gather` and `hand-to-human`
+  // too, whose office halves are in other lanes. That red would read as Lane
+  // B's on the day it fires. The conductor re-cut #18 standalone; this asserts
+  // what standalone actually means, against the lint itself rather than against
+  // a description of it.
+  on();
+  const { runLints } = await import("../src/world-lints.mjs");
+  const { lints } = await granted(() => runLints({ dbPath: grantedPath, treePath: repo }));
+  const l6 = lints.find((l) => l.id === "L6");
+  assert.equal(l6.verdict, "GREEN", l6.headline);
+
+  // The exposed set is exactly say (from sound) plus this lane's two, and every
+  // one of them dispatches. `gather` and `hand-to-human` are ABSENT — that is
+  // the whole point of the standalone cut, and asserting their absence is what
+  // makes this leg red if the fixture ever drifts back to the stacked shape.
+  const rows = l6.rows.map((r) => r.action).sort();
+  assert.deepEqual(rows, ["say", "subscribe", "unsubscribe"]);
+  assert.equal(l6.rows.every((r) => r.handled), true, "every exposed action has a live handler");
+  assert.equal(rows.includes("gather"), false, "the stacked branch's ride-alongs must not be in this fixture");
+  assert.equal(rows.includes("hand-to-human"), false);
+});
+
+test("and on the TRAIN world L6 is green for a different reason — nothing exposes the verbs yet", async () => {
+  on();
+  const { runLints } = await import("../src/world-lints.mjs");
+  const { lints } = await runLints({ dbPath, treePath: repo });
+  const l6 = lints.find((l) => l.id === "L6");
+  assert.equal(l6.verdict, "GREEN", l6.headline);
+  assert.deepEqual(l6.rows.map((r) => r.action).sort(), ["say"],
+    "the resident grants nothing at v8; say comes from the sound class, as it does in the real world");
+});
+
 // ═════════════════════════════════════════════════════════════════════════════
 // THE CARD — the law is quoted, the dials are the mark's
 // ═════════════════════════════════════════════════════════════════════════════
@@ -290,7 +342,12 @@ test("THE ACT ROW CARRIES A FINGERPRINT AND NEVER THE URL — asserted on what t
   assert.ok(!serialized.includes(ENDPOINT_A), "the act row carries the endpoint URL");
 
   const payload = JSON.parse(row.payload);
-  assert.deepEqual(Object.keys(payload).sort(), ["deliver_to_fp", "earshot_m", "expires_at", "ttl_h", "wake_on"]);
+  assert.deepEqual(Object.keys(payload).sort(), ["deliver_to_fp", "earshot_m", "ttl_h", "wake_on"]);
+  // `expires_at` IS NOT IN THAT LIST, and the assertion is on the whole key set
+  // rather than on its absence, so a field creeping back in reds here whatever
+  // it is called. The archive freezes this row forever; a field the town
+  // publishes and does not honour is a promise with no keeper.
+  assert.equal("expires_at" in payload, false, "the payload must not carry a field the projection ignores");
   assert.equal(payload.deliver_to_fp, subs.fingerprint(ENDPOINT_A));
   // and the fingerprint is a NAME, not the thing: it does not reverse, and it
   // is not the URL with characters swapped
@@ -310,6 +367,48 @@ test("the receipt tells the resident what the town kept, and quotes the wake law
   // the ttl's expiry is a STAMP, not a duration the caller has to compute
   assert.match(a.expires_at, /^\d{4}-\d{2}-\d{2}T/);
   assert.ok(new Date(a.expires_at).getTime() > Date.now());
+});
+
+test("THE RECEIPT NAMES THE ENTROPY REQUIREMENT — a public permanent fingerprint is an offline oracle, and the resident is told", async () => {
+  // R5. The fingerprint is an unsalted SHA-256 of the whole URL in an archive
+  // that is public and frozen, so anyone who can GUESS an endpoint can confirm
+  // the guess against the published name forever, offline, with nothing to
+  // rate-limit. "The town kept your URL out of the record" reads as more
+  // protection than that, so the door says the rest of it.
+  on();
+  const r = await granted(() => worldApex({ do: "subscribe", handle: "alpha", args: { wake_on: "say-names-me", deliver_to: ENDPOINT_A } }, KEY_ALPHA));
+  const note = r.result.endpoint.note;
+  assert.match(note, /public and permanent/i, "the note must say the fingerprint cannot be taken back");
+  assert.match(note, /unsalted/i, "and that it is unsalted, which is why a guess can be checked against it");
+  assert.match(note, /entropy of the token/i, "and where the secrecy actually lives");
+
+  // the card says it too, because a resident composing the act reads the card
+  // and not a receipt they have not received yet
+  const card = await granted(() => worldApex({ read: "subscribe", handle: "alpha" }, KEY_ALPHA));
+  assert.match(card.card.fields.deliver_to.description, /guess/i);
+  assert.match(card.card.fields.deliver_to.description, /long and random|entropy/i);
+});
+
+test("THE DRY-RUN LINE DOES NOT WRITE THE TOKEN TO THE BOX'S JOURNAL", async () => {
+  // R5's second half. `--dry-run` logged the full `deliver_to`, so a rehearsal
+  // wrote bearer tokens to disk — and the operator's rehearsal is exactly when
+  // a REAL endpoint first meets this code path.
+  const live = subs.liveSubscriptions([sub(1, 0, "alpha", { wake_on: "say-names-me", ttl_h: 10, deliver_to_fp: subs.fingerprint(ENDPOINT_A) })], T0 + H);
+  subs.rememberEndpoint(ENDPOINT_A, { by: "alpha" });
+  const lines = [];
+  const client = { query: async () => ({ rows: [sayAct("@alpha hello", 21)] }) };
+  const sent = await dispatcher.onNotification({ id: 21 }, {
+    client, subscriptions: live, deps: {}, dryRun: true, log: (l) => lines.push(l),
+    fetchImpl: async () => { throw new Error("dry run must not POST"); },
+  });
+  assert.equal(sent.length, 1, "the dry run still reports what it would have sent");
+  const all = lines.join("\n");
+  assert.ok(!all.includes("alpha-secret-token"), `the dry-run line carried the token: ${all}`);
+  assert.match(all, /alpha\.example\/wake/, "the host and path stay — they are what makes the line useful");
+  assert.match(all, /token elided/, "and the line says something was withheld rather than silently truncating");
+
+  // a URL this reader cannot parse degrades to saying LESS, never to the raw string
+  assert.equal(dispatcher.elide("not a url").includes("not a url"), false);
 });
 
 test("a dormant wake_on is ACCEPTED — law outranks the office — and the receipt says it does not fire yet, with the reason", async () => {
@@ -407,6 +506,32 @@ test("rows of another CLASS or another ACTION are not swept in", () => {
     { id: 2, at: new Date(T0).toISOString(), actor: "alpha", action: "say", class: "subscription", household: "gh:a", payload: { wake_on: "say-names-me", ttl_h: 10 } },
   ];
   assert.deepEqual(subs.liveSubscriptions(rows, T0 + H), []);
+});
+
+test("THE PROJECTION HONOURS `at + ttl_h` AND NOTHING ELSE — a payload that disagrees changes nothing", () => {
+  // The leg that could not exist before `expires_at` was dropped, and the
+  // reason it could not: nothing read the field, so no row could be written
+  // that the projection would treat differently. Now the rule is asserted
+  // rather than merely true.
+  //
+  // Three rows, one hour of ttl each, and a payload lying about expiry in both
+  // directions. If the projection ever prefers a published `expires_at`, the
+  // first row lives an extra day and the second dies at once.
+  const lying = [
+    sub(1, 0, "alpha", { wake_on: "say-names-me", ttl_h: 1, deliver_to_fp: "a", expires_at: new Date(T0 + 25 * H).toISOString() }),
+    sub(2, 0, "beta", { wake_on: "say-names-me", ttl_h: 1, deliver_to_fp: "b", expires_at: new Date(T0 - 1 * H).toISOString() }, "gh:b"),
+    sub(3, 0, "gamma", { wake_on: "say-names-me", ttl_h: 1, deliver_to_fp: "g" }, "gh:g"),
+  ];
+
+  // Half an hour in: all three stand, because at + 1h is still ahead.
+  assert.deepEqual(subs.liveSubscriptions(lying, T0 + 0.5 * H).map((x) => x.actor), ["alpha", "beta", "gamma"]);
+  // Ninety minutes in: all three have stopped, INCLUDING the one whose payload
+  // claims another day. The arithmetic wins.
+  assert.deepEqual(subs.liveSubscriptions(lying, T0 + 1.5 * H), []);
+
+  // and the projection's own `expires_at` is the DERIVED one, never the row's
+  const live = subs.liveSubscriptions(lying, T0 + 0.5 * H);
+  for (const x of live) assert.equal(x.expires_at, new Date(T0 + 1 * H).toISOString());
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -508,6 +633,36 @@ test("EARSHOT 50 m FIRES AT 50 AND DOES NOT FIRE AT 51", async () => {
   assert.equal((await subs.wakesFor(sayAct("hello"), live, at(50))).length, 1, "50 is within 50");
   assert.equal((await subs.wakesFor(sayAct("hello"), live, at(49))).length, 1);
   assert.equal((await subs.wakesFor(sayAct("hello"), live, at(51))).length, 0, "51 is not");
+});
+
+test("AN ADVISORY `radiusM` COSTS EFFICIENCY, NOT CORRECTNESS — a resident beyond the radius still does not fire", async () => {
+  // R3. The coverage table used to imply two falsifiers held `radiusM`'s
+  // BOUNDING behaviour. Neither does: the envelope leg's echo is guarded by
+  // `if (!r.error)` and this fixture has no presence table, so it never runs;
+  // the dep spy asserts the office ASKS for 137, not that near() honours it.
+  //
+  // This is the leg that makes the exposure nil rather than merely small.
+  // `wakesFor` applies EACH SUBSCRIPTION'S OWN radius to whatever came back
+  // (src/subscriptions.mjs § the earshot arm), so a `near()` that ignored its
+  // radius entirely — returning the whole town — would cost one oversized
+  // answer and wake nobody it should not.
+  const live = subs.liveSubscriptions([sub(1, 0, "alpha", { wake_on: "say-in-earshot", earshot_m: 50, ttl_h: 10, deliver_to_fp: "a" })], T0 + H);
+
+  // near() ignores the radius and hands back a resident 4 km away
+  const ignoresRadius = { nearHandles: async () => ({ residents: [{ handle: "alpha", distance_m: 4000 }] }) };
+  assert.deepEqual(await subs.wakesFor(sayAct("hello"), live, ignoresRadius), [],
+    "a resident beyond their own earshot must not be woken, whatever near() returned");
+
+  // and the same answer with one row inside and one outside wakes only the one inside
+  const both = subs.liveSubscriptions([
+    sub(1, 0, "alpha", { wake_on: "say-in-earshot", earshot_m: 50, ttl_h: 10, deliver_to_fp: "a" }),
+    sub(2, 0, "gamma", { wake_on: "say-in-earshot", earshot_m: 5000, ttl_h: 10, deliver_to_fp: "g" }, "gh:g"),
+  ], T0 + H);
+  const woken = await subs.wakesFor(sayAct("hello"), both, {
+    nearHandles: async () => ({ residents: [{ handle: "alpha", distance_m: 4000 }, { handle: "gamma", distance_m: 4000 }] }),
+  });
+  assert.deepEqual(woken.map((w) => w.sub.actor), ["gamma"],
+    "each subscription's own radius decides, which is why an advisory near() radius is not load-bearing");
 });
 
 test("a say that NAMES a subscriber wakes exactly that one and no other", async () => {

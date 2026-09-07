@@ -46,7 +46,7 @@
 //
 // So the split this module makes is the one the office already knows how to
 // make. THE CONSENT IS PUBLIC AND RIDES THE LOG — `wake_on`, `earshot_m`,
-// `ttl_h`, `expires_at`, and `deliver_to_fp`, a truncated SHA-256 of the
+// `ttl_h`, and `deliver_to_fp`, a truncated SHA-256 of the
 // endpoint that identifies it without disclosing it. THE ENDPOINT ITSELF NEVER
 // ENTERS THE ACT, the journal, or the archive: it is written to a box-local
 // endpoint book (`SUBSCRIPTION_ENDPOINTS`, default `<office>/.subscription-
@@ -179,6 +179,26 @@ export const DIAL_FALLBACK = Object.freeze({ ttl_max_h: 168, earshot_max_m: 500 
  * town will not collide; short enough to read in an archive line. It is a NAME,
  * not a proof — anyone holding the URL can compute it, which is exactly what
  * lets a resident check that the town fingerprinted the endpoint they meant.
+ *
+ * ⚠ AND IT IS THEREFORE A PERMANENT OFFLINE CONFIRMATION ORACLE, which the
+ * door has to say out loud rather than leave as a property somebody notices
+ * later. UNSALTED, over the WHOLE URL, written into an archive that is public
+ * and frozen: anyone who can guess a household's endpoint can check the guess
+ * against the published name, at leisure, forever, with no request to the town
+ * and nothing to rate-limit. Rotating the token does not help retroactively —
+ * the old name still confirms the old URL.
+ *
+ * So the endpoint's secrecy is EXACTLY the entropy of the token in it, and
+ * nothing else. A short or structured token (`?t=wright`, `?h=1`) is not
+ * protected by this scheme; a long random one is. The receipt and the card
+ * both say so in the resident's own reply, because a caller who is not told
+ * this will reasonably read "the town kept your URL out of the record" as
+ * meaning more than it does.
+ *
+ * A SALT WOULD NOT FIX IT and is deliberately not used: the office has to be
+ * able to recompute the name from the URL to key its endpoint book, and a salt
+ * the archive also carries is not a salt. The honest move is disclosure, not a
+ * scheme that looks stronger than it is.
  */
 export function fingerprint(url) {
   return createHash("sha256").update(String(url), "utf8").digest("hex").slice(0, 16);
@@ -632,11 +652,28 @@ export async function subscribeViaOffice(args = {}, key = null, deps = {}) {
     crossing, actor: by, household: resolvedWorldHousehold(key) ?? null,
     action: ACTION_SUBSCRIBE, object: null, cls: CLASS_SUBSCRIPTION,
     at: stamp.at, witnesses: stamp.witnesses,
+    // ── THE PAYLOAD IS THE CONSENT, AND NOTHING THE TOWN DOES NOT HONOUR ────
+    //
+    // `expires_at` USED TO RIDE HERE AND HAS BEEN REMOVED. It had no reader:
+    // `liveSubscriptions` recomputes expiry from `at + ttl_h` (above) and never
+    // consults the payload, and a grep across src/, world2/ and test/ found no
+    // other reader either. Today the two agree to within the milliseconds
+    // between this line computing it and the pen stamping `written_at` — and
+    // NOTHING ASSERTED THEY WOULD, so the only guarantee was that nobody had
+    // yet made them disagree.
+    //
+    // That would be a harmless redundancy in an ordinary table. It is not one
+    // here: this row is exported to a public archive, FROZEN ON WRITE, so a
+    // field the town publishes permanently and does not honour is a promise
+    // with no keeper, kept forever. The derived value still reaches the
+    // resident — in the receipt below and in `world { read: "subscribe" }`,
+    // both computed by the same arithmetic the projection uses — so nothing a
+    // resident can see has changed. What changed is that the archive no longer
+    // carries a second answer to a question the log already answers.
     payload: {
       wake_on: fields.wake_on,
       ...(fields.earshot_m == null ? {} : { earshot_m: fields.earshot_m }),
       ttl_h: fields.ttl_h,
-      expires_at: expires,
       deliver_to_fp: fp,
     },
     effect: `${by} consents to be woken on ${fields.wake_on} until ${expires}; the town sends a pointer and never the content`,
@@ -653,7 +690,7 @@ export async function subscribeViaOffice(args = {}, key = null, deps = {}) {
     // got a name for it. Saying so at the door is the whole of the consent.
     endpoint: {
       fingerprint: fp,
-      note: "the town wrote this fingerprint to its public act log and kept your URL out of it. `acts` is exported to a public archive, frozen on write — a token in that archive could never be taken back, so the record carries a name for your endpoint and the office alone holds the endpoint.",
+      note: "the town wrote this fingerprint to its public act log and kept your URL out of it. `acts` is exported to a public archive, frozen on write — a token in that archive could never be taken back, so the record carries a name for your endpoint and the office alone holds the endpoint. THE FINGERPRINT ITSELF IS PUBLIC AND PERMANENT, and it is an unsalted hash of your whole URL: anyone holding a guess at your endpoint can check the guess against it, forever. So the secrecy of your endpoint is entirely the entropy of the token you put in it — use a long random one, not a short or structured one, and treat this fingerprint as the reason you can never make a guessable endpoint private again by rotating around it.",
     },
     caps: { ttl_max_h: caps.ttl_max_h, earshot_max_m: caps.earshot_max_m, from: caps.from },
     seq: row.seq, crossing: row.crossing,
@@ -721,7 +758,7 @@ export const SUBSCRIBE_TOOLS = [
         description: "which kind of event wakes you. say-names-me: a say whose text names your handle (a convention residents use, not a field the town writes — a say has no addressee). say-in-earshot: a say within earshot_m of where you stand. claim-effect: a claim touching your node or your ground. letter-delivered and gathering-doors-open are PENDING in the law itself: declare either today and the door tells you, in the receipt, what is missing and that your subscription stands until it lands." },
       earshot_m: { type: "number", description: "for say-in-earshot only: how far a voice may be and still wake you, capped by the class dial (500 m). Omit for the cap." },
       ttl_h: { type: "number", description: "how many hours this subscription stands, capped by the class dial (168 h). Omit for the cap. A subscription that never ends is not fleeting, and fleeting is what it is." },
-      deliver_to: { type: "string", description: "an https URL your household owns, carrying its own token. The town POSTs the pointer there and NEVER fetches it at declaration. The URL is not written to the record — the act carries a fingerprint of it and the office alone holds the URL." },
+      deliver_to: { type: "string", description: "an https URL your household owns, carrying its own token. The town POSTs the pointer there and NEVER fetches it at declaration. The URL is not written to the record — the act carries an unsalted fingerprint of it and the office alone holds the URL. That fingerprint is public and permanent, so anyone who can GUESS your URL can confirm the guess against it forever: make the token long and random, because its entropy is the whole of your endpoint's secrecy." },
       handle: { type: "string", description: "which of YOUR residents is subscribing (omit if your key holds one; a multi-resident key must name one)" },
     }, additionalProperties: false, required: ["wake_on", "deliver_to"] } },
   { name: "world_unsubscribe",

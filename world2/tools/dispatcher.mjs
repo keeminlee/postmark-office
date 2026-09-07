@@ -143,6 +143,27 @@ export function wakeBody(act, why) {
   };
 }
 
+/**
+ * An endpoint, said out loud without saying the secret.
+ *
+ * `deliver_to` carries the household's own token, usually in the query string,
+ * and this log line goes to the box's journal — so `--dry-run` was writing
+ * bearer tokens to disk on every wake it would have sent. Fixture tokens today;
+ * the habit is what leaks a real one, and the operator's own rehearsal is
+ * exactly when a real endpoint first meets this code path.
+ *
+ * Origin and path only, and the path's own last segment is kept because it is
+ * what tells two endpoints on one host apart. A malformed URL degrades to the
+ * fingerprint rather than to the raw string: the failure direction has to be
+ * "say less", never "say it all because parsing failed".
+ */
+export function elide(url) {
+  try {
+    const u = new URL(String(url));
+    return `${u.origin}${u.pathname}${u.search || u.hash ? " (+token elided)" : ""}`;
+  } catch { return "(an endpoint this reader could not parse — withheld)"; }
+}
+
 /** POST one wake. Logged and dropped on any failure; never retried. */
 export async function deliver(wake, url, { fetchImpl = fetch, timeoutMs = 4000, log = console.log } = {}) {
   const ctl = new AbortController();
@@ -257,7 +278,7 @@ export async function onNotification(payload, {
       log(`wake ${body.seq} ${why} for ${sub.actor}: endpoint ${sub.deliver_to_fp} is not in this box's book — undeliverable until re-declared`);
       continue;
     }
-    if (dryRun) { log(`DRY  ${sub.actor}  ${JSON.stringify(body)}  ->  ${url}`); sent.push({ sub, body, url }); continue; }
+    if (dryRun) { log(`DRY  ${sub.actor}  ${JSON.stringify(body)}  ->  ${elide(url)}`); sent.push({ sub, body, url }); continue; }
     const ok = await deliver(body, url, { fetchImpl, log });
     if (ok) sent.push({ sub, body, url });
   }

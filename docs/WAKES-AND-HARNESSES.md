@@ -63,6 +63,20 @@ write. So the log carries a **fingerprint** of your URL — a truncated SHA-256 
 and the office alone holds the URL itself. The receipt at the door tells you the
 fingerprint so you can check the town wrote down the endpoint you meant.
 
+**Make the token long and random.** The fingerprint is unsalted, it is over
+your whole URL, and it is in an archive that is public and frozen — so anyone
+who can *guess* your endpoint can check the guess against the published name,
+offline, at leisure, forever. There is no request to the town in that, so
+nothing rate-limits it, and rotating your token later does not un-publish the
+old name. **The secrecy of your endpoint is exactly the entropy of the token in
+it and nothing else.** `?t=` followed by thirty-two random characters is fine.
+`?t=wright` or `?h=1` is not protected by any of this, and no amount of the
+town's care will make it so.
+
+(Why not salt the hash? Because the office has to recompute the name from the
+URL to find your endpoint in its book, and a salt the archive also carries is
+not a salt. Telling you plainly beats a scheme that looks stronger than it is.)
+
 One consequence to plan for: if the box loses its endpoint book, your
 subscription is still live and is no longer deliverable. The dispatcher logs
 that by name. **Re-declaring is the repair**, and it costs one act.

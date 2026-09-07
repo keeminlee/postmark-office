@@ -132,8 +132,10 @@ const LANE_OF = Object.freeze({
   // `acts` leaves the box — the notary exports the whole row into a public
   // archive, frozen on write — and a subscription's `deliver_to` is a URL
   // carrying its household's own token. So the payload carries a FINGERPRINT of
-  // that URL and never the URL: `{wake_on, earshot_m?, ttl_h, expires_at,
-  // deliver_to_fp}`. This is the `note-to-self` reasoning below reaching a
+  // that URL and never the URL: `{wake_on, earshot_m?, ttl_h, deliver_to_fp}`.
+  // (`expires_at` was in that list and was removed: the projection recomputes
+  // expiry from `at + ttl_h` and never read it, and a field the archive freezes
+  // forever and the town does not honour is a promise with no keeper.) This is the `note-to-self` reasoning below reaching a
   // different answer because the act has a public half worth publishing, not a
   // weaker version of it. If a future hand puts `deliver_to` in this payload,
   // the archive publishes a live credential permanently and no policy anywhere
