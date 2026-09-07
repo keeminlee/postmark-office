@@ -290,6 +290,16 @@ test("awaiting is DERIVED FROM THE WHOLE LEDGER, then bounded", () => {
     "what awaits you leads the page");
   assert.equal(a.conversations_awaiting_you, 5);
   assert.equal(a.outgoing_total, 1, "the queued reply is derived from the whole ledger too");
+  // ⚠ AND THE BUDGET IS ACTUALLY SHRUNK HERE, not merely described as shrunk.
+  // The comment above promised this proof and the first draft did not carry it —
+  // it named the repair and then asserted the ordering instead, which is a
+  // different claim. Flagged by the fresh reviewer, 2026-09-07. Two rows asked
+  // for; the totals must not move.
+  const tight = mailAwaiting(db, HANDLE, { limit: 2 });
+  assert.equal(tight.conversations.length, 2, "the budget did decide how much gets said");
+  assert.equal(tight.threads_total, 5, "…and did not decide what is true");
+  assert.equal(tight.conversations_total, 30, "the total is the ledger's, never the page's");
+  assert.equal(tight.outgoing_total, 1);
   assert.equal(a.conversations_total, 30);
   assert.equal(a.conversations.length, 20);
   assert.notEqual(a.conversations_total, a.conversations.length);
