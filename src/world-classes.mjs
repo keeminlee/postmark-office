@@ -602,6 +602,50 @@ const DIAL_PREDICATE_SQL = `
      AND json_extract(c.props, '$.class') = ?
      AND json_extract(p.props, '$.slot') IS NOT NULL`;
 
+// The same join, asked for the NODE rather than the number. One SQL shape, two
+// questions, so a change to the predicate gate cannot move one and miss the
+// other.
+const DIAL_NODE_SQL = `
+  SELECT p.id AS id
+    FROM nodes AS c
+    JOIN edges AS e ON e.src = c.id AND e.type = 'describes'
+    JOIN nodes AS p ON p.id = e.dst
+   WHERE ${CLASS_GATE_C}
+     AND json_extract(c.props, '$.class') = ?
+     AND json_extract(p.props, '$.slot') = ?
+   LIMIT 1`;
+
+/**
+ * WHERE a class's slot lives — the predicate node's id, as the record spells it.
+ *
+ * `classPredicates` answers what a slot is SET TO. This answers where that
+ * setting stands, which is what a surface needs when it wants to SEND a reader
+ * to the number rather than merely quote it.
+ *
+ * It exists because an id assembled in code is a guess. `available` published
+ * `the-town/say/presence_min` — a class id, a slash, and the module's own
+ * lookup key — and it was wrong in three ways at once: no world id has two
+ * slashes, the dial is a SIBLING of its class rather than a child of it, and
+ * the record spells the name `presence-min` where the lookup key says
+ * `presence_min`. Every one of those is invisible to a test that compares the
+ * published string to the same string typed again. Read the id and none of them
+ * can happen.
+ *
+ * Null when the record cannot answer — which is the same condition that makes
+ * `dialNumber` report `source: "fallback"`, so a surface carrying both says one
+ * consistent thing: we are standing on a constant, and there is no node to
+ * point you at.
+ */
+export function dialNode(className, slot, { worldDb = null } = {}) {
+  const path = worldDb ?? storeDbPath();
+  try {
+    const db = new DatabaseSync(path, { readOnly: true });
+    const row = db.prepare(DIAL_NODE_SQL).get(String(className), String(slot));
+    db.close();
+    return row?.id ? String(row.id) : null;
+  } catch { return null; }
+}
+
 export function classDials(name, { worldDb = null } = {}) {
   const path = worldDb ?? storeDbPath();
   try {

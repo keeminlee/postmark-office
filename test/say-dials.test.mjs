@@ -20,7 +20,7 @@ import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 
-import { classDials, classPredicates, dialNumber } from "../src/world-classes.mjs";
+import { classDials, classPredicates, dialNode, dialNumber } from "../src/world-classes.mjs";
 // The class name lives beside its reader in voices.mjs, for the same reason
 // STRIDE_CLASS_NAME lives beside departurePace — one place to rename, one test
 // that fails when the record renames out from under it.
@@ -80,6 +80,43 @@ describe("the say dials, read off the live world store", { skip: storeHasSay ? f
     }
   });
 
+  // ── the id a surface PUBLISHES must be one the record carries ──────────────
+  //
+  // `available` sends a resident to the node that governed its answer. It used
+  // to build that id from the class name and its own lookup key —
+  // `the-town/say/presence_min` — which is wrong three ways at once: no world id
+  // has two slashes, a dial is a SIBLING of its class, and the record spells the
+  // name with a hyphen where the key uses an underscore. Its falsifier compared
+  // the published string to the same string typed again, so it locked the error
+  // in instead of catching it. This resolves the published id AGAINST THE
+  // RECORD, in the one file that refuses to run on a fixture — because a
+  // fixture answers to whatever name the fixture used, which is the same
+  // circularity that let the wrong id ship.
+  test("the node `available` publishes for its window is one the record actually carries", async () => {
+    const { PRESENCE_DIAL_NODE } = await import("../src/voices.mjs");
+    assert.notEqual(PRESENCE_DIAL_NODE, null,
+      "the store carries the-town/say, so it must be able to name where presence_min stands");
+
+    const db = new DatabaseSync(DB, { readOnly: true });
+    const row = db.prepare("SELECT json_extract(props, '$.slot') AS slot FROM nodes WHERE id = ?")
+      .get(PRESENCE_DIAL_NODE);
+    db.close();
+    assert.ok(row, `the published id "${PRESENCE_DIAL_NODE}" is not a node in the record — a reader sent there finds nothing`);
+    assert.equal(String(row.slot), "presence_min",
+      "and the node it names must be the one that carries THIS slot, not merely some node that exists");
+
+    // The grammar, said out loud: a world id is `<by>/<name>` and nothing
+    // deeper. The old string had two slashes and would fail here on its shape
+    // alone, before any lookup.
+    assert.equal(PRESENCE_DIAL_NODE.split("/").length, 2,
+      `world ids are flat — "${PRESENCE_DIAL_NODE}" is not an id, it is a path`);
+  });
+
+  test("a slot the record does not carry names no node — the read cannot invent one", () => {
+    assert.equal(dialNode(SAY_CLASS_NAME, "a-dial-no-record-carries"), null,
+      "absence answers null; a plausible id would send a reader somewhere that does not exist and look authoritative doing it");
+  });
+
   test("the class this reader asks for is the class the record declares (the departure→depart guard)", () => {
     const db = new DatabaseSync(DB, { readOnly: true });
     const names = db.prepare(
@@ -95,6 +132,13 @@ test("an absent dial falls back, and NEVER pretends it read", () => {
   assert.equal(d.value, 4242);
   assert.equal(d.read, false);
   assert.equal(d.source, "fallback");
+});
+
+test("an unreadable store names no dial node — and that is the SAME condition as the fallback", () => {
+  const store = "G:/nowhere/there-is-no-store.db";
+  assert.equal(dialNode(SAY_CLASS_NAME, "presence_min", { worldDb: store }), null);
+  assert.equal(dialNumber(SAY_CLASS_NAME, "presence_min", 15, { worldDb: store }).source, "fallback",
+    "the two must agree: a surface carrying both says one thing — we are on a constant, and there is no node to point you at");
 });
 
 test("an unreadable store falls back for every dial, and the disclosure names them", async () => {
