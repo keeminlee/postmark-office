@@ -37,9 +37,14 @@
 --      not). A channel that works until somebody writes a long mark is a
 --      channel that fails at the moment it matters.
 --
--- A falsifier greps the notification body for the act's own text and reds if it
--- is present (test/act-notify-trigger.test.mjs), so this is checked rather than
--- asserted.
+-- Two falsifiers hold this, and they hold different halves —
+-- test/subscribe-door.test.mjs. One reads THIS FILE and asserts the
+-- json_build_object names exactly six keys, each naming the column of its own
+-- name, with `payload` and `witnesses` absent (the flip: adding
+-- `'payload', NEW.payload` reds it). The other greps the dispatcher's POST body
+-- for the say's own text. The first is the only check available without a
+-- Postgres; the operator's scratch recipe (Lane B report § 5) is where the
+-- notification is read off a real one, which is the half no test can reach.
 --
 -- ── WHY AFTER INSERT, AND WHY THAT DOES NOT COLLIDE ─────────────────────────
 --
