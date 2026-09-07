@@ -280,11 +280,16 @@ export function settlementThatCarried(repo, path, { tags = null, ref = "HEAD" } 
   if (!ns.length) return null;
   const s = Math.min(...ns);          // the FIRST settlement that carried it
   const known = (tags ?? []).find((t) => t.n === s) ?? null;
-  let sha = known?.sha ?? null, at = known?.date ?? null;
-  if (!sha) {
-    try { sha = git(repo, ["rev-parse", `settlement/S${s}^{commit}`]).trim() || null; } catch { /* named absent */ }
-  }
-  return { s, sha, at, added_at: added };
+  // ⚑ THE WHOLE SHA, NOT THE SETTLEMENTS DOOR'S. `readSettlementTags` resolves
+  // its shas with `rev-parse --short` — right for that door, which RENDERS a
+  // list a reader skims. A receipt's sha is an IDENTIFIER: it is the thing a
+  // resident pastes into `git show` and the thing a reviewer compares against
+  // `read_at.sha`, and comparing a short spelling with a long one is how two
+  // names for one commit start disagreeing. The tag's DATE is taken from the
+  // list, because that costs a subprocess and means the same either way.
+  let sha = null;
+  try { sha = git(repo, ["rev-parse", `settlement/S${s}^{commit}`]).trim() || null; } catch { /* named absent, never guessed */ }
+  return { s, sha, at: known?.date ?? null, added_at: added };
 }
 
 /**

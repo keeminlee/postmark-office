@@ -1348,7 +1348,16 @@ export async function worldInvestigate(args = {}, key = null) {
   // absences that are three different sentences.
   const receipt = await markReceipt(String(args.mark), key, w);
 
-  if (!r) {
+  // ⚑ THE MISS IS `r.error`, NOT `!r`, AND THE OFFICE'S OWN BOUNCE WAS DEAD
+  // CODE (found by this lane's door falsifier, 2026-09-07). The engine answers
+  // a missing mark with `{ error: "no mark or terrain feature '<id>'" }` —
+  // truthy — so `if (!r)` never fired, the office's bounce below has never been
+  // reached for a missing mark, and its hint ("ids are <by>/<slug> — see
+  // /world/state") has never reached a resident. The walk of 2026-09-06 quotes
+  // the ENGINE's sentence, which is how we know: `"error": "no mark or terrain
+  // feature 'wright/the-flip-day-plumb-line'"`.
+  const missing = !r || Boolean(r.error);
+  if (missing) {
     // The record HAS seen it — a docket claim, or the caller's own compose
     // space. That is not a bounce, it is a tense: answer with the receipt and
     // the sentence that names it.
@@ -1356,6 +1365,9 @@ export async function worldInvestigate(args = {}, key = null) {
       return { mark: String(args.mark), standing: false, receipt, note: receipt.says };
     return { error: "bounce", defect: `no mark "${args.mark}"`,
       hint: "ids are <by>/<slug> — see /world/state",
+      // The engine's own sentence, kept rather than swallowed: it distinguishes
+      // a mark from a TERRAIN feature, which this bounce's wording does not.
+      ...(r?.error ? { engine: String(r.error) } : {}),
       ...(receipt ? { receipt } : {}) };
   }
 
