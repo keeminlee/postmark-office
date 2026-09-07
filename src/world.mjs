@@ -1233,10 +1233,19 @@ export async function worldPresent(args = {}, { roll = null } = {}) {
   // The fold, so this door answers over the whole position union — everyone with
   // a walk on record AND everyone holding ground (issue #7 §1).
   const w = await foldForPresence();
-  if (!has) return presenceEveryone({ place, repo: WORLD_CLONE, world: w, roll: roll ?? [] });
+  // AVAILABLE HERE TOO, from the same resolver the apex and the walkers door
+  // use. This is the THIRD presence surface, and a field that landed on two of
+  // three would leave the standalone door — the one the town's map draws from —
+  // disagreeing with `orient` about who is reading. That is the split-brain
+  // issue #7 and DEC-11 each paid for once; it is not worth buying a third
+  // time for one line. The disclosure is the boolean and its window, which is
+  // the same fact any keyed caller already reads, and nothing more: no text, no
+  // position this door did not already publish.
+  const available = (handle) => voices.availability(handle);
+  if (!has) return presenceEveryone({ place, available, repo: WORLD_CLONE, world: w, roll: roll ?? [] });
   const radiusM = Number.isFinite(Number(args.radius_m)) ? Math.max(1, Number(args.radius_m)) : undefined;
   const limit = Number.isFinite(Number(args.limit)) ? Math.max(1, Math.floor(Number(args.limit))) : undefined;
-  return presenceNear({ x, y, place, repo: WORLD_CLONE, world: w, roll: roll ?? [], ...(radiusM ? { radiusM } : {}), ...(limit ? { limit } : {}) });
+  return presenceNear({ x, y, place, available, repo: WORLD_CLONE, world: w, roll: roll ?? [], ...(radiusM ? { radiusM } : {}), ...(limit ? { limit } : {}) });
 }
 
 // ── a mark's image, as bytes (world_investigate with_image, 2026-08-23) ──────
