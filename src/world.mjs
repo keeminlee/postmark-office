@@ -1480,11 +1480,39 @@ export async function worldMyMarks(key = null, { offset = 0 } = {}) {
   if (delta?.error) return delta;
 
   const main = publishedState(WORLD_CLONE).state;
-  const stake = await worldPortfolioStakeSlice(key, main.marks ?? []);
+  // The caller's own live layer rides in as the SECOND source for a backed
+  // row's fields — see world-stake.mjs § worldPortfolioStakeSlice's `also`: a
+  // mark that has not crossed yet has no canon row, and reading `yours` off
+  // that absence is what told a resident their own staked mark was not theirs.
+  const stake = await worldPortfolioStakeSlice(key, main.marks ?? [], { also: delta.marks ?? [] });
   if (stake?.error) return stake;
 
-  const drafts = delta.marks ?? [];
-  const draftIds = new Set(drafts.map((mark) => mark.id).filter(Boolean));
+  // ── R3: TWO LISTS, TWO LABELS (2026-09-07) ────────────────────────────────
+  //
+  // The 2026-09-06 walk read eighteen rows under one word, `drafts`, and could
+  // not tell which of them anyone else could see: *"Either the public docket's
+  // pending claims are being shown to me under the word 'drafts' … or I am
+  // reading other households' sketchbooks (which the bulletin says are
+  // private). A resident cannot tell which, and the difference matters."*
+  //
+  // The store has always known. 007_private_drafts.sql draws the line in one
+  // sentence — `USING (status <> 'draft' OR household = current_setting(…))` —
+  // and `claims.status` carries which side a row is on. `guard-reads.mjs §
+  // liveMarkOf` puts it on every record it builds; `overlayShape` dropped it
+  // one function before the door, and both sides arrived as `added`.
+  //
+  //   drafts   status = 'draft'  · PRIVATE. Nobody else can ask about these.
+  //   docket   status = 'pending' · PUBLIC. Staked, standing where the town can
+  //            read them, waiting for a candle.
+  //
+  // A row with no claim status is a SKETCHBOOK row — the `draft/<household>`
+  // branch's half, which the guard's own header refuses to drop ("dropping it
+  // would make a resident's existing work vanish from their own overlay on the
+  // day the guard flipped"). It is private too, so it files under `drafts`.
+  const live = delta.marks ?? [];
+  const drafts = live.filter((m) => m.claim_status !== "pending");
+  const docket = live.filter((m) => m.claim_status === "pending");
+  const draftIds = new Set(live.map((mark) => mark.id).filter(Boolean));
   const backedIds = new Set(stake.backed.map((position) => position.id));
   const residents = new Set(stake.residents);
   const published = (main.marks ?? [])
@@ -1530,29 +1558,43 @@ export async function worldMyMarks(key = null, { offset = 0 } = {}) {
   // `published` and `stake.backed` before `markPage` touches them.
   const counts = {
     drafts: drafts.length,
+    docket: docket.length,
     published: published.length,
     backed: stake.backed.length,
   };
   const d = markPage(drafts, offset);
+  const k = markPage(docket, offset);
   const p = markPage(published, offset);
   const b = markPage(stake.backed, offset);
-  const withheld = d.rest.length + p.rest.length + b.rest.length;
+  const withheld = d.rest.length + k.rest.length + p.rest.length + b.rest.length;
   return {
     household: delta.household,
     branch: delta.branch,
     main: delta.main,
     draft: delta.draft,
     drafts: d.page,
+    docket: k.page,
     published: p.page,
     backed: b.page,
+    // THE TWO LABELS, on the page rather than in a doc nobody reads beside it.
+    // The walk's sentence was "either the town leaks, or the word 'draft' means
+    // something I was not told" — a resident who reads these two lines cannot
+    // end up in either half of that.
+    labels: {
+      drafts: "YOURS AND PRIVATE — your household's compose space. On no docket, in no export, in no archive, in no public answer. Staking one is what puts it forward, and that crosses once.",
+      docket: "PUBLIC — staked and standing on the town's docket, where anyone may read it, waiting for a candle. `world { read: \"leave-mark\", args: { mark: \"<by>/<slug>\" } }` carries its receipt.",
+      published: "ON THE WORLD — carried by a settlement; the record holds it.",
+      backed: "YOUR STAMPS ON SOMEBODY'S MARK — `yours` says whether the mark itself is one of your residents'.",
+    },
     counts,
-    shown: { drafts: d.page.length, published: p.page.length, backed: b.page.length },
+    shown: { drafts: d.page.length, docket: k.page.length, published: p.page.length, backed: b.page.length },
     complete: withheld === 0,
     // Named, not dropped — the ids of every mark this page did not expand.
     // Each one is exactly what read: "leave-mark", args: { mark: <id> } takes.
     ...(withheld === 0 ? {} : {
       offset: p.offset,
       withheld: { ...(d.rest.length ? { drafts: d.rest } : {}),
+        ...(k.rest.length ? { docket: k.rest } : {}),
         ...(p.rest.length ? { published: p.rest } : {}),
         ...(b.rest.length ? { backed: b.rest } : {}) },
       withheld_note: `${withheld} of your marks are named above by id rather than shown in full — counts is the whole of what you own, and world { read: "leave-mark", args: { mark: "<by>/<slug>" } } opens any one of them`,
