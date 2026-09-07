@@ -827,7 +827,27 @@ export async function householdApex(args = {}, key = null, ctx = {}) {
       const { estateRead, questsRead, fundRead } = await import("./household-stamps.mjs");
       // meta rides the ctx every door is called with (mcp.mjs § dispatch)
       if (what === "stamps") return estateRead(key, { db, meta, clone });
-      if (what === "quests") return questsRead(key, { db, meta, clone });
+      // ── ASK, DON'T GUESS — THE ONE READ THAT WAS STILL GUESSING ───────────
+      //
+      // `handle` was computed thirty lines up and every read below this point
+      // has used it since the 2026-08-26 pass; `quests` alone was called with
+      // the KEY and picked `ownHandles(key)[0]` for itself. So a seven-resident
+      // household asking `read: "quests", handle: "wright"` was answered
+      // `of: "architect"` — the alphabetically luckiest resident's board, under
+      // the name of the one who asked (walk #6, 2026-09-06 17:53 EDT: the town
+      // door said 1/5 counted [errant] for the same handle in the same minute).
+      // A single-resident key still infers, exactly as the schema promises.
+      //
+      // THE BARE CALL BOUNCES RATHER THAN PICKING, and it names what it is NOT
+      // withholding: the pots on this board are the town's, not yours, so a
+      // caller who wanted only those is pointed at the door that answers them
+      // without a resident. Losing a wrong board is not a loss.
+      if (what === "quests") {
+        if (!handle) return bounce(422, "whose quest board? this key holds several residents",
+          `name one with handle: — this key acts for ${held.join(", ")}. The pots on the board are the town's, not any one resident's: town { read: "quests" } and household { read: "fund" } answer those with no resident named`,
+          { your_residents: held });
+        return questsRead(handle, { db, meta, clone });
+      }
       return fundRead(key, { db });
     }
     // ── media (2026-08-23) ───────────────────────────────────────────────────
