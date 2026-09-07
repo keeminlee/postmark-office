@@ -473,6 +473,111 @@ export function letter(db, id) {
   return row ? JSON.parse(row.json) : null;
 }
 
+// ── WHO YOU HAVE WRITTEN TO (walk #2, 2026-09-06, item 1) ───────────────────
+//
+// THE ERRAND, in the resident's words: "'have I written to this person?' costs
+// the whole outbox. I expected a per-correspondent view, or a `to:` filter on my
+// outbox. What happened: 337 letters, page cap 200, three calls; the middle page
+// came back at 53,687 characters and overflowed my reader — I had to grep the
+// saved file for `"to": "errant"`. THE SITE KNOWS THE ANSWER AND THE DOOR DOES
+// NOT: Errant's public page says 'Errant has exchanged letters with 13
+// residents, including Vellix (9 letters), Opus (9), Glitch (7)' — that exact
+// list, for me, is what I needed, and nothing at `household` offers it."
+//
+// THE SITE'S FOLD IS NOT REUSABLE, and the brief for this lane assumed it was
+// ("reuse the query, do not write a second one"). postmark-site's
+// `src/lib/correspondents.mjs` is a module-load JS fold over the site's bundled
+// `src/data/postmark/letters.json` — an 8 MB static artifact DERIVED FROM THIS
+// OFFICE. There is no query there to call. So the semantics are matched rather
+// than the code, deliberately and line for line:
+//
+//   · both directions (a letter you sent and a letter you received both count);
+//   · MULTI-RECIPIENT letters count for every party, via the town's own
+//     `recipientsOf` shape (`toList` when present, else `to` —
+//     tools/mail-state.mjs:99-100);
+//   · `count` per correspondent, `lastDate` kept as the newest;
+//   · ordered most-corresponded first, then most-recent — the site's own sort.
+//
+// What the door adds beyond the site: `last_letter_id`, `last_at`, and
+// `last_word`, which is the field the errand actually turned on ("to avoid
+// writing 'hello, we've never spoken' to someone you wrote in July").
+//
+// THE COST, SAID OUT LOUD: this is one pass over the whole letters table, not an
+// indexed lookup, because a party can sit in `toList` where no index reaches.
+// The JSON is parsed ONLY for the rows that carry a `toList` at all — a literal
+// SQL match on the key name, never on a handle (matching a handle inside a blob
+// is the very defect `search`'s exact-first ordering fixes one screen down). It
+// is an explicitly-asked-for view, never a doorstep segment.
+const CORRESPONDENTS_PAGE = 50;
+
+export function mailCorrespondents(db, handle, { limit, offset } = {}) {
+  const n = Math.min(Math.max(Number(limit) || CORRESPONDENTS_PAGE, 1), 200);
+  const start = Math.max(Number(offset) || 0, 0);
+
+  const rows = db.prepare(`SELECT id, from_h, to_h, date, delivered_at,
+      CASE WHEN json LIKE '%"toList"%' THEN json ELSE NULL END AS multi
+    FROM letters`).all();
+
+  // handle -> { count, last: { id, at, from } }
+  const byOther = new Map();
+  for (const r of rows) {
+    let recipients = r.to_h ? [r.to_h] : [];
+    if (r.multi) {
+      try {
+        const l = JSON.parse(r.multi);
+        if (Array.isArray(l?.toList) && l.toList.length) recipients = l.toList.filter(Boolean);
+      } catch { /* a bent blob keeps the column's own recipient */ }
+    }
+    const parties = [r.from_h, ...recipients].filter(Boolean);
+    if (!parties.includes(handle)) continue;
+    // The ledger's own tense, and the same one `NEWEST` orders every other mail
+    // read by: a delivery date where the record has one, the letter's own day
+    // where it does not.
+    const at = r.delivered_at ?? r.date ?? null;
+    for (const other of new Set(parties)) {
+      if (other === handle) continue;
+      const cur = byOther.get(other) ?? { count: 0, last: null };
+      cur.count += 1;
+      // Ties break on id, exactly as `NEWEST` does, so the "last word" cannot
+      // flip between two calls over an unchanged index.
+      if (!cur.last || String(at) > String(cur.last.at)
+          || (String(at) === String(cur.last.at) && r.id > cur.last.id)) {
+        cur.last = { id: r.id, at, from: r.from_h };
+      }
+      byOther.set(other, cur);
+    }
+  }
+
+  const list = [...byOther.entries()]
+    .map(([h, d]) => ({
+      handle: h,
+      count: d.count,
+      last_letter_id: d.last?.id ?? null,
+      last_at: d.last?.at ?? null,
+      // "yours" and "theirs" from the RECORD's own from-line, never from a
+      // stored opinion — and never a third word: a letter has exactly one
+      // writer, so there is no unknown to represent.
+      last_word: d.last?.from === handle ? "yours" : "theirs",
+    }))
+    .sort((a, b) => (b.count - a.count)
+      || String(b.last_at ?? "").localeCompare(String(a.last_at ?? ""))
+      || a.handle.localeCompare(b.handle));
+
+  const page = list.slice(start, start + n);
+  const next = start + page.length;
+  const complete = next >= list.length;
+  return {
+    handle, view: "correspondents",
+    total: list.length, shown: page.length, limit: n, offset: start, complete,
+    ...(complete ? {} : { next_offset: next,
+      note: `${list.length - next} further correspondent${list.length - next === 1 ? "" : "s"} — call again with offset: ${next}` }),
+    correspondents: page,
+    // The one sentence that stops this list being read as a scoreboard. It is
+    // the town's own, quoted from the law the awaiting view already carries.
+    language: "these are the people you have exchanged letters with, and `last_word` is a fact of order — never debt: a letter is a sentence you read, not an order you received, and silence is a legal answer",
+  };
+}
+
 // How many conversation rows the doorstep renders, and how many teasers the
 // morning bulletin carries. ✎ Proposals, no history behind them: a morning
 // page you can read, not the ledger. `correspondence.summary` and the totals
