@@ -562,6 +562,20 @@ test("THE DISPATCHER'S BOOT REBUILD EQUALS THE PURE PROJECTION OVER THE SAME ROW
     sub(3, 0, "beta", { wake_on: "say-in-earshot", earshot_m: 90, ttl_h: 1, deliver_to_fp: "b" }, "gh:b"),
     sub(4, 0, "gamma", { wake_on: "claim-effect", ttl_h: 10, deliver_to_fp: "g" }, "gh:g"),
     unsub(5, 2, "gamma", {}, "gh:g"),
+    // ⚠ DELTA IS HERE BECAUSE THIS TEST COULD NOT FAIL WITHOUT HER.
+    //
+    // The first version of this fixture held one live row — alpha's — because
+    // beta's had expired and gamma's was withdrawn. So a dispatcher that
+    // dropped an entire wake_on kind (the flip: `.filter(s => s.wake_on !==
+    // "claim-effect")` on the boot rebuild) STAYED GREEN: there was no live
+    // claim-effect row for it to drop, and the leg was taking credit for a red
+    // it could not produce.
+    //
+    // Delta is a live claim-effect subscription that survives to `now`, so the
+    // two sides now differ under that flip and the leg reds. Measured, not
+    // reasoned: the flip was run, it passed 26/26, this row was added, and it
+    // fails 25/26.
+    sub(6, 0, "delta", { wake_on: "claim-effect", ttl_h: 10, deliver_to_fp: "d" }, "gh:d"),
   ];
   const now = T0 + 3 * H;
   const client = { query: async () => ({ rows }) };
@@ -569,8 +583,9 @@ test("THE DISPATCHER'S BOOT REBUILD EQUALS THE PURE PROJECTION OVER THE SAME ROW
   const fromProjection = subs.liveSubscriptions(rows, now);
   assert.deepEqual(fromDispatcher, fromProjection);
   // and it is not vacuously equal — beta's expired, gamma's withdrawn, alpha's
-  // second declaration wins
-  assert.deepEqual(fromDispatcher.map((s) => [s.actor, s.deliver_to_fp]), [["alpha", "a2"]]);
+  // second declaration wins, delta's stands
+  assert.deepEqual(fromDispatcher.map((s) => [s.actor, s.wake_on, s.deliver_to_fp]),
+    [["alpha", "addressed-say", "a2"], ["delta", "claim-effect", "d"]]);
 });
 
 test("a subscribe act is what makes the dispatcher rebuild — it never patches its set by hand", () => {
