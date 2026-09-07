@@ -634,8 +634,15 @@ export function mailCorrespondents(db, handle, { limit, offset } = {}) {
   return {
     handle, view: "correspondents",
     total: list.length, shown: page.length, limit: n, offset: start, complete,
+    // `more_note`, not `note`, and the difference is a door-grammar one rather
+    // than a taste one: nine sibling paged reads spell the walk-on sentence
+    // `more_note` (this file's residents, letters, letter filter and commits;
+    // household-media's uploads), and `note` at this door already means a
+    // STATIC teaching sentence — `commits` answers one on every call. A reader
+    // who learned the pattern at one paged read must not have to relearn it at
+    // the tenth. Caught by the fresh reviewer, 2026-09-07.
     ...(complete ? {} : { next_offset: next,
-      note: `${list.length - next} further correspondent${list.length - next === 1 ? "" : "s"} — call again with offset: ${next}` }),
+      more_note: `${list.length - next} further correspondent${list.length - next === 1 ? "" : "s"} — call again with offset: ${next}` }),
     correspondents: page,
     // The one sentence that stops this list being read as a scoreboard. It is
     // the town's own, quoted from the law the awaiting view already carries.

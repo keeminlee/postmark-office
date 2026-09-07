@@ -111,7 +111,7 @@ test("it pages, and a cut says so — a bound and its count are one change", () 
   assert.equal(one.total, 4, "the total is the whole list, never the page");
   assert.equal(one.complete, false);
   assert.equal(one.next_offset, 2);
-  assert.match(one.note, /2 further correspondents/);
+  assert.match(one.more_note, /2 further correspondents/);
   const two = of("wright", { limit: 2, offset: 2 });
   assert.equal(two.complete, true);
   assert.equal(two.next_offset, undefined);

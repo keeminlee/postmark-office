@@ -249,3 +249,35 @@ test("the teaser is bounded and says how much it is a cut of", async () => {
   assert.equal(rest.cursor, null, "a cursor is null exactly when there is nothing more");
   assert.equal(rest.stances_awaiting, 2, "the total does not shrink as you walk");
 });
+
+// ── THE TEACHING BLOCK IS NOT ON THE MORNING PAGE (conductor, 2026-09-07) ────
+//
+// It is the largest block this lane added to the doorstep by bytes, it is
+// byte-identical for every resident every day, and it teaches rather than
+// reports. The doorstep is the surface little-bird abandoned as too heavy, so a
+// fix for one resident's confusion that fattens everyone's morning page has
+// traded one complaint for another.
+//
+// THE CUT IS ON THE CONNECTOR SKIN ONLY, and that is the law rather than a
+// hedge: the REST bundle's segment must stay deep-equal to the read its
+// `serves` names (§ THE BUNDLE LAW HOLDS HERE TOO, above), so trimming it there
+// would break a standing law to save bytes on the skin that is not the heavy
+// one. slimAwaiting and slimPsa already cut this way, and every cut they make
+// is named on the page.
+
+test("slim: the teaching block becomes ONE POINTER, and the page says it did", async () => {
+  const slim = await doorstepBundle(HANDLE, { ...ctx, slim: true });
+  assert.equal(typeof slim.stances.teach, "string", "a pointer, not a block");
+  assert.match(slim.stances.teach, /household \{ read: "stances" \}/, "and it names the door that answers whole");
+  assert.doesNotMatch(slim.stances.teach, /UNRULED PAIR|neutral-and-revisable/,
+    "the pointer is not a summary of the block — a paraphrase here is the copy the block exists to avoid");
+  assert.match(slim.stances.abridged, /carries the pointer above instead of the block/,
+    "and the cut is NAMED on the page, the way every other slim cut is");
+});
+
+test("REST: the segment still carries the block whole — the bundle law is not traded for bytes", async () => {
+  const fat = await doorstepBundle(HANDLE, ctx);
+  assert.equal(typeof fat.stances.teach, "object", "the whole block, not a pointer");
+  assert.ok(fat.stances.teach.after_it_is_published, "including the unruled pair");
+  assert.equal(fat.stances.abridged, undefined, "and nothing was cut, so nothing claims to have been");
+});

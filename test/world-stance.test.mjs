@@ -582,6 +582,8 @@ const OPPOSED_SAYS =
   "opposed — the veto: on sovereign ground it is absolute and intersection-keyed (a claim cannot dodge the law by being slightly too big to be a child); from the constitutional layer it is absolute simply.";
 const UNTIL_YOU_SPEAK_SAYS =
   "the default is neutral-and-revisable: the incoming thing stands uncoupled until the holder speaks, and the word can always be changed by a newer word. Nothing blocks; nothing is lost.";
+const ANY_LATENCY_SAYS =
+  "this is safe at any latency, because the default is neutral-and-revisable: the incoming thing stands uncoupled until the holder speaks, and the word can always be changed by a newer word. Nothing blocks; nothing is lost.";
 const LATE_WELCOME_SAYS =
   "A stance may arrive after the sketch and before the publish; the ledger keeps who was first.";
 
@@ -601,11 +603,20 @@ test("the teach block says where the LAW STOPS rather than inventing an answer p
   const teach = stanceTeach(repo, { lateWelcome: LATE_WELCOME_SAYS });
   assert.equal(teach.after_it_is_published.the_law_reaches, LATE_WELCOME_SAYS);
   assert.equal(teach.after_it_is_published.law_mark, "the-town/the-late-welcome");
-  // THE HONEST GAP. The law's window is "after the sketch and before the
-  // publish"; nothing in LOGOS/ speaks about a word declared after the publish,
-  // which is precisely what both walks asked. The door must SAY that.
-  assert.match(teach.after_it_is_published.unruled, /the law's window ends at the publish/);
-  assert.match(teach.after_it_is_published.unruled, /will not tell you it undoes anything/);
+  // ⚠ NOT A SILENCE — AN UNRULED PAIR. The reviewer read both LOGOS files
+  // independently and sharpened this: the record does not fall quiet, it says
+  // two things that pull against each other. So the field must name BOTH, and
+  // both must be the FILES' words rather than the door's summary of them.
+  const u = teach.after_it_is_published.unruled;
+  assert.ok(u.includes(ANY_LATENCY_SAYS), "the response function's latency clause, verbatim");
+  assert.ok(u.includes(LATE_WELCOME_SAYS), "and the late welcome's window, verbatim");
+  assert.match(u, /UNRULED PAIR/, "and it is called by the law's own word");
+  assert.match(u, /founders' desk/, "which conflict-matrix.md says is where such a pair goes");
+  assert.match(u, /will not tell you it undoes anything/);
+  // Both quoted sentences are IN the files this repo carries, not merely equal
+  // to two constants that happen to sit twice in this suite.
+  const src = readFileSync(join(repo, "LOGOS", "the-response-function.md"), "utf8").replace(/\*\*/g, "").replace(/\s+/g, " ");
+  assert.ok(src.includes(ANY_LATENCY_SAYS), "the latency clause is in the file, not only in the door");
 });
 
 test("a rewritten law is REPORTED, never paraphrased — the quote cannot outlive its source", () => {

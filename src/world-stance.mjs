@@ -117,6 +117,13 @@ const RESPONSE_FUNCTION_FILE = join("LOGOS", "the-response-function.md");
 const RESPONSE_ANCHORS = Object.freeze([
   { key: "opposed", from: "opposed — the veto:", to: "\n" },
   { key: "neutral_and_revisable", from: "the default is neutral-and-revisable:", to: "Nothing blocks; nothing is lost." },
+  // THE HALF THAT MAKES THE GAP A PAIR RATHER THAN A SILENCE (fresh reviewer,
+  // 2026-09-07). The response function does not merely fail to speak about a
+  // word declared after publication — it says the resident's word is safe
+  // WHENEVER it arrives, which pulls directly against the late welcome's
+  // "before the publish". Two sentences that disagree are an UNRULED PAIR, and
+  // conflict-matrix.md's last section names exactly that shape.
+  { key: "any_latency", from: "this is safe at any latency", to: "Nothing blocks; nothing is lost." },
 ]);
 
 // ── UNWRAP BEFORE YOU SEARCH ────────────────────────────────────────────────
@@ -184,6 +191,12 @@ export function responseFunctionSays(repo = WORLD_CLONE) {
     : {
         ...(found.opposed ? { what_opposed_does: found.opposed } : {}),
         ...(found.neutral_and_revisable ? { until_you_speak: found.neutral_and_revisable } : {}),
+        // Not a field of the answer — the unruled-pair sentence quotes it, and
+        // it rides here so that block reads it from the same slice rather than
+        // opening the file a second time. A key added to RESPONSE_ANCHORS and
+        // not to this mapping is silently dropped, which is how the first draft
+        // of the pair sentence quoted only one of its two halves.
+        ...(found.any_latency ? { any_latency: found.any_latency } : {}),
         from: RESPONSE_FUNCTION_FILE.replace(/\\/g, "/"),
         ...(missing.length ? { unquoted: missing } : {}),
       };
@@ -219,7 +232,25 @@ export function stanceTeach(repo = WORLD_CLONE, { lateWelcome = null } = {}) {
         ? { the_law_reaches: lateWelcome }
         : { the_law_reaches: null, unresolved: `${LATE_WELCOME_MARK} could not be read from this world checkout — the law stands in the record either way` }),
       law_mark: LATE_WELCOME_MARK,
-      unruled: "the law's window ends at the publish. Nothing in the record says what a word declared AFTER a mark is published does to it — so a stance you speak on something already standing is your word on the record, revisable, and this door will not tell you it undoes anything. That gap is a question for the founders' desk, not an answer this door may invent.",
+      // ⚠ NOT A SILENCE — AN UNRULED PAIR, and the difference is the whole
+      // correction (fresh reviewer, 2026-09-07). The record does not fall quiet
+      // here; it says two things that pull against each other, and
+      // conflict-matrix.md's last section names that shape: "Where two claims
+      // collide in a shape no law yet covers, the collision is refused noisily
+      // and named — never resolved by silent default. An unruled pair is a
+      // finding for the founders' desk." So the door names BOTH sentences,
+      // sliced from the files like every other quote in this block, and calls
+      // the thing by the law's own word rather than by my summary of it.
+      unruled: [
+        "these two sentences pull against each other, and the record has not ruled between them.",
+        said.any_latency
+          ? `The response function says: "${said.any_latency}"`
+          : "The response function's latency clause could not be read from this checkout.",
+        lateWelcome
+          ? `And ${LATE_WELCOME_MARK} says: "${lateWelcome}"`
+          : `And ${LATE_WELCOME_MARK} could not be read from this checkout.`,
+        "The first says your word is safe whenever it arrives; the second gives it a window that closes at the publish. That is an UNRULED PAIR in the town's own sense — a finding for the founders' desk, never a default this door may pick. So a stance you speak on something already standing is your word on the record, revisable, and this door will not tell you it undoes anything.",
+      ].join(" "),
     },
     law_mark: STANCE_LAW_MARK,
   };

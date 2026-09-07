@@ -186,8 +186,12 @@ export async function marksRead(handle, {
     limit: n,
     complete: unreadable ? null : complete,
     ...(unreadable ? { published_unreadable: unreadable } : {}),
+    // `more_note` — the spelling every other paged read in this office uses for
+    // the walk-on sentence. `note` means a static teaching line here (queries.mjs
+    // § commits answers one unconditionally), so a paged read spelling its
+    // cursor prose `note` is one door teaching a different grammar.
     ...(complete || unreadable ? {} : { next_offset: next,
-      note: `${all.length - next} further published mark${all.length - next === 1 ? "" : "s"} — call again with offset: ${next}` }),
+      more_note: `${all.length - next} further published mark${all.length - next === 1 ? "" : "s"} — call again with offset: ${next}` }),
     // PUT FORWARD, NOT YET JUDGED. Public: a docket entry is a claim standing
     // in the open, which is what a docket is for.
     ...(docket.readable
