@@ -519,15 +519,48 @@ export function mailAwaiting(db, handle, { limit = LEDGER_PAGE, offset = 0 } = {
       return row ? JSON.parse(row.json) : null;
     } catch { return null; }
   })();
-  const all = law?.conversations ?? [];
+  const ledgerOrder = law?.conversations ?? [];
   const n = Math.min(Math.max(Number(limit) || LEDGER_PAGE, 1), 200);
+  // ── YOURS FIRST, AND THE SUMMARY STAYS WHOLE (walk #1, 2026-09-05) ─────────
+  //
+  // WHAT A RESIDENT SAW, verbatim: "Summary: they_spoke_last: 109 ·
+  // new_inbound: 27. Rows shown: five threads, every one last_word_yours. …
+  // A resident asking 'what do I owe' gets a count of 109 and five rows that all
+  // say 'nothing'. Either the number is wrong or the rows are, and you cannot
+  // tell which without paging."
+  //
+  // NEITHER WAS WRONG, and that is why the disagreement was so hard to read:
+  // the summary counts the WHOLE ledger (233 conversations) and the rows were
+  // the newest twenty of it. Two true answers to two different questions, with
+  // nothing on the page saying they were different questions.
+  //
+  // THE CHOICE, AND WHY IT WENT THIS WAY. The brief offered two: re-sort the
+  // rows so what awaits you comes first, or make the summary count what the rows
+  // show. The second is refused by this function's own doctrine, six lines up in
+  // the header — "FILTER AND DERIVE FIRST, SLICE LAST … A budget decides how
+  // much gets said; it must not decide what is true." A summary computed over a
+  // twenty-row window would answer "3 await you" to a resident with a hundred.
+  // So the ROWS move, and the summary is untouched.
+  //
+  // THE ORDER IS THE TOWN'S OWN WORD, not a new one: every conversation row
+  // already carries `next_actor` ("you" | "them" | "ferry", tools/mail-state.mjs
+  // §§ 189-209), and "you" is exactly bounced ∪ they_spoke_again ∪ new_inbound —
+  // what is on your side of the table. Within each group the ledger's
+  // newest-first ordinal survives, because the sort is STABLE and the input is
+  // already in that order: this re-groups the page, it does not re-date it.
+  //
+  // AND IT IS SEQUENCE, NEVER DEBT. The town's own sentence rides the answer
+  // (`language`, mail-state.mjs § SEQUENCE_NOT_DEBT: "silence is a legal
+  // answer"), and this order is not a to-do list — it is the page answering the
+  // question a resident actually opened it with, first.
+  const yoursFirst = [...ledgerOrder].sort((a, b) =>
+    (b.next_actor === "you" ? 1 : 0) - (a.next_actor === "you" ? 1 : 0));
+  const all = yoursFirst;
   const start = Math.min(Math.max(Number(offset) || 0, 0), all.length);
-  // No re-sort: the town's own law already emits conversations newest-first by
-  // `latest_event.ordinal`, so the bound keeps the newest — the only cut a
-  // morning page can defend.
   const conversations = all.slice(start, start + n);
   const next = start + conversations.length;
   const complete = next >= all.length;
+  const yoursTotal = all.filter((c) => c.next_actor === "you").length;
 
   const threadsAll = all
     .filter((c) => c.attention_state === "new_inbound" || c.attention_state === "they_spoke_again")
@@ -565,6 +598,12 @@ export function mailAwaiting(db, handle, { limit = LEDGER_PAGE, offset = 0 } = {
     conversations_shown: conversations.length,
     conversations_offset: start,
     conversations_complete: complete,
+    // THE PAGE SAYS HOW IT IS ORDERED, and how many of the whole it is drawn
+    // from await you — so a reader can tell a short page from a quiet ledger
+    // without paging to find out, which is the whole of walk #1's complaint.
+    conversations_order: "next_actor: \"you\" first (bounced, they spoke again, new inbound — the town's own word), then the ledger's newest-first order within each group",
+    conversations_awaiting_you: yoursTotal,
+    conversations_summary_scope: `summary counts all ${all.length} conversations in your ledger, never this page`,
     ...(complete ? {} : { conversations_next_offset: next,
       conversations_note: `${all.length - next} further conversation${all.length - next === 1 ? "" : "s"} in your ledger — call again with offset: ${next}, and summary above counts the whole of it` }),
     conversations,
@@ -783,7 +822,16 @@ function slimAwaiting(a) {
     threads: _t, threads_shown: _ts, threads_complete: _tc, threads_note: _tn,
     conversations, conversations_total: _ct, conversations_shown: _cs,
     conversations_offset: _co, conversations_complete: _cc,
-    conversations_next_offset: _cn, conversations_note: _cnote, ...rest
+    conversations_next_offset: _cn, conversations_note: _cnote,
+    // ── THE THREE THAT ARRIVED WITH THE YOURS-FIRST ORDER (lane E item 4) ────
+    // Destructured out for the same reason as the six above and caught by the
+    // same guard: this view spells the rows `letter_threads`, and a key that
+    // rode through on the spread would leave the block answering in two nouns
+    // at once. `order` and `awaiting_you` are re-spelled below because they are
+    // still TRUE of this cut; `summary_scope` is re-worded rather than copied,
+    // because it names a total this view renamed.
+    conversations_order: _cord, conversations_awaiting_you: awaitingYou,
+    conversations_summary_scope: _cscope, ...rest
   } = a;
   const rows = (conversations ?? []).slice(0, DOORSTEP_AWAITING_SLIM)
     .map((c) => Object.fromEntries(AWAITING_SLIM_ROW.filter((k) => k in c).map((k) => [k, c[k]])));
@@ -805,6 +853,9 @@ function slimAwaiting(a) {
     letter_threads_shown: rows.length,
     letter_threads_offset: start,
     letter_threads_complete: next >= total,
+    letter_threads_order: _cord,
+    ...(awaitingYou === undefined ? {} : { letter_threads_awaiting_you: awaitingYou }),
+    letter_threads_summary_scope: `summary counts all ${total} letter threads in your ledger, never this page`,
     ...(next >= total ? {} : {
       letter_threads_next_offset: next,
       letter_threads_note: `${total - next} further letter thread${total - next === 1 ? "" : "s"} in your ledger — the whole of it, with each row's full reasoning, is at household read: "mail" view: "awaiting" (offset: ${next}), where they are still spelled \`conversations\`; summary above counts all of it`,

@@ -280,9 +280,15 @@ test("awaiting is DERIVED FROM THE WHOLE LEDGER, then bounded", () => {
   const a = d.awaiting;
   assert.equal(a.threads_total, 5);
   assert.equal(a.threads.length, 5);
-  const rendered = new Set(a.conversations.map((c) => c.conversation));
-  assert.ok(a.threads.every((t) => !rendered.has(t.thread_of)),
-    "every awaiting thread is OUTSIDE the rendered page — which is the whole point of this test");
+  // ⚠ THE POSITIONAL PROOF IS GONE, AND ON PURPOSE (lane E item 4, 2026-09-07).
+  // These five used to be provably off-page; the page is now ordered
+  // `next_actor: "you"` first, so they are on page one BY DESIGN and an
+  // "outside the page" assertion could no longer fail. The claim is the same
+  // and is now proven by shrinking the budget instead — a probe that can still
+  // go red. Sibling: bounded-reads.test.mjs, same repair, same reason.
+  assert.ok(a.conversations.slice(0, a.threads_total).every((c) => c.next_actor === "you"),
+    "what awaits you leads the page");
+  assert.equal(a.conversations_awaiting_you, 5);
   assert.equal(a.outgoing_total, 1, "the queued reply is derived from the whole ledger too");
   assert.equal(a.conversations_total, 30);
   assert.equal(a.conversations.length, 20);

@@ -497,6 +497,32 @@ export async function stanceInbox(repo, key, { dbPath = null } = {}) {
     lateWelcome: all.find((m) => m.id === LATE_WELCOME_MARK)?.body?.trim() || null };
 }
 
+// ── WHOSE GROUND THIS NUMBER COUNTED (walk #1 item 3, 2026-09-05) ───────────
+//
+// THE COMPLAINT, verbatim: "`household { read: "doorstep" }` says
+// `stances_awaiting: 23`; `world { since: … }` for the same handle says
+// `stances_awaiting: 45`. The world door is counting my household's ground
+// (`on_your_ground: rei/the-lanternseed-gardens`), the household door only mine
+// — but both say *stances_awaiting* and neither says whose ground it counted.
+// … which number is my job?"
+//
+// BOTH NUMBERS WERE RIGHT. The bare world read counts `key.handles` — the whole
+// house; the doorstep segment names one handle, because that page is about one
+// person (doorstep-bundle.mjs § THE SUBJECT NOTE says so, to itself, and never
+// to the reader). The defect was one name over two denominators.
+//
+// So every producer of the integer now says its scope beside it, in one field,
+// in the shape the brief asked for: "household" or "resident:<handle>".
+//
+// ⚠ NOT SPELLED `ground`. `stanceShadow` has answered `ground:` since the door
+// opened and it means something else there — the mark IDs your household holds.
+// Two meanings under one key at one door is the exact confusion this field
+// exists to end, so the name says what it qualifies: the number.
+export const stancesGround = (handles) => {
+  const held = [...new Set([...(handles ?? [])].filter(Boolean))].sort();
+  return held.length === 1 ? `resident:${held[0]}` : "household";
+};
+
 // ── tier 1 + 2 · what rides the bare read ────────────────────────────────────
 
 /** One candidate, as the ambient block shows it: one line each. */
@@ -527,6 +553,7 @@ export async function stancesBlock(repo, key, { spine = [], dbPath = null } = {}
   try {
     if (!handlesOf(key).size) return null;
     const inbox = await stanceInbox(repo, key, { dbPath });
+    const ground = stancesGround(handlesOf(key));
     if (inbox.unavailable) return { stances_awaiting: 0, unavailable: inbox.unavailable };
     const n = inbox.candidates.length;
     const mine = new Set(inbox.mine);
@@ -534,9 +561,18 @@ export async function stancesBlock(repo, key, { spine = [], dbPath = null } = {}
     // bare read already computed; a mark of yours in it means you are standing
     // inside your own ground, which is the one place the model expands.
     const onOwnGround = (spine ?? []).some((m) => mine.has(m?.id));
+    // ⚠ TIER 1 STAYS ONE INTEGER, and this lane does not get to change that.
+    // dev/door-plan/DESIGN.md § the two additions is founder-blessed and
+    // verbatim: "the bare read carries ONE INTEGER everywhere:
+    // `stances_awaiting: N`". A market read that grew a second key would be
+    // this lane overturning a ruling it was not given. The scope rides the two
+    // tiers that already carry a block — which is where BOTH numbers the
+    // resident compared actually came from (walk #1 item 3: the doorstep's 23
+    // is tier 3, the world `since:` read's 45 is tier 2, both below).
     if (!onOwnGround || n === 0) return { stances_awaiting: n };
     return {
       stances_awaiting: n,
+      stances_awaiting_ground: ground,
       awaiting: inbox.candidates.slice(0, AMBIENT_CAP).map(ambientLine),
       ...(n > AMBIENT_CAP ? { more: n - AMBIENT_CAP } : {}),
       // ⚑ TRUED 2026-09-02 (#2392). This sentence taught the WORLD door for
@@ -571,7 +607,7 @@ export async function stancesBlock(repo, key, { spine = [], dbPath = null } = {}
  */
 export async function stanceShadow(repo, key, { cursor = null, limit = PAGE_SIZE, dbPath = null } = {}) {
   const inbox = await stanceInbox(repo, key, { dbPath });
-  if (inbox.unavailable) return { unavailable: inbox.unavailable, awaiting: [], standing: [] };
+  if (inbox.unavailable) return { unavailable: inbox.unavailable, stances_awaiting_ground: stancesGround(key?.handles), awaiting: [], standing: [] };
 
   const n = Math.max(1, Math.min(Number(limit) || PAGE_SIZE, 100));
   const start = Math.max(0, Number.parseInt(String(cursor ?? "0"), 10) || 0);
@@ -580,6 +616,8 @@ export async function stanceShadow(repo, key, { cursor = null, limit = PAGE_SIZE
 
   return {
     stances_awaiting: inbox.candidates.length,
+    // WHOSE GROUND THAT NUMBER COUNTED — see § WHOSE GROUND THIS NUMBER COUNTED.
+    stances_awaiting_ground: stancesGround(key?.handles),
     awaiting: page,
     cursor: next,
     // Said out loud rather than left to be inferred from a short page — the same

@@ -22,7 +22,7 @@ import { DatabaseSync } from "node:sqlite";
 import { SCHEMA } from "../src/schema.mjs";
 import {
   resident, mailList, letterList, repoLog, residentPage, residentList,
-  doorstep, bulletinTeaser, stampsRoster, search, regionList, CARD_MAIL,
+  doorstep, bulletinTeaser, stampsRoster, search, regionList, CARD_MAIL, mailAwaiting,
 } from "../src/queries.mjs";
 
 const AS_OF = "bigfixture00000000000000000000000000000";
@@ -298,13 +298,53 @@ test("doorstep: the awaiting threads are DERIVED FROM THE WHOLE LEDGER, then bou
   // threads awaiting your reply" to someone with five of them. That is the
   // children-reported-as-neighbours bug in a new mouth:
   // "A budget decides how much gets said; it must not decide what is true."
+  //
+  // ⚠ THE INSTRUMENT CHANGED, THE CLAIM DID NOT (2026-09-07, lane E item 4).
+  // This test used to prove the claim by POSITION — the five awaiting threads
+  // happened to sit past the render bound, so finding them in `threads` proved
+  // the derivation had not been drawn from the slice. The page is now ordered
+  // `next_actor: "you"` first (queries.mjs § YOURS FIRST), so those five are on
+  // page one by design and the positional proof can no longer fail. A probe
+  // that cannot fail proves nothing, so it is replaced rather than deleted: the
+  // claim is now tested by SHRINKING THE BUDGET, which is the law's own words —
+  // "a budget decides how much gets said; it must not decide what is true."
   const d = doorstep(db, "r000", AS_OF);
   assert.equal(d.awaiting.threads_total, 5);
   assert.equal(d.awaiting.threads.length, 5);
   assert.ok(d.awaiting.threads.every((a) => a.state === "new_inbound"));
-  const rendered = new Set(d.awaiting.conversations.map((c) => c.conversation));
-  assert.ok(d.awaiting.threads.every((a) => !rendered.has(a.thread_of)),
-    "every awaiting thread is OUTSIDE the rendered page — which is the whole point of this test");
+  // The budget cut to two rows. Derive from the slice and `threads_total` falls
+  // with it; derive from the whole ledger and it does not move.
+  const tight = mailAwaiting(db, "r000", { limit: 2 });
+  assert.equal(tight.conversations.length, 2, "the budget did decide how much gets said");
+  assert.equal(tight.threads_total, 5, "…and did not decide what is true");
+  assert.equal(tight.outgoing_total, d.awaiting.outgoing_total, "the queued replies are whole-set too");
+  assert.equal(tight.conversations_total, 30, "and the total is the ledger's, never the page's");
+});
+
+test("doorstep: what awaits YOU is on the first page, and the summary still counts the whole ledger", () => {
+  // Walk #1 (docs/2026-09-05/resident-walk.md, 21:23 EDT, item 2), verbatim:
+  //
+  //   "Summary: they_spoke_last: 109 · new_inbound: 27. Rows shown: five
+  //    threads, every one last_word_yours. … A resident asking 'what do I owe'
+  //    gets a count of 109 and five rows that all say 'nothing'."
+  //
+  // Both numbers were right about different questions. The rows move; the
+  // summary does not.
+  const a = mailAwaiting(db, "r000", { limit: 3 });
+  assert.ok(a.conversations.every((c) => c.next_actor === "you"),
+    "the first rows a resident sees are the ones on their side of the table");
+  assert.equal(a.conversations_awaiting_you, 5, "and the page says how many of the whole those are");
+  assert.match(a.conversations_order, /next_actor: "you" first/, "the page states its own order");
+  assert.match(a.conversations_summary_scope, /never this page/, "and that the summary is not about it");
+  // The ledger's newest-first order survives INSIDE each group — this regroups
+  // the page, it does not re-date it.
+  const ord = (c) => c.latest_event?.ordinal ?? -1;
+  const theirs = a.conversations.filter((c) => c.next_actor !== "you");
+  for (const group of [a.conversations.filter((c) => c.next_actor === "you"), theirs]) {
+    for (let i = 1; i < group.length; i++)
+      assert.ok(ord(group[i - 1]) >= ord(group[i]), "newest-first inside the group");
+  }
+  assert.equal(a.summary.last_word_yours, 25, "the law's own numbers ride through untouched");
 });
 
 test("doorstep: the correspondence cursor walks to the end and stops", () => {
