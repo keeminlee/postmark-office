@@ -188,8 +188,41 @@ import {
 // `materialize.mjs`' own header: it was extracted the day a second lawful writer
 // of `marks` appeared, precisely so a third would import it instead of copying.
 import { materializeClaims } from "./materialize.mjs";
+// DEC-18 — the cause of each parity finding. The RULES live there and are pure;
+// the git/store lookups are the adapter beneath them. Nothing about "which of
+// these findings is the store's fault" is decided in this file.
+import { classifyFinding, historyFor, claimsFor, renderCauses, parseFinding } from "./parity-causes.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+
+/**
+ * Attach a cause to every substance finding (DEC-18).
+ *
+ * BEST-EFFORT, AND NEVER A PASS. Building the lookups reads the checkout with the
+ * repo's own loader and shells out to git; if any of that fails the run prints the
+ * findings exactly as it did before and every one of them still reds. The only
+ * thing a classification can do is move a finding to INFO, and only three causes
+ * can do that — see `parity-causes.mjs § OUT-OF-SCOPE IS NOT A SYNONYM FOR QUIET`.
+ */
+export async function classifyParity(findings, { worldRepo, sha, client }) {
+  if (!findings.length || !worldRepo || !sha) return null;
+  // The records must come from the world AT `sha`, not from whatever the clone's
+  // working tree is sitting at — the same binding `planBackfill` was returned for
+  // missing. A detached worktree, disposed either way.
+  let co = null;
+  try {
+    co = checkoutAt(worldRepo, sha, "causes");
+    const record = await historyFor({ worldRepo, checkoutDir: co.dir, sha });
+    const slugs = findings.map((f) => parseFinding(f)?.slug).filter(Boolean);
+    const claim = client ? await claimsFor(client, [...new Set(slugs)]) : () => null;
+    return findings.map((f) => classifyFinding(f, { record, claim }));
+  } catch (err) {
+    console.log(`  (causes unavailable: ${String(err.message).split("\n")[0]} — every finding above still reds)`);
+    return null;
+  } finally {
+    co?.dispose();
+  }
+}
 
 // ── git: reads only, and the caller's checkout is never one of the things moved ─
 
@@ -481,7 +514,7 @@ const commitDate2 = (repo, sha) => new Date(git(repo, "log", "-1", "--format=%cI
  * (the shared-node_modules lesson: a `worktree remove` over a junction empties
  * the junction's target). Nothing is ever linked into these trees.
  */
-function checkoutAt(repo, sha, label) {
+export function checkoutAt(repo, sha, label) {
   const dir = mkdtempSync(join(tmpdir(), `w2replay-${label}-`));
   // mkdtemp made the directory; `worktree add` wants to make it itself.
   rmSync(dir, { recursive: true, force: true });
@@ -880,16 +913,21 @@ export async function eraClaims({
     t.amended = authoredSubstance({ ...t.was, owner: t.now.owner }) !== authoredSubstance(t.now);
     if (t.amended) amended.push({ mark: t.now, was: t.was, transfer: t });
 
-    // A RENAME-TRANSFER'S EDIT HALF IS NOT ADMITTED, and it does not need to be.
-    // `amendedByHand` asks `--diff-filter=M` at the mark's CURRENT path, and a
-    // rename registers there as an addition, so the founder's hand is invisible to
-    // that probe even though the transfer act beside it names the very same
-    // commit. `wright/the-candle-vault` is the live case: one amend claim, pending.
-    // It reaches the right answer anyway — the clearing job's step 1 finds a
-    // standing mark at the new slug whose id IS this claim's `supersedes` (the
-    // transferred row kept it), so it locks as an amend rather than refusing as a
-    // duplicate. Named because it is residual exposure of the exact kind DEC-17
-    // removes: the candle judges it, and a candle that judges can refuse.
+    // A RENAME-TRANSFER'S EDIT HALF IS ADMITTED (M-10, closed 2026-09-05).
+    // It was not, and this comment used to say it did not need to be:
+    // `amendedByHand` asks `--diff-filter=M` at the mark's CURRENT path, a rename
+    // does not register as a modification there, and so the founder's hand was
+    // invisible on the one commit that both moved the record and edited it —
+    // `wright/the-candle-vault`, one amend claim, pending. It reached the right
+    // answer anyway, because the clearing job's step 1 finds a standing mark at
+    // the new slug whose id IS the claim's `supersedes`. That was the argument
+    // for leaving it, and it was the wrong argument: a claim that arrives at the
+    // right verdict BY WAY OF A JUDGEMENT is a claim a judgement can refuse, which
+    // is the residual exposure DEC-17 exists to remove.
+    //
+    // `t.commit` is handed to `amendedByHand` now (see its `known` map), so the
+    // edit half locks as a founder's admission naming the rename's own commit —
+    // the same sha the `transfer` act beside it already names.
 
     // ── WHAT A TRANSFER'S PREDICATED CHILDREN NEED, WHICH DEC-16 DOES NOT CARRY
     //
@@ -1244,18 +1282,58 @@ export async function plantedByHand({ worldRepo, toDir, fromSha, toSha, added })
  * though a resident filed it.
  */
 export async function amendedByHand({ worldRepo, toDir, fromSha, toSha, amended }) {
-  return byHand({ worldRepo, toDir, fromSha, toSha, filter: "M", slugs: amended.map((a) => a.mark.slug) });
+  return byHand({
+    worldRepo, toDir, fromSha, toSha, filter: "M",
+    slugs: amended.map((a) => a.mark.slug),
+    // ── M-10: A RENAME-TRANSFER'S EDIT HALF, ADMITTED ───────────────────────
+    //
+    // This probe asks `--diff-filter=M` at the mark's CURRENT path, and a
+    // rename does not register as a modification there — git files the change
+    // under R, against a path pair, and a pathspec naming one side alone has
+    // nothing to pair with. So the founder's hand was invisible on exactly the
+    // commits that both MOVED a record and EDITED it, and the edit half of a
+    // rename-transfer was derived as a resident's ordinary amend claim: pending,
+    // for the candle to adjudicate. `wright/the-candle-vault` is the live case.
+    //
+    // It reached the right answer anyway, through the transfer — the clearing
+    // job's step 1 finds a standing mark at the new slug whose id IS the claim's
+    // `supersedes`, so it locks as an amend rather than refusing as a duplicate.
+    // That is why this was "not a blocker" and not why it was safe: a claim that
+    // arrives at the right verdict by way of a judgement is a claim a judgement
+    // can REFUSE, which is the residual exposure DEC-17 exists to remove.
+    //
+    // THE COMMIT WAS ALREADY IN HAND, which is why the fix is a lookup and not
+    // another `git log`. `eraClaims` builds each transfer from `renamesBetween`,
+    // whose map carries the sha, the date and the subject of the very commit
+    // that moved the file — and that function's own words, one screen up, are
+    // the law this reuses rather than a new idea: "A rename ALREADY NAMED ITS
+    // COMMIT … asking git a second time would be a second reading of one fact,
+    // and the two could differ."
+    //
+    // Passed for every transfer, not only the renamed ones. A same-path refold's
+    // `commit` IS `commitTouching(…, filter: "M")` at that same path — the
+    // identical call this loop would make — so handing it over changes nothing
+    // there and spares a duplicate read. The publish-subject guard below still
+    // runs on it: a commit that published is not the founder's hand, however
+    // this probe came by it.
+    known: new Map(amended.filter((a) => a.transfer?.commit?.sha)
+      .map((a) => [a.mark.slug, a.transfer.commit])),
+  });
 }
 
-async function byHand({ worldRepo, toDir, fromSha, toSha, filter, slugs }) {
+async function byHand({ worldRepo, toDir, fromSha, toSha, filter, slugs, known = new Map() }) {
   if (!slugs.length) return [];
   const owners = await filingOwners(toDir);
   const pathOf = new Map([...owners].map(([p, id]) => [id, p]));
   const hand = [];
   for (const slug of slugs) {
+    // A commit the caller already holds is used as it stands. Only when there is
+    // none does this ask git, and only then does a missing file mean there is
+    // nothing to ask about.
+    const carried = known.get(slug) ?? null;
     const path = pathOf.get(slug);
-    if (!path) continue;                       // no file to ask about; not a claim about the hand
-    const c = commitTouching(worldRepo, { fromSha, toSha, path, filter });
+    if (!carried && !path) continue;           // no file to ask about; not a claim about the hand
+    const c = carried ?? commitTouching(worldRepo, { fromSha, toSha, path, filter });
     // `at` RIDES SINCE DEC-17. It was dropped here while the hand was only a
     // count for the receipt's diagnosis; the admission needs it, because a claim
     // the founder's hand locked is decided WHEN HIS COMMIT LANDED and not at
@@ -1702,11 +1780,35 @@ export async function parityFindings(client, { registerAfter }) {
   return { substance: [...substance, ...staleTier], provenance };
 }
 
-const stripSlug = (g) => {
+/**
+ * Take the pre-006 smuggled slug back out of a store row's `geometry`.
+ *
+ * THE STRIP THAT EMPTIES THE OBJECT MUST SAY `null`, NOT `{}` (DEC-18).
+ *
+ * A DE-SITED mark has no geometry at all, so the slug the clearing job smuggled
+ * in is its ONLY key, and stripping it left `{}` — compared against the
+ * register's `null`, which `canonicalJson` renders as two different strings. The
+ * comment on `parityFindings` says this strip exists so that no finding is
+ * "manufactured by a workaround"; until now it manufactured one per de-sited
+ * continuation mark (nine at S58: the `welcome-*` marks, `quill-stem/the-fitting-room`,
+ * `sable/the-second-failed-lap`, `vermillion/pando-peak-home`). They were never a
+ * store defect and there was never anything to backfill for them.
+ *
+ * Narrow on purpose: only the branch that actually removed a slug can empty an
+ * object this way. A store row whose geometry is genuinely `{}` — no slug ever in
+ * it — is returned untouched and still reds against a register `null`, because
+ * that is a real disagreement about a real column and not this one's shape.
+ */
+// EXPORTED so it can be asked a question. Same contract `standingOnly` is held
+// to two functions up: "WHICH ROWS THE GATE SEES is a decision, and a decision
+// that only exists inside a query string cannot be asked a question without a
+// database." What this returns for an emptied object is a decision of exactly
+// that kind, and it was wrong for nine rows for as long as it was unaskable.
+export const stripSlug = (g) => {
   if (!g || typeof g !== "object") return g;
   if (!("slug" in g)) return g;
   const { slug, ...rest } = g;                 // eslint-disable-line no-unused-vars
-  return rest;
+  return Object.keys(rest).length ? rest : null;
 };
 
 const without = (o, keys) => {
@@ -1829,37 +1931,58 @@ export async function actsCompleteness(client, toDir) {
  * sees the eras.
  */
 export async function canFailProof(client, era, worldRepo) {
+  // ── THE PROOF RUNS ON A RED STORE TOO (DEC-18) ────────────────────────────
+  //
+  // It used to refuse: "cannot prove can-fail: parity is ALREADY red". On the
+  // live store that refusal fired on the one run that mattered — cutover-eve,
+  // 158 findings deep — and left the gate's own falsifier unproved exactly when
+  // it was about to be relied on. A falsifier that can only be watched fail on a
+  // green store is a falsifier nobody can watch fail when it counts.
+  //
+  // So the question changes from "was it green and did it go red" to the one that
+  // was always the real one: DOES THIS MANGLE PRODUCE A FINDING THAT NAMES THE
+  // ROW IT MANGLED, over and above whatever the store was already saying. That is
+  // strictly stronger. The old form passes if the count merely rises; this one
+  // requires the new finding to be ABOUT the victim, so a mangle that reddened
+  // something unrelated — or a comparator that emits one more line under any
+  // perturbation — fails the proof instead of passing it.
+  //
+  // The baseline is taken once, on the same connection, before any mangle.
   const clean = await parityFindings(client, era);
-  if (clean.substance.length) {
-    throw new Error(`cannot prove can-fail: parity is ALREADY red at ${era.to.tag} (${clean.substance.length} finding(s))\n  ${clean.substance[0]}`);
-  }
+  const baseline = new Set(clean.substance);
+  const baselineRed = clean.substance.length;
+
   const replayed = (await client.query(
     "SELECT slug FROM marks WHERE locked_window = $1 ORDER BY slug LIMIT 2", [era.window.id])).rows;
   if (replayed.length < 2) throw new Error(`cannot prove can-fail: window ${era.window.id} materialized fewer than two marks`);
   const [victim, gone] = replayed.map((r) => r.slug);
 
   const results = [];
-  const mangle = async (label, sql, params = [], kind = "substance") => {
+  const mangle = async (label, sql, params = [], kind = "substance", names = null) => {
     await client.query("BEGIN");
     try {
       await client.query(sql, params);
       const p = await parityFindings(client, era);
       const a = kind === "acts" ? await actsCompletenessFor(client, worldRepo, era.to.sha) : [];
-      results.push({ mangle: label, findings: [...p.substance, ...a] });
+      const findings = [...p.substance, ...a];
+      // What this mangle ADDED, and whether any of it names the row it broke.
+      const added = findings.filter((f) => !baseline.has(f));
+      const about = names ? added.filter((f) => f.includes(names)) : added;
+      results.push({ mangle: label, findings, added, about, names, baselineRed });
     } finally { await client.query("ROLLBACK"); }
   };
 
   await mangle(`body of ${victim} (a value the era carried)`,
-    "UPDATE marks SET body = body || ' — MANGLED' WHERE slug = $1", [victim]);
+    "UPDATE marks SET body = body || ' — MANGLED' WHERE slug = $1", [victim], "substance", victim);
   await mangle(`geometry of ${victim} moved`,
-    `UPDATE marks SET geometry = jsonb_set(geometry, '{at,x}', '99999') WHERE slug = $1`, [victim]);
+    `UPDATE marks SET geometry = jsonb_set(geometry, '{at,x}', '99999') WHERE slug = $1`, [victim], "substance", victim);
   await mangle(`DELETE ${gone} (a mark the settlement published and the replay must have)`,
-    "DELETE FROM marks WHERE slug = $1", [gone]);
+    "DELETE FROM marks WHERE slug = $1", [gone], "substance", gone);
   await mangle("INSERT forged/never-published (a mark 1.0 never had)",
     `INSERT INTO marks (id, slug, kind, owner, household, body, geometry, bbox, status, locked_window, data)
      VALUES (gen_random_uuid(), 'forged/never-published', 'sited', 'nobody', NULL, '',
              '{"at":{"x":0,"y":0},"extent":{"w":1,"h":1}}'::jsonb, '((-0.5,-0.5),(0.5,0.5))'::box,
-             'standing', $1, '{}'::jsonb)`, [era.window.id]);
+             'standing', $1, '{}'::jsonb)`, [era.window.id], "substance", "forged/never-published");
   // ── DEC-15'S OWN BREAK: UN-RETIRE ONE (2026-09-04) ─────────────────────────
   //
   // The four mangles above prove the gate sees a mark's SUBSTANCE. The
@@ -1883,7 +2006,7 @@ export async function canFailProof(client, era, worldRepo) {
     retirement.checked = true;
     retirement.slug = retiredRow.slug;
     await mangle(`UN-RETIRE ${retiredRow.slug} (DEC-15's terminal supersession undone — the mark stands again)`,
-      "UPDATE marks SET status = 'standing' WHERE slug = $1", [retiredRow.slug]);
+      "UPDATE marks SET status = 'standing' WHERE slug = $1", [retiredRow.slug], "substance", retiredRow.slug);
   }
 
   // ── DEC-16'S OWN BREAK: PUT THE OLD SLUG BACK (2026-09-04) ─────────────────
@@ -1910,7 +2033,7 @@ export async function canFailProof(client, era, worldRepo) {
     transfer.slug = moved.slug;
     transfer.was = moved.was;
     await mangle(`UN-TRANSFER ${moved.slug} back to ${moved.was} (DEC-16's re-identification undone)`,
-      "UPDATE marks SET slug = $2 WHERE slug = $1", [moved.slug, moved.was]);
+      "UPDATE marks SET slug = $2 WHERE slug = $1", [moved.slug, moved.was], "substance", moved.was);
   }
 
   // ── DEC-17'S OWN BREAK: UN-ADMIT ONE (2026-09-04) ──────────────────────────
@@ -1942,7 +2065,7 @@ export async function canFailProof(client, era, worldRepo) {
     admission.sha = admittedRow.sha;
     await mangle(`UN-ADMIT ${admittedRow.slug} (DEC-17's founder admission undone — the mark the hand planted at ` +
       `${String(admittedRow.sha ?? "?").slice(0, 9)} is gone, which is the register a still-pending claim would leave)`,
-      "DELETE FROM marks WHERE slug = $1", [admittedRow.slug]);
+      "DELETE FROM marks WHERE slug = $1", [admittedRow.slug], "substance", admittedRow.slug);
 
     // And the ruling's literal words, asked in their own rolled-back transaction
     // because a refused statement aborts the one it is in. This pen connects as
@@ -2012,8 +2135,16 @@ export async function canFailProof(client, era, worldRepo) {
   }
 
   const after = await parityFindings(client, era);
-  const silent = results.filter((r) => !r.findings.length);
-  return { results, restored: after.substance.length === 0, silent, dedupe, retirement, transfer, admission };
+  // SILENT = the mangle produced no NEW finding naming the row it broke. On a
+  // green store this is exactly the old `!r.findings.length`; on a red one it is
+  // the only reading that means anything.
+  const silent = results.filter((r) => !r.about.length);
+  // And the rollback is judged against the BASELINE, not against zero — a store
+  // that was red before the proof must read exactly as red after it, no more and
+  // no less, or a mangle escaped its transaction.
+  const restoredSet = new Set(after.substance);
+  const restored = restoredSet.size === baseline.size && [...baseline].every((f) => restoredSet.has(f));
+  return { results, restored, baselineRed, silent, dedupe, retirement, transfer, admission };
 }
 
 // ── the store's state, and the refusal ───────────────────────────────────────
@@ -2364,10 +2495,18 @@ async function main() {
       if (!era) throw new Error(`--can-fail-proof needs the store to be AT one of this range's tags; its tip is window ${at}`);
       const proof = await canFailProof(client, era, worldRepo);
       for (const r of proof.results) {
-        console.log(`${r.findings.length ? "RED  " : "GREEN"} after mangle: ${r.mangle} — ${r.findings.length} finding(s)`);
-        for (const f of r.findings.slice(0, 2)) console.log(`  ${f.split("\n").join("\n  ")}`);
+        console.log(`${r.about.length ? "CAUGHT " : "SILENT "} mangle: ${r.mangle} — ` +
+          `${r.added.length} finding(s) beyond the baseline of ${r.baselineRed}` +
+          `${r.names ? `, ${r.about.length} of them naming ${r.names}` : ""}`);
+        for (const f of r.about.slice(0, 2)) console.log(`  ${f.split("\n").join("\n  ")}`);
       }
-      console.log(proof.restored ? "GREEN after rollback — the mangles left no trace" : "RED after rollback — THE PROOF DID NOT CLEAN UP");
+      if (proof.baselineRed) {
+        console.log(`\n(the store was ALREADY red at this tag: ${proof.baselineRed} finding(s). The proof is ` +
+          `therefore "did each mangle add a finding that NAMES the row it broke", which is stronger than the ` +
+          `green-store form — see canFailProof's header.)`);
+      }
+      console.log(proof.restored ? "RESTORED after rollback — the store reads exactly as it did before the proof"
+        : "NOT RESTORED after rollback — THE PROOF DID NOT CLEAN UP");
       if (!proof.retirement.checked) {
         console.log("SKIPPED the retirement break — this store holds no retired mark to un-retire " +
           "(no era replayed so far removed a standing mark; DEC-15's filter is UNPROVED here)");
@@ -2392,7 +2531,8 @@ async function main() {
           `action rather than the derived one (${proof.dedupe.skippedDuring})`);
       }
       const ok = proof.silent.length === 0 && proof.restored && (!proof.dedupe.checked || proof.dedupe.ok);
-      console.log(ok ? `\ncan-fail PROVEN at ${era.to.tag}: every mangle turned the gate red, and rollback restored green.`
+      console.log(ok ? `\ncan-fail PROVEN at ${era.to.tag}: every mangle produced a finding naming the row it ` +
+          `broke, and rollback restored the store's prior reading.`
         : `\ncan-fail NOT PROVEN: ${proof.silent.length} mangle(s) the gate did not notice.`);
       await client.end();
       assertHeadUnmoved(worldRepo, headBefore);
@@ -2439,10 +2579,17 @@ async function main() {
         const parity = await parityFindings(client, e);
         const actsF = await actsCompletenessFor(client, worldRepo, e.to.sha);
         console.log(`already replayed — VERIFIED at the store's tip, not re-ingested`);
+
+        // DEC-18 — EVERY FINDING SAYS WHY. A 158-line wall with no causes is read
+        // once. The classification is best-effort and never invents a pass: if it
+        // throws, the findings print exactly as before and all of them still red.
+        const causes = await classifyParity(parity.substance, { worldRepo, sha: e.to.sha, client });
         report.push({ tag: e.to.tag, window: e.window.id, skipped: true, recheckable: true,
-          substance: parity.substance, provenance: parity.provenance, acts: actsF, clearing: null });
+          substance: parity.substance, provenance: parity.provenance, acts: actsF, clearing: null,
+          causes });
         for (const f of parity.substance) console.log(`  ✗ ${f.split("\n").join("\n    ")}`);
         for (const p of parity.provenance) console.log(`  ⚑ ${p}`);
+        if (causes) console.log(renderCauses(causes));
         continue;
       }
 

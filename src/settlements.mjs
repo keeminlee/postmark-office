@@ -17,6 +17,7 @@
 // tags ride the tick's existing fetch, so freshness costs no per-request work.
 
 import { execFileSync } from "node:child_process";
+import { resolve } from "node:path";
 
 export const SETTLEMENT_TAG = /^settlement\/S(\d+)$/;
 const RECENT_MAX = 20;
@@ -66,10 +67,45 @@ const git = (repo, args) => execFileSync("git", ["-C", repo, ...args], {
   stdio: ["ignore", "pipe", "pipe"],
 });
 
+/**
+ * IS THIS DIRECTORY A REPO, OR IS IT STANDING INSIDE SOMEONE ELSE'S?
+ *
+ * `git -C <dir>` ASCENDS. Handed a directory that is not a repo, git walks up
+ * the tree until it finds one, and then answers about THAT repo without saying
+ * it did. Measured on this box, 2026-09-05:
+ *
+ *     $ git -C <a fresh mkdtemp under %TEMP%> rev-parse --show-toplevel
+ *     C:/Users/keemi
+ *     $ git -C <the same dir> tag -l 'settlement/*'
+ *     settlement/S1 … settlement/S58
+ *
+ * — a home directory that happens to be a git repo, forty-odd real settlement
+ * tags, and a caller who asked about an empty temp folder. This is not a
+ * Windows quirk and not a test-only accident: any deploy path nested under a
+ * checkout gets the same wrong answer, and it is wrong in the worst direction,
+ * because a settlement number the viewer trusts would be some other repo's.
+ *
+ * So the question is asked properly: the directory must BE the top of a work
+ * tree, not merely stand somewhere inside one. Anything else is "no repo", which
+ * is already an answer this function has and already returns honestly.
+ *
+ * `--show-toplevel` rather than `--is-inside-work-tree`: the latter is true for
+ * every subdirectory, which is exactly the case being refused.
+ */
+function isRepoRoot(repo) {
+  let top;
+  try { top = git(repo, ["rev-parse", "--show-toplevel"]).trim(); }
+  catch { return false; }                     // not a repo anywhere above it
+  if (!top) return false;
+  const norm = (p) => resolve(p).replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+  return norm(top) === norm(repo);
+}
+
 // One `git tag` call for the list, then one date lookup per tag. The tag may be
 // lightweight or annotated — `git log -1` resolves either to its commit, so the
 // date is the commit's, which is when the blessing actually landed.
 export function readSettlementTags(repo) {
+  if (!isRepoRoot(repo)) return [];           // not this directory's tags to give
   let names = [];
   try {
     names = git(repo, ["tag", "--list", "settlement/S*"]).split("\n").map((s) => s.trim()).filter(Boolean);

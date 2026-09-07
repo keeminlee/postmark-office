@@ -687,6 +687,49 @@ All four carry rows in `deploy/box-rollcall-manifest.json`. `world2-restore-rehe
 is a hand-run, deliberately: it drops and recreates a database, and nothing that
 does that belongs on a clock.
 
+### Which branch the ingest lane reads (2026-09-05)
+
+`world2-refresh-clone.sh world` defaults to **`main`**. That default is the whole
+of the lane's branch policy — measured on the box on 2026-09-05, nothing else
+sets it:
+
+    /etc/postmark-world2-dev.env   carries no W2_WORLD_BRANCH
+    the ingest unit                carries no inline Environment=
+    the ingest unit                has no drop-ins
+
+The default was `world-2` until this change, and `world-2` is the retired tree:
+on 2026-09-05 `main` stood at `a23a8d1` and `world-2` at `cba817d`. Because the
+refresh does `fetch --depth 1 origin "$BRANCH"` then `reset --hard FETCH_HEAD`,
+the old default did not merely name the wrong branch — the next automatic run
+would have pulled the persisted checkout back off the law and gone on reporting a
+sha for it. `test/world2-refresh-clone-branch.test.mjs` holds the default and
+executes the shipped dispatch to prove it.
+
+`W2_WORLD_BRANCH` still wins, and should: reading the retired tree by hand (a
+bisect, a comparison) is a legitimate call.
+
+**The box's copy of the script is stale until it is carried.** The ops directory
+is a plain file copy of this repo's `deploy/`, exactly like `/srv/postmark-office`,
+so the fix reaches the box only by copying it — one line, run by the conductor
+after this lands:
+
+    scp deploy/world2-refresh-clone.sh meepo-ec2:/srv/world2-lab/ops/
+
+and, if a copy is not wanted yet, the in-place edit that makes the same change:
+
+    ssh meepo-ec2 "sudo -n sed -i 's/W2_WORLD_BRANCH:-world-2/W2_WORLD_BRANCH:-main/' /srv/world2-lab/ops/world2-refresh-clone.sh"
+
+Neither is run by this change. Verify either with:
+
+    ssh meepo-ec2 'grep -n W2_WORLD_BRANCH /srv/world2-lab/ops/world2-refresh-clone.sh'
+
+**The ingest timer is `disabled`/`inactive` on the box as of 2026-09-05 21:19Z**,
+so the every-15-minutes row in the table above describes the unit's schedule, not
+what is running. The last ingest was the hand-run re-ingest of the same day
+(`FETCH_HEAD` names `branch 'main'`, `state/ingest.json` at 19:44:52Z, exit 0 on
+both pens). Enabling the timer before the branch fix is carried is exactly the
+sequence that resets the checkout off the law, so carry the script first.
+
 ### Where things live
 
     /srv/world2-lab/ops/            the scripts (a plain file copy from this repo,

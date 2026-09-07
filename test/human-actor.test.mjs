@@ -159,6 +159,22 @@ test("an unknown actor kind bounces rather than falling through to resident", ()
   assert.match(b.defect, /not an actor kind this door resolves/);
 });
 
+/**
+ * A source file with its comments removed — line comments AND block comments.
+ *
+ * String literals are not modelled and do not need to be: nothing in the file
+ * under probe puts a comment opener inside a string, and a stripper that parsed
+ * JavaScript to answer a grep would be a second parser to keep right. The
+ * falsifier for that risk is in the test below — a banned token planted in real
+ * code must still red, which is what catches a stripper that has begun eating
+ * too much.
+ */
+function codeOnly(text) {
+  return String(text)
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .split("\n").filter((l) => !l.trim().startsWith("//")).join("\n");
+}
+
 test("the seam routes and never re-derives the hand", () => {
   // worldSayHuman has owned the speaker label ("human-of-<slug>", NEVER the
   // GitHub login), the companion choice and the record since 2026-08-08.
@@ -167,10 +183,42 @@ test("the seam routes and never re-derives the hand", () => {
   // explaining why this file does not build one — a comment that documents the
   // boundary is the opposite of crossing it, and the first version of this
   // probe could not tell the two apart.
-  const src = readFileSync(new URL("../src/human-actor.mjs", import.meta.url), "utf8")
-    .split("\n").filter((l) => !l.trim().startsWith("//")).join("\n");
-  assert.equal(/human-of-|githubLogin|householdOf\(/.test(src), false,
+  // THE STRIPPER READS BLOCK COMMENTS TOO (2026-09-05). It dropped `//` lines
+  // and nothing else, so the day a JSDoc paragraph in that file explained the
+  // boundary — "DISPLAY ONLY: the record's hand (`human-of-<household>`) and
+  // every id keyed…" — this probe went red on exactly the prose the note above
+  // calls legitimate. Its contract is CODE ONLY and it was reading two thirds of
+  // the file's comments as code; widening it is the probe doing what it already
+  // says it does, not a loosened assertion.
+  const BANNED = /human-of-|githubLogin|householdOf\(/;
+  const raw = readFileSync(new URL("../src/human-actor.mjs", import.meta.url), "utf8");
+  const src = codeOnly(raw);
+  assert.equal(BANNED.test(src), false,
     "the seam must not compute the speaker label itself");
+
+  // AND THE WIDENING CAN STILL FAIL. A stripper that swallowed too much would
+  // green this probe forever and nobody would notice, so the same banned token
+  // is planted in a real statement and must be found. Two shapes, because the
+  // block-comment rule is the one that just changed: bare code, and code on the
+  // line right after a closing `*/`.
+  for (const planted of [
+    'const x = "human-of-" + h;',
+    '/** doc */\nconst y = githubLogin(h);',
+    'const z = 1; /* trailing */ const w = householdOf(h);',
+  ]) {
+    assert.equal(BANNED.test(codeOnly(planted)), true,
+      `the stripper ate real code: ${JSON.stringify(planted)}`);
+  }
+  // …and the comment forms it is meant to drop really are dropped, or the arm
+  // above would be passing for the wrong reason.
+  for (const dropped of [
+    "// human-of-<household>, in a line comment",
+    "/** DISPLAY ONLY: the record's hand (`human-of-<household>`) */",
+    "/*\n * githubLogin is named here to explain why this file does not call it\n */",
+  ]) {
+    assert.equal(BANNED.test(codeOnly(dropped)), false,
+      `the stripper left a comment behind: ${JSON.stringify(dropped)}`);
+  }
   const apex = readFileSync(new URL("../src/world-apex.mjs", import.meta.url), "utf8");
   // AMENDED 2026-08-26: the apex re-resolves the actor once the match is known,
   // because WHICH STANDING an act is taken from depends on the channel that
@@ -216,8 +264,24 @@ test("the seam routes and never re-derives the hand", () => {
     "the hand is the one derivation, read — not a second spelling of the label invented here");
   assert.match(apex, /let hand = null;/,
     "and it is declared where both the dispatch and the crossing can see it, rather than derived twice");
-  assert.match(apex, /wheelOnCrossing\(action, args, key, spineIds, hand\)/,
+  // AMENDED 2026-09-05: the closing `\)` came off this pattern. It pinned the
+  // call's ENTIRE argument list, so the day `wheelOnCrossing` grew a sixth
+  // parameter (`ctx`) the probe went red — not because the hand had stopped
+  // riding, but because something else had started to. That is a control
+  // asserting a spelling where it means a relation: the property is THE HAND IS
+  // PASSED, IN THE HAND'S POSITION, and a call that also carries a context is
+  // still that property. `\b` keeps it honest — it still reds if the argument is
+  // dropped, renamed, or moved, and the falsifier below runs both.
+  assert.match(apex, /wheelOnCrossing\(action, args, key, spineIds, hand\b/,
     "so the wheel counts whoever actually crossed — the hand where there is one");
+
+  const WHEEL_HAND = /wheelOnCrossing\(action, args, key, spineIds, hand\b/;
+  assert.equal(WHEEL_HAND.test("await wheelOnCrossing(action, args, key, spineIds, hand, ctx);"), true,
+    "a call that grew another argument still carries the hand");
+  assert.equal(WHEEL_HAND.test("await wheelOnCrossing(action, args, key, spineIds);"), false,
+    "…and a call that dropped the hand is still caught");
+  assert.equal(WHEEL_HAND.test("await wheelOnCrossing(action, args, key, spineIds, handler);"), false,
+    "…and so is one that passes something merely named like it");
 });
 
 // ── THE OWN HAND, at the two doors that answer for it ───────────────────────

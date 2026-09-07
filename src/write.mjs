@@ -138,9 +138,7 @@ export function validateLetter({ from, to, title, thread, body, stake_topic, sta
   // writing a letter. A letter without these fields is byte-for-byte unchanged.
   const stakeFm = buildStakeFm({ stake_topic, stake_candidate, stake_stamps }, bounce);
 
-  // Letters are human-day surfaces: date them in the town's local day, not UTC
-  // (the env-clock-ahead class — an evening letter must not carry tomorrow's date).
-  const date = new Intl.DateTimeFormat("en-CA", { timeZone: process.env.TOWN_TZ ?? "America/New_York" }).format(new Date());
+  const date = letterDate();
   const slug = slugify(title);
   const id = `${from}-${date}-to-${to}-${slug}`;
   if (db.prepare("SELECT 1 FROM letters WHERE id = ?").get(id))
@@ -154,6 +152,31 @@ export function validateLetter({ from, to, title, thread, body, stake_topic, sta
 // spelling of this path is a second thing that can drift from the pen's.
 export const outboxRelPath = (from, date, to, slug) =>
   `WHITE_PAGES/${from}/outbox/letter-${date}-to-${to}-${slug}.md`;
+
+/**
+ * THE DAY A LETTER IS DATED — the one derivation, so a caller can ask for it.
+ *
+ * Letters are human-day surfaces: dated in the town's local day, not UTC (the
+ * env-clock-ahead class — an evening letter must not carry tomorrow's date).
+ *
+ * Extracted 2026-09-05 because it was computed inline in `validateLetter` and
+ * nothing else could ask what it would answer. That is not a tidiness point: a
+ * letter's date is in its id AND in `outboxRelPath`, so anything that needs to
+ * predict where a letter will land had to re-spell this expression, and
+ * `town-bridge.test.mjs § seedLetter` did the next worst thing — it pinned a
+ * literal, `2026-08-24`. The row it seeded therefore disclosed an AUGUST path
+ * while the door wrote today's file, the drain's resume check looked for the
+ * August one and missed, and the letter was replayed into a 409 instead of
+ * being recognised as `already`. Green on the day it was written, red every day
+ * after. The S58 class, one file over.
+ *
+ * `enqueueLetter`'s own comment names the rule this restores: the file is
+ * written "at the path outboxRelPath spells, because the row the door writes
+ * discloses that same path to the sender, and two spellings of it would be two
+ * things that can drift." A pinned date in a fixture is a third spelling.
+ */
+export const letterDate = () =>
+  new Intl.DateTimeFormat("en-CA", { timeZone: process.env.TOWN_TZ ?? "America/New_York" }).format(new Date());
 
 // Validate + write + commit. Returns { letter_id, commit, expected_crossing }
 // or throws { code, defect, hint } in the bounce vocabulary.

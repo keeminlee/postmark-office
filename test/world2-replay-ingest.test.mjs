@@ -1104,6 +1104,99 @@ test("M-8: a move that ALSO edits the record carries one amend claim, under the 
   } finally { w.cleanup(); }
 });
 
+// ── M-10: the edit half of a rename-transfer is ADMITTED (closed 2026-09-05) ─
+//
+// The founder's hand has three faces and DEC-17 admits all three, but the probe
+// that finds the amending face asked `--diff-filter=M` at the mark's CURRENT
+// path — and a rename does not register as a modification there. Git files that
+// change under R, against a PATH PAIR, and a pathspec naming one side alone has
+// nothing to pair with (`renamesBetween` says the same thing about its own
+// query, one function up). So on exactly the commits that both MOVED a record
+// and EDITED it, the hand was invisible, and the edit half was derived as a
+// resident's ordinary amend claim: pending, for the candle to adjudicate.
+//
+// `wright/the-candle-vault` is the live case, and it reached the right answer —
+// the clearing job's step 1 finds a standing mark at the new slug whose id IS
+// the claim's `supersedes`, so it locks as an amend rather than refusing as a
+// duplicate. THAT IS WHY IT WAS NOT A BLOCKER AND NOT WHY IT WAS SAFE: a claim
+// that arrives at the right verdict by way of a judgement is a claim a judgement
+// can refuse. DEC-17 exists to take the judgement out of it.
+//
+// The fixture is `handedOver` with an edit — the same world M-8 already proves
+// is a rename-transfer, so this test adds one question to a shape whose other
+// answers are already pinned above rather than building a second world to
+// believe in.
+
+test("M-10: a rename-transfer that ALSO edits the record admits the edit — a LOCKED supersede naming the rename's own commit", async () => {
+  const w = handedOver({ over: { body: `${LONG}\nAnd a line the new owner added.` } });
+  try {
+    const c = await claimsFor(w, "a", "b");
+    const t = c.transferred[0];
+    assert.equal(t.amended, true, "the premise: the record was edited as well as moved");
+    assert.ok(t.moved, "and the file really moved, or this is not the seam");
+
+    // The hand is FOUND. Before this fix `handAmends` was empty here, and the
+    // claim below was an ordinary pending one.
+    assert.equal(c.handAmends.length, 1,
+      "the founder's hand was invisible on a rename — the edit half of a transfer went to the candle as a resident's claim");
+    assert.equal(c.handAmends[0].slug, "wright/the-unlit-cake");
+    assert.equal(c.handAmends[0].sha, t.commit.sha,
+      "and it is the rename's OWN commit — the same sha the `transfer` act beside it names, read once");
+    assert.equal(c.handAmends[0].subject, HAND);
+
+    const claim = c.claims.find((x) => x.slug === "wright/the-unlit-cake");
+    assert.equal(claim.status, "locked",
+      "an admission is decided; the clearing job never re-judges canon");
+    assert.equal(claim.decided_at, t.commit.at,
+      "decided when the founder's commit landed, not at replay time");
+    assert.equal(claim.data.locked_by, "founder");
+    assert.equal(claim.data.founder_commit.sha, t.commit.sha);
+    assert.equal(claim.supersedes, uuid5("the-town/the-unlit-cake"),
+      "and it still supersedes the STANDING mark's locking claim — the admission changes how it arrived, not what it says");
+    assert.equal(claim.id, amendId("wright/the-unlit-cake", 8));
+  } finally { w.cleanup(); }
+});
+
+test("M-10: a rename-transfer with NO edit admits nothing — the negative control", async () => {
+  // Without this, the test above would pass against a pen that locked every
+  // transfer. A move that only changes hands has no edit to admit: `amended` is
+  // false, the mark never reaches `amendedByHand`, and there is no claim at all.
+  const w = handedOver();
+  try {
+    const c = await claimsFor(w, "a", "b");
+    assert.equal(c.transferred[0].amended, false, "only the owner moved");
+    assert.deepEqual(c.handAmends, [], "nothing was edited, so there is nothing for the hand to have amended");
+    assert.deepEqual(c.claims.map((x) => x.slug), [], "and a transfer is not a claim");
+  } finally { w.cleanup(); }
+});
+
+test("M-10: a SWEEP commit that renames and edits admits nothing — the publish-subject guard still runs", async () => {
+  // The commit that carries a rename is now handed straight to the hand probe,
+  // so the guard that decides whether a commit IS the founder's hand has to keep
+  // running on it. A sweep published the change; no hand to find, and the claim
+  // goes on the docket like any resident's.
+  const w = world([
+    { tag: "a", subject: SWEEP(0), at: "2026-08-26T00:00:00+00:00",
+      register: [M({ by: "the-town", slug: "the-unlit-cake", body: LONG })], log: { "7.jsonl": [] } },
+    { subject: SWEEP(1), at: "2026-08-26T00:30:00+00:00",
+      register: [M({ by: "wright", slug: "the-unlit-cake", body: `${LONG}\nAnd an edit.` })], log: { "7.jsonl": [] } },
+    { tag: "b", subject: SWEEP(2), at: "2026-08-26T01:00:00+00:00",
+      register: [M({ by: "wright", slug: "the-unlit-cake", body: `${LONG}\nAnd an edit.` })],
+      log: { "7.jsonl": [], "8.jsonl": [] } },
+  ]);
+  try {
+    const c = await claimsFor(w, "a", "b");
+    assert.equal(c.transferred.length, 1, "still a rename-transfer — DEC-16 never asked whose hand it was");
+    assert.equal(c.transferred[0].amended, true);
+    assert.deepEqual(c.handAmends, [], "a sweep published it; the publish-subject guard refuses the commit");
+
+    const claim = c.claims.find((x) => x.slug === "wright/the-unlit-cake");
+    assert.equal(claim.status, "pending", "a resident's claim goes on the docket for the clearing job");
+    assert.equal(claim.decided_at, null);
+    assert.equal(claim.data?.locked_by, undefined);
+  } finally { w.cleanup(); }
+});
+
 test("M-8: a move that RENAMES THE LEAF is not a transfer — the pen does not decide that", async () => {
   // A mark's id is `by` + leaf, so a move that keeps the leaf changes only the
   // owner half of the identity, which is what changing hands means. A move that

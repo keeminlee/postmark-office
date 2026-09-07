@@ -1421,7 +1421,53 @@ export async function questBoardFor(db, meta, handle, clone) {
   // A guard nobody could observe working is a guard nobody would have noticed
   // breaking.
   const bountyIds = (registry.quests ?? []).filter((q) => q.subtype === "bounty").map((q) => q.id);
-  board.quests = (board.quests ?? []).filter((q) => !bountyIds.includes(q.id));
+  // ── `measured` — THE DOOR SAYS IT, INSTEAD OF EVERY READER DERIVING IT ─────
+  //
+  // BOARD_LAW's shape puts two kinds of row on one board, and tells them apart
+  // by a TYPE rather than by a field (tools/quest-progress.mjs, verbatim):
+  //
+  //   countable row     progress: <n>, complete: <n >= target>, counted: [names]
+  //   uncounted row     progress: null, complete: <injected> ?? null, counted: []
+  //
+  // Every consumer therefore has to write `typeof q.progress === "number"` for
+  // itself, and the site already does — `questIsCounted` in
+  // `town/components/Household.astro`, with its own note that the FIELD has to
+  // say it because an id list "is the allow-list again wearing a different
+  // name". It is right about that and it should not have had to work it out. A
+  // predicate two doors each re-derive is a predicate two doors can come to
+  // disagree about; this states it once, at the door that already knows.
+  //
+  // WHAT IT MEANS, exactly, measured against the town's fold rather than
+  // assumed: `progress` is null on one branch of `boardForHandle` and one only —
+  // the `!f` branch, a registry row for which `COUNTABLE_FIELD` names no field.
+  // A countable row with no progress entry reads a CLEAN ZERO ("absent from the
+  // fold == 0, first-class"), never null. So `measured: false` says "the daily
+  // fold has no way to count this kind of row", and it cannot be confused with
+  // "the store could not be read". That distinction was the open question on
+  // this seam, and the town's own code already settles it.
+  //
+  // NOT PROVABLE AGAINST AN ID LIST, and said here rather than implied in the
+  // test: `["correspond-send", "correspond-receive"]` IS `COUNTABLE_FIELD`'s key
+  // set today, so a hardcoded pair and this derivation agree by arithmetic and no
+  // fixture can pull them apart while that table holds two rows. What the
+  // falsifier binds instead is the AGREEMENT, against the town's exported table
+  // — so an office that hardcoded the pair reds the day the town names a third
+  // countable row, which is the divergence that can actually happen.
+  //
+  // WHY NOT THE TOWN'S OWN WORD. The rendered surfaces say `uncounted` (the
+  // civic hub since 09-01, the household board since today) and a second word
+  // for one fact is how two doors start disagreeing — so the door's PROSE keeps
+  // that word (see read_quests in mcp.mjs). It cannot be the KEY: `counted` is
+  // already taken on this very row, where it holds the array of correspondents
+  // who counted today. `measured` is the field, `uncounted` stays the word.
+  //
+  // `progress` IS KEPT, null and all. The site's guard reads it, the doorstep
+  // bundle's next-steps lane rides these rows, and `household-stamps` maps
+  // `q.progress ?? null` — none of them asked for it to go, and a key removed
+  // is a shape change every reader has to survive. This adds; it takes nothing.
+  board.quests = (board.quests ?? [])
+    .filter((q) => !bountyIds.includes(q.id))
+    .map((q) => ({ ...q, measured: typeof q.progress === "number" }));
   try { board.pots = potBoard(db, postingsWithoutPots(bountyIds, db.prepare("SELECT id FROM pots").all().map((r) => r.id))); }
   catch { board.pots_note = "this index predates the funding seam — pots are not indexed here yet; they appear at the next rehydrate"; }
   return board;

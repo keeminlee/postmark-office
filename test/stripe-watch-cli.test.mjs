@@ -37,13 +37,42 @@ const TOWN = [resolve(HERE, "..", "town-clone"), "G:/postmark/seam-overnight/tow
 const KEY = "rk_test_thisisnotarealkey";
 const CS = "cs_test_cli111111111111111111111";
 
-function fakeStripe(sessions) {
+// ── WHY THE SHUTDOWN IS REGISTERED AND NOT CALLED (2026-09-05) ──────────────
+//
+// This file used to hang the whole suite, and the reason was not a wait — it was
+// a HANDLE. `server.close()` was called in the middle of each test body, on the
+// success path only, so any assertion that threw before that line left a socket
+// LISTENING. Node then had a live handle and would not exit: the four tests all
+// finished in under a second, the summary printed, and the process sat there
+// until something killed it. `--test-timeout` cannot bound that, and correctly
+// so — nothing was slow. It is the exit that never comes.
+//
+// Measured on 2026-09-05 at the train tip: 4 tests, 3 pass, 1 fail, every case
+// under 500ms, `duration_ms 149994` — the 150-second bound I put around it, not
+// work. The failure that leaked the handle was itself real (the town mint's main
+// guard exits 0 in silence under a junction, so no ledger was written and the
+// read of it threw ENOENT) — which is the whole shape of the trap: A TEST THAT
+// ONLY CLEANS UP WHEN IT PASSES STOPS BEING A TEST THE MOMENT IT FAILS, and
+// takes the suite with it.
+//
+// So the shutdown is registered with the runner the instant the server exists,
+// which is the only arrangement that survives a throw. `closeAllConnections`
+// goes first because `close()` alone waits out keep-alive sockets, and a
+// shutdown that waits is the thing being removed.
+//
+// This is the same lesson the header above already records once — "the test's
+// own apparatus needed its own falsifier" — reached a second time from the other
+// side. The apparatus is not exempt from the discipline it exists to apply.
+function fakeStripe(sessions, t) {
   const seen = [];
   const server = http.createServer((req, res) => {
     seen.push({ url: req.url, auth: req.headers.authorization });
     res.setHeader("content-type", "application/json");
     res.end(JSON.stringify({ object: "list", data: sessions, has_more: false }));
   });
+  if (t) {
+    t.after(() => { server.closeAllConnections?.(); server.close(); });
+  }
   return new Promise((done) => server.listen(0, "127.0.0.1", () => done({ server, seen, port: server.address().port })));
 }
 
@@ -78,8 +107,8 @@ const session = (over = {}) => ({
   payment_intent: "pi_cli", ...over,
 });
 
-test("the CLI runs end to end: env → reader → pages → journal → state, and writes no ledger row", async () => {
-  const { server, seen, port } = await fakeStripe([session()]);
+test("the CLI runs end to end: env → reader → pages → journal → state, and writes no ledger row", async (t) => {
+  const { seen, port } = await fakeStripe([session()], t);
   const town = seamTown();
   const state = join(town.repo, "state.json");
   const journal = join(town.repo, "intake.jsonl");
@@ -93,7 +122,6 @@ test("the CLI runs end to end: env → reader → pages → journal → state, a
     encoding: "utf8", maxBuffer: 8 * 1024 * 1024,
     env: { ...process.env, STRIPE_KEY: KEY, STRIPE_API: `http://127.0.0.1:${port}/v1`, TOWN_CLONE: "" },
   });
-  server.close();
 
   const report = JSON.parse(out);
   assert.equal(report.sessions, 1);
@@ -122,8 +150,8 @@ test("the CLI runs end to end: env → reader → pages → journal → state, a
   assert.equal(readFileSync(ledger, "utf8"), before);
 });
 
-test("a second run journals the SAME session once — the journal is append-only, not append-again", async () => {
-  const { server, port } = await fakeStripe([session()]);
+test("a second run journals the SAME session once — the journal is append-only, not append-again", async (t) => {
+  const { port } = await fakeStripe([session()], t);
   const town = seamTown();
   const state = join(town.repo, "state.json");
   const journal = join(town.repo, "intake.jsonl");
@@ -133,7 +161,6 @@ test("a second run journals the SAME session once — the journal is append-only
 
   await run(process.execPath, args, { encoding: "utf8", env });
   await run(process.execPath, args, { encoding: "utf8", env });
-  server.close();
 
   const rows = readFileSync(journal, "utf8").trim().split("\n").map((l) => JSON.parse(l));
   assert.equal(rows.filter((r) => r.kind === "seen").length, 1, "the boundary second is re-read and the session is re-seen, but journalled once");

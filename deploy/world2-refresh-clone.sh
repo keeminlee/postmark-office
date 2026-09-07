@@ -31,13 +31,31 @@
 # The clean is not optional and it is not decoration: without it a file a pen
 # wrote into the checkout would survive into the next run's derivation, and the
 # sha would then describe a tree that is not the tree that was read.
+#
+# ── WHERE THE LAW LIVES, AND WHY THIS DEFAULT MOVED (2026-09-05) ────────────
+# The world default was `world-2` from this file's first line, and `world-2` is
+# where the law lived when it was written. It does not any more: the law moved
+# to `main`, which today stands at a23a8d1 while `world-2` stands at cba817d —
+# two different trees under one poll. The 09-05 re-ingest was run by hand as
+# `W2_WORLD_BRANCH=main`, so the persisted checkout is on main's sha and its
+# FETCH_HEAD names `branch 'main'`; nothing on the box pins the variable
+# (`/etc/postmark-world2-dev.env` carries no W2_WORLD_BRANCH, the unit carries
+# no inline Environment= and no drop-in), so the DEFAULT is the whole of the
+# lane's branch policy. Leaving it at `world-2` meant the next automatic run
+# would reset --hard the checkout back off the law, quietly, and the pens would
+# go on reporting a sha — the wrong one. A default that disagrees with where
+# the law lives is not a stale comment; it is the poll's actual behaviour.
+#
+# The env var still wins, unchanged, and that is deliberate: reading an OLD
+# branch is a legitimate hand-run (a bisect, a comparison against the retired
+# tree), and this line is a default, not a lock.
 
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/world2-lib.sh"
 
 case "${1:-}" in
-  world) URL="https://github.com/keeminlee/postmark-world.git"; BRANCH="${W2_WORLD_BRANCH:-world-2}" ;;
+  world) URL="https://github.com/keeminlee/postmark-world.git"; BRANCH="${W2_WORLD_BRANCH:-main}" ;;
   town)  URL="https://github.com/postmark-town/postmark.git";   BRANCH="${W2_TOWN_BRANCH:-main}" ;;
   *) echo "usage: world2-refresh-clone.sh world|town" >&2; exit 2 ;;
 esac
