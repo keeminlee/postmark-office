@@ -483,3 +483,53 @@ export async function docketSettled() {
   const { penSettled } = await import("./world2-pen.mjs");
   await Promise.all([state.queue, penSettled()]);
 }
+
+/**
+ * EVERY CLAIM THE STORE HOLDS FOR ONE SLUG, newest first — the receipt's half.
+ *
+ * The whole life of one mark on the docket: the draft it was composed as, the
+ * pending row its stake put forward, and the candle's ruling. `mark-receipt.mjs`
+ * reads the newest and reports the rest as history.
+ *
+ * ── WHY THIS IS NOT SCOPED TO ONE HOUSEHOLD, AND WHY THAT IS LAWFUL ────────
+ *
+ * The docket is PUBLIC — 007_private_drafts.sql's row policy says so in one
+ * line, and says which row is the exception:
+ *
+ *   CREATE POLICY claims_read ON claims FOR SELECT
+ *     USING (status <> 'draft' OR household = current_setting('app.household', true));
+ *
+ * So a receipt on somebody else's pending claim is a public fact this door is
+ * allowed to answer, and a receipt on their DRAFT is unrepresentable — not by a
+ * WHERE clause here, but structurally, because `current_setting(…, true)`
+ * answers NULL when nothing declared and NULL is never equal to anything.
+ *
+ * `household` is therefore the CALLER's, and it buys exactly one thing: the
+ * caller's own drafts. Handed null, the read runs with nothing declared and the
+ * policy hides every draft in town, the caller's included — which is the right
+ * answer for a spectator and the reason this takes the argument rather than
+ * resolving a key it was not given.
+ *
+ * ⚑ THE SET-LOCAL TRAP is `withHousehold`'s, and it is documented there: this
+ * runs on a POOL, so `app.household` must never outlive its transaction. Do not
+ * inline the declaration here.
+ */
+ // `slug` is the FULL mark id, `<by>/<name>` — 006 made identity a column and
+ // the column holds "the 1.0 path identity" (guard-reads.mjs § liveMarkOf).
+ //
+ // The household is resolved HERE, from the caller's key, through
+ // `householdKeyForKey` — THE ONE RESOLVER both halves of the private-draft
+ // lane already use. Resolving it at the call site would be a second notion of
+ // whose drafts these are, which is the exact drift that function's own header
+ // forbids ("do not inline either half").
+export async function claimRowsForSlug(slug, { key = null, env = process.env } = {}) {
+  const p = await pool(env);
+  const sql = `SELECT id, slug, class, claimant, household, status, window_id,
+                      submitted_at, decided_at, refusal_check, stake, supersedes
+                 FROM claims WHERE slug = $1
+                ORDER BY submitted_at DESC, id DESC`;
+  if (!key) return (await p.query(sql, [slug])).rows;
+  const household = await householdKeyForKey(p, key);
+  if (!household) return (await p.query(sql, [slug])).rows;
+  return (await withHousehold(p, household, (c) => c.query(sql, [slug]))).rows;
+}

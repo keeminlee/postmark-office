@@ -1,0 +1,383 @@
+// mark-receipt.mjs — THE CANON RECEIPT: what happened to your mark, and where.
+//
+// THE PROMISE THIS KEEPS, verbatim, from the town's own bulletin entry
+// `the-world` — a sentence the town published and did not keep:
+//
+//   "The World runs on the clock; judgment runs on the Worldkeeper. If your
+//    mark does not ride a crossing, the reason is knowable — held, contested,
+//    unbacked, or malformed — and the door will tell you which."
+//
+// and from `LOGOS/the-response-function § Residents: words, at their own pace`,
+// which the plan of record names as the clause the town is breaking:
+//
+//   the resident's loop is "a replayable, cursor-ordered read of every effect
+//   on your own node since you last looked" — and a crossing publishing or
+//   refusing your mark is an effect on your node.
+//
+// ── THE WALK THAT PRODUCED IT (2026-09-06 05:53 EDT, #2526) ────────────────
+//
+// One staked mark, one crossing later, five doors, five different answers and
+// none of them the promised one: the focus said "no mark or terrain feature";
+// the marks shadow said `drafts / status: added`; the escrow said 1✦ standing;
+// the `backed` row said `yours: false` with every field null; `since:` said,
+// with a completeness guarantee, that nothing had happened to the resident.
+//
+// ── IT IS A DERIVED, AND IT IS STORED BY NOBODY ────────────────────────────
+//
+// `LOGOS/classes.md § The derived`: "a value the record implies at a save —
+// computed at the read, stored never, authored by nobody." So there is no new
+// table, no new column, and no new file. Every field below is read out of a
+// record that already holds it:
+//
+//   status/window/cause   `claims` (status, window_id, submitted_at,
+//                         decided_at, refusal_check) — world2/schema/001+007
+//   crossing/sha          the world repo's own `settlement/S<n>` TAGS, which
+//                         `settlements.mjs` already reads: "the truth is the
+//                         world repo's own git TAGS … which exist only when a
+//                         settlement actually landed"
+//   published             canon — `publishedState(repo).state.marks`
+//   draft (private)       the household's own delta — the sketchbook half
+//
+// ── THE PURE HALF, AND WHY ─────────────────────────────────────────────────
+//
+// `receiptFrom` takes RECORDS, not a repo and not a key, for the reason
+// `world-hold.mjs § deps` gives: "deps exist so the ordering can be proven on a
+// hand-built store with no world db and no Postgres — the door injects the real
+// ones." Every sentence a resident reads is decided here, where a falsifier can
+// hand it any tense without a settlement, a candle, or a clone.
+
+import { execFileSync } from "node:child_process";
+
+// ── the clock, named every time (R4) ────────────────────────────────────────
+//
+// THREE CLOCKS WEAR THE WORD "CROSSING" and the walk found all three in one
+// sitting: the world's `since:` cursor counts 12h crossings from 00:00/12:00Z
+// (`crossings.mjs § CROSSING_DERIVATION`), the ferry sails the mail on the same
+// 00/12Z beat, and the keeper's SETTLEMENT runs at 05:45/17:45Z and numbers its
+// blessings S1, S2, … — "the number counts blessings, not beats"
+// (`settlements.mjs`), so it cannot be derived from any clock at all.
+//
+// This receipt speaks in the SETTLEMENT's epoch and says so on every answer.
+// `window` is the candle's, and it is labelled as the candle's. Nothing here
+// re-uses the bare word "crossing" for either.
+export const RECEIPT_CLOCK =
+  "crossing = the SETTLEMENT epoch (S-number + the sha it blessed, 05:45/17:45Z) — not the ferry's 00:00/12:00Z crossing, and not the candle's window";
+
+/**
+ * The bulletin's own five words for why a mark did not ride.
+ *
+ * A refusal names a CHECK (`claims.refusal_check`, "refused always names its
+ * failing check — attributable by construction", 001_tables.sql) and a resident
+ * was promised one of FIVE WORDS. This is the only place the two vocabularies
+ * meet, and it is a map rather than a rename: `cause` is the promised word and
+ * `cause_row` always carries the record it came from, so nothing is lost in the
+ * translation and a reader can go check.
+ *
+ * ⚑ AN UNMAPPED CHECK IS NOT "malformed". It answers `null` with the raw check
+ * beside it, because guessing one of five promised words for a refusal nobody
+ * has classified would be the town keeping its promise in appearance only.
+ */
+export const CAUSE_WORDS = Object.freeze(["held", "contested", "unbacked", "malformed", "quarantined"]);
+
+const CAUSE_OF_CHECK = Object.freeze({
+  // the sweep's own channels (world tools/settlement-sweep.mjs)
+  "suite-quarantine": "held",
+  "grammar-suite": "held",
+  "held-review": "held",
+  "collision": "contested",
+  "counterclaim": "contested",
+  "parcel-overlap": "contested",
+  "escrow": "unbacked",
+  "no-stake": "unbacked",
+  "unstaked": "unbacked",
+  "commons-minimum": "unbacked",
+  "geometry": "malformed",
+  "fold-error": "malformed",
+  "filing": "malformed",
+  "schema": "malformed",
+  "quarantine": "quarantined",
+  "registrar-quarantine": "quarantined",
+});
+
+export function causeOf(refusalCheck) {
+  const raw = String(refusalCheck ?? "").trim();
+  if (!raw) return { cause: null, cause_row: null };
+  const key = raw.toLowerCase();
+  const word = CAUSE_OF_CHECK[key]
+    ?? CAUSE_WORDS.find((w) => key === w)
+    ?? null;
+  return { cause: word, cause_row: `claims.refusal_check = ${JSON.stringify(raw)}` };
+}
+
+/**
+ * THE DERIVATION, pure over the records.
+ *
+ * `records` is what the readers below found:
+ *   { id, canon, published_at, claims, sketchbook, withdrawn, settlement, site_pin }
+ *
+ *   canon         the mark's row in published world-state, or null
+ *   published_at  { s, sha, at } — the settlement that first carried it, or null
+ *   claims        the store's rows for this slug, newest first, or null when the
+ *                 store is not configured (NOT the same as "no rows" — see below)
+ *   sketchbook    the caller's own delta entry for this mark, or null
+ *   withdrawn     true when the caller's delta proposes its deletion
+ *   settlement    { s, sha, at } — the newest settlement the record holds
+ *   site_pin      the postmark-world sha the SITE is pinned to, or null
+ *
+ * ── THREE ABSENCES, THREE SENTENCES (walk #7 item 4) ──────────────────────
+ *
+ * "No mark" is only for a mark the record NEVER SAW. A withdrawn mark, an
+ * unindexed-but-published mark, and a never-was are three states and they get
+ * three sentences here. `unreadable` is a fourth and it is not an absence at
+ * all: a store the office cannot reach must never be reported as an empty
+ * docket, which is the `the-town/the-disclosure` law — "refuse or disclose
+ * absent inputs; never quietly substitute".
+ */
+export function receiptFrom(records = {}) {
+  const {
+    id = null, canon = null, published_at = null, claims = null,
+    sketchbook = null, withdrawn = false, settlement = null, site_pin = null,
+  } = records;
+
+  const sources = [];
+  const rows = Array.isArray(claims) ? claims : null;
+  if (rows) sources.push("claims");
+  if (canon) sources.push("canon");
+  if (sketchbook) sources.push("sketchbook");
+
+  // The newest row the store holds for this slug decides the tense; older rows
+  // are its history, not its state. `latest-wins` is the log's own rule and the
+  // amend chain's (`supersedes`), so a receipt that averaged them would be
+  // inventing a state no record holds.
+  const row = rows?.[0] ?? null;
+
+  const base = {
+    id,
+    window: row?.window_id ?? null,
+    crossing: null,
+    settlement_sha: null,
+    site_pin,
+    cause: null,
+    cause_row: null,
+    clock: RECEIPT_CLOCK,
+    sources,
+    ...(rows === null
+      ? { docket: { readable: false, reason: "the office could not read the docket store — this receipt is drawn from the record alone, and a claim standing on the docket would not appear in it" } }
+      : {}),
+  };
+
+  // 1 · PUBLISHED. Canon holds it, so the settlement ruled and the answer is a
+  // fact about the world, whatever the docket says about the claim behind it.
+  if (canon) {
+    return {
+      ...base,
+      status: "published",
+      crossing: published_at ?? settlement ?? null,
+      settlement_sha: published_at?.sha ?? settlement?.sha ?? null,
+      says: published_at
+        ? `published at S${published_at.s} (${String(published_at.sha).slice(0, 8)})${published_at.at ? ` on ${published_at.at}` : ""}`
+        : "published — the record holds this mark, and which settlement carried it could not be read from the tags",
+      ...(withdrawn
+        ? { withdrawal_standing: "you have declared this mark withdrawn; it stands in the world until a crossing carries the removal" }
+        : {}),
+    };
+  }
+
+  // 2 · THE DOCKET RULED, and canon does not hold it. This is the sentence the
+  // bulletin promised and no door said.
+  if (row?.status === "refused") {
+    const { cause, cause_row } = causeOf(row.refusal_check);
+    return {
+      ...base, status: "refused", cause, cause_row,
+      crossing: settlement ?? null,
+      settlement_sha: settlement?.sha ?? null,
+      says: `refused at window ${row.window_id}${cause ? ` — ${cause}` : ""}${row.decided_at ? ` (${row.decided_at})` : ""}`
+        + (cause ? "" : " — the check that refused it has no word in the bulletin's five yet; the row is named beside this"),
+    };
+  }
+  if (row?.status === "locked") {
+    return {
+      ...base, status: "locked",
+      crossing: settlement ?? null,
+      settlement_sha: settlement?.sha ?? null,
+      says: `locked at window ${row.window_id} — the candle ruled for it; it reaches the world at the settlement that carries the window`,
+    };
+  }
+  if (row?.status === "retracted") {
+    return { ...base, status: "retracted", says: `retracted at window ${row.window_id} — you took it off the docket before the close` };
+  }
+  if (row?.status === "held_review") {
+    return { ...base, status: "held_review", cause: "held", cause_row: "claims.status = \"held_review\"",
+      says: `held at window ${row.window_id} — a mind rules on it; it did not ride and it was not refused` };
+  }
+
+  // 3 · PENDING. On the public docket, waiting for the candle.
+  if (row?.status === "pending") {
+    return {
+      ...base, status: "pending",
+      says: `pending at window ${row.window_id} — staked and on the public docket since ${row.submitted_at ?? "its stake"}; it rides when that window closes`,
+    };
+  }
+
+  // 4 · DRAFT. Private, and it rides nothing until it is staked.
+  if (row?.status === "draft" || sketchbook) {
+    return {
+      ...base, status: "draft",
+      says: "draft — this stands in your own compose space, on no docket and in no public answer. Staking it is what puts it forward (a commons mark publishes only with escrow behind it).",
+    };
+  }
+
+  // 5 · WITHDRAWN, with nothing left standing.
+  if (withdrawn) {
+    return { ...base, status: "withdrawn", says: "withdrawn — you let this one go, and the record holds no standing copy of it" };
+  }
+
+  // 6 · THE RECORD NEVER SAW IT. The only case that may say "no mark".
+  return {
+    ...base, status: "never-was",
+    says: rows === null
+      ? "the record holds no mark of this id — and the docket could not be read, so a claim standing on it would not show here"
+      : "the record holds no mark of this id: no canon entry, no claim on the docket, and nothing in your own compose space",
+  };
+}
+
+// ── the readers ─────────────────────────────────────────────────────────────
+
+const git = (repo, args) => execFileSync("git", ["-C", repo, ...args], {
+  encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 64 * 1024 * 1024,
+});
+
+/**
+ * WHICH SETTLEMENT CARRIED THIS MARK — derived, because nothing records it.
+ *
+ * `WORLD/settlement-publications.json` is a map of WHICH marks are published
+ * and, in `settlements.mjs`'s own words, "holds neither an index nor a date".
+ * So the settlement a mark rode is not a stored fact anywhere in the town, and
+ * this derives it from the two things that ARE stored: the commit that first
+ * added the mark's file, and the `settlement/S<n>` tags that contain it.
+ *
+ * Two git calls, on the clone the office already keeps. Null — never a guess —
+ * when either is unreadable: an invented S-number on a receipt is worse than an
+ * absent one, because the resident has no way to tell it is invented.
+ */
+export function settlementThatCarried(repo, path, { tags = null, ref = "HEAD" } = {}) {
+  if (!repo || !path) return null;
+  let added;
+  try {
+    added = git(repo, ["log", "--diff-filter=A", "-1", "--format=%H", ref, "--", path]).trim();
+  } catch { return null; }
+  if (!added) return null;
+  let containing;
+  try {
+    containing = git(repo, ["tag", "--list", "settlement/S*", "--contains", added])
+      .split("\n").map((s) => s.trim()).filter(Boolean);
+  } catch { return null; }
+  const ns = containing
+    .map((t) => /^settlement\/S(\d+)$/.exec(t))
+    .filter(Boolean)
+    .map((m) => Number(m[1]))
+    .filter((n) => Number.isInteger(n));
+  if (!ns.length) return null;
+  const s = Math.min(...ns);          // the FIRST settlement that carried it
+  const known = (tags ?? []).find((t) => t.n === s) ?? null;
+  let sha = known?.sha ?? null, at = known?.date ?? null;
+  if (!sha) {
+    try { sha = git(repo, ["rev-parse", `settlement/S${s}^{commit}`]).trim() || null; } catch { /* named absent */ }
+  }
+  return { s, sha, at, added_at: added };
+}
+
+/**
+ * THE DOOR'S READER: gather every record that speaks about one mark, then let
+ * `receiptFrom` decide the sentence.
+ *
+ * Never throws. Every source is attached inside its own try, and a source the
+ * office cannot read is DISCLOSED rather than reported as empty — the law is
+ * `the-town/the-disclosure`, "refuse or disclose absent inputs; never quietly
+ * substitute", which is why `claims: null` and `claims: []` stay two different
+ * things all the way through `receiptFrom`.
+ *
+ * @param id    `<by>/<slug>` — the full mark identity.
+ * @param repo  the world clone.
+ * @param key   the caller's credential, or null. It buys exactly one thing: the
+ *              caller's own private drafts (007's row policy).
+ * @param canon the mark's canon row when the caller already has it — the focus
+ *              does, it just folded the world — else null and this reads it.
+ */
+export async function readMarkReceipt(id, { repo, key = null, canon = null, publishedSha = null } = {}) {
+  const markId = String(id ?? "").trim();
+  if (!markId) return null;
+
+  const branches = await import("./world-branches.mjs");
+
+  // ── canon ────────────────────────────────────────────────────────────────
+  //
+  // `canon` and `publishedSha` are HANDED IN by the focus, which has just
+  // folded the world and holds both. Reading them again here would cost a
+  // second `git show` of a 1 MiB world-state.json per read — the exact class
+  // `world-branches.mjs § GIT_MAX_BUFFER` records as an outage. The fallback is
+  // for a caller with neither.
+  let canonRow = canon, sha = publishedSha;
+  if (!canonRow || !sha) {
+    try {
+      const ps = branches.publishedState(repo);
+      sha = sha ?? ps.sha;
+      if (!canonRow) canonRow = (ps.state?.marks ?? []).find((m) => m.id === markId) ?? null;
+    } catch { /* an unreadable clone leaves canon null; `sources` says so */ }
+  }
+
+  // ── the settlement epoch ─────────────────────────────────────────────────
+  let settlement = null, tags = [];
+  try {
+    const { settlements } = await import("./settlements.mjs");
+    const s = settlements(repo);
+    settlement = s.current ?? null;
+    tags = s.recent ?? [];
+  } catch { /* no tags, no S-number — and never a guessed one */ }
+
+  let carried = null;
+  if (canonRow && sha) {
+    try {
+      const { filedPathOfAt } = await import("./world-journal.mjs");
+      const path = filedPathOfAt(repo, sha)(markId);
+      if (path) {
+        const c = settlementThatCarried(repo, path, { tags, ref: sha });
+        if (c) carried = { s: c.s, sha: c.sha, at: c.at };
+      }
+    } catch { /* the filing index's absence is not a receipt's to invent around */ }
+  }
+
+  // ── the docket ───────────────────────────────────────────────────────────
+  let claims = null;
+  try {
+    const { world2Enabled } = await import("./world2-acts.mjs");
+    if (world2Enabled()) {
+      const { claimRowsForSlug } = await import("./world2-claims.mjs");
+      claims = await claimRowsForSlug(markId, { key });
+    }
+  } catch { claims = null; }
+
+  // ── the caller's own compose space ───────────────────────────────────────
+  let sketchbook = null, withdrawn = false;
+  if (key) {
+    try {
+      const { guardedDraftsForKey } = await import("./world2-guards.mjs");
+      const delta = await guardedDraftsForKey(repo, key);
+      const row = (delta?.marks ?? []).find((m) => m.id === markId) ?? null;
+      if (row) { withdrawn = row.status === "deleted"; sketchbook = withdrawn ? null : row; }
+    } catch { /* the overlay is one source of five; its absence is not the answer */ }
+  }
+
+  return receiptFrom({
+    id: markId, canon: canonRow, published_at: carried, claims,
+    sketchbook, withdrawn, settlement,
+    // ⚑ NOTHING RECORDS THE SITE PIN, and this is the honest null rather than a
+    // guess. `site_pin` is the `postmark-world` version `keeminlee/postmark-site`
+    // is built against; the office holds no clone of the site and no record of
+    // its pin, so the one field of the plan's receipt shape that the store
+    // cannot derive is this one. It is a FINDING, not a schema change: either
+    // the site publishes its pin at a door the office can read, or the field
+    // leaves the shape. Reported in the lane's day doc.
+    site_pin: null,
+  });
+}

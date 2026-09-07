@@ -137,7 +137,12 @@ async function world() {
   const worldState = selected.state;
   const skeleton = publishedSkeleton(WORLD_CLONE).skeleton;
   const assembled = build.assembleWorld({ worldState, skeleton });
-  assembled._raw = { worldState, skeleton, ref: selected.ref };
+  // ⚑ THE SHA RIDES ALONG (2026-09-07, lane-a). `ref` alone cannot answer "which
+  // world is this" — a ref is a name and the commit under it moves. The canon
+  // receipt stamps the answer with the sha it was folded from, and reading it
+  // back out of `publishedState` would be a second `git show` of a 1 MiB
+  // world-state.json on every focus. It is already in hand here; carry it.
+  assembled._raw = { worldState, skeleton, ref: selected.ref, sha: selected.sha };
   _worlds.set(selected.ref, { sha: selected.sha, world: assembled });
   _places.clear(); // place words are a fold over these marks — a new world, new names
   return assembled;
@@ -1326,7 +1331,33 @@ export async function worldInvestigate(args = {}, key = null) {
   const { verbs } = await mods();
   const depth = Number.isFinite(Number(args.depth)) ? Number(args.depth) : 1;
   const r = verbs.investigate(String(args.mark), w, { depth });
-  if (!r) return { error: "bounce", defect: `no mark "${args.mark}"`, hint: "ids are <by>/<slug> — see /world/state" };
+
+  // ── THE CANON RECEIPT (2026-09-07, #2526) ───────────────────────────────
+  //
+  // "No mark" is only for a mark THE RECORD NEVER SAW. Before this, a mark
+  // staked yesterday, standing on the public docket with a stamp behind it,
+  // came back from this door as `no mark or terrain feature` — the same
+  // sentence a typo gets — while the escrow door could name it, the marks
+  // shadow listed it, and the bulletin promised in writing that "if your mark
+  // does not ride a crossing, the reason is knowable … and the door will tell
+  // you which".
+  //
+  // The receipt is a DERIVED (classes § The derived): computed here at the
+  // read, out of `claims` + the world's settlement tags + canon, and stored by
+  // nobody. See `mark-receipt.mjs` for the derivation and for the three
+  // absences that are three different sentences.
+  const receipt = await markReceipt(String(args.mark), key, w);
+
+  if (!r) {
+    // The record HAS seen it — a docket claim, or the caller's own compose
+    // space. That is not a bounce, it is a tense: answer with the receipt and
+    // the sentence that names it.
+    if (receipt && receipt.status !== "never-was")
+      return { mark: String(args.mark), standing: false, receipt, note: receipt.says };
+    return { error: "bounce", defect: `no mark "${args.mark}"`,
+      hint: "ids are <by>/<slug> — see /world/state",
+      ...(receipt ? { receipt } : {}) };
+  }
 
   // OPT-IN, and OFF IS BYTE-IDENTICAL. Without with_image: true this branch is
   // not entered, nothing is fetched, no field is added, and the answer is the
@@ -1338,6 +1369,7 @@ export async function worldInvestigate(args = {}, key = null) {
     const got = await markImageBytes(r.image);
     return {
       ...r,
+      ...(receipt ? { receipt } : {}),
       image_note: got.note,
       // The transport carrier, not door vocabulary — mcp.mjs lifts these out
       // of the answer and into the MCP content array, and strips the field
@@ -1353,7 +1385,48 @@ export async function worldInvestigate(args = {}, key = null) {
   // this door's vocabulary, so `stamps` is raw own escrow and `weight` is the
   // effective ✦ figure here too. Adding a translation layer is how the two words
   // drifted apart in the first place.
-  return r;
+  return receipt ? { ...r, receipt } : r;
+}
+
+/**
+ * ONE STAMP FOR ONE ANSWER.
+ *
+ * The receipt names the ref and sha the world it sits beside was folded from,
+ * and DISCLOSES when the class layer's store (`world.db`, hydrated `--ref
+ * origin/main`) stands at a different world — the shape `dynamic-entities.mjs §
+ * readDepartureEvents` already uses for `walk-ledger-moved`. Before this, the
+ * apex printed `law.as_of_world` off `world.db` beside a focus folded from a
+ * six-hour-old ref: a fresh stamp certifying a stale answer, with nothing in
+ * the object able to say so.
+ *
+ * Garnish discipline: never throws, and a receipt that could not be built is
+ * absent rather than empty, so a caller that never learns about this field
+ * reads exactly what it read before.
+ */
+async function markReceipt(id, key, w) {
+  try {
+    const { readMarkReceipt } = await import("./mark-receipt.mjs");
+    // The world in hand IS the canon this answer was folded from — reading it
+    // back out of `publishedState` would be a second `git show` of a 1 MiB
+    // world-state.json on the request path, per read.
+    const raw = w?._raw ?? null;
+    const canonRow = (raw?.worldState?.marks ?? []).find((m) => m.id === id) ?? null;
+    const read_at = raw?.ref && raw?.sha ? { ref: raw.ref, sha: raw.sha } : null;
+    const receipt = await readMarkReceipt(id, {
+      repo: WORLD_CLONE, key, canon: canonRow,
+      publishedSha: read_at?.sha ?? null,
+    });
+    if (!receipt) return null;
+    let disclosed = [];
+    try {
+      const { storeSnapshot } = await import("./world-serve.mjs");
+      const snap = storeSnapshot();
+      const asOf = snap?.error ? null : (snap?.asOfWorld ?? null);
+      if (read_at?.sha && asOf && asOf !== read_at.sha)
+        disclosed.push(`world-store-at-another-world: this answer was folded from ${read_at.ref} at ${String(read_at.sha).slice(0, 12)}, and the class layer (world.db) stands at ${String(asOf).slice(0, 12)} — the two do not name the same world`);
+    } catch { /* an unreadable store is not a claim about freshness */ }
+    return { ...receipt, ...(read_at ? { read_at } : {}), ...(disclosed.length ? { disclosed } : {}) };
+  } catch { return null; }
 }
 
 // The canon pair. No key: /world/state and /world/skeleton answer the same bytes
