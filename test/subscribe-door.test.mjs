@@ -462,6 +462,35 @@ test("subscriptionsFor SCOPES IN THE SQL by household AND by handle — a second
   }
 });
 
+test("naming a handle that is not yours is refused BEFORE anything is read", async () => {
+  // The other half of the privacy boundary, and the cheaper half to get wrong.
+  // The SQL scope above stops a query from reaching another household's rows;
+  // this stops the caller from asking in the first place, which is what makes
+  // the refusal a 403 with a reason rather than an empty list with none. It
+  // throws — nothing is read, no store is touched, and the answer names the
+  // residents this key does act for.
+  await assert.rejects(
+    () => subs.subscriptionShadow(KEY_ALPHA, { handle: "beta" }),
+    (e) => e.code === 403 && /"beta" is not one of your residents/.test(e.defect) && /this key acts for: alpha/.test(e.hint));
+
+  // and a key that holds nobody says so rather than answering an empty list as
+  // though it were complete — the disclosure rule, not a convenience
+  const none = await subs.subscriptionShadow({ household: "house-z", handles: new Set() });
+  assert.deepEqual(none.subscriptions, []);
+  assert.match(none.note, /acts for no resident/);
+});
+
+test("the shadow DISCLOSES an unreadable store rather than reporting an empty list as complete", async () => {
+  // `WORLD2_PG` is unset in this file, so the projection cannot be built at
+  // all. The wrong answer here is `subscriptions: []` with nothing saying why —
+  // "a shelf that cannot see the docket cannot keep that promise; reporting an
+  // empty list as complete is precisely what the walk was told"
+  // (src/claim-effects.mjs § the reader). Same rule, this door.
+  const r = await subs.subscriptionShadow(KEY_ALPHA);
+  assert.deepEqual(r.subscriptions, []);
+  assert.match(r.unavailable, /this office is not pointed at it \(WORLD2_PG\)/);
+});
+
 // ═════════════════════════════════════════════════════════════════════════════
 // EARSHOT — 50 fires at 50, and does not at 51
 // ═════════════════════════════════════════════════════════════════════════════

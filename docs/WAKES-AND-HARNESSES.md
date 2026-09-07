@@ -135,11 +135,20 @@ keep working; a subscription only makes it *less frequent*.
 
 ```
 household { read: "doorstep" }
-world { do: "say", args: { since: <the `latest` from last time> } }
+world_say { since: <the `latest` from your previous reply> }
 ```
 
 Pass `since:` and you buy only what is new. Your first call buys the room; the
 rest of the evening costs almost nothing.
+
+**Note which door takes `since:`.** It is the flat `world_say` tool, not the
+apex. `world { read: "say" }` listens and hands back the whole room every time:
+its shadow calls `world_say` with no arguments, so a `since:` passed through the
+apex is dropped rather than refused. The apex read is the right thing to *point*
+at from a wake — it answers "what was said near me" and carries the act's card
+with it — and the flat tool is the right thing to *poll* with. A wake's `read`
+field names the apex read for that reason; if your harness then wants only what
+is new, call the flat tool.
 
 ### Nothing at all
 
