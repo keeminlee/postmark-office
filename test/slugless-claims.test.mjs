@@ -17,10 +17,33 @@
 //    vocabulary. The clearing job materializes exactly the claims that name
 //    one."
 //
-// So a slugless `locked` claim is a stake or an escrow the candle ruled for —
-// not a corrupt row, and not a mark. (The query did not project `class`, so the
-// CLASS of these six is unconfirmed; `SELECT class` on the same rows settles it,
-// and the lane's report says so rather than asserting it here.)
+// ⚑ AND THE OBVIOUS READING OF THAT SENTENCE IS WRONG FOR THESE SIX. This file
+// first said they were "a stake or an escrow the candle ruled for — not a
+// corrupt row, and not a mark", flagging the class as unconfirmed. The operator
+// ran `SELECT class` on the same rows (2026-09-07 10:40Z, read-only):
+//
+//     sited ×5, parcel ×1 — all locked, all WINDOW 150
+//     households: solo:berthillon ×2, solo:current-the-reader ×4
+//
+// They are MARK CLAIMS. `sited` and `parcel` are the two classes that name a
+// mark, and 006's own words are that "the clearing job materializes exactly the
+// claims that name one" — so six mark claims LOCKED at window 150 with no slug
+// is a DATA DEFECT, not the nullable column doing its job. 006 was written for
+// exactly this shape one lane over: "a claim with no geometry locks and then
+// vanishes, with no refusal and nothing to notice it. That is the
+// states-with-no-receipt class."
+//
+// The defect is the sitting's (which register wrote a mark claim with an empty
+// slug at window 150, and what was window 150?) and it is NOT what this file
+// tests. What this file tests is unchanged and matters more now, not less: rows
+// like these EXIST on prod, two of this lane's reads return them, and no answer
+// may print one. A slugless row being a defect rather than an ordinary state is
+// a reason for the guards to hold, never a reason to assume they will not be
+// met.
+//
+// I had the schema's sentence and reached for the reading it suggested instead
+// of the column that would settle it — the third time in this lane that a value
+// was reasoned about rather than read (the 0-of-8, `review-ruling`, this).
 //
 // ── WHY THEY NEED A GUARD AT ALL ───────────────────────────────────────────
 //
@@ -52,16 +75,32 @@ const isoAt = (crossing) => new Date(CROSSING_EPOCH_UTC + crossing * CROSSING_MS
 const MINE = new Set(["berthillon", "current-the-reader"]);
 const mine = (id, row) => MINE.has(row?.claimant);
 
-/** The six real rows, in the shape the readers return them. */
+/**
+ * The six real rows, in the shape the readers return them — and with the values
+ * the operator MEASURED (2026-09-07 10:40Z), not the ones this file first
+ * guessed. `window_id` was 174 here until that read; it is 150, and the class
+ * column that decides what these rows even are was absent entirely.
+ *
+ * `sited` ×5 and `parcel` ×1 are the two classes that DO name a mark, which is
+ * what makes an empty slug on them a defect rather than the nullable column
+ * working as designed. Carried in the fixture so a reader of this file meets
+ * the real shape, and so the legs below are running over mark claims rather
+ * than over the stakes I imagined.
+ */
+const SLUGLESS_WINDOW = 150;
 const SLUGLESS = [
   ...Array.from({ length: 2 }, (_, i) => ({
-    id: `b-${i}`, slug: null, claimant: "berthillon", household: "solo:berthillon",
-    status: "locked", window_id: 174, submitted_at: isoAt(172), decided_at: isoAt(173), refusal_check: null,
+    id: `b-${i}`, slug: null, class: "sited", claimant: "berthillon", household: "solo:berthillon",
+    status: "locked", window_id: SLUGLESS_WINDOW, submitted_at: isoAt(172), decided_at: isoAt(173), refusal_check: null,
   })),
-  ...Array.from({ length: 4 }, (_, i) => ({
-    id: `c-${i}`, slug: null, claimant: "current-the-reader", household: "solo:current-the-reader",
-    status: "locked", window_id: 174, submitted_at: isoAt(172), decided_at: isoAt(173), refusal_check: null,
+  ...Array.from({ length: 3 }, (_, i) => ({
+    id: `c-${i}`, slug: null, class: "sited", claimant: "current-the-reader", household: "solo:current-the-reader",
+    status: "locked", window_id: SLUGLESS_WINDOW, submitted_at: isoAt(172), decided_at: isoAt(173), refusal_check: null,
   })),
+  {
+    id: "c-parcel", slug: null, class: "parcel", claimant: "current-the-reader", household: "solo:current-the-reader",
+    status: "locked", window_id: SLUGLESS_WINDOW, submitted_at: isoAt(172), decided_at: isoAt(173), refusal_check: null,
+  },
 ];
 
 const REAL = {
@@ -69,11 +108,18 @@ const REAL = {
   status: "locked", window_id: 174, submitted_at: isoAt(172), decided_at: isoAt(173), refusal_check: null,
 };
 
-test("RED CONTROL: the fixture is the prod shape — six slugless LOCKED rows for two claimants", () => {
+test("RED CONTROL: the fixture is the prod shape the operator measured", () => {
   assert.equal(SLUGLESS.length, 6);
   assert.ok(SLUGLESS.every((r) => r.slug == null && r.status === "locked"));
+  assert.ok(SLUGLESS.every((r) => r.window_id === SLUGLESS_WINDOW), "all six locked at window 150");
   assert.deepEqual([...new Set(SLUGLESS.map((r) => r.claimant))].sort(),
     ["berthillon", "current-the-reader"]);
+  // The class is what turns "an ordinary nullable column" into "a defect", so
+  // the fixture must carry it or the legs below are about something else.
+  assert.deepEqual(SLUGLESS.filter((r) => r.class === "sited").length, 5);
+  assert.deepEqual(SLUGLESS.filter((r) => r.class === "parcel").length, 1);
+  assert.ok(SLUGLESS.every((r) => ["sited", "parcel"].includes(r.class)),
+    "both are classes that NAME a mark — 006: 'the clearing job materializes exactly the claims that name one'");
 });
 
 // ── `since:` ───────────────────────────────────────────────────────────────

@@ -69,9 +69,14 @@ export function claimEffectsFrom({ rows = [], sinceCrossing, nowCrossing, mine =
     // ⚑ A SLUGLESS CLAIM NAMES NO MARK, and there are real ones on prod: six
     // `locked` rows for berthillon and current-the-reader carry no slug at all
     // (operator's SELECT, 2026-09-07 10:13Z). `006_claim_identity.sql` makes the
-    // column NULLABLE on purpose — "not every claim class names a mark (a stake
-    // or an escrow claim does not)" — so this is an ordinary state, not a
-    // corrupt row. `claimRowsSince` DOES return them (its `claimant = ANY($1)`
+    // column NULLABLE on purpose, and my first reading of that — "so this is an
+    // ordinary state" — was WRONG: the operator's `SELECT class` (10:40Z) says
+    // `sited` ×5 and `parcel` ×1, all at window 150. Both classes NAME a mark,
+    // so six mark claims locked with an empty slug is a DATA DEFECT, carried to
+    // the sitting. It does not change this guard; it raises it. A slugless row
+    // being a defect is a reason for the guard to hold, never a reason to
+    // assume it will not be met.
+    // `claimRowsSince` DOES return them (its `claimant = ANY($1)`
     // arm matches on the handle, not the slug), so this guard is load-bearing:
     // without it an event would be minted with `mark: null` and a summary
     // reading "null went forward onto the docket". Bound by
