@@ -265,14 +265,39 @@ test("the teaser is bounded and says how much it is a cut of", async () => {
 // one. slimAwaiting and slimPsa already cut this way, and every cut they make
 // is named on the page.
 
-test("slim: the teaching block becomes ONE POINTER, and the page says it did", async () => {
+test("slim: the teaching block is DROPPED and the door is named — the key is not retyped", async () => {
   const slim = await doorstepBundle(HANDLE, { ...ctx, slim: true });
-  assert.equal(typeof slim.stances.teach, "string", "a pointer, not a block");
-  assert.match(slim.stances.teach, /household \{ read: "stances" \}/, "and it names the door that answers whole");
-  assert.doesNotMatch(slim.stances.teach, /UNRULED PAIR|neutral-and-revisable/,
+  // ⚠ THE FIRST CUT KEPT `teach` AND CHANGED ITS TYPE, object -> string. That
+  // is the one place it departed from this skin's idiom (every other slim cut
+  // renames or drops; none retypes), and the cost is exact: a consumer reading
+  // `stances.teach.after_it_is_published.unruled` gets undefined here with no
+  // bounce — a silent wrong answer rather than a refusal.
+  assert.equal(slim.stances.teach, undefined, "no `teach` on this skin at all");
+  assert.equal(typeof slim.stances.teach_at, "string", "a pointer under its own name");
+  assert.match(slim.stances.teach_at, /household \{ read: "stances" \}/, "and it names the door that answers whole");
+  assert.doesNotMatch(slim.stances.teach_at, /UNRULED PAIR|neutral-and-revisable/,
     "the pointer is not a summary of the block — a paraphrase here is the copy the block exists to avoid");
-  assert.match(slim.stances.abridged, /carries the pointer above instead of the block/,
+  assert.match(slim.stances.abridged, /drops `teach` and names the door instead/,
     "and the cut is NAMED on the page, the way every other slim cut is");
+});
+
+test("no key on the slim stances segment holds a DIFFERENT TYPE from the same key on REST", async () => {
+  // The general form of the defect above, and the reason it is worth a probe of
+  // its own: a renamed key and a dropped key are both legible to a caller — one
+  // is absent, one is somewhere else — but a key that survives with a different
+  // type reads as present and answers wrong. This walks the whole segment, so
+  // the next cut cannot reintroduce the shape under a different key.
+  const fat = await doorstepBundle(HANDLE, ctx);
+  const slim = await doorstepBundle(HANDLE, { ...ctx, slim: true });
+  const wrong = [];
+  for (const [k, v] of Object.entries(slim.stances)) {
+    if (!(k in fat.stances)) continue;              // renamed or new: legible
+    const a = Array.isArray(fat.stances[k]) ? "array" : typeof fat.stances[k];
+    const b = Array.isArray(v) ? "array" : typeof v;
+    if (a !== b) wrong.push(`stances.${k}: ${a} on REST, ${b} on the connector`);
+  }
+  assert.deepEqual(wrong, [],
+    "a key that survives a cut with a new type answers wrong instead of being absent: " + wrong.join(" · "));
 });
 
 test("REST: the segment still carries the block whole — the bundle law is not traded for bytes", async () => {

@@ -97,9 +97,23 @@ export async function doorstepBundle(handle, ctx = {}) {
     const args = { handle, limit: DOORSTEP_STANCES };
     const whole = await stancesForHandles([handle], { limit: DOORSTEP_STANCES });
     const { teach: _teach, ...trimmed } = whole;
+    // ⚠ `teach_at`, NOT `teach` — THE KEY IS DROPPED, NOT RETYPED.
+    //
+    // The first cut kept `teach` and changed it from an object to a string,
+    // which is the one place this cut departed from the skin's own idiom: every
+    // other slim cut RENAMES a key or DROPS it, and none keeps a key while
+    // changing what type it holds. The cost is exact — a consumer reading
+    // `stances.teach.after_it_is_published.unruled` gets `undefined` on the
+    // connector with no bounce, which is a silent wrong answer rather than a
+    // refusal, and this lane exists to stop exactly that. Caught by the
+    // reviewer at re-review, 2026-09-07.
+    //
+    // So the slim segment has no `teach` at all and carries `teach_at`, a
+    // pointer. A reader who asks for the block on this skin gets nothing and
+    // can tell; a reader who wants it is told, by name, which door answers.
     d.stances = slim
-      ? { serves: "household.stances", args, ...trimmed, teach: TEACH_POINTER,
-          abridged: "the teaching block — what a stance DOES, and the unruled pair it is caught between — is the same paragraph for every resident every day, so the connector skin carries the pointer above instead of the block. `household { read: \"stances\" }` answers it whole." }
+      ? { serves: "household.stances", args, ...trimmed, teach_at: TEACH_POINTER,
+          abridged: "the teaching block — what a stance DOES, and the unruled pair it is caught between — is the same paragraph for every resident every day, so the connector skin drops `teach` and names the door instead (`teach_at` above). `household { read: \"stances\" }` answers it whole." }
       : { serves: "household.stances", args, ...whole };
   } catch (e) {
     d.stances = { serves: "household.stances", args: { handle, limit: DOORSTEP_STANCES },
