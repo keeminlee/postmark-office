@@ -636,3 +636,45 @@ test("the teach block rides the SHADOW — the doorstep's segment and the world'
   // sentences, and the second was the one missing.
   assert.match(shadow.law, /^A stance is a revisable word on an edge/);
 });
+
+// ── WHOSE GROUND THE INTEGER COUNTED (walk #1 item 3, 2026-09-05) ────────────
+//
+// THE COMPLAINT, verbatim: "`household { read: "doorstep" }` says
+// `stances_awaiting: 23`; `world { since: … }` for the same handle says 45. The
+// world door is counting my household's ground, the household door only mine —
+// but both say *stances_awaiting* and neither says whose ground it counted. …
+// which number is my job?"
+
+test("stances_awaiting names its DENOMINATOR — one resident's ground reads differently from a house's", async () => {
+  // One resident named: the count is that resident's ground.
+  const solo = await stanceShadow(repo, { handles: new Set(["alpha"]) }, { dbPath });
+  assert.equal(solo.stances_awaiting_ground, "resident:alpha");
+
+  // The same call for a household holding two: the same field, a different
+  // word, because it is a different denominator — which is the whole finding.
+  const house = await stanceShadow(repo, { handles: new Set(["alpha", "beta"]) }, { dbPath });
+  assert.equal(house.stances_awaiting_ground, "household");
+  assert.notEqual(house.stances_awaiting_ground, solo.stances_awaiting_ground,
+    "two scopes must not answer under one name — that WAS the defect");
+
+  // And the numbers really do differ, so the label is load-bearing rather than
+  // decorative: alpha alone holds one parcel; the house holds alpha's ground
+  // and beta's cairn, so beta's own mark leaves alpha's inbox.
+  assert.notEqual(house.stances_awaiting, solo.stances_awaiting,
+    "the two counts differ — which is why the label had to");
+});
+
+test("the ambient block names its ground too, and TIER 1 stays one integer", async () => {
+  // Tier 2 — standing on your own parcel — carries a block, so the scope rides
+  // it. This is the read the walk's `45` came from.
+  const own = await stancesBlock(repo, houseA, { spine: [{ id: "alpha/alphas-parcel" }], dbPath });
+  assert.equal(own.stances_awaiting_ground, "resident:alpha");
+  assert.ok(Array.isArray(own.awaiting), "tier 2 is the block, not the bare integer");
+
+  // Tier 1 — off your own ground — is ONE INTEGER, and this lane does not get to
+  // change that. dev/door-plan/DESIGN.md § the two additions, founder-blessed,
+  // verbatim: "the bare read carries ONE INTEGER everywhere: `stances_awaiting: N`".
+  const away = await stancesBlock(repo, houseA, { spine: [{ id: "the-town/let-there-be-light" }], dbPath });
+  assert.deepEqual(Object.keys(away), ["stances_awaiting"],
+    "a market read grows no second key — the exposure model is a ruling, not a default");
+});
