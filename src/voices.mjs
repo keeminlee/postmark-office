@@ -47,7 +47,7 @@ const ROOT = join(HERE, "..");
 // `SAY_DIALS` below records, per dial, whether the record answered, and
 // `sayDialsDisclosure()` is the sentence a surface can print. A dial that fell
 // back says so; it never passes its constant off as the town's word.
-import { dialNumber } from "./world-classes.mjs";
+import { dialNode, dialNumber } from "./world-classes.mjs";
 
 // The class the dials hang on. Named once, beside the reader, for the same
 // reason STRIDE_CLASS_NAME is: the slow-walk bug was a lookup asking for a
@@ -55,11 +55,23 @@ import { dialNumber } from "./world-classes.mjs";
 // a test instead of failing the town.
 export const SAY_CLASS_NAME = "say";
 
-// The same class as the WORLD renders it. `SAY_CLASS_NAME` is the key the dial
-// reader hands the store; this is the mark id a resident can go and read. They
-// are two names for one node and both are needed: the derived that quotes a
-// dial has to name a node the reader can find.
-export const SAY_RESIDUE = `the-town/${SAY_CLASS_NAME}`;
+// WHERE presence_min STANDS, READ OFF THE RECORD — never assembled here.
+//
+// This was `the-town/say/presence_min`, built from the class id and the lookup
+// key, and it was wrong three ways: no world id has two slashes, a dial is a
+// SIBLING of its class and not a child of it, and the record spells the name
+// `presence-min` where this module's key says `presence_min`. A falsifier that
+// compared the published string to the same string typed again could not see
+// any of it — so the id is no longer typed. `dialNode` walks the same
+// `describes` edge `dialNumber` walks and returns what the record calls it
+// (`the-town/presence-min`).
+//
+// Null when the store cannot answer. That is the same condition that makes
+// `dialNumber` report `source: "fallback"`, so the two fields agree: we are
+// standing on this repo's constant, and there is no node to send you to. A
+// plausible id would be worse than none — it sends a reader somewhere that does
+// not exist and looks authoritative doing it.
+export const PRESENCE_DIAL_NODE = dialNode(SAY_CLASS_NAME, "presence_min");
 
 // slot -> [fallback, unit-multiplier to the exported value]. The record keeps
 // human units (minutes, seconds, metres); the module keeps milliseconds where
@@ -454,7 +466,8 @@ export function createVoices({
    *
    * Presence today is POSITION: true by law, read off departures, and a resident
    * can stand in the makers' quarter for a week and be reading nothing. The say
-   * edge already carries the honest source — the-town/say/presence_min:
+   * edge already carries the honest source — the-town/presence-min, say's
+   * presence_min dial:
    * "Minutes that listening still counts as standing here. Attention is
    * presence; a silent listener has not left the room." — and this module has
    * kept exactly that presence, for every voice that spoke OR listened, since
@@ -489,11 +502,9 @@ export function createVoices({
     const dialSlot = SAY_DIALS.presence_min;
     const base = {
       available_within_min: withinMin,
-      // The node a reader can actually go and read, not the key this module
-      // hands dialNumber: the class is `say` in the code and renders in the
-      // world as `the-town/say`, and a resident deciding whether to wait for
-      // someone should be able to find the number that governed the answer.
-      dial: { slot: `${SAY_RESIDUE}/presence_min`, read_from: dialSlot.source },
+      // The node a reader can actually go and read, as the RECORD names it.
+      // Null when the record could not be asked — see PRESENCE_DIAL_NODE.
+      dial: { slot: PRESENCE_DIAL_NODE, read_from: dialSlot.source },
     };
 
     const p = presence.get(handle);

@@ -4,7 +4,7 @@
 // off departures) with AVAILABILITY. A resident can stand in the makers'
 // quarter for a week and be reading nothing, and `present` has been calling
 // that presence. The town's own dial already says the honest thing —
-// the-town/say/presence_min: "Minutes that listening still counts as standing
+// the-town/presence-min (say's presence_min): "Minutes that listening still counts as standing
 // here. Attention is presence; a silent listener has not left the room." — and
 // the office has kept exactly that presence, for every voice that spoke OR
 // listened, since the say-box. Nothing read it back.
@@ -18,7 +18,8 @@
 //                          availability at all — the defect, on a fixture.
 //   the window is the      availability lapses at presence_min + 1s with no
 //   dial's                 act, on an injected clock, never a sleep; and the
-//                          window IS the-town/say/presence_min, not a constant.
+//                          window IS the-town/presence-min, read off the record
+//                          and never an id assembled here.
 //   attention is presence  a LISTEN (an empty-handed say) makes a resident
 //                          available exactly as a say does, and says which.
 //   the durable half       a say is in the record and survives a restart; a
@@ -45,7 +46,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 process.env.WORLD_CLONE = join(tmpdir(), "postmark-no-world-clone-available");
-const { createVoices, EARSHOT_M, PRESENCE_MS, SAY_DIALS } = await import("../src/voices.mjs");
+const { createVoices, EARSHOT_M, PRESENCE_MS, PRESENCE_DIAL_NODE, SAY_DIALS } = await import("../src/voices.mjs");
 
 const DIR = mkdtempSync(join(tmpdir(), "postmark-available-"));
 const T0 = Date.UTC(2026, 8, 7, 12, 0, 0);
@@ -120,11 +121,26 @@ test("availability lapses at presence_min + 1s with no act — on an injected cl
   // The window is the record's number, not a constant in this file.
   assert.equal(gone.available_within_min, Math.round(PRESENCE_MS / 60000));
   assert.equal(gone.available_within_min, SAY_DIALS.presence_min.value,
-    "read from the-town/say/presence_min — there is no second constant");
-  assert.equal(gone.dial.slot, "the-town/say/presence_min",
-    "and it names the node a resident can go and read, not this module's lookup key");
+    "read from say's presence_min dial — there is no second constant");
+  // THE NODE IS READ, NEVER TYPED. This used to assert a hand-typed literal
+  // against the same literal in the code, which is a tautology and locked in an
+  // id no world node carries (`the-town/say/presence_min`: two slashes, a dial
+  // treated as a child of its class, and the module's underscore where the
+  // record spells a hyphen). The id now comes off the record via `dialNode`;
+  // say-dials.test.mjs resolves it AGAINST the store, and what is asserted here
+  // is the law that holds with or without one.
+  assert.equal(gone.dial.slot, PRESENCE_DIAL_NODE, "the published id is the one the record named — never assembled here");
   assert.equal(gone.dial.read_from, SAY_DIALS.presence_min.source,
     "with the honest half: whether that number is the town's word or this repo's fallback");
+  // The two fields must agree about the same fact. A named node with a
+  // fallback number, or a read number with no node, would be one answer telling
+  // two stories.
+  assert.equal(gone.dial.slot === null, gone.dial.read_from === "fallback",
+    "no node named and no record read are the SAME condition — they cannot disagree");
+  if (gone.dial.slot !== null) {
+    assert.equal(gone.dial.slot.split("/").length, 2,
+      `world ids are flat <by>/<name> — "${gone.dial.slot}" is a path, not an id`);
+  }
 });
 
 // ── 3. attention is presence ─────────────────────────────────────────────────

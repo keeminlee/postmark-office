@@ -14,6 +14,18 @@
 //   byte                 deep-equal to the rows it served before this existed.
 //   never a mark         `available` appears on resident rows and nowhere else —
 //                        not in `within`, not in `nearby`, not in the block.
+//   absent, never fatal  a resolver that THROWS costs the row its `available`
+//                        and costs the answer nothing else — the block keeps
+//                        every resident, key and disclosure it has always had,
+//                        and the throw does not escape near() to 500 the door.
+//   one clock, not two   the resolver is asked as of the same instant the
+//                        position was derived at, not as of now.
+//   four doors, watched  each of the four injections in world.mjs is driven
+//                        through the REAL door with the REAL voices store, and
+//                        deleting any one of them reds its own leg. Before
+//                        these, all four could be deleted and 155 tests stayed
+//                        green — the field vanished from the whole office and
+//                        nothing noticed.
 //
 //   node --test test/available-present.test.mjs
 
@@ -30,7 +42,24 @@ const MARKS = [
   { id: FRAME, by: "the-town", kind: "sited", tier: "constitution", at: { x: 0, y: 0 }, extent: { w: 100000, h: 100000 }, body: "let there be light" },
   { id: "the-town/town-square", by: "the-town", kind: "sited", tier: "constitution", at: { x: 0, y: 0 }, extent: { w: 400, h: 400 }, body: "the square" },
 ];
-const repo = fixtureWorldCloneWithEngine({ label: "available", marks: MARKS });
+const N = 400;
+const B = crossingStart(N);
+
+// Two residents, at rest, thirty metres apart. By POSITION they are identical
+// in every way the presence layer has ever been able to see.
+//
+// The clone is built FROM this list, so the walk ledger the walkers door reads
+// and the world.db events the presence door reads are the same two records.
+// Without that, `worldWalkers` answered an empty roster and the door-4 leg
+// below reported "the injection is gone" when the injection was fine and the
+// FIXTURE was empty — a leg that fails for the wrong reason is not watching
+// the thing it names.
+const DEPARTURES = [
+  { at: new Date(B).toISOString(), actor: "wright", from: { x: 0, y: 0 }, toward: { x: 0, y: 0 }, crossing: N, line_no: 1 },
+  { at: new Date(B).toISOString(), actor: "iris", from: { x: 30, y: 0 }, toward: { x: 30, y: 0 }, crossing: N, line_no: 2 },
+];
+
+const repo = fixtureWorldCloneWithEngine({ label: "available", marks: MARKS, departures: DEPARTURES });
 const sweep = (d) => { try { rmSync(d, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); } catch { /* litter */ } };
 after(() => { sweep(scratch); sweep(repo); });
 
@@ -44,15 +73,7 @@ process.env.WORLD_DYNAMIC_DB = dynPath;
 delete process.env.WORLD_PRESENCE;
 delete process.env.WORLD_EMISSIONS;
 
-const N = 400;
-const B = crossingStart(N);
 
-// Two residents, at rest, thirty metres apart. By POSITION they are identical
-// in every way the presence layer has ever been able to see.
-const DEPARTURES = [
-  { at: new Date(B).toISOString(), actor: "wright", from: { x: 0, y: 0 }, toward: { x: 0, y: 0 }, crossing: N, line_no: 1 },
-  { at: new Date(B).toISOString(), actor: "iris", from: { x: 30, y: 0 }, toward: { x: 30, y: 0 }, crossing: N, line_no: 2 },
-];
 
 const wipeDyn = () => { for (const p of [dynPath, `${dynPath}-wal`, `${dynPath}-shm`]) if (existsSync(p)) rmSync(p, { force: true }); };
 
@@ -78,10 +99,10 @@ beforeEach(async () => {
  *  invented them here would teach this file a disclosure the office refuses. */
 const resolver = (readingHere) => (handle) => (readingHere.has(handle)
   ? { available: true, since: null, until: null,
-      source: "listened", available_within_min: 15, dial: { slot: "the-town/say/presence_min", read_from: "record" },
+      source: "listened", available_within_min: 15, dial: { slot: "the-town/presence-min", read_from: "record" },
       note: "listening within the last 15 minutes — attention is presence, and a silent listener has not left the room. When they last read is withheld: a listen is disclosed nowhere else, and this field says whether someone is here, not when they looked." }
   : { available: false, since: null, until: null, source: null, available_within_min: 15,
-      dial: { slot: "the-town/say/presence_min", read_from: "record" },
+      dial: { slot: "the-town/presence-min", read_from: "record" },
       note: "no word and no listening in the last 15 minutes — present by position, not reading here" });
 
 // ── 1. the room, answered ────────────────────────────────────────────────────
@@ -157,4 +178,161 @@ test("available rides resident rows and nothing else — it is a derived, not an
   const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((t) => t.name);
   db.close();
   assert.equal(tables.includes("available"), false, "no table for it, because it is never stored");
+});
+
+// ── 4. absent, never fatal ───────────────────────────────────────────────────
+//
+// `available` is advertised as purely additive. On the FAILURE path it was not:
+// unguarded, a throw escaped `near()` — which 500s GET /world/present — and
+// inside `presentNear`'s catch it cost orient and open_your_eyes the entire
+// presence block. This lane already met that failure once, as an instance (a
+// cold-load bug that threw on the first read after a restart). This is the
+// class.
+
+const boom = () => { throw new Error("availability tripped — a corrupt voices log, say"); };
+
+test("a resolver that throws costs the row its availability and the answer nothing else", async () => {
+  const good = await presence.near({ x: 0, y: 0, radiusM: 500, dbPath: dynPath, repo, atMs: B });
+  const bad = await presence.near({ x: 0, y: 0, radiusM: 500, dbPath: dynPath, repo, atMs: B, available: boom });
+
+  assert.deepEqual(bad, good,
+    "a derived that cannot answer is ABSENT — and absent means the answer is the one the door has always given, byte for byte");
+  assert.equal(bad.residents.length, 2, "both residents still stand there; not knowing whether they are reading does not unplace them");
+  for (const row of bad.residents) assert.equal("available" in row, false);
+});
+
+test("and it does not escape near() — the door that has no catch above it stays a door", async () => {
+  // GET /world/present calls near()/everyone() directly and server.mjs turns an
+  // escaped throw into a 500. The guard is at the seam so this cannot happen.
+  await presence.near({ x: 0, y: 0, radiusM: 500, dbPath: dynPath, repo, atMs: B, available: boom });
+  await presence.everyone({ dbPath: dynPath, repo, atMs: B, available: boom });
+});
+
+test("presentNear keeps the WHOLE presence block when the derived trips — orient does not go dark for a boolean", async () => {
+  const was = process.env.WORLD_PRESENCE;
+  process.env.WORLD_PRESENCE = "1";
+  try {
+    const r = await presence.presentNear({ x: 0, y: 0 }, { repo, dbPath: dynPath, atMs: B, radiusM: 500, available: boom });
+    assert.ok(Array.isArray(r?.residents), "the block survives — this returned `{ unavailable: … }` before the guard");
+    assert.equal(r.residents.length, 2);
+    for (const k of ["at", "radius_m", "count", "shown", "capped", "as_of", "evaluated_at", "ledger_moved"]) {
+      assert.equal(k in r, true, `${k} survived too — a resident loses one field, not every field`);
+    }
+  } finally {
+    if (was === undefined) delete process.env.WORLD_PRESENCE; else process.env.WORLD_PRESENCE = was;
+  }
+});
+
+// ── 5. one clock, not two ────────────────────────────────────────────────────
+
+test("the resolver is asked as of the instant the position was derived at, not as of now", async () => {
+  const asked = [];
+  const spy = (handle, atMs) => { asked.push(atMs); return null; };
+  const PAST = B - 3 * 3600 * 1000;
+
+  await presence.near({ x: 0, y: 0, radiusM: 500, dbPath: dynPath, repo, atMs: PAST, available: spy });
+  assert.ok(asked.length > 0, "the resolver was consulted at all");
+  for (const t of asked) {
+    assert.equal(t, PAST,
+      "a row that says `standing at X as of then` beside `reading here as of now` is a quietly wrong answer; the two clocks are one clock");
+  }
+
+  asked.length = 0;
+  await presence.everyone({ dbPath: dynPath, repo, atMs: PAST, available: spy });
+  for (const t of asked) assert.equal(t, PAST, "and everyone() forwards it too — one seam, both readers");
+});
+
+// ── 6. four doors, watched ───────────────────────────────────────────────────
+//
+// `world.mjs` has exactly four lines that make `available` reach a resident:
+// worldOrient, worldEyes, worldPresent and worldWalkers. The reviewer deleted
+// all four and ran 155 tests green — the field was gone from every door in the
+// office and nothing said so. These legs drive the real doors with the module's
+// own `voices` store, so deleting an injection reds the leg that names it.
+//
+// The attention is made the town's own way: `worldSay` with no text is the
+// listen act (server.mjs: "world_say {} (empty-handed) listens at the quay"),
+// which routes to voices.hear() and touches presence. No test-only hook exists
+// or should.
+
+const withPresenceOn = async (fn) => {
+  const was = process.env.WORLD_PRESENCE;
+  process.env.WORLD_PRESENCE = "1";
+  try { return await fn(); } finally {
+    if (was === undefined) delete process.env.WORLD_PRESENCE; else process.env.WORLD_PRESENCE = was;
+  }
+};
+
+/** The shape every door must carry, asserted once so four legs cannot drift. */
+const assertWellFormed = (av, where) => {
+  assert.ok(av && typeof av === "object", `${where}: the row carries no \`available\` at all — the injection is gone`);
+  assert.deepEqual(Object.keys(av).sort(),
+    ["available", "available_within_min", "dial", "note", "since", "source", "until"],
+    `${where}: the derived's shape`);
+  assert.ok(av.available === true || av.available === false || av.available === null,
+    `${where}: three states and no fourth`);
+};
+
+test("door 1 of 4 — worldOrient's present rows carry the derived, and a real listen turns it true", async () => {
+  const { worldOrient, worldSay } = await import("../src/world.mjs");
+
+  await withPresenceOn(async () => {
+    const before = await worldOrient({ x: 0, y: 0 }, null);
+    const irisBefore = before.present.residents.find((r) => r.handle === "iris");
+    assertWellFormed(irisBefore?.available, "worldOrient");
+    assert.equal(irisBefore.available.available, null,
+      "a fresh office has been keeping presence for less than a window, so it says unknown rather than false");
+
+    // The town's own attention act, through the town's own door.
+    const heard = await worldSay({}, { handles: new Set(["iris"]) });
+    assert.equal(heard?.error, undefined, `the listen bounced: ${JSON.stringify(heard).slice(0, 200)}`);
+
+    const after = await worldOrient({ x: 0, y: 0 }, null);
+    const irisAfter = after.present.residents.find((r) => r.handle === "iris");
+    assert.equal(irisAfter.available.available, true, "she read the room, so the door says she is reading here");
+    assert.equal(irisAfter.available.source, "listened");
+    assert.equal(irisAfter.available.since, null, "and her clock stays hers");
+
+    const other = after.present.residents.find((r) => r.handle === "wright");
+    assert.equal(other.available.available, null,
+      "and the resident who did nothing is untouched — the door is reading presence, not painting everyone the same");
+  });
+});
+
+test("door 2 of 4 — worldEyes' banded residents carry the derived", async () => {
+  const { worldEyes, worldSay } = await import("../src/world.mjs");
+  await withPresenceOn(async () => {
+    await worldSay({}, { handles: new Set(["iris"]) });
+    const eyes = await worldEyes({ x: 0, y: 0 }, null);
+    const rows = (eyes.residents ?? []).flatMap((g) => g.residents ?? []);
+    assert.ok(rows.length > 0, "the eyes door grouped some residents");
+    const iris = rows.find((r) => r.handle === "iris");
+    assertWellFormed(iris?.available, "worldEyes");
+    assert.equal(iris.available.available, true);
+  });
+});
+
+test("door 3 of 4 — GET /world/present carries it, near AND bare", async () => {
+  const { worldPresent, worldSay } = await import("../src/world.mjs");
+  await withPresenceOn(async () => {
+    await worldSay({}, { handles: new Set(["iris"]) });
+
+    const near = await worldPresent({ x: "0", y: "0" });
+    assertWellFormed(near.residents.find((r) => r.handle === "iris")?.available, "worldPresent (near)");
+
+    const all = await worldPresent({});
+    assertWellFormed(all.residents.find((r) => r.handle === "iris")?.available, "worldPresent (bare)");
+    assert.equal(all.residents.find((r) => r.handle === "iris").available.available, true,
+      "the door the town's map draws from agrees with orient — that agreement is the whole grounds for the widening");
+  });
+});
+
+test("door 4 of 4 — worldWalkers' rows carry it, which is what `world { read: \"walk\" }` reads", async () => {
+  const { worldWalkers, worldSay } = await import("../src/world.mjs");
+  await worldSay({}, { handles: new Set(["iris"]) });
+  const w = await worldWalkers(repo, null);
+  const iris = (w.walkers ?? []).find((r) => r.handle === "iris");
+  assertWellFormed(iris?.available, "worldWalkers");
+  assert.equal(iris.available.available, true,
+    "the walkers door and the presence door name the same residents; now they agree about attention too");
 });

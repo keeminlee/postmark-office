@@ -1068,7 +1068,7 @@ export async function worldOrient(args = {}, key = null, { roll = [] } = {}) {
     // from the say edge's own presence, which the office has kept since the
     // say-box and nothing ever read back. Injected, not imported — the derived
     // is voices.mjs's to compute and dynamic-presence's only to carry.
-    available: (handle) => voices.availability(handle),
+    available: (handle, atMs) => voices.availability(handle, { at: atMs }),
     // You are not your own audience — the same ruling the earshot reply follows
     // for `listeners`. A spectator glance excludes nobody: it is nobody's.
     exclude: choice.handle ? [choice.handle] : [],
@@ -1176,7 +1176,7 @@ export async function worldEyes(args = {}, key = null, { roll = [] } = {}) {
   // office a second author of the world's voice.
   const present = await presentNear(at, {
     place: (p) => placeWords(p),
-    available: (handle) => voices.availability(handle),   // see worldOrient
+    available: (handle, atMs) => voices.availability(handle, { at: atMs }),   // see worldOrient
     exclude: choice.handle ? [choice.handle] : [],
     repo: WORLD_CLONE,
     world: w,
@@ -1241,7 +1241,7 @@ export async function worldPresent(args = {}, { roll = null } = {}) {
   // time for one line. The disclosure is the boolean and its window, which is
   // the same fact any keyed caller already reads, and nothing more: no text, no
   // position this door did not already publish.
-  const available = (handle) => voices.availability(handle);
+  const available = (handle, atMs) => voices.availability(handle, { at: atMs });
   if (!has) return presenceEveryone({ place, available, repo: WORLD_CLONE, world: w, roll: roll ?? [] });
   const radiusM = Number.isFinite(Number(args.radius_m)) ? Math.max(1, Number(args.radius_m)) : undefined;
   const limit = Number.isFinite(Number(args.limit)) ? Math.max(1, Math.floor(Number(args.limit))) : undefined;
@@ -3416,7 +3416,17 @@ export async function worldWalkers(worldClone, key = null, { roll = null } = {})
     // § the roll) — and a field that landed on one of them would be the exact
     // split-brain that consolidation ended. `world { read: "walk" }` reads this
     // door, so this is where the apex's walk shadow gets the word.
-    const withAvailability = (rows) => rows.map((r) => ({ ...r, available: voices.availability(r.handle) }));
+    // GUARDED, for the reason dynamic-presence's `askAvailable` is guarded: a
+    // derived that cannot answer is absent, never fatal. This door has no
+    // try/catch above it at all, so an unguarded throw here took out the whole
+    // walkers answer — the door the town's map draws from — for one boolean.
+    const withAvailability = (rows) => rows.map((r) => {
+      try { return { ...r, available: voices.availability(r.handle) }; }
+      catch (e) {
+        console.error(`[walkers] availability tripped for ${r.handle} (${String(e?.message ?? e).slice(0, 120)}) — the row answers without it`);
+        return r;
+      }
+    });
     // THE ROLL'S ABSENCE IS A DISCLOSURE, not a silence. Given no roll this door
     // answers about doers only — which is exactly the shape of the original
     // defect — so it says which question it asked rather than letting a narrower
