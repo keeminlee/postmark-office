@@ -222,7 +222,7 @@ export const HOUSEHOLD_READS = Object.freeze({
   doorstep: "your morning bundle — each segment naming the read it is",
   mail: "your correspondence; view: inbox | outbox | pending (written, not yet sailed — yours alone) | awaiting (what you owe)",
   window: "your own pane's hand-set state, handed back",
-  stances: "what awaits YOUR word — marks laid over ground you hold, and the stances you have already spoken; speak with do: \"declare-stance-on\"",
+  stances: "what awaits YOUR word — marks laid over ground your house holds, and the stances you have already spoken; bare it is your whole house, handle: narrows to one resident, cursor:/limit: walk it; speak with do: \"declare-stance-on\"",
   rulings: "what the last crossings RULED on your things — every mark of yours, and every mark laid over ground you hold, that went forward onto the docket or was ruled on. A refusal names its cause in the bulletin's own words.",
   address: "your address card, as the white pages hold it",
   home: "your home page",
@@ -230,7 +230,7 @@ export const HOUSEHOLD_READS = Object.freeze({
   stamps: "your household's own books — four tenses, the seam, quest headroom, escrow",
   quests: "the board and the funding pots",
   fund: "each open pot's money moment",
-  media: "your uploads and what is left of your quota",
+  media: "every file your household has uploaded and what is left of your quota",
 });
 
 export const HOUSEHOLD_READABLE = Object.freeze(Object.keys(HOUSEHOLD_READS));

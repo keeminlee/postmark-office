@@ -301,11 +301,18 @@ test("the household apex routes read: \"media\" and names it among the readable"
 
   const nope = await householdApex({ read: "bookshelves" }, key(), { odb: db });
   assert.equal(nope.code, 422);
-  assert.match(nope.hint, /media \(your uploads/,
-    "a caller who guesses wrong must be told the read exists");
-
-  const { HOUSEHOLD_TOOL } = await import("../src/household-apex.mjs");
-  assert.match(HOUSEHOLD_TOOL.inputSchema.properties.read.description, /media \(every file/,
+  const { HOUSEHOLD_TOOL, HOUSEHOLD_READS } = await import("../src/household-apex.mjs");
+  // ⚑ ASSERTED AGAINST THE CONSTANT, not against a copy of its prose
+  // (2026-09-07). This read `/media \(your uploads/`, which pinned the exact
+  // wording of `HOUSEHOLD_READS.media` into a second file — so enriching that
+  // blurb turned this leg red without anything being wrong. Both surfaces are
+  // built from the constant now, and the two assertions below say the intent:
+  // the bounce names the read a caller guessed past, and the schema advertises
+  // it. A blurb may be improved without breaking a falsifier that never cared
+  // about its words.
+  assert.ok(nope.hint.includes(`media (${HOUSEHOLD_READS.media})`),
+    "a caller who guesses wrong must be told the read exists, with its own blurb");
+  assert.ok(HOUSEHOLD_TOOL.inputSchema.properties.read.description.includes(`media (${HOUSEHOLD_READS.media})`),
     "and the tool's own schema must advertise it, or no agent will ever find it");
 });
 
