@@ -198,17 +198,54 @@ export function readAtRef(repo, ref, path, encoding = "utf8") {
 // this once per window rather than once per read, which removes the same
 // subprocess storm without touching what the answer means. Fix the caller's
 // cadence, not the answer's truth.
+//
+// ── IT IS ALSO THE CANON READER (2026-09-07, lane-a) ────────────────────────
+//
+// The sentence above says "for CODE we want the town's published truth". Every
+// word of it is true of the world STATE as well, and `publishedState` below did
+// not have it: it read `mainRef`, the pen's local-preferring reader, so on the
+// box the focus answered from `refs/heads/main` — a ref only the crossing-save's
+// 00:02/12:02Z pull advances — six hours after the settlement published. A mark
+// the same clone held at `origin/main` came back as "no mark or terrain feature"
+// (postmark-town/postmark#2526; the resident walk of 2026-09-06 05:53 EDT).
+//
+// So this is the ONE published-main ref for every READ tier. `mainRef` stays
+// exactly as it is and stays the WRITE path's: a draft forks from the freshest
+// local line mid-settlement, which is the case its local preference exists for.
+//
+// ── THE DIVERGED ARM, AND WHOSE RULING IT IS ────────────────────────────────
+//
+// `world-serve.mjs § publishedMainSha` ruled on this on 2026-08-17, for the
+// as-of bar, in its own words:
+//
+//   "mainRef()'s local-preference is right for the WRITE paths (a draft forks
+//    from the freshest local line mid-settlement) and was wrong here: on
+//    2026-08-17 the as-of bar read the lag backwards and reported the store
+//    BEHIND a 'main' that was itself two commits stale. The published sha is
+//    the DESCENDANT when the two disagree; a truly diverged pair falls to
+//    origin, because published truth is what the world can clone."
+//
+// This function answered only half of that: "is local behind origin" is the
+// descendant test in one direction, and it returned the LOCAL branch for a
+// diverged pair — a state the box reaches whenever a settlement's push is in
+// flight against a keeper's PC push. The two readers now answer the same
+// question the same way; `test/published-ref-follows-the-settlement.test.mjs`
+// binds them across all four states so they cannot drift apart again.
 export function freshestMainRef(repo) {
-  const local = refExists(repo, "refs/heads/main");
-  const remote = refExists(repo, "refs/remotes/origin/main");
+  const LOCAL = "refs/heads/main", ORIGIN = "refs/remotes/origin/main";
+  const local = refExists(repo, LOCAL);
+  const remote = refExists(repo, ORIGIN);
   if (local && remote) {
     try {
-      const behind = Number(git(repo, ["rev-list", "--count", "refs/heads/main..refs/remotes/origin/main"]).trim());
-      return behind > 0 ? "refs/remotes/origin/main" : "refs/heads/main";
-    } catch { return "refs/heads/main"; }
+      const [a, b] = git(repo, ["rev-parse", `${LOCAL}^{commit}`, `${ORIGIN}^{commit}`]).trim().split("\n");
+      if (a === b) return LOCAL;                     // one commit, two names
+      if (isAncestor(repo, a, b)) return ORIGIN;     // the box lagged; published truth moved ahead
+      if (isAncestor(repo, b, a)) return LOCAL;      // a settlement's push is in flight
+      return ORIGIN;                                 // diverged: what the world can clone wins
+    } catch { return LOCAL; }
   }
-  if (local) return "refs/heads/main";
-  if (remote) return "refs/remotes/origin/main";
+  if (local) return LOCAL;
+  if (remote) return ORIGIN;
   throw new Error("world clone has no main ref");
 }
 
@@ -530,8 +567,15 @@ export function foldedStateAtRef(repo, ref, { stakes = null } = {}) {
 // block, and the accept queue climbed past 200 (the 2026-08-22 outage). The
 // tourniquet WORLD_DRAFT_FOLD=0 stopped the bleeding that day; the overlay made
 // it the architecture, and the switch is gone with the arm it guarded.
+// ⚑ THE REF IS `freshestMainRef`, NOT `mainRef` (2026-09-07, lane-a). These two
+// functions ARE the canon a read serves, so they take the READ tier's ref — see
+// § freshestMainRef "IT IS ALSO THE CANON READER" for the ruling and the walk
+// that found it. Reading `mainRef` here made the focus answer from a branch the
+// tick never advances, so a mark published at 05:45Z was "no mark" until the
+// crossing-save pulled at 12:02Z, while the same answer's `law.as_of_world` —
+// off `world.db`, hydrated from `origin/main` — already named the newer world.
 export function publishedState(repo) {
-  const main = mainRef(repo);
+  const main = freshestMainRef(repo);
   return {
     ref: main,
     sha: git(repo, ["rev-parse", `${main}^{commit}`]).trim(),
@@ -543,7 +587,7 @@ export function publishedState(repo) {
 // world's own record, and a sketchbook holds marks. It followed the draft ref
 // only because the read tier once did.
 export function publishedSkeleton(repo) {
-  const main = mainRef(repo);
+  const main = freshestMainRef(repo);
   return { ref: main, skeleton: readJsonAtRef(repo, main, "WORLD/skeleton.json") };
 }
 
@@ -584,7 +628,13 @@ export function draftDeltaForKey(repo, key) {
     hint: "sign in as a resident household to read your drafts",
   };
 
-  const base = mainRef(repo);
+  // The READ tier's ref, for the same reason `publishedState` takes it: this
+  // delta says which of a household's declarations canon does NOT hold, and it
+  // must ask that of the same canon the focus answers from. Against a stale
+  // `mainRef` a mark the settlement published six hours ago is still "added",
+  // so the drafts list and the focus disagreed about the same mark — the shape
+  // walk #2 read as "the focus says no mark, the shadow says draft".
+  const base = freshestMainRef(repo);
   const ref = draftRefForHousehold(repo, household);
   const mainSha = git(repo, ["rev-parse", `${base}^{commit}`]).trim();
   if (!ref) return {
