@@ -72,13 +72,16 @@ beforeEach(async () => {
   assert.equal(r.ok, true, `seed refused: ${JSON.stringify(r.refused)}`);
 });
 
-/** The resolver the office injects, standing in for voices.availability. */
+/** The resolver the office injects, standing in for voices.availability — and
+ *  it must model a shape the real one can actually produce. A `listened` source
+ *  carries NO timestamps (the conductor's narrowing, 2026-09-07): a fixture that
+ *  invented them here would teach this file a disclosure the office refuses. */
 const resolver = (readingHere) => (handle) => (readingHere.has(handle)
-  ? { available: true, since: new Date(B).toISOString(), until: new Date(B + 900000).toISOString(),
-      source: "listened", available_within_min: 15, dial: { slot: "say/presence_min", read_from: "record" },
-      note: "listening within the last 15 minutes — attention is presence, and a silent listener has not left the room" }
+  ? { available: true, since: null, until: null,
+      source: "listened", available_within_min: 15, dial: { slot: "the-town/say/presence_min", read_from: "record" },
+      note: "listening within the last 15 minutes — attention is presence, and a silent listener has not left the room. When they last read is withheld: a listen is disclosed nowhere else, and this field says whether someone is here, not when they looked." }
   : { available: false, since: null, until: null, source: null, available_within_min: 15,
-      dial: { slot: "say/presence_min", read_from: "record" },
+      dial: { slot: "the-town/say/presence_min", read_from: "record" },
       note: "no word and no listening in the last 15 minutes — present by position, not reading here" });
 
 // ── 1. the room, answered ────────────────────────────────────────────────────
@@ -98,6 +101,7 @@ test("two residents at rest thirty metres apart read the same by position and di
 
   assert.equal(iris.available.available, true, "iris has been reading the room");
   assert.equal(iris.available.source, "listened");
+  assert.equal(iris.available.since, null, "and the town learns that she is here, not when she looked");
   assert.equal(wright.available.available, false, "wright has stood here saying and hearing nothing");
   assert.match(wright.available.note, /present by position, not reading here/);
 

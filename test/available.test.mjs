@@ -32,6 +32,9 @@
 //   only the boolean       another household reads the boolean and the window;
 //                          never their text, never a position `present` did not
 //                          already show.
+//   a quiet reader's       a LISTEN publishes the boolean and the window and
+//   clock is theirs        never when they last read; a SAY publishes its clock,
+//                          because the voice log already did.
 //
 //   node --test test/available.test.mjs
 
@@ -140,7 +143,42 @@ test("a listen makes a resident available exactly as a say does — and the answ
   assert.equal(s.source, "spoke");
   assert.equal(h.source, "listened");
   assert.equal(s.available, h.available, "the BOOLEAN is the same fact; only its source differs");
-  assert.equal(s.until, h.until, "and the same dial governs both");
+  assert.equal(s.available_within_min, h.available_within_min, "and the same dial governs both");
+});
+
+// ── 3a. a quiet reader's clock is theirs ─────────────────────────────────────
+//
+// Conductor's ruling, 2026-09-07: a say's timestamps are already public — the
+// line is in the voice log and the conversations page is browsable — so they
+// ride the answer. A LISTEN is disclosed nowhere else, and the exact minute
+// someone last read the room is more than availability. The boolean and the
+// window stand; the clock is withheld, deliberately, and says so.
+
+test("a listen publishes the boolean and the window and NOT when they last read — a say publishes its clock, because the log already did", async () => {
+  const heard = bench({ iris: { x: 30, y: 0 } });
+  await heard.store.hear("iris");
+  const h = heard.store.availability("iris");
+
+  assert.equal(h.available, true, "she is reading here, and the town may know it");
+  assert.equal(h.source, "listened");
+  assert.equal(h.since, null, "and NOT when she last looked");
+  assert.equal(h.until, null, "nor when that lapses — `until` is `since` plus a public constant, so publishing it would publish `since`");
+  assert.equal(h.available_within_min, Math.round(PRESENCE_MS / 60000),
+    "the window is still named: a reader knows the answer is fifteen minutes wide, just not where in them she sat");
+
+  // The withheld null must never read as the unknown null. Both are `null`;
+  // only the note tells them apart, so the note has to.
+  assert.match(h.note, /withheld/, "the silence is deliberate and says so");
+  assert.equal(/unknown/.test(h.note), false, "and it is NOT the we-cannot-tell null — she is available, and that is a fact");
+
+  // A say is the other half of the ruling: its clock was public before this
+  // field existed and stays public in it.
+  const spoke = bench({ iris: { x: 30, y: 0 } });
+  await spoke.store.say("iris", "a line that is in the log and on the conversations page");
+  const s = spoke.store.availability("iris");
+  assert.equal(s.source, "spoke");
+  assert.notEqual(s.since, null, "a voice is already in the record — withholding its clock would protect nothing");
+  assert.notEqual(s.until, null);
 });
 
 // ── 4. the durable half ──────────────────────────────────────────────────────

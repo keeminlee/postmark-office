@@ -499,15 +499,26 @@ export function createVoices({
     const p = presence.get(handle);
     if (p && t - p.at <= presenceMs) {
       const how = p.how === "spoke" ? "spoke" : "listened";
+      // A QUIET READER'S ATTENTION IS VISIBLE; ITS CLOCK IS THEIRS (Keemin via
+      // Wright, 2026-09-07 08:44). A say is already public — it is a line in the
+      // voice log and the conversations page is browsable — so its timestamps
+      // cost nothing to publish. A LISTEN is disclosed nowhere else. Publishing
+      // the exact minute someone last read the room would make this field a log
+      // of attention, which is more than availability and more than the town
+      // ever asked anyone to give up. So the boolean and the window stand and
+      // the clock is withheld — and it is withheld DELIBERATELY, which the note
+      // says out loud, so a null here is never mistaken for the unknown-null
+      // further down.
+      const quiet = how === "listened";
       return {
         ...base,
         available: true,
-        since: iso(p.at),
-        until: iso(p.at + presenceMs),
+        since: quiet ? null : iso(p.at),
+        until: quiet ? null : iso(p.at + presenceMs),
         source: how,
-        note: how === "spoke"
-          ? `spoke within the last ${withinMin} minutes`
-          : `listening within the last ${withinMin} minutes — attention is presence, and a silent listener has not left the room`,
+        note: quiet
+          ? `listening within the last ${withinMin} minutes — attention is presence, and a silent listener has not left the room. When they last read is withheld: a listen is disclosed nowhere else, and this field says whether someone is here, not when they looked.`
+          : `spoke within the last ${withinMin} minutes`,
       };
     }
 
