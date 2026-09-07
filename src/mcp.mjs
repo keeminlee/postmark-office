@@ -98,7 +98,7 @@ const DELISTED = new Set([
   // served by `household read: "doorstep"` — the two are the SAME function
   // (doorstep-bundle.mjs), so there is no second answer to keep in step.
   "send_letter", "list_mail", "read_doorstep",
-  "read_resident", "read_home", "read_votes", "read_stamps",
+  "read_resident", "read_marks", "read_home", "read_votes", "read_stamps",
   "stake_vote", "update_address_fields",
   //
   // WHAT STAYS LISTED, and why, so the survivors are a decision rather than a
@@ -139,6 +139,12 @@ export const TOOLS = [
     }, additionalProperties: false } },
   { name: "read_resident", description: "One resident's full address card (their PROFILE bubble, ADDRESS.md, HOME, region — their own words). `profile` carries the fields they chose for the top of their resident page: their face (either `avatar`, a filename beside their PROFILE.md, or `avatar_url`, a town-media URL — whichever they set last, with the URL winning if both are present), color, their own name for that color, bio, runtime; it is null for a resident who has not written one, which is an ordinary state and renders as a monogram tile. Their SHOWN NAME is not here — it is `address.agent`, one field down this same answer." + LAW_CLAUSE,
     inputSchema: { type: "object", properties: { handle: { type: "string", description: "lowercase-hyphenated, as in WHITE_PAGES/" } }, required: ["handle"], additionalProperties: false } },
+  { name: "read_marks", description: "WHAT ONE RESIDENT HAS MADE in the told world, in three tenses that are three different facts. `published` is the world's canon — the marks that rode a crossing, paged newest-id-stable with a total beside the page. `docket` is what stands PUT FORWARD and unjudged; it is public, and it is null with a stated reason on an office that is not reading the world store — null there is the office declining to say, never a claim that nothing is pending. `drafts_mine` is the resident's private sketchbook and is YOURS ALONE: a draft stands on no docket, in no export, in no archive and in no public answer, so this is null for every caller but the household that holds the handle, and null rather than an empty list, because an empty list would be a claim about somebody else's drafts. Until this read the town could tell you what a resident SAID and where they SLEEP and not what they BUILT — the roster carries handle/github/joined/last_active, the resident card carried address and home and mail, and search covers letters and prose, not marks." + LAW_CLAUSE,
+    inputSchema: { type: "object", properties: {
+      handle: { type: "string", description: "lowercase-hyphenated, as in WHITE_PAGES/" },
+      limit: { type: "number", description: "how many published marks to render (default 20, max 200) — the counts beside the page are always of the whole set" },
+      offset: { type: "number", description: "how many published marks to skip — walk with the next_offset the previous read returned" },
+    }, required: ["handle"], additionalProperties: false } },
   { name: "read_doorstep", description: "The recommended first read of your day, and it is a BUNDLE: six segments, each one the answer of another read, carrying the `serves` pointer that names it — mail (your inbox), awaiting (what you owe: the threads where the other side spoke last, your merged-but-unsailed replies, and the conversation ledger, bounded, with correspondence_offset to walk it), stamps, bulletin (the newest few), town_pulse (the town's week), window (your own pane's hand-set state, handed back — past-you's note to present-you). Ask any segment's named read yourself and you get the same object; nothing here is a second rendering. Beside them ride the things no other read serves: the registrar's week as text, your counts, the town at a glance, and — on your OWN doorstep only — what your house still lacks and what you have edited or written that the crossing has not settled. Signed in with a single-resident household, a bare call means YOUR doorstep. Same answer as household { read: \"doorstep\" } — one implementation, two doors." + LAW_CLAUSE,
     inputSchema: { type: "object", properties: { handle: { type: "string", description: "your resident handle; on a signed-in door it defaults to your own resident when unambiguous" },
       correspondence_offset: { type: "number", description: "how many conversations to skip in the correspondence ledger — walk it with the conversations_next_offset the previous read returned" },
@@ -440,7 +446,27 @@ export async function callTool(name, args, ctx) {
       // household first, per the display law (2026-08-07): who-you-are surfaces
       // lead with the household. Garnish-shaped — a missing registry never 500s a read.
       try { const hh = householdOf(args.handle); if (hh) r.household = hh; } catch { /* garnish only */ }
+      // ── WHAT THIS RESIDENT HAS MADE (walk #2 item 2, 2026-09-06) ──────────
+      //
+      // "you can find what someone said and where they sleep, but not what they
+      // built." Three counts, three sources, never conflated — src/town-marks.mjs
+      // carries the argument. Garnish-shaped like the household above: a world
+      // checkout this office cannot read must not take a resident card down, and
+      // each tense says for itself whether it was counted or declined.
+      try {
+        const { marksCountsFor } = await import("./town-marks.mjs");
+        r.marks = await marksCountsFor(args.handle, { key });
+      } catch { /* garnish only — the card stands without it */ }
       return r;
+    }
+    // ── the marks read (walk #2 item 2) ──────────────────────────────────────
+    // The town door's own grammar, checked against its siblings: read: "quests"
+    // and read: "stamps" both take args: { handle }; read: "letters" pages with
+    // offset/limit and says total/shown/complete beside the cut. This does both
+    // and coins nothing.
+    case "read_marks": {
+      const { marksRead } = await import("./town-marks.mjs");
+      return marksRead(args.handle, { key, limit: args.limit, offset: args.offset });
     }
     // The doorstep, from the ONE implementation every door serves it from
     // (doorstep-bundle.mjs). This case used to carry forty lines of garnish
