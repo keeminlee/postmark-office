@@ -118,6 +118,10 @@ test("availability lapses at presence_min + 1s with no act — on an injected cl
   assert.equal(gone.available_within_min, Math.round(PRESENCE_MS / 60000));
   assert.equal(gone.available_within_min, SAY_DIALS.presence_min.value,
     "read from the-town/say/presence_min — there is no second constant");
+  assert.equal(gone.dial.slot, "the-town/say/presence_min",
+    "and it names the node a resident can go and read, not this module's lookup key");
+  assert.equal(gone.dial.read_from, SAY_DIALS.presence_min.source,
+    "with the honest half: whether that number is the town's word or this repo's fallback");
 });
 
 // ── 3. attention is presence ─────────────────────────────────────────────────

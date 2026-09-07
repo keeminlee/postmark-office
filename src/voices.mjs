@@ -55,6 +55,12 @@ import { dialNumber } from "./world-classes.mjs";
 // a test instead of failing the town.
 export const SAY_CLASS_NAME = "say";
 
+// The same class as the WORLD renders it. `SAY_CLASS_NAME` is the key the dial
+// reader hands the store; this is the mark id a resident can go and read. They
+// are two names for one node and both are needed: the derived that quotes a
+// dial has to name a node the reader can find.
+export const SAY_RESIDUE = `the-town/${SAY_CLASS_NAME}`;
+
 // slot -> [fallback, unit-multiplier to the exported value]. The record keeps
 // human units (minutes, seconds, metres); the module keeps milliseconds where
 // it always has, so the conversion lives here and nowhere downstream.
@@ -483,7 +489,11 @@ export function createVoices({
     const dialSlot = SAY_DIALS.presence_min;
     const base = {
       available_within_min: withinMin,
-      dial: { slot: `${SAY_CLASS_NAME}/presence_min`, read_from: dialSlot.source },
+      // The node a reader can actually go and read, not the key this module
+      // hands dialNumber: the class is `say` in the code and renders in the
+      // world as `the-town/say`, and a resident deciding whether to wait for
+      // someone should be able to find the number that governed the answer.
+      dial: { slot: `${SAY_RESIDUE}/presence_min`, read_from: dialSlot.source },
     };
 
     const p = presence.get(handle);
