@@ -17,7 +17,7 @@
 import test, { after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -26,7 +26,7 @@ import { CLASS_MARK, ACTION_LEAVE, appendJournal, readJournal } from "../src/wor
 import {
   ACTION_STANCE, AMBIENT_CAP, CLASS_STANCE, PAGE_SIZE, STANCES,
   candidatesFrom, declareStanceViaOffice, groundFor, resetStanceGeometry,
-  readNeverPerforms, stanceInbox, stanceShadow, standingStances, standsBefore, stancesBlock,
+  readNeverPerforms, stanceInbox, stanceShadow, stanceTeach, standingStances, standsBefore, stancesBlock,
 } from "../src/world-stance.mjs";
 
 const sweep = (d) => { try { rmSync(d, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); } catch { /* litter */ } };
@@ -53,6 +53,13 @@ const MARKS = [
   // PRECEDENT'S OTHER DIRECTION: this one stood BEFORE alpha's parcel, so alpha
   // is the newcomer and has no word about it.
   { id: "epsilon/was-here-first", by: "epsilon", kind: "sited", at: { x: 90, y: 100 }, extent: { w: 6, h: 6 }, date: "2026-07-15", body: "standing here since before alpha arrived" },
+  // THE LAW THE TEACHING BLOCK QUOTES, in the record where the door reads it
+  // from. Body VERBATIM from the live world checkout's WORLD/world-state.json
+  // (`the-town/the-late-welcome`, kind predicated, tier constitution). Far away
+  // and dated before every parcel here, so it is nobody's candidate and changes
+  // no count above it.
+  { id: "the-town/the-late-welcome", by: "the-town", kind: "predicated", at: { x: 9500, y: 9500 }, extent: { w: 1, h: 1 }, date: "2026-07-01",
+    body: "A stance may arrive after the sketch and before the publish; the ledger keeps who was first." },
 ];
 
 // The engine, in miniature — but `geometry.mjs` is the REAL arithmetic,
@@ -66,6 +73,37 @@ export function overlapArea(a, b) {
   return dx > 0 && dy > 0 ? dx * dy : 0;
 }
 `);
+// ── THE RESPONSE FUNCTION, IN THE CHECKOUT ──────────────────────────────────
+//
+// The two paragraphs the teaching block slices, copied VERBATIM out of the live
+// world checkout's LOGOS/the-response-function.md (§ The tri-state and
+// § Residents: words, at their own pace) — line breaks and emphasis included,
+// because the slicer has to survive the real file's shape and not a tidied one.
+// A test that fed the door a hand-smoothed paragraph would be testing the
+// smoothing.
+const RESPONSE_FUNCTION_MD = `# The response function — the one axis
+
+## The tri-state
+
+Every edge, once formed, stands under exactly one of three responses from
+whatever ground it touches: **welcomed · neutral · opposed**.
+
+- **welcomed** — conferral: the child stands as the ground's own
+  ([tiers.md](tiers.md));
+- **neutral** — the resting state: the child stands, uncoupled;
+- **opposed** — the veto: on sovereign ground it is absolute and
+  intersection-keyed (a claim cannot dodge the law by being slightly too big
+  to be a child); from the constitutional layer it is absolute simply.
+
+## Residents: words, at their own pace
+
+Every sub-constitutional edge into their ground awaits their individual word —
+and this is safe at any latency, because the default is
+**neutral-and-revisable**: the incoming thing stands uncoupled until the holder
+speaks, and the word can always be changed by a newer word. Nothing blocks;
+nothing is lost. The resident's loop is:
+`;
+put("LOGOS/the-response-function.md", RESPONSE_FUNCTION_MD);
 put("WORLD/world-state.json", JSON.stringify({ tick: 0, marks: MARKS, parcels: [] }));
 put("WORLD/skeleton.json", JSON.stringify({ features: [] }));
 for (const m of MARKS) put(`WORLD/marks/let-there-be-light/${m.id.split("/")[1]}/mark.md`,
@@ -510,4 +548,91 @@ test("#2454 CONTROL: no photograph, no stance — the union adds nothing that wa
     const inbox = await stanceInbox(repo, houseA, { dbPath });
     assert.deepEqual(inbox.standing, [], "an empty record stands nothing");
   } finally { rmSync(dbPath, { force: true }); }
+});
+
+// ── THE TEACHING LINE (walks #1 and #2, 2026-09-05/06) ───────────────────────
+//
+// THE COMPLAINT, in the resident's own words (docs/2026-09-05/resident-walk.md,
+// 21:23 EDT, item 4):
+//
+//   "The law line says 'A stance is a revisable word on an edge — welcomed or
+//    opposed, latest wins; neutral is never stored.' It does not say what my
+//    'opposed' would DO to a mark the town has already published, nor why I was
+//    not asked when it was laid. … 'welcomed or opposed' on a done thing feels
+//    like a survey."
+//
+// THE LAW THESE ASSERT, verbatim, and both are SLICED FROM THE CHECKOUT rather
+// than typed into the door:
+//
+//   LOGOS/the-response-function.md § The tri-state —
+//     "opposed — the veto: on sovereign ground it is absolute and
+//      intersection-keyed (a claim cannot dodge the law by being slightly too
+//      big to be a child); from the constitutional layer it is absolute simply."
+//
+//   LOGOS/the-response-function.md § Residents: words, at their own pace —
+//     "the default is neutral-and-revisable: the incoming thing stands
+//      uncoupled until the holder speaks, and the word can always be changed by
+//      a newer word. Nothing blocks; nothing is lost."
+//
+//   the-town/the-late-welcome (world record, tier constitution) —
+//     "A stance may arrive after the sketch and before the publish; the ledger
+//      keeps who was first."
+
+const OPPOSED_SAYS =
+  "opposed — the veto: on sovereign ground it is absolute and intersection-keyed (a claim cannot dodge the law by being slightly too big to be a child); from the constitutional layer it is absolute simply.";
+const UNTIL_YOU_SPEAK_SAYS =
+  "the default is neutral-and-revisable: the incoming thing stands uncoupled until the holder speaks, and the word can always be changed by a newer word. Nothing blocks; nothing is lost.";
+const LATE_WELCOME_SAYS =
+  "A stance may arrive after the sketch and before the publish; the ledger keeps who was first.";
+
+test("the teach block quotes the response function VERBATIM — both sentences, sliced from the checkout", () => {
+  const teach = stanceTeach(repo, { lateWelcome: LATE_WELCOME_SAYS });
+  assert.equal(teach.what_opposed_does, OPPOSED_SAYS, "what `opposed` DOES, in the law's own words");
+  assert.equal(teach.until_you_speak, UNTIL_YOU_SPEAK_SAYS, "and what standing under an unanswered word costs you");
+  assert.equal(teach.from, "LOGOS/the-response-function.md", "and the file it came out of is named");
+  // The bytes are in the file this repo carries — not merely equal to a
+  // constant that happens to sit in two places in this suite.
+  const src = readFileSync(join(repo, "LOGOS", "the-response-function.md"), "utf8").replace(/\*\*/g, "").replace(/\s+/g, " ");
+  assert.ok(src.includes(OPPOSED_SAYS), "the opposed sentence is in the file, not only in the door");
+  assert.ok(src.includes(UNTIL_YOU_SPEAK_SAYS), "and so is the neutral-and-revisable sentence");
+});
+
+test("the teach block says where the LAW STOPS rather than inventing an answer past it", () => {
+  const teach = stanceTeach(repo, { lateWelcome: LATE_WELCOME_SAYS });
+  assert.equal(teach.after_it_is_published.the_law_reaches, LATE_WELCOME_SAYS);
+  assert.equal(teach.after_it_is_published.law_mark, "the-town/the-late-welcome");
+  // THE HONEST GAP. The law's window is "after the sketch and before the
+  // publish"; nothing in LOGOS/ speaks about a word declared after the publish,
+  // which is precisely what both walks asked. The door must SAY that.
+  assert.match(teach.after_it_is_published.unruled, /the law's window ends at the publish/);
+  assert.match(teach.after_it_is_published.unruled, /will not tell you it undoes anything/);
+});
+
+test("a rewritten law is REPORTED, never paraphrased — the quote cannot outlive its source", () => {
+  // The slicer's whole purpose: a sentence typed into the door would still be
+  // served, confidently, after the record changed under it.
+  const gone = join(scratch, "world-without-logos");
+  mkdirSync(join(gone, "LOGOS"), { recursive: true });
+  writeFileSync(join(gone, "LOGOS", "the-response-function.md"), "# The response function\n\nRewritten, and the anchors are gone.\n");
+  const teach = stanceTeach(gone, { lateWelcome: LATE_WELCOME_SAYS });
+  assert.equal(teach.what_opposed_does, undefined, "no sentence is served that the file no longer carries");
+  assert.match(teach.unresolved, /no longer carries the sentences this door quotes/);
+  // And the mark half still stands: two sources, independently honest.
+  assert.equal(teach.after_it_is_published.the_law_reaches, LATE_WELCOME_SAYS);
+});
+
+test("a mark the checkout cannot answer is DISCLOSED, not filled in from memory", () => {
+  const teach = stanceTeach(repo, { lateWelcome: null });
+  assert.equal(teach.after_it_is_published.the_law_reaches, null, "null, never a hard-coded twin");
+  assert.match(teach.after_it_is_published.unresolved, /the-town\/the-late-welcome could not be read/);
+});
+
+test("the teach block rides the SHADOW — the doorstep's segment and the world's read get one teaching", async () => {
+  const shadow = await stanceShadow(repo, houseA, { dbPath });
+  assert.equal(shadow.teach.what_opposed_does, OPPOSED_SAYS);
+  assert.equal(shadow.teach.after_it_is_published.the_law_reaches, LATE_WELCOME_SAYS,
+    "and its mark body comes off the set the inbox already loaded, never a second read of the world");
+  // The `law:` line is untouched: what a stance IS and what it DOES are two
+  // sentences, and the second was the one missing.
+  assert.match(shadow.law, /^A stance is a revisable word on an edge/);
 });

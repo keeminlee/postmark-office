@@ -81,6 +81,150 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 
+// ── THE TEACHING LINE (walk #1 item 4 · walk #2, 2026-09-05/06) ─────────────
+//
+// WHAT A RESIDENT ASKED, twice, in their own words:
+//
+//   "The law line says 'A stance is a revisable word on an edge — welcomed or
+//    opposed, latest wins; neutral is never stored.' It does NOT say what my
+//    'opposed' would DO to a mark the town has already published, nor why I was
+//    not asked when it was laid. … 'welcomed or opposed' on a done thing feels
+//    like a survey."
+//
+// The `law:` line below has always been right and has never been enough: it
+// says what a stance IS, and the question is what one DOES. So the read now
+// carries a second block that answers it out of the record.
+//
+// READ, NEVER TYPED. `the-town/the-media`'s doctrine, applied here: "Ids only.
+// The sentences live in the record and arrive by read" (household-media.mjs
+// § the three marks this door stands on). A sentence typed into this file is a
+// copy nothing keeps honest — the exact class the 2026-08-31 civic-quarter lane
+// found on a page. So the two sentences are SLICED OUT of the world checkout's
+// own `LOGOS/the-response-function.md` at read time, by anchors that either
+// match or say plainly that they did not.
+//
+// NO SECOND STAMP. The brief for this lane asked for the sha of the world pin
+// beside the quote. It is deliberately absent: the office's world checkout
+// already reports which version it read at the world reads (and Lane A is this
+// week fixing exactly the case where a fresh stamp sat on a stale answer), and
+// a second stamp minted here would be a second answer to "which world is this"
+// — one stamp for one answer. The block names the FILE; the checkout names the
+// version.
+const RESPONSE_FUNCTION_FILE = join("LOGOS", "the-response-function.md");
+// The two anchors, and both are load-bearing sentences of the law rather than
+// convenient landmarks: the first is what `opposed` DOES, the second is what
+// standing under an unanswered word costs you (nothing).
+const RESPONSE_ANCHORS = Object.freeze([
+  { key: "opposed", from: "opposed — the veto:", to: "\n" },
+  { key: "neutral_and_revisable", from: "the default is neutral-and-revisable:", to: "Nothing blocks; nothing is lost." },
+]);
+
+// ── UNWRAP BEFORE YOU SEARCH ────────────────────────────────────────────────
+//
+// `the-response-function.md` is hand-wrapped prose, and both sentences this
+// door quotes straddle a line break in the file today. An anchor matched
+// against the raw bytes therefore depends on where the author's editor happened
+// to break the line — the falsifier's fixture wrapped one of them one word
+// earlier than the live file does and the anchor missed, which is the whole
+// class in miniature: a quote whose retrieval depends on typography is a quote
+// that silently stops being served the next time somebody reflows a paragraph.
+//
+// So the file is normalized FIRST and the anchors are matched against the
+// normalized text: emphasis dropped (a reader hears none), wrapped lines
+// rejoined, and a line that begins a new bullet or heading left as its own line
+// so the three tri-state bullets stay three sentences and not one.
+const unwrap = (text) => text
+  .replace(/\*\*/g, "")
+  .replace(/\r\n/g, "\n")
+  .replace(/([^\n])\n(?![\n\-#*])[ \t]*/g, "$1 ")
+  .replace(/^[ \t]*-[ \t]+/gm, "");
+// The two marks whose bodies bound the answer. `the-late-welcome` is the one
+// that says where the law STOPS, which is the honest half of the teaching.
+export const STANCE_LAW_MARK = "the-town/declare-stance-on";
+export const LATE_WELCOME_MARK = "the-town/the-late-welcome";
+
+const TEACH_CACHE = new Map();
+
+/** Markdown emphasis stripped, whitespace folded — the sentence as a reader hears it. */
+const plain = (s) => s.replace(/\*\*/g, "").replace(/\s+/g, " ").trim();
+
+/**
+ * The response function's own two sentences, sliced out of the file at `repo`.
+ *
+ * Returns `{ says, and, from }`, or `{ unresolved }` — never a paraphrase. If
+ * the file moves, is rewritten, or loses an anchor, this says so and the door
+ * teaches one sentence less. That is strictly better than teaching a sentence
+ * the record no longer contains.
+ */
+export function responseFunctionSays(repo = WORLD_CLONE) {
+  const path = join(repo, RESPONSE_FUNCTION_FILE);
+  let key;
+  try { const s = statSync(path); key = `${s.mtimeMs}|${s.size}`; }
+  catch { return { unresolved: `the world checkout carries no ${RESPONSE_FUNCTION_FILE.replace(/\\/g, "/")} — the law stands in the record either way` }; }
+  const hit = TEACH_CACHE.get(path);
+  if (hit && hit.key === key) return hit.out;
+
+  let text;
+  try { text = unwrap(readFileSync(path, "utf8")); }
+  catch { return { unresolved: `${RESPONSE_FUNCTION_FILE.replace(/\\/g, "/")} could not be read from the world checkout` }; }
+
+  const found = {};
+  const missing = [];
+  for (const a of RESPONSE_ANCHORS) {
+    const start = text.indexOf(a.from);
+    if (start < 0) { missing.push(a.key); continue; }
+    const end = text.indexOf(a.to, start + a.from.length);
+    if (end < 0) { missing.push(a.key); continue; }
+    // The line-terminated anchor stops AT the break; the sentence-terminated one
+    // keeps the sentence that ends it.
+    found[a.key] = plain(text.slice(start, a.to === "\n" ? end : end + a.to.length));
+  }
+  const out = missing.length === RESPONSE_ANCHORS.length
+    ? { unresolved: `${RESPONSE_FUNCTION_FILE.replace(/\\/g, "/")} no longer carries the sentences this door quotes (${missing.join(", ")}) — it was rewritten, and this door will not paraphrase what it can no longer read` }
+    : {
+        ...(found.opposed ? { what_opposed_does: found.opposed } : {}),
+        ...(found.neutral_and_revisable ? { until_you_speak: found.neutral_and_revisable } : {}),
+        from: RESPONSE_FUNCTION_FILE.replace(/\\/g, "/"),
+        ...(missing.length ? { unquoted: missing } : {}),
+      };
+  TEACH_CACHE.set(path, { key, out });
+  return out;
+}
+
+/**
+ * The teaching block the stances read carries.
+ *
+ * ⚠ AND THE HALF THAT IS AN HONEST GAP. The law's window on a late word ENDS AT
+ * THE PUBLISH — `the-town/the-late-welcome`, verbatim from the record: "A stance
+ * may arrive after the sketch and before the publish; the ledger keeps who was
+ * first." Nothing in `LOGOS/` says what a word declared AFTER a mark is
+ * published does to the published mark, and the resident who asked was asking
+ * exactly that (a home was laid on their terrace on 09-01, published, and the
+ * doorstep asked for their stance on 09-05). The brief for this lane said: if
+ * the law does not say, the teach line says THAT. It says that. It is Lane D's
+ * to rule, not this door's to invent.
+ */
+export function stanceTeach(repo = WORLD_CLONE, { lateWelcome = null } = {}) {
+  const said = responseFunctionSays(repo);
+  return {
+    ...said,
+    after_it_is_published: {
+      // The mark's body as the record holds it, handed in from the set
+      // `stanceInbox` has already loaded — one `find` over an array in memory,
+      // never a second read of the world. NO TYPED FALLBACK: a sentence this
+      // door could not read is reported as unread, because a hard-coded twin
+      // would be right until the day the record changed and wrong silently
+      // after it.
+      ...(lateWelcome
+        ? { the_law_reaches: lateWelcome }
+        : { the_law_reaches: null, unresolved: `${LATE_WELCOME_MARK} could not be read from this world checkout — the law stands in the record either way` }),
+      law_mark: LATE_WELCOME_MARK,
+      unruled: "the law's window ends at the publish. Nothing in the record says what a word declared AFTER a mark is published does to it — so a stance you speak on something already standing is your word on the record, revisable, and this door will not tell you it undoes anything. That gap is a question for the founders' desk, not an answer this door may invent.",
+    },
+    law_mark: STANCE_LAW_MARK,
+  };
+}
+
 /** The journal class for a resident's word. The single log's first new verb. */
 export const CLASS_STANCE = "stance";
 export const ACTION_STANCE = "declare-stance-on";
@@ -347,7 +491,10 @@ export async function stanceInbox(repo, key, { dbPath = null } = {}) {
   const standing = standingStances(rows).filter((s) => mineHandles.has(s.by));
   const spoken = new Set(standing.map((s) => s.on));
 
-  return { candidates: candidatesFrom({ mine, all, spoken, overlaps }), standing, mine: mine.map((m) => m.id) };
+  return { candidates: candidatesFrom({ mine, all, spoken, overlaps }), standing, mine: mine.map((m) => m.id),
+    // The teaching block's one mark body, taken off the set this read already
+    // holds — never a second read of the world for one sentence.
+    lateWelcome: all.find((m) => m.id === LATE_WELCOME_MARK)?.body?.trim() || null };
 }
 
 // ── tier 1 + 2 · what rides the bare read ────────────────────────────────────
@@ -441,6 +588,10 @@ export async function stanceShadow(repo, key, { cursor = null, limit = PAGE_SIZE
     standing: inbox.standing,
     ground: inbox.mine,
     law: "A stance is a revisable word on an edge — welcomed or opposed, latest wins; neutral is never stored, it is absence. The ground's holder speaks.",
+    // WHAT THE LAW LINE SAYS A STANCE IS; WHAT `teach` SAYS IT DOES. Two
+    // residents' walks asked the second question and this read only ever
+    // answered the first — see § THE TEACHING LINE above.
+    teach: stanceTeach(repo ?? WORLD_CLONE, { lateWelcome: inbox.lateWelcome ?? null }),
   };
 }
 
