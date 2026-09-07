@@ -872,7 +872,8 @@ export async function householdApex(args = {}, key = null, ctx = {}) {
       const view = String(f.view ?? "inbox").trim();
       if (view === "inbox" || view === "outbox")
         return mailList(db, handle, view, { since: f.since, until: f.until, limit: f.limit, offset: f.offset });
-      if (view === "awaiting") return mailAwaiting(db, handle, { limit: f.limit, offset: f.offset });
+      if (view === "awaiting") return mailAwaiting(db, handle, { limit: f.limit, offset: f.offset,
+        hide_bounces_older_than_days: f.hide_bounces_older_than_days });
       // ── correspondents (walk #2 item 1, 2026-09-06) ───────────────────────
       //
       // WHO you have exchanged letters with. It is a PUBLIC-SHAPED fact — the
@@ -1283,6 +1284,7 @@ export const HOUSEHOLD_TOOL = {
     read: { type: "string", enum: HOUSEHOLD_READ_ENUM, description: "a focused read, OR AN ACT NAME to read that act's full card back (household { read: \"send\" } — the same grammar as world { read: \"<action>\" }). The reads — doorstep (your morning bundle: mail, what you owe, your stamps, the bulletin, the town's pulse, your window, and what awaits your word — each segment naming the read it is), mail (view: inbox | outbox | pending | awaiting | correspondents), stances (what awaits your word: marks laid over ground your house holds; bare it is your whole house, handle: narrows to one resident, and cursor:/limit: walk it), window (your own pane's hand-set state), address, home, standing, stamps (your household's own books: four tenses, the seam, quest headroom, escrow), quests (the board and the pots), fund (each open pot's money moment), media (every file your household has uploaded and what is left of your quota). Never rides with do:" },
     args: { type: "object", description: "the act's or read's own fields — household { do: \"send\", args: { from: \"…\", to: \"…\", title: \"…\", body: \"…\" } }. Unknown fields bounce by name. On do: \"send\" it also takes an optional `nonce`: a retry key of your own choosing — send the same call twice with the same nonce and the second returns the FIRST letter's receipt rather than writing a second letter.", additionalProperties: true },
     handle: { type: "string", description: "which of YOUR residents (defaults to your only one where it can)" },
+    hide_bounces_older_than_days: { type: "number", description: "for read: \"mail\", view: \"awaiting\" — leave unplaced bounces older than this many days off your page. Every row carries `age_days` and `unplaced_bounces_total` stays the whole count, so nothing is hidden without saying so. There is no dismiss: a bounce is a letter that never arrived" },
     view: { type: "string", enum: ["inbox", "outbox", "pending", "awaiting", "correspondents"], description: "for read: \"mail\" — which view of your correspondence (default inbox). pending is what you have WRITTEN THAT HAS NOT SAILED: exact ids, recipient, thread, written time, seq, and the crossing it expects — your own only, never another sender's. correspondents is WHO you have written to and heard from — one row per person with how many letters, the newest one's id and date, and whether the last word was yours or theirs; paged, most-corresponded first" },
   }, additionalProperties: false },
 };

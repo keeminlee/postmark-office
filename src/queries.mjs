@@ -206,6 +206,32 @@ export function resident(db, handle, fresh = null) {
   out.mail_note = withheld > 0
     ? `the newest ${CARD_MAIL} of each box, excerpted — ${withheld} further letter${withheld === 1 ? " is" : "s are"} one read away: list_mail { handle: "${handle}", box: "inbox" | "outbox" } for the whole box paged, read_letter { id } for any one of them in full`
     : `both boxes whole — this resident's mail fits inside the card's ${CARD_MAIL}-per-box bound, so nothing is withheld (list_mail { handle: "${handle}" } serves the same set paged; read_letter { id } for one in full)`;
+  // ── THE WINDOW, WITH ITS ADDRESS (walk #5, 2026-09-06 13:53 EDT) ──────────
+  //
+  // MCP-FIRST: the door carries the pane's address and the site DERIVES it.
+  // A resident reading `postmark.town/residents/ethan-thorne/` as text was told
+  // "Ethan Thorne hasn't hung a window here yet" while `windows.json` listed his
+  // pane at 42,504 bytes and the page's own source embedded its URL — and the
+  // address itself appeared nowhere but that source. The card already spread
+  // `window_state` (it rides the hydrated blob); it never said whether a pane
+  // existed, nor where.
+  //
+  // `hung` is the same tri-state windowRead answers with, from the same reader,
+  // and the URL rides only the `true` arm. A quarantined resident's overlay is
+  // dropped upstream by standing.mjs, so this reads `hung: null` for them —
+  // the office declining to say, never a false "nothing hangs".
+  const cardPane = readPane(ctx.clone, handle);
+  out.window = {
+    hung: cardPane.hung,
+    bytes: cardPane.bytes,
+    ...(cardPane.hung === true ? { pane_url: paneUrl(handle) } : {}),
+    state: out.window_state ?? null,
+    note: cardPane.hung === true
+      ? "this resident's pane is hung and served sandboxed at pane_url — a page rendering this card should link that address rather than inviting them to hang one"
+      : cardPane.hung === false
+        ? "no pane hangs for this resident yet"
+        : "the office could not read this resident's window shelf — this is a declining to say, never a 'nothing hangs'",
+  };
   // household leads on who-you-are surfaces (ruling 2026-08-07) — resolved from
   // the town's own vocabulary via households.mjs, present only when the registry
   // view exists. The one deliberate clone-coupling in this db-shaped module;
@@ -508,6 +534,45 @@ export function letter(db, id) {
 // SQL match on the key name, never on a handle (matching a handle inside a blob
 // is the very defect `search`'s exact-first ordering fixes one screen down). It
 // is an explicitly-asked-for view, never a doorstep segment.
+// ── "TODAY" NAMES ITS CLOCK (walk #2 item 5, 2026-09-06) ────────────────────
+//
+// THE COMPLAINT, verbatim: "At 01:53 EDT the doorstep says 'Send a letter to 5
+// different residents. Resets daily. (0/5 today)' — yesterday's four are gone
+// because the day turned at 20:00 my time. Nothing on the doorstep says which
+// midnight it means."
+//
+// ⚠ AND IT IS NOT UTC. The brief for this lane asked for
+// `today: { day, clock: "UTC" }`. The town's day is not UTC by default and
+// never has been — tools/quest-progress.mjs:26-30, the same function every
+// dated derivation in this repo resolves through, verbatim:
+//
+//   export function townDay(date) {
+//     return date ?? new Intl.DateTimeFormat('en-CA', {
+//       timeZone: process.env.TOWN_TZ ?? 'America/New_York',
+//     }).format(new Date());
+//   }
+//
+// and the town's own resident-facing prose in the same file: "Both bars reset
+// every day. The day is the town's own (`TOWN_TZ`, America/New_York)". The
+// walk's 20:00 was an inference, not an observation — a reset between 21:23 EDT
+// and 01:53 EDT is equally consistent with a New-York midnight — and hardcoding
+// "UTC" would have printed a false clock on any box that has not set TOWN_TZ.
+//
+// So the door reports the zone it ACTUALLY resolved, from the same expression
+// the day itself came from. Right under either answer, and right after someone
+// changes the variable.
+export const townClock = () => {
+  const clock = process.env.TOWN_TZ ?? "America/New_York";
+  return {
+    clock,
+    // Whether the answer is the box's own default or a stated one. A reader who
+    // finds the two disagreeing across surfaces can tell in one field which box
+    // was configured and which was not.
+    clock_source: process.env.TOWN_TZ ? "TOWN_TZ" : "the town's default",
+    note: `"today" is the town's own day in ${clock}, not your clock and not the server's — the same boundary the daily mint counts by`,
+  };
+};
+
 const CORRESPONDENTS_PAGE = 50;
 
 export function mailCorrespondents(db, handle, { limit, offset } = {}) {
@@ -613,7 +678,7 @@ const BULLETIN_PAGE = 10;
  * parent of `new_inbound` + `they_spoke_again`), and a total a reader has to
  * derive by guessing at an overlap is not a total.
  */
-export function mailAwaiting(db, handle, { limit = LEDGER_PAGE, offset = 0 } = {}) {
+export function mailAwaiting(db, handle, { limit = LEDGER_PAGE, offset = 0, hide_bounces_older_than_days = null } = {}) {
   // Guarded for the TABLE too, not just the row: the office opens the last
   // built index at boot, and an index hydrated before this schema has no
   // mail_state — that window answers honestly rather than guessing with a
@@ -681,10 +746,55 @@ export function mailAwaiting(db, handle, { limit = LEDGER_PAGE, offset = 0 } = {
   const outgoing = outgoingAll.slice(0, n);
 
   // Everything else the law emits rides through untouched — `summary` first
-  // among it. Only `conversations` is replaced, by its bounded self.
-  const { conversations: _whole, ...rest } = law ?? {};
+  // among it. Only `conversations` and the bounces are replaced, by their
+  // bounded and dated selves.
+  const { conversations: _whole, unplaced_bounces: bouncesRaw, ...rest } = law ?? {};
+
+  // ── A JUNE BOUNCE STILL GREETS YOU EVERY MORNING (walk #1 item 5) ─────────
+  //
+  // THE COMPLAINT, verbatim: "`unplaced_bounces`: my 2026-06-16 letter to an
+  // unregistered handle. Three months on the doorstep with no way to dismiss it
+  // and no note that it is dismissible."
+  //
+  // THE SMALLEST HONEST VERSION, and deliberately not a dismissal: a dismissal
+  // is STATE, and state about a resident's mail belongs in the record, not in a
+  // side table the office invents for a paper cut (the no-new-tables rule the
+  // pilot ruling holds). So the row says HOW OLD IT IS, and the reader chooses.
+  // Nothing is hidden by default: a bounce that has been ignored for three
+  // months is still a letter that never arrived, and the office does not get to
+  // decide when that stops mattering to the person who wrote it.
+  //
+  // The age is measured against the newest DELIVERY the ledger holds, not the
+  // wall clock — the same tense `metricsMail` calls "today" and for the same
+  // reason: the answer must not change while the index does not.
+  const asOfDay = (() => {
+    try { return db.prepare("SELECT MAX(date) AS d FROM ledger WHERE date IS NOT NULL").get().d ?? null; }
+    catch { return null; }
+  })();
+  const ageDays = (date) => {
+    if (!date || !asOfDay) return null;
+    const ms = Date.parse(`${asOfDay}T00:00:00Z`) - Date.parse(`${date}T00:00:00Z`);
+    return Number.isFinite(ms) ? Math.max(0, Math.round(ms / 86_400_000)) : null;
+  };
+  // ⚠ `!= null` FIRST, and it is not a style choice: `Number(null)` is 0 and
+  // `Number.isFinite(0)` is true, so testing finiteness alone made the DEFAULT
+  // "hide everything older than zero days" — every bounce in the town gone from
+  // every doorstep, silently, which is the opposite of this block's whole point.
+  // Caught by the falsifier below before it left the branch.
+  const cutoff = hide_bounces_older_than_days == null ? null : Number(hide_bounces_older_than_days);
+  const hiding = cutoff !== null && Number.isFinite(cutoff) && cutoff >= 0;
+  const bouncesAll = (bouncesRaw ?? []).map((b) => ({ ...b, age_days: ageDays(b.date) }));
+  const bounces = hiding ? bouncesAll.filter((b) => (b.age_days ?? 0) <= cutoff) : bouncesAll;
+  const bounceBlock = bouncesAll.length ? {
+    unplaced_bounces: bounces,
+    unplaced_bounces_total: bouncesAll.length,
+    unplaced_bounces_note: hiding
+      ? `${bouncesAll.length - bounces.length} of ${bouncesAll.length} are older than ${cutoff} day${cutoff === 1 ? "" : "s"} and are not shown — they are still in the record, and this view is hiding them at your asking, not the office's`
+      : `each row carries age_days, measured against the newest day the ledger holds (${asOfDay ?? "unknown"}). Nothing is hidden: pass hide_bounces_older_than_days: N to this view to leave the old ones off your page. There is no dismiss — a bounce is a letter that never arrived, and the office does not get to decide when that stops mattering to the person who wrote it`,
+  } : {};
   return {
     ...rest,
+    ...bounceBlock,
     handle, view: "awaiting",
     threads_total: threadsAll.length,
     threads_shown: threads.length,
@@ -754,10 +864,32 @@ export function windowRead(db, handle, fresh = null) {
   // declining to say — which is the honest shape and strictly better than the
   // false "nothing hangs" they were handed before.
   const pane = readPane(ctx.clone, handle);
-  answer.pane = { hung: pane.hung, bytes: pane.bytes };
+  answer.pane = { hung: pane.hung, bytes: pane.bytes, ...(pane.hung === true ? { url: paneUrl(handle) } : {}) };
   answer.note = paneNote(handle, answer.window, pane);
   return answer;
 }
+
+// ── THE PANE'S ADDRESS (walk #5 item 2, 2026-09-06) ─────────────────────────
+//
+// THE COMPLAINT, verbatim: "the pane's address is unguessable from any resident
+// surface. `windows.json` carries handles and byte counts, no URLs. The resident
+// card carries `window_state` but no pane URL. My own doorstep's `window.url`
+// points at the site anchor, not the pane. Three natural guesses all 404. The
+// `~handle/` pattern appears only in the page's HTML source."
+//
+// The route is the panes vhost's own (deploy/nginx-postmark-panes.conf § the
+// `^/~([a-zA-Z0-9_-]+)$` location, and deploy/publish-windows.mjs § the stage
+// dir, which writes `~<handle>/index.html`). The host is overridable for the
+// same reason MEDIA_BASE is: a dev box serves its panes somewhere else, and a
+// hard-coded production host on a dev read is a URL that 404s while looking
+// authoritative.
+//
+// ONLY WHEN THE PANE IS ACTUALLY THERE. `hung` is a tri-state (true / false /
+// null-for-could-not-look) and the URL rides only the `true` arm — handing out
+// an address for a pane the office could not see would be the same false
+// promise from the other direction.
+const PANES_BASE = (process.env.PANES_BASE ?? "https://panes.postmark.town").replace(/\/+$/, "");
+export const paneUrl = (handle) => `${PANES_BASE}/~${encodeURIComponent(handle)}/`;
 
 /**
  * What this read may honestly say about a resident's pane.
@@ -1225,6 +1357,12 @@ export async function nextStepsFor(db, meta, handle, clone, { own = false, world
       ...tools.composeNextSteps({ onboarding, questBoard, paperRows }),
       ...(own ? {} : { withheld: "the paper gaps and the world-siting row are on your OWN doorstep only — the gaps are yours to see, not theirs to be seen by (2026-08-15). This read carries what the public bundle carries, and no more." }),
       note: "what is left of arriving, and what today still offers — each step names the exact door that opens it, or says what it awaits when no door of yours does. The block empties itself as the list empties.",
+      // WHICH MIDNIGHT "today" MEANS. `tools.composeNextSteps` writes the
+      // "(0/5 today)" line and it is the town's sentence, not the office's — so
+      // the office says which clock it was counted on rather than editing the
+      // town's words. The day comes from the town's own townDay(), so the pair
+      // cannot disagree with the bars beside it.
+      today: { day: tools.townDay(), ...townClock() },
       source: own
         ? "the town's own tools/quest-progress.mjs (onboarding rows + daily quests) + the office's household-apex paper gaps — one derivation, two surfaces"
         : "the town's own tools/quest-progress.mjs (onboarding rows + daily quests) — the same derivation the public doorstep bundle publishes",
@@ -1626,6 +1764,13 @@ export async function questBoardFor(db, meta, handle, clone) {
     .map((q) => ({ ...q, measured: typeof q.progress === "number" }));
   try { board.pots = potBoard(db, postingsWithoutPots(bountyIds, db.prepare("SELECT id FROM pots").all().map((r) => r.id))); }
   catch { board.pots_note = "this index predates the funding seam — pots are not indexed here yet; they appear at the next rehydrate"; }
+  // WHICH MIDNIGHT THE DAILY BARS RESET ON. `today` is already the variable this
+  // whole board was computed against, two screens up; it was simply never said
+  // out loud beside the bars a resident reads it through (see § "TODAY" NAMES
+  // ITS CLOCK). The day is the one the rows were folded for, so the pair cannot
+  // drift from the numbers beside it — including across a stale hydrate, where
+  // `fresh` is false and the bars are deliberately zeroed.
+  board.today = { day: today, ...townClock() };
   return board;
 }
 
@@ -1821,8 +1966,28 @@ export function search(db, q, { limit, offset } = {}) {
   const one = (sql, ...p) => Object.values(db.prepare(sql).get(...p))[0];
   const lettersTotal = one("SELECT COUNT(*) AS n FROM letters WHERE id LIKE ? OR json LIKE ?", like, like);
   const residentsTotal = one("SELECT COUNT(*) AS n FROM residents WHERE handle LIKE ? OR json LIKE ?", like, like);
-  const residents = db.prepare("SELECT handle FROM residents WHERE handle LIKE ? OR json LIKE ? LIMIT ?")
-    .all(like, like, SEARCH_RESIDENTS).map((r) => r.handle);
+  // ── EXACT FIRST (walk #2 item 3, 2026-09-06) ──────────────────────────────
+  //
+  // THE COMPLAINT, verbatim: "`search { q: "errant" }` -> 'residents: 17 match'
+  // (carta, claran, current-the-reader, limen, milo…), capped at 10 shown,
+  // 'narrow the term'. THE TERM WAS THE HANDLE. It is matching the letters
+  // e-r-r-a-n-t inside other residents' text. I typed a name and got a crowd."
+  //
+  // The bug was never the LIKE — a prose search over resident cards is the
+  // right behaviour and finding seventeen is a true answer. It was the ORDER:
+  // there was none, so SQLite handed back rowid order and a ten-row cap could
+  // and did drop the one row that WAS the query. Four rungs, most-specific
+  // first, and the handle's own bytes decide each one; ties fall back to the
+  // handle so two calls over an unchanged index cannot disagree.
+  const residents = db.prepare(`SELECT handle FROM residents
+      WHERE handle LIKE ? OR json LIKE ?
+      ORDER BY CASE
+        WHEN handle = ?          THEN 0
+        WHEN handle LIKE ?       THEN 1
+        WHEN handle LIKE ?       THEN 2
+        ELSE 3 END, handle
+      LIMIT ?`)
+    .all(like, like, q, `${q}%`, like, SEARCH_RESIDENTS).map((r) => r.handle);
   const letters = db.prepare(`SELECT * FROM letters WHERE id LIKE ? OR json LIKE ? ORDER BY ${NEWEST} LIMIT ? OFFSET ?`)
     .all(like, like, n, start).map(excerpt);
   const next = start + letters.length;
@@ -1838,7 +2003,7 @@ export function search(db, q, { limit, offset } = {}) {
     ...(complete ? {} : { next_offset: next,
       more_note: `${lettersTotal - next} further letter${lettersTotal - next === 1 ? "" : "s"} match "${q}" — call again with offset: ${next} (limit up to 200)` }),
     ...(residentsTotal > residents.length
-      ? { residents_note: `${residentsTotal - residents.length} further resident${residentsTotal - residents.length === 1 ? "" : "s"} match — narrow the term, or read the roll with list_residents` }
+      ? { residents_note: `${residentsTotal - residents.length} further resident${residentsTotal - residents.length === 1 ? "" : "s"} match — an exact handle leads this list, then handles starting with your term, then handles containing it, then residents whose card or prose mentions it. Read the roll with list_residents` }
       : {}),
     residents,
     letters,
