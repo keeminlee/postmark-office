@@ -66,6 +66,16 @@ export function claimEffectsFrom({ rows = [], sinceCrossing, nowCrossing, mine =
   const within = (c) => c != null && c >= sinceCrossing && c <= nowCrossing;
 
   for (const row of rows) {
+    // ⚑ A SLUGLESS CLAIM NAMES NO MARK, and there are real ones on prod: six
+    // `locked` rows for berthillon and current-the-reader carry no slug at all
+    // (operator's SELECT, 2026-09-07 10:13Z). `006_claim_identity.sql` makes the
+    // column NULLABLE on purpose — "not every claim class names a mark (a stake
+    // or an escrow claim does not)" — so this is an ordinary state, not a
+    // corrupt row. `claimRowsSince` DOES return them (its `claimant = ANY($1)`
+    // arm matches on the handle, not the slug), so this guard is load-bearing:
+    // without it an event would be minted with `mark: null` and a summary
+    // reading "null went forward onto the docket". Bound by
+    // `test/slugless-claims.test.mjs`.
     const id = row.slug;
     if (!id) continue;
     // WHOSE EFFECT IS IT. `yours` is about the mark's author; `on_your_ground`
@@ -269,6 +279,12 @@ export async function doorstepRulings(handle, { key = null, sinceCrossings = 2, 
 export function headlinesFrom({ rows = [], cap = 3 } = {}) {
   const locked = [], refused = [];
   for (const row of rows) {
+    // The same slugless-claim guard as `claimEffectsFrom`, and it is needed
+    // HERE too rather than only there: `claimRowsDecidedSince` selects on
+    // `status IN ('locked','refused')` and the six real slugless rows on prod
+    // are all `locked`, so every one of them reaches this loop. Without this a
+    // headline would read "7 marks published at the last crossing" counting
+    // rows that name no mark, with `marks: [null, …]` under it.
     if (!row.slug) continue;
     if (row.status === "locked") locked.push(row.slug);
     else if (row.status === "refused") refused.push(row.slug);

@@ -290,6 +290,60 @@ try {
     } else dead(`control: the author's own ${path}`, "no --key given — the positive door control was not exercised");
   }
 
+  // ── THE LEG THAT WOULD HAVE CAUGHT #2556, AND THE ONE ABOVE WOULD NOT ─────
+  //
+  // Every leg in this file hunts a PLANTED NEEDLE: a nonce in a slug, a secret
+  // in a body, both written by this run. That is the right instrument for "did
+  // my private sentence escape" and it is BLIND to the defect the 2026-09-07
+  // walks actually found — `read: "leave-mark"` answering `drafts: 18` where
+  // fifteen were other households' PUBLISHED marks, mislabelled as the caller's
+  // private compose space. Published marks carry no nonce, so nothing here so
+  // much as twitched, through two walks and a review.
+  //
+  // The cause was the sketchbook half diffing against a STALE base
+  // (`world-branches.mjs § freshestMainRef`, and this branch's commit 1), so
+  // every mark every household published since that base read as an addition
+  // the caller was proposing. What leaked was PUBLIC canon under a private
+  // label — a mislabel, not a disclosure — but a resident cannot tell those
+  // apart from where they stand, and neither could two walks.
+  //
+  // So this leg hunts the CLASS instead of a needle: EVERY id in your own
+  // `drafts` must be authored by a resident of your own household. It needs no
+  // plant, it cannot go stale, and it is red on any future reader that widens
+  // this list by accident.
+  if (KEY) {
+    const { code, text } = await door("/world/my-marks", KEY);
+    let answer = null;
+    try { answer = JSON.parse(text); } catch { /* named below */ }
+    const drafts = answer?.drafts;
+    if (!Array.isArray(drafts)) {
+      dead("class: every id in your own drafts is your household's",
+        `/world/my-marks did not answer with a drafts array (HTTP ${code}: ${text.slice(0, 120)}) — this leg proved nothing`);
+    } else if (!answer.household) {
+      dead("class: every id in your own drafts is your household's",
+        "the answer names no household, so there is nothing to compare the authors against");
+    } else {
+      // The household's own residents, from the answer itself — the door
+      // already resolved them, and asking a second source is how two notions of
+      // one household are born (world2-claims.mjs § THE ONE RESOLVER).
+      const ours = new Set([
+        ...(Array.isArray(answer.residents) ? answer.residents : []),
+        ...(answer.backed ?? []).filter((b) => b?.yours).map((b) => String(b.by)),
+        ...(answer.published ?? []).map((m) => String(m.by)),
+      ].filter(Boolean));
+      const foreign = drafts
+        .map((m) => ({ id: m?.id, by: m?.by ?? String(m?.id ?? "").split("/")[0] }))
+        .filter((m) => m.by && ours.size > 0 && !ours.has(m.by));
+      if (foreign.length)
+        red("class: every id in your own drafts is your household's",
+          `${foreign.length} of ${drafts.length} rows in YOUR drafts are authored by residents this household does not hold: ${
+            foreign.slice(0, 5).map((m) => m.id).join(", ")}${foreign.length > 5 ? " …" : ""}`);
+      else if (ours.size === 0)
+        dead("class: every id in your own drafts is your household's",
+          "the answer named no residents at all (no published marks, no backed rows), so every author compared against an empty set and nothing could have been caught");
+    }
+  } else dead("class: every id in your own drafts is your household's", "no --key given");
+
   // ── CONTROL 1 · the owner's own door DOES show it ─────────────────────────
   // The one answer that must carry the nonce. Without this the whole suite is
   // consistent with the draft never having been saved at all.

@@ -1583,6 +1583,14 @@ export async function worldMyMarks(key = null, { offset = 0 } = {}) {
   const withheld = d.rest.length + k.rest.length + p.rest.length + b.rest.length;
   return {
     household: delta.household,
+    // WHOSE HOUSEHOLD THIS IS, BY NAME (2026-09-07, #2556). The stake slice has
+    // always resolved this and the answer never carried it, so a reader holding
+    // the page could not tell whether an author on it was one of their own —
+    // which is exactly the question two resident walks could not answer about
+    // their own `drafts` list. It is one line, it is already in hand, and it is
+    // what lets `falsifier-draft-privacy.mjs`'s class leg ask "is every id here
+    // authored by this household" without inventing a second roster.
+    residents: stake.residents,
     branch: delta.branch,
     main: delta.main,
     draft: delta.draft,

@@ -212,7 +212,20 @@ export function receiptFrom(records = {}) {
   }
 
   const sources = [];
-  const rows = Array.isArray(claims) ? claims : null;
+  // ⚑ A ROW MUST BE ABOUT THE MARK BEING ASKED ABOUT (2026-09-07). `claims` is
+  // INJECTED, and this function's whole design is that a caller hands it
+  // records — so "the reader already filtered" is a guarantee living in another
+  // file, and a pure function that trusts it is not pure, it is coupled.
+  //
+  // `claimRowsForSlug` does filter (`WHERE slug = $1`), and SQL's `NULL = x` is
+  // never true, so the six real SLUGLESS rows on prod cannot reach it today.
+  // The falsifier that found this handed them in anyway and watched a claim
+  // that names NO mark decide a named mark's tense — `status: "locked"` on a
+  // receipt for a slug that row has nothing to do with. Cheap to close, and it
+  // makes the injection contract honest.
+  const rows = Array.isArray(claims)
+    ? claims.filter((r) => r && r.slug != null && String(r.slug) === String(id))
+    : null;
   if (rows) sources.push("claims");
   if (canon) sources.push("canon");
   if (sketchbook) sources.push("sketchbook");
