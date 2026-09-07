@@ -1063,6 +1063,12 @@ export async function worldOrient(args = {}, key = null, { roll = [] } = {}) {
   // answer is the one orient has always given.
   const present = await presentNear(at, {
     place: (p) => placeWords(p),
+    // AVAILABLE (the-town/available, world PR #19; Rei-2). The presence layer
+    // answers WHERE from the walk ledger; this answers WHETHER THEY ARE READING
+    // from the say edge's own presence, which the office has kept since the
+    // say-box and nothing ever read back. Injected, not imported — the derived
+    // is voices.mjs's to compute and dynamic-presence's only to carry.
+    available: (handle) => voices.availability(handle),
     // You are not your own audience — the same ruling the earshot reply follows
     // for `listeners`. A spectator glance excludes nobody: it is nobody's.
     exclude: choice.handle ? [choice.handle] : [],
@@ -1170,6 +1176,7 @@ export async function worldEyes(args = {}, key = null, { roll = [] } = {}) {
   // office a second author of the world's voice.
   const present = await presentNear(at, {
     place: (p) => placeWords(p),
+    available: (handle) => voices.availability(handle),   // see worldOrient
     exclude: choice.handle ? [choice.handle] : [],
     repo: WORLD_CLONE,
     world: w,
@@ -3394,6 +3401,13 @@ export async function worldWalkers(worldClone, key = null, { roll = null } = {})
     // frame needs the engine; what it takes is a precomputed map, so the purity
     // holds and the two derivations still meet in exactly one place.
     const walkers = everyonePlaced({ world: w, departures, at, where, roll: roll ?? [] });
+    // AVAILABLE on the walkers door too, from the SAME resolver `present` uses.
+    // These are two row-builders for one roster — "world_walkers and present
+    // name the same residents, one derivation, two doors" (dynamic-presence.mjs
+    // § the roll) — and a field that landed on one of them would be the exact
+    // split-brain that consolidation ended. `world { read: "walk" }` reads this
+    // door, so this is where the apex's walk shadow gets the word.
+    const withAvailability = (rows) => rows.map((r) => ({ ...r, available: voices.availability(r.handle) }));
     // THE ROLL'S ABSENCE IS A DISCLOSURE, not a silence. Given no roll this door
     // answers about doers only — which is exactly the shape of the original
     // defect — so it says which question it asked rather than letting a narrower
@@ -3403,7 +3417,7 @@ export async function worldWalkers(worldClone, key = null, { roll = null } = {})
       : "no town roll supplied to this door — the answer covers residents with a walk record or ground, and cannot include a resident who has neither";
     return {
       at,
-      walkers: movementV2Enabled() ? await walkersInFrames(walkers, w, departures) : walkers,
+      walkers: withAvailability(movementV2Enabled() ? await walkersInFrames(walkers, w, departures) : walkers),
       // The disclosure the reader assembled, carried rather than dropped. A door
       // that reads half the record and says nothing is the failure this whole
       // change is about.

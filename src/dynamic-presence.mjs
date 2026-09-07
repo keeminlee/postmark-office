@@ -304,7 +304,7 @@ async function readPresence({ dbPath = null, repo = WORLD_CLONE, atMs = Date.now
  */
 export async function near({
   x, y, radiusM = PRESENCE_DIALS.near_radius_m, limit = PRESENCE_DIALS.near_cap,
-  exclude = [], place = null, dbPath = null, repo = WORLD_CLONE, atMs = Date.now(),
+  exclude = [], place = null, available = null, dbPath = null, repo = WORLD_CLONE, atMs = Date.now(),
   walk = null, engine = null, world = null, where = null, roll = [],
 } = {}) {
   const read = await readPresence({ dbPath, repo, atMs, walk, engine, world, where, roll });
@@ -333,6 +333,13 @@ export async function near({
       band: distanceBand(r.distance_m),
       at: { x: Math.round(r.x), y: Math.round(r.y) },
       standing: r.standing, moving: r.moving, aboard: r.aboard,
+      // AVAILABLE, beside standing and moving, because that is where the
+      // conflation was: those two are about a body and this one is about
+      // attention. Injected exactly as `place` is, for the same reason — this
+      // module must never grow a second answer to a question voices.mjs owns,
+      // and with no resolver passed the row is byte-identical to the one it
+      // has always served.
+      ...(available ? { available: await available(r.handle) } : {}),
       ...(r.moving ? { remaining_m: Math.round(r.remaining_m ?? 0) } : {}),
       ...(place ? { place: await place({ x: r.x, y: r.y, aboard: r.aboard, moving: r.moving }) } : {}),
     });
@@ -362,7 +369,7 @@ export async function near({
  * walkers door's, already paid for, and it is not re-learned here.
  */
 export async function everyone({
-  place = null, dbPath = null, repo = WORLD_CLONE, atMs = Date.now(), walk = null, engine = null,
+  place = null, available = null, dbPath = null, repo = WORLD_CLONE, atMs = Date.now(), walk = null, engine = null,
   world = null, where = null, roll = [],
 } = {}) {
   const read = await readPresence({ dbPath, repo, atMs, walk, engine, world, where, roll });
@@ -375,6 +382,7 @@ export async function everyone({
       at: { x: Math.round(r.x), y: Math.round(r.y) },
       source: r.source,
       standing: r.standing, moving: r.moving, aboard: r.aboard,
+      ...(available ? { available: await available(r.handle) } : {}),   // see near()
       ...(r.moving ? { remaining_m: Math.round(r.remaining_m ?? 0), eta_crossings: r.eta_crossings } : {}),
       ...(place ? { place: await place({ x: r.x, y: r.y, aboard: r.aboard, moving: r.moving }) } : {}),
     });
