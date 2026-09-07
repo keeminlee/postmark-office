@@ -238,6 +238,46 @@ try {
     else if (!text.includes("compose space")) dead("door /world2/my-drafts as ANOTHER household", `the door did not answer as itself (HTTP ${code}: ${text.slice(0, 120)})`);
   } else dead("door /world2/my-drafts as ANOTHER household", "no --other-key given — the cross-household read was not exercised");
 
+  // ── THE DOOR A RESIDENT ACTUALLY READS (2026-09-07, lane-a / R3) ──────────
+  //
+  // THE GAP THIS CLOSES, and it is the reason the finding took a walk to find:
+  // every leg above hunts `/world2/*`, and `/world2/my-drafts` reads
+  // `readDraftClaims` — one query, `WHERE status = 'draft' AND household = $1`.
+  // The door a RESIDENT reads is `world { read: "leave-mark" }` → `worldMyMarks`
+  // → `guardedDraftsForKey` → `pgDraftsForKey`, which is a DIFFERENT reader
+  // with a different query (`status = ANY(draft,pending)`), unioned with the git
+  // sketchbook, and NO LEG TOUCHED IT. On 2026-09-06 a resident read eighteen
+  // rows there, fifteen of them by other households, and could not tell a
+  // mislabel from a leak — while this falsifier stood green over four `/world2`
+  // paths.
+  //
+  // A leak falsifier that does not cover the door the residents use is a green
+  // suite doing the wrong arithmetic, which this file's own header calls worse
+  // than a red one.
+  //
+  // ⚑ ONE PATH, NOT TWO, and the reason is a finding of its own: `worldMyDrafts`
+  // (`world_my_drafts`, the other reader of this overlay) has NO REST DOOR — it
+  // is MCP-only, so an HTTP falsifier cannot reach it at all. `/world/my-marks`
+  // is the one door of the pair this file can hunt, and it shares the overlay,
+  // so a leak in `guardedDraftsForKey` shows here. That the sibling is
+  // unreachable from any probe of this shape is recorded rather than papered
+  // over; closing it needs an MCP-speaking leg, which is not this file's shape.
+  for (const [path, control] of [["/world/my-marks", "drafts"]]) {
+    if (OTHER_KEY) {
+      const { code, text } = await door(path, OTHER_KEY);
+      if (text.includes(SECRET) || text.includes(NONCE))
+        red(`door ${path} as ANOTHER household`, `the answer carries the draft (HTTP ${code}) — this is the door a resident reads`);
+      else if (!text.includes(control))
+        dead(`door ${path} as ANOTHER household`, `neither the draft NOR this leg's control ("${control}") is in the answer (HTTP ${code}: ${text.slice(0, 120)}) — this leg proved nothing`);
+    } else dead(`door ${path} as ANOTHER household`, "no --other-key given — the cross-household read was not exercised");
+
+    if (KEY) {
+      const { code, text } = await door(path, KEY);
+      if (!text.includes(NONCE))
+        dead(`control: the author's own ${path}`, `the author's own draft is NOT in their own answer (HTTP ${code}) — so the cross-household leg above proves nothing about this door`);
+    } else dead(`control: the author's own ${path}`, "no --key given — the positive door control was not exercised");
+  }
+
   // ── CONTROL 1 · the owner's own door DOES show it ─────────────────────────
   // The one answer that must carry the nonce. Without this the whole suite is
   // consistent with the draft never having been saved at all.
