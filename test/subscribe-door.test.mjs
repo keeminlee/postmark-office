@@ -588,6 +588,33 @@ test("THE DISPATCHER'S BOOT REBUILD EQUALS THE PURE PROJECTION OVER THE SAME ROW
     [["alpha", "addressed-say", "a2"], ["delta", "claim-effect", "d"]]);
 });
 
+test("EVERY WAKE POINTS AT A DOOR THAT EXISTS — a pointer to a read nobody can type is worse than no wake", async () => {
+  // A wake is a form: its whole content is `read`, the sentence that answers
+  // it. So the sentence has to name a door the town actually has, and this
+  // checks it against the two apexes' own readable sets rather than against a
+  // list here — which is the only version of this check that can catch a read
+  // being renamed one door over.
+  const { HOUSEHOLD_READABLE } = await import("../src/household-apex.mjs");
+  const worldReadable = new Set(apex.DISPATCHABLE);
+  const householdReadable = new Set(HOUSEHOLD_READABLE);
+
+  for (const kind of subs.WAKE_ON_LIVE) {
+    const sentence = dispatcher.wakeBody({ id: 1 }, kind).read;
+    const m = sentence.match(/^(world|household) \{ read: "([a-z-]+)"/);
+    assert.ok(m, `the wake for ${kind} does not name a read in the door's own grammar: ${sentence}`);
+    const [, door, name] = m;
+    const has = door === "world" ? worldReadable.has(name) : householdReadable.has(name);
+    assert.ok(has, `the wake for ${kind} points at ${door} { read: "${name}" }, which that door does not answer`);
+  }
+
+  // The two dormant kinds are exempt AND named as exempt, rather than quietly
+  // skipped: `gather` is world#15's and does not exist yet, which is exactly
+  // why that wake_on does not fire. If a dormant kind ever gains a door, the
+  // exemption should shrink — so the set is asserted, not assumed.
+  assert.deepEqual(Object.keys(subs.WAKE_ON_DORMANT).sort(), ["gathering-doors-open", "letter-delivered"]);
+  assert.equal(worldReadable.has("gather"), false, "if `gather` has landed, gathering-doors-open is no longer dormant and this file is stale");
+});
+
 test("a subscribe act is what makes the dispatcher rebuild — it never patches its set by hand", () => {
   assert.equal(dispatcher.changesSubscriptions({ action: "subscribe" }), true);
   assert.equal(dispatcher.changesSubscriptions({ action: "unsubscribe" }), true);
