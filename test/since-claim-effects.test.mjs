@@ -282,10 +282,21 @@ test("the household door's `read:` schema names EVERY segment and EVERY read", a
   const { DOORSTEP_SEGMENTS } = await import("../src/queries.mjs");
   const d = HOUSEHOLD_TOOL.inputSchema.properties.read.description;
 
+  // ⚑ THE SEGMENT LIST AND THE READ LIST ARE CHECKED APART, and the first
+  // version of this leg did not do that: it asked `d.includes(name)` for both,
+  // and every read that is also a segment was satisfied by the SEGMENT list. I
+  // flipped the read list back to a hand-typed one that omits `rulings` and
+  // this stayed GREEN — a control satisfied by something other than the thing
+  // it is controlling for, which is the exact weakness the reviewer named in
+  // the leak falsifier's cross-household leg. Each read is now matched WITH ITS
+  // BLURB, `<name> (…`, a shape only the derived form produces.
+  const segmentSentence = d.slice(d.indexOf("bundle of"), d.indexOf("The reads —"));
   for (const seg of DOORSTEP_SEGMENTS)
-    assert.ok(d.includes(seg), `the read: schema does not name the doorstep segment "${seg}"`);
+    assert.ok(segmentSentence.includes(seg), `the read: schema's doorstep gloss does not name the segment "${seg}"`);
+  const readList = d.slice(d.indexOf("The reads —"));
   for (const r of HOUSEHOLD_READABLE)
-    assert.ok(d.includes(r), `the read: schema advertises no read "${r}" — a door that accepts a name it does not mention`);
+    assert.ok(readList.includes(`${r} (`),
+      `the read: schema advertises no read "${r}" — a door that accepts a name it does not mention`);
   assert.ok(d.includes(`${DOORSTEP_SEGMENTS.length} segments`),
     "and it counts what the page serves");
   assert.equal(Object.keys(HOUSEHOLD_READS).length, HOUSEHOLD_READABLE.length,
