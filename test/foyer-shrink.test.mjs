@@ -745,8 +745,23 @@ test("F13b · and a send with NO nonce is byte-for-byte the receipt it always wa
     const odb = logDb();
     const clone = mailClone();
     const r = await sendLetterAsRow(letter(), KEY, db, clone, odb);
-    assert.deepEqual(Object.keys(r), ["letter_id", "commit", "standing", "expected_crossing", "logged", "pushed"],
+    // THE CLAIM IS ABOUT NONCES, and it is asserted directly so it can fail on
+    // its own — the key list below is a shape guard, and a shape guard cannot
+    // stand in for the claim it sits beside.
+    assert.deepEqual(Object.keys(r).filter((k) => /nonce|idempotent|duplicate/.test(k)), [],
       "a caller who passed no nonce is told nothing about nonces");
+    // AND THE SHAPE IS STILL PINNED, so the receipt cannot fatten unnoticed —
+    // the sibling concern F7c5 holds for the morning page. `office_bookkeeping`
+    // joined 2026-09-07 (lane E item 7b): `commit: null` and `pushed: false` sat
+    // beside `standing` on every successful send and read as failure to anyone
+    // who has used git (walk #2, 2026-09-06, item 4). Neither field could be
+    // dropped — flag-off the same receipt carries a real sha, and a caller
+    // comparing the two must see the difference rather than infer it from an
+    // absent key — so one sentence was added that says whose question they
+    // answer. The list moves by hand, and this comment is why.
+    assert.deepEqual(Object.keys(r),
+      ["letter_id", "commit", "standing", "expected_crossing", "logged", "pushed", "office_bookkeeping"],
+      "the receipt's shape is pinned; a key added without a reason reds here");
     odb.close();
   });
 });

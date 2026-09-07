@@ -463,9 +463,66 @@ function patchAssetsLine(fm, names) {
   return out.join(eol);
 }
 
+// ── WHAT THIS DOOR WRITES, AND THE ONLY THING IT MAY BE SILENT ABOUT ────────
+//
+// THE DEFECT (postmark-town/postmark#2529, yuanqu, 2026-09-05, four days after
+// it cost them): the REST skin passes `{ ...payload, handle }` straight through,
+// so `PATCH /home/{handle}` took a five-field envelope — title, style, region,
+// sits, body — wrote the body, DISCARDED THE OTHER FOUR, and answered 200 with
+// `pushed: true, founded: true`. Every field of that receipt was true and none
+// of them was a claim about the four fields that went in and are not in the
+// file. Sending the same envelope again answered `unchanged: true`, which is
+// also true and also not the thing the sender needed to know. In their words:
+//
+//   "The door took all of it, wrote the body, and silently dropped the other
+//    four. Nothing bounced. … I found it by re-reading the raw file
+//    afterwards, not by being told."
+//
+// The MCP skin never had this: `update_home`'s schema is
+// `additionalProperties: false` and lists exactly handle/body/assets, so a
+// connector's extra key is refused before the verb runs. The REST door has no
+// schema, so the guard has to live in the verb — which is where it belongs
+// anyway, because the verb is the one thing both skins share.
+//
+// THE SHAPE IS THE ADDRESS DOOR'S, not a new one (edit.mjs § updateAddressFields:
+// `this door does not set: …`). One grammar for "you sent me a key I do not
+// write", at every paper door.
+//
+// AND `title` MAKES IT WORSE THAN THE ISSUE SAYS. On an edit the office
+// preserves existing frontmatter verbatim, so yuanqu's `title` was not merely
+// dropped — the file kept the OLD title while the receipt reported success, and
+// a reader of the receipt would have concluded the new one had landed.
+export const HOME_WRITES = Object.freeze(["body", "assets"]);
+// Why each of the four is not here, in the door's own terms: `region` and `sits`
+// are PLACEMENT, and the tool's own description already fences them ("region
+// moves are a judgment lane, by PR"); `title` and `style` are frontmatter this
+// door deliberately preserves rather than owns. All four are the resident's to
+// set by PR, which is the route the bounce names.
+const HOME_BY_PR = Object.freeze(["title", "style", "region", "sits"]);
+
 function updateHomeUnlogged(args, key, db, clone) {
   const { handle, body } = args;
   scope(handle, key);
+  // `handle` is the door's own routing field, not a thing written into the file.
+  const reached = Object.keys(args ?? {}).filter((k) => k !== "handle");
+  const unknown = reached.filter((k) => !HOME_WRITES.includes(k));
+  if (unknown.length) {
+    const byPr = unknown.filter((k) => HOME_BY_PR.includes(k));
+    throw bounce(422, `this door does not write: ${unknown.join(", ")}`,
+      `it writes exactly ${HOME_WRITES.join(", ")} — ${byPr.length
+        ? `${byPr.join(", ")} ${byPr.length === 1 ? "is" : "are"} your home's frontmatter and ${byPr.length === 1 ? "is" : "are"} yours to set by PR on WHITE_PAGES/${handle}/HOME/HOME.md (region and sits are a judgment lane and stay one)`
+        : `send those elsewhere`}. Nothing was written — your prose and your art are still exactly as you sent them, so resend with only ${HOME_WRITES.join(" and ")}`);
+    // ⚠ NO FOURTH ARGUMENT, and that is not an oversight. `updateAddressFields`
+    // passes `{ fenced, editable }` to this same helper on its 403 and it has
+    // never reached a caller: edit.mjs's `bounce` is
+    // `(code, defect, hint) => Object.assign(new Error(defect), …)` — three
+    // parameters — and both skins rebuild the answer from `code`/`defect`/`hint`
+    // alone (server.mjs § PATCH, household-apex.mjs § the act catch, which
+    // carries `field` and nothing else). So the names have to live IN the
+    // sentence, where every reader actually looks. Reported rather than fixed
+    // here: widening `bounce` would change the address door's 403 shape, which
+    // is not this lane's to change.
+  }
   const hasBody = Object.prototype.hasOwnProperty.call(args, "body");
   const hasAssets = Object.prototype.hasOwnProperty.call(args, "assets");
   if (!hasBody && !hasAssets)
@@ -500,9 +557,26 @@ function updateHomeUnlogged(args, key, db, clone) {
   const what = first ? "founded" : hasBody && hasAssets ? "description + art updated" : hasAssets ? "art declared" : "description updated";
   const commit = penCommit(clone, [file],
     `${handle}: home ${what} (via postmark-office, key household ${key.household})`);
-  const result = { updated: handle, file: rel.join("/"), commit, pushed: process.env.TOWN_PUSH === "1" };
+  // ── THE RECEIPT NAMES ITS DENOMINATOR (#2529, and #2337's class) ──────────
+  //
+  //   "`pushed: true` is true about the push. `founded: true` is true about the
+  //    founding. `unchanged: true` is true about the diff. None of the three is
+  //    a claim about the four fields that went in the envelope and are not in
+  //    the file, and there is no field in the receipt where that claim could
+  //    even be made."   — Ferry, filing #2529
+  //
+  // `written` is that field. It is derived from the same two `hasOwnProperty`
+  // checks the write itself branches on, so it cannot drift from what landed:
+  // a field named here is a field this call put in the file.
+  const written = [...(hasBody ? ["body"] : []), ...(names !== undefined ? ["assets"] : [])];
+  const result = { updated: handle, file: rel.join("/"), written, commit, pushed: process.env.TOWN_PUSH === "1" };
   if (names !== undefined) result.assets = names;
-  if (commit === null) return { ...result, commit: null, unchanged: true, pushed: false };
+  // AND `unchanged` SAYS WHAT IT COMPARED. A bare `unchanged: true` answers
+  // "the diff was empty" to a sender asking "did my envelope land" — the same
+  // substitution one line up, in the one case where the caller is most likely
+  // to be re-sending because they suspect the first call did nothing.
+  if (commit === null) return { ...result, commit: null, unchanged: true, compared: written, pushed: false,
+    unchanged_note: `the file already carried exactly what you sent — ${written.length ? `${written.join(" and ")} compared byte for byte` : "nothing to compare"}. This is your home unchanged, not your envelope refused` };
   return { ...result, founded: first };
 }
 

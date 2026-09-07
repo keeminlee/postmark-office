@@ -477,6 +477,22 @@ async function sendRow(args, key, db, clone, odb, nonce) {
     expected_crossing: nextCrossing(),
     logged: { seq, settles_at: SETTLES_AT },
     pushed: false,
+    // ── WHAT commit AND pushed ARE ABOUT (walk #2 item 4, 2026-09-06) ───────
+    //
+    // THE COMPLAINT, verbatim: "a success receipt with two words that look like
+    // failure. `do: "send"` answers `commit: null` and `pushed: false` beside
+    // `standing: written and standing ahead of the record`. The prose is right;
+    // the two fields read as 'not saved' to anyone who has used git. The receipt
+    // answers a question I did not ask (did the office push?) in a way that
+    // sounds like the one I did (did it take?)."
+    //
+    // NEITHER FIELD IS DROPPED. `commit: null` is load-bearing — flag-off the
+    // same receipt carries a sha, and a caller comparing the two must see the
+    // difference rather than infer it from an absent key (the comment three
+    // lines up says so, and it is right). What was missing was the sentence
+    // that says whose question they answer. `standing` above is the answer to
+    // whether it took.
+    office_bookkeeping: "commit and pushed are the OFFICE's own record-keeping — whether this call also wrote a git commit and pushed it — and under the town log neither happens by design: your letter is a row that becomes an outbox file at the crossing. Whether it TOOK is `standing` and `logged.seq` above; read it back with household { read: \"mail\", view: \"pending\" }",
     // Only when one was offered — a caller who passed no nonce is told nothing
     // about nonces, and this receipt is byte-for-byte the one they got before.
     ...(nonce ? { nonce, idempotent: "retry this exact call with the same nonce and you will get this receipt back rather than a second letter — until the crossing takes it, after which the letter id is the guard" } : {}),

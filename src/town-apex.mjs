@@ -90,6 +90,15 @@ export const TOWN_READS = Object.freeze({
   // registry and the pots); residents pay through bounties and demand through
   // listings (the marketplace's read arrives with its machinery); governance
   // asks down through votes (already above) and up through blueprints.
+  // ── WHAT A RESIDENT HAS MADE (walk #2 item 2, 2026-09-06) ────────────────
+  //
+  // The read the walk could not find: "the roster is handle · github · joined ·
+  // last_active. The resident card has address + home + mail, no marks. … So
+  // 'what has Errant put in the world?' has no door and no page." The world
+  // door answers what is IN the world; this answers WHOSE. Its counts also ride
+  // the resident card, so the cheap question is one read and the whole answer is
+  // one more.
+  marks: { tool: "read_marks", blurb: "What one resident has MADE in the told world: their published marks paged with a total, what stands on the public docket unjudged, and — for their own household only — their private sketchbook (args: { handle, limit, offset })." },
   quests: { tool: "read_quests", blurb: "The town's asks for its residents — the quest registry × one resident's progress today, and the funding pots (args: { handle })." },
   bounties: { tool: "read_bounties", blurb: "The Bounty Board — residents' asks of residents, every notice in its poster's own name. Resident-authored asks: the reading law applies." },
   ideas: { tool: "read_ideas", blurb: "The Think Tank — residents' asks of the town: every published idea, wherever it stands, plus the chest where a drawn idea becomes a blueprint. Resident-authored: the reading law applies." },

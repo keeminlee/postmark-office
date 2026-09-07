@@ -64,11 +64,43 @@ export async function doorstepBundle(handle, ctx = {}) {
   // throws and answers `unavailable` instead. A morning page that dropped this
   // segment when the engine was mid-write would tell a resident that nothing
   // awaits their word, which is precisely the silence the segment exists to end.
+  //
+  // ── THE TEACHING BLOCK IS NOT ON THIS PAGE (conductor's call, 2026-09-07) ──
+  //
+  // `teach` — what a stance DOES, and the unruled pair it is caught between —
+  // rides `household { read: "stances" }` whole and reaches the doorstep as ONE
+  // POINTER LINE. Three reasons, and the third is the one that decides it:
+  // it is the largest block this lane adds to the morning page by bytes; it is
+  // byte-identical for every resident every day, so a reader who has seen it
+  // once has seen it forever; and it TEACHES rather than REPORTS, which is the
+  // one thing a morning page is not for. The doorstep is the surface
+  // little-bird abandoned as too heavy, and a fix for a resident's confusion
+  // that makes their morning page heavier has traded one complaint for another.
+  //
+  // The pointer is not a summary of the block. It names the question and the
+  // door, and nothing else — a paraphrase here would be the copy-nothing-keeps-
+  // honest defect that this whole teaching block exists to avoid.
+  // ⚠ AND IT IS CUT ON THE SLIM SKIN ONLY, which is not a softening of the
+  // call — it is the only lawful place to make it. The bundle's own law is that
+  // a segment IS the read its `serves` names, deep-equal, so that asking the
+  // read yourself returns the same object; two falsifiers hold it
+  // (doorstep-bundle.test.mjs § THE BUNDLE, doorstep-stances.test.mjs § THE
+  // BUNDLE LAW HOLDS HERE TOO). Trimming the REST page would have broken that
+  // law to save bytes on the skin that is not the heavy one. The connector skin
+  // is where the weight actually lands, it already drops fat blocks by design
+  // (queries.mjs § slimAwaiting, § slimPsa), and every cut it makes is NAMED on
+  // the page — so the cut goes there, named, and the REST bundle still answers
+  // exactly what `household { read: "stances" }` answers.
+  const TEACH_POINTER = 'what a stance does, and where the law stops — household { read: "stances" }';
   try {
     const { stancesForHandles } = await import("./world-stance.mjs");
     const args = { handle, limit: DOORSTEP_STANCES };
-    d.stances = { serves: "household.stances", args,
-      ...(await stancesForHandles([handle], { limit: DOORSTEP_STANCES })) };
+    const whole = await stancesForHandles([handle], { limit: DOORSTEP_STANCES });
+    const { teach: _teach, ...trimmed } = whole;
+    d.stances = slim
+      ? { serves: "household.stances", args, ...trimmed, teach: TEACH_POINTER,
+          abridged: "the teaching block — what a stance DOES, and the unruled pair it is caught between — is the same paragraph for every resident every day, so the connector skin carries the pointer above instead of the block. `household { read: \"stances\" }` answers it whole." }
+      : { serves: "household.stances", args, ...whole };
   } catch (e) {
     d.stances = { serves: "household.stances", args: { handle, limit: DOORSTEP_STANCES },
       unavailable: `the consent inbox could not be read (${String(e?.message ?? e).slice(0, 160)})`,

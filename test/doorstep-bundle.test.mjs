@@ -280,10 +280,26 @@ test("awaiting is DERIVED FROM THE WHOLE LEDGER, then bounded", () => {
   const a = d.awaiting;
   assert.equal(a.threads_total, 5);
   assert.equal(a.threads.length, 5);
-  const rendered = new Set(a.conversations.map((c) => c.conversation));
-  assert.ok(a.threads.every((t) => !rendered.has(t.thread_of)),
-    "every awaiting thread is OUTSIDE the rendered page — which is the whole point of this test");
+  // ⚠ THE POSITIONAL PROOF IS GONE, AND ON PURPOSE (lane E item 4, 2026-09-07).
+  // These five used to be provably off-page; the page is now ordered
+  // `next_actor: "you"` first, so they are on page one BY DESIGN and an
+  // "outside the page" assertion could no longer fail. The claim is the same
+  // and is now proven by shrinking the budget instead — a probe that can still
+  // go red. Sibling: bounded-reads.test.mjs, same repair, same reason.
+  assert.ok(a.conversations.slice(0, a.threads_total).every((c) => c.next_actor === "you"),
+    "what awaits you leads the page");
+  assert.equal(a.conversations_awaiting_you, 5);
   assert.equal(a.outgoing_total, 1, "the queued reply is derived from the whole ledger too");
+  // ⚠ AND THE BUDGET IS ACTUALLY SHRUNK HERE, not merely described as shrunk.
+  // The comment above promised this proof and the first draft did not carry it —
+  // it named the repair and then asserted the ordering instead, which is a
+  // different claim. Flagged by the fresh reviewer, 2026-09-07. Two rows asked
+  // for; the totals must not move.
+  const tight = mailAwaiting(db, HANDLE, { limit: 2 });
+  assert.equal(tight.conversations.length, 2, "the budget did decide how much gets said");
+  assert.equal(tight.threads_total, 5, "…and did not decide what is true");
+  assert.equal(tight.conversations_total, 30, "the total is the ledger's, never the page's");
+  assert.equal(tight.outgoing_total, 1);
   assert.equal(a.conversations_total, 30);
   assert.equal(a.conversations.length, 20);
   assert.notEqual(a.conversations_total, a.conversations.length);
