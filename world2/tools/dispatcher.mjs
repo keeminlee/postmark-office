@@ -170,18 +170,31 @@ export async function deliver(wake, url, { fetchImpl = fetch, timeoutMs = 4000, 
 // of. `groundFor` is the consent door's own overlap rule, pure and exported,
 // and it is what "the ground's holders" means anywhere else in this office.
 
-async function makeDeps({ repo = null, log = console.log } = {}) {
+/**
+ * The two facts `wakesFor` cannot derive alone.
+ *
+ * EXPORTED, AND `near` IS INJECTABLE, for one reason: `nearHandles` is a
+ * three-line fetch and a flip that made it drop `near()`'s `error` field
+ * STAYED GREEN twice — once when the mapper raised the error itself, and again
+ * after the seam moved into `wakesFor`. Both times it was the last unfalsified
+ * line in the earshot path, and both times deleting one field from it would
+ * have made say-in-earshot go quietly dead. A line that can break a lane and
+ * cannot be reached by a test is a line nobody is watching.
+ */
+export async function makeDeps({ repo = null, log = console.log, nearImpl = null } = {}) {
   return {
     log,
     async nearHandles(at, radiusM) {
-      const { near } = await import("../../src/dynamic-presence.mjs");
+      const near = nearImpl ?? (await import("../../src/dynamic-presence.mjs")).near;
       // HANDED BACK WHOLE, not flattened. `near()` has two arms and only one
       // of them throws: a failed presence read RETURNS `{ error, detail,
       // residents: [] }`. `wakesFor` is the ONE reader of that difference, and
       // a mapper here that kept only `residents` would make a broken read and
       // an empty room the same silence — which is exactly what it did until a
-      // flip that deleted the check stayed green. This function now decides
-      // nothing; it fetches.
+      // flip that deleted the check stayed green. This function decides
+      // nothing; it fetches — and the leg in test/subscribe-door.test.mjs
+      // asserts exactly that, by handing in a `near` that errors and checking
+      // the error survives the trip.
       return await near({ x: at.x, y: at.y, radiusM, ...(repo ? { repo } : {}) });
     },
     async interestedIn(act) {

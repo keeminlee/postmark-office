@@ -668,6 +668,40 @@ test("A PRESENCE READ THAT ERRORS IS LOGGED, NOT SWALLOWED — earshot waking no
   assert.deepEqual(quiet, [], "an empty room says nothing — only a broken read does");
 });
 
+test("THE DISPATCHER'S PRESENCE DEP DECIDES NOTHING — `near()`'s error survives the trip to `wakesFor`", async () => {
+  // THE LINE THIS EXISTS FOR was the last unfalsified one in the earshot path,
+  // and two separate flips proved it: dropping `error` in the dispatcher's
+  // three-line `nearHandles` left all legs green, both while the mapper raised
+  // the error itself AND after the seam moved into `wakesFor`. A line that can
+  // break a lane and cannot be reached by a test is a line nobody is watching.
+  //
+  // So `makeDeps` takes `nearImpl`, and this hands it a `near` that takes the
+  // error arm. What is asserted is that the FIELD SURVIVES — not that the
+  // dispatcher does anything with it, because it must not.
+  const deps = await dispatcher.makeDeps({
+    nearImpl: async () => ({ error: "entities-never-derived", detail: "the presence table has never been filled", residents: [] }),
+  });
+  const answer = await deps.nearHandles({ x: 0, y: 0 }, 50);
+  assert.equal(answer.error, "entities-never-derived", "the dep flattened the answer and erased which arm it came from");
+  assert.ok(Array.isArray(answer.residents));
+
+  // and the success arm passes rows through untouched, or earshot compares
+  // distances that are not there
+  const ok = await dispatcher.makeDeps({
+    nearImpl: async () => ({ radius_m: 50, residents: [{ handle: "alpha", distance_m: 12 }] }),
+  });
+  const rows = await ok.nearHandles({ x: 0, y: 0 }, 50);
+  assert.deepEqual(rows.residents, [{ handle: "alpha", distance_m: 12 }]);
+  assert.equal(rows.error, undefined);
+
+  // the radius the derivation asked for is the radius the dep asks near() for —
+  // the widest any subscriber wants, capped nowhere in between
+  let sawRadius = null;
+  const spy = await dispatcher.makeDeps({ nearImpl: async (args) => { sawRadius = args.radiusM; return { residents: [] }; } });
+  await spy.nearHandles({ x: 3, y: 4 }, 137);
+  assert.equal(sawRadius, 137);
+});
+
 test("EVERY WAKE POINTS AT A DOOR THAT EXISTS — a pointer to a read nobody can type is worse than no wake", async () => {
   // A wake is a form: its whole content is `read`, the sentence that answers
   // it. So the sentence has to name a door the town actually has, and this
