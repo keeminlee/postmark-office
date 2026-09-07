@@ -39,6 +39,10 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 import { WORLD_CLONE } from "./world-store.mjs";
+// The READ tier's published-main ref. `world-branches.mjs` imports node builtins
+// only, so this closes no cycle, and it is the one place that decision lives —
+// see its § freshestMainRef "IT IS ALSO THE CANON READER".
+import { freshestMainRef } from "./world-branches.mjs";
 
 /** Around-you and town shelves are windows. These are their sills. */
 export const HAPPENED_DIALS = Object.freeze({
@@ -81,7 +85,7 @@ export function latestSavedCrossing(worldClone) {
  * reader could disagree with it. The log supplies the displacement half: what
  * the carrier did while you were in its frame.
  */
-export function toYou({ transitions = [], carriedLegs = [], sinceCrossing, nowCrossing }) {
+export function toYou({ transitions = [], carriedLegs = [], claimEffects = null, sinceCrossing, nowCrossing }) {
   const events = [];
   for (const t of transitions) {
     if (t.crossing != null && t.crossing < sinceCrossing) continue;
@@ -108,9 +112,31 @@ export function toYou({ transitions = [], carriedLegs = [], sinceCrossing, nowCr
       from: leg.from, to: leg.to,
     });
   }
+  // ── THE CLAIM EFFECTS (2026-09-07, #2526) ────────────────────────────────
+  //
+  // A crossing publishing or refusing your mark is an effect on your node —
+  // `the-response-function § Residents: words, at their own pace` — and this
+  // shelf did not carry one. The 2026-09-06 walk staked a mark, lived through
+  // two crossings, and read `{ complete: true, count: 0, events: [] }`.
+  for (const e of claimEffects?.events ?? []) events.push(e);
+
+  // ── AND `complete` STOPS BEING UNCONDITIONAL ──────────────────────────────
+  //
+  // The old sentence — "complete by construction — frame events are rare, so
+  // yours are never truncated" — was TRUE about the shelf it was written for
+  // and FALSE about the shelf a resident reads it as. It is a promise, so it
+  // must now be earned: this shelf is complete when every source it draws on
+  // answered, and says which one did not when one did not.
+  //
+  // `claimEffects: null` means the caller did not ask for them (a keyless or
+  // handle-less read). That is not an unreadable source — there is no resident
+  // whose backlog could be incomplete — so it keeps the promise.
+  const docketReadable = claimEffects == null || claimEffects.readable !== false;
   return {
-    complete: true,
-    note: "complete by construction — frame events are rare, so yours are never truncated",
+    complete: docketReadable,
+    note: docketReadable
+      ? "complete for you — frame events are rare by construction, and every claim effect on your marks and on your ground rides here too"
+      : `INCOMPLETE — ${claimEffects.reason ?? "a source of this shelf could not be read"}. Frame events below are whole; claim effects on your marks are missing from this answer, and this line is here so you do not read their absence as nothing having happened.`,
     since_crossing: sinceCrossing,
     through_crossing: nowCrossing,
     count: events.length,
@@ -162,18 +188,37 @@ export function aroundYou({ lines = [], at, radiusM = HAPPENED_DIALS.around_radi
  * most a few teasers. Nothing here grows with how long you were gone, and
  * nothing here is a thing to read — it is a place to go look.
  */
-export function townShelf({ nowCrossing, latestSettlement = null, notices = [], cap = HAPPENED_DIALS.town_headlines }) {
-  return {
-    complete: false,
-    note: "headlines only — pointers, never copies. Follow one if it matters to you.",
-    crossing: nowCrossing,
-    latest_settlement: latestSettlement,
-    headlines: notices.slice(0, cap).map((n) => ({
+export function townShelf({ nowCrossing, latestSettlement = null, notices = [], headlines = null, cap = HAPPENED_DIALS.town_headlines }) {
+  // ── R2: THE TOWN HAD NO NEWS, ONLY NOTICES ────────────────────────────────
+  //
+  // `headlines` came back `[]` at crossing 172 — the crossing right after a
+  // settlement published five marks — because the only source it had was
+  // `activeNotices()`, the standing PSA board, and a standing notice is not
+  // news. Both walks found it from opposite ends: "the doorstep tells me
+  // everything about me and nothing about the town", and "the town has a
+  // heartbeat you can count and no news you can read".
+  //
+  // The crossing's own published/refused list is now the FIRST source, and the
+  // PSAs fill whatever room is left. Pointers, never copies — this shelf's own
+  // standing rule, and each row names the read that opens it.
+  const rows = [
+    ...(headlines?.rows ?? []),
+    ...notices.map((n) => ({
       id: n.id, title: n.title,
       // A teaser, not the notice. The notice board already carries the whole
       // thing to anyone standing where it applies.
       teaser: String(n.text ?? "").slice(0, 140) + (String(n.text ?? "").length > 140 ? "…" : ""),
     })),
+  ];
+  return {
+    complete: false,
+    note: "headlines only — pointers, never copies. Follow one if it matters to you.",
+    crossing: nowCrossing,
+    latest_settlement: latestSettlement,
+    ...(headlines?.readable === false
+      ? { headlines_incomplete: headlines.reason ?? "the crossing's own published/refused list could not be read — these headlines are the notice board only" }
+      : {}),
+    headlines: rows.slice(0, cap),
   };
 }
 
@@ -181,12 +226,17 @@ export function townShelf({ nowCrossing, latestSettlement = null, notices = [], 
  * The whole `happened` block. Pure over its inputs so the delta-cap invariant
  * can be falsified without a world, a clone, or a store.
  */
-export function happenedBlock({ transitions, carriedLegs, lines, at, sinceCrossing, nowCrossing, latestSettlement, notices, exclude }) {
+export function happenedBlock({ transitions, carriedLegs, claimEffects = null, lines, at, sinceCrossing, nowCrossing, latestSettlement, notices, headlines = null, exclude }) {
   return {
-    since: { crossing: sinceCrossing, note: "pass the `crossing` from your last reply as since: — the town's clock is the cursor" },
-    to_you: toYou({ transitions, carriedLegs, sinceCrossing, nowCrossing }),
+    since: { crossing: sinceCrossing,
+      // R4: the cursor's clock, named where the cursor is. `since:` counts the
+      // FERRY's 00:00/12:00Z crossings; the keeper's settlement epoch (S59, and
+      // the sha it blessed) is a different number on a different beat, and it
+      // rides `latest_settlement` below.
+      note: "pass the `crossing` from your last reply as since: — the town's clock is the cursor, and it counts the ferry's 00:00/12:00Z crossings (not the keeper's settlement epoch, which rides town.latest_settlement)" },
+    to_you: toYou({ transitions, carriedLegs, claimEffects, sinceCrossing, nowCrossing }),
     around_you: aroundYou({ lines, at, exclude }),
-    town: townShelf({ nowCrossing, latestSettlement, notices }),
+    town: townShelf({ nowCrossing, latestSettlement, notices, headlines }),
   };
 }
 
@@ -218,13 +268,45 @@ export async function carriedLegsFor({ fold, carrierAt, mod, sinceCrossing, nowC
   return legs;
 }
 
-/** The town's newest settlement commit, as a pointer. Never the diff. */
+/**
+ * The town's newest settlement commit, as a pointer. Never the diff.
+ *
+ * ⚑ IT READ `HEAD`, AND HEAD IS THE PEN'S (2026-09-07, lane-a). `git log` with
+ * no ref argument answers about HEAD, and on the box HEAD is whatever household
+ * branch `ensureDraftCheckout` last parked the world clone on — so this named a
+ * settlement from whenever that branch was last rebased. The 2026-09-06 walk
+ * read it in the shape: *"`latest_settlement` still names S58's class commit
+ * from 09-05 15:42, not S59"*, in the same answer whose `law.as_of_world` came
+ * off `world.db` and already said S59.
+ *
+ * That was the THIRD ref policy in one object — the focus's `refs/heads/main`,
+ * the engine's `freshestMainRef`, and this one's HEAD. It now takes the READ
+ * tier's ref, like the focus beside it, and reports which ref answered so the
+ * two can be compared rather than assumed to agree.
+ *
+ * Also: the S-NUMBER. This pointed at a commit and never said which settlement
+ * it was, while `settlements.mjs` has read the `settlement/S<n>` tags since
+ * August — "the truth is the world repo's own git TAGS … which exist only when
+ * a settlement actually landed". A resident was being handed a sha for a thing
+ * the town numbers.
+ */
 export function latestSettlement(worldClone = WORLD_CLONE) {
+  let ref = "HEAD";
+  try { ref = freshestMainRef(worldClone); }
+  catch { /* an unresolvable ref falls back to HEAD, and `ref` in the answer says so */ }
   try {
-    const line = execFileSync("git", ["-C", worldClone, "log", "-1", "--format=%h %cI %s", "--grep", "^settlement"],
+    const line = execFileSync("git", ["-C", worldClone, "log", "-1", "--format=%h %cI %s", "--grep", "^settlement", ref],
       { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
     if (!line) return null;
     const [sha, iso, ...rest] = line.split(" ");
-    return { sha, at: iso, subject: rest.join(" ").slice(0, 120) };
+    const out = { sha, at: iso, subject: rest.join(" ").slice(0, 120), ref };
+    // The number, from the tags that are its only record.
+    try {
+      const tags = execFileSync("git", ["-C", worldClone, "tag", "--list", "settlement/S*", "--contains", sha],
+        { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] })
+        .split("\n").map((s) => /^settlement\/S(\d+)$/.exec(s.trim())?.[1]).filter(Boolean).map(Number);
+      if (tags.length) out.s = Math.min(...tags);
+    } catch { /* a commit no tag carries has no number, and inventing one is worse */ }
+    return out;
   } catch { return null; }
 }

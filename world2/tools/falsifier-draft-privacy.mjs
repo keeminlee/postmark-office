@@ -238,6 +238,112 @@ try {
     else if (!text.includes("compose space")) dead("door /world2/my-drafts as ANOTHER household", `the door did not answer as itself (HTTP ${code}: ${text.slice(0, 120)})`);
   } else dead("door /world2/my-drafts as ANOTHER household", "no --other-key given — the cross-household read was not exercised");
 
+  // ── THE DOOR A RESIDENT ACTUALLY READS (2026-09-07, lane-a / R3) ──────────
+  //
+  // THE GAP THIS CLOSES, and it is the reason the finding took a walk to find:
+  // every leg above hunts `/world2/*`, and `/world2/my-drafts` reads
+  // `readDraftClaims` — one query, `WHERE status = 'draft' AND household = $1`.
+  // The door a RESIDENT reads is `world { read: "leave-mark" }` → `worldMyMarks`
+  // → `guardedDraftsForKey` → `pgDraftsForKey`, which is a DIFFERENT reader
+  // with a different query (`status = ANY(draft,pending)`), unioned with the git
+  // sketchbook, and NO LEG TOUCHED IT. On 2026-09-06 a resident read eighteen
+  // rows there, fifteen of them by other households, and could not tell a
+  // mislabel from a leak — while this falsifier stood green over four `/world2`
+  // paths.
+  //
+  // A leak falsifier that does not cover the door the residents use is a green
+  // suite doing the wrong arithmetic, which this file's own header calls worse
+  // than a red one.
+  //
+  // ⚑ ONE PATH, NOT TWO, and the reason is a finding of its own: `worldMyDrafts`
+  // (`world_my_drafts`, the other reader of this overlay) has NO REST DOOR — it
+  // is MCP-only, so an HTTP falsifier cannot reach it at all. `/world/my-marks`
+  // is the one door of the pair this file can hunt, and it shares the overlay,
+  // so a leak in `guardedDraftsForKey` shows here. That the sibling is
+  // unreachable from any probe of this shape is recorded rather than papered
+  // over; closing it needs an MCP-speaking leg, which is not this file's shape.
+  // ⚑ THE CONTROL IS A FIELD THE OVERLAY PRODUCED, NOT ONE THE DOOR PRINTS
+  // ANYWAY (tightened 2026-09-07, reviewer-found). It was `"drafts"` — a key
+  // `worldMyMarks` emits on EVERY successful answer, together with its
+  // `labels.drafts` prose, including one where `log.readable` is false and the
+  // overlay was never consulted at all. So the control proved the door answered
+  // and nothing about whether the thing being hunted was even looked for.
+  //
+  // `"log"` is the block `guardedDraftsForKey` attaches when it has actually
+  // read the live layer (`{ readable, source, ... }`) — present on the overlay's
+  // own path and on nothing else this answer carries. A leg that finds it has
+  // proved the overlay ran; a leg that does not is ASLEEP and says so, which by
+  // this file's own standard is the only honest alternative to a red.
+  for (const [path, control] of [["/world/my-marks", '"log"']]) {
+    if (OTHER_KEY) {
+      const { code, text } = await door(path, OTHER_KEY);
+      if (text.includes(SECRET) || text.includes(NONCE))
+        red(`door ${path} as ANOTHER household`, `the answer carries the draft (HTTP ${code}) — this is the door a resident reads`);
+      else if (!text.includes(control))
+        dead(`door ${path} as ANOTHER household`, `the draft is absent, but so is this leg's control (${control} — the overlay's own block, present only when the live layer was actually read) at HTTP ${code}: ${text.slice(0, 120)} — so this leg proved the door ANSWERED, not that the overlay was consulted`);
+    } else dead(`door ${path} as ANOTHER household`, "no --other-key given — the cross-household read was not exercised");
+
+    if (KEY) {
+      const { code, text } = await door(path, KEY);
+      if (!text.includes(NONCE))
+        dead(`control: the author's own ${path}`, `the author's own draft is NOT in their own answer (HTTP ${code}) — so the cross-household leg above proves nothing about this door`);
+    } else dead(`control: the author's own ${path}`, "no --key given — the positive door control was not exercised");
+  }
+
+  // ── THE LEG THAT WOULD HAVE CAUGHT #2556, AND THE ONE ABOVE WOULD NOT ─────
+  //
+  // Every leg in this file hunts a PLANTED NEEDLE: a nonce in a slug, a secret
+  // in a body, both written by this run. That is the right instrument for "did
+  // my private sentence escape" and it is BLIND to the defect the 2026-09-07
+  // walks actually found — `read: "leave-mark"` answering `drafts: 18` where
+  // fifteen were other households' PUBLISHED marks, mislabelled as the caller's
+  // private compose space. Published marks carry no nonce, so nothing here so
+  // much as twitched, through two walks and a review.
+  //
+  // The cause was the sketchbook half diffing against a STALE base
+  // (`world-branches.mjs § freshestMainRef`, and this branch's commit 1), so
+  // every mark every household published since that base read as an addition
+  // the caller was proposing. What leaked was PUBLIC canon under a private
+  // label — a mislabel, not a disclosure — but a resident cannot tell those
+  // apart from where they stand, and neither could two walks.
+  //
+  // So this leg hunts the CLASS instead of a needle: EVERY id in your own
+  // `drafts` must be authored by a resident of your own household. It needs no
+  // plant, it cannot go stale, and it is red on any future reader that widens
+  // this list by accident.
+  if (KEY) {
+    const { code, text } = await door("/world/my-marks", KEY);
+    let answer = null;
+    try { answer = JSON.parse(text); } catch { /* named below */ }
+    const drafts = answer?.drafts;
+    if (!Array.isArray(drafts)) {
+      dead("class: every id in your own drafts is your household's",
+        `/world/my-marks did not answer with a drafts array (HTTP ${code}: ${text.slice(0, 120)}) — this leg proved nothing`);
+    } else if (!answer.household) {
+      dead("class: every id in your own drafts is your household's",
+        "the answer names no household, so there is nothing to compare the authors against");
+    } else {
+      // The household's own residents, from the answer itself — the door
+      // already resolved them, and asking a second source is how two notions of
+      // one household are born (world2-claims.mjs § THE ONE RESOLVER).
+      const ours = new Set([
+        ...(Array.isArray(answer.residents) ? answer.residents : []),
+        ...(answer.backed ?? []).filter((b) => b?.yours).map((b) => String(b.by)),
+        ...(answer.published ?? []).map((m) => String(m.by)),
+      ].filter(Boolean));
+      const foreign = drafts
+        .map((m) => ({ id: m?.id, by: m?.by ?? String(m?.id ?? "").split("/")[0] }))
+        .filter((m) => m.by && ours.size > 0 && !ours.has(m.by));
+      if (foreign.length)
+        red("class: every id in your own drafts is your household's",
+          `${foreign.length} of ${drafts.length} rows in YOUR drafts are authored by residents this household does not hold: ${
+            foreign.slice(0, 5).map((m) => m.id).join(", ")}${foreign.length > 5 ? " …" : ""}`);
+      else if (ours.size === 0)
+        dead("class: every id in your own drafts is your household's",
+          "the answer named no residents at all (no published marks, no backed rows), so every author compared against an empty set and nothing could have been caught");
+    }
+  } else dead("class: every id in your own drafts is your household's", "no --key given");
+
   // ── CONTROL 1 · the owner's own door DOES show it ─────────────────────────
   // The one answer that must carry the nonce. Without this the whole suite is
   // consistent with the draft never having been saved at all.

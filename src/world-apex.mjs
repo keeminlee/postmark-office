@@ -1675,11 +1675,44 @@ async function happenedFor(oriented, args, key) {
         }
       }
     }
+    // ── THE BACKLOG'S OWN CLAUSE (2026-09-07, #2526) ────────────────────────
+    //
+    // "a replayable, cursor-ordered read of every effect on your own node since
+    // you last looked" — and a crossing publishing or refusing a mark is one.
+    // TWO AXES: the caller's own marks, and marks laid over ground they hold.
+    // The second set comes from the CONSENT INBOX rather than a second geometry
+    // pass — `stancesForHandles` already answers "what has been laid over ground
+    // you hold", and one question must not have two derivations that disagree
+    // (world.mjs § worldBlockForHandle's own lesson, #1044).
+    let claimEffects = null;
+    if (who) {
+      const onMyGround = new Set();
+      try {
+        const { stancesForHandles } = await import("./world-stance.mjs");
+        const inbox = await stancesForHandles([who], { repo: WORLD_CLONE });
+        for (const row of [...(inbox?.awaiting ?? []), ...(inbox?.standing ?? [])])
+          if (row?.mark ?? row?.id) onMyGround.add(String(row.mark ?? row.id));
+      } catch { /* the ground half is one axis of two; its absence is disclosed by `complete` below only if the docket itself failed */ }
+      const { readClaimEffects } = await import("./claim-effects.mjs");
+      claimEffects = await readClaimEffects({
+        key, handles: [...(key?.handles ?? [])],
+        sinceCrossing: since, nowCrossing, onMyGround,
+      });
+    }
+
+    // R2: the crossing's own published/refused list, as the town's news.
+    let headlines = null;
+    try {
+      const { readHeadlines } = await import("./claim-effects.mjs");
+      headlines = await readHeadlines({ sinceCrossing: since });
+    } catch { headlines = null; }
+
     const block = happenedBlock({
-      transitions, carriedLegs, lines, at,
+      transitions, carriedLegs, claimEffects, lines, at,
       sinceCrossing: since, nowCrossing,
       latestSettlement: latestSettlement(WORLD_CLONE),
       notices: activeNotices(),
+      headlines,
       exclude: who,
     });
     return { ...block, log: { crossings_read: covered.length, crossings_absent: absent.length } };

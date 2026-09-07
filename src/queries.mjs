@@ -692,7 +692,34 @@ export const INDEX_SEGMENTS = Object.freeze(["mail", "awaiting", "stamps", "bull
  *  `unavailable` when the world cannot be read — because a manifest that
  *  quietly drops a segment when a dependency is down teaches a reader that
  *  nothing awaits their word, which is the one thing it must never do. */
-export const DOORSTEP_SEGMENTS = Object.freeze([...INDEX_SEGMENTS, "stances"]);
+/** ⚑ `rulings` is the EIGHTH, added 2026-09-07 (#2526, lane-a), and it is the
+ *  `stances` case again for the same reason: the office index cannot answer it.
+ *  What the last crossings RULED on your things is derived from the DOCKET store
+ *  and the world's settlement tags, so it is async and it can be genuinely
+ *  unreadable — and like `stances` it is ALWAYS PRESENT on a finished bundle,
+ *  carrying `unavailable` when it cannot be read.
+ *
+ *  Why it must never simply drop: this is the segment that tells a resident
+ *  their staked mark was refused. A morning page that silently omitted it would
+ *  teach them nothing happened, which is precisely the sentence the 2026-09-06
+ *  walk was told by four doors at once.
+ *
+ *  ── IT WAS `crossings` FOR A DAY, AND THE NAME WAS THE PROBLEM ────────────
+ *
+ *  Renamed on the conductor's ruling, 2026-09-07, and the argument is this
+ *  lane's own § 5.2 turned on itself. That rule says "a surface that says
+ *  'crossing' without qualification means the ferry's", and this segment's
+ *  WINDOW genuinely is ferry crossings — so the old name was lawful. But the
+ *  QUESTION the segment answers is "did my mark ride?", and the same section's
+ *  next sentence is "A mark rides a settlement, never a ferry crossing." A
+ *  resident opening a segment called `crossings` to learn whether their mark
+ *  rode is reading the one word the lexicon exists to un-collide.
+ *
+ *  So: lawful and still wrong to spend. `rulings` says what the segment holds —
+ *  the candle's and the keeper's verdicts on the things you put forward — and
+ *  leaves the contested word to the law PR. The window is still ferry-counted
+ *  and the segment still says so in its own `clock` line. */
+export const DOORSTEP_SEGMENTS = Object.freeze([...INDEX_SEGMENTS, "stances", "rulings"]);
 
 /** How many awaiting candidates the morning page shows. A teaser: the shadow
  *  underneath pages properly, `stances_awaiting` is the true total, and the
@@ -718,8 +745,18 @@ export const DOORSTEP_STANCES = 5;
 //
 // The word that changed is DOMAIN. What the segment carries is what the read
 // answers ABOUT — not the envelope the apex wraps it in.
+//
+// ⚑ AND THE LIST IS DERIVED, NOT TYPED (2026-09-07, lane-a). This sentence
+// enumerated six segments while the page served seven: `stances` shipped
+// 2026-08-15 and this line never learned it, so the page has been telling every
+// resident a wrong list for three weeks — a door lying about itself on the one
+// surface a resident actually reads. It is now built from `DOORSTEP_SEGMENTS`,
+// which is also what `d.segments` is built from, so a ninth segment cannot ship
+// with a page that says eight.
 export const BUNDLE_LAW =
-  "This page is a BUNDLE: each segment below carries the DOMAIN of another read, called at the args it names in `serves` and `args` — what that read answers about, not the envelope the apex wraps it in. Nothing here is a second rendering of anything — ask the named read yourself and the segment is what comes back under its own key. The segments are mail, awaiting, stamps, bulletin, town_pulse, window; everything else on this page has no other door.";
+  "This page is a BUNDLE: each segment below carries the DOMAIN of another read, called at the args it names in `serves` and `args` — what that read answers about, not the envelope the apex wraps it in. Nothing here is a second rendering of anything — ask the named read yourself and the segment is what comes back under its own key. The segments are "
+  + DOORSTEP_SEGMENTS.join(", ")
+  + "; everything else on this page has no other door.";
 
 /** One bundle segment: the pointer, the args, and the named read's own answer
  *  spread flat beside them. Flat rather than nested under `answer` so a reader

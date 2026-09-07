@@ -183,8 +183,14 @@ test("ruling 9 scopes reads by household and every write lands off main", async 
 
   const portfolio = await worldMyMarks(houseA);
   assert.equal(portfolio.household, "house-a");
-  assert.deepEqual(portfolio.counts, { drafts: 1, published: 1, backed: 1 });
+  // `docket` joined the shape 2026-09-07 (lane-a / R3): a claim standing
+  // PUBLICLY on the town's docket is not a private compose space, and it used
+  // to arrive under the word `drafts`. This fixture's one live mark is a
+  // sketchbook row with no claim status, so it stays private and the docket is
+  // empty — which is the assertion, not an accident of the fixture.
+  assert.deepEqual(portfolio.counts, { drafts: 1, docket: 0, published: 1, backed: 1 });
   assert.deepEqual(portfolio.drafts.map((mark) => mark.id), ["alpha/private-note"]);
+  assert.deepEqual(portfolio.docket, [], "nothing here has been staked onto the public docket");
   assert.deepEqual(portfolio.published.map((mark) => mark.id), ["alpha/published-note"]);
   assert.deepEqual(portfolio.backed.map((position) => ({
     id: position.id,

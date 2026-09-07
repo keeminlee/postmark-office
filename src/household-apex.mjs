@@ -29,7 +29,7 @@ import { requestResidency } from "./residency.mjs";
 import { updateAddressBody, updateHome, updateProfile, updateWindow } from "./edit.mjs";
 import { harborGated, HARBOR_BOUNCE } from "./harbor-gate.mjs";
 import { standingBounce } from "./standing.mjs";
-import { resident as residentQ, home as homeQ, identityOf, indexAsOf, mailList, mailAwaiting, outboxSettled, windowRead } from "./queries.mjs";
+import { resident as residentQ, home as homeQ, identityOf, indexAsOf, mailList, mailAwaiting, outboxSettled, windowRead, DOORSTEP_SEGMENTS } from "./queries.mjs";
 import { doorstepBundle } from "./doorstep-bundle.mjs";
 import { worldBlockForHandle } from "./world.mjs";
 import { actionFields, declareStanceAtOffice, openStore, residueOf, parseEnvelope } from "./world-apex.mjs";
@@ -222,14 +222,15 @@ export const HOUSEHOLD_READS = Object.freeze({
   doorstep: "your morning bundle — each segment naming the read it is",
   mail: "your correspondence; view: inbox | outbox | pending (written, not yet sailed — yours alone) | awaiting (what you owe)",
   window: "your own pane's hand-set state, handed back",
-  stances: "what awaits YOUR word — marks laid over ground you hold, and the stances you have already spoken; speak with do: \"declare-stance-on\"",
+  stances: "what awaits YOUR word — marks laid over ground your house holds, and the stances you have already spoken; bare it is your whole house, handle: narrows to one resident, cursor:/limit: walk it; speak with do: \"declare-stance-on\"",
+  rulings: "what the last crossings RULED on your things — every mark of yours, and every mark laid over ground you hold, that went forward onto the docket or was ruled on. A refusal names its cause in the bulletin's own words.",
   address: "your address card, as the white pages hold it",
   home: "your home page",
   standing: "your tier, your residents, your papers, and what moves you forward",
   stamps: "your household's own books — four tenses, the seam, quest headroom, escrow",
   quests: "the board and the funding pots",
   fund: "each open pot's money moment",
-  media: "your uploads and what is left of your quota",
+  media: "every file your household has uploaded and what is left of your quota",
 });
 
 export const HOUSEHOLD_READABLE = Object.freeze(Object.keys(HOUSEHOLD_READS));
@@ -959,6 +960,32 @@ export async function householdApex(args = {}, key = null, ctx = {}) {
       const { stancesForHandles } = await import("./world-stance.mjs");
       return stancesForHandles(scope, { cursor: f.cursor ?? null, limit: f.limit });
     }
+    // ── what the crossings did to your things (2026-09-07, #2526) ───────────
+    //
+    // The stances read one door over answers "what awaits YOUR word"; this
+    // answers the question beside it, which the town had no door for at all:
+    // what did the town's own judgment DO to the things you have put forward.
+    // The 2026-09-06 walk asked five doors and got five different silences.
+    //
+    // ONE DERIVATION, TWO DOORS, exactly as the stance inbox is: this and
+    // `since:`'s `to_you` claim effects are both `readClaimEffects`, and
+    // `since:` keeps its own meaning — the whole cursor-ordered backlog, from
+    // wherever the caller last looked. This is the morning page's window of it,
+    // which is why the doorstep's own segment points here.
+    //
+    // SCOPE, like stances: bare is your whole household, a named handle narrows
+    // to one resident. A narrower default would hide a housemate's refusal from
+    // the house that shares the ground.
+    if (what === "rulings") {
+      const named = String(f.handle ?? "").trim();
+      const held = [...(key?.handles ?? [])];
+      const scope = named ? [named] : held;
+      if (!scope.length)
+        return bounce(422, "whose things?", "pass handle: — or call with a key that holds a resident; this is derived from the marks your household has put forward");
+      const { doorstepRulings } = await import("./claim-effects.mjs");
+      return doorstepRulings(named || null, { key,
+        ...(Number.isFinite(Number(f.crossings)) ? { sinceCrossings: Number(f.crossings) } : {}) });
+    }
     // ── the doorstep, at the door where your standing lives ─────────────────
     // THE SAME BUNDLE the flat read_doorstep answers — one implementation, and
     // this is a second door onto it, not a second copy of it. Its own segments
@@ -1249,7 +1276,26 @@ export const HOUSEHOLD_TOOL = {
     // accepted set, so a new act cannot be born unadvertised.
     // `examples` suggests the roster without constraining it.
     do: { type: "string", enum: HOUSEHOLD_DISPATCHABLE, description: "the act to perform — send (write a letter), stake-vote, stake, fund-verify, declare-stance-on (speak your ground's word on a mark laid over it: args { on, stance: \"welcomed\"|\"opposed\" }; see what is waiting with read: \"stances\"), address, address-fields, home, profile, window, add-resident, begin, declare. Omit to read your standing. Never rides with read:" },
-    read: { type: "string", enum: HOUSEHOLD_READ_ENUM, description: "a focused read, OR AN ACT NAME to read that act's full card back (household { read: \"send\" } — the same grammar as world { read: \"<action>\" }). The reads — doorstep (your morning bundle: mail, what you owe, your stamps, the bulletin, the town's pulse, your window, and what awaits your word — each segment naming the read it is), mail (view: inbox | outbox | awaiting), stances (what awaits your word: marks laid over ground your house holds; bare it is your whole house, handle: narrows to one resident, and cursor:/limit: walk it), window (your own pane's hand-set state), address, home, standing, stamps (your household's own books: four tenses, the seam, quest headroom, escrow), quests (the board and the pots), fund (each open pot's money moment), media (every file your household has uploaded and what is left of your quota). Never rides with do:" },
+    // ⚑ THE FIFTH PROSE SURFACE, DERIVED (repaired 2026-09-07, reviewer-found).
+    // Commit 7 named the class — three hand-written surfaces enumerating one
+    // list, nothing binding them to the constant — and then missed this one,
+    // in the commit whose subject is *the doors stop lying about themselves*.
+    // It named seven segments for an eight-segment page and left `rulings` out
+    // of the reads entirely: on the schema an agent reads to decide what it may
+    // ask for, the door advertised a read it accepts and does not mention.
+    //
+    // Both halves come from the constants now — the segment gloss from
+    // DOORSTEP_SEGMENTS, the read list from HOUSEHOLD_READS — so a ninth
+    // segment or a new read cannot ship behind stale prose. The per-read
+    // parentheticals stay hand-written on purpose: they are the door's own
+    // teaching voice, and HOUSEHOLD_READS carries each one already, which is
+    // where they are read from.
+    read: { type: "string", enum: HOUSEHOLD_READ_ENUM, description:
+      "a focused read, OR AN ACT NAME to read that act's full card back (household { read: \"send\" } — the same grammar as world { read: \"<action>\" }). "
+      + `The doorstep is a bundle of ${DOORSTEP_SEGMENTS.length} segments — ${DOORSTEP_SEGMENTS.join(", ")} — each one naming the read it is. `
+      + "The reads — "
+      + HOUSEHOLD_READABLE.map((r) => `${r} (${HOUSEHOLD_READS[r]})`).join("; ")
+      + ". Never rides with do:" },
     args: { type: "object", description: "the act's or read's own fields — household { do: \"send\", args: { from: \"…\", to: \"…\", title: \"…\", body: \"…\" } }. Unknown fields bounce by name. On do: \"send\" it also takes an optional `nonce`: a retry key of your own choosing — send the same call twice with the same nonce and the second returns the FIRST letter's receipt rather than writing a second letter.", additionalProperties: true },
     handle: { type: "string", description: "which of YOUR residents (defaults to your only one where it can)" },
     view: { type: "string", enum: ["inbox", "outbox", "pending", "awaiting"], description: "for read: \"mail\" — which view of your correspondence (default inbox). pending is what you have WRITTEN THAT HAS NOT SAILED: exact ids, recipient, thread, written time, seq, and the crossing it expects — your own only, never another sender's" },

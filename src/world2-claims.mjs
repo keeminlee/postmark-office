@@ -41,6 +41,21 @@ async function pool(env = process.env) {
   return state.pool;
 }
 
+/**
+ * Test seam: hand the module a pool. Never used by the office.
+ *
+ * The same seam `world2-acts.mjs` has carried since the pen lane, and here for
+ * the same reason: there is no lab store — the box's `world2_dev` IS prod — so
+ * a falsifier that must prove the DOOR's wiring (which arguments reach the
+ * query, not what Postgres does with them) has no other way in. A stub that
+ * records its SQL and its parameters is exactly the right instrument for
+ * "`claimRowsSince` was called with `slugs: []`", which is a fact about this
+ * office and not about any database.
+ *
+ * Pass `null` to restore the real pool.
+ */
+export function __setPoolForTest(p) { state.pool = p; }
+
 // ── the household KEY, not the handle (A/B finding AB-R.household) ───────────
 //
 // 001_tables.sql says what this column holds: "denormalized at submit from
@@ -75,6 +90,26 @@ const householdKeys = new Map();
  * would be working perfectly and the answer would still be wrong. Routing both
  * through this function is what makes that unrepresentable, so do not inline
  * either half.
+ *
+ * ── "THE TWO NETS ARE ONE NET" — ASKED AND ANSWERED (2026-09-07) ───────────
+ *
+ * Lane A observed that the WHERE clause in `pgLiveMarks` and 007's row policy
+ * both key off this function's output, so a wrong row in `identities` defeats
+ * both at once and there is no independent check. That observation is true and
+ * it is ACCEPTED DESIGN, not a defect to file — written down here rather than
+ * opened as an issue, on the reviewer's reading, which is the better one:
+ *
+ *   the IDENTITY is one fact, and the two mechanisms enforce two different
+ *   things over it. The WHERE clause bounds the result set; the row policy
+ *   bounds what the credential may return AT ALL — and only the second survives
+ *   a new reading surface written by somebody who did not know it was needed.
+ *   That is exactly 007's own argument for the policy ("enforced structurally,
+ *   not by vigilance"), and it is why the two are not redundant.
+ *
+ * A wrong row in `identities` does defeat both. It also defeats every other
+ * notion of who you are in this town, which is what makes this function's
+ * single-resolver discipline the right shape rather than a shared weakness:
+ * one fact, one place to be wrong, one place to fix.
  */
 export async function householdKeyForKey(p, key) {
   const named = String(key?.household ?? "").trim();
@@ -482,4 +517,113 @@ export function docketStatus() {
 export async function docketSettled() {
   const { penSettled } = await import("./world2-pen.mjs");
   await Promise.all([state.queue, penSettled()]);
+}
+
+/**
+ * EVERY CLAIM THE STORE HOLDS FOR ONE SLUG, newest first — the receipt's half.
+ *
+ * The whole life of one mark on the docket: the draft it was composed as, the
+ * pending row its stake put forward, and the candle's ruling. `mark-receipt.mjs`
+ * reads the newest and reports the rest as history.
+ *
+ * ── WHY THIS IS NOT SCOPED TO ONE HOUSEHOLD, AND WHY THAT IS LAWFUL ────────
+ *
+ * The docket is PUBLIC — 007_private_drafts.sql's row policy says so in one
+ * line, and says which row is the exception:
+ *
+ *   CREATE POLICY claims_read ON claims FOR SELECT
+ *     USING (status <> 'draft' OR household = current_setting('app.household', true));
+ *
+ * So a receipt on somebody else's pending claim is a public fact this door is
+ * allowed to answer, and a receipt on their DRAFT is unrepresentable — not by a
+ * WHERE clause here, but structurally, because `current_setting(…, true)`
+ * answers NULL when nothing declared and NULL is never equal to anything.
+ *
+ * `household` is therefore the CALLER's, and it buys exactly one thing: the
+ * caller's own drafts. Handed null, the read runs with nothing declared and the
+ * policy hides every draft in town, the caller's included — which is the right
+ * answer for a spectator and the reason this takes the argument rather than
+ * resolving a key it was not given.
+ *
+ * ⚑ THE SET-LOCAL TRAP is `withHousehold`'s, and it is documented there: this
+ * runs on a POOL, so `app.household` must never outlive its transaction. Do not
+ * inline the declaration here.
+ */
+ // `slug` is the FULL mark id, `<by>/<name>` — 006 made identity a column and
+ // the column holds "the 1.0 path identity" (guard-reads.mjs § liveMarkOf).
+ //
+ // The household is resolved HERE, from the caller's key, through
+ // `householdKeyForKey` — THE ONE RESOLVER both halves of the private-draft
+ // lane already use. Resolving it at the call site would be a second notion of
+ // whose drafts these are, which is the exact drift that function's own header
+ // forbids ("do not inline either half").
+export async function claimRowsForSlug(slug, { key = null, env = process.env } = {}) {
+  const p = await pool(env);
+  const sql = `SELECT id, slug, class, claimant, household, status, window_id,
+                      submitted_at, decided_at, refusal_check, stake, supersedes
+                 FROM claims WHERE slug = $1
+                ORDER BY submitted_at DESC, id DESC`;
+  if (!key) return (await p.query(sql, [slug])).rows;
+  const household = await householdKeyForKey(p, key);
+  if (!household) return (await p.query(sql, [slug])).rows;
+  return (await withHousehold(p, household, (c) => c.query(sql, [slug]))).rows;
+}
+
+/**
+ * EVERY CLAIM THAT MOVED SINCE AN INSTANT, for a named set of authors and slugs
+ * — the backlog's half.
+ *
+ * `the-response-function § Residents: words, at their own pace` calls the
+ * resident's loop "a replayable, cursor-ordered read of every effect on your own
+ * node since you last looked", and a crossing publishing or refusing a mark IS
+ * an effect on that node. This is the read that makes that clause answerable;
+ * `claim-effects.mjs` turns the rows into events.
+ *
+ * TWO AXES, ONE QUERY, and the second is not decorative: a resident is owed the
+ * claims laid over GROUND THEY HOLD as much as their own — that is what the
+ * consent inbox is about, and the slug list is where those ids arrive.
+ *
+ * `since` bounds on `submitted_at` OR `decided_at` because a claim moves twice:
+ * once when its author puts it forward and once when the candle rules. Bounding
+ * on one would silently drop the other half of the resident's own history.
+ *
+ * Scoping is `claimRowsForSlug`'s, for its reasons: the household is resolved
+ * through `householdKeyForKey`, drafts are the caller's own by 007's policy, and
+ * every other status is a public fact.
+ */
+/**
+ * EVERY CLAIM THE CANDLE RULED ON SINCE AN INSTANT — the town's news.
+ *
+ * Keyless and unscoped, and lawfully so: a `locked` or `refused` claim is a
+ * public fact, and 007's row policy says which row is not
+ * (`USING (status <> 'draft' OR household = …)`). No `withHousehold` here means
+ * `app.household` is undeclared, so the policy compares against NULL and every
+ * draft in town — including the caller's own — is invisible to this query. That
+ * is the right answer for a shelf that describes what the TOWN did.
+ */
+export async function claimRowsDecidedSince(since, { env = process.env } = {}) {
+  const p = await pool(env);
+  const { rows } = await p.query(
+    `SELECT slug, status, window_id, decided_at, refusal_check
+       FROM claims
+      WHERE status IN ('locked','refused') AND decided_at >= $1
+      ORDER BY decided_at DESC, slug ASC
+      LIMIT 500`, [since]);
+  return rows;
+}
+
+export async function claimRowsSince(since, { claimants = [], slugs = [], key = null, env = process.env } = {}) {
+  if (!(claimants.length || slugs.length)) return [];
+  const p = await pool(env);
+  const sql = `SELECT id, slug, class, claimant, household, status, window_id,
+                      submitted_at, decided_at, refusal_check, stake, supersedes
+                 FROM claims
+                WHERE (claimant = ANY($1::text[]) OR slug = ANY($2::text[]))
+                  AND (submitted_at >= $3 OR decided_at >= $3)
+                ORDER BY COALESCE(decided_at, submitted_at) ASC, id ASC`;
+  const args = [claimants, slugs, since];
+  if (!key) return (await p.query(sql, args)).rows;
+  const household = await householdKeyForKey(p, key);
+  if (!household) return (await p.query(sql, args)).rows;
+  return (await withHousehold(p, household, (c) => c.query(sql, args))).rows;
 }

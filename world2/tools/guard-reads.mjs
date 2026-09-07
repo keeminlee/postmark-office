@@ -599,6 +599,21 @@ export async function pgDraftsForKey(client, {
  * `date` falls back to the CLAIM's own composition stamp where the journal used
  * `row.written_at`. Both are "when this declaration was made"; the claim's is
  * rewritten on every compose, which is what latest-wins means on a row.
+ *
+ * ── `claim_status` AND `household` RIDE THROUGH (2026-09-07, lane-a / R3) ───
+ *
+ * `liveMarkOf` above puts both on every record it builds, and this shape threw
+ * them away — so a PRIVATE draft and a claim standing PUBLICLY on the docket
+ * with a stamp behind it arrived at `read: "leave-mark"` under one word,
+ * `drafts`, and one delta status, `added`. The 2026-09-06 resident walk read
+ * eighteen rows under that one word and could not tell which of them anyone
+ * else could see: *"either the town leaks, or the word 'draft' means something
+ * I was not told."*
+ *
+ * The store knew the whole time. Two fields, already selected, already on the
+ * record, dropped one function before the door. They are ADDITIVE — every
+ * existing key keeps its meaning and its value — and `world.mjs § worldMyMarks`
+ * is what splits the list on them.
  */
 function overlayShape(id, m, canon = null) {
   const points = m.points ?? canon?.points ?? null;
@@ -612,6 +627,8 @@ function overlayShape(id, m, canon = null) {
     at: m.at ?? canon?.at ?? null,
     extent: m.extent ?? canon?.extent ?? null,
     ...(points ? { points } : {}),
+    ...(m.claim_status ? { claim_status: m.claim_status } : {}),
+    ...(m.household ? { household: m.household } : {}),
   };
 }
 
