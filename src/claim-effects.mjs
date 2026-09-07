@@ -172,7 +172,7 @@ export async function readClaimEffects({ key, handles = [], sinceCrossing, nowCr
 // each row is an id, a word, and the read that opens it.
 
 /**
- * THE DOORSTEP'S `crossings` SEGMENT — the last crossing's verdict on my
+ * THE DOORSTEP'S `rulings` SEGMENT — what the last crossings ruled on my
  * things, one line each.
  *
  * SAME DERIVATION as `since:`'s claim effects: `readClaimEffects` is the one
@@ -184,12 +184,58 @@ export async function readClaimEffects({ key, handles = [], sinceCrossing, nowCr
  * THE WINDOW IS THE LAST TWO CROSSINGS, not a cursor: a doorstep is a morning
  * page, not a backlog. A resident who wants the whole delta has `since:`, and
  * this segment names it in `serves` so they can walk there.
+ *
+ * ── BOTH AXES, AND THE SECOND WAS PROMISED AND NOT WIRED ──────────────────
+ *
+ * Repaired 2026-09-07 on the reviewer's finding. This function called
+ * `readClaimEffects` with no `onMyGround`, so it defaulted to an empty Set —
+ * and that is not a cosmetic omission, it is structural in two places at once:
+ * `claimRowsSince` was called with `slugs: []`, so the rows never left the
+ * store, and `claimEffectsFrom`'s `if (!isMine && !onGround) continue` dropped
+ * any that had. **A mark somebody else laid over your ground could never appear
+ * here.**
+ *
+ * The door's own description promised exactly that axis — "every mark of yours,
+ * AND every mark laid over ground you hold" — and the commit that added it
+ * argued the bare-vs-named scoping on the same axis ("a narrower default hides
+ * a housemate's refusal from the house that shares the ground"). A door saying
+ * something true-sounding about itself that nobody asked the record to confirm
+ * is the class this lane was chartered to fix, introduced by this lane.
+ *
+ * The ground set comes from the CONSENT INBOX, exactly as `world-apex.mjs §
+ * happenedFor` builds it — `stancesForHandles` already answers "what has been
+ * laid over ground you hold", and one question must not have two derivations
+ * that disagree (#1044's lesson, and `stances_awaiting`'s two counts).
  */
-export async function doorstepCrossings(handle, { key = null, sinceCrossings = 2 } = {}) {
+export async function doorstepRulings(handle, { key = null, sinceCrossings = 2, repo = null } = {}) {
   const now = currentCrossing();
-  const since = Math.max(0, now - Math.max(1, Number(sinceCrossings) || 2));
+  // ⚑ `?? 2` NOT `|| 2`: an explicit `crossings: 0` is a caller asking for the
+  // window that is open right now, and `||` turned it into 2 after
+  // `household-apex.mjs` had already let 0 through its `Number.isFinite` guard.
+  // The floor stays at 0 — `Math.max(0, …)` below bounds the cursor anyway, and
+  // a zero-width window is a lawful question with an honest empty answer.
+  const asked = Number(sinceCrossings);
+  const back = Number.isFinite(asked) && asked >= 0 ? Math.floor(asked) : 2;
+  const since = Math.max(0, now - back);
   const handles = handle ? [handle] : [...(key?.handles ?? [])];
-  const effects = await readClaimEffects({ key, handles, sinceCrossing: since, nowCrossing: now });
+
+  // The ground half. Best-effort and never fatal: an unreadable consent inbox
+  // costs this segment its second axis, and it is the SAME shape `happenedFor`
+  // uses — if it ever grows a disclosure, both should get it together.
+  const onMyGround = new Set();
+  try {
+    const { stancesForHandles } = await import("./world-stance.mjs");
+    const scope = handles.filter(Boolean);
+    if (scope.length) {
+      const inbox = await stancesForHandles(scope, ...(repo ? [{ repo }] : []));
+      for (const row of [...(inbox?.awaiting ?? []), ...(inbox?.standing ?? [])]) {
+        const id = row?.mark ?? row?.id;
+        if (id) onMyGround.add(String(id));
+      }
+    }
+  } catch { /* one axis of two; its absence does not make the other one wrong */ }
+
+  const effects = await readClaimEffects({ key, handles, sinceCrossing: since, nowCrossing: now, onMyGround });
   const events = effects.events ?? [];
   // ── THE PAGE'S BUDGET IS REAL (Hal's foyer, 2026-08-26) ──────────────────
   //

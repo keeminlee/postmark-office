@@ -41,6 +41,21 @@ async function pool(env = process.env) {
   return state.pool;
 }
 
+/**
+ * Test seam: hand the module a pool. Never used by the office.
+ *
+ * The same seam `world2-acts.mjs` has carried since the pen lane, and here for
+ * the same reason: there is no lab store — the box's `world2_dev` IS prod — so
+ * a falsifier that must prove the DOOR's wiring (which arguments reach the
+ * query, not what Postgres does with them) has no other way in. A stub that
+ * records its SQL and its parameters is exactly the right instrument for
+ * "`claimRowsSince` was called with `slugs: []`", which is a fact about this
+ * office and not about any database.
+ *
+ * Pass `null` to restore the real pool.
+ */
+export function __setPoolForTest(p) { state.pool = p; }
+
 // ── the household KEY, not the handle (A/B finding AB-R.household) ───────────
 //
 // 001_tables.sql says what this column holds: "denormalized at submit from

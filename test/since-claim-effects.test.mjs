@@ -238,19 +238,19 @@ test("the fixture's crossing arithmetic is the town's, not this file's", () => {
 
 // ── the doorstep's eighth segment ──────────────────────────────────────────
 
-test("the manifest names eight, and `crossings` is one of them", async () => {
+test("the manifest names eight, and `rulings` is one of them", async () => {
   const { DOORSTEP_SEGMENTS } = await import("../src/queries.mjs");
   assert.equal(DOORSTEP_SEGMENTS.length, 8);
-  assert.ok(DOORSTEP_SEGMENTS.includes("crossings"),
+  assert.ok(DOORSTEP_SEGMENTS.includes("rulings"),
     "a manifest that did not name it would hide the segment that carries a refusal");
 });
 
-test("`household read: \"crossings\"` is a real door, advertised and accepted", async () => {
+test("`household read: \"rulings\"` is a real door, advertised and accepted", async () => {
   const { HOUSEHOLD_READS, HOUSEHOLD_READ_ENUM, HOUSEHOLD_READABLE } = await import("../src/household-apex.mjs");
-  assert.ok(HOUSEHOLD_READABLE.includes("crossings"),
+  assert.ok(HOUSEHOLD_READABLE.includes("rulings"),
     "the doorstep's segment points at this read by name — a segment whose `serves` names no door is a restatement, which the bundle law forbids");
-  assert.ok(HOUSEHOLD_READ_ENUM.includes("crossings"), "and the tool schema advertises it");
-  assert.match(HOUSEHOLD_READS.crossings, /bulletin's own words/,
+  assert.ok(HOUSEHOLD_READ_ENUM.includes("rulings"), "and the tool schema advertises it");
+  assert.match(HOUSEHOLD_READS.rulings, /bulletin's own words/,
     "the door's own blurb carries the promise it keeps");
 });
 
@@ -271,6 +271,27 @@ test("THE PAGE'S OWN SENTENCE names every segment the manifest names — no hand
     "and it names them in the manifest's own order, because it is built from the manifest");
 });
 
+// ⚑ THE FIFTH SURFACE, added on the reviewer's finding. Commit 7 named this
+// exact class — "three separate hand-written prose surfaces enumerate the
+// doorstep's segments … nothing binds them to DOORSTEP_SEGMENTS" — and missed a
+// fourth: `household-apex.mjs`'s `read:` schema description, which named seven
+// segments for an eight-segment page and left the new read out of its own list
+// of reads. On the schema an agent reads to decide what it may ask for.
+test("the household door's `read:` schema names EVERY segment and EVERY read", async () => {
+  const { HOUSEHOLD_TOOL, HOUSEHOLD_READS, HOUSEHOLD_READABLE } = await import("../src/household-apex.mjs");
+  const { DOORSTEP_SEGMENTS } = await import("../src/queries.mjs");
+  const d = HOUSEHOLD_TOOL.inputSchema.properties.read.description;
+
+  for (const seg of DOORSTEP_SEGMENTS)
+    assert.ok(d.includes(seg), `the read: schema does not name the doorstep segment "${seg}"`);
+  for (const r of HOUSEHOLD_READABLE)
+    assert.ok(d.includes(r), `the read: schema advertises no read "${r}" — a door that accepts a name it does not mention`);
+  assert.ok(d.includes(`${DOORSTEP_SEGMENTS.length} segments`),
+    "and it counts what the page serves");
+  assert.equal(Object.keys(HOUSEHOLD_READS).length, HOUSEHOLD_READABLE.length,
+    "HOUSEHOLD_READABLE is the keys of HOUSEHOLD_READS — if that stops being true this leg is asserting the wrong set");
+});
+
 test("the MCP tool description counts the segments the manifest counts", async () => {
   const { TOOLS } = await import("../src/mcp.mjs");
   const { DOORSTEP_SEGMENTS } = await import("../src/queries.mjs");
@@ -280,16 +301,20 @@ test("the MCP tool description counts the segments the manifest counts", async (
     `the description advertises a different number than the page serves (${DOORSTEP_SEGMENTS.length})`);
   for (const name of DOORSTEP_SEGMENTS)
     assert.ok(tool.description.includes(name), `read_doorstep does not name "${name}"`);
+  // AND THE GLOSS, which the first pass left hand-written beside a derived list
+  // — so a ninth segment would have shipped a correct list and a stale sentence.
+  assert.ok(!tool.description.includes("no gloss written for this segment yet"),
+    "a segment reached the page with no sentence of its own; add it to SEGMENT_GLOSS");
 });
 
 test("A QUIET MORNING IS CHEAP: no events means no teaching prose", async () => {
-  const { doorstepCrossings } = await import("../src/claim-effects.mjs");
+  const { doorstepRulings } = await import("../src/claim-effects.mjs");
   // No store configured → readable, no events. The common case, on every
   // doorstep, every morning.
   const before = process.env.WORLD2_PG;
   delete process.env.WORLD2_PG;
   try {
-    const seg = await doorstepCrossings("wright", { key: { handles: new Set(["wright"]) } });
+    const seg = await doorstepRulings("wright", { key: { handles: new Set(["wright"]) } });
     assert.equal(seg.count, 0);
     assert.deepEqual(seg.events, []);
     assert.equal(seg.clock, undefined, "the page's budget is real — Hal's foyer bought 63% and it is not spent a field at a time");

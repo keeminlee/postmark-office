@@ -122,6 +122,51 @@ test("a mark the record NEVER SAW still bounces — the only case that may", { s
     "and even the bounce carries the receipt, so the reader can tell a never-was from an unreadable store");
 });
 
+// ── TERRAIN IS NOT A MARK, AND IT WAS NEVER MISSING ────────────────────────
+//
+// Repaired 2026-09-07 on the reviewer's finding. `investigate` answers a
+// TERRAIN feature with `{ id, kind: "terrain", body, attaches }` and no `error`
+// — a perfectly good answer about a real thing in the world. Commit 2's
+// unconditional `return { ...r, receipt }` hung a receipt on it, and the
+// receipt is derived from `claims` + canon MARKS, neither of which has ever
+// held a terrain feature. So the town's own river came back beside
+// `status: "never-was"`, "the record holds no mark of this id" — the exact
+// mislabel class commit 4 fixed one door over, newly introduced by commit 2.
+//
+// THE ID IS READ OUT OF `WORLD/skeleton.json § features`, never typed here, so
+// this leg cannot go vacuous the day the terrain is renamed: a hardcoded id
+// that stopped resolving would answer `never-was` and the assertion would pass
+// for the wrong reason. The red control below is what makes that safe.
+const TERRAIN = HAVE_SOURCE
+  ? (JSON.parse(readFileSync(join(SOURCE_WORLD, "WORLD", "skeleton.json"), "utf8")).features ?? [])[0]?.id ?? null
+  : null;
+
+test("RED CONTROL: the fixture's skeleton really carries a terrain feature, and canon does not", { skip }, () => {
+  assert.ok(TERRAIN, "no terrain feature in the skeleton — every assertion below would be about nothing");
+  const state = JSON.parse(git("show", "main:WORLD/world-state.json"));
+  assert.ok(!(state.marks ?? []).some((m) => m.id === TERRAIN),
+    "canon must NOT hold it — that is why the receipt called it never-was");
+});
+
+test("a TERRAIN feature answers as terrain, and carries no 'the record never saw it' receipt", { skip }, async () => {
+  const r = await (await door())({ mark: TERRAIN }, KEY);
+  assert.equal(r.error, undefined, "a terrain focus is a real answer about a real thing");
+  assert.equal(r.kind, "terrain");
+  assert.notEqual(r.receipt?.status, "never-was",
+    "the town's own river was being told the record holds nothing of its id");
+  assert.equal(r.receipt?.status, "terrain",
+    "terrain gets its OWN sentence — absence of a receipt would be a third silence, and this lane is about ending those");
+  assert.match(r.receipt.says, /terrain/);
+  assert.ok(!/never saw|holds no mark/.test(r.receipt.says));
+});
+
+test("the `terrain:`-prefixed spelling answers the same — one thing, not two", { skip }, async () => {
+  const r = await (await door())({ mark: `terrain:${TERRAIN}` }, KEY);
+  assert.equal(r.error, undefined);
+  assert.equal(r.kind, "terrain");
+  assert.equal(r.receipt?.status, "terrain");
+});
+
 test("a SPECTATOR (no key) sees the published mark and NOT another household's compose space", { skip }, async () => {
   const pub = await (await door())({ mark: STANDING }, null);
   assert.equal(pub.receipt.status, "published", "canon is public — ruling 9, one world for everyone");

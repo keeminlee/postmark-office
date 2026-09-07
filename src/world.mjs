@@ -1346,7 +1346,12 @@ export async function worldInvestigate(args = {}, key = null) {
   // read, out of `claims` + the world's settlement tags + canon, and stored by
   // nobody. See `mark-receipt.mjs` for the derivation and for the three
   // absences that are three different sentences.
-  const receipt = await markReceipt(String(args.mark), key, w);
+  // TERRAIN IS NOT A MARK, and the receipt must be told so before it goes
+  // looking (repaired 2026-09-07). `investigate` answers a terrain feature with
+  // `{ kind: "terrain" }` and no error; the receipt derives from `claims` and
+  // canon marks, so without this it answered `never-was` about the town's own
+  // river — see mark-receipt.mjs § 0.
+  const receipt = await markReceipt(String(args.mark), key, w, { terrain: r?.kind === "terrain" });
 
   // ⚑ THE MISS IS `r.error`, NOT `!r`, AND THE OFFICE'S OWN BOUNCE WAS DEAD
   // CODE (found by this lane's door falsifier, 2026-09-07). The engine answers
@@ -1415,7 +1420,7 @@ export async function worldInvestigate(args = {}, key = null) {
  * absent rather than empty, so a caller that never learns about this field
  * reads exactly what it read before.
  */
-async function markReceipt(id, key, w) {
+async function markReceipt(id, key, w, { terrain = false } = {}) {
   try {
     const { readMarkReceipt } = await import("./mark-receipt.mjs");
     // The world in hand IS the canon this answer was folded from — reading it
@@ -1426,7 +1431,7 @@ async function markReceipt(id, key, w) {
     const read_at = raw?.ref && raw?.sha ? { ref: raw.ref, sha: raw.sha } : null;
     const receipt = await readMarkReceipt(id, {
       repo: WORLD_CLONE, key, canon: canonRow,
-      publishedSha: read_at?.sha ?? null,
+      publishedSha: read_at?.sha ?? null, terrain,
     });
     if (!receipt) return null;
     let disclosed = [];

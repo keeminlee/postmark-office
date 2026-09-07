@@ -186,7 +186,30 @@ export function receiptFrom(records = {}) {
   const {
     id = null, canon = null, published_at = null, claims = null,
     sketchbook = null, withdrawn = false, settlement = null, site_pin = null,
+    terrain = false,
   } = records;
+
+  // ── 0 · TERRAIN IS NOT A MARK (repaired 2026-09-07, reviewer-found) ───────
+  //
+  // `investigate` answers a terrain feature with `{ kind: "terrain", … }` and
+  // no error — a real answer about a real thing. This receipt is derived from
+  // `claims` and canon MARKS, and neither has ever held a terrain feature, so
+  // the first version hung `status: "never-was"` on the town's own river:
+  // "the record holds no mark of this id". That is the mislabel class this lane
+  // fixed one door over, introduced by this lane one commit later.
+  //
+  // It gets a SENTENCE rather than no receipt at all. Dropping the field would
+  // make a terrain focus the one answer on this door with no account of itself,
+  // and a third kind of silence is what this lane exists to end — a reader
+  // walking `receipt` should never have to know in advance which ids have one.
+  if (terrain) {
+    return {
+      id, window: null, crossing: null, settlement_sha: null, site_pin,
+      cause: null, cause_row: null, clock: RECEIPT_CLOCK, sources: ["skeleton"],
+      status: "terrain",
+      says: "terrain — the world's own ground, authored by the record's skeleton rather than declared by a resident. It rides no docket and no settlement carries it; there is nothing here for a crossing to rule on.",
+    };
+  }
 
   const sources = [];
   const rows = Array.isArray(claims) ? claims : null;
@@ -393,9 +416,15 @@ export function settlementThatCarried(repo, path, { tags = null, ref = "HEAD" } 
  * @param canon the mark's canon row when the caller already has it — the focus
  *              does, it just folded the world — else null and this reads it.
  */
-export async function readMarkReceipt(id, { repo, key = null, canon = null, publishedSha = null } = {}) {
+export async function readMarkReceipt(id, { repo, key = null, canon = null, publishedSha = null, terrain = false } = {}) {
   const markId = String(id ?? "").trim();
   if (!markId) return null;
+
+  // Terrain short-circuits before any source is opened: there is nothing in
+  // `claims`, canon or a sketchbook that could speak about the world's own
+  // ground, so reading them would be spending four lookups to arrive at a
+  // sentence that is decided by the kind alone.
+  if (terrain) return receiptFrom({ id: markId, terrain: true, site_pin: null });
 
   const branches = await import("./world-branches.mjs");
 

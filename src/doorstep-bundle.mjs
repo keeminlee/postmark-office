@@ -92,12 +92,12 @@ export async function doorstepBundle(handle, ctx = {}) {
   // store would say "nothing happened to you", which is the exact sentence this
   // lane exists to stop the town saying.
   try {
-    const { doorstepCrossings } = await import("./claim-effects.mjs");
-    d.crossings = { serves: "household.crossings", args: { handle },
-      ...(await doorstepCrossings(handle, { key })) };
+    const { doorstepRulings } = await import("./claim-effects.mjs");
+    d.rulings = { serves: "household.rulings", args: { handle },
+      ...(await doorstepRulings(handle, { key })) };
   } catch (e) {
-    d.crossings = { serves: "household.crossings", args: { handle },
-      unavailable: `the crossing's verdict on your things could not be read (${String(e?.message ?? e).slice(0, 160)})`,
+    d.rulings = { serves: "household.rulings", args: { handle },
+      unavailable: `the crossings' rulings on your things could not be read (${String(e?.message ?? e).slice(0, 160)})`,
       count: 0, events: [] };
   }
   // The manifest, republished now that every segment is on the page. A reader
