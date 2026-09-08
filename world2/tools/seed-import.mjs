@@ -140,12 +140,16 @@ async function readersOf(worldRepo) {
  * A record the fold does not answer for STOPS the seed. A silent fallback to the
  * frontmatter is how this bug shipped the first time.
  *
- * EXPORTED because the two one-off dev repairs (repair-tier-2026-08-28.mjs,
- * repair-household-2026-08-28.mjs) true the ALREADY-seeded rows and must reach
- * the same verdict this does. A repair that derived its answer differently from
- * the seed would leave the database in a state no single run could reproduce.
+ * MODULE-LOCAL, and it always should have been. This comment used to say the
+ * function was EXPORTED for the two one-off dev repairs of 2026-08-28 — but
+ * those two imported `foldDerivedFor` below, never this, so the stated reason
+ * was already false while they existed, and G2 deleted them. Nothing outside
+ * this file imports `foldOracle`; its two callers are `foldDerivedFor` and
+ * the seed's own run. The shared door is `foldDerivedFor`, and the invariant
+ * the old comment was reaching for lives there: one derivation, so no pen
+ * reaches a verdict the seed would not.
  */
-export function foldOracle({ repo, records, fold }) {
+function foldOracle({ repo, records, fold }) {
   const terrainPath = join(repo, "WORLD", "skeleton.json");
   const terrain = existsSync(terrainPath) ? JSON.parse(readFileSync(terrainPath, "utf8")) : null;
   const hhPath = join(repo, "WORLD", "households.json");
@@ -169,8 +173,14 @@ export function foldOracle({ repo, records, fold }) {
 
 /**
  * The oracle plus the records it was built from, for a checkout path — the whole
- * of what a repair pen needs, in one call, so no caller assembles the three
- * pieces slightly differently from the seed.
+ * of what a caller needs, in one call, so nobody assembles the three pieces
+ * slightly differently from the seed.
+ *
+ * ITS READERS, named because the two it was written for are gone (G2 deleted
+ * the 2026-08-28 repair one-shots): `falsifier-standing-equality.mjs` and
+ * `parity-causes.mjs`. Both ask the fold what the seed asked it, which is the
+ * whole point — a checker deriving its own answer would disagree with the
+ * store for a reason that is neither the store's fault nor the world's.
  */
 export async function foldDerivedFor(worldRepo) {
   const repo = resolve(worldRepo);

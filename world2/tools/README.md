@@ -701,7 +701,10 @@ marks and left one column carrying three spellings of one fact.
 Three surfaces were changed, and one deliberately was not:
 
 - `seed-import.mjs` — derives it from the fold, so a future reseed is right from birth.
-- `repair-household-2026-08-28.mjs` — trues the already-seeded `marks` rows in place.
+- a one-shot repair, run once on 2026-08-28, trued the already-seeded `marks`
+  rows in place. **The tool is gone** — G2 deleted `repair-household-2026-08-28.mjs`
+  and its sibling `repair-tier-2026-08-28.mjs`; the rows they wrote stand, and
+  the derivation they borrowed is `seed-import.mjs § foldDerivedFor`.
 - `src/world2-claims.mjs` — the live docket pen resolves through `identities`
   instead of writing the journal's bare handle. Only positive answers are cached:
   a household key is not a fact that gets taken away, but a MISS is the registry-lag
