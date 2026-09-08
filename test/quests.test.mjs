@@ -108,16 +108,29 @@ test("a resident absent from the index reads a clean zero with empty lists", asy
 // re-derive is a predicate two doors can come to disagree about. The door states
 // it now, and these pin what it states.
 //
-// The registry here carries a THIRD row the daily fold has no field for, which
+// The registry here carries a THIRD row NO FOLD ON THIS BOARD CAN COUNT, which
 // is the whole point: `COUNTABLE_FIELD` names `send` and `receive` and nothing
-// else, so any other registry row comes back uncounted. That is the town's own
-// mechanism, not a shape invented for the test.
+// else, and the standing join (`standingJoin` in queries.mjs) has no fact for
+// `walk-the-world` — it attaches a note naming the surface that can answer, and
+// nothing else. That is the town's own mechanism, not a shape invented for the
+// test.
+//
+// ⚑ WHY NOT `first-idea`, which stood here until the w37 continuation ship
+// (2026-09-08). Since the standing join, that row is settled from the WORLD
+// record whenever `world.db` sits beside the office (`DEFAULT_DB`): with the
+// store answering it reads `progress: 0`, measured — so a test that used it as
+// the uncounted exemplar went green in a bare worktree and red in the primary
+// clone, by nothing but whether a stray `world.db` lay at the repo root. A test
+// whose oracle is a file lying about is not a test of the door. The row the
+// board genuinely cannot count is the exemplar; `first-idea`'s own measure under
+// a real store is pinned in quest-standing.test.mjs, where the store is a
+// fixture, not an accident of the checkout.
 const MIXED_REGISTRY = JSON.stringify({
   version: 1,
   quests: [
     { id: "correspond-send", title: "Reach out", cadence: "daily", validation: "automatic", target: 5, reward: "1 stamp per unit" },
     { id: "correspond-receive", title: "Be reached", cadence: "daily", validation: "automatic", target: 5, reward: "1 stamp per unit" },
-    { id: "first-idea", title: "Put an idea up", cadence: "once", validation: "manual", target: 1, reward: "1 stamp", door: { tool: "leave_mark" } },
+    { id: "walk-the-world", title: "Walk the world", cadence: "once", validation: "manual", target: 1, reward: "1 stamp" },
   ],
 });
 const mixedMeta = (day) => ({ quest_registry: MIXED_REGISTRY, quest_day: day });
@@ -133,8 +146,8 @@ test("every quest row says whether it is measured — a number is measured, a nu
   assert.equal(board.quests.length, 3, "the board is every registry row (BOARD_LAW), or this proves nothing");
   assert.equal(q(board, "correspond-send").measured, true);
   assert.equal(q(board, "correspond-receive").measured, true);
-  assert.equal(q(board, "first-idea").measured, false,
-    "the daily fold names no field for this row, so it cannot be counted and the door must say so");
+  assert.equal(q(board, "walk-the-world").measured, false,
+    "the daily fold names no field for this row and the standing join has no fact for it, so no fold on this board can count it and the door must say so");
 
   // TWO ORACLES, and the second is the one that will still be doing work in six
   // months. Stated plainly because the obvious flip does NOT catch it: replacing
@@ -167,7 +180,7 @@ test("`measured` is ADDITIVE — progress survives, null and all, for the reader
   const day = await today();
   const board = await questBoardFor(dbWith(null, day), mixedMeta(day), "nobody", TOWN);
 
-  const uncounted = q(board, "first-idea");
+  const uncounted = q(board, "walk-the-world");
   assert.ok("progress" in uncounted, "the `progress` key is still on the row");
   assert.equal(uncounted.progress, null, "and it is still null — the shape the site's guard reads");
   assert.equal(uncounted.household.total, null, "the daily cap is a daily fact; inventing 0 is the lie the null exists to avoid");
@@ -191,7 +204,7 @@ test("a stale snapshot does not make a countable row unmeasured — the two are 
   const board = await questBoardFor(db, mixedMeta("2000-01-01"), "alice", TOWN);
   assert.equal(q(board, "correspond-send").progress, 0, "the stale snapshot is zeroed");
   assert.equal(q(board, "correspond-send").measured, true, "and it is still a row the fold can count");
-  assert.equal(q(board, "first-idea").measured, false, "while the uncounted row is unchanged by the staleness");
+  assert.equal(q(board, "walk-the-world").measured, false, "while the uncounted row is unchanged by the staleness");
 });
 
 test("a stale snapshot across midnight zeroes the names too, not just the bars", async () => {
