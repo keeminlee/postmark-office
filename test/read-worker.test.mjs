@@ -32,6 +32,7 @@ import { tmpdir } from "node:os";
 import { DatabaseSync } from "node:sqlite";
 import { fixtureDb } from "./fixture.mjs";
 import { workerSafe, penTokenFor } from "../src/role.mjs";
+import { openOauthDb } from "../src/oauth.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = 43861;
@@ -195,6 +196,17 @@ test("§1b the refusal is the ROLE's, not the router's — a writer answers thes
     const res = await fetch(`http://127.0.0.1:${PORT + 1}/.well-known/openid-configuration`);
     assert.notEqual(res.status, 405, "the writer must SERVE oauth discovery — otherwise §1 proves nothing about the role");
     await res.text();
+
+    // ⚑ THE OTHER POLE OF THE GRANT, and §4 is worthless without it. Flip F6b
+    // hardcoded `write_grant: false` at /release and the suite stayed GREEN,
+    // because false is the TRUE answer for a worker — an assertion that only
+    // ever reads the read role cannot tell a disclosure from a constant. The
+    // writer must say the opposite through the same line of code.
+    const rel = await (await fetch(`http://127.0.0.1:${PORT + 1}/release`)).json();
+    assert.equal(rel.role, "write");
+    assert.equal(rel.write_grant, true,
+      "the WRITER holds a pen and must say so — otherwise `write_grant` is a constant wearing a disclosure's clothes");
+    assert.equal(rel.writes_at, undefined, "only a worker names somewhere else to write");
   } finally {
     const gone = new Promise((ok) => proc.on("exit", ok));
     proc.kill();
@@ -297,6 +309,31 @@ test("§3b the four apex readers ask for a READ handle, and the ask is load-bear
     if (before === undefined) delete process.env.WORLD_DYNAMIC_DB;
     else process.env.WORLD_DYNAMIC_DB = before;
   }
+});
+
+test("§3c openOauthDb's readOnly is a handle that REFUSES a write, not a flag", () => {
+  // Flip F10 — make `openOauthDb` ignore readOnly and always take the DDL path —
+  // left the suite GREEN, because every other leg exercises a store that is
+  // perfectly writable, so nothing anywhere observed the handle's mode. § 3
+  // makes the DYNAMIC store unwritable; the key store had no such leg.
+  //
+  // The mode is not readable off the object, so it is asked the only way it can
+  // be: give each handle a write and see which one refuses.
+  const path = join(tmp, "oauth-mode-probe.db");
+  openOauthDb(path).close(); // the writer creates and owns the schema
+
+  const ro = openOauthDb(path, { readOnly: true });
+  assert.throws(() => ro.exec("CREATE TABLE g3_mode_probe (x)"),
+    "a readOnly handle took a write — this is the sqlite handle DEC-4 forbids a worker to hold");
+  // and it can still do the one thing a worker needs it for
+  assert.equal(ro.prepare("SELECT count(*) AS n FROM tokens").get().n, 0,
+    "and it can still do the one thing a worker needs it for — resolve a credential");
+  ro.close();
+
+  const rw = openOauthDb(path);
+  rw.exec("CREATE TABLE g3_mode_probe (x)"); // the writer's handle takes it
+  rw.exec("DROP TABLE g3_mode_probe");
+  rw.close();
 });
 
 // ── § 4 · no write grant ────────────────────────────────────────────────────
