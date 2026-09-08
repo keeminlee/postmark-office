@@ -29,6 +29,9 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 const TMP = mkdtempSync(join(tmpdir(), "reach-dial-"));
+// The residue class this house keeps a list of: a fixture without an after()
+// leaves a temp directory behind on every run. Named by the reviewer.
+test.after(() => { try { rmSync(TMP, { recursive: true, force: true }); } catch { /* windows holds it a beat */ } });
 
 const THE_RECORD_SAYS = 137; // not 60, and not a round number anybody would type by habit
 
@@ -73,26 +76,42 @@ test("THE DOOR'S REACH IS THE RECORD'S NUMBER — 137 in the store is 137 at the
   assert.equal(withinArmsLength({ x: 0, y: 0 }, { x: 200, y: 0 }).stands, false);
 });
 
-test("...and an ABSENT record falls back and SAYS SO — silence is not the good case here", async () => {
-  // Run in this same process AFTER the test above, so `voices.mjs` is already
-  // loaded and its dials are already read: this asserts the DISCLOSURE contract
-  // on the value that was read, not a second read. The absent-store half is
-  // proven by `dialNumber`'s own tests and by the office's live behaviour in a
-  // worktree with no world.db, where `reachDisclosure()` returns the sentence
-  // naming `npm run hydrate:world` (recorded in the lane report § 7).
+test("a READ record discloses nothing — silence is the good case, and only here", async () => {
+  // ⛔ RETITLED. This was called "an ABSENT record falls back and SAYS SO" and
+  // asserted `reachDisclosure() === null`, which is the record having been
+  // READ — it proved the opposite of its own name. The reviewer caught it in
+  // the file written to close exactly the class of a check whose title claims
+  // more than the check does. The absent half is asserted below, on the dial's
+  // own flag, which is what actually decides the sentence.
   const { reachDisclosure, EARSHOT_M } = await import("../src/reach.mjs");
   assert.equal(typeof EARSHOT_M, "number");
-  assert.equal(reachDisclosure(), null, "this process read the record; the disclosure is for the process that could not");
+  assert.equal(reachDisclosure(), null, "this process read the record, so there is nothing to disclose");
 });
 
-test("the disclosure is a REAL sentence when the dial did not read", async () => {
-  // The other side, proven on the pure piece rather than by unloading a module:
-  // `reachDisclosure` is a function of the dial's own `read` flag, and the flag
-  // is `dialNumber`'s, so this asserts the wording a resident would meet on an
-  // office whose store has not been hydrated.
+test("AN ABSENT RECORD falls back to this repo's number and says the sentence a resident would meet", async () => {
+  // The other half, driven rather than described. `dialNumber` is the one
+  // reader behind `SAY_DIALS`, so pointing it at a store that does not exist
+  // is exactly the condition an un-hydrated office is in — and the value it
+  // falls back to must be the repo's 60, not the 137 this process read.
+  const { dialNumber } = await import("../src/world-classes.mjs");
+  const nowhere = join(TMP, "there-is-no-such-store.db");
+  const fell = dialNumber("say", "earshot_m", 60, { worldDb: nowhere, min: 0 });
+  assert.equal(fell.read, false, "an absent store must not report itself as read");
+  assert.equal(fell.source, "fallback");
+  assert.equal(fell.value, 60, "and the fallback is this repo's own constant, not the record's 137");
+
+  // The sentence itself, and it must NAME the repair — a disclosure a resident
+  // cannot act on is a disclosure that only looks honest.
+  const { reachDisclosure } = await import("../src/reach.mjs");
+  const words = reachDisclosure.toString();
+  assert.match(words, /built-in 60 m/);
+  assert.match(words, /npm run hydrate:world/);
+
+  // And this process's own dial is still the record's, so the two conditions
+  // are held apart rather than blurred.
   const { SAY_DIALS } = await import("../src/voices.mjs");
-  assert.equal(typeof SAY_DIALS.earshot_m.read, "boolean");
-  assert.equal(SAY_DIALS.earshot_m.source, SAY_DIALS.earshot_m.read ? "record" : "fallback");
+  assert.equal(SAY_DIALS.earshot_m.read, true);
+  assert.equal(SAY_DIALS.earshot_m.source, "record");
   assert.equal(SAY_DIALS.earshot_m.value, THE_RECORD_SAYS,
     "the dial this process read is the one the store declared");
 });
