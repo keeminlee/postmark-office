@@ -124,9 +124,91 @@ test("WALK #10 item 4 — a private draft cannot be given to a neighbour", async
 test("…and its own author may still pick it up — the clause says 'by nobody BUT its author's household'", async () => {
   const out = await refuseOutOfReach({
     thing: "wright/a-try-square-for-the-joinery", to: null, actor: "wright", act: "take", holder: null,
-    ctx: { mark: null, within, standing: { placed: true, x: 0, y: 0 }, standsWithin },
+    ctx: { mark: null, canon_readable: true, within, standing: { placed: true, x: 0, y: 0 }, standsWithin },
   });
-  assert.deepEqual(out, { unpublished_own_draft: true });
+  assert.equal(out.unpublished_own_draft, true);
+  assert.equal(out.reach.how, "unpublished",
+    "an unpublished mark has no footprint; the answer must SAY the threshold test had nothing to ask rather than pretend it passed");
+});
+
+// ── REPAIR 1 · the early return that broke two clauses with one line ────────
+//
+// Reviewer, on pin 2da3e377: the author's early return sat ABOVE clauses 1 and
+// 3, so an author could GIVE their own private draft to another household from
+// any distance — walk #10's exact end state, recreated by the branch that
+// refuses it. And the lane's own test titled "a private draft cannot be given
+// to a neighbour" made a TAKE call; the give case had no test at any layer.
+
+const HOUSES = {
+  wright: { key: "hh:trueing", slug: "trueing" },
+  rei: { key: "hh:trueing", slug: "trueing" },
+  "ethan-thorne": { key: "hh:joinery", slug: "joinery" },
+};
+const houseOf = (h) => HOUSES[h] ?? null;
+const draftCtx = (here, householdOf = houseOf) =>
+  ({ mark: null, canon_readable: true, within, standing: { placed: true, ...here }, standsWithin, householdOf });
+
+test("REPAIR 1 — an author may NOT give their own private draft OUT of the household, at any distance", async () => {
+  const e = await refusal(() => refuseOutOfReach({
+    thing: "wright/a-try-square-for-the-joinery", to: "ethan-thorne", actor: "wright", act: "give", holder: "wright",
+    ctx: draftCtx({ x: 1015, y: -2394 }),
+    standpointOfOther: async () => ({ placed: true, x: 1394, y: -2394 }),
+  }));
+  assert.ok(e, "the author handed a thing the record does not carry to another household — walk #10's end state through the front door");
+  assert.equal(e.code, 409);
+  assert.match(e.defect, /ethan-thorne is not of wright's household/);
+  assert.match(e.defect, /does not stand on the world/, "the refusal must name the draft, not only the household");
+  assert.match(e.hint, /stays inside the house that made it/);
+});
+
+test("…and not inside earshot either — the distance is not what makes it wrong", async () => {
+  const e = await refusal(() => refuseOutOfReach({
+    thing: "wright/a-try-square-for-the-joinery", to: "ethan-thorne", actor: "wright", act: "give", holder: "wright",
+    ctx: draftCtx({ x: 0, y: 0 }),
+    standpointOfOther: async () => ({ placed: true, x: 4, y: 0 }),
+  }));
+  assert.equal(e.code, 409);
+  assert.match(e.defect, /is not of wright's household/);
+});
+
+test("…a give INSIDE the household still answers to arm's length — clause 3 is no longer skipped", async () => {
+  const far = await refusal(() => refuseOutOfReach({
+    thing: "wright/a-try-square-for-the-joinery", to: "rei", actor: "wright", act: "give", holder: "wright",
+    ctx: draftCtx({ x: 1015, y: -2394 }),
+    standpointOfOther: async () => ({ placed: true, x: 1394, y: -2394 }),
+  }));
+  assert.ok(far, "the reach was skipped for the whole class of unpublished things");
+  assert.equal(far.code, 409);
+  assert.match(far.defect, /rei is not within arm's length/);
+  assert.match(far.defect, /379 m/);
+
+  const near = await refuseOutOfReach({
+    thing: "wright/a-try-square-for-the-joinery", to: "rei", actor: "wright", act: "give", holder: "wright",
+    ctx: draftCtx({ x: 0, y: 0 }),
+    standpointOfOther: async () => ({ placed: true, x: 3, y: 0 }),
+  });
+  assert.equal(near.unpublished_own_draft, true);
+  assert.equal(near.reach.stands, true);
+  assert.equal(near.reach.distance_round, 3);
+});
+
+test("a HOUSEMATE of the author may take the draft — the law's unit is the household, not the handle", async () => {
+  const out = await refuseOutOfReach({
+    thing: "wright/a-try-square-for-the-joinery", to: null, actor: "rei", act: "take", holder: null,
+    ctx: draftCtx({ x: 0, y: 0 }),
+  });
+  assert.equal(out.unpublished_own_draft, true);
+  assert.equal(out.in_household, "household", "the record answered, and the answer must say which test did");
+});
+
+test("an UNREAD household record refuses only what handle identity still proves, and says so", async () => {
+  const e = await refusal(() => refuseOutOfReach({
+    thing: "wright/a-try-square-for-the-joinery", to: null, actor: "rei", act: "take", holder: null,
+    ctx: draftCtx({ x: 0, y: 0 }, null),
+  }));
+  assert.equal(e.code, 409);
+  assert.match(e.hint, /household record could not be read/,
+    "a refusal must never name a test it did not run");
 });
 
 // ── WALK #12 · "the town says it never left the door I came in by" ───────────
@@ -534,14 +616,36 @@ test("...and a thing beyond reach is NOT in the answer at all", async () => {
   assert.ok(rr.distance_round > 500);
 });
 
-test("a thing within reach but NOT within its extent is listed as not-yet-takeable, with the walk", async () => {
+test("REPAIR 2 — a thing at the DOORSTEP is takeable, because that is what the door does there", async () => {
+  // Reviewer: `takeable` read `reach.how === "extent"` and threw the doorstep
+  // arm away, so a resident 10 m from a thing was told to walk to it — and
+  // walking changed nothing, because the take was already admitted where they
+  // stood. A read publishing a stricter verdict than the door is the second
+  // opinion this very function's comment forbids, and it undid half of the
+  // conductor's decision 1.
   const bench = thingAt("sable/the-big-scarred-worktable", 0, 0, { w: 2.3, h: 1.05 });
   const stands = { where: bench.at, source: "fold", holder: null };
-  const row = groundRowOf(await import("../src/world-hold.mjs"), bench, { x: 30, y: 0 }, stands);
+  const row = groundRowOf(await import("../src/world-hold.mjs"), bench, { x: 10, y: 0 }, stands);
+  assert.equal(row.takeable, true, "the door admits at 10 m; the read must not refuse there");
+  assert.equal(row.within_its_extent, false, "and the record of WHICH arm answered stays");
+  assert.equal(row.distance_m, 10);
+  assert.match(row.why, /doorstep/);
+
+  // The door's own verdict at the same distance, side by side. One verdict.
+  const door = await refuseOutOfReach({
+    thing: bench.id, to: null, actor: "wright", act: "take", holder: null,
+    ctx: ctxOf(bench, { x: 10, y: 0 }),
+  });
+  assert.equal(door.reach.stands, true);
+  assert.equal(row.takeable, door.reach.stands, "the ground read and the door must publish ONE verdict");
+});
+
+test("…and a thing genuinely beyond reach is still not takeable, with the walk", async () => {
+  const bench = thingAt("sable/the-big-scarred-worktable", 0, 0, { w: 2.3, h: 1.05 });
+  const stands = { where: bench.at, source: "fold", holder: null };
+  const row = groundRowOf(await import("../src/world-hold.mjs"), bench, { x: 900, y: 0 }, stands);
   assert.equal(row.takeable, false);
-  assert.equal(row.within_its_extent, false);
-  assert.equal(row.distance_m, 30);
-  assert.match(row.why, /30 m off/);
+  assert.match(row.why, /900 m off/);
   assert.match(row.why, /mode: "center"/, "the row hands back the walk that closes it");
 });
 
@@ -561,3 +665,43 @@ function groundRowOf(mod, mark, at, stands) {
   return mod.groundRow({ id: mark.id, made_by: mark.id.split("/")[0], stands,
     reach: standsWithin(at, mark, { pointWithinMark: within }) });
 }
+
+
+// ── REPAIR 1, THROUGH THE REAL DOOR ─────────────────────────────────
+//
+// The adjudicator tests above would all pass with the door not calling any of
+// it — which is exactly how the first lap shipped a hole. The reviewer found
+// Repair 1 by driving `callHoldTool`, so the proof lives there too: an author
+// takes their own private draft (admitted, clause 4's own carve-out), then
+// tries to hand it to another household (must be refused).
+
+test("THE DOOR REFUSES AN AUTHOR GIVING THEIR OWN PRIVATE DRAFT AWAY — walk #10's end state, end to end", async () => {
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = mkdtempSync(join(tmpdir(), "hold-draft-give-"));
+  const prior = process.env.WORLD_DYNAMIC_DB;
+  process.env.WORLD_DYNAMIC_DB = join(dir, "dynamic.db");
+  try {
+    const { callHoldTool } = await import("../src/world-hold.mjs");
+    const DRAFT = "wright/a-try-square-for-the-joinery";
+    const key = { handles: new Set(["wright"]) };
+
+    // 1 · the author takes their own draft — clause 4 allows this, and it is
+    //     what puts the thing in a hand for step 2 to try to give away.
+    const took = await callHoldTool("world_hold", { thing: DRAFT }, key)
+      .then((r) => r, (e) => ({ refused: e }));
+    assert.ok(!took.refused, `the author's own take was refused: ${took.refused?.defect}`);
+    assert.equal(took.did, "take");
+
+    // 2 · the author gives it to another household. THIS is the hole.
+    const gave = await callHoldTool("world_hold", { thing: DRAFT, to: "ethan-thorne" }, key)
+      .then((r) => ({ admitted: r }), (e) => e);
+    assert.ok(gave?.code === 409,
+      `the door ADMITTED it: ${JSON.stringify(gave?.admitted)} — a thing the record does not carry changed households`);
+    assert.match(gave.defect, /does not stand on the world|is not of wright's household/);
+  } finally {
+    if (prior === undefined) delete process.env.WORLD_DYNAMIC_DB; else process.env.WORLD_DYNAMIC_DB = prior;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

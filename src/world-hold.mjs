@@ -107,6 +107,21 @@ export const heldPositionOf = (holderAt, offset = { x: 0, y: 0 }) =>
   holderAt ? { x: holderAt.x + offset.x, y: holderAt.y + offset.y } : null;
 
 /**
+ * WHICH OF THE THREE FACES THIS CALL IS — the ONE derivation.
+ *
+ * ⛔ IT IS A FUNCTION BECAUSE THE DOOR ALSO NEEDS IT, and for one lap it was a
+ * second copy. `the-town/the-reach`'s clauses are per-face, so the door must
+ * know the face before it can ask the right one — and it derived the face
+ * itself, in three lines identical to this one, inside the file whose header
+ * warns about second copies of exactly this. The reviewer caught it. One home,
+ * two callers.
+ *
+ * Read off CURRENT STATE, never from the caller's word: a resident cannot
+ * `give` a thing they are not holding by naming the act differently.
+ */
+export const faceOf = (holder, to) => (holder == null ? "take" : (to == null ? "drop" : "give"));
+
+/**
  * THE ACT. Declare who holds `thing`.
  *
  * `to` given            hand it over (give) — or pick it up, when `to` is you
@@ -138,8 +153,7 @@ export function declareHolding({ db, thing, to = null, actor, roster = null, gro
   const holder = liveHolder(rows, thing);
 
   // ── the three faces, derived ───────────────────────────────────────────────
-  const wantsGround = to == null;
-  const act = holder == null ? "take" : (wantsGround ? "drop" : "give");
+  const act = faceOf(holder, to);
 
   if (act === "give" || act === "drop") {
     if (holder !== actor)
@@ -323,6 +337,44 @@ async function refuseShroudedLoot(thingId) {
 // resident would have no way to tell those two apart. What it refuses is what
 // it measured: a distance it computed, or a canon it read and did not find.
 
+/**
+ * ARE THESE TWO OF ONE HOUSEHOLD — the law's own unit, not the handle.
+ *
+ * `the-town/the-reach` clause 4 says an unpublished thing "can be held by
+ * nobody but its author's HOUSEHOLD". The first lap tested `madeBy !== actor`,
+ * which is the author's HANDLE — narrower than the law (a housemate of the
+ * author was refused) and, far worse, it was the only test there was: the
+ * branch returned early and never asked who RECEIVES. So an author could hand
+ * their own private draft to another household from any distance, which is
+ * walk #10's exact end state recreated by the branch that refuses it.
+ *
+ * THE RECORD'S ANSWER, NOT THE KEY'S. `householdOf` reads the town's own
+ * household map for a handle; the caller's key `handles` set is the GIVER's
+ * key, which says nothing about the AUTHOR's household and would let a
+ * multi-resident key vouch for a house it does not belong to.
+ *
+ * ⛔ IT DEGRADES HONESTLY AND SAYS SO. `householdOf` answers null at a
+ * checkout with no engine, or when the map cannot be built. That is "could not
+ * be read", not "different households", so the ladder falls back to the one
+ * thing still provable — handle identity — and reports `how` so a refusal can
+ * say which test actually answered. Refusing on an unread household would be
+ * the same defect as refusing on an unread canon, one clause over.
+ */
+export function sameHousehold(a, b, householdOf = null) {
+  const A = String(a), B = String(b);
+  if (A === B) return { same: true, how: "handle", slug: null }; // you are always of your own house
+  if (typeof householdOf !== "function") return { same: false, how: "handle-only", slug: null };
+  let ha = null, hb = null;
+  try { ha = householdOf(A); hb = householdOf(B); } catch { return { same: false, how: "handle-only", slug: null }; }
+  if (!ha?.key || !hb?.key) return { same: false, how: "handle-only", slug: null };
+  return { same: ha.key === hb.key, how: "household", slug: ha.slug ?? null };
+}
+
+/** How a refusal names the test that actually answered — never a test it did not run. */
+const byWhat = (h) => (h.how === "household"
+  ? `by the town's household record${h.slug ? ` (${h.slug})` : ""}`
+  : "by handle — the household record could not be read here, so this door fell back to the narrower test it can still prove");
+
 /** The distance sentence a refusal opens with, in the enter refusal's grammar. */
 const standsOff = (id, reach) =>
   `${id} stands ${reach.distance_round} m${reach.bearing ? ` ${reach.bearing}` : ""} of you`;
@@ -339,7 +391,13 @@ export async function reachContext(thing, actor) {
     const { mark, canon_marks } = await worldMarkById(thing);
     const within = await pointWithinMarkFn();
     const standing = await residentStandpoint(actor).catch(() => null);
-    return { mark, canon_readable: canon_marks > 0, within, standing, standsWithin };
+    // The town's own household map, for clause 4's unit. Lazily imported like
+    // everything else this door reaches for, and ABSENT rather than wrong when
+    // the module cannot answer — `sameHousehold` degrades to handle identity
+    // and says which test answered.
+    let householdOf = null;
+    try { ({ householdOf } = await import("./households.mjs")); } catch { householdOf = null; }
+    return { mark, canon_readable: canon_marks > 0, within, standing, standsWithin, householdOf };
   } catch { return null; }
 }
 
@@ -347,10 +405,13 @@ export async function reachContext(thing, actor) {
  * THE FOUR CLAUSES, adjudicated. Throws the door's own bounce, or returns the
  * reach facts the receipt carries.
  *
- * `act` is `declareHolding`'s verdict — the face this call actually is — which
- * is why this runs AFTER the adjudicator and not before it: the law's clauses
- * are per-face, and asking "is this a give?" before the adjudicator has said so
- * would be a second reading of the three faces. One reading, one home.
+ * `act` is the face this call is, from `faceOf` — the ONE derivation, which
+ * `declareHolding` reads too. The door asks it BEFORE the adjudicator runs,
+ * because the law's clauses are per-face and a refusal must land before
+ * anything is written. This comment said "AFTER the adjudicator" for one lap
+ * while the door called it before, against a face the door derived itself: a
+ * false comment above a second copy. The reviewer caught both; the copy is
+ * gone and the sentence now describes what happens.
  */
 export async function refuseOutOfReach({ thing, to, actor, act, holder, ctx: given = null, standpointOfOther = null }) {
   // A DROP IS ALWAYS IN REACH. You set a thing down where you stand; there is
@@ -366,11 +427,12 @@ export async function refuseOutOfReach({ thing, to, actor, act, holder, ctx: giv
   const ctx = given ?? await reachContext(thing, actor);
   if (!ctx) return null; // the world could not be read — the ordinary door stands
 
-  const { mark, within, standing, standsWithin } = ctx;
+  const { mark, within, standing, standsWithin, householdOf = null } = ctx;
   // `canon_readable: undefined` in a hand-built ctx means the fixture is
   // asserting about canon it supplied — absent is absent there. Only the real
   // reader can report an unread canon, and it does, explicitly.
   const canonReadable = ctx.canon_readable !== false;
+  const here = standing?.placed ? { x: standing.x, y: standing.y } : null;
 
   // ── CLAUSE 4 · ONLY WHAT STANDS ON THE WORLD CHANGES HANDS ────────────────
   //
@@ -378,26 +440,49 @@ export async function refuseOutOfReach({ thing, to, actor, act, holder, ctx: giv
   // by nobody but its author's household until it publishes; a hold edge on an
   // unpublished thing is refused."
   //
-  // Canon is the whole test: `worldMarkById` answers out of the folded world,
-  // which is what "stands on the world" means. The author's household keeps its
-  // own draft, so the maker may still pick their own thing back up — the clause
-  // says "by nobody BUT its author's household", not "by nobody".
+  // ⛔ THE FIRST LAP RETURNED EARLY HERE AND BROKE TWO CLAUSES WITH ONE LINE.
+  // `return { unpublished_own_draft: true }` sat above clause 1 and clause 3,
+  // so for the whole class of unpublished things the reach was never asked and
+  // the RECIPIENT was never asked at all — an author could hand their own
+  // private draft to another household from any distance. That is walk #10's
+  // exact end state, recreated by the branch that refuses it, and the door's
+  // own blurb promised the opposite in as many words. Found by the reviewer;
+  // the shape is this lane's own headline defect one level down.
+  //
+  // THE RULE, as ruled: an unpublished thing may be TAKEN and DROPPED inside
+  // its author's household, and GIVEN only to that same household and only at
+  // arm's length. Nothing about it leaves the house until it publishes.
   if (!mark && !canonReadable) return null; // canon did not answer — nothing measured, nothing refused
   if (!mark) {
     const madeBy = String(thing).split("/")[0];
-    if (madeBy !== actor)
+    const mine = sameHousehold(madeBy, actor, householdOf);
+    if (!mine.same)
       throw bounce(409, `${thing} does not stand on the world`,
-        `it is a private draft — on no docket, in no export, in no public answer — so nobody outside ${madeBy}'s household can take it or be given it. ${madeBy} puts it forward by staking it (world { do: "stake", args: { mark: "${thing}", stamps: 1 } }); it changes hands after the crossing that carries it.`);
-    // The maker, holding their own draft. Nothing left to measure: an
-    // unpublished mark has no place on the map to stand within.
-    return { unpublished_own_draft: true };
+        `it is a private draft — on no docket, in no export, in no public answer — so nobody outside ${madeBy}'s household can take it or be given it, and you are not of that household (${byWhat(mine)}). ${madeBy} puts it forward by staking it (world { do: "stake", args: { mark: "${thing}", stamps: 1 } }); it changes hands after the crossing that carries it.`);
+
+    // A GIVE OF AN UNPUBLISHED THING IS STILL A GIVE. Both halves of clause 3
+    // apply — who receives, and how far away they are.
+    if (act === "give") {
+      const theirs = sameHousehold(madeBy, String(to), householdOf);
+      if (!theirs.same)
+        throw bounce(409, `${to} is not of ${madeBy}'s household, and ${thing} does not stand on the world`,
+          `a private draft stays inside the house that made it until it publishes (${byWhat(theirs)}) — it is on no docket and in no public answer, so a resident outside ${madeBy}'s household would be handed a thing the record does not carry. Stake it first (world { do: "stake", args: { mark: "${thing}", stamps: 1 } }) and give it after the crossing that carries it. Nothing was recorded.`);
+      const reach = await armsLengthOrThrow({ thing, to, here, actor, standpointOfOther });
+      return { unpublished_own_draft: true, in_household: mine.how, reach };
+    }
+
+    // A take, inside the author's own house. There is nothing to stand within:
+    // an unpublished mark has no place on the map, so clause 1's threshold test
+    // has no footprint to ask about and its absence is stated rather than
+    // silently skipped.
+    return { unpublished_own_draft: true, in_household: mine.how,
+             reach: { stands: true, how: "unpublished", distance_m: null, distance_round: null, bearing: null } };
   }
 
-  if (!standing?.placed) {
+  if (!here) {
     throw bounce(409, "the record does not place you anywhere",
       `a hold is good only where you truly stand (the-town/attach), and the walk ledger has no position for ${actor} — walk somewhere first: world { do: "walk", args: { mark_id: "${thing}", mode: "center" } }`);
   }
-  const here = { x: standing.x, y: standing.y };
 
   // ── CLAUSE 1 · A TAKE IS A THRESHOLD ACT ──────────────────────────────────
   if (act === "take") {
@@ -408,23 +493,36 @@ export async function refuseOutOfReach({ thing, to, actor, act, holder, ctx: giv
     return { reach };
   }
 
-  // ── CLAUSE 3 · A GIVE IS A TAKE AT ARM'S LENGTH ───────────────────────────
-  if (act === "give") {
-    const { withinArmsLength } = await import("./reach.mjs");
-    const theirs = typeof standpointOfOther === "function"
-      ? await standpointOfOther(String(to)).catch(() => null)
-      : await (await import("./world.mjs")).residentStandpoint(String(to)).catch(() => null);
-    if (!theirs?.placed)
-      throw bounce(409, `the record does not place ${to} anywhere`,
-        `a give is a take at arm's length (the-town/the-reach) and the town cannot measure the length: ${to} has no position in the walk ledger. Set it down where you both can reach it instead — world { do: "drop", args: { thing: "${thing}" } }.`);
-    const reach = withinArmsLength(here, { x: theirs.x, y: theirs.y });
-    if (!reach.stands)
-      throw bounce(409, `${to} is not within arm's length — they stand ${reach.distance_round} m${reach.bearing ? ` ${reach.bearing}` : ""} of you`,
-        `a give is a take at arm's length (the-town/the-reach): giver and receiver stand within earshot of each other, ${reach.earshot_m} m, the town's one measure of beside. Walk to them and hand it over there — world { do: "walk", args: { mark_id: "<their ground>", mode: "center" } } — or set it down where they will find it: world { do: "drop", args: { thing: "${thing}" } }. Nothing was recorded.`);
-    return { reach };
-  }
+  // ── CLAUSE 3 · A GIVE IS A TAKE AT ARM'S LENGTH ───────────────────────
+  if (act === "give") return { reach: await armsLengthOrThrow({ thing, to, here, actor, standpointOfOther }) };
 
   return null;
+}
+
+/**
+ * CLAUSE 3's MEASURE, in ONE place — the published give and the unpublished one.
+ *
+ * It is a function because clause 4 needs it too: an unpublished give is still
+ * a give, and the first lap skipped this test for that whole class. Two copies
+ * of an arm's-length rule would be two answers to "how far is beside", which is
+ * the split this lane exists to close.
+ */
+async function armsLengthOrThrow({ thing, to, here, actor, standpointOfOther = null }) {
+  const { withinArmsLength } = await import("./reach.mjs");
+  if (!here)
+    throw bounce(409, "the record does not place you anywhere",
+      `a give is a take at arm's length (the-town/the-reach), and the walk ledger has no position for ${actor} — there is no length to measure. Walk somewhere first.`);
+  const theirs = typeof standpointOfOther === "function"
+    ? await standpointOfOther(String(to)).catch(() => null)
+    : await (await import("./world.mjs")).residentStandpoint(String(to)).catch(() => null);
+  if (!theirs?.placed)
+    throw bounce(409, `the record does not place ${to} anywhere`,
+      `a give is a take at arm's length (the-town/the-reach) and the town cannot measure the length: ${to} has no position in the walk ledger. Set it down where you both can reach it instead — world { do: "drop", args: { thing: "${thing}" } }.`);
+  const reach = withinArmsLength(here, { x: theirs.x, y: theirs.y });
+  if (!reach.stands)
+    throw bounce(409, `${to} is not within arm's length — they stand ${reach.distance_round} m${reach.bearing ? ` ${reach.bearing}` : ""} of you`,
+      `a give is a take at arm's length (the-town/the-reach): giver and receiver stand within earshot of each other, ${reach.earshot_m} m, the town's one measure of beside. Walk to them and hand it over there — world { do: "walk", args: { mark_id: "<their ground>", mode: "center" } } — or set it down where they will find it: world { do: "drop", args: { thing: "${thing}" } }. Nothing was recorded.`);
+  return reach;
 }
 
 /**
@@ -631,10 +729,22 @@ export function groundRow({ id, made_by = null, body = null, stands, reach }) {
     ...(stands.holder
       ? { holder: stands.holder, takeable: false,
           why: `${stands.holder} is holding it — a held thing moves by its holder's own give` }
-      : reach.how === "extent"
-        ? { takeable: true, why: "you are standing within it — a take is admitted here" }
+      // ⛔ `takeable` IS THE DOOR'S VERDICT, NOT A STRICTER ONE. The first lap
+      // read `reach.how === "extent"` and threw the doorstep arm away, so a
+      // resident standing 10 m from a thing was told to walk to it — and
+      // walking changed nothing, because the take was already admitted where
+      // they stood. That is the second opinion `groundWithinReach`'s own
+      // comment forbids twenty lines above it, and it undid half the
+      // conductor's decision 1: the doorstep arm was KEPT so the town's small
+      // things stay takeable, and this read told every resident it did not
+      // exist. The filter obeyed the door; the verdict did not.
+      : reach.stands
+        ? { takeable: true,
+            why: reach.how === "extent"
+              ? "you are standing within it — a take is admitted here"
+              : `you are at its doorstep, ${reach.distance_round} m off — a take is admitted here` }
         : { takeable: false,
-            why: `you are ${reach.distance_round} m off; a take stands within a thing's extent — world { do: "walk", args: { mark_id: "${id}", mode: "center" } }` }),
+            why: `you are ${reach.distance_round} m off; a take stands within a thing's extent or at its doorstep — world { do: "walk", args: { mark_id: "${id}", mode: "center" } }` }),
   };
 }
 
@@ -801,7 +911,7 @@ export async function callHoldTool(name, args = {}, key = null) {
     const preRows = await guardRows(db);
     const preHolder = liveHolder(preRows, String(args.thing));
     refuseGiveOfUnheld({ thing: args.thing, to: args.to ?? null, actor, holder: preHolder });
-    const face = preHolder == null ? "take" : (args.to == null ? "drop" : "give");
+    const face = faceOf(preHolder, args.to ?? null);
     const reached = await refuseOutOfReach({ thing: args.thing, to: args.to ?? null, actor, act: face, holder: preHolder });
 
     if (laneFlipped("hold"))
