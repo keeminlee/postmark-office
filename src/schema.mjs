@@ -29,6 +29,24 @@ export const SCHEMA = `
   -- writing to them again earns nothing). Nullable by design — an older snapshot
   -- reads as [] via boardForHandle rather than crashing.
   CREATE TABLE quest_progress (handle TEXT PRIMARY KEY, send INTEGER, receive INTEGER, house_size INTEGER, house_send INTEGER, house_receive INTEGER, sent_to TEXT, heard_from TEXT);
+  -- quest_standing: the facts behind the board's NON-daily rows — the six
+  -- one-time onboarding rows and the budding-friendship milestone — folded
+  -- whole-town at hydrate by the TOWN'S OWN quest-progress.mjs
+  -- (onboardingFactsFor + foldFriendships), exactly as quest_progress folds
+  -- the daily pair. It exists because those facts were derivable all along and
+  -- were never joined to the board: queries.injectedComplete's own docstring
+  -- said the onboarding rows are "deliberately NOT injected here … read_quests
+  -- is a hot read", and that is a statement about the PER-REQUEST path, not
+  -- about the record. This table is the standing answer to it: one whole-town
+  -- fold at hydrate (measured 2026-09-08 at 155 residents: 178 ms for the
+  -- onboarding facts, 183 ms for 938 friendship pairs), and the hot read stays
+  -- a primary-key lookup.
+  --
+  -- Nullable by absence, like mail_state: an index built before this seam has
+  -- no row, and questBoardFor then answers those rows exactly as it did before
+  -- (measured: false, with a note naming the missing index) rather than
+  -- reporting "not done" on the strength of an old hydrate.
+  CREATE TABLE quest_standing (handle TEXT PRIMARY KEY, json TEXT);
   CREATE TABLE repo_log (
     sha TEXT, committed_at TEXT, author TEXT, subject TEXT, op TEXT, path TEXT
   );

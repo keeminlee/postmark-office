@@ -247,7 +247,8 @@ const registryPath = join(TOWN, "quest-registry.json");
 if (existsSync(questTool) && existsSync(registryPath)) {
   const { pathToFileURL } = await import("node:url");
   const { readFileSync } = await import("node:fs");
-  const { foldQuestProgress, townDay } = await import(pathToFileURL(questTool));
+  const questMod = await import(pathToFileURL(questTool));
+  const { foldQuestProgress, townDay } = questMod;
   const today = townDay();
   const prog = foldQuestProgress(TOWN, { today });
   const insQ = db.prepare("INSERT OR REPLACE INTO quest_progress (handle, send, receive, house_size, house_send, house_receive, sent_to, heard_from) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
@@ -257,6 +258,92 @@ if (existsSync(questTool) && existsSync(registryPath)) {
   }
   put.run("quest_day", today);
   put.run("quest_registry", readFileSync(registryPath, "utf8"));
+
+  // ── the standing rows: what the record already knew and nobody joined ──────
+  //
+  // The board's eight non-daily rows have answered `progress: null, complete:
+  // null` to every resident since BOARD_LAW widened the board on 2026-09-01 —
+  // "this surface did not look" printed beside eight things a 125-day resident
+  // had plainly done. The facts were never missing. `onboardingFactsFor` and
+  // `foldFriendships` are exported from the SAME town file as `boardForHandle`,
+  // and the office already wires the first of them into the doorstep
+  // (queries.nextStepsFor) and not into the board. This block is the join.
+  //
+  // ONE derivation, not a second one: every fact below comes from the town's
+  // own exported folds. The office contributes the INDEX, exactly as it does
+  // for the daily pair — nothing here re-implements a rule.
+  //
+  // A checkout too old to export these folds writes no rows at all, and the
+  // door then answers the non-daily rows precisely as it did before this seam.
+  if (typeof questMod.onboardingFactsFor === "function" && typeof questMod.foldFriendships === "function") {
+    const { onboardingFactsFor, foldFriendships } = questMod;
+    const { parseDeliveries } = await import(pathToFileURL(join(TOWN, "tools", "stamp-mint.mjs")));
+
+    // ONE ledger parse, shared by the onboarding facts and the two first-letter
+    // dates. `foldOnboarding` would parse it a second time for the same answer.
+    const deliveries = parseDeliveries(TOWN);
+    // `since` for the two mail rows: the FIRST delivery each way. The ledger is
+    // in delivery order, so the first row seen for a handle is the earliest —
+    // no sort, and no clock but the ledger's own dates.
+    const firstSent = new Map(), firstRecv = new Map();
+    for (const d of deliveries) {
+      if (d.from === d.to) continue; // self-mail is not a correspondence (the mint's own rule)
+      if (!firstSent.has(d.from)) firstSent.set(d.from, { date: d.date, id: d.id });
+      if (!firstRecv.has(d.to)) firstRecv.set(d.to, { date: d.date, id: d.id });
+    }
+
+    // The milestone, per handle: the deepest each-way reach this resident has
+    // with any ONE correspondent, and the rungs that crossed. Only QUALIFYING
+    // pairs count — cross-household, neither side a meep — because a pair that
+    // can never mint must never be shown as progress toward an award it cannot
+    // earn (BOARD_LAW's kept clause). foldFriendships computes `qualifies` and
+    // the crossings; this reduces its per-pair answer to the per-handle one the
+    // board needs, and reduces nothing else.
+    const depth = new Map(); // handle -> { eachWay, best, since, friends: [] }
+    const fr = foldFriendships(TOWN);
+    if (fr.active) {
+      for (const p of fr.pairs) {
+        if (!p.qualifies) continue;
+        for (const [me, them] of [[p.a, p.b], [p.b, p.a]]) {
+          const st = depth.get(me) ?? { eachWay: 0, best: 0, since: null, friends: [] };
+          if (p.eachWay > st.eachWay) st.eachWay = p.eachWay;
+          for (const r of p.rungs) {
+            if (!r.achieved) continue;
+            st.friends.push({ with: them, threshold: r.threshold, date: r.date });
+            // `since` is the day this resident FIRST crossed any rung — the day
+            // the milestone became theirs, not the day of their deepest one.
+            if (r.threshold > st.best) st.best = r.threshold;
+            if (!st.since || r.date < st.since) st.since = r.date;
+          }
+          depth.set(me, st);
+        }
+      }
+      for (const st of depth.values()) {
+        st.friends.sort((x, y) => y.threshold - x.threshold || x.date.localeCompare(y.date) || x.with.localeCompare(y.with));
+      }
+    }
+
+    const insS = db.prepare("INSERT OR REPLACE INTO quest_standing (handle, json) VALUES (?, ?)");
+    let standingRows = 0;
+    for (const r of town.residents) {
+      const h = r.handle;
+      const facts = onboardingFactsFor(TOWN, h, { deliveries });
+      insS.run(h, JSON.stringify({
+        ...facts,
+        sent_since: firstSent.get(h)?.date ?? null,
+        sent_via: firstSent.get(h)?.id ?? null,
+        received_since: firstRecv.get(h)?.date ?? null,
+        received_via: firstRecv.get(h)?.id ?? null,
+        // the milestone's ladder is ACTIVE-or-not, and an inactive ladder is a
+        // rule the town has not sealed yet — not a resident who has not earned
+        // it. `depth: null` carries that distinction to the door.
+        depth: fr.active ? (depth.get(h) ?? { eachWay: 0, best: 0, since: null, friends: [] }) : null,
+      }));
+      standingRows++;
+    }
+    console.log(`  quests: ${prog.size} progress rows, ${standingRows} standing rows` +
+      (fr.active ? `, ${fr.pairs.length} friendship pairs` : ", friendship ladder not sealed"));
+  }
 }
 
 // ── atlas: regions + homes ───────────────────────────────────────────────────
