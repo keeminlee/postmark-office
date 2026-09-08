@@ -454,3 +454,56 @@ test("the id this lane cites is the convention its live siblings keep", async ()
   assert.equal(reach, null,
     "the-town/the-reach is world PR #21, unmerged — if it now stands, update reach.mjs's dated-dependency note");
 });
+
+// ── the since: shelf's WIRING (found by this lane's own flip run) ────────────
+//
+// F6 of the flip set deleted the line that pushes hold events onto `to_you`
+// and the suite STAYED GREEN. `holdEffectsFrom` was watched; the shelf reading
+// it was not — the same hole the two door probes above close for the hold door,
+// found the same way, by asking the deletion question instead of the flattering
+// one. These are the tests that would have gone red.
+
+test("THE SHELF CARRIES THE HOLD EVENTS — walk #11's certified zero, on to_you itself", async () => {
+  const { toYou } = await import("../src/world-happened.mjs");
+  const shelf = toYou({
+    transitions: [], carriedLegs: [], claimEffects: null,
+    holdEffects: { readable: true, events: [{ kind: "hold-give", thing: "wright/a-try-square-for-the-joinery", at: "2026-09-07T13:57:16Z", crossing: 175 }] },
+    sinceCrossing: 175, nowCrossing: 175,
+  });
+  assert.equal(shelf.count, 1, "a give of a thing of mine must reach the shelf, not only the deriver");
+  assert.equal(shelf.events[0].kind, "hold-give");
+  assert.equal(shelf.complete, true);
+  assert.match(shelf.note, /hold on a thing of yours/);
+});
+
+test("…and an UNREADABLE holding record makes `complete` false and names itself", async () => {
+  const { toYou } = await import("../src/world-happened.mjs");
+  const shelf = toYou({
+    transitions: [], carriedLegs: [], claimEffects: { readable: true, events: [] },
+    holdEffects: { readable: false, events: [], reason: "the holding record could not be read (disk on fire)" },
+    sinceCrossing: 0, nowCrossing: 1,
+  });
+  assert.equal(shelf.complete, false, "a promise of completeness over a shelf that did not answer is the defect this repairs");
+  assert.match(shelf.note, /INCOMPLETE/);
+  assert.match(shelf.note, /disk on fire/, "the shelf must name which source went unread");
+});
+
+test("…and BOTH shelves unread are BOTH named, not just the first", async () => {
+  const { toYou } = await import("../src/world-happened.mjs");
+  const shelf = toYou({
+    transitions: [], carriedLegs: [],
+    claimEffects: { readable: false, events: [], reason: "the docket store could not be read" },
+    holdEffects: { readable: false, events: [], reason: "the holding record could not be read" },
+    sinceCrossing: 0, nowCrossing: 1,
+  });
+  assert.equal(shelf.complete, false);
+  assert.match(shelf.note, /docket store/);
+  assert.match(shelf.note, /holding record/);
+});
+
+test("a caller who asked for neither shelf still gets an honest `complete`", async () => {
+  const { toYou } = await import("../src/world-happened.mjs");
+  const shelf = toYou({ transitions: [], carriedLegs: [], claimEffects: null, holdEffects: null, sinceCrossing: 0, nowCrossing: 1 });
+  assert.equal(shelf.complete, true, "not asking is not a source that failed");
+  assert.equal(shelf.count, 0);
+});
