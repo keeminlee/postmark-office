@@ -473,7 +473,7 @@ test("THE SHELF CARRIES THE HOLD EVENTS — walk #11's certified zero, on to_you
   assert.equal(shelf.count, 1, "a give of a thing of mine must reach the shelf, not only the deriver");
   assert.equal(shelf.events[0].kind, "hold-give");
   assert.equal(shelf.complete, true);
-  assert.match(shelf.note, /hold on a thing of yours/);
+  assert.match(shelf.note, /so does every hold on a thing of yours or by your own hand/);
 });
 
 test("…and an UNREADABLE holding record makes `complete` false and names itself", async () => {

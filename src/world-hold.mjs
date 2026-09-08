@@ -777,9 +777,36 @@ export async function callHoldTool(name, args = {}, key = null) {
     // has. Unreachable Postgres = the ruled refusal, and nothing was written —
     // the thing is exactly where it was. Unflipped, the door is what it was.
     const { laneFlipped } = await import("./world-journal.mjs");
+    // ── THE REACH, AT THE DOOR, FOR BOTH PENS ─────────────────────────
+    //
+    // ⛔ IT WAS INSIDE `declareHoldingFlipped` FOR ONE COMMIT, and the suite
+    // caught it: that function is documented as provable "on a hand-built store
+    // with no world db and no Postgres", its whole `deps` parameter exists for
+    // that, and a reach check inside it handed all three pen-ordering tests a
+    // world engine, a clone and a walk ledger they have no business having.
+    // Exactly the mistake this file's header warns about twice, made a third
+    // time by me. The law belongs at the door, where the world already is.
+    //
+    // ON THE ORDERING, and why hoisting it above the flip branch is safe. B1
+    // requires the HOLDER check to sit inside the write transaction, and it
+    // still does — `declareHoldingFlipped` re-reads the rows after
+    // `BEGIN IMMEDIATE` and `declareHolding` adjudicates ownership there. What
+    // is read here is GEOMETRY, and the only thing a stale face can do is send
+    // the wrong clause to a call the transaction then refuses on ownership
+    // anyway. The one crossing case — a `drop` at check time that is a `take`
+    // by commit time — means the actor dropped it in between, so they are
+    // standing exactly where it now lies, and the reach it skipped would have
+    // passed.
+    const { guardedAttachments: guardRows } = await import("./world2-guards.mjs");
+    const preRows = await guardRows(db);
+    const preHolder = liveHolder(preRows, String(args.thing));
+    refuseGiveOfUnheld({ thing: args.thing, to: args.to ?? null, actor, holder: preHolder });
+    const face = preHolder == null ? "take" : (args.to == null ? "drop" : "give");
+    const reached = await refuseOutOfReach({ thing: args.thing, to: args.to ?? null, actor, act: face, holder: preHolder });
+
     if (laneFlipped("hold"))
-      return await declareHoldingFlipped({ db, thing: args.thing, to: args.to ?? null, actor, dials, key });
-    // ── THE REACH, BEFORE THE PEN ─────────────────────────────────────────────
+      return await declareHoldingFlipped({ db, thing: args.thing, to: args.to ?? null, actor, dials, key, reached, stood: await standpointOfActor(actor) });
+    // ── THE UNFLIPPED PEN ─────────────────────────────────────────────
     // Both legs run before anything is written, and both are read from the live
     // holder the adjudicator is about to read: the `to:`-on-an-unheld-thing
     // bounce needs the caller's own word (which the faces discard), and the
@@ -791,13 +818,7 @@ export async function callHoldTool(name, args = {}, key = null) {
     // write flip are independent flags (runbook §4: "the ports gate the
     // DELETION, not the flag"), so W2_GUARDS=1 with W2_PEN unset is a real and
     // supported state, and it is the one this lane is proven in.
-    const { guardedAttachments } = await import("./world2-guards.mjs");
-    const rows = await guardedAttachments(db);
-    const holder = liveHolder(rows, String(args.thing));
-    refuseGiveOfUnheld({ thing: args.thing, to: args.to ?? null, actor, holder });
-    const face = holder == null ? "take" : (args.to == null ? "drop" : "give");
-    const reached = await refuseOutOfReach({ thing: args.thing, to: args.to ?? null, actor, act: face, holder });
-    const did = declareHolding({ db, thing: args.thing, to: args.to ?? null, actor, roster: null, groundOwner: null, dials, rows });
+    const did = declareHolding({ db, thing: args.thing, to: args.to ?? null, actor, roster: null, groundOwner: null, dials, rows: preRows });
     const stood = await standpointOfActor(actor);
     mirrorHoldingAct(did, key);
     return dressReceipt(did, { reached, stood });
@@ -896,7 +917,7 @@ export function holdingEntry(did, { crossing, at, witnesses, cls, household }) {
 // "nothing was written" true rather than asserted. `deps` exist so the ordering
 // can be proven on a hand-built store with no world db and no Postgres — the
 // door injects the real ones.
-export async function declareHoldingFlipped({ db, thing, to = null, actor, dials = {}, key = null, deps = {} }) {
+export async function declareHoldingFlipped({ db, thing, to = null, actor, dials = {}, key = null, deps = {}, reached = null, stood = null }) {
   const journal = await import("./world-journal.mjs");
   const appendActFlipped = deps.appendActFlipped ?? journal.appendActFlipped;
   const CLASS_HOLDING = journal.CLASS_HOLDING;
@@ -917,20 +938,15 @@ export async function declareHoldingFlipped({ db, thing, to = null, actor, dials
     // above) would be answering about a past. Flipped, the rows come from
     // `acts`, both eras, latest-wins; unflipped, `readAttachments(db)`.
     const rows = await guardedAttachments(db);
-    // THE REACH IS INSIDE THE TRANSACTION SHAPE TOO, and for B1's own reason:
-    // the holder it adjudicates against must be the holder the edge commits
-    // against. Both refusals throw, so both roll back — "nothing was written"
-    // stays true of a refusal for distance exactly as it is of a refusal for
-    // ownership.
-    const holder = liveHolder(rows, String(thing));
-    refuseGiveOfUnheld({ thing, to, actor, holder });
-    const face = holder == null ? "take" : (to == null ? "drop" : "give");
-    const reached = await refuseOutOfReach({ thing, to, actor, act: face, holder });
+    // The reach was already asked at the door, above the flip branch, and its
+    // answer rides in as `reached`. It is NOT re-asked here: this function's
+    // contract is that it can be driven on a hand-built store with no world db
+    // and no Postgres, and a world read inside the transaction would take that
+    // away from the three tests that exist to prove the pen's ordering.
     const did = declareHolding({ db, thing, to, actor, roster: null, groundOwner: null, dials, rows }); // throws the door's own bounce on refusal
     const { at, witnesses } = await witnessStamp(did.declared_by);
     const row = await appendActFlipped(db, holdingEntry(did, { crossing: currentCrossing(), at, witnesses, cls: CLASS_HOLDING, household: resolvedWorldHousehold(key) }));
     db.exec("COMMIT");
-    const stood = await standpointOfActor(actor);
     // Which store is the RECORD for this act — said in the answer, as the stance
     // door says it (the journal row behind it is the reverse-mirror copy).
     return { ...dressReceipt(did, { reached, stood }), log: "acts", seq: row.seq ?? null };
