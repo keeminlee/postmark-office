@@ -35,7 +35,7 @@ import { tmpdir } from "node:os";
 import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-import { groundPointIn, backfill, distanceM } from "../tools/atlas-grid-backfill.mjs";
+import { groundPointIn, backfill, distanceM, reserialize } from "../tools/atlas-grid-backfill.mjs";
 import { GRID_TOLERANCE_M } from "../src/atlas-fold.mjs";
 
 const HERE = resolve(fileURLToPath(import.meta.url), "..");
@@ -215,6 +215,40 @@ test("FALSIFIER: the backfill adds grid_m and changes nothing else", () => {
 
   const verdicts = Object.fromEntries(rows.map((r) => [r.id, r.verdict]));
   assert.deepEqual(verdicts, { "a-house": "ground", "b-house": "none", "c-house": "already", "d-house": "none" });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FALSIFIER 3b — the emitted FILE is a patch, not a rewrite.
+//
+// The object-level check above says the backfill only adds `grid_m`. That was
+// true and the first file it wrote still diffed 3,369 lines against the ledger,
+// because the live ledger is CRLF on disk and `JSON.stringify` emits LF. A
+// whole-file line-ending flip is invisible to every check that reads decoded
+// text and total in `git diff` — it buries a 188-line judgment in a rewrite
+// nobody can review. This is the arm that watches the bytes.
+// ─────────────────────────────────────────────────────────────────────────────
+test("FALSIFIER: the emitted ledger keeps the source's line endings, so the diff is the judgment", () => {
+  const obj = { schema_version: 1, facts: [{ kind: "home", id: "a", resident: "a" }] };
+
+  const crlfSource = '{\r\n  "schema_version": 1\r\n}\r\n';
+  const crlf = reserialize(crlfSource, obj);
+  assert.equal(crlf.eol, "\r\n");
+  assert.ok(crlf.text.includes("\r\n"), "a CRLF source must produce a CRLF file");
+  assert.ok(!/(?<!\r)\n/.test(crlf.text), "not one bare LF may survive into a CRLF file");
+  assert.ok(crlf.text.endsWith("\r\n"), "the source's trailing newline is kept");
+
+  const lfSource = '{\n  "schema_version": 1\n}\n';
+  const lf = reserialize(lfSource, obj);
+  assert.equal(lf.eol, "\n");
+  assert.ok(!lf.text.includes("\r"), "an LF source must NOT gain carriage returns");
+  assert.ok(lf.text.endsWith("\n"));
+
+  // A source with no trailing newline does not grow one.
+  assert.ok(!reserialize('{"schema_version": 1}', obj).text.endsWith("\n"),
+    "a file with no trailing newline must not gain one — that is a diff line too");
+
+  // And the content is the same either way, so this is purely about bytes.
+  assert.deepEqual(JSON.parse(crlf.text), JSON.parse(lf.text));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -145,6 +145,23 @@ export function backfill(placements) {
 /** Metres between two `{x,y}` points. The ledger's grid is metres already. */
 export const distanceM = (a, b) => Math.round(Math.hypot(a.x - b.x, a.y - b.y));
 
+/**
+ * Serialise the patched ledger the way the SOURCE file is written.
+ *
+ * THE OUTPUT IS A DIFF SOMEONE MERGES, so it has to read as "47 lines added"
+ * and not as "the file was rewritten". The live ledger is CRLF on disk;
+ * `JSON.stringify` emits LF, and a whole-file line-ending flip is invisible to
+ * any decoded-text check and total in `git diff` — it turns a 188-line patch
+ * into a 3,369-line one and buries the judgment being proposed.
+ *
+ * Takes the source's ending and its trailing byte rather than assuming either.
+ */
+export function reserialize(rawSource, patched) {
+  const eol = rawSource.includes("\r\n") ? "\r\n" : "\n";
+  const tail = rawSource.endsWith("\r\n") ? "\r\n" : rawSource.endsWith("\n") ? "\n" : "";
+  return { text: JSON.stringify(patched, null, 2).split("\n").join(eol) + tail, eol };
+}
+
 // ── CLI ─────────────────────────────────────────────────────────────────────
 
 // `realpathSync` on BOTH sides, deliberately. A lane worktree reaches this file
@@ -209,7 +226,9 @@ if (isMain) {
 
   const out = arg("write", null);
   if (out) {
-    writeFileSync(resolve(out), JSON.stringify({ ...placements, facts }, null, 2) + "\n", "utf8");
-    console.log(`\nwrote ${resolve(out)} — ${by("ground").length} home facts gained grid_m`);
+    const { text, eol } = reserialize(readFileSync(LEDGER, "utf8"), { ...placements, facts });
+    writeFileSync(resolve(out), text, "utf8");
+    console.log(`\nwrote ${resolve(out)} — ${by("ground").length} home facts gained grid_m`
+      + ` (${eol === "\r\n" ? "CRLF" : "LF"}, matching the ledger)`);
   }
 }
