@@ -246,12 +246,23 @@ try {
   //     · CATCHES a claim whose mark reaches no ref of the world at all — the
   //       three instances (`darko/the-second-foundation-stone` at window 154,
   //       `wright/final-unstaked` at 155, `little-bird/the-second-spoon-verdict`
-  //       at 161), and the live fourth found while this was being built:
-  //       `lupi/the-drift-room`, locked at window 177 on 2026-09-08 17:45:44Z
-  //       with its file only on `origin/draft/lupi-agent` at bff32fae, while the
-  //       same crossing's settlement reported "2 published, 50 LEFT DRAFTED".
-  //       One act, two gates: the 1.0 sweep decides whether to PUBLISH and the
-  //       2.0 candle locked unconditionally.
+  //       at 161, whose only file sat on a draft branch nothing merged for seven
+  //       days). The mechanism is TWO GATES ON ONE ACT: the drain writes a
+  //       household draft branch and the shadow writer files a 2.0 claim; the 1.0
+  //       sweep then decides whether to PUBLISH, and the candle has been locking
+  //       unconditionally.
+  //     · CANNOT TELL "never" FROM "not yet", and there is a live case that
+  //       proves it rather than a hypothetical. `lupi/the-drift-room` locked at
+  //       window 177 on 2026-09-08 17:45:44Z and stands in the store with its
+  //       file on `origin/draft/lupi-agent` and no other ref. Whether the next
+  //       settlement publishes it is UNDETERMINED — the drain rebuilds that
+  //       branch every run, so its commit timestamps date the drain and not the
+  //       draft, and the sweep's `left_drafted` reasons are not written into the
+  //       tree. This check would have refused that claim tonight. If the sweep
+  //       then publishes the mark, the disagreement does not go away; it FLIPS —
+  //       canon carries a mark the store refused. That is the strongest argument
+  //       for the grace of one crossing carried up in the lane's report, and it
+  //       is the founder's call, not this file's.
   //     · DOES NOT CATCH a mark the world publishes and later UNPUBLISHES —
   //       that is the retire path's lane (G1 lane 1, materialize.mjs §
   //       retireMarks), and it must not be caught here: the claim locked when

@@ -60,9 +60,9 @@
 // The identity a record carries is `m.id` — `owner/name` — and that is the same
 // string `marks.slug` holds. MEASURED, not assumed: 1,030 of the store's 1,031
 // standing slugs join to a `loadMarks` id on world main at 91536f76, and the one
-// that does not (`lupi/the-drift-room`) is a live instance of the very class this
-// file exists to refuse. The PATH is a different string and is never the
-// identity — `review-g1-retire.md` repair 1 is the receipt of that mistake.
+// that does not (`lupi/the-drift-room`) is a live standing mark canon has no file
+// for. The PATH is a different string and is never the identity —
+// `review-g1-retire.md` repair 1 is the receipt of that mistake.
 
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";

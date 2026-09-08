@@ -88,7 +88,9 @@ export const UNMATERIALIZED_SELECT = `
  * `berthillon/pistache-cone-for-julian` (unpublished by the sweep at world
  * 49e0fe89) and `the-town/pledges` (removed by a law commit). All five were
  * retired by the founder's hand at window 177, so prod after the retire answers
- * ONE: `lupi/the-drift-room`, which locked at window 177 the same evening.
+ * ONE: `lupi/the-drift-room`, which locked at window 177 the same evening and
+ * whose file sits on `origin/draft/lupi-agent` and no other ref. Whether that one
+ * is "never" or "not yet" is UNDETERMINED — see clearing-job.mjs step 5.5.
  */
 export function canonLockFindings(rows, register, { unmaterializedRows = [] } = {}) {
   const absent = [];

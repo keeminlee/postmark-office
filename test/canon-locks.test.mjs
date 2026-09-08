@@ -78,8 +78,10 @@ test("after the retire, the same marks against the same canon answer zero", () =
 // ── 3 · the live fourth instance, found while this was built ───────────────
 //
 // `lupi/the-drift-room` locked at window 177 on 2026-09-08 17:45:44Z with its
-// file only on `origin/draft/lupi-agent` at bff32fae, while the same crossing's
-// settlement reported "2 published, 50 LEFT DRAFTED". A draft branch is not main.
+// file on `origin/draft/lupi-agent` and no other ref. A draft branch is not main,
+// which is the whole of what this asserts — NOT that the sweep declined it. The
+// verified case of a sweep declining for seven days is
+// `little-bird/the-second-spoon-verdict`.
 test("a mark whose only file is on a household draft branch is canon-absent", () => {
   const r = canonLockFindings(
     [{ slug: "lupi/the-drift-room", mark_status: "standing", locked_window: 177, claim_id: "32c20578", claim_status: "locked", window_id: 177, claimant: "lupi" }],
