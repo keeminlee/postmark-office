@@ -344,3 +344,27 @@ export function mirrorSettled() {
 export function mirrorExpired(today = new Date(), lanes = LANE_MIRROR) {
   return expiredLanes(today, lanes).length > 0;
 }
+
+/**
+ * READ the register, through the pool this module already owns.
+ *
+ * WHY IT LIVES IN THE WRITE MIRROR'S FILE. Three modules — `world2-serve`,
+ * `world2-claims`, `world2-pen` — each carry their own private `pool(env)`,
+ * and this file is the fourth. A fifth copy in `world-stance.mjs` would be the
+ * office learning one word five times, so the read ports borrow the pool from
+ * the module that owns the TABLE rather than opening another. (That there are
+ * four already is a finding handed up, not a licence to add the fifth.)
+ *
+ * Returns `null` — never a throw and never `[]` — when the register is not
+ * configured. **The distinction is the whole point:** a read port that answered
+ * an empty array for "I could not look" would tell its caller the town has no
+ * stances, which is the #2454 shape (a door that takes an act, keeps it, and
+ * shows a world in which it never happened). `null` means "not asked"; `[]`
+ * means "asked, and the answer is none".
+ */
+export async function actsQuery(text, params = [], env = process.env) {
+  if (!world2Enabled(env)) return null;
+  const p = await pool(env);
+  const { rows } = await p.query(text, params);
+  return rows;
+}

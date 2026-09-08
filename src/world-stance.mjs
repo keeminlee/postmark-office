@@ -377,13 +377,36 @@ export function candidatesFrom({ mine = [], all = [], spoken = new Set(), overla
  * Rows in seq order, last word per (speaker, object) standing. There is no
  * tombstone to skip because there is no neutral row to write — absence is the
  * third state and it is expressed by never appearing here.
+ *
+ * ── "LATEST" IS NOW READ, NOT ASSUMED (G1 lane 3b, 2026-09-08) ──────────────
+ *
+ * This used to fold by overwriting a Map in the caller's order — whatever row
+ * came last won — and to sort its answer by `seq` descending. Both were correct
+ * exactly while one numbering existed. `stanceRows` now merges the register with
+ * the 1.0 halves, and `acts.id` is a different sequence from `journal.seq`
+ * (4,000s against 1,000s), so a caller handing rows in any order at all could
+ * make a 2026-09-02 declaration outrank a 2026-09-08 one purely on the size of
+ * its id.
+ *
+ * So the fold COMPARES the instant instead of trusting arrival order, and the
+ * answer is ordered by instant with seq only as a tiebreak within one instant.
+ * A pure function that silently depends on its caller's sort is a contract
+ * written nowhere; this one now holds whatever order it is handed.
  */
+const laterStance = (a, b) => {
+  if (!a) return true;
+  const ai = String(a.written_at ?? ""), bi = String(b.written_at ?? "");
+  if (ai !== bi) return bi > ai;
+  return Number(b.seq ?? 0) >= Number(a.seq ?? 0);
+};
+
 export function standingStances(rows, { by = null } = {}) {
   const latest = new Map();
   for (const r of rows) {
     if (r.class !== CLASS_STANCE || !r.object) continue;
     if (by && r.actor !== by) continue;
-    latest.set(`${r.actor} ${r.object}`, r);
+    const k = `${r.actor} ${r.object}`;
+    if (laterStance(latest.get(k), r)) latest.set(k, r);
   }
   return [...latest.values()]
     .map((r) => ({
@@ -394,7 +417,7 @@ export function standingStances(rows, { by = null } = {}) {
       crossing: r.crossing,
       seq: r.seq,
     }))
-    .sort((a, b) => b.seq - a.seq);
+    .sort((a, b) => (String(a.at) === String(b.at) ? b.seq - a.seq : (String(a.at) < String(b.at) ? 1 : -1)));
 }
 
 // ── reading the world this door needs ────────────────────────────────────────
@@ -486,17 +509,116 @@ function photographStanceRows(worldClone) {
   return out;
 }
 
-/** Every stance row in the record: the drained photographs ∪ the live journal, by seq. Empty (never a throw) when neither can be read. */
-export function stanceRows({ dbPath = null, worldClone = WORLD_CLONE } = {}) {
-  if (!singleLogEnabled()) return [];
-  const bySeq = new Map();
-  for (const r of photographStanceRows(worldClone)) bySeq.set(r.seq, r);
-  try {
-    const db = openDynamic(dbPath ?? undefined, { readOnly: true });
-    try { for (const r of readJournal(db, { cls: CLASS_STANCE })) bySeq.set(r.seq, r); } // the live row is the fresher copy of the same seq
-    finally { try { db.close(); } catch { /* already gone */ } }
-  } catch { /* no live layer → the photographs alone are an honest record */ }
-  return [...bySeq.values()].sort((a, b) => a.seq - b.seq);
+// ── THE READ MOVES TO THE REGISTER (G1 lane 3b, 2026-09-08) ─────────────────
+//
+// The comment above this function used to end "At cutover this read moves to
+// the acts record (G2); until then the mirror + the photographs ARE the record
+// on 1.0." This is that move, pulled forward, because G1 cannot ship without it.
+//
+// THE DEFECT IT CLOSES, and it is #2454 wearing a different coat. Both of the
+// old union's halves die at the store cutover: the drain stops writing
+// `STATE/log/<n>.journal.jsonl` (there is no drain), and the sqlite journal
+// stops being the pen. So on the first store crossing this read would answer
+// `[]` for a town with live stances, every `standing` stance would go back to
+// `stances_awaiting`, and the door would show a world in which the declaration
+// never happened — which is the exact sentence #2454 was written to make false.
+//
+// AND THE MERGE KEY HAD TO CHANGE, WHICH IS NOT A DETAIL. The old union merged
+// by `seq`, which was sound while both halves carried the SAME numbering: a
+// photograph line and a live journal row for one act share the journal's seq.
+// The register does not. `acts.id` is its own sequence (in the 4,000s where the
+// journal is in the 1,000s) and `acts.journal_seq` is null for 4,483 of 4,689
+// rows, so a seq-keyed union would have carried EVERY act twice — once under
+// its journal seq and once under its act id — and `standingStances` would then
+// have picked whichever copy happened to be last. The key is the twin key
+// `(actor, action, object, written_at)`, which is `falsifier-pen-flip`'s own
+// (`twinKey`) and the only thing that names one act across two numberings.
+//
+// A stance is safe under that key where a MARK would not be: Phase 5.6's
+// deferral moves an unstaked declaration's instant, and only marks are deferred
+// (`world-journal.mjs § privateDraftAct` is `CLASS_MARK` + leave-mark/amend).
+// Measured 2026-09-08: 29 stance lines in the photograph, 28 in the register,
+// and the one extra is a genuine duplicate — seq 1084 and 1123 are lupi's same
+// declaration at the same instant, written twice. The twin key collapses it,
+// which is the register being right.
+//
+// THE REGISTER IS PREFERRED, NOT EXCLUSIVE. It is the copy that survives the
+// cutover, so where both hold an act the register's row is the one kept. But a
+// register that cannot be reached must not empty the town: `actsQuery` answers
+// `null` for "not asked" and an array for "asked", and only the array is
+// allowed to be the whole answer.
+
+/** One act, across two numberings. `falsifier-pen-flip.twinKey`'s own key — the only thing that names an act in both the journal's sequence and the register's. */
+const stanceTwinKey = (r) =>
+  JSON.stringify([String(r.actor), String(r.action), r.object == null ? null : String(r.object), String(r.written_at)]);
+
+/** A register row in `hydrateRow`'s vocabulary, so one shape leaves this function whichever source produced it. */
+function stanceRowFromAct(a) {
+  return {
+    seq: Number(a.id),
+    crossing: a.crossing == null ? null : Number(a.crossing),
+    actor: a.actor,
+    action: a.action,
+    object: a.object ?? null,
+    at: { anchor: a.at_anchor ?? null, dx: a.at_dx ?? null, dy: a.at_dy ?? null },
+    witnesses: a.witnesses ?? null,
+    class: a.class,
+    payload: a.payload ?? null,
+    effect: a.effect ?? null,
+    household: a.household ?? null,
+    written_at: a.at instanceof Date ? a.at.toISOString() : String(a.at),
+    register: true,   // which side answered, so a caller can say so rather than infer it
+  };
+}
+
+/**
+ * Every stance row in the record: the REGISTER, plus the drained photographs and
+ * the live journal beside it, merged by the twin key. Empty (never a throw) when
+ * none of the three can be read.
+ *
+ * ASYNC as of this change, because the register is. There is exactly one caller
+ * (`stanceInbox`, already async) and it awaits — a second synchronous copy of
+ * this read is how the two would come to disagree about who is standing.
+ */
+export async function stanceRows({ dbPath = null, worldClone = WORLD_CLONE, acts = null } = {}) {
+  const byTwin = new Map();
+
+  // The 1.0 halves first, so the register's copy overwrites them where both hold
+  // the act. Order is the preference, and it is stated here rather than left to
+  // whichever loop happens to run last.
+  if (singleLogEnabled()) {
+    for (const r of photographStanceRows(worldClone)) byTwin.set(stanceTwinKey(r), r);
+    try {
+      const db = openDynamic(dbPath ?? undefined, { readOnly: true });
+      try { for (const r of readJournal(db, { cls: CLASS_STANCE })) byTwin.set(stanceTwinKey(r), r); }
+      finally { try { db.close(); } catch { /* already gone */ } }
+    } catch { /* no live layer → the other sources are an honest record */ }
+  }
+
+  let rows = acts;
+  if (rows == null) {
+    try {
+      const { actsQuery } = await import("./world2-acts.mjs");
+      rows = await actsQuery(
+        "SELECT id, at, crossing, actor, action, object, at_anchor, at_dx, at_dy,"
+        + " witnesses, class, payload, effect, household FROM acts WHERE class = $1 ORDER BY id",
+        [CLASS_STANCE]);
+    } catch { rows = null; /* the register is unreachable — `null`, not `[]`; see actsQuery */ }
+  }
+  if (Array.isArray(rows)) for (const a of rows) {
+    const r = stanceRowFromAct(a);
+    byTwin.set(stanceTwinKey(r), r);
+  }
+
+  // SORTED BY THE INSTANT, not by seq. `standingStances` folds "latest wins" out
+  // of this order, and seq stopped being comparable the moment two numberings
+  // arrived in one list — a 1.0 row at seq 1,340 would have sorted BELOW every
+  // register row at id 4,700 and lost every contest regardless of when it was
+  // spoken. The instant is the one thing both sides mean the same way.
+  return [...byTwin.values()].sort((a, b) => {
+    const ai = String(a.written_at), bi = String(b.written_at);
+    return ai === bi ? a.seq - b.seq : (ai < bi ? -1 : 1);
+  });
 }
 
 /** The handles a key acts for — whose marks are "mine". */
@@ -518,7 +640,7 @@ export async function stanceInbox(repo, key, { dbPath = null } = {}) {
 
   const all = worldForStances(repo, { dbPath });
   const mine = all.filter((m) => mineHandles.has(m.by) && m.at && m.extent);
-  const rows = stanceRows({ dbPath, worldClone: repo });
+  const rows = await stanceRows({ dbPath, worldClone: repo });
   const standing = standingStances(rows).filter((s) => mineHandles.has(s.by));
   const spoken = new Set(standing.map((s) => s.on));
 
