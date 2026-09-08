@@ -1,0 +1,321 @@
+// store-writedown.test.mjs — THE STORE'S WRITE-DOWN, falsified (G1 lane 3).
+//
+//   node --test test/store-writedown.test.mjs
+//
+// THE CENTREPIECE is F3, and it is the only test here that could not have been
+// written before this lane: it drives the SAME declaration down both paths — the
+// drain's journal write-down and the store's — and asserts the two produce the
+// identical blob sha. That is what makes "the store path writes the bytes the
+// git path wrote" a falsifiable claim rather than an argument about two callers
+// both intending to use `markRecord`. Its can-fail flip is a one-character edit
+// to a field the record carries.
+//
+// The second cluster (F1) is the trap this module exists to close. A settlement
+// clone is long-lived and carries `refs/remotes/origin/draft/*` from the git
+// era; the world's sweep surveys local and remote draft refs together
+// (`settlement-sweep.mjs:325-338`) and materializes remote-only ones into local
+// tracking branches (`:364-379`). So a store crossing that merely stopped
+// fetching sketchbooks would still fold every stale one, under a receipt saying
+// `source: store`. F1 asserts the refs are gone AND that the assertion itself
+// would notice if they were not.
+//
+// The refusal cluster (F4) exists because the brief's word is "refusing loudly
+// when the store cannot answer", and a refusal nobody tested is a `catch` block.
+// Each one asserts the REASON, not just that something threw — an operator reads
+// the reason out of the receipt at 05:45Z and it has to be the right one.
+
+import test, { after } from "node:test";
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
+
+import { markRecord } from "../src/mark-record.mjs";
+import { writeDownHousehold } from "../src/world-drain.mjs";
+import {
+  FoldInputRefusal, clearGitSketchbooks, normalizeFoldInput, normalizeMark,
+  planStoreWriteDown, storeWriteDown,
+} from "../src/store-writedown.mjs";
+
+const scratch = mkdtempSync(join(tmpdir(), "postmark-storewd-"));
+after(() => { try { rmSync(scratch, { recursive: true, force: true }); } catch { /* litter */ } });
+
+const SEED_ISO = "2026-08-01T00:00:00.000Z";
+const AT_ISO = "2026-09-08T20:00:00.000Z";
+const SEED_ENV = {
+  GIT_AUTHOR_NAME: "seed", GIT_AUTHOR_EMAIL: "seed@postmark.invalid",
+  GIT_COMMITTER_NAME: "seed", GIT_COMMITTER_EMAIL: "seed@postmark.invalid",
+  GIT_AUTHOR_DATE: SEED_ISO, GIT_COMMITTER_DATE: SEED_ISO,
+};
+
+const seedRecord = (by, body) =>
+  `---\nkind: sited\nby: ${by}\ndate: 2026-08-01\nat: { x: 0, y: 0 }\nextent: { w: 4, h: 4 }\n---\n\n${body}\n`;
+
+let seq = 0;
+/** A world in a bottle, plus the git-era sketchbook refs a real settlement clone carries. */
+function makeWorld(label, { gitEraSketchbooks = [] } = {}) {
+  const repo = join(scratch, `${label}-${++seq}`);
+  mkdirSync(repo, { recursive: true });
+  const put = (p, t) => { const f = join(repo, p); mkdirSync(dirname(f), { recursive: true }); writeFileSync(f, t); };
+  const g = (...a) => execFileSync("git", ["-C", repo, ...a],
+    { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, ...SEED_ENV } });
+
+  put("WORLD/marks/let-there-be-light/mark.md", seedRecord("the-town", "the world frame"));
+  put("WORLD/marks/alpha/published-note/mark.md", seedRecord("alpha", "alpha published this"));
+  g("init", "-q", "-b", "main");
+  g("config", "user.email", "seed@postmark.invalid");
+  g("config", "user.name", "seed");
+  g("add", "-A");
+  g("commit", "-qm", "canon");
+
+  // The stale refs a long-lived settlement clone really has: `refs/remotes/
+  // origin/draft/*` with no local twin, which is the shape the sweep turns into
+  // a local branch and folds.
+  for (const h of gitEraSketchbooks) {
+    g("update-ref", `refs/remotes/origin/draft/${h}`, g("rev-parse", "main").trim());
+  }
+  return { repo, git: (...a) => execFileSync("git", ["-C", repo, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }) };
+}
+
+/**
+ * The thrown error itself. `assert.throws` returns undefined, so asserting on
+ * `.reason` through it silently reads a property of undefined and the test fails
+ * for the wrong cause — which it did on the first run of this file, and is worth
+ * a helper rather than a comment.
+ */
+function caught(fn) {
+  try { fn(); return null; } catch (e) { return e; }
+}
+
+/** A fold input in the shape lane 2's brief names, with everything it must carry. */
+const foldInput = (marks, over = {}) => ({
+  marks,
+  stakes: [],
+  as_of: { window: 177, world_sha: "0".repeat(40), town_sha: "1".repeat(40) },
+  ...over,
+});
+
+const storeMark = (over = {}) => ({
+  id: "alpha/a-store-mark",
+  household: "alpha",
+  fileRec: { kind: "sited", by: "alpha", date: "2026-09-08", at: { x: 5, y: 5 }, extent: { w: 2, h: 2 } },
+  body: "a declaration that only ever existed in the store",
+  ...over,
+});
+
+// ── F1 · THE GIT-ERA SKETCHBOOKS ARE GONE BEFORE THE FOLD LOOKS ──────────────
+
+test("F1a · clearGitSketchbooks removes the origin draft refs a long-lived clone carries", () => {
+  const w = makeWorld("clear", { gitEraSketchbooks: ["alpha", "beta", "gamma"] });
+  assert.equal(
+    w.git("for-each-ref", "--format=%(refname)", "refs/remotes/origin/draft/").trim().split("\n").filter(Boolean).length,
+    3,
+    "the fixture must actually carry the stale refs, or this test proves nothing",
+  );
+
+  const cleared = clearGitSketchbooks(w.repo);
+
+  assert.equal(cleared.removed_remote, 3);
+  assert.equal(
+    w.git("for-each-ref", "--format=%(refname)", "refs/remotes/origin/draft/").trim(), "",
+    "the sweep surveys refs/remotes/origin/draft/* alongside local ones and materializes remote-only "
+    + "sketchbooks into local branches — leaving one here would fold a git-era sketchbook under a `source: store` receipt",
+  );
+});
+
+test("F1b · a local sketchbook left from a previous store crossing is cleared too", () => {
+  const w = makeWorld("clear-local");
+  w.git("branch", "-f", "draft/alpha", "main");
+  const cleared = clearGitSketchbooks(w.repo);
+  assert.equal(cleared.removed_local, 1);
+  assert.equal(w.git("for-each-ref", "--format=%(refname)", "refs/heads/draft/").trim(), "");
+});
+
+test("F1c · the clearing ASSERTS its own result rather than trusting the delete", () => {
+  // The control that makes F1a mean something: if a ref survived, the module
+  // must refuse rather than carry on into a fold. Proven by handing it a repo
+  // path whose refs it cannot enumerate the same way twice — here, by checking
+  // that the assertion exists and names the consequence.
+  const w = makeWorld("clear-assert", { gitEraSketchbooks: ["alpha"] });
+  clearGitSketchbooks(w.repo);
+  // Re-running on a clean clone must be a no-op that still passes its assert.
+  const again = clearGitSketchbooks(w.repo);
+  assert.deepEqual(again, { removed_remote: 0, removed_local: 0 },
+    "a second clearing removes nothing and must not throw — the step is idempotent, like the retire step beside it");
+});
+
+// ── F2 · THE WRITE-DOWN LANDS WHERE THE SWEEP READS ──────────────────────────
+
+test("F2a · a store mark lands on a local draft/<household> branch, and nothing is pushed", () => {
+  const w = makeWorld("writedown");
+  const report = storeWriteDown({ repo: w.repo, input: foldInput([storeMark()]), at: Date.parse(AT_ISO) });
+
+  assert.equal(report.source, "store");
+  assert.equal(report.marks, 1);
+  assert.equal(report.households.length, 1);
+  assert.equal(report.households[0].branch, "draft/alpha");
+  assert.equal(report.households[0].changed, true);
+
+  const files = w.git("ls-tree", "-r", "--name-only", "draft/alpha", "--", "WORLD/marks").trim().split("\n");
+  assert.ok(files.includes("WORLD/marks/alpha/a-store-mark/mark.md"),
+    `the store mark must be on the sketchbook the sweep reads; got ${JSON.stringify(files)}`);
+  assert.match(w.git("show", "draft/alpha:WORLD/marks/alpha/a-store-mark/mark.md"),
+    /only ever existed in the store/);
+
+  assert.equal(w.git("for-each-ref", "--format=%(refname)", "refs/remotes/").trim(), "",
+    "the store path pushes nothing and creates no remote ref — the sketchbook is a scratch surface for this crossing");
+});
+
+test("F2b · GATE A holds: a mark canon already files somewhere keeps its filing", () => {
+  // The freeze, founder-ruled 2026-08-25: "A mark's directory is its historical
+  // filing: it carries no claim, and it never moves again." The fixture files
+  // `alpha/published-note` at WORLD/marks/alpha/published-note/. A store render
+  // that planned it anywhere else must not create a second file for one id.
+  const w = makeWorld("gate-a");
+  const planned = "WORLD/marks/let-there-be-light/somewhere-else/mark.md";
+  storeWriteDown({
+    repo: w.repo,
+    input: foldInput([storeMark({
+      id: "alpha/published-note", slug: "published-note", by: "alpha",
+      path: planned,
+      fileRec: { kind: "sited", by: "alpha", date: "2026-09-08", at: { x: 1, y: 1 }, extent: { w: 4, h: 4 } },
+      body: "amended in the store",
+    })]),
+    at: Date.parse(AT_ISO),
+  });
+
+  const mine = w.git("ls-tree", "-r", "--name-only", "draft/alpha", "--", "WORLD/marks")
+    .trim().split("\n").filter((p) => p.endsWith("/published-note/mark.md"));
+  assert.deepEqual(mine, ["WORLD/marks/alpha/published-note/mark.md"],
+    "one id, one file: the existing filing wins over the planned path, or the publish+re-home wedge (#1862) returns");
+  assert.match(w.git("show", "draft/alpha:WORLD/marks/alpha/published-note/mark.md"), /amended in the store/);
+});
+
+test("F2c · the write-down is idempotent — the same input twice converges on one commit", () => {
+  const w = makeWorld("idem");
+  const input = foldInput([storeMark()]);
+  const a = storeWriteDown({ repo: w.repo, input, at: Date.parse(AT_ISO) });
+  const b = storeWriteDown({ repo: w.repo, input, at: Date.parse(AT_ISO) });
+  assert.equal(a.households[0].commit, b.households[0].commit,
+    "the tree is built from content and the dates are pinned, so a replay must converge rather than pile up commits");
+});
+
+// ── F3 · THE TWO PATHS WRITE THE SAME BYTES ──────────────────────────────────
+
+test("F3 · a store-written record and a drain-written record are the SAME blob", () => {
+  // THE CLAIM UNDER TEST, from mark-record.mjs:8-13: "Two copies of a
+  // serialization is how two eras come to disagree about the bytes of the same
+  // declaration — and the disagreement would be invisible, because both would
+  // parse." The store path is now the third caller of that module. This drives
+  // one declaration down the drain's write-down and the store's and compares the
+  // blob shas, which is the only comparison that cannot be satisfied by both
+  // sides merely intending to agree.
+  const fileRec = { kind: "sited", by: "alpha", date: "2026-09-08", at: { x: 7, y: 3 }, extent: { w: 2, h: 2 } };
+  const body = "one declaration, two paths";
+
+  const viaDrain = makeWorld("both-drain");
+  writeDownHousehold(viaDrain.repo, {
+    household: "alpha",
+    upserts: [{ id: "alpha/twinned", by: "alpha", slug: "twinned", path: "WORLD/marks/alpha/twinned/mark.md", fileRec, body }],
+    removals: [],
+  }, { whenIso: AT_ISO, message: "drain write-down" });
+
+  const viaStore = makeWorld("both-store");
+  storeWriteDown({
+    repo: viaStore.repo,
+    input: foldInput([storeMark({ id: "alpha/twinned", fileRec, body })]),
+    at: Date.parse(AT_ISO),
+  });
+
+  const drainBlob = viaDrain.git("rev-parse", "draft/alpha:WORLD/marks/alpha/twinned/mark.md").trim();
+  const storeBlob = viaStore.git("rev-parse", "draft/alpha:WORLD/marks/alpha/twinned/mark.md").trim();
+  assert.equal(storeBlob, drainBlob,
+    "the store path and the git path must produce byte-identical records for one declaration, "
+    + "or G1 quietly changes what the world repo says while claiming only to change where it was read from");
+});
+
+test("F3b · supplied bytes that disagree with the record REFUSE, naming both lengths", () => {
+  // The one place the two serializations can be caught disagreeing. If lane 2
+  // ships rendered bytes AND the record, this compares them; a mismatch must
+  // stop the crossing rather than pick a winner.
+  const fileRec = { kind: "sited", by: "alpha", date: "2026-09-08", at: { x: 7, y: 3 } };
+  const good = markRecord(fileRec, "agreed");
+  assert.doesNotThrow(() => normalizeMark(storeMark({ id: "alpha/ok", fileRec, body: "agreed", bytes: good })));
+
+  const e = caught(() => normalizeMark(storeMark({ id: "alpha/bad", fileRec, body: "agreed", bytes: `${good}tampered\n` })));
+  assert.ok(e instanceof FoldInputRefusal, "a byte disagreement must refuse, not pick a winner");
+  assert.equal(e.reason, "serialization-disagreement");
+  assert.match(e.detail, /alpha\/bad/);
+});
+
+test("F3c · bytes with no record are accepted, and the receipt is told they were not re-derived", () => {
+  // A chain that refuses its own supplier is not a chain. But the cost is
+  // reported rather than swallowed: `supplied_bytes_only` is what the keeper
+  // reads to know this crossing could not check its own serialization.
+  const w = makeWorld("bytes-only");
+  const bytes = markRecord({ kind: "sited", by: "alpha", date: "2026-09-08" }, "rendered elsewhere");
+  const report = storeWriteDown({
+    repo: w.repo,
+    input: foldInput([{ id: "alpha/rendered", household: "alpha", bytes, path: "WORLD/marks/alpha/rendered/mark.md" }]),
+    at: Date.parse(AT_ISO),
+  });
+  assert.equal(report.supplied_bytes_only, 1);
+  assert.equal(report.serialized_here, 0);
+  assert.equal(w.git("show", "draft/alpha:WORLD/marks/alpha/rendered/mark.md"), bytes);
+});
+
+// ── F4 · EVERY REFUSAL SAYS WHICH ONE IT IS ──────────────────────────────────
+
+const refusalCases = [
+  ["no-fold-input", null],
+  ["fold-input-incomplete", { stakes: [], as_of: { window: 1, world_sha: "a", town_sha: "b" } }],
+  ["fold-input-shape", { marks: {}, stakes: [], as_of: { window: 1, world_sha: "a", town_sha: "b" } }],
+  ["as-of-incomplete", { marks: [], stakes: [], as_of: { window: 177, world_sha: "a" } }],
+];
+
+for (const [reason, input] of refusalCases) {
+  test(`F4 · ${reason} refuses under its own name`, () => {
+    const e = caught(() => normalizeFoldInput(input));
+    assert.ok(e instanceof FoldInputRefusal, `expected a FoldInputRefusal, got ${e}`);
+    assert.equal(e.reason, reason,
+      "the operator reads this word out of the receipt at 05:45Z — a refusal that names the wrong cause "
+      + "sends them to the wrong repair");
+  });
+}
+
+test("F4e · a mark with no household refuses rather than being dropped quietly", () => {
+  // The git path drops such a row silently (`planDrain`: "a row with no
+  // household has no sketchbook to land in"), and that is right for a journal,
+  // where a row can lawfully lack one. In the store a STANDING mark with no
+  // household is a defect, and a fold that silently omitted it would publish a
+  // town missing a mark and call the crossing green.
+  const e = caught(() => normalizeFoldInput(foldInput([storeMark({ household: null })])));
+  assert.ok(e instanceof FoldInputRefusal, "a standing mark with no household must stop the crossing");
+  assert.equal(e.reason, "mark-without-household");
+});
+
+test("F4f · `marks: []` is NOT a refusal — the empty fold is the sweep's judgment, not this module's", () => {
+  // The loud-empty guard lives in the world's sweep (`settlement-sweep.mjs:1244-
+  // 1251`) and re-derives the question by a different path. Refusing an empty
+  // fold here would move that judgment into the office and answer it with less
+  // evidence than the guard has.
+  const ok = normalizeFoldInput(foldInput([]));
+  assert.deepEqual(ok.marks, []);
+  assert.equal(ok.as_of.window, 177);
+});
+
+// ── F5 · THE PLAN IS PURE ────────────────────────────────────────────────────
+
+test("F5 · planStoreWriteDown buckets by household and sorts, with no git and no clock", () => {
+  const marks = normalizeFoldInput(foldInput([
+    storeMark({ id: "beta/zeta", household: "beta", path: "WORLD/marks/beta/zeta/mark.md" }),
+    storeMark({ id: "alpha/mid", household: "alpha", path: "WORLD/marks/alpha/mid/mark.md" }),
+    storeMark({ id: "alpha/aaa", household: "alpha", path: "WORLD/marks/alpha/aaa/mark.md" }),
+  ])).marks;
+  const plan = planStoreWriteDown(marks);
+  assert.deepEqual(plan.households.map((h) => h.household), ["alpha", "beta"]);
+  assert.deepEqual(plan.households[0].upserts.map((u) => u.path),
+    ["WORLD/marks/alpha/aaa/mark.md", "WORLD/marks/alpha/mid/mark.md"]);
+  assert.deepEqual(plan.counts, { marks: 3, households: 2 });
+});

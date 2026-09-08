@@ -55,7 +55,44 @@
 #      ones, SHOUTS the quarantine, and settles for everyone else. Only a red
 #      it cannot attribute to a candidate still refuses the town.
 #
+# ── WHAT CHANGED 2026-09-08 (G1: the store becomes the only source) ──────────
+#
+# The fold's input used to arrive through two lossy hops. A door write landed in
+# Postgres FIRST and was awaited (`src/world-journal.mjs:381-391`); the sqlite
+# journal received a COPY afterwards; the drain emptied that copy into
+# `draft/<login>` sketchbooks; and this script swept those branches. The five
+# acts with no journal twin on 2026-09-06 are what a lossy hop looks like from
+# outside: the fold could not see them because a copy failed, not because the
+# store lacked them.
+#
+# SETTLEMENT_SOURCE=store removes both hops. The store is read directly, its
+# marks are written down into LOCAL sketchbook branches in this disposable
+# clone, and the sweep reads them exactly as it reads drained ones.
+#
+# THE FOLD IS NOT TOUCHED, AND EVERY GUARD ABOVE STAYS. The grammar that decides
+# what publishes lives in the WORLD repo (`tools/settlement-sweep.mjs`,
+# `tools/marks-fold.mjs`, `tools/settlement-isolate.mjs`) and is the world's law,
+# not this box's. The store path hands that law the one input it already
+# understands — local `refs/heads/draft/*` — so the loud-empty guard, the
+# isolation pass, the race retry and the six-channel receipt all keep working on
+# the same evidence they were written for.
+#
+# WHAT THE STORE PATH DROPS: the sketchbook fetch, the drain, the delivery push,
+# and the end-of-run sketchbook lease pushes. WHAT IT KEEPS: the suite gate, the
+# isolation pass, the retire step, the receipt, and main's own push lease with
+# its cheap-salvage rebase — that lease is about WORLD MAIN and has nothing to do
+# with sketchbooks, so it is untouched in both modes. The SKETCHBOOK leases go,
+# and they go because there is nothing left to race: no store crossing pushes a
+# draft branch, so no door write can invalidate one.
+#
+# ROLLBACK IS A FLIP, NOT A RESTORE. `SETTLEMENT_SOURCE=git` takes the original
+# path, unchanged, for one crossing. It stays cheap only while the sketchbook
+# branches are left standing on origin through the green week — deleting them
+# with the swap would make the rollback a restore. They cost nothing; they are
+# G2's line, not G1's.
+#
 # Env (unit): TOWN_CLONE, WORLD_CLONE (origin URL discovery only).
+#   SETTLEMENT_SOURCE  `store` (default) or `git` (the one-crossing rollback)
 #   OFFICE_ROOT        the office checkout (default /srv/postmark-office)
 #   SETTLEMENT_CLONE   the sweep's own clone (default $OFFICE_ROOT/settlement-clone)
 #   SETTLEMENT_REPORT  the receipt path (default /srv/postmark-harbor/settlement-auto.json)
@@ -74,6 +111,18 @@ OUT="${SETTLEMENT_REPORT:-/srv/postmark-harbor/settlement-auto.json}"
 HISTORY="${SETTLEMENT_HISTORY:-${OUT%.json}-history.jsonl}"
 STAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
+
+# THE SOURCE, READ ON EXACTLY ONE LINE. Every later branch tests $SOURCE and
+# never the environment again — a flag read twice is a flag that can disagree
+# with itself halfway through a crossing, and this one decides where canon comes
+# from. An unrecognised value REFUSES rather than defaulting: a typo silently
+# taking the git path would publish a git fold under a receipt saying `store`,
+# which is the one failure this whole lane is meant to make impossible.
+SOURCE="${SETTLEMENT_SOURCE:-store}"
+case "$SOURCE" in
+  store|git) ;;
+  *) echo "[settlement-auto] SETTLEMENT_SOURCE=\"$SOURCE\" is not \`store\` or \`git\` — refusing rather than guessing which record to publish" >&2; exit 1 ;;
+esac
 
 # One-time: a dedicated settlement clone — never the write pen's checkout.
 if [ ! -d "$SWEEP/.git" ]; then
@@ -95,6 +144,7 @@ report() { # status detail
   SETTLEMENT_SWEEP_JSON="${SWEEP_JSON:-}" SETTLEMENT_DRAIN_JSON="${DRAIN_JSON:-}" \
   SETTLEMENT_RETIRE_JSON="${RETIRE_JSON:-}" \
   SETTLEMENT_ISOLATE_JSON="${ISOLATE_JSON:-}" SETTLEMENT_REFUSAL_JSON="${REFUSAL_JSON:-}" \
+  SETTLEMENT_SOURCE_MODE="$SOURCE" SETTLEMENT_STORE_JSON="${STORE_JSON:-}" \
     node "$OFFICE/deploy/settlement-receipt.mjs" > "$OUT" 2>/dev/null || true
   # THE HISTORY. One line per DECIDED crossing, appended, bounded. A single
   # receipt file answers "what did the last crossing do"; nothing on the box
@@ -158,18 +208,46 @@ if [ -z "${SETTLEMENT_ATTEMPT:-}" ]; then
   exit 2
 fi
 
-# Immutable inputs: the town at a pinned sha, in a frozen local snapshot.
+# Immutable inputs: the town at a pinned sha.
+#
+# The FETCH and the pinned read happen in both modes, because `town_sha` is the
+# crossing's identity in the receipt and, after G1, the key the store's
+# `stamp_projection` is looked up by — `(town_sha, handle)`, `world2/schema/
+# 001_tables.sql:136-143`. The frozen local SNAPSHOT is git-mode only: its one
+# reader is `tools/world-stake.mjs`, which the store path replaces.
 git -C "$TOWN" fetch -q origin
 TOWN_SHA="$(git -C "$TOWN" rev-parse origin/main)"
-git clone -q --local --no-checkout "$TOWN" "$WORK/town"
-git -C "$WORK/town" checkout -qf "$TOWN_SHA"
+if [ "$SOURCE" = "git" ]; then
+  git clone -q --local --no-checkout "$TOWN" "$WORK/town"
+  git -C "$WORK/town" checkout -qf "$TOWN_SHA"
+fi
 
-# World: main + every sketchbook at its exact remote tip; leases recorded.
-git -C "$SWEEP" fetch -qp origin '+refs/heads/*:refs/remotes/origin/*'
+# World: main, and — in git mode only — every sketchbook at its exact remote tip
+# with its lease recorded.
+#
+# THE REFSPEC IS NARROWED IN STORE MODE, AND THAT IS NOT AN OPTIMISATION. The
+# sweep surveys local AND remote draft refs together (`settlement-sweep.mjs:325-
+# 338`) and materializes any remote draft with no local twin into a local
+# tracking branch (`:364-379`). This clone is long-lived and its origin is the
+# world repo, so it already holds forty `refs/remotes/origin/draft/*` from the
+# git era. A store crossing that merely stopped fetching them would still FOLD
+# them — silently, under a receipt saying `source: store`. Narrowing the refspec
+# stops new ones arriving; `src/store-writedown.mjs` deletes the ones already
+# here, asserts none survived, and reports the counts. Both are needed: the
+# refspec alone leaves the existing forty, and the deletion alone would be undone
+# by the next fetch.
+if [ "$SOURCE" = "git" ]; then
+  git -C "$SWEEP" fetch -qp origin '+refs/heads/*:refs/remotes/origin/*'
+else
+  git -C "$SWEEP" fetch -qp origin '+refs/heads/main:refs/remotes/origin/main'
+fi
 WORLD_FROM="$(git -C "$SWEEP" rev-parse origin/main)"
 git -C "$SWEEP" checkout -qf -B main origin/main
 git -C "$SWEEP" clean -fdq  # a killed run leaves untracked debris; the clone is disposable
-git -C "$SWEEP" for-each-ref --format='%(refname:short) %(objectname)' 'refs/remotes/origin/draft/*' > "$WORK/tips"
+: > "$WORK/tips"
+if [ "$SOURCE" = "git" ]; then
+  git -C "$SWEEP" for-each-ref --format='%(refname:short) %(objectname)' 'refs/remotes/origin/draft/*' > "$WORK/tips"
+fi
 
 # ── THE SKETCHBOOK SYNC IS FAST-FORWARD-AWARE (2026-08-27) ───────────────────
 #
@@ -221,7 +299,7 @@ done < "$WORK/tips"
 # checkout. Committing them here is also correct on its own terms — they are
 # main's files and the clone stands on main at this point.
 DRAIN_JSON=""
-if [ "${SETTLEMENT_DRAIN:-1}" = "1" ]; then
+if [ "$SOURCE" = "git" ] && [ "${SETTLEMENT_DRAIN:-1}" = "1" ]; then
   DRAIN_JSON="$WORK/drain.json"
   if ! (cd "$OFFICE" && WORLD_SINGLE_LOG=1 node "$OFFICE/src/world-drain.mjs" \
         --world "$SWEEP" --commit-state) > "$DRAIN_JSON" 2>"$WORK/drain.err"; then
@@ -283,8 +361,48 @@ if [ "${SETTLEMENT_DRAIN:-1}" = "1" ]; then
   fi
 fi
 
-# Stakes, derived at the pinned town read (k and law dials from the town's own files).
-(cd "$WORK/town" && node tools/world-stake.mjs --escrow --json) > "$WORK/stakes.json"
+# ── THE STORE'S WRITE-DOWN, IN THE DRAIN'S PLACE (G1) ────────────────────────
+#
+# One read of the store answers BOTH of the fold's questions — which marks stand
+# at this window, and what each is staked at — so the two arrive together from
+# one entry point at one instant. That is the property the two-hop chain never
+# had: the drain's sketchbooks were written at one moment and the stakes derived
+# from a town read at another, and nothing anywhere said the two agreed.
+#
+# It refuses LOUDLY and publishes nothing. There is deliberately no fall-through
+# to git: a receipt saying `source: store` over a git fold would be a worse lie
+# than a refused crossing, and the rollback is an operator's deliberate act
+# (`SETTLEMENT_SOURCE=git`), never something this script decides for itself at
+# 05:45Z with nobody watching.
+STORE_JSON=""
+if [ "$SOURCE" = "store" ]; then
+  FOLD_INPUT="$WORK/fold-input.json"
+  if ! (cd "$OFFICE" && node "$OFFICE/world2/tools/fold-input.mjs" \
+        --town-sha "$TOWN_SHA" --world-sha "$WORLD_FROM") > "$FOLD_INPUT" 2>"$WORK/fold.err"; then
+    report refused "the store could not answer this crossing: $(node -e 'const r=require(process.argv[1]);process.stdout.write(String(r.refused||"unknown")+" — "+String(r.detail||""))' "$FOLD_INPUT" 2>/dev/null || head -c 200 "$WORK/fold.err" | tr '\n"' ' .')"
+    echo "[settlement-auto] STORE REFUSED — publishing nothing" >&2
+    cat "$FOLD_INPUT" >&2 2>/dev/null || true; cat "$WORK/fold.err" >&2
+    exit 1
+  fi
+
+  # The stakes come out of the same answer, in the shape the sweep already reads
+  # (`settlement-sweep.mjs:232-243` accepts a bare array or `{stakes:[...]}`).
+  node -e 'const fs=require("node:fs");const i=require(process.argv[1]);fs.writeFileSync(process.argv[2],JSON.stringify(i.stakes,null,1)+"\n")' \
+    "$FOLD_INPUT" "$WORK/stakes.json"
+
+  STORE_JSON="$WORK/store.json"
+  if ! (cd "$OFFICE" && node "$OFFICE/src/store-writedown.mjs" \
+        --input "$FOLD_INPUT" --world "$SWEEP") > "$STORE_JSON" 2>"$WORK/store.err"; then
+    report refused "the store write-down refused: $(node -e 'const r=require(process.argv[1]);process.stdout.write(String(r.refused||"unknown")+" — "+String(r.detail||""))' "$STORE_JSON" 2>/dev/null || head -c 200 "$WORK/store.err" | tr '\n"' ' .')"
+    echo "[settlement-auto] STORE WRITE-DOWN REFUSED — publishing nothing" >&2
+    cat "$STORE_JSON" >&2 2>/dev/null || true; cat "$WORK/store.err" >&2
+    exit 1
+  fi
+  echo "[settlement-auto] store: $(node -e 'const r=require(process.argv[1]);const a=r.as_of||{};process.stdout.write(String(r.marks||0)+" mark(s) into "+String((r.households||[]).length)+" sketchbook(s) at window "+String(a.window)+"; cleared "+String((r.sketchbooks_cleared||{}).removed_remote||0)+" origin + "+String((r.sketchbooks_cleared||{}).removed_local||0)+" local git-era draft ref(s)")' "$STORE_JSON")" >&2
+else
+  # Stakes, derived at the pinned town read (k and law dials from the town's own files).
+  (cd "$WORK/town" && node tools/world-stake.mjs --escrow --json) > "$WORK/stakes.json"
+fi
 
 # THE PRE-SWEEP REFS, recorded because they cannot be recovered afterwards: the
 # sweep rebases every draft branch onto the main it just wrote, so once it has
@@ -460,6 +578,12 @@ git -C "$SWEEP" push -q origin main:main || {
     echo "[settlement-auto] RACE on main — rerun" >&2; exit 2
   fi
 }
+# THE SKETCHBOOK LEASES. In store mode `$WORK/tips` is empty by construction —
+# nothing was fetched into it and nothing was delivered — so this loop is a
+# no-op and no draft branch is pushed. That is stated here rather than left to
+# be inferred from an empty file, because the emptiness is the whole safety
+# argument and the next person to add a line inside this loop should know it
+# runs for one mode only.
 RACED=0
 while read -r ref sha; do
   b="${ref#origin/}"

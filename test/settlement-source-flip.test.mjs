@@ -1,0 +1,306 @@
+// settlement-source-flip.test.mjs — THE ROLLBACK IS A FLIP, AND HERE IS THE PROOF.
+//
+//   node --test test/settlement-source-flip.test.mjs
+//
+// ── WHAT IS UNDER TEST ──────────────────────────────────────────────────────
+//
+// G1 puts a switch in the crossing: `SETTLEMENT_SOURCE=store` folds from the
+// register, `SETTLEMENT_SOURCE=git` takes the original path for one crossing.
+// The plan of record calls that switch the rollback — "point the fold back at
+// git for that crossing" — and the whole swap is scheduled on the strength of
+// it. A rollback nobody has exercised is a comment.
+//
+// The claim my brief states is that with `git`, "the chain is byte-identical to
+// the train's". A literal byte comparison of the two SCRIPTS cannot be the
+// instrument: this branch adds lines to the file, so that comparison is false by
+// construction and would have to be weakened until it passed. What the sentence
+// actually means, and the only thing that matters at 05:45Z, is that the
+// rollback crossing DOES THE SAME THINGS. So the instrument here is the sequence
+// of external commands each script issues — every `git`, `node` and `npm`
+// invocation with its full argument list, in order — captured by putting stub
+// wrappers ahead of the real binaries on PATH.
+//
+// The train's script is read out of git (`origin/train/2026-w38:deploy/
+// settlement-auto.sh`) rather than kept as a copy in the test tree, so this test
+// cannot drift away from what is actually shipping.
+//
+// ── THE CAN-FAIL FLIP ───────────────────────────────────────────────────────
+//
+// F-flip below is the control, and it is the reason to trust the equality test:
+// it re-runs the same comparison with the branch script's git path deliberately
+// perturbed by one command, and asserts the comparison NOTICES. An equality
+// assertion that has never been shown to fail is a green light wired to nothing.
+
+import test, { after } from "node:test";
+import assert from "node:assert/strict";
+import { execFileSync, spawnSync } from "node:child_process";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
+
+const OFFICE = join(dirname(fileURLToPath(import.meta.url)), "..");
+const scratch = mkdtempSync(join(tmpdir(), "postmark-srcflip-"));
+after(() => { try { rmSync(scratch, { recursive: true, force: true }); } catch { /* litter */ } });
+
+const sh = (cmd, opts = {}) => execFileSync("sh", ["-c", cmd], { encoding: "utf8", ...opts });
+const has = (cmd) => { try { execFileSync("sh", ["-c", cmd], { stdio: "ignore" }); return true; } catch { return false; } };
+
+// The harness is POSIX-shell shaped. Where `sh` is not a real shell the tests
+// SKIP rather than pass — a silent pass on a box that cannot run the crossing is
+// the "check reached for something easier than the behaviour" defect.
+const SH_OK = has("sh -c 'true'");
+
+const TRAIN_REF = "origin/train/2026-w38";
+
+/** The train's shipping script, read from git so this test cannot drift from it. */
+function trainScript() {
+  return execFileSync("git", ["-C", OFFICE, "show", `${TRAIN_REF}:deploy/settlement-auto.sh`], {
+    encoding: "utf8", maxBuffer: 8 * 1024 * 1024,
+  });
+}
+
+let runSeq = 0;
+
+/**
+ * ONE CROSSING, IN A BOTTLE.
+ *
+ * A bare origin, a settlement clone with a stub sweep that really commits, a
+ * town clone with a stub stake deriver, and stub `git`/`node`/`npm` wrappers
+ * that LOG their argv and then exec the real thing. The logging wrapper is what
+ * turns "did these two scripts behave the same" into a diff.
+ */
+function crossing(label, script, { env = {}, perturb = null } = {}) {
+  const root = join(scratch, `${label}-${++runSeq}`);
+  const bin = join(root, "bin");
+  const origin = join(root, "world.git");
+  const sweepClone = join(root, "sweep");
+  const townOrigin = join(root, "town.git");
+  const townClone = join(root, "town");
+  const seed = join(root, "seed");
+  const log = join(root, "commands.log");
+  const harbor = join(root, "harbor");
+  mkdirSync(bin, { recursive: true });
+  mkdirSync(harbor, { recursive: true });
+
+  const g = (repo, ...a) => execFileSync("git", ["-C", repo, ...a], {
+    encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+    env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: "seed", GIT_AUTHOR_EMAIL: "seed@postmark.invalid",
+      GIT_COMMITTER_NAME: "seed", GIT_COMMITTER_EMAIL: "seed@postmark.invalid",
+      GIT_AUTHOR_DATE: "2026-08-01T00:00:00Z", GIT_COMMITTER_DATE: "2026-08-01T00:00:00Z",
+    },
+  });
+
+  // ── the world: canon on main, one sketchbook, a sweep that publishes ───────
+  mkdirSync(join(seed, "WORLD", "marks", "alpha", "published-note"), { recursive: true });
+  mkdirSync(join(seed, "tools"), { recursive: true });
+  writeFileSync(join(seed, "WORLD", "marks", "alpha", "published-note", "mark.md"),
+    "---\nkind: sited\nby: alpha\ndate: 2026-08-01\n---\n\nalpha published this\n");
+  // A sweep stub that behaves like the real one where this script touches it: it
+  // reads --stakes, commits to main, and prints a six-channel report.
+  writeFileSync(join(seed, "tools", "settlement-sweep.mjs"), `
+import { execFileSync } from "node:child_process";
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { dirname, join } from "node:path";
+const at = (n, d) => { const i = process.argv.indexOf(n); return i !== -1 ? process.argv[i + 1] : d; };
+const stakes = JSON.parse(readFileSync(at("--stakes"), "utf8"));
+const repo = process.cwd();
+const drafts = execFileSync("git", ["-C", repo, "for-each-ref", "--format=%(refname:short)", "refs/heads/draft/", "refs/remotes/origin/draft/"], { encoding: "utf8" })
+  .split("\\n").map((l) => l.trim()).filter(Boolean);
+const p = join(repo, "WORLD", "swept.txt");
+mkdirSync(dirname(p), { recursive: true });
+writeFileSync(p, String(drafts.length) + " sketchbook(s) seen; " + stakes.length + " stake row(s)\\n");
+execFileSync("git", ["-C", repo, "add", "-A"]);
+execFileSync("git", ["-C", repo, "commit", "-qm", "settlement: sweep 1 published"], { env: { ...process.env, GIT_AUTHOR_NAME: "sweep", GIT_AUTHOR_EMAIL: "s@x.invalid", GIT_COMMITTER_NAME: "sweep", GIT_COMMITTER_EMAIL: "s@x.invalid", GIT_AUTHOR_DATE: "2026-09-08T00:00:00Z", GIT_COMMITTER_DATE: "2026-09-08T00:00:00Z" } });
+process.stdout.write(JSON.stringify({
+  published: ["alpha/one"], unpublished: [], left_drafted: [], withdrawn: [], quarantined: [], dropped: [], rebased: drafts,
+  surveyed: { branches: drafts.length, delta_rows: drafts.length, escrow_backed_deltas: 0 },
+  sketchbooks_seen: drafts,
+}) + "\\n");
+`);
+  writeFileSync(join(seed, "package.json"), JSON.stringify({ name: "world-fixture", scripts: { test: "node -e \"\"" } }));
+  g(".", "init", "-q", "-b", "main", seed);
+  g(seed, "config", "user.email", "seed@postmark.invalid");
+  g(seed, "config", "user.name", "seed");
+  g(seed, "add", "-A");
+  g(seed, "commit", "-qm", "canon");
+  execFileSync("git", ["init", "-q", "--bare", "-b", "main", origin], { stdio: "ignore" });
+  g(seed, "remote", "add", "origin", origin);
+  g(seed, "push", "-q", "origin", "main");
+  // One git-era sketchbook on origin — the input the git path folds and the
+  // store path must not.
+  g(seed, "branch", "draft/alpha", "main");
+  g(seed, "push", "-q", "origin", "draft/alpha");
+  execFileSync("git", ["clone", "-q", origin, sweepClone], { stdio: "ignore" });
+  execFileSync("git", ["-C", sweepClone, "config", "user.email", "sweep@postmark.invalid"], { stdio: "ignore" });
+  execFileSync("git", ["-C", sweepClone, "config", "user.name", "sweep"], { stdio: "ignore" });
+
+  // ── the town: a stake deriver at a pinned sha ──────────────────────────────
+  const townSeed = join(root, "town-seed");
+  mkdirSync(join(townSeed, "tools"), { recursive: true });
+  writeFileSync(join(townSeed, "tools", "world-stake.mjs"),
+    'process.stdout.write(JSON.stringify([{ holder: "alpha", mark: "alpha/one", n: 1, weight: 3, tick: 0 }]) + "\\n");\n');
+  g(".", "init", "-q", "-b", "main", townSeed);
+  g(townSeed, "config", "user.email", "seed@postmark.invalid");
+  g(townSeed, "config", "user.name", "seed");
+  g(townSeed, "add", "-A");
+  g(townSeed, "commit", "-qm", "town");
+  execFileSync("git", ["init", "-q", "--bare", "-b", "main", townOrigin], { stdio: "ignore" });
+  g(townSeed, "remote", "add", "origin", townOrigin);
+  g(townSeed, "push", "-q", "origin", "main");
+  execFileSync("git", ["clone", "-q", townOrigin, townClone], { stdio: "ignore" });
+
+  // ── the logging stubs ──────────────────────────────────────────────────────
+  //
+  // Each wrapper appends its full argv to one log and then execs the real
+  // binary. That log IS the instrument: two scripts that issue the same
+  // commands in the same order did the same thing, whatever their source bytes.
+  const realOf = (name) => sh(`command -v ${name}`).trim().split("\n")[0];
+  for (const name of ["git", "npm"]) {
+    const real = realOf(name);
+    writeFileSync(join(bin, name),
+      `#!/bin/sh\nprintf '%s' "${name}" >> "$CMDLOG"\nfor a in "$@"; do printf ' %s' "$a" >> "$CMDLOG"; done\nprintf '\\n' >> "$CMDLOG"\nexec "${real}" "$@"\n`);
+    chmodSync(join(bin, name), 0o755);
+  }
+  // `node` is logged but its `-e` bodies are elided: they embed absolute temp
+  // paths that differ between two runs by construction, and comparing those
+  // would make every run differ for a reason that says nothing about behaviour.
+  const realNode = realOf("node");
+  writeFileSync(join(bin, "node"),
+    `#!/bin/sh\nprintf 'node' >> "$CMDLOG"\nskip=0\nfor a in "$@"; do\n  if [ "$skip" = "1" ]; then skip=0; printf ' <inline>' >> "$CMDLOG"; continue; fi\n  case "$a" in\n    -e) skip=1; printf ' -e' >> "$CMDLOG" ;;\n    /*|*/*) printf ' %s' "$(basename "$a")" >> "$CMDLOG" ;;\n    *) printf ' %s' "$a" >> "$CMDLOG" ;;\n  esac\ndone\nprintf '\\n' >> "$CMDLOG"\nexec "${realNode}" "$@"\n`);
+  chmodSync(join(bin, "node"), 0o755);
+
+  const scriptPath = join(root, "settlement-auto.sh");
+  writeFileSync(scriptPath, perturb ? perturb(script) : script);
+
+  const res = spawnSync("sh", [scriptPath], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      PATH: `${bin}:${process.env.PATH}`,
+      CMDLOG: log,
+      OFFICE_ROOT: OFFICE,
+      TOWN_CLONE: townClone,
+      WORLD_CLONE: sweepClone,
+      SETTLEMENT_CLONE: sweepClone,
+      SETTLEMENT_REPORT: join(harbor, "settlement-auto.json"),
+      SETTLEMENT_HISTORY: join(harbor, "settlement-auto-history.jsonl"),
+      // Set so the retry wrapper does not re-exec the script: the retry is
+      // proven by its own falsifier (test/settlement-retry.test.mjs) and a
+      // re-exec here would double every line of the command log.
+      SETTLEMENT_ATTEMPT: "1",
+      WORLD_SINGLE_LOG: "1",
+      WORLD_DYNAMIC_DB: join(root, "dynamic.db"),
+      ...env,
+    },
+  });
+
+  let receipt = null;
+  try { receipt = JSON.parse(readFileSync(join(harbor, "settlement-auto.json"), "utf8")); } catch { /* none written */ }
+  let commands = [];
+  try { commands = readFileSync(log, "utf8").split("\n").filter(Boolean); } catch { /* none run */ }
+
+  return { root, sweepClone, origin, res, receipt, commands };
+}
+
+/**
+ * The command log with every run-specific path removed, so two runs of the same
+ * behaviour compare equal. Temp roots, mktemp dirs and shas are all per-run.
+ */
+function normalize(commands, root) {
+  return commands.map((line) => line
+    .replaceAll(root.replaceAll("\\", "/"), "<root>")
+    .replaceAll(root, "<root>")
+    .replace(/\/tmp\/[^\s]*/g, "<tmp>")
+    .replace(/[A-Za-z]:[\\/][^\s]*[Tt]emp[\\/][^\s]*/g, "<tmp>")
+    .replace(/\b[0-9a-f]{40}\b/g, "<sha>")
+    .replace(/\b[0-9a-f]{7,12}\b/g, "<sha>"));
+}
+
+test("F-git · SETTLEMENT_SOURCE=git issues the same commands as the train's chain", { skip: !SH_OK && "no POSIX sh" }, () => {
+  const train = crossing("train", trainScript());
+  const branch = crossing("branch", readFileSync(join(OFFICE, "deploy", "settlement-auto.sh"), "utf8"),
+    { env: { SETTLEMENT_SOURCE: "git" } });
+
+  assert.equal(train.res.status, 0, `the train's chain must complete in the fixture: ${train.res.stderr}`);
+  assert.equal(branch.res.status, 0, `the rollback crossing must complete: ${branch.res.stderr}`);
+  assert.ok(train.commands.length > 20,
+    `the fixture must actually exercise the chain, not exit early; got ${train.commands.length} commands`);
+
+  assert.deepEqual(
+    normalize(branch.commands, branch.root),
+    normalize(train.commands, train.root),
+    "SETTLEMENT_SOURCE=git must issue the train's exact command sequence — that is what makes the rollback "
+    + "a flip rather than a restore, and it is the whole reason the swap can be scheduled",
+  );
+
+  assert.equal(branch.receipt.status, train.receipt.status);
+  assert.equal(branch.receipt.source, "git", "and it says which path it took");
+});
+
+test("F-flip · the comparison NOTICES a one-command difference", { skip: !SH_OK && "no POSIX sh" }, () => {
+  // The control. Without this, F-git is an equality assertion that has never
+  // been shown capable of failing, which is a green light wired to nothing.
+  const train = crossing("flip-train", trainScript());
+  const perturbed = crossing("flip-branch", readFileSync(join(OFFICE, "deploy", "settlement-auto.sh"), "utf8"), {
+    env: { SETTLEMENT_SOURCE: "git" },
+    // One extra command on the git path, nothing else.
+    perturb: (s) => s.replace(
+      'TOWN_SHA="$(git -C "$TOWN" rev-parse origin/main)"',
+      'TOWN_SHA="$(git -C "$TOWN" rev-parse origin/main)"\ngit -C "$TOWN" status --porcelain >/dev/null',
+    ),
+  });
+  assert.notDeepEqual(
+    normalize(perturbed.commands, perturbed.root),
+    normalize(train.commands, train.root),
+    "if this passes, F-git proves nothing",
+  );
+});
+
+test("F-store · the store path fetches no sketchbook and pushes no draft branch", { skip: !SH_OK && "no POSIX sh" }, () => {
+  // The store crossing cannot complete in this fixture — lane 2's entry point
+  // does not exist, so `world2/tools/fold-input.mjs` refuses. That refusal IS
+  // the assertion here: it must happen, it must be named, and the commands
+  // issued before it must contain no sketchbook fetch.
+  const store = crossing("store", readFileSync(join(OFFICE, "deploy", "settlement-auto.sh"), "utf8"),
+    { env: { SETTLEMENT_SOURCE: "store" } });
+
+  const fetches = store.commands.filter((c) => c.includes("fetch"));
+  assert.ok(fetches.length > 0, "the crossing still fetches");
+  assert.ok(
+    fetches.every((c) => !c.includes("refs/heads/*:refs/remotes/origin/*")),
+    `the store path must not fetch every ref: ${JSON.stringify(fetches)}`,
+  );
+  assert.ok(
+    fetches.some((c) => c.includes("+refs/heads/main:refs/remotes/origin/main")),
+    "it fetches main and only main",
+  );
+  assert.ok(
+    !store.commands.some((c) => /push .*draft\//.test(c)),
+    "no draft branch is pushed on the store path",
+  );
+  assert.ok(
+    !store.commands.some((c) => c.includes("world-drain.mjs")),
+    "the drain does not run on the store path",
+  );
+
+  assert.equal(store.res.status, 1, "with no store entry point the crossing must refuse, not publish");
+  assert.equal(store.receipt.status, "refused");
+  assert.equal(store.receipt.source, "store", "and the refusal says which path refused");
+  assert.match(store.receipt.detail, /entry-point-absent|no-store-credential/,
+    "the refusal names its own reason so the operator is not sent to the wrong repair");
+});
+
+test("F-mode · an unrecognised SETTLEMENT_SOURCE refuses rather than defaulting", { skip: !SH_OK && "no POSIX sh" }, () => {
+  // A typo taking the git path silently would publish a git fold under whatever
+  // the receipt claimed. This is the cheapest guard in the lane and the one
+  // whose absence is hardest to notice.
+  const bad = crossing("mode", readFileSync(join(OFFICE, "deploy", "settlement-auto.sh"), "utf8"),
+    { env: { SETTLEMENT_SOURCE: "stroe" } });
+  assert.equal(bad.res.status, 1);
+  assert.match(bad.res.stderr, /is not `store` or `git`/);
+  assert.ok(!bad.commands.some((c) => c.includes("world-drain.mjs")),
+    "it refuses before touching anything");
+});
