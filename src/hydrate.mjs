@@ -425,6 +425,14 @@ if (fold) {
       + `${diff.region_only_in_ledger.length} region(s) only in the ledger`
       + `${diff.region_only_in_ledger.length ? ` (${diff.region_only_in_ledger.join(", ")})` : ""}`);
     for (const r of diff.movedRows) console.warn(`    moved: ${r.handle} ${r.was ?? "—"} -> ${r.now ?? "—"}`);
+    // The households whose region line GOES AWAY. They are inside `ungrounded`
+    // above, which reads as an absence; at the door it is a change, and it was
+    // the six the log did not name before this line existed.
+    if (diff.unplaced) {
+      console.warn(`  ${diff.unplaced} household(s) LOSE their region line — the ledger named one, the world holds no ground:`);
+      for (const r of diff.unplacedRows) console.warn(`    unplaced: ${r.handle} ${r.was} -> —`);
+      console.warn(`  ${diff.rows_changed} household row(s) change region in total (${diff.moved} moved + ${diff.unplaced} unplaced)`);
+    }
     // The coordinate half of the same receipt, and it says nothing at all until
     // the ledger states metre points — which is correct: before `grid_m` there
     // is no second coordinate to disagree with, and a line reporting "0 of 0"

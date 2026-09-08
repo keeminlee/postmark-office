@@ -399,6 +399,81 @@ test("FALSIFIER: a grid_m more than 200 m from the world's ground reaches the bu
   assert.equal(d201.grid_far.length, 1, `${GRID_TOLERANCE_M + 1} m is not`);
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// FALSIFIER 5 — THE RECEIPT COUNTS EVERY ROW THAT CHANGES, including the ones
+// that change by losing something.
+//
+// FOUND BY MEASUREMENT, not by reading. Hydrating the live town on both paths
+// and diffing the composed answers gave 31 households whose /homes/{h} region
+// line changed. The build's own receipt said 26 moved. The six missing —
+// alex-rowan, argos, cael, caelum-reeves, lior-macleod, yuanqu — were inside
+// `ungrounded`, whose docstring says "not a disagreement, an absence: the world
+// says nothing." True about the world; false about the door, which stops
+// serving those households a region at all.
+//
+// A migration receipt that under-reports the migration is the failure the
+// receipt exists to prevent, one level up. This arm reads the number off a real
+// build so it cannot be satisfied by the count being computed somewhere.
+// ─────────────────────────────────────────────────────────────────────────────
+test("FALSIFIER: a household that LOSES its region is named in the receipt, not filed under an absence", () => {
+  // `lost` has a ledger region and NO parcel in the fold — the six live cases.
+  // `stays` has both and does not move. `never` has a ledger row with no region
+  // at all, so its absence really is only an absence and must NOT be counted.
+  const marks = [
+    REGION_MARK("alice/north-region", 0, -1000),
+    PARCEL("alice/alice-parcel", 0, -1000),
+    PARCEL("stays/stays-parcel", 10, -1000),
+  ];
+  const contain = [
+    chain("alice/north-region"),
+    chain("alice/alice-parcel", "alice/north-region"),
+    chain("stays/stays-parcel", "alice/north-region"),
+  ];
+  const town = (() => {
+    const dir = tmp("pm-unplaced-town-");
+    for (const [handle, region] of Object.entries({ alice: "North Region", stays: null, lost: null, never: null })) {
+      const h = join(dir, "WHITE_PAGES", handle, "HOME");
+      mkdirSync(h, { recursive: true });
+      writeFileSync(join(dir, "WHITE_PAGES", handle, "ADDRESS.md"),
+        fm({ handle, github: `${handle}-gh`, since: "2026-01-01", joined: "2026-08-01", agent: handle }, `${handle} lives here.`));
+      writeFileSync(join(h, "HOME.md"), fm({ title: `${handle}'s House`, style: "plain" }, `The body of ${handle}'s house.`));
+      if (region) writeFileSync(join(h, "REGION.md"), fm({ founder: handle, region, style: "plain" }, `The prose of ${region}.`));
+    }
+    const atlas = join(dir, "PROJECTS", "build-the-town", "atlas");
+    mkdirSync(atlas, { recursive: true });
+    writeFileSync(join(atlas, "placements.json"), JSON.stringify({
+      schema_version: 1,
+      facts: [
+        { kind: "region", id: "north-region", holder: "alice", bearing: "N", band: "high-slope", status: "resident-claimed" },
+        { kind: "home", id: "stays-house", resident: "stays", region: "north-region" },
+        { kind: "home", id: "lost-house", resident: "lost", region: "north-region" },
+        { kind: "home", id: "never-house", resident: "never", region: null },
+      ],
+    }, null, 2));
+    commit(dir);
+    return dir;
+  })();
+
+  const { db: p, err } = hydrate({ town, world: makeWorld(marks, contain) });
+  const db = open(p);
+  const diff = JSON.parse(metaOf(db, "atlas_diff"));
+
+  assert.deepEqual(diff.unplacedRows, [{ handle: "lost", was: "north-region" }],
+    "the household that loses its region line must be NAMED, not summed into an absence");
+  assert.equal(diff.unplaced, 1);
+  assert.equal(diff.ungrounded, 2, "`lost` and `never` are both ungrounded — that count is unchanged");
+  assert.equal(diff.rows_changed, diff.moved + diff.unplaced,
+    "the total a reader would quote must be in the receipt, not left as an addition");
+
+  // The door really did lose it, which is what makes the receipt's silence a bug
+  // rather than a pedantic one.
+  const region = (h) => db.prepare("SELECT region FROM homes WHERE handle = ?").get(h)?.region ?? null;
+  assert.equal(region("lost"), null, "the door stopped serving `lost` a region");
+  assert.equal(region("stays"), "north-region", "…and kept serving `stays` one, so the fixture is not degenerate");
+  assert.match(err, /unplaced: lost north-region -> —/, "and the journal says it out loud");
+  db.close();
+});
+
 test("the distance the receipt reports is the distance the backfill's own --check reports", () => {
   // One arithmetic, two readers. If these ever diverge, the tool the Illuminator
   // runs before merging and the receipt the office prints after would disagree

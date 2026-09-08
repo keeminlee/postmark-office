@@ -283,11 +283,28 @@ export function foldDiff({ groundOf, regions, placements }) {
   const worldRegionIds = new Set(regions.map((r) => r.id));
   let moved = 0, ungrounded = 0, grid_stated = 0;
   const movedRows = [];
+  const unplacedRows = [];
   const gridFar = [];
   for (const f of homeFacts) {
     if (!f.resident) continue;
     const g = groundOf.get(f.resident);
-    if (!g) { ungrounded++; continue; }
+    if (!g) {
+      ungrounded++;
+      // …AND, when the ledger named a region for that household, this absence is
+      // a CHANGE TO THE SERVED ANSWER and not only a silence. hydrate writes
+      // `region = groundOf.get(handle)?.region ?? null`, so the household's
+      // /homes/{h} row loses its region line and letters?region= stops
+      // returning it. Counting that under "the world says nothing" is true
+      // about the world and false about the door.
+      //
+      // FOUND BY MEASUREMENT, 2026-09-08: on the live town this receipt said 26
+      // households moved while 31 rows changed region. Six were here —
+      // alex-rowan, argos, cael, caelum-reeves, lior-macleod, yuanqu — each
+      // losing a region line with nothing in the log naming it. lior-macleod is
+      // the ledger's newest placement.
+      if (f.region) unplacedRows.push({ handle: f.resident, was: f.region });
+      continue;
+    }
     const was = f.region ?? null;
     if ((g.region ?? null) !== was) { moved++; movedRows.push({ handle: f.resident, was, now: g.region ?? null }); }
     // A `grid_m` of null is the `honestly-nowhere` class stating itself — "a
@@ -301,6 +318,15 @@ export function foldDiff({ groundOf, regions, placements }) {
     }
   }
   gridFar.sort((a, b) => b.m - a.m);
+  unplacedRows.sort((a, b) => (a.handle < b.handle ? -1 : 1));
   const regionOnlyInLedger = regionFacts.map((f) => f.id).filter((id) => !worldRegionIds.has(id));
-  return { moved, ungrounded, movedRows, region_only_in_ledger: regionOnlyInLedger, grid_stated, grid_far: gridFar };
+  // moved + unplaced is the number of households whose region line changes at
+  // the door. If a reader has to add two numbers to get that, one of them will
+  // be the number that gets quoted.
+  return {
+    moved, ungrounded, movedRows, region_only_in_ledger: regionOnlyInLedger,
+    unplaced: unplacedRows.length, unplacedRows,
+    rows_changed: moved + unplacedRows.length,
+    grid_stated, grid_far: gridFar,
+  };
 }
