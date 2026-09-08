@@ -66,11 +66,11 @@ const standing = (slug, locked_window = 100) => ({ slug, status: "standing", loc
 
 // ── 1 · a mark the sweep unpublished is retired, with the window named ───────
 test("an unpublished mark is retired at the named window", async () => {
-  const { q, marks } = register([standing("let-there-be-light/pistache-cone-for-julian", 168)]);
-  const r = await retireMarks(q, { slugs: ["let-there-be-light/pistache-cone-for-julian"], windowId: 174 });
+  const { q, marks } = register([standing("berthillon/pistache-cone-for-julian", 168)]);
+  const r = await retireMarks(q, { slugs: ["berthillon/pistache-cone-for-julian"], windowId: 174 });
 
   assert.equal(r.retired.length, 1);
-  assert.equal(r.retired[0].slug, "let-there-be-light/pistache-cone-for-julian");
+  assert.equal(r.retired[0].slug, "berthillon/pistache-cone-for-julian");
   // The window is named, and it is the RETIRING window — not the locking one.
   // 001 gives the row two columns for two different instants and conflating
   // them would make the register unable to say how long the mark stood.
@@ -78,7 +78,7 @@ test("an unpublished mark is retired at the named window", async () => {
   assert.equal(r.retired[0].locked_window, 168);
   assert.equal(r.retired[0].cause, "settlement-unpublish");
 
-  const row = marks.get("let-there-be-light/pistache-cone-for-julian");
+  const row = marks.get("berthillon/pistache-cone-for-julian");
   assert.equal(row.status, "retired");
   assert.equal(row.retired_window, 174);
 });

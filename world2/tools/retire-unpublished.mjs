@@ -95,9 +95,32 @@ const has = (n) => process.argv.includes(n);
  * channel into this step is how it would start retiring marks the world still
  * carries, which the negative control in the test asserts it does not.
  *
- * The sweep's rows carry `id` as the `<owner>/<name>` identity (its `published`
- * and `unpublished` entries are built from the same registry shape), which is
- * `marks.slug` — 001_tables.sql:102 calls that column "the 1.0 path identity".
+ * ── THE IDENTITY MAPPING, PROVEN RATHER THAN ASSUMED ───────────────────────
+ *
+ * This is the one line the whole step hangs on: `unpublished[].id` must be
+ * `marks.slug` or the step silently retires nothing, which is the quietest
+ * possible failure. It is checked against the register both ends:
+ *
+ *   · the sweep builds `unpublished` from `registry.published`'s KEYS
+ *     (settlement-sweep.mjs:1174-1183), and those keys read
+ *     `"berthillon/pistache-cone-for-julian"` in
+ *     `WORLD/settlement-publications.json` on world main — `<owner>/<name>`.
+ *   · `marks.slug` is `<owner>/<name>` by 001_tables.sql:102's own comment,
+ *     "the 1.0 path identity", and `world-state.json`'s mark ids agree
+ *     (`alex-rowan/the-threadbound-house`, …).
+ *
+ * THE TRAP THIS AVOIDS, which I walked into once while writing the tests: the
+ * PATH is not the id. The pistache cone's registry path is
+ * `WORLD/marks/let-there-be-light/the-town-centre/pistache-cone-for-julian/mark.md`
+ * — `let-there-be-light` is a REGION segment and `the-town-centre` a
+ * containment one, and neither is the owner (the owner is `berthillon`, whose
+ * household is `devadavisson`, which is a third thing again — the ownership
+ * grain materialize.mjs warns about). Deriving the slug from the path would
+ * produce an identity the register has never held.
+ *
+ * And `marks.id` is NOT this: 001_tables.sql:101 makes it a uuid, "= the
+ * locking claim's id". Matching on the wrong column here would be a no-op
+ * UPDATE reporting a clean crossing.
  */
 export function slugsFromSweep(sweep) {
   const rows = Array.isArray(sweep?.unpublished) ? sweep.unpublished : [];
