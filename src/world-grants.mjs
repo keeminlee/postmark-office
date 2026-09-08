@@ -237,11 +237,36 @@ export function resolveGrants(candidates, { kind = "resident", actorHousehold = 
  *
  * A resident is never "seated": they hold the resident set by being one, and
  * asking the question of them would be asking whether they may be themselves.
+ *
+ * ── THE THIRD WAY A SEAT ARISES (world#16, PROPOSED 2026-09-07) ─────────────
+ *
+ * LOGOS/classes.md § The human class — the handoff, verbatim:
+ *
+ *   "`hand-to-human` is an ambient grant on the resident class whose residue is
+ *    a fleeting node … While a handoff stands, THE HUMAN IS SEATED AT THE
+ *    RESIDENT'S STANDING, WHOLE — the seat ruling applies unchanged … This adds
+ *    no verb to the human class and no field to any record; IT ADDS ONE MORE
+ *    WAY THE DERIVATION 'WHO IS SEATED HERE' COMES OUT TRUE."
+ *
+ * That last clause is an instruction about where the code goes, and it is why
+ * `opts.handoff` is an ARGUMENT to this function rather than a reader inside
+ * it. This is the office's ONE answer to who is seated; a second reader living
+ * beside it would agree the day it was written and disagree the first time
+ * either moved. So the door folds the log and hands the seat over; the calculus
+ * decides, once, here.
+ *
+ * ⚑ A HANDOFF SEAT IS NOT A GROUND, and `seated` therefore stays null for one.
+ * Three things downstream read `seated` as a ground id — the apex's `seatBlock`,
+ * the walk fence, and `exitAllowed` — and the law's own sentence is why they
+ * must not be handed a handoff there: the seat "is the resident's standing, not
+ * a ground … it moves with the resident and ends at the ttl, NOT AT A FENCE".
+ * So it rides its own key, and a caller that fences on `seated` fences on
+ * nothing, which is the correct behaviour rather than an oversight.
  */
 export function resolveForActor(candidates, opts = {}) {
   const kind = String(opts.kind ?? "resident");
   const first = resolveGrants(candidates, opts);
-  if (kind === "resident") return { ...first, seated: null };
+  if (kind === "resident") return { ...first, seated: null, handoff: null };
 
   // ⚑ WHICH GROUND SEATS YOU IS DECIDED BY THE SPINE, NOT BY GATHER ORDER.
   //
@@ -273,7 +298,12 @@ export function resolveForActor(candidates, opts = {}) {
   const seat = spine.length
     ? seatable.slice().sort((a, b) => depth(a) - depth(b))[0]
     : seatable[0];
-  if (!seat) return { ...first, seated: null };
+  // A handoff seats wherever the resident stands, so it is asked AFTER the
+  // ground question and answers the same one. Either alone is a seat; both at
+  // once is one human seated twice, and the resident set they get is identical
+  // because the seat's whole effect is to resolve them against it.
+  const handoff = opts.handoff ?? null;
+  if (!seat && !handoff) return { ...first, seated: null, handoff: null };
 
   // The resident set, read against the same law a resident standing here is
   // read against — resolved, not copied. A second list of "what a resident may
@@ -290,7 +320,9 @@ export function resolveForActor(candidates, opts = {}) {
     entries: [...byAction.values()],
     // A refusal that the seat has since answered is not a refusal any more.
     refused: first.refused.filter((r) => !byAction.has(r.action)),
-    seated: seat.ground ?? seat.from ?? null,
+    // THE GROUND, or null — never a handoff. See the header note above.
+    seated: seat ? (seat.ground ?? seat.from ?? null) : null,
+    handoff,
   };
 }
 

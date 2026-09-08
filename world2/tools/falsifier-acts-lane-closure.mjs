@@ -142,6 +142,42 @@ const LANE_OF = Object.freeze({
   // can take it back.
   subscribe: "journal", unsubscribe: "journal",
 
+  // ── THE GATHERING AND THE HANDOFF (world#15 and #16, PROPOSED; Rei-3) ─────
+  //
+  // Named in the same commit that adds their dispatch rows and BEFORE the law
+  // they answer has merged — the same early-naming the subscription's row above
+  // and the `arena-act` row one check down both defend: "a census that only
+  // learns about a lane after it lands is a census that is late by exactly the
+  // interval in which the gap can open."
+  //
+  // The answer is "journal" for both. Each rides `appendJournal` like every
+  // other class-lane act (src/gatherings.mjs § writeGatherAct, src/handoff.mjs
+  // § writeHandoffAct), so `appendJournal`'s mirror carries it and
+  // falsifier-acts-parity is what checks it; on a FLIPPED lane it rides
+  // `appendActFlipped` and Postgres is the record, which is not a different
+  // census answer because `laneOf` maps a flip per lane and the row reaches
+  // `acts` either way.
+  //
+  // ⚠ WHAT RIDES IN THE PAYLOAD, said here because `acts` LEAVES THE BOX — the
+  // notary exports the whole row into a public archive, frozen on write.
+  //
+  //   gather        the five facts the invitation already is: the gathering's
+  //                 own id, the face (declare/amend/withdraw), the place, the
+  //                 doors-open, the start, the end, and an optional shape.
+  //                 Every one of them is what a host SAYS PUBLICLY when they
+  //                 invite the town; publishing them permanently is what an
+  //                 invitation is for. Nothing about who came rides here — that
+  //                 is derived at the read, and the receipt's own fence ("never
+  //                 a line of what was spoken") governs it.
+  //   hand-to-human `ttl_min` and `human`, and `human` is the HOUSEHOLD'S
+  //                 label — `human-of-<slug>`, which src/households.mjs has
+  //                 derived since 2026-08-08 with the note "NEVER the GitHub
+  //                 login (the office does not name people)". A person's name
+  //                 must never enter this payload: the archive is frozen and no
+  //                 policy anywhere could take it back. The disclosure the law
+  //                 asks for is that a hand was seated, not whose hand it was.
+  gather: "journal", "hand-to-human": "journal",
+
   // ruled out, each with its reason
   "note-to-self": "none",
   //   HOUSEHOLD-PRIVATE BY THE DOOR'S OWN LAW — "one note to your returning
@@ -205,6 +241,13 @@ const CLASS_LANE_OF = Object.freeze({
   // `subscription` after the class, and `appendJournal`'s mirror carries the
   // row exactly as it carries a stance's.
   subscription: "journal",
+  // world#15 and #16's residue classes, named before their first rows exist —
+  // the same early-naming this check's own header defends. `laneOf` has no
+  // branch for either and needs none: it falls through to `return cls`, so the
+  // lanes are called `gathering` and `handoff` after the classes, and
+  // `appendJournal`'s mirror carries the rows exactly as it carries a stance's.
+  gathering: "journal",
+  handoff: "journal",
 });
 
 function checkClassCensus(classesInJournal) {
