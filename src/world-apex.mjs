@@ -1545,20 +1545,12 @@ export async function groundWithinReach(oriented, key = null) {
       const placed = { ...mark, at: stands.where };
       const rr = reach.standsWithin(at, placed, { pointWithinMark: withinFn });
       if (!rr.stands) continue;
-      out.push({
-        thing: r.id, made_by: r.by,
-        body: r.body ? String(r.body).slice(0, 160) : null,
-        stands_at: stands.where, place_from: stands.source,
-        distance_m: rr.distance_round, bearing: rr.bearing,
-        within_its_extent: rr.how === "extent",
-        ...(stands.holder
-          ? { holder: stands.holder, takeable: false,
-              why: `${stands.holder} is holding it — a held thing moves by its holder's own give` }
-          : rr.how === "extent"
-            ? { takeable: true, why: "you are standing within it — a take is admitted here" }
-            : { takeable: false,
-                why: `you are ${rr.distance_round} m off; a take stands within a thing's extent — world { do: "walk", args: { mark_id: "${r.id}", mode: "center" } }` }),
-      });
+      // The row's verdict is `groundRow`'s, in world-hold.mjs — pure, and
+      // testable against a thing 90 m away or in somebody's hands with no store
+      // anywhere near it. This function's job is finding the rows; deciding
+      // what each one says is the hold lane's, next to the door that will
+      // enforce it.
+      out.push(hold.groundRow({ id: r.id, made_by: r.by, body: r.body, stands, reach: rr }));
     }
     out.sort((a, b) => a.distance_m - b.distance_m);
     const dis = reach.reachDisclosure();

@@ -606,6 +606,38 @@ export async function readHoldEffects({ handles = [], sinceCrossing, nowCrossing
   } finally { try { db?.close(); } catch { /* a reader that cannot close still read */ } }
 }
 
+/**
+ * ONE ROW OF THE GROUND READ — is this thing takeable from where I stand, and
+ * if not, in what words?
+ *
+ * PURE, and lifted out of `groundWithinReach` for the reason every adjudication
+ * in this file is pure: the verdict a resident reads is decided here, and a
+ * falsifier must be able to put a thing 90 m away, or in somebody's hands,
+ * without a world store, a dynamic store and a walk ledger.
+ *
+ * THE VERDICT USES THE DOOR'S OWN WORDS ON PURPOSE. A read that listed things
+ * the door would then refuse would be a second opinion about the reach, and the
+ * door's is the one that binds. A thing somebody else is holding is LISTED with
+ * its holder rather than dropped: "she is holding it" is an answer; an absence
+ * is not.
+ */
+export function groundRow({ id, made_by = null, body = null, stands, reach }) {
+  return {
+    thing: id, made_by,
+    body: body ? String(body).slice(0, 160) : null,
+    stands_at: stands.where, place_from: stands.source,
+    distance_m: reach.distance_round, bearing: reach.bearing,
+    within_its_extent: reach.how === "extent",
+    ...(stands.holder
+      ? { holder: stands.holder, takeable: false,
+          why: `${stands.holder} is holding it — a held thing moves by its holder's own give` }
+      : reach.how === "extent"
+        ? { takeable: true, why: "you are standing within it — a take is admitted here" }
+        : { takeable: false,
+            why: `you are ${reach.distance_round} m off; a take stands within a thing's extent — world { do: "walk", args: { mark_id: "${id}", mode: "center" } }` }),
+  };
+}
+
 /** Where the actor stands, in world coordinates, or null when it cannot be read. */
 async function standpointOfActor(actor) {
   try {

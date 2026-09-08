@@ -507,3 +507,57 @@ test("a caller who asked for neither shelf still gets an honest `complete`", asy
   assert.equal(shelf.complete, true, "not asking is not a source that failed");
   assert.equal(shelf.count, 0);
 });
+
+// ── THE GROUND READ (walk #12 item 2: "will not show me the ground") ─────────
+
+test("the ground read LISTS a thing within reach — and says a take is admitted", async () => {
+  const { groundRow } = await import("../src/world-hold.mjs");
+  const top = thingAt("wright/a-trued-spinning-top-for-little-m", -1850, -2650);
+  const stands = { where: top.at, source: "set-down", holder: null };
+  const row = groundRow({ id: top.id, made_by: "wright", body: "A trued spinning top.",
+    stands, reach: standsWithin({ x: -1850, y: -2650 }, top, { pointWithinMark: within }) });
+  assert.equal(row.takeable, true);
+  assert.equal(row.within_its_extent, true);
+  assert.equal(row.distance_m, 0);
+  assert.equal(row.place_from, "set-down", "the row says where its position came from");
+  assert.match(row.why, /you are standing within it/);
+});
+
+test("...and a thing beyond reach is NOT in the answer at all", async () => {
+  // The filter, at the one place it lives: `standsWithin` says no, and the
+  // caller's `continue` never builds a row. Asserted on the predicate the
+  // caller uses, because a row for a thing 536 m off is the walk-#12 answer
+  // this read exists to replace.
+  const archway = thingAt("wright/a-trued-spinning-top-for-little-m", -1365, -2403);
+  const rr = standsWithin({ x: -1850, y: -2650 }, archway, { pointWithinMark: within });
+  assert.equal(rr.stands, false, "536 m is not underfoot, and the read must not list it");
+  assert.ok(rr.distance_round > 500);
+});
+
+test("a thing within reach but NOT within its extent is listed as not-yet-takeable, with the walk", async () => {
+  const bench = thingAt("sable/the-big-scarred-worktable", 0, 0, { w: 2.3, h: 1.05 });
+  const stands = { where: bench.at, source: "fold", holder: null };
+  const row = groundRowOf(await import("../src/world-hold.mjs"), bench, { x: 30, y: 0 }, stands);
+  assert.equal(row.takeable, false);
+  assert.equal(row.within_its_extent, false);
+  assert.equal(row.distance_m, 30);
+  assert.match(row.why, /30 m off/);
+  assert.match(row.why, /mode: "center"/, "the row hands back the walk that closes it");
+});
+
+test("a thing somebody is HOLDING is listed with its holder, never silently dropped", async () => {
+  const { groundRow } = await import("../src/world-hold.mjs");
+  const t = thingAt("rei/the-pocket-lantern-for-hal", 5, 0);
+  const row = groundRow({ id: t.id, made_by: "rei",
+    stands: { where: t.at, source: "holder", holder: "hal" },
+    reach: standsWithin({ x: 0, y: 0 }, t, { pointWithinMark: within }) });
+  assert.equal(row.takeable, false);
+  assert.equal(row.holder, "hal");
+  assert.match(row.why, /hal is holding it/);
+  assert.ok(row.thing, "an absence is not an answer — the row must still be there");
+});
+
+function groundRowOf(mod, mark, at, stands) {
+  return mod.groundRow({ id: mark.id, made_by: mark.id.split("/")[0], stands,
+    reach: standsWithin(at, mark, { pointWithinMark: within }) });
+}
