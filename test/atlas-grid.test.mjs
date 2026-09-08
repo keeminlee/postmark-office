@@ -399,39 +399,70 @@ test("FALSIFIER: a grid_m more than 200 m from the world's ground reaches the bu
   assert.equal(d201.grid_far.length, 1, `${GRID_TOLERANCE_M + 1} m is not`);
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// FALSIFIER 5 — THE RECEIPT COUNTS EVERY ROW THAT CHANGES, including the ones
-// that change by losing something.
+// -----------------------------------------------------------------------------
+// FALSIFIER 5 - THE RECEIPT COUNTS EVERY ROW THAT CHANGES, AND CALLS EACH ONE
+// WHAT IT IS.
 //
-// FOUND BY MEASUREMENT, not by reading. Hydrating the live town on both paths
-// and diffing the composed answers gave 31 households whose /homes/{h} region
-// line changed. The build's own receipt said 26 moved. The six missing —
-// alex-rowan, argos, cael, caelum-reeves, lior-macleod, yuanqu — were inside
-// `ungrounded`, whose docstring says "not a disagreement, an absence: the world
-// says nothing." True about the world; false about the door, which stops
-// serving those households a region at all.
+// FOUND BY MEASUREMENT TWICE, and the second time by the reviewer.
 //
-// A migration receipt that under-reports the migration is the failure the
-// receipt exists to prevent, one level up. This arm reads the number off a real
-// build so it cannot be satisfied by the count being computed somewhere.
-// ─────────────────────────────────────────────────────────────────────────────
-test("FALSIFIER: a household that LOSES its region is named in the receipt, not filed under an absence", () => {
-  // `lost` has a ledger region and NO parcel in the fold — the six live cases.
-  // `stays` has both and does not move. `never` has a ledger row with no region
-  // at all, so its absence really is only an absence and must NOT be counted.
+// First pass: hydrating the live town on both paths gave 31 households whose
+// /homes/{h} region line changed while the receipt said 26 moved. Six -
+// alex-rowan, argos, cael, caelum-reeves, lior-macleod, yuanqu - sat inside
+// `ungrounded`, whose docstring reads "not a disagreement, an absence: the
+// world says nothing." True about the world; false about the door.
+//
+// Second pass: naming those six was the INSTANCE, not the class. 21 of the 26
+// rows still called "moved" were ALSO region -> null - households that DO hold
+// a world parcel, standing inside a sub-mark that is not one of the town's own
+// regions. They lose their line exactly as the six do. The log printed "26
+// household(s) in a different region" when that was true of ONE row.
+//
+// So the fixture below carries all four outcomes, and `regionless` is the one
+// that matters most: it dominates the live town, and the first version of this
+// test could not see it at all. Its `lost` household had no parcel, so it only
+// ever drove the ungrounded path - repair 1 could have been made and unmade
+// with the suite green.
+//
+// It also carries `two-facts`, the `postmaster` shape: a household with TWO
+// home facts where the second carries the region the first lacks. hydrate
+// resolves last-non-null-wins per RESIDENT; a receipt walking FACTS counted a
+// move the door never makes, and rows_changed read 32 against a door number of
+// 31.
+//
+// Read off a real hydration - meta.atlas_diff on the built index, plus the
+// journal - so a computed-and-discarded count cannot satisfy it.
+// -----------------------------------------------------------------------------
+test("FALSIFIER: every row that changes is counted, and a lost line is not called a move", () => {
+  // north-region and south-region are regions of the town. `outer-ward` is a
+  // mark that CONTAINS a parcel and is NOT a region - the live shape behind the
+  // twenty-one.
   const marks = [
     REGION_MARK("alice/north-region", 0, -1000),
+    REGION_MARK("bob/south-region", 0, 1000),
     PARCEL("alice/alice-parcel", 0, -1000),
     PARCEL("stays/stays-parcel", 10, -1000),
+    PARCEL("regionless/regionless-parcel", 3000, 3000),
+    PARCEL("mover/mover-parcel", 0, 1000),
+    PARCEL("gains/gains-parcel", 20, -1000),
+    PARCEL("two-facts/two-facts-parcel", 30, -1000),
+    { id: "the-town/outer-ward", kind: "sited", by: "the-town", tier: "market", at: { x: 3000, y: 3000 }, extent: { w: 900, h: 900 } },
   ];
   const contain = [
-    chain("alice/north-region"),
+    chain("alice/north-region"), chain("bob/south-region"), chain("the-town/outer-ward"),
     chain("alice/alice-parcel", "alice/north-region"),
     chain("stays/stays-parcel", "alice/north-region"),
+    chain("regionless/regionless-parcel", "the-town/outer-ward"),
+    chain("mover/mover-parcel", "bob/south-region"),
+    chain("gains/gains-parcel", "alice/north-region"),
+    chain("two-facts/two-facts-parcel", "alice/north-region"),
   ];
   const town = (() => {
-    const dir = tmp("pm-unplaced-town-");
-    for (const [handle, region] of Object.entries({ alice: "North Region", stays: null, lost: null, never: null })) {
+    const dir = tmp("pm-buckets-town-");
+    const people = {
+      alice: "North Region", bob: "South Region", stays: null, ungrounded: null,
+      regionless: null, mover: null, gains: null, never: null, "two-facts": null,
+    };
+    for (const [handle, region] of Object.entries(people)) {
       const h = join(dir, "WHITE_PAGES", handle, "HOME");
       mkdirSync(h, { recursive: true });
       writeFileSync(join(dir, "WHITE_PAGES", handle, "ADDRESS.md"),
@@ -445,9 +476,15 @@ test("FALSIFIER: a household that LOSES its region is named in the receipt, not 
       schema_version: 1,
       facts: [
         { kind: "region", id: "north-region", holder: "alice", bearing: "N", band: "high-slope", status: "resident-claimed" },
+        { kind: "region", id: "south-region", holder: "bob", bearing: "S", band: "downwater", status: "resident-claimed" },
         { kind: "home", id: "stays-house", resident: "stays", region: "north-region" },
-        { kind: "home", id: "lost-house", resident: "lost", region: "north-region" },
+        { kind: "home", id: "ungrounded-house", resident: "ungrounded", region: "north-region" },
+        { kind: "home", id: "regionless-house", resident: "regionless", region: "north-region" },
+        { kind: "home", id: "mover-house", resident: "mover", region: "north-region" },
+        { kind: "home", id: "gains-house", resident: "gains", region: null },
         { kind: "home", id: "never-house", resident: "never", region: null },
+        { kind: "home", id: "two-facts-a", resident: "two-facts", region: null },
+        { kind: "home", id: "two-facts-b", resident: "two-facts", region: "north-region" },
       ],
     }, null, 2));
     commit(dir);
@@ -457,20 +494,51 @@ test("FALSIFIER: a household that LOSES its region is named in the receipt, not 
   const { db: p, err } = hydrate({ town, world: makeWorld(marks, contain) });
   const db = open(p);
   const diff = JSON.parse(metaOf(db, "atlas_diff"));
-
-  assert.deepEqual(diff.unplacedRows, [{ handle: "lost", was: "north-region" }],
-    "the household that loses its region line must be NAMED, not summed into an absence");
-  assert.equal(diff.unplaced, 1);
-  assert.equal(diff.ungrounded, 2, "`lost` and `never` are both ungrounded — that count is unchanged");
-  assert.equal(diff.rows_changed, diff.moved + diff.unplaced,
-    "the total a reader would quote must be in the receipt, not left as an addition");
-
-  // The door really did lose it, which is what makes the receipt's silence a bug
-  // rather than a pedantic one.
   const region = (h) => db.prepare("SELECT region FROM homes WHERE handle = ?").get(h)?.region ?? null;
-  assert.equal(region("lost"), null, "the door stopped serving `lost` a region");
-  assert.equal(region("stays"), "north-region", "…and kept serving `stays` one, so the fixture is not degenerate");
-  assert.match(err, /unplaced: lost north-region -> —/, "and the journal says it out loud");
+
+  // THE DOMINANT CASE. `regionless` has a parcel, a containment chain and a
+  // coordinate; what it lacks is a region OF THE TOWN on that chain. It loses
+  // its line exactly as an ungrounded household does, and the receipt has to
+  // say which of the two it is, because they need different fixes.
+  assert.deepEqual(diff.lostRows, [
+    { handle: "regionless", was: "north-region", why: "regionless", mark: "regionless/regionless-parcel" },
+    { handle: "ungrounded", was: "north-region", why: "ungrounded", mark: null },
+  ], "both ways of losing a line are named, and each says WHY");
+  assert.equal(diff.lost, 2);
+  assert.equal(diff.lost_regionless, 1);
+  assert.equal(diff.lost_ungrounded, 1);
+  assert.equal(region("regionless"), null, "the door really did drop it");
+  assert.equal(region("ungrounded"), null);
+
+  // A REAL MOVE IS STILL A MOVE, and it is the only thing `moved` may hold.
+  assert.deepEqual(diff.movedRows, [{ handle: "mover", was: "north-region", now: "south-region" }]);
+  assert.equal(diff.moved, 1, "`moved` means region -> a DIFFERENT region and nothing else");
+  assert.equal(region("mover"), "south-region");
+
+  // A GAIN IS A CHANGE TOO.
+  assert.deepEqual(diff.gainedRows, [{ handle: "gains", now: "north-region" }]);
+  assert.equal(region("gains"), "north-region");
+
+  // THE POSTMASTER SHAPE. Two facts, one resident, and the door does not move.
+  // A fact walk counts a move here; a resident walk does not.
+  assert.ok(!diff.movedRows.some((r) => r.handle === "two-facts"), "two facts for one resident is not a move");
+  assert.ok(!diff.lostRows.some((r) => r.handle === "two-facts"));
+  assert.equal(region("two-facts"), "north-region", "and the door serves it the same region on both paths");
+
+  // The totals, and the one a reader quotes.
+  assert.equal(diff.rows_changed, 4, "2 lost + 1 moved + 1 gained");
+  assert.equal(diff.rows_changed, diff.lost + diff.moved + diff.gained);
+  assert.equal(diff.ungrounded, 2, "`ungrounded` keeps its old meaning: `ungrounded` and `never`");
+  assert.equal(region("stays"), "north-region", "an unchanged household is unchanged, so the fixture is not degenerate");
+  assert.equal(region("never"), null);
+
+  // THE HEADLINE SENTENCE. It used to open "N household(s) in a different
+  // region" over a count that was mostly households losing their line.
+  assert.match(err, /4 household row\(s\) change region \(2 LOSE their region line, 1 move between regions, 1 gain one\)/);
+  assert.match(err, /lost: regionless north-region -> . \(regionless, regionless\/regionless-parcel\)/);
+  assert.match(err, /lost: ungrounded north-region -> . \(ungrounded\)/);
+  assert.match(err, /moved: mover north-region -> south-region/);
+  assert.match(err, /gained: gains . -> north-region/);
   db.close();
 });
 

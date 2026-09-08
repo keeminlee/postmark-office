@@ -207,26 +207,41 @@ export function deriveFromFold(fold, holders) {
   // must be rebuildable byte-for-byte from a clone.
   regions.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 
-  // A household's GROUND: its `kind: parcel` mark. Where a household holds more
-  // than one, the lowest id wins — an arbitrary tie needs a stable rule, not a
-  // judgment the office is not entitled to make. Where it holds none, a lone
-  // `slot: home` sited mark stands in; two of them is an ambiguity the office
-  // reports as "no ground" rather than guessing between them.
+  // A household's GROUND is its `kind: parcel` mark, and only that. Where a
+  // household holds more than one, the lowest id wins — an arbitrary tie needs a
+  // stable rule, not a judgment the office is not entitled to make.
+  //
+  // THIS USED TO PROMISE A FALLBACK IT COULD NOT DELIVER (removed 2026-09-08,
+  // review of lanes 3+4): "where it holds none, a lone `slot: home` sited mark
+  // stands in." Measured against the live fold of 1,184 marks, that branch is
+  // dead and always was — there are 43 marks carrying `slot: "home"` and every
+  // one of them is `kind: "predicated"` with no `at`, so `kind: "sited"` AND
+  // `slot: "home"` is the empty set. No household holds two parcels either, so
+  // the tie rule has never fired.
+  //
+  // A docstring promising a fallback that cannot fire is worse than no
+  // fallback: it reads as "the office tried the house before giving up" when
+  // the office never looked. The branch is gone and this comment is the record.
+  //
+  // WHAT IT COSTS, NAMED RATHER THAN HIDDEN: `alex-rowan` and `caelum-reeves`
+  // each hold a SITED mark naming their house with a real coordinate
+  // (`alex-rowan/the-threadbound-house` at (1450,1080), `caelum-reeves/the-sky-house`
+  // at (1140,2795)), and containment.json places both inside a region. They are
+  // ungrounded here anyway and lose their region line. Reading a household's
+  // sited house mark as its ground would give both lines back — and it would be
+  // the office inventing a ground rule the `grounds` law does not give it
+  // ("Grounds ties a PARCEL to the dwelling it holds"). That is a founder call,
+  // handed up rather than taken here.
   const parcelsBy = new Map();
-  const homeSitedBy = new Map();
   for (const m of fold.marks) {
     const who = m.by ?? m.household;
     if (!who) continue;
     if (m.kind === "parcel" && m.at) push(parcelsBy, who, m);
-    else if (m.kind === "sited" && m.slot === "home" && m.at) push(homeSitedBy, who, m);
   }
 
   const groundOf = new Map();
-  const handles = new Set([...parcelsBy.keys(), ...homeSitedBy.keys()]);
-  for (const who of handles) {
-    const parcels = (parcelsBy.get(who) ?? []).sort(byIdAsc);
-    const sited = (homeSitedBy.get(who) ?? []);
-    const mark = parcels[0] ?? (sited.length === 1 ? sited[0] : null);
+  for (const who of parcelsBy.keys()) {
+    const mark = (parcelsBy.get(who) ?? []).sort(byIdAsc)[0];
     if (!mark) continue;
     // The region a ground stands in is the first region mark on its containment
     // chain — the world's ONE containment answer, asked of the artifact the
@@ -250,12 +265,27 @@ const byIdAsc = (a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
  * Count where the world fold and the placements ledger disagree, so the
  * migration logs one line an operator can read without a diff tool.
  *
- * Three separable numbers, because they mean different things and collapsing
- * them would hide the one that matters:
- *   moved   — both records place the handle, and they name different regions.
- *             A real divergence between two live claims.
- *   ungrounded — the ledger places the handle; the world holds no ground for
- *             it. Not a disagreement, an absence: the world says nothing.
+ * THE BUCKETS ARE WHAT A RESIDENT SEES, not what the world says. Rebuilt
+ * 2026-09-08 after the review of lanes 3+4: `moved` used to hold every row whose
+ * region differed, under a docstring reading "both records place the handle, and
+ * they name different regions. A real divergence between two live claims." On
+ * the live town that sentence was true of ONE of the 26 rows it covered.
+ *
+ *   moved   — region → a DIFFERENT region. A real divergence between two live
+ *             claims, which is what the word was always supposed to mean. One
+ *             household on the live town (`sol-am-lichterfenster`).
+ *   lost    — region → null. The household LOSES its region line: /homes/{h}
+ *             stops carrying one and letters?region= stops returning it. Each
+ *             row carries `why`, because the two reasons are different problems:
+ *               "ungrounded" — the world holds no parcel for this household
+ *               "regionless" — it holds a parcel, and no region on that parcel's
+ *                              containment chain is one of the town's regions
+ *             27 on the live town, 21 of them regionless.
+ *   gained  — null → region. The world places a household the ledger did not.
+ *   rows_changed — moved + lost + gained. The number a reader would quote.
+ *   ungrounded — how many of the ledger's households the world holds no ground
+ *             for at all, whether or not they had a region to lose. Kept with
+ *             its old meaning and its old count.
  *   region_only_in_ledger — a region the ledger declares that the fold does not
  *             carry (today: `the-headland`, drawn but never founded).
  *
@@ -278,55 +308,79 @@ const byIdAsc = (a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 export const GRID_TOLERANCE_M = 200;
 
 export function foldDiff({ groundOf, regions, placements }) {
-  const homeFacts = (placements?.facts ?? []).filter((f) => f.kind === "home");
+  const homeFacts = (placements?.facts ?? []).filter((f) => f.kind === "home" && f.resident);
   const regionFacts = (placements?.facts ?? []).filter((f) => f.kind === "region");
   const worldRegionIds = new Set(regions.map((r) => r.id));
-  let moved = 0, ungrounded = 0, grid_stated = 0;
-  const movedRows = [];
-  const unplacedRows = [];
-  const gridFar = [];
-  for (const f of homeFacts) {
-    if (!f.resident) continue;
-    const g = groundOf.get(f.resident);
-    if (!g) {
-      ungrounded++;
-      // …AND, when the ledger named a region for that household, this absence is
-      // a CHANGE TO THE SERVED ANSWER and not only a silence. hydrate writes
-      // `region = groundOf.get(handle)?.region ?? null`, so the household's
-      // /homes/{h} row loses its region line and letters?region= stops
-      // returning it. Counting that under "the world says nothing" is true
-      // about the world and false about the door.
-      //
-      // FOUND BY MEASUREMENT, 2026-09-08: on the live town this receipt said 26
-      // households moved while 31 rows changed region. Six were here —
-      // alex-rowan, argos, cael, caelum-reeves, lior-macleod, yuanqu — each
-      // losing a region line with nothing in the log naming it. lior-macleod is
-      // the ledger's newest placement.
-      if (f.region) unplacedRows.push({ handle: f.resident, was: f.region });
-      continue;
-    }
-    const was = f.region ?? null;
-    if ((g.region ?? null) !== was) { moved++; movedRows.push({ handle: f.resident, was, now: g.region ?? null }); }
+
+  // COUNT PER RESIDENT, NEVER PER FACT. hydrate serves ONE row per resident and
+  // resolves the ledger's region the same way: `for (const h of homeFacts) if
+  // (h.resident && h.region) regionOfResident.set(...)` — last non-null fact
+  // wins. Walking facts here instead put this receipt one ahead of the door.
+  // `postmaster` has TWO home facts (`the-post-office`, region null, and
+  // `the-waiting-room`, the-town-centre), so the fact walk counted a move the
+  // door never makes: rows_changed said 32 against a door number of 31.
+  const ledgerRegionOf = new Map();
+  for (const f of homeFacts) if (f.region) ledgerRegionOf.set(f.resident, f.region);
+  const residents = [...new Set(homeFacts.map((f) => f.resident))].sort();
+  // Same last-wins rule for the fact carrying the coordinate, so a household
+  // with two facts is measured on the one the door serves.
+  const gridFactOf = new Map();
+  for (const f of homeFacts) if (f.grid_m !== undefined) gridFactOf.set(f.resident, f);
+
+  let ungrounded = 0, grid_stated = 0;
+  const movedRows = [], lostRows = [], gainedRows = [], gridFar = [];
+
+  for (const who of residents) {
+    const g = groundOf.get(who);
+    const was = ledgerRegionOf.get(who) ?? null;
+    const now = g?.region ?? null;
+    if (!g) ungrounded++;
+
+    // THE BUCKETS ARE WHAT THE DOOR DOES, not what the world says. `moved` used
+    // to hold all three outcomes, under a docstring reading "both records place
+    // the handle, and they name different regions. A real divergence between two
+    // live claims." On the live town that sentence was true of ONE of the 26
+    // rows it covered: 21 were region -> null, which is a household LOSING its
+    // region line, and 4 were null -> region. The log printed "26 household(s)
+    // in a different region" and meant one.
+    //
+    // `lost` carries WHY, because the two reasons are different problems:
+    //   "ungrounded" — the world holds no parcel for this household at all
+    //   "regionless" — it holds a parcel, and no region on that parcel's
+    //                  containment chain is one of the town's own regions
+    // The second dominates the live town and had no name here at all. Those
+    // households are not missing from the world; the world's region rings do
+    // not reach them, which is a different question and a different fix.
+    if (was && !now) lostRows.push({ handle: who, was, why: g ? "regionless" : "ungrounded", mark: g?.mark ?? null });
+    else if (!was && now) gainedRows.push({ handle: who, now });
+    else if (was && now && was !== now) movedRows.push({ handle: who, was, now });
+
     // A `grid_m` of null is the `honestly-nowhere` class stating itself — "a
     // home may be honestly nowhere ... recorded, told by words, never given
     // ground by a tidying hand". It is not a missing number and is not counted
     // as a disagreement; comparing it to a world ground is the tidying hand.
-    if (f.grid_m && g.at) {
+    const gf = gridFactOf.get(who);
+    if (gf?.grid_m && g?.at) {
       grid_stated++;
-      const m = Math.round(Math.hypot(f.grid_m.x - g.at.x, f.grid_m.y - g.at.y));
-      if (m > GRID_TOLERANCE_M) gridFar.push({ handle: f.resident, ledger: f.grid_m, world: g.at, mark: g.mark, m });
+      const m = Math.round(Math.hypot(gf.grid_m.x - g.at.x, gf.grid_m.y - g.at.y));
+      if (m > GRID_TOLERANCE_M) gridFar.push({ handle: who, ledger: gf.grid_m, world: g.at, mark: g.mark, m });
     }
   }
+
   gridFar.sort((a, b) => b.m - a.m);
-  unplacedRows.sort((a, b) => (a.handle < b.handle ? -1 : 1));
   const regionOnlyInLedger = regionFacts.map((f) => f.id).filter((id) => !worldRegionIds.has(id));
-  // moved + unplaced is the number of households whose region line changes at
-  // the door. If a reader has to add two numbers to get that, one of them will
-  // be the number that gets quoted.
+  // rows_changed is the number a reader would quote. If it has to be assembled
+  // out of three others, one of the three gets quoted instead.
   return {
-    moved, ungrounded, movedRows, region_only_in_ledger: regionOnlyInLedger,
-    unplaced: unplacedRows.length, unplacedRows,
-    rows_changed: moved + unplacedRows.length,
+    moved: movedRows.length, movedRows,
+    lost: lostRows.length, lostRows,
+    lost_regionless: lostRows.filter((r) => r.why === "regionless").length,
+    lost_ungrounded: lostRows.filter((r) => r.why === "ungrounded").length,
+    gained: gainedRows.length, gainedRows,
+    rows_changed: movedRows.length + lostRows.length + gainedRows.length,
+    ungrounded,
+    region_only_in_ledger: regionOnlyInLedger,
     grid_stated, grid_far: gridFar,
   };
 }
+

@@ -420,19 +420,24 @@ if (fold) {
   console.log(`  atlas: ${regions.length} regions, ${town.residents.filter((r) => r.home).length} homes`);
   console.log(`  placement authority: world fold @ ${fold.sha.slice(0, 12)} (${fold.marks.length} marks)`);
   if (placements) {
-    console.warn(`  atlas diff vs placements.json: ${diff.moved} household(s) in a different region, `
-      + `${diff.ungrounded} placed by the ledger with no world ground, `
+    // THE HEADLINE IS THE NUMBER A RESIDENT WOULD FEEL, and the breakdown is
+    // under it. This line used to open with "N household(s) in a different
+    // region" over a count that was 26 when exactly ONE household moved between
+    // two regions and 21 lost their region line entirely. A receipt whose first
+    // sentence is true of one row in twenty-six is worse than no receipt: it is
+    // read, believed, and never checked.
+    console.warn(`  atlas diff vs placements.json: ${diff.rows_changed} household row(s) change region `
+      + `(${diff.lost} LOSE their region line, ${diff.moved} move between regions, ${diff.gained} gain one), `
       + `${diff.region_only_in_ledger.length} region(s) only in the ledger`
       + `${diff.region_only_in_ledger.length ? ` (${diff.region_only_in_ledger.join(", ")})` : ""}`);
-    for (const r of diff.movedRows) console.warn(`    moved: ${r.handle} ${r.was ?? "—"} -> ${r.now ?? "—"}`);
-    // The households whose region line GOES AWAY. They are inside `ungrounded`
-    // above, which reads as an absence; at the door it is a change, and it was
-    // the six the log did not name before this line existed.
-    if (diff.unplaced) {
-      console.warn(`  ${diff.unplaced} household(s) LOSE their region line — the ledger named one, the world holds no ground:`);
-      for (const r of diff.unplacedRows) console.warn(`    unplaced: ${r.handle} ${r.was} -> —`);
-      console.warn(`  ${diff.rows_changed} household row(s) change region in total (${diff.moved} moved + ${diff.unplaced} unplaced)`);
+    if (diff.lost) {
+      console.warn(`  ${diff.lost} household(s) LOSE their region line `
+        + `(${diff.lost_regionless} stand on a parcel in no region of the town, ${diff.lost_ungrounded} have no world ground at all):`);
+      for (const r of diff.lostRows) console.warn(`    lost: ${r.handle} ${r.was} -> — (${r.why}${r.mark ? `, ${r.mark}` : ""})`);
     }
+    for (const r of diff.movedRows) console.warn(`    moved: ${r.handle} ${r.was} -> ${r.now}`);
+    for (const r of diff.gainedRows) console.warn(`    gained: ${r.handle} — -> ${r.now}`);
+    console.warn(`  ${diff.ungrounded} household(s) the ledger places and the world holds no ground for`);
     // The coordinate half of the same receipt, and it says nothing at all until
     // the ledger states metre points — which is correct: before `grid_m` there
     // is no second coordinate to disagree with, and a line reporting "0 of 0"

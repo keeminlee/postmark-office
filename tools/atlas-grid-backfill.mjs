@@ -10,7 +10,7 @@
 // grid_m placements.json` is 0.
 //
 // THE ONE RULE: NEVER MANUFACTURE A COORDINATE. A point is backfilled only when
-// the note ASSERTS it as this home's ground, in one of the four phrasings the
+// the note ASSERTS it as this home's ground, in one of the five phrasings the
 // ledger actually uses (below). Everything else — a point mentioned for another
 // reason, a phrasing this tool has not been taught, a note with no point at all
 // — is FLAGGED and left alone. The ledger's own law is "never derive what a
@@ -34,19 +34,23 @@ import { readFileSync, writeFileSync, existsSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-// ── the four phrasings, each quoted from the ledger it was read out of ───────
+// ── the five phrasings, each quoted from the ledger it was read out of ───────
 //
 // A pattern earns its place here by appearing in the live ledger, not by being
-// imaginable. The count beside each is what it matched on 2026-09-08.
+// imaginable. The count beside each is the number of home facts it is the
+// winning pattern for on 2026-09-08, at town `715eb65f8` — the tool's own
+// printed breakdown, not a number typed from memory.
 export const GROUND_PATTERNS = [
   {
-    // 28×  "…at Atlas (305,1720), projecting to World (-900,4800)."   (lior-macleod)
+    // 29×  "…at Atlas (305,1720), projecting to World (-900,4800)."   (lior-macleod)
     name: "projecting-to",
     re: /\bprojecting to World \((-?\d+),\s*(-?\d+)\)/g,
   },
   {
-    // 15×  "…the office projected it from Centre (485,760) to World (1675,2950)…"  (still)
-    //  3×  "…which projects / projecting from Centre (485,760) to World (-45,-1355)…"  (the-level, alden, corwin)
+    // 15×  three wordings of one sentence, counted together because they are one:
+    //      "…the office projected it from Centre (485,760) to World (1675,2950)…"   (still)
+    //      "…which projects from Centre (485,760) to World (-45,-1355)…"            (the-level)
+    //      "…projecting from Centre (485,760) to World (-5,-1300)…"                 (alden, corwin)
     name: "from-centre-to",
     re: /\bproject(?:ed it|s|ing) from Centre \(-?\d+,\s*-?\d+\) to World \((-?\d+),\s*(-?\d+)\)/g,
   },
