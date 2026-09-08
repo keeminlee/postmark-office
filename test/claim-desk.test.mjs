@@ -43,6 +43,8 @@ const HANDLE = "wright";
 // and the stranger never reaches the check the test is named after: a probe
 // aimed at a state the code cannot be in.
 const HANDLE2 = "wright-second";
+const HANDLE3 = "wright-quarantined";
+const HANDLE4 = "wright-fourth";   // untouched until the budget test, which needs one clean mint
 const OWNER = { id: 999, login: "keeminlee" };
 const STRANGER = { id: 4242, login: "someone-else" };
 
@@ -62,9 +64,29 @@ before(async () => {
     handle: HANDLE2, is_office: false, last_active: null,
     address: { data: { since: "2026-08-01", joined: "2026-08-01", github: OWNER.login }, body: `# ${HANDLE2}` },
   }));
+  seed.prepare("INSERT INTO residents VALUES (?, ?)").run(HANDLE4, JSON.stringify({
+    handle: HANDLE4, is_office: false, last_active: null,
+    address: { data: { since: "2026-08-01", github: "fourth-keeper" }, body: `# ${HANDLE4}` },
+  }));
+  seed.prepare("INSERT INTO residents VALUES (?, ?)").run(HANDLE3, JSON.stringify({
+    handle: HANDLE3, is_office: false, last_active: null,
+    // A DIFFERENT ACCOUNT ON PURPOSE. householdFor falls back to the residents
+    // index's own `github:` line for unpinned handles, so giving this one the
+    // owner's login would silently enlarge the household the arc test asserts
+    // on — the fixture would be changing the answer to a question it is not
+    // about. Standing is per-handle and cares nothing for the household, so
+    // the quarantine test works just as well from a house of its own.
+    address: { data: { since: "2026-08-01", github: "third-keeper" }, body: `# ${HANDLE3}` },
+  }));
   seed.close();
   const clone = join(tmp, "town-clone");
   mkdirSync(join(clone, "tools"), { recursive: true });
+  // A THIRD RESIDENT, QUARANTINED. The desk is keyless and so runs before the
+  // credentialed standing gate; this is the fixture that proves it applies the
+  // ledger itself rather than minting first and refusing later.
+  writeFileSync(join(clone, "tools", "standing-ledger.md"),
+    `- 2026-09-01 · quarantine · ${HANDLE3} · by: registrar · reason: an open question about who is writing
+`);
   mkdirSync(join(clone, "WHITE_PAGES"), { recursive: true });
   writeFileSync(join(clone, "tools", "github-ids.json"), JSON.stringify({
     [HANDLE]: { login: OWNER.login, id: OWNER.id, pinned: "2026-07-05" },
@@ -267,8 +289,39 @@ test("a second ask on a handle that already asked is refused, and points at the 
   assert.match(b.hint, /GET \/keys\/claim\?handle=/, "the refusal names the read that shows the standing ask");
 });
 
+test("THE STANDING LEDGER REACHES THE MINT: a quarantined resident is refused, in the ledger's own words", async () => {
+  const r = await ask(HANDLE3);
+  assert.equal(r.status, 403, "the key desk is shut to a suspended resident");
+  const b = await r.json();
+  assert.match(b.defect, /quarantined/i);
+  assert.match(b.defect, new RegExp(HANDLE3), "the refusal names who");
+  // the ledger's OWN sentence, not one this door invented
+  assert.match(b.hint, /2026-09-01/, "the refusal carries the dated act");
+  assert.match(b.hint, /an open question about who is writing/, "and the recorded reason");
+
+  // and nothing was minted: no claim stands on that handle
+  const state = await (await fetch(`${BASE}/keys/claim?handle=${HANDLE3}`)).json();
+  assert.equal(state.claim, null, "a refused ask leaves no claim behind");
+});
+
 test("GET /keys/claim on a handle nobody claimed answers null rather than inventing one", async () => {
   const r = await fetch(`${BASE}/keys/claim?handle=nobody-of-nowhere`);
   assert.equal(r.status, 200);
   assert.equal((await r.json()).claim, null);
+});
+
+test("THE MINT CAP COUNTS KEYS, NOT KNOCKS: refusals do not spend a resident's hourly budget", async () => {
+  // The cap is five mints an hour from one address. Six refusals in a row here
+  // would exhaust it if being told no cost a slot — which is what the berth
+  // shape this was modelled on does, and what this desk did until the lane's
+  // own standing falsifier ran sixth and got a 429 instead of the 403 it
+  // names. A resident who mistypes their own address should not lose their
+  // afternoon to it.
+  for (let i = 0; i < 6; i++) {
+    const r = await ask(`no-such-resident-${i}`);
+    assert.equal(r.status, 404, "each of these mints nothing");
+  }
+  const good = await ask(HANDLE4);
+  assert.equal(good.status, 201, "a real ask still lands after six refusals");
+  assert.match((await good.json()).key, /^pmc_/);
 });

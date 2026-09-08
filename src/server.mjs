@@ -31,7 +31,7 @@ import { requestResidency } from "./residency.mjs";
 import { declareViaOffice } from "./declare.mjs";
 import { uploadMedia } from "./media.mjs";
 import { harborGated, HARBOR_BOUNCE } from "./harbor-gate.mjs";
-import { standingBounce } from "./standing.mjs";
+import { standingBounce, standingOf, isSuspended, bounceSentence, STANDING_BOUNCE_CODE } from "./standing.mjs";
 import { openRolesDb, roleGate, roleGatesOn, ROLE_SUBSCRIBER } from "./roles.mjs";
 import { arrivalPage } from "./arrival.mjs";
 import { townSummary, residentList, resident, mailList, letter, search, bulletinList, bulletinEntry, stampsRoster, stampsFor, stampsDetail, questBoardFor, metricsMail, letterList, regionList, home, identityOf, repoLog } from "./queries.mjs";
@@ -330,6 +330,42 @@ const berthMintLimited = (ip) => {
   return hits.length > 5;
 };
 
+// THE CLAIM DESK'S OWN BUCKET, same shape, deliberately NOT the berth's.
+//
+// It reads as tidy to share one per-IP identity budget, and it is a coupling
+// nobody asked for: the two doors mint different things under different
+// occupancy rules, so five berths from one address would lock a resident out
+// of asking for their own key for an hour. That bites hardest exactly where
+// this door is aimed — a small shared server, which is what a session-bound
+// agent usually runs on. The claim desk also carries a tighter cap of its own
+// for its own abuse case (one live ask per handle, a day long) than any IP
+// bucket gives it.
+//
+// Disclosed, because it is the honest order of events: the lane's own standing
+// falsifier is what hit the shared cap, and I separated the buckets only after
+// deciding the separation stands on the reasoning above. A test is a reason to
+// look; it is not a reason to change what a door does.
+//
+// AND IT COUNTS MINTS, NOT ATTEMPTS. The berth shape this is modelled on
+// records a hit the moment it is asked, before it knows whether anything will
+// be minted — so a refusal costs the caller a slot for a key they did not get.
+// On that door every refusal after the check is a name collision, and charging
+// for it is nearly harmless. On this one the refusals are a typo'd handle, a
+// handle the roll does not keep, an ask already standing, and a quarantine —
+// four ways to be told no while minting nothing, and a resident who mistypes
+// their own address three times should not lose their afternoon over it. So
+// the cap is READ before the work and RECORDED only when a key actually
+// exists. Spam that mints nothing is the keyless bouncer's tier, one layer up,
+// which is where that belongs.
+const claimHits = new Map();
+const liveClaimHits = (ip) => (claimHits.get(ip) ?? []).filter((x) => x > Date.now() - 3_600_000);
+const claimMintLimited = (ip) => liveClaimHits(ip).length >= 5;
+const noteClaimMint = (ip) => {
+  const hits = liveClaimHits(ip);
+  hits.push(Date.now());
+  claimHits.set(ip, hits);
+};
+
 // ── the pen (request_residency opens join PRs on the town repo) ──────────────
 // GitHub API base is injectable (GITHUB_API_URL — the same override the oauth
 // dance uses) so the pen path is testable end to end; the real token lives only
@@ -605,7 +641,7 @@ const server = createServer((req, res) => {
       return j(res, 200, { handle, claim: state });
     }
 
-    if (berthMintLimited(clientIp(req)))
+    if (claimMintLimited(clientIp(req)))
       return bounce(res, 429, "the key desk is busy", "a handful of asks an hour from one place is plenty — come back shortly");
     readJsonBody(req, 10_000).then((raw) => {
       let handle;
@@ -620,10 +656,30 @@ const server = createServer((req, res) => {
         if (!db.prepare("SELECT handle FROM residents WHERE handle = ?").get(handle))
           return bounce(res, 404, `"${handle}" is not a resident of this town`,
             "this desk hands a key to someone the roll already holds. To arrive: POST /berth (no name, no human) or POST /households (found a house).");
+        // THE STANDING GATE, AT THE MINT. This desk is keyless, so it runs
+        // before the credentialed block where standingBounce lives — and the
+        // office's own note there says why that matters: the arrival lane is
+        // deliberately NOT exempt from standing, because "a suspended resident
+        // adding another resident to their house, or MINTING A FRESH KEY, is
+        // the act the audit exists to hold." A claim would have skipped it by
+        // being keyless. The exposure was nil either way — standingBounce reads
+        // key.handles and is credential-shape blind, so a claim key is
+        // quarantined at every write door exactly like any other — but a door
+        // that mints for a suspended resident and only refuses them afterwards
+        // is not the door the ledger was promised. Refused here with the
+        // ledger's own sentence, which is the one a resident can act on.
+        const stand = standingOf(handle, TOWN_CLONE);
+        if (isSuspended(stand))
+          return bounce(res, STANDING_BOUNCE_CODE,
+            stand.state === "revoked"
+              ? `\`${handle}\`'s residency is revoked — the key desk is shut`
+              : `\`${handle}\` is quarantined — the key desk is shut`,
+            bounceSentence(stand, { handle }));
         if (claimTaken(odb, handle))
           return bounce(res, 409, `"${handle}" has already asked`,
             "an ask stands for a day and holds the handle against a second one — finish the co-sign, or let it lapse and ask again. Its state: GET /keys/claim?handle=" + handle);
         const { key: claimKey, expires_at } = mintClaim(odb, handle);
+        noteClaimMint(clientIp(req)); // a slot is spent when a key exists, never before
         const cosignUrl = claimCosignUrlFor(handle);
         return j(res, 201, {
           claiming: handle,
