@@ -105,10 +105,13 @@ export const WITNESS_FIELDS = Object.freeze(["handle", "anchor", "dx", "dy"]);
  * built to the shape I imagine rather than the shape the town produces, and it
  * would go quietly wrong the first time a door added a key. The honest position
  * is that payload key order does not survive `jsonb` and this module does not
- * pretend otherwise: `stateLogFromStore` reports `payload_order_lost` per line
- * so a caller can count the cost instead of discovering it in a git diff.
+ * pretend otherwise: `compareWindow` names it as "key ORDER only" whenever the
+ * values are equal, so a caller counts the cost instead of meeting it in a git
+ * diff. This sentence used to promise a `payload_order_lost` field the module
+ * never had — a comment describing a reader that does not exist, which is the
+ * defect this whole lane is about, committed inside the fix for it.
  */
-export const PAYLOAD_ORDER = "not recoverable from jsonb — reported, never invented";
+export const PAYLOAD_ORDER = "not recoverable from jsonb — named by compareWindow, never invented";
 
 /**
  * A window that the DRAIN already photographed must never be re-derived into.
@@ -142,7 +145,7 @@ export const MERGE_HAZARD =
  * take, and a photograph that quietly rounded its own timestamps is the kind of
  * thing nobody finds until a twin cannot be paired.
  */
-export function instantOf(v) {
+export function journalInstant(v) {
   if (v == null) return null;
   if (v instanceof Date) return v.toISOString();
   const s = String(v);
@@ -184,8 +187,15 @@ function inOrder(obj, fields) {
  * it as the object of nulls. Not one spells it `null`. So there is no ambiguity
  * for the register to fail to resolve: one shape, always.
  */
-export function standingOf(act) {
-  return { anchor: act.at_anchor ?? null, dx: act.at_dx ?? null, dy: act.at_dy ?? null };
+export function standingFieldOf(act) {
+  // Built THROUGH `STANDING_FIELDS` rather than beside it. The list was exported
+  // with no reader anywhere in the repo, including here — a field list nothing
+  // consults is a comment wearing a const's clothes, and the next edit would have
+  // changed one and not the other.
+  const v = { anchor: act.at_anchor ?? null, dx: act.at_dx ?? null, dy: act.at_dy ?? null };
+  const out = {};
+  for (const f of STANDING_FIELDS) out[f] = v[f] ?? null;
+  return out;
 }
 
 /**
@@ -230,7 +240,7 @@ export function witnessesOf(act) {
  */
 export function logLineFromAct(act, { householdNameFor = (k) => k, seqOf = (a) => a.id } = {}) {
   const line = {
-    at: instantOf(act.at),
+    at: journalInstant(act.at),
     type: act.action,
     actor: act.actor,
     seq: seqOf(act),
@@ -238,7 +248,7 @@ export function logLineFromAct(act, { householdNameFor = (k) => k, seqOf = (a) =
     object: act.object ?? null,
     household: act.household == null ? null : householdNameFor(act.household),
     crossing: act.crossing == null ? null : Number(act.crossing),
-    standing: standingOf(act),
+    standing: standingFieldOf(act),
     witnesses: witnessesOf(act),
     effect: act.effect ?? null,
     payload: act.payload ?? null,

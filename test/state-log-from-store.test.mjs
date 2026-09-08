@@ -18,9 +18,9 @@ import { fileURLToPath } from "node:url";
 
 import { logLine } from "../src/world-drain.mjs";
 import {
-  LINE_FIELDS, MERGE_HAZARD, META_GRAMMAR,
-  compareWindow, instantOf, logLineFromAct, metaFor, stateLogFromStore,
-  standingOf, windowBytes, windowFromActs, witnessesOf,
+  LINE_FIELDS, MERGE_HAZARD, META_GRAMMAR, STANDING_FIELDS,
+  compareWindow, journalInstant, logLineFromAct, metaFor, stateLogFromStore,
+  standingFieldOf, windowBytes, windowFromActs, witnessesOf,
 } from "../src/state-log-from-store.mjs";
 
 const FIX = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
@@ -78,12 +78,12 @@ test("F3 · the meta file's grammar sentence is the drain's, verbatim", () => {
 });
 
 test("F4 · the instant is millisecond ISO with a Z, from either driver spelling", () => {
-  assert.equal(instantOf(new Date("2026-09-08T12:07:55.964Z")), "2026-09-08T12:07:55.964Z");
-  assert.equal(instantOf("2026-09-08T12:07:55.964+00:00"), "2026-09-08T12:07:55.964Z");
+  assert.equal(journalInstant(new Date("2026-09-08T12:07:55.964Z")), "2026-09-08T12:07:55.964Z");
+  assert.equal(journalInstant("2026-09-08T12:07:55.964+00:00"), "2026-09-08T12:07:55.964Z");
   // Sub-millisecond precision is REFUSED, not rounded: a photograph that
   // quietly truncated its own timestamps produces twins that cannot be paired.
-  assert.throws(() => instantOf("2026-09-08T12:07:55.964637+00:00"), /sub-millisecond/);
-  assert.equal(instantOf("2026-09-08T12:07:55.964000+00:00"), "2026-09-08T12:07:55.964Z",
+  assert.throws(() => journalInstant("2026-09-08T12:07:55.964637+00:00"), /sub-millisecond/);
+  assert.equal(journalInstant("2026-09-08T12:07:55.964000+00:00"), "2026-09-08T12:07:55.964Z",
     "trailing zeroes are not precision");
 });
 
@@ -235,16 +235,16 @@ test("F14 · the bytes are the drain's serialization — one JSON object per lin
 });
 
 test("F15 · a row with NO standing gets the object of nulls, not a bare null", () => {
-  // THIS TEST CAUGHT ME. I had `standingOf` return `null` for an anchorless row
+  // THIS TEST CAUGHT ME. I had `standingFieldOf` return `null` for an anchorless row
   // because that is what it obviously means, and shipped it green — the window
   // 177 fixture has no such row, so nothing in this file could see it. The
   // scratch run on window 177.0872 (lupi's exit) is what said otherwise, and the
   // town's own files settle it: 483 anchorless lines across world main at
   // `256db2fe`, every one of them spelling standing as the object of nulls,
   // because `logLine`'s `row.at ?? null` never fires on a truthy object.
-  assert.deepEqual(standingOf({ at_anchor: null, at_dx: null, at_dy: null }),
+  assert.deepEqual(standingFieldOf({ at_anchor: null, at_dx: null, at_dy: null }),
     { anchor: null, dx: null, dy: null });
-  assert.deepEqual(Object.keys(standingOf({ at_anchor: null, at_dx: null, at_dy: null })),
+  assert.deepEqual(Object.keys(standingFieldOf({ at_anchor: null, at_dx: null, at_dy: null })),
     ["anchor", "dx", "dy"], "and in the pen's key order, like any other standing");
   assert.equal(witnessesOf({ witnesses: null }), null, "witnesses IS a bare null — the two are not the same field");
 
@@ -265,4 +265,43 @@ test("F15 · a row with NO standing gets the object of nulls, not a bare null", 
   assert.equal(line.household, null, "a null household stays null and is not handed to the resolver");
   assert.equal(JSON.stringify(line), FILE_LINE,
     "an enter/exit line is byte-equal to the drain's, seq supplied — nothing about a frame row is unrecoverable");
+});
+
+// ── F16–F17: the reader check on this lane's OWN additions ───────────────────
+//
+// My carry from this week, applied to the fix rather than only to the code it
+// fixes: name the reader of what you introduce. Run over every export of
+// `state-log-from-store.mjs`, it found three defects in my own work — two field
+// lists with no reader anywhere in the repo, and two names that already meant
+// something else in this office. These two bind the repairs.
+
+test("F16 · STANDING_FIELDS is the builder's own source, not a list beside it", () => {
+  // It was exported and read by NOTHING, including its own module: `standingFieldOf`
+  // built the object literal by hand. A field list nothing consults is a comment
+  // wearing a const's clothes, and the next edit changes one and not the other.
+  const withExtra = standingFieldOf({ at_anchor: "x", at_dx: 1, at_dy: 2 });
+  assert.deepEqual(Object.keys(withExtra), [...STANDING_FIELDS],
+    "the built object's keys ARE the field list, in its order");
+  // The binding is real, not incidental: a line built through the list carries
+  // exactly the list, so reordering the list reorders the bytes.
+  assert.equal(JSON.stringify(withExtra), '{"anchor":"x","dx":1,"dy":2}');
+});
+
+test("F17 · this module's two exported names do not collide with the office's own", async () => {
+  // `standingOf` already means "a resident's standing in the town" in
+  // `src/standing.mjs` (good standing / suspended), read by `paper-fresh.mjs`.
+  // `instantOf` already means "the wall-clock instant of a fractional crossing"
+  // on the world module, read by world-apex, world-frames and world-movement.
+  // Mine meant neither, and one word with two meanings in one `src/` is how a
+  // seam gets crossed by an import nobody re-reads.
+  const mine = await import("../src/state-log-from-store.mjs");
+  const standing = await import("../src/standing.mjs");
+  assert.equal(typeof standing.standingOf, "function", "the office's own standingOf still exists");
+  assert.equal(mine.standingOf, undefined, "this module must not export a second standingOf");
+  assert.equal(mine.instantOf, undefined, "this module must not export a second instantOf");
+  assert.equal(typeof mine.standingFieldOf, "function");
+  assert.equal(typeof mine.journalInstant, "function");
+  // And they are genuinely different functions, not a re-export wearing a new
+  // name — without this the assertions above would pass on an alias.
+  assert.notEqual(mine.standingFieldOf, standing.standingOf);
 });
