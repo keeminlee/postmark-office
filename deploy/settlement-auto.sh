@@ -124,6 +124,29 @@ case "$SOURCE" in
   *) echo "[settlement-auto] SETTLEMENT_SOURCE=\"$SOURCE\" is not \`store\` or \`git\` — refusing rather than guessing which record to publish" >&2; exit 1 ;;
 esac
 
+# ── A STORE CROSSING LEAVES THE CLONE AS IT FOUND IT ─────────────────────────
+#
+# The store path's sketchbooks are scratch by construction — this crossing makes
+# them for the sweep to read and nothing else ever wants them. Leaving them is
+# what armed the rollback ghost (repair 1 below): the next `SETTLEMENT_SOURCE=git`
+# crossing would fold them.
+#
+# ON THE TRAP, so it runs on EVERY exit — published, quiet, refused, raced, or a
+# crash between any two lines. A cleanup that only runs on the happy path is a
+# cleanup for the case that did not need it: the crossing whose leftovers matter
+# most is the one that failed, which is also the crossing after which somebody
+# reaches for the rollback.
+#
+# The git path's net stays anyway. This makes it rare; it does not make it
+# unnecessary, because a `kill -9` runs no trap.
+store_sketchbook_cleanup() {
+  [ "$SOURCE" = "store" ] || return 0
+  [ -n "${SWEEP:-}" ] && [ -d "$SWEEP/.git" ] || return 0
+  git -C "$SWEEP" for-each-ref --format='%(refname)' 'refs/heads/draft/*' 2>/dev/null |
+    while read -r r; do [ -n "$r" ] && git -C "$SWEEP" update-ref -d "$r" 2>/dev/null || true; done
+}
+trap 'rm -rf "$WORK"; store_sketchbook_cleanup' EXIT
+
 # One-time: a dedicated settlement clone — never the write pen's checkout.
 if [ ! -d "$SWEEP/.git" ]; then
   ORIGIN="$(git -C "${WORLD_CLONE:-$OFFICE/world-clone}" remote get-url origin)"
@@ -145,6 +168,7 @@ report() { # status detail
   SETTLEMENT_RETIRE_JSON="${RETIRE_JSON:-}" \
   SETTLEMENT_ISOLATE_JSON="${ISOLATE_JSON:-}" SETTLEMENT_REFUSAL_JSON="${REFUSAL_JSON:-}" \
   SETTLEMENT_SOURCE_MODE="$SOURCE" SETTLEMENT_STORE_JSON="${STORE_JSON:-}" \
+  SETTLEMENT_GHOSTS="${GHOSTS:-}" SETTLEMENT_KEPT_UNDELIVERED="${KEPT_UNDELIVERED:-}" \
     node "$OFFICE/deploy/settlement-receipt.mjs" > "$OUT" 2>/dev/null || true
   # THE HISTORY. One line per DECIDED crossing, appended, bounded. A single
   # receipt file answers "what did the last crossing do"; nothing on the box
@@ -267,6 +291,74 @@ fi
 # The lease recorded in "$WORK/tips" is still the REMOTE tip in every case, so
 # the compare-and-swap on the push below is unchanged: it still asks "has origin
 # moved since I looked", which is the only question a lease should ask.
+# ── THE ROLLBACK'S GHOST (repair 1, reviewer at f2274e47) ────────────────────
+#
+# THE DEFECT, and it points the dangerous way. The store path deletes every
+# draft ref before it writes (`store-writedown.mjs § clearGitSketchbooks`). The
+# git path deleted NOTHING: `$WORK/tips` is built only from
+# `refs/remotes/origin/draft/*`, the sync loop below reconciles only the names it
+# found there, and the sweep's `draftBranches` returns EVERY LOCAL draft ref. So
+# the sketchbooks a store crossing left in this long-lived clone — minus the ones
+# whose names collide with an origin branch and get reset — were folded by the
+# next rollback crossing, carrying store renders under a receipt saying
+# `source: git`. Sized by the reviewer against S63: 27 names collide and reset,
+# **57 survive and are folded**.
+#
+# And the rollback is the hatch you reach for WHEN THE STORE PATH HAS ALREADY
+# GONE WRONG, which is exactly the moment its leftovers are worst. The shape is
+# new with G1: before it, a local-only sketchbook was delivered to origin
+# immediately, so it never persisted.
+#
+# THE REPAIR IS NOT "DELETE EVERY TWIN-LESS LOCAL", and that matters. The git
+# path deliberately KEEPS a twin-less local: a household drained for the first
+# time whose delivery push failed has its only copy there, with its journal rows
+# already truncated (`:339-345` pushes them, and says "it will be retried next
+# crossing"). Deleting those would destroy the one copy of work the drain has
+# already made irreversible — the exact defect the sync loop below exists to
+# prevent, re-introduced by its own fix.
+#
+# So the two are told apart by the one fact that distinguishes them, which is the
+# commit each write-down wrote:
+#
+#   subject begins `store write-down:`  → a store crossing's leftover, DELETE
+#   tree equals main's tree             → carries nothing at all, DELETE
+#   anything else                       → KEEP, and say why, and let the
+#                                         delivery loop retry it
+#
+# The unrecognised case is KEPT, which is the conservative direction: a ref this
+# cannot classify is treated as somebody's undelivered work, not as debris.
+GHOSTS=0
+KEPT_UNDELIVERED=0
+if [ "$SOURCE" = "git" ]; then
+  MAIN_TREE="$(git -C "$SWEEP" rev-parse 'main^{tree}')"
+  git -C "$SWEEP" for-each-ref --format='%(refname:short)' 'refs/heads/draft/*' | while read -r b; do
+    [ -n "$b" ] || continue
+    if git -C "$SWEEP" rev-parse --verify -q "refs/remotes/origin/$b" >/dev/null; then continue; fi
+    subject="$(git -C "$SWEEP" log -1 --format=%s "refs/heads/$b" 2>/dev/null || echo '')"
+    tree="$(git -C "$SWEEP" rev-parse "refs/heads/$b^{tree}" 2>/dev/null || echo '')"
+    case "$subject" in
+      "store write-down:"*)
+        git -C "$SWEEP" update-ref -d "refs/heads/$b"
+        echo "[settlement-auto] cleared $b — a store crossing's leftover sketchbook with no origin twin; a rollback must not fold it" >&2
+        echo x >> "$WORK/ghosts" ;;
+      *)
+        if [ -n "$tree" ] && [ "$tree" = "$MAIN_TREE" ]; then
+          git -C "$SWEEP" update-ref -d "refs/heads/$b"
+          echo "[settlement-auto] cleared $b — a twin-less local sketchbook whose tree is main's; it carries nothing" >&2
+          echo x >> "$WORK/ghosts"
+        else
+          echo "[settlement-auto] KEEPING $b — twin-less local this cannot attribute to a store crossing; treating it as an undelivered drain, which the delivery loop will retry" >&2
+          echo x >> "$WORK/kept"
+        fi ;;
+    esac
+  done
+  # The loop above runs in a subshell (it is the right-hand side of a pipe), so
+  # its variables do not survive it. The counts come back through $WORK, which is
+  # the same reason the delivery loop below writes `tips.next` to a file.
+  [ -f "$WORK/ghosts" ] && GHOSTS="$(wc -l < "$WORK/ghosts" | tr -d ' ')"
+  [ -f "$WORK/kept" ] && KEPT_UNDELIVERED="$(wc -l < "$WORK/kept" | tr -d ' ')"
+fi
+
 UNDELIVERED=0
 while read -r ref sha; do
   b="${ref#origin/}"

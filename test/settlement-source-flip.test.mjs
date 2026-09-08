@@ -70,7 +70,7 @@ let runSeq = 0;
  * that LOG their argv and then exec the real thing. The logging wrapper is what
  * turns "did these two scripts behave the same" into a diff.
  */
-function crossing(label, script, { env = {}, perturb = null } = {}) {
+function crossing(label, script, { env = {}, perturb = null, plant = null } = {}) {
   const root = join(scratch, `${label}-${++runSeq}`);
   const bin = join(root, "bin");
   const origin = join(root, "world.git");
@@ -109,6 +109,10 @@ const stakes = JSON.parse(readFileSync(at("--stakes"), "utf8"));
 const repo = process.cwd();
 const drafts = execFileSync("git", ["-C", repo, "for-each-ref", "--format=%(refname:short)", "refs/heads/draft/", "refs/remotes/origin/draft/"], { encoding: "utf8" })
   .split("\\n").map((l) => l.trim()).filter(Boolean);
+// WHAT THE SWEEP SAW, recorded outside the repo so a test can assert on it.
+// This is the instrument for the rollback ghost: the question is not what the
+// crossing published, it is which sketchbooks reached the fold at all.
+writeFileSync(process.env.SWEEP_SAW_OUT, JSON.stringify(drafts.map((d) => d.replace(/^origin\\//, ""))));
 const p = join(repo, "WORLD", "swept.txt");
 mkdirSync(dirname(p), { recursive: true });
 writeFileSync(p, String(drafts.length) + " sketchbook(s) seen; " + stakes.length + " stake row(s)\\n");
@@ -172,6 +176,11 @@ process.stdout.write(JSON.stringify({
     `#!/bin/sh\nprintf 'node' >> "$CMDLOG"\nskip=0\nfor a in "$@"; do\n  if [ "$skip" = "1" ]; then skip=0; printf ' <inline>' >> "$CMDLOG"; continue; fi\n  case "$a" in\n    -e) skip=1; printf ' -e' >> "$CMDLOG" ;;\n    /*|*/*) printf ' %s' "$(basename "$a")" >> "$CMDLOG" ;;\n    *) printf ' %s' "$a" >> "$CMDLOG" ;;\n  esac\ndone\nprintf '\\n' >> "$CMDLOG"\nexec "${realNode}" "$@"\n`);
   chmodSync(join(bin, "node"), 0o755);
 
+  // The starting REF STATE, varied by the caller. `F-git`'s perturbation varies
+  // a command and always starts from a clean clone, which is exactly why it
+  // cannot see the rollback ghost; this hook is the other axis.
+  if (plant) plant(root);
+
   const scriptPath = join(root, "settlement-auto.sh");
   writeFileSync(scriptPath, perturb ? perturb(script) : script);
 
@@ -193,6 +202,7 @@ process.stdout.write(JSON.stringify({
       SETTLEMENT_ATTEMPT: "1",
       WORLD_SINGLE_LOG: "1",
       WORLD_DYNAMIC_DB: join(root, "dynamic.db"),
+      SWEEP_SAW_OUT: join(root, "sweep-saw.json"),
       ...env,
     },
   });
@@ -216,10 +226,16 @@ function normalize(commands, root) {
     .replace(/\/tmp\/[^\s]*/g, "<tmp>")
     .replace(/[A-Za-z]:[\\/][^\s]*[Tt]emp[\\/][^\s]*/g, "<tmp>")
     .replace(/\b[0-9a-f]{40}\b/g, "<sha>")
-    .replace(/\b[0-9a-f]{7,12}\b/g, "<sha>"));
+    .replace(/\b[0-9a-f]{7,12}\b/g, "<sha>")
+    // Path separators last, and on both sequences equally: on Windows the
+    // wrappers log `<root>\sweep` where the script's own literals read
+    // `<root>/sweep`, so a pattern written either way matches only on one
+    // platform. Normalizing here keeps the comparison and the patterns on one
+    // spelling instead of doubling every regex.
+    .replace(/\\/g, "/"));
 }
 
-test("F-git · SETTLEMENT_SOURCE=git issues the same commands as the train's chain", { skip: !SH_OK && "no POSIX sh" }, () => {
+test("F-git · SETTLEMENT_SOURCE=git issues the train's chain plus the ghost sweep, and nothing else", { skip: !SH_OK && "no POSIX sh" }, () => {
   const train = crossing("train", trainScript());
   const branch = crossing("branch", readFileSync(join(OFFICE, "deploy", "settlement-auto.sh"), "utf8"),
     { env: { SETTLEMENT_SOURCE: "git" } });
@@ -229,12 +245,45 @@ test("F-git · SETTLEMENT_SOURCE=git issues the same commands as the train's cha
   assert.ok(train.commands.length > 20,
     `the fixture must actually exercise the chain, not exit early; got ${train.commands.length} commands`);
 
-  assert.deepEqual(
-    normalize(branch.commands, branch.root),
-    normalize(train.commands, train.root),
-    "SETTLEMENT_SOURCE=git must issue the train's exact command sequence — that is what makes the rollback "
-    + "a flip rather than a restore, and it is the whole reason the swap can be scheduled",
-  );
+  // ── THE CLAIM CHANGED AT REPAIR 1, AND THE CHANGE IS THE POINT ─────────────
+  //
+  // Until repair 1 this asserted raw equality: the rollback issued the train's
+  // exact sequence. It cannot any more, and it MUST not — the train's git path
+  // has a defect (it deletes no local draft ref) that a rollback after a store
+  // crossing must not inherit, because that is precisely when the leftovers
+  // exist. So the rollback is now the train's chain PLUS the ghost sweep.
+  //
+  // Weakening the assertion to "roughly the same" would have been the easy move
+  // and would have retired the only instrument that watches this seam. Instead
+  // the claim is made narrower and stronger in both directions: NOTHING the
+  // train issues may go missing, and every ADDED command must belong to the
+  // ghost sweep by name. An addition this test does not recognise fails it.
+  const trainCmds = normalize(train.commands, train.root);
+  const branchCmds = normalize(branch.commands, branch.root);
+
+  const GHOST_SWEEP = [
+    /^git -C <root>\/sweep rev-parse main\^\{tree\}$/,
+    /^git -C <root>\/sweep for-each-ref --format=%\(refname:short\) refs\/heads\/draft\/\*$/,
+    /^git -C <root>\/sweep rev-parse --verify -q refs\/remotes\/origin\/draft\//,
+    /^git -C <root>\/sweep log -1 --format=%s refs\/heads\/draft\//,
+    /^git -C <root>\/sweep rev-parse refs\/heads\/draft\/.*\^\{tree\}$/,
+    /^git -C <root>\/sweep update-ref -d refs\/heads\/draft\//,
+  ];
+
+  // Multiset difference both ways, so a reordering or a dropped duplicate shows.
+  const minus = (a, b) => { const c = [...b]; return a.filter((x) => { const i = c.indexOf(x); if (i === -1) return true; c.splice(i, 1); return false; }); };
+  const missing = minus(trainCmds, branchCmds);
+  const added = minus(branchCmds, trainCmds);
+
+  assert.deepEqual(missing, [],
+    "the rollback must issue every command the train's chain issues — anything missing here is behaviour the "
+    + "rollback silently dropped, and the rollback is the hatch reached for when the store path has already gone wrong");
+
+  const unexplained = added.filter((c) => !GHOST_SWEEP.some((re) => re.test(c)));
+  assert.deepEqual(unexplained, [],
+    "every command the rollback adds must belong to the ghost sweep (repair 1). An addition this test cannot "
+    + `name is a change to the rollback nobody declared: ${JSON.stringify(unexplained)}`);
+  assert.ok(added.length > 0, "and the ghost sweep must actually run, or repair 1 is not in this tree");
 
   assert.equal(branch.receipt.status, train.receipt.status);
   assert.equal(branch.receipt.source, "git", "and it says which path it took");
@@ -291,6 +340,110 @@ test("F-store · the store path fetches no sketchbook and pushes no draft branch
   assert.equal(store.receipt.source, "store", "and the refusal says which path refused");
   assert.match(store.receipt.detail, /entry-point-absent|no-store-credential/,
     "the refusal names its own reason so the operator is not sent to the wrong repair");
+});
+
+// ── F-ghost · THE ROLLBACK'S GHOST (repair 1) ────────────────────────────────
+//
+// The reviewer's finding, and it points the dangerous way: the store path
+// deletes every draft ref before it writes; the git path deleted nothing; and
+// the sweep's `draftBranches` returns EVERY local draft ref. So a
+// `SETTLEMENT_SOURCE=git` crossing folded the sketchbooks the previous store
+// crossing left — 57 of them at S63 — under a receipt saying `source: git`. The
+// rollback is the hatch you reach for when the store path has already gone
+// wrong, which is exactly when its leftovers are worst.
+//
+// `F-git` could not see this: both its runs start from a clean clone, and its
+// perturbation control varies a command, never the starting ref state. So this
+// test varies the starting ref state and nothing else.
+
+/** Put a leftover local sketchbook in the clone before the crossing runs. */
+function plantLeftover(root, { branch, subject }) {
+  const sweep = join(root, "sweep");
+  const g = (...a) => execFileSync("git", ["-C", sweep, ...a], {
+    encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+    env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: "store", GIT_AUTHOR_EMAIL: "s@x.invalid",
+      GIT_COMMITTER_NAME: "store", GIT_COMMITTER_EMAIL: "s@x.invalid",
+      GIT_AUTHOR_DATE: "2026-09-08T00:00:00Z", GIT_COMMITTER_DATE: "2026-09-08T00:00:00Z",
+    },
+  });
+  const main = g("rev-parse", "main").trim();
+  const blob = execFileSync("git", ["-C", sweep, "hash-object", "-w", "--stdin"],
+    { input: "---\nkind: sited\nby: ghost\ndate: 2026-09-08\n---\n\na leftover\n", encoding: "utf8" }).trim();
+  const idx = join(root, `idx-${branch.replace(/\W/g, "")}`);
+  execFileSync("git", ["-C", sweep, "read-tree", main], { env: { ...process.env, GIT_INDEX_FILE: idx }, stdio: "ignore" });
+  execFileSync("git", ["-C", sweep, "update-index", "--add", "--cacheinfo", `100644,${blob},WORLD/marks/ghost/left-behind/mark.md`],
+    { env: { ...process.env, GIT_INDEX_FILE: idx }, stdio: "ignore" });
+  const tree = execFileSync("git", ["-C", sweep, "write-tree"], { env: { ...process.env, GIT_INDEX_FILE: idx }, encoding: "utf8" }).trim();
+  const c = g("commit-tree", tree, "-p", main, "-m", subject).trim();
+  g("update-ref", `refs/heads/${branch}`, c);
+  return c;
+}
+
+test("F-ghost · a rollback crossing does NOT fold the store's leftover sketchbooks", { skip: !SH_OK && "no POSIX sh" }, () => {
+  const script = readFileSync(join(OFFICE, "deploy", "settlement-auto.sh"), "utf8");
+  const run = crossing("ghost", script, {
+    env: { SETTLEMENT_SOURCE: "git" },
+    plant: (root) => plantLeftover(root, {
+      branch: "draft/ghosthousehold",
+      subject: "store write-down: 3 mark(s) — solo:ghosthousehold (window 178)",
+    }),
+  });
+
+  assert.equal(run.res.status, 0, `the crossing must complete: ${run.res.stderr}`);
+  const seen = JSON.parse(readFileSync(join(run.root, "sweep-saw.json"), "utf8"));
+  assert.ok(
+    !seen.includes("draft/ghosthousehold"),
+    `the sweep must not see the store's leftover; it saw ${JSON.stringify(seen)}`,
+  );
+  assert.equal(run.receipt.sketchbook_ghosts, 1, "and the receipt counts what it swept up");
+  assert.match(run.res.stderr, /a store crossing's leftover sketchbook/);
+});
+
+test("F-ghost-control · an UNDELIVERED first drain is kept, not swept", { skip: !SH_OK && "no POSIX sh" }, () => {
+  // The control that stops repair 1 from becoming the defect the sync loop
+  // exists to prevent. A household drained for the first time whose delivery
+  // push failed has its ONLY copy in a twin-less local ref, with its journal
+  // rows already truncated. "Delete every twin-less local" would destroy it.
+  const script = readFileSync(join(OFFICE, "deploy", "settlement-auto.sh"), "utf8");
+  const run = crossing("ghost-keep", script, {
+    env: { SETTLEMENT_SOURCE: "git" },
+    plant: (root) => plantLeftover(root, {
+      branch: "draft/firstdrain",
+      subject: "drain: 2 declared, 0 withdrawn — firstdrain (journal seq ≤ 91)",
+    }),
+  });
+
+  assert.equal(run.res.status, 0, `the crossing must complete: ${run.res.stderr}`);
+  const seen = JSON.parse(readFileSync(join(run.root, "sweep-saw.json"), "utf8"));
+  assert.ok(
+    seen.includes("draft/firstdrain"),
+    `an undelivered drain must still reach the sweep; it saw ${JSON.stringify(seen)}`,
+  );
+  assert.equal(run.receipt.sketchbook_ghosts, 0);
+  assert.equal(run.receipt.sketchbook_kept_undelivered, 1, "and the receipt says one was kept, which is its own alarm");
+  assert.match(run.res.stderr, /treating it as an undelivered drain/);
+});
+
+test("F-store-cleanup · a store crossing leaves no local draft ref behind, even when it refuses", { skip: !SH_OK && "no POSIX sh" }, () => {
+  // The other half of repair 1: the store path cleans up on the TRAP, so it runs
+  // on every exit including a refusal. The crossing whose leftovers matter most
+  // is the one that failed, because that is the one after which somebody reaches
+  // for the rollback.
+  const script = readFileSync(join(OFFICE, "deploy", "settlement-auto.sh"), "utf8");
+  const run = crossing("store-clean", script, {
+    env: { SETTLEMENT_SOURCE: "store" },
+    plant: (root) => plantLeftover(root, {
+      branch: "draft/leftover",
+      subject: "store write-down: 1 mark(s) — solo:leftover (window 177)",
+    }),
+  });
+
+  assert.equal(run.res.status, 1, "with no store entry point the crossing refuses");
+  const left = execFileSync("git", ["-C", join(run.root, "sweep"), "for-each-ref", "--format=%(refname)", "refs/heads/draft/"],
+    { encoding: "utf8" }).trim();
+  assert.equal(left, "", `a refused store crossing must still leave no draft ref; found ${JSON.stringify(left)}`);
 });
 
 test("F-mode · an unrecognised SETTLEMENT_SOURCE refuses rather than defaulting", { skip: !SH_OK && "no POSIX sh" }, () => {

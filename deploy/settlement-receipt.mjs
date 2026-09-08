@@ -109,6 +109,22 @@ const receipt = {
   // the operator reading a refusal cannot tell which path refused.
   source: env("SETTLEMENT_SOURCE_MODE") ?? "git",
 
+  // ── WHAT A ROLLBACK CROSSING SWEPT UP BEFORE IT LOOKED (repair 1) ──────────
+  //
+  // A `git` crossing after a `store` one used to fold the store's leftover local
+  // sketchbooks — 57 of them at S63 — under a receipt saying `source: git`. The
+  // git path now clears the twin-less locals it can attribute to a store
+  // crossing and KEEPS the ones it cannot, because a twin-less local is also how
+  // an undelivered first drain survives.
+  //
+  // Both numbers are here and neither is folded into the other: `ghosts` climbing
+  // means store crossings are dying before their own cleanup, and `kept` climbing
+  // means a household's first drain has been failing to deliver for days. They
+  // are different alarms and a single count would hide whichever was smaller.
+  // Null on a store crossing, where the question is not asked.
+  sketchbook_ghosts: env("SETTLEMENT_GHOSTS") === null ? null : Number(env("SETTLEMENT_GHOSTS")),
+  sketchbook_kept_undelivered: env("SETTLEMENT_KEPT_UNDELIVERED") === null ? null : Number(env("SETTLEMENT_KEPT_UNDELIVERED")),
+
   // THE `as_of` TRIPLE — the window, the world sha and the town sha the store
   // was read at. Reader 5's finding, in the keeper's own terms: without the
   // store cursor beside the three git shas he cannot tell a quiet crossing from
