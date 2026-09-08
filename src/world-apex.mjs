@@ -1476,6 +1476,98 @@ export function standingHandle(args = {}, key = null) {
   return handles.length === 1 ? handles[0] : null;
 }
 
+// ── THE GROUND, WITHIN REACH (lane-h, the-town/the-reach) ────────────────────
+//
+// "the other half of 'a dropped thing can be found'." Walk #12 set a spinning
+// top down at a child's race track and no door in the town could show it to
+// her — `read: "take"` answered the reader's own hands, `world_investigate`
+// answered the last fold 536 m away, and the focus on the ground listed no
+// holdings at all. A town that lets you set a gift down and shows it to nobody
+// is a town where a gift is a thing you lose.
+//
+// ONE READER, THREE ANSWERS PER ROW, and it says which:
+//   · where the thing actually stands (whereThingStands — holder, set-down, or
+//     the fold, each naming itself)
+//   · how far that is from you, and whether you are inside its extent
+//   · whether a take would be admitted, IN THE SAME WORDS the door will use
+//
+// The last of those is the point. A read that listed things without saying
+// which of them the door would refuse would be a second opinion about the reach
+// — and the door's is the one that binds. So the row's verdict comes from
+// `standsWithin`, the same function the door calls, and a thing somebody else
+// is holding is listed with its holder rather than silently dropped: "she is
+// holding it" is an answer, an absence is not.
+const GROUND_THINGS = `SELECT id, by, tier,
+         json_extract(props, '$.class') AS class,
+         json_extract(props, '$.body')  AS body,
+         at_x, at_y, extent_w, extent_h
+       FROM nodes
+       WHERE json_extract(props, '$.class') = 'thing'
+         AND at_x IS NOT NULL AND at_y IS NOT NULL`;
+
+export async function groundWithinReach(oriented, key = null) {
+  const here = oriented?.standpoint;
+  if (!Number.isFinite(Number(here?.x)) || !Number.isFinite(Number(here?.y)))
+    return { unavailable: "the record does not place you anywhere, so there is no ground underfoot to read — walk somewhere first" };
+  const at = { x: Number(here.x), y: Number(here.y) };
+  const store = openStore();
+  let dyn = null;
+  try {
+    if (!store?.db) return { unavailable: "the office could not read the world store — this is not an answer about what lies underfoot" };
+    const [{ readJournal }, hold, reach, { readAttachments: readAtt }] = await Promise.all([
+      import("./world-journal.mjs"), import("./world-hold.mjs"), import("./reach.mjs"),
+      import("./dynamic-entities.mjs"),
+    ]);
+    dyn = openDynamic();
+    const attachments = readAtt(dyn);
+    const journal = readJournal(dyn, { cls: "holding" });
+    const rows = store.db.prepare(GROUND_THINGS).all();
+    const marks = rows.map((r) => ({ id: r.id, at: { x: Number(r.at_x), y: Number(r.at_y) }, extent: { w: Number(r.extent_w) || 1, h: Number(r.extent_h) || 1 } }));
+    const centreOf = (id) => marks.find((m) => m.id === id)?.at ?? null;
+    // The world engine's own containment, through world.mjs's one loader — a
+    // second `pointInRect` here would be the split-brain the reach module
+    // exists to prevent, and this read must agree with the door exactly.
+    const { pointWithinMarkFn } = await import("./world.mjs");
+    const withinFn = await pointWithinMarkFn().catch(() => null);
+
+    const out = [];
+    for (const r of rows) {
+      const mark = marks.find((m) => m.id === r.id);
+      const stands = await hold.whereThingStands(r.id, {
+        attachments, journal, fold: mark.at, centreOf,
+        standpointOf: async (h) => { const s = await residentStandpoint(h).catch(() => null); return s?.placed ? { x: s.x, y: s.y } : null; },
+      });
+      if (!stands?.where) continue; // a thing whose place cannot be derived is not "underfoot"
+      // The reach is asked of the thing WHERE IT ACTUALLY STANDS, not where the
+      // fold last put it: a top set down at the track is at the track, and
+      // asking the archway's coordinates would reproduce the exact bug this
+      // read exists to end.
+      const placed = { ...mark, at: stands.where };
+      const rr = reach.standsWithin(at, placed, { pointWithinMark: withinFn });
+      if (!rr.stands) continue;
+      // The row's verdict is `groundRow`'s, in world-hold.mjs — pure, and
+      // testable against a thing 90 m away or in somebody's hands with no store
+      // anywhere near it. This function's job is finding the rows; deciding
+      // what each one says is the hold lane's, next to the door that will
+      // enforce it.
+      out.push(hold.groundRow({ id: r.id, made_by: r.by, body: r.body, stands, reach: rr }));
+    }
+    out.sort((a, b) => a.distance_m - b.distance_m);
+    const dis = reach.reachDisclosure();
+    return {
+      at, reach_m: reach.EARSHOT_M ?? null, count: out.length,
+      things: out,
+      reading_law: "Where a thing stands is derived, never stored: a held thing rides its holder, a thing set down stands where it was set down, and canon's fold is the answer only when neither speaks.",
+      ...(dis ? { disclosed: dis } : {}),
+    };
+  } catch (e) {
+    return { unavailable: `the ground could not be read (${String(e?.message ?? e).slice(0, 120)}) — this is not an answer about what lies underfoot` };
+  } finally {
+    try { dyn?.close(); } catch { /* a reader that cannot close still read */ }
+    try { store?.db?.close(); } catch { /* same */ }
+  }
+}
+
 /**
  * What this caller is carrying, from the attachments table and nowhere else.
  *
@@ -1697,7 +1789,10 @@ async function frameBlock(oriented, key) {
 }
 
 /** The three shelves. Complete for you, capped around you, pointers for the town. */
-async function happenedFor(oriented, args, key) {
+// Exported for the same reason `readDomainFor` is, and with the same caveat:
+// the `since:` shelf's join is only watched by a check that reads the block
+// this returns, not by one that reads the source line that builds it.
+export async function happenedFor(oriented, args, key) {
   if (!movementV2Enabled()) return null;
   const since = Number(args.since);
   if (!Number.isFinite(since)) return null;
@@ -1750,6 +1845,20 @@ async function happenedFor(oriented, args, key) {
       });
     }
 
+    // ── THE HOLD EFFECTS (lane-h, walk #11 item 1) ──────────────────────────
+    //
+    // A give/take/drop on a thing of yours, or by your hand, is an effect on
+    // your node. Read from the office's own journal, which carries these acts
+    // under both pens (the mirror writes them unflipped, the reverse-mirror
+    // writes them flipped) — so this shelf reads ONE place whichever pen is
+    // live. Keyless reads get nothing rather than an error: there is no
+    // resident whose hands could have changed.
+    let holdEffects = null;
+    if (who) {
+      const { readHoldEffects } = await import("./world-hold.mjs");
+      holdEffects = await readHoldEffects({ handles: [...(key?.handles ?? [who])], sinceCrossing: since, nowCrossing });
+    }
+
     // R2: the crossing's own published/refused list, as the town's news.
     let headlines = null;
     try {
@@ -1758,7 +1867,7 @@ async function happenedFor(oriented, args, key) {
     } catch { headlines = null; }
 
     const block = happenedBlock({
-      transitions, carriedLegs, claimEffects, lines, at,
+      transitions, carriedLegs, claimEffects, holdEffects, lines, at,
       sinceCrossing: since, nowCrossing,
       latestSettlement: latestSettlement(WORLD_CLONE),
       notices: activeNotices(),
@@ -2378,7 +2487,15 @@ async function apexDo(args, key, ctx = {}) {
 
 /** One action's domain, read. Fields are whitelisted per action — a read
  *  passes through only what the shadow's own tool takes, never the act's. */
-async function readDomainFor(action, fields, key, oriented, ctx = {}) {
+// ⛔ EXPORTED SO A WIRING PROBE CAN DRIVE IT (lane-h, the reviewer's owed lap).
+// A source-text detector over the call expression cannot tell "called" from
+// "called and thrown away": the reviewer kept the call and discarded its answer
+// — `ground: ((await groundWithinReach(oriented, key)), null)` — and every
+// probe stayed green while the take read answered `ground: null`. The only
+// check that sees that is one which reads what this function RETURNS, so this
+// seam is reachable. It takes no key it did not already take and performs
+// nothing; a read never does.
+export async function readDomainFor(action, fields, key, oriented, ctx = {}) {
   const call = async (tool, send) => {
     try {
       // ctx carries town-side facts the world tools cannot fetch themselves —
@@ -2427,9 +2544,21 @@ async function readDomainFor(action, fields, key, oriented, ctx = {}) {
       return fields?.mark
         ? { stakes: await call("world_stake_read", { mark: fields.mark }) }
         : { stakes: { unavailable: `name a mark — read: "${action}", args: { mark: "<by>/<slug>" } — and the escrow behind it answers` } };
+    // ── THE GROUND READ (lane-h, the-town/the-reach) ──────────────────────────
+    //
+    // Walk #12 item 2: "the town lets me pick up things from the ground and
+    // will not show me the ground." `read: "take"` answered `holdings: []` —
+    // the caller's own hands — which is the one place a thing they can take is
+    // guaranteed NOT to be. The other half of "a dropped thing can be found".
+    //
+    // give/drop KEEP their holdings answer, and that is not an oversight: those
+    // two verbs act on what you hold, so your hands ARE their domain. `take`
+    // acts on what stands within reach, so reach is its domain. One shadow per
+    // verb, each showing the set that verb can act on.
+    case "take":
+      return { holdings: await call("world_holdings", {}), ground: await groundWithinReach(oriented, key) };
     case "give":
     case "drop":
-    case "take":
       return { holdings: await call("world_holdings", {}) };
     case "note-to-self":
       return { note: oriented.note ?? null };

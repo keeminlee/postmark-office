@@ -1392,7 +1392,8 @@ test("...and the HOLD DOOR itself refuses it — the guard is wired, not merely 
   // real door is driven, against a real world store on disk, with the same
   // marks the fixture carries.
   const dir = mkdtempSync(join(tmpdir(), "bde-hold-"));
-  const prev = { store: process.env.WORLD_STORE_DB, dyn: process.env.WORLD_DYNAMIC_DB, log: process.env.WORLD_SINGLE_LOG };
+  const prev = { store: process.env.WORLD_STORE_DB, dyn: process.env.WORLD_DYNAMIC_DB, log: process.env.WORLD_SINGLE_LOG,
+                 mv2: process.env.WORLD_MOVEMENT_V2 };
   const storePath = join(dir, "world.db");
   try {
     // the same bottle, written to disk where `storeDbPath()` will find it
@@ -1409,9 +1410,34 @@ test("...and the HOLD DOOR itself refuses it — the guard is wired, not merely 
     process.env.WORLD_STORE_DB = storePath;
     process.env.WORLD_DYNAMIC_DB = join(dir, "dynamic.db");
     process.env.WORLD_SINGLE_LOG = "1";
+    // Dev's own condition, and the one a placed hand needs: with movement-v2
+    // off, `departuresAcrossEras` reads the frozen ledger ALONE and a position
+    // written to the store is invisible (src/world.mjs § departuresAcrossEras).
+    // Dev has run this flag since movement-v2 shipped; the office comment at
+    // world.mjs § THE WALK GAP says so in as many words.
+    process.env.WORLD_MOVEMENT_V2 = "1";
 
     const { callHoldTool } = await import("../src/world-hold.mjs");
     const key = { handles: new Set(["darko"]) };
+
+    // ⛔ DARKO HAS TO BE STANDING IN THE ROOM, and until 2026-09-07 he did not
+    // have to be. `the-town/the-reach` (world #21, founder-ruled) makes a take a
+    // threshold act, and without this placement this test drove the door from
+    // darko's HOME — 6,466 m from the vault — and took the vault's loot from
+    // there. The take succeeded, which is what this test was proving, and it
+    // should not have: a hand who has not entered the room is not in the fight.
+    // The placement is the one `spawnOnEnter` writes for a real entrant, in the
+    // same words: a zero-length departure to where the ground sets them down.
+    {
+      const { openDynamic } = await import("../src/dynamic-store.mjs");
+      const { declareMovement } = await import("../src/dynamic-entities.mjs");
+      const dyn = openDynamic();
+      try {
+        const spot = { x: 1082, y: -792.4 }; // the vault floor, beside the loot
+        declareMovement(dyn, { actor: "darko", from: spot, toward: spot, crossing: 0,
+          within: null, toMark: VAULT, declaredBy: "darko", pace: 0 });
+      } finally { dyn.close(); }
+    }
 
     const refused = await callHoldTool("world_hold", { thing: WICK }, key).then(() => null, (e) => e);
     assert.ok(refused, "the hold door took the wick end while the cake was still standing — the guard is written but not wired");
@@ -1452,7 +1478,7 @@ test("...and the HOLD DOOR itself refuses it — the guard is wired, not merely 
           `the floor row for ${row.thing} carries no position — an injected entry with no \`at\` cannot be drawn`);
     } finally { try { store.db?.close(); } catch { /* already gone */ } }
   } finally {
-    for (const [k, v] of [["WORLD_STORE_DB", prev.store], ["WORLD_DYNAMIC_DB", prev.dyn], ["WORLD_SINGLE_LOG", prev.log]])
+    for (const [k, v] of [["WORLD_STORE_DB", prev.store], ["WORLD_DYNAMIC_DB", prev.dyn], ["WORLD_SINGLE_LOG", prev.log], ["WORLD_MOVEMENT_V2", prev.mv2]])
       if (v === undefined) delete process.env[k]; else process.env[k] = v;
     try { rmSync(dir, { recursive: true, force: true }); } catch { /* windows holds it a beat */ }
   }
