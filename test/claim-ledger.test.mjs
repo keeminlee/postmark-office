@@ -205,28 +205,29 @@ test("A LAPSED ASK DOES NOT BRICK THE HANDLE, and no refusal leaks the office's 
   const again = await ask(LAPSER);
   assert.equal(again.status, 201, "the handle is free again, with no oauth request needed to unstick it");
   const body = await again.json();
+
+  // THE SWEEP IS ASSERTED HERE, on the desk's own call, and NOT later in the
+  // file. That ordering is the whole point: sweep() also runs inside every
+  // /oauth/* route, so an assertion placed after the co-sign check below would
+  // pass whether or not the DESK ever swept — cleared by an unrelated request,
+  // which is the reviewer's repair-1 root cause reappearing inside my own test.
+  // An instrument placed one call too late measures the wrong sweep.
+  {
+    const check = new DatabaseSync(OAUTH_DB.path);
+    try {
+      const lapsed = check.prepare(
+        "SELECT COUNT(*) AS n FROM key_claims WHERE expires < ? AND cosigned_gh_id IS NULL"
+      ).get(Math.floor(Date.now() / 1000));
+      assert.equal(lapsed.n, 0,
+        "the lapsed row is deleted by the desk itself, not merely ignored — hygiene with no reader is a table that only grows");
+    } finally { check.close(); }
+  }
   assert.notEqual(askOf(body), firstAsk, "a fresh ask, not the lapsed one revived");
   assert.ok(!JSON.stringify(body).toLowerCase().includes("constraint"), "no internal text anywhere in the answer");
 
   // and the lapsed link is dead rather than merely superseded
   assert.equal((await fetch(`${BASE}/oauth/claim-cosign?ask=${encodeURIComponent(firstAsk)}`, { redirect: "manual" })).status, 404,
     "the lapsed ask's own link names nothing");
-});
-
-test("THE SWEEP ACTUALLY SWEEPS: a lapsed row is deleted, not merely ignored", () => {
-  // The flip run removed sweepClaims from the desk and every test stayed green,
-  // which is TRUE and is also a finding. Since the ask's hash became the primary
-  // key, a stale row can no longer collide with anything — so the sweep stopped
-  // being correctness and became hygiene, and hygiene with no reader is a table
-  // that only grows. This is the reader.
-  const odb = new DatabaseSync(OAUTH_DB.path);
-  try {
-    const lapsed = odb.prepare(
-      "SELECT COUNT(*) AS n FROM key_claims WHERE expires < ? AND cosigned_gh_id IS NULL"
-    ).get(Math.floor(Date.now() / 1000));
-    assert.equal(lapsed.n, 0,
-      "the lapsed ask the test above expired is gone from the table, cleared by the desk's own sweep on the next ask");
-  } finally { odb.close(); }
 });
 
 // LAST IN THE FILE ON PURPOSE: it breaks the office's ask table to reach a code
