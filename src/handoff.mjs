@@ -68,6 +68,7 @@ import { currentCrossing } from "./crossings.mjs";
 import { openDynamic, singleLogEnabled } from "./dynamic-store.mjs";
 import { worldFreezeBounce } from "./freeze.mjs";
 import { humanHandFor } from "./households.mjs";
+import * as journalMod from "./world-journal.mjs";
 import { appendActFlipped, appendJournal, laneFlipped } from "./world-journal.mjs";
 import { resolvedWorldHousehold } from "./world-branches.mjs";
 
@@ -156,6 +157,13 @@ export function liveHandoffs(rows = [], now = Date.now()) {
     const ttlMin = Number(p.ttl_min);
     if (!Number.isFinite(ttlMin) || ttlMin <= 0) continue;
     const from = ms(row.at);
+    // ⛔ A ROW WHOSE INSTANT CANNOT BE READ IS SKIPPED, NOT THROWN ON. Found by
+    // this lane's own journal-arm test: an unmapped journal row's `at` is the
+    // WITNESSED LINE (an object), `ms()` of it is NaN, and `iso(NaN)` throws
+    // `RangeError: Invalid time value` — from inside the projection, which
+    // means ONE torn row would take down every seat read in the office rather
+    // than costing one seat. A projection over a log has to survive its log.
+    if (!Number.isFinite(from)) continue;
     byActor.set(actor, {
       resident: actor,
       household: row.household ?? null,
@@ -216,7 +224,21 @@ export async function handoffRowsFor(key, { handle = null, read = null, env = pr
   if (!list.length) return null;
   let world2Enabled = null;
   try { ({ world2Enabled } = await import("./world2-acts.mjs")); } catch { return null; }
-  if (!world2Enabled(env)) return null;
+  // ⛔ THE JOURNAL ARM EXISTS BECAUSE THE SEAT WOULD OTHERWISE BE A NO-OP, AND
+  // A SILENT ONE. This lane's flip run found that the only reader here was
+  // Postgres, so at an office not pointed at it the door would accept
+  // `hand-to-human`, write the row to the journal, and then answer — through
+  // this same function, on the next breath — that no seat stands. A resident
+  // would have handed their human a chair that was not there, and nothing
+  // anywhere would have said so.
+  //
+  // That is not the subscription's shape one door over, and the difference is
+  // why this arm was written rather than a disclosure copied: an unreadable
+  // subscription projection means "the town will not wake you", which the
+  // shadow says out loud; an unreadable handoff projection means "the seat you
+  // declared does nothing", which nothing was saying. A value written that
+  // nothing reads is the quiet-failure class, and this one was mine.
+  if (!world2Enabled(env)) return journalHandoffRows(list);
   const household = resolvedWorldHousehold(key) ?? null;
   if (household == null) return null;
   try {
@@ -231,6 +253,29 @@ export async function handoffRowsFor(key, { handle = null, read = null, env = pr
       return rows;
     });
   } catch { return null; }
+}
+
+/**
+ * The same rows out of the journal, for an office with no Postgres.
+ *
+ * The journal has no household column policy and no `ANY($n)` — it is a local
+ * sqlite file this office alone writes — so the scope is applied in JS against
+ * the key's own handles, which is the same second assertion the SQL makes and
+ * the only one available here. `journalRowAsAct` is what makes the projection
+ * able to read these at all: a journal row's instant is `written_at` and its
+ * `at` is the witnessed line.
+ */
+function journalHandoffRows(handles) {
+  const mine = new Set(handles.map(String));
+  let db = null;
+  try {
+    db = openDynamic();
+    const { readJournal, journalRowAsAct } = journalMod;
+    return readJournal(db, { cls: CLASS_HANDOFF })
+      .filter((r) => mine.has(String(r.actor)))
+      .map(journalRowAsAct);
+  } catch { return null; }
+  finally { try { db?.close(); } catch { /* already gone */ } }
 }
 
 /** ONE READER, TWO CALLERS — the seat and the shadow read the same rows through the same query. */

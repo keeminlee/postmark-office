@@ -108,7 +108,7 @@ import { humanHandFor } from "./households.mjs";
 import {
   classOfInstance, entriesOfClass, guardsPass, heldEntries, kindOf, resolveGrants, resolveForActor,
 } from "./world-grants.mjs";
-import { exitAllowed, walkAllowed } from "./embodiment.mjs";
+import { exitAllowed, fenceGroundFor, walkAllowed } from "./embodiment.mjs";
 // THE ARENA'S DOOR. `src/encounter.mjs` has held the wheel, the witnessed roll
 // and the NPC driver since 2026-08-26 and was imported by nothing in `src/` —
 // law with no door behind it, which is precisely the 501 the dispatch miss
@@ -786,7 +786,18 @@ export function handoffDials() {
 async function gatherRows() {
   try {
     const { world2Enabled } = await import("./world2-acts.mjs");
-    if (!world2Enabled()) return null;
+    // THE JOURNAL ARM, for the handoff door's reason one file over: an office
+    // not pointed at Postgres writes `gather` to the journal, and a projection
+    // that only ever read `acts` would answer that nothing was ever declared.
+    // A gathering is an INVITATION — the one act in this pair whose whole point
+    // is that other people can read it — so a town that could not read back its
+    // own invitations would be the quietest failure of the two.
+    if (!world2Enabled()) {
+      const { readJournal, journalRowAsAct } = await import("./world-journal.mjs");
+      const db = openDynamic();
+      try { return readJournal(db, { cls: "gathering" }).map(journalRowAsAct); }
+      finally { try { db.close(); } catch { /* already gone */ } }
+    }
     const { officeRead } = await import("./world2-pen.mjs");
     return await officeRead(async (client) => {
       const { rows } = await client.query(
@@ -2403,9 +2414,11 @@ async function apexDo(args, key, ctx = {}) {
       // This is not a hole. The walk fence exists because an EMBODIED human's
       // feet are a ground's loan and end at its edge; a handoff's feet are the
       // resident's own, and the resident may walk anywhere a resident may.
-      const fenceGround = kind === "human"
-        ? (handoffSeat ? null : (seatedAt ?? match.ground))
-        : match.ground;
+      // ⛔ AND THE DECISION ITSELF LIVES IN embodiment.mjs, not here. It was a
+      // ternary on this line, and this lane's flip run proved nothing watched
+      // it: deleting the handoff arm reddened zero tests. Beside the two rules
+      // it chooses between, it is a function a test can reach.
+      const fenceGround = fenceGroundFor({ kind, handoff: handoffSeat, seated: seatedAt, matchGround: match.ground });
       if (kind === "human" && fenceGround) {
         const groundRow = store.db.prepare("SELECT id, at_x, at_y, extent_w, extent_h FROM nodes WHERE id = ?").get(fenceGround);
         if (action === "exit") {

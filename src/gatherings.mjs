@@ -259,6 +259,11 @@ export function gatheringsFrom(rows = [], now = Date.now()) {
     const face = String(p.face ?? "declare");
     const actor = String(row?.actor ?? "");
     if (!actor) continue;
+    // ⛔ A ROW WHOSE INSTANT CANNOT BE READ IS SKIPPED, NOT THROWN ON — the
+    // handoff projection's own note, and the same crash: `iso(NaN)` throws from
+    // inside the fold, so one torn row would take down every gathering read in
+    // the town rather than costing one gathering.
+    if (!Number.isFinite(ms(row?.at))) continue;
 
     const prior = byId.get(id) ?? null;
 

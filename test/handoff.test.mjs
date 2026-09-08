@@ -18,7 +18,8 @@ import {
   capsFrom, handoffFor, handoffReadNeverPerforms, liveHandoffs, readDeclaration, seatFromHandoff,
 } from "../src/handoff.mjs";
 import { resolveForActor, resolveGrants } from "../src/world-grants.mjs";
-import { exitAllowed } from "../src/embodiment.mjs";
+import { exitAllowed, fenceGroundFor } from "../src/embodiment.mjs";
+import { journalRowAsAct } from "../src/world-journal.mjs";
 
 const T = (s) => new Date(s).toISOString();
 const at = (s) => Date.parse(s);
@@ -66,14 +67,24 @@ test("a handoff stands for its ttl and then simply stops — nothing runs to end
 });
 
 test("A SECOND DECLARATION SUPERSEDES THE FIRST — one seat per resident, latest wins", () => {
+  // ⛔ THE INSTANT IS THE WHOLE TEST, and the first version of it could not
+  // fail. It read the pair at 21:30, by which time the FIRST seat had expired
+  // on its own — so "one live seat" was true whether or not supersession
+  // happened, and the flip that gave each row its own key stayed green. Read at
+  // 20:40 BOTH would still stand if nothing superseded, which is the one moment
+  // that can carry the claim. The habit: ask which input makes the guarded line
+  // decide, not which input makes the sentence true.
   const rows = [
-    row(),
-    row({ id: 2, at: T("2026-09-08T20:30:00.000Z"), payload: { ttl_min: 240, human: "human-of-wright" } }),
+    row(),                                                                                     // 20:00 + 60 min -> 21:00
+    row({ id: 2, at: T("2026-09-08T20:30:00.000Z"), payload: { ttl_min: 240, human: "human-of-wright" } }), // 20:30 + 240 -> 00:30
   ];
-  const live = liveHandoffs(rows, at("2026-09-08T21:30:00.000Z"));
-  assert.equal(live.length, 1, "two live seats for one hand would leave the record unable to say which one an act was written through");
-  assert.equal(live[0].ttl_min, 240);
-  assert.equal(live[0].expires_at, T("2026-09-09T00:30:00.000Z"));
+  const both = liveHandoffs(rows, at("2026-09-08T20:40:00.000Z"));
+  assert.equal(both.length, 1,
+    "at 20:40 the first seat has NOT expired — so a second live row here would be supersession failing, and two live seats for one hand leave the record unable to say which one an act was written through");
+  assert.equal(both[0].ttl_min, 240);
+  assert.equal(both[0].expires_at, T("2026-09-09T00:30:00.000Z"));
+  assert.equal(liveHandoffs(rows, at("2026-09-08T21:30:00.000Z")).length, 1,
+    "and later, when the first would have lapsed anyway, the survivor is still the second");
 });
 
 test("a withdraw ends it early, and takes effect at the next read with nothing to delete", () => {
@@ -172,6 +183,21 @@ test("A RESIDENT IS NEVER SEATED, and passing a handoff does not make them so", 
   assert.equal(r.handoff, null, "asking a resident whether they are seated is asking whether they may be themselves");
 });
 
+test("THE WIRING, not the law: WHICH GROUND FENCES THIS ACTOR, asked as its own question", () => {
+  const seat = seatFromHandoff(liveHandoffs([row()], at("2026-09-08T20:30:00.000Z"))[0]);
+  // A HANDOFF SEAT IS FENCED BY NOTHING — the apex's fence block is guarded on
+  // this answer, so `null` is what skips it whole.
+  assert.equal(fenceGroundFor({ kind: "human", handoff: seat, seated: null, matchGround: "the-town/the-quay-reach" }), null);
+  assert.equal(fenceGroundFor({ kind: "human", handoff: seat, seated: "wright/the-terrace", matchGround: "the-town/the-quay-reach" }), null,
+    "and a handoff seat outranks a ground seat for this question: a resident's own stride is not fenced because they also stand on their own parcel");
+  // AN EMBODIED HUMAN IS STILL FENCED, by the SEATING ground where there is
+  // one — the 2026-08-29 correction, untouched.
+  assert.equal(fenceGroundFor({ kind: "human", handoff: null, seated: "wright/the-terrace", matchGround: "the-town/the-quay-reach" }), "wright/the-terrace");
+  assert.equal(fenceGroundFor({ kind: "human", handoff: null, seated: null, matchGround: "the-town/the-quay-reach" }), "the-town/the-quay-reach");
+  // A RESIDENT IS FENCED BY THE GRANT'S OWN GROUND AND NOTHING ELSE.
+  assert.equal(fenceGroundFor({ kind: "resident", handoff: seat, seated: "wright/the-terrace", matchGround: "the-town/the-quay-reach" }), "the-town/the-quay-reach");
+});
+
 test("THE SEAT IS FENCELESS: leaving is never the thing a seated hand may not do", () => {
   // `exitAllowed` returns ok for ANY truthy seat, which is the behaviour a
   // fenceless seat needs and which was written for the ground seat's own
@@ -233,4 +259,45 @@ test("the calculus without the seat is BYTE-IDENTICAL to what it was — nothing
   const after = resolveForActor(AMBIENT, { kind: "human", spineIds: [] });
   assert.deepEqual(after.entries, before.entries);
   assert.deepEqual(after.refused, before.refused);
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// THE JOURNAL ARM — the seat must not be a no-op at an office with no Postgres
+// ═════════════════════════════════════════════════════════════════════════════
+
+test("A JOURNAL ROW IS UNREADABLE BY THIS PROJECTION UNTIL IT IS MAPPED — the defect, reproduced", () => {
+  // The journal's instant is `written_at`; its `at` is the WITNESSED LINE, an
+  // anchor-and-offset object. Handed straight to the projection, every instant
+  // is NaN and the live set is empty — which looks exactly like "no seat
+  // stands". This asserts the failure the mapper exists to prevent, so that
+  // deleting the mapper cannot pass as a refactor.
+  const raw = {
+    seq: 7, actor: "wright", action: ACTION_HAND_TO_HUMAN, class: CLASS_HANDOFF,
+    at: { anchor: "the-town/the-quay-reach", dx: 3, dy: -1 },
+    written_at: DECLARED, payload: { ttl_min: 60, human: "human-of-wright" }, household: "wright",
+  };
+  // It answers an EMPTY SET rather than throwing, and that guard is itself a
+  // repair this test forced: unguarded, `iso(NaN)` threw `RangeError: Invalid
+  // time value` from inside the projection, so ONE torn row would have taken
+  // down every seat read in the office instead of costing one seat.
+  assert.equal(liveHandoffs([raw], at("2026-09-08T20:30:00.000Z")).length, 0,
+    "unmapped, the row reads as no seat at all — the silent no-op this arm was written for");
+  const mapped = journalRowAsAct(raw);
+  const live = liveHandoffs([mapped], at("2026-09-08T20:30:00.000Z"));
+  assert.equal(live.length, 1, "mapped, the same row is the seat the resident declared");
+  assert.equal(live[0].expires_at, T("2026-09-08T21:00:00.000Z"));
+  assert.equal(live[0].seq, 7, "and the journal's seq is the id the projection orders by");
+});
+
+test("the mapper carries the witnessed line across, because the receipt derivation reads it", () => {
+  const mapped = journalRowAsAct({
+    seq: 1, actor: "wright", action: "say", class: "voice", written_at: DECLARED,
+    at: { anchor: "the-town/the-quay-reach", dx: 12, dy: -4 },
+    witnesses: { source: "presence", list: [{ handle: "amber" }] }, payload: { text: "x" },
+  });
+  assert.equal(mapped.at_dx, 12);
+  assert.equal(mapped.at_dy, -4);
+  assert.equal(mapped.at_anchor, "the-town/the-quay-reach");
+  assert.deepEqual(mapped.witnesses.list, [{ handle: "amber" }],
+    "the gathering's receipt counts who stood in earshot off these, so dropping them here would empty every journal-side receipt");
 });

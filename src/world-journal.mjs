@@ -713,6 +713,38 @@ export function readJournal(db, { household = null, cls = null, sinceSeq = 0, li
   return db.prepare(sql).all(...args).map(hydrateRow);
 }
 
+/**
+ * A journal row in the `acts` row shape a projection reads — THE ONE PLACE THE
+ * TWO STORES' COLUMN NAMES MEET.
+ *
+ * `emissionToVoice`'s discipline (src/dynamic-emissions.mjs), and it exists for
+ * a defect a flip run found rather than for tidiness. A class-lane projection
+ * — `liveSubscriptions`, `liveHandoffs`, `gatheringsFrom` — is pure over rows
+ * whose instant is `at` and whose id is `id`, which is Postgres' `acts`. A
+ * journal row's instant is `written_at` and its `at` is the WITNESSED LINE, an
+ * anchor-and-offset object. Handing a journal row straight to one of those
+ * projections yields `NaN` for every instant and an empty live set — silently,
+ * because an empty projection is exactly what "nothing stands" looks like.
+ *
+ * So an office not pointed at Postgres would accept a declaration at the door
+ * and then answer that nothing was ever declared. This is the mapping that
+ * stops it, and it is one function so the two shapes cannot come apart.
+ */
+export const journalRowAsAct = (r) => ({
+  id: r.seq,
+  at: r.written_at,
+  actor: r.actor,
+  action: r.action,
+  object: r.object ?? null,
+  class: r.class,
+  payload: r.payload,
+  household: r.household ?? null,
+  at_anchor: r.at?.anchor ?? null,
+  at_dx: r.at?.dx ?? null,
+  at_dy: r.at?.dy ?? null,
+  witnesses: r.witnesses ?? null,
+});
+
 /** One stored row, in the vocabulary the ruling used. Exported so a test can hydrate a row it built by hand. */
 export function hydrateRow(r) {
   return {
