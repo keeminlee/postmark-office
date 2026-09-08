@@ -378,3 +378,56 @@ test("latest-wins is untouched by this lane — the reach gates the act, it does
   assert.equal(liveHolder(rows, id), null);
   assert.equal(liveHolder(rows.slice(0, 2), id), "beta");
 });
+
+// ── THE WIRING, WHICH IS A DIFFERENT TEST FROM THE ADJUDICATION ─────────────
+//
+// Every test above drives the adjudicators directly, and every one of them
+// would go on passing if the DOOR stopped calling them. That is the shape a
+// lane learned the hard way on 2026-09-07 (lane-c, three review returns): a
+// flip asks "is the line I chose to break watched?", and the sharper question
+// is "what could I delete and stay green?" — the answer here was "both call
+// sites in `callHoldTool`".
+//
+// So these drive the real door, on a real (temporary) dynamic store, and they
+// red if the wiring goes rather than the law.
+
+test("THE DOOR REFUSES A `to:` ON AN UNHELD THING — walk #10 item 2, end to end", async () => {
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = mkdtempSync(join(tmpdir(), "hold-wiring-"));
+  const prior = process.env.WORLD_DYNAMIC_DB;
+  process.env.WORLD_DYNAMIC_DB = join(dir, "dynamic.db");
+  try {
+    const { callHoldTool } = await import("../src/world-hold.mjs");
+    const key = { handles: new Set(["wright"]) };
+    const e = await callHoldTool("world_hold", { thing: "wright/a-try-square-for-the-joinery", to: "ethan-thorne" }, key)
+      .then((r) => ({ answered: r }), (err) => err);
+    assert.ok(e?.code === 409, `the door answered ${JSON.stringify(e?.answered ?? e?.defect)} — a give of an unheld thing must not reach the record`);
+    assert.match(e.defect, /you are not holding/);
+    assert.notEqual(e.answered?.did, "take", "and it must never be performed as a take instead");
+  } finally {
+    if (prior === undefined) delete process.env.WORLD_DYNAMIC_DB; else process.env.WORLD_DYNAMIC_DB = prior;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("THE DOOR REFUSES A TAKE OF WHAT CANON DOES NOT HOLD — walk #10 item 4, end to end", async () => {
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = mkdtempSync(join(tmpdir(), "hold-wiring-canon-"));
+  const prior = process.env.WORLD_DYNAMIC_DB;
+  process.env.WORLD_DYNAMIC_DB = join(dir, "dynamic.db");
+  try {
+    const { callHoldTool } = await import("../src/world-hold.mjs");
+    const key = { handles: new Set(["ethan-thorne"]) };
+    const e = await callHoldTool("world_hold", { thing: "wright/a-try-square-for-the-joinery" }, key)
+      .then((r) => ({ answered: r }), (err) => err);
+    assert.ok(e?.code === 409, `the door answered ${JSON.stringify(e?.answered ?? e?.defect)} — a private draft must not change hands`);
+    assert.match(e.defect, /does not stand on the world/);
+  } finally {
+    if (prior === undefined) delete process.env.WORLD_DYNAMIC_DB; else process.env.WORLD_DYNAMIC_DB = prior;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
