@@ -376,9 +376,20 @@ fi
 # 05:45Z with nobody watching.
 STORE_JSON=""
 if [ "$SOURCE" = "store" ]; then
+  # ── THE ORDERING: THE FOLD READS AFTER THE CLEARING'S INGEST ────────────────
+  #
+  # Lane 2's stakes come from `escrow_projection`, written by `stamp-ingest.mjs`
+  # inside the clearing's own transaction (`world2/tools/clearing-job.mjs:60`
+  # shells to it as the census first step). So the store's escrow is as-of the
+  # sha the CLEARING ingested, and this crossing must read after that, not beside
+  # it. `$TOWN_SHA` is passed as the INPUT TO A CHECK, not as the sha folded at:
+  # the store answers at its own ingested head, and `fold-input-cli.mjs` refuses
+  # if that head is not in this town's history and NAMES the distance when it is
+  # merely behind. An ingest that has stopped running is otherwise
+  # indistinguishable from a quiet town.
   FOLD_INPUT="$WORK/fold-input.json"
-  if ! (cd "$OFFICE" && node "$OFFICE/world2/tools/fold-input.mjs" \
-        --town-sha "$TOWN_SHA" --world-sha "$WORLD_FROM") > "$FOLD_INPUT" 2>"$WORK/fold.err"; then
+  if ! (cd "$OFFICE" && node "$OFFICE/world2/tools/fold-input-cli.mjs" \
+        --world-sha "$WORLD_FROM" --town-clone "$TOWN" --town-sha "$TOWN_SHA") > "$FOLD_INPUT" 2>"$WORK/fold.err"; then
     report refused "the store could not answer this crossing: $(node -e 'const r=require(process.argv[1]);process.stdout.write(String(r.refused||"unknown")+" — "+String(r.detail||""))' "$FOLD_INPUT" 2>/dev/null || head -c 200 "$WORK/fold.err" | tr '\n"' ' .')"
     echo "[settlement-auto] STORE REFUSED — publishing nothing" >&2
     cat "$FOLD_INPUT" >&2 2>/dev/null || true; cat "$WORK/fold.err" >&2
@@ -398,7 +409,14 @@ if [ "$SOURCE" = "store" ]; then
     cat "$STORE_JSON" >&2 2>/dev/null || true; cat "$WORK/store.err" >&2
     exit 1
   fi
-  echo "[settlement-auto] store: $(node -e 'const r=require(process.argv[1]);const a=r.as_of||{};process.stdout.write(String(r.marks||0)+" mark(s) into "+String((r.households||[]).length)+" sketchbook(s) at window "+String(a.window)+"; cleared "+String((r.sketchbooks_cleared||{}).removed_remote||0)+" origin + "+String((r.sketchbooks_cleared||{}).removed_local||0)+" local git-era draft ref(s); entry "+String((r.entry||{}).module||"unnamed"))' "$STORE_JSON")" >&2
+  echo "[settlement-auto] store: $(node -e 'const r=require(process.argv[1]);const a=r.as_of||{};const g=r.ingest||{};process.stdout.write(String(r.written||0)+" of "+String(r.marks||0)+" mark(s) written into "+String((r.households||[]).length)+" sketchbook(s) at window "+String(a.window)+" ("+String(r.unchanged_skipped||0)+" unchanged, not re-materialized); escrow ingested at town "+String(g.storeSha||"?").slice(0,9)+" ("+String(g.reason||"?")+(Number.isFinite(g.behind)?", behind "+g.behind:"")+"); cleared "+String((r.sketchbooks_cleared||{}).removed_remote||0)+" origin + "+String((r.sketchbooks_cleared||{}).removed_local||0)+" local git-era draft ref(s)")' "$STORE_JSON")" >&2
+  # THE INGEST DISTANCE, SHOUTED WHEN IT IS NOT ZERO. The crossing is lawful and
+  # publishes: its escrow is honestly as-of the ingested sha. But an ingest that
+  # quietly stopped is the starving-crossing shape one layer up, and a receipt
+  # nobody reads until the round is twelve hours away.
+  if [ "$(node -e 'const r=require(process.argv[1]);const g=r.ingest||{};process.stdout.write(String(Number(g.behind||0) > 0))' "$STORE_JSON" 2>/dev/null)" = "true" ]; then
+    echo "[settlement-auto] ESCROW INGEST IS BEHIND THE TOWN by $(node -e 'const r=require(process.argv[1]);process.stdout.write(String((r.ingest||{}).behind))' "$STORE_JSON") commit(s) — this crossing's stakes are as-of the ingested sha, which is lawful; a distance that GROWS across crossings is an ingest that has stopped" >&2
+  fi
   # A REHEARSAL SHOUTS. It is already on the receipt and in the history file; this
   # is the line the operator watching the run sees, and it is deliberately not
   # conditional on a quiet flag — the one time this matters is the time somebody

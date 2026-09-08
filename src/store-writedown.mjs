@@ -131,7 +131,19 @@ export const FOLD_INPUT_CONTRACT = Object.freeze({
  * the two eras' serializations can be caught disagreeing about one mark.
  */
 export function normalizeMark(m) {
-  const id = m?.id ?? (m?.by && m?.slug ? `${m.by}/${m.slug}` : null);
+  // ── LANE 2's SHAPE, NOW CONFIRMED AND CITED ────────────────────────────────
+  //
+  // `world2/tools/fold-input.mjs § foldInputFromStore` (lane 2, `a5ccd224`)
+  // returns each mark as `{ slug, kind, by, household, locked_window, bytes }`.
+  //
+  // `slug` IS THE FULL IDENTITY, not a leaf. The store's own column comment says
+  // so — `world2/schema/001_tables.sql:102`: *"slug text NOT NULL UNIQUE —
+  // <owner>/<name>, the 1.0 path identity"* — and taking it for a leaf would file
+  // every mark one directory too deep, silently, since the path would still
+  // parse. The `id`/`by`+`slug` form below is the older shape this accepted
+  // while lane 2 was unpushed; it is kept because `writeDownHousehold` speaks the
+  // leaf form and the drain's callers still use it.
+  const id = m?.slug ?? m?.id ?? (m?.by && m?.leaf ? `${m.by}/${m.leaf}` : null);
   if (!id) {
     throw new FoldInputRefusal(
       "mark-without-id",
@@ -139,7 +151,9 @@ export function normalizeMark(m) {
     );
   }
   const by = m.by ?? String(id).split("/")[0];
-  const slug = m.slug ?? String(id).split("/").slice(1).join("/");
+  // The LEAF, always derived from the identity rather than read from a field, so
+  // there is one place this split happens and no shape can disagree with itself.
+  const slug = String(id).split("/").slice(1).join("/");
   const household = m.household ?? null;
   if (!household) {
     throw new FoldInputRefusal(
@@ -184,6 +198,12 @@ export function normalizeMark(m) {
     body: hasRecord ? String(m.body ?? "") : null,
     bytes,
     serialized_here: serializedHere,
+    // The window the store locked this mark at, carried so the crossing can say
+    // which of the marks it wrote are THIS crossing's and which are older
+    // standing rows that merely arrived in the same answer. Lane 2 supplies it;
+    // null from any other supplier, and null is reported rather than assumed.
+    locked_window: Number.isFinite(m.locked_window) ? Number(m.locked_window) : null,
+    kind: m.kind ?? null,
     // A path the supplier already knows wins over one we compute — but GATE A in
     // `writeDownHousehold` still overrides both when the branch already files
     // this mark somewhere, which is the freeze and is not ours to weaken.
@@ -240,6 +260,12 @@ export function normalizeFoldInput(input) {
     // receipt shows it, and the chain shouts it — a crossing that folded from an
     // instrument is legible as one at a glance, forever, in the history file.
     rehearsal: input.rehearsal === true,
+    // WHERE THE STORE'S ESCROW INGEST STANDS against the town this crossing
+    // fetched — `world2/tools/fold-input-cli.mjs § ingestOrdering`. Carried to
+    // the receipt because an ingest that has stopped running looks exactly like
+    // a quiet town, and `behind` climbing across successive receipts is the only
+    // thing that would say so.
+    ingest: input.ingest ?? null,
     as_of: {
       window: input.as_of.window,
       world_sha: input.as_of.world_sha,
@@ -257,16 +283,43 @@ export function normalizeFoldInput(input) {
  * rather than read, so the pure half stays pure. GATE A before GATE B, exactly
  * as `planDrain` does it.
  */
-export function planStoreWriteDown(marks, { publishedPathOf = null } = {}) {
+export function planStoreWriteDown(marks, { publishedPathOf = null, canonBytesAt = null } = {}) {
   const byHousehold = new Map();
   const bucket = (h) => {
     if (!byHousehold.has(h)) byHousehold.set(h, { household: h, upserts: [], removals: [] });
     return byHousehold.get(h);
   };
 
+  const unchanged = [];
   for (const m of marks) {
+    // `kind` RIDES SEPARATELY AND IT IS LOAD-BEARING. `pathFor` takes GATE A/B —
+    // the freeze's "an existing filing never moves", then "a new mark files at
+    // its id" — ONLY for `kind` of `sited` or `parcel` (`world-journal.mjs:795`);
+    // everything else falls through to the parent-or-root branch. Lane 2 supplies
+    // `kind` as a column beside the bytes rather than inside a record, so a
+    // caller that only spread `fileRec` would hand `pathFor` no kind at all and
+    // file every sited mark under the root prefix instead of at its identity.
+    // Caught by F7a: the mark landed, at the wrong path, and the test that
+    // noticed was the one comparing against canon's bytes rather than the one
+    // checking a file existed.
+    const kind = m.fileRec?.kind ?? m.kind ?? null;
+    if (!m.plannedPath && !kind) {
+      // A MISSING `kind` IS A MISFILING, NOT A MISSING FIELD. `pathFor` takes
+      // Gate A/B only for `sited` and `parcel`; with no kind it falls through to
+      // the root-prefix branch and files the mark at
+      // `WORLD/marks/let-there-be-light/<slug>/mark.md` — a real path, which
+      // parses, which the sweep will publish, and which is not where the mark
+      // lives. Nothing downstream can tell that apart from a deliberate filing.
+      // So it refuses here rather than landing somewhere plausible.
+      throw new FoldInputRefusal(
+        "mark-without-kind",
+        `${m.id} carries no \`kind\`, and \`pathFor\` needs one to take the freeze's Gate A/B `
+        + "(world-journal.mjs:795 — the filing branch is `sited` or `parcel` only). Without it the mark files under "
+        + "the root prefix instead of at its identity: a plausible path, silently wrong, that the sweep would publish.",
+      );
+    }
     const path = m.plannedPath ?? pathFor(
-      { ...(m.fileRec ?? {}), id: m.id, by: m.by, slug: m.slug },
+      { ...(m.fileRec ?? {}), kind, id: m.id, by: m.by, slug: m.slug },
       { publishedPathOf },
     );
     if (!path) {
@@ -275,6 +328,35 @@ export function planStoreWriteDown(marks, { publishedPathOf = null } = {}) {
         `${m.id} resolves to no path — neither canon's filing nor its id can place it`,
       );
     }
+
+    // ── A CROSSING NEVER RE-MATERIALIZES A MARK IT IS NOT CHANGING ────────────
+    //
+    // The rule, and lane 2 is where it comes from: their `mark-render.mjs`
+    // header states the honest narrow claim — *"A MARK A CROSSING WRITES renders
+    // byte-identical from the store"* — and says why the corpus-wide claim is
+    // not available. Measured on the live corpus at `a5ccd224`: 75 distinct
+    // frontmatter field orders on disk, 40+ distinct keys against the door's 13,
+    // `extent: { w, h }` on 510 files and `{ h, w }` on 36, and two value forms
+    // for `points`. None of that is the store's fault and none of it is
+    // reachable, because the door refuses those fields today and jsonb has no
+    // key order to return.
+    //
+    // So a fold that re-rendered every standing mark would REWRITE the whole
+    // town's history into the door's present grammar, on one crossing, under a
+    // receipt that said it published a handful of marks. The git chain never
+    // could: `writeDownHousehold` builds its tree from the base, so a mark no
+    // sketchbook touched keeps the bytes it already has.
+    //
+    // This is the line that keeps that true when the input is the whole store.
+    // It is a CONTENT check rather than a window filter deliberately: a window
+    // filter trusts the supplier to have sent only the delta, and this is the
+    // property that must hold whatever the supplier sends.
+    const canon = typeof canonBytesAt === "function" ? canonBytesAt(path) : null;
+    if (canon !== null && canon === m.bytes) {
+      unchanged.push({ id: m.id, path, household: m.household, locked_window: m.locked_window });
+      continue;
+    }
+
     bucket(m.household).upserts.push({
       id: m.id, by: m.by, slug: m.slug, path,
       fileRec: m.fileRec, body: m.body, bytes: m.bytes,
@@ -283,10 +365,85 @@ export function planStoreWriteDown(marks, { publishedPathOf = null } = {}) {
 
   for (const b of byHousehold.values()) b.upserts.sort((a, c) => a.path.localeCompare(c.path));
 
+  const written = marks.filter((m) => !unchanged.some((u) => u.id === m.id));
+  const byWindow = {};
+  for (const m of written) {
+    const w = m.locked_window === null ? "unknown" : String(m.locked_window);
+    byWindow[w] = (byWindow[w] ?? 0) + 1;
+  }
+
   return {
     households: [...byHousehold.values()].sort((a, b) => a.household.localeCompare(b.household)),
-    counts: { marks: marks.length, households: byHousehold.size },
+    unchanged,
+    counts: {
+      marks: marks.length,
+      written: written.length,
+      unchanged: unchanged.length,
+      households: byHousehold.size,
+      // WHICH WINDOWS THE WRITTEN MARKS WERE LOCKED AT. The delta contract says a
+      // crossing's fold should carry the window's own locked marks; this is the
+      // measurement that says whether it does. A crossing writing marks locked at
+      // windows long past is folding standing state rather than a delta, and this
+      // histogram is where that shows without anyone having to diff a tree.
+      written_by_locked_window: byWindow,
+    },
   };
+}
+
+/**
+ * THE LOUD-EMPTY GUARD, RE-DERIVED FOR THE STORE ERA.
+ *
+ * The git-era guard lives in the world's sweep (`settlement-sweep.mjs:1244-1251`)
+ * and its evidence is branch-shaped: *"the sweep found no candidates on any
+ * channel, but N escrow-backed mark(s) stand in SKETCHBOOKS"*. In the store era
+ * there are no sketchbooks to be starved about, so it cannot fire. Measured, not
+ * assumed: an empty store fold on a scratch produced zero sketchbooks and
+ * `SETTLEMENT-SWEEP-STARVING` never appeared — the crossing was caught one layer
+ * down by `marks-fold.mjs`'s stampless refusal instead. **The guard survived the
+ * cutover syntactically and died semantically**, and that is why this exists.
+ *
+ * THE SHAPE IS THE ORIGINAL'S, and deliberately so — the original's whole design
+ * is that it *"re-derives that question by a different path"*, so a guard that
+ * asked the same array twice would be a check that cannot disagree with itself:
+ *
+ *   the FIRST path  — the marks the fold is going to write
+ *   the SECOND path — the escrow positions, which come from a different table
+ *                     (`escrow_projection`, lane 2's P-006) filled by a
+ *                     different writer (`stamp-ingest.mjs`, inside the
+ *                     clearing's transaction) at a different time
+ *
+ * A crossing that writes NOTHING while the store holds staked marks is not a
+ * quiet day. A crossing that writes nothing while nothing is staked is.
+ *
+ * AND IT MUST NOT FIRE ON A LAWFULLY QUIET DELTA, which is the trap: under the
+ * delta contract a crossing may honestly carry no changed mark. That is why the
+ * test is on what the fold was OFFERED, not on what it wrote — an offered set
+ * that is empty while escrow stands is a store that did not answer; an offered
+ * set that is entirely unchanged is a town where nothing moved, and those are
+ * different states that a `written === 0` test would collapse into one.
+ */
+export function starvingCheck({ marks = [], stakes = [] } = {}) {
+  const staked = stakes.filter((s) => Number(s.n) > 0);
+  const stakedMarks = new Set(staked.map((s) => s.mark));
+  const offered = marks.length;
+
+  if (offered > 0) return { starving: false, offered, staked_marks: stakedMarks.size, staked_positions: staked.length };
+
+  if (stakedMarks.size === 0) {
+    // Both paths agree there is nothing: a genuinely quiet crossing. The world's
+    // own guard makes the same call for the same reason, and saying so here
+    // keeps "quiet" a claim this function actually made rather than a default.
+    return { starving: false, offered: 0, staked_marks: 0, staked_positions: 0, quiet: true };
+  }
+
+  const first = [...stakedMarks].sort()[0];
+  throw new FoldInputRefusal(
+    "store-starving",
+    `the fold carries no marks at all, but the store holds ${staked.length} escrow position(s) across `
+    + `${stakedMarks.size} mark(s) — first, ${first}. Publishing nothing here would be a quiet day that is not one. `
+    + "This is the loud-empty guard's question asked of the register: the marks and the escrow come from different "
+    + "tables written by different pens at different times, so the two answers can disagree, and this is that disagreement.",
+  );
 }
 
 /**
@@ -434,6 +591,11 @@ export function storeWriteDown({
   const whenIso = new Date(at).toISOString();
   const normalized = normalizeFoldInput(input);
 
+  // BEFORE ANY WORK. The guard's job is to refuse a blind crossing rather than
+  // to notice afterwards that it built nothing, and a refusal that lands after
+  // the clone has been rewritten is a refusal that also has to be undone.
+  const starving = starvingCheck(normalized);
+
   const cleared = clearSketchbooks ? clearGitSketchbooks(world) : { removed_remote: 0, removed_local: 0, skipped: true };
 
   // Canon's filing, read once at main. Memoized the way the drain memoizes it:
@@ -457,7 +619,20 @@ export function storeWriteDown({
     return null;
   };
 
-  const plan = planStoreWriteDown(normalized.marks, { publishedPathOf });
+  // What canon already holds at a path, or null when it holds nothing there.
+  // Memoized per path because the plan asks once per mark and a crossing may see
+  // the same path twice through Gate A.
+  const canonCache = new Map();
+  const canonBytesAt = (path) => {
+    if (canonCache.has(path)) return canonCache.get(path);
+    let bytes = null;
+    try { bytes = git(world, ["show", `${mainSha}:${path}`]); }
+    catch { bytes = null; }   // not in canon: a new mark, and new is changed
+    canonCache.set(path, bytes);
+    return bytes;
+  };
+
+  const plan = planStoreWriteDown(normalized.marks, { publishedPathOf, canonBytesAt });
 
   // Read once, from main, the same file the sweep's wall reads.
   const registry = wallRegistryAt(world, mainSha);
@@ -497,7 +672,20 @@ export function storeWriteDown({
     as_of: normalized.as_of,
     entry: normalized.entry,
     rehearsal: normalized.rehearsal,
+    ingest: normalized.ingest,
     marks: normalized.marks.length,
+    // WHAT THE CROSSING ACTUALLY WROTE, beside what it was offered. The gap
+    // between them is the whole of the "never re-materialize an unchanged mark"
+    // rule, and it is the number that says whether a fold is folding a DELTA or
+    // rewriting the town: `written` close to `marks` on a quiet crossing means
+    // the fold is re-rendering standing state.
+    written: plan.counts.written,
+    unchanged_skipped: plan.counts.unchanged,
+    // The guard's own answer, on every crossing including the ones it passed.
+    // "It did not fire" and "nobody asked" are different states, and only one of
+    // them is evidence.
+    starving_check: starving,
+    written_by_locked_window: plan.counts.written_by_locked_window,
     serialized_here: normalized.marks.filter((m) => m.serialized_here).length,
     supplied_bytes_only: normalized.marks.filter((m) => !m.serialized_here).length,
     sketchbooks_cleared: cleared,

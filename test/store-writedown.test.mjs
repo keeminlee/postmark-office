@@ -35,7 +35,7 @@ import { markRecord } from "../src/mark-record.mjs";
 import { writeDownHousehold } from "../src/world-drain.mjs";
 import {
   FoldInputRefusal, clearGitSketchbooks, normalizeFoldInput, normalizeMark,
-  planStoreWriteDown, sketchbookNameFor, storeWriteDown,
+  planStoreWriteDown, sketchbookNameFor, starvingCheck, storeWriteDown,
 } from "../src/store-writedown.mjs";
 
 const scratch = mkdtempSync(join(tmpdir(), "postmark-storewd-"));
@@ -97,7 +97,10 @@ const foldInput = (marks, over = {}) => ({
 });
 
 const storeMark = (over = {}) => ({
-  id: "alpha/a-store-mark",
+  // Lane 2's shape: `slug` is the FULL identity (`world2/schema/001_tables.sql:102`).
+  slug: "alpha/a-store-mark",
+  kind: "sited",
+  by: "alpha",
   household: "alpha",
   fileRec: { kind: "sited", by: "alpha", date: "2026-09-08", at: { x: 5, y: 5 }, extent: { w: 2, h: 2 } },
   body: "a declaration that only ever existed in the store",
@@ -177,7 +180,7 @@ test("F2b · GATE A holds: a mark canon already files somewhere keeps its filing
   storeWriteDown({
     repo: w.repo,
     input: foldInput([storeMark({
-      id: "alpha/published-note", slug: "published-note", by: "alpha",
+      slug: "alpha/published-note", by: "alpha",
       path: planned,
       fileRec: { kind: "sited", by: "alpha", date: "2026-09-08", at: { x: 1, y: 1 }, extent: { w: 4, h: 4 } },
       body: "amended in the store",
@@ -224,7 +227,7 @@ test("F3 · a store-written record and a drain-written record are the SAME blob"
   const viaStore = makeWorld("both-store");
   storeWriteDown({
     repo: viaStore.repo,
-    input: foldInput([storeMark({ id: "alpha/twinned", fileRec, body })]),
+    input: foldInput([storeMark({ slug: "alpha/twinned", fileRec, body })]),
     at: Date.parse(AT_ISO),
   });
 
@@ -241,9 +244,9 @@ test("F3b · supplied bytes that disagree with the record REFUSE, naming both le
   // stop the crossing rather than pick a winner.
   const fileRec = { kind: "sited", by: "alpha", date: "2026-09-08", at: { x: 7, y: 3 } };
   const good = markRecord(fileRec, "agreed");
-  assert.doesNotThrow(() => normalizeMark(storeMark({ id: "alpha/ok", fileRec, body: "agreed", bytes: good })));
+  assert.doesNotThrow(() => normalizeMark(storeMark({ slug: "alpha/ok", fileRec, body: "agreed", bytes: good })));
 
-  const e = caught(() => normalizeMark(storeMark({ id: "alpha/bad", fileRec, body: "agreed", bytes: `${good}tampered\n` })));
+  const e = caught(() => normalizeMark(storeMark({ slug: "alpha/bad", fileRec, body: "agreed", bytes: `${good}tampered\n` })));
   assert.ok(e instanceof FoldInputRefusal, "a byte disagreement must refuse, not pick a winner");
   assert.equal(e.reason, "serialization-disagreement");
   assert.match(e.detail, /alpha\/bad/);
@@ -257,7 +260,7 @@ test("F3c · bytes with no record are accepted, and the receipt is told they wer
   const bytes = markRecord({ kind: "sited", by: "alpha", date: "2026-09-08" }, "rendered elsewhere");
   const report = storeWriteDown({
     repo: w.repo,
-    input: foldInput([{ id: "alpha/rendered", household: "alpha", bytes, path: "WORLD/marks/alpha/rendered/mark.md" }]),
+    input: foldInput([{ slug: "alpha/rendered", by: "alpha", household: "alpha", bytes, path: "WORLD/marks/alpha/rendered/mark.md" }]),
     at: Date.parse(AT_ISO),
   });
   assert.equal(report.supplied_bytes_only, 1);
@@ -370,8 +373,8 @@ test("F6e · the write-down reports how many sketchbooks the wall can bind", () 
     repo: w.repo,
     at: Date.parse(AT_ISO),
     input: foldInput([
-      storeMark({ id: "alpha/one", household: "gh:293432145", path: "WORLD/marks/alpha/one/mark.md" }),
-      storeMark({ id: "beta/two", household: "solo:ev-attractor", path: "WORLD/marks/beta/two/mark.md" }),
+      storeMark({ slug: "alpha/one", household: "gh:293432145", path: "WORLD/marks/alpha/one/mark.md" }),
+      storeMark({ slug: "beta/two", household: "solo:ev-attractor", path: "WORLD/marks/beta/two/mark.md" }),
     ]),
   });
 
@@ -389,17 +392,168 @@ test("F6e · the write-down reports how many sketchbooks the wall can bind", () 
     "and both vocabularies are on the row, so either side can be checked against the other");
 });
 
+// ── F7 · A CROSSING NEVER RE-MATERIALIZES A MARK IT IS NOT CHANGING ──────────
+//
+// Lane 2's `mark-render.mjs` states the honest narrow claim — "A MARK A CROSSING
+// WRITES renders byte-identical from the store" — and measured why the
+// corpus-wide claim is not available: 75 distinct frontmatter field orders on
+// disk, 40+ keys against the door's 13, `extent: { w, h }` on 510 files and
+// `{ h, w }` on 36, two value forms for `points`. So a fold that re-rendered
+// every standing mark would rewrite the town's whole history into the door's
+// present grammar on one crossing, under a receipt claiming a handful of marks.
+// The git chain never could: `writeDownHousehold` builds its tree from the base.
+// This is the line that keeps that true when the input is the whole store.
+
+test("F7a · a mark whose store bytes already equal canon is NOT written", () => {
+  const w = makeWorld("unchanged");
+  const canonPath = "WORLD/marks/alpha/published-note/mark.md";
+  const canonBytes = w.git("show", `main:${canonPath}`);
+
+  const report = storeWriteDown({
+    repo: w.repo,
+    at: Date.parse(AT_ISO),
+    input: foldInput([
+      { slug: "alpha/published-note", kind: "sited", by: "alpha", household: "alpha", bytes: canonBytes, locked_window: 100 },
+      { slug: "alpha/a-new-one", kind: "sited", by: "alpha", household: "alpha", bytes: markRecord({ kind: "sited", by: "alpha", date: "2026-09-08" }, "new"), locked_window: 177 },
+    ]),
+  });
+
+  assert.equal(report.marks, 2, "both were offered");
+  assert.equal(report.written, 1, "only the changed one is written");
+  assert.equal(report.unchanged_skipped, 1);
+  assert.deepEqual(report.written_by_locked_window, { 177: 1 },
+    "and the histogram says the written one is this crossing's, not an old standing row");
+
+  const files = w.git("ls-tree", "-r", "--name-only", "draft/alpha", "--", "WORLD/marks").trim().split("\n");
+  assert.ok(files.includes("WORLD/marks/alpha/a-new-one/mark.md"));
+  assert.equal(w.git("show", `draft/alpha:${canonPath}`), canonBytes,
+    "the untouched mark keeps the bytes canon already had, byte for byte");
+});
+
+test("F7b · a mark whose store bytes DIFFER by one character IS written", () => {
+  // The control for F7a. Without it, F7a passes for a module that writes nothing
+  // at all, which is the shape of a guard wired to the off position.
+  const w = makeWorld("changed");
+  const canonPath = "WORLD/marks/alpha/published-note/mark.md";
+  const canon = w.git("show", `main:${canonPath}`);
+  const nudged = canon.replace("alpha published this", "alpha published this, amended");
+
+  const report = storeWriteDown({
+    repo: w.repo,
+    at: Date.parse(AT_ISO),
+    input: foldInput([{ slug: "alpha/published-note", kind: "sited", by: "alpha", household: "alpha", bytes: nudged, locked_window: 177 }]),
+  });
+  assert.equal(report.written, 1);
+  assert.equal(report.unchanged_skipped, 0);
+  assert.match(w.git("show", `draft/alpha:${canonPath}`), /amended/);
+});
+
+test("F7c · lane 2's `slug` is the FULL identity, not a leaf", () => {
+  // `world2/schema/001_tables.sql:102` — "slug text NOT NULL UNIQUE — <owner>/
+  // <name>, the 1.0 path identity". Taking it for a leaf would file every mark
+  // one directory too deep, silently, because the path would still parse.
+  const m = normalizeMark({ slug: "alpha/deep-one", kind: "sited", by: "alpha", household: "alpha", bytes: "x" });
+  assert.equal(m.id, "alpha/deep-one");
+  assert.equal(m.slug, "deep-one", "the leaf is derived from the identity, never read from a field");
+  assert.equal(m.by, "alpha");
+});
+
+test("F7d · a mark with no `kind` REFUSES rather than filing somewhere plausible", () => {
+  // Found by F7a failing for the wrong reason, which is the honest provenance:
+  // its own fixture omitted `kind`, `pathFor` fell through to the root-prefix
+  // branch (`world-journal.mjs:795` takes Gate A/B for `sited`/`parcel` only),
+  // and the mark landed at `WORLD/marks/let-there-be-light/<slug>/mark.md` — a
+  // real path that parses, that the sweep would publish, and that is not where
+  // the mark lives. Nothing downstream can tell that from a deliberate filing.
+  const e = caught(() => planStoreWriteDown([
+    { id: "alpha/kindless", by: "alpha", slug: "kindless", bytes: "x", household: "alpha", kind: null, fileRec: null, plannedPath: null },
+  ]));
+  assert.ok(e instanceof FoldInputRefusal, "a silent misfiling must become a named refusal");
+  assert.equal(e.reason, "mark-without-kind");
+
+  // The control: an explicit path needs no kind, because nothing is being inferred.
+  assert.doesNotThrow(() => planStoreWriteDown([
+    { id: "alpha/kindless", by: "alpha", slug: "kindless", bytes: "x", household: "alpha", kind: null, fileRec: null, plannedPath: "WORLD/marks/alpha/kindless/mark.md" },
+  ]));
+});
+
+// ── F8 · THE STORE-ERA LOUD-EMPTY GUARD ──────────────────────────────────────
+//
+// The git-era guard's evidence is branch-shaped and cannot fire once there are
+// no sketchbooks; that was measured on a scratch, not assumed. This asks the
+// same question of the register, and by a DIFFERENT PATH than the one that
+// produced the marks — the escrow positions come from `escrow_projection`,
+// filled by `stamp-ingest.mjs` inside the clearing's transaction, so the two
+// answers can genuinely disagree.
+
+test("F8a · no marks at all while the store holds escrow REFUSES as starving", () => {
+  const e = caught(() => starvingCheck({
+    marks: [],
+    stakes: [{ mark: "alpha/staked", holder: "beta", n: 3, weight: 3, tick: 0 }],
+  }));
+  assert.ok(e instanceof FoldInputRefusal, "a blind crossing must refuse, not publish nothing quietly");
+  assert.equal(e.reason, "store-starving");
+  assert.match(e.detail, /alpha\/staked/, "and it names the first staked mark, as the world's own guard does");
+});
+
+test("F8b · no marks and no escrow is a QUIET crossing, not a starving one", () => {
+  // The control that stops F8a from being a guard that refuses every empty fold.
+  // Both paths agree there is nothing; that is a quiet day and the receipt says
+  // the question was asked.
+  const r = starvingCheck({ marks: [], stakes: [] });
+  assert.equal(r.starving, false);
+  assert.equal(r.quiet, true);
+});
+
+test("F8c · it does NOT fire on a lawfully quiet DELTA — the trap the written-count version walks into", () => {
+  // Under the delta contract a crossing may honestly carry marks that are all
+  // unchanged. Testing on what was WRITTEN would collapse "the store did not
+  // answer" and "nothing moved in the town" into one refusal. The test is on
+  // what was OFFERED, and this is the case that proves the difference.
+  const r = starvingCheck({
+    marks: [{ slug: "alpha/one" }],
+    stakes: [{ mark: "alpha/one", holder: "beta", n: 5, weight: 5, tick: 0 }],
+  });
+  assert.equal(r.starving, false);
+  assert.equal(r.staked_marks, 1);
+});
+
+test("F8d · a stake position of zero is not escrow — it must not hold the guard open", () => {
+  const r = starvingCheck({ marks: [], stakes: [{ mark: "alpha/one", holder: "beta", n: 0, weight: 0, tick: 0 }] });
+  assert.equal(r.starving, false);
+  assert.equal(r.quiet, true, "zero escrow across the board is a poor town, not a blind crossing");
+});
+
+test("F8e · the guard runs inside storeWriteDown, before the clone is touched", () => {
+  const w = makeWorld("starve", { gitEraSketchbooks: ["alpha"] });
+  const e = caught(() => storeWriteDown({
+    repo: w.repo,
+    at: Date.parse(AT_ISO),
+    input: foldInput([], { stakes: [{ mark: "alpha/staked", holder: "beta", n: 2, weight: 2, tick: 0 }] }),
+  }));
+  assert.ok(e instanceof FoldInputRefusal);
+  assert.equal(e.reason, "store-starving");
+  assert.equal(
+    w.git("for-each-ref", "--format=%(refname)", "refs/remotes/origin/draft/").trim().split("\n").filter(Boolean).length,
+    1,
+    "the git-era ref is still there: a refusal that lands after the clone has been rewritten is a refusal that also has to be undone",
+  );
+});
+
 // ── F5 · THE PLAN IS PURE ────────────────────────────────────────────────────
 
 test("F5 · planStoreWriteDown buckets by household and sorts, with no git and no clock", () => {
   const marks = normalizeFoldInput(foldInput([
-    storeMark({ id: "beta/zeta", household: "beta", path: "WORLD/marks/beta/zeta/mark.md" }),
-    storeMark({ id: "alpha/mid", household: "alpha", path: "WORLD/marks/alpha/mid/mark.md" }),
-    storeMark({ id: "alpha/aaa", household: "alpha", path: "WORLD/marks/alpha/aaa/mark.md" }),
+    storeMark({ slug: "beta/zeta", household: "beta", path: "WORLD/marks/beta/zeta/mark.md" }),
+    storeMark({ slug: "alpha/mid", household: "alpha", path: "WORLD/marks/alpha/mid/mark.md" }),
+    storeMark({ slug: "alpha/aaa", household: "alpha", path: "WORLD/marks/alpha/aaa/mark.md" }),
   ])).marks;
   const plan = planStoreWriteDown(marks);
   assert.deepEqual(plan.households.map((h) => h.household), ["alpha", "beta"]);
   assert.deepEqual(plan.households[0].upserts.map((u) => u.path),
     ["WORLD/marks/alpha/aaa/mark.md", "WORLD/marks/alpha/mid/mark.md"]);
-  assert.deepEqual(plan.counts, { marks: 3, households: 2 });
+  assert.equal(plan.counts.marks, 3);
+  assert.equal(plan.counts.households, 2);
+  assert.equal(plan.counts.written, 3, "with no canon to compare against, every mark is a change");
+  assert.equal(plan.counts.unchanged, 0);
 });

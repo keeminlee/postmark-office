@@ -177,7 +177,26 @@ const receipt = {
         // unverified, and produce a receipt that looked exactly like a clean
         // crossing. `bound` falling is the only thing that shows it.
         wall: store.wall ?? null,
+        // WHERE THE ESCROW INGEST STANDS. `behind: 0` is the ordinary case; a
+        // number that climbs across crossings is an ingest that has stopped
+        // running, which is otherwise indistinguishable from a quiet town.
+        ingest: store.ingest ?? null,
         marks: store.marks ?? 0,
+        // OFFERED vs WRITTEN. A crossing must never re-materialize a mark it is
+        // not changing: the corpus carries 75 frontmatter field orders and 40+
+        // keys against the door's 13, so a fold that re-rendered everything
+        // standing would rewrite the town's whole history into the door's
+        // present grammar under a receipt claiming a handful of marks. `written`
+        // close to `marks` on a quiet crossing is that failure, visible.
+        written: store.written ?? null,
+        unchanged_skipped: store.unchanged_skipped ?? null,
+        // THE STORE-ERA LOUD-EMPTY GUARD's own answer, on every crossing
+        // including the ones it passed. The git-era guard fires from the world's
+        // sweep and cannot fire at all in the store era, so this is the surface
+        // that says the question was asked. "It did not fire" and "nobody asked"
+        // are different states and only one of them is evidence.
+        starving_check: store.starving_check ?? null,
+        written_by_locked_window: store.written_by_locked_window ?? null,
         households: (store.households ?? []).length,
         changed: (store.households ?? []).filter((h) => h.changed).length,
         serialized_here: store.serialized_here ?? null,
