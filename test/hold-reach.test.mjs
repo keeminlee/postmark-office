@@ -431,3 +431,26 @@ test("THE DOOR REFUSES A TAKE OF WHAT CANON DOES NOT HOLD — walk #10 item 4, e
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// ── the law node, checked rather than assembled ──────────────────────────────
+
+test("the id this lane cites is the convention its live siblings keep", async () => {
+  // A day-old lesson (lane-c, 2026-09-07): an id built in code out of a class
+  // name and a slot is a GUESS, and one shipped last night naming a node that
+  // does not exist. `the-town/the-reach` comes from the founder's own law text,
+  // and this asserts the convention it rests on against the record — two
+  // predicated children of a class, each `<by>/<leaf-directory>`, so the same
+  // reading gives `.../attach/the-reach/mark.md` its id.
+  const { worldMarkById } = await import("../src/world.mjs");
+  for (const id of ["the-town/the-anchor", "the-town/the-not-ground"]) {
+    const { mark } = await worldMarkById(id);
+    assert.ok(mark, `${id} must stand in canon for this convention to be evidence`);
+    assert.equal(mark.kind, "predicated");
+  }
+  // And the honest half: the node this lane's refusals cite is RULED and not
+  // yet planted. If this assertion ever flips, world #21 has merged and the
+  // dated dependency in src/reach.mjs's header can come out.
+  const { mark: reach } = await worldMarkById("the-town/the-reach");
+  assert.equal(reach, null,
+    "the-town/the-reach is world PR #21, unmerged — if it now stands, update reach.mjs's dated-dependency note");
+});
