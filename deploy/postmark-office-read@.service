@@ -107,12 +107,32 @@ WantedBy=multi-user.target
 #      Each must say role read, write_grant false, and 405.
 #
 #   3b. Prove the ENVELOPE is real, because a quota that silently does nothing
-#      reads as protection:
-#        systemctl show postmark-reads.slice -p CPUQuotaPerSecUSec -p CPUWeight
-#        systemctl show postmark-office-read@4391.service -p Slice
-#        cat /sys/fs/cgroup/postmark-reads.slice/cpu.max   # want: 2500000 100000
+#      reads as protection. EVERY LINE HERE IS A CHECK THAT CAN FAIL — the
+#      first draft of this step had two that could not:
+#
+#        # (a) does the slice unit actually EXIST? An empty FragmentPath means
+#        #     no unit file, which means no bound — and `systemctl show -p Slice`
+#        #     on the WORKER cannot tell you this: it echoes the name the unit
+#        #     asked for whether or not the slice exists, so it always "passes".
+#        systemctl show -p FragmentPath --value postmark-reads.slice
+#        #     want: /etc/systemd/system/postmark-reads.slice   (empty = NO BOUND)
+#
+#        # (b) the numbers, in the kernel rather than in the unit file
+#        cat /sys/fs/cgroup/postmark-reads.slice/cpu.max
+#        #     want: 250000 100000
+#        #     NOT `2500000 100000` — an earlier draft of this recipe said that,
+#        #     which is the per-SECOND figure written beside the per-PERIOD
+#        #     instrument. cpu.max is quota-and-period in microseconds, and the
+#        #     default period is 100000, so 250% is 250000. A correct install
+#        #     would have read as broken at the only check that could fail.
+#        cat /sys/fs/cgroup/postmark-reads.slice/cpu.weight    # want: 50-ish
+#
+#        # (c) and that the worker is actually IN it
+#        systemctl show -p ControlGroup --value postmark-office-read@4391.service
+#        #     want: a path containing /postmark-reads.slice/
+#
 #      If cpu.max reads `max`, the cpu controller is not delegated to that slice
-#      and the quota is decoration - say so rather than shipping it. (Checked
+#      and the quota is decoration — say so rather than shipping it. (Checked
 #      available on this box before proposing: systemd 255, cgroup2fs, and `cpu`
 #      present in /sys/fs/cgroup/cgroup.controllers.)
 #

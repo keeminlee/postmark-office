@@ -36,24 +36,28 @@ import { openOauthDb } from "../src/oauth.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-// ⚑ THE PORTS ARE ASKED FOR, NOT ASSUMED. This file boots up to three servers
-// (the worker, a writer control, a misconfigured worker), and an earlier draft
-// pinned them at 43861-43863. That is a flake waiting for the first person who
-// runs this file twice at once — which is exactly what a REVIEWER does, since
-// re-running the eleven flips runs this file eleven times while other lanes'
-// suites are running on the same machine. It bit on this branch: a second
-// concurrent run failed all ten legs with "server never listened", and for a
-// moment it read like a real defect.
+// ⚑ THE PORTS ARE DERIVED FROM THE PID, and this comment says so because the
+// last one did not. It read "THE PORTS ARE ASKED FOR ... the kernel is asked for
+// three free ports" — describing an approach I wrote, found broken
+// (`server.listen(0)` does not know its port until the 'listening' event, so
+// `.address()` reads null) and replaced with this one, WITHOUT rewriting the
+// prose above it. A comment describing the approach you ABANDONED is worse than
+// none: it tells a reviewer to stop reading at the line that is actually there.
 //
-// So the kernel is asked for three free ports instead. Not a guarantee — the
-// window between close and re-bind is real — but it turns a certainty into a
-// small chance, and the alternative was a number somebody guessed once.
-// Derived from the pid, SYNCHRONOUSLY, because `PORT` is needed at module load
-// and `server.listen(0)` does not know its own port until the 'listening' event
-// — an earlier version of this very fix called `.address()` straight after
-// `listen(0)` and would have read null. The stride of 7 keeps two adjacent pids
-// seven apart, which is more than the three ports this file uses.
-const PORT = 43000 + ((process.pid * 7) % 2000);
+// Why derived at all: this file boots up to three servers, and an earlier draft
+// pinned them at 43861-43863. 43861 is `hot-reload.test.mjs`'s port — safe only
+// because the suite runs at concurrency 1 — and this file failed all ten legs
+// against a second concurrent run of ITSELF, which for a minute read like a real
+// defect. A reviewer runs this file once per flip while other lanes' suites share
+// the machine, so a fixed port here is a flake I would be handing them.
+//
+// The base is 46000, ABOVE the neighbourhood: sixteen fixed ports live between
+// 43000 and 43999 across twelve other test files, and the previous derivation
+// (43000 + pid*7 % 2000) landed squarely inside them. Nothing in test/ sits above
+// 44000. The stride of 7 keeps two adjacent pids seven apart, which is more than
+// the three ports this file uses. Not a guarantee — a collision is still
+// possible — but it is a small chance where a fixed port was a certainty.
+const PORT = 46000 + ((process.pid * 7) % 2000);
 const BASE = `http://127.0.0.1:${PORT}`;
 const KEY = "read-worker-test-key";
 const PEN = "ghp_a_token_a_read_worker_must_not_hold";
