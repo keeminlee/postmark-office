@@ -151,7 +151,7 @@ else {
       `(claim ${a.claim_id ? a.claim_id.slice(0, 8) : "none"}${a.claimant ? `, ${a.claimant}` : ""}), and canon carries no file for it at ${out.canon_sha.slice(0, 8)}`);
   const n = out.absent.length + out.unmaterialized.length;
   console.log(n
-    ? `\nRED · ${n} locked claim(s) the world does not carry`
-    : `\nGREEN · every standing mark with a locked claim has a file in canon at ${out.canon_sha.slice(0, 8)}`);
+    ? `\nRED · ${n} row(s) the world does not carry`
+    : `\nGREEN · every standing mark has a file in canon at ${out.canon_sha.slice(0, 8)}, and every locked claim made one`);
 }
 process.exit(out.absent.length + out.unmaterialized.length ? 1 : 0);
