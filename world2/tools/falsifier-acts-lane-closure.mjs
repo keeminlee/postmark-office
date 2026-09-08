@@ -329,6 +329,48 @@ if (has("--prove-can-fail")) {
   process.exit(0);
 }
 
+// ── THE CENSUS, ALONE (`--census`) ──────────────────────────────────────────
+//
+// Checks 0 and 0b need no Postgres, no window and no voices log: check 0
+// compares the apex's own dispatch table against `LANE_OF`, and check 0b
+// compares a journal's distinct classes against `CLASS_LANE_OF`. Neither of
+// them reads `acts` at all.
+//
+// ⛔ WHY THIS MODE EXISTS, and it is a defect in the file's own shape rather
+// than a convenience. The full run reaches check 0 only AFTER the usage gate
+// demands `--db` and `WORLD2_PG_URL`, and prints it only after four store-bound
+// checks have run. So the one question this census exists to answer on the day
+// a verb lands — "does every door this office opens have a pen named for it?" —
+// could not be asked on a branch, in a worktree, or anywhere without a live
+// store to open. `--prove-can-fail` proves the CHECK works against synthetic
+// input; it never asks the check about THIS TREE. That is the gap: a census
+// that is "late by exactly the interval in which the gap can open" was, itself,
+// unaskable during exactly that interval.
+//
+// `--db` is optional and its absence is DISCLOSED rather than counted green:
+// without a journal to read, check 0b has nothing to be asked about, and a mode
+// that reported "clean" for a check it did not run would be the noise floor
+// hidden in the silence.
+if (has("--census")) {
+  const { DISPATCHABLE } = await import("../../src/world-apex.mjs");
+  const problems = checkCensus([...DISPATCHABLE]);
+  let classes = null;
+  const censusDb = arg("--db");
+  if (censusDb && existsSync(censusDb)) {
+    const db = new DatabaseSync(censusDb, { readOnly: true });
+    classes = db.prepare("SELECT DISTINCT class FROM journal").all().map((r) => String(r.class));
+    db.close();
+    problems.push(...checkClassCensus(classes));
+  }
+  for (const p of problems) console.error(p);
+  console.log(
+    `census: check 0 asked ${DISPATCHABLE.length} dispatchable verb(s) against LANE_OF — ${problems.length ? "RED" : "every one is named"}; `
+    + (classes
+      ? `check 0b asked ${classes.length} journal class(es) against CLASS_LANE_OF (${classes.join(", ") || "none"})`
+      : "check 0b was NOT asked — no --db was given, so no journal was read and this run says nothing about which classes the store holds"));
+  process.exit(problems.length ? 1 : 0);
+}
+
 /**
  * The lane record's twin among the acts, or null.
  *
