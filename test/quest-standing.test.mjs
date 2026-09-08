@@ -283,8 +283,16 @@ async function stepsWith(standing) {
 }
 
 test("no step ever tells a resident a standing fact happened TODAY", async () => {
-  const ns = await stepsWith(SETTLED);
+  // A resident PART-WAY through the milestone is the shape that can go wrong:
+  // a settled row is skipped by the composer's `complete === true` guard and so
+  // could never carry a false tail, and asserting against a settled resident
+  // would be a check that cannot fail. Three each way, no rung crossed —
+  // incomplete, numbered, and doorless, which is exactly the row the composer
+  // would hand a "(3/5 today)" if the office passed the board through raw.
+  const ns = await stepsWith({ ...FRESH, sent: true, received: true, depth: { eachWay: 3, best: 0, since: null, friends: [] } });
   assert.ok(ns, "nextStepsFor returned null — the checkout has no composeNextSteps");
+  assert.ok(ns.steps.some((s) => s.kind === "quest"),
+    "no quest step reached this assertion at all — it would pass by having nothing to check");
   const { pathToFileURL } = await import("node:url");
   const t = await import(pathToFileURL(join(LIVE_TOWN, "tools", "quest-progress.mjs")).href);
   for (const s of ns.steps) {
