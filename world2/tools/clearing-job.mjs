@@ -7,6 +7,29 @@
 // withdrawn → retracted · left_drafted → stays pending · rebased → ceases to
 // exist (git mechanics, not a decision)."
 //
+// ⚠ ONE CLAUSE OF THAT QUOTE IS CORRECTED — "the isolation pass dies" (Wright,
+// ruled 2026-09-08). The quote above stays verbatim because it is the law's own
+// text and misquoting law to make it true is worse than the error; the amendment
+// sits here beside it.
+//
+// THE ISOLATION PASS SURVIVES, AND IS BEING RE-SCOPED. It is the property that
+// ONE bad sketchbook does not refuse the whole town — P-130 rules that removing
+// that machinery is NOT-A-LINE, and `deploy/settlement-auto.sh` keeps calling
+// `tools/settlement-isolate.mjs` on BOTH the git and store paths (its call sits
+// behind `SETTLEMENT_ISOLATE`, never behind `$SOURCE`). So this file quoted a
+// clause that the fold being built does not implement — a law with no reader,
+// inside the file whose whole job is to be that law's reader.
+//
+// RE-SCOPED, not "kept and working": the G1 chain lane's review found that the
+// isolation pass **cannot isolate a STORE crossing as the code stands**. What is
+// true today is that the pass is retained and its store-side form is owed. This
+// note says that rather than "it works", because a correction that overshoots is
+// the same defect wearing the other sign.
+//
+// CONSEQUENCE FOR THE DELETION LIST: G2's P-129 line — delete
+// `tools/settlement-isolate.mjs` — is WITHDRAWN by the same ruling. No G1 step
+// retires what that line names.
+//
 // LAW (census.md Decision 2, verbatim): "Competing claims on the same ground in
 // one window: neither locks; both held for REVIEW (a mind rules). Stake-weight
 // is advisory context, never an auto-win."
