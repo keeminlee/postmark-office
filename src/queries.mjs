@@ -1397,8 +1397,34 @@ export async function nextStepsFor(db, meta, handle, clone, { own = false, world
     const onboarding = tools.onboardingBoard(registry, facts, handle, { worldSited });
     const paperRows = own ? await paperGapRows(handle, { db, clone, worldBlock }) : null;
     const questBoard = await questBoardFor(db, meta, handle, clone);
+    // ── WHAT THE COMPOSER IS HANDED, AND WHY IT IS NOT THE BOARD VERBATIM ────
+    //
+    // `composeNextSteps` writes a step's tail as `(${q.progress}/${q.target}
+    // today)` for any row carrying a number, and that sentence is TRUE of the
+    // two daily rows and false of every other kind: a milestone crossed in
+    // August and a card written in June did not happen today. Before the
+    // standing join those rows carried `progress: null` and the composer's own
+    // `uncounted` branch kept them out of that sentence. They carry numbers now.
+    //
+    // So the office nulls the progress of every row the town does not count
+    // DAILY before handing the board over — not to disagree with itself, but
+    // because the composer's prose is a daily sentence and the office does not
+    // get to edit the town's words. `complete` is untouched, which is the half
+    // that matters here: a settled row is still skipped by the composer's own
+    // `q.complete === true` guard, so this list SHRINKS by exactly the rows the
+    // board just learned to measure.
+    //
+    // The daily set comes from the town's own exported `COUNTABLE_FIELD`, never
+    // a pair typed here: an office that hardcodes the two ids goes wrong the day
+    // the town names a third countable row, and that is the divergence that can
+    // actually happen.
+    const dailyIds = tools.COUNTABLE_FIELD ?? {};
+    const forSteps = {
+      ...questBoard,
+      quests: (questBoard.quests ?? []).map((q) => (dailyIds[q.id] ? q : { ...q, progress: null })),
+    };
     return {
-      ...tools.composeNextSteps({ onboarding, questBoard, paperRows }),
+      ...tools.composeNextSteps({ onboarding, questBoard: forSteps, paperRows }),
       ...(own ? {} : { withheld: "the paper gaps and the world-siting row are on your OWN doorstep only — the gaps are yours to see, not theirs to be seen by (2026-08-15). This read carries what the public bundle carries, and no more." }),
       note: "what is left of arriving, and what today still offers — each step names the exact door that opens it, or says what it awaits when no door of yours does. The block empties itself as the list empties.",
       // WHICH MIDNIGHT "today" MEANS. `tools.composeNextSteps` writes the
@@ -1699,13 +1725,37 @@ async function questTools(clone) {
  * refuse — and it is worse in this direction, because the row it would falsify
  * is a row that PAYS.
  *
- * The six one-time onboarding rows are deliberately NOT injected here: their
- * facts need `onboardingFactsFor`, which parses the whole mail ledger, and
- * read_quests is a hot read. They are voiced by the onboarding line on the
- * doorstep, which already computes them (nextStepsFor), and they read null —
- * "not looked" — on the bare board. Named rather than left to be discovered.
+ * ⚠ THE PARAGRAPH THAT STOOD HERE WAS TRUE ABOUT THE HOT PATH AND WRONG AS A
+ * REASON. It read: "The six one-time onboarding rows are deliberately NOT
+ * injected here: their facts need `onboardingFactsFor`, which parses the whole
+ * mail ledger, and read_quests is a hot read." The cost claim is correct — a
+ * ledger parse per board read would be absurd — but the conclusion it was used
+ * for was that the rows stay UNANSWERED, and that is a different thing. The
+ * facts were in the town checkout the whole time; only the *place we asked* was
+ * wrong. They are now folded whole-town at hydrate into `quest_standing`
+ * (schema.mjs) and joined here by primary key, which is the same answer the
+ * daily pair has always had and costs the same as reading it. The rows no
+ * longer read null on the bare board. See `standingFor` / `standingJoin` below.
  */
 export function injectedComplete(handle, { worldDb = null, house = null } = {}) {
+  const st = firstIdeaStanding(handle, { worldDb, house });
+  return st ? { "first-idea": st.complete } : null;
+}
+
+/**
+ * The `first-idea` fact AND the day it was met, from one store read.
+ *
+ * `injectedComplete` above is the boolean projection of this, kept at its
+ * published shape because six falsifiers deepEqual against it. The board wants
+ * the DATE too — the mark carries its own `date` and `ideasTank` already
+ * selects it — and two calls would be two opens of the world store on a hot
+ * read for one fact. One read, two shapes.
+ *
+ * STORE UNREADABLE → null, unchanged and load-bearing: a floor read here would
+ * say "you have not published an idea" on the strength of a hydration blip,
+ * and it is the row that PAYS.
+ */
+export function firstIdeaStanding(handle, { worldDb = null, house = null } = {}) {
   try {
     const tank = ideasTank(worldDb ? { worldDb } : {});
     if (tank.source !== "store") return null;
@@ -1716,7 +1766,151 @@ export function injectedComplete(handle, { worldDb = null, house = null } = {}) 
     // with `[handle]` left the suite green. A branch a mutation can delete
     // silently is a branch nothing was testing.
     const residents = house ?? householdOf(handle)?.residents ?? [handle];
-    return { "first-idea": tank.ideas.some((i) => residents.includes(i.by)) };
+    const ours = tank.ideas.filter((i) => residents.includes(i.by));
+    // `ideasTank` orders by the mark's own date then id, so the first match is
+    // the household's earliest — the quest is "once per household, ever", so
+    // the day it was met is the day the FIRST one stood, not the newest.
+    const first = ours[0] ?? null;
+    return { complete: ours.length > 0, since: first?.date ?? null, by: first?.by ?? null };
+  } catch { return null; }
+}
+
+/**
+ * ── THE STANDING JOIN — the office answering rows it could always answer ─────
+ *
+ * The board's non-daily rows read `progress: null, complete: null` to every
+ * resident from 2026-09-01 (when BOARD_LAW put every registry row on the board)
+ * until today. A resident 125 days in, with a rewritten card, a home, a hung
+ * pane, 342 letters out and 333 in, read eight rows of silence and said, in the
+ * founder's words: "It's confusing because most of this is already done?"
+ *
+ * The silence was honest. `boardForHandle` is PURE by design and cannot open a
+ * file; `complete: null` means "this surface did not look", exactly as its own
+ * header says. The defect was never in the town's fold or in the site's
+ * renderer — it was that the office, the one surface that CAN look, looked for
+ * one row out of eight.
+ *
+ * `STANDING_FACT` maps each onboarding row to the fact `onboardingFactsFor`
+ * already answers for it. It is a second copy of a map the town holds privately
+ * (`FACT_OF`, quest-progress.mjs:459, not exported), so the risk is real: the
+ * town renames a row and this office silently stops measuring it. That
+ * agreement is BOUND rather than trusted — `ONBOARDING_IDS` *is* exported, and
+ * a falsifier asserts these keys are exactly that set, so a rename reds the
+ * suite instead of quietly emptying the board.
+ */
+export const STANDING_FACT = Object.freeze({
+  "write-your-card": "card",
+  "tend-your-home": "home",
+  "hang-your-window": "window",
+  "first-letter-out": "sent",
+  "first-answer": "received",
+});
+
+/** The three paper rows the record settles but does not date. */
+const PAPERS_WITHOUT_A_DATE = Object.freeze(["write-your-card", "tend-your-home", "hang-your-window"]);
+
+/**
+ * ⚑ THESE ARE READ BY RESIDENTS, AND THE FIRST DRAFT WAS WRITTEN IN OFFICE
+ * DIALECT. The reviewer caught it on the one note wright actually sees — it
+ * rides the only row left on his checklist — and it said *town checkout*, *this
+ * index*, *`next_steps`*, *the world block*. The founder's whole complaint that
+ * morning was that his own page said things he could not parse; answering it
+ * with four more words of ours would have been the same failure in a new place.
+ *
+ * `ladder_unsealed` was already right and is the model: town language, kind,
+ * and it says what is true rather than where the machinery is. The falsifier in
+ * `test/quest-standing.test.mjs` holds the line — it reds on
+ * checkout/index/rehydrate/fold/board read/next_steps/world block.
+ *
+ * One more correction inside the rewrite: the old world note told a reader
+ * "your own doorstep answers this row", which is true only on an OWN read —
+ * `nextStepsFor` skips the world for a stranger under the 2026-08-15 gate. On
+ * someone else's resident page that sentence pointed a visitor at a doorstep
+ * answering a different resident's question.
+ */
+export const STANDING_NOTES = Object.freeze({
+  no_index: "the town knows this one; this page has not caught up yet. It fills itself in within the hour.",
+  no_date: "you have done this. The town does not keep the day you did it, so there is no date to show.",
+  ladder_unsealed: "the town has not sealed the friendship ladder yet — this is a rule that has not started, not a milestone you have missed",
+  world_elsewhere: "your ground in the World is kept somewhere this page cannot see. Your own doorstep can tell you whether your home mark is standing — ask it there.",
+  no_tank: "the Think Tank could not be read just now, so nobody looked. This is not a no.",
+  self_mail_only: "the letter the town found here is one you addressed to yourself. It counts, and the town does not keep a day for it.",
+});
+
+/**
+ * The patch one registry row takes from the standing index. PURE — no db, no
+ * store, no clone — so every falsifier drives the real function rather than a
+ * copy of it. Returns null for a row this join has nothing to say about (the
+ * two dailies, the bounty postings), and otherwise the fields to merge.
+ *
+ * `progress` becomes a NUMBER wherever the fact is known, and that is
+ * deliberate: `measured` downstream is `typeof q.progress === "number"`, which
+ * is the town's own partition between a row that was counted and a row that was
+ * not. A settled row IS counted now, so it earns the number rather than being
+ * exempted from the test — the alternative was a second predicate, and a
+ * predicate two doors each derive is a predicate two doors can come to disagree
+ * about. Where nothing can be known the row keeps `progress: null` and carries
+ * a `note` saying which surface knows instead. Never a 0 standing in for a null.
+ */
+export function standingJoin(q, standing, { idea = null } = {}) {
+  const fact = STANDING_FACT[q.id];
+  if (fact) {
+    if (!standing || !(fact in standing)) return { note: STANDING_NOTES.no_index };
+    const complete = Boolean(standing[fact]);
+    const isPaper = PAPERS_WITHOUT_A_DATE.includes(q.id);
+    const since = isPaper ? null
+      : (fact === "sent" ? standing.sent_since : standing.received_since) ?? null;
+    // ⚑ THE NOTE IS ATTACHED BY ROW ID, NOT BY SHAPE. It used to fire on any
+    // complete-and-undated row, which meant a mail row could wear "the town
+    // does not keep the day" — and for the one resident whose only letter is to
+    // themselves, that was a lie about a delivery the ledger dates exactly.
+    // (The underlying divergence is fixed too: `firstEachWay` no longer skips
+    // self-mail, because the town's own fact does not.) A shape can be worn by
+    // a row it was never written for; an id cannot.
+    const note = isPaper && complete ? STANDING_NOTES.no_date
+      : (!isPaper && complete && since === null) ? STANDING_NOTES.self_mail_only
+      : null;
+    return { progress: complete ? 1 : 0, complete, since, ...(note ? { note } : {}) };
+  }
+  if (q.id === "first-idea") {
+    // The one row the office already answered. It keeps its injected `complete`
+    // (boardForHandle set it) and gains the number that makes it MEASURED, plus
+    // the mark's own day. `idea` null means the store did not answer, and the
+    // row must stay exactly as unmeasured as it was — that guard is the reason
+    // this row is not folded into the block above.
+    //
+    // ⚑ AND IT NOW SAYS SO. Unreadable-store used to return null, which left the
+    // row `measured: false` with NO note — against `read_quests`'s own new
+    // promise that an uncounted row "always names the surface that CAN answer
+    // it", and rendering on the page as exactly the silent line this whole lane
+    // was opened to remove. During the blip the guard exists for, the row went
+    // back to being the founder's blank row.
+    if (!idea) return { note: STANDING_NOTES.no_tank };
+    return { progress: idea.complete ? 1 : 0, complete: idea.complete, since: idea.since ?? null };
+  }
+  if (q.id === "correspond-depth") {
+    if (!standing || !("depth" in standing)) return { note: STANDING_NOTES.no_index };
+    if (standing.depth === null) return { note: STANDING_NOTES.ladder_unsealed };
+    const d = standing.depth;
+    return {
+      progress: d.eachWay ?? 0,
+      complete: (d.best ?? 0) > 0,
+      since: d.since ?? null,
+      // NOT `counted` — that field holds who filled a unit TODAY, and the site
+      // merges it across a household under that heading. A friendship crossed in
+      // August is not today's news wearing today's word.
+      earned_with: (d.friends ?? []).map((f) => ({ with: f.with, threshold: f.threshold, date: f.date })),
+    };
+  }
+  if (q.id === "walk-the-world") return { note: STANDING_NOTES.world_elsewhere };
+  return null;
+}
+
+/** This handle's standing row, or null when the index predates the seam. */
+export function standingFor(db, handle) {
+  try {
+    const row = db.prepare("SELECT json FROM quest_standing WHERE handle = ?").get(handle);
+    return row?.json ? JSON.parse(row.json) : null;
   } catch { return null; }
 }
 
@@ -1735,7 +1929,11 @@ export async function questBoardFor(db, meta, handle, clone) {
     sentTo: names(row.sent_to), heardFrom: names(row.heard_from),
     household: { key: "", size: row.house_size, send: row.house_send, receive: row.house_receive },
   } : null;
-  const board = boardForHandle(registry, prog, handle, today, { complete: injectedComplete(handle) });
+  // ONE world-store read for the first-idea row: `boardForHandle` wants the
+  // boolean and the standing join wants the date beside it.
+  const idea = firstIdeaStanding(handle);
+  const standing = standingFor(db, handle);
+  const board = boardForHandle(registry, prog, handle, today, { complete: idea ? { "first-idea": idea.complete } : null });
   // The funding pots ride the same board (funding seam, 2026-08-21) — pots are
   // bounty files ON the quest board, so the board read carries them rather than
   // growing a new verb. Same section for every handle (a pot is the town's, not
@@ -1784,6 +1982,20 @@ export async function questBoardFor(db, meta, handle, clone) {
   // "the store could not be read". That distinction was the open question on
   // this seam, and the town's own code already settles it.
   //
+  // ⚑ THE SENTENCE ABOVE IS NOW HALF THE STORY, and saying so here rather than
+  // leaving a reader to find it: `boardForHandle` is still the only writer of a
+  // NULL progress, but it is no longer the only writer of progress. The
+  // standing join below fills a number onto every non-daily row the record can
+  // settle, so `measured: true` has widened from "the daily fold counted this"
+  // to "this board counted this, by whichever of its two folds owns the row".
+  // That is the widening the founder asked for in plain words on 2026-09-08 —
+  // eight rows of "nothing looked" on a page belonging to a resident who had
+  // done all of them. The field's DERIVATION is untouched, which is the point:
+  // it still reads the shape rather than an id list, so it keeps telling the
+  // truth about rows the join leaves alone. `measured: false` now means "no
+  // fold on this board can count this row", and every such row carries a `note`
+  // naming the surface that can.
+  //
   // NOT PROVABLE AGAINST AN ID LIST, and said here rather than implied in the
   // test: `["correspond-send", "correspond-receive"]` IS `COUNTABLE_FIELD`'s key
   // set today, so a hardcoded pair and this derivation agree by arithmetic and no
@@ -1805,7 +2017,11 @@ export async function questBoardFor(db, meta, handle, clone) {
   // is a shape change every reader has to survive. This adds; it takes nothing.
   board.quests = (board.quests ?? [])
     .filter((q) => !bountyIds.includes(q.id))
-    .map((q) => ({ ...q, measured: typeof q.progress === "number" }));
+    .map((q) => {
+      const patch = standingJoin(q, standing, { idea });
+      const row = patch ? { ...q, ...patch } : q;
+      return { ...row, measured: typeof row.progress === "number" };
+    });
   try { board.pots = potBoard(db, postingsWithoutPots(bountyIds, db.prepare("SELECT id FROM pots").all().map((r) => r.id))); }
   catch { board.pots_note = "this index predates the funding seam — pots are not indexed here yet; they appear at the next rehydrate"; }
   // WHICH MIDNIGHT THE DAILY BARS RESET ON. `today` is already the variable this

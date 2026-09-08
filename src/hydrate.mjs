@@ -247,7 +247,8 @@ const registryPath = join(TOWN, "quest-registry.json");
 if (existsSync(questTool) && existsSync(registryPath)) {
   const { pathToFileURL } = await import("node:url");
   const { readFileSync } = await import("node:fs");
-  const { foldQuestProgress, townDay } = await import(pathToFileURL(questTool));
+  const questMod = await import(pathToFileURL(questTool));
+  const { foldQuestProgress, townDay } = questMod;
   const today = townDay();
   const prog = foldQuestProgress(TOWN, { today });
   const insQ = db.prepare("INSERT OR REPLACE INTO quest_progress (handle, send, receive, house_size, house_send, house_receive, sent_to, heard_from) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
@@ -257,6 +258,53 @@ if (existsSync(questTool) && existsSync(registryPath)) {
   }
   put.run("quest_day", today);
   put.run("quest_registry", readFileSync(registryPath, "utf8"));
+
+  // ── the standing rows: what the record already knew and nobody joined ──────
+  //
+  // The board's eight non-daily rows have answered `progress: null, complete:
+  // null` to every resident since BOARD_LAW widened the board on 2026-09-01 —
+  // "this surface did not look" printed beside eight things a 125-day resident
+  // had plainly done. The facts were never missing. `onboardingFactsFor` and
+  // `foldFriendships` are exported from the SAME town file as `boardForHandle`,
+  // and the office already wires the first of them into the doorstep
+  // (queries.nextStepsFor) and not into the board. This block is the join.
+  //
+  // ONE derivation, not a second one: every fact below comes from the town's
+  // own exported folds. The office contributes the INDEX, exactly as it does
+  // for the daily pair — nothing here re-implements a rule.
+  //
+  // A checkout too old to export these folds writes no rows at all, and the
+  // door then answers the non-daily rows precisely as it did before this seam.
+  // ⚑ THE RULES BELOW LIVE IN `src/quest-standing.mjs`, NOT HERE, and that is a
+  // review finding rather than a shape I got right. They shipped inline in this
+  // file, which is a SCRIPT nothing can import and nothing in the suite runs —
+  // six rules watched by no test at all, every one invertible without a red.
+  // This block is now the WIRING only: read the town's folds, hand them to the
+  // pure reduction, write what comes back.
+  if (typeof questMod.onboardingFactsFor === "function" && typeof questMod.foldFriendships === "function") {
+    const { onboardingFactsFor, foldFriendships } = questMod;
+    const { parseDeliveries } = await import(pathToFileURL(join(TOWN, "tools", "stamp-mint.mjs")));
+    const { standingRowsFor } = await import("./quest-standing.mjs");
+
+    // ONE ledger parse, shared by the onboarding facts and the two first-letter
+    // dates. `foldOnboarding` would parse it a second time for the same answer.
+    const deliveries = parseDeliveries(TOWN);
+    const friendships = foldFriendships(TOWN);
+    // `isResidentHandle` is the office's own admission grammar and the reason
+    // this iterates it rather than `town.residents` raw: the raw list carries
+    // `_archived`, which the daily fold already excludes, so an unfiltered loop
+    // wrote a standing row nothing would ever read.
+    const handles = town.residents.map((r) => r.handle).filter(isResidentHandle);
+    const rows = standingRowsFor(handles, {
+      deliveries, friendships,
+      factsFor: (h) => onboardingFactsFor(TOWN, h, { deliveries }),
+    });
+
+    const insS = db.prepare("INSERT OR REPLACE INTO quest_standing (handle, json) VALUES (?, ?)");
+    for (const [h, row] of rows) insS.run(h, JSON.stringify(row));
+    console.log(`  quests: ${prog.size} progress rows, ${rows.size} standing rows` +
+      (friendships.active ? `, ${friendships.pairs.length} friendship pairs` : ", friendship ladder not sealed"));
+  }
 }
 
 // ── atlas: regions + homes ───────────────────────────────────────────────────
