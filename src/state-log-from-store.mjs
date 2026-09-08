@@ -187,14 +187,17 @@ function inOrder(obj, fields) {
  * it as the object of nulls. Not one spells it `null`. So there is no ambiguity
  * for the register to fail to resolve: one shape, always.
  */
-export function standingFieldOf(act) {
-  // Built THROUGH `STANDING_FIELDS` rather than beside it. The list was exported
-  // with no reader anywhere in the repo, including here — a field list nothing
-  // consults is a comment wearing a const's clothes, and the next edit would have
-  // changed one and not the other.
-  const v = { anchor: act.at_anchor ?? null, dx: act.at_dx ?? null, dy: act.at_dy ?? null };
+export function standingFieldOf(act, fields = STANDING_FIELDS) {
+  // Built THROUGH the field list, and the list is the ONLY thing that decides
+  // the order. The first version of this built a literal in the right order and
+  // then copied it through the loop, which reads as a binding and is not one:
+  // deleting the loop returned the same bytes, so the falsifier that claimed to
+  // hold the list load-bearing could not fail. The columns are a LOOKUP now, with
+  // no order of their own, so reordering `fields` reorders the output — which is
+  // what F16 flips.
+  const column = { anchor: "at_anchor", dx: "at_dx", dy: "at_dy" };
   const out = {};
-  for (const f of STANDING_FIELDS) out[f] = v[f] ?? null;
+  for (const f of fields) out[f] = act[column[f]] ?? null;
   return out;
 }
 

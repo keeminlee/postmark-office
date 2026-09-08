@@ -279,12 +279,19 @@ test("F16 · STANDING_FIELDS is the builder's own source, not a list beside it",
   // It was exported and read by NOTHING, including its own module: `standingFieldOf`
   // built the object literal by hand. A field list nothing consults is a comment
   // wearing a const's clothes, and the next edit changes one and not the other.
-  const withExtra = standingFieldOf({ at_anchor: "x", at_dx: 1, at_dy: 2 });
-  assert.deepEqual(Object.keys(withExtra), [...STANDING_FIELDS],
-    "the built object's keys ARE the field list, in its order");
-  // The binding is real, not incidental: a line built through the list carries
-  // exactly the list, so reordering the list reorders the bytes.
-  assert.equal(JSON.stringify(withExtra), '{"anchor":"x","dx":1,"dy":2}');
+  const act = { at_anchor: "x", at_dx: 1, at_dy: 2 };
+  assert.equal(JSON.stringify(standingFieldOf(act)), '{"anchor":"x","dx":1,"dy":2}');
+  assert.deepEqual(Object.keys(standingFieldOf(act)), [...STANDING_FIELDS]);
+  // AND THE FLIP, IN-SUITE, because the first version of this test could not
+  // fail: `standingFieldOf` built a literal in the right order and then copied it
+  // through the loop, so deleting the loop returned the same bytes and the flip
+  // stayed green. A binding is only a binding if changing the list changes the
+  // answer — so change it, here, and watch.
+  assert.equal(JSON.stringify(standingFieldOf(act, ["dy", "dx", "anchor"])),
+    '{"dy":2,"dx":1,"anchor":"x"}',
+    "the field list decides the order — if this still reads anchor-first, the list is decorative");
+  assert.equal(JSON.stringify(standingFieldOf(act, ["anchor"])), '{"anchor":"x"}',
+    "and it decides the SET, not just the order");
 });
 
 test("F17 · this module's two exported names do not collide with the office's own", async () => {
