@@ -69,6 +69,7 @@ const STORE_REPORT = {
   serialized_here: 1184,
   supplied_bytes_only: 0,
   sketchbooks_cleared: { removed_remote: 40, removed_local: 0 },
+  wall: { sketchbooks: 84, bound: 52, unbound: [] },
   households: [{ household: "alpha", changed: true }, { household: "beta", changed: false }],
 };
 
@@ -112,6 +113,34 @@ test("the store block names what it cleared, and it is not folded into a count",
   assert.equal(r.store.changed, 1, "only the households whose sketchbook actually moved");
   assert.equal(r.store.supplied_bytes_only, 0,
     "anything but zero means two writers are serializing the same declaration, which mark-record.mjs exists to prevent");
+});
+
+test("entry, rehearsal and wall all ARRIVE on the receipt — the reader check on this lane's own additions", () => {
+  // THE RULE RUN ON MYSELF. This lane's recurring class is a value written that
+  // nothing reads. `entry`, `rehearsal` and `wall` are three fields I added to
+  // the store report and then carried into the receipt, and until this test each
+  // of them was written by one file and asserted by none — so a rename or a
+  // dropped line anywhere between `storeWriteDown` and `settlement-receipt.mjs`
+  // would have left them silently absent, on exactly the surface the keeper
+  // reads. Asserting them here is the whole point: the receipt is the reader.
+  const r = compose({ source: "store", store: STORE_REPORT });
+  // `null`, not absent: the receipt's own doctrine is that an empty channel is
+  // NAMED, because its absence is indistinguishable from a crossing that never
+  // looked. A supplier that did not say which module answered gets a null here
+  // and that null is itself the finding.
+  assert.equal(r.store.entry, null, "a supplier that named no module is recorded as null, not dropped from the receipt");
+  assert.equal(r.store.rehearsal, false, "absent means not a rehearsal, never unknown");
+
+  const withProvenance = compose({
+    source: "store",
+    store: { ...STORE_REPORT, entry: { module: "world2/tools/store-fold.mjs", name: "foldInputFromStore" }, rehearsal: true },
+  });
+  assert.deepEqual(withProvenance.store.entry, { module: "world2/tools/store-fold.mjs", name: "foldInputFromStore" },
+    "which module answered must reach the keeper — `source: store` alone does not say whose read of the store it was");
+  assert.equal(withProvenance.store.rehearsal, true,
+    "a crossing folded by a rehearsal instrument must be legible as one in the history file, weeks later, with nothing but these receipts");
+  assert.deepEqual(withProvenance.store.wall, { sketchbooks: 84, bound: 52, unbound: [] },
+    "and the wall's reach, because its failure mode is silence: an unbindable sketchbook is left alone, not refused");
 });
 
 test("no SETTLEMENT_SOURCE_MODE at all reads as git — the pre-G1 receipt is not silently a store one", () => {
