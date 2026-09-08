@@ -838,6 +838,28 @@ test("FALSIFIER (i4): N crossings where the store was never told is an ALARM, an
   assert.match(row.reason, /unpublished/);
 });
 
+test("FALSIFIER (i4e): the retire alarm carries its OWN means, never the sibling's install-day excuse", () => {
+  // The shared `means` on this row ends with "INSTALL-DAY NOTE: this row is
+  // EXPECTED to read ALARM-outcome until the first crossing after deploy writes
+  // the log, and it clears itself then." That is true of its two siblings and
+  // FALSE of this rule: a missing `retired` key does not match, so this alarm is
+  // silent on an old log and has no install day to be excused for. Appending the
+  // shared sentence would hand the operator a reason to ignore the one alarm that
+  // never needs one — a real finding read as expected noise, which is the exact
+  // way a board stops being read.
+  const m = manifest();
+  const blind = plantHistory(healthy(m), m, [
+    { at: "a", status: "published", class: null, published: 4, left_drafted: 10, retired: null },
+    { at: "b", status: "published", class: null, published: 3, left_drafted: 9, retired: null },
+    { at: "c", status: "published", class: null, published: 5, left_drafted: 8, retired: null },
+  ]);
+  const reason = rowFor(rollcall(m, blind, T0), SETTLEMENT).reason;
+  assert.doesNotMatch(reason, /INSTALL-DAY NOTE/,
+    "the retire alarm must not inherit an install-day excuse it does not have");
+  // And it must still say what to DO, or it is an alarm with no next step.
+  assert.match(reason, /postmark-office\.env|box carry/);
+});
+
 test("FALSIFIER (i4b): THE CONTROL — a step that RAN and retired nothing is green", () => {
   // `retired: 0` is the common crossing: the step asked and there was nothing to
   // retire. Alarming on it would fire on nearly every crossing and teach the
