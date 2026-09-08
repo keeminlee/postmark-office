@@ -212,3 +212,41 @@ test("A LAPSED ASK DOES NOT BRICK THE HANDLE, and no refusal leaks the office's 
   assert.equal((await fetch(`${BASE}/oauth/claim-cosign?ask=${encodeURIComponent(firstAsk)}`, { redirect: "manual" })).status, 404,
     "the lapsed ask's own link names nothing");
 });
+
+test("THE SWEEP ACTUALLY SWEEPS: a lapsed row is deleted, not merely ignored", () => {
+  // The flip run removed sweepClaims from the desk and every test stayed green,
+  // which is TRUE and is also a finding. Since the ask's hash became the primary
+  // key, a stale row can no longer collide with anything — so the sweep stopped
+  // being correctness and became hygiene, and hygiene with no reader is a table
+  // that only grows. This is the reader.
+  const odb = new DatabaseSync(OAUTH_DB.path);
+  try {
+    const lapsed = odb.prepare(
+      "SELECT COUNT(*) AS n FROM key_claims WHERE expires < ? AND cosigned_gh_id IS NULL"
+    ).get(Math.floor(Date.now() / 1000));
+    assert.equal(lapsed.n, 0,
+      "the lapsed ask the test above expired is gone from the table, cleared by the desk's own sweep on the next ask");
+  } finally { odb.close(); }
+});
+
+// LAST IN THE FILE ON PURPOSE: it breaks the office's ask table to reach a code
+// path nothing else can, and nothing after it could ask again.
+test("THE 500 IS THE OFFICE'S OWN SENTENCE, never SQLite's, to a caller who presented nothing", async () => {
+  // The desk's catch used to answer `String(e.message)` — so a keyless caller
+  // got "UNIQUE constraint failed: key_claims.handle", the schema named to a
+  // stranger. The flip that restores that line stayed GREEN, because with the
+  // primary key fixed there is no longer a natural way to make the desk throw:
+  // the guard had no reachable case and therefore no watcher. This makes one.
+  const odb = new DatabaseSync(OAUTH_DB.path);
+  odb.exec("DROP TABLE key_claims");
+  odb.close();
+
+  const r = await ask(LAPSER);
+  assert.equal(r.status, 500, "the desk trips");
+  const b = await r.json();
+  assert.equal(b.defect, "the key desk tripped");
+  const whole = JSON.stringify(b).toLowerCase();
+  for (const leak of ["sqlite", "no such table", "key_claims", "constraint", "prepare", "syntax"])
+    assert.ok(!whole.includes(leak), `the answer must not carry "${leak}" to a keyless caller`);
+  assert.match(b.hint, /inside the office, not in your ask/, "and it tells them whose fault it is");
+});
