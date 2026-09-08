@@ -234,17 +234,35 @@ test("F14 · the bytes are the drain's serialization — one JSON object per lin
   for (const l of bytes.split("\n").filter(Boolean)) JSON.parse(l);
 });
 
-test("F15 · standing and witnesses survive a row that has neither", () => {
-  assert.equal(standingOf({ at_anchor: null, at_dx: null, at_dy: null }), null);
-  assert.equal(witnessesOf({ witnesses: null }), null);
-  // An `enter`/`exit` row is exactly this shape in the register — measured on
-  // prod: crossing 177.0872, lupi exit, at_anchor null, witnesses null.
+test("F15 · a row with NO standing gets the object of nulls, not a bare null", () => {
+  // THIS TEST CAUGHT ME. I had `standingOf` return `null` for an anchorless row
+  // because that is what it obviously means, and shipped it green — the window
+  // 177 fixture has no such row, so nothing in this file could see it. The
+  // scratch run on window 177.0872 (lupi's exit) is what said otherwise, and the
+  // town's own files settle it: 483 anchorless lines across world main at
+  // `256db2fe`, every one of them spelling standing as the object of nulls,
+  // because `logLine`'s `row.at ?? null` never fires on a truthy object.
+  assert.deepEqual(standingOf({ at_anchor: null, at_dx: null, at_dy: null }),
+    { anchor: null, dx: null, dy: null });
+  assert.deepEqual(Object.keys(standingOf({ at_anchor: null, at_dx: null, at_dy: null })),
+    ["anchor", "dx", "dy"], "and in the pen's key order, like any other standing");
+  assert.equal(witnessesOf({ witnesses: null }), null, "witnesses IS a bare null — the two are not the same field");
+
+  // lupi's exit at crossing 177.0872, byte for byte out of world main 256db2fe:
+  // this is the line the register must reproduce, not a shape I invented.
+  const FILE_LINE = '{"at":"2026-09-08T13:02:50.962Z","type":"exit","actor":"lupi","seq":1366,'
+    + '"class":"frame","object":null,"household":null,"crossing":177.0872,'
+    + '"standing":{"anchor":null,"dx":null,"dy":null},"witnesses":null,'
+    + '"effect":"the crossing is declared; the record receives it at the save","payload":'
+    + '{"ledger":"WORLD/enter-exit-ledger.md","lines":["- 2026-09-08T13:02:50.862Z · lupi · exits to lupi/the-unworn-step · ferry 177.0872 · word neutral"],"summary":"exits to lupi/the-unworn-step"}}';
+  const file = JSON.parse(FILE_LINE);
   const line = logLineFromAct({
     id: 4727, at: "2026-09-08T13:02:50.962+00:00", crossing: 177.0872, actor: "lupi",
     action: "exit", object: null, at_anchor: null, at_dx: null, at_dy: null,
-    witnesses: null, class: "frame", payload: {}, effect: "e", household: null,
-  }, { householdNameFor });
-  assert.equal(line.standing, null);
-  assert.equal(line.witnesses, null);
+    witnesses: null, class: "frame", payload: file.payload,
+    effect: file.effect, household: null,
+  }, { householdNameFor, seqOf: () => 1366 });
   assert.equal(line.household, null, "a null household stays null and is not handed to the resolver");
+  assert.equal(JSON.stringify(line), FILE_LINE,
+    "an enter/exit line is byte-equal to the drain's, seq supplied — nothing about a frame row is unrecoverable");
 });

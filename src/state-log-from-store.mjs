@@ -169,12 +169,23 @@ function inOrder(obj, fields) {
  *
  * The drain carried `row.at` — the sqlite TEXT column the pen wrote — straight
  * through. The register splits it into `at_anchor / at_dx / at_dy` (the columns
- * `the-anchor` asked for), so this puts it back together. A row with no anchor
- * had no standing and gets `null`, which is what `logLine` wrote for it.
+ * `the-anchor` asked for), so this puts it back together.
+ *
+ * A ROW WITH NO ANCHOR STILL GETS THE OBJECT, and this is the one place I got it
+ * wrong by reasoning instead of reading. `logLine` writes `row.at ?? null`, and
+ * the pen's `row.at` for a standing-less act is the JSON text
+ * `{"anchor":null,"dx":null,"dy":null}` — an object, which is truthy, so the
+ * `?? null` never fires. Returning a bare `null` here looked obviously right and
+ * is not what any file in the town holds.
+ *
+ * MEASURED, not assumed: across every `STATE/log/*.journal.jsonl` in world main
+ * at `256db2fe` there are 483 lines with no anchor — 231 `exit`, 215 `enter`,
+ * 24 arena `join`, 11 arena `leave`, 2 `declare-stance-on` — and ALL 483 spell
+ * it as the object of nulls. Not one spells it `null`. So there is no ambiguity
+ * for the register to fail to resolve: one shape, always.
  */
 export function standingOf(act) {
-  if (act.at_anchor == null) return null;
-  return { anchor: act.at_anchor, dx: act.at_dx, dy: act.at_dy };
+  return { anchor: act.at_anchor ?? null, dx: act.at_dx ?? null, dy: act.at_dy ?? null };
 }
 
 /**
