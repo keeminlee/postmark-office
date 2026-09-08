@@ -94,7 +94,22 @@ const TOWN_CLONE = process.env.TOWN_CLONE ?? resolve(ROOT, "town-clone");
 // A read worker opens it READ-ONLY and skips the DDL: it still has to resolve
 // credentials (three SELECTs — a worker that could not would answer 401 to
 // every signed-in reader), and the schema belongs to the writer.
-const odb = openOauthDb(resolve(ROOT, arg("--oauth-db", "oauth.db")), { readOnly: READ_ONLY_ROLE });
+//
+// ⚑ AND IT REFUSES TO BOOT IF THE FILE IS NOT THERE, deliberately, where the
+// writer would have created it. The tempting alternative — boot anyway and let
+// credentialed reads 401 — makes a POOL MEMBER THAT POISONS QUIETLY: nginx has
+// no way to know this worker cannot resolve a key, so it keeps handing it
+// traffic and a share of signed-in readers are told they are not signed in.
+// A worker that will not start is a worker an operator can see. The writer owns
+// this file's existence; a worker only borrows its contents.
+const OAUTH_DB_PATH = resolve(ROOT, arg("--oauth-db", "oauth.db"));
+if (READ_ONLY_ROLE && !existsSync(OAUTH_DB_PATH)) {
+  console.error(`FATAL: --role read needs an existing key store at ${OAUTH_DB_PATH}, and a read worker will not create one.`);
+  console.error("       Start the writer first (it creates and owns the schema), or point --oauth-db at the writer's file.");
+  console.error("       Booting anyway would leave this worker answering 401 to every signed-in reader while nginx kept sending it traffic.");
+  process.exit(78); // EX_CONFIG
+}
+const odb = openOauthDb(OAUTH_DB_PATH, { readOnly: READ_ONLY_ROLE });
 
 // roles.db — the subscription lane's registry (hand-kept; tools/roles.mjs is the
 // only writer). Its own file for the same reason oauth.db has one: it is office
