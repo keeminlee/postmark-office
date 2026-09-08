@@ -106,7 +106,17 @@ import {
   cockpitPortal, encounterOn, joinOnCrossing, leaveOnCrossing, looseIn, publicState,
 } from "./arena.mjs";
 
-export const apexEnabled = () => process.env.WORLD_APEX === "1";
+// `apexEnabled()` — the `WORLD_APEX` gate — was DELETED here by G2 (P-033).
+// It was a rollback path to the flat verbs, and the flats are on the same
+// deletion list, so it was "a rollback to flats that will not exist" (the
+// parity matrix's own words). The gate had been open at every office that
+// exists — `WORLD_APEX=1` in /etc/postmark-office.env and
+// /etc/postmark-office-dev.env, read on the box 2026-09-08 — so no live answer
+// changes with it gone: the apex was already unconditional in practice and is
+// now unconditional in the code.
+//
+// CARRY AT DEPLOY: those two env files still name a key nothing reads. Removing
+// the lines is a box act and belongs beside this merge, not inside it.
 
 // ── the crossings' office plumbing (DEMO SLICE, step 5) ─────────────────────
 //
@@ -2672,7 +2682,8 @@ async function apexReadAction(args, key, ctx = {}) {
 }
 
 export async function worldApex(args = {}, key = null, ctx = {}) {
-  if (!apexEnabled()) return bounce(404, "the apex verb is not switched on at this office", "the operator runs it behind WORLD_APEX=1; the flat world_* verbs answer meanwhile");
+  // The `if (!apexEnabled()) return bounce(404, …)` that stood here went with
+  // the gate (G2 · P-033). There is no office where it could have fired.
   const doing = args.do != null && args.do !== "";
   const reading = args.read != null && args.read !== "";
 
@@ -2743,8 +2754,8 @@ export const APEX_TOOL = {
   additionalProperties: false },
 };
 
-// The tool list contribution. Frozen empty array with the flag off — the
-// callers spread this, so an office running without WORLD_APEX serves exactly
-// the list it served before this file existed.
-const NO_TOOLS = Object.freeze([]);
-export const apexTools = () => (apexEnabled() ? [APEX_TOOL] : NO_TOOLS);
+// The tool list contribution. It used to be conditional on `WORLD_APEX` and
+// frozen-empty with the flag off; G2 (P-033) deleted the gate, so the apex tool
+// is always contributed. Frozen and shared because the callers spread it.
+const APEX_TOOLS = Object.freeze([APEX_TOOL]);
+export const apexTools = () => APEX_TOOLS;

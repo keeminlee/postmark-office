@@ -114,10 +114,12 @@ if (!existsSync(REPO)) die(`no checkout at ${REPO}`);
 if (!process.env.WORLD2_PG_URL) die("WORLD2_PG_URL missing");
 // The oracle reads the clone; the port's engine loader reads the same one.
 process.env.WORLD_CLONE ??= REPO;
-// The 1.0 apex gates itself behind its own flag, and a falsifier that silently
-// ran against a disabled door would compare a bounce to an answer and call it a
-// divergence. Set it here, loudly, rather than requiring the caller to know.
-if (process.env.WORLD_APEX !== "1") process.env.WORLD_APEX = "1";
+// The 1.0 apex used to gate itself behind `WORLD_APEX`, and this set the flag
+// loudly rather than let the falsifier compare a bounce to an answer and call it
+// a divergence. G2 (P-033) deleted the gate; the door cannot be disabled, so the
+// line is gone rather than left setting a variable nothing reads. The recipe in
+// the header above keeps the export for older office checkouts, where it still
+// does something.
 // And the presence flag, for the same reason: without it 1.0 composes no `present` block at all,
 // A6 compares 0 handles, and the run ends CANNOT RUN — twice on 2026-09-04 before this line.
 // A falsifier that needs a flag sets the flag; a recipe in a report is not a guard.

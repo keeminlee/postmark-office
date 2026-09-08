@@ -3,9 +3,13 @@
 //
 // Seven falsifiers, each written so it CAN fail:
 //
-//   the flag off   the `world` tool is absent from tools/list, the verb itself
-//                  refuses, and GET /world/apex is not a door. Asserted against
-//                  the SAME list the door serves, not a copy of it.
+//   the gate gone  G2 (P-033) deleted `WORLD_APEX`. The three "flag off"
+//                  falsifiers that stood here tested an absence that no office
+//                  can produce any more; the one below replaces them and asks
+//                  the opposite question — an office started with the variable
+//                  EMPTY still serves the apex, on the list, at both doors, and
+//                  in the 404's own advertisement. It fails the moment anyone
+//                  puts a gate back.
 //   the gate       a hostile mark authored by a RESIDENT, standing on the
 //                  caller's own spine, carrying a perfectly well-formed
 //                  `affordances:` field, mints nothing — nor does one that
@@ -284,7 +288,7 @@ buildStore(STAGE_D_MARKS, stageDPath);
 // ── the code under test ──────────────────────────────────────────────────────
 
 const apex = await import("../src/world-apex.mjs");
-const { worldApex, apexTools, apexEnabled, TERMS_BUDGET_CHARS } = apex;
+const { worldApex, apexTools, TERMS_BUDGET_CHARS } = apex;
 
 const on = () => { process.env.WORLD_APEX = "1"; };
 const off = () => { delete process.env.WORLD_APEX; };
@@ -376,32 +380,61 @@ const rpc = async (method, params = {}) => {
   return { status: res.status, body: await res.json() };
 };
 
-// ── falsifier 1 · the flag off is an absence, not a refusal in disguise ──────
+// ── falsifier 1 · the gate is GONE, and an empty WORLD_APEX proves it ───────
+//
+// Three falsifiers stood here and all three asserted the flag-OFF absence: no
+// `world` tool on the list, the verb refusing, GET and POST /world/apex not a
+// door. G2 (P-033) deleted `apexEnabled()`, so that absence is unproducible and
+// a test of it is a test of nothing.
+//
+// This is their replacement and it asks the inverse, which is the property the
+// deletion actually created: an office started with WORLD_APEX EMPTY behaves
+// exactly like one started with it set. It runs the office with the variable
+// blank on purpose — that is the whole point — and it goes RED against the
+// train, where a blank flag hides the tool and 404s both doors. So it is also
+// the guard against the gate coming back by accident.
+//
+// `on()` / `off()` and the `WORLD_APEX` values the fixtures pass are inert now.
+// They are left in place so this commit's diff is the gate and not a sweep of
+// sixty-four call sites; this test is what makes their inertness a fact rather
+// than an assumption.
 
-test("flag off: an office without WORLD_APEX serves no `world` tool and no /world/apex", async () => {
+test("the gate is gone: an office with WORLD_APEX empty serves the apex anyway", async () => {
   off();
-  assert.deepEqual(apexTools(), []);
-  assert.equal(apexEnabled(), false);
+  assert.deepEqual(apexTools().map((t) => t.name), ["world"],
+    "apexTools() is unconditional since P-033");
   await withOffice({ WORLD_APEX: "" }, async () => {
     const { body } = await rpc("tools/list");
     const names = body.result.tools.map((t) => t.name);
-    assert.ok(!names.includes("world"), "the apex tool was served with the flag off");
-    assert.ok(names.includes("world_orient"), "…and the flat verbs are untouched beside it");
-    const call = await rpc("tools/call", { name: "world", arguments: {} });
-    assert.match(call.body.error.message, /unknown tool "world"/);
+    assert.ok(names.includes("world"), "the apex tool must be served with no flag set");
+    assert.ok(names.includes("town"), "…and so must the town tool, which shared the gate");
+    assert.ok(!names.includes("world_orient"),
+      "the delist is unconditional too — it used to lift with the flag");
+
+    // Still CALLABLE, which is the boundary the delist never crossed.
+    const call = await rpc("tools/call", { name: "world_orient", arguments: { handle: "apex" } });
+    assert.ok(!/unknown tool/.test(JSON.stringify(call.body)),
+      "a delisted verb is unadvertised, never unplugged");
+
     const res = await fetch(`${BASE}/world/apex?x=-900&y=-760`);
-    assert.equal(res.status, 404);
-    const doors = await res.json();
-    assert.ok(!doors.hint.includes("/world/apex"), "the 404 advertised a door it would also 404 on");
+    assert.notEqual(res.status, 404, "GET /world/apex is a door at every office now");
+
+    // And the 404 list advertises it — the inverse of the assertion that stood
+    // here, and the reader of server.mjs's now-unconditional door line.
+    const miss = await fetch(`${BASE}/world/no-such-door`);
+    assert.equal(miss.status, 404);
+    const doors = await miss.json();
+    assert.ok(doors.hint.includes("/world/apex"),
+      "the door list must advertise a door that answers");
   });
 });
 
-test("flag off: the verb itself refuses too, in case something calls past the list", async () => {
+test("the gate is gone: the verb itself answers with no flag, where it used to bounce 404", async () => {
   off();
   const r = await worldApex({ ...A }, null);
-  assert.equal(r.error, "bounce");
-  assert.equal(r.code, 404);
-  assert.match(r.hint, /WORLD_APEX=1/);
+  assert.notEqual(r.code, 404, "the WORLD_APEX bounce was P-033's own line and is deleted");
+  assert.ok(!(r.error === "bounce" && /WORLD_APEX/.test(r.hint ?? "")),
+    "nothing may still teach a reader to set WORLD_APEX=1");
 });
 
 test("the slim: rounds three and four take the listing to six; world_note and world_investigate stand, by ruling", async () => {
@@ -1308,7 +1341,10 @@ test("berth: the bare read answers as the quay's spectator — resident grants a
 // lives in the body, which the path-static REST maps cannot express. These run
 // against a spawned office: every claim here is about a door.
 
-test("POST /world/apex, flag off: an absence — 404 like every unknown door", async () => {
+// Its "flag off: an absence" twin was P-033's, and went with the gate. What is
+// left to watch is that the POST door is there with no flag set at all — the
+// same inversion as falsifier 1, on the act half.
+test("POST /world/apex with WORLD_APEX empty: a door, not an absence", async () => {
   off();
   await withOffice({ WORLD_APEX: "" }, async () => {
     const res = await fetch(`${BASE}/world/apex`, {
@@ -1316,7 +1352,7 @@ test("POST /world/apex, flag off: an absence — 404 like every unknown door", a
       headers: { authorization: "Bearer apexkey", "content-type": "application/json" },
       body: JSON.stringify({ do: "say", args: { text: "hello" } }),
     });
-    assert.equal(res.status, 404, "the falsifier's shape: off is not-there, never refused-in-disguise");
+    assert.notEqual(res.status, 404, "the act door answers at every office now");
   });
 });
 

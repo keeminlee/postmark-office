@@ -34,7 +34,7 @@ import { harborGated, HARBOR_BOUNCE } from "./harbor-gate.mjs";
 import { standingBounce } from "./standing.mjs";
 import { roleGate, ROLE_SUBSCRIBER } from "./roles.mjs";
 import { WORLD_TOOLS, callWorldTool, townPost, worldBlockForHandle } from "./world.mjs";
-import { apexEnabled, apexTools, dispatchToolFor, worldApex } from "./world-apex.mjs"; // stage 3: the apex `world` verb, behind WORLD_APEX
+import { apexTools, dispatchToolFor, worldApex } from "./world-apex.mjs"; // stage 3: the apex `world` verb (the WORLD_APEX gate died with G2 · P-033)
 import { HOUSEHOLD_TOOL, householdApex, householdDispatchToolFor } from "./household-apex.mjs";
 import { TOWN_TOOL, townApex, townDispatchToolFor, townTools } from "./town-apex.mjs";
 import { TOWN_STAKE_TOOLS, callTownStakeTool } from "./town-stake.mjs"; // the stake gesture, 2026-08-31
@@ -371,9 +371,12 @@ export const TOOLS = [
 //   holding a cached list is answered exactly as before (the request_blessing
 //   pattern) — a delisted tool is unadvertised, never unplugged.
 //
-//   APEX-CONDITIONED. With WORLD_APEX unset the delist does not apply and this
-//   serves the identical full list it served before the apex existed — the
-//   rollback story stays one environment variable.
+//   UNCONDITIONAL SINCE G2 (P-033). This used to read "APEX-CONDITIONED: with
+//   WORLD_APEX unset the delist does not apply and this serves the identical
+//   full list it served before the apex existed — the rollback story stays one
+//   environment variable." The gate is deleted and the flats it rolled back to
+//   are on the same G2 list, so the delist applies always. What it does NOT
+//   change is the boundary below: every delisted verb still ANSWERS.
 //
 //   ONE FLAT REMAINS. world_note stays listed by ruling; the five read flats
 //   delisted when `read:` landed to answer for them (same day, hours later).
@@ -384,13 +387,15 @@ export const TOOLS = [
 // has an apex verb that serves it. The listing goes to SIX names — world,
 // household, town, upload_media, world_note, world_investigate — from the
 // nineteen a connector paid for on connect this morning. The three boundaries
-// above are unchanged: every delisted verb still answers, the whole delist
-// lifts with WORLD_APEX unset, and nothing was unplugged.
-export const toolList = () => (apexEnabled() ? [...TOOLS.filter((t) => !DELISTED.has(t.name)), ...apexTools(), ...townTools()] : TOOLS);
+// above are unchanged: every delisted verb still answers and nothing was
+// unplugged. The third — "the whole delist lifts with WORLD_APEX unset" — was
+// true until G2 (P-033) deleted the gate; it is recorded here as history, not
+// as a property of this line.
+export const toolList = () => [...TOOLS.filter((t) => !DELISTED.has(t.name)), ...apexTools(), ...townTools()];
 
 // What may be CALLED is wider than what is LISTED — the whole point of a
 // listing-only delist. The call path looks up here, never in toolList.
-const callableList = () => (apexEnabled() ? [...TOOLS, ...apexTools(), ...townTools()] : TOOLS);
+const callableList = () => [...TOOLS, ...apexTools(), ...townTools()];
 
 // The apex is the one tool whose SHAPE depends on its arguments: bare it is a
 // read anyone may make, and with `do:` it performs a write-shaped act through

@@ -415,11 +415,19 @@ test("THE HARBOR: an unsettled household reads and posts nothing durable — sta
   } finally { if (before === undefined) delete process.env.HARBOR_WRITES; else process.env.HARBOR_WRITES = before; }
 });
 
-test("THE FLAG: the town tool appears only apex-on, and costs one frozen array off", () => {
+// THE FLAG that stood here — "the town tool appears only apex-on, and costs one
+// frozen array off" — was P-033's, and G2 deleted the gate it watched. Its
+// inverse is what wants watching now: the third door is unconditional, and no
+// environment can take it away.
+test("THE GATE IS GONE: the town tool is served whatever WORLD_APEX says", () => {
   const before = process.env.WORLD_APEX;
   try {
     delete process.env.WORLD_APEX;
-    assert.deepEqual(townTools(), [], "flag-off, no third door");
+    assert.deepEqual(townTools().map((t) => t.name), ["town"], "no flag: the third door stands");
+    process.env.WORLD_APEX = "";
+    assert.deepEqual(townTools().map((t) => t.name), ["town"], "empty flag: the third door stands");
+    process.env.WORLD_APEX = "0";
+    assert.deepEqual(townTools().map((t) => t.name), ["town"], "a flag saying no: the third door stands");
     process.env.WORLD_APEX = "1";
     assert.deepEqual(townTools().map((t) => t.name), ["town"]);
   } finally { if (before === undefined) delete process.env.WORLD_APEX; else process.env.WORLD_APEX = before; }

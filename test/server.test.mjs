@@ -12,6 +12,11 @@ import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { editClone, fixtureDb } from "./fixture.mjs";
 import { worldStoreFixture, AS_OF_WORLD } from "./world-graph-fixture.mjs";
+// The flat DEFINITIONS, read straight from the door's own module. G2 (P-033)
+// made the delist unconditional, so "still has a flat definition" and "appears
+// on tools/list" stopped being the same question — and the first is the one the
+// delist promised never to touch.
+import { TOOLS } from "../src/mcp.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = 43811;
@@ -327,56 +332,45 @@ test("MCP initialize → protocol + instructions", async () => {
   assert.match(body.result.instructions, /The reading law/, "the handshake carries the reading law");
 });
 
-// (the title carries no count on purpose — a name a routine addition can
-// falsify is a name that will lie; the ledger below is the count's home)
-test("MCP tools/list, apex OFF: the full flat list — the slim's delist is apex-conditioned and does not apply", async () => {
+// (the titles carry no count on purpose — a name a routine addition can
+// falsify is a name that will lie; the ledgers below are the counts' home)
+//
+// THIS PAIR REPLACES ONE TEST, and the split is P-033's doing. What stood here
+// was "MCP tools/list, apex OFF: the full flat list — the slim's delist is
+// apex-conditioned and does not apply", and it was the ROLLBACK contract: unset
+// one env var and the door serves the identical full list it served before the
+// apex existed. G2 deleted `WORLD_APEX`, so the delist is unconditional and
+// there is no listing in which the flats appear. That collapsed two claims the
+// old test made at once, and only one of them was ever about the LISTING:
+//
+//   · what the door LISTS — now the delist-filtered set plus the apex doors,
+//     asserted by exact membership below, so a door going missing is red;
+//   · what still EXISTS to be called — the boundary the delist never crossed
+//     ("a delisted tool is unadvertised, never unplugged"). That claim outlived
+//     the flag, and it is asserted against `TOOLS` itself, which is where a flat
+//     definition actually lives.
+//
+// The old test's own note said the named-verbs loop "is the assertion that
+// actually says something, since it fails when a tool GOES MISSING rather than
+// when one is added." That loop is kept whole, moved to the surface that can
+// still answer for it.
+
+test("MCP tools/list: the delist is unconditional now — the door serves the apex verbs and the paper doors, and nothing it hides", async () => {
   const { body } = await rpc("tools/list");
-  const names = body.result.tools.map((t) => t.name);
-  // 38 → 40: world_hold + world_holdings (the object primitive, 2026-08-14).
-  // 40 → 39: request_blessing delisted (the slim, 2026-08-15) — unconditional.
-  // THE SLIM's main cut (same day, eight world flats) applies only with
-  // WORLD_APEX on — this fixture runs the flag OFF, so this test is the
-  // ROLLBACK contract: unset one env var and the door serves the identical
-  // full list it served before the apex existed. The apex-on shape (31 flats
-  // + `world` = 32) is asserted in world-apex.test.mjs.
-  // 39 → 40: the `household` verb (the third door, 2026-08-15) — unconditional,
-  // additive, not flag-gated.
-  // 40 → 41: upload_media (the media door, 2026-08-15) — unconditional.
-  // 41 → 42: world_withdraw_mark (the revision family, founder-ruled 2026-08-19)
-  //          — added to WORLD_TOOLS without this ledger being paid; trued
-  //          2026-08-23 after the count sat red across every train tip.
-  // NOTE: this exact total breaks for whoever adds the next tool, whatever it is
-  // — the named-tools loop below is the assertion that actually says something,
-  // since it fails when a tool GOES MISSING rather than when one is added.
-  // 42 -> 43 (wave 2, 2026-08-24): update_address_fields, the scoped
-  // frontmatter door. Listed unconditionally like every other paper door — the
-  // slim only hides what an APEX serves, and no apex serves this one.
-  // 43 -> 45 (the lane reads, 2026-08-30): read_bounties + read_blueprints —
-  // born delisted behind the town apex, so the flag-OFF listing is where their
-  // flat definitions show (delisting is listing-only, apex-conditioned).
-  // 45 -> 46 (the lanes' pen, 2026-08-30 evening): town_post — town
-  // { do: "post" }'s charge name, born delisted like the lane reads it writes.
-  // 46 -> 49 (the stake gesture, 2026-08-31): town_stake, town_unstake and
-  // town_stake_read — town { do: "stake" | "unstake" } and their shared read
-  // shadow, born delisted the same way. Three, not two, because the shadow is
-  // the door's grammar and not an extra: anything you can do here, you can read.
-  // 49 -> 50 (the quarter read, 2026-09-01): read_asks — town { read: "asks" },
-  // the Civic Quarter's five plaques. Born delisted behind the town apex like
-  // every lane read above it, so the flag-OFF listing is where its flat
-  // definition shows.
-  // 50 -> 51 (the marks read, 2026-09-07, lane E item 2): read_marks —
-  // town { read: "marks" }, what a resident has MADE. Born delisted behind the
-  // town apex like every read above it, so the flag-OFF listing is where its
-  // flat definition shows. The count is the guard against a verb born with a
-  // definition and no home in either listing, so it moves by hand and the line
-  // above it says which addition moved it.
-  assert.equal(names.length, 51);
-  assert.ok(names.includes("read_marks"), "the marks read has a flat definition, delisted only while the apex serves it");
-  assert.ok(names.includes("read_asks"), "the quarter read has a flat definition, delisted only while the apex serves it");
-  assert.ok(names.includes("update_address_fields"), "the fields door stands regardless of the world flag");
-  assert.ok(!names.includes("request_blessing"), "request_blessing's delist is unconditional");
-  assert.ok(!names.includes("world"), "no apex tool with the flag off");
-  assert.ok(names.includes("household"), "the third door stands regardless of the world flag");
+  const names = body.result.tools.map((t) => t.name).sort();
+  // Exact membership, not a count: every name here is a door somebody can lose.
+  assert.deepEqual(names,
+    ["household", "town", "upload_media", "world", "world_investigate", "world_note"].sort(),
+    "the listed surface is the six the apex leaves standing — see mcp.mjs § DELISTED");
+  assert.ok(!names.includes("request_blessing"), "request_blessing's delist was always unconditional");
+  assert.ok(!names.includes("world_orient"), "world_orient is delisted — the apex `world` verb serves it");
+});
+
+test("MCP: every delisted verb still has its flat definition — unadvertised, never unplugged", () => {
+  const defined = new Set(TOOLS.map((t) => t.name));
+  // The named-verbs loop, verbatim from the test this replaces. It fails when a
+  // verb GOES MISSING, which is the failure worth catching; an addition never
+  // moves it.
   for (const n of ["read_town", "read_doorstep", "send_letter", "stake_vote", "read_votes",
     "read_metrics", "list_letters", "list_regions", "read_home", "request_residency",
     "declare_household", // join-as-declaration: the front door (2026-08-14)
@@ -385,7 +379,11 @@ test("MCP tools/list, apex OFF: the full flat list — the slim's delist is apex
     "world_my_marks", "world_leave_mark", "world_note", "world_walk", "world_walkers",
     "world_stake", "world_unstake", "world_stake_read",
     "world_say", "world_hold", "world_holdings"])
-    assert.ok(names.includes(n), n);
+    assert.ok(defined.has(n), n);
+  // And the four added since the flag went, each of which the old ledger tracked
+  // by hand as the flag-OFF listing's own count: they have definitions too.
+  for (const n of ["read_marks", "read_asks", "update_address_fields", "read_bounties", "town_post", "town_stake"])
+    assert.ok(defined.has(n), n);
 });
 
 // The arrival page over the wire, with NO credential — the claim is that an

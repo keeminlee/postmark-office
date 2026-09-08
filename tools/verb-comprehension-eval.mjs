@@ -50,9 +50,9 @@
 //   node tools/verb-comprehension-eval.mjs --score answers.json
 //   node tools/verb-comprehension-eval.mjs --key           # the key, AFTER the taker has answered
 //
-// The surface is read with the apex ON, because that is the surface that ships.
-
-process.env.WORLD_APEX ??= "1";
+// The surface is read as it ships. It used to set `WORLD_APEX=1` here "because
+// that is the surface that ships"; G2 (P-033) deleted the gate, so there is only
+// one surface and nothing to set.
 
 const { toolList } = await import("../src/mcp.mjs");
 const { TOWN_READABLE, TOWN_DISPATCHABLE } = await import("../src/town-apex.mjs");

@@ -537,11 +537,14 @@ the only reader of the fact.
 
 Two consequences, both deliberate:
 
-- **`WORLD_APEX=1` opens the store regardless of the serving flags.** The
+- **The apex opens the store regardless of the serving flags.** The
   promise at the top of `world-serve.mjs` — with neither flag, the store is
   never opened — is about serving a fold-equivalent read *in place of* the fold.
-  With `WORLD_APEX` unset nothing in `world-apex.mjs` runs at all, so the
-  promise holds exactly where it was made.
+  This paragraph used to add "with `WORLD_APEX` unset nothing in
+  `world-apex.mjs` runs at all, so the promise holds exactly where it was made";
+  G2 (P-033) deleted that gate, so there is no unset. The promise still holds
+  where it was made — the apex is not a fold-equivalent read — but it now holds
+  because of what the apex IS, not because an operator could switch it off.
 - **Absence is disclosed, never substituted.** A missing, failed or unreadable
   store makes the read return no affordances and say why in `law.unavailable`;
   an *act* refuses outright (503), because the law that binds an act has to

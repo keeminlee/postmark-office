@@ -28,7 +28,7 @@
 // fires on this door for free because the shape is the shape, not because
 // anything downstream learned the word "town".
 
-import { actionFields, apexEnabled } from "./world-apex.mjs";
+import { actionFields } from "./world-apex.mjs";
 import { standingBounce } from "./standing.mjs";
 import { harborGated, HARBOR_BOUNCE } from "./harbor-gate.mjs";
 
@@ -384,6 +384,10 @@ export const TOWN_TOOL = {
   }, additionalProperties: true },
 };
 
-/** Frozen empty, the same shape world-apex uses, so the flag costs one array. */
-const NO_TOOLS = Object.freeze([]);
-export const townTools = () => (apexEnabled() ? [TOWN_TOOL] : NO_TOOLS);
+/**
+ * Frozen and shared, the same shape world-apex uses. It was conditional on
+ * `WORLD_APEX` until G2 (P-033) deleted that gate; the town tool is always
+ * contributed now.
+ */
+const TOWN_TOOLS = Object.freeze([TOWN_TOOL]);
+export const townTools = () => TOWN_TOOLS;

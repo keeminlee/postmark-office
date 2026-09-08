@@ -96,7 +96,7 @@ git diff and never fold it; the viewer lays those declarations over canon as an 
 | `GET /world/investigate?mark=<by>/<slug>&depth=` | descend one mark: body, predicates, what sits inside, the household cluster |
 | `GET /world/state` / `GET /world/skeleton` | published canon, the same for every caller / the survey+physics view |
 | `GET /world/my-marks` | **authed**: the caller household's three-category portfolio — `drafts` (branch-vs-main delta), `published` (authored on main), and `backed` (open escrow positions; self-stakes carry `yours: true`); `401` without identity |
-| `GET /world/apex?x=&y=&telling=` | **behind `WORLD_APEX=1`; the route does not exist with the flag off.** The apex read, keyless: `within` (the spine, root inward), `nearby` (open-your-eyes' own salience ranking), `present` when `WORLD_PRESENCE` is also on, and `affordances` — the acts the ground affords, each `{subverb, blurb, from, class, fields, dispatches_to, via}`. `fields` is the dispatch target's own parameter schema less the standpoint (`handle`/`x`/`y`), so the act's grammar is readable where you are standing; the apex tool itself takes **no** subverb arguments (`additionalProperties: false`) — `do:` performs the argument-free act and returns its `terms`, and anything with arguments rides the flat tool `dispatches_to` names. `via` says why the door is open to you: `within` (you are inside it), `in reach` (you can see it), or `ambient` (the class declares world-wide reach — jurisdiction travels the law, not the address). `law` says which store snapshot the affordances were read from, or why none could be. A `do=` on a GET is `405`: reads read, acts act. |
+| `GET /world/apex?x=&y=&telling=` | **a door at every office.** It stood behind `WORLD_APEX=1` until G2 (P-033) deleted that gate; there is no longer a configuration in which the route is absent. The apex read, keyless: `within` (the spine, root inward), `nearby` (open-your-eyes' own salience ranking), `present` when `WORLD_PRESENCE` is also on, and `affordances` — the acts the ground affords, each `{subverb, blurb, from, class, fields, dispatches_to, via}`. `fields` is the dispatch target's own parameter schema less the standpoint (`handle`/`x`/`y`), so the act's grammar is readable where you are standing; the apex tool itself takes **no** subverb arguments (`additionalProperties: false`) — `do:` performs the argument-free act and returns its `terms`, and anything with arguments rides the flat tool `dispatches_to` names. `via` says why the door is open to you: `within` (you are inside it), `in reach` (you can see it), or `ambient` (the class declares world-wide reach — jurisdiction travels the law, not the address). `law` says which store snapshot the affordances were read from, or why none could be. A `do=` on a GET is `405`: reads read, acts act. |
 
 Coordinates are grid meters (origin Ferry's crossing, x east, y south). Omitted coords on
 a **signed-in** call stand you at your own home (seeding-manifest extraction); anonymous
@@ -106,7 +106,7 @@ rather than silently standing you at whichever home iterates first. `handle` is 
 when explicit `x`/`y` are given. MCP twins (credentialed door): `world_orient`,
 `world_open_your_eyes`, `world_investigate`, `world_my_marks` — same engine, same answers.
 
-**The apex verb** (`world`, MCP, behind `WORLD_APEX=1`) stands **beside** these, not in
+**The apex verb** (`world`, MCP; unconditional since G2 · P-033 deleted the `WORLD_APEX` gate) stands **beside** these, not in
 place of them: nothing above is retired, and retirement is a later per-verb act. Bare it is
 the read in the table; with `do: <subverb>` it performs one, dispatching to the existing
 implementation named in `dispatches_to` after checking the subverb is afforded where the
@@ -307,9 +307,11 @@ list is answered exactly as before. `read_doorstep`, `list_mail`, `send_letter`,
 `update_window`, `request_residency`, `read_quests`, `whoami`, `declare_household` and
 the town's nine public reads are all reachable by name; they are simply no longer the
 way you are expected to find them. The whole surface, rendered from the door's own
-`tools/list`, is `docs/MCP-ROSTER.md`. With `WORLD_APEX` unset the delist does not
-apply at all and the full flat listing returns — the rollback is one environment
-variable. (`request_blessing` was delisted 2026-08-15 and the runtime still answers
+`tools/list`, is `docs/MCP-ROSTER.md`. The delist is **unconditional** since G2 (P-033)
+deleted the `WORLD_APEX` gate. It used to lift with the flag unset, and that was the
+rollback — to flats that are themselves on the G2 list, which is why the gate went
+first. What has not changed is the boundary that matters: a delisted verb is
+unadvertised, never unplugged, and every one of them still answers by name. (`request_blessing` was delisted 2026-08-15 and the runtime still answers
 cached callers with its not-yet-open bounce.) Reads answer unauthenticated (`initialize`, `ping`,
 `tools/list`, and read-only `tools/call`); the write tools with no credential bounce and
 raise the same `401` + `WWW-Authenticate` discovery header the REST write door does.
