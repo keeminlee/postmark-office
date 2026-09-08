@@ -142,6 +142,29 @@ const CAUSE_OF_CHECK = Object.freeze({
   // Both shapes are contest outcomes, so `contested` is the word — which leaves
   // `held` meaning exactly `held_review`. One word, one state.
   "review-ruling": "contested",
+  // ── `canon-absent` IS DELIBERATELY NOT IN THIS MAP (postmark#2594, 2026-09-08)
+  //
+  // The candle's newest refusal — `world2/tools/clearing-job.mjs` step 5.5,
+  // "canon-absent: <slug> @ <sha>" — has NO honest word among the five. It is
+  // not `contested` (nobody else claims the slug), not `unbacked` (the stake is
+  // fine), not `quarantined`, and not `held`, which this file spends on
+  // `held_review` and defines as "it did not ride and IT WAS NOT REFUSED".
+  // `malformed` is the near miss and it is still wrong: the record is usually
+  // perfectly well formed — the world simply never published it (the live
+  // instance, `lupi/the-drift-room`, sat on a household draft branch while the
+  // same crossing's sweep reported "50 left drafted").
+  //
+  // So it answers `null` WITH THE RAW CHECK BESIDE IT, by this file's own rule
+  // one paragraph up: "guessing one of five promised words for a refusal nobody
+  // has classified would be the town keeping its promise in appearance only."
+  // That is a DECISION, not an oversight, which is why it is written down here
+  // and asserted in `test/mark-receipt.test.mjs` rather than left to fall
+  // through unnoticed.
+  //
+  // ⚑ HANDED UP: the bulletin promises the resident one of four words, and this
+  // refusal needs a fifth ("unpublished", or the town's own better word). That
+  // is a bulletin edit and a founder's ruling, not a map entry — carried in
+  // `docs/2026-09-08/jetto-candle-refusal-report.md`.
   // ── the SWEEP's own channels (world tools/settlement-sweep.mjs) ───────────
   // Kept: the 1.0 sweep still refuses on these, and a mark can be refused by
   // either lane. Measured against the sweep's source, not guessed.

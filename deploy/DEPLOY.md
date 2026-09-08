@@ -678,7 +678,7 @@ one line, named below.
 
 | unit | what it runs | when |
 |---|---|---|
-| `postmark-world2-clearing.timer` | `world2-clearing.sh` → `clearing-job.mjs` | 05:45 / 17:45 UTC |
+| `postmark-world2-clearing.timer` | `world2-clearing.sh` → `clearing-job.mjs` + `falsifier-canon-locks.mjs` | 05:45 / 17:45 UTC |
 | `postmark-world2-ingest.timer` | `world2-ingest.sh` → `law-ingest.mjs` + `stamp-ingest.mjs` | every 15 min, :04/:19/:34/:49 |
 | `postmark-world2-notary.timer` | `world2-notary.sh` → `snapshot-export.mjs` | 03:20 UTC |
 | `postmark-world2-backup.timer` | `world2-backup.sh` → `pg_dump` + ship, `pg_basebackup` | 04:10 UTC |
@@ -686,6 +686,35 @@ one line, named below.
 All four carry rows in `deploy/box-rollcall-manifest.json`. `world2-restore-rehearse.sh`
 is a hand-run, deliberately: it drops and recreates a database, and nothing that
 does that belongs on a clock.
+
+### The clearing lane reads canon, and it is not the ingest (2026-09-08, postmark#2594)
+
+Keemin ruled *refusal at the candle*: a claim that would lock while the mark it
+materializes has no file on main at the locking crossing is REFUSED, naming the
+slug and the world sha. `clearing-job.mjs` therefore takes `--world-repo`, and
+`world2-clearing.sh` refreshes `ingest-clones/world` before the loop exactly as it
+already refreshes `ingest-clones/town`. **A crossing with a claim that names a
+mark and no `--world-repo` REFUSES**, the same shape as the null-pin guard beside
+it: the whole cost of this class was three weeks of silence, so the silent
+outcome is the one that must not exist.
+
+The sha it rules against is the CHECKOUT's head, recorded on the window as
+`receipts.computed_against.canon_sha` — a third pinned input beside `law_sha` and
+`town_sha`, and a different source from either. It is deliberately **not**
+`projection_heads['world-law']`. That pin is frozen at `a23a8d17` (2026-09-05)
+because the ingest poll is parked by the 2026-08-31 ruling, and it cannot become
+fresh while the park stands. Measured on prod 2026-09-08: of the 1,031 standing
+marks, 27 have no file at that pin and **26 of the 27 are on world main today** —
+a refusal computed against it would refuse twenty-six legitimate marks to catch
+one. Even unparked it could not answer: the settlement pushes a crossing's mark
+files at `:45:2x` and the candle closes the window at `:45:44`, twelve seconds
+later, in the same systemd tick.
+
+After the crossing, `falsifier-canon-locks.mjs` runs as `snapshot_reader` and
+appends one line — clean or not — to `/srv/world2-lab/state/canon-locks.jsonl`.
+Its RED does not fail the unit: the crossing succeeded and the finding is about
+history the crossing did not make. The alarm is the roll-call's outcome block on
+the clearing row (`alarm_on_nonempty`), which is where an operator already looks.
 
 ### Which branch the ingest lane reads (2026-09-05)
 

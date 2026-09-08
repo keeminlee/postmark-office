@@ -65,6 +65,7 @@ import {
   ALARM_OUTCOME,
   ALARM_CUSTODY,
   scanCustody,
+  judgeOutcome,
   MINUTE,
 } from "../tools/box-rollcall.mjs";
 
@@ -191,6 +192,13 @@ function healthy(m = manifest()) {
           // crossing. `0` must never alarm; only `null` (nobody asked) does.
           retired: 0,
           world_from: "aaaa", world_to: "bbbb",
+          // A row that declares a list-alarm gets the fields it declares, EMPTY —
+          // the healthy shape for `canon_absent` is "the read ran and found
+          // nothing", which is most crossings. Generated from the row's own
+          // declaration rather than hard-coded, for the same reason the window
+          // length is: a manifest that names a third list must not go green here
+          // because nobody remembered to widen a fixture.
+          ...Object.fromEntries((row.outcome.alarm_on_nonempty ?? []).map((f) => [f, []])),
         }));
       }
       files[row.outcome.history_path] = { exists: true, mtime_ms: beatAt, text: `${lines.join("\n")}\n` };
@@ -1074,4 +1082,73 @@ test("the custody scan walks a real tree and finds the one file somebody else ow
   // And the bound is real: the same tree under a cap of 2 reports truncated.
   const capped = scanCustody(G, 1001, { readdir, lstat, cap: 2 });
   assert.equal(capped.truncated, true);
+});
+
+// ── the list that must be empty (postmark#2594, ruled 2026-09-08) ───────────
+//
+// `falsifier-canon-locks.mjs` appends one line per crossing naming every locked
+// claim the world carries no file for. These four are the rule's whole failure
+// space: it must fire on a name, stay silent on an empty list, refuse to be
+// silenced by a writer that stops emitting the field, and judge the LATEST
+// reading rather than a trend.
+//
+// THE CAN-FAIL FLIP: in `judgeOutcome`, change `.filter((r) => r.items.length)`
+// to `.filter(() => false)` — the check then reads every list as empty. Tests
+// "fires" and "judges the latest line" red; "stays silent" and the manifest test
+// stay green, which is what makes them controls.
+
+const LIST_ROW = Object.freeze({
+  unit: "postmark-world2-clearing.timer",
+  outcome: {
+    history_path: "/state/canon-locks.jsonl",
+    alarm_on_nonempty: ["canon_absent", "unmaterialized"],
+    unsettled_runs: 0,
+    why: "why",
+    means: "MEANS.",
+  },
+});
+const logOf = (...lines) => ({ files: { "/state/canon-locks.jsonl": { exists: true, text: lines.map((l) => JSON.stringify(l)).join("\n") + "\n" } } });
+
+test("a non-empty canon_absent list alarms, and the alarm names the slug", () => {
+  const said = judgeOutcome(LIST_ROW, logOf(
+    { at: "2026-09-08T17:46:00Z", canon_absent: ["lupi/the-drift-room"], unmaterialized: [] }));
+  assert.ok(said, "a locked claim canon has no file for must not read green");
+  assert.match(said, /lupi\/the-drift-room/);
+  assert.match(said, /MEANS\./);
+});
+
+test("an empty list is silent — most crossings are, and a board that cries every morning is not read", () => {
+  assert.equal(judgeOutcome(LIST_ROW, logOf(
+    { at: "2026-09-08T05:46:00Z", canon_absent: [], unmaterialized: [] })), null);
+});
+
+test("the LATEST line rules: a clean read after a red one clears, and a red after a clean one fires", () => {
+  const clean = { at: "a", canon_absent: [], unmaterialized: [] };
+  const red = { at: "b", canon_absent: ["darko/the-second-foundation-stone"], unmaterialized: [] };
+  assert.equal(judgeOutcome(LIST_ROW, logOf(red, clean)), null, "a disagreement the town has since settled is not still true");
+  assert.ok(judgeOutcome(LIST_ROW, logOf(clean, red)), "the newest reading is the one that is still true");
+});
+
+test("a latest line carrying none of the named fields is itself the alarm, not silence", () => {
+  // Deliberately NOT the `retired` rule's silent-on-a-missing-key shape: that
+  // discipline is right for a field a rail grew into, and wrong here, because
+  // silence would let a writer that stops emitting the list switch off its own
+  // alarm.
+  const said = judgeOutcome(LIST_ROW, logOf({ at: "c", status: "ok" }));
+  assert.ok(said);
+  assert.match(said, /carries none of them/);
+});
+
+test("the shipped manifest's clearing row declares the list alarm, and an empty declaration is refused", () => {
+  const row = manifest().units.find((u) => u.unit === "postmark-world2-clearing.timer");
+  assert.deepEqual(row.outcome.alarm_on_nonempty, ["canon_absent", "unmaterialized"]);
+  assert.match(row.outcome.history_path, /canon-locks\.jsonl$/);
+  // A list-alarm that names no field would pass every other assertion in
+  // loadManifest and watch nothing forever.
+  const dir = mkdtempSync(join(tmpdir(), "rollcall-manifest-"));
+  const bad = join(dir, "m.json");
+  const m = manifest();
+  m.units.find((u) => u.unit === "postmark-world2-clearing.timer").outcome.alarm_on_nonempty = [];
+  writeFileSync(bad, JSON.stringify(m));
+  assert.throws(() => loadManifest(bad), /alarm_on_nonempty that names no field/);
 });

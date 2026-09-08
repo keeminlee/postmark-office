@@ -27,9 +27,17 @@
 // first-step runs as law_ingester (its own pen) BEFORE this transaction; this
 // tool shells to stamp-ingest.mjs for it rather than borrowing its grants.
 //
+// LAW (Keemin's ruling on postmark#2594, 2026-09-08 at the G1 sitting, verbatim):
+// "refusal at the candle. A claim that would lock while the mark it materializes
+// has no file on main at the locking crossing is REFUSED at the clearing job's
+// lock step, naming the slug and the world sha — not held for review." That is
+// step 5.5 below; the predicate is `canon-register.mjs`, shared with the nightly
+// read so the two can never disagree about what "canon carries it" means.
+//
 // Usage (box):
 //   node world2/tools/clearing-job.mjs --window <N> \
 //     [--town-repo <checkout>]        # when given: stamp-ingest first (the census first-step)
+//     [--world-repo <checkout>]       # canon, for step 5.5 — REQUIRED when a claim names a mark
 //     [--dry-run]                     # compute + print transitions, commit nothing
 //   env: WORLD2_CLEARING_URL = postgres://clearing_job:...@localhost/world2_dev
 //        WORLD2_INGEST_URL   = postgres://law_ingester:... (only with --town-repo)
@@ -44,6 +52,10 @@ import { dirname, join } from "node:path";
 // holding the same `clearing_job` pen (`review-rule.mjs`). One definition, two
 // callers — see materialize.mjs's header for why it is not a copy.
 import { materializeClaims, recomputeStanding, slugOf } from "./materialize.mjs";
+// The 2594 predicate. ONE function, two backends, selected at the one line in
+// step 5.5 — so a refusal at the candle and the nightly listing of what already
+// slipped are answers from the same code.
+import { canonRegisterAt, canonAbsentAmong } from "./canon-register.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const arg = (n) => { const i = process.argv.indexOf(n); return i === -1 ? null : process.argv[i + 1]; };
@@ -55,6 +67,10 @@ if (!process.env.WORLD2_CLEARING_URL) { console.error("WORLD2_CLEARING_URL missi
 
 // ── first step: the stamp ingest (census amendment), its own pen ─────────────
 const townRepo = arg("--town-repo");
+// Canon's checkout for step 5.5. NOT ingested, NOT projected, NOT written into
+// the store — read only, as a refusal oracle. See canon-register.mjs § "this is
+// not a re-lift of the parked ingest".
+const worldRepo = arg("--world-repo");
 if (townRepo && !has("--dry-run")) {
   const sha = execFileSync("git", ["-C", townRepo, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
   execFileSync(process.execPath, [join(HERE, "stamp-ingest.mjs"), "--town-repo", townRepo, "--sha", sha],
@@ -97,6 +113,23 @@ try {
     throw new Error("no town projection head — staked claims cannot be judged without a pinned stamp read; run stamp-ingest first (the census first-step)");
   if (pending.length && !lawSha)
     throw new Error("no world-law projection head — a clearing computes against law-as-of a sha; run law-ingest first");
+  // THE SAME DISCIPLINE FOR CANON (the 2594 ruling). A claim that names a mark
+  // must not lock unchecked, so a crossing with such a claim and no canon
+  // checkout REFUSES rather than skipping the check — the third member of the
+  // guard family above, and the whole point of the ruling is that the silent
+  // outcome is the one that cost three weeks.
+  //
+  // It is NOT `!lawSha`'s twin in the sha it reads. `law_sha` is the parked
+  // projection's pin (frozen at a23a8d17 since 2026-09-05 by the 08-31 ruling)
+  // and cannot carry a file that landed twelve seconds ago; canon-register.mjs's
+  // header carries the measurement. This reads the checkout's own head and the
+  // window records it as its own field.
+  const namedPending = pending.filter((c) => slugOf(c));
+  if (namedPending.length && !worldRepo)
+    throw new Error(
+      `${namedPending.length} pending claim(s) name a mark and no --world-repo was given — ` +
+      "the candle cannot rule whether canon carries them (postmark#2594, ruled 2026-09-08). " +
+      "Pass a world checkout; refusing rather than locking unchecked.");
 
   const outcomes = new Map(); // id -> { status, refusal_check }
   const decide = (id, status, check = null) => outcomes.set(id, { status, refusal_check: check });
@@ -193,6 +226,55 @@ try {
     }
   }
 
+  // 5.5 · CANON CARRIES IT, OR IT DOES NOT LOCK (postmark#2594, ruled by Keemin
+  //     2026-09-08 at the G1 sitting). A claim whose mark has no file in the
+  //     world's register at this crossing's canon sha is REFUSED, naming the
+  //     slug and the sha.
+  //
+  //     NOT `held_review`, AND THE RULING SAYS WHY, verbatim: "the three
+  //     instances were silent for weeks; a `held_review` row would have been
+  //     just as silent." The status exists in the schema and step 5 above uses
+  //     it for the counterclaim rule; this check must never reach for it.
+  //
+  //     AFTER the four refusal rules and BEFORE the lock, so a claim that is
+  //     already refused for a more specific reason keeps that reason: a
+  //     duplicate slug, a superseded claim, an unbacked stake and a parcel
+  //     overlap all say something truer about the claim than "canon has no file
+  //     for it", and a held counterclaim stays a mind's to rule on.
+  //
+  //     THE CLASS THIS CATCHES, and the class it does not:
+  //     · CATCHES a claim whose mark reaches no ref of the world at all — the
+  //       three instances (`darko/the-second-foundation-stone` at window 154,
+  //       `wright/final-unstaked` at 155, `little-bird/the-second-spoon-verdict`
+  //       at 161), and the live fourth found while this was being built:
+  //       `lupi/the-drift-room`, locked at window 177 on 2026-09-08 17:45:44Z
+  //       with its file only on `origin/draft/lupi-agent` at bff32fae, while the
+  //       same crossing's settlement reported "2 published, 50 LEFT DRAFTED".
+  //       One act, two gates: the 1.0 sweep decides whether to PUBLISH and the
+  //       2.0 candle locked unconditionally.
+  //     · DOES NOT CATCH a mark the world publishes and later UNPUBLISHES —
+  //       that is the retire path's lane (G1 lane 1, materialize.mjs §
+  //       retireMarks), and it must not be caught here: the claim locked when
+  //       canon did carry the mark, and refusing it retroactively would record a
+  //       history that did not happen.
+  //     · CANNOT CATCH a mark whose file lands AFTER its crossing. Measured:
+  //       the 2026-09-07 05:45 settlement ran 1h53m late (world 49e0fe89 at
+  //       07:38:28Z) and `little-m-of-garrison/a-cluster-of-phaenolepis-
+  //       garrisonii` locked at window 174 before its own file existed. This
+  //       check would have refused it. The margin is normally twelve seconds and
+  //       the candle's own boundary wait is what supplies it; a grace of one
+  //       crossing is the founder's ruling to make, not this file's, and it is
+  //       carried up in the lane's report rather than built in silently.
+  const canonRegister = worldRepo
+    ? await canonRegisterAt({ backend: "git", worldRepo })  // ← the one line the G1 swap moves
+    : null;
+  if (canonRegister) {
+    for (const c of canonAbsentAmong(pending.filter((c) => !outcomes.has(c.id)), canonRegister, slugOf))
+      decide(c.id, "refused", c.check);
+    for (const u of canonRegister.unreadable)
+      console.log(`  ⚑ canon: the register at ${canonRegister.sha.slice(0, 8)} could not parse ${u} — it states nothing either way`);
+  }
+
   // 6 · everything still undecided LOCKS and materializes. The materialization
   //     itself is `materialize.mjs`'s — the same code the REVIEW lane's ruling
   //     runs, so a mark that arrives by a mind's ruling and one that arrives by
@@ -264,7 +346,13 @@ try {
     [windowId, lawSha, townSha, JSON.stringify({
       six_count: sixCount,
       ...(carried ? { review_rulings: carried } : {}),
-      computed_against: { law_sha: lawSha, town_sha: townSha },
+      // THREE INPUTS NOW, AND EACH NAMES ITS OWN SOURCE. `law_sha` and
+      // `town_sha` are the projections' pins; `canon_sha` is the world checkout
+      // step 5.5 read, which is a DIFFERENT source and a different freshness —
+      // the law projection is parked (2026-08-31) and its pin is frozen, so
+      // borrowing it to stamp canon's answer would be a confident lie. `null`
+      // means no claim named a mark, so nothing was asked.
+      computed_against: { law_sha: lawSha, town_sha: townSha, canon_sha: canonRegister?.sha ?? null },
       standing: {
         recomputed: standing.length, moved: moved.length,
         // Capped, because the receipt is evidence and not an export: the first
@@ -285,7 +373,7 @@ try {
     console.log(`DRY RUN window ${windowId}: ${JSON.stringify(sixCount)}; standing recomputed over ${standing.length}, ${moved.length} moved (rolled back)`);
   } else {
     await q("COMMIT");
-    console.log(`CLEARED window ${windowId} @ law ${lawSha?.slice(0, 8) ?? "∅"} town ${townSha?.slice(0, 8) ?? "∅"}: ${JSON.stringify(sixCount)}; standing recomputed over ${standing.length} mark(s), ${moved.length} moved${moved.length ? ` (${moved.slice(0, 3).map((m) => `${m.slug} ${m.from}→${m.to}`).join(", ")}${moved.length > 3 ? ", …" : ""})` : ""}; window ${windowId + 1} open`);
+    console.log(`CLEARED window ${windowId} @ law ${lawSha?.slice(0, 8) ?? "∅"} town ${townSha?.slice(0, 8) ?? "∅"} canon ${canonRegister?.sha?.slice(0, 8) ?? "∅"}: ${JSON.stringify(sixCount)}; standing recomputed over ${standing.length} mark(s), ${moved.length} moved${moved.length ? ` (${moved.slice(0, 3).map((m) => `${m.slug} ${m.from}→${m.to}`).join(", ")}${moved.length > 3 ? ", …" : ""})` : ""}; window ${windowId + 1} open`);
   }
 } catch (err) {
   await q("ROLLBACK").catch(() => {});

@@ -76,6 +76,14 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 MAX_CATCHUP="${W2_MAX_CATCHUP:-6}"
 TOWN_CLONE_DIR="$WORLD2_LAB/ingest-clones/town"
+# Canon's checkout, for the candle's step 5.5 (postmark#2594, ruled 2026-09-08).
+# The SAME directory the parked law ingest owns, refreshed the same way — it is
+# the box's one world checkout and nothing else reads it while the ingest is
+# parked. Nothing here ingests, projects, or writes it into the store: the world
+# is READ as a refusal oracle. See canon-register.mjs § "this is not a re-lift of
+# the parked ingest".
+WORLD_CLONE_DIR="$WORLD2_LAB/ingest-clones/world"
+CANON_HISTORY="${W2_CANON_HISTORY:-$WORLD2_STATE_DIR/canon-locks.jsonl}"
 
 # PG* becomes the LAW INGESTER, for the first step the clearing shells out to
 # (world2-lib.sh § two connection shapes — the WORLD2_INGEST_URL hand-off in
@@ -98,6 +106,19 @@ if ! "$HERE/world2-refresh-clone.sh" town >/tmp/w2-clearing-town.log 2>&1; then
   echo "[world2-clearing] town checkout refresh FAILED — refusing to clear against a sha I cannot vouch for" >&2
   cat /tmp/w2-clearing-town.log >&2
   w2_state clearing.json "\"status\":\"cannot-run\",\"detail\":$(w2_json_escape < /tmp/w2-clearing-town.log)"
+  exit 2
+fi
+
+# The world checkout the candle's canon check needs. Refreshed here rather than
+# trusted, for the same reason the town one is — and for a sharper one: the law
+# projection's pin is FROZEN (its poll is parked by the 2026-08-31 ruling), so a
+# checkout left where the last hand-run put it would have the candle refusing
+# every mark published since. Measured 2026-09-08: 26 of the 27 standing marks
+# absent from that frozen pin are on world main today.
+if ! "$HERE/world2-refresh-clone.sh" world >/tmp/w2-clearing-world.log 2>&1; then
+  echo "[world2-clearing] world checkout refresh FAILED — refusing to rule on canon I cannot vouch for" >&2
+  cat /tmp/w2-clearing-world.log >&2
+  w2_state clearing.json "\"status\":\"cannot-run\",\"detail\":$(w2_json_escape < /tmp/w2-clearing-world.log)"
   exit 2
 fi
 
@@ -133,7 +154,7 @@ for _ in $(seq 1 "$MAX_CATCHUP"); do
   # die at the call site with nothing written down.
   last_out="$(cd "$WORLD2_OFFICE" && \
     WORLD2_CLEARING_URL="$CLEARING_URL" \
-    node world2/tools/clearing-job.mjs --window "$win" --town-repo "$TOWN_CLONE_DIR" 2>&1)"
+    node world2/tools/clearing-job.mjs --window "$win" --town-repo "$TOWN_CLONE_DIR" --world-repo "$WORLD_CLONE_DIR" 2>&1)"
   rc=$?          # BEFORE any pipe. $? after `cmd | tee` is tee's, not the tool's.
   echo "$last_out"
 
@@ -145,6 +166,31 @@ for _ in $(seq 1 "$MAX_CATCHUP"); do
   fi
   closed=$((closed + 1))
 done
+
+# ── THE STANDING READ (postmark#2594) ───────────────────────────────────────
+# Step 5.5 stops a FOURTH. This lists any that already slipped, or that slip by
+# a path the candle cannot see — the instrument that would have found the three
+# on the day instead of three weeks later. It runs on EVERY tick, including the
+# nothing-due ones, and appends a line whether it finds anything or not: "ran and
+# found nothing" and "did not run" must not look alike, which is the only reason
+# the roll-call can judge it at all.
+#
+# ITS RED DOES NOT FAIL THIS UNIT, and that is deliberate. The crossing
+# succeeded; the finding is about history the crossing did not make. The alarm is
+# the roll-call's outcome rule on this log (deploy/box-rollcall-manifest.json § the
+# clearing row), which is where an operator already looks at 8am. Failing the
+# clearing on it would put a red on the wrong rail and, worse, stop the candle
+# over a record nobody is mid-writing.
+if READ_URL="$(w2_url snapshot_reader PG_SNAPSHOT_READER_PASSWORD)"; then
+  mkdir -p "$(dirname "$CANON_HISTORY")"
+  canon_out="$(cd "$WORLD2_OFFICE" && WORLD2_PG_URL="$READ_URL" \
+    node world2/tools/falsifier-canon-locks.mjs --world-repo "$WORLD_CLONE_DIR" --history "$CANON_HISTORY" 2>&1)"
+  canon_rc=$?
+  echo "$canon_out"
+  [ "$canon_rc" -eq 2 ] && echo "[world2-clearing] the canon-locks read could NOT RUN (exit 2) — no line was appended, so the roll-call will read this row as unjudged" >&2
+else
+  echo "[world2-clearing] PG_SNAPSHOT_READER_PASSWORD unreadable — the canon-locks read did not run" >&2
+fi
 
 if [ "$closed" -eq 0 ]; then
   w2_state clearing.json '"status":"nothing-due","closed_this_run":0'

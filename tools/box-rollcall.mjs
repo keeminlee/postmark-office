@@ -187,6 +187,14 @@ export function loadManifest(path = DEFAULT_MANIFEST) {
     if (!Number.isFinite(Number(row.outcome.unsettled_runs))) throw new Error(`${row.unit} declares an outcome with no unsettled_runs — a refusal that keeps returning would read green`);
     if (!row.outcome.means) throw new Error(`${row.unit} declares an outcome with no means — nothing to print on the alarm line`);
     if (!row.outcome.why) throw new Error(`${row.unit} declares an outcome with no why — its thresholds are numbers nobody can review`);
+    // A list-alarm names the fields it watches, and an empty declaration is the
+    // shape that reads green forever: `alarm_on_nonempty: []` would pass every
+    // check above and watch nothing.
+    if (Object.prototype.hasOwnProperty.call(row.outcome, "alarm_on_nonempty")) {
+      const l = row.outcome.alarm_on_nonempty;
+      if (!Array.isArray(l) || !l.length || l.some((f) => typeof f !== "string" || !f))
+        throw new Error(`${row.unit} declares alarm_on_nonempty that names no field — a list-alarm watching nothing reads green forever`);
+    }
   }
   return m;
 }
@@ -806,6 +814,44 @@ export function judgeOutcome(row, snapshot) {
         `\`WORLD2_CLEARING_URL\` is absent from the settlement unit's environment, so the step names its own ` +
         `absence and retires nothing.${mine}`
       );
+    }
+  }
+
+  // THE LIST THAT MUST BE EMPTY (postmark#2594, ruled 2026-09-08).
+  //
+  // `falsifier-canon-locks.mjs` appends one line per crossing naming every
+  // locked claim the world carries no file for. The class it watches went
+  // unseen for three weeks because NOTHING WAS LOOKING — not because anything
+  // was quiet about it — so the alarm is the list itself, not a trend across
+  // runs: one name in it is a disagreement between the two records standing
+  // right now, and by the time it repeats it has already been true for twelve
+  // hours.
+  //
+  // JUDGED ON THE LATEST LINE ONLY, and that is the difference from every rule
+  // above. `left_drafted` and `retired` are about a rail's BEHAVIOUR over time,
+  // where one bad crossing is noise; this is about the STORE'S STATE, where the
+  // most recent reading is the only one that is still true.
+  //
+  // A LATEST LINE CARRYING NONE OF THE NAMED FIELDS IS ITSELF THE ALARM, and it
+  // is deliberately not the `retired` rule's silent-on-a-missing-key shape. That
+  // discipline is right for a field a rail grew into; it is wrong here, because
+  // "silent when the field is absent" means a writer that stops emitting the list
+  // turns its own alarm off. The judge says so instead.
+  const lists = Array.isArray(spec.alarm_on_nonempty) ? spec.alarm_on_nonempty : [];
+  if (lists.length) {
+    const present = lists.filter((f) => Object.prototype.hasOwnProperty.call(latest, f));
+    if (!present.length) {
+      return `declares an alarm on ${lists.join(", ")} and its latest line at ${latest.at ?? "?"} carries none of them — ` +
+        `the instrument and this judge disagree about the shape, so nothing is being judged.${means}`;
+    }
+    const found = present
+      .map((f) => ({ field: f, items: Array.isArray(latest[f]) ? latest[f] : [] }))
+      .filter((r) => r.items.length);
+    if (found.length) {
+      return `last read at ${latest.at ?? "?"} found ${found.map((r) => `${r.items.length} ${r.field}`).join(" and ")} — ` +
+        `${found.map((r) => r.items.join(", ")).join(" · ")}. ` +
+        `The store and canon disagree about ${found.reduce((n, r) => n + r.items.length, 0) === 1 ? "a mark" : "marks"} ` +
+        `that ${found.reduce((n, r) => n + r.items.length, 0) === 1 ? "stands" : "stand"} in the register today.${means}`;
     }
   }
 
