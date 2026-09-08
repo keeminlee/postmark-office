@@ -155,7 +155,19 @@ export async function worldStakeRead(args = {}) {
 // Ruling 9 portfolio seam. Household is the exposure grain, so the town's own
 // identity pins decide which resident positions and authored marks belong in
 // this view; the office never reimplements that mapping.
-export async function worldPortfolioStakeSlice(key, marks = []) {
+// `also` is a SECOND source of mark bodies — the caller's own live layer (their
+// drafts and docket claims). It exists because of the row the 2026-09-06 walk
+// read on their own staked mark:
+//
+//     { id: "wright/the-flip-day-plumb-line", by: null, kind: null, tier: null,
+//       body: null, holder: "wright", stamps: 1, yours: false }
+//
+// Every field null and `yours: false`, on a mark whose stake the very same
+// answer had just named. The cause is one line below: `byId` was built from
+// PUBLISHED canon alone, so a mark that has not crossed yet has no row to draw
+// from — and `yours` was computed off that missing row. A mark not yet on the
+// world is exactly the case a resident is asking about.
+export async function worldPortfolioStakeSlice(key, marks = [], { also = [] } = {}) {
   const household = String(key?.household ?? "").trim();
   if (!household || key?.visitor || !(key?.handles instanceof Set) || key.handles.size === 0)
     return bounce(403, "no resident household at this door", "sign in as a resident household to read your marks");
@@ -175,34 +187,60 @@ export async function worldPortfolioStakeSlice(key, marks = []) {
     .map((h) => stakeState.currentHouseholdOf(h))
     .find(Boolean) ?? household;
   const belongs = (handle) => stakeState.currentHouseholdOf(handle) === pinsHousehold;
-  const byId = new Map(marks.map((mark) => [mark.id, mark]));
+  // Canon first, the caller's own live layer second — canon wins on a shared
+  // id, because a published mark's fields are the town's answer and a draft
+  // copy of one is the author's proposal.
+  const byId = new Map([...also, ...marks].map((mark) => [mark.id, mark]));
   const residents = [...new Set(marks.map((mark) => mark.by).filter(belongs))].sort();
   const backed = derived.rows
     .filter((row) => belongs(row.holder))
-    .map((row) => {
-      const mark = byId.get(row.mark);
-      return {
-        id: row.mark,
-        by: mark?.by ?? null,
-        kind: mark?.kind ?? null,
-        tier: mark?.tier ?? null,
-        body: mark?.body ?? null,
-        holder: row.holder,
-        stamps: Number(row.n ?? 0),
-        // `holder_weight`, not `weight` — a FOURTH quantity, and the narrowest:
-        // this one holder's row, their own escrow plus the breadth bonus if
-        // theirs was the row that earned it. It is not the mark's ✦weight and
-        // not even the mark's ledger_weight. Sitting beside published[].weight
-        // (fully effective) under the same word made the portfolio read as
-        // though a resident's stake and a mark's standing were one scale.
-        // Audited before renaming: no consumer read it — the viewer's
-        // backedPosition reads `stamps` only, the site reads none of it.
-        holder_weight: Number(row.weight ?? row.n ?? 0),
-        yours: Boolean(mark && belongs(mark.by)),
-      };
-    })
+    .map((row) => backedRow(row, { mark: byId.get(row.mark), belongs }))
     .sort((a, b) => a.id.localeCompare(b.id) || a.holder.localeCompare(b.holder));
   return { household, residents, backed };
+}
+
+/**
+ * ONE ROW OF THE BACKED LIST — a stake of yours, and the mark it stands behind.
+ *
+ * Exported and PURE because it is the decision, not the plumbing: `yours` is a
+ * sentence the town says to a resident about their own work, and it was wrong
+ * for as long as it was computed off a record that had not been written yet.
+ * A falsifier that could only reach it through a town clone and a stake state
+ * would be asserting the fixture.
+ *
+ * ⚑ THE OWNER IS IN THE ID (2026-09-07). A mark id IS `<by>/<slug>` — "the 1.0
+ * path identity", 006's own words — so the author is readable from the identity
+ * alone, with no record to look up. The old line read `yours: Boolean(mark &&
+ * belongs(mark.by))`, and `mark` came from PUBLISHED canon only, so a mark that
+ * had not crossed yet produced `{ by: null, kind: null, tier: null, body: null,
+ * holder: "wright", stamps: 1, yours: false }` — a resident's own staked mark,
+ * every field empty, declared not theirs, in the same answer that named the
+ * stake behind it (walk of 2026-09-06).
+ */
+export function backedRow(row, { mark = null, belongs = () => false } = {}) {
+  const by = mark?.by ?? String(row.mark ?? "").split("/")[0] ?? null;
+  return {
+    id: row.mark,
+    by: by || null,
+    kind: mark?.kind ?? null,
+    tier: mark?.tier ?? null,
+    body: mark?.body ?? null,
+    // Absent from canon AND from the caller's live layer: say so, rather than
+    // letting four nulls read as "a mark with no kind and no body".
+    ...(mark ? {} : { unread: "this mark's fields are in neither published canon nor your own live layer — the stake is real and its record is elsewhere" }),
+    holder: row.holder,
+    stamps: Number(row.n ?? 0),
+    // `holder_weight`, not `weight` — a FOURTH quantity, and the narrowest:
+    // this one holder's row, their own escrow plus the breadth bonus if theirs
+    // was the row that earned it. It is not the mark's ✦weight and not even the
+    // mark's ledger_weight. Sitting beside published[].weight (fully effective)
+    // under the same word made the portfolio read as though a resident's stake
+    // and a mark's standing were one scale. Audited before renaming: no
+    // consumer read it — the viewer's backedPosition reads `stamps` only, the
+    // site reads none of it.
+    holder_weight: Number(row.weight ?? row.n ?? 0),
+    yours: Boolean(by && belongs(by)),
+  };
 }
 
 async function runExec(payload) {

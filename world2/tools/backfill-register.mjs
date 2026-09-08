@@ -29,6 +29,13 @@
 //     resident's, and publishing it from here would put a mark in the register
 //     that its author never put forward. These are reported and skipped; the
 //     five at S58 are a ruling, not a backfill.
+//     RULED 2026-09-08 (founder, at the G1 sitting: "agree with your rec"): A
+//     PRIVATE DRAFT NEVER BLOCKS THE PUBLISHED BODY. The world's published mark
+//     becomes the standing row, locked at its source commit; the household's
+//     draft stays a draft — a revision on top, judged at the next window as any
+//     draft is. The skip above is the default; `--published-body-over-draft`
+//     is the ruling typed on purpose, and the receipt names every row it
+//     touched beside a draft.
 //   · a database whose name contains neither `lab` nor `scratch`, unless `--prod`
 //     is ALSO given. Two flags, deliberately. NOTE (measured 2026-09-05): the box
 //     has no separate lab store — `/srv/world2-lab/lab.env` and
@@ -136,6 +143,8 @@ export function refusalFor({ amendCount = 0, recompute = false, accepted = false
 // escape hatch is `--drafts-held-by-name <file>`: a name survives a policy, a
 // status does not, so an operator who cannot see the drafts may still name them.
 export const DRAFTS_FLAG = "drafts-held-by-name";
+/** The 2026-09-08 ruling, typed on purpose: the published body is written even where the store holds a private draft under the slug. */
+export const PUBLISH_OVER_DRAFT_FLAG = "published-body-over-draft";
 
 /**
  * The by-name hold file: one slug per line, blank lines and `#` comments ignored
@@ -314,13 +323,13 @@ export function privilegeRefusal(p) {
 // Returns `{ refused, vis, plan }`. `refused` is a string the caller prints and
 // exits on; the caller does not decide whether to refuse.
 export async function preflightAndPlan(client, {
-  worldRepo, sha, windowId, cls, lawSha, townSha, heldByName = null,
+  worldRepo, sha, windowId, cls, lawSha, townSha, heldByName = null, publishOverDraft = false,
 }) {
   const vis = await visibilityProbe(client);
   const refused = visibilityRefusal(vis, { heldByName });
   if (refused) return { refused, vis, plan: null };
   const plan = await planBackfill(client, {
-    worldRepo, sha, windowId, cls, lawSha, townSha, heldByName,
+    worldRepo, sha, windowId, cls, lawSha, townSha, heldByName, publishOverDraft,
   });
   plan.cls = cls;
   return { refused: null, vis, plan };
@@ -342,13 +351,15 @@ export function renderPlan(plan, { sha, dbName, windowId }) {
 ADD ${plan.adds.length}:`);
   for (const a of plan.adds) {
     out.push(`  + ${a.slug}  [${a.mark.kind}/${a.mark.data?.tier ?? "-"}]  ${a.commit.sha} ` +
-      `${a.commit.author} — ${String(a.commit.subject).slice(0, 60)}`);
+      `${a.commit.author} — ${String(a.commit.subject).slice(0, 60)}` +
+      (a.draftBeside ? `  [a private DRAFT stays beside it — ruled 2026-09-08]` : ""));
   }
   out.push(`
 AMEND ${plan.amends.length}:`);
   for (const a of plan.amends) {
     out.push(`  ~ ${a.slug}  fields: ${a.fields.join(", ")}  ${a.commit.sha} ` +
-      `${a.commit.author} — ${String(a.commit.subject).slice(0, 60)}`);
+      `${a.commit.author} — ${String(a.commit.subject).slice(0, 60)}` +
+      (a.draftBeside ? `  [a private DRAFT stays beside it — ruled 2026-09-08]` : ""));
   }
   if (plan.blockedByParent.length) {
     out.push(`
@@ -389,7 +400,7 @@ const flag = (n) => process.argv.includes(`--${n}`);
  * writes what this returns; a rehearsal that measured a different set from the
  * one the write applies is not a rehearsal.
  */
-export async function planBackfill(client, { worldRepo, sha, windowId, cls, lawSha, townSha, checkoutDir, heldByName = null }) {
+export async function planBackfill(client, { worldRepo, sha, windowId, cls, lawSha, townSha, checkoutDir, heldByName = null, publishOverDraft = false }) {
   // ── THE ORACLE IS BOUND TO `--sha`, NOT TO WHATEVER THE CLONE IS SITTING AT ──
   //
   // This function used to call `deriveSeed({ worldRepo })` — the clone's WORKING
@@ -406,13 +417,13 @@ export async function planBackfill(client, { worldRepo, sha, windowId, cls, lawS
   const own = checkoutDir ? null : checkoutAt(worldRepo, sha, "backfill");
   const at = checkoutDir ?? own.dir;
   try {
-    return await planFrom(client, { worldRepo, checkoutDir: at, sha, windowId, cls, lawSha, townSha, heldByName });
+    return await planFrom(client, { worldRepo, checkoutDir: at, sha, windowId, cls, lawSha, townSha, heldByName, publishOverDraft });
   } finally {
     own?.dispose();
   }
 }
 
-async function planFrom(client, { worldRepo, checkoutDir, sha, windowId, cls, lawSha, townSha, heldByName = null }) {
+async function planFrom(client, { worldRepo, checkoutDir, sha, windowId, cls, lawSha, townSha, heldByName = null, publishOverDraft = false }) {
   const derived = await deriveSeed({ worldRepo: checkoutDir, lawSha, townSha });
   const register = new Map(derived.marks.map((m) => [m.slug, m]));
 
@@ -477,17 +488,21 @@ async function planFrom(client, { worldRepo, checkoutDir, sha, windowId, cls, la
     if (cause !== cls) continue;
 
     if (REFUSED_BY_NAME.has(slug)) { skipped.push({ slug, why: "HELD by the founder's word — refused by name" }); continue; }
-    if (draftSlugs.has(slug)) {
+    // RULED 2026-09-08: a private draft never blocks the published body. Without
+    // the flag the skip stands (the default is still the resident's); with it the
+    // row is planned and the receipt says a draft stays beside it.
+    const draftBeside = draftSlugs.has(slug);
+    if (draftBeside && !publishOverDraft) {
       const byName = heldByName?.has(slug) ? " (held BY NAME — this connection cannot see the claim itself)" : "";
       skipped.push({ slug, why: `the store holds a private DRAFT for this slug — a ruling, not a backfill${byName}` });
       continue;
     }
 
     if (isMissing) {
-      adds.push({ slug, mark: m, commit, cause });
+      adds.push({ slug, mark: m, commit, cause, draftBeside });
     } else {
       amends.push({
-        slug, mark: m, was: db.get(slug), commit, cause,
+        slug, mark: m, was: db.get(slug), commit, cause, draftBeside,
         fields: [...fieldsBySlug.get(slug)].sort(),
       });
     }
@@ -666,7 +681,7 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].split(/[\\/]/).p
   // argument — see `preflightAndPlan` for the bug that shape exists to make
   // impossible. The CLI no longer has a place to compute the hold and forget it.
   const { refused, vis, plan } = await preflightAndPlan(client, {
-    worldRepo, sha, windowId, cls, heldByName: held,
+    worldRepo, sha, windowId, cls, heldByName: held, publishOverDraft: flag(PUBLISH_OVER_DRAFT_FLAG),
     lawSha: arg("law-sha", w.rows[0]?.law_sha ?? "0".repeat(40)),
     townSha: arg("town-sha", w.rows[0]?.town_sha ?? null),
   });

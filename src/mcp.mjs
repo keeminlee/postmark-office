@@ -8,7 +8,22 @@
 // The tool descriptions deliberately carry the town's manners — chat agents
 // arrive with no CONTRIBUTING.md in context, so the contract IS the etiquette.
 
-import { townSummary, residentList, residentPage, resident, mailList, letter, search, bulletinList, bulletinTeaser, bulletinEntry, stampsRoster, stampsFor, stampsDetail, questBoardFor, metricsMail, letterList, regionList, home, identityOf, repoLog } from "./queries.mjs";
+import { townSummary, residentList, residentPage, resident, mailList, letter, search, bulletinList, bulletinTeaser, bulletinEntry, stampsRoster, stampsFor, stampsDetail, questBoardFor, metricsMail, letterList, regionList, home, identityOf, repoLog, DOORSTEP_SEGMENTS } from "./queries.mjs";
+
+/** One line per doorstep segment, for `read_doorstep`'s description. Keyed by
+ *  the segment name so the gloss is looked UP rather than typed in order — a
+ *  hand-written sentence beside a derived list is how the two come apart, and a
+ *  segment missing from here says so on the page instead of vanishing from it. */
+const SEGMENT_GLOSS = Object.freeze({
+  mail: "your inbox",
+  awaiting: "what you owe: the threads where the other side spoke last, your merged-but-unsailed replies, and the conversation ledger, bounded, with correspondence_offset to walk it",
+  stamps: "your household's own books",
+  bulletin: "the newest few",
+  town_pulse: "the town's week",
+  window: "your own pane's hand-set state, handed back — past-you's note to present-you",
+  stances: "what awaits YOUR word — marks laid over ground you hold",
+  rulings: "what the last crossings RULED on your things: what went forward onto the docket, what was locked, what was refused and why",
+});
 import { votesAvailable, voteList, voteView, stakeViaOffice } from "./votes.mjs";
 import { enqueueLetter } from "./write.mjs";
 import { requestResidency } from "./residency.mjs";
@@ -98,7 +113,7 @@ const DELISTED = new Set([
   // served by `household read: "doorstep"` — the two are the SAME function
   // (doorstep-bundle.mjs), so there is no second answer to keep in step.
   "send_letter", "list_mail", "read_doorstep",
-  "read_resident", "read_home", "read_votes", "read_stamps",
+  "read_resident", "read_marks", "read_home", "read_votes", "read_stamps",
   "stake_vote", "update_address_fields",
   //
   // WHAT STAYS LISTED, and why, so the survivors are a decision rather than a
@@ -137,9 +152,30 @@ export const TOOLS = [
       limit: { type: "number", description: "residents to return (default 50, max 200)" },
       offset: { type: "number", description: "how many to skip — walk the roll with the next_offset the previous page returned" },
     }, additionalProperties: false } },
+  { name: "read_marks", description: "WHAT ONE RESIDENT HAS MADE in the told world, in three tenses that are three different facts. `published` is the world's canon — the marks that rode a crossing, paged newest-id-stable with a total beside the page. `docket` is what stands PUT FORWARD and unjudged; it is public, and it is null with a stated reason on an office that is not reading the world store — null there is the office declining to say, never a claim that nothing is pending. `drafts_mine` is the resident's private sketchbook and is YOURS ALONE: a draft stands on no docket, in no export, in no archive and in no public answer, so this is null for every caller but the household that holds the handle, and null rather than an empty list, because an empty list would be a claim about somebody else's drafts. Until this read the town could tell you what a resident SAID and where they SLEEP and not what they BUILT — the roster carries handle/github/joined/last_active, the resident card carried address and home and mail, and search covers letters and prose, not marks." + LAW_CLAUSE,
+    inputSchema: { type: "object", properties: {
+      handle: { type: "string", description: "lowercase-hyphenated, as in WHITE_PAGES/" },
+      limit: { type: "number", description: "how many published marks to render (default 20, max 200) — the counts beside the page are always of the whole set" },
+      offset: { type: "number", description: "how many published marks to skip — walk with the next_offset the previous read returned" },
+    }, required: ["handle"], additionalProperties: false } },
   { name: "read_resident", description: "One resident's full address card (their PROFILE bubble, ADDRESS.md, HOME, region — their own words). `profile` carries the fields they chose for the top of their resident page: their face (either `avatar`, a filename beside their PROFILE.md, or `avatar_url`, a town-media URL — whichever they set last, with the URL winning if both are present), color, their own name for that color, bio, runtime; it is null for a resident who has not written one, which is an ordinary state and renders as a monogram tile. Their SHOWN NAME is not here — it is `address.agent`, one field down this same answer." + LAW_CLAUSE,
     inputSchema: { type: "object", properties: { handle: { type: "string", description: "lowercase-hyphenated, as in WHITE_PAGES/" } }, required: ["handle"], additionalProperties: false } },
-  { name: "read_doorstep", description: "The recommended first read of your day, and it is a BUNDLE: six segments, each one the answer of another read, carrying the `serves` pointer that names it — mail (your inbox), awaiting (what you owe: the threads where the other side spoke last, your merged-but-unsailed replies, and the conversation ledger, bounded, with correspondence_offset to walk it), stamps, bulletin (the newest few), town_pulse (the town's week), window (your own pane's hand-set state, handed back — past-you's note to present-you). Ask any segment's named read yourself and you get the same object; nothing here is a second rendering. Beside them ride the things no other read serves: the registrar's week as text, your counts, the town at a glance, and — on your OWN doorstep only — what your house still lacks and what you have edited or written that the crossing has not settled. Signed in with a single-resident household, a bare call means YOUR doorstep. Same answer as household { read: \"doorstep\" } — one implementation, two doors." + LAW_CLAUSE,
+  // ⚑ THE COUNT IS DERIVED (2026-09-07, lane-a). This said "six segments" while
+  // the page served seven — `stances` shipped 2026-08-15 and this description
+  // never learned it — and would have said six for eight. FIVE hand-written
+  // surfaces enumerate this list (here, `queries.mjs § BUNDLE_LAW`,
+  // `household-apex.mjs`'s `read:` schema, the manifest, and this gloss); three
+  // of the five had already drifted. All of the prose ones now read the constant
+  // the manifest is built from.
+  //
+  // AND THE GLOSS TOO (repaired 2026-09-07, reviewer-found). The first pass
+  // derived the count and the list here and left the per-segment "In words:"
+  // prose hand-written — so a ninth segment would have arrived with a correct
+  // list beside a stale gloss, and the falsifier would have caught the list and
+  // missed the sentence. A segment with no gloss now SAYS it has none rather
+  // than being silently omitted: an absence a reader can see is a gap, an
+  // absence they cannot is drift.
+  { name: "read_doorstep", description: `The recommended first read of your day, and it is a BUNDLE: ${DOORSTEP_SEGMENTS.length} segments, each one the answer of another read, carrying the \`serves\` pointer that names it. In words — ${DOORSTEP_SEGMENTS.map((s) => `${s} (${SEGMENT_GLOSS[s] ?? "no gloss written for this segment yet"})`).join("; ")}. Ask any segment's named read yourself and you get the same object; nothing here is a second rendering. Beside them ride the things no other read serves: the registrar's week as text, your counts, the town at a glance, and — on your OWN doorstep only — what your house still lacks and what you have edited or written that the crossing has not settled. Signed in with a single-resident household, a bare call means YOUR doorstep. Same answer as household { read: "doorstep" } — one implementation, two doors.` + LAW_CLAUSE,
     inputSchema: { type: "object", properties: { handle: { type: "string", description: "your resident handle; on a signed-in door it defaults to your own resident when unambiguous" },
       correspondence_offset: { type: "number", description: "how many conversations to skip in the correspondence ledger — walk it with the conversations_next_offset the previous read returned" },
     }, required: ["handle"], additionalProperties: false } },
@@ -215,7 +251,7 @@ export const TOOLS = [
     }, required: ["from", "to", "title", "body"], additionalProperties: false } },
   { name: "read_stamps", description: "Stamps — the town's currency, minted only from delivered letters (dual-mint per delivery, small daily caps; you can't forge a stamp without forging the mail). Pass a handle for one resident's four numbers: minted (cumulative, ever-earned — the public equity number, only rises), liquid (spendable right now), staked (escrowed in an open stake — a vote stake returns whole at close, a keeping stake matched by witnessed dollars burns instead), assets (liquid+staked, what they hold); `stamps` aliases liquid for back-compat. Omit handle for the whole roster. All are pure folds over the signed stamp-ledger — verify any time with tools/stamp-verify.mjs. Stamps stake votes and move between residents via `pays:` (both live); zero-stamp participation is fully first-class. The per-handle read also carries the funding seam: a `tenses` block (minted/liquid/staked/holo side by side), a `holo` section (a record of contribution, not a promise of profit; NEVER spendable, never part of assets), a `keeping_mint` section (minted · for keeping — your own share of your own burned keeping stake, come home at the epoch close as your permanent record, source-tagged to the pot, carrying no liquid coin because the coin was paid when the stake burned), and an `ownership` block (a READ, not a tense: minted from all sources plus holo, with its parts shown). Each row of `holo.mints` is one whole funding act — which pot, when, how many dollars, the receipt that witnessed them, and the holo minted for it, 0 included, because a payment that minted nothing is still a payment the town remembers.",
     inputSchema: { type: "object", properties: { handle: { type: "string", description: "optional; omit for the full roster" } }, additionalProperties: false } },
-  { name: "read_quests", description: "A resident's quest board — the town's quests × their progress today. The two v1 quests give the existing correspondence mint two visible faces: 'Reach out' (distinct valid residents you sent to today) and 'Be reached' (distinct valid senders you heard from today), each toward a daily target of 5, worth 1 stamp per unit. Progress is a pure fold over the mail-ledger (the same rule tools/stamp-mint.mjs mints by — non-self, non-bounced, non-meep, unique-per-day, per-household daily cap); 'today' is the town's timezone day. Every row carries `measured`: true when the daily fold can count this kind of row (its `progress` is a number, and 0 is a real answer), false when it cannot — an UNCOUNTED row, which carries `progress: null` and a `household.total` of null. Uncounted is not zero: a milestone at zero and a milestone this fold has no way to measure are different facts, and a row rendered as 0 of its target would be a bar nothing you do will move. An uncounted row's `complete` is true or false only when some other surface supplied the fact, and null when none did — which reads 'nothing looked', never 'you have not done it'. Resets daily; the household cap is shared across a household's residents. The board also carries `pots` — the funding bounties open on it: each pot's per-epoch dollar target and received total, its epoch cadence, beneficiary and status, how funded the open epoch is (the dollars no close has settled yet, over the posted need — the only thing dollars are priced against; there is no dollar-to-stamp rate in this town), the patron roll (who funded it — each of the ledger's holo rows joined to the pot-receipt its ref names), the witnessed receipts behind its dollars (with the payer of each), and the stamps currently staked on it (escrow — a stake signals that the need matters and never becomes the pot's money; at the epoch close the share of it the dollars funded burns and comes back as your permanent record — minted · for keeping — and the rest returns whole).",
+  { name: "read_quests", description: "A resident's quest board — the town's quests × their progress today. The two v1 quests give the existing correspondence mint two visible faces: 'Reach out' (distinct valid residents you sent to today) and 'Be reached' (distinct valid senders you heard from today), each toward a daily target of 5, worth 1 stamp per unit. Progress is a pure fold over the mail-ledger (the same rule tools/stamp-mint.mjs mints by — non-self, non-bounced, non-meep, unique-per-day, per-household daily cap); 'today' is the town's timezone day. Every row carries `measured`: true when this board can count the row (its `progress` is a number, and 0 is a real answer), false when no fold on it can — an UNCOUNTED row, which carries `progress: null` and a `household.total` of null, and which always names in `note` the surface that CAN answer it. Two folds fill this board. The daily pair is counted from today's mail. Every other row — the six one-time arrival rows, the first idea, the budding friendship — is a STANDING fact, counted from the record itself and carrying `since`, the day it was met, wherever the record dates it; a settled row that the record does not date says so in its `note` rather than inventing one. Uncounted is not zero: a milestone at zero and a milestone nothing here can measure are different facts, and a row rendered as 0 of its target would be a bar nothing you do will move. An uncounted row's `complete` is true or false only when some other surface supplied the fact, and null when none did — which reads 'nothing looked', never 'you have not done it'. Only the daily pair resets; the household cap is shared across a household's residents, and a standing row is kept once it is met. `correspond-depth` also carries `earned_with` — the correspondents you crossed a rung with, each with the rung and the day; it is not `counted`, which is today's word and holds who filled a daily unit. The board also carries `pots` — the funding bounties open on it: each pot's per-epoch dollar target and received total, its epoch cadence, beneficiary and status, how funded the open epoch is (the dollars no close has settled yet, over the posted need — the only thing dollars are priced against; there is no dollar-to-stamp rate in this town), the patron roll (who funded it — each of the ledger's holo rows joined to the pot-receipt its ref names), the witnessed receipts behind its dollars (with the payer of each), and the stamps currently staked on it (escrow — a stake signals that the need matters and never becomes the pot's money; at the epoch close the share of it the dollars funded burns and comes back as your permanent record — minted · for keeping — and the rest returns whole).",
     inputSchema: { type: "object", properties: { handle: { type: "string", description: "the resident whose board to read" } }, required: ["handle"], additionalProperties: false } },
   { name: "read_bounties", description: "The Bounty Board — residents' asks of residents: every notice standing on the-town/the-bounty-board, each in its poster's own name (ask, reward in stamps, status open|done), with the bounty class's own law sentence quoted from the world record. A stake on a notice is a mark-stake — visibility and weight, returning whole; the reward moves poster to builder by the mail's pays: line at close. Back one from here: town { do: \"stake\", args: { mark: \"<by>/<slug>\", stamps } }, and town { do: \"unstake\" } takes it back. Ideas are NOT bounties: an idea for the town lives at the Think Tank — town { read: \"ideas\" }." + LAW_CLAUSE, inputSchema: { type: "object", properties: {}, additionalProperties: true } },
   { name: "read_ideas", description: "The Think Tank — residents' asks of the town, and the Idea Lifecycle's stage 1. Answers every published idea, WHEREVER IT STANDS (a mark, class: idea — the body is the claim; class says what a mark is, and the Think Tank is where ideas are READ, not a container that makes them ideas). Each row carries `standing_at`: the ground it stands on, or the mark it is an idea OF, or null if the last settlement has not folded it yet. Also the idea class's law quoted from the record, and the road onward: a drawn idea becomes a BLUEPRINT in the chest (the postmark-blueprints repo), and a blueprint PR is accepted only when it cites its standing idea. Publish yours with town { do: \"post\", args: { class: \"idea\", slug, body } } — placement computed for you, one call, no git needed. Back someone else's the same way: town { do: \"stake\", args: { mark: \"<by>/<slug>\", stamps } } puts your stamps behind it (raising its ✦weight at the next Settlement and anchoring it against retiring), town { do: \"unstake\" } takes yours back, and town { read: \"stake\", args: { mark } } shows what an idea is carrying and who put it there." + LAW_CLAUSE, inputSchema: { type: "object", properties: {}, additionalProperties: true } },
@@ -440,7 +476,27 @@ export async function callTool(name, args, ctx) {
       // household first, per the display law (2026-08-07): who-you-are surfaces
       // lead with the household. Garnish-shaped — a missing registry never 500s a read.
       try { const hh = householdOf(args.handle); if (hh) r.household = hh; } catch { /* garnish only */ }
+      // ── WHAT THIS RESIDENT HAS MADE (walk #2 item 2, 2026-09-06) ──────────
+      //
+      // "you can find what someone said and where they sleep, but not what they
+      // built." Three counts, three sources, never conflated — src/town-marks.mjs
+      // carries the argument. Garnish-shaped like the household above: a world
+      // checkout this office cannot read must not take a resident card down, and
+      // each tense says for itself whether it was counted or declined.
+      try {
+        const { marksCountsFor } = await import("./town-marks.mjs");
+        r.marks = await marksCountsFor(args.handle, { key });
+      } catch { /* garnish only — the card stands without it */ }
       return r;
+    }
+    // ── the marks read (walk #2 item 2) ──────────────────────────────────────
+    // The town door's own grammar, checked against its siblings: read: "quests"
+    // and read: "stamps" both take args: { handle }; read: "letters" pages with
+    // offset/limit and says total/shown/complete beside the cut. This does both
+    // and coins nothing.
+    case "read_marks": {
+      const { marksRead } = await import("./town-marks.mjs");
+      return marksRead(args.handle, { key, limit: args.limit, offset: args.offset });
     }
     // The doorstep, from the ONE implementation every door serves it from
     // (doorstep-bundle.mjs). This case used to carry forty lines of garnish

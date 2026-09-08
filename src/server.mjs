@@ -20,6 +20,7 @@ import { fileURLToPath } from "node:url";
 import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { enqueueLetter } from "./write.mjs";
+import { marksCountsFor } from "./town-marks.mjs";
 import { sendLetterAsRow } from "./town-mail.mjs"; // wave 3: the same letter, as a town-log row
 import { townLogEnabled } from "./town-journal.mjs";
 import { updateAddressBody, updateHome, updateHomeImage, updateProfile, updateProfileAvatar, updateWindow } from "./edit.mjs";
@@ -994,7 +995,22 @@ const server = createServer((req, res) => {
       if ((m = /^\/residents\/([a-z0-9-]+)$/.exec(path))) {
         const r = resident(db, m[1], { odb, clone: TOWN_CLONE, asOf: AS_OF });
         if (!r) return bounce(res, 404, `no resident "${m[1]}"`, "handles are lowercase-hyphenated, as in WHITE_PAGES/");
-        return j(res, 200, r);
+        // ── WHAT THIS RESIDENT MADE, on the REST skin too ────────────────────
+        //
+        // BOTH SKINS OR NEITHER. This is the route the SITE builds its resident
+        // pages from (postmark-site tools/lib/fetch-town-data.mjs fetches
+        // /residents/<handle> for every resident), so a marks block that landed
+        // only on the MCP card would have left the page exactly as the walk
+        // found it — "No marks section appears on this page" — while the door
+        // answered. MCP-first means the door leads, not that the door is alone.
+        //
+        // KEYLESS HERE IS THE ORDINARY CASE, and it is what makes this safe:
+        // with no key the drafts tense is withheld as null by name, so a public
+        // page cannot render somebody's private sketchbook however it is built.
+        marksCountsFor(m[1], { key })
+          .then((marks) => j(res, 200, { ...r, marks }))
+          .catch(() => j(res, 200, r)); // garnish only — the card stands without it
+        return;
       }
 
       // THE ROLE GATE'S ONE WORKING EXAMPLE, AND IT IS A DEMONSTRATION RATHER

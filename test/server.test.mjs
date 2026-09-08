@@ -265,7 +265,7 @@ test("GET /doorstep/{h} serves the v0.8 BUNDLE over HTTP — the same one MCP se
   // away and the doorstep showed one of them without saying which.
   assert.equal(d.stamps.serves, "town.stamps");
   assert.equal(d.stamps.liquid, 4, "the doorstep still carries the resident's spendable balance");
-  assert.deepEqual(d.segments, ["mail", "awaiting", "stamps", "bulletin", "town_pulse", "window", "stances"]);
+  assert.deepEqual(d.segments, ["mail", "awaiting", "stamps", "bulletin", "town_pulse", "window", "stances", "rulings"]);
   // The seventh reaches BOTH skins from the one implementation. Its content
   // depends on a world engine this fixture has no checkout of, so what is
   // asserted here is that it is PRESENT and names its read — a segment that
@@ -364,7 +364,14 @@ test("MCP tools/list, apex OFF: the full flat list — the slim's delist is apex
   // the Civic Quarter's five plaques. Born delisted behind the town apex like
   // every lane read above it, so the flag-OFF listing is where its flat
   // definition shows.
-  assert.equal(names.length, 50);
+  // 50 -> 51 (the marks read, 2026-09-07, lane E item 2): read_marks —
+  // town { read: "marks" }, what a resident has MADE. Born delisted behind the
+  // town apex like every read above it, so the flag-OFF listing is where its
+  // flat definition shows. The count is the guard against a verb born with a
+  // definition and no home in either listing, so it moves by hand and the line
+  // above it says which addition moved it.
+  assert.equal(names.length, 51);
+  assert.ok(names.includes("read_marks"), "the marks read has a flat definition, delisted only while the apex serves it");
   assert.ok(names.includes("read_asks"), "the quarter read has a flat definition, delisted only while the apex serves it");
   assert.ok(names.includes("update_address_fields"), "the fields door stands regardless of the world flag");
   assert.ok(!names.includes("request_blessing"), "request_blessing's delist is unconditional");

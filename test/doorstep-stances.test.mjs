@@ -249,3 +249,60 @@ test("the teaser is bounded and says how much it is a cut of", async () => {
   assert.equal(rest.cursor, null, "a cursor is null exactly when there is nothing more");
   assert.equal(rest.stances_awaiting, 2, "the total does not shrink as you walk");
 });
+
+// ── THE TEACHING BLOCK IS NOT ON THE MORNING PAGE (conductor, 2026-09-07) ────
+//
+// It is the largest block this lane added to the doorstep by bytes, it is
+// byte-identical for every resident every day, and it teaches rather than
+// reports. The doorstep is the surface little-bird abandoned as too heavy, so a
+// fix for one resident's confusion that fattens everyone's morning page has
+// traded one complaint for another.
+//
+// THE CUT IS ON THE CONNECTOR SKIN ONLY, and that is the law rather than a
+// hedge: the REST bundle's segment must stay deep-equal to the read its
+// `serves` names (§ THE BUNDLE LAW HOLDS HERE TOO, above), so trimming it there
+// would break a standing law to save bytes on the skin that is not the heavy
+// one. slimAwaiting and slimPsa already cut this way, and every cut they make
+// is named on the page.
+
+test("slim: the teaching block is DROPPED and the door is named — the key is not retyped", async () => {
+  const slim = await doorstepBundle(HANDLE, { ...ctx, slim: true });
+  // ⚠ THE FIRST CUT KEPT `teach` AND CHANGED ITS TYPE, object -> string. That
+  // is the one place it departed from this skin's idiom (every other slim cut
+  // renames or drops; none retypes), and the cost is exact: a consumer reading
+  // `stances.teach.after_it_is_published.unruled` gets undefined here with no
+  // bounce — a silent wrong answer rather than a refusal.
+  assert.equal(slim.stances.teach, undefined, "no `teach` on this skin at all");
+  assert.equal(typeof slim.stances.teach_at, "string", "a pointer under its own name");
+  assert.match(slim.stances.teach_at, /household \{ read: "stances" \}/, "and it names the door that answers whole");
+  assert.doesNotMatch(slim.stances.teach_at, /UNRULED PAIR|neutral-and-revisable/,
+    "the pointer is not a summary of the block — a paraphrase here is the copy the block exists to avoid");
+  assert.match(slim.stances.abridged, /drops `teach` and names the door instead/,
+    "and the cut is NAMED on the page, the way every other slim cut is");
+});
+
+test("no key on the slim stances segment holds a DIFFERENT TYPE from the same key on REST", async () => {
+  // The general form of the defect above, and the reason it is worth a probe of
+  // its own: a renamed key and a dropped key are both legible to a caller — one
+  // is absent, one is somewhere else — but a key that survives with a different
+  // type reads as present and answers wrong. This walks the whole segment, so
+  // the next cut cannot reintroduce the shape under a different key.
+  const fat = await doorstepBundle(HANDLE, ctx);
+  const slim = await doorstepBundle(HANDLE, { ...ctx, slim: true });
+  const wrong = [];
+  for (const [k, v] of Object.entries(slim.stances)) {
+    if (!(k in fat.stances)) continue;              // renamed or new: legible
+    const a = Array.isArray(fat.stances[k]) ? "array" : typeof fat.stances[k];
+    const b = Array.isArray(v) ? "array" : typeof v;
+    if (a !== b) wrong.push(`stances.${k}: ${a} on REST, ${b} on the connector`);
+  }
+  assert.deepEqual(wrong, [],
+    "a key that survives a cut with a new type answers wrong instead of being absent: " + wrong.join(" · "));
+});
+
+test("REST: the segment still carries the block whole — the bundle law is not traded for bytes", async () => {
+  const fat = await doorstepBundle(HANDLE, ctx);
+  assert.equal(typeof fat.stances.teach, "object", "the whole block, not a pointer");
+  assert.ok(fat.stances.teach.after_it_is_published, "including the unruled pair");
+  assert.equal(fat.stances.abridged, undefined, "and nothing was cut, so nothing claims to have been");
+});

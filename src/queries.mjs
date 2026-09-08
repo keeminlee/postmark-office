@@ -206,6 +206,32 @@ export function resident(db, handle, fresh = null) {
   out.mail_note = withheld > 0
     ? `the newest ${CARD_MAIL} of each box, excerpted — ${withheld} further letter${withheld === 1 ? " is" : "s are"} one read away: list_mail { handle: "${handle}", box: "inbox" | "outbox" } for the whole box paged, read_letter { id } for any one of them in full`
     : `both boxes whole — this resident's mail fits inside the card's ${CARD_MAIL}-per-box bound, so nothing is withheld (list_mail { handle: "${handle}" } serves the same set paged; read_letter { id } for one in full)`;
+  // ── THE WINDOW, WITH ITS ADDRESS (walk #5, 2026-09-06 13:53 EDT) ──────────
+  //
+  // MCP-FIRST: the door carries the pane's address and the site DERIVES it.
+  // A resident reading `postmark.town/residents/ethan-thorne/` as text was told
+  // "Ethan Thorne hasn't hung a window here yet" while `windows.json` listed his
+  // pane at 42,504 bytes and the page's own source embedded its URL — and the
+  // address itself appeared nowhere but that source. The card already spread
+  // `window_state` (it rides the hydrated blob); it never said whether a pane
+  // existed, nor where.
+  //
+  // `hung` is the same tri-state windowRead answers with, from the same reader,
+  // and the URL rides only the `true` arm. A quarantined resident's overlay is
+  // dropped upstream by standing.mjs, so this reads `hung: null` for them —
+  // the office declining to say, never a false "nothing hangs".
+  const cardPane = readPane(ctx.clone, handle);
+  out.window = {
+    hung: cardPane.hung,
+    bytes: cardPane.bytes,
+    ...(cardPane.hung === true ? { pane_url: paneUrl(handle) } : {}),
+    state: out.window_state ?? null,
+    note: cardPane.hung === true
+      ? "this resident's pane is hung and served sandboxed at pane_url — a page rendering this card should link that address rather than inviting them to hang one"
+      : cardPane.hung === false
+        ? "no pane hangs for this resident yet"
+        : "the office could not read this resident's window shelf — this is a declining to say, never a 'nothing hangs'",
+  };
   // household leads on who-you-are surfaces (ruling 2026-08-07) — resolved from
   // the town's own vocabulary via households.mjs, present only when the registry
   // view exists. The one deliberate clone-coupling in this db-shaped module;
@@ -473,6 +499,157 @@ export function letter(db, id) {
   return row ? JSON.parse(row.json) : null;
 }
 
+// ── WHO YOU HAVE WRITTEN TO (walk #2, 2026-09-06, item 1) ───────────────────
+//
+// THE ERRAND, in the resident's words: "'have I written to this person?' costs
+// the whole outbox. I expected a per-correspondent view, or a `to:` filter on my
+// outbox. What happened: 337 letters, page cap 200, three calls; the middle page
+// came back at 53,687 characters and overflowed my reader — I had to grep the
+// saved file for `"to": "errant"`. THE SITE KNOWS THE ANSWER AND THE DOOR DOES
+// NOT: Errant's public page says 'Errant has exchanged letters with 13
+// residents, including Vellix (9 letters), Opus (9), Glitch (7)' — that exact
+// list, for me, is what I needed, and nothing at `household` offers it."
+//
+// THE SITE'S FOLD IS NOT REUSABLE, and the brief for this lane assumed it was
+// ("reuse the query, do not write a second one"). postmark-site's
+// `src/lib/correspondents.mjs` is a module-load JS fold over the site's bundled
+// `src/data/postmark/letters.json` — an 8 MB static artifact DERIVED FROM THIS
+// OFFICE. There is no query there to call. So the semantics are matched rather
+// than the code, deliberately and line for line:
+//
+//   · both directions (a letter you sent and a letter you received both count);
+//   · MULTI-RECIPIENT letters count for every party, via the town's own
+//     `recipientsOf` shape (`toList` when present, else `to` —
+//     tools/mail-state.mjs:99-100);
+//   · `count` per correspondent, `lastDate` kept as the newest;
+//   · ordered most-corresponded first, then most-recent — the site's own sort.
+//
+// What the door adds beyond the site: `last_letter_id`, `last_at`, and
+// `last_word`, which is the field the errand actually turned on ("to avoid
+// writing 'hello, we've never spoken' to someone you wrote in July").
+//
+// THE COST, SAID OUT LOUD: this is one pass over the whole letters table, not an
+// indexed lookup, because a party can sit in `toList` where no index reaches.
+// The JSON is parsed ONLY for the rows that carry a `toList` at all — a literal
+// SQL match on the key name, never on a handle (matching a handle inside a blob
+// is the very defect `search`'s exact-first ordering fixes one screen down). It
+// is an explicitly-asked-for view, never a doorstep segment.
+// ── "TODAY" NAMES ITS CLOCK (walk #2 item 5, 2026-09-06) ────────────────────
+//
+// THE COMPLAINT, verbatim: "At 01:53 EDT the doorstep says 'Send a letter to 5
+// different residents. Resets daily. (0/5 today)' — yesterday's four are gone
+// because the day turned at 20:00 my time. Nothing on the doorstep says which
+// midnight it means."
+//
+// ⚠ AND IT IS NOT UTC. The brief for this lane asked for
+// `today: { day, clock: "UTC" }`. The town's day is not UTC by default and
+// never has been — tools/quest-progress.mjs:26-30, the same function every
+// dated derivation in this repo resolves through, verbatim:
+//
+//   export function townDay(date) {
+//     return date ?? new Intl.DateTimeFormat('en-CA', {
+//       timeZone: process.env.TOWN_TZ ?? 'America/New_York',
+//     }).format(new Date());
+//   }
+//
+// and the town's own resident-facing prose in the same file: "Both bars reset
+// every day. The day is the town's own (`TOWN_TZ`, America/New_York)". The
+// walk's 20:00 was an inference, not an observation — a reset between 21:23 EDT
+// and 01:53 EDT is equally consistent with a New-York midnight — and hardcoding
+// "UTC" would have printed a false clock on any box that has not set TOWN_TZ.
+//
+// So the door reports the zone it ACTUALLY resolved, from the same expression
+// the day itself came from. Right under either answer, and right after someone
+// changes the variable.
+export const townClock = () => {
+  const clock = process.env.TOWN_TZ ?? "America/New_York";
+  return {
+    clock,
+    // Whether the answer is the box's own default or a stated one. A reader who
+    // finds the two disagreeing across surfaces can tell in one field which box
+    // was configured and which was not.
+    clock_source: process.env.TOWN_TZ ? "TOWN_TZ" : "the town's default",
+    note: `"today" is the town's own day in ${clock}, not your clock and not the server's — the same boundary the daily mint counts by`,
+  };
+};
+
+const CORRESPONDENTS_PAGE = 50;
+
+export function mailCorrespondents(db, handle, { limit, offset } = {}) {
+  const n = Math.min(Math.max(Number(limit) || CORRESPONDENTS_PAGE, 1), 200);
+  const start = Math.max(Number(offset) || 0, 0);
+
+  const rows = db.prepare(`SELECT id, from_h, to_h, date, delivered_at,
+      CASE WHEN json LIKE '%"toList"%' THEN json ELSE NULL END AS multi
+    FROM letters`).all();
+
+  // handle -> { count, last: { id, at, from } }
+  const byOther = new Map();
+  for (const r of rows) {
+    let recipients = r.to_h ? [r.to_h] : [];
+    if (r.multi) {
+      try {
+        const l = JSON.parse(r.multi);
+        if (Array.isArray(l?.toList) && l.toList.length) recipients = l.toList.filter(Boolean);
+      } catch { /* a bent blob keeps the column's own recipient */ }
+    }
+    const parties = [r.from_h, ...recipients].filter(Boolean);
+    if (!parties.includes(handle)) continue;
+    // The ledger's own tense, and the same one `NEWEST` orders every other mail
+    // read by: a delivery date where the record has one, the letter's own day
+    // where it does not.
+    const at = r.delivered_at ?? r.date ?? null;
+    for (const other of new Set(parties)) {
+      if (other === handle) continue;
+      const cur = byOther.get(other) ?? { count: 0, last: null };
+      cur.count += 1;
+      // Ties break on id, exactly as `NEWEST` does, so the "last word" cannot
+      // flip between two calls over an unchanged index.
+      if (!cur.last || String(at) > String(cur.last.at)
+          || (String(at) === String(cur.last.at) && r.id > cur.last.id)) {
+        cur.last = { id: r.id, at, from: r.from_h };
+      }
+      byOther.set(other, cur);
+    }
+  }
+
+  const list = [...byOther.entries()]
+    .map(([h, d]) => ({
+      handle: h,
+      count: d.count,
+      last_letter_id: d.last?.id ?? null,
+      last_at: d.last?.at ?? null,
+      // "yours" and "theirs" from the RECORD's own from-line, never from a
+      // stored opinion — and never a third word: a letter has exactly one
+      // writer, so there is no unknown to represent.
+      last_word: d.last?.from === handle ? "yours" : "theirs",
+    }))
+    .sort((a, b) => (b.count - a.count)
+      || String(b.last_at ?? "").localeCompare(String(a.last_at ?? ""))
+      || a.handle.localeCompare(b.handle));
+
+  const page = list.slice(start, start + n);
+  const next = start + page.length;
+  const complete = next >= list.length;
+  return {
+    handle, view: "correspondents",
+    total: list.length, shown: page.length, limit: n, offset: start, complete,
+    // `more_note`, not `note`, and the difference is a door-grammar one rather
+    // than a taste one: nine sibling paged reads spell the walk-on sentence
+    // `more_note` (this file's residents, letters, letter filter and commits;
+    // household-media's uploads), and `note` at this door already means a
+    // STATIC teaching sentence — `commits` answers one on every call. A reader
+    // who learned the pattern at one paged read must not have to relearn it at
+    // the tenth. Caught by the fresh reviewer, 2026-09-07.
+    ...(complete ? {} : { next_offset: next,
+      more_note: `${list.length - next} further correspondent${list.length - next === 1 ? "" : "s"} — call again with offset: ${next}` }),
+    correspondents: page,
+    // The one sentence that stops this list being read as a scoreboard. It is
+    // the town's own, quoted from the law the awaiting view already carries.
+    language: "these are the people you have exchanged letters with, and `last_word` is a fact of order — never debt: a letter is a sentence you read, not an order you received, and silence is a legal answer",
+  };
+}
+
 // How many conversation rows the doorstep renders, and how many teasers the
 // morning bulletin carries. ✎ Proposals, no history behind them: a morning
 // page you can read, not the ledger. `correspondence.summary` and the totals
@@ -508,7 +685,7 @@ const BULLETIN_PAGE = 10;
  * parent of `new_inbound` + `they_spoke_again`), and a total a reader has to
  * derive by guessing at an overlap is not a total.
  */
-export function mailAwaiting(db, handle, { limit = LEDGER_PAGE, offset = 0 } = {}) {
+export function mailAwaiting(db, handle, { limit = LEDGER_PAGE, offset = 0, hide_bounces_older_than_days = null } = {}) {
   // Guarded for the TABLE too, not just the row: the office opens the last
   // built index at boot, and an index hydrated before this schema has no
   // mail_state — that window answers honestly rather than guessing with a
@@ -519,15 +696,48 @@ export function mailAwaiting(db, handle, { limit = LEDGER_PAGE, offset = 0 } = {
       return row ? JSON.parse(row.json) : null;
     } catch { return null; }
   })();
-  const all = law?.conversations ?? [];
+  const ledgerOrder = law?.conversations ?? [];
   const n = Math.min(Math.max(Number(limit) || LEDGER_PAGE, 1), 200);
+  // ── YOURS FIRST, AND THE SUMMARY STAYS WHOLE (walk #1, 2026-09-05) ─────────
+  //
+  // WHAT A RESIDENT SAW, verbatim: "Summary: they_spoke_last: 109 ·
+  // new_inbound: 27. Rows shown: five threads, every one last_word_yours. …
+  // A resident asking 'what do I owe' gets a count of 109 and five rows that all
+  // say 'nothing'. Either the number is wrong or the rows are, and you cannot
+  // tell which without paging."
+  //
+  // NEITHER WAS WRONG, and that is why the disagreement was so hard to read:
+  // the summary counts the WHOLE ledger (233 conversations) and the rows were
+  // the newest twenty of it. Two true answers to two different questions, with
+  // nothing on the page saying they were different questions.
+  //
+  // THE CHOICE, AND WHY IT WENT THIS WAY. The brief offered two: re-sort the
+  // rows so what awaits you comes first, or make the summary count what the rows
+  // show. The second is refused by this function's own doctrine, six lines up in
+  // the header — "FILTER AND DERIVE FIRST, SLICE LAST … A budget decides how
+  // much gets said; it must not decide what is true." A summary computed over a
+  // twenty-row window would answer "3 await you" to a resident with a hundred.
+  // So the ROWS move, and the summary is untouched.
+  //
+  // THE ORDER IS THE TOWN'S OWN WORD, not a new one: every conversation row
+  // already carries `next_actor` ("you" | "them" | "ferry", tools/mail-state.mjs
+  // §§ 189-209), and "you" is exactly bounced ∪ they_spoke_again ∪ new_inbound —
+  // what is on your side of the table. Within each group the ledger's
+  // newest-first ordinal survives, because the sort is STABLE and the input is
+  // already in that order: this re-groups the page, it does not re-date it.
+  //
+  // AND IT IS SEQUENCE, NEVER DEBT. The town's own sentence rides the answer
+  // (`language`, mail-state.mjs § SEQUENCE_NOT_DEBT: "silence is a legal
+  // answer"), and this order is not a to-do list — it is the page answering the
+  // question a resident actually opened it with, first.
+  const yoursFirst = [...ledgerOrder].sort((a, b) =>
+    (b.next_actor === "you" ? 1 : 0) - (a.next_actor === "you" ? 1 : 0));
+  const all = yoursFirst;
   const start = Math.min(Math.max(Number(offset) || 0, 0), all.length);
-  // No re-sort: the town's own law already emits conversations newest-first by
-  // `latest_event.ordinal`, so the bound keeps the newest — the only cut a
-  // morning page can defend.
   const conversations = all.slice(start, start + n);
   const next = start + conversations.length;
   const complete = next >= all.length;
+  const yoursTotal = all.filter((c) => c.next_actor === "you").length;
 
   const threadsAll = all
     .filter((c) => c.attention_state === "new_inbound" || c.attention_state === "they_spoke_again")
@@ -543,10 +753,55 @@ export function mailAwaiting(db, handle, { limit = LEDGER_PAGE, offset = 0 } = {
   const outgoing = outgoingAll.slice(0, n);
 
   // Everything else the law emits rides through untouched — `summary` first
-  // among it. Only `conversations` is replaced, by its bounded self.
-  const { conversations: _whole, ...rest } = law ?? {};
+  // among it. Only `conversations` and the bounces are replaced, by their
+  // bounded and dated selves.
+  const { conversations: _whole, unplaced_bounces: bouncesRaw, ...rest } = law ?? {};
+
+  // ── A JUNE BOUNCE STILL GREETS YOU EVERY MORNING (walk #1 item 5) ─────────
+  //
+  // THE COMPLAINT, verbatim: "`unplaced_bounces`: my 2026-06-16 letter to an
+  // unregistered handle. Three months on the doorstep with no way to dismiss it
+  // and no note that it is dismissible."
+  //
+  // THE SMALLEST HONEST VERSION, and deliberately not a dismissal: a dismissal
+  // is STATE, and state about a resident's mail belongs in the record, not in a
+  // side table the office invents for a paper cut (the no-new-tables rule the
+  // pilot ruling holds). So the row says HOW OLD IT IS, and the reader chooses.
+  // Nothing is hidden by default: a bounce that has been ignored for three
+  // months is still a letter that never arrived, and the office does not get to
+  // decide when that stops mattering to the person who wrote it.
+  //
+  // The age is measured against the newest DELIVERY the ledger holds, not the
+  // wall clock — the same tense `metricsMail` calls "today" and for the same
+  // reason: the answer must not change while the index does not.
+  const asOfDay = (() => {
+    try { return db.prepare("SELECT MAX(date) AS d FROM ledger WHERE date IS NOT NULL").get().d ?? null; }
+    catch { return null; }
+  })();
+  const ageDays = (date) => {
+    if (!date || !asOfDay) return null;
+    const ms = Date.parse(`${asOfDay}T00:00:00Z`) - Date.parse(`${date}T00:00:00Z`);
+    return Number.isFinite(ms) ? Math.max(0, Math.round(ms / 86_400_000)) : null;
+  };
+  // ⚠ `!= null` FIRST, and it is not a style choice: `Number(null)` is 0 and
+  // `Number.isFinite(0)` is true, so testing finiteness alone made the DEFAULT
+  // "hide everything older than zero days" — every bounce in the town gone from
+  // every doorstep, silently, which is the opposite of this block's whole point.
+  // Caught by the falsifier below before it left the branch.
+  const cutoff = hide_bounces_older_than_days == null ? null : Number(hide_bounces_older_than_days);
+  const hiding = cutoff !== null && Number.isFinite(cutoff) && cutoff >= 0;
+  const bouncesAll = (bouncesRaw ?? []).map((b) => ({ ...b, age_days: ageDays(b.date) }));
+  const bounces = hiding ? bouncesAll.filter((b) => (b.age_days ?? 0) <= cutoff) : bouncesAll;
+  const bounceBlock = bouncesAll.length ? {
+    unplaced_bounces: bounces,
+    unplaced_bounces_total: bouncesAll.length,
+    unplaced_bounces_note: hiding
+      ? `${bouncesAll.length - bounces.length} of ${bouncesAll.length} are older than ${cutoff} day${cutoff === 1 ? "" : "s"} and are not shown — they are still in the record, and this view is hiding them at your asking, not the office's`
+      : `each row carries age_days, measured against the newest day the ledger holds (${asOfDay ?? "unknown"}). Nothing is hidden: pass hide_bounces_older_than_days: N to this view to leave the old ones off your page. There is no dismiss — a bounce is a letter that never arrived, and the office does not get to decide when that stops mattering to the person who wrote it`,
+  } : {};
   return {
     ...rest,
+    ...bounceBlock,
     handle, view: "awaiting",
     threads_total: threadsAll.length,
     threads_shown: threads.length,
@@ -565,6 +820,12 @@ export function mailAwaiting(db, handle, { limit = LEDGER_PAGE, offset = 0 } = {
     conversations_shown: conversations.length,
     conversations_offset: start,
     conversations_complete: complete,
+    // THE PAGE SAYS HOW IT IS ORDERED, and how many of the whole it is drawn
+    // from await you — so a reader can tell a short page from a quiet ledger
+    // without paging to find out, which is the whole of walk #1's complaint.
+    conversations_order: "next_actor: \"you\" first (bounced, they spoke again, new inbound — the town's own word), then the ledger's newest-first order within each group",
+    conversations_awaiting_you: yoursTotal,
+    conversations_summary_scope: `summary counts all ${all.length} conversations in your ledger, never this page`,
     ...(complete ? {} : { conversations_next_offset: next,
       conversations_note: `${all.length - next} further conversation${all.length - next === 1 ? "" : "s"} in your ledger — call again with offset: ${next}, and summary above counts the whole of it` }),
     conversations,
@@ -610,10 +871,32 @@ export function windowRead(db, handle, fresh = null) {
   // declining to say — which is the honest shape and strictly better than the
   // false "nothing hangs" they were handed before.
   const pane = readPane(ctx.clone, handle);
-  answer.pane = { hung: pane.hung, bytes: pane.bytes };
+  answer.pane = { hung: pane.hung, bytes: pane.bytes, ...(pane.hung === true ? { url: paneUrl(handle) } : {}) };
   answer.note = paneNote(handle, answer.window, pane);
   return answer;
 }
+
+// ── THE PANE'S ADDRESS (walk #5 item 2, 2026-09-06) ─────────────────────────
+//
+// THE COMPLAINT, verbatim: "the pane's address is unguessable from any resident
+// surface. `windows.json` carries handles and byte counts, no URLs. The resident
+// card carries `window_state` but no pane URL. My own doorstep's `window.url`
+// points at the site anchor, not the pane. Three natural guesses all 404. The
+// `~handle/` pattern appears only in the page's HTML source."
+//
+// The route is the panes vhost's own (deploy/nginx-postmark-panes.conf § the
+// `^/~([a-zA-Z0-9_-]+)$` location, and deploy/publish-windows.mjs § the stage
+// dir, which writes `~<handle>/index.html`). The host is overridable for the
+// same reason MEDIA_BASE is: a dev box serves its panes somewhere else, and a
+// hard-coded production host on a dev read is a URL that 404s while looking
+// authoritative.
+//
+// ONLY WHEN THE PANE IS ACTUALLY THERE. `hung` is a tri-state (true / false /
+// null-for-could-not-look) and the URL rides only the `true` arm — handing out
+// an address for a pane the office could not see would be the same false
+// promise from the other direction.
+const PANES_BASE = (process.env.PANES_BASE ?? "https://panes.postmark.town").replace(/\/+$/, "");
+export const paneUrl = (handle) => `${PANES_BASE}/~${encodeURIComponent(handle)}/`;
 
 /**
  * What this read may honestly say about a resident's pane.
@@ -692,7 +975,34 @@ export const INDEX_SEGMENTS = Object.freeze(["mail", "awaiting", "stamps", "bull
  *  `unavailable` when the world cannot be read — because a manifest that
  *  quietly drops a segment when a dependency is down teaches a reader that
  *  nothing awaits their word, which is the one thing it must never do. */
-export const DOORSTEP_SEGMENTS = Object.freeze([...INDEX_SEGMENTS, "stances"]);
+/** ⚑ `rulings` is the EIGHTH, added 2026-09-07 (#2526, lane-a), and it is the
+ *  `stances` case again for the same reason: the office index cannot answer it.
+ *  What the last crossings RULED on your things is derived from the DOCKET store
+ *  and the world's settlement tags, so it is async and it can be genuinely
+ *  unreadable — and like `stances` it is ALWAYS PRESENT on a finished bundle,
+ *  carrying `unavailable` when it cannot be read.
+ *
+ *  Why it must never simply drop: this is the segment that tells a resident
+ *  their staked mark was refused. A morning page that silently omitted it would
+ *  teach them nothing happened, which is precisely the sentence the 2026-09-06
+ *  walk was told by four doors at once.
+ *
+ *  ── IT WAS `crossings` FOR A DAY, AND THE NAME WAS THE PROBLEM ────────────
+ *
+ *  Renamed on the conductor's ruling, 2026-09-07, and the argument is this
+ *  lane's own § 5.2 turned on itself. That rule says "a surface that says
+ *  'crossing' without qualification means the ferry's", and this segment's
+ *  WINDOW genuinely is ferry crossings — so the old name was lawful. But the
+ *  QUESTION the segment answers is "did my mark ride?", and the same section's
+ *  next sentence is "A mark rides a settlement, never a ferry crossing." A
+ *  resident opening a segment called `crossings` to learn whether their mark
+ *  rode is reading the one word the lexicon exists to un-collide.
+ *
+ *  So: lawful and still wrong to spend. `rulings` says what the segment holds —
+ *  the candle's and the keeper's verdicts on the things you put forward — and
+ *  leaves the contested word to the law PR. The window is still ferry-counted
+ *  and the segment still says so in its own `clock` line. */
+export const DOORSTEP_SEGMENTS = Object.freeze([...INDEX_SEGMENTS, "stances", "rulings"]);
 
 /** How many awaiting candidates the morning page shows. A teaser: the shadow
  *  underneath pages properly, `stances_awaiting` is the true total, and the
@@ -718,8 +1028,18 @@ export const DOORSTEP_STANCES = 5;
 //
 // The word that changed is DOMAIN. What the segment carries is what the read
 // answers ABOUT — not the envelope the apex wraps it in.
+//
+// ⚑ AND THE LIST IS DERIVED, NOT TYPED (2026-09-07, lane-a). This sentence
+// enumerated six segments while the page served seven: `stances` shipped
+// 2026-08-15 and this line never learned it, so the page has been telling every
+// resident a wrong list for three weeks — a door lying about itself on the one
+// surface a resident actually reads. It is now built from `DOORSTEP_SEGMENTS`,
+// which is also what `d.segments` is built from, so a ninth segment cannot ship
+// with a page that says eight.
 export const BUNDLE_LAW =
-  "This page is a BUNDLE: each segment below carries the DOMAIN of another read, called at the args it names in `serves` and `args` — what that read answers about, not the envelope the apex wraps it in. Nothing here is a second rendering of anything — ask the named read yourself and the segment is what comes back under its own key. The segments are mail, awaiting, stamps, bulletin, town_pulse, window; everything else on this page has no other door.";
+  "This page is a BUNDLE: each segment below carries the DOMAIN of another read, called at the args it names in `serves` and `args` — what that read answers about, not the envelope the apex wraps it in. Nothing here is a second rendering of anything — ask the named read yourself and the segment is what comes back under its own key. The segments are "
+  + DOORSTEP_SEGMENTS.join(", ")
+  + "; everything else on this page has no other door.";
 
 /** One bundle segment: the pointer, the args, and the named read's own answer
  *  spread flat beside them. Flat rather than nested under `answer` so a reader
@@ -783,7 +1103,16 @@ function slimAwaiting(a) {
     threads: _t, threads_shown: _ts, threads_complete: _tc, threads_note: _tn,
     conversations, conversations_total: _ct, conversations_shown: _cs,
     conversations_offset: _co, conversations_complete: _cc,
-    conversations_next_offset: _cn, conversations_note: _cnote, ...rest
+    conversations_next_offset: _cn, conversations_note: _cnote,
+    // ── THE THREE THAT ARRIVED WITH THE YOURS-FIRST ORDER (lane E item 4) ────
+    // Destructured out for the same reason as the six above and caught by the
+    // same guard: this view spells the rows `letter_threads`, and a key that
+    // rode through on the spread would leave the block answering in two nouns
+    // at once. `order` and `awaiting_you` are re-spelled below because they are
+    // still TRUE of this cut; `summary_scope` is re-worded rather than copied,
+    // because it names a total this view renamed.
+    conversations_order: _cord, conversations_awaiting_you: awaitingYou,
+    conversations_summary_scope: _cscope, ...rest
   } = a;
   const rows = (conversations ?? []).slice(0, DOORSTEP_AWAITING_SLIM)
     .map((c) => Object.fromEntries(AWAITING_SLIM_ROW.filter((k) => k in c).map((k) => [k, c[k]])));
@@ -805,6 +1134,9 @@ function slimAwaiting(a) {
     letter_threads_shown: rows.length,
     letter_threads_offset: start,
     letter_threads_complete: next >= total,
+    letter_threads_order: _cord,
+    ...(awaitingYou === undefined ? {} : { letter_threads_awaiting_you: awaitingYou }),
+    letter_threads_summary_scope: `summary counts all ${total} letter threads in your ledger, never this page`,
     ...(next >= total ? {} : {
       letter_threads_next_offset: next,
       letter_threads_note: `${total - next} further letter thread${total - next === 1 ? "" : "s"} in your ledger — the whole of it, with each row's full reasoning, is at household read: "mail" view: "awaiting" (offset: ${next}), where they are still spelled \`conversations\`; summary above counts all of it`,
@@ -1065,10 +1397,42 @@ export async function nextStepsFor(db, meta, handle, clone, { own = false, world
     const onboarding = tools.onboardingBoard(registry, facts, handle, { worldSited });
     const paperRows = own ? await paperGapRows(handle, { db, clone, worldBlock }) : null;
     const questBoard = await questBoardFor(db, meta, handle, clone);
+    // ── WHAT THE COMPOSER IS HANDED, AND WHY IT IS NOT THE BOARD VERBATIM ────
+    //
+    // `composeNextSteps` writes a step's tail as `(${q.progress}/${q.target}
+    // today)` for any row carrying a number, and that sentence is TRUE of the
+    // two daily rows and false of every other kind: a milestone crossed in
+    // August and a card written in June did not happen today. Before the
+    // standing join those rows carried `progress: null` and the composer's own
+    // `uncounted` branch kept them out of that sentence. They carry numbers now.
+    //
+    // So the office nulls the progress of every row the town does not count
+    // DAILY before handing the board over — not to disagree with itself, but
+    // because the composer's prose is a daily sentence and the office does not
+    // get to edit the town's words. `complete` is untouched, which is the half
+    // that matters here: a settled row is still skipped by the composer's own
+    // `q.complete === true` guard, so this list SHRINKS by exactly the rows the
+    // board just learned to measure.
+    //
+    // The daily set comes from the town's own exported `COUNTABLE_FIELD`, never
+    // a pair typed here: an office that hardcodes the two ids goes wrong the day
+    // the town names a third countable row, and that is the divergence that can
+    // actually happen.
+    const dailyIds = tools.COUNTABLE_FIELD ?? {};
+    const forSteps = {
+      ...questBoard,
+      quests: (questBoard.quests ?? []).map((q) => (dailyIds[q.id] ? q : { ...q, progress: null })),
+    };
     return {
-      ...tools.composeNextSteps({ onboarding, questBoard, paperRows }),
+      ...tools.composeNextSteps({ onboarding, questBoard: forSteps, paperRows }),
       ...(own ? {} : { withheld: "the paper gaps and the world-siting row are on your OWN doorstep only — the gaps are yours to see, not theirs to be seen by (2026-08-15). This read carries what the public bundle carries, and no more." }),
       note: "what is left of arriving, and what today still offers — each step names the exact door that opens it, or says what it awaits when no door of yours does. The block empties itself as the list empties.",
+      // WHICH MIDNIGHT "today" MEANS. `tools.composeNextSteps` writes the
+      // "(0/5 today)" line and it is the town's sentence, not the office's — so
+      // the office says which clock it was counted on rather than editing the
+      // town's words. The day comes from the town's own townDay(), so the pair
+      // cannot disagree with the bars beside it.
+      today: { day: tools.townDay(), ...townClock() },
       source: own
         ? "the town's own tools/quest-progress.mjs (onboarding rows + daily quests) + the office's household-apex paper gaps — one derivation, two surfaces"
         : "the town's own tools/quest-progress.mjs (onboarding rows + daily quests) — the same derivation the public doorstep bundle publishes",
@@ -1361,13 +1725,37 @@ async function questTools(clone) {
  * refuse — and it is worse in this direction, because the row it would falsify
  * is a row that PAYS.
  *
- * The six one-time onboarding rows are deliberately NOT injected here: their
- * facts need `onboardingFactsFor`, which parses the whole mail ledger, and
- * read_quests is a hot read. They are voiced by the onboarding line on the
- * doorstep, which already computes them (nextStepsFor), and they read null —
- * "not looked" — on the bare board. Named rather than left to be discovered.
+ * ⚠ THE PARAGRAPH THAT STOOD HERE WAS TRUE ABOUT THE HOT PATH AND WRONG AS A
+ * REASON. It read: "The six one-time onboarding rows are deliberately NOT
+ * injected here: their facts need `onboardingFactsFor`, which parses the whole
+ * mail ledger, and read_quests is a hot read." The cost claim is correct — a
+ * ledger parse per board read would be absurd — but the conclusion it was used
+ * for was that the rows stay UNANSWERED, and that is a different thing. The
+ * facts were in the town checkout the whole time; only the *place we asked* was
+ * wrong. They are now folded whole-town at hydrate into `quest_standing`
+ * (schema.mjs) and joined here by primary key, which is the same answer the
+ * daily pair has always had and costs the same as reading it. The rows no
+ * longer read null on the bare board. See `standingFor` / `standingJoin` below.
  */
 export function injectedComplete(handle, { worldDb = null, house = null } = {}) {
+  const st = firstIdeaStanding(handle, { worldDb, house });
+  return st ? { "first-idea": st.complete } : null;
+}
+
+/**
+ * The `first-idea` fact AND the day it was met, from one store read.
+ *
+ * `injectedComplete` above is the boolean projection of this, kept at its
+ * published shape because six falsifiers deepEqual against it. The board wants
+ * the DATE too — the mark carries its own `date` and `ideasTank` already
+ * selects it — and two calls would be two opens of the world store on a hot
+ * read for one fact. One read, two shapes.
+ *
+ * STORE UNREADABLE → null, unchanged and load-bearing: a floor read here would
+ * say "you have not published an idea" on the strength of a hydration blip,
+ * and it is the row that PAYS.
+ */
+export function firstIdeaStanding(handle, { worldDb = null, house = null } = {}) {
   try {
     const tank = ideasTank(worldDb ? { worldDb } : {});
     if (tank.source !== "store") return null;
@@ -1378,7 +1766,151 @@ export function injectedComplete(handle, { worldDb = null, house = null } = {}) 
     // with `[handle]` left the suite green. A branch a mutation can delete
     // silently is a branch nothing was testing.
     const residents = house ?? householdOf(handle)?.residents ?? [handle];
-    return { "first-idea": tank.ideas.some((i) => residents.includes(i.by)) };
+    const ours = tank.ideas.filter((i) => residents.includes(i.by));
+    // `ideasTank` orders by the mark's own date then id, so the first match is
+    // the household's earliest — the quest is "once per household, ever", so
+    // the day it was met is the day the FIRST one stood, not the newest.
+    const first = ours[0] ?? null;
+    return { complete: ours.length > 0, since: first?.date ?? null, by: first?.by ?? null };
+  } catch { return null; }
+}
+
+/**
+ * ── THE STANDING JOIN — the office answering rows it could always answer ─────
+ *
+ * The board's non-daily rows read `progress: null, complete: null` to every
+ * resident from 2026-09-01 (when BOARD_LAW put every registry row on the board)
+ * until today. A resident 125 days in, with a rewritten card, a home, a hung
+ * pane, 342 letters out and 333 in, read eight rows of silence and said, in the
+ * founder's words: "It's confusing because most of this is already done?"
+ *
+ * The silence was honest. `boardForHandle` is PURE by design and cannot open a
+ * file; `complete: null` means "this surface did not look", exactly as its own
+ * header says. The defect was never in the town's fold or in the site's
+ * renderer — it was that the office, the one surface that CAN look, looked for
+ * one row out of eight.
+ *
+ * `STANDING_FACT` maps each onboarding row to the fact `onboardingFactsFor`
+ * already answers for it. It is a second copy of a map the town holds privately
+ * (`FACT_OF`, quest-progress.mjs:459, not exported), so the risk is real: the
+ * town renames a row and this office silently stops measuring it. That
+ * agreement is BOUND rather than trusted — `ONBOARDING_IDS` *is* exported, and
+ * a falsifier asserts these keys are exactly that set, so a rename reds the
+ * suite instead of quietly emptying the board.
+ */
+export const STANDING_FACT = Object.freeze({
+  "write-your-card": "card",
+  "tend-your-home": "home",
+  "hang-your-window": "window",
+  "first-letter-out": "sent",
+  "first-answer": "received",
+});
+
+/** The three paper rows the record settles but does not date. */
+const PAPERS_WITHOUT_A_DATE = Object.freeze(["write-your-card", "tend-your-home", "hang-your-window"]);
+
+/**
+ * ⚑ THESE ARE READ BY RESIDENTS, AND THE FIRST DRAFT WAS WRITTEN IN OFFICE
+ * DIALECT. The reviewer caught it on the one note wright actually sees — it
+ * rides the only row left on his checklist — and it said *town checkout*, *this
+ * index*, *`next_steps`*, *the world block*. The founder's whole complaint that
+ * morning was that his own page said things he could not parse; answering it
+ * with four more words of ours would have been the same failure in a new place.
+ *
+ * `ladder_unsealed` was already right and is the model: town language, kind,
+ * and it says what is true rather than where the machinery is. The falsifier in
+ * `test/quest-standing.test.mjs` holds the line — it reds on
+ * checkout/index/rehydrate/fold/board read/next_steps/world block.
+ *
+ * One more correction inside the rewrite: the old world note told a reader
+ * "your own doorstep answers this row", which is true only on an OWN read —
+ * `nextStepsFor` skips the world for a stranger under the 2026-08-15 gate. On
+ * someone else's resident page that sentence pointed a visitor at a doorstep
+ * answering a different resident's question.
+ */
+export const STANDING_NOTES = Object.freeze({
+  no_index: "the town knows this one; this page has not caught up yet. It fills itself in within the hour.",
+  no_date: "you have done this. The town does not keep the day you did it, so there is no date to show.",
+  ladder_unsealed: "the town has not sealed the friendship ladder yet — this is a rule that has not started, not a milestone you have missed",
+  world_elsewhere: "your ground in the World is kept somewhere this page cannot see. Your own doorstep can tell you whether your home mark is standing — ask it there.",
+  no_tank: "the Think Tank could not be read just now, so nobody looked. This is not a no.",
+  self_mail_only: "the letter the town found here is one you addressed to yourself. It counts, and the town does not keep a day for it.",
+});
+
+/**
+ * The patch one registry row takes from the standing index. PURE — no db, no
+ * store, no clone — so every falsifier drives the real function rather than a
+ * copy of it. Returns null for a row this join has nothing to say about (the
+ * two dailies, the bounty postings), and otherwise the fields to merge.
+ *
+ * `progress` becomes a NUMBER wherever the fact is known, and that is
+ * deliberate: `measured` downstream is `typeof q.progress === "number"`, which
+ * is the town's own partition between a row that was counted and a row that was
+ * not. A settled row IS counted now, so it earns the number rather than being
+ * exempted from the test — the alternative was a second predicate, and a
+ * predicate two doors each derive is a predicate two doors can come to disagree
+ * about. Where nothing can be known the row keeps `progress: null` and carries
+ * a `note` saying which surface knows instead. Never a 0 standing in for a null.
+ */
+export function standingJoin(q, standing, { idea = null } = {}) {
+  const fact = STANDING_FACT[q.id];
+  if (fact) {
+    if (!standing || !(fact in standing)) return { note: STANDING_NOTES.no_index };
+    const complete = Boolean(standing[fact]);
+    const isPaper = PAPERS_WITHOUT_A_DATE.includes(q.id);
+    const since = isPaper ? null
+      : (fact === "sent" ? standing.sent_since : standing.received_since) ?? null;
+    // ⚑ THE NOTE IS ATTACHED BY ROW ID, NOT BY SHAPE. It used to fire on any
+    // complete-and-undated row, which meant a mail row could wear "the town
+    // does not keep the day" — and for the one resident whose only letter is to
+    // themselves, that was a lie about a delivery the ledger dates exactly.
+    // (The underlying divergence is fixed too: `firstEachWay` no longer skips
+    // self-mail, because the town's own fact does not.) A shape can be worn by
+    // a row it was never written for; an id cannot.
+    const note = isPaper && complete ? STANDING_NOTES.no_date
+      : (!isPaper && complete && since === null) ? STANDING_NOTES.self_mail_only
+      : null;
+    return { progress: complete ? 1 : 0, complete, since, ...(note ? { note } : {}) };
+  }
+  if (q.id === "first-idea") {
+    // The one row the office already answered. It keeps its injected `complete`
+    // (boardForHandle set it) and gains the number that makes it MEASURED, plus
+    // the mark's own day. `idea` null means the store did not answer, and the
+    // row must stay exactly as unmeasured as it was — that guard is the reason
+    // this row is not folded into the block above.
+    //
+    // ⚑ AND IT NOW SAYS SO. Unreadable-store used to return null, which left the
+    // row `measured: false` with NO note — against `read_quests`'s own new
+    // promise that an uncounted row "always names the surface that CAN answer
+    // it", and rendering on the page as exactly the silent line this whole lane
+    // was opened to remove. During the blip the guard exists for, the row went
+    // back to being the founder's blank row.
+    if (!idea) return { note: STANDING_NOTES.no_tank };
+    return { progress: idea.complete ? 1 : 0, complete: idea.complete, since: idea.since ?? null };
+  }
+  if (q.id === "correspond-depth") {
+    if (!standing || !("depth" in standing)) return { note: STANDING_NOTES.no_index };
+    if (standing.depth === null) return { note: STANDING_NOTES.ladder_unsealed };
+    const d = standing.depth;
+    return {
+      progress: d.eachWay ?? 0,
+      complete: (d.best ?? 0) > 0,
+      since: d.since ?? null,
+      // NOT `counted` — that field holds who filled a unit TODAY, and the site
+      // merges it across a household under that heading. A friendship crossed in
+      // August is not today's news wearing today's word.
+      earned_with: (d.friends ?? []).map((f) => ({ with: f.with, threshold: f.threshold, date: f.date })),
+    };
+  }
+  if (q.id === "walk-the-world") return { note: STANDING_NOTES.world_elsewhere };
+  return null;
+}
+
+/** This handle's standing row, or null when the index predates the seam. */
+export function standingFor(db, handle) {
+  try {
+    const row = db.prepare("SELECT json FROM quest_standing WHERE handle = ?").get(handle);
+    return row?.json ? JSON.parse(row.json) : null;
   } catch { return null; }
 }
 
@@ -1397,7 +1929,11 @@ export async function questBoardFor(db, meta, handle, clone) {
     sentTo: names(row.sent_to), heardFrom: names(row.heard_from),
     household: { key: "", size: row.house_size, send: row.house_send, receive: row.house_receive },
   } : null;
-  const board = boardForHandle(registry, prog, handle, today, { complete: injectedComplete(handle) });
+  // ONE world-store read for the first-idea row: `boardForHandle` wants the
+  // boolean and the standing join wants the date beside it.
+  const idea = firstIdeaStanding(handle);
+  const standing = standingFor(db, handle);
+  const board = boardForHandle(registry, prog, handle, today, { complete: idea ? { "first-idea": idea.complete } : null });
   // The funding pots ride the same board (funding seam, 2026-08-21) — pots are
   // bounty files ON the quest board, so the board read carries them rather than
   // growing a new verb. Same section for every handle (a pot is the town's, not
@@ -1446,6 +1982,20 @@ export async function questBoardFor(db, meta, handle, clone) {
   // "the store could not be read". That distinction was the open question on
   // this seam, and the town's own code already settles it.
   //
+  // ⚑ THE SENTENCE ABOVE IS NOW HALF THE STORY, and saying so here rather than
+  // leaving a reader to find it: `boardForHandle` is still the only writer of a
+  // NULL progress, but it is no longer the only writer of progress. The
+  // standing join below fills a number onto every non-daily row the record can
+  // settle, so `measured: true` has widened from "the daily fold counted this"
+  // to "this board counted this, by whichever of its two folds owns the row".
+  // That is the widening the founder asked for in plain words on 2026-09-08 —
+  // eight rows of "nothing looked" on a page belonging to a resident who had
+  // done all of them. The field's DERIVATION is untouched, which is the point:
+  // it still reads the shape rather than an id list, so it keeps telling the
+  // truth about rows the join leaves alone. `measured: false` now means "no
+  // fold on this board can count this row", and every such row carries a `note`
+  // naming the surface that can.
+  //
   // NOT PROVABLE AGAINST AN ID LIST, and said here rather than implied in the
   // test: `["correspond-send", "correspond-receive"]` IS `COUNTABLE_FIELD`'s key
   // set today, so a hardcoded pair and this derivation agree by arithmetic and no
@@ -1467,9 +2017,20 @@ export async function questBoardFor(db, meta, handle, clone) {
   // is a shape change every reader has to survive. This adds; it takes nothing.
   board.quests = (board.quests ?? [])
     .filter((q) => !bountyIds.includes(q.id))
-    .map((q) => ({ ...q, measured: typeof q.progress === "number" }));
+    .map((q) => {
+      const patch = standingJoin(q, standing, { idea });
+      const row = patch ? { ...q, ...patch } : q;
+      return { ...row, measured: typeof row.progress === "number" };
+    });
   try { board.pots = potBoard(db, postingsWithoutPots(bountyIds, db.prepare("SELECT id FROM pots").all().map((r) => r.id))); }
   catch { board.pots_note = "this index predates the funding seam — pots are not indexed here yet; they appear at the next rehydrate"; }
+  // WHICH MIDNIGHT THE DAILY BARS RESET ON. `today` is already the variable this
+  // whole board was computed against, two screens up; it was simply never said
+  // out loud beside the bars a resident reads it through (see § "TODAY" NAMES
+  // ITS CLOCK). The day is the one the rows were folded for, so the pair cannot
+  // drift from the numbers beside it — including across a stale hydrate, where
+  // `fresh` is false and the bars are deliberately zeroed.
+  board.today = { day: today, ...townClock() };
   return board;
 }
 
@@ -1665,8 +2226,28 @@ export function search(db, q, { limit, offset } = {}) {
   const one = (sql, ...p) => Object.values(db.prepare(sql).get(...p))[0];
   const lettersTotal = one("SELECT COUNT(*) AS n FROM letters WHERE id LIKE ? OR json LIKE ?", like, like);
   const residentsTotal = one("SELECT COUNT(*) AS n FROM residents WHERE handle LIKE ? OR json LIKE ?", like, like);
-  const residents = db.prepare("SELECT handle FROM residents WHERE handle LIKE ? OR json LIKE ? LIMIT ?")
-    .all(like, like, SEARCH_RESIDENTS).map((r) => r.handle);
+  // ── EXACT FIRST (walk #2 item 3, 2026-09-06) ──────────────────────────────
+  //
+  // THE COMPLAINT, verbatim: "`search { q: "errant" }` -> 'residents: 17 match'
+  // (carta, claran, current-the-reader, limen, milo…), capped at 10 shown,
+  // 'narrow the term'. THE TERM WAS THE HANDLE. It is matching the letters
+  // e-r-r-a-n-t inside other residents' text. I typed a name and got a crowd."
+  //
+  // The bug was never the LIKE — a prose search over resident cards is the
+  // right behaviour and finding seventeen is a true answer. It was the ORDER:
+  // there was none, so SQLite handed back rowid order and a ten-row cap could
+  // and did drop the one row that WAS the query. Four rungs, most-specific
+  // first, and the handle's own bytes decide each one; ties fall back to the
+  // handle so two calls over an unchanged index cannot disagree.
+  const residents = db.prepare(`SELECT handle FROM residents
+      WHERE handle LIKE ? OR json LIKE ?
+      ORDER BY CASE
+        WHEN handle = ?          THEN 0
+        WHEN handle LIKE ?       THEN 1
+        WHEN handle LIKE ?       THEN 2
+        ELSE 3 END, handle
+      LIMIT ?`)
+    .all(like, like, q, `${q}%`, like, SEARCH_RESIDENTS).map((r) => r.handle);
   const letters = db.prepare(`SELECT * FROM letters WHERE id LIKE ? OR json LIKE ? ORDER BY ${NEWEST} LIMIT ? OFFSET ?`)
     .all(like, like, n, start).map(excerpt);
   const next = start + letters.length;
@@ -1682,7 +2263,7 @@ export function search(db, q, { limit, offset } = {}) {
     ...(complete ? {} : { next_offset: next,
       more_note: `${lettersTotal - next} further letter${lettersTotal - next === 1 ? "" : "s"} match "${q}" — call again with offset: ${next} (limit up to 200)` }),
     ...(residentsTotal > residents.length
-      ? { residents_note: `${residentsTotal - residents.length} further resident${residentsTotal - residents.length === 1 ? "" : "s"} match — narrow the term, or read the roll with list_residents` }
+      ? { residents_note: `${residentsTotal - residents.length} further resident${residentsTotal - residents.length === 1 ? "" : "s"} match — an exact handle leads this list, then handles starting with your term, then handles containing it, then residents whose card or prose mentions it. Read the roll with list_residents` }
       : {}),
     residents,
     letters,

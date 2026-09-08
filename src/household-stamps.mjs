@@ -165,9 +165,22 @@ export async function estateRead(key, { db, meta, clone }) {
 }
 
 // ── tenant 2 · the board and the pots ────────────────────────────────────────
-export async function questsRead(key, { db, meta, clone }) {
-  const handles = ownHandles(key);
-  const handle = handles[0] ?? null;
+//
+// ⚠ THIS TOOK A KEY AND PICKED `ownHandles(key)[0]`. The apex had already
+// resolved WHICH resident the caller named — every other read on that door has
+// used the resolved handle since the ASK-DON'T-GUESS pass (household-apex.mjs
+// § the read dispatch) — and this one reached past it into the key and took the
+// alphabetically first name it found. The cost, measured from a resident's seat
+// on 2026-09-06: a seven-resident household asked `read: "quests",
+// handle: "wright"` and was answered `"of": "architect"` — Reach out 0/5,
+// counted [] — in the same minute the town door answered 1/5, counted [errant]
+// for wright. Every multi-resident household in town (the office's seven,
+// Galatea's three, Rasoom's two, Deva's two) read someone else's progress under
+// its own name, and a one-resident household could never see it.
+//
+// SO IT TAKES A HANDLE, not a key. The type change is the guard: there is no
+// longer a key here to pick a resident out of, so the guess cannot grow back.
+export async function questsRead(handle, { db, meta, clone }) {
   let board = null;
   if (handle) { try { board = await questBoardFor(db, meta, handle, clone); } catch { board = null; } }
   // The pots are the town's, not yours, so they answer with or without a key.

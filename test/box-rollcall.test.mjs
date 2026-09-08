@@ -187,6 +187,9 @@ function healthy(m = manifest()) {
           at: new Date(beatAt - i * 12 * 60 * MINUTE).toISOString(),
           status: "published", class: null,
           published: 4, left_drafted: 20 + i, quarantined: 0,
+          // The retire step RAN and had nothing to retire — the common green
+          // crossing. `0` must never alarm; only `null` (nobody asked) does.
+          retired: 0,
           world_from: "aaaa", world_to: "bbbb",
         }));
       }
@@ -812,6 +815,90 @@ test("the outcome thresholds are MANIFEST DATA — the checker holds no baseline
   assert.equal(rowFor(rollcall(m, starving3, T0), SETTLEMENT).verdict, ALARM_OUTCOME, "at a window of 3 it alarms");
   assert.equal(rowFor(rollcall(wide, starving3, T0), SETTLEMENT).verdict, OK,
     "at a window of 6, three crossings is not yet the pattern");
+});
+
+test("FALSIFIER (i4): N crossings where the store was never told is an ALARM, and it names the key", () => {
+  // THE FIELD WAS WRITTEN AND NOTHING READ IT (G1 lane 1, the reviewer's note 4).
+  // The retire step degrades LOUDLY — a box with no `WORLD2_CLEARING_URL` writes
+  // `retired: {ran: false}` into every receipt and publishes canon anyway, which
+  // is the right failure. It is also the shape nobody reads: a named absence
+  // repeated twice a day forever is indistinguishable from a quiet town unless
+  // something counts it. That is the 2026-08-26 starvation lesson one rule up,
+  // and this is the same lesson applied to the register instead of the backlog.
+  const m = manifest();
+  const blind = plantHistory(healthy(m), m, [
+    { at: "a", status: "published", class: null, published: 4, left_drafted: 10, retired: null },
+    { at: "b", status: "published", class: null, published: 3, left_drafted: 9, retired: null },
+    { at: "c", status: "published", class: null, published: 5, left_drafted: 8, retired: null },
+  ]);
+  const row = rowFor(rollcall(m, blind, T0), SETTLEMENT);
+  assert.equal(row.verdict, ALARM_OUTCOME);
+  // The operator must be told WHICH key, or the alarm is a puzzle.
+  assert.match(row.reason, /WORLD2_CLEARING_URL/);
+  assert.match(row.reason, /unpublished/);
+});
+
+test("FALSIFIER (i4e): the retire alarm carries its OWN means, never the sibling's install-day excuse", () => {
+  // The shared `means` on this row ends with "INSTALL-DAY NOTE: this row is
+  // EXPECTED to read ALARM-outcome until the first crossing after deploy writes
+  // the log, and it clears itself then." That is true of its two siblings and
+  // FALSE of this rule: a missing `retired` key does not match, so this alarm is
+  // silent on an old log and has no install day to be excused for. Appending the
+  // shared sentence would hand the operator a reason to ignore the one alarm that
+  // never needs one — a real finding read as expected noise, which is the exact
+  // way a board stops being read.
+  const m = manifest();
+  const blind = plantHistory(healthy(m), m, [
+    { at: "a", status: "published", class: null, published: 4, left_drafted: 10, retired: null },
+    { at: "b", status: "published", class: null, published: 3, left_drafted: 9, retired: null },
+    { at: "c", status: "published", class: null, published: 5, left_drafted: 8, retired: null },
+  ]);
+  const reason = rowFor(rollcall(m, blind, T0), SETTLEMENT).reason;
+  assert.doesNotMatch(reason, /INSTALL-DAY NOTE/,
+    "the retire alarm must not inherit an install-day excuse it does not have");
+  // And it must still say what to DO, or it is an alarm with no next step.
+  assert.match(reason, /postmark-office\.env|box carry/);
+});
+
+test("FALSIFIER (i4b): THE CONTROL — a step that RAN and retired nothing is green", () => {
+  // `retired: 0` is the common crossing: the step asked and there was nothing to
+  // retire. Alarming on it would fire on nearly every crossing and teach the
+  // board to be ignored, which is worse than not having the rule.
+  const m = manifest();
+  const ranEmpty = plantHistory(healthy(m), m, [
+    { at: "a", status: "published", class: null, published: 4, left_drafted: 10, retired: 0 },
+    { at: "b", status: "published", class: null, published: 3, left_drafted: 9, retired: 0 },
+    { at: "c", status: "published", class: null, published: 5, left_drafted: 8, retired: 0 },
+  ]);
+  assert.equal(rowFor(rollcall(m, ranEmpty, T0), SETTLEMENT).verdict, OK,
+    "a step that ran and found nothing is not a step that never ran");
+});
+
+test("FALSIFIER (i4c): a log written BEFORE the field existed never alarms about it", () => {
+  // A missing key is not a null. Lines predating the retire step carry no
+  // `retired` at all, and an old log must not alarm about a step that did not
+  // exist when it was written — which is also why this rule needs no install-day
+  // exception, unlike its sibling.
+  const m = manifest();
+  const old = plantHistory(healthy(m), m, [
+    { at: "a", status: "published", class: null, published: 4, left_drafted: 10 },
+    { at: "b", status: "published", class: null, published: 3, left_drafted: 9 },
+    { at: "c", status: "published", class: null, published: 5, left_drafted: 8 },
+  ]);
+  assert.equal(rowFor(rollcall(m, old, T0), SETTLEMENT).verdict, OK);
+});
+
+test("FALSIFIER (i4d): one blind crossing among two that asked is not the pattern", () => {
+  // The window is three for its sibling's reason. A single crossing that could
+  // not reach the store — a restart, a moment of contention — is not the
+  // register drifting from canon.
+  const m = manifest();
+  const mixed = plantHistory(healthy(m), m, [
+    { at: "a", status: "published", class: null, published: 4, left_drafted: 10, retired: 0 },
+    { at: "b", status: "published", class: null, published: 3, left_drafted: 9, retired: null },
+    { at: "c", status: "published", class: null, published: 5, left_drafted: 8, retired: 2 },
+  ]);
+  assert.equal(rowFor(rollcall(m, mixed, T0), SETTLEMENT).verdict, OK);
 });
 
 test("FALSIFIER (i3): a refusal that KEEPS COMING BACK is an alarm whatever its class says", () => {

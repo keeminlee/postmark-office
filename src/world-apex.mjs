@@ -72,6 +72,14 @@ import { servedEnterExitLedger } from "./enter-exit-ledger.mjs";
 // POS-5's consent verb. STANCE_TOOLS ride the schema lookup without joining
 // the flat tool list, exactly as CROSSING_TOOLS do and for the same reason.
 import { ACTION_STANCE, STANCE_TOOLS, declareStanceViaOffice, readNeverPerforms, stanceShadow, stancesBlock } from "./world-stance.mjs";
+// Rei-1's subscription (world#18, PROPOSED). SUBSCRIBE_TOOLS ride the schema
+// lookup without joining the flat tool list — the same precedent again, and
+// here it also keeps the office from advertising a public tool for a clause the
+// founder has not ruled on.
+import {
+  ACTION_SUBSCRIBE, ACTION_UNSUBSCRIBE, SUBSCRIBE_TOOLS,
+  subscribeReadNeverPerforms, subscribeViaOffice, subscriptionShadow, unsubscribeViaOffice,
+} from "./subscriptions.mjs";
 import { callHoldTool, holdingsOf, liveHolder } from "./world-hold.mjs";
 import { openDynamic } from "./dynamic-store.mjs";
 import { declareMovement, readAttachments } from "./dynamic-entities.mjs";
@@ -713,6 +721,31 @@ export function portalBlockAt(db, spineIds = []) {
 export const declareStanceAtOffice = (args, key) =>
   declareStanceViaOffice(WORLD_CLONE, args, key, { witnessStamp, crossing: currentCrossing() });
 
+// ── THE SUBSCRIPTION'S DIALS, READ OFF THE MARK ─────────────────────────────
+//
+// `ttl_max_h` and `earshot_max_m` live on `the-town/subscription` (world#18).
+// They are READ, never restated: a cap this file spelled out would be a second
+// copy of a number the town declared, and dec18-parity measured what a second
+// copy costs — a comparison drifted from the gate's in a day and proposed 466
+// amends where the gate reported 15.
+//
+// The store may not hold the class at all — #18 is PROPOSED and the office
+// builds against a world train that does not carry it — so this returns null
+// and the door falls back to the same numbers with `from:` saying it did. A cap
+// that came from a default is not a cap the town declared, and the resident is
+// owed the difference in the receipt.
+export function subscriptionDials() {
+  const store = openStore();
+  try { return residueOf(store.db, "the-town/subscription")?.dials ?? null; }
+  catch { return null; }
+  finally { try { store.db?.close(); } catch { /* already gone */ } }
+}
+
+const subscribeAtOffice = (args, key) =>
+  subscribeViaOffice(args, key, { witnessStamp, crossing: currentCrossing(), dials: subscriptionDials });
+const unsubscribeAtOffice = (args, key) =>
+  unsubscribeViaOffice(args, key, { witnessStamp, crossing: currentCrossing() });
+
 // ── THE STANDING-SCOPED DOORS ───────────────────────────────────────────────
 //
 // An act whose grant hangs on a class that NOBODY IS and NOTHING SITES cannot
@@ -853,6 +886,23 @@ const DISPATCH = {
   // — the split-brain this office keeps a museum of. ONE DERIVATION, TWO
   // DOORS, and here that is literally one function with two callers.
   [ACTION_STANCE]: { tool: "world_declare_stance", run: (args, key) => declareStanceAtOffice(args, key) },
+  // ── the subscription (Rei-1; world#18, PROPOSED) ──────────────────────────
+  //
+  // THESE TWO ROWS ARE UNREACHABLE UNTIL #18 MERGES, and that is the point of
+  // landing them first. `apexDo` admits an action when `gatherActions` returns
+  // it, and nothing on the world train grants `subscribe`, so today both rows
+  // are law-less machinery: a resident asking for the act gets the ordinary
+  // "afforded nowhere in the world" bounce and never reaches here.
+  //
+  // The day the resident class's `actions:` gains the pair (it does on
+  // `wright/law-subscribe`, version 10 -> 11), the grant arrives from the store
+  // with no office change at all — and lint L6 ("every exposed action has a
+  // live handler", src/world-lints.mjs) goes GREEN rather than red, which is
+  // what these rows are for. The five arena verbs were the opposite order and
+  // it cost the town a 501 on every call for a fortnight (see the ARENA_VERBS
+  // note below, in this same table).
+  [ACTION_SUBSCRIBE]: { tool: "world_subscribe", run: (args, key) => subscribeAtOffice(args, key) },
+  [ACTION_UNSUBSCRIBE]: { tool: "world_unsubscribe", run: (args, key) => unsubscribeAtOffice(args, key) },
   // ── the arena's five verbs (2026-08-27) ───────────────────────────────────
   //
   // ⚑ THESE FIVE WERE THE 501. The class marks granted them from the day the
@@ -962,7 +1012,7 @@ function flatSchemas() {
   // fields an act takes must still come from the act's own schema — the seam-4
   // discipline — and inventing a second grammar here for two verbs would be
   // exactly the drift that seam exists to close.
-  for (const tool of [...WORLD_TOOLS, ...WORLD_STAKE_TOOLS, ...CROSSING_TOOLS, ...STANCE_TOOLS, ...ARENA_TOOLS]) {
+  for (const tool of [...WORLD_TOOLS, ...WORLD_STAKE_TOOLS, ...CROSSING_TOOLS, ...STANCE_TOOLS, ...SUBSCRIBE_TOOLS, ...ARENA_TOOLS]) {
     _flatSchemas.set(tool.name, actionFields(tool?.inputSchema?.properties, tool?.inputSchema?.required));
   }
   return _flatSchemas;
@@ -975,7 +1025,7 @@ let _fullProps = null;
 function fullPropsFor(toolName) {
   if (!_fullProps) {
     _fullProps = new Map();
-    for (const t of [...WORLD_TOOLS, ...WORLD_STAKE_TOOLS, ...CROSSING_TOOLS, ...STANCE_TOOLS, ...ARENA_TOOLS]) _fullProps.set(t.name, t?.inputSchema?.properties ?? {});
+    for (const t of [...WORLD_TOOLS, ...WORLD_STAKE_TOOLS, ...CROSSING_TOOLS, ...STANCE_TOOLS, ...SUBSCRIBE_TOOLS, ...ARENA_TOOLS]) _fullProps.set(t.name, t?.inputSchema?.properties ?? {});
   }
   return _fullProps.get(toolName) ?? null;
 }
@@ -1426,6 +1476,98 @@ export function standingHandle(args = {}, key = null) {
   return handles.length === 1 ? handles[0] : null;
 }
 
+// ── THE GROUND, WITHIN REACH (lane-h, the-town/the-reach) ────────────────────
+//
+// "the other half of 'a dropped thing can be found'." Walk #12 set a spinning
+// top down at a child's race track and no door in the town could show it to
+// her — `read: "take"` answered the reader's own hands, `world_investigate`
+// answered the last fold 536 m away, and the focus on the ground listed no
+// holdings at all. A town that lets you set a gift down and shows it to nobody
+// is a town where a gift is a thing you lose.
+//
+// ONE READER, THREE ANSWERS PER ROW, and it says which:
+//   · where the thing actually stands (whereThingStands — holder, set-down, or
+//     the fold, each naming itself)
+//   · how far that is from you, and whether you are inside its extent
+//   · whether a take would be admitted, IN THE SAME WORDS the door will use
+//
+// The last of those is the point. A read that listed things without saying
+// which of them the door would refuse would be a second opinion about the reach
+// — and the door's is the one that binds. So the row's verdict comes from
+// `standsWithin`, the same function the door calls, and a thing somebody else
+// is holding is listed with its holder rather than silently dropped: "she is
+// holding it" is an answer, an absence is not.
+const GROUND_THINGS = `SELECT id, by, tier,
+         json_extract(props, '$.class') AS class,
+         json_extract(props, '$.body')  AS body,
+         at_x, at_y, extent_w, extent_h
+       FROM nodes
+       WHERE json_extract(props, '$.class') = 'thing'
+         AND at_x IS NOT NULL AND at_y IS NOT NULL`;
+
+export async function groundWithinReach(oriented, key = null) {
+  const here = oriented?.standpoint;
+  if (!Number.isFinite(Number(here?.x)) || !Number.isFinite(Number(here?.y)))
+    return { unavailable: "the record does not place you anywhere, so there is no ground underfoot to read — walk somewhere first" };
+  const at = { x: Number(here.x), y: Number(here.y) };
+  const store = openStore();
+  let dyn = null;
+  try {
+    if (!store?.db) return { unavailable: "the office could not read the world store — this is not an answer about what lies underfoot" };
+    const [{ readJournal }, hold, reach, { readAttachments: readAtt }] = await Promise.all([
+      import("./world-journal.mjs"), import("./world-hold.mjs"), import("./reach.mjs"),
+      import("./dynamic-entities.mjs"),
+    ]);
+    dyn = openDynamic();
+    const attachments = readAtt(dyn);
+    const journal = readJournal(dyn, { cls: "holding" });
+    const rows = store.db.prepare(GROUND_THINGS).all();
+    const marks = rows.map((r) => ({ id: r.id, at: { x: Number(r.at_x), y: Number(r.at_y) }, extent: { w: Number(r.extent_w) || 1, h: Number(r.extent_h) || 1 } }));
+    const centreOf = (id) => marks.find((m) => m.id === id)?.at ?? null;
+    // The world engine's own containment, through world.mjs's one loader — a
+    // second `pointInRect` here would be the split-brain the reach module
+    // exists to prevent, and this read must agree with the door exactly.
+    const { pointWithinMarkFn } = await import("./world.mjs");
+    const withinFn = await pointWithinMarkFn().catch(() => null);
+
+    const out = [];
+    for (const r of rows) {
+      const mark = marks.find((m) => m.id === r.id);
+      const stands = await hold.whereThingStands(r.id, {
+        attachments, journal, fold: mark.at, centreOf,
+        standpointOf: async (h) => { const s = await residentStandpoint(h).catch(() => null); return s?.placed ? { x: s.x, y: s.y } : null; },
+      });
+      if (!stands?.where) continue; // a thing whose place cannot be derived is not "underfoot"
+      // The reach is asked of the thing WHERE IT ACTUALLY STANDS, not where the
+      // fold last put it: a top set down at the track is at the track, and
+      // asking the archway's coordinates would reproduce the exact bug this
+      // read exists to end.
+      const placed = { ...mark, at: stands.where };
+      const rr = reach.standsWithin(at, placed, { pointWithinMark: withinFn });
+      if (!rr.stands) continue;
+      // The row's verdict is `groundRow`'s, in world-hold.mjs — pure, and
+      // testable against a thing 90 m away or in somebody's hands with no store
+      // anywhere near it. This function's job is finding the rows; deciding
+      // what each one says is the hold lane's, next to the door that will
+      // enforce it.
+      out.push(hold.groundRow({ id: r.id, made_by: r.by, body: r.body, stands, reach: rr }));
+    }
+    out.sort((a, b) => a.distance_m - b.distance_m);
+    const dis = reach.reachDisclosure();
+    return {
+      at, reach_m: reach.EARSHOT_M ?? null, count: out.length,
+      things: out,
+      reading_law: "Where a thing stands is derived, never stored: a held thing rides its holder, a thing set down stands where it was set down, and canon's fold is the answer only when neither speaks.",
+      ...(dis ? { disclosed: dis } : {}),
+    };
+  } catch (e) {
+    return { unavailable: `the ground could not be read (${String(e?.message ?? e).slice(0, 120)}) — this is not an answer about what lies underfoot` };
+  } finally {
+    try { dyn?.close(); } catch { /* a reader that cannot close still read */ }
+    try { store?.db?.close(); } catch { /* same */ }
+  }
+}
+
 /**
  * What this caller is carrying, from the attachments table and nowhere else.
  *
@@ -1647,7 +1789,10 @@ async function frameBlock(oriented, key) {
 }
 
 /** The three shelves. Complete for you, capped around you, pointers for the town. */
-async function happenedFor(oriented, args, key) {
+// Exported for the same reason `readDomainFor` is, and with the same caveat:
+// the `since:` shelf's join is only watched by a check that reads the block
+// this returns, not by one that reads the source line that builds it.
+export async function happenedFor(oriented, args, key) {
   if (!movementV2Enabled()) return null;
   const since = Number(args.since);
   if (!Number.isFinite(since)) return null;
@@ -1675,11 +1820,58 @@ async function happenedFor(oriented, args, key) {
         }
       }
     }
+    // ── THE BACKLOG'S OWN CLAUSE (2026-09-07, #2526) ────────────────────────
+    //
+    // "a replayable, cursor-ordered read of every effect on your own node since
+    // you last looked" — and a crossing publishing or refusing a mark is one.
+    // TWO AXES: the caller's own marks, and marks laid over ground they hold.
+    // The second set comes from the CONSENT INBOX rather than a second geometry
+    // pass — `stancesForHandles` already answers "what has been laid over ground
+    // you hold", and one question must not have two derivations that disagree
+    // (world.mjs § worldBlockForHandle's own lesson, #1044).
+    let claimEffects = null;
+    if (who) {
+      const onMyGround = new Set();
+      try {
+        const { stancesForHandles } = await import("./world-stance.mjs");
+        const inbox = await stancesForHandles([who], { repo: WORLD_CLONE });
+        for (const row of [...(inbox?.awaiting ?? []), ...(inbox?.standing ?? [])])
+          if (row?.mark ?? row?.id) onMyGround.add(String(row.mark ?? row.id));
+      } catch { /* the ground half is one axis of two; its absence is disclosed by `complete` below only if the docket itself failed */ }
+      const { readClaimEffects } = await import("./claim-effects.mjs");
+      claimEffects = await readClaimEffects({
+        key, handles: [...(key?.handles ?? [])],
+        sinceCrossing: since, nowCrossing, onMyGround,
+      });
+    }
+
+    // ── THE HOLD EFFECTS (lane-h, walk #11 item 1) ──────────────────────────
+    //
+    // A give/take/drop on a thing of yours, or by your hand, is an effect on
+    // your node. Read from the office's own journal, which carries these acts
+    // under both pens (the mirror writes them unflipped, the reverse-mirror
+    // writes them flipped) — so this shelf reads ONE place whichever pen is
+    // live. Keyless reads get nothing rather than an error: there is no
+    // resident whose hands could have changed.
+    let holdEffects = null;
+    if (who) {
+      const { readHoldEffects } = await import("./world-hold.mjs");
+      holdEffects = await readHoldEffects({ handles: [...(key?.handles ?? [who])], sinceCrossing: since, nowCrossing });
+    }
+
+    // R2: the crossing's own published/refused list, as the town's news.
+    let headlines = null;
+    try {
+      const { readHeadlines } = await import("./claim-effects.mjs");
+      headlines = await readHeadlines({ sinceCrossing: since });
+    } catch { headlines = null; }
+
     const block = happenedBlock({
-      transitions, carriedLegs, lines, at,
+      transitions, carriedLegs, claimEffects, holdEffects, lines, at,
       sinceCrossing: since, nowCrossing,
       latestSettlement: latestSettlement(WORLD_CLONE),
       notices: activeNotices(),
+      headlines,
       exclude: who,
     });
     return { ...block, log: { crossings_read: covered.length, crossings_absent: absent.length } };
@@ -2295,7 +2487,15 @@ async function apexDo(args, key, ctx = {}) {
 
 /** One action's domain, read. Fields are whitelisted per action — a read
  *  passes through only what the shadow's own tool takes, never the act's. */
-async function readDomainFor(action, fields, key, oriented, ctx = {}) {
+// ⛔ EXPORTED SO A WIRING PROBE CAN DRIVE IT (lane-h, the reviewer's owed lap).
+// A source-text detector over the call expression cannot tell "called" from
+// "called and thrown away": the reviewer kept the call and discarded its answer
+// — `ground: ((await groundWithinReach(oriented, key)), null)` — and every
+// probe stayed green while the take read answered `ground: null`. The only
+// check that sees that is one which reads what this function RETURNS, so this
+// seam is reachable. It takes no key it did not already take and performs
+// nothing; a read never does.
+export async function readDomainFor(action, fields, key, oriented, ctx = {}) {
   const call = async (tool, send) => {
     try {
       // ctx carries town-side facts the world tools cannot fetch themselves —
@@ -2344,9 +2544,21 @@ async function readDomainFor(action, fields, key, oriented, ctx = {}) {
       return fields?.mark
         ? { stakes: await call("world_stake_read", { mark: fields.mark }) }
         : { stakes: { unavailable: `name a mark — read: "${action}", args: { mark: "<by>/<slug>" } — and the escrow behind it answers` } };
+    // ── THE GROUND READ (lane-h, the-town/the-reach) ──────────────────────────
+    //
+    // Walk #12 item 2: "the town lets me pick up things from the ground and
+    // will not show me the ground." `read: "take"` answered `holdings: []` —
+    // the caller's own hands — which is the one place a thing they can take is
+    // guaranteed NOT to be. The other half of "a dropped thing can be found".
+    //
+    // give/drop KEEP their holdings answer, and that is not an oversight: those
+    // two verbs act on what you hold, so your hands ARE their domain. `take`
+    // acts on what stands within reach, so reach is its domain. One shadow per
+    // verb, each showing the set that verb can act on.
+    case "take":
+      return { holdings: await call("world_holdings", {}), ground: await groundWithinReach(oriented, key) };
     case "give":
     case "drop":
-    case "take":
       return { holdings: await call("world_holdings", {}) };
     case "note-to-self":
       return { note: oriented.note ?? null };
@@ -2360,6 +2572,20 @@ async function readDomainFor(action, fields, key, oriented, ctx = {}) {
       const performing = readNeverPerforms(fields);
       if (performing) return performing;
       return await stanceShadow(WORLD_CLONE, key, { cursor: fields?.cursor ?? null, limit: fields?.limit });
+    }
+    // THE SUBSCRIPTION'S SHADOW (Rei-1). Both verbs read the same thing — the
+    // caller's own live subscriptions — because `unsubscribe`'s domain IS the
+    // set it can withdraw from, and answering it with anything else would make
+    // a resident guess which name to pass to see what they hold.
+    //
+    // A read never performs, so an envelope carrying declaration fields is
+    // refused by name rather than quietly ignored — the stance door's own rule,
+    // reused rather than re-argued.
+    case ACTION_SUBSCRIBE:
+    case ACTION_UNSUBSCRIBE: {
+      const performing = subscribeReadNeverPerforms(fields);
+      if (performing) return performing;
+      return await subscriptionShadow(key, { handle: fields?.handle ?? null });
     }
     default:
       return { domain: { unavailable: `no shadow read is wired for "${action}" yet — its card above is the law that stands` } };

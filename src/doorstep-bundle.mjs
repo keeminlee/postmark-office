@@ -64,18 +64,90 @@ export async function doorstepBundle(handle, ctx = {}) {
   // throws and answers `unavailable` instead. A morning page that dropped this
   // segment when the engine was mid-write would tell a resident that nothing
   // awaits their word, which is precisely the silence the segment exists to end.
+  //
+  // ── THE TEACHING BLOCK IS NOT ON THIS PAGE (conductor's call, 2026-09-07) ──
+  //
+  // `teach` — what a stance DOES, and the unruled pair it is caught between —
+  // rides `household { read: "stances" }` whole and reaches the doorstep as ONE
+  // POINTER LINE. Three reasons, and the third is the one that decides it:
+  // it is the largest block this lane adds to the morning page by bytes; it is
+  // byte-identical for every resident every day, so a reader who has seen it
+  // once has seen it forever; and it TEACHES rather than REPORTS, which is the
+  // one thing a morning page is not for. The doorstep is the surface
+  // little-bird abandoned as too heavy, and a fix for a resident's confusion
+  // that makes their morning page heavier has traded one complaint for another.
+  //
+  // The pointer is not a summary of the block. It names the question and the
+  // door, and nothing else — a paraphrase here would be the copy-nothing-keeps-
+  // honest defect that this whole teaching block exists to avoid.
+  // ⚠ AND IT IS CUT ON THE SLIM SKIN ONLY, which is not a softening of the
+  // call — it is the only lawful place to make it. The bundle's own law is that
+  // a segment IS the read its `serves` names, deep-equal, so that asking the
+  // read yourself returns the same object; two falsifiers hold it
+  // (doorstep-bundle.test.mjs § THE BUNDLE, doorstep-stances.test.mjs § THE
+  // BUNDLE LAW HOLDS HERE TOO). Trimming the REST page would have broken that
+  // law to save bytes on the skin that is not the heavy one. The connector skin
+  // is where the weight actually lands, it already drops fat blocks by design
+  // (queries.mjs § slimAwaiting, § slimPsa), and every cut it makes is NAMED on
+  // the page — so the cut goes there, named, and the REST bundle still answers
+  // exactly what `household { read: "stances" }` answers.
+  const TEACH_POINTER = 'what a stance does, and where the law stops — household { read: "stances" }';
   try {
     const { stancesForHandles } = await import("./world-stance.mjs");
     const args = { handle, limit: DOORSTEP_STANCES };
-    d.stances = { serves: "household.stances", args,
-      ...(await stancesForHandles([handle], { limit: DOORSTEP_STANCES })) };
+    const whole = await stancesForHandles([handle], { limit: DOORSTEP_STANCES });
+    const { teach: _teach, ...trimmed } = whole;
+    // ⚠ `teach_at`, NOT `teach` — THE KEY IS DROPPED, NOT RETYPED.
+    //
+    // The first cut kept `teach` and changed it from an object to a string,
+    // which is the one place this cut departed from the skin's own idiom: every
+    // other slim cut RENAMES a key or DROPS it, and none keeps a key while
+    // changing what type it holds. The cost is exact — a consumer reading
+    // `stances.teach.after_it_is_published.unruled` gets `undefined` on the
+    // connector with no bounce, which is a silent wrong answer rather than a
+    // refusal, and this lane exists to stop exactly that. Caught by the
+    // reviewer at re-review, 2026-09-07.
+    //
+    // So the slim segment has no `teach` at all and carries `teach_at`, a
+    // pointer. A reader who asks for the block on this skin gets nothing and
+    // can tell; a reader who wants it is told, by name, which door answers.
+    d.stances = slim
+      ? { serves: "household.stances", args, ...trimmed, teach_at: TEACH_POINTER,
+          abridged: "the teaching block — what a stance DOES, and the unruled pair it is caught between — is the same paragraph for every resident every day, so the connector skin drops `teach` and names the door instead (`teach_at` above). `household { read: \"stances\" }` answers it whole." }
+      : { serves: "household.stances", args, ...whole };
   } catch (e) {
     d.stances = { serves: "household.stances", args: { handle, limit: DOORSTEP_STANCES },
       unavailable: `the consent inbox could not be read (${String(e?.message ?? e).slice(0, 160)})`,
       awaiting: [], standing: [] };
   }
+  // ── THE EIGHTH SEGMENT · the last crossing's verdict on your things ──────
+  //
+  // #2526's other half. The receipt on the focus answers "what happened to THIS
+  // mark"; a resident's morning question is "did anything happen to MINE", and
+  // before this there was no surface that answered it — the walk of 2026-09-06
+  // asked five doors and got five different silences.
+  //
+  // SAME DERIVATION AS `since:` AND THE FOCUS, deliberately. `claim-effects.mjs`
+  // is the one place a claim becomes an event, so this page and the delta cannot
+  // come to disagree about a refusal the way `stances_awaiting`'s two counts
+  // came to disagree about a ground (walk #1 item 3). One question, one
+  // derivation — world.mjs § worldBlockForHandle's own lesson.
+  //
+  // ALWAYS PRESENT, like `stances` and for a sharper reason: this is the segment
+  // that tells a resident their stake was refused. Dropping it on an unreadable
+  // store would say "nothing happened to you", which is the exact sentence this
+  // lane exists to stop the town saying.
+  try {
+    const { doorstepRulings } = await import("./claim-effects.mjs");
+    d.rulings = { serves: "household.rulings", args: { handle },
+      ...(await doorstepRulings(handle, { key })) };
+  } catch (e) {
+    d.rulings = { serves: "household.rulings", args: { handle },
+      unavailable: `the crossings' rulings on your things could not be read (${String(e?.message ?? e).slice(0, 160)})`,
+      count: 0, events: [] };
+  }
   // The manifest, republished now that every segment is on the page. A reader
-  // walks `segments` to find them, so it must name all seven or none.
+  // walks `segments` to find them, so it must name all eight or none.
   d.segments = [...DOORSTEP_SEGMENTS];
 
   const own = key?.handles?.has?.(handle) === true;

@@ -531,6 +531,89 @@ test("#865 assets: an empty list clears the declaration; omitting it changes not
   } finally { rmSync(clone, { recursive: true, force: true }); }
 });
 
+// ── #2529 · the home door writes every field it accepts, or bounces naming
+//    the one it will not ─────────────────────────────────────────────────────
+//
+// yuanqu, 2026-09-05, verbatim from the issue:
+//
+//   "I sent my HOME through the office door (PATCH /home/{handle}) with the
+//    whole envelope: title, style, region, sits, body. The door took all of it,
+//    wrote the body, and silently dropped the other four. Nothing bounced. The
+//    response was 200, pushed: true, founded: true — every field of the receipt
+//    true, and the file on disk carrying resident: alone."
+//
+// THE ENVELOPE IS THE FIXTURE. These five keys are yuanqu's five, not a
+// convenient stand-in, and all four of the dropped ones are real HOME.md
+// frontmatter the town's residents carry today (yuanqu's own file has all four;
+// errant's has all four; wright's has title and style).
+const YUANQU_ENVELOPE = {
+  handle: "wright",
+  title: "留白 (the Room Left)",
+  style: "bare red brick, china-fir windows, one round window on the water",
+  region: "the-town-centre",
+  sits: "the near bank, the downwater end of the quay",
+  body: "# 留白 · the Room Left\n\nA room kept empty on purpose.",
+};
+
+test("#2529 a field this door does not write BOUNCES, naming every one of them — nothing is dropped in silence", () => {
+  const clone = editClone();
+  try {
+    const before = homeMd(clone);
+    const e = bounceOf(() => updateHome({ ...YUANQU_ENVELOPE }, fixtureKey, db, clone));
+    assert.equal(e.code, 422);
+    // NAMED, and all four — a bounce that named only the first would leave the
+    // sender to discover the rest one round trip at a time.
+    for (const field of ["title", "style", "region", "sits"])
+      assert.match(e.defect, new RegExp(`\\b${field}\\b`), `the bounce must name ${field}`);
+    // AND IT MUST NOT NAME A FIELD IT DID TAKE. `body` was lawful in that
+    // envelope; a refusal that blamed it would send the resident to rewrite the
+    // one thing that was right.
+    assert.doesNotMatch(e.defect, /\bbody\b/, "the bounce must not name a field the door does write");
+    assert.match(e.hint, /it writes exactly body, assets/, "and it says what it DOES write");
+    assert.match(e.hint, /by PR/, "and names the route that takes the other four");
+    // NOTHING WAS WRITTEN. The refusal is total: a half-applied envelope would
+    // be the original defect wearing a bounce's coat.
+    assert.equal(homeMd(clone), before, "a refused envelope leaves the file byte-for-byte");
+  } finally { rmSync(clone, { recursive: true, force: true }); }
+});
+
+test("#2529 the receipt names the fields it WROTE, and unchanged names what it COMPARED", () => {
+  const clone = editClone();
+  try {
+    putArt(clone, "the-room-left.png");
+    const one = updateHome({ handle: "wright", body: YUANQU_ENVELOPE.body }, fixtureKey, db, clone);
+    assert.deepEqual(one.written, ["body"], "the receipt's denominator, by name");
+    assert.ok(one.commit, "and it landed");
+
+    // The second call is the one yuanqu called worse than the first.
+    const two = updateHome({ handle: "wright", body: YUANQU_ENVELOPE.body }, fixtureKey, db, clone);
+    assert.equal(two.unchanged, true);
+    assert.deepEqual(two.compared, ["body"], "`unchanged: true` says which fields it compared");
+    assert.match(two.unchanged_note, /not your envelope refused/,
+      "and distinguishes an unchanged home from a refused envelope");
+
+    // Both fields at once: `written` grows with what actually landed rather
+    // than being a constant wearing a list's costume.
+    const three = updateHome({ handle: "wright", body: "Two rooms now.", assets: ["the-room-left.png"] }, fixtureKey, db, clone);
+    assert.deepEqual(three.written, ["body", "assets"]);
+    const four = updateHome({ handle: "wright", assets: [] }, fixtureKey, db, clone);
+    assert.deepEqual(four.written, ["assets"], "art alone is art alone");
+  } finally { rmSync(clone, { recursive: true, force: true }); }
+});
+
+test("#2529 the guard is the ENVELOPE's, not a blocklist of four remembered names", () => {
+  const clone = editClone();
+  try {
+    // A key nobody has thought of yet must bounce exactly as the four do — a
+    // list of known-bad names would let the next unknown field through silently,
+    // which is the defect, not the fix.
+    const e = bounceOf(() => updateHome({ handle: "wright", body: "hi", lantern_colour: "amber" }, fixtureKey, db, clone));
+    assert.equal(e.code, 422);
+    assert.match(e.defect, /lantern_colour/);
+    assert.match(e.hint, /resend with only body and assets/);
+  } finally { rmSync(clone, { recursive: true, force: true }); }
+});
+
 test("#865 assets: neither body nor assets is a bounce, not a silent no-op", () => {
   const clone = editClone();
   try {

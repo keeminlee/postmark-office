@@ -59,6 +59,17 @@ export function lineFor(receipt) {
     published: ch.published ?? 0,
     left_drafted: ch.left_drafted ?? 0,
     quarantined: ch.quarantined ?? 0,
+    // THE RETIREMENT, on the rolling line and not only in the last receipt
+    // (G1 lane 1). This log exists to answer "has it published anything in
+    // three days", and the store falling behind canon is the same shape of
+    // question: a single receipt says what the last crossing retired, and
+    // nothing could say whether the register has heard anything in a week.
+    //
+    // `null` rather than 0 when the step did not run, because a crossing that
+    // retired nothing and a crossing that holds no store pen are different
+    // facts, and this is the file whose founding lesson is that a zero which
+    // means two things reads as a quiet day.
+    retired: receipt?.retired?.ran === true ? (receipt.retired.count ?? 0) : null,
     world_from: receipt?.world_from ?? "",
     world_to: receipt?.world_to ?? "",
   };
