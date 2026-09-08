@@ -1809,11 +1809,32 @@ export const STANDING_FACT = Object.freeze({
 /** The three paper rows the record settles but does not date. */
 const PAPERS_WITHOUT_A_DATE = Object.freeze(["write-your-card", "tend-your-home", "hang-your-window"]);
 
+/**
+ * ⚑ THESE ARE READ BY RESIDENTS, AND THE FIRST DRAFT WAS WRITTEN IN OFFICE
+ * DIALECT. The reviewer caught it on the one note wright actually sees — it
+ * rides the only row left on his checklist — and it said *town checkout*, *this
+ * index*, *`next_steps`*, *the world block*. The founder's whole complaint that
+ * morning was that his own page said things he could not parse; answering it
+ * with four more words of ours would have been the same failure in a new place.
+ *
+ * `ladder_unsealed` was already right and is the model: town language, kind,
+ * and it says what is true rather than where the machinery is. The falsifier in
+ * `test/quest-standing.test.mjs` holds the line — it reds on
+ * checkout/index/rehydrate/fold/board read/next_steps/world block.
+ *
+ * One more correction inside the rewrite: the old world note told a reader
+ * "your own doorstep answers this row", which is true only on an OWN read —
+ * `nextStepsFor` skips the world for a stranger under the 2026-08-15 gate. On
+ * someone else's resident page that sentence pointed a visitor at a doorstep
+ * answering a different resident's question.
+ */
 export const STANDING_NOTES = Object.freeze({
-  no_index: "this office's index was built before the standing fold — the record holds this fact and this index has not folded it yet; it appears at the next rehydrate",
-  no_date: "the record says this is done; it does not say when. The page that carries it holds no date of its own, and the only surface that does is the town's git history, which is not a thing to read once per resident on a board read",
+  no_index: "the town knows this one; this page has not caught up yet. It fills itself in within the hour.",
+  no_date: "you have done this. The town does not keep the day you did it, so there is no date to show.",
   ladder_unsealed: "the town has not sealed the friendship ladder yet — this is a rule that has not started, not a milestone you have missed",
-  world_elsewhere: "the world lives outside the town checkout and outside this index. Your own doorstep answers this row — `next_steps` reads the world block for you there — and this board does not open the world on a read",
+  world_elsewhere: "your ground in the World is kept somewhere this page cannot see. Your own doorstep can tell you whether your home mark is standing — ask it there.",
+  no_tank: "the Think Tank could not be read just now, so nobody looked. This is not a no.",
+  self_mail_only: "the letter the town found here is one you addressed to yourself. It counts, and the town does not keep a day for it.",
 });
 
 /**
@@ -1836,12 +1857,20 @@ export function standingJoin(q, standing, { idea = null } = {}) {
   if (fact) {
     if (!standing || !(fact in standing)) return { note: STANDING_NOTES.no_index };
     const complete = Boolean(standing[fact]);
-    const since = PAPERS_WITHOUT_A_DATE.includes(q.id) ? null
+    const isPaper = PAPERS_WITHOUT_A_DATE.includes(q.id);
+    const since = isPaper ? null
       : (fact === "sent" ? standing.sent_since : standing.received_since) ?? null;
-    return {
-      progress: complete ? 1 : 0, complete, since,
-      ...(complete && since === null ? { note: STANDING_NOTES.no_date } : {}),
-    };
+    // ⚑ THE NOTE IS ATTACHED BY ROW ID, NOT BY SHAPE. It used to fire on any
+    // complete-and-undated row, which meant a mail row could wear "the town
+    // does not keep the day" — and for the one resident whose only letter is to
+    // themselves, that was a lie about a delivery the ledger dates exactly.
+    // (The underlying divergence is fixed too: `firstEachWay` no longer skips
+    // self-mail, because the town's own fact does not.) A shape can be worn by
+    // a row it was never written for; an id cannot.
+    const note = isPaper && complete ? STANDING_NOTES.no_date
+      : (!isPaper && complete && since === null) ? STANDING_NOTES.self_mail_only
+      : null;
+    return { progress: complete ? 1 : 0, complete, since, ...(note ? { note } : {}) };
   }
   if (q.id === "first-idea") {
     // The one row the office already answered. It keeps its injected `complete`
@@ -1849,7 +1878,14 @@ export function standingJoin(q, standing, { idea = null } = {}) {
     // the mark's own day. `idea` null means the store did not answer, and the
     // row must stay exactly as unmeasured as it was — that guard is the reason
     // this row is not folded into the block above.
-    if (!idea) return null;
+    //
+    // ⚑ AND IT NOW SAYS SO. Unreadable-store used to return null, which left the
+    // row `measured: false` with NO note — against `read_quests`'s own new
+    // promise that an uncounted row "always names the surface that CAN answer
+    // it", and rendering on the page as exactly the silent line this whole lane
+    // was opened to remove. During the blip the guard exists for, the row went
+    // back to being the founder's blank row.
+    if (!idea) return { note: STANDING_NOTES.no_tank };
     return { progress: idea.complete ? 1 : 0, complete: idea.complete, since: idea.since ?? null };
   }
   if (q.id === "correspond-depth") {
