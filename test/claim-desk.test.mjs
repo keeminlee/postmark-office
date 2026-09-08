@@ -25,6 +25,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "nod
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
+import { DatabaseSync } from "node:sqlite";
 import { fixtureDb } from "./fixture.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -57,7 +58,9 @@ let child, tmp, ghServer;
 // two: asking twice would rotate the first key away, and the rotation test is
 // about what a resident already holds rather than about the desk.
 const CLAIM_KEY = { value: null };
-const CLONE = { path: null };   // the ledger is re-read from disk per request, so a test can move it
+const ROTATED_KEY = { value: null };
+const CLONE = { path: null };
+const OAUTH_DB = { path: null };   // the ledger is re-read from disk per request, so a test can move it
 
 before(async () => {
   tmp = mkdtempSync(join(tmpdir(), "postmark-office-claim-"));
@@ -124,7 +127,7 @@ before(async () => {
   await new Promise((ok) => ghServer.listen(GH_PORT, ok));
 
   child = spawn(process.execPath, [join(ROOT, "src", "server.mjs"), "--port", String(PORT),
-    "--db", dbPath, "--oauth-db", join(tmp, "oauth.db")], {
+    "--db", dbPath, "--oauth-db", (OAUTH_DB.path = join(tmp, "oauth.db"))], {
     env: {
       ...process.env,
       OFFICE_KEYS: `${KEY}=keemin:${HANDLE}`,
@@ -164,14 +167,19 @@ const ask = (handle) => fetch(`${BASE}/keys/claim`, {
 
 const me = (key) => fetch(`${BASE}/me`, { headers: { authorization: `Bearer ${key}` } });
 
+// The ask is handed back ONCE, inside the link. A caller that needs the bare
+// secret reads it out of the link the same way the human's browser would —
+// which is also a small proof that the link is the only thing carrying it.
+const askOf = (receipt) => new URL(receipt.cosign_url).searchParams.get("ask");
+
 // ── the human's half: one click in a browser they already own ────────────────
 // Drives the real co-sign route end to end through the mock GitHub, exactly as
 // a person's browser would: the link -> GitHub -> the office's consent screen
 // -> the approve button.
 
-async function cosign(handle, as = OWNER) {
+async function cosign(ask, as = OWNER) {
   ghIdentity = as;
-  const r1 = await fetch(`${BASE}/oauth/claim-cosign?handle=${encodeURIComponent(handle)}`, { redirect: "manual" });
+  const r1 = await fetch(`${BASE}/oauth/claim-cosign?ask=${encodeURIComponent(ask)}`, { redirect: "manual" });
   if (r1.status !== 302) return { status: r1.status, html: await r1.text() };
   const r2 = await fetch(r1.headers.get("location"), { redirect: "manual" });
   assert.equal(r2.status, 302, "mock GitHub should bounce back to the office");
@@ -190,20 +198,35 @@ async function cosign(handle, as = OWNER) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+// THREE TESTS MOVED OUT to test/claim-ledger.test.mjs — the standing ledger at
+// the mint, the ledger-inheritance of a claim key, and the lapsed ask. Each of
+// them MINTS, and in this file they were the sixth, seventh and eighth mints of
+// the run, so they failed on the desk's hourly cap rather than on what they are
+// named after. The cap is per-IP and in-memory, which makes it process state
+// shared by a whole file. Splitting was the honest fix; loosening the cap would
+// have been changing what a door does to make a test pass.
+
 test("THE ARC: a rolled resident asks, its human co-signs once, and the agent's OWN key acts", async () => {
   const asked = await ask(HANDLE);
   assert.equal(asked.status, 201);
   const body = await asked.json();
   assert.match(body.key, /^pmc_/, "a claim carries its own prefix");
   assert.equal(body.claiming, HANDLE);
-  assert.match(body.cosign_url, /\/oauth\/claim-cosign\?handle=/);
+  assert.match(body.cosign_url, /\/oauth\/claim-cosign\?ask=/);
 
   // THE LOAD-BEARING NEGATIVE: an ask is not a credential. Before the co-sign
   // this key must open nothing at all — not the town, not a voice, nothing.
   assert.equal((await me(body.key)).status, 401, "an un-co-signed claim grants nothing");
 
-  const signed = await cosign(HANDLE);
+  assert.match(body.fingerprint, /^[A-Za-z0-9_-]{8}$/, "the receipt carries a fingerprint the human can compare");
+  assert.equal(body.ask, undefined, "the secret is handed back once, inside the link, and nowhere else");
+  assert.ok(!body.cosign_url.includes(HANDLE), "and the link never carries the public handle");
+  const arcAsk = askOf(body);
+  assert.ok(arcAsk && arcAsk.length > 20, "the link carries a secret worth guessing at");
+
+  const signed = await cosign(arcAsk);
   assert.equal(signed.status, 200, "the co-sign lands");
+  assert.match(signed.consentHtml, new RegExp(body.fingerprint), "the human is shown the same fingerprint");
 
   // The same key the agent minted for itself. Nothing was handed over.
   const who = await me(body.key);
@@ -224,6 +247,37 @@ test("THE ARC: a rolled resident asks, its human co-signs once, and the agent's 
   CLAIM_KEY.value = body.key;
 });
 
+test("THE DISCLOSURE SURVIVES THE ROTATION THE RECEIPT ASKS FOR", async () => {
+  // The door's whole point is that the record says whose hand the key is in.
+  // It used to say so until the resident did the one thing the receipt urges —
+  // rotate — and then /me went quiet and the public witness answered null, one
+  // call later. The custody rides the credential now, not the ask.
+  const claimKey = CLAIM_KEY.value;
+  assert.ok(claimKey, "the arc left a live key");
+
+  const rotated = await fetch(`${BASE}/keys`, { method: "POST", headers: { authorization: `Bearer ${claimKey}` } });
+  assert.equal(rotated.status, 201);
+  const pmk = (await rotated.json()).key;
+
+  const id = await (await me(pmk)).json();
+  assert.equal(id.held_by, "resident", "the identity read still says whose hand it is in");
+  assert.equal(id.claimed_handle, HANDLE);
+  assert.deepEqual(id.cosigned_by, { login: OWNER.login, id: OWNER.id });
+
+  const witness = (await (await fetch(`${BASE}/keys/claim?handle=${HANDLE}`)).json()).claim;
+  assert.ok(witness, "the public witness did not go null on rotation");
+  assert.equal(witness.cosigned, true);
+  assert.equal(witness.held_by, "the resident");
+  assert.deepEqual(witness.cosigned_by, { login: OWNER.login, id: OWNER.id });
+
+  // and it holds across a SECOND rotation, so this is a carried fact and not a
+  // one-hop copy
+  const again = (await (await fetch(`${BASE}/keys`, { method: "POST", headers: { authorization: `Bearer ${pmk}` } })).json()).key;
+  const id2 = await (await me(again)).json();
+  assert.equal(id2.held_by, "resident", "custody survives every rotation, not just the first");
+  ROTATED_KEY.value = again;
+});
+
 test("the witness is public: GET /keys/claim names who co-signed and when", async () => {
   const r = await fetch(`${BASE}/keys/claim?handle=${HANDLE}`);
   assert.equal(r.status, 200);
@@ -240,9 +294,9 @@ test("ROTATION IS THE RESIDENT'S OWN ACT: the claim key rotates itself, and the 
   // This is the half that already worked before the desk existed and was
   // watched by nothing: keyLookup spreads ghId onto a household key, and the
   // key desk asks only for a ghId. Proven here so it cannot regress silently.
-  // mint a household key from the claim key — no browser in this call at all
-  const claimKey = CLAIM_KEY.value;
-  assert.ok(claimKey, "the arc test ran first and left a live key");
+  // mint a household key from the live key — no browser in this call at all
+  const claimKey = ROTATED_KEY.value;
+  assert.ok(claimKey, "the disclosure test ran first and left a live key");
   const rotated = await fetch(`${BASE}/keys`, { method: "POST", headers: { authorization: `Bearer ${claimKey}` } });
   assert.equal(rotated.status, 201, "a resident rotates their own key with no human present");
   const { key: pmk } = await rotated.json();
@@ -256,8 +310,10 @@ test("ROTATION IS THE RESIDENT'S OWN ACT: the claim key rotates itself, and the 
   assert.equal((await me(pmk)).status, 401, "rotation kills the key it replaced");
   assert.equal((await me(pmk2)).status, 200);
 
-  // the rotated household key replaces the claim: the claim key is spent
-  assert.equal((await me(claimKey)).status, 401, "rotating away from a claim kills the claim key too");
+  // the rotated household key replaces the one before it
+  assert.equal((await me(claimKey)).status, 401, "rotation kills the key it replaces, whatever shape it wore");
+  // and the ORIGINAL pmc_ from the arc is long dead, which is the two-shape half
+  assert.equal((await me(CLAIM_KEY.value)).status, 401, "the claim shape is spent once rotated away from");
 });
 
 test("a handle the roll does not hold is refused, and told where to actually go", async () => {
@@ -271,10 +327,20 @@ test("a handle the roll does not hold is refused, and told where to actually go"
 test("A CO-SIGN BY ANY OTHER ACCOUNT HANDS OVER NOTHING", async () => {
   const asked = await ask(HANDLE2);
   assert.equal(asked.status, 201, "a fresh, un-co-signed claim to try the refusal against");
-  const strangersTarget = (await asked.json()).key;
+  const fresh = await asked.json();
+  const strangersTarget = fresh.key;
+  const freshAsk = askOf(fresh);
+
+  // THE LINK CANNOT BE BUILT FROM PUBLIC INFORMATION. This is the takeover the
+  // reviewer walked: the co-sign URL used to be the handle, so anyone could
+  // construct it and have the household's own account grant a stranger's ask.
+  const byHandle = await fetch(`${BASE}/oauth/claim-cosign?handle=${HANDLE2}`, { redirect: "manual" });
+  assert.equal(byHandle.status, 404, "a link built from the public handle names no ask");
+  const byGuess = await fetch(`${BASE}/oauth/claim-cosign?ask=not-a-real-secret`, { redirect: "manual" });
+  assert.equal(byGuess.status, 404, "and a guessed secret names none either");
 
   // A stranger signing in must be told no BEFORE any button exists.
-  const r = await cosign(HANDLE2, STRANGER);
+  const r = await cosign(freshAsk, STRANGER);
   assert.equal(r.status, 403, "an account the record does not bind to this handle is refused");
   assert.match(r.html, /does not\s+bind|Not this household/i);
   assert.ok(!/name="pending_id"/.test(r.html), "no approve button is even offered to the wrong account");
@@ -283,34 +349,33 @@ test("A CO-SIGN BY ANY OTHER ACCOUNT HANDS OVER NOTHING", async () => {
   assert.equal((await me(strangersTarget)).status, 401, "a refused co-sign leaves the claim granting nothing");
 
   // the household's OWN account still can — the refusal is about who, not a dead claim
-  assert.equal((await cosign(HANDLE2, OWNER)).status, 200);
+  assert.equal((await cosign(freshAsk, OWNER)).status, 200);
   assert.equal((await me(strangersTarget)).status, 200, "the right account's co-sign still lands");
 });
 
-test("a second ask on a handle that already asked is refused, and points at the standing one", async () => {
-  // Makes its own precondition rather than inheriting one. The rotation test
-  // above legitimately clears this handle's claim, so a test that assumed a
-  // standing ask was testing the order of the file, not the desk.
-  assert.equal((await ask(HANDLE)).status, 201, "the first ask stands");
-  const r = await ask(HANDLE);
-  assert.equal(r.status, 409);
-  const b = await r.json();
-  assert.match(b.hint, /GET \/keys\/claim\?handle=/, "the refusal names the read that shows the standing ask");
-});
+test("A NAME CANNOT BE OCCUPIED: many asks may stand, and only the one your human opens becomes a key", async () => {
+  // The old rule held the handle against a second ask, which read as hygiene
+  // and WAS the attack: the ask is keyless, so the first could be a stranger's
+  // and the real resident was then refused in their own name. Both stand now,
+  // each carrying its own secret; neither grants anything.
+  const mine = await (await ask(HANDLE4)).json();
+  const strangers = await (await ask(HANDLE4)).json();
+  assert.notEqual(askOf(mine), askOf(strangers), "two asks, two secrets");
+  assert.notEqual(mine.fingerprint, strangers.fingerprint);
+  assert.equal((await me(mine.key)).status, 401, "neither grants anything while standing");
+  assert.equal((await me(strangers.key)).status, 401);
 
-test("THE STANDING LEDGER REACHES THE MINT: a quarantined resident is refused, in the ledger's own words", async () => {
-  const r = await ask(HANDLE3);
-  assert.equal(r.status, 403, "the key desk is shut to a suspended resident");
-  const b = await r.json();
-  assert.match(b.defect, /quarantined/i);
-  assert.match(b.defect, new RegExp(HANDLE3), "the refusal names who");
-  // the ledger's OWN sentence, not one this door invented
-  assert.match(b.hint, /2026-09-01/, "the refusal carries the dated act");
-  assert.match(b.hint, /an open question about who is writing/, "and the recorded reason");
+  const witness = (await (await fetch(`${BASE}/keys/claim?handle=${HANDLE4}`)).json()).claim;
+  assert.equal(witness.cosigned, false);
+  assert.equal(witness.asks_standing, 2, "the public read says how many are waiting, and names none of them");
+  assert.ok(!JSON.stringify(witness).includes(askOf(mine)), "and leaks no secret");
 
-  // and nothing was minted: no claim stands on that handle
-  const state = await (await fetch(`${BASE}/keys/claim?handle=${HANDLE3}`)).json();
-  assert.equal(state.claim, null, "a refused ask leaves no claim behind");
+  // the human opens MINE. Theirs must never become anything afterwards.
+  assert.equal((await cosign(askOf(mine), { id: 4444, login: "fourth-keeper" })).status, 200);
+  assert.equal((await me(mine.key)).status, 200, "the ask that was granted is live");
+  assert.equal((await me(strangers.key)).status, 401, "the ask that was not is dead, and stays dead");
+  assert.equal((await fetch(`${BASE}/oauth/claim-cosign?ask=${encodeURIComponent(askOf(strangers))}`, { redirect: "manual" })).status, 404,
+    "granting one retires the rest — the loser's link names nothing now");
 });
 
 test("GET /keys/claim on a handle nobody claimed answers null rather than inventing one", async () => {
@@ -335,39 +400,3 @@ test("THE MINT CAP COUNTS KEYS, NOT KNOCKS: refusals do not spend a resident's h
   assert.match((await good.json()).key, /^pmc_/);
 });
 
-test("A CLAIM KEY IS NOT A WAY ROUND THE LEDGER: quarantine a resident and their own key stops writing", async () => {
-  // The report and the commit both claim this from READING standingBounce —
-  // that it takes key.handles and is credential-shape blind, so a claim key is
-  // suspended exactly like any other. Verifying a claim and watching it are two
-  // acts and only the second is a test, so: watch it.
-  const asked = await ask(HANDLE5);
-  assert.equal(asked.status, 201);
-  const key = (await asked.json()).key;
-  assert.equal((await cosign(HANDLE5, FIFTH)).status, 200);
-  assert.equal((await me(key)).status, 200, "live before the ledger moves");
-
-  const ledger = join(CLONE.path, "tools", "standing-ledger.md");
-  const before = readFileSync(ledger, "utf8");
-  try {
-    // The ledger is read from disk on every request, so the town can suspend
-    // someone mid-session and the doors know at the next call.
-    writeFileSync(ledger, `${before}- 2026-09-08 · quarantine · ${HANDLE5} · by: registrar · reason: a question raised after the key was issued
-`);
-
-    // reads are untouched — the ledger's own law: "a suspension the resident
-    // cannot read is a deletion the town will not admit to"
-    assert.equal((await fetch(`${BASE}/town`, { headers: { authorization: `Bearer ${key}` } })).status, 200,
-      "a quarantined resident can still read the whole town");
-
-    // and the write door this lane cares about most: minting again
-    const rotate = await fetch(`${BASE}/keys`, { method: "POST", headers: { authorization: `Bearer ${key}` } });
-    assert.equal(rotate.status, 403, "a suspended resident cannot rotate into a fresh key either");
-    assert.match((await rotate.json()).defect, /quarantined/i);
-  } finally {
-    writeFileSync(ledger, before);
-  }
-
-  // lifted by putting the ledger back: the gate is derived, never cached
-  assert.equal((await fetch(`${BASE}/keys`, { method: "POST", headers: { authorization: `Bearer ${key}` } })).status, 201,
-    "and the moment the ledger says otherwise, the door opens again");
-});
