@@ -52,7 +52,7 @@ import { cannotAnswer, pointAnswerable, servedRead, storeEpoch, storeShadowEnabl
 // how fine is its floor. arena.mjs imports world-hold.mjs and world-journal.mjs
 // and never world.mjs, so this edge closes no cycle.
 import { arenaGroundAt, adversaryIn, arrivalOnGround, groundAtPoint } from "./arena.mjs";
-import { emissionsEnabled, openDynamic } from "./dynamic-store.mjs"; // stage 2: the dynamic layer's flag
+import { emissionsEnabled, openDynamic, openDynamicReadOnly } from "./dynamic-store.mjs"; // stage 2: the dynamic layer's flag
 import { declareMovement, declareMovementFlipped } from "./dynamic-entities.mjs"; // stage D: the pen after the ledger's freeze
 import { emissionFromVoice } from "./dynamic-emissions.mjs"; // stage 2: speech also becomes an emission instance
 import { world2Enabled } from "./world2-acts.mjs"; // the write-path closure: is the shadow mirror on at all
@@ -1444,11 +1444,22 @@ export async function worldInvestigate(args = {}, key = null) {
 async function thingStandsBlock(id, w, r) {
   let dyn = null;
   try {
-    const [{ openDynamic }, { readAttachments }, { readJournal }, hold] = await Promise.all([
+    // ⚑ READ-ONLY, AND THIS ONE WAS A LIVE BREACH OF DEC-4 (found by the g3
+    // reviewer, driven on a booted `--role read` worker at the previous pin):
+    // `GET /world/investigate` for a mark that EXISTS reached here, opened the
+    // dynamic store in WRITE mode, and re-created a dropped `emissions` table
+    // on a worker that is supposed to hold no writable handle at all.
+    //
+    // My own § 2.1 sweep drove all 41 GET routes and saw nothing, because it
+    // drove this one with a mark that does not exist and got a 422 before the
+    // store was ever opened. A sweep whose inputs bounce early cannot see the
+    // code underneath them.
+    const [{ openDynamicReadOnly }, { readAttachments }, { readJournal }, hold] = await Promise.all([
       import("./dynamic-store.mjs"), import("./dynamic-entities.mjs"),
       import("./world-journal.mjs"), import("./world-hold.mjs"),
     ]);
-    dyn = openDynamic();
+    dyn = openDynamicReadOnly();
+    if (!dyn) return null; // no journal means nothing is held, which is the same answer
     const attachments = readAttachments(dyn);
     if (!attachments.some((a) => a.target === id)) return null; // never held — nothing new to say
     const journal = readJournal(dyn, { cls: "holding" });
@@ -3344,7 +3355,10 @@ async function framesByHandle(w, departures, atMs) {
     byHandle.get(d.handle).push(d);
   }
   const out = new Map();
-  const store = openDynamic();
+  // Read-only: this is a pure reader on `GET /world/walkers` (latent — it
+  // returns before the open when the vessel carriers are absent, which is why
+  // it had not fired). Same class as thingStandsBlock, found by the lap-3 sweep.
+  const store = openDynamicReadOnly();
   try {
     // THE STORE IS READ ONCE, NOT ONCE PER RESIDENT. `storedRecordsFor` is a
     // filter over the whole movements table, so calling it inside this loop
@@ -3356,7 +3370,7 @@ async function framesByHandle(w, departures, atMs) {
     // here. `recordsAcrossEras` de-dupes deliberately rather than leaving that
     // to the accident of `foldFrames` being idempotent over repeated arrivals;
     // `transitions` is a COUNT and the `happened` shelf reads it.
-    const all = storedDepartures({ db: store, atMs }).records;
+    const all = store ? storedDepartures({ db: store, atMs }).records : [];
     const storeByHandle = new Map();
     for (const r of all) {
       if (!storeByHandle.has(r.handle)) storeByHandle.set(r.handle, []);
