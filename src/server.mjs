@@ -558,12 +558,19 @@ const server = createServer((req, res) => {
 
   // ── THE READ WORKER'S ONE REFUSAL (runbook DEC-4, G3) ─────────────────────
   //
-  // Placed HERE, after OPTIONS and after the HEAD→GET rewrite and before every
-  // door, so that: a preflight still answers (a browser that cannot preflight
-  // cannot read either), a HEAD is judged as the GET it mirrors, and no door
+  // Placed HERE, after OPTIONS and before every door, so that a preflight still
+  // answers (a browser that cannot preflight cannot read either) and no door
   // below needs to know the role exists. One gate, one sentence, every unsafe
   // path — rather than a role check per route, which is the shape that grows a
   // hole the first time somebody adds a door and forgets one.
+  //
+  // ⚑ WHAT KEEPS A HEAD PROBE ALIVE IS `workerSafe`'s METHOD LIST, not this
+  // line's position. An earlier draft of this comment claimed the placement
+  // after the HEAD→GET rewrite was what did it; it is not, because HEAD is
+  // named safe in the rule and would pass on either side of the rewrite. The
+  // flip that actually reddens the HEAD leg drops "HEAD" from that list. Said
+  // plainly because a comment claiming a line is load-bearing when it is not is
+  // how a reviewer is taught to skip the line that really is.
   //
   // 405 and not 403: the method and path are refused BY THIS PROCESS, not by
   // the town — the same request is answered at the writer, and the bounce says
