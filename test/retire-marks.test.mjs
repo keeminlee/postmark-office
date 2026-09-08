@@ -11,20 +11,38 @@
 // A column with a CHECK nobody writes is a law with no pen. These tests are the
 // pen's proof.
 //
-// THE CAN-FAIL FLIP, EXECUTED (2026-09-08, on the committed tree at 6b9045f):
-// with `retireMarks`'s UPDATE replaced by a SELECT that returns no rows, the
-// suite reads 12 pass / 3 fail — tests 1, 2 and 4 red; 3, 5, 6, 7, 8 green.
+// ── THE CAN-FAIL FLIP, REPRODUCIBLE ─────────────────────────────────────────
 //
-// I PREDICTED FOUR REDS AND GOT THREE, and the miss is worth keeping rather
-// than quietly correcting. I expected test 6 (the missing-window refusal) to
-// red with the write removed; it does not, because its throw happens BEFORE the
-// UPDATE is ever reached, so it never touched the disabled code. That is the
-// correct behaviour and my prediction was the wrong one — a test that guards an
-// argument, not a write.
+// The flip is the exact four-line edit recorded in `materialize.mjs`'s
+// `retireMarks` header (§ THE CAN-FAIL FLIP, AS A DIFF). Apply it, then:
 //
-// The shape that matters is the other half: tests 3 and 5 are the negative
-// controls and they stayed green under the flip, which is what a control must
-// do. A control that reds when the feature is removed was never a control.
+//   node --test test/retire-marks.test.mjs
+//     → 9 tests · 6 pass · 3 fail        (re-run 2026-09-08 on 9259657)
+//   node --test test/retire-marks.test.mjs test/settlement-receipt-retired.test.mjs
+//     → 15 tests · 12 pass · 3 fail      (first run, on 6b9045f)
+//
+// Same three reds either way — the second command only adds six green receipt
+// tests, which is why the two numbers differ and neither is wrong. Naming the
+// COMMAND beside the count is the repair: "12 pass / 3 fail" alone cannot be
+// checked by anyone who runs a different file set.
+//
+// THE THREE REDS: tests 1, 2 and 4. The greens: 3, 5, 6, 7, 8.
+//
+// WHY THE FLIP IS A SELECT AND NOT A DELETED LINE: the `register` stub below
+// THROWS on SQL it does not model, so most ways of "removing the write" produce
+// an error rather than this split. The chosen SELECT is one the stub already
+// answers, which is what makes the flip runnable at all — the detail my first
+// prose write-up lost, and the reviewer's repair 3.
+//
+// I PREDICTED FOUR REDS AND GOT THREE, kept rather than quietly corrected. I
+// expected test 6 (the missing-window refusal) to red; it does not, because its
+// throw happens BEFORE the UPDATE is reached, so it never touches the disabled
+// code. The test is right and the prediction was wrong — it guards an argument,
+// not a write.
+//
+// The half that matters: tests 3 and 5 are the negative controls and they
+// stayed GREEN under the flip. A control that reds when the feature is removed
+// was never a control.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
