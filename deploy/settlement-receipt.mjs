@@ -170,6 +170,13 @@ const receipt = {
         // "which of these crossings was a rehearsal" is a question somebody asks
         // weeks later with nothing but these receipts to answer it from.
         rehearsal: store.rehearsal === true,
+        // THE AUTHORSHIP WALL'S REACH, and it is on the receipt because the
+        // wall's failure mode is silence. The sweep leaves a sketchbook it
+        // cannot bind ALONE rather than refusing it, so a fold that named its
+        // branches differently would bind none of them, publish every mark
+        // unverified, and produce a receipt that looked exactly like a clean
+        // crossing. `bound` falling is the only thing that shows it.
+        wall: store.wall ?? null,
         marks: store.marks ?? 0,
         households: (store.households ?? []).length,
         changed: (store.households ?? []).filter((h) => h.changed).length,

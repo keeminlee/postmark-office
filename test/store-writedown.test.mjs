@@ -35,7 +35,7 @@ import { markRecord } from "../src/mark-record.mjs";
 import { writeDownHousehold } from "../src/world-drain.mjs";
 import {
   FoldInputRefusal, clearGitSketchbooks, normalizeFoldInput, normalizeMark,
-  planStoreWriteDown, storeWriteDown,
+  planStoreWriteDown, sketchbookNameFor, storeWriteDown,
 } from "../src/store-writedown.mjs";
 
 const scratch = mkdtempSync(join(tmpdir(), "postmark-storewd-"));
@@ -303,6 +303,90 @@ test("F4f · `marks: []` is NOT a refusal — the empty fold is the sweep's judg
   const ok = normalizeFoldInput(foldInput([]));
   assert.deepEqual(ok.marks, []);
   assert.equal(ok.as_of.window, 177);
+});
+
+// ── F6 · THE SKETCHBOOK NAME KEEPS THE AUTHORSHIP WALL BOUND ─────────────────
+//
+// Measured on a scratch clone of the live store: every one of the 84 standing
+// households carries a PREFIXED key — `gh:<github-id>` (547 marks) or
+// `solo:<handle>` (484) — and not one is a legal git branch component. The
+// obvious move is to sanitize the colon away, and it is the worst move
+// available, because the sweep's authorship wall resolves the branch NAME
+// through `WORLD/households.json`'s `logins` map and its own rule is that a
+// branch it cannot bind is LEFT ALONE, never refused. Invented names would bind
+// to nothing, the wall would stand down for the whole town at once, every mark
+// would publish unverified, and every test would stay green.
+//
+// So the mapping is discovered, not invented, and F6b is the one that would
+// have caught the silent version.
+
+const REGISTRY = {
+  logins: { aionsolare: "gh:293432145", "fox-hearth": "gh:20786448" },
+  households: { "aion-solare": "gh:293432145" },
+};
+
+test("F6a · a gh: key is named by the login the wall already binds to it", () => {
+  assert.equal(sketchbookNameFor("gh:293432145", REGISTRY), "aionsolare",
+    "origin carries draft/AionSolare; the wall lowercases, so this binds to the same household key");
+  assert.equal(REGISTRY.logins[sketchbookNameFor("gh:293432145", REGISTRY).toLowerCase()], "gh:293432145",
+    "the round trip is the point: the name the store chooses must resolve back to the household the mark came from");
+});
+
+test("F6b · a solo: key is named by its handle, and the wall standing down is the STATUS QUO", () => {
+  // 13 of the 40 git-era sketchbooks on origin are already unbindable today
+  // (draft/ev-attractor among them, and solo:ev-attractor is a live store
+  // household). Reproducing that is correct. Making it a refusal would be a new
+  // refusal the world's own law forbids: "registry lag must not strand the pen's
+  // own writes".
+  assert.equal(sketchbookNameFor("solo:ev-attractor", REGISTRY), "ev-attractor");
+  assert.equal(REGISTRY.logins["ev-attractor"], undefined, "it binds to nothing, exactly as it does today");
+});
+
+test("F6c · a gh: key no login binds gets the id, never a name belonging to someone else", () => {
+  assert.equal(sketchbookNameFor("gh:999999", REGISTRY), "gh-999999");
+});
+
+test("F6d · a key two logins bind REFUSES rather than picking one", () => {
+  const two = { logins: { alice: "gh:5", bob: "gh:5" } };
+  const e = caught(() => sketchbookNameFor("gh:5", two));
+  assert.ok(e instanceof FoldInputRefusal);
+  assert.equal(e.reason, "household-key-ambiguous",
+    "naming it after one of them would bind the wall to a household this mark may not belong to");
+});
+
+test("F6e · the write-down reports how many sketchbooks the wall can bind", () => {
+  // THE NUMBER THAT MAKES THE SILENCE VISIBLE. Without it, a fold that renamed
+  // every branch produces a receipt indistinguishable from a clean crossing.
+  const w = makeWorld("wall");
+  w.git("update-index", "--add", "--cacheinfo",
+    `100644,${execFileSync("git", ["-C", w.repo, "hash-object", "-w", "--stdin"],
+      { input: JSON.stringify(REGISTRY), encoding: "utf8" }).trim()},WORLD/households.json`);
+  const tree = w.git("write-tree").trim();
+  const commit = execFileSync("git", ["-C", w.repo, "commit-tree", tree, "-p", w.git("rev-parse", "main").trim(), "-m", "registry"],
+    { encoding: "utf8", env: { ...process.env, ...SEED_ENV } }).trim();
+  w.git("update-ref", "refs/heads/main", commit);
+
+  const report = storeWriteDown({
+    repo: w.repo,
+    at: Date.parse(AT_ISO),
+    input: foldInput([
+      storeMark({ id: "alpha/one", household: "gh:293432145", path: "WORLD/marks/alpha/one/mark.md" }),
+      storeMark({ id: "beta/two", household: "solo:ev-attractor", path: "WORLD/marks/beta/two/mark.md" }),
+    ]),
+  });
+
+  assert.equal(report.wall.sketchbooks, 2);
+  assert.equal(report.wall.bound, 1, "the gh: household binds; the solo: one does not, exactly as today");
+  assert.deepEqual(report.wall.unbound, [{ household_key: "solo:ev-attractor", sketchbook: "ev-attractor" }]);
+
+  const branches = report.households.map((h) => h.branch).sort();
+  assert.deepEqual(branches, ["draft/aionsolare", "draft/ev-attractor"],
+    "the branch names are the git era's, not the store's keys — a draft/gh:293432145 could not exist and a "
+    + "draft/gh-293432145 would bind to nothing");
+
+  const keys = report.households.map((h) => h.household_key).sort();
+  assert.deepEqual(keys, ["gh:293432145", "solo:ev-attractor"],
+    "and both vocabularies are on the row, so either side can be checked against the other");
 });
 
 // ── F5 · THE PLAN IS PURE ────────────────────────────────────────────────────

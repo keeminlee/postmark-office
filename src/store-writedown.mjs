@@ -290,6 +290,97 @@ export function planStoreWriteDown(marks, { publishedPathOf = null } = {}) {
 }
 
 /**
+ * THE HOUSEHOLD KEY IS NOT A SKETCHBOOK NAME, AND THE NAME IS LOAD-BEARING.
+ *
+ * Measured on a scratch clone of the live store, 2026-09-08, 1,031 standing
+ * marks across 84 households: EVERY household key is prefixed, so not one of
+ * them is a legal git branch component.
+ *
+ *     gh:<github-id>    547 marks · 52 households
+ *     solo:<handle>     484 marks · 32 households   (solo:the-town alone is 378)
+ *
+ * The obvious move is to sanitize — `gh:67605380` becomes `gh-67605380` — and it
+ * is the worst available move, because the branch name is read. The sweep's
+ * AUTHORSHIP WALL resolves a sketchbook's name through main's own registry
+ * (`settlement-sweep.mjs:905-919`): `wallRegistry.logins[branchName.slice(
+ * "draft/".length).toLowerCase()]`, where `WORLD/households.json`'s `logins` maps
+ * a lowercased GitHub login to a household key. That wall is what keeps "a mark
+ * whose registered author belongs to a DIFFERENT household than the branch"
+ * drafted. And its own stated rule is that a branch it cannot bind is LEFT
+ * ALONE — "unverifiable is the status quo, never a new refusal".
+ *
+ * So invented branch names would not fail loudly. They would bind to nothing,
+ * the wall would stand down for every household in the town at once, every mark
+ * would publish unverified, and every test would stay green. A rename would have
+ * switched off an authorship check for the whole town, silently. That is the
+ * exact defect this file's own trap-closing exists to prevent, arriving from the
+ * other side.
+ *
+ * THE MAPPING, and it is discovered rather than invented — it reproduces the
+ * names the git era already uses:
+ *
+ *   `gh:<id>`      → the login that `logins` binds to that key. `gh:293432145`
+ *                    → `aionsolare`, and origin carries `draft/AionSolare`. The
+ *                    wall lowercases, so case does not matter to it.
+ *   `solo:<handle>` → the handle itself. `solo:ev-attractor` → `ev-attractor`,
+ *                    and origin carries `draft/ev-attractor`. These bind to
+ *                    nothing in `logins` — and they bind to nothing TODAY too:
+ *                    13 of the 40 git-era sketchbooks on origin are already
+ *                    unbindable. Matching that is correct; making it a refusal
+ *                    would be a new refusal the world's own law forbids.
+ *
+ * An unprefixed key is taken as-is, which is what a key with no era-marker can
+ * mean. A key this cannot turn into a legal branch component REFUSES, because at
+ * that point there is no honest name left to choose.
+ */
+export function sketchbookNameFor(householdKey, { logins = {} } = {}) {
+  const key = String(householdKey);
+  const colon = key.indexOf(":");
+  const prefix = colon === -1 ? null : key.slice(0, colon);
+  const rest = colon === -1 ? key : key.slice(colon + 1);
+
+  let name = rest;
+  if (prefix === "gh") {
+    const bound = Object.entries(logins).filter(([, v]) => v === key).map(([login]) => login);
+    if (bound.length === 1) name = bound[0];
+    else if (bound.length > 1) {
+      throw new FoldInputRefusal(
+        "household-key-ambiguous",
+        `${key} is bound by ${bound.length} logins in WORLD/households.json (${bound.join(", ")}) — `
+        + "picking one would name a sketchbook whose authorship wall binds a household this mark may not belong to",
+      );
+    } else {
+      // No login binds this key. The git era has no sketchbook for it either, so
+      // the numeric id is the only stable name left; it binds to nothing in the
+      // wall, exactly like the 13 unbindable sketchbooks already on origin.
+      name = `gh-${rest}`;
+    }
+  }
+
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) {
+    throw new FoldInputRefusal(
+      "household-key-unnameable",
+      `household ${key} yields "${name}", which is not a legal sketchbook component — `
+      + "there is no honest branch name for it, and inventing one would leave the sweep's authorship wall bound to nothing",
+    );
+  }
+  return name;
+}
+
+/** Main's own registry — the SAME resolver the sweep's wall reads, so the two cannot drift. */
+export function wallRegistryAt(repo, ref) {
+  try {
+    const raw = git(repo, ["show", `${ref}:WORLD/households.json`]);
+    const r = JSON.parse(raw);
+    return { households: r.households ?? {}, logins: r.logins ?? {} };
+  } catch {
+    // The sweep's own behaviour when the registry is missing: "no registry on
+    // main → the wall stands down entirely". Mirrored rather than invented.
+    return { households: {}, logins: {} };
+  }
+}
+
+/**
  * EVERY GIT-ERA SKETCHBOOK REF, GONE FROM THIS CLONE.
  *
  * Local and remote both, and remote is the one that matters: the sweep
@@ -368,6 +459,15 @@ export function storeWriteDown({
 
   const plan = planStoreWriteDown(normalized.marks, { publishedPathOf });
 
+  // Read once, from main, the same file the sweep's wall reads.
+  const registry = wallRegistryAt(world, mainSha);
+  const naming = plan.households.map((h) => ({
+    household: h.household,
+    sketchbook: sketchbookNameFor(h.household, registry),
+    bound: null,
+  }));
+  for (const n of naming) n.bound = registry.logins[n.sketchbook.toLowerCase()] ?? null;
+
   const households = [];
   for (const h of plan.households) {
     // A household's sketchbook is built from main every crossing, because in the
@@ -376,11 +476,19 @@ export function storeWriteDown({
     // makes for the sweep to read. That is the one behavioural difference from
     // the drain's write-down and it is deliberate — `sketchbookBase` exists to
     // protect work that lives ONLY on a branch, and after G1 nothing does.
-    git(world, ["branch", "-qf", draftBranch(h.household), mainSha]);
-    households.push(writeDownHousehold(world, h, {
-      whenIso,
-      message: `store write-down: ${h.upserts.length} mark(s) — ${h.household} (window ${normalized.as_of.window})`,
-    }));
+    const name = naming.find((n) => n.household === h.household).sketchbook;
+    git(world, ["branch", "-qf", draftBranch(name), mainSha]);
+    households.push({
+      ...writeDownHousehold(world, { ...h, household: name }, {
+        whenIso,
+        message: `store write-down: ${h.upserts.length} mark(s) — ${h.household} (window ${normalized.as_of.window})`,
+      }),
+      // BOTH NAMES, always. The store speaks household KEYS and the world repo
+      // speaks sketchbook names, and a receipt carrying only one of them cannot
+      // be checked against the other side. This is the row where the two eras'
+      // vocabularies are written down together.
+      household_key: h.household,
+    });
   }
 
   return {
@@ -394,8 +502,18 @@ export function storeWriteDown({
     supplied_bytes_only: normalized.marks.filter((m) => !m.serialized_here).length,
     sketchbooks_cleared: cleared,
     counts: plan.counts,
-    households: households.map(({ household, branch, base, base_from, commit, changed, touched }) =>
-      ({ household, branch, base, base_from, commit, changed, touched })),
+    // HOW MANY SKETCHBOOKS THE AUTHORSHIP WALL CAN STILL BIND. On the receipt
+    // because the wall's failure mode is silence: an unbindable branch is left
+    // alone, not refused, so a fold that renamed every sketchbook would switch
+    // the wall off for the whole town and publish a clean-looking crossing.
+    // These two numbers are the only surface on which that shows.
+    wall: {
+      sketchbooks: naming.length,
+      bound: naming.filter((n) => n.bound).length,
+      unbound: naming.filter((n) => !n.bound).map((n) => ({ household_key: n.household, sketchbook: n.sketchbook })),
+    },
+    households: households.map(({ household, household_key, branch, base, base_from, commit, changed, touched }) =>
+      ({ household, household_key, branch, base, base_from, commit, changed, touched })),
     main: mainSha,
   };
 }
