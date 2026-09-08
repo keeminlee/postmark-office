@@ -166,7 +166,7 @@ test("the world row names the surface that answers it, and claims nothing itself
   assert.match(p.note, /doorstep/, "the note must name WHERE the answer is, or it is a shrug with better grammar");
 });
 
-test("first-idea takes its number and its day from the store, and stays silent when the store did not answer", () => {
+test("first-idea takes its number and its day from the store, and SAYS SO when the store did not answer", () => {
   const withIdea = standingJoin(row("first-idea"), SETTLED, { idea: { complete: true, since: "2026-08-19", by: "wright" } });
   assert.equal(withIdea.progress, 1);
   assert.equal(withIdea.complete, true);
@@ -175,8 +175,84 @@ test("first-idea takes its number and its day from the store, and stays silent w
   // unmeasured as it was. A floor read here would tell a resident they had not
   // published an idea on the strength of a hydration blip, and this is the row
   // that PAYS.
-  assert.equal(standingJoin(row("first-idea"), SETTLED, { idea: null }), null,
-    "no store answer means no patch at all — the row keeps boardForHandle's null");
+  const blind = standingJoin(row("first-idea"), SETTLED, { idea: null });
+  assert.equal(blind.progress, undefined, "no store answer means no number — the row keeps boardForHandle's null");
+  assert.equal(blind.complete, undefined);
+  // ⚑ AND IT NOW CARRIES A NOTE. It used to return null outright, which left
+  // the row measured:false with nothing said — the founder's silent line, for
+  // that row, during exactly the blip the guard exists for.
+  assert.equal(blind.note, STANDING_NOTES.no_tank);
+  assert.match(blind.note, /Think Tank/, "the note must name the surface that can answer it");
+});
+
+// ── repair 4: the door's own promise, held to ────────────────────────────────
+
+test("NO unmeasured row anywhere on a board is left without a note — driven both ways", async () => {
+  const day = await today();
+  // `read_quests` now promises an uncounted row "always names in `note` the
+  // surface that CAN answer it". This is that sentence, executable.
+  for (const [what, standing] of [["settled", SETTLED], ["fresh", FRESH], ["no index", null]]) {
+    const board = await questBoardFor(dbWith(standing, day), meta(day), "wright", TOWN);
+    const silent = board.quests.filter((q) => q.measured === false && !q.note).map((q) => q.id);
+    assert.deepEqual(silent, [],
+      `${what}: these rows say "nothing looked" and do not say who could. That is the founder's blank row, one row narrower.`);
+  }
+});
+
+// ── repair 5: the notes are for residents, not for us ────────────────────────
+
+test("no note is written in office dialect", () => {
+  // The one note wright actually sees rides the only row left on his checklist.
+  // The founder's complaint that morning was that his page said things he could
+  // not parse; answering it in our own vocabulary would be the same failure in
+  // a new place.
+  // The reviewer's vocabulary, verbatim. I added "standing" to it on the first
+  // pass and it fired on "whether your home mark is standing" — which is the
+  // TOWN's own word for a mark placed on ground (the registry: "the household's
+  // first class:idea mark standing on the-town/the-think-tank"). A resident
+  // reads that sentence fine. Dropped, and named here rather than quietly, so
+  // nobody re-adds it thinking it was an oversight.
+  const OURS = /checkout|\bindex\b|rehydrate|\bfold\b|board read|next_steps|world block/i;
+  for (const [key, text] of Object.entries(STANDING_NOTES)) {
+    assert.doesNotMatch(text, OURS,
+      `STANDING_NOTES.${key} is written in office dialect: ${JSON.stringify(text)}`);
+  }
+});
+
+test("the world note does not promise a stranger an answer about someone else", () => {
+  // `nextStepsFor` skips the world read for a stranger under the 2026-08-15
+  // gate, correctly. A note saying "your own doorstep answers this row" is
+  // therefore false on every page but your own — and a resident page is public.
+  assert.match(STANDING_NOTES.world_elsewhere, /your own doorstep/i, "it may name the doorstep");
+  assert.doesNotMatch(STANDING_NOTES.world_elsewhere, /answers this row/i,
+    "but it must not tell a visitor that THIS row is answered there — the doorstep they can reach is their own");
+});
+
+// ── repair 7: self-mail, and the note attached by id rather than by shape ────
+
+test("a resident whose only letter is to themselves is dated, not told the town forgot", () => {
+  // The divergence: the town's `onboardingFactsFor` counts a self-addressed
+  // letter as sent AND received; the office's date maps used to skip it. So the
+  // row read complete:true, since:null — and picked up the paper-row note
+  // saying the record does not date it, about a delivery the ledger dates
+  // exactly. Latent when the reviewer found it; live for the first newcomer who
+  // opens that way.
+  const selfOnly = { ...FRESH, sent: true, received: true, sent_since: "2026-09-08", received_since: "2026-09-08" };
+  const out = standingJoin(row("first-letter-out"), selfOnly);
+  assert.equal(out.complete, true);
+  assert.equal(out.since, "2026-09-08", "the ledger dates it; so does this row");
+  assert.equal(out.note, undefined, "and nothing tells them the town does not keep the day");
+});
+
+test("the undated note is attached by ROW ID, never by shape", () => {
+  // A shape can be worn by a row it was never written for. If a mail row ever
+  // does come back complete-and-undated, it gets its own true sentence.
+  const undatedMail = { ...FRESH, sent: true, sent_since: null };
+  const mail = standingJoin(row("first-letter-out"), undatedMail);
+  assert.equal(mail.note, STANDING_NOTES.self_mail_only,
+    "a mail row must not borrow the paper rows' note — replace the id test with `complete && since === null` and this reads no_date");
+  assert.equal(standingJoin(row("write-your-card"), SETTLED).note, STANDING_NOTES.no_date,
+    "and the paper rows keep theirs");
 });
 
 // ── an index older than the seam ─────────────────────────────────────────────
