@@ -164,6 +164,12 @@ const receipt = {
         // folded by the register — that is the same defect as a freshness stamp
         // naming a source it did not come from.
         entry: store.entry ?? null,
+        // TRUE means this crossing folded from a rehearsal instrument, not from
+        // lane 2's entry point. It is on the receipt rather than only in a log
+        // line because the history file outlives the terminal that ran it, and
+        // "which of these crossings was a rehearsal" is a question somebody asks
+        // weeks later with nothing but these receipts to answer it from.
+        rehearsal: store.rehearsal === true,
         marks: store.marks ?? 0,
         households: (store.households ?? []).length,
         changed: (store.households ?? []).filter((h) => h.changed).length,

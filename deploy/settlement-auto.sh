@@ -398,7 +398,14 @@ if [ "$SOURCE" = "store" ]; then
     cat "$STORE_JSON" >&2 2>/dev/null || true; cat "$WORK/store.err" >&2
     exit 1
   fi
-  echo "[settlement-auto] store: $(node -e 'const r=require(process.argv[1]);const a=r.as_of||{};process.stdout.write(String(r.marks||0)+" mark(s) into "+String((r.households||[]).length)+" sketchbook(s) at window "+String(a.window)+"; cleared "+String((r.sketchbooks_cleared||{}).removed_remote||0)+" origin + "+String((r.sketchbooks_cleared||{}).removed_local||0)+" local git-era draft ref(s)")' "$STORE_JSON")" >&2
+  echo "[settlement-auto] store: $(node -e 'const r=require(process.argv[1]);const a=r.as_of||{};process.stdout.write(String(r.marks||0)+" mark(s) into "+String((r.households||[]).length)+" sketchbook(s) at window "+String(a.window)+"; cleared "+String((r.sketchbooks_cleared||{}).removed_remote||0)+" origin + "+String((r.sketchbooks_cleared||{}).removed_local||0)+" local git-era draft ref(s); entry "+String((r.entry||{}).module||"unnamed"))' "$STORE_JSON")" >&2
+  # A REHEARSAL SHOUTS. It is already on the receipt and in the history file; this
+  # is the line the operator watching the run sees, and it is deliberately not
+  # conditional on a quiet flag — the one time this matters is the time somebody
+  # ran a rehearsal instrument against something they thought was a scratch.
+  if [ "$(node -e 'const r=require(process.argv[1]);process.stdout.write(String(r.rehearsal===true))' "$STORE_JSON" 2>/dev/null)" = "true" ]; then
+    echo "[settlement-auto] *** REHEARSAL *** this crossing folded from a rehearsal instrument, NOT from the register's entry point — nothing it publishes is canon" >&2
+  fi
 else
   # Stakes, derived at the pinned town read (k and law dials from the town's own files).
   (cd "$WORK/town" && node tools/world-stake.mjs --escrow --json) > "$WORK/stakes.json"

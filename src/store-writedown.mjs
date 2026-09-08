@@ -234,6 +234,12 @@ export function normalizeFoldInput(input) {
     // by an instrument must not be indistinguishable from one folded by the
     // register. Null when the supplier did not say, which is itself the finding.
     entry: input.entry ?? null,
+    // A REHEARSAL SAYS SO ON ITS OWN RECEIPT. The module name alone cannot carry
+    // this: a rehearsal instrument placed at a candidate path answers under that
+    // path's name and reads as the real thing. So the supplier declares it, the
+    // receipt shows it, and the chain shouts it — a crossing that folded from an
+    // instrument is legible as one at a glance, forever, in the history file.
+    rehearsal: input.rehearsal === true,
     as_of: {
       window: input.as_of.window,
       world_sha: input.as_of.world_sha,
@@ -382,6 +388,7 @@ export function storeWriteDown({
     at: whenIso,
     as_of: normalized.as_of,
     entry: normalized.entry,
+    rehearsal: normalized.rehearsal,
     marks: normalized.marks.length,
     serialized_here: normalized.marks.filter((m) => m.serialized_here).length,
     supplied_bytes_only: normalized.marks.filter((m) => !m.serialized_here).length,
