@@ -18,6 +18,7 @@
 // door that says it cannot read it.
 
 import { worldFreezeBounce } from "./freeze.mjs";
+import { standsWithin } from "./reach.mjs"; // the ONE "do you truly stand there" test — shared with the hold door (the-town/the-reach)
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { fileURLToPath } from "node:url";
@@ -111,14 +112,19 @@ export async function enterViaOffice(worldClone, payload = {}, key = null, deps 
   // town's own being-part-of-a-scene number) of its anchor. The refusal hands
   // back the directions instead of the deed; a client that wants one-click
   // convenience walks first, then knocks again.
-  const EARSHOT_M = 60;
+  //
+  // ⚑ THE TEST MOVED OUT, THE LAW DID NOT (lane-h, 2026-09-07). It is now
+  // `standsWithin` in reach.mjs, because `the-town/the-reach` rules that a take
+  // stands within a thing's extent "exactly as an entry stands at a threshold
+  // you truly stand before" — and "exactly as" is only true if it is the same
+  // function. The one change: the 60 that stood here as a literal is now read
+  // off `the-town/say`'s own `earshot_m`, which is the record this comment has
+  // always named. Same number today; the town's number tomorrow.
   const firstLink = answer.links?.length ? (w.marks ?? []).find((m) => m.id === answer.links[0]) : null;
   if (firstLink && answer.walk) {
-    const within = typeof verbs.pointWithinMark === "function" && verbs.pointWithinMark(here, firstLink);
-    const dx = (firstLink.at?.x ?? 0) - (here?.x ?? 0), dy = (firstLink.at?.y ?? 0) - (here?.y ?? 0);
-    const m = Math.hypot(dx, dy);
-    if (!within && m > EARSHOT_M) {
-      throw bounce(409, `you are not at that door — ${firstLink.id} stands ~${Math.round(m)} m from where you stand`,
+    const reach = standsWithin(here, firstLink, { pointWithinMark: verbs.pointWithinMark });
+    if (!reach.stands) {
+      throw bounce(409, `you are not at that door — ${firstLink.id} stands ~${reach.distance_round} m from where you stand`,
         `a door is entered from its doorstep (founder-ruled 2026-08-27; R15 keeps walk and entry decoupled in both directions). Walk to (${firstLink.at?.x}, ${firstLink.at?.y}) and knock again; nothing was recorded`);
     }
   }

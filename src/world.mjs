@@ -1418,7 +1418,53 @@ export async function worldInvestigate(args = {}, key = null) {
   // this door's vocabulary, so `stamps` is raw own escrow and `weight` is the
   // effective ✦ figure here too. Adding a translation layer is how the two words
   // drifted apart in the first place.
-  return receipt ? { ...r, receipt } : r;
+  const stands = await thingStandsBlock(String(args.mark), w, r);
+  return { ...r, ...(receipt ? { receipt } : {}), ...(stands ? { stands } : {}) };
+}
+
+/**
+ * WHERE A THING STANDS, when it is a thing anybody has ever held (lane-h).
+ *
+ * ⚑ ADDITIVE, AND ABSENT IS THE DEFAULT. The block appears only for a mark the
+ * holding record has an edge for — so every mark nobody has ever picked up
+ * answers byte-for-byte what it answered before, and the one class of mark this
+ * lane is about answers the question walk #12 asked and got the wrong number
+ * to. A focus that grew a field on every mark in the town would be a different
+ * and much larger change wearing this one's justification.
+ *
+ * ⚑ `r.at` STAYS WHAT IT WAS. This block sits BESIDE the folded `at`, it does
+ * not overwrite it — canon's own answer is a real fact ("where the world last
+ * folded it") and quietly substituting a derived one for it would leave a
+ * reader unable to tell the two apart, which is the whole complaint. The block
+ * names its source; the reader chooses.
+ *
+ * Never throws: a store that will not open yields no block, exactly as an
+ * unreadable receipt is absent rather than empty.
+ */
+async function thingStandsBlock(id, w, r) {
+  let dyn = null;
+  try {
+    const [{ openDynamic }, { readAttachments }, { readJournal }, hold] = await Promise.all([
+      import("./dynamic-store.mjs"), import("./dynamic-entities.mjs"),
+      import("./world-journal.mjs"), import("./world-hold.mjs"),
+    ]);
+    dyn = openDynamic();
+    const attachments = readAttachments(dyn);
+    if (!attachments.some((a) => a.target === id)) return null; // never held — nothing new to say
+    const journal = readJournal(dyn, { cls: "holding" });
+    const marks = w?.marks ?? [];
+    const centreOf = (mid) => marks.find((m) => m.id === mid)?.at ?? null;
+    return await hold.whereThingStands(id, {
+      attachments, journal,
+      fold: r?.at ?? null,
+      centreOf,
+      standpointOf: async (h) => {
+        const s = await residentStandpoint(h, w).catch(() => null);
+        return s?.placed ? { x: s.x, y: s.y } : null;
+      },
+    });
+  } catch { return null; }
+  finally { try { dyn?.close(); } catch { /* a reader that cannot close still read */ } }
 }
 
 /**
@@ -1464,6 +1510,41 @@ async function markReceipt(id, key, w, { terrain = false } = {}) {
 
 // The canon pair. No key: /world/state and /world/skeleton answer the same bytes
 // to every caller, which is what makes them cacheable and what §1c settled.
+/**
+ * ONE MARK OUT OF THE ONE WORLD (lane-h, 2026-09-07).
+ *
+ * The hold door needs a thing's footprint to ask `the-town/the-reach`'s
+ * question, and it must ask it of the SAME world every other door answers from
+ * — the assembled, cached `world()` above, not a second `publishedState` read
+ * with its own cache and its own ref. `null` is "canon does not hold this",
+ * which is a fact the caller acts on; a throw is reserved for a world that
+ * could not be read at all, and callers of this one treat that as "could not
+ * measure" rather than as a refusal.
+ */
+export async function worldMarkById(id) {
+  const w = await world();
+  const marks = w.marks ?? [];
+  return {
+    mark: marks.find((m) => m.id === String(id)) ?? null,
+    // ⚑ THE COUNT IS LOAD-BEARING, and a test found out why. `publishedState`
+    // on a clone that is not there answers an EMPTY state rather than throwing,
+    // so `mark: null` has two causes — canon does not hold this id, and canon
+    // could not be read at all — and a caller that refuses on the first would
+    // refuse on the second too. An office whose clone is missing would start
+    // telling every resident their published thing is a private draft. So the
+    // reader hands back the evidence for telling them apart instead of a bare
+    // null, and refusing on an unread canon becomes impossible rather than
+    // merely discouraged.
+    canon_marks: marks.length,
+  };
+}
+
+/** The world engine's own containment definition, for a door that must not write a second one. */
+export async function pointWithinMarkFn() {
+  const { verbs } = await mods();
+  return typeof verbs.pointWithinMark === "function" ? verbs.pointWithinMark : null;
+}
+
 export async function worldStateRaw() { return (await world())._raw.worldState; }
 export async function worldSkeletonRaw() { return (await world())._raw.skeleton; }
 // B1: the signed-in draft overlay's journal half comes from `claims` + the

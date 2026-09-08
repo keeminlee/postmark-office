@@ -195,3 +195,55 @@ test("...and the doorstep itself still admits — within earshot of the first li
   const answer = await enterViaOffice(CLONE, { mark: SHIP, accept: true }, key("postmaster"), o.deps);
   assert.ok((answer.entered ?? []).length > 0 || answer.already, "the doorstep entry must land (or already be within)");
 });
+
+
+// ── the doorstep's number, read off the record (lane-h, the-town/the-reach) ──
+//
+// The 60 that stood in this door as a literal is now `EARSHOT_M` — the say
+// edge's own dial, off the world store, through the one reader that already
+// reads it. The comment beside the literal always CALLED it that ("EARSHOT_M
+// (60, the town's own being-part-of-a-scene number)"); a name that does not
+// read its record is a falsifier that cannot fail, and the town could have
+// moved its own number with this door going on refusing at the old one.
+//
+// ⚑ WHY THIS IS NOT A ±1 m BOUNDARY TEST, which is what I tried first and
+// which does not exist for this door. The measure is to the FIRST UNCROSSED
+// LINK of the chain, and for every mark on this clone that link is
+// `the-town/the-town-centre` — a mark so large that any point within 60 m of
+// its anchor is inside its extent, so the containment leg short-circuits and
+// the doorstep leg is unobservable from here. Probed, not assumed: at 59 m
+// `within` is true and at 1000 m it is false with 1051 m to the anchor. The
+// boundary belongs to `standsWithin` and is tested there, at ±1 m, in
+// test/hold-reach.test.mjs. What this door owes is that it ASKS that function
+// and reports what it measured.
+
+test("the enter refusal reports the distance the SHARED reach measured, not one of its own", { skip: !HAVE_CLONE && "no world clone" }, async () => {
+  const { readFileSync } = await import("node:fs");
+  const { standsWithin } = await import("../src/reach.mjs");
+  const world = JSON.parse(readFileSync(join(CLONE, "WORLD", "world-state.json"), "utf8"));
+  const standing = { x: 90000, y: 90000 };
+  const o = await officeWith({ standing });
+  const e = await enterViaOffice(CLONE, { mark: SHIP }, key("postmaster"), o.deps).then(() => null, (err) => err);
+  assert.ok(e, "127 km out is not at the door");
+  // The same question, asked here of the same first link, must produce the same
+  // metre. If the door ever grew a second measurement this diverges.
+  const link = world.marks.find((m) => m.id === "the-town/the-town-centre");
+  const reach = standsWithin(standing, link);
+  assert.equal(reach.stands, false);
+  assert.match(e.defect, new RegExp(`~${reach.distance_round} m`),
+    "the refusal names the shared reach's own number");
+});
+
+test("the enter door and the hold door ask ONE function — the reach is not copied", async () => {
+  // `the-town/the-reach`: a take stands within a thing's extent "exactly as an
+  // entry stands at a threshold you truly stand before". "Exactly as" is only
+  // true while it is the same function, and this is the assertion that notices
+  // if somebody writes the second copy.
+  const { readFileSync } = await import("node:fs");
+  const crossings = readFileSync(new URL("../src/world-crossings.mjs", import.meta.url), "utf8");
+  const hold = readFileSync(new URL("../src/world-hold.mjs", import.meta.url), "utf8");
+  assert.match(crossings, /standsWithin\(/, "the enter door calls the shared reach");
+  assert.match(hold, /standsWithin\(/, "and so does the hold door");
+  assert.doesNotMatch(crossings, /const EARSHOT_M = \d/, "the literal must not come back");
+  assert.doesNotMatch(hold, /const EARSHOT_M = \d/);
+});

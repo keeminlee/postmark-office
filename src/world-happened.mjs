@@ -85,7 +85,7 @@ export function latestSavedCrossing(worldClone) {
  * reader could disagree with it. The log supplies the displacement half: what
  * the carrier did while you were in its frame.
  */
-export function toYou({ transitions = [], carriedLegs = [], claimEffects = null, sinceCrossing, nowCrossing }) {
+export function toYou({ transitions = [], carriedLegs = [], claimEffects = null, holdEffects = null, sinceCrossing, nowCrossing }) {
   const events = [];
   for (const t of transitions) {
     if (t.crossing != null && t.crossing < sinceCrossing) continue;
@@ -120,6 +120,15 @@ export function toYou({ transitions = [], carriedLegs = [], claimEffects = null,
   // two crossings, and read `{ complete: true, count: 0, events: [] }`.
   for (const e of claimEffects?.events ?? []) events.push(e);
 
+  // ── THE HOLD EFFECTS (lane-h, walk #11 item 1) ───────────────────────────
+  //
+  // "I gave my neighbour something an hour ago and the town says nothing has
+  // happened to me." A give, a take or a drop on a thing of yours — or by you,
+  // or into or out of your hands — is an effect on your node exactly as a
+  // crossing ruling on your mark is. Lane A named this family as still nobody's
+  // when it landed the claim half; it is this lane's.
+  for (const e of holdEffects?.events ?? []) events.push(e);
+
   // ── AND `complete` STOPS BEING UNCONDITIONAL ──────────────────────────────
   //
   // The old sentence — "complete by construction — frame events are rare, so
@@ -132,11 +141,16 @@ export function toYou({ transitions = [], carriedLegs = [], claimEffects = null,
   // handle-less read). That is not an unreadable source — there is no resident
   // whose backlog could be incomplete — so it keeps the promise.
   const docketReadable = claimEffects == null || claimEffects.readable !== false;
+  const holdsReadable = holdEffects == null || holdEffects.readable !== false;
+  const unread = [
+    ...(docketReadable ? [] : [claimEffects.reason ?? "the docket store could not be read"]),
+    ...(holdsReadable ? [] : [holdEffects.reason ?? "the holding record could not be read"]),
+  ];
   return {
-    complete: docketReadable,
-    note: docketReadable
-      ? "complete for you — frame events are rare by construction, and every claim effect on your marks and on your ground rides here too"
-      : `INCOMPLETE — ${claimEffects.reason ?? "a source of this shelf could not be read"}. Frame events below are whole; claim effects on your marks are missing from this answer, and this line is here so you do not read their absence as nothing having happened.`,
+    complete: docketReadable && holdsReadable,
+    note: unread.length === 0
+      ? "complete for you — frame events are rare by construction, and every claim effect on your marks and on your ground, and every hold on a thing of yours or by your hand, rides here too"
+      : `INCOMPLETE — ${unread.join("; ")}. Frame events below are whole; the shelves named here are missing from this answer, and this line is here so you do not read their absence as nothing having happened.`,
     since_crossing: sinceCrossing,
     through_crossing: nowCrossing,
     count: events.length,
@@ -226,7 +240,7 @@ export function townShelf({ nowCrossing, latestSettlement = null, notices = [], 
  * The whole `happened` block. Pure over its inputs so the delta-cap invariant
  * can be falsified without a world, a clone, or a store.
  */
-export function happenedBlock({ transitions, carriedLegs, claimEffects = null, lines, at, sinceCrossing, nowCrossing, latestSettlement, notices, headlines = null, exclude }) {
+export function happenedBlock({ transitions, carriedLegs, claimEffects = null, holdEffects = null, lines, at, sinceCrossing, nowCrossing, latestSettlement, notices, headlines = null, exclude }) {
   return {
     since: { crossing: sinceCrossing,
       // R4: the cursor's clock, named where the cursor is. `since:` counts the
@@ -234,7 +248,7 @@ export function happenedBlock({ transitions, carriedLegs, claimEffects = null, l
       // the sha it blessed) is a different number on a different beat, and it
       // rides `latest_settlement` below.
       note: "pass the `crossing` from your last reply as since: — the town's clock is the cursor, and it counts the ferry's 00:00/12:00Z crossings (not the keeper's settlement epoch, which rides town.latest_settlement)" },
-    to_you: toYou({ transitions, carriedLegs, claimEffects, sinceCrossing, nowCrossing }),
+    to_you: toYou({ transitions, carriedLegs, claimEffects, holdEffects, sinceCrossing, nowCrossing }),
     around_you: aroundYou({ lines, at, exclude }),
     town: townShelf({ nowCrossing, latestSettlement, notices, headlines }),
   };
