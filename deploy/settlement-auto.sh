@@ -467,7 +467,40 @@ fi
 # (`SETTLEMENT_SOURCE=git`), never something this script decides for itself at
 # 05:45Z with nobody watching.
 STORE_JSON=""
+DOCKET_JSON=""
 if [ "$SOURCE" = "store" ]; then
+  # ── WAIT FOR THE CANDLE. THE ORDER INVERTS AT THE SWAP ──────────────────────
+  #
+  # In the git era the settlement and the candle were independent: the sweep
+  # committed at :45:32 and the clearing locked window 177's docket at :45:44, so
+  # the fold ran BEFORE the clearing and did not care — its input came from
+  # sketchbooks the drain had already written.
+  #
+  # After G1 the fold's input IS the clearing's output. So this crossing waits
+  # for the candle to lock the closing window's docket, and only then folds. A
+  # crossing that folded first would fold the PREVIOUS window a second time and
+  # look exactly like a quiet crossing: same marks, nothing new, green.
+  #
+  # It WAITS rather than INVOKES, deliberately. Invoking the clearing from here
+  # would give the settlement a write pen on the candle and make one unit
+  # responsible for both halves of a seam whose whole value is that they are
+  # separate. A wait that times out is a loud finding; an invocation that fails
+  # is a settlement holding a half-cleared window.
+  #
+  # `$STAMP` is this crossing's own start instant, which is what makes the
+  # condition unambiguous — see the tool's header for why "the most recently
+  # closed window" and "the open window has closed" are both wrong.
+  DOCKET_JSON="$WORK/docket.json"
+  if ! (cd "$OFFICE" && node "$OFFICE/world2/tools/await-clearing.mjs" \
+        --since "$STAMP" --timeout-s "${SETTLEMENT_CLEARING_WAIT_S:-240}") > "$DOCKET_JSON" 2>"$WORK/docket.err"; then
+    report refused "the candle did not lock this crossing's docket: $(node -e 'const r=require(process.argv[1]);process.stdout.write(String(r.refused||"unknown")+" — "+String(r.detail||""))' "$DOCKET_JSON" 2>/dev/null || head -c 200 "$WORK/docket.err" | tr '\n"' ' .')"
+    echo "[settlement-auto] CLEARING DID NOT RUN — publishing nothing" >&2
+    cat "$DOCKET_JSON" >&2 2>/dev/null || true; cat "$WORK/docket.err" >&2
+    exit 1
+  fi
+  echo "[settlement-auto] docket: window $(node -e 'const d=require(process.argv[1]);process.stdout.write(String(d.window)+" locked at "+String(d.cleared_at)+" (waited "+String(d.waited_s)+"s)")' "$DOCKET_JSON")" >&2
+  DOCKET_WINDOW="$(node -e 'const d=require(process.argv[1]);process.stdout.write(String(d.window))' "$DOCKET_JSON")"
+
   # ── THE ORDERING: THE FOLD READS AFTER THE CLEARING'S INGEST ────────────────
   #
   # Lane 2's stakes come from `escrow_projection`, written by `stamp-ingest.mjs`
@@ -481,7 +514,8 @@ if [ "$SOURCE" = "store" ]; then
   # indistinguishable from a quiet town.
   FOLD_INPUT="$WORK/fold-input.json"
   if ! (cd "$OFFICE" && node "$OFFICE/world2/tools/fold-input-cli.mjs" \
-        --world-sha "$WORLD_FROM" --town-clone "$TOWN" --town-sha "$TOWN_SHA") > "$FOLD_INPUT" 2>"$WORK/fold.err"; then
+        --world-sha "$WORLD_FROM" --town-clone "$TOWN" --town-sha "$TOWN_SHA" \
+        --window "$DOCKET_WINDOW") > "$FOLD_INPUT" 2>"$WORK/fold.err"; then
     report refused "the store could not answer this crossing: $(node -e 'const r=require(process.argv[1]);process.stdout.write(String(r.refused||"unknown")+" — "+String(r.detail||""))' "$FOLD_INPUT" 2>/dev/null || head -c 200 "$WORK/fold.err" | tr '\n"' ' .')"
     echo "[settlement-auto] STORE REFUSED — publishing nothing" >&2
     cat "$FOLD_INPUT" >&2 2>/dev/null || true; cat "$WORK/fold.err" >&2

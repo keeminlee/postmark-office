@@ -266,6 +266,11 @@ export function normalizeFoldInput(input) {
     // a quiet town, and `behind` climbing across successive receipts is the only
     // thing that would say so.
     ingest: input.ingest ?? null,
+    // HOW THE FOLD CHOSE ITS MARKS — `docket` (the closed window's locked set,
+    // which is provenance) or `standing` (everything the store holds, which is
+    // not). The two produce very different amounts of canon and must never be
+    // told apart by reading the code that happened to be deployed.
+    selection: input.selection ?? null,
     as_of: {
       window: input.as_of.window,
       world_sha: input.as_of.world_sha,
@@ -673,6 +678,7 @@ export function storeWriteDown({
     entry: normalized.entry,
     rehearsal: normalized.rehearsal,
     ingest: normalized.ingest,
+    selection: normalized.selection,
     marks: normalized.marks.length,
     // WHAT THE CROSSING ACTUALLY WROTE, beside what it was offered. The gap
     // between them is the whole of the "never re-materialize an unchanged mark"

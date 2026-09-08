@@ -197,6 +197,11 @@ const receipt = {
         // number that climbs across crossings is an ingest that has stopped
         // running, which is otherwise indistinguishable from a quiet town.
         ingest: store.ingest ?? null,
+        // The selector, on every store crossing. `by: "standing"` on a crossing
+        // that was meant to fold a docket is the single most consequential thing
+        // this receipt can say, and its absence would be indistinguishable from
+        // the correct case.
+        selection: store.selection ?? null,
         marks: store.marks ?? 0,
         // OFFERED vs WRITTEN. A crossing must never re-materialize a mark it is
         // not changing: the corpus carries 75 frontmatter field orders and 40+

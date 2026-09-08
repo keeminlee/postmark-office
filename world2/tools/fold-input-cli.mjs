@@ -50,7 +50,11 @@
 
 import { execFileSync } from "node:child_process";
 
-import { foldInputFromStore } from "./fold-input.mjs";
+// The namespace, not a named import: `foldDelta` is lane 2's delta-contract
+// export and does not exist on every pin of that file. Naming it in a static
+// import would make this whole tool fail to load on a pin that predates it,
+// which turns a missing feature into a crossing that cannot start.
+import * as foldInput from "./fold-input.mjs";
 
 const argOf = (n, d = null) => { const i = process.argv.indexOf(n); return i !== -1 ? process.argv[i + 1] : d; };
 
@@ -104,12 +108,47 @@ if (isMain) {
     );
   }
 
+  const windowArg = argOf("--window");
+  const window = windowArg === null ? null : Number(windowArg);
+  if (windowArg !== null && !Number.isFinite(window)) { console.error(`--window must be a number, got "${windowArg}"`); process.exit(2); }
+
   const { default: pg } = await import("pg");
   const client = new pg.Client({ connectionString: process.env.WORLD2_PG_URL });
   let out;
+  let selection;
   try {
     await client.connect();
-    out = await foldInputFromStore(client, { worldSha });
+    // ── THE PROVENANCE SELECTOR, AND THE HONEST FALLBACK ──────────────────────
+    //
+    // RULED 2026-09-08: the write-down writes only the marks lane 2's
+    // `foldDelta(client, { window })` returns for the just-closed window —
+    // provenance is the closed window's locked docket, not "the bytes differ
+    // from the tree". `foldDelta` is lane 2's second pin and may not be on the
+    // pin this box is running.
+    //
+    // When it is absent the crossing does NOT silently fold the standing set
+    // under a receipt that looks the same. It falls back, and it says so in a
+    // field the receipt carries, because a fold whose selector is "everything
+    // standing" and a fold whose selector is "this window's docket" produce very
+    // different amounts of canon and must never be told apart by reading the
+    // code that happened to be deployed.
+    if (typeof foldInput.foldDelta === "function" && window !== null) {
+      out = await foldInput.foldDelta(client, { window, worldSha });
+      selection = { by: "docket", window, entry: "foldDelta" };
+    } else {
+      out = await foldInput.foldInputFromStore(client, { worldSha });
+      selection = {
+        by: "standing",
+        window,
+        entry: "foldInputFromStore",
+        note: typeof foldInput.foldDelta !== "function"
+          ? "this pin of world2/tools/fold-input.mjs exports no `foldDelta`, so the fold was offered the STANDING SET "
+            + "and not this window's docket. The write-down still refuses to re-materialize a mark whose bytes already "
+            + "equal canon, so nothing unchanged is rewritten — but the selector is not provenance and this crossing "
+            + "is not the swap's shape."
+          : `no --window was given, so the docket could not be named and the standing set was used instead`,
+      };
+    }
   } catch (e) {
     // Lane 2's refusals are thrown Errors whose messages carry the sha or window
     // they wanted and the sentence for why. They are passed through WHOLE rather
@@ -131,5 +170,5 @@ if (isMain) {
     );
   }
 
-  process.stdout.write(`${JSON.stringify({ ...out, ingest: ordering }, null, 1)}\n`);
+  process.stdout.write(`${JSON.stringify({ ...out, ingest: ordering, selection }, null, 1)}\n`);
 }
