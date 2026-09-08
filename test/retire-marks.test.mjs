@@ -11,11 +11,20 @@
 // A column with a CHECK nobody writes is a law with no pen. These tests are the
 // pen's proof.
 //
-// EVERY ONE OF THESE CAN FAIL, and the report records the executed flip: with
-// `retireMarks`'s UPDATE turned into a no-op, tests 1, 2, 4 and 6 go red and 3
-// and 5 stay green — which is the right shape, because 3 and 5 are the negative
-// controls and a control that reds when the feature is removed was never a
-// control.
+// THE CAN-FAIL FLIP, EXECUTED (2026-09-08, on the committed tree at 6b9045f):
+// with `retireMarks`'s UPDATE replaced by a SELECT that returns no rows, the
+// suite reads 12 pass / 3 fail — tests 1, 2 and 4 red; 3, 5, 6, 7, 8 green.
+//
+// I PREDICTED FOUR REDS AND GOT THREE, and the miss is worth keeping rather
+// than quietly correcting. I expected test 6 (the missing-window refusal) to
+// red with the write removed; it does not, because its throw happens BEFORE the
+// UPDATE is ever reached, so it never touched the disabled code. That is the
+// correct behaviour and my prediction was the wrong one — a test that guards an
+// argument, not a write.
+//
+// The shape that matters is the other half: tests 3 and 5 are the negative
+// controls and they stayed green under the flip, which is what a control must
+// do. A control that reds when the feature is removed was never a control.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
