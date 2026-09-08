@@ -17,7 +17,7 @@ import {
   ACTION_GATHER, CLASS_GATHERING, DIAL_FALLBACK, PHASES, RECEIPT_FENCE,
   capsFrom, gatherReadNeverPerforms, gatheredAt, gatheringById, gatheringIdFor,
   gatheringsFrom, groupCount, phaseAt, readDeclaration, receiptFor,
-  refuseOutOfPlace, standingGatherings, standsAt,
+  gatheringShadow, refuseOutOfPlace, standingGatherings, standsAt,
 } from "../src/gatherings.mjs";
 import { standsWithin } from "../src/reach.mjs";
 
@@ -343,4 +343,49 @@ test("a read never performs, and the refusal names every declaration field that 
   assert.equal(r.code, 422);
   assert.match(r.hint, /place, start/);
   assert.match(r.hint, /world \{ do: "gather"/);
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// THE SHADOW — what a resident actually reads
+// ═════════════════════════════════════════════════════════════════════════════
+
+test("read: \"gather\" answers WHAT STANDS, and a gathering is public rather than household-scoped", async () => {
+  const rows = [
+    declareRow(),
+    { id: 3, at: T("2026-09-10T11:00:00.000Z"), actor: "amber", action: ACTION_GATHER, class: CLASS_GATHERING,
+      payload: { gathering: "gathering:amber:the-town/the-long-run:1789243200000", face: "declare",
+        place: "the-town/the-long-run", doors_open: T("2026-09-12T20:00:00.000Z"), start: T("2026-09-12T20:00:00.000Z"), end: T("2026-09-12T23:00:00.000Z") } },
+  ];
+  const r = await gatheringShadow({ handles: new Set(["wright"]) }, { rows, now: at("2026-09-11T00:00:00.000Z") });
+  assert.equal(r.standing, 2, "amber's gathering is in wright's answer — an invitation the town cannot read is not one");
+  assert.deepEqual(r.gatherings.map((g) => g.host), ["wright", "amber"], "ordered by start, not by who asked");
+  assert.match(r.note, /arriving is walking/);
+});
+
+test("read: \"gather\" narrowed to one carries its derived receipt, and says so when it cannot build one", async () => {
+  const rows = [declareRow()];
+  const withReceipt = await gatheringShadow(null, {
+    rows, gathering: GID, now: at("2026-09-13T00:00:00.000Z"),
+    receipt: (g) => receiptFor(g, [], { place: QUAY, pointWithinMark: within, lullMin: 30, lullRead: true }),
+  });
+  assert.equal(withReceipt.gathering.gathering, GID);
+  assert.equal(withReceipt.receipt.host, "wright");
+  assert.equal(withReceipt.fence, RECEIPT_FENCE);
+  const without = await gatheringShadow(null, { rows, gathering: GID, now: at("2026-09-13T00:00:00.000Z") });
+  assert.match(without.receipt_note, /could not read the window/,
+    "a receipt that could not be built is NAMED, not answered as an empty room");
+});
+
+test("read: \"gather\" says the projection is unavailable rather than reporting a town with no gatherings", async () => {
+  const r = await gatheringShadow(null, { rows: null });
+  assert.deepEqual(r.gatherings, []);
+  assert.match(r.unavailable, /WORLD2_PG/,
+    "an office that cannot build the projection must not answer 'nothing stands' — those are different facts");
+  assert.ok(!("standing" in r), "and it does not publish a count it did not earn");
+});
+
+test("read: \"gather\" for an id this log does not hold says so by name", async () => {
+  const r = await gatheringShadow(null, { rows: [declareRow()], gathering: "gathering:nobody:nowhere:0" });
+  assert.deepEqual(r.gatherings, []);
+  assert.match(r.note, /holds no gathering called/);
 });

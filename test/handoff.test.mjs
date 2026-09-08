@@ -15,7 +15,7 @@ import assert from "node:assert/strict";
 
 import {
   ACTION_HAND_TO_HUMAN, CLASS_HANDOFF, DIAL_FALLBACK, HANDOFF_LAW, P6,
-  capsFrom, handoffFor, handoffReadNeverPerforms, liveHandoffs, readDeclaration, seatFromHandoff,
+  capsFrom, handoffFor, handoffReadNeverPerforms, handoffShadow, liveHandoffs, readDeclaration, seatFromHandoff,
 } from "../src/handoff.mjs";
 import { resolveForActor, resolveGrants } from "../src/world-grants.mjs";
 import { exitAllowed, fenceGroundFor } from "../src/embodiment.mjs";
@@ -300,4 +300,22 @@ test("the mapper carries the witnessed line across, because the receipt derivati
   assert.equal(mapped.at_anchor, "the-town/the-quay-reach");
   assert.deepEqual(mapped.witnesses.list, [{ handle: "amber" }],
     "the gathering's receipt counts who stood in earshot off these, so dropping them here would empty every journal-side receipt");
+});
+
+test("read: \"hand-to-human\" is YOURS ALONE, and says unavailable rather than 'you hold none'", async () => {
+  const key = { handles: new Set(["wright"]) };
+  const mine = await handoffShadow(key, { rows: [row()], now: at("2026-09-08T20:30:00.000Z") });
+  assert.equal(mine.live, 1);
+  assert.equal(mine.disclosure, P6);
+  const theirs = await handoffShadow(key, {
+    rows: [row({ id: 9, actor: "amber", payload: { ttl_min: 60, human: "human-of-amber" } })],
+    now: at("2026-09-08T20:30:00.000Z"),
+  });
+  assert.equal(theirs.live, 0, "another household's seat is not in this key's answer");
+  const down = await handoffShadow(key, { rows: null });
+  assert.match(down.unavailable, /WORLD2_PG/,
+    "an office that cannot build the projection must not answer 'you seat nobody' — those are different facts");
+  assert.ok(!("live" in down), "and it does not publish a count it did not earn");
+  const noResidents = await handoffShadow({ handles: new Set() }, { rows: [row()] });
+  assert.match(noResidents.note, /acts for no resident/);
 });
