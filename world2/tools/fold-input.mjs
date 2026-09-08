@@ -65,12 +65,25 @@ export async function stakesFromStore(client, { townSha } = {}) {
   const k = [...ks][0];
 
   // THE TOWN'S OWN ORDER, and it is load-bearing because the fold consumes an
-  // ARRAY. `deriveWorldMarkWeights` walks `[...state.positions.entries()].sort()`
-  // — a plain lexicographic sort of `<mark>|<holder>` — groups by mark in the
-  // order that walk first sees each one, then emits the groups sorted by
-  // `localeCompare` on the mark. Reproduced exactly rather than approximated
-  // with "sort by mark then holder": the two agree on this data and would part
-  // company on the first mark id whose codepoint order and locale order differ.
+  // ARRAY and because the FIRST position of a household in the walk is the one
+  // that draws k. `deriveWorldMarkWeights` walks
+  // `[...state.positions.entries()].sort()` — a plain lexicographic sort of
+  // `<mark>|<holder>` — groups by mark in the order that walk first sees each
+  // one, then emits the groups sorted by `localeCompare` on the mark.
+  //
+  // ⚑ THE TWO SORTS AGREE ON EVERY ID THIS GRAMMAR ADMITS, MEASURED, and the
+  // first draft of this comment claimed otherwise. It said the codepoint walk
+  // and a `localeCompare` sort "part company on the first mark id whose
+  // codepoint order and locale order differ" — so the flip that replaced the
+  // walk with the simpler sort was expected to red, and it reddened NOTHING.
+  // Searched afterwards rather than asserted: every ordered pair over the mark-id
+  // alphabet (`^[a-z0-9][a-z0-9-]*$`, `MARK_ID_RE`) at length 3, and the
+  // hyphen-placement cases a variable-weighting collation is supposed to reorder
+  // — zero divergent pairs. So the walk is reproduced because it is the TOWN'S,
+  // which is the only thing the equality can rest on, and NOT because a
+  // difference is known to exist. `test/world2-fold-input.test.mjs` pins that
+  // agreement, so the day a wider alphabet makes it false, something says so
+  // instead of the two answers quietly parting.
   const walked = rows
     .map((r) => ({ ...r, key: `${r.mark}|${r.holder}` }))
     .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));

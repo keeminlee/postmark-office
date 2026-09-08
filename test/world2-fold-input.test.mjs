@@ -104,6 +104,34 @@ test("k is paid ONCE per external household, not once per position — a second 
   }
 });
 
+test("THE FLIP THAT REDDENED NOTHING, turned into a check: over the mark-id alphabet the town's codepoint walk and a localeCompare sort agree on every pair — so the day they stop agreeing, this says so", () => {
+  // Replacing the town's `<mark>|<holder>` codepoint walk with a
+  // (mark, holder) localeCompare sort was flip 10 of this lane and it broke
+  // NOTHING, because on `MARK_ID_RE`'s alphabet the two orders are the same.
+  // The code still reproduces the town's walk — the equality can only rest on
+  // the town's own algorithm — but the reason is now measured rather than
+  // asserted, and this is the instrument that would catch a wider alphabet.
+  const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789-".split("");
+  const words = [];
+  for (const a of alphabet) for (const b of alphabet) for (const c of alphabet) {
+    const w = a + b + c;
+    if (/^[a-z0-9][a-z0-9-]*$/.test(w)) words.push(w);
+  }
+  // plus the hyphen-placement shapes a variable-weighting collation reorders
+  words.push("ab", "a-b", "a-bc", "abc", "ab-c", "a-b-c", "abcd", "ab-cd", "a--b", "ab-", "a-b-", "a1", "a-1");
+
+  // Two total orders over the same set are the same order exactly when they
+  // sort it to the same sequence — so this is the exhaustive pairwise question
+  // asked in n log n rather than in n², which matters: the pairwise form of this
+  // test ran for 74 seconds and a check that slow is a check somebody deletes.
+  const byCodepoint = [...words].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  const byLocale = [...words].sort((a, b) => a.localeCompare(b));
+  const at = byCodepoint.findIndex((w, i) => w !== byLocale[i]);
+  assert.equal(at, -1,
+    at === -1 ? "" : `codepoint order and locale order have parted company at position ${at}: ${byCodepoint[at]} vs ${byLocale[at]} — stakesFromStore's grouping walk and the town's are no longer interchangeable, and which position draws k now depends on which one runs`);
+  assert.ok(words.length > 40000, "the search must actually be exhaustive over length 3 or it proves very little");
+});
+
 // ── THE REFUSALS, EACH WITH ITS OWN CAUSE ───────────────────────────────────
 
 test("an un-ingested town sha REFUSES — an empty stake set and a town where nobody stakes must not look alike", async () => {
