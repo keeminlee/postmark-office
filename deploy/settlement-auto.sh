@@ -93,6 +93,7 @@ report() { # status detail
   SETTLEMENT_AT="$STAMP" SETTLEMENT_TOWN_SHA="${TOWN_SHA:-}" \
   SETTLEMENT_WORLD_FROM="${WORLD_FROM:-}" SETTLEMENT_WORLD_TO="${WORLD_TO:-}" \
   SETTLEMENT_SWEEP_JSON="${SWEEP_JSON:-}" SETTLEMENT_DRAIN_JSON="${DRAIN_JSON:-}" \
+  SETTLEMENT_RETIRE_JSON="${RETIRE_JSON:-}" \
   SETTLEMENT_ISOLATE_JSON="${ISOLATE_JSON:-}" SETTLEMENT_REFUSAL_JSON="${REFUSAL_JSON:-}" \
     node "$OFFICE/deploy/settlement-receipt.mjs" > "$OUT" 2>/dev/null || true
   # THE HISTORY. One line per DECIDED crossing, appended, bounded. A single
@@ -468,6 +469,50 @@ while read -r ref sha; do
   }
 done < "$WORK/tips"
 [ "$RACED" = "1" ] && { report race "one or more sketchbook leases refused — rerun"; exit 2; }
+
+# ── THE RETIRE STEP (G1 lane 1) ──────────────────────────────────────────────
+#
+# The store learns what the world let go. Until this step existed nothing in the
+# live write path ever set `marks.status = 'retired'` — the column and its CHECK
+# have been in 001_tables.sql since the first migration with no pen behind them,
+# and the pre-cutover dump read 1,019 standing and 0 retired, ever. The store
+# then held ground under neighbours the world had already released, and
+# `standing-equality` reddened on the difference.
+#
+# AFTER THE PUSH, AND THAT PLACEMENT IS THE WHOLE CORRECTNESS ARGUMENT. Canon
+# has not let a mark go until main is actually on origin. Retiring before the
+# push would mean a raced or rejected push leaves the store having retired marks
+# the world still carries — the same disagreement as today, pointing the other
+# way, and harder to see because the receipt would claim it was handled. Placed
+# here, a race exits above and the store is untouched.
+#
+# NOT FATAL TO A PUBLISHED CROSSING, and this is a deliberate asymmetry rather
+# than a swallowed error. The world is already published at this line; refusing
+# now would leave a receipt saying `refused` over a crossing that in fact landed
+# canon, which is a worse lie than a named gap. So a refusal is LOUD — it shouts,
+# it lands in the receipt as `ran: false` with its reason, and the keeper reads a
+# crossing whose retirement is owed — but it does not retract a real publication.
+# The step is idempotent, so the next crossing picks up what this one missed.
+RETIRE_JSON=""
+if [ "${SETTLEMENT_RETIRE:-1}" = "1" ] && [ -n "${WORLD2_CLEARING_URL:-}" ]; then
+  RETIRE_JSON="$WORK/retire.json"
+  if (cd "$OFFICE" && node "$OFFICE/world2/tools/retire-unpublished.mjs" \
+        --sweep "$SWEEP_JSON") > "$RETIRE_JSON" 2>"$WORK/retire.err"; then
+    echo "[settlement-auto] retired: $(node -e 'const r=require(process.argv[1]);process.stdout.write(String(r.count||0)+" mark(s) in the store"+((r.absent||[]).length?" ("+r.absent.length+" absent — the store never held them)":""))' "$RETIRE_JSON" 2>/dev/null || echo "?")" >&2
+  else
+    echo "[settlement-auto] RETIRE REFUSED — the world published but the store was not told; the next crossing retries" >&2
+    cat "$WORK/retire.err" >&2
+    node -e 'const fs=require("node:fs");fs.writeFileSync(process.argv[1],JSON.stringify({ran:false,reason:process.argv[2]},null,1)+"\n")' \
+      "$RETIRE_JSON" "the retire step refused: $(head -c 200 "$WORK/retire.err" | tr '\n"' ' .')" 2>/dev/null || RETIRE_JSON=""
+  fi
+else
+  # A named absence, not a silent one. `WORLD2_CLEARING_URL` unset is the state
+  # of every box that has not been given the pen yet, and a crossing must be able
+  # to say "I did not do this and here is why" rather than printing nothing.
+  RETIRE_JSON="$WORK/retire.json"
+  node -e 'const fs=require("node:fs");fs.writeFileSync(process.argv[1],JSON.stringify({ran:false,reason:process.argv[2]},null,1)+"\n")' \
+    "$RETIRE_JSON" "$([ "${SETTLEMENT_RETIRE:-1}" = "1" ] && echo "WORLD2_CLEARING_URL is unset — the crossing holds no store pen" || echo "SETTLEMENT_RETIRE=0")" 2>/dev/null || RETIRE_JSON=""
+fi
 
 report published "$(node -e 'const s=require(process.argv[1]);const n=(k)=>((s[k]||[]).length);process.stdout.write([n("published")+" published",n("unpublished")+" unpublished",n("left_drafted")+" left drafted",n("withdrawn")+" withdrawn",n("quarantined")+" quarantined",n("dropped")+" dropped"].join(", "))' "$SWEEP_JSON" 2>/dev/null || echo 'published')"
 echo "[settlement-auto] published: $WORLD_FROM -> $WORLD_TO (suite green, leases held)"

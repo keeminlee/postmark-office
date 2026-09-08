@@ -56,6 +56,12 @@ const CHANNELS = ["published", "unpublished", "left_drafted", "withdrawn", "quar
 const sweep = readJson(env("SETTLEMENT_SWEEP_JSON"));
 const drain = readJson(env("SETTLEMENT_DRAIN_JSON"));
 const isolate = readJson(env("SETTLEMENT_ISOLATE_JSON"));
+// THE RETIREMENT (G1 lane 1). Not a sweep channel — the sweep holds no database
+// credential and never will — so it arrives on its own report, like the drain's.
+// It is named on every crossing including the ones where it retired nothing,
+// for the drain's own reason: "retired: 0" is the receipt that the step RAN,
+// and its absence is indistinguishable from a step nobody called.
+const retire = readJson(env("SETTLEMENT_RETIRE_JSON"));
 // The refusal's CLASS — deploy/settlement-classify.mjs's verdict, when this
 // crossing refused. Added 2026-08-30 to retire `"phase":"unknown"`: a refusal
 // that cannot say whether a rerun could ever clear it makes the operator guess,
@@ -106,6 +112,28 @@ const receipt = {
   // WHAT THE CROSSING SURVEYED. A quiet pass without this is a claim with no
   // receipt: "nothing eligible" and "I looked at nothing" print identically.
   surveyed: sweep?.surveyed ?? null,
+
+  // ── WHAT THE STORE WAS TOLD (G1 lane 1) ────────────────────────────────────
+  //
+  // The keeper reads this line to answer the question that had no surface at
+  // all before it: did the register hear that the world let these marks go.
+  // `absent` is carried in full rather than as a count because it is the one
+  // row that means something is wrong somewhere else — a slug the world
+  // unpublished that the store never held is either founding estate or a
+  // materialization the candle missed, and the keeper is the one who can tell.
+  retired: retire
+    ? (retire.ran === false
+        ? { ran: false, reason: retire.reason ?? "the retire step did not run for this crossing" }
+        : {
+            ran: true,
+            count: retire.count ?? (retire.retired ?? []).length,
+            slugs: (retire.retired ?? []).map((r) => r.slug),
+            window: retire.window ?? null,
+            cause: retire.cause ?? null,
+            already_retired: (retire.already_retired ?? []).map((r) => r.slug),
+            absent: (retire.absent ?? []).map((r) => r.slug),
+          })
+    : { ran: false, reason: "the retire step did not run for this crossing" },
 
   channels: sweep ? channels : null,
   ...(unnamed ? { channels_unnamed: unnamed } : {}),

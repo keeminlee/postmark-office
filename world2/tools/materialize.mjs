@@ -192,3 +192,95 @@ export async function recomputeStanding(q) {
   // should have to go looking for the day it did.
   return { standing, moved, notes: admissionNotes(standing) };
 }
+
+/**
+ * THE RETIREMENT — the inverse of `materializeClaims`, and the only path by
+ * which a standing mark stops standing.
+ *
+ * ── WHY IT LIVES HERE AND NOT IN A NEW FILE ─────────────────────────────────
+ *
+ * `marks` has exactly one pen — `clearing_job` holds INSERT, UPDATE on it
+ * (002_grants.sql:22) — and this file is where that pen's answers to "what
+ * becomes of a mark" live. A retirement written anywhere else would be a second
+ * place to read the register's law, which is the drift `mark-standing.mjs`'s
+ * header forbids one level up. No new grant is needed and none is asked for.
+ *
+ * ── THE GAP THIS CLOSES, MEASURED BEFORE IT WAS BUILT ───────────────────────
+ *
+ * Until this function existed, NOTHING in the live write path ever set
+ * `marks.status = 'retired'`. 001_tables.sql has carried the column and its
+ * CHECK since the first migration; the only writers in the tree were
+ * `replay-ingest.mjs`'s backfill and `falsifier-standing-equality.mjs`'s own
+ * can-fail fixture. So a mark the world unpublished stayed `standing` in the
+ * store forever, and on the pre-cutover dump that read 1,019 standing / 0
+ * retired, ever.
+ *
+ * IT IS WORSE THAN A STALE ROW, and this is the reason the step is worth a
+ * transaction rather than a nightly tidy. `recomputeStanding` above walks
+ * `WHERE status = 'standing'`, and standing is a fact about the ground a mark
+ * stands on — so a mark that should have been retired keeps holding ground
+ * under its neighbours and hands them a tier the fold does not agree with.
+ * That is the `berthillon/chez-antoine` mechanism in this file's own comment,
+ * running backwards. Retiring correctly is what removes the phantom ground,
+ * which is why the caller runs this BEFORE the recompute, never after.
+ *
+ * ── WHAT HAPPENS TO THE CLAIM, AND WHY NOTHING ─────────────────────────────
+ *
+ * The locking claim is left exactly as it stands. `retracted` is the docket's
+ * word for a claim that never locked — `world2-claims.mjs:200-202` only ever
+ * moves a `pending` row there — and the docket's own guard forbids deleting a
+ * locked one. The claim is the historical fact that this mark WAS ruled in at
+ * that window, and that fact did not stop being true when the world let the
+ * mark go. The retirement is a fact about the mark's standing today; the claim
+ * is a fact about a window that has closed. Writing the retirement onto the
+ * claim would collapse two different times into one row.
+ *
+ * ── IDEMPOTENT BY THE GUARD, NOT BY A CHECK-THEN-WRITE ─────────────────────
+ *
+ * `AND status = 'standing'` is what makes a re-run a no-op, and it is in the
+ * UPDATE rather than in a preceding SELECT on purpose: a check-then-write over
+ * a connection two crossings could share is a race with a comfortable shape.
+ * A slug already retired reports as `already_retired`, not as an error and not
+ * as a silent success — a caller re-running after a half-finished crossing has
+ * to be able to tell "I did this" from "this was already done".
+ *
+ * A slug the register does not carry at all is `absent`, and that is also not
+ * an error: the world can unpublish a mark the store never materialized (a
+ * founding-estate row, or one whose claim was never locked here), and refusing
+ * the whole crossing over it would make the store's ignorance the town's
+ * problem. It is REPORTED, because a step that quietly did nothing is the
+ * failure mode this whole seam exists to end.
+ *
+ * @param q      the caller's query function — this runs INSIDE the caller's
+ *               transaction, like every other function in this file.
+ * @param slugs  the `<owner>/<name>` identities the world no longer carries.
+ * @param windowId  the window this retirement is ruled at; lands in
+ *               `retired_window`, which is the column 001 gave it — NOT
+ *               `locked_window`, which records when the mark was ruled IN.
+ * @param cause  a short word naming which door the mark left canon by, carried
+ *               into the receipt so a keeper reading it knows what happened
+ *               rather than only that something did.
+ */
+export async function retireMarks(q, { slugs, windowId, cause = "settlement-unpublish" }) {
+  if (!Number.isInteger(windowId)) {
+    throw new Error(`retireMarks needs the window it rules at; got ${JSON.stringify(windowId)}`);
+  }
+  const retired = [];
+  const alreadyRetired = [];
+  const absent = [];
+  for (const slug of [...new Set(slugs.map((s) => String(s)))].sort()) {
+    const { rows } = await q(
+      `UPDATE marks SET status = 'retired', retired_window = $2
+        WHERE slug = $1 AND status = 'standing'
+        RETURNING slug, locked_window`,
+      [slug, windowId]);
+    if (rows.length) { retired.push({ slug, window: windowId, locked_window: rows[0].locked_window, cause }); continue; }
+    // Tell the two zeroes apart. A zero meaning "already done" and a zero
+    // meaning "never here" must not be spelled the same way — the RLS lesson,
+    // one table over.
+    const { rows: seen } = await q("SELECT status, retired_window FROM marks WHERE slug = $1", [slug]);
+    if (seen.length) alreadyRetired.push({ slug, retired_window: seen[0].retired_window ?? null });
+    else absent.push({ slug });
+  }
+  return { retired, already_retired: alreadyRetired, absent, window: windowId, cause };
+}
