@@ -56,7 +56,7 @@ import { servedEnterExitLedger, DEPRECATED_DOOR } from "./enter-exit-ledger.mjs"
 import { Bouncer, keyIdForToken, worldWriteVerbForRest } from "./bouncer.mjs";
 import { readReleaseStamp } from "./release.mjs"; // POS-60: the deploy receipt the auto-deploy probes
 import { currentCrossing, CROSSING_DERIVATION } from "./crossings.mjs"; // the town clock, served at the door
-import { roleFrom, workerSafe, writerAddressFrom, readRoleBounce } from "./role.mjs"; // DEC-4/G3: read-only workers behind nginx
+import { roleFrom, workerSafe, writerAddressFrom, readRoleBounce, penTokenFor, roleDisclosure } from "./role.mjs"; // DEC-4/G3: read-only workers behind nginx
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, "..");
@@ -384,7 +384,7 @@ const [PEN_OWNER, PEN_REPO] = (process.env.POSTMARK_TOWN_REPO ?? "postmark-town/
 // intends. Blanked here, at boot, where the object is built.
 const PEN = {
   apiBase: (process.env.GITHUB_API_URL ?? "https://api.github.com").replace(/\/+$/, ""),
-  token: READ_ONLY_ROLE ? "" : (process.env.POSTMARK_PEN_TOKEN ?? ""),
+  token: penTokenFor(ROLE),
   owner: PEN_OWNER, repo: PEN_REPO,
   baseBranch: process.env.POSTMARK_TOWN_BRANCH ?? "main",
 };
@@ -638,7 +638,16 @@ const server = createServer((req, res) => {
   // tense and moves only when a release is deployed. The office has two clocks
   // and this is the one nobody could read before.
   if (path === "/release" && req.method === "GET") {
-    return j(res, 200, { ...RELEASE, started_at: STARTED_AT, as_of: borrowed.asOf });
+    // The role rides the DEPLOY receipt because that is already this door's
+    // job — "what is this process, exactly" — and because behind a pool it is
+    // the only way a caller or an operator can tell WHICH process answered.
+    // `write_grant` is read off the pen the process actually holds, so a worker
+    // that kept its token could not go on claiming it had none.
+    return j(res, 200, {
+      ...RELEASE, started_at: STARTED_AT, as_of: borrowed.asOf,
+      ...roleDisclosure(ROLE, WRITER_URL),
+      write_grant: PEN.token !== "",
+    });
   }
 
   // OAuth + discovery routes are unauthenticated by nature (the dance IS the

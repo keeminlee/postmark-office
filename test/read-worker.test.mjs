@@ -31,7 +31,7 @@ import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { DatabaseSync } from "node:sqlite";
 import { fixtureDb } from "./fixture.mjs";
-import { workerSafe } from "../src/role.mjs";
+import { workerSafe, penTokenFor } from "../src/role.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = 43861;
@@ -313,6 +313,23 @@ test("§4 the pen token is in the worker's environment and not in the worker", a
   // proof that no request can reach the pen at all.
   const res = await call("/residency", { method: "POST", body: "{}" });
   assert.equal(res.status, 405, "the pen's own door is unreachable on a read worker");
+
+  // ⚑ AND THE GRANT ITSELF, READ OFF THE RUNNING PROCESS. Everything above
+  // this line stayed TRUE when the flip put the pen token back into the read
+  // role — the 405 is §1's claim and the boot line is a sentence about the
+  // role, so §4 was watching neither the token nor anything that depends on
+  // it. F6 was green against a read worker holding a live pen. This is the leg
+  // that reddens it.
+  const rel = await (await call("/release")).json();
+  assert.equal(rel.role, "read");
+  assert.equal(rel.write_grant, false,
+    "the worker is holding a pen token it was handed — `no write grant` is a claim about what the process HAS");
+  assert.equal(rel.writes_at, WRITER);
+
+  // And the construction, driven directly, so the decision is watched at both
+  // ends rather than only where it happens to be observable.
+  assert.equal(penTokenFor("read", { POSTMARK_PEN_TOKEN: PEN }), "");
+  assert.equal(penTokenFor("write", { POSTMARK_PEN_TOKEN: PEN }), PEN);
 
   // And the boot line says so, because an operator reading journalctl over four
   // ports has no other way to tell which process can take a letter.

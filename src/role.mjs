@@ -75,6 +75,33 @@ export function writerAddressFrom(argv = process.argv, env = process.env) {
   return String((i !== -1 ? argv[i + 1] : undefined) ?? env.OFFICE_WRITER_URL ?? env.PUBLIC_BASE ?? "https://postmark.town/api").replace(/\/+$/, "");
 }
 
+/**
+ * The pen a process of this role may hold.
+ *
+ * ⚑ THIS IS A FUNCTION BECAUSE THE FLIP PROVED THE CLAIM WAS UNWATCHED. The
+ * first draft of `test/read-worker.test.mjs § 4` asserted three things — the
+ * token is in the boot env, POST /residency answers 405, and the boot line says
+ * "no write grant" — and F6 (keep the token in the read role) left every one of
+ * them TRUE, so the suite stayed green with a read worker holding a live pen.
+ * The route refusal is §1's claim, not §4's; the boot line is a sentence about
+ * the role, not a reading of the grant. Nothing anywhere looked at the token.
+ *
+ * The grant decision lives here so it can be driven directly, and the office
+ * DISCLOSES the answer at `/release` so the end-to-end leg reads the running
+ * process rather than a sentence about it. Two checks, one fact, both able to
+ * fail — which is what the last three lanes' carry keeps asking for.
+ */
+export function penTokenFor(role, env = process.env) {
+  return role === "read" ? "" : (env.POSTMARK_PEN_TOKEN ?? "");
+}
+
+/** What this process will admit about itself at `/release`. */
+export const roleDisclosure = (role, writer) => ({
+  role,
+  write_grant: role !== "read",
+  ...(role === "read" ? { writes_at: writer } : {}),
+});
+
 /** The bounce a read worker answers every unsafe door with. */
 export const readRoleBounce = (writer) => ({
   code: 405,
