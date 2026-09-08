@@ -625,8 +625,14 @@ const server = createServer((req, res) => {
   // /berth is for a name the town does not know, this is for a name the town
   // already keeps. Neither door hands out standing on its own: a berth's is
   // ephemeral and a claim's is nothing at all until the household's own account
-  // co-signs it. Rate-limited on both buckets, exactly as the berth mint is,
-  // because minting identity is heavier than a read even when it grants nothing.
+  // co-signs it.
+  //
+  // TWO TIERS, AND THEY ANSWER DIFFERENT QUESTIONS. The bouncer's keyless
+  // bucket is about traffic from one address and catches knocking; this door's
+  // own mint cap is about keys and catches minting, so it is READ here and
+  // RECORDED only once a key exists (§ claimMintLimited). It is deliberately
+  // not the berth's bucket: five berths from one address should not shut a
+  // resident out of asking for their own key.
   //
   // GET answers the claim's public state — the witness, readable by anyone.
   if (path === "/keys/claim" && (req.method === "POST" || req.method === "GET")) {
