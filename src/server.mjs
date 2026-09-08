@@ -56,6 +56,7 @@ import { servedEnterExitLedger, DEPRECATED_DOOR } from "./enter-exit-ledger.mjs"
 import { Bouncer, keyIdForToken, worldWriteVerbForRest } from "./bouncer.mjs";
 import { readReleaseStamp } from "./release.mjs"; // POS-60: the deploy receipt the auto-deploy probes
 import { currentCrossing, CROSSING_DERIVATION } from "./crossings.mjs"; // the town clock, served at the door
+import { roleFrom, workerSafe, writerAddressFrom, readRoleBounce } from "./role.mjs"; // DEC-4/G3: read-only workers behind nginx
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, "..");
@@ -66,13 +67,34 @@ function arg(name, fallback) {
 }
 
 const PORT = Number(arg("--port", "4380"));
+
+// ── WHAT THIS PROCESS IS (runbook DEC-4, G3) ─────────────────────────────────
+//
+// `--role read` (or OFFICE_ROLE=read) makes this process a READ WORKER: it
+// serves the worker-safe routes, opens every sqlite handle read-only, and holds
+// no write grant. The default is `write` — one process, exactly as before, and
+// every line below that mentions the role is inert in it.
+//
+// The three refusals are enforced in three separate places on purpose, because
+// they are three different claims and a single flag would let one of them rot
+// unnoticed: the ROUTE refusal is at the top of the handler, the HANDLE mode is
+// at each open, and the GRANT is blanked here at boot. `test/read-worker.test.mjs`
+// walks all three against a booted worker.
+const ROLE = roleFrom();
+const READ_ONLY_ROLE = ROLE === "read";
+const WRITER_URL = writerAddressFrom();
+const ROLE_BOUNCE = readRoleBounce(WRITER_URL);
+
 const DB_PATH = resolve(ROOT, arg("--db", "office.db"));
 const TOWN_CLONE = process.env.TOWN_CLONE ?? resolve(ROOT, "town-clone");
 // oauth.db is auth paperwork, not town truth — separate from the rebuildable
 // index by design (gold plan postmark-oauth); wiping it only re-prompts sign-in.
 // It is also NOT hot-reloaded below: nothing rewrites this file underneath us,
 // the office is its only writer, and a swapped handle would drop live sessions.
-const odb = openOauthDb(resolve(ROOT, arg("--oauth-db", "oauth.db")));
+// A read worker opens it READ-ONLY and skips the DDL: it still has to resolve
+// credentials (three SELECTs — a worker that could not would answer 401 to
+// every signed-in reader), and the schema belongs to the writer.
+const odb = openOauthDb(resolve(ROOT, arg("--oauth-db", "oauth.db")), { readOnly: READ_ONLY_ROLE });
 
 // roles.db — the subscription lane's registry (hand-kept; tools/roles.mjs is the
 // only writer). Its own file for the same reason oauth.db has one: it is office
@@ -87,7 +109,7 @@ const odb = openOauthDb(resolve(ROOT, arg("--oauth-db", "oauth.db")));
 // read must not be able to take the town down.
 let rdb = null;
 try {
-  rdb = openRolesDb(resolve(ROOT, arg("--roles-db", "roles.db")));
+  rdb = openRolesDb(resolve(ROOT, arg("--roles-db", "roles.db")), { readOnly: READ_ONLY_ROLE });
 } catch (e) {
   rdb = null;
   console.warn(`WARN: roles.db could not be opened (${String(e?.message ?? e).slice(0, 120)}) — ` +
@@ -104,8 +126,12 @@ try {
 // box never passes it.
 const RELEASE = readReleaseStamp(resolve(ROOT, arg("--release-root", ".")));
 const STARTED_AT = new Date().toISOString();
-const canWrite = existsSync(join(TOWN_CLONE, "WHITE_PAGES"));
-if (!canWrite) console.warn(`WARN: no town clone at ${TOWN_CLONE} — POST /letters will answer not-yet-open.`);
+// ⚑ A READ WORKER IS NEVER `canWrite`, WHATEVER ITS CLONE LOOKS LIKE. The
+// workers share the writer's EnvironmentFile and its checkout, so a worker will
+// see a perfectly good town clone and would otherwise believe it could take a
+// pen commit. The role decides this, not the filesystem.
+const canWrite = !READ_ONLY_ROLE && existsSync(join(TOWN_CLONE, "WHITE_PAGES"));
+if (!canWrite && !READ_ONLY_ROLE) console.warn(`WARN: no town clone at ${TOWN_CLONE} — POST /letters will answer not-yet-open.`);
 
 // ── the index, and how it is replaced under a running office ─────────────────
 //
@@ -335,13 +361,19 @@ const berthMintLimited = (ip) => {
 // dance uses) so the pen path is testable end to end; the real token lives only
 // on the box. No token configured → request_residency answers not-yet-open.
 const [PEN_OWNER, PEN_REPO] = (process.env.POSTMARK_TOWN_REPO ?? "postmark-town/postmark").split("/");
+// ⚑ THE GRANT IS DROPPED, NOT MERELY UNUSED. A read worker reads the same
+// EnvironmentFile as the writer, so POSTMARK_PEN_TOKEN is sitting right there in
+// its environment. Holding a token it promises never to spend is exactly the
+// arrangement DEC-4's falsifier exists to refuse — "a read worker holds no
+// write grant" is a claim about what the process HAS, not about what it
+// intends. Blanked here, at boot, where the object is built.
 const PEN = {
   apiBase: (process.env.GITHUB_API_URL ?? "https://api.github.com").replace(/\/+$/, ""),
-  token: process.env.POSTMARK_PEN_TOKEN ?? "",
+  token: READ_ONLY_ROLE ? "" : (process.env.POSTMARK_PEN_TOKEN ?? ""),
   owner: PEN_OWNER, repo: PEN_REPO,
   baseBranch: process.env.POSTMARK_TOWN_BRANCH ?? "main",
 };
-if (!PEN.token) console.warn("WARN: no POSTMARK_PEN_TOKEN — request_residency will answer not-yet-open.");
+if (!PEN.token && !READ_ONLY_ROLE) console.warn("WARN: no POSTMARK_PEN_TOKEN — request_residency will answer not-yet-open.");
 
 // ── keys ─────────────────────────────────────────────────────────────────────
 //
@@ -508,6 +540,22 @@ const server = createServer((req, res) => {
     res.write = () => true;
     res.end = () => end();
   }
+
+  // ── THE READ WORKER'S ONE REFUSAL (runbook DEC-4, G3) ─────────────────────
+  //
+  // Placed HERE, after OPTIONS and after the HEAD→GET rewrite and before every
+  // door, so that: a preflight still answers (a browser that cannot preflight
+  // cannot read either), a HEAD is judged as the GET it mirrors, and no door
+  // below needs to know the role exists. One gate, one sentence, every unsafe
+  // path — rather than a role check per route, which is the shape that grows a
+  // hole the first time somebody adds a door and forgets one.
+  //
+  // 405 and not 403: the method and path are refused BY THIS PROCESS, not by
+  // the town — the same request is answered at the writer, and the bounce says
+  // where. A worker that refused without an address would turn a pool into a
+  // guessing game.
+  if (READ_ONLY_ROLE && !workerSafe(req.method, path))
+    return bounce(res, ROLE_BOUNCE.code, ROLE_BOUNCE.defect, ROLE_BOUNCE.hint);
 
   // GET / — the capability manifest llms.txt has advertised at /api/ (it
   // 404'd from the day it was written; HAL §7 named it). One machine-readable
@@ -1679,4 +1727,10 @@ const server = createServer((req, res) => {
   }
 });
 
-server.listen(PORT, () => console.log(`postmark-office listening on :${PORT} — as-of ${AS_OF.slice(0, 12)}`));
+// The role rides the boot line because it is the one fact about a worker that
+// an operator reading `journalctl` cannot otherwise see — four processes on four
+// ports, and only this says which of them can take a letter.
+server.listen(PORT, () => console.log(
+  `postmark-office listening on :${PORT} — as-of ${AS_OF.slice(0, 12)}`
+  + (READ_ONLY_ROLE ? ` — ROLE read (sqlite read-only, no write grant; writes → ${WRITER_URL})` : "")
+));

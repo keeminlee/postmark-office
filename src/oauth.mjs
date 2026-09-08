@@ -44,7 +44,17 @@ const sha256 = (s) => createHash("sha256").update(s).digest("base64url");
 
 // ── storage ──────────────────────────────────────────────────────────────────
 
-export function openOauthDb(path) {
+// `readOnly` is the read worker's door into this file (runbook DEC-4, G3). A
+// read worker still has to RESOLVE credentials — `oauthLookup`, `keyLookup` and
+// `berthLookup` are all single SELECTs against this store and a worker that
+// could not run them would answer 401 to every signed-in reader — but it must
+// hold no handle that could write. The DDL below is skipped rather than made
+// conditional per statement: `CREATE TABLE IF NOT EXISTS` is a no-op against an
+// existing store only until it isn't, and a read worker is not the process that
+// should be repairing schema. The writer owns the file's shape; the worker
+// borrows its contents.
+export function openOauthDb(path, { readOnly = false } = {}) {
+  if (readOnly) return new DatabaseSync(path, { readOnly: true });
   const db = new DatabaseSync(path);
   db.exec(`
     CREATE TABLE IF NOT EXISTS clients (client_id TEXT PRIMARY KEY, json TEXT, created INTEGER);
