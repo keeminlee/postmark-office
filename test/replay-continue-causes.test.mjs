@@ -763,7 +763,7 @@ test("RULE — the probe asks the database only for the privileges that shape ne
 // assert on the RENDERED RECEIPT, because "the SKIPPED block names the slug" is
 // what an operator actually reads.
 
-import { preflightAndPlan, renderPlan } from "../world2/tools/backfill-register.mjs";
+import { preflightAndPlan, renderPlan, PUBLISH_OVER_DRAFT_FLAG } from "../world2/tools/backfill-register.mjs";
 
 /** A store that reports no drafts at all — exactly what office_api sees on prod. */
 const blindStore = (visRow) => ({
@@ -835,5 +835,58 @@ test("SEAM — a connection that sees the true count needs no file, and holds by
     assert.match(receipt, /SKIPPED 1/);
     assert.doesNotMatch(receipt, /held BY NAME/,
       "and the skip does NOT claim a name did it — the store said so itself");
+  } finally { w.cleanup(); }
+});
+
+// ── RULED 2026-09-08: A PRIVATE DRAFT NEVER BLOCKS THE PUBLISHED BODY ──────
+//
+// The G1 rehearsal found thirteen published marks the store held only as a
+// household's later private draft (Current's re-sent Snug fixtures, neth's,
+// rook's, vermillion's, rei's). The tool refused them as "a ruling, not a
+// backfill" — and the founder ruled: the published body becomes the standing
+// row, the draft stays a draft. Typed on purpose; off by default; named on the
+// receipt. The flip that proves it: the same store, flag off, plans NOTHING.
+test("RULING — with --published-body-over-draft, the draft it can read is written beside, and the receipt says so", async () => {
+  const w = theWorld();
+  try {
+    const seeing = {
+      query: async (sql) => {
+        if (/pg_class/.test(sql)) return { rows: [OWNER_ROW] };
+        if (/FROM claims/.test(sql)) return { rows: [{ slug: "hand/only-in-repo", status: "draft" }] };
+        if (/FROM marks/.test(sql)) return { rows: storeRows() };
+        throw new Error(`unexpected query: ${sql}`);
+      },
+    };
+    const { refused, plan } = await preflightAndPlan(seeing, {
+      worldRepo: w.dir, sha: w.shas.hand, windowId: 172, cls: "hand-planted-on-main",
+      lawSha: "0".repeat(40), townSha: null, heldByName: null, publishOverDraft: true,
+    });
+    assert.equal(refused, null);
+    assert.equal(plan.adds.length, 1, "the published body is planned despite the draft");
+    assert.equal(plan.adds[0].draftBeside, true, "and the row knows a draft stays beside it");
+    assert.equal(plan.skipped.filter((s) => s.slug === "hand/only-in-repo").length, 0);
+    const receipt = renderPlan(plan, { sha: w.shas.hand, dbName: "world2_dev", windowId: 172 });
+    assert.match(receipt, /a private DRAFT stays beside it — ruled 2026-09-08/, "the receipt names the ruling on the row");
+    assert.equal(typeof PUBLISH_OVER_DRAFT_FLAG, "string");
+  } finally { w.cleanup(); }
+});
+
+test("RULING — the flip: flag off (the default), the same store holds the draft and plans nothing", async () => {
+  const w = theWorld();
+  try {
+    const seeing = {
+      query: async (sql) => {
+        if (/pg_class/.test(sql)) return { rows: [OWNER_ROW] };
+        if (/FROM claims/.test(sql)) return { rows: [{ slug: "hand/only-in-repo", status: "draft" }] };
+        if (/FROM marks/.test(sql)) return { rows: storeRows() };
+        throw new Error(`unexpected query: ${sql}`);
+      },
+    };
+    const { plan } = await preflightAndPlan(seeing, {
+      worldRepo: w.dir, sha: w.shas.hand, windowId: 172, cls: "hand-planted-on-main",
+      lawSha: "0".repeat(40), townSha: null, heldByName: null,
+    });
+    assert.equal(plan.adds.length, 0);
+    assert.match(plan.skipped.find((s) => s.slug === "hand/only-in-repo").why, /a ruling, not a backfill/);
   } finally { w.cleanup(); }
 });
