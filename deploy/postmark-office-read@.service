@@ -1,0 +1,102 @@
+# postmark-office-read@.service — a READ WORKER (runbook DEC-4, G3).
+#
+# PROPOSED. Nothing in this file has been applied to the box by the lane that
+# wrote it. Carry recipe at the bottom.
+#
+#   "We are paying for four cores so we should use them." — Keemin, 2026-08-29
+#
+# The instance name IS the port: `postmark-office-read@4391.service` listens on
+# 4391. One template, N instances, no second place where a port is written down.
+#
+# ⚑ WHY 4391 AND NOT 4382. The G3 brief said "ports 4382+N". Port 4382 was
+# MEASURED BUSY on 2026-09-08: a hand-started `node src/server.mjs --port 4382`
+# owned by no unit, running inside a transient login scope (session-6960.scope),
+# up 10 days 18 hours from Sat Aug 29 03:10 — the brownout night — with its cwd
+# at /srv/world2-lab/office and 80 MB resident. It is not this lane's to kill
+# and it is handed up in the report. The pool starts at 4391, where 4391-4395
+# were all measured free.
+#
+# ⚑ THREE WORKERS, NOT FOUR. The box has 4 cores and the WRITER still needs one.
+# Three read workers plus the writer is the four cores used, with the writer left
+# responsive for the letters — which is what actually browned out.
+
+[Unit]
+Description=Postmark office READ WORKER on port %i (DEC-4 / G3 — reads only, no write grant)
+After=network.target postmark-office.service
+# Not Requires=: a worker that outlives a writer restart should keep SERVING
+# READS. The reads are the thing the pool exists to protect, and they do not
+# need the writer up to be correct — office.db is a file, and every worker
+# re-opens it on its own reload poll.
+Wants=postmark-office.service
+
+[Service]
+User=meepo
+Type=simple
+# THE SAME ENVIRONMENT FILE AS THE WRITER, deliberately. A worker that read a
+# different env could disagree with the writer about which world it is in —
+# WORLD_APEX, WORLD_PRESENCE, the store paths — and two offices disagreeing
+# about the world is the split-brain this whole layer exists to prevent.
+#
+# The write grants in that file (POSTMARK_PEN_TOKEN, TOWN_PUSH) are inherited
+# and then DROPPED by the process itself: `--role read` blanks the pen at boot
+# and forces canWrite false, and /release discloses `write_grant: false` so the
+# claim can be checked from outside rather than believed.
+EnvironmentFile=/etc/postmark-office.env
+WorkingDirectory=/srv/postmark-office
+ExecStart=/usr/bin/node src/server.mjs --port %i --role read --writer https://postmark.town/api
+Restart=on-failure
+RestartSec=5
+
+# least privilege, and MORE of it than the writer has
+NoNewPrivileges=yes
+ProtectSystem=strict
+PrivateTmp=yes
+# ⚑ THE ONE WRITABLE PATH, AND IT IS NOT THE STORE. A read worker opens every
+# sqlite handle read-only, but it still appends ONE telemetry line per request
+# (src/telemetry.mjs), and ProtectSystem=strict permits writes only where they
+# are named. The line is an O_APPEND write to a shared JSONL file: measured on
+# prod 2026-09-08 the longest line that day was 371 bytes, well under the 4096
+# PIPE_BUF bound that makes concurrent appends atomic on Linux, so N workers
+# interleave at line granularity without tearing.
+#
+# ⚑ AND THE BOUND IS NOT GUARANTEED. `logAccess` slices the user-agent to 120
+# chars and does NOT slice `path`, and nginx will pass a URL up to
+# large_client_header_buffers (8k by default). A single long query string
+# therefore produces a >4096-byte line, and THAT append is not atomic across
+# processes. It is a one-line fix in telemetry.mjs (slice the path the way the
+# UA is sliced) and it is named in the G3 report rather than smuggled into this
+# unit, because it changes what the traffic dashboard records.
+ReadWritePaths=/srv/postmark-office/telemetry
+
+[Install]
+WantedBy=multi-user.target
+
+# ── CARRY RECIPE (the conductor's, not the lane's) ───────────────────────────
+#
+#   1. Deploy the code that knows the role. `--role read` is inert on the
+#      writer, so the office can ship first and the pool can come later:
+#        sudo systemctl restart postmark-office && \
+#          curl -s https://postmark.town/api/release | grep -E 'role|write_grant'
+#      The writer must answer `"role": "write"` and `"write_grant": true`.
+#
+#   2. Install this template and start the pool:
+#        sudo install -m 644 deploy/postmark-office-read@.service \
+#             /etc/systemd/system/postmark-office-read@.service
+#        sudo systemctl daemon-reload
+#        sudo systemctl enable --now postmark-office-read@439{1,2,3}.service
+#
+#   3. Prove each worker before nginx sends it anything — this is the receipt,
+#      not the start message:
+#        for p in 4391 4392 4393; do
+#          curl -s "http://127.0.0.1:$p/release" | grep -E '"role"|"write_grant"'
+#          curl -s -o /dev/null -w "  POST /letters -> %{http_code}\n" \
+#               -X POST "http://127.0.0.1:$p/letters" -d '{}'
+#        done
+#      Each must say role read, write_grant false, and 405.
+#
+#   4. Only then install the nginx split (deploy/nginx-postmark-read-pool.conf),
+#      `nginx -t`, and reload.
+#
+#   5. To take the pool out again: `sudo systemctl disable --now
+#      postmark-office-read@439{1,2,3}.service` and revert the nginx snippet.
+#      The writer alone serves everything, exactly as it does today.
