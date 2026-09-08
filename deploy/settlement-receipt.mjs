@@ -157,6 +157,13 @@ const receipt = {
   store: store
     ? {
         ran: true,
+        // WHOSE STORE READ THIS WAS. `source: store` says the register was the
+        // record; this says which module produced it. A rehearsal instrument
+        // and lane 2's entry point both make a fold input, and a crossing
+        // folded by an instrument must never be indistinguishable from one
+        // folded by the register — that is the same defect as a freshness stamp
+        // naming a source it did not come from.
+        entry: store.entry ?? null,
         marks: store.marks ?? 0,
         households: (store.households ?? []).length,
         changed: (store.households ?? []).filter((h) => h.changed).length,

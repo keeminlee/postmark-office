@@ -228,6 +228,12 @@ export function normalizeFoldInput(input) {
   return {
     marks: input.marks.map(normalizeMark),
     stakes: input.stakes,
+    // WHICH MODULE ANSWERED. Carried through to the receipt because `source:
+    // store` alone does not say WHOSE store read it was: a rehearsal instrument
+    // and lane 2's entry point both produce a fold input, and a crossing folded
+    // by an instrument must not be indistinguishable from one folded by the
+    // register. Null when the supplier did not say, which is itself the finding.
+    entry: input.entry ?? null,
     as_of: {
       window: input.as_of.window,
       world_sha: input.as_of.world_sha,
@@ -375,6 +381,7 @@ export function storeWriteDown({
     source: "store",
     at: whenIso,
     as_of: normalized.as_of,
+    entry: normalized.entry,
     marks: normalized.marks.length,
     serialized_here: normalized.marks.filter((m) => m.serialized_here).length,
     supplied_bytes_only: normalized.marks.filter((m) => !m.serialized_here).length,

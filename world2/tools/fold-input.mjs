@@ -78,6 +78,22 @@ const refuse = (reason, detail) => {
 
 export async function resolveEntryPoint({ office = OFFICE, candidates = CANDIDATES, names = ENTRY_NAMES } = {}) {
   const tried = [];
+  // ── THE REHEARSAL SEAM, AND WHY IT IS ARGV AND NOT ENV ──────────────────────
+  //
+  // A rehearsal on a scratch database needs to point the fold at an instrument
+  // that is not lane 2. That override is `--module <path>` on the command line
+  // and deliberately NOT an environment variable: an env var is inherited, and
+  // `EnvironmentFile=/etc/postmark-office.env` is how the settlement unit gets
+  // its configuration — so an env-shaped override is one stray line in a file
+  // away from pointing a PROD crossing at an arbitrary module, forever, silently.
+  // An argv flag has to be typed by whoever is running the crossing, and the
+  // chain never types it (`settlement-auto.sh` passes only --town-sha and
+  // --world-sha). Whichever module answers is named in the output and carried
+  // into the receipt, so a crossing folded by an instrument cannot look like one
+  // folded by the register.
+  const override = (() => { const i = process.argv.indexOf("--module"); return i !== -1 ? process.argv[i + 1] : null; })();
+  if (override) candidates = [override, ...candidates];
+
   for (const rel of candidates) {
     const abs = join(office, rel);
     if (!existsSync(abs)) { tried.push({ path: rel, found: false }); continue; }
