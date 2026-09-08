@@ -32,6 +32,13 @@ Wants=postmark-office.service
 [Service]
 User=meepo
 Type=simple
+# THE POOL'S CPU ENVELOPE lives on the slice, not here (deploy/postmark-reads.slice)
+# - the conductor's ask was that three workers plus the writer plus the twelve
+# timers cannot starve a crossing. A per-instance CPUQuota would throttle a lone
+# worker to its share while its two siblings sat idle, which is most of the time
+# and is exactly the read the fourth core was bought to serve. A slice bounds the
+# three TOGETHER and lets any one of them have the envelope when the others are quiet.
+Slice=postmark-reads.slice
 # THE SAME ENVIRONMENT FILE AS THE WRITER, deliberately. A worker that read a
 # different env could disagree with the writer about which world it is in —
 # WORLD_APEX, WORLD_PRESENCE, the store paths — and two offices disagreeing
@@ -79,7 +86,12 @@ WantedBy=multi-user.target
 #          curl -s https://postmark.town/api/release | grep -E 'role|write_grant'
 #      The writer must answer `"role": "write"` and `"write_grant": true`.
 #
-#   2. Install this template and start the pool:
+#   2. Install the SLICE FIRST, then the template, then start the pool. The
+#      order is load-bearing: a `Slice=` naming a unit that does not exist does
+#      NOT fail - it puts the worker in the default slice with no bound at all,
+#      which reads exactly like success.
+#        sudo install -m 644 deploy/postmark-reads.slice \
+#             /etc/systemd/system/postmark-reads.slice
 #        sudo install -m 644 deploy/postmark-office-read@.service \
 #             /etc/systemd/system/postmark-office-read@.service
 #        sudo systemctl daemon-reload
@@ -93,6 +105,16 @@ WantedBy=multi-user.target
 #               -X POST "http://127.0.0.1:$p/letters" -d '{}'
 #        done
 #      Each must say role read, write_grant false, and 405.
+#
+#   3b. Prove the ENVELOPE is real, because a quota that silently does nothing
+#      reads as protection:
+#        systemctl show postmark-reads.slice -p CPUQuotaPerSecUSec -p CPUWeight
+#        systemctl show postmark-office-read@4391.service -p Slice
+#        cat /sys/fs/cgroup/postmark-reads.slice/cpu.max   # want: 2500000 100000
+#      If cpu.max reads `max`, the cpu controller is not delegated to that slice
+#      and the quota is decoration - say so rather than shipping it. (Checked
+#      available on this box before proposing: systemd 255, cgroup2fs, and `cpu`
+#      present in /sys/fs/cgroup/cgroup.controllers.)
 #
 #   4. Only then install the nginx split (deploy/nginx-postmark-read-pool.conf),
 #      `nginx -t`, and reload.
