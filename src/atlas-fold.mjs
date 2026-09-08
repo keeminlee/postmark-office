@@ -258,20 +258,49 @@ const byIdAsc = (a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
  *             it. Not a disagreement, an absence: the world says nothing.
  *   region_only_in_ledger — a region the ledger declares that the fold does not
  *             carry (today: `the-headland`, drawn but never founded).
+ *
+ * AND, once the ledger states metre points (`grid_m`, the atlas–world merge's
+ * lane 3a), a fourth: `grid_far`. The first three compare which REGION each
+ * record names; none of them compares the COORDINATE, because until `grid_m`
+ * the ledger had no coordinate to compare — its number was a pixel in a drawing
+ * with a different origin and a different scale. A stated metre point is the
+ * first time the two records can be asked the same question, so the receipt
+ * asks it: how far is the ledger's own number from the ground the world holds
+ * for that household?
+ *
+ * The law it reads is `grounds` (constitution-tier, 2026-09-02): "One
+ * coordinate between them: the ground's number is the number; the home wears
+ * the offset." `GRID_TOLERANCE_M` is the width of "the offset" — a house stands
+ * somewhere on its parcel, not at its survey point — and anything wider is two
+ * records disagreeing about where a household lives, which is a placement call
+ * and belongs to a founder, not to a tolerance.
  */
+export const GRID_TOLERANCE_M = 200;
+
 export function foldDiff({ groundOf, regions, placements }) {
   const homeFacts = (placements?.facts ?? []).filter((f) => f.kind === "home");
   const regionFacts = (placements?.facts ?? []).filter((f) => f.kind === "region");
   const worldRegionIds = new Set(regions.map((r) => r.id));
-  let moved = 0, ungrounded = 0;
+  let moved = 0, ungrounded = 0, grid_stated = 0;
   const movedRows = [];
+  const gridFar = [];
   for (const f of homeFacts) {
     if (!f.resident) continue;
     const g = groundOf.get(f.resident);
     if (!g) { ungrounded++; continue; }
     const was = f.region ?? null;
     if ((g.region ?? null) !== was) { moved++; movedRows.push({ handle: f.resident, was, now: g.region ?? null }); }
+    // A `grid_m` of null is the `honestly-nowhere` class stating itself — "a
+    // home may be honestly nowhere ... recorded, told by words, never given
+    // ground by a tidying hand". It is not a missing number and is not counted
+    // as a disagreement; comparing it to a world ground is the tidying hand.
+    if (f.grid_m && g.at) {
+      grid_stated++;
+      const m = Math.round(Math.hypot(f.grid_m.x - g.at.x, f.grid_m.y - g.at.y));
+      if (m > GRID_TOLERANCE_M) gridFar.push({ handle: f.resident, ledger: f.grid_m, world: g.at, mark: g.mark, m });
+    }
   }
+  gridFar.sort((a, b) => b.m - a.m);
   const regionOnlyInLedger = regionFacts.map((f) => f.id).filter((id) => !worldRegionIds.has(id));
-  return { moved, ungrounded, movedRows, region_only_in_ledger: regionOnlyInLedger };
+  return { moved, ungrounded, movedRows, region_only_in_ledger: regionOnlyInLedger, grid_stated, grid_far: gridFar };
 }

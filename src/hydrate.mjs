@@ -425,6 +425,16 @@ if (fold) {
       + `${diff.region_only_in_ledger.length} region(s) only in the ledger`
       + `${diff.region_only_in_ledger.length ? ` (${diff.region_only_in_ledger.join(", ")})` : ""}`);
     for (const r of diff.movedRows) console.warn(`    moved: ${r.handle} ${r.was ?? "—"} -> ${r.now ?? "—"}`);
+    // The coordinate half of the same receipt, and it says nothing at all until
+    // the ledger states metre points — which is correct: before `grid_m` there
+    // is no second coordinate to disagree with, and a line reporting "0 of 0"
+    // every build would be noise pretending to be a measurement.
+    if (diff.grid_stated) {
+      console.warn(`  atlas grid_m vs world ground: ${diff.grid_stated} stated, ${diff.grid_far.length} more than 200 m apart`);
+      for (const r of diff.grid_far) {
+        console.warn(`    ${r.m} m: ${r.handle} ledger (${r.ledger.x},${r.ledger.y}) vs world ${r.mark} (${r.world.x},${r.world.y})`);
+      }
+    }
   } else {
     console.warn("  placements.json absent — region band/status are null this build (transitional fields, 2026-09-02)");
   }
