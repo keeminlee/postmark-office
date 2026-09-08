@@ -762,6 +762,53 @@ export function judgeOutcome(row, snapshot) {
     }
   }
 
+  // THE STEP THAT IS NOT RUNNING AT ALL (G1 lane 1, 2026-09-08).
+  //
+  // The retire step tells the store what the world unpublished. It degrades
+  // LOUDLY BY DESIGN — a box with no `WORLD2_CLEARING_URL` writes a named
+  // absence into every receipt rather than failing the crossing — and that is
+  // the right failure and exactly the shape nobody reads. A named absence
+  // repeated twice a day forever is indistinguishable from a quiet town unless
+  // something is counting, which is the `left_drafted` lesson one rule up.
+  //
+  // NULL AND ZERO ARE DIFFERENT FACTS AND ONLY ONE OF THEM ALARMS.
+  // deploy/settlement-history.mjs writes `retired: <n>` when the step ran and
+  // `retired: null` when it did not. A crossing that ran and retired nothing is
+  // a normal, common, green crossing — most are. A crossing that never asked is
+  // the register drifting from canon with nothing saying so. Alarming on `0`
+  // would fire on almost every crossing and teach the board to be ignored.
+  //
+  // A MISSING FIELD IS NOT A NULL. History lines written before this field
+  // existed have no `retired` key at all, and `undefined` deliberately does not
+  // match: an old log must not alarm about a step that did not exist when it was
+  // written. The rule therefore judges only crossings that ran the code that
+  // reports it, and it starts judging on its own as soon as they do — no
+  // install-day exception needed, unlike its sibling above.
+  //
+  // IT CARRIES ITS OWN `means`, AND THAT IS THE POINT OF THE SEPARATE FIELD.
+  // The shared `spec.means` above ends with an INSTALL-DAY NOTE — "this row is
+  // EXPECTED to read ALARM-outcome until the first crossing after deploy writes
+  // the log, and it clears itself then" — which is true of its siblings and
+  // FALSE here: a missing `retired` key does not match, so this rule is silent
+  // on an old log and has no install day to be excused for. Appending the
+  // shared sentence would have handed the operator an excuse for the one alarm
+  // that never needs one, which is how a real finding gets read as expected
+  // noise. `retire_means` names the box carry instead.
+  const blind = Number(spec.retire_null_runs);
+  if (Number.isFinite(blind) && blind > 0 && history.length >= blind) {
+    const window = history.slice(-blind);
+    if (window.every((r) => Object.prototype.hasOwnProperty.call(r, "retired") && r.retired === null)) {
+      const mine = spec.retire_means ? ` ${spec.retire_means}` : means;
+      return (
+        `has crossed ${blind} times without the store hearing what the world unpublished — every one of those ` +
+        `receipts carries \`retired: {ran: false}\`. The world let marks go and the register still stands them, ` +
+        `which is the disagreement standing-equality reddens on. The usual cause is that ` +
+        `\`WORLD2_CLEARING_URL\` is absent from the settlement unit's environment, so the step names its own ` +
+        `absence and retires nothing.${mine}`
+      );
+    }
+  }
+
   return null;
 }
 
