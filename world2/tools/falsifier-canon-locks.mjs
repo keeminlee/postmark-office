@@ -14,40 +14,46 @@
 //
 // ── WHAT IT LISTS, AND THE ONE THING IT DELIBERATELY DOES NOT ────────────────
 //
-//   canon-absent   a claim with status `locked` whose mark is still `standing`
-//                  and whose slug has no file in the world's register at the
-//                  checkout's sha. THIS IS THE ALARM.
-//   unmaterialized a claim with status `locked` and NO mark row at all. A
-//                  different defect (the lock happened and the materialization
-//                  did not) and reported on its own line rather than folded in,
-//                  because one is a disagreement between two records and the
-//                  other is a missing record.
+//   canon-absent   a STANDING mark whose slug has no file in the world's register
+//                  at the checkout's sha, with the claim that locked it named
+//                  beside it. THIS IS THE ALARM.
+//   unmaterialized a locked claim naming a slug NO mark carries. A different
+//                  defect — the lock happened and the materialization did not —
+//                  and reported on its own line, because one is a disagreement
+//                  between two records and the other is a missing record.
 //
-// A RETIRED MARK IS NOT LISTED, and that is the whole reason this asks about the
-// mark and not only about the claim. A mark the world published and later
-// UNPUBLISHED also has a locked claim and no file — the retire path (G1 lane 1)
-// exists for exactly that, and it writes `status='retired'`. Listing those would
-// make this alarm forever on a fact the town has already recorded and settled,
-// which is how a board teaches its reader to skim.
+// A RETIRED MARK IS NOT LISTED. A mark the world published and later UNPUBLISHED
+// also stands with a locked claim and no file — the retire path (G1 lane 1)
+// exists for exactly that and writes `status='retired'`. Listing those would make
+// this alarm forever on a fact the town has already recorded, which is how a
+// board teaches its reader to skim.
 //
-// MEASURED, AND IT CONTRADICTS THE BRIEF THIS WAS BUILT FROM: the brief expected
-// the pre-cutover dump to answer with THREE. It answers with FIVE — the three
-// never-stood marks plus `berthillon/pistache-cone-for-julian` (the sweep
-// unpublished it at world 49e0fe89) and `the-town/pledges` (removed by a law
-// commit). All five were retired by the founder's hand at window 177 on
-// 2026-09-08, so the scratch AFTER the retire answers ZERO. The claim/mark split
-// above is what makes both numbers true at once.
+// ── THE DENOMINATOR, AND THE REPAIR THE REHEARSAL FORCED ────────────────────
+//
+// The first cut walked `claims`, because that is the noun the issue and the brief
+// both use. It reported the three instances and looked right, and it was reading
+// 188 OF 1,019 STANDING MARKS: `claims.slug` is NULL on every seed-imported
+// claim, so 831 locked claims name nothing and two marks that were absent from
+// canon and standing in the dump — `berthillon/pistache-cone-for-julian` and
+// `the-town/pledges` — were invisible to it. It walks `marks` now.
+//
+// MEASURED, and the numbers are the lane's receipts:
+//   · pre-cutover dump vs world main 91536f76 → FIVE (the three never-stood, plus
+//     pistache which the sweep unpublished at 49e0fe89, plus the-town/pledges
+//     which a law commit removed).
+//   · prod after the founder's 2026-09-08 retire of all five → ONE:
+//     `lupi/the-drift-room`, locked at window 177 that same evening.
 //
 // ── EXIT CODES (the siblings' rule) ──────────────────────────────────────────
 //
-//   0  no locked claim disagrees with canon
-//   1  RED — at least one does, named with its slug, window and the sha
+//   0  every standing mark has a file in canon, and every locked claim made one
+//   1  RED — at least one does not, named with its slug, window and the sha
 //   2  CANNOT RUN
 //
-// There is no code for "checked nothing and found nothing": an empty `claims`, a
-// checkout that loads no marks, or a store and a checkout with no slug in common
-// all exit 2, loudly. A comparison whose two sides describe different worlds is
-// not a pass.
+// There is no code for "checked nothing and found nothing": an empty `marks`, a
+// checkout that loads no marks, or a comparison that ended with zero slugs all
+// exit 2, loudly. A comparison whose two sides describe different worlds is not a
+// pass.
 //
 // ── RUNNING IT ───────────────────────────────────────────────────────────────
 //
@@ -69,7 +75,7 @@ import { canonRegisterAt } from "./canon-register.mjs";
 // script: it exits at the top on a missing argument, so anything that imported it
 // to test the judgement would be killed by it. `canon-locks.mjs` is the pure half
 // and `test/canon-locks.test.mjs` is what watches the rules.
-import { LOCKED_SELECT, canonLockFindings } from "./canon-locks.mjs";
+import { STANDING_SELECT, UNMATERIALIZED_SELECT, canonLockFindings } from "./canon-locks.mjs";
 
 const arg = (n) => { const i = process.argv.indexOf(n); return i === -1 ? null : process.argv[i + 1]; };
 const has = (n) => process.argv.includes(n);
@@ -89,22 +95,23 @@ const client = await (async () => {
 let out = {};
 try {
   const register = await canonRegisterAt({ backend: "git", worldRepo: resolve(worldRepo) });
-  const { rows } = await client.query(LOCKED_SELECT);
-  if (!rows.length) die("`claims` holds no locked rows — there is nothing to check, and a check that checked nothing must not report green");
+  const { rows } = await client.query(STANDING_SELECT);
+  if (!rows.length) die("`marks` holds no standing rows — there is nothing to check, and a check that checked nothing must not report green");
+  const { rows: unmaterializedRows } = await client.query(UNMATERIALIZED_SELECT);
 
-  const { absent, unmaterialized, compared } = canonLockFindings(rows, register);
+  const { absent, unmaterialized, compared } = canonLockFindings(rows, register, { unmaterializedRows });
   if (!compared) die(
-    `no locked claim's mark is standing, so nothing was compared against the register at ${register.sha.slice(0, 8)} — ` +
+    `no standing mark carries a slug, so nothing was compared against the register at ${register.sha.slice(0, 8)} — ` +
     "an empty comparison is not a pass");
 
   out = {
     canon_sha: register.sha,
     register_records: register.count,
-    locked_claims: rows.length,
+    standing_marks: rows.length,
     compared,
     absent: absent.map((r) => ({
-      slug: r.slug, claim_id: r.claim_id, window: r.window_id, locked_window: r.locked_window,
-      claimant: r.claimant, decided_at: r.decided_at,
+      slug: r.slug, claim_id: r.claim_id, claim_status: r.claim_status, window: r.window_id,
+      locked_window: r.locked_window, claimant: r.claimant, decided_at: r.decided_at,
     })),
     unmaterialized: unmaterialized.map((r) => ({ slug: r.slug, claim_id: r.claim_id, window: r.window_id })),
     unreadable: register.unreadable,
@@ -135,13 +142,13 @@ if (historyPath) {
 
 if (has("--json")) console.log(JSON.stringify(out, null, 2));
 else {
-  console.log(`canon ${out.canon_sha.slice(0, 8)} · ${out.register_records} register records · ${out.locked_claims} locked claim(s), ${out.compared} compared`);
+  console.log(`canon ${out.canon_sha.slice(0, 8)} · ${out.register_records} register records · ${out.standing_marks} standing mark(s), ${out.compared} compared`);
   for (const u of out.unreadable) console.log(`  ⚑ the register could not parse ${u} — it states nothing either way`);
   for (const u of out.unmaterialized)
-    console.log(`  ✗ UNMATERIALIZED · claim ${u.claim_id.slice(0, 8)} locked at window ${u.window} names ${u.slug} and no mark row exists`);
+    console.log(`  ✗ UNMATERIALIZED · claim ${u.claim_id.slice(0, 8)} locked at window ${u.window} names ${u.slug} and no mark carries that slug`);
   for (const a of out.absent)
-    console.log(`  ✗ CANON-ABSENT · ${a.slug} stands in the register, locked at window ${a.locked_window ?? a.window} ` +
-      `(claim ${a.claim_id.slice(0, 8)}, ${a.claimant}), and canon carries no file for it at ${out.canon_sha.slice(0, 8)}`);
+    console.log(`  ✗ CANON-ABSENT · ${a.slug} stands in the register, locked at window ${a.locked_window ?? a.window ?? "?"} ` +
+      `(claim ${a.claim_id ? a.claim_id.slice(0, 8) : "none"}${a.claimant ? `, ${a.claimant}` : ""}), and canon carries no file for it at ${out.canon_sha.slice(0, 8)}`);
   const n = out.absent.length + out.unmaterialized.length;
   console.log(n
     ? `\nRED · ${n} locked claim(s) the world does not carry`
