@@ -1789,7 +1789,10 @@ async function frameBlock(oriented, key) {
 }
 
 /** The three shelves. Complete for you, capped around you, pointers for the town. */
-async function happenedFor(oriented, args, key) {
+// Exported for the same reason `readDomainFor` is, and with the same caveat:
+// the `since:` shelf's join is only watched by a check that reads the block
+// this returns, not by one that reads the source line that builds it.
+export async function happenedFor(oriented, args, key) {
   if (!movementV2Enabled()) return null;
   const since = Number(args.since);
   if (!Number.isFinite(since)) return null;
@@ -2484,7 +2487,15 @@ async function apexDo(args, key, ctx = {}) {
 
 /** One action's domain, read. Fields are whitelisted per action — a read
  *  passes through only what the shadow's own tool takes, never the act's. */
-async function readDomainFor(action, fields, key, oriented, ctx = {}) {
+// ⛔ EXPORTED SO A WIRING PROBE CAN DRIVE IT (lane-h, the reviewer's owed lap).
+// A source-text detector over the call expression cannot tell "called" from
+// "called and thrown away": the reviewer kept the call and discarded its answer
+// — `ground: ((await groundWithinReach(oriented, key)), null)` — and every
+// probe stayed green while the take read answered `ground: null`. The only
+// check that sees that is one which reads what this function RETURNS, so this
+// seam is reachable. It takes no key it did not already take and performs
+// nothing; a read never does.
+export async function readDomainFor(action, fields, key, oriented, ctx = {}) {
   const call = async (tool, send) => {
     try {
       // ctx carries town-side facts the world tools cannot fetch themselves —

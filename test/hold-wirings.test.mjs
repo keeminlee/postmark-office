@@ -76,16 +76,44 @@ test("WIRING 1 — the ground read is REACHED, and answers about the ground unde
   });
 });
 
-test("...and the read shadow for `take` CALLS it — the wiring, not the function", async () => {
-  // `readDomainFor("take", …)` is the line Repair 4 says is unwatched: delete
-  // `ground: await groundWithinReach(…)` from world-apex.mjs and this reds
-  // while WIRING 1 above stays green.
-  const { readFileSync } = await import("node:fs");
-  const apex = readFileSync(new URL("../src/world-apex.mjs", import.meta.url), "utf8");
-  const shadow = apex.slice(apex.indexOf('case "take":'), apex.indexOf('case "note-to-self":'));
-  assert.match(shadow, /groundWithinReach\(/,
-    'read: "take" no longer reaches the ground read — walk #12 asked for the ground and this is the line that answers');
-  assert.match(shadow, /world_holdings/, "and it must still answer the caller's own hands beside it");
+test("...and the take SHADOW carries the ground through — driven, so a discarded answer cannot hide", async () => {
+  // ⛔ THIS REPLACED A SOURCE-TEXT DETECTOR, and the reviewer showed exactly
+  // why. A grep for `groundWithinReach(` proves the call is WRITTEN; it cannot
+  // tell "called" from "called and thrown away". The reviewer kept the call and
+  // discarded its answer — `ground: ((await groundWithinReach(oriented, key)),
+  // null)` — and all six probes stayed green while `read: "take"` answered
+  // `ground: null`. The only check that sees that is one which reads what the
+  // shadow RETURNS. So this drives `readDomainFor` itself.
+  await withStore("shadow.db", async () => {
+    const { readDomainFor } = await import("../src/world-apex.mjs");
+    const oriented = { standpoint: { x: 0, y: 0, handle: "wright" } };
+    const key = { handles: new Set(["wright"]) };
+    const domain = await readDomainFor("take", {}, key, oriented, {});
+
+    assert.ok(domain, "the take shadow answered nothing at all");
+    assert.ok(domain.ground, "read: \"take\" answered no ground — walk #12 asked for the ground and this is the answer that carries it");
+    assert.ok(!domain.ground.unavailable, `the ground read was unavailable: ${domain.ground.unavailable}`);
+    const ids = (domain.ground.things ?? []).map((t) => t.thing);
+    assert.ok(ids.includes(NEAR), "the thing at the caller's feet did not reach the shadow's answer");
+    assert.equal(ids.includes(FAR), false, "and a thing 900 m off must not");
+    // give/drop keep their holdings-only domain, so the shadow must still carry
+    // the hands beside the ground rather than having swapped one for the other.
+    assert.ok(domain.holdings, "the take shadow lost the caller's own hands");
+  });
+});
+
+test("...and give/drop are UNCHANGED — their domain is your hands, and only take grew a ground", async () => {
+  await withStore("shadow-give.db", async () => {
+    const { readDomainFor } = await import("../src/world-apex.mjs");
+    const oriented = { standpoint: { x: 0, y: 0, handle: "wright" } };
+    const key = { handles: new Set(["wright"]) };
+    for (const verb of ["give", "drop"]) {
+      const domain = await readDomainFor(verb, {}, key, oriented, {});
+      assert.ok(domain.holdings, `read: "${verb}" lost the caller's hands`);
+      assert.equal(domain.ground, undefined,
+        `read: "${verb}" grew a ground block — those two verbs act on what you hold, so your hands are their whole domain`);
+    }
+  });
 });
 
 // ── WIRING 2 · the apex joins hold effects onto the `since:` shelf ───────────
@@ -114,25 +142,50 @@ test("WIRING 2 — `readHoldEffects` reads the journal the office actually write
   });
 });
 
-test("...and the apex JOINS it onto the shelf — the line that was silent", async () => {
-  // Delete `holdEffects` from the `happenedBlock({ … })` call in
-  // world-apex.mjs's `happenedFor` and this reds while WIRING 2 stays green.
-  const { readFileSync } = await import("node:fs");
-  const apex = readFileSync(new URL("../src/world-apex.mjs", import.meta.url), "utf8");
-  assert.match(apex, /readHoldEffects\(\{[\s\S]{0,200}?sinceCrossing: since/,
-    "the apex no longer reads hold effects for the since: cursor");
-  const call = apex.slice(apex.indexOf("const block = happenedBlock({"), apex.indexOf("return { ...block,"));
-  assert.match(call, /holdEffects/,
-    "hold effects are read and then dropped on the floor — walk #11's certified zero, back");
+test("...and the `since:` shelf CARRIES the hold event — driven through happenedFor, not read off the source", async () => {
+  // The same replacement, for the same reason: a grep proves `holdEffects` is
+  // passed; it cannot prove the events arrive. This drives the whole join —
+  // journal row in, `happened.to_you` out.
+  const prev = { dyn: process.env.WORLD_DYNAMIC_DB, mv2: process.env.WORLD_MOVEMENT_V2 };
+  const dir = mkdtempSync(join(TMP, "shelf-"));
+  process.env.WORLD_DYNAMIC_DB = join(dir, "dynamic.db");
+  // `happenedFor` answers null with the flag off, which is dev's own condition
+  // for a store-written position (src/world.mjs § THE WALK GAP).
+  process.env.WORLD_MOVEMENT_V2 = "1";
+  try {
+    const { openDynamic } = await import("../src/dynamic-store.mjs");
+    const { appendJournal, CLASS_HOLDING } = await import("../src/world-journal.mjs");
+    const { currentCrossing } = await import("../src/crossings.mjs");
+    const now = currentCrossing();
 
-  // And the shelf itself must carry them through, which is the half F6 covers.
-  const { toYou } = await import("../src/world-happened.mjs");
-  const shelf = toYou({
-    transitions: [], carriedLegs: [], claimEffects: null,
-    holdEffects: { readable: true, events: [{ kind: "hold-give", thing: NEAR, at: "2026-09-07T13:57:16Z", crossing: 175 }] },
-    sinceCrossing: 175, nowCrossing: 175,
-  });
-  assert.equal(shelf.count, 1);
+    const db = openDynamic();
+    try {
+      appendJournal(db, {
+        crossing: now, actor: "wright", action: "give", object: NEAR,
+        at: { anchor: null, dx: 0, dy: 0 }, witnesses: { source: "presence", list: [] },
+        cls: CLASS_HOLDING, household: "hh:trueing",
+        payload: { thing: NEAR, holder: "ethan-thorne", previous_holder: "wright", made_by: "wright", policy: "cascade" },
+        effect: "ethan-thorne holds it now", writtenAt: new Date().toISOString(),
+      });
+    } finally { db.close(); }
+
+    const { happenedFor } = await import("../src/world-apex.mjs");
+    const oriented = { standpoint: { x: 0, y: 0, handle: "wright" }, crossing: { n: now } };
+    const block = await happenedFor(oriented, { since: now }, { handles: new Set(["wright"]) });
+
+    assert.ok(block, "the happened path answered nothing — the cursor read is off");
+    assert.ok(!block.unavailable, `the delta could not be read: ${block.detail ?? block.unavailable}`);
+    const kinds = (block.to_you?.events ?? []).map((e) => e.kind);
+    assert.ok(kinds.includes("hold-give"),
+      `a give of a thing of mine did not reach happened.to_you (${JSON.stringify(kinds)}) — walk #11's certified zero, back`);
+    const ev = block.to_you.events.find((e) => e.kind === "hold-give");
+    assert.equal(ev.thing, NEAR);
+    assert.equal(ev.from_you, true, "it left wright's hands, and the shelf must say which way");
+    assert.equal(block.to_you.complete, true, "every source answered, so the promise is kept");
+  } finally {
+    for (const [k, v] of [["WORLD_DYNAMIC_DB", prev.dyn], ["WORLD_MOVEMENT_V2", prev.mv2]])
+      if (v === undefined) delete process.env[k]; else process.env[k] = v;
+  }
 });
 
 // ── WIRING 3 · `world_investigate` carries the `stands` block ────────────────
