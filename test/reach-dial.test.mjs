@@ -100,12 +100,18 @@ test("AN ABSENT RECORD falls back to this repo's number and says the sentence a 
   assert.equal(fell.source, "fallback");
   assert.equal(fell.value, 60, "and the fallback is this repo's own constant, not the record's 137");
 
-  // The sentence itself, and it must NAME the repair — a disclosure a resident
-  // cannot act on is a disclosure that only looks honest.
+  // The sentence itself, PRODUCED rather than read out of the source. The first
+  // draft asserted on `reachDisclosure.toString()`, which is a check on the
+  // code's text and not on its behaviour — a flip that made the function return
+  // null unconditionally left it green. The dial is a parameter now, so the
+  // branch a resident meets is the branch under test.
   const { reachDisclosure } = await import("../src/reach.mjs");
-  const words = reachDisclosure.toString();
-  assert.match(words, /built-in 60 m/);
-  assert.match(words, /npm run hydrate:world/);
+  const said = reachDisclosure(fell);
+  assert.ok(said, "an office standing on the repo's constant must SAY so; silence here is the defect");
+  assert.match(said, /built-in 60 m/);
+  assert.match(said, /npm run hydrate:world/, "a disclosure a resident cannot act on only looks honest");
+  assert.equal(reachDisclosure({ read: true, value: 60, source: "record" }), null,
+    "and a dial that WAS read discloses nothing — both sides of the branch, in one process");
 
   // And this process's own dial is still the record's, so the two conditions
   // are held apart rather than blurred.

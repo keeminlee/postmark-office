@@ -149,8 +149,13 @@ export function withinArmsLength(here, there, { earshotM = EARSHOT_M } = {}) {
  * `sayDialsDisclosure` has it. A door standing on this repo's constant while
  * quoting the town's law should say so in the same breath.
  */
-export function reachDisclosure() {
-  const d = SAY_DIALS?.earshot_m;
-  return d?.read ? null
+export function reachDisclosure(dial = SAY_DIALS?.earshot_m) {
+  // ⛔ THE DIAL IS A PARAMETER because otherwise this function has a branch no
+  // test can reach. `SAY_DIALS` is read once at module load, so inside any one
+  // process the flag is fixed and only ONE of these two lines can ever run — a
+  // flip that made this return null unconditionally reddened nothing, which is
+  // this lane's own lesson for the third time. With the dial passed in, both
+  // sides are reachable and both are asserted.
+  return dial?.read ? null
     : "the reach is standing on this repo's built-in 60 m — the world store did not answer for the-town/say's earshot_m, so this is not the town's own number. Run: npm run hydrate:world";
 }
