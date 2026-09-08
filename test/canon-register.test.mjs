@@ -7,6 +7,16 @@
 //    clearing job's lock step, naming the slug and the world sha — not held for
 //    review."
 //
+// ── WHERE THIS PREDICATE IS ASKED, AND WHERE IT IS NOT (RE-RULED 2026-09-08) ─
+//
+// NOT at the candle. The reviewer timed the two units' journals over seven
+// consecutive crossings and the settlement's push lands three to four minutes
+// AFTER the candle clears — never once before — so a canon check at the lock
+// step refuses the marks its own crossing just locked. Keemin withdrew the
+// lock-time refusal the same evening. This predicate now serves the NIGHTLY read
+// on the notary rail, where the push is nine hours old, and the `fold` backend
+// at the G1 swap.
+//
 // ── WHAT THESE CAN AND CANNOT PROVE ─────────────────────────────────────────
 //
 // `clearing-job.mjs` is a SCRIPT — top-level await, `process.argv`, a
@@ -45,7 +55,6 @@ import { execFileSync } from "node:child_process";
 
 import {
   canonRegisterAt, canonAbsentAmong, canonAbsentCheck, CANON_BACKENDS, CANON_ABSENT_CHECK,
-  graceVerdict, GRACE_CROSSINGS, CROSSING_MS,
 } from "../world2/tools/canon-register.mjs";
 import { slugOf } from "../world2/tools/materialize.mjs";
 
@@ -182,110 +191,4 @@ test("a record the loader could not parse is reported, not counted", async () =>
 test("canonAbsentCheck never invents a sha it was not given", () => {
   assert.equal(canonAbsentCheck("a/b", null), "canon-absent: a/b @ ?");
   assert.equal(canonAbsentCheck("a/b", "0123456789abcdef"), "canon-absent: a/b @ 01234567");
-});
-
-// ── THE GRACE (ruled by Keemin 2026-09-08, built as the second lap) ─────────
-//
-// The founder's shape, verbatim: "one crossing of grace for a late settlement (a
-// legitimate mark whose settlement is at most one crossing late locks; two or
-// more late refuses), as a NAMED value read at one line with its reason beside
-// it, never a default-off flag."
-//
-// EVERY TIMESTAMP BELOW IS REAL, off the world repo and the store, so these are
-// the town's own crossings and not shapes I imagined:
-//
-//   window 174  closes 2026-09-07T05:45:40Z   (store, `windows`)
-//   the settlement before it   2026-09-06T17:45:33Z   (world, `git log --grep`)
-//   window 177  closes 2026-09-08T17:45:40Z
-//   its settlement             2026-09-08T17:45:32Z   — eight seconds ahead
-//
-// THE CAN-FAIL FLIP the conductor asked for: set `GRACE_CROSSINGS = 0` in
-// `world2/tools/canon-register.mjs`. Test "the phaenolepis case" goes RED and
-// the two refusal tests stay GREEN — which is what makes them controls.
-
-const W174_CLOSES = "2026-09-07T05:45:40Z";
-const W177_CLOSES = "2026-09-08T17:45:40Z";
-
-test("THE PHAENOLEPIS CASE: a settlement one crossing late graces the claim", () => {
-  // 2026-09-07: the 05:45 sweep ran at 07:38:28Z, 1h53m late (world 49e0fe89),
-  // and little-m-of-garrison/a-cluster-of-phaenolepis-garrisonii locked at
-  // window 174 before its own file existed. At the moment of locking the last
-  // settlement was the previous evening's.
-  const v = graceVerdict({ closesAt: W174_CLOSES, lastSettlementAt: "2026-09-06T17:45:33Z" });
-  assert.equal(v.granted, true, "a resident's mark must not be refused for the box being slow");
-  assert.equal(v.crossings_late, 1);
-  assert.match(v.reason, /1 crossing late/);
-});
-
-test("an ON-TIME settlement grants nothing — canon has spoken, and absence means absence", () => {
-  // Window 177, the live case: the sweep landed eight seconds before the close.
-  const v = graceVerdict({ closesAt: W177_CLOSES, lastSettlementAt: "2026-09-08T17:45:32Z" });
-  assert.equal(v.granted, false, "if the settlement ran, a mark it did not publish is genuinely unpublished");
-  assert.equal(v.crossings_late, 0);
-  assert.match(v.reason, /canon has spoken/);
-});
-
-test("TWO crossings late refuses — that is a broken rail, not a late one", () => {
-  // A CONTROL, and it must stay GREEN under the GRACE_CROSSINGS = 0 flip. The
-  // first draft asserted /past the grace of 1/ and therefore reddened under the
-  // flip on the MESSAGE while the behaviour was unchanged — a control that reds
-  // when the feature is removed was never a control, and I had that sentence in
-  // this repo already. It asserts the verdict and the count, and that the reason
-  // names a bound, without pinning which bound.
-  const twoBack = new Date(Date.parse(W177_CLOSES) - 2 * CROSSING_MS).toISOString();
-  const v = graceVerdict({ closesAt: W177_CLOSES, lastSettlementAt: twoBack });
-  assert.equal(v.granted, false);
-  assert.equal(v.crossings_late, 2);
-  assert.match(v.reason, /past the grace of \d+/);
-  assert.match(v.reason, /broken rail/);
-});
-
-test("the grace is bounded by a NAMED value, and the bound is the thing under test", () => {
-  assert.equal(GRACE_CROSSINGS, 1);
-  const oneLate = { closesAt: W174_CLOSES, lastSettlementAt: "2026-09-06T17:45:33Z" };
-  // Driven through the parameter rather than asserted about the constant: a test
-  // that only reads the number proves the number is 1, not that anything uses it.
-  assert.equal(graceVerdict({ ...oneLate, graceCrossings: 0 }).granted, false);
-  assert.equal(graceVerdict({ ...oneLate, graceCrossings: 1 }).granted, true);
-  assert.equal(graceVerdict({ ...oneLate, graceCrossings: 2 }).granted, true);
-});
-
-test("a checkout with no settlement in history is NOT a grace, and says why", () => {
-  // The shallow-clone case. Answering "grant" here would turn every un-deepened
-  // checkout into a silently open gate — the failure mode with the quietest code.
-  const v = graceVerdict({ closesAt: W177_CLOSES, lastSettlementAt: null });
-  assert.equal(v.granted, false);
-  assert.equal(v.crossings_late, null);
-  assert.match(v.reason, /no settlement commit in the canon checkout's history/);
-  assert.match(v.reason, /the strict rule stands/);
-});
-
-test("the shape the CANDLE actually sends: a Date, not a string", () => {
-  // `clearing-job.mjs` passes `win.closes_at`, which `pg` hands back as a Date.
-  // Every other test here passes an ISO string, so until this one existed
-  // NOTHING watched the shape the real caller uses — the "fixture built to the
-  // shape you imagine" defect, which this room has recorded before. Driven both
-  // ways, and the two must agree.
-  const asString = graceVerdict({ closesAt: W174_CLOSES, lastSettlementAt: "2026-09-06T17:45:33Z" });
-  const asDate = graceVerdict({ closesAt: new Date(W174_CLOSES), lastSettlementAt: new Date("2026-09-06T17:45:33Z") });
-  assert.equal(asDate.granted, true);
-  assert.equal(asDate.crossings_late, asString.crossings_late);
-  assert.equal(asDate.reason, asString.reason, "the reason must not name a Date's toString on one path and an ISO stamp on the other");
-});
-
-test("a window with no closes_at is not graced either", () => {
-  const v = graceVerdict({ closesAt: null, lastSettlementAt: "2026-09-08T17:45:32Z" });
-  assert.equal(v.granted, false);
-  assert.match(v.reason, /no closes_at/);
-});
-
-test("the register carries the settlement's last run, or null where git cannot answer", async () => {
-  // The fixture checkout has one commit and it is not a settlement, so the
-  // field is null and the grace refuses to compute — the wiring, proven, not the
-  // string. `last_settlement_at` existing is what lets clearing-job read it.
-  const dir = worldFixture(["wright/the-lit-name"]);
-  const reg = await canonRegisterAt({ backend: "git", worldRepo: dir });
-  assert.ok("last_settlement_at" in reg, "the field must exist or the candle reads undefined and graces nothing, silently");
-  assert.equal(reg.last_settlement_at, null);
-  assert.equal(graceVerdict({ closesAt: W177_CLOSES, lastSettlementAt: reg.last_settlement_at }).granted, false);
 });

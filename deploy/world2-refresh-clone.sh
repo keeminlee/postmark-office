@@ -63,27 +63,12 @@ esac
 DIR="$WORLD2_LAB/ingest-clones/$1"
 mkdir -p "$(dirname "$DIR")"
 
-# ── THE GRACE NEEDS HISTORY, AND ONLY THE WORLD'S (2026-09-08, postmark#2594) ─
-# The candle's canon check grants one crossing of grace when the SETTLEMENT is
-# late, and it learns that from the last `settlement: sweep …` commit in this
-# checkout. At `--depth 1` there is exactly one commit and no settlement in
-# range, so `graceVerdict` would answer "cannot compute" on every crossing and
-# the grace would be a value with no reader — which is the thing the ruling
-# forbade. `--shallow-since` rather than a depth NUMBER because the grace needs a
-# span of TIME (at most two crossings = 24h) and main's commit rate is not
-# constant: measured on the box 2026-09-08, three days is 29 commits and 3.8 MB,
-# against 19 MB for the full clone.
-#
-# The town keeps depth 1: nothing reads its history, and it is the 306 MB one.
-DEPTH_ARGS=(--depth 1)
-[ "$1" = "world" ] && DEPTH_ARGS=(--shallow-since="${W2_WORLD_SINCE:-3 days ago}")
-
 if [ ! -d "$DIR/.git" ]; then
   echo "[refresh-clone] first clone of $1 ($URL @ $BRANCH)"
   rm -rf "$DIR"
-  git clone --quiet "${DEPTH_ARGS[@]}" --branch "$BRANCH" "$URL" "$DIR" || exit 2
+  git clone --quiet --depth 1 --branch "$BRANCH" "$URL" "$DIR" || exit 2
 else
-  git -C "$DIR" fetch --quiet "${DEPTH_ARGS[@]}" origin "$BRANCH" || exit 2
+  git -C "$DIR" fetch --quiet --depth 1 origin "$BRANCH" || exit 2
   git -C "$DIR" reset --quiet --hard FETCH_HEAD || exit 2
   # -x reaches ignored files too, which is the point: an ignored artifact left
   # by a pen is still a file the next derivation would see.

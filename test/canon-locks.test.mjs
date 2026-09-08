@@ -206,3 +206,34 @@ test("STANDING_SELECT reads the tier and the LOCKING window's town sha", () => {
   assert.match(STANDING_SELECT, /w\.town_sha AS locking_town_sha/);
   assert.match(ESCROW_BY_SHA_SELECT, /GROUP BY town_sha, mark/);
 });
+
+// ── THE PHAENOLEPIS CASE, KEPT AS A TEST OF THE READ (ruled 2026-09-08) ─────
+//
+// `little-m-of-garrison/a-cluster-of-phaenolepis-garrisonii` locked at window
+// 174 on 2026-09-07 while that crossing's settlement was 1h56m late; the file
+// reached main at 07:42. The GRACE built for this case was dropped — it was dead
+// by construction, because every settlement pushes after its own candle, so
+// every claim would have taken it. What survives is the requirement on the READ:
+// by the time the nightly read runs, the next crossing has carried the mark, and
+// the read MUST NOT alarm on it.
+//
+// This is the whole reason the read is nightly and not at the crossing.
+test("a mark whose settlement was LATE is not a finding once canon carries it", () => {
+  const late = {
+    slug: "little-m-of-garrison/a-cluster-of-phaenolepis-garrisonii",
+    mark_status: "standing", tier: "home", locked_window: 174,
+    claim_id: "late0001", claim_status: "locked", window_id: 174,
+  };
+  const carried = { slugs: new Set([late.slug]), sha: "0".repeat(40) };
+  const r = canonLockFindings([late], carried);
+  assert.deepEqual(r.absent, [], "the next crossing carried it — a late settlement is not a canon-absent mark");
+  assert.equal(r.compared, 1, "and it WAS compared, so this is a pass and not a skip");
+});
+
+test("the same mark IS a finding while canon genuinely lacks it — the control", () => {
+  // Without this, the test above would pass on an empty register and prove
+  // nothing about lateness at all.
+  const late = { slug: "little-m-of-garrison/a-cluster-of-phaenolepis-garrisonii", mark_status: "standing", tier: "home", locked_window: 174 };
+  const r = canonLockFindings([late], { slugs: new Set(["somebody/else"]), sha: "0".repeat(40) });
+  assert.deepEqual(r.absent.map((a) => a.slug), [late.slug]);
+});

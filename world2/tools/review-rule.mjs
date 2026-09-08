@@ -126,11 +126,15 @@
 //            which.
 
 import { pathToFileURL } from "node:url";
-import { materializeClaims, recomputeStanding, slugOf } from "./materialize.mjs";
+import { materializeClaims, recomputeStanding, slugOf, ownerHouseholdFor } from "./materialize.mjs";
 import { fractionalCrossing } from "./live-reads.mjs";
 // The #2594 predicate, for NAMING only — this door is deliberately not gated by
 // it. See § THE SECOND DOOR below.
 import { canonRegisterAt } from "./canon-register.mjs";
+// The escrow PRESENCE rule — a real blocker here, unlike the canon note. See
+// § THE SECOND DOOR.
+import { escrowAbsentAmong, escrowPresenceAt } from "./escrow-presence.mjs";
+import { computeStanding } from "./standing.mjs";
 
 const arg = (n) => { const i = process.argv.indexOf(n); return i === -1 ? null : process.argv[i + 1]; };
 const has = (n) => process.argv.includes(n);
@@ -176,7 +180,7 @@ export async function contestOf(q, claim) {
  * at ruling time. Returns the reasons the run must refuse, and the standing mark
  * the winner amends when there is one.
  */
-export async function reCheckGrant(q, winner) {
+export async function reCheckGrant(q, winner, { townSha = null } = {}) {
   const blockers = [];
   let amended = null;
   const slug = slugOf(winner);
@@ -197,6 +201,48 @@ export async function reCheckGrant(q, winner) {
     if (rows.length) blockers.push(`this parcel now overlaps standing parcel "${rows[0].slug}" — ` +
       `the ground was taken while the claim was held; contesting a STANDING mark is a different question from the one that was held`);
   }
+  // ── THE ESCROW PRESENCE RULE, RE-RUN AT RULING TIME (postmark#2594) ───────
+  //
+  // This door LOCKS and MATERIALIZES, so the rule the candle's step 5.5 carries
+  // has to hold here too, or the register grows commons marks with nothing
+  // behind them through the one door nobody is watching. The conductor ruled it
+  // in on 2026-09-08: the review door gets the predicate, not only the canon
+  // naming line above.
+  //
+  // A BLOCKER, NOT A REFUSAL OF THE CLAIM — which is this file's own established
+  // shape for a fact that changed while the claim was held: "a failure REFUSES
+  // THE RUN rather than refusing the claim. A mind ruled on facts that have
+  // changed; that wants the mind again, not this tool's guess." A mind that
+  // still wants to grant it can have the stake put on first.
+  //
+  // The class is computed prospectively, exactly as the candle does it, so the
+  // two doors cannot disagree about what `commons` means: `computeStanding` over
+  // the standing rows plus this candidate, in the shape `materializeClaims` is
+  // about to insert. And an escrow projection that cannot answer blocks NOTHING —
+  // `escrowAbsentAmong` returns `unchecked` for that, never a refusal, because a
+  // store that cannot answer and a town where nobody staked are different facts.
+  if (townSha) {
+    const { rows: standingRows } = await q(
+      `SELECT id::text, slug, kind, owner, household, geometry, parent::text, data
+         FROM marks WHERE status = 'standing'`);
+    const candidate = {
+      id: String(winner.id), slug, kind: winner.class, owner: winner.claimant,
+      household: await ownerHouseholdFor(q, winner.claimant),
+      geometry: winner.geometry, parent: winner.parent, data: winner.data,
+    };
+    const tiers = computeStanding([...standingRows, candidate]);
+    const escrowByMark = await escrowPresenceAt(q, { townSha });
+    const verdict = escrowAbsentAmong([{ id: winner.id, slug }], { tiers, escrowByMark, townSha });
+    if (verdict.refused.length)
+      blockers.push(`"${slug}" would stand as a COMMONS mark with nothing staked on it at town ${String(townSha).slice(0, 8)} — ` +
+        `the town's own sweep refuses this ("commons needs escrow > 0") and the candle refuses it at the lock step; ` +
+        `a mind granting it here would put the one mark in the register that neither other door would allow`);
+    if (verdict.unchecked.length)
+      console.log(`  ⚑ escrow NOT CHECKED for ${slug} — escrow_projection cannot answer at town ${String(townSha).slice(0, 8)} (migration 014); this ruling does not know whether the mark is backed`);
+  } else {
+    console.log(`  ⚑ escrow NOT CHECKED for ${slug} — this window pinned no town read, so the presence rule could not be asked`);
+  }
+
   return { blockers, amended };
 }
 
@@ -253,7 +299,17 @@ async function main() {
 
     let amended = null;
     if (kind === "grant") {
-      const re = await reCheckGrant(q, claim);
+      // THE TOWN SHA IS THE LATEST PINNED ONE, NOT THE OPEN WINDOW'S.
+      // `windows.town_sha` is written by the clearing AT CLOSE, so the open
+      // window this ruling lands in has none — reading `open.town_sha` would
+      // hand `reCheckGrant` a null on every run and the presence rule would
+      // never fire. That is the value-with-no-reader defect, and I wrote it
+      // before checking which write fills the column. The latest CLOSED window's
+      // pin is also the right answer on its own terms: this file's rule for a
+      // re-check is "the world as it now stands".
+      const { rows: [pinned] } = await q(
+        "SELECT town_sha FROM windows WHERE town_sha IS NOT NULL ORDER BY id DESC LIMIT 1");
+      const re = await reCheckGrant(q, claim, { townSha: pinned?.town_sha ?? null });
       if (re.blockers.length) {
         throw new Error(`the world moved while this claim was held, so the ruling is REFUSED rather than applied:\n  - ` +
           re.blockers.join("\n  - ") + `\nNothing was written. Re-decide the contest against the world as it now stands.`);

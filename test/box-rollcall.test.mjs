@@ -1143,8 +1143,16 @@ test("a latest line carrying none of the named fields is itself the alarm, not s
   assert.match(said, /LIST-MEANS\./);
 });
 
-test("the shipped manifest's clearing row declares the list alarm, and an empty declaration is refused", () => {
-  const row = manifest().units.find((u) => u.unit === "postmark-world2-clearing.timer");
+test("the shipped manifest's NOTARY row declares the list alarm, and an empty declaration is refused", () => {
+  // THE NOTARY, NOT THE CLEARING, and the move is the reviewer's blocker made
+  // structural: the crossing's settlement pushes minutes AFTER the candle
+  // clears, so a canon read on the clearing rail asks a checkout that cannot yet
+  // carry the marks the crossing just locked. At 03:20 the push is nine hours
+  // old. If this assertion ever moves back to the clearing row, the read has
+  // been put back in front of the push.
+  const row = manifest().units.find((u) => u.unit === "postmark-world2-notary.timer");
+  assert.equal(manifest().units.find((u) => u.unit === "postmark-world2-clearing.timer").outcome, undefined,
+    "the clearing row must NOT carry this alarm — it would judge a read taken before the push");
   assert.deepEqual(row.outcome.alarm_on_nonempty, ["canon_absent", "unmaterialized", "escrow_unbacked"]);
   assert.match(row.outcome.history_path, /canon-locks\.jsonl$/);
   // A list-alarm that names no field would pass every other assertion in
@@ -1152,7 +1160,7 @@ test("the shipped manifest's clearing row declares the list alarm, and an empty 
   const dir = mkdtempSync(join(tmpdir(), "rollcall-manifest-"));
   const bad = join(dir, "m.json");
   const m = manifest();
-  m.units.find((u) => u.unit === "postmark-world2-clearing.timer").outcome.alarm_on_nonempty = [];
+  m.units.find((u) => u.unit === "postmark-world2-notary.timer").outcome.alarm_on_nonempty = [];
   writeFileSync(bad, JSON.stringify(m));
   assert.throws(() => loadManifest(bad), /alarm_on_nonempty that names no field/);
 });

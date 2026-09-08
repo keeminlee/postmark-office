@@ -687,55 +687,58 @@ All four carry rows in `deploy/box-rollcall-manifest.json`. `world2-restore-rehe
 is a hand-run, deliberately: it drops and recreates a database, and nothing that
 does that belongs on a clock.
 
-### The clearing lane reads canon, and it is not the ingest (2026-09-08, postmark#2594)
+### The canon check is NIGHTLY, not at the candle — and why (2026-09-08, postmark#2594)
 
-Keemin ruled *refusal at the candle*: a claim that would lock while the mark it
-materializes has no file on main at the locking crossing is REFUSED, naming the
-slug and the world sha. `clearing-job.mjs` therefore takes `--world-repo`, and
-`world2-clearing.sh` refreshes `ingest-clones/world` before the loop exactly as it
-already refreshes `ingest-clones/town`. **A crossing with a claim that names a
-mark and no `--world-repo` REFUSES**, the same shape as the null-pin guard beside
-it: the whole cost of this class was three weeks of silence, so the silent
-outcome is the one that must not exist.
+Keemin first ruled *refusal at the candle*, and the lane's reviewer measured it
+impossible the same evening. **The crossing's settlement pushes its mark files to
+origin three to four minutes AFTER the candle clears the window** — seven
+consecutive crossings timed from both units' journals, never once before, and on
+2026-09-07 the push landed 1h56m late. Today's 17:45 crossing would have refused
+all three of the marks it locked.
 
-The sha it rules against is the CHECKOUT's head, recorded on the window as
-`receipts.computed_against.canon_sha` — a third pinned input beside `law_sha` and
-`town_sha`, and a different source from either. It is deliberately **not**
-`projection_heads['world-law']`. That pin is frozen at `a23a8d17` (2026-09-05)
-because the ingest poll is parked by the 2026-08-31 ruling, and it cannot become
-fresh while the park stands. Measured on prod 2026-09-08: of the 1,031 standing
-marks, 27 have no file at that pin and **26 of the 27 are on world main today** —
-a refusal computed against it would refuse twenty-six legitimate marks to catch
-one. Even unparked it could not answer: the settlement pushes a crossing's mark
-files at `:45:2x` and the candle closes the window at `:45:44`, twelve seconds
-later, in the same systemd tick.
+The lane's own first table said the opposite ("twelve seconds before"), and it was
+wrong because it read **commit** timestamps, which are local authoring times,
+while the candle fetches **origin**. That is the freshness-stamps-name-their-own-
+source rule turned on the lane's own measurement.
 
-**The grace (ruled 2026-09-08, the same sitting).** The settlement and the
-clearing fire on the same two systemd marks and the mark files normally land
-about twelve seconds before the window closes — that margin is the clearing's own
-boundary wait, not a designed ordering. So the candle grants **one crossing** of
-grace when the settlement has not run for this close: `GRACE_CROSSINGS` in
-`world2/tools/canon-register.mjs`, a named value with its reason beside it, read
-on every crossing. Zero crossings late means the sweep ran and a mark it did not
-publish is genuinely unpublished; one means canon has not had its chance and the
-claim locks; two or more means the rail is broken rather than late, and the claim
-is refused so somebody looks. The verdict rides on the window as
-`receipts.canon_grace`, and the crossing's log names every claim it graced.
+So the ruling moved: the canon-absent check is **withdrawn from the lock step**
+and lives on the **nightly read**, `world2/tools/falsifier-canon-locks.mjs`, which
+runs on the **notary rail** (`world2-notary.sh`, 03:20 UTC) as `snapshot_reader`.
+At 03:20 the 17:45 push is nine hours old, so the read asks about a world that has
+finished moving. It refreshes the world clone itself, appends one line per run —
+clean or not — to `/srv/world2-lab/state/canon-locks.jsonl`, and **its RED does
+not fail the notary**: the certification is the notary's job, and this finding is
+about the register. The alarm is the roll-call's outcome rule on the
+`postmark-world2-notary.timer` row (`alarm_on_nonempty`).
 
-**That grace needs history, and it is why the world clone is no longer depth 1.**
-`world2-refresh-clone.sh` fetches the world with `--shallow-since` (default three
-days, `W2_WORLD_SINCE`) instead of `--depth 1`, because the grace reads the last
-`settlement: sweep …` commit and a one-commit clone has none — the grace would
-answer "cannot compute" forever and be a value with no reader. Measured on the
-box 2026-09-08: three days is 29 commits and 3.8 MB, against 19 MB for a full
-clone. **The town clone stays depth 1** — nothing reads its history and it is the
-306 MB one.
+At the G1 swap the class becomes structurally impossible — the fold writes what
+the candle locked — and the read stays as the detector.
 
-After the crossing, `falsifier-canon-locks.mjs` runs as `snapshot_reader` and
-appends one line — clean or not — to `/srv/world2-lab/state/canon-locks.jsonl`.
-Its RED does not fail the unit: the crossing succeeded and the finding is about
-history the crossing did not make. The alarm is the roll-call's outcome block on
-the clearing row (`alarm_on_nonempty`), which is where an operator already looks.
+### What DOES gate at the candle: the escrow presence rule (2026-09-08)
+
+`clearing-job.mjs` step 5.5. The clearing's only escrow step was an
+**affordability** test — `if (total === 0) continue` — so a claim staking zero was
+never looked at. The 1.0 sweep holds the **presence** rule ("commons needs escrow
+> 0", `settlement-sweep.mjs:1146-1152`) and G1 deletes the sketchbook path it
+lives on, so the rule would simply stop being enforced. A commons-class claim with
+zero escrow at the window's own pinned `town_sha` is now refused
+`escrow-absent: <slug> @ <sha>`, which the receipt maps to `unbacked`.
+
+This one races nothing: it reads the **town** projection and the store, never a
+git push. The class is computed prospectively by the port's own `computeStanding`
+over the standing rows plus the candidates, because `data.tier` is not written
+until step 7. Own ground is exempt without a clause, because the class rule
+answers `home` for it.
+
+**Until migration 014 lands** (lane 2's `escrow_projection`), `escrowPresenceAt`
+answers null, every commons claim is reported UNCHECKED on the crossing and on the
+window's `receipts.escrow_presence`, and the nightly read carries the same class.
+Null is never read as zero — that would refuse the whole town on a missing
+migration.
+
+The REVIEW door (`review-rule.mjs`) re-runs the same presence rule at ruling time
+and treats a failure as a **blocker on the run**, which is that file's own
+established shape for a fact that changed while a claim was held.
 
 ### Which branch the ingest lane reads (2026-09-05)
 

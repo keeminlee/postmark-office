@@ -92,6 +92,39 @@ PG_URL="$(w2_url snapshot_reader PG_SNAPSHOT_READER_PASSWORD)" || {
   exit 2
 }
 
+# ── THE CANON-LOCKS READ (postmark#2594) ────────────────────────────────────
+# It rides THIS rail and not the clearing's, and the reason is a measurement.
+# The crossing's settlement pushes its mark files to origin three to four minutes
+# AFTER the candle clears the window — seven consecutive crossings, never once
+# before — so a canon check anywhere near lock time asks a checkout that cannot
+# yet carry the marks the crossing just locked. The lock-time refusal was
+# withdrawn for exactly that (Keemin, 2026-09-08, on the reviewer's timing). At
+# 03:20 UTC the 17:45 push is nine hours old, and that is the whole reason the
+# nightly cadence is the honest one: this rail asks about a world that has
+# finished moving.
+#
+# ITS RED DOES NOT FAIL THIS UNIT. The notary's job is the certification; this
+# read's finding is about the register, and the alarm is the roll-call's outcome
+# rule on this row. Failing the notary on it would put a red on the wrong rail
+# and could stop a certification over a disagreement nobody is mid-writing.
+#
+# A LINE IS APPENDED ON EVERY RUN, clean or not: "ran and found nothing" and "did
+# not run" must not look alike, which is the whole of what #2594 is about and the
+# only reason the roll-call can judge this at all.
+CANON_HISTORY="${W2_CANON_HISTORY:-$WORLD2_STATE_DIR/canon-locks.jsonl}"
+WORLD_CLONE_DIR="$WORLD2_LAB/ingest-clones/world"
+if "$HERE/world2-refresh-clone.sh" world >/tmp/w2-notary-world.log 2>&1; then
+  mkdir -p "$(dirname "$CANON_HISTORY")"
+  canon_out="$(cd "$WORLD2_OFFICE" && WORLD2_PG_URL="$PG_URL" \
+    node world2/tools/falsifier-canon-locks.mjs --world-repo "$WORLD_CLONE_DIR" --history "$CANON_HISTORY" 2>&1)"
+  canon_rc=$?
+  echo "$canon_out"
+  [ "$canon_rc" -eq 2 ] && echo "[world2-notary] the canon-locks read could NOT RUN (exit 2) — no line was appended, so the roll-call will read this row as unjudged" >&2
+else
+  echo "[world2-notary] world checkout refresh failed — the canon-locks read did not run; the roll-call will say so" >&2
+  cat /tmp/w2-notary-world.log >&2
+fi
+
 out="$(cd "$WORLD2_OFFICE" && WORLD2_PG_URL="$PG_URL" \
   node world2/tools/snapshot-export.mjs --target "$TARGET" --json 2>&1)"
 rc=$?                            # captured before the echo, before anything pipes

@@ -85,7 +85,8 @@
 
 import { resolve } from "node:path";
 import { appendFileSync } from "node:fs";
-import { canonRegisterAt } from "./canon-register.mjs";
+import { canonRegisterAt, canonAbsentCheck } from "./canon-register.mjs";
+import { causeOf } from "../../src/mark-receipt.mjs";
 // THE JUDGEMENT LIVES NEXT DOOR, and it lives there because THIS file is a
 // script: it exits at the top on a missing argument, so anything that imported it
 // to test the judgement would be killed by it. `canon-locks.mjs` is the pure half
@@ -137,9 +138,17 @@ try {
     register_records: register.count,
     standing_marks: rows.length,
     compared,
+    // EACH FINDING CARRIES THE WORD A RESIDENT WOULD BE TOLD. The lock-time
+    // refusal was withdrawn, so nothing writes `canon-absent` onto a claim any
+    // more — and without this the bulletin's sixth word would have no reader on
+    // the only path that still produces the class. The check string is composed
+    // here and run through `causeOf`, the same map the door uses, so the read and
+    // the door cannot drift about what this class is called.
     absent: absent.map((r) => ({
       slug: r.slug, claim_id: r.claim_id, claim_status: r.claim_status, window: r.window_id,
       locked_window: r.locked_window, claimant: r.claimant, decided_at: r.decided_at,
+      check: canonAbsentCheck(r.slug, register.sha),
+      cause: causeOf(canonAbsentCheck(r.slug, register.sha)).cause,
     })),
     unmaterialized: unmaterialized.map((r) => ({ slug: r.slug, claim_id: r.claim_id, window: r.window_id })),
     escrow_checked, escrow_compared,
@@ -186,7 +195,7 @@ else {
     console.log(`  ✗ ESCROW-ABSENT · ${u.slug} stands as ${u.tier} (commons), locked at window ${u.locked_window}, with nothing staked on it at that window's town ${String(u.town_sha).slice(0, 8)}`);
   for (const a of out.absent)
     console.log(`  ✗ CANON-ABSENT · ${a.slug} stands in the register, locked at window ${a.locked_window ?? a.window ?? "?"} ` +
-      `(claim ${a.claim_id ? a.claim_id.slice(0, 8) : "none"}${a.claimant ? `, ${a.claimant}` : ""}), and canon carries no file for it at ${out.canon_sha.slice(0, 8)}`);
+      `(claim ${a.claim_id ? a.claim_id.slice(0, 8) : "none"}${a.claimant ? `, ${a.claimant}` : ""}), and canon carries no file for it at ${out.canon_sha.slice(0, 8)} — a resident reading this mark is told "${a.cause}"`);
   const n = out.absent.length + out.unmaterialized.length + out.escrow_unbacked.length;
   console.log(n
     ? `\nRED · ${n} row(s) the world does not carry or does not back`
