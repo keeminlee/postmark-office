@@ -1104,7 +1104,8 @@ const LIST_ROW = Object.freeze({
     alarm_on_nonempty: ["canon_absent", "unmaterialized"],
     unsettled_runs: 0,
     why: "why",
-    means: "MEANS.",
+    means: "SHARED-MEANS.",
+    list_means: "LIST-MEANS.",
   },
 });
 const logOf = (...lines) => ({ files: { "/state/canon-locks.jsonl": { exists: true, text: lines.map((l) => JSON.stringify(l)).join("\n") + "\n" } } });
@@ -1114,7 +1115,9 @@ test("a non-empty canon_absent list alarms, and the alarm names the slug", () =>
     { at: "2026-09-08T17:46:00Z", canon_absent: ["lupi/the-drift-room"], unmaterialized: [] }));
   assert.ok(said, "a locked claim canon has no file for must not read green");
   assert.match(said, /lupi\/the-drift-room/);
-  assert.match(said, /MEANS\./);
+  assert.match(said, /LIST-MEANS\./);
+  assert.doesNotMatch(said, /SHARED-MEANS\./,
+    "the shared means ends with an install-day excuse, and a line naming a slug is never install-day noise");
 });
 
 test("an empty list is silent — most crossings are, and a board that cries every morning is not read", () => {
@@ -1137,6 +1140,7 @@ test("a latest line carrying none of the named fields is itself the alarm, not s
   const said = judgeOutcome(LIST_ROW, logOf({ at: "c", status: "ok" }));
   assert.ok(said);
   assert.match(said, /carries none of them/);
+  assert.match(said, /LIST-MEANS\./);
 });
 
 test("the shipped manifest's clearing row declares the list alarm, and an empty declaration is refused", () => {

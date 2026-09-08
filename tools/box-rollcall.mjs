@@ -194,6 +194,10 @@ export function loadManifest(path = DEFAULT_MANIFEST) {
       const l = row.outcome.alarm_on_nonempty;
       if (!Array.isArray(l) || !l.length || l.some((f) => typeof f !== "string" || !f))
         throw new Error(`${row.unit} declares alarm_on_nonempty that names no field — a list-alarm watching nothing reads green forever`);
+      // Its own sentence, always — never the shared one, whose install-day note
+      // would excuse a finding that is never install-day noise.
+      if (!row.outcome.list_means)
+        throw new Error(`${row.unit} declares alarm_on_nonempty with no list_means — it would print the shared means, whose install-day excuse is false of a named slug`);
     }
   }
   return m;
@@ -837,21 +841,31 @@ export function judgeOutcome(row, snapshot) {
   // discipline is right for a field a rail grew into; it is wrong here, because
   // "silent when the field is absent" means a writer that stops emitting the list
   // turns its own alarm off. The judge says so instead.
+  // IT CARRIES ITS OWN `means`, FOR THE REASON `retire_means` DOES ONE RULE UP
+  // AND FOR A SHARPER ONE. The shared `spec.means` ends with an INSTALL-DAY NOTE
+  // — "this row is EXPECTED to read ALARM-outcome until the first crossing after
+  // deploy appends to the log, and it clears itself then" — which is true of the
+  // empty-log case above and FALSE here: a line naming a slug is never install-day
+  // noise. Appending it would hand the operator a ready-made excuse for the one
+  // alarm that has no excuse, which is how a real finding gets skimmed past. I
+  // wrote it the other way first and the end-to-end run on the box showed the
+  // excuse attached to `lupi/the-drift-room`; this is that repair.
   const lists = Array.isArray(spec.alarm_on_nonempty) ? spec.alarm_on_nonempty : [];
   if (lists.length) {
+    const mine = spec.list_means ? ` ${spec.list_means}` : "";
     const present = lists.filter((f) => Object.prototype.hasOwnProperty.call(latest, f));
     if (!present.length) {
       return `declares an alarm on ${lists.join(", ")} and its latest line at ${latest.at ?? "?"} carries none of them — ` +
-        `the instrument and this judge disagree about the shape, so nothing is being judged.${means}`;
+        `the instrument and this judge disagree about the shape, so nothing is being judged.${mine}`;
     }
     const found = present
       .map((f) => ({ field: f, items: Array.isArray(latest[f]) ? latest[f] : [] }))
       .filter((r) => r.items.length);
     if (found.length) {
+      const n = found.reduce((t, r) => t + r.items.length, 0);
       return `last read at ${latest.at ?? "?"} found ${found.map((r) => `${r.items.length} ${r.field}`).join(" and ")} — ` +
         `${found.map((r) => r.items.join(", ")).join(" · ")}. ` +
-        `The store and canon disagree about ${found.reduce((n, r) => n + r.items.length, 0) === 1 ? "a mark" : "marks"} ` +
-        `that ${found.reduce((n, r) => n + r.items.length, 0) === 1 ? "stands" : "stand"} in the register today.${means}`;
+        `The store and canon disagree about ${n === 1 ? "a mark that stands" : "marks that stand"} in the register today.${mine}`;
     }
   }
 

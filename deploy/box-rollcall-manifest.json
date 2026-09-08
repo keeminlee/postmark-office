@@ -54,6 +54,13 @@
   "                        how many consecutive empty runs is starvation. Every threshold is",
   "                        DATA here rather than a constant in the checker, because a baseline",
   "                        compiled into code is a number nobody can review beside its reason",
+  "  outcome.alarm_on_nonempty  the fields in the latest log line that must be EMPTY lists, with",
+  "                        list_means as that alarm's own sentence. Judged on the LATEST line only",
+  "                        — a non-empty list is a fact about the store right now, not a trend —",
+  "                        and a latest line carrying none of the named fields is ITSELF the alarm,",
+  "                        so a writer that stops emitting the list cannot switch its own alarm off.",
+  "                        list_means is REQUIRED and separate because the shared means ends with an",
+  "                        install-day excuse, which is false of a line naming a slug",
   "",
   "SEE ALSO the custody[] block at the foot of this file: every row above asks whether a",
   "mechanism RAN; those ask whether it still CAN."
@@ -274,7 +281,8 @@
     "alarm_on_nonempty": ["canon_absent", "unmaterialized"],
     "unsettled_runs": 0,
     "why": "postmark#2594, ruled by Keemin 2026-09-08 at the G1 sitting. The store locked claims at named candle windows for three marks canon never carried (darko/the-second-foundation-stone at 154, wright/final-unstaked at 155, little-bird/the-second-spoon-verdict at 161). They disagreed with canon from the moment of locking and stood for three weeks, and the reason nobody caught them is not that anything was quiet — it is that NOTHING WAS LOOKING. The candle now refuses a fourth at the lock step (clearing-job.mjs step 5.5); world2/tools/falsifier-canon-locks.mjs is the standing read that lists any that slipped anyway, and this row is what makes its answer arrive somewhere a person already looks. unsettled_runs is 0 ON PURPOSE and is not an oversight: this log's lines carry no `status`, so the sibling refusal-that-keeps-returning rule could never fire on it, and declaring a threshold that cannot fire is a rule that reads green forever. The judgement here is on the LATEST line only, because a non-empty list is a fact about the store's state right now rather than a trend across crossings.",
-    "means": "A locked claim stands in the register for a mark the world carries no file for, which is the class #2594 names. The fix is never to delete the claim (it is the historical fact that the mark WAS ruled in at that window) — it is to decide which door the mark left canon by and record that: a settlement unpublish retires through the retire path, a never-materialized mark retires by hand with a data.note, per review-g1-retire.md probe 4. INSTALL-DAY NOTE: this row is EXPECTED to read ALARM-outcome until the first crossing after deploy appends to the log, and it clears itself then."
+    "means": "The canon-locks read is not writing its log. INSTALL-DAY NOTE: this row is EXPECTED to read ALARM-outcome until the first crossing after deploy appends to /srv/world2-lab/state/canon-locks.jsonl, and it clears itself then.",
+    "list_means": "A mark stands in the register that the world carries no file for, which is the class #2594 names. The fix is never to delete the locking claim (it is the historical fact that the mark WAS ruled in at that window) — it is to decide which door the mark left canon by and record that: a settlement unpublish retires through the retire path, a never-materialized mark retires by hand with a data.note, per review-g1-retire.md probe 4. THIS ALARM HAS NO INSTALL DAY: a line naming a slug is never deploy noise."
    }
   },
   {
