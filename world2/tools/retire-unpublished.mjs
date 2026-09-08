@@ -98,8 +98,8 @@ const has = (n) => process.argv.includes(n);
  * ── THE IDENTITY MAPPING, PROVEN RATHER THAN ASSUMED ───────────────────────
  *
  * This is the one line the whole step hangs on: `unpublished[].id` must be
- * `marks.slug` or the step silently retires nothing, which is the quietest
- * possible failure. It is checked against the register both ends:
+ * `marks.slug`, or nothing is retired. It is checked against the register both
+ * ends:
  *
  *   · the sweep builds `unpublished` from `registry.published`'s KEYS
  *     (settlement-sweep.mjs:1174-1183), and those keys read
@@ -119,8 +119,32 @@ const has = (n) => process.argv.includes(n);
  * produce an identity the register has never held.
  *
  * And `marks.id` is NOT this: 001_tables.sql:101 makes it a uuid, "= the
- * locking claim's id". Matching on the wrong column here would be a no-op
- * UPDATE reporting a clean crossing.
+ * locking claim's id".
+ *
+ * ── WHAT A WRONG IDENTITY ACTUALLY DOES, CORRECTED ─────────────────────────
+ *
+ * This paragraph used to warn that a wrong identity fails SILENTLY — "the
+ * quietest possible failure", and matching on `marks.id` "a no-op UPDATE
+ * reporting a clean crossing". A reviewer ran both against the store on
+ * 2026-09-08 and neither is true, so both are struck. Recording what the store
+ * really does, because a warning about a hazard the design already closes is
+ * worse than no warning: it teaches the next reader to fear the wrong thing,
+ * and it implies a guard is missing when it is present.
+ *
+ *   A WRONG-BUT-VALID SLUG → `absent`, and the receipt CARRIES IT BY NAME.
+ *   `retireMarks` distinguishes its two zeroes on purpose, and
+ *   settlement-receipt.mjs prints the `absent` list in full rather than as a
+ *   count, precisely so an operator sees which slugs the register did not hold.
+ *   `test/retire-marks.test.mjs`'s fifth test is the proof, and the keeper's
+ *   own step-2 sentence makes a non-empty `absent` a finding. Not silent.
+ *
+ *   MATCHING ON `marks.id` → Postgres raises `invalid input syntax for type
+ *   uuid` on the first row. The transaction ROLLS BACK whole and `main()`
+ *   exits 1 with the message. That is the LOUDEST failure in this file, not a
+ *   quiet one.
+ *
+ * The mapping still deserves the care above; what it does not deserve is a
+ * scary story about a failure mode that cannot happen here.
  */
 export function slugsFromSweep(sweep) {
   const rows = Array.isArray(sweep?.unpublished) ? sweep.unpublished : [];
