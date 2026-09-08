@@ -720,9 +720,16 @@ test("send_letter FOLDS UNDER household — your pen lives where your standing d
   const names = TOOLS.map((t) => t.name);
   assert.ok(names.includes("send_letter"),
     "the DEFINITION stands — a delist is listing-only, and a cached client still calls this name");
+  // NOTE (G2 · P-033): the ledger below counts `TOOLS`, the DEFINITIONS — and it
+  // always did. The phrase "the flag-off listing" appears in the lines that follow
+  // because until today there WAS a listing that carried every definition, the one
+  // `WORLD_APEX` unset produced. That gate is deleted; the delist is unconditional;
+  // no listing carries these names any more. The count is unaffected, because a
+  // definition is not a listing — which is the distinction the delist rests on.
+  //
   // 43 → 45: read_bounties + read_blueprints (the lane reads, 2026-08-30) —
   // born delisted behind the town apex, but the DEFINITIONS stand flat like
-  // every delisted verb's, so the flag-off listing carries them.
+  // every delisted verb's.
   // 45 → 46: town_post (the lanes' pen, 2026-08-30 evening) — town
   // { do: "post" }'s charge name, born delisted the same way.
   // 46 → 49: town_stake + town_unstake + town_stake_read (the stake gesture,
@@ -732,10 +739,11 @@ test("send_letter FOLDS UNDER household — your pen lives where your standing d
   // 50 → 51: read_marks (what a resident has MADE, 2026-09-07, lane E item 2) —
   // town { read: "marks" }, born delisted behind the town apex the same way,
   // definition standing flat. Third of the three hand-kept counts that guard the
-  // same thing from three angles (server.test.mjs's flag-off listing and
-  // town-apex.test.mjs's TOWN_READABLE are the other two); all three moved
-  // together, which is the ledger being paid rather than a count being nudged.
-  assert.equal(names.length, 51, "no tool was added or removed beyond the paid ledger; the flag-off listing is untouched");
+  // same thing from three angles (server.test.mjs's definition ledger — which was
+  // its flag-off listing until P-033 — and town-apex.test.mjs's TOWN_READABLE are
+  // the other two); all three moved together, which is the ledger being paid rather
+  // than a count being nudged.
+  assert.equal(names.length, 51, "no tool was added or removed beyond the paid ledger; the DEFINITIONS are untouched");
 
   assert.ok(HOUSEHOLD_DISPATCHABLE.includes("send"), "household do: \"send\" is the letter's apex verb");
   assert.equal(householdDispatchToolFor("send"), "send_letter",

@@ -112,13 +112,31 @@ test("MCP: partial trio bounces (not an unknown-argument error — the schema ac
   assert.doesNotMatch(r.defect, /unknown argument/);
 });
 
-test("MCP: tools/list advertises the stake trio on send_letter", async () => {
-  const res = await fetch(`${BASE}/mcp`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${KEY}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcId, method: "tools/list", params: {} }),
-  });
-  const tools = (await res.json()).result.tools;
-  const props = tools.find((t) => t.name === "send_letter").inputSchema.properties;
+// This asked `tools/list` for `send_letter`'s schema until G2 (P-033) deleted the
+// `WORLD_APEX` gate. The delist is unconditional now, so the flat name is on no
+// listing at any office and `tools.find(…)` returned undefined — the test failed by
+// TypeError, which is a test of a listing that no longer exists rather than of the
+// thing it was guarding.
+//
+// TWO CLAIMS WERE RIDING IN ONE ASSERTION AND BOTH SURVIVE, SEPARATELY:
+//   · the DEFINITION carries the trio — asserted against `TOOLS`, where a flat
+//     definition lives (`town-mail.test.mjs` reads it the same way, for the same
+//     reason: "a delist is listing-only, and a cached client still calls this name");
+//   · the DOOR still takes the trio — asserted by CALLING it, which is stronger than
+//     reading a schema back and is the half a resident actually meets.
+// Where a client DISCOVERS it now is the `household` apex: `do: "send"` dispatches to
+// send_letter, and that mapping has its own test in town-mail.test.mjs.
+test("the stake trio stands on send_letter — in the definition, and at the door", async () => {
+  const { TOOLS } = await import("../src/mcp.mjs");
+  const def = TOOLS.find((t) => t.name === "send_letter");
+  assert.ok(def, "the flat definition stands — a delist is listing-only, never an unplug");
+  const props = def.inputSchema.properties;
   for (const k of ["stake_topic", "stake_candidate", "stake_stamps"]) assert.ok(props[k], `missing ${k}`);
+
+  // And the door: the same three fields, accepted and acted on, not merely declared.
+  const r = await rpc("send_letter", {
+    ...base, title: "the trio at the door",
+    stake_topic: "the-name", stake_candidate: "Waystation", stake_stamps: 1,
+  });
+  assert.ok(!r.error, `the door refused the trio it declares: ${JSON.stringify(r)}`);
 });
