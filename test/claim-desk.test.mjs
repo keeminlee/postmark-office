@@ -21,7 +21,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { createHash, randomBytes } from "node:crypto";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
@@ -45,6 +45,8 @@ const HANDLE = "wright";
 const HANDLE2 = "wright-second";
 const HANDLE3 = "wright-quarantined";
 const HANDLE4 = "wright-fourth";   // untouched until the budget test, which needs one clean mint
+const HANDLE5 = "wright-fifth";    // its own account, so quarantining it disturbs nobody else
+const FIFTH = { id: 5555, login: "fifth-keeper" };
 const OWNER = { id: 999, login: "keeminlee" };
 const STRANGER = { id: 4242, login: "someone-else" };
 
@@ -55,6 +57,7 @@ let child, tmp, ghServer;
 // two: asking twice would rotate the first key away, and the rotation test is
 // about what a resident already holds rather than about the desk.
 const CLAIM_KEY = { value: null };
+const CLONE = { path: null };   // the ledger is re-read from disk per request, so a test can move it
 
 before(async () => {
   tmp = mkdtempSync(join(tmpdir(), "postmark-office-claim-"));
@@ -63,6 +66,10 @@ before(async () => {
   seed.prepare("INSERT INTO residents VALUES (?, ?)").run(HANDLE2, JSON.stringify({
     handle: HANDLE2, is_office: false, last_active: null,
     address: { data: { since: "2026-08-01", joined: "2026-08-01", github: OWNER.login }, body: `# ${HANDLE2}` },
+  }));
+  seed.prepare("INSERT INTO residents VALUES (?, ?)").run(HANDLE5, JSON.stringify({
+    handle: HANDLE5, is_office: false, last_active: null,
+    address: { data: { since: "2026-08-01", github: FIFTH.login }, body: `# ${HANDLE5}` },
   }));
   seed.prepare("INSERT INTO residents VALUES (?, ?)").run(HANDLE4, JSON.stringify({
     handle: HANDLE4, is_office: false, last_active: null,
@@ -80,6 +87,7 @@ before(async () => {
   }));
   seed.close();
   const clone = join(tmp, "town-clone");
+  CLONE.path = clone;
   mkdirSync(join(clone, "tools"), { recursive: true });
   // A THIRD RESIDENT, QUARANTINED. The desk is keyless and so runs before the
   // credentialed standing gate; this is the fixture that proves it applies the
@@ -91,6 +99,7 @@ before(async () => {
   writeFileSync(join(clone, "tools", "github-ids.json"), JSON.stringify({
     [HANDLE]: { login: OWNER.login, id: OWNER.id, pinned: "2026-07-05" },
     [HANDLE2]: { login: OWNER.login, id: OWNER.id, pinned: "2026-08-01" },
+    [HANDLE5]: { login: FIFTH.login, id: FIFTH.id, pinned: "2026-08-01" },
   }));
 
   ghServer = createServer((req, res) => {
@@ -324,4 +333,41 @@ test("THE MINT CAP COUNTS KEYS, NOT KNOCKS: refusals do not spend a resident's h
   const good = await ask(HANDLE4);
   assert.equal(good.status, 201, "a real ask still lands after six refusals");
   assert.match((await good.json()).key, /^pmc_/);
+});
+
+test("A CLAIM KEY IS NOT A WAY ROUND THE LEDGER: quarantine a resident and their own key stops writing", async () => {
+  // The report and the commit both claim this from READING standingBounce —
+  // that it takes key.handles and is credential-shape blind, so a claim key is
+  // suspended exactly like any other. Verifying a claim and watching it are two
+  // acts and only the second is a test, so: watch it.
+  const asked = await ask(HANDLE5);
+  assert.equal(asked.status, 201);
+  const key = (await asked.json()).key;
+  assert.equal((await cosign(HANDLE5, FIFTH)).status, 200);
+  assert.equal((await me(key)).status, 200, "live before the ledger moves");
+
+  const ledger = join(CLONE.path, "tools", "standing-ledger.md");
+  const before = readFileSync(ledger, "utf8");
+  try {
+    // The ledger is read from disk on every request, so the town can suspend
+    // someone mid-session and the doors know at the next call.
+    writeFileSync(ledger, `${before}- 2026-09-08 · quarantine · ${HANDLE5} · by: registrar · reason: a question raised after the key was issued
+`);
+
+    // reads are untouched — the ledger's own law: "a suspension the resident
+    // cannot read is a deletion the town will not admit to"
+    assert.equal((await fetch(`${BASE}/town`, { headers: { authorization: `Bearer ${key}` } })).status, 200,
+      "a quarantined resident can still read the whole town");
+
+    // and the write door this lane cares about most: minting again
+    const rotate = await fetch(`${BASE}/keys`, { method: "POST", headers: { authorization: `Bearer ${key}` } });
+    assert.equal(rotate.status, 403, "a suspended resident cannot rotate into a fresh key either");
+    assert.match((await rotate.json()).defect, /quarantined/i);
+  } finally {
+    writeFileSync(ledger, before);
+  }
+
+  // lifted by putting the ledger back: the gate is derived, never cached
+  assert.equal((await fetch(`${BASE}/keys`, { method: "POST", headers: { authorization: `Bearer ${key}` } })).status, 201,
+    "and the moment the ledger says otherwise, the door opens again");
 });
