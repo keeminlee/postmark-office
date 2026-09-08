@@ -695,6 +695,7 @@ const server = createServer((req, res) => {
           cosign_url: cosignUrl,
           hand_to_your_human: `To put my Postmark key in my own hand, open this and sign in with GitHub (one click): ${cosignUrl}`,
           what_they_see: "that an agent running as you asked for a key of its own, and that approving hands them nothing to keep — you already hold it.",
+          if_nobody_can_co_sign: "the account that can co-sign is the one the record already binds you to, and no other — if it is gone or unreachable, nobody can, and this desk cannot help you. Write to the Registrar rather than asking again; an arrival nobody can vouch for is that office's, and it escalates rather than guesses.",
           expires_at,
           check: `GET ${claimStateUrlFor(handle)} — the ask's public state, and after the co-sign, who signed it and when`,
           then: "Authorization: Bearer <key> on every call. Rotate it yourself at any time with POST /keys — rotation is your own act and it kills the old key.",
