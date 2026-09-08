@@ -540,6 +540,110 @@ test("F8e · the guard runs inside storeWriteDown, before the clone is touched",
   );
 });
 
+// ── F9 · A MARK THE WALL CANNOT BIND IS HELD OUT, NOT WRITTEN ────────────────
+//
+// The ruling, revised on measurement. The first version filtered on `by:
+// the-town` and was withdrawn: `by: the-town` is coextensive with household
+// `solo:the-town` — 378 of 1,031 rows — so it would have frozen 37% of the town,
+// the boarding and door marks among them, to protect six law nodes.
+//
+// The recorded defect was never "law is in the store". It was that the
+// write-down OPENED A SKETCHBOOK for `the-town`, which is not a household the
+// sweep's authorship wall can bind. A branch the wall cannot bind is a branch
+// whose marks publish unverified, and the sweep leaves such a branch ALONE
+// rather than refusing it — so not opening one is the only place this can be
+// stopped.
+
+test("F9a · a docket mark whose household the wall cannot bind opens NO sketchbook", () => {
+  const w = makeWorld("unbound");
+  w.git("update-index", "--add", "--cacheinfo",
+    `100644,${execFileSync("git", ["-C", w.repo, "hash-object", "-w", "--stdin"],
+      { input: JSON.stringify(REGISTRY), encoding: "utf8" }).trim()},WORLD/households.json`);
+  const tree = w.git("write-tree").trim();
+  const commit = execFileSync("git", ["-C", w.repo, "commit-tree", tree, "-p", w.git("rev-parse", "main").trim(), "-m", "registry"],
+    { encoding: "utf8", env: { ...process.env, ...SEED_ENV } }).trim();
+  w.git("update-ref", "refs/heads/main", commit);
+
+  const report = storeWriteDown({
+    repo: w.repo,
+    at: Date.parse(AT_ISO),
+    input: foldInput([
+      // A resident whose login the registry binds.
+      storeMark({ slug: "alpha/a-home", household: "gh:293432145", path: "WORLD/marks/alpha/a-home/mark.md" }),
+      // The town's own law node, arriving in the docket exactly as it does live.
+      storeMark({ slug: "the-town/co-sign-guard", by: "the-town", household: "solo:the-town",
+        path: "WORLD/marks/the-town/co-sign-guard/mark.md", founder_commit: "abc1234" }),
+    ]),
+  });
+
+  const branches = w.git("for-each-ref", "--format=%(refname:short)", "refs/heads/draft/").trim().split("\n").filter(Boolean);
+  assert.deepEqual(branches, ["draft/aionsolare"],
+    `only the bindable household gets a sketchbook; got ${JSON.stringify(branches)}`);
+  assert.equal(
+    w.git("for-each-ref", "--format=%(refname)", "refs/heads/draft/the-town").trim(), "",
+    "and draft/the-town is never created — a branch the wall cannot bind is a branch whose marks publish unverified");
+
+  assert.equal(report.held_unbound_count, 1);
+  assert.deepEqual(report.held_unbound, [{
+    id: "the-town/co-sign-guard",
+    household_key: "solo:the-town",
+    sketchbook: "the-town",
+    crossing_output: "unbound-household",
+    founder_commit: "abc1234",
+  }], "held out, NAMED in full, with founder_commit reported beside it");
+
+  // The wall's unbound list is NOT asserted empty here, and that is the finding:
+  // `gh:293432145` binds, so this fixture happens to have none — but on the live
+  // registry 32 of 84 households are unbindable and holding them ALL out would
+  // hold out `amia-semper` and `alta-of-garrison`, the two marks S63 published.
+  // The list stays on the receipt so the conductor can rule the wider question
+  // with the number in front of him.
+  assert.ok(Array.isArray(report.wall.unbound), "the wider set is still reported, not resolved here");
+});
+
+test("F9c · a SOLO RESIDENT the wall cannot bind is still WRITTEN — the ruling's stated test would have held them out", () => {
+  // THE MEASUREMENT THAT FORCED THIS. `WORLD/households.json` at S63 knows only
+  // the 73 `gh:` keys: every `solo:` household is absent from both `households`
+  // and `logins`. So "a household the wall cannot bind" is true of
+  // `solo:the-town` AND of `solo:amia-semper`, `solo:alta-of-garrison`,
+  // `solo:berthillon`, `solo:neth` alike — 32 households, 484 marks. At window
+  // 177's docket that rule holds out the two marks S63 actually published, and
+  // the crossing publishes zero.
+  //
+  // This test is the guard against implementing the stated rule literally.
+  const w = makeWorld("solo-resident");
+  const report = storeWriteDown({
+    repo: w.repo,
+    at: Date.parse(AT_ISO),
+    input: foldInput([
+      storeMark({ slug: "amia-semper/the-stone-cottage-creek", by: "amia-semper", household: "solo:amia-semper",
+        path: "WORLD/marks/amia-semper/the-stone-cottage-creek/mark.md" }),
+    ]),
+  });
+  assert.equal(report.held_unbound_count, 0, "a solo RESIDENT is not the town and is not held out");
+  assert.equal(report.written, 1);
+  assert.deepEqual(
+    w.git("for-each-ref", "--format=%(refname:short)", "refs/heads/draft/").trim().split(/\r?\n/).filter(Boolean),
+    ["draft/amia-semper"],
+    "their sketchbook is opened under the name the git era already uses — draft/amia-semper is on origin today",
+  );
+});
+
+test("F9b · founder_commit is REPORTED, never used as the filter", () => {
+  // The control for F9a's shape. `founder_commit` is on 142 rows and covers all
+  // five of the-town's docket marks, so filtering on it would look like it
+  // works — and would give the crossing two answers to "is this mine" that can
+  // disagree. A resident mark carrying one is written like any other.
+  const w = makeWorld("founder");
+  const report = storeWriteDown({
+    repo: w.repo,
+    at: Date.parse(AT_ISO),
+    input: foldInput([storeMark({ slug: "alpha/a-home", household: "alpha", founder_commit: "deadbee" })]),
+  });
+  assert.equal(report.held_unbound_count, 0, "a bindable household is written even carrying founder_commit");
+  assert.equal(report.written, 1);
+});
+
 // ── F5 · THE PLAN IS PURE ────────────────────────────────────────────────────
 
 test("F5 · planStoreWriteDown buckets by household and sorts, with no git and no clock", () => {

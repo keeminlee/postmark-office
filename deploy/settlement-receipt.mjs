@@ -193,6 +193,13 @@ const receipt = {
         // unverified, and produce a receipt that looked exactly like a clean
         // crossing. `bound` falling is the only thing that shows it.
         wall: store.wall ?? null,
+        // MARKS IN THE DOCKET THE WALL COULD NOT BIND, held out of the fold
+        // rather than written into a sketchbook nobody can verify. Named in full,
+        // not counted: the keeper is the one who can tell a law node from a
+        // household whose registry row is simply missing, and a count would make
+        // those two look the same.
+        held_unbound: store.held_unbound ?? null,
+        held_unbound_count: store.held_unbound_count ?? null,
         // WHERE THE ESCROW INGEST STANDS. `behind: 0` is the ordinary case; a
         // number that climbs across crossings is an ingest that has stopped
         // running, which is otherwise indistinguishable from a quiet town.

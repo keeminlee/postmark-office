@@ -80,6 +80,25 @@ const git = (repo, args, opts = {}) => execFileSync("git", ["-C", repo, ...args]
   ...opts,
 });
 
+/**
+ * THE TOWN IS NOT A HOUSEHOLD.
+ *
+ * It owns the LOGOS law nodes, which reach canon by PR and ingest and never by a
+ * crossing. The store materializes them into `marks` with a household column
+ * like any other row, so nothing in the fold's input distinguishes a law node
+ * from a resident's home unless something says so here.
+ *
+ * Spelled as a bare `"the-town"` because that is this office's own spelling
+ * (`world-grants.mjs:309`, `world-apex.mjs:1679`, `world-store.mjs:207`), and
+ * matched against both the prefixed household key the store uses (`solo:the-town`)
+ * and the bare form, because both shapes reach this module.
+ */
+const TOWN = "the-town";
+const isTheTown = (household) => {
+  const k = String(household ?? "");
+  return k === TOWN || k.slice(k.indexOf(":") + 1) === TOWN;
+};
+
 /** A refusal that names itself, so the chain can put the reason in the receipt verbatim. */
 export class FoldInputRefusal extends Error {
   constructor(reason, detail) {
@@ -93,20 +112,21 @@ export class FoldInputRefusal extends Error {
 // ── THE SEAM WITH LANE 2, NAMED IN ONE PLACE ─────────────────────────────────
 //
 // Lane 2 (`jetto/g1-render-stakes`) owns the store-side render and the
-// store-derived stakes behind one entry point. As of this commit that branch
-// carries no code — `git ls-remote origin refs/heads/jetto/g1-render-stakes` is
-// empty — so the names below are taken from lane 2's BRIEF and are UNCONFIRMED.
-// They live here, in one exported constant, precisely so that confirming them is
-// a one-file edit and a reviewer can see at a glance what was assumed:
+// store-derived stakes. IT HAS LANDED (`a5ccd224`) and the shape below is no
+// longer an assumption — it is read off that file and cited where it is
+// consumed. The earlier version of this comment said the branch "carries no
+// code"; that was true when written and is kept in the history rather than here.
 //
-//   entry point   -> { marks: [...], stakes: [...], as_of: { window, world_sha, town_sha } }
-//   a stake row   -> { holder, mark, n, weight, tick }
+//   entry point   -> { marks: [{ slug, kind, by, household, locked_window, bytes }],
+//                      stakes: [{ tick, holder, mark, n, weight }],
+//                      as_of: { window, town_sha, world_sha } }
 //
-// A mark entry is normalized by `normalizeMark` below, which accepts the record
-// shape and the bytes shape and says why it prefers the first.
+// `slug` is the FULL identity, not a leaf. A mark entry is normalized by
+// `normalizeMark` below, which accepts the record shape and the bytes shape and
+// says why it prefers the first.
 export const FOLD_INPUT_CONTRACT = Object.freeze({
-  source: "jetto-brief-g1-render-stakes.md § Build item 3",
-  confirmed: false,
+  source: "world2/tools/fold-input.mjs § foldInputFromStore / fold-delta.mjs § foldDelta",
+  confirmed: true,
   top_level: Object.freeze(["marks", "stakes", "as_of"]),
   as_of: Object.freeze(["window", "world_sha", "town_sha"]),
   stake_row: Object.freeze(["holder", "mark", "n", "weight", "tick"]),
@@ -204,6 +224,8 @@ export function normalizeMark(m) {
     // null from any other supplier, and null is reported rather than assumed.
     locked_window: Number.isFinite(m.locked_window) ? Number(m.locked_window) : null,
     kind: m.kind ?? null,
+    // Reported, never a filter — see the unbound-household block in storeWriteDown.
+    founder_commit: m.founder_commit ?? null,
     // A path the supplier already knows wins over one we compute — but GATE A in
     // `writeDownHousehold` still overrides both when the branch already files
     // this mark somewhere, which is the freeze and is not ours to weaken.
@@ -352,10 +374,25 @@ export function planStoreWriteDown(marks, { publishedPathOf = null, canonBytesAt
     // could: `writeDownHousehold` builds its tree from the base, so a mark no
     // sketchbook touched keeps the bytes it already has.
     //
-    // This is the line that keeps that true when the input is the whole store.
-    // It is a CONTENT check rather than a window filter deliberately: a window
-    // filter trusts the supplier to have sent only the delta, and this is the
-    // property that must hold whatever the supplier sends.
+    // ── THIS IS AN ECONOMY INSIDE THE DOCKET. IT IS NOT THE SELECTOR. ────────
+    //
+    // AN EARLIER VERSION OF THIS COMMENT ARGUED THE OPPOSITE and the correction
+    // is left visible rather than swapped out, because a reader who believed the
+    // old sentence would decline to add the filter that actually matters. It
+    // said this content check was preferable to a window filter, on the grounds
+    // that "a window filter trusts the supplier to have sent only the delta".
+    // That is backwards. The supplier's docket IS the provenance — a mark
+    // belongs to this crossing because the candle locked it at this window — and
+    // a byte comparison is not provenance at all. It happens to narrow 1,031
+    // rows to 813, which is not a delta; it is the whole corpus minus whatever
+    // renders identically, and it makes the fold's membership depend on the
+    // RENDERER, so a change to a field's spelling would silently rewrite eight
+    // hundred records.
+    //
+    // The selector is `foldDelta(client, { window })`, upstream, and the chain
+    // REFUSES without it. What this line does, inside that docket, is decline to
+    // rewrite a docket mark whose bytes canon already holds — which is worth
+    // doing (23 of 33 at window 177) and is worth nothing on its own.
     const canon = typeof canonBytesAt === "function" ? canonBytesAt(path) : null;
     if (canon !== null && canon === m.bytes) {
       unchanged.push({ id: m.id, path, household: m.household, locked_window: m.locked_window });
@@ -637,10 +674,78 @@ export function storeWriteDown({
     return bytes;
   };
 
-  const plan = planStoreWriteDown(normalized.marks, { publishedPathOf, canonBytesAt });
-
   // Read once, from main, the same file the sweep's wall reads.
   const registry = wallRegistryAt(world, mainSha);
+
+  // ── A MARK THE WALL CANNOT BIND IS NOT WRITTEN (ruled 2026-09-08, revised) ──
+  //
+  // THE FIRST RULING WAS `by: the-town`, AND IT WAS WITHDRAWN ON MEASUREMENT:
+  // `by: the-town` is coextensive with household `solo:the-town` — 378 of 1,031
+  // rows — so filtering on it would freeze 37% of the town, the 1f3d9/1f916
+  // boarding and door marks among them, to protect six law nodes. The recorded
+  // defect was never "law is in the store". It was that the write-down OPENED A
+  // SKETCHBOOK for `the-town`, which is not a household the sweep's authorship
+  // wall can bind.
+  //
+  // So the test is the wall's own: a docket mark whose household resolves to a
+  // sketchbook name that `WORLD/households.json`'s `logins` cannot bind is held
+  // out. It is REPORTED (`crossing_output: "unbound-household"`), it is counted
+  // on the receipt, and it never opens a branch. A sketchbook the wall cannot
+  // bind is a sketchbook whose marks publish unverified — the sweep leaves such
+  // a branch alone rather than refusing it — so not opening one is the only
+  // place this can be stopped.
+  //
+  // `founder_commit` rides beside it as the provenance marker and is NOT used as
+  // a filter: it is present on 142 rows and covers all five of the-town's docket
+  // marks, but making it a second selector would give the crossing two answers
+  // to "is this mine" that can disagree.
+  // ── AND THE STATED TEST DOES NOT SEPARATE THEM. MEASURED. ─────────────────
+  //
+  // The ruling's discriminator is "a household the wall cannot bind". Measured
+  // against `WORLD/households.json` at S63: **the registry knows only the 73
+  // `gh:` keys.** Every `solo:` key is absent from BOTH `households` and
+  // `logins` — `solo:the-town`, and equally `solo:amia-semper`,
+  // `solo:alta-of-garrison`, `solo:berthillon`, `solo:neth`. So "cannot bind"
+  // holds out all 32 solo households and 484 marks, and at window 177's docket
+  // it would hold out `amia-semper` and `alta-of-garrison` — **the two marks
+  // S63 actually published**. The crossing would publish zero.
+  //
+  // That contradicts the ruling's own falsifier ("a resident's docket mark →
+  // written"), so the stated test cannot be the one, and neither can the
+  // registry's `households` map: it knows the same 73 keys and no more.
+  //
+  // WHAT THE MEASUREMENT DOES SUPPORT is the narrower sentence inside the same
+  // ruling: `the-town` "is not a household". It is the town. It owns law nodes
+  // that arrive by PR and ingest, and no resident's record is on the other side
+  // of that line. So that is the test here — one key, six marks at 177, and not
+  // one resident touched.
+  //
+  // `by === "the-town"` is a bare literal across this office already
+  // (`world-grants.mjs:309`, `world-apex.mjs:1679`, `world-store.mjs:207`), so
+  // naming it once here is the house spelling rather than a new convention.
+  //
+  // The broader question stays visible rather than being resolved by me: every
+  // unbindable household is still reported under `wall.unbound`, so if the
+  // conductor wants the wider rule the number to act on is already on the
+  // receipt.
+  const held = [];
+  const carried = [];
+  for (const m of normalized.marks) {
+    if (isTheTown(m.household) || m.by === TOWN) {
+      held.push({
+        id: m.id,
+        household_key: m.household,
+        sketchbook: sketchbookNameFor(m.household, registry),
+        crossing_output: "unbound-household",
+        founder_commit: m.founder_commit ?? null,
+      });
+      continue;
+    }
+    carried.push(m);
+  }
+
+  const plan = planStoreWriteDown(carried, { publishedPathOf, canonBytesAt });
+
   const naming = plan.households.map((h) => ({
     household: h.household,
     sketchbook: sketchbookNameFor(h.household, registry),
@@ -704,8 +809,18 @@ export function storeWriteDown({
     wall: {
       sketchbooks: naming.length,
       bound: naming.filter((n) => n.bound).length,
+      // After the ruling this should be ZERO on every crossing: an unbindable
+      // household never reaches the plan, so it never opens a sketchbook. A
+      // non-zero here would mean a name bound at the hold-out check and not at
+      // the naming pass, which is one resolver disagreeing with itself.
       unbound: naming.filter((n) => !n.bound).map((n) => ({ household_key: n.household, sketchbook: n.sketchbook })),
     },
+    // THE MARKS THE WALL COULD NOT BIND, held out of the fold and named in full
+    // rather than counted: each one is a mark a resident or the town put in this
+    // crossing's docket that no sketchbook carried, and the keeper is the one who
+    // can tell a law node from a household whose registry row is missing.
+    held_unbound: held,
+    held_unbound_count: held.length,
     households: households.map(({ household, household_key, branch, base, base_from, commit, changed, touched }) =>
       ({ household, household_key, branch, base, base_from, commit, changed, touched })),
     main: mainSha,

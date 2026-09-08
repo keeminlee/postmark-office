@@ -2,7 +2,13 @@
 // fold-input-cli.mjs — the crossing's one call into the store (G1 lane 3).
 //
 //   node world2/tools/fold-input-cli.mjs --world-sha <sha> --town-clone <path>
-//                                        --town-sha <sha> [--delta-window N]
+//                                        --town-sha <sha> --window <closed-window>
+//
+// `--window` is REQUIRED and it is the just-closed window's id. The usage line
+// above once read `[--delta-window N]` — a flag spelled one way in a comment and
+// parsed nowhere, which the reviewer caught as this lane's own recurring class:
+// a value written that nothing reads. It is now the same word here and in the
+// parser, and its absence refuses.
 //
 //   env: WORLD2_PG=1 and WORLD2_PG_URL — the pair is consumed at
 //        `src/world2-acts.mjs:255` (`env.WORLD2_PG === "1" && !!env.WORLD2_PG_URL`),
@@ -112,43 +118,41 @@ if (isMain) {
   const window = windowArg === null ? null : Number(windowArg);
   if (windowArg !== null && !Number.isFinite(window)) { console.error(`--window must be a number, got "${windowArg}"`); process.exit(2); }
 
+  // BEFORE THE CONNECTION. This needs no store, and a refusal that first opens a
+  // database is a refusal with a second way to fail — on the night the store is
+  // also down, the operator would read the wrong cause.
+  if (window === null) {
+    refuse(
+      "no-docket-window",
+      "no --window was given, so this crossing cannot say which marks are its own. The docket is the selector: a "
+      + "mark belongs to this crossing because the candle LOCKED it at the window being folded, and for no other "
+      + "reason. Folding the standing set instead would offer the fold every row the store holds — measured at "
+      + "956 written and a RED suite — under a receipt that looks like a delta.");
+  }
+
   const { default: pg } = await import("pg");
   const client = new pg.Client({ connectionString: process.env.WORLD2_PG_URL });
   let out;
   let selection;
   try {
     await client.connect();
-    // ── THE PROVENANCE SELECTOR, AND THE HONEST FALLBACK ──────────────────────
+    // ── THE DOCKET IS THE SELECTOR, AND THERE IS NO FALLBACK ─────────────────
     //
-    // RULED 2026-09-08: the write-down writes only the marks lane 2's
-    // `foldDelta(client, { window })` returns for the just-closed window —
-    // provenance is the closed window's locked docket, not "the bytes differ
-    // from the tree". `foldDelta` is lane 2's second pin and may not be on the
-    // pin this box is running.
+    // The previous shape of this block fell back to the standing set with a note
+    // on the receipt, and that was wrong twice over. It was the 956-write
+    // configuration reachable by default, and a note on a receipt is read after
+    // the crossing published, not before. The conductor's ruling is that a fold
+    // with no docket REFUSES and never reaches a sketchbook.
     //
-    // When it is absent the crossing does NOT silently fold the standing set
-    // under a receipt that looks the same. It falls back, and it says so in a
-    // field the receipt carries, because a fold whose selector is "everything
-    // standing" and a fold whose selector is "this window's docket" produce very
-    // different amounts of canon and must never be told apart by reading the
-    // code that happened to be deployed.
-    if (typeof foldInput.foldDelta === "function" && window !== null) {
-      out = await foldInput.foldDelta(client, { window, worldSha });
-      selection = { by: "docket", window, entry: "foldDelta" };
-    } else {
-      out = await foldInput.foldInputFromStore(client, { worldSha });
-      selection = {
-        by: "standing",
-        window,
-        entry: "foldInputFromStore",
-        note: typeof foldInput.foldDelta !== "function"
-          ? "this pin of world2/tools/fold-input.mjs exports no `foldDelta`, so the fold was offered the STANDING SET "
-            + "and not this window's docket. The write-down still refuses to re-materialize a mark whose bytes already "
-            + "equal canon, so nothing unchanged is rewritten — but the selector is not provenance and this crossing "
-            + "is not the swap's shape."
-          : `no --window was given, so the docket could not be named and the standing set was used instead`,
-      };
-    }
+    // `foldDelta` is resolved from lane 2's file first and from this lane's
+    // stand-in second, so the day lane 2 ships its own, that one wins with no
+    // edit here.
+    const delta = typeof foldInput.foldDelta === "function"
+      ? { fn: foldInput.foldDelta, entry: "fold-input.mjs § foldDelta" }
+      : { fn: (await import("./fold-delta.mjs")).foldDelta, entry: "fold-delta.mjs § foldDelta (lane 3's stand-in; lane 2 owns this function)" };
+
+    out = await delta.fn(client, { window, worldSha });
+    selection = { by: "docket", window, entry: delta.entry };
   } catch (e) {
     // Lane 2's refusals are thrown Errors whose messages carry the sha or window
     // they wanted and the sentence for why. They are passed through WHOLE rather

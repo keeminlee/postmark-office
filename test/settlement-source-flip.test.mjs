@@ -70,7 +70,11 @@ let runSeq = 0;
  * that LOG their argv and then exec the real thing. The logging wrapper is what
  * turns "did these two scripts behave the same" into a diff.
  */
-function crossing(label, script, { env = {}, perturb = null, plant = null } = {}) {
+function crossing(label, script, { env = {}, perturb = null, plant = null, reuse = null } = {}) {
+  // `reuse` runs a SECOND crossing in a root a previous one left behind, which is
+  // the only way to test what one crossing leaves for the next. Everything below
+  // is skipped and the existing world, town and stubs are used as they stand.
+  if (reuse) return runCrossing(reuse, script, { env, perturb });
   const root = join(scratch, `${label}-${++runSeq}`);
   const bin = join(root, "bin");
   const origin = join(root, "world.git");
@@ -180,6 +184,19 @@ process.stdout.write(JSON.stringify({
   // a command and always starts from a clean clone, which is exactly why it
   // cannot see the rollback ghost; this hook is the other axis.
   if (plant) plant(root);
+
+  return runCrossing(root, script, { env, perturb });
+}
+
+/** The run itself, factored out so a second crossing can reuse a first one's root. */
+function runCrossing(root, script, { env = {}, perturb = null } = {}) {
+  const sweepClone = join(root, "sweep");
+  const townClone = join(root, "town");
+  const origin = join(root, "world.git");
+  const bin = join(root, "bin");
+  const log = join(root, "commands.log");
+  const harbor = join(root, "harbor");
+  try { rmSync(log, { force: true }); } catch { /* first run */ }
 
   const scriptPath = join(root, "settlement-auto.sh");
   writeFileSync(scriptPath, perturb ? perturb(script) : script);
@@ -444,6 +461,31 @@ test("F-store-cleanup · a store crossing leaves no local draft ref behind, even
   const left = execFileSync("git", ["-C", join(run.root, "sweep"), "for-each-ref", "--format=%(refname)", "refs/heads/draft/"],
     { encoding: "utf8" }).trim();
   assert.equal(left, "", `a refused store crossing must still leave no draft ref; found ${JSON.stringify(left)}`);
+});
+
+test("F-sequence · a REAL store crossing followed by a git crossing leaves zero local-only drafts in the survey", { skip: !SH_OK && "no POSIX sh" }, () => {
+  // THE REVIEWER'S OWN FALSIFIER, run as the sequence rather than as a planted
+  // stand-in. F-ghost plants a synthetic leftover; this one lets a store
+  // crossing actually run in the clone and then asks the next git crossing what
+  // the sweep saw. It is the stronger shape because nothing about the leftover
+  // is invented by the test.
+  const script = readFileSync(join(OFFICE, "deploy", "settlement-auto.sh"), "utf8");
+
+  const store = crossing("seq", script, { env: { SETTLEMENT_SOURCE: "store" } });
+  assert.equal(store.res.status, 1, "the store crossing refuses in the fixture — there is no store to read");
+
+  const git1 = crossing(null, script, { reuse: store.root, env: { SETTLEMENT_SOURCE: "git" } });
+  assert.equal(git1.res.status, 0, `the rollback crossing must complete: ${git1.res.stderr}`);
+
+  const seen = JSON.parse(readFileSync(join(store.root, "sweep-saw.json"), "utf8"));
+  const originDrafts = execFileSync("git", ["-C", join(store.root, "sweep"), "for-each-ref",
+    "--format=%(refname:short)", "refs/remotes/origin/draft/"], { encoding: "utf8" })
+    .split(/\r?\n/).map((l) => l.trim().replace(/^origin\//, "")).filter(Boolean);
+
+  const localOnly = seen.filter((b) => !originDrafts.includes(b));
+  assert.deepEqual(localOnly, [],
+    `no sketchbook without an origin twin may reach the fold on a rollback; the sweep saw ${JSON.stringify(seen)} `
+    + `against origin's ${JSON.stringify(originDrafts)}`);
 });
 
 test("F-mode · an unrecognised SETTLEMENT_SOURCE refuses rather than defaulting", { skip: !SH_OK && "no POSIX sh" }, () => {
