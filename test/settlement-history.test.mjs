@@ -48,9 +48,37 @@ test("THE CONTROL: a decided crossing lands as exactly one line, carrying the fi
   assert.deepEqual(line, {
     at: "2026-08-31T05:45:00Z", status: "published", class: null,
     published: 4, left_drafted: 20, quarantined: 1,
+    // `retired: null` on a receipt with no retire block — the crossing did not
+    // run the step, which is not the same fact as running it and retiring none.
+    // (Added with the G1 retire step; this control asserts the exact field set,
+    // so it is the test that notices when the line's shape moves.)
+    retired: null,
     world_from: "aaaa", world_to: "bbbb",
   });
   assert.deepEqual(readHistory(append("", receipt())), [line]);
+});
+
+// ── the retirement on the rolling line (G1 lane 1) ──────────────────────────
+
+test("the rolling line carries what the store retired, so a week of them is readable", () => {
+  const line = lineFor(receipt({ retired: { ran: true, count: 2 } }));
+  assert.equal(line.retired, 2);
+});
+
+test("a crossing that ran the step and retired nothing reads 0, not null", () => {
+  const line = lineFor(receipt({ retired: { ran: true, count: 0 } }));
+  assert.equal(line.retired, 0, "0 is the receipt that the step RAN");
+});
+
+test("a crossing that never ran the step reads null, and the two zeroes stay apart", () => {
+  // This file's founding lesson, applied to its own new field: a zero meaning
+  // "nothing to retire" and a zero meaning "nobody looked" must not print the
+  // same way, or a store falling behind canon reads as a quiet week.
+  const notRun = lineFor(receipt({ retired: { ran: false, reason: "no store pen" } }));
+  const ranEmpty = lineFor(receipt({ retired: { ran: true, count: 0 } }));
+  assert.equal(notRun.retired, null);
+  assert.equal(ranEmpty.retired, 0);
+  assert.notEqual(notRun.retired, ranEmpty.retired);
 });
 
 // ── §1 a lost race inside the retry is not a decision ───────────────────────
