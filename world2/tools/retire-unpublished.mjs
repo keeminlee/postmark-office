@@ -88,7 +88,7 @@ const has = (n) => process.argv.includes(n);
  *
  * ONLY `unpublished`. The sweep has six other outcome channels and none of them
  * is a retirement: `left_drafted` never published, `withdrawn` is the docket's
- * own lane (world2-claims.mjs:193), `quarantined` and `suite_quarantined` are
+ * own lane (world2-claims.mjs:228), `quarantined` and `suite_quarantined` are
  * held back rather than let go, `dropped` is the-already-standing (a copy that
  * was never a conflict — the ORIGINAL still stands and retiring by that id
  * would retire the survivor), and `rebased` is git mechanics. Reading a second

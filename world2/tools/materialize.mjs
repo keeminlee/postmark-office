@@ -227,7 +227,7 @@ export async function recomputeStanding(q) {
  * ── WHAT HAPPENS TO THE CLAIM, AND WHY NOTHING ─────────────────────────────
  *
  * The locking claim is left exactly as it stands. `retracted` is the docket's
- * word for a claim that never locked — `world2-claims.mjs:200-202` only ever
+ * word for a claim that never locked — `world2-claims.mjs:234-237` only ever
  * moves a `pending` row there — and the docket's own guard forbids deleting a
  * locked one. The claim is the historical fact that this mark WAS ruled in at
  * that window, and that fact did not stop being true when the world let the
@@ -250,6 +250,31 @@ export async function recomputeStanding(q) {
  * the whole crossing over it would make the store's ignorance the town's
  * problem. It is REPORTED, because a step that quietly did nothing is the
  * failure mode this whole seam exists to end.
+ *
+ * ── THE CAN-FAIL FLIP, AS A DIFF RATHER THAN A DESCRIPTION ─────────────────
+ *
+ * My first write-up said "the UPDATE replaced by a SELECT that returns no
+ * rows", and a reader cannot run that sentence: the fake register in
+ * `test/retire-marks.test.mjs` THROWS on SQL it does not model, so most
+ * spellings of that sentence produce an error rather than the split I reported.
+ * The flip is therefore recorded as the exact four-line edit it was, applied to
+ * the UPDATE below:
+ *
+ *     -    const { rows } = await q(
+ *     -      `UPDATE marks SET status = 'retired', retired_window = $2
+ *     -        WHERE slug = $1 AND status = 'standing'
+ *     -        RETURNING slug, locked_window`,
+ *     -      [slug, windowId]);
+ *     +    const { rows } = await q(
+ *     +      `SELECT status, retired_window FROM marks WHERE slug = $1 AND FALSE`,
+ *     +      [slug, windowId]);
+ *
+ * It is the SELECT the register already models (the second branch of its `q`),
+ * so it returns rows instead of throwing — which is what makes this flip
+ * runnable at all, and is exactly the detail the prose lost.
+ *
+ * Run on the committed tree, the split it produces is recorded in
+ * `test/retire-marks.test.mjs`'s header beside the tests it reds.
  *
  * @param q      the caller's query function — this runs INSIDE the caller's
  *               transaction, like every other function in this file.
