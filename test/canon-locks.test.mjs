@@ -31,7 +31,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { canonLockFindings, STANDING_SELECT, UNMATERIALIZED_SELECT } from "../world2/tools/canon-locks.mjs";
+import { canonLockFindings, STANDING_SELECT, UNMATERIALIZED_SELECT, ESCROW_BY_SHA_SELECT } from "../world2/tools/canon-locks.mjs";
 
 const register = (...slugs) => ({ slugs: new Set(slugs), sha: "0123456789abcdef0123456789abcdef01234567" });
 
@@ -136,4 +136,73 @@ test("STANDING_SELECT walks the marks, and UNMATERIALIZED_SELECT asks about the 
     "an amend claim's id is never a mark id — asking by id reports every amendment as missing");
   assert.match(UNMATERIALIZED_SELECT, /coalesce\(c\.slug, c\.geometry->>'slug'\)/,
     "darko/the-second-foundation-stone carries its slug in geometry and not in claims.slug");
+});
+
+// ── THE ESCROW CLASS (postmark#2594's second half, ruled a G1 blocker) ──────
+//
+// A standing COMMONS mark with nothing staked on it at the town sha of the
+// window that LOCKED it — not at today's town. A mark locked at window 150 and
+// one locked at 177 are answerable to different reads of the ledger, and judging
+// August's marks against September's town would invent findings.
+//
+// THE CAN-FAIL FLIP: in `canon-locks.mjs § canonLockFindings`, delete
+//
+//     -    if (n === 0) unbacked.push(r);
+//
+// The drift-room test reds; the staked and own-ground controls stay green.
+
+const DRIFT = {
+  slug: "lupi/the-drift-room", mark_status: "standing", tier: "market",
+  locked_window: 177, locking_town_sha: "723005e5", claim_id: "32c20578", claim_status: "locked", window_id: 177,
+};
+const anyRegister = { slugs: new Set(["lupi/the-drift-room"]), sha: "0".repeat(40) };
+
+test("a standing COMMONS mark with nothing staked at its locking sha is unbacked", () => {
+  const r = canonLockFindings([DRIFT], anyRegister, { escrowBySha: new Map([["723005e5|somebody/else", 4]]) });
+  assert.deepEqual(r.unbacked.map((u) => u.slug), ["lupi/the-drift-room"]);
+  assert.equal(r.escrow_checked, true);
+  assert.equal(r.escrow_compared, 1);
+  assert.deepEqual(r.absent, [], "canon carries it in this fixture — the two classes are independent");
+});
+
+test("the stake is read at the LOCKING window's town sha, not at another one", () => {
+  // Staked at a DIFFERENT sha: that is a fact about a different read of the
+  // ledger and must not excuse this mark. The first shape I considered keyed the
+  // map on the mark alone, which would have silently passed this.
+  const r = canonLockFindings([DRIFT], anyRegister, { escrowBySha: new Map([["e34e5fa0|lupi/the-drift-room", 9]]) });
+  assert.deepEqual(r.unbacked.map((u) => u.slug), ["lupi/the-drift-room"]);
+  const ok = canonLockFindings([DRIFT], anyRegister, { escrowBySha: new Map([["723005e5|lupi/the-drift-room", 1]]) });
+  assert.deepEqual(ok.unbacked, [], "staked at its OWN locking sha, so it stands");
+});
+
+test("own ground and town law are never unbacked — the class exempts them", () => {
+  const home = { ...DRIFT, slug: "current-the-reader/the-mantel", tier: "home" };
+  const law = { ...DRIFT, slug: "the-town/pledges", tier: "constitution" };
+  const r = canonLockFindings([home, law], { slugs: new Set([home.slug, law.slug]), sha: "0".repeat(40) },
+    { escrowBySha: new Map() });
+  assert.deepEqual(r.unbacked, []);
+  assert.equal(r.escrow_compared, 0, "they are not commons, so they are not even compared");
+});
+
+test("NO PROJECTION IS NOT A CLEAN TOWN — nothing is judged and the run says so", () => {
+  const r = canonLockFindings([DRIFT], anyRegister, { escrowBySha: null });
+  assert.deepEqual(r.unbacked, []);
+  assert.equal(r.escrow_checked, false);
+  assert.equal(r.escrow_compared, 0);
+});
+
+test("a commons mark whose window pinned no town read cannot be judged, and is not guessed", () => {
+  const r = canonLockFindings([{ ...DRIFT, locking_town_sha: null }], anyRegister, { escrowBySha: new Map() });
+  assert.deepEqual(r.unbacked, []);
+  assert.equal(r.escrow_compared, 0);
+});
+
+test("STANDING_SELECT reads the tier and the LOCKING window's town sha", () => {
+  // Neither was in the first cut, and without them the escrow class is
+  // unjudgeable — a query that does not fetch the fields the judgement needs is
+  // a judgement that silently finds nothing.
+  assert.match(STANDING_SELECT, /m\.data->>'tier' AS tier/);
+  assert.match(STANDING_SELECT, /LEFT JOIN windows w ON w\.id = m\.locked_window/);
+  assert.match(STANDING_SELECT, /w\.town_sha AS locking_town_sha/);
+  assert.match(ESCROW_BY_SHA_SELECT, /GROUP BY town_sha, mark/);
 });

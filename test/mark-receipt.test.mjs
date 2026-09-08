@@ -222,16 +222,20 @@ const REAL_REFUSAL_CHECKS = [
   ["counterclaim: collides with 77 — a mind rules (census D2)", "contested", "clearing-job.mjs:190-191"],
   ["review-ruling: wright refused this contest — the ground was already spoken for", "contested", "review-rule.mjs:247"],
   ["review-ruling: wright granted the-long-field — the elder claim stands", "contested", "review-rule.mjs:248"],
-  // ⚑ THE ONE THE MAP DELIBERATELY DOES NOT ANSWER (postmark#2594, 2026-09-08).
-  // The candle's canon-absent refusal has no honest word among the five — the
-  // record is usually well formed and the world simply never published it — so
-  // `causeOf` answers null WITH the raw check, by this map's own
-  // guess-nothing rule. It lives in THIS list rather than in a test of its own
+  // ⚑ THE SIXTH WORD, RULED 2026-09-08 (postmark#2594). This answered `null` for
+  // one lap — none of the four bulletin words nor `quarantined` is honest about
+  // a mark the WORLD has no file for — and the founder then classified it as
+  // `unpublished`. It lives in THIS list rather than in a test of its own
   // because this list is "every refusal string the town can write", and an
-  // exception kept somewhere else is an exception nobody re-reads. The fifth
-  // word the bulletin needs is a founder's ruling, carried in
-  // docs/2026-09-08/jetto-candle-refusal-report.md.
-  ["canon-absent: lupi/the-drift-room @ 91536f76", null, "clearing-job.mjs step 5.5 / canon-register.mjs"],
+  // exception kept somewhere else is an exception nobody re-reads. THE TOWN HALF
+  // IS STILL OWED: the bulletin's published sentence lists four.
+  ["canon-absent: lupi/the-drift-room @ 91536f76", "unpublished", "clearing-job.mjs step 5.5 / canon-register.mjs"],
+  // ⚑ THE TWO CANDLE CHECKS ANSWER DIFFERENT WORDS, ON PURPOSE. `canon-absent`
+  // says the world has no file yet; `escrow-absent` says the world's own sweep
+  // would refuse it for want of a stake ("commons needs escrow > 0"). A resident
+  // told `unpublished` waits; a resident told `unbacked` stakes. Collapsing them
+  // to one word would cost the reader the only thing the difference is for.
+  ["escrow-absent: lupi/the-drift-room @ 723005e5", "unbacked", "clearing-job.mjs step 5.6 / escrow-presence.mjs"],
 ];
 
 test("EVERY refusal string the town can write gets the word this map decided for it", () => {
@@ -461,12 +465,21 @@ test("C · a mark whose FILE MOVED names the settlement that carried the MARK, n
 //
 // THE CAN-FAIL FLIP: add `"canon-absent": "malformed"` to CAUSE_OF_CHECK in
 // src/mark-receipt.mjs. Both this test and the list test above go red.
-test("canon-absent answers null with the raw check beside it — a decision, not an oversight", () => {
+test("canon-absent answers `unpublished`, and it is one of the words the town publishes", () => {
   const raw = "canon-absent: darko/the-second-foundation-stone @ a23a8d17";
   const { cause, cause_row } = causeOf(raw);
-  assert.equal(cause, null,
-    "none of held/contested/unbacked/malformed/quarantined is true of a mark the world never published");
-  assert.equal(cause_row, `claims.refusal_check = ${JSON.stringify(raw)}`,
-    "the resident is owed the raw check when the town has no word for it");
+  assert.equal(cause, "unpublished",
+    "a refusal that has a name must not answer null (Keemin, 2026-09-08)");
+  assert.ok(CAUSE_WORDS.includes(cause),
+    "the word the door answers must be a word the receipt's own vocabulary carries");
+  assert.equal(cause_row, `claims.refusal_check = ${JSON.stringify(raw)}`);
   assert.equal(checkNameOf(raw), "canon-absent");
+});
+
+test("the guess-nothing rule is UNTOUCHED for the next unclassified check", () => {
+  // The thing the fifth word must not cost: classifying one check is not licence
+  // to guess at the next. A ruling named `canon-absent`; nothing named this.
+  const { cause, cause_row } = causeOf("some-check-the-founder-has-not-ruled-on: with a detail");
+  assert.equal(cause, null);
+  assert.equal(cause_row, 'claims.refusal_check = "some-check-the-founder-has-not-ruled-on: with a detail"');
 });

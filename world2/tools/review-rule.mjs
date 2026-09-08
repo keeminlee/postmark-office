@@ -83,10 +83,34 @@
 // can have its act written afterwards. `--journal-only` is that repair, and it
 // refuses to write a second act for a ruling that already has one.
 //
+// ── THE SECOND DOOR, AND WHY IT NAMES RATHER THAN REFUSES (postmark#2594) ───
+//
+// Keemin ruled on 2026-09-08: "a claim that would lock while the mark it
+// materializes has no file on main at the locking crossing is REFUSED at the
+// clearing job's lock step". THE CLEARING JOB'S. This file is the OTHER lawful
+// writer of `marks` — it writes `status = 'locked'` and calls the same
+// `materializeClaims` — so a mind granting a contest can materialize a mark
+// canon does not carry, and the candle's step 5.5 never sees it.
+//
+// A GUARD HERE WOULD BE THE WRONG SHAPE, and that is a judgement the lane made
+// and the conductor took (2026-09-08): a mind ruling on a contest is a
+// deliberate act by somebody who can read canon for themselves, and the ruling
+// covers the candle. What was missing is not a refusal — it is the FACT. So this
+// prints one line when the granted claim's slug has no canon file, and the mind
+// rules with it in front of them.
+//
+// AND IT NAMES ITS OWN ABSENCE. Without `--world-repo` the line says the check
+// did not run, rather than printing nothing: "asked and found nothing" and
+// "never asked" must not look alike, which is the whole of what #2594 is about.
+// The nightly read (`falsifier-canon-locks.mjs`) catches whatever comes through
+// this door regardless, because it walks standing marks and does not care which
+// door they arrived by.
+//
 // ── USAGE ───────────────────────────────────────────────────────────────────
 //
 //   node world2/tools/review-rule.mjs --claim <uuid> --rule grant|refuse|hold \
-//        --by <handle> --because "<one sentence>" [--dry-run] [--json]
+//        --by <handle> --because "<one sentence>" [--world-repo <checkout>] \
+//        [--dry-run] [--json]
 //   node world2/tools/review-rule.mjs --claim <uuid> --journal-only
 //
 //   env: WORLD2_CLEARING_URL = postgres://clearing_job:…@localhost/world2_dev
@@ -104,6 +128,9 @@
 import { pathToFileURL } from "node:url";
 import { materializeClaims, recomputeStanding, slugOf } from "./materialize.mjs";
 import { fractionalCrossing } from "./live-reads.mjs";
+// The #2594 predicate, for NAMING only — this door is deliberately not gated by
+// it. See § THE SECOND DOOR below.
+import { canonRegisterAt } from "./canon-register.mjs";
 
 const arg = (n) => { const i = process.argv.indexOf(n); return i === -1 ? null : process.argv[i + 1]; };
 const has = (n) => process.argv.includes(n);
@@ -187,6 +214,7 @@ async function main() {
   const kind = arg("--rule");
   const by = arg("--by");
   const because = arg("--because");
+  const worldRepo = arg("--world-repo");   // § THE SECOND DOOR — naming, not gating
   if (!RULINGS.includes(kind)) usage(`--rule must be one of ${RULINGS.join(" | ")}`);
   // A RECEIPT WITH NO NAME IS NOT A RECEIPT. `held_review` means "a mind rules",
   // and a ruling that cannot say whose mind it was is exactly the state-with-no-
@@ -253,7 +281,25 @@ async function main() {
 
     let materialized = 0;
     let standingMoved = { moved: [], standing: [], notes: [] };
+    let canonNote = null;
     if (kind === "grant") {
+      // § THE SECOND DOOR — the fact, printed. Never a refusal, and never silent.
+      const grantedSlug = slugOf(claim);
+      if (!grantedSlug) {
+        canonNote = null;                       // a claim naming no mark makes none
+      } else if (!worldRepo) {
+        canonNote = `canon NOT CHECKED for ${grantedSlug} — no --world-repo was given, so this ruling does not know whether the world carries the mark it is about to stand (postmark#2594)`;
+      } else {
+        try {
+          const register = await canonRegisterAt({ backend: "git", worldRepo });
+          canonNote = register.slugs.has(grantedSlug) ? null
+            : `canon carries NO FILE for ${grantedSlug} at ${register.sha.slice(0, 8)} — this ruling stands a mark the world does not hold (postmark#2594); the candle would have refused it, and a mind may not be wrong to`;
+        } catch (err) {
+          canonNote = `canon could not be read (${err.message}) — this ruling does not know whether the world carries ${grantedSlug}`;
+        }
+      }
+      if (canonNote) console.log(`  ⚑ ${canonNote}`);
+
       materialized = await materializeClaims(q, {
         claims: [claim],
         amends: amended ? new Map([[String(claim.id), amended]]) : new Map(),
@@ -270,13 +316,18 @@ async function main() {
       `UPDATE windows SET receipts = coalesce(receipts, '{}'::jsonb) || jsonb_build_object('review_rulings', $2::jsonb) WHERE id = $1`,
       [open.id, JSON.stringify([...existing, {
         ...ruling, held_window: claim.window_id, outcomes,
+        // The canon fact rides on the RULING, not only on the console. The
+        // conductor asked for one printed line; a printed line is gone the
+        // moment the terminal scrolls, and this receipt is the durable record of
+        // what a mind ruled and what it knew when it ruled. Same key on both.
+        ...(canonNote ? { canon_note: canonNote } : {}),
         ...(kind === "grant" ? { materialized, standing_moved: standingMoved.moved.length } : {}),
       }])]);
 
     out = {
       claim: String(claim.id), slug: slugOf(claim), rule: kind, by, because, at,
       held_window: claim.window_id, ruled_in_window: open.id,
-      contest: contest.length, outcomes, materialized,
+      contest: contest.length, outcomes, materialized, canon_note: canonNote,
       standing: { recomputed: standingMoved.standing.length, moved: standingMoved.moved.length, moves: standingMoved.moved.slice(0, 10) },
       notes: standingMoved.notes,
       act: null,

@@ -33,6 +33,8 @@
 // `locked`), and take the slug from `marks.slug`, which is the column that is
 // never null.
 
+import { rowClassOf } from "./escrow-presence.mjs";
+
 /**
  * Every standing mark and the claim that locked it.
  *
@@ -41,12 +43,26 @@
  * examined rather than dropped by the join that was supposed to describe it.
  */
 export const STANDING_SELECT = `
-  SELECT m.slug, m.locked_window, m.status AS mark_status,
+  SELECT m.slug, m.locked_window, m.status AS mark_status, m.data->>'tier' AS tier,
+         w.town_sha AS locking_town_sha,
          c.id::text AS claim_id, c.status AS claim_status, c.window_id, c.claimant, c.decided_at
     FROM marks m
     LEFT JOIN claims c ON c.id = m.id
+    LEFT JOIN windows w ON w.id = m.locked_window
    WHERE m.status = 'standing'
    ORDER BY m.slug`;
+
+/**
+ * The open stamps per (town sha, mark), for the escrow class below.
+ *
+ * Grouped by SHA as well as by mark because each standing mark is judged at the
+ * town sha of the window that LOCKED IT, not at today's — a mark locked at
+ * window 150 and a mark locked at 177 are answerable to different reads of the
+ * ledger, and collapsing them would judge August's marks against September's
+ * town.
+ */
+export const ESCROW_BY_SHA_SELECT = `
+  SELECT town_sha, mark, sum(n)::int AS n FROM escrow_projection GROUP BY town_sha, mark`;
 
 /**
  * The other class: a claim that locked and produced no mark.
@@ -92,15 +108,39 @@ export const UNMATERIALIZED_SELECT = `
  * whose file sits on `origin/draft/lupi-agent` and no other ref. Whether that one
  * is "never" or "not yet" is UNDETERMINED — see clearing-job.mjs step 5.5.
  */
-export function canonLockFindings(rows, register, { unmaterializedRows = [] } = {}) {
+export function canonLockFindings(rows, register, { unmaterializedRows = [], escrowBySha = null } = {}) {
   const absent = [];
+  const unbacked = [];
   let compared = 0;
+  let escrowCompared = 0;
   for (const r of rows) {
     // A mark row with no slug is not a thing canon could carry.
     if (!r.slug) continue;
     if (r.mark_status && r.mark_status !== "standing") continue;   // § the retired mark, above
     compared += 1;
     if (!register.slugs.has(r.slug)) absent.push(r);
+
+    // ── THE ESCROW CLASS (postmark#2594's second half) ──────────────────────
+    //
+    // A standing COMMONS mark with nothing staked on it at the town sha of the
+    // window that locked it. The candle's step 5.6 stops a new one; this is the
+    // standing read for the ones already in the register, and it is judged at
+    // each mark's OWN locking sha rather than at today's town.
+    //
+    // `escrowBySha === null` means the projection cannot answer (migration 014
+    // absent, or nothing ingested) — nothing is judged, and the caller reports
+    // that rather than reporting zero findings, which would look identical to a
+    // clean town.
+    if (!escrowBySha) continue;
+    if (rowClassOf(r.tier) !== "commons") continue;
+    if (!r.locking_town_sha) continue;   // a mark whose window pinned no town read cannot be judged
+    escrowCompared += 1;
+    const n = Number(escrowBySha.get(`${r.locking_town_sha}|${r.slug}`) ?? 0);
+    if (n === 0) unbacked.push(r);
   }
-  return { absent, unmaterialized: unmaterializedRows.filter((r) => r.slug), compared };
+  return {
+    absent, unbacked, compared, escrow_compared: escrowCompared,
+    escrow_checked: Boolean(escrowBySha),
+    unmaterialized: unmaterializedRows.filter((r) => r.slug),
+  };
 }

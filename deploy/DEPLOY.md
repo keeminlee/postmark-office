@@ -710,6 +710,27 @@ one. Even unparked it could not answer: the settlement pushes a crossing's mark
 files at `:45:2x` and the candle closes the window at `:45:44`, twelve seconds
 later, in the same systemd tick.
 
+**The grace (ruled 2026-09-08, the same sitting).** The settlement and the
+clearing fire on the same two systemd marks and the mark files normally land
+about twelve seconds before the window closes — that margin is the clearing's own
+boundary wait, not a designed ordering. So the candle grants **one crossing** of
+grace when the settlement has not run for this close: `GRACE_CROSSINGS` in
+`world2/tools/canon-register.mjs`, a named value with its reason beside it, read
+on every crossing. Zero crossings late means the sweep ran and a mark it did not
+publish is genuinely unpublished; one means canon has not had its chance and the
+claim locks; two or more means the rail is broken rather than late, and the claim
+is refused so somebody looks. The verdict rides on the window as
+`receipts.canon_grace`, and the crossing's log names every claim it graced.
+
+**That grace needs history, and it is why the world clone is no longer depth 1.**
+`world2-refresh-clone.sh` fetches the world with `--shallow-since` (default three
+days, `W2_WORLD_SINCE`) instead of `--depth 1`, because the grace reads the last
+`settlement: sweep …` commit and a one-commit clone has none — the grace would
+answer "cannot compute" forever and be a value with no reader. Measured on the
+box 2026-09-08: three days is 29 commits and 3.8 MB, against 19 MB for a full
+clone. **The town clone stays depth 1** — nothing reads its history and it is the
+306 MB one.
+
 After the crossing, `falsifier-canon-locks.mjs` runs as `snapshot_reader` and
 appends one line — clean or not — to `/srv/world2-lab/state/canon-locks.jsonl`.
 Its RED does not fail the unit: the crossing succeeded and the finding is about

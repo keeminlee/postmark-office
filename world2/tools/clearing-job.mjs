@@ -51,11 +51,15 @@ import { dirname, join } from "node:path";
 // Steps 6 and 7's law, extracted the day the REVIEW lane became a second tool
 // holding the same `clearing_job` pen (`review-rule.mjs`). One definition, two
 // callers — see materialize.mjs's header for why it is not a copy.
-import { materializeClaims, recomputeStanding, slugOf } from "./materialize.mjs";
+import { materializeClaims, recomputeStanding, slugOf, ownerHouseholdFor } from "./materialize.mjs";
 // The 2594 predicate. ONE function, two backends, selected at the one line in
 // step 5.5 — so a refusal at the candle and the nightly listing of what already
 // slipped are answers from the same code.
-import { canonRegisterAt, canonAbsentAmong } from "./canon-register.mjs";
+import { canonRegisterAt, canonAbsentAmong, graceVerdict, GRACE_CROSSINGS } from "./canon-register.mjs";
+// The escrow PRESENCE gate — the sweep's own rule, ported to the candle before
+// G1 deletes the path it lives on. See step 5.6.
+import { escrowAbsentAmong, escrowPresenceAt } from "./escrow-presence.mjs";
+import { computeStanding } from "./standing.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const arg = (n) => { const i = process.argv.indexOf(n); return i === -1 ? null : process.argv[i + 1]; };
@@ -276,14 +280,100 @@ try {
   //       the candle's own boundary wait is what supplies it; a grace of one
   //       crossing is the founder's ruling to make, not this file's, and it is
   //       carried up in the lane's report rather than built in silently.
+  //
+  //     THE GRACE (ruled by Keemin 2026-09-08, after this lane measured the
+  //     race above). The settlement and this job fire on the SAME systemd marks
+  //     and the files normally land twelve seconds ahead, so a late settlement
+  //     means canon has not had its chance yet at this close. `GRACE_CROSSINGS`
+  //     is the bound — a NAMED value with its reason beside it in
+  //     canon-register.mjs, never a flag, because a flag nobody sets is a value
+  //     with no reader. Read at the one line below, on every crossing.
   const canonRegister = worldRepo
     ? await canonRegisterAt({ backend: "git", worldRepo })  // ← the one line the G1 swap moves
     : null;
+  let grace = null;
   if (canonRegister) {
-    for (const c of canonAbsentAmong(pending.filter((c) => !outcomes.has(c.id)), canonRegister, slugOf))
-      decide(c.id, "refused", c.check);
+    grace = graceVerdict({ closesAt: win.closes_at, lastSettlementAt: canonRegister.last_settlement_at });
+    const absent = canonAbsentAmong(pending.filter((c) => !outcomes.has(c.id)), canonRegister, slugOf);
+    // THE GRACE IS LOUD IN BOTH DIRECTIONS. A crossing that graced says which
+    // marks it graced and why; a crossing that refused says the same. A grace
+    // nobody can see in the log is the silence this whole issue is about,
+    // wearing a kinder face.
+    if (grace.granted && absent.length) {
+      console.log(`  ⚑ canon: GRACED ${absent.length} claim(s) — ${grace.reason}: ${absent.map((a) => a.slug).join(", ")}`);
+    } else {
+      for (const a of absent) decide(a.id, "refused", a.check);
+      if (absent.length) console.log(`  ⚑ canon: refused ${absent.length} claim(s) — ${grace.reason}`);
+    }
     for (const u of canonRegister.unreadable)
       console.log(`  ⚑ canon: the register at ${canonRegister.sha.slice(0, 8)} could not parse ${u} — it states nothing either way`);
+  }
+
+  // 5.6 · A COMMONS MARK NEEDS SOMEBODY'S STAMPS BEHIND IT (postmark#2594's
+  //     second half; ruled a G1 blocker 2026-09-08 after lane 2's reviewer found
+  //     it by receipt).
+  //
+  //     Step 3 above is an AFFORDABILITY test and says so — `if (total === 0)
+  //     continue`. A claim staking zero has never been looked at. The 1.0 sweep
+  //     is where the PRESENCE rule lives (`settlement-sweep.mjs:1146-1152`,
+  //     "commons needs escrow > 0"), and G1 deletes the sketchbook path that
+  //     carries it, so after the cutover the rule stops being enforced anywhere
+  //     unless it is here.
+  //
+  //     THE CLASS IS COMPUTED, NOT READ. `marks.data.tier` is written by
+  //     `recomputeStanding` at step 7, AFTER materialization — at this point the
+  //     mark does not exist and the column is null, so a gate reading it would
+  //     judge every claim as classless and refuse nothing, forever. The port's
+  //     own walk answers prospectively over the standing rows PLUS the candidate
+  //     rows, in the shape `materializeClaims` is about to insert. One definition
+  //     of standing, used twice.
+  //
+  //     OWN GROUND IS EXEMPT WITHOUT A CLAUSE: the class rule answers `home` for
+  //     a mark on its own household's ground (`mark-standing.mjs § groundVerdict`,
+  //     ported in `standing.mjs`), and only `commons` needs escrow. Writing an
+  //     own-ground exception here would be a second copy of a law, and copies
+  //     drift.
+  //
+  //     AND IT DEGRADES LOUDLY RATHER THAN EITHER WAY SILENTLY. `escrow_projection`
+  //     is migration 014, which arrives with lane 2 (`jetto/g1-render-stakes`);
+  //     until it lands, `escrowPresenceAt` answers null and every commons claim
+  //     is reported UNCHECKED and locks. It is not read as "nobody staked" —
+  //     that would refuse the whole town on a missing migration — and it is not
+  //     silent: the crossing prints it and the nightly read carries the class.
+  //     (If the conductor would rather the crossing REFUSE while it cannot check,
+  //     that is this block's `if (escrow.unchecked.length)` arm and one throw.)
+  let escrowSeen = null;
+  {
+    const undecidedNamed = pending.filter((c) => !outcomes.has(c.id) && slugOf(c));
+    if (undecidedNamed.length) {
+      const { rows: standingRows } = await q(
+        `SELECT id::text, slug, kind, owner, household, geometry, parent::text, data
+           FROM marks WHERE status = 'standing'`);
+      const candidates = [];
+      for (const c of undecidedNamed) {
+        candidates.push({
+          id: String(c.id), slug: slugOf(c), kind: c.class, owner: c.claimant,
+          household: await ownerHouseholdFor(q, c.claimant),
+          geometry: c.geometry, parent: c.parent, data: c.data,
+        });
+      }
+      const tiers = computeStanding([...standingRows, ...candidates]);
+      const escrowByMark = await escrowPresenceAt(q, { townSha });
+      const verdict = escrowAbsentAmong(
+        undecidedNamed.map((c) => ({ id: c.id, slug: slugOf(c) })),
+        { tiers, escrowByMark, townSha });
+      escrowSeen = {
+        commons: verdict.commons.length,
+        refused: verdict.refused.map((r) => r.slug),
+        unchecked: verdict.unchecked.map((c) => c.slug),
+        town_sha: townSha,
+      };
+      for (const r of verdict.refused) decide(r.id, "refused", r.check);
+      if (verdict.refused.length)
+        console.log(`  ⚑ escrow: refused ${verdict.refused.length} commons claim(s) with nothing staked at town ${townSha?.slice(0, 8) ?? "?"}: ${verdict.refused.map((r) => r.slug).join(", ")}`);
+      if (verdict.unchecked.length)
+        console.log(`  ⚑ escrow: ${verdict.unchecked.length} commons claim(s) LOCKED UNCHECKED — escrow_projection cannot answer at town ${townSha?.slice(0, 8) ?? "?"} (migration 014 not applied, or this sha not ingested): ${verdict.unchecked.join(", ")}`);
+    }
   }
 
   // 6 · everything still undecided LOCKS and materializes. The materialization
@@ -364,6 +454,14 @@ try {
       // borrowing it to stamp canon's answer would be a confident lie. `null`
       // means no claim named a mark, so nothing was asked.
       computed_against: { law_sha: lawSha, town_sha: townSha, canon_sha: canonRegister?.sha ?? null },
+      // The grace's verdict rides on the window it decided, with the number it
+      // was decided against — a grace granted and not recorded is indistinguishable
+      // from a check that never ran.
+      ...(grace ? { canon_grace: { ...grace, grace_crossings: GRACE_CROSSINGS, last_settlement_at: canonRegister.last_settlement_at } } : {}),
+      // The escrow gate's own account, including what it could NOT check — a
+      // crossing that locked commons claims unchecked must say so on the record
+      // and not only on a console nobody kept.
+      ...(escrowSeen ? { escrow_presence: escrowSeen } : {}),
       standing: {
         recomputed: standing.length, moved: moved.length,
         // Capped, because the receipt is evidence and not an export: the first

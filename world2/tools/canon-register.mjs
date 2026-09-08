@@ -72,6 +72,92 @@ import { pathToFileURL } from "node:url";
 /** The backends this predicate can be asked through. One line selects. */
 export const CANON_BACKENDS = Object.freeze(["git", "fold"]);
 
+/**
+ * THE GRACE — how many crossings late the settlement may be before a claim
+ * canon has no file for is refused anyway. RULED by Keemin 2026-09-08, after
+ * this lane measured the race.
+ *
+ * ── WHY IT IS ONE AND NOT ZERO, AND NOT A FLAG ──────────────────────────────
+ *
+ * The settlement that publishes a crossing's mark files and the candle that
+ * rules its claims fire on the SAME systemd marks (05:45 / 17:45 UTC) and the
+ * files normally land twelve seconds ahead — the margin comes from the candle's
+ * own boundary wait, not from any designed ordering. So a late settlement is not
+ * a hypothetical: on 2026-09-07 the 05:45 sweep ran at 07:38:28Z, 1h53m late
+ * (world 49e0fe89), and `little-m-of-garrison/a-cluster-of-phaenolepis-
+ * garrisonii` locked at window 174 before its own file existed. A strict check
+ * refuses that resident's mark for the box being slow.
+ *
+ * Refusing it does not even end the disagreement — it FLIPS it, because the
+ * sweep publishes to main afterwards and canon then carries a mark the store
+ * refused, which `falsifier-standing-equality` reds on from the other side.
+ *
+ * ONE crossing, because the three instances this issue is about stood for WEEKS.
+ * Twelve hours of held disagreement is not where that harm was, and a bound is
+ * what separates a grace from an excuse: at two crossings the settlement is not
+ * late, it is broken, and the claim is refused so somebody looks.
+ *
+ * A NAMED VALUE, NOT A FLAG. A default-off flag is a value with no reader, which
+ * is this room's own recurring defect; this is read on every crossing, by
+ * `graceVerdict` below, at one line.
+ */
+export const GRACE_CROSSINGS = 1;
+
+/** The candle's cadence — census Decision 3's own marks (05:45 / 17:45 UTC). */
+export const CROSSING_MS = 12 * 60 * 60 * 1000;
+
+/** The subject every settlement sweep commit carries (world `tools/settlement-sweep.mjs`). */
+export const SETTLEMENT_SUBJECT = "^settlement: sweep ";
+
+/**
+ * Has canon had its chance at this crossing, and if not, how late is it.
+ *
+ * PURE, and separate from every checkout and connection, because this is the
+ * decision a resident's mark turns on and it must be provable on two timestamps
+ * with no git and no Postgres.
+ *
+ * `crossings_late` is the lag from the last settlement to this window's close,
+ * ROUNDED to crossings:
+ *
+ *   0  the settlement for this crossing has landed (the ordinary case — it lands
+ *      about twelve seconds before the close). Canon has spoken. NO grace: a
+ *      mark absent now is absent because the sweep did not publish it.
+ *   1  the settlement is one crossing late and has not run for this close.
+ *      GRACE: the claim locks, and the crossing's log says it was graced.
+ *   2+ the settlement is not late, it is broken. NO grace, so the refusal
+ *      surfaces and somebody looks at the rail rather than the mark.
+ *
+ * A missing `lastSettlementAt` is NOT a grace. A checkout too shallow to hold a
+ * settlement commit cannot say whether canon had its chance, and answering
+ * "grant" there would turn every un-deepened clone into a silently open gate —
+ * the reason is returned so the crossing can print it.
+ */
+export function graceVerdict({ closesAt, lastSettlementAt, graceCrossings = GRACE_CROSSINGS } = {}) {
+  // BOTH SHAPES, BECAUSE THE TWO CALLERS DISAGREE AND ONLY ONE OF THEM IS IN A
+  // TEST. `clearing-job.mjs` passes `win.closes_at`, which `pg` hands back as a
+  // Date; the git read and every falsifier here pass an ISO string.
+  // `Date.parse(aDate)` happens to work by stringifying, which is a coincidence
+  // of two coercions and not a contract — and my first draft's tests drove only
+  // the string, so nothing was watching the shape the candle actually sends.
+  const ms = (v) => (v instanceof Date ? v.getTime() : v ? Date.parse(String(v)) : NaN);
+  const close = ms(closesAt);
+  const last = ms(lastSettlementAt);
+  if (!Number.isFinite(close)) {
+    return { granted: false, crossings_late: null, reason: "the window has no closes_at — nothing to measure the settlement's lateness against" };
+  }
+  if (!Number.isFinite(last)) {
+    return { granted: false, crossings_late: null, reason: `no settlement commit in the canon checkout's history (subject ${JSON.stringify(SETTLEMENT_SUBJECT)}) — the grace cannot be computed, so the strict rule stands` };
+  }
+  const crossingsLate = Math.round((close - last) / CROSSING_MS);
+  if (crossingsLate <= 0) {
+    return { granted: false, crossings_late: crossingsLate, reason: `the settlement for this crossing landed at ${new Date(last).toISOString()} — canon has spoken` };
+  }
+  if (crossingsLate > graceCrossings) {
+    return { granted: false, crossings_late: crossingsLate, reason: `the settlement last ran at ${new Date(last).toISOString()}, ${crossingsLate} crossings ago — past the grace of ${graceCrossings}, so this is a broken rail and not a late one` };
+  }
+  return { granted: true, crossings_late: crossingsLate, reason: `the settlement last ran at ${new Date(last).toISOString()}, ${crossingsLate} crossing late — within the grace of ${graceCrossings}, so canon has not had its chance at this crossing` };
+}
+
 /** The check name this writes into `claims.refusal_check` — the prefix `causeOf` splits on. */
 export const CANON_ABSENT_CHECK = "canon-absent";
 
@@ -140,6 +226,18 @@ export async function canonRegisterAt({ backend = "git", worldRepo = null } = {}
     throw new Error(`canonRegisterAt: ${repo} answered ${JSON.stringify(sha)} for HEAD, which is not a sha`);
   }
 
+  // THE SETTLEMENT'S OWN LAST RUN, read from the checkout that answered the
+  // register — one checkout, one head, one answer. `--grep` stops at a shallow
+  // clone's graft boundary, so a checkout with no settlement in range answers
+  // null and `graceVerdict` refuses to grace on it rather than guessing. The box
+  // deepens the world clone with `--shallow-since` for exactly this (see
+  // deploy/world2-refresh-clone.sh § the grace needs history).
+  let settlementAt = null;
+  try {
+    settlementAt = execFileSync("git", ["-C", repo, "log", "-1", "--format=%cI", `--grep=${SETTLEMENT_SUBJECT}`, "-E"],
+      { encoding: "utf8" }).trim() || null;
+  } catch { /* a checkout git cannot walk states nothing about the settlement */ }
+
   const { loadMarks } = await import(pathToFileURL(join(repo, "tools", "marks-fold.mjs")).href);
   const records = loadMarks(marksDir);
 
@@ -164,6 +262,7 @@ export async function canonRegisterAt({ backend = "git", worldRepo = null } = {}
   return {
     slugs,
     sha,
+    last_settlement_at: settlementAt,
     source: `world checkout ${repo} @ ${sha}`,
     count: slugs.size,
     unreadable: records.filter((r) => r._error).map((r) => String(r.id ?? r._dir ?? "?")),

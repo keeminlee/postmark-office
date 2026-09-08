@@ -21,6 +21,21 @@
 //                  defect — the lock happened and the materialization did not —
 //                  and reported on its own line, because one is a disagreement
 //                  between two records and the other is a missing record.
+//   escrow-absent  a standing COMMONS mark with nothing staked on it at the town
+//                  sha of the window that LOCKED it. The 1.0 sweep refuses this
+//                  ("commons needs escrow > 0", `settlement-sweep.mjs:1146-1152`)
+//                  and G1 deletes the path that rule lives on; `clearing-job.mjs`
+//                  step 5.6 stops a new one and this lists the ones already
+//                  standing. Its repair is a STAKE, not a retire — which is why
+//                  it is a third class and not folded into canon-absent.
+//
+// EACH MARK IS JUDGED AT ITS OWN LOCKING SHA, never at today's town. A mark
+// locked at window 150 and one locked at 177 are answerable to different reads
+// of the ledger, and one map keyed on the mark alone would judge August against
+// September and invent findings. And `escrow_checked: false` — the projection
+// absent (migration 014) or uningested — is REPORTED: zero findings from a check
+// that could not run looks exactly like a clean town, and that is the whole
+// failure this file exists to end.
 //
 // A RETIRED MARK IS NOT LISTED. A mark the world published and later UNPUBLISHED
 // also stands with a locked claim and no file — the retire path (G1 lane 1)
@@ -75,7 +90,7 @@ import { canonRegisterAt } from "./canon-register.mjs";
 // script: it exits at the top on a missing argument, so anything that imported it
 // to test the judgement would be killed by it. `canon-locks.mjs` is the pure half
 // and `test/canon-locks.test.mjs` is what watches the rules.
-import { STANDING_SELECT, UNMATERIALIZED_SELECT, canonLockFindings } from "./canon-locks.mjs";
+import { STANDING_SELECT, UNMATERIALIZED_SELECT, ESCROW_BY_SHA_SELECT, canonLockFindings } from "./canon-locks.mjs";
 
 const arg = (n) => { const i = process.argv.indexOf(n); return i === -1 ? null : process.argv[i + 1]; };
 const has = (n) => process.argv.includes(n);
@@ -99,7 +114,20 @@ try {
   if (!rows.length) die("`marks` holds no standing rows — there is nothing to check, and a check that checked nothing must not report green");
   const { rows: unmaterializedRows } = await client.query(UNMATERIALIZED_SELECT);
 
-  const { absent, unmaterialized, compared } = canonLockFindings(rows, register, { unmaterializedRows });
+  // The escrow projection, if the store has one. `null` when migration 014 is
+  // not applied or nothing is ingested — REPORTED rather than silently producing
+  // zero findings, which would look exactly like a clean town.
+  let escrowBySha = null;
+  try {
+    const { rows: has } = await client.query("SELECT to_regclass('public.escrow_projection') IS NOT NULL AS ok");
+    if (has[0]?.ok) {
+      const { rows: e } = await client.query(ESCROW_BY_SHA_SELECT);
+      if (e.length) escrowBySha = new Map(e.map((r) => [`${r.town_sha}|${r.mark}`, Number(r.n)]));
+    }
+  } catch { /* an unreadable projection is an unanswered question, not an empty one */ }
+
+  const { absent, unbacked, unmaterialized, compared, escrow_compared, escrow_checked } =
+    canonLockFindings(rows, register, { unmaterializedRows, escrowBySha });
   if (!compared) die(
     `no standing mark carries a slug, so nothing was compared against the register at ${register.sha.slice(0, 8)} — ` +
     "an empty comparison is not a pass");
@@ -114,6 +142,10 @@ try {
       locked_window: r.locked_window, claimant: r.claimant, decided_at: r.decided_at,
     })),
     unmaterialized: unmaterialized.map((r) => ({ slug: r.slug, claim_id: r.claim_id, window: r.window_id })),
+    escrow_checked, escrow_compared,
+    escrow_unbacked: unbacked.map((r) => ({
+      slug: r.slug, tier: r.tier, locked_window: r.locked_window, town_sha: r.locking_town_sha,
+    })),
     unreadable: register.unreadable,
   };
 } catch (err) {
@@ -134,6 +166,8 @@ if (historyPath) {
       compared: out.compared,
       canon_absent: out.absent.map((a) => a.slug),
       unmaterialized: out.unmaterialized.map((u) => u.slug),
+      escrow_unbacked: out.escrow_unbacked.map((u) => u.slug),
+      escrow_checked: out.escrow_checked,
     }) + "\n");
   } catch (e) {
     console.error(`  ⚑ could not append to ${historyPath}: ${e.message} — the finding below still stands`);
@@ -146,12 +180,17 @@ else {
   for (const u of out.unreadable) console.log(`  ⚑ the register could not parse ${u} — it states nothing either way`);
   for (const u of out.unmaterialized)
     console.log(`  ✗ UNMATERIALIZED · claim ${u.claim_id.slice(0, 8)} locked at window ${u.window} names ${u.slug} and no mark carries that slug`);
+  if (!out.escrow_checked)
+    console.log("  ⚑ escrow: NOT CHECKED — escrow_projection is absent or holds no rows (migration 014, lane 2). Zero findings below is a question unanswered, not a clean town.");
+  for (const u of out.escrow_unbacked)
+    console.log(`  ✗ ESCROW-ABSENT · ${u.slug} stands as ${u.tier} (commons), locked at window ${u.locked_window}, with nothing staked on it at that window's town ${String(u.town_sha).slice(0, 8)}`);
   for (const a of out.absent)
     console.log(`  ✗ CANON-ABSENT · ${a.slug} stands in the register, locked at window ${a.locked_window ?? a.window ?? "?"} ` +
       `(claim ${a.claim_id ? a.claim_id.slice(0, 8) : "none"}${a.claimant ? `, ${a.claimant}` : ""}), and canon carries no file for it at ${out.canon_sha.slice(0, 8)}`);
-  const n = out.absent.length + out.unmaterialized.length;
+  const n = out.absent.length + out.unmaterialized.length + out.escrow_unbacked.length;
   console.log(n
-    ? `\nRED · ${n} row(s) the world does not carry`
-    : `\nGREEN · every standing mark has a file in canon at ${out.canon_sha.slice(0, 8)}, and every locked claim made one`);
+    ? `\nRED · ${n} row(s) the world does not carry or does not back`
+    : `\nGREEN · every standing mark has a file in canon at ${out.canon_sha.slice(0, 8)}, every locked claim made one` +
+      `${out.escrow_checked ? `, and all ${out.escrow_compared} commons mark(s) carry a stake` : " — but escrow was NOT checked"}`);
 }
-process.exit(out.absent.length + out.unmaterialized.length ? 1 : 0);
+process.exit(out.absent.length + out.unmaterialized.length + out.escrow_unbacked.length ? 1 : 0);

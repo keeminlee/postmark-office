@@ -1145,7 +1145,7 @@ test("a latest line carrying none of the named fields is itself the alarm, not s
 
 test("the shipped manifest's clearing row declares the list alarm, and an empty declaration is refused", () => {
   const row = manifest().units.find((u) => u.unit === "postmark-world2-clearing.timer");
-  assert.deepEqual(row.outcome.alarm_on_nonempty, ["canon_absent", "unmaterialized"]);
+  assert.deepEqual(row.outcome.alarm_on_nonempty, ["canon_absent", "unmaterialized", "escrow_unbacked"]);
   assert.match(row.outcome.history_path, /canon-locks\.jsonl$/);
   // A list-alarm that names no field would pass every other assertion in
   // loadManifest and watch nothing forever.
