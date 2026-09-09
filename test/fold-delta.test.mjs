@@ -40,7 +40,7 @@ import { foldDelta } from "../world2/tools/fold-delta.mjs";
  * test did not anticipate, so a refusal that fires later than expected shows up
  * as an unanticipated read rather than as a silent pass.
  */
-function stubClient(windows, { marks = [], docketRows = null, onUnexpected = null } = {}) {
+function stubClient(windows, { marks = [], docketClaims = null, onUnexpected = null } = {}) {
   const seen = [];
   return {
     seen,
@@ -55,11 +55,11 @@ function stubClient(windows, { marks = [], docketRows = null, onUnexpected = nul
         return { rows: closed.slice(0, 1) };
       }
       // THE DOCKET'S SIZE, ANSWERED SEPARATELY FROM THE MARKS — which is the
-      // whole point of the field. `docketRows` defaults to the mark count only
+      // whole point of the field. `docketClaims` defaults to the mark count only
       // so the ordinary tests need not state it twice; every test that is ABOUT
       // this field sets it to something the mark array cannot supply.
       if (/FROM claims WHERE window_id = \$1 AND status = 'locked'/.test(text)) {
-        return { rows: [{ n: docketRows === null ? marks.length : docketRows }] };
+        return { rows: [{ n: docketClaims === null ? marks.length : docketClaims }] };
       }
       if (/FROM marks WHERE locked_window/.test(text)) return { rows: marks };
       if (onUnexpected) return onUnexpected(text);
@@ -118,22 +118,22 @@ test("the newest closed window is accepted", async () => {
 // falsifiers are about the one property that makes it worth having: that it is a
 // SECOND READ, so the guard it feeds can disagree with itself.
 
-test("the selection carries `docket_rows`, and it is read from `claims` — not from the mark array", async () => {
+test("the selection carries `docket_claims`, and it is read from `claims` — not from the mark array", async () => {
   // The stub answers 33 to the claims count while handing back ONE mark. No
-  // arithmetic over the returned marks can produce 33, so a `docket_rows` of 33
+  // arithmetic over the returned marks can produce 33, so a `docket_claims` of 33
   // is proof the count came from the other table. If this field were
   // `rows.length` in disguise, this test reds at 1.
   const client = stubClient(WINDOWS, {
     marks: [{ id: "u1", slug: "alpha/one", kind: "sited", owner: "alpha", household: "solo:alpha",
       body: "b", geometry: { at: { x: 1, y: 2 } }, status: "standing", locked_window: 177, data: {} }],
-    docketRows: 33,
+    docketClaims: 33,
     onUnexpected: (text) => (/escrow_projection/.test(text)
       ? { rows: [{ mark: "alpha/one", holder: "beta", household: "solo:beta", own_household: "solo:alpha", n: 3, weight_k: 5 }] }
       : { rows: [] }),
   });
   const out = await foldDelta(client, { window: 177, worldSha: "w".repeat(40) });
   assert.equal(out.marks.length, 1);
-  assert.equal(out.selection.docket_rows, 33,
+  assert.equal(out.selection.docket_claims, 33,
     "the size must come from `claims`; a size taken from the marks array is a guard that cannot disagree with itself");
   assert.equal(out.selection.by, "docket");
   assert.equal(out.selection.window, 177);
@@ -142,21 +142,21 @@ test("the selection carries `docket_rows`, and it is read from `claims` — not 
 });
 
 test("an empty docket is reported as ZERO rows, not as an absent field", async () => {
-  // The lawful quiet crossing, at the fold. `docket_rows: 0` is what lets the
+  // The lawful quiet crossing, at the fold. `docket_claims: 0` is what lets the
   // guard downstream say "nobody locked a claim" instead of refusing; an ABSENT
   // field would put it back where it started, because absence cannot prove quiet.
-  const client = stubClient(WINDOWS, { marks: [], docketRows: 0, onUnexpected: escrowStub });
+  const client = stubClient(WINDOWS, { marks: [], docketClaims: 0, onUnexpected: escrowStub });
   const out = await foldDelta(client, { window: 177, worldSha: "w".repeat(40) });
   assert.equal(out.marks.length, 0);
-  assert.equal(out.selection.docket_rows, 0);
-  assert.ok("docket_rows" in out.selection, "the field is present at zero, not dropped");
+  assert.equal(out.selection.docket_claims, 0);
+  assert.ok("docket_claims" in out.selection, "the field is present at zero, not dropped");
 });
 
 test("the docket count is asked of the window this crossing folds, and only after the window checks pass", async () => {
   // Asserted from what the stub was asked. A count read before the
   // newest-closed check would be a query issued on a window the fold is about to
   // refuse — cheap, but it is the shape that turns a refusal into two failures.
-  const c = stubClient(WINDOWS, { marks: [], docketRows: 0, onUnexpected: escrowStub });
+  const c = stubClient(WINDOWS, { marks: [], docketClaims: 0, onUnexpected: escrowStub });
   await foldDelta(c, { window: 177, worldSha: "w".repeat(40) });
   const claimsAt = c.seen.findIndex((q) => /FROM claims WHERE window_id/.test(q));
   const newestAt = c.seen.findIndex((q) => /FROM windows WHERE status = 'closed' ORDER BY id DESC/.test(q));

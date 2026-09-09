@@ -194,7 +194,7 @@ if (isMain) {
     //
     // This used to be assembled here — `{ by, window, entry, note }` — and that
     // was fine while every field was something the CALLER already knew. It
-    // stopped being fine when the selection gained `docket_rows`, which only the
+    // stopped being fine when the selection gained `docket_claims`, which only the
     // function that read the docket can say without running its query a second
     // time. So `foldDelta` returns its own selection and this reads it.
     //
@@ -209,9 +209,9 @@ if (isMain) {
         + `but this crossing called ${delta.entry}. The selection is what the receipt shows a keeper to say WHICH `
         + "module folded, so it must be the module that ran, not a name copied beside it.");
     }
-    if (!Number.isFinite(Number(selection.docket_rows))) {
+    if (!Number.isFinite(Number(selection.docket_claims))) {
       throw new Error(
-        "fold-selection-incomplete: the fold returned no `selection.docket_rows`. That is the loud-empty guard's "
+        "fold-selection-incomplete: the fold returned no `selection.docket_claims`. That is the loud-empty guard's "
         + "third input — without it an empty docket (nobody claimed) and an empty mark read over a docket with rows "
         + "(the store did not answer) are the same value again, which is the defect this field exists to close.");
     }

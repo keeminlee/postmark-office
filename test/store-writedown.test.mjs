@@ -563,12 +563,12 @@ test("F8f 路 an empty DOCKET passes quietly, and the sentence names the window",
   const r = starvingCheck({
     marks: [],
     stakes: [{ mark: "alpha/staked", holder: "beta", n: 3, weight: 3, tick: 0 }],
-    docketRows: 0,
+    docketClaims: 0,
     window: 180,
   });
   assert.equal(r.starving, false, "an empty docket is a quiet day, not a blind crossing");
   assert.equal(r.quiet, true);
-  assert.equal(r.docket_rows, 0);
+  assert.equal(r.docket_claims, 0);
   assert.match(r.why, /the docket was empty: nobody locked a claim in window 180/,
     "the keeper reads this twelve hours later; a bare `quiet: true` does not say WHICH quiet");
 });
@@ -581,7 +581,7 @@ test("F8g 路 a NON-EMPTY docket whose mark read returns nothing still REFUSES 鈥
   const e = caught(() => starvingCheck({
     marks: [],
     stakes: [{ mark: "alpha/staked", holder: "beta", n: 3, weight: 3, tick: 0 }],
-    docketRows: 33,
+    docketClaims: 33,
     window: 177,
   }));
   assert.ok(e instanceof FoldInputRefusal, "a docket with rows and no marks must still refuse");
@@ -591,7 +591,7 @@ test("F8g 路 a NON-EMPTY docket whose mark read returns nothing still REFUSES 鈥
 
 test("F8h 路 a supplier that does not say how big its docket was refuses exactly as before", () => {
   // Back-compatibility stated as a claim rather than assumed. An absent
-  // `docket_rows` is not proof of a quiet day, and an unproved quiet is the
+  // `docket_claims` is not proof of a quiet day, and an unproved quiet is the
   // 2026-08-26 starving-crossing shape. The register's own entry point always
   // says; a hand-built input or an older instrument may not.
   const e = caught(() => starvingCheck({
@@ -602,7 +602,7 @@ test("F8h 路 a supplier that does not say how big its docket was refuses exactly
   assert.equal(e.reason, "store-starving");
 });
 
-test("F8i 路 storeWriteDown carries `docket_rows` onto the receipt, and passes an empty docket end to end", () => {
+test("F8i 路 storeWriteDown carries `docket_claims` onto the receipt, and passes an empty docket end to end", () => {
   // The whole path, not the function alone: a fold input whose `selection` says
   // the docket was empty must reach a receipt that says `source: store`, carries
   // the size, and did not refuse.
@@ -613,15 +613,15 @@ test("F8i 路 storeWriteDown carries `docket_rows` onto the receipt, and passes a
     input: foldInput([], {
       as_of: { window: 180, world_sha: "0".repeat(40), town_sha: "1".repeat(40) },
       stakes: [{ mark: "alpha/staked", holder: "beta", n: 2, weight: 2, tick: 0 }],
-      selection: { by: "docket", window: 180, entry: "fold-delta.mjs 搂 foldDelta", docket_rows: 0, note: null },
+      selection: { by: "docket", window: 180, entry: "fold-delta.mjs 搂 foldDelta", docket_claims: 0, note: null },
     }),
   });
   assert.equal(out.source, "store");
   assert.equal(out.marks, 0);
-  assert.equal(out.selection.docket_rows, 0, "the receipt must carry the size, or nobody can check the guard's call");
+  assert.equal(out.selection.docket_claims, 0, "the receipt must carry the size, or nobody can check the guard's call");
   assert.equal(out.starving_check.starving, false);
   assert.equal(out.starving_check.quiet, true);
-  assert.equal(out.starving_check.docket_rows, 0);
+  assert.equal(out.starving_check.docket_claims, 0);
   assert.match(out.starving_check.why, /nobody locked a claim in window 180/);
 });
 
@@ -635,7 +635,7 @@ test("F8j 路 storeWriteDown still refuses a docket with rows and no marks, befor
     at: Date.parse(AT_ISO),
     input: foldInput([], {
       stakes: [{ mark: "alpha/staked", holder: "beta", n: 2, weight: 2, tick: 0 }],
-      selection: { by: "docket", window: 177, entry: "fold-delta.mjs 搂 foldDelta", docket_rows: 33, note: null },
+      selection: { by: "docket", window: 177, entry: "fold-delta.mjs 搂 foldDelta", docket_claims: 33, note: null },
     }),
   }));
   assert.ok(e instanceof FoldInputRefusal);

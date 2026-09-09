@@ -214,14 +214,14 @@ export async function foldDelta(client, { window = null, worldSha = null, townSh
   //     coincide (176: 4·4, 177: 33·33, 178: 1·1, 179: 3·3).
   const docket = await client.query(
     "SELECT count(*)::int AS n FROM claims WHERE window_id = $1 AND status = 'locked'", [w]);
-  const docketRows = docket.rows[0].n;
+  const docketClaims = docket.rows[0].n;
 
   const stakes = await stakesFromStore(client, { townSha: sha });
 
   return {
     // THE SELECTOR, SAID BY THE FUNCTION THAT DID THE SELECTING. It used to be
     // assembled by `fold-input-cli.mjs`, which knew `by`, `window` and `entry`
-    // but could not know `docket_rows` without running this query a second time.
+    // but could not know `docket_claims` without running this query a second time.
     // A caller re-deriving a callee's fact is two answers to one question, which
     // is the hazard this file's header keeps `foldDelta` single for.
     selection: {
@@ -230,10 +230,19 @@ export async function foldDelta(client, { window = null, worldSha = null, townSh
       entry: "fold-delta.mjs § foldDelta",
       // THE SIZE OF THE DOCKET THIS CROSSING FOLDED, and the guard's third
       // input. On the receipt beside `marks` (what the mark read returned), so
-      // `docket_rows: 33, marks: 0` reads as a materialization that did not
-      // happen and `docket_rows: 0, marks: 0` reads as a town where nobody
+      // `docket_claims: 33, marks: 0` reads as a materialization that did not
+      // happen and `docket_claims: 0, marks: 0` reads as a town where nobody
       // claimed — two sentences that were one number until this field existed.
-      docket_rows: docketRows,
+      //
+      // THE NAME SAYS WHICH TABLE, and that is the whole of it. This field was
+      // first written as `docket_rows`, which is what you call a number when you
+      // have not decided where it comes from — and the only thing that makes it
+      // worth putting on a receipt is that it comes from `claims` and not from
+      // the mark array beside it. A keeper reading `docket_rows: 0, marks: 0`
+      // cannot tell a second read from a restatement of the first; reading
+      // `docket_claims: 0, marks: 0` they can. Renamed 2026-09-09, before any
+      // receipt carrying the old name reached a history file.
+      docket_claims: docketClaims,
       // `note: null` is not decoration. There is one selector now and no
       // fallback, so nothing ever fills this — and that is exactly when a field
       // goes missing and its absence starts meaning "fine". An empty channel is
