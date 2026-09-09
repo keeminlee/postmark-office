@@ -871,10 +871,26 @@ const allHandoffRowsForKey = (key) => async () => {
  * resident would be a store read for an answer that could not change anything.
  * `phaseAt`'s note in this file is the same discipline: "an ordinary act pays
  * nothing for this".
+ *
+ * ⛔ THE SEAM (the office-halves review, repair 3 — the F12 residual). This
+ * used to call the statically-imported `standingHandoffFor(key, { handle })`
+ * and take no deps, so the apex's own seat reader — the function whose answer
+ * the walk fence is guarded on — could not be driven without World 2.0 on and
+ * a Postgres nobody has a lab copy of. `standingHandoffFor` already accepted
+ * `read`, `env` and `now`; `deps` threads them through, and both call sites
+ * hand it `ctx.handoff` so a harness can point the reader at a scratch journal
+ * (`env: {}`) with hand-built rows. Production passes nothing and nothing
+ * changes. Exported for the same reason: a test drives THIS function, not a
+ * copy of it.
  */
-async function handoffSeatFor(args, key) {
+export async function handoffSeatFor(args, key, deps = {}) {
   if (actorKindOf(args) !== "human") return null;
-  const live = await standingHandoffFor(key, { handle: standingHandle(args, key) });
+  const live = await standingHandoffFor(key, {
+    handle: standingHandle(args, key),
+    ...(deps.env !== undefined ? { env: deps.env } : {}),
+    ...(deps.read !== undefined ? { read: deps.read } : {}),
+    ...(deps.now !== undefined ? { now: deps.now } : {}),
+  });
   return seatFromHandoff(live);
 }
 
@@ -2078,7 +2094,7 @@ async function apexRead(args, key, ctx = {}) {
       // handoff-seated human less than the door admits is that reverse wearing
       // an omission, and it is the exact asymmetry the seat ruling's own note
       // one screen up was written about.
-      handoff: await handoffSeatFor(args, key),
+      handoff: await handoffSeatFor(args, key, ctx.handoff ?? {}),
     });
     actions = resolved.entries;
     refusedGrants = resolved.refused;
@@ -2343,7 +2359,7 @@ async function apexDo(args, key, ctx = {}) {
         // calculus is the office's one answer to who is seated, and this is an
         // argument to it rather than a second reader beside it. Null for a
         // resident, and the read costs nothing then.
-        handoff: await handoffSeatFor(args, key),
+        handoff: await handoffSeatFor(args, key, ctx.handoff ?? {}),
       });
     const rows = [...amb.rows, ...ground.classRows];
     const match = entries.find((e) => e.action === action);

@@ -299,7 +299,7 @@ const NOW = at("2026-09-08T20:00:00.000Z");
 function scratchDoor(name) {
   const dir = mkdtempSync(join(tmpdir(), `handoff-door-${name}-`));
   const prior = {};
-  for (const k of ["WORLD_DYNAMIC_DB", "WORLD_SINGLE_LOG", "WORLD2_PG", "WORLD_FREEZE"]) prior[k] = process.env[k];
+  for (const k of ["WORLD_DYNAMIC_DB", "WORLD_SINGLE_LOG", "WORLD2_PG", "WORLD2_PG_URL", "WORLD_FREEZE"]) prior[k] = process.env[k];
   process.env.WORLD_DYNAMIC_DB = join(dir, "dynamic.db");
   process.env.WORLD_SINGLE_LOG = "1";
   delete process.env.WORLD2_PG;
@@ -393,6 +393,47 @@ test("THE DOOR'S GATES: over the cap is refused by name and writes nothing; no p
     assert.equal(fz.error, "bounce");
     assert.equal(fz.code, 503);
     assert.equal(door.rows().length, 0, "neither gate let a row through");
+  } finally { door.restore(); }
+});
+
+test("THE APEX'S OWN SEAT READER HAS A SEAM: handoffSeatFor(args, key, { env, now }) reaches the journal, and the fence it feeds is null while the seat stands", async () => {
+  // Repair 3 of the review, the F12 residual: `handoffSeatFor` called the
+  // statically-imported `standingHandoffFor(key, { handle })` and took no
+  // deps, so the apex's own seat reader — the function whose answer the fence
+  // line is guarded on — could not be driven without World 2.0 on and a
+  // Postgres nobody has a lab copy of. `standingHandoffFor` already took
+  // `read`, `env` and `now`; this threads them through. What this drives is
+  // the apex's reader and the fence predicate it feeds, from a journal row;
+  // what it still does not drive is apexDo's own call site line (that needs a
+  // hydrated store and the server harness), which stays named as residual.
+  const { handoffSeatFor } = await import("../src/world-apex.mjs");
+  const door = scratchDoor("apex-seam");
+  try {
+    await handToHumanViaOffice({ ttl_min: 60 }, KEY, { dials: null, now: NOW, crossing: 7 });
+    const t0 = at(door.rows()[0].at);
+    // THE SEAM IS WHAT MAKES THE NEXT READS POSSIBLE, and this is what proves
+    // it: the PROCESS env now says World 2.0 is on and points at a Postgres
+    // that does not exist. A reader that ignored its deps would go there, fail,
+    // and answer "no seat" — the safe direction, and a red here. The reader is
+    // handed `env: {}` through the seam and reads the journal instead.
+    process.env.WORLD2_PG = "1";
+    process.env.WORLD2_PG_URL = "postgres://nowhere.invalid/none";
+    // ASKED ONLY OF A HUMAN — a resident's call pays nothing and gets null.
+    assert.equal(await handoffSeatFor({}, KEY, { env: {}, now: t0 + 30 * 60_000 }), null, "a resident is never seated, and the reader is not even consulted for one");
+    const seat = await handoffSeatFor({ as: "human" }, KEY, { env: {}, now: t0 + 30 * 60_000 });
+    assert.ok(seat, "the apex's reader finds the seat the door wrote, on the journal arm, through the seam");
+    assert.equal(seat.kind, "handoff");
+    assert.equal(seat.resident, "wright");
+    assert.equal(seat.ground, null);
+    // THE FENCE THE APEX FEEDS THIS TO: null while the seat stands, the match's ground once it lapses.
+    assert.equal(fenceGroundFor({ kind: "human", handoff: seat, seated: null, matchGround: "the-town/the-quay-reach" }), null,
+      "a handoff-seated human is fenced by nothing — the apex's fence block is skipped whole on this answer");
+    const lapsed = await handoffSeatFor({ as: "human" }, KEY, { env: {}, now: t0 + 90 * 60_000 });
+    assert.equal(lapsed, null, "after the ttl the reader answers no seat");
+    assert.equal(fenceGroundFor({ kind: "human", handoff: lapsed, seated: null, matchGround: "the-town/the-quay-reach" }), "the-town/the-quay-reach",
+      "and the same human is fenced by the grant's ground again — the safe direction, an over-refusal never a privilege");
+    // A NAMED HANDLE NOT ON THE KEY is the reader's own refusal, not a seat.
+    assert.equal(await handoffSeatFor({ as: "human", handle: "amber" }, KEY, { env: {}, now: t0 + 30 * 60_000 }), null);
   } finally { door.restore(); }
 });
 
