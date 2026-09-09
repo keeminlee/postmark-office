@@ -2195,8 +2195,8 @@ export function bulletinList(db) {
  * `bulletinList` stays exactly what it is: the whole listing, which is the
  * right answer at `read_bulletin`'s own door. This is the morning page's view
  * of it. The entries are already teasers (title + the author's listing line, or
- * a 160-character first line), so the only thing missing was the bound and the
- * count of what the bound withheld.
+ * a 160-character excerpt of the posting's first real paragraph), so the only
+ * thing missing was the bound and the count of what the bound withheld.
  *
  * Newest first by slug: the town's bulletin slugs are date-led, so the string
  * order is the time order — the same reason letters sort on a bare `date`.
