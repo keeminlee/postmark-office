@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { planFrom, NAMED_DISAGREEMENT } from "../world2/tools/unstaked-return-store.mjs";
+import { planFrom, NAMED_DISAGREEMENT, REFUSED_KINDS } from "../world2/tools/unstaked-return-store.mjs";
 
 // The shape the store actually holds, measured on world2_dev 2026-09-09: the
 // column named `slug` carries the fold's FULL mark id, and `owner` repeats its
@@ -48,6 +48,31 @@ test("the household written on the draft comes from the STORE's row, not the fol
     [setRow("aion-solare/aelyria")],
     [storeRow("aion-solare/aelyria", { household: "gh:293432145" })]);
   assert.equal(retire[0].household, "gh:293432145");
+});
+
+// ── the parcel law, enforced again on this side (founder's ruling 2026-09-09) ──
+
+test("a stale receipt naming a parcel is REFUSED, not retired", () => {
+  // The exact failure this guards: a receipt written by a build of the git tool
+  // from before the ruling names 74 parcels. Retiring them here would undo
+  // "parcels need no staking either" on the record the town actually reads.
+  const { retire, refused } = planFrom(
+    [setRow("rei/rei-parcel")],
+    [storeRow("rei/rei-parcel", { kind: "parcel" })]);
+  assert.equal(retire.length, 0, "no parcel is ever retired by this move");
+  assert.equal(refused.length, 1);
+  assert.match(refused[0].why, /founding privilege/);
+  assert.match(refused[0].why, /predates it/);
+});
+
+test("the refusal is on KIND, which is the one exemption the store can check itself", () => {
+  assert.deepEqual([...REFUSED_KINDS], ["parcel"]);
+  // sited marks in the same receipt are unaffected — the guard is narrow
+  const { retire, refused } = planFrom(
+    [setRow("rei/a-bench"), setRow("rei/rei-parcel")],
+    [storeRow("rei/a-bench", { kind: "sited" }), storeRow("rei/rei-parcel", { kind: "parcel" })]);
+  assert.deepEqual(retire.map((r) => r.mark), ["rei/a-bench"]);
+  assert.deepEqual(refused.map((r) => r.mark), ["rei/rei-parcel"]);
 });
 
 test("the named disagreement is a share, and it is not 100%", () => {

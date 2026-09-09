@@ -105,6 +105,23 @@ export const NAMED_DISAGREEMENT = 0.25;
 
 /** The rows this move touches, derived from the git receipt and the store's own
  *  standing marks. Pure, so the dry run and the write cannot take two paths. */
+/**
+ * THE FOUNDER'S EXEMPTIONS OF 2026-09-09, enforced again on this side.
+ *
+ * The set is derived by the git half and handed here as a receipt, so in the
+ * ordinary case nothing exempt ever reaches this function. That is exactly why
+ * the check belongs here: A RECEIPT IS A FILE. It can be a day old, hand-edited,
+ * or written by a build of the git tool from before the rulings landed — and a
+ * PRE-RULING receipt names 74 parcels, which this tool would otherwise retire
+ * and plant drafts for, quietly undoing "parcels need no staking either" on the
+ * record the town actually reads.
+ *
+ * Kind is the only exemption the store can check on its own. It has no
+ * sovereignty flag and no escrow (see the header), but `marks.kind` is a column,
+ * so the parcel law is enforceable here and is enforced.
+ */
+export const REFUSED_KINDS = Object.freeze(["parcel"]);
+
 export function planFrom(setRows, storeRows) {
   // THE JOIN KEY IS `marks.slug`, WHICH ALREADY CARRIES THE OWNER. Measured on
   // world2_dev: a standing row reads owner `aion-solare`, slug
@@ -116,10 +133,15 @@ export function planFrom(setRows, storeRows) {
   // must not be retired by this move.
   const store = new Map();
   for (const r of storeRows) store.set(r.slug, r);
-  const retire = [], missing = [];
+  const retire = [], missing = [], refused = [];
   for (const m of setRows) {
     const row = store.get(m.mark);
     if (!row) { missing.push({ mark: m.mark, household: m.household, why: "no standing row in the store" }); continue; }
+    if (REFUSED_KINDS.includes(row.kind)) {
+      refused.push({ mark: m.mark, household: m.household, kind: row.kind,
+        why: "parcel: the founding privilege — needs no stake (founder's ruling 2026-09-09); this receipt predates it" });
+      continue;
+    }
     const owner = String(m.mark).split("/")[0];
     if (row.owner !== owner) {
       missing.push({ mark: m.mark, household: m.household, why: `the store's row for this slug is owned by ${row.owner}, not ${owner} — a different mark` });
@@ -127,7 +149,7 @@ export function planFrom(setRows, storeRows) {
     }
     retire.push({ mark: m.mark, id: row.id, slug: row.slug, owner: row.owner, household: row.household ?? m.household, kind: row.kind, why: "unstaked-commons" });
   }
-  return { retire, missing };
+  return { retire, missing, refused };
 }
 
 async function main() {
@@ -182,13 +204,14 @@ async function main() {
       "SELECT id FROM windows WHERE status = 'open' ORDER BY id DESC LIMIT 1");
     if (!win) throw new Error("no open window — the candle is dark; a retirement has no window to name");
 
-    const { retire, missing } = planFrom(setRows, storeRows);
+    const { retire, missing, refused } = planFrom(setRows, storeRows);
     const missRate = setRows.length ? missing.length / setRows.length : 0;
     Object.assign(receipt, {
       window_id: win.id,
       store_standing: storeRows.length,
-      totals: { retiring: retire.length, missing_from_store: missing.length, miss_rate: +missRate.toFixed(4) },
-      retire, missing,
+      totals: { retiring: retire.length, missing_from_store: missing.length,
+                refused_by_ruling: refused.length, miss_rate: +missRate.toFixed(4) },
+      retire, missing, refused,
     });
 
     if (missRate > NAMED_DISAGREEMENT && !ALLOW_SKEW) {
@@ -238,6 +261,10 @@ async function main() {
   console.log(`  set from the fold: ${receipt.set_size}   standing in the store: ${receipt.store_standing}`);
   console.log(`  retiring: ${t.retiring}   with a fresh draft planted for each`);
   console.log(`  not found in the store: ${t.missing_from_store} (${(t.miss_rate * 100).toFixed(1)}%)`);
+  if (t.refused_by_ruling) {
+    console.log(`  ⚠ REFUSED ${t.refused_by_ruling} parcel(s): parcels need no staking (founder's ruling 2026-09-09).`);
+    console.log(`     This receipt predates the ruling. Re-run the git half and use its receipt.`);
+  }
   if (RECEIPT) console.log(`  receipt: ${RECEIPT}`);
   if (!receipt.applied) console.log("  (dry run — nothing was written; pass --apply to perform the move)");
 }
