@@ -34,9 +34,12 @@ const QUARANTINED = "ledger-quarantined";
 const HOLDER = "ledger-holder";
 const LAPSER = "ledger-lapser";
 const REASKER = "ledger-reasker";   // loses its key between sessions and asks again (CR-1)
+const TWIN_A = "ledger-twin-a";     // two session-bound residents in ONE house, one account (CR-2)
+const TWIN_B = "ledger-twin-b";
 const HOLDER_ACCT = { id: 6161, login: "holder-keeper" };
 const LAPSER_ACCT = { id: 6262, login: "lapser-keeper" };
 const REASKER_ACCT = { id: 6363, login: "reasker-keeper" };
+const TWINS_ACCT = { id: 6464, login: "twins-keeper" };
 
 let ghIdentity = HOLDER_ACCT;
 let child, tmp, ghServer;
@@ -55,6 +58,8 @@ before(async () => {
   resident(HOLDER, HOLDER_ACCT.login);
   resident(LAPSER, LAPSER_ACCT.login);
   resident(REASKER, REASKER_ACCT.login);
+  resident(TWIN_A, TWINS_ACCT.login);
+  resident(TWIN_B, TWINS_ACCT.login);
   seed.close();
 
   const clone = (CLONE.path = join(tmp, "town-clone"));
@@ -63,6 +68,8 @@ before(async () => {
     [HOLDER]: { login: HOLDER_ACCT.login, id: HOLDER_ACCT.id, pinned: "2026-08-01" },
     [LAPSER]: { login: LAPSER_ACCT.login, id: LAPSER_ACCT.id, pinned: "2026-08-01" },
     [REASKER]: { login: REASKER_ACCT.login, id: REASKER_ACCT.id, pinned: "2026-08-01" },
+    [TWIN_A]: { login: TWINS_ACCT.login, id: TWINS_ACCT.id, pinned: "2026-08-01" },
+    [TWIN_B]: { login: TWINS_ACCT.login, id: TWINS_ACCT.id, pinned: "2026-08-01" },
   }));
   writeFileSync(join(clone, "tools", "standing-ledger.md"),
     `- 2026-09-01 · quarantine · ${QUARANTINED} · by: registrar · reason: an open question about who is writing\n`);
@@ -288,6 +295,45 @@ test("A RE-ASK AFTER A ROTATION RETIRES THE KEY THAT WAS LOST: a fresh grant lea
   assert.equal(witness.cosigned, true);
   assert.ok(Date.parse(witness.cosigned_at) >= Date.parse(oldWitness.cosigned_at),
     "the witness dates the grant that stands, not the one that was replaced");
+});
+
+test("TWO RESIDENTS IN ONE HOUSE EACH HOLD THEIR OWN KEY: one's rotation is not the other's", async () => {
+  // The grant is per handle; the rotation was per account. A house with two
+  // session-bound agents anchored to one GitHub account could be granted two
+  // keys and could not keep them: either one's rotation ran a DELETE across
+  // every resident-held row for the account, and every claim the account had
+  // co-signed. Driven by the second reviewer (P2 § 6b). The custody object
+  // already names the handle, which is the grain a resident's rotation is at.
+  const from = "10.9.2.1";
+  const a = await (await ask(TWIN_A, from)).json();
+  const b = await (await ask(TWIN_B, from)).json();
+  assert.equal((await cosign(askOf(a), TWINS_ACCT)).status, 200);
+  assert.equal((await cosign(askOf(b), TWINS_ACCT)).status, 200, "granting the second does not disturb the first (CR-1 is per handle too)");
+  assert.equal((await me(a.key)).status, 200, "A's claim key is live after B's grant");
+  assert.equal((await me(b.key)).status, 200);
+
+  // A rotates
+  const ra = await fetch(`${BASE}/keys`, { method: "POST", headers: { authorization: `Bearer ${a.key}` } });
+  assert.equal(ra.status, 201);
+  const aKey = (await ra.json()).key;
+  assert.equal((await me(a.key)).status, 401, "A's own old key dies — rotation still rotates");
+  assert.equal((await me(b.key)).status, 200, "B's claim key survives A's rotation — it was never A's to spend");
+
+  // B rotates, from a claim key, and then rotates again from the pmk_
+  const rb = await fetch(`${BASE}/keys`, { method: "POST", headers: { authorization: `Bearer ${b.key}` } });
+  assert.equal(rb.status, 201);
+  const bKey = (await rb.json()).key;
+  assert.equal((await me(aKey)).status, 200, "A's rotated key survives B's rotation");
+  const rb2 = await fetch(`${BASE}/keys`, { method: "POST", headers: { authorization: `Bearer ${bKey}` } });
+  assert.equal(rb2.status, 201);
+  assert.equal((await me(bKey)).status, 401, "and B's rotation still kills B's own previous key");
+  assert.equal((await me(aKey)).status, 200, "A's key survives B's second rotation too");
+
+  // each identity read still says which resident's hand
+  const idA = await (await me(aKey)).json();
+  assert.equal(idA.held_by, "resident");
+  assert.equal(idA.claimed_handle, TWIN_A);
+  assert.deepEqual(idA.handles.slice().sort(), [TWIN_A, TWIN_B].sort(), "the key acts as the whole house — custody is per resident, authority is per household");
 });
 
 // LAST IN THE FILE ON PURPOSE: it breaks the office's ask table to reach a code

@@ -164,10 +164,15 @@ export function oauthLookup(odb, db, clone, token) {
 // minting again rotates the old key dead", and the claim desk made that false
 // the day it shipped: after a grant an account holds two live credentials, the
 // human's `pmk_` and the agent's `pmc_`, in two tables. The true invariant is
-// ONE LIVE KEY PER ACCOUNT PER HOLDER. A human's mint rotates the human's key;
-// a resident's rotation rotates the resident's, reaches their claim row too,
-// and does NOT touch their human's. `held_by` on the row is what tells the two
-// apart, and mintHouseholdKey's DELETE is scoped by it.
+// ONE LIVE KEY PER ACCOUNT IN THE HUMAN'S HAND, AND ONE PER RESIDENT IN THE
+// RESIDENT'S OWN. A human's mint rotates the human's key; a resident's rotation
+// rotates THAT resident's, reaches their claim row too, and touches neither
+// their human's key nor a housemate's (a house may hold two session-bound
+// residents on one account, and one's rotation is not the other's). `held_by`
+// on the row tells the two hands apart and `claimed_handle` tells the
+// residents apart; mintHouseholdKey's DELETEs are scoped by both, and the
+// grant (cosignClaim) retires the handle's earlier resident key at the same
+// grain, so a re-ask after a lost key leaves one live credential, not two.
 //
 // This is the lane's own rule — rotation must reach every shape the thing can
 // wear — applied to the sentence that describes rotation. A comment that
@@ -185,11 +190,23 @@ export function mintHouseholdKey(odb, ghId, ghLogin, custody = null) {
   // There was: the key they already held. The invariant is now one live key per
   // ACCOUNT PER HOLDER, which is what the two-shape world actually needs.
   const held = custody ? "resident" : null;
-  odb.prepare(
-    held === null
-      ? "DELETE FROM tokens WHERE kind = 'household' AND gh_id = ? AND held_by IS NULL"
-      : "DELETE FROM tokens WHERE kind = 'household' AND gh_id = ? AND held_by = 'resident'"
-  ).run(ghId);
+  // AND, IN THE RESIDENT'S HAND, BY WHICH RESIDENT (the second reviewer's
+  // CR-2). The grant is per handle; the rotation was per account — so in a
+  // house with two session-bound residents anchored to one account, either
+  // one's rotation killed the other's key. The custody object already names
+  // the handle the key was granted for, and that is the grain the resident's
+  // branch rotates at: one live key per RESIDENT in the resident's hand, one
+  // per ACCOUNT in the human's. (A resident-held row with no handle cannot be
+  // minted — the grant always names one — so the fallback below is defensive,
+  // never a road.)
+  if (held === null) {
+    odb.prepare("DELETE FROM tokens WHERE kind = 'household' AND gh_id = ? AND held_by IS NULL").run(ghId);
+  } else if (custody.claimedHandle) {
+    odb.prepare("DELETE FROM tokens WHERE kind = 'household' AND gh_id = ? AND held_by = 'resident' AND claimed_handle = ?")
+      .run(ghId, custody.claimedHandle);
+  } else {
+    odb.prepare("DELETE FROM tokens WHERE kind = 'household' AND gh_id = ? AND held_by = 'resident'").run(ghId);
+  }
   // ROTATION MUST REACH EVERY SHAPE THIS ACCOUNT'S KEY CAN WEAR, and until the
   // claim desk existed there was only one. A co-signed claim IS a household key
   // — same standing, same doors, different table — so deleting only the
@@ -200,8 +217,16 @@ export function mintHouseholdKey(odb, ghId, ghLogin, custody = null) {
   // by the desk's own falsifier on its first run, against my assertion that it
   // already held.
   // and it still reaches the OTHER shape the same standing can wear — the lane's
-  // own rule, unchanged: a claim that has been rotated away from is spent.
-  if (custody) odb.prepare("DELETE FROM key_claims WHERE cosigned_gh_id = ?").run(ghId);
+  // own rule, unchanged: a claim that has been rotated away from is spent. At
+  // the same grain as the tokens delete above: THIS resident's claim, not every
+  // claim the account ever co-signed (CR-2 again — a housemate's claim key is
+  // not this resident's to spend).
+  if (custody) {
+    if (custody.claimedHandle)
+      odb.prepare("DELETE FROM key_claims WHERE cosigned_gh_id = ? AND handle = ?").run(ghId, custody.claimedHandle);
+    else
+      odb.prepare("DELETE FROM key_claims WHERE cosigned_gh_id = ?").run(ghId);
+  }
   odb.prepare(
     "INSERT INTO tokens (token_hash, kind, gh_id, gh_login, client_id, expires, created, held_by, claimed_handle, cosigned_gh_id, cosigned_gh_login)"
     + " VALUES (?, 'household', ?, ?, NULL, ?, ?, ?, ?, ?, ?)"
