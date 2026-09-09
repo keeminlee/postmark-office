@@ -176,15 +176,21 @@ const CAUSE_OF_CHECK = Object.freeze({
   "canon-absent": "unpublished",
   // ── the note that lap left, kept because it is the argument (postmark#2594)
   //
-  // The candle's newest refusal — `world2/tools/clearing-job.mjs` step 5.5,
-  // "canon-absent: <slug> @ <sha>" — has NO honest word among the five. It is
-  // not `contested` (nobody else claims the slug), not `unbacked` (the stake is
-  // fine), not `quarantined`, and not `held`, which this file spends on
-  // `held_review` and defines as "it did not ride and IT WAS NOT REFUSED".
-  // `malformed` is the near miss and it is still wrong: the record is usually
-  // perfectly well formed — the world simply never published it (the live
-  // instance, `lupi/the-drift-room`, sat on a household draft branch while the
-  // same crossing's sweep reported "50 left drafted").
+  // ⚑ TENSE, CORRECTED: NOTHING WRITES THIS CHECK ONTO A CLAIM. The lock-time
+  // refusal this note was written for was WITHDRAWN on 2026-09-08 — the
+  // settlement pushes minutes after the candle clears, so a canon check at the
+  // lock step would refuse the marks its own crossing locked. The string reaches
+  // `causeOf` from `falsifier-canon-locks.mjs`, the nightly read, which composes
+  // it per finding so this word keeps a reader on the only path that still
+  // produces the class.
+  //
+  // The argument for the WORD is unchanged and is why the note is kept: no
+  // honest fit among the five. Not `contested` (nobody else claims the slug),
+  // not `unbacked` (the stake is fine — that is `escrow-absent`, a different
+  // check with a different word), not `quarantined`, and not `held`, which this
+  // file spends on `held_review` and defines as "it did not ride and IT WAS NOT
+  // REFUSED". `malformed` is the near miss and still wrong: the record is
+  // usually perfectly well formed and the world simply has no file for it.
   //
   // For one lap it answered `null` WITH THE RAW CHECK BESIDE IT, by this file's
   // own rule one paragraph up: "guessing one of five promised words for a

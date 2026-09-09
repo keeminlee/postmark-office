@@ -199,6 +199,12 @@ function healthy(m = manifest()) {
           // length is: a manifest that names a third list must not go green here
           // because nobody remembered to widen a fixture.
           ...Object.fromEntries((row.outcome.alarm_on_nonempty ?? []).map((f) => [f, []])),
+          // …and a row that declares a present-and-false alarm gets the flag
+          // TRUE, which is its healthy shape: the check RAN. Generated from the
+          // row's own declaration for the same reason as the lists above — a
+          // manifest that names a second flag must not go green here because
+          // nobody remembered to widen a fixture.
+          ...Object.fromEntries((row.outcome.alarm_on_false ?? []).map((f) => [f, true])),
         }));
       }
       files[row.outcome.history_path] = { exists: true, mtime_ms: beatAt, text: `${lines.join("\n")}\n` };
@@ -1097,22 +1103,28 @@ test("the custody scan walks a real tree and finds the one file somebody else ow
 // "fires" and "judges the latest line" red; "stays silent" and the manifest test
 // stay green, which is what makes them controls.
 
+// THE WATCHED FIELDS COME FROM THE SHIPPED ROW; only the SENTENCES are the
+// test's own. A hand-written copy of `alarm_on_nonempty` drifted the moment the
+// manifest gained `escrow_unbacked`, and the four-row test below passed its first
+// three rows against a fixture that was no longer the town's — a control built
+// from a copy is a control of the copy. The marker strings stay hand-written so
+// an assertion can tell WHICH sentence printed.
+const SHIPPED_OUTCOME = manifest().units.find((u) => u.unit === "postmark-world2-notary.timer").outcome;
 const LIST_ROW = Object.freeze({
-  unit: "postmark-world2-clearing.timer",
+  unit: "postmark-world2-notary.timer",
   outcome: {
+    ...SHIPPED_OUTCOME,
     history_path: "/state/canon-locks.jsonl",
-    alarm_on_nonempty: ["canon_absent", "unmaterialized"],
-    unsettled_runs: 0,
-    why: "why",
     means: "SHARED-MEANS.",
     list_means: "LIST-MEANS.",
+    unchecked_means: "UNCHECKED-MEANS.",
   },
 });
 const logOf = (...lines) => ({ files: { "/state/canon-locks.jsonl": { exists: true, text: lines.map((l) => JSON.stringify(l)).join("\n") + "\n" } } });
 
 test("a non-empty canon_absent list alarms, and the alarm names the slug", () => {
   const said = judgeOutcome(LIST_ROW, logOf(
-    { at: "2026-09-08T17:46:00Z", canon_absent: ["lupi/the-drift-room"], unmaterialized: [] }));
+    { at: "2026-09-08T17:46:00Z", canon_absent: ["lupi/the-drift-room"], unmaterialized: [], escrow_unbacked: [], escrow_checked: true }));
   assert.ok(said, "a locked claim canon has no file for must not read green");
   assert.match(said, /lupi\/the-drift-room/);
   assert.match(said, /LIST-MEANS\./);
@@ -1122,12 +1134,12 @@ test("a non-empty canon_absent list alarms, and the alarm names the slug", () =>
 
 test("an empty list is silent — most crossings are, and a board that cries every morning is not read", () => {
   assert.equal(judgeOutcome(LIST_ROW, logOf(
-    { at: "2026-09-08T05:46:00Z", canon_absent: [], unmaterialized: [] })), null);
+    { at: "2026-09-08T05:46:00Z", canon_absent: [], unmaterialized: [], escrow_unbacked: [], escrow_checked: true })), null);
 });
 
 test("the LATEST line rules: a clean read after a red one clears, and a red after a clean one fires", () => {
-  const clean = { at: "a", canon_absent: [], unmaterialized: [] };
-  const red = { at: "b", canon_absent: ["darko/the-second-foundation-stone"], unmaterialized: [] };
+  const clean = { at: "a", canon_absent: [], unmaterialized: [], escrow_unbacked: [], escrow_checked: true };
+  const red = { at: "b", canon_absent: ["darko/the-second-foundation-stone"], unmaterialized: [], escrow_unbacked: [], escrow_checked: true };
   assert.equal(judgeOutcome(LIST_ROW, logOf(red, clean)), null, "a disagreement the town has since settled is not still true");
   assert.ok(judgeOutcome(LIST_ROW, logOf(clean, red)), "the newest reading is the one that is still true");
 });
@@ -1163,4 +1175,70 @@ test("the shipped manifest's NOTARY row declares the list alarm, and an empty de
   m.units.find((u) => u.unit === "postmark-world2-notary.timer").outcome.alarm_on_nonempty = [];
   writeFileSync(bad, JSON.stringify(m));
   assert.throws(() => loadManifest(bad), /alarm_on_nonempty that names no field/);
+});
+
+// ── ESCROW-CLEAN IS NOT ESCROW-NEVER-CHECKED (the reviewer's repair 2) ──────
+//
+// This is the reviewer's own four-row table, driven through the judge. Rows two
+// and three used to be the SAME VERDICT FOR OPPOSITE FACTS, and it was masked
+// only because the canon half still carried a slug: the moment that settled, the
+// row would have gone green while the escrow gate — the lane's centre and the G1
+// blocker — had never once been checked.
+//
+// THE CAN-FAIL FLIP: delete the `alarm_on_false` block in `judgeOutcome`. Row 2
+// goes back to OK and this test reds; rows 1, 3 and 4 stay as they are, which is
+// what makes them controls.
+
+const line = (o) => ({ at: "2026-09-09T03:20:00Z", canon_absent: [], unmaterialized: [], escrow_unbacked: [], escrow_checked: true, ...o });
+const judge = (o) => judgeOutcome(LIST_ROW, logOf(line(o)));
+
+test("the reviewer's four rows: only ONE of them used to be wrong, and it is row 2", () => {
+  const r1 = judge({ canon_absent: ["lupi/the-drift-room"], escrow_checked: false });
+  const r2 = judge({ escrow_checked: false });
+  const r3 = judge({ escrow_checked: true });
+  const r4 = judge({ escrow_unbacked: ["someone/a-commons-mark"], escrow_checked: true });
+
+  assert.ok(r1, "1 · canon carries a slug, escrow unchecked → ALARM (on the canon half)");
+  assert.ok(r2, "2 · lists empty but escrow UNCHECKED → ALARM. This is the repair; it read OK before.");
+  assert.equal(r3, null, "3 · lists empty and escrow CHECKED → OK, and it must stay OK");
+  assert.ok(r4, "4 · an unbacked slug, escrow checked → ALARM");
+
+  assert.notEqual(r2, r3, "rows 2 and 3 are opposite facts and must never be the same verdict again");
+  assert.match(r2, /escrow_checked/);
+  assert.match(r2, /a question unanswered and not an answer/);
+  assert.match(r2, /UNCHECKED-MEANS\./, "its OWN sentence — the list-alarm's would send an operator after a stake that is not the problem");
+  assert.doesNotMatch(r2, /LIST-MEANS\./);
+});
+
+test("a latest line carrying no flag at all is itself the alarm — the writer cannot switch it off", () => {
+  const said = judgeOutcome(LIST_ROW, logOf({ at: "T", canon_absent: [], unmaterialized: [], escrow_unbacked: [] }));
+  assert.ok(said);
+  assert.match(said, /carries none of them/);
+});
+
+test("the shipped NOTARY row declares the flag alarm, and a nameless or voiceless one is refused", () => {
+  const row = manifest().units.find((u) => u.unit === "postmark-world2-notary.timer");
+  assert.deepEqual(row.outcome.alarm_on_false, ["escrow_checked"]);
+  assert.match(row.outcome.unchecked_means, /migration 014/, "it must name the pending cause, or the operator hunts the wrong one");
+  assert.match(row.outcome.unchecked_means, /never a stake/);
+
+  const dir = mkdtempSync(join(tmpdir(), "rollcall-flag-"));
+  for (const [mutate, want] of [
+    [(o) => { o.alarm_on_false = []; }, /alarm_on_false that names no field/],
+    [(o) => { delete o.unchecked_means; }, /alarm_on_false with no unchecked_means/],
+  ]) {
+    const m = manifest();
+    mutate(m.units.find((u) => u.unit === "postmark-world2-notary.timer").outcome);
+    const bad = join(dir, `m${Math.random()}.json`);
+    writeFileSync(bad, JSON.stringify(m));
+    assert.throws(() => loadManifest(bad), want);
+  }
+});
+
+test("the manifest no longer describes the WITHDRAWN lock-time check as live", () => {
+  // after-a-repeal-grep-its-citations: the `why` is the paragraph a reviewer
+  // reads beside the thresholds, so a false premise there outlives the code.
+  const row = manifest().units.find((u) => u.unit === "postmark-world2-notary.timer");
+  assert.doesNotMatch(row.outcome.why, /refuses a fourth at the lock step/);
+  assert.match(row.outcome.why, /WITHDRAWN/);
 });

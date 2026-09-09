@@ -199,6 +199,16 @@ export function loadManifest(path = DEFAULT_MANIFEST) {
       if (!row.outcome.list_means)
         throw new Error(`${row.unit} declares alarm_on_nonempty with no list_means — it would print the shared means, whose install-day excuse is false of a named slug`);
     }
+    // Same discipline for the present-and-false alarm: a flag list naming no
+    // field watches nothing, and one without its own sentence borrows a means
+    // that sends the operator after the wrong cause.
+    if (Object.prototype.hasOwnProperty.call(row.outcome, "alarm_on_false")) {
+      const f = row.outcome.alarm_on_false;
+      if (!Array.isArray(f) || !f.length || f.some((x) => typeof x !== "string" || !x))
+        throw new Error(`${row.unit} declares alarm_on_false that names no field — a flag-alarm watching nothing reads green forever`);
+      if (!row.outcome.unchecked_means)
+        throw new Error(`${row.unit} declares alarm_on_false with no unchecked_means — a check that did not run has a different repair from a check that found something`);
+    }
   }
   return m;
 }
@@ -866,6 +876,48 @@ export function judgeOutcome(row, snapshot) {
       return `last read at ${latest.at ?? "?"} found ${found.map((r) => `${r.items.length} ${r.field}`).join(" and ")} — ` +
         `${found.map((r) => r.items.join(", ")).join(" · ")}. ` +
         `The store and canon disagree about ${n === 1 ? "a mark that stands" : "marks that stand"} in the register today.${mine}`;
+    }
+  }
+
+  // A FIELD PRESENT AND FALSE IS ALSO AN ALARM (the reviewer's repair 2,
+  // 2026-09-08). The sibling rule above catches a latest line carrying NONE of
+  // the named fields. This catches the other shape: the field is there, the
+  // instrument is honest, and it says it did not check.
+  //
+  // THE HOLE IT CLOSES, driven through this judge against the real manifest row:
+  //
+  //   canon absent carries lupi, escrow unchecked   → ALARM (on the canon half)
+  //   canon empty, escrow list empty, UNCHECKED     → OK        ← the hole
+  //   canon empty, escrow list empty, checked       → OK
+  //   escrow list carries a slug, checked           → ALARM
+  //
+  // Rows two and three were the same verdict for opposite facts. Masked only
+  // because the canon half still carried a slug; the moment that settled, the row
+  // would have gone green while the escrow gate — the lane's centre and the G1
+  // blocker — had never once been checked.
+  //
+  // It is the lane's own rule applied everywhere except the alarm:
+  // `escrow-presence.mjs` says a store that cannot answer and a town where nobody
+  // staked are different facts, and `world2-notary.sh` says "ran and found
+  // nothing" and "did not run" must not look alike. Both were true of the read
+  // and neither was true of the judge.
+  //
+  // ITS OWN `means`, for the same reason `list_means` has one: this alarm has a
+  // known, named, pending cause (the migration), and printing the list-alarm's
+  // sentence would tell an operator to go looking for a stake that is not the
+  // problem.
+  const flags = Array.isArray(spec.alarm_on_false) ? spec.alarm_on_false : [];
+  if (flags.length) {
+    const said = flags.filter((f) => Object.prototype.hasOwnProperty.call(latest, f) && latest[f] === false);
+    if (said.length) {
+      return `last read at ${latest.at ?? "?"} reports ${said.join(", ")} — the check did not run, so a clean list above ` +
+        `is a question unanswered and not an answer.${spec.unchecked_means ? ` ${spec.unchecked_means}` : ""}`;
+    }
+    const absent = flags.filter((f) => !Object.prototype.hasOwnProperty.call(latest, f));
+    if (absent.length === flags.length) {
+      return `declares an alarm on ${flags.join(", ")} being false and its latest line at ${latest.at ?? "?"} carries ` +
+        `none of them — the instrument and this judge disagree about the shape, so nothing is being judged.` +
+        `${spec.unchecked_means ? ` ${spec.unchecked_means}` : ""}`;
     }
   }
 

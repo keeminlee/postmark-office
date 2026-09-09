@@ -6,11 +6,18 @@
 // records disagreed from the moment of locking and NOTHING WAS LOOKING, for three
 // weeks, until a G1 pre-flight lane happened to walk past.
 //
-// `clearing-job.mjs` step 5.5 now refuses a fourth at the candle. This is the
-// other half: the standing read that lists any that already slipped, or that slip
-// by a path the candle cannot see. Both ask `canon-register.mjs` — one predicate,
-// so the gate and the audit can never disagree about what "canon carries it"
-// means.
+// THIS FILE IS THE WHOLE INSTRUMENT, not half of one. A lock-time refusal was
+// ruled and then WITHDRAWN on 2026-09-08, because the crossing's settlement
+// pushes to origin three to four minutes AFTER the candle clears — seven
+// consecutive crossings measured, never once before — so a canon check at the
+// lock step would refuse the marks its own crossing just locked. Nothing refuses
+// a canon-absent claim anywhere; this read is what finds them, and it runs on the
+// NOTARY rail (03:20 UTC) where the push is hours old.
+//
+// It still asks `canon-register.mjs`, which keeps the predicate and its `fold`
+// backend for the G1 swap — at which point the class becomes structurally
+// impossible, because the fold writes what the candle locked, and this read stays
+// as the detector.
 //
 // ── WHAT IT LISTS, AND THE ONE THING IT DELIBERATELY DOES NOT ────────────────
 //

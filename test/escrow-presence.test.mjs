@@ -35,7 +35,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  escrowAbsentAmong, escrowPresenceAt, escrowAbsentCheck, rowClassOf, ESCROW_ABSENT_CHECK,
+  escrowAbsentAmong, escrowPresenceAt, escrowAbsentCheck, rowClassOf, ESCROW_ABSENT_CHECK, escrowLines,
 } from "../world2/tools/escrow-presence.mjs";
 
 // Window 177's own pinned town sha, off the store. NOT 2a681e6c, which is the
@@ -165,4 +165,55 @@ test("escrowPresenceAt answers null where the projection cannot, and a Map where
 
 test("escrowPresenceAt refuses to answer without a sha — there is no 'latest' escrow", async () => {
   await assert.rejects(() => escrowPresenceAt(() => ({ rows: [] }), {}), /no townSha/);
+});
+
+// ── THE OPERATOR LINES, READ AS STRINGS (the reviewer's repair 1) ───────────
+//
+// The first cut composed these at the call site in `clearing-job.mjs`, which is
+// a script, so nothing watched them — and the UNCHECKED line joined an array of
+// `{ id, slug }` OBJECTS and printed `[object Object]`. Its sibling one line
+// above mapped to `.slug` correctly, the receipt mapped correctly, and the tests
+// above map `unchecked` to slugs in their own assertions — so the suite
+// performed the exact mapping the production line forgot, and stayed green.
+//
+// It was the worst of the two to get wrong: until migration 014 lands with lane
+// 2, `escrow_projection` does not exist on prod, so the UNCHECKED branch is the
+// ONLY one that can run, and every crossing between merge and that migration
+// would have printed a line naming nothing.
+//
+// THESE TESTS READ THE STRING. Asserting on the verdict object again would
+// reproduce the blind spot exactly.
+//
+// THE CAN-FAIL FLIP: in `escrow-presence.mjs § escrowLines`, change
+// `unchecked.map((c) => c.slug).join(", ")` back to `unchecked.join(", ")`.
+// The first test below goes RED with `[object Object]` in the message; the
+// refused-line test stays GREEN, which is what makes it the control.
+
+test("the UNCHECKED line names the slugs, and never prints [object Object]", () => {
+  const [line] = escrowLines({ unchecked: [DRIFT_ROOM, STAKED] }, TOWN_177);
+  assert.doesNotMatch(line, /\[object Object\]/, "the line an operator reads on every crossing until 014 lands");
+  assert.match(line, /lupi\/the-drift-room/);
+  assert.match(line, /berthillon\/cone-peche-blanche-2026-09-08/);
+  assert.match(line, /LOCKED UNCHECKED/);
+  assert.match(line, /migration 014/, "and it names the pending migration, so the operator knows what clears it");
+  assert.match(line, /town 723005e5/, "at the window's own pinned town sha, short");
+});
+
+test("the REFUSED line names its slugs too — the control that must stay green under the flip", () => {
+  const [line] = escrowLines({ refused: [{ ...DRIFT_ROOM, check: "x" }] }, TOWN_177);
+  assert.doesNotMatch(line, /\[object Object\]/);
+  assert.match(line, /refused 1 commons claim/);
+  assert.match(line, /lupi\/the-drift-room/);
+});
+
+test("both lines at once, and neither when there is nothing to say", () => {
+  assert.equal(escrowLines({ refused: [], unchecked: [] }, TOWN_177).length, 0,
+    "a quiet crossing prints nothing — an operator line for every crossing is a line nobody reads");
+  assert.equal(escrowLines({ refused: [DRIFT_ROOM], unchecked: [STAKED] }, TOWN_177).length, 2);
+  assert.equal(escrowLines(undefined, TOWN_177).length, 0, "and a caller with no verdict does not throw");
+});
+
+test("a missing town sha is spelled, not silently blank", () => {
+  const [line] = escrowLines({ unchecked: [DRIFT_ROOM] }, null);
+  assert.match(line, /town \?/, "the operator must be able to tell 'no sha' from a sha they misread");
 });

@@ -56,7 +56,7 @@ import { dirname, join } from "node:path";
 import { materializeClaims, recomputeStanding, slugOf, ownerHouseholdFor } from "./materialize.mjs";
 // The escrow PRESENCE gate — the sweep's own rule, ported to the candle before
 // G1 deletes the path it lives on. See step 5.5.
-import { escrowAbsentAmong, escrowPresenceAt } from "./escrow-presence.mjs";
+import { escrowAbsentAmong, escrowPresenceAt, escrowLines } from "./escrow-presence.mjs";
 import { computeStanding } from "./standing.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -266,10 +266,12 @@ try {
         town_sha: townSha,
       };
       for (const r of verdict.refused) decide(r.id, "refused", r.check);
-      if (verdict.refused.length)
-        console.log(`  ⚑ escrow: refused ${verdict.refused.length} commons claim(s) with nothing staked at town ${townSha?.slice(0, 8) ?? "?"}: ${verdict.refused.map((r) => r.slug).join(", ")}`);
-      if (verdict.unchecked.length)
-        console.log(`  ⚑ escrow: ${verdict.unchecked.length} commons claim(s) LOCKED UNCHECKED — escrow_projection cannot answer at town ${townSha?.slice(0, 8) ?? "?"} (migration 014 not applied, or this sha not ingested): ${verdict.unchecked.join(", ")}`);
+      // The strings are composed by `escrowLines`, not here, because this file is
+      // a script and a line composed here is watched by nothing — which is how
+      // the first cut of the UNCHECKED line came to print `[object Object]` over
+      // an array of candidate objects while its sibling and the receipt both
+      // mapped to `.slug` correctly.
+      for (const line of escrowLines(verdict, townSha)) console.log(`  ⚑ ${line}`);
     }
   }
 

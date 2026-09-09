@@ -122,6 +122,45 @@ export function escrowAbsentAmong(candidates, { tiers, escrowByMark, townSha } =
 }
 
 /**
+ * The two operator lines a crossing prints about this gate.
+ *
+ * ── WHY THE COMPOSITION LIVES HERE AND NOT AT THE CALL SITE ─────────────────
+ *
+ * Because the call site is `clearing-job.mjs`, which is a SCRIPT, so a line
+ * composed there is watched by nothing — and the first cut of the `unchecked`
+ * line proved exactly what that costs. It read
+ *
+ *     ${verdict.unchecked.join(", ")}
+ *
+ * over an array of `{ id, slug }` OBJECTS, and printed `[object Object]`. Its
+ * sibling one line above mapped to `.slug` correctly, and so did the receipt, and
+ * so did `test/escrow-presence.test.mjs`, which does the mapping ITSELF in its
+ * own assertion — **the test performed the very mapping the production line
+ * forgot.** A green suite could never have shown it.
+ *
+ * And it was the worst of the two to get wrong: `escrow_projection` is not on
+ * prod until migration 014 lands with lane 2, so the `unchecked` branch is the
+ * ONLY one that can run between merge and that migration. Every crossing would
+ * have printed an operator line naming nothing.
+ *
+ * So the strings are built by a pure function and the falsifiers read the
+ * STRINGS. A line nobody can assert on is a line that will say `[object Object]`
+ * eventually.
+ */
+export function escrowLines({ refused = [], unchecked = [] } = {}, townSha) {
+  const at = `town ${String(townSha ?? "?").slice(0, 8)}`;
+  const lines = [];
+  if (refused.length)
+    lines.push(`escrow: refused ${refused.length} commons claim(s) with nothing staked at ${at}: ` +
+      refused.map((r) => r.slug).join(", "));
+  if (unchecked.length)
+    lines.push(`escrow: ${unchecked.length} commons claim(s) LOCKED UNCHECKED — escrow_projection cannot answer at ${at} ` +
+      `(migration 014 not applied, or this sha not ingested): ` +
+      unchecked.map((c) => c.slug).join(", "));
+  return lines;
+}
+
+/**
  * The open stamps per mark at one town sha, from `escrow_projection` (migration
  * 014, lane 2's `jetto/g1-render-stakes`).
  *
