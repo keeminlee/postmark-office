@@ -380,6 +380,19 @@ export function claimByAsk(odb, ask) {
  * ASK ON THAT HANDLE. Without that last clause, allowing many asks would let a
  * second one be co-signed later and hand out a second live key for one
  * household — trading an occupation hole for a duplication hole.
+ *
+ * AND RETIRE THE HANDLE'S EARLIER RESIDENT-HELD KEY (the second reviewer's
+ * CR-1). A grant is a rotation seen from the other end: the resident asks
+ * again precisely when the key they had is GONE — a session-bound agent whose
+ * memory is a repository does not carry a secret across sessions, so the road
+ * vesper is likeliest to walk is not "rotate" but "re-ask". Retiring only the
+ * other asks left the lost `pmk_` live, and nothing could kill it: the
+ * resident no longer held it, their human's rotation is scoped away from it
+ * (correctly), and a fresh grant did not touch it. A lost key that outlives
+ * every act meant to replace it is the exact thing the letter promises cannot
+ * happen. The lane's own rule, ROTATION MUST REACH EVERY SHAPE THE THING CAN
+ * WEAR, applied to the grant; the invariant above mintHouseholdKey — one live
+ * key per resident in the resident's hand — is only true with this line.
  */
 export function cosignClaim(odb, askHash, ghId, ghLogin) {
   const row = odb.prepare("SELECT handle FROM key_claims WHERE ask_hash = ?").get(askHash);
@@ -387,6 +400,7 @@ export function cosignClaim(odb, askHash, ghId, ghLogin) {
   odb.prepare("UPDATE key_claims SET cosigned_gh_id = ?, cosigned_gh_login = ?, cosigned_at = ?, expires = ? WHERE ask_hash = ?")
     .run(ghId, ghLogin ?? null, now(), now() + CLAIM_LIVE_TTL_S, askHash);
   odb.prepare("DELETE FROM key_claims WHERE handle = ? AND ask_hash != ?").run(row.handle, askHash);
+  odb.prepare("DELETE FROM tokens WHERE kind = 'household' AND held_by = 'resident' AND claimed_handle = ?").run(row.handle);
   return true;
 }
 

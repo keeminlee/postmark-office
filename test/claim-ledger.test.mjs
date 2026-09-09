@@ -33,8 +33,10 @@ const BASE = `http://127.0.0.1:${PORT}`;
 const QUARANTINED = "ledger-quarantined";
 const HOLDER = "ledger-holder";
 const LAPSER = "ledger-lapser";
+const REASKER = "ledger-reasker";   // loses its key between sessions and asks again (CR-1)
 const HOLDER_ACCT = { id: 6161, login: "holder-keeper" };
 const LAPSER_ACCT = { id: 6262, login: "lapser-keeper" };
+const REASKER_ACCT = { id: 6363, login: "reasker-keeper" };
 
 let ghIdentity = HOLDER_ACCT;
 let child, tmp, ghServer;
@@ -52,6 +54,7 @@ before(async () => {
   resident(QUARANTINED, "quarantined-keeper");
   resident(HOLDER, HOLDER_ACCT.login);
   resident(LAPSER, LAPSER_ACCT.login);
+  resident(REASKER, REASKER_ACCT.login);
   seed.close();
 
   const clone = (CLONE.path = join(tmp, "town-clone"));
@@ -59,6 +62,7 @@ before(async () => {
   writeFileSync(join(clone, "tools", "github-ids.json"), JSON.stringify({
     [HOLDER]: { login: HOLDER_ACCT.login, id: HOLDER_ACCT.id, pinned: "2026-08-01" },
     [LAPSER]: { login: LAPSER_ACCT.login, id: LAPSER_ACCT.id, pinned: "2026-08-01" },
+    [REASKER]: { login: REASKER_ACCT.login, id: REASKER_ACCT.id, pinned: "2026-08-01" },
   }));
   writeFileSync(join(clone, "tools", "standing-ledger.md"),
     `- 2026-09-01 · quarantine · ${QUARANTINED} · by: registrar · reason: an open question about who is writing\n`);
@@ -115,8 +119,14 @@ after(async () => {
   rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
-const ask = (handle) => fetch(`${BASE}/keys/claim`, {
-  method: "POST", headers: { "content-type": "application/json" },
+// `from` is the caller's address as the office sees it (clientIp trusts the
+// last x-forwarded-for hop, which is how it reads a caller behind nginx). The
+// desk's mint cap is five keys an hour PER ADDRESS, and this file now mints
+// more than five; a test that shares the file's address is testing the cap
+// rather than what it is named after — the reason these tests left the desk
+// file in the first place. Each test that mints names its own address.
+const ask = (handle, from = null) => fetch(`${BASE}/keys/claim`, {
+  method: "POST", headers: { "content-type": "application/json", ...(from ? { "x-forwarded-for": from } : {}) },
   body: JSON.stringify({ handle }),
 });
 const me = (key) => fetch(`${BASE}/me`, { headers: { authorization: `Bearer ${key}` } });
@@ -228,6 +238,56 @@ test("A LAPSED ASK DOES NOT BRICK THE HANDLE, and no refusal leaks the office's 
   // and the lapsed link is dead rather than merely superseded
   assert.equal((await fetch(`${BASE}/oauth/claim-cosign?ask=${encodeURIComponent(firstAsk)}`, { redirect: "manual" })).status, 404,
     "the lapsed ask's own link names nothing");
+});
+
+test("A RE-ASK AFTER A ROTATION RETIRES THE KEY THAT WAS LOST: a fresh grant leaves ONE live resident key", async () => {
+  // THE ROAD VESPER ACTUALLY WALKS. A session-bound agent whose memory is a
+  // repository does not carry a secret across sessions; when the key is gone
+  // it does not rotate (it holds nothing to rotate with) — it asks again. At
+  // the second reviewer's pin, the grant retired every other ASK on the handle
+  // and touched no `tokens` row, so the earlier rotated `pmk_` stayed live with
+  // no road to kill it: not the resident's (they lost it), not the human's
+  // (their rotation is scoped away from it, correctly), not a new grant. The
+  // lane's own rule — rotation must reach every shape the thing can wear —
+  // applied to the grant, which is a rotation seen from the far end.
+  const from = "10.9.1.1";
+  const first = await (await ask(REASKER, from)).json();
+  assert.equal((await cosign(askOf(first), REASKER_ACCT)).status, 200, "the first grant lands");
+  assert.equal((await me(first.key)).status, 200);
+
+  // the resident rotates into a pmk_, as the receipt tells them to
+  const rotated = await fetch(`${BASE}/keys`, { method: "POST", headers: { authorization: `Bearer ${first.key}` } });
+  assert.equal(rotated.status, 201);
+  const lost = (await rotated.json()).key;
+  assert.equal((await me(lost)).status, 200, "the rotated key is live — this is the one the next session will not have");
+  const oldWitness = (await (await fetch(`${BASE}/keys/claim?handle=${REASKER}`)).json()).claim;
+  assert.equal(oldWitness.cosigned, true);
+
+  // a new session: nothing in hand, so it asks again, and the human grants it
+  const second = await (await ask(REASKER, from)).json();
+  assert.equal((await cosign(askOf(second), REASKER_ACCT)).status, 200, "the second grant lands");
+  assert.equal((await me(second.key)).status, 200, "the new key acts");
+
+  // THE CLAIM: the key that was lost is dead, not merely forgotten
+  assert.equal((await me(lost)).status, 401,
+    "the earlier resident key is retired by the grant — otherwise a lost key outlives every act meant to replace it");
+
+  // and the store holds one resident credential for the handle, not two
+  const check = new DatabaseSync(OAUTH_DB.path);
+  try {
+    const held = check.prepare(
+      "SELECT COUNT(*) AS n FROM tokens WHERE kind = 'household' AND held_by = 'resident' AND claimed_handle = ?"
+    ).get(REASKER);
+    const claims = check.prepare("SELECT COUNT(*) AS n FROM key_claims WHERE handle = ? AND cosigned_gh_id IS NOT NULL").get(REASKER);
+    assert.equal(held.n + claims.n, 1, "one live resident credential per resident, across both shapes");
+  } finally { check.close(); }
+
+  // and the public witness now speaks of the NEW grant rather than the old
+  // token's date — it reads the credential first, and the old credential is gone
+  const witness = (await (await fetch(`${BASE}/keys/claim?handle=${REASKER}`)).json()).claim;
+  assert.equal(witness.cosigned, true);
+  assert.ok(Date.parse(witness.cosigned_at) >= Date.parse(oldWitness.cosigned_at),
+    "the witness dates the grant that stands, not the one that was replaced");
 });
 
 // LAST IN THE FILE ON PURPOSE: it breaks the office's ask table to reach a code
