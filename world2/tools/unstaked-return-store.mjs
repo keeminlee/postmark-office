@@ -122,6 +122,58 @@ export const NAMED_DISAGREEMENT = 0.25;
  */
 export const REFUSED_KINDS = Object.freeze(["parcel"]);
 
+/**
+ * THE STORE-ONLY PASS — marks the FOLD HAS NEVER HEARD OF.
+ *
+ * `planFrom` walks the git receipt, so a standing mark that exists only in the
+ * store is never visited. `lupi/the-drift-room` is that mark today: standing,
+ * `locked_window 177`, a locked claim at stake 0, and absent from the fold.
+ * Nothing in the git half can reach it, and it would sail through 09-16
+ * unstaked and standing.
+ *
+ * ── THE LINE THAT MAKES THIS SAFE, AND IT IS NOT OPTIONAL ───────────────────
+ *
+ * "Absent from the git receipt" means ABSENT FROM THE FOLD ENTIRELY — not
+ * merely absent from `moved`. Measured on world2_dev 2026-09-09: 106 standing
+ * marks carry a locked claim at stake 0 and are neither the town's nor a parcel.
+ * ONE of them is store-only. The other 100 are in the fold, and the fold has
+ * already ruled on them:
+ *
+ *     40  staked        (the fold sees escrow the claim row does not)
+ *     38  sovereign     (standing on their household's own ground)
+ *     12  no sketchbook to move to
+ *     10  already moved by the git half
+ *
+ * So a store-only pass written as "locked claim at stake 0" alone would retire
+ * 40 staked and 38 sovereign marks — the exact marks the PSA promises stand.
+ * `claims.stake` is NOT the escrow oracle (see the header); the fold is. The
+ * receipt's full mark list is therefore the authority on what the fold saw, and
+ * a candidate is store-only only if it appears in NEITHER `moved` NOR `skipped`.
+ *
+ * Parcels and constitution-tier marks are excluded here too, by the same rulings
+ * the git half enforces — the store can check `kind` itself, and `data->>'tier'`
+ * where the row carries one.
+ */
+export function storeOnlyFrom(candidateRows, gitReceipt) {
+  const folded = new Set([
+    ...(gitReceipt.moved ?? []).map((m) => m.mark),
+    ...(gitReceipt.skipped ?? []).map((s) => s.mark),
+  ]);
+  const out = [], governedByFold = [];
+  const seen = new Set();
+  for (const r of candidateRows) {
+    if (seen.has(r.slug)) continue;                 // the marks table carries duplicate slugs
+    seen.add(r.slug);
+    if (folded.has(r.slug)) { governedByFold.push(r.slug); continue; }
+    if (r.owner === "the-town") continue;
+    if (REFUSED_KINDS.includes(r.kind)) continue;
+    if ((r.data ?? {}).tier === "constitution") continue;
+    out.push({ mark: r.slug, id: r.id, slug: r.slug, owner: r.owner,
+      household: r.household, kind: r.kind, why: "store-only: standing in the store, absent from the fold" });
+  }
+  return { storeOnly: out, governedByFold };
+}
+
 export function planFrom(setRows, storeRows) {
   // THE JOIN KEY IS `marks.slug`, WHICH ALREADY CARRIES THE OWNER. Measured on
   // world2_dev: a standing row reads owner `aion-solare`, slug
@@ -199,19 +251,45 @@ async function main() {
   };
   try {
     const { rows: storeRows } = await client.query(
-      "SELECT id, slug, kind, owner, household FROM marks WHERE status = 'standing'");
+      "SELECT id, slug, kind, owner, household, data FROM marks WHERE status = 'standing'");
+    // The store-only candidates: a standing mark whose LOCKED claim carries no
+    // stake. The join is on `slug` and never on household — see the split-key
+    // class below, which is exactly the 64 marks a household join would drop.
+    const { rows: candidateRows } = await client.query(
+      `SELECT m.id, m.slug, m.kind, m.owner, m.household, m.data
+         FROM marks m JOIN claims c ON c.slug = m.slug AND c.status = 'locked'
+        WHERE m.status = 'standing' AND c.stake = 0`);
+    // THE SPLIT-KEY CLASS, reported because it is the reason for the join rule.
+    // Measured on world2_dev 2026-09-09: standing marks whose `marks.household`
+    // disagrees with their locked claim's `claims.household` — `gh:<id>` on one
+    // side, `solo:<login>` on the other (`lupi/the-drift-room`: gh:312847595 vs
+    // solo:lupi-agent). A retire that reached from claim to mark through the
+    // household key would miss every one of them AND REPORT A CLEAN RUN.
+    const { rows: splitKeyRows } = await client.query(
+      `SELECT m.slug, m.household AS marks_household, c.household AS claims_household
+         FROM marks m JOIN claims c ON c.slug = m.slug AND c.status = 'locked'
+        WHERE m.status = 'standing' AND m.household IS DISTINCT FROM c.household
+        ORDER BY m.slug`);
     const { rows: [win] } = await client.query(
       "SELECT id FROM windows WHERE status = 'open' ORDER BY id DESC LIMIT 1");
     if (!win) throw new Error("no open window — the candle is dark; a retirement has no window to name");
 
     const { retire, missing, refused } = planFrom(setRows, storeRows);
+    const { storeOnly, governedByFold } = storeOnlyFrom(candidateRows, gitReceipt);
     const missRate = setRows.length ? missing.length / setRows.length : 0;
     Object.assign(receipt, {
       window_id: win.id,
       store_standing: storeRows.length,
-      totals: { retiring: retire.length, missing_from_store: missing.length,
-                refused_by_ruling: refused.length, miss_rate: +missRate.toFixed(4) },
-      retire, missing, refused,
+      totals: { retiring: retire.length + storeOnly.length,
+                from_the_fold: retire.length, store_only: storeOnly.length,
+                missing_from_store: missing.length,
+                refused_by_ruling: refused.length,
+                split_key_households: splitKeyRows.length,
+                zero_stake_candidates_the_fold_governs: governedByFold.length,
+                miss_rate: +missRate.toFixed(4) },
+      retire, missing, refused, store_only: storeOnly,
+      split_key: splitKeyRows.map((r) => ({ mark: r.slug, marks_household: r.marks_household,
+                                            claims_household: r.claims_household })),
     });
 
     if (missRate > NAMED_DISAGREEMENT && !ALLOW_SKEW) {
@@ -229,7 +307,7 @@ async function main() {
       // every household has its draft, or nothing moved at all.
       await client.query("BEGIN");
       try {
-        for (const r of retire) {
+        for (const r of [...retire, ...storeOnly]) {
           await client.query(
             "UPDATE marks SET status = 'retired', retired_window = $1 WHERE id = $2 AND status = 'standing'",
             [win.id, r.id]);
@@ -260,6 +338,9 @@ async function main() {
   console.log(`unstaked-return-store · ${receipt.applied ? "APPLIED" : "dry run"} · db ${receipt.database} · window ${receipt.window_id}`);
   console.log(`  set from the fold: ${receipt.set_size}   standing in the store: ${receipt.store_standing}`);
   console.log(`  retiring: ${t.retiring}   with a fresh draft planted for each`);
+  console.log(`    ${t.from_the_fold} from the fold's set, ${t.store_only} store-only (standing here, absent from the fold)`);
+  console.log(`  split-key households (marks vs claims): ${t.split_key_households} — the join is on slug, so all of them are reached`);
+  console.log(`  zero-stake rows the FOLD governs and this pass leaves alone: ${t.zero_stake_candidates_the_fold_governs}`);
   console.log(`  not found in the store: ${t.missing_from_store} (${(t.miss_rate * 100).toFixed(1)}%)`);
   if (t.refused_by_ruling) {
     console.log(`  ⚠ REFUSED ${t.refused_by_ruling} parcel(s): parcels need no staking (founder's ruling 2026-09-09).`);

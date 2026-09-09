@@ -455,6 +455,32 @@ export async function promoteDraftOnStake({ actor, householdName, slug, stamps =
 }
 
 /**
+ * Whether the store still stands this mark — the one question `world_stake`
+ * cannot answer from the sketchbook.
+ *
+ * WHY IT EXISTS. `markExists` (world-stake.mjs § the door's own gate) accepts a
+ * mark it finds in the CALLER'S OWN SKETCHBOOK, which is exactly where the
+ * 2026-09-16 move puts a returned mark. So after the crossing the 404 gate waves
+ * a retired mark through, and a stake of ✦1 or more would take the stamps into
+ * escrow against something the town no longer sees.
+ *
+ * A slug can carry both a retired row and a standing one (a mark returned and
+ * then re-claimed), and the STANDING row is the answer in that case — the mark
+ * stands, whatever also happened to it once. Hence the ordering rather than a
+ * LIMIT 1 over an arbitrary row.
+ */
+export async function markStandingStatus({ slug }, env = process.env) {
+  if (!candleEnabled(env)) return { known: false };
+  const p = await pool(env);
+  const { rows } = await p.query(
+    `SELECT status, retired_window FROM marks WHERE slug = $1
+      ORDER BY (status = 'standing') DESC LIMIT 1`, [slug]);
+  if (!rows.length) return { known: true, found: false };
+  return { known: true, found: true, status: rows[0].status,
+           retired: rows[0].status === "retired", retired_window: rows[0].retired_window };
+}
+
+/**
  * One household's own drafts — the whole of what `/world2/my-drafts` answers.
  *
  * `submitted_at` comes back as `composed_at`, and `window_id` does not come
