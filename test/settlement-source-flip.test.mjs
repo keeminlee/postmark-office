@@ -508,6 +508,19 @@ test("F-collide · a store-written local whose name COLLIDES with an origin draf
   // fixture builds that world on purpose, because a test that can only pass is
   // not a test.
   const script = readFileSync(join(OFFICE, "deploy", "settlement-auto.sh"), "utf8");
+  // ── THE ASSERTION THAT ACTUALLY SEPARATES THE TWO WORLDS ──────────────────
+  //
+  // The first version of this test asserted `local === twin` after the crossing,
+  // and that is VACUOUS: it is true whether the repair reset the local DOWN to
+  // origin's sha or the defect pushed the local UP to origin. Both make them
+  // equal. Removing only the reset left this test green; it reddened only when
+  // the whole branch went, and then on a stderr regex — a log line, not state.
+  //
+  // The question is which direction they were made equal in, so the instrument
+  // is ORIGIN'S OWN SHA, captured before the crossing: if the repair works,
+  // origin still holds the git-era sketchbook it started with; if the defect
+  // runs, origin has been moved to the store's render.
+  let originBefore = null;
   const run = crossing("collide", script, {
     env: { SETTLEMENT_SOURCE: "git" },
     plant: (root) => {
@@ -517,18 +530,29 @@ test("F-collide · a store-written local whose name COLLIDES with an origin draf
         branch: "draft/alpha",
         subject: "store write-down: 2 mark(s) — solo:alpha (window 178)",
       });
+      originBefore = execFileSync("git", ["-C", join(root, "world.git"), "rev-parse", "refs/heads/draft/alpha"],
+        { encoding: "utf8" }).trim();
     },
   });
 
   assert.equal(run.res.status, 0, `the crossing must complete: ${run.res.stderr}`);
+  const originAfter = execFileSync("git", ["-C", join(run.root, "world.git"), "rev-parse", "refs/heads/draft/alpha"],
+    { encoding: "utf8" }).trim();
+  assert.equal(originAfter, originBefore,
+    "ORIGIN must still hold the git-era sketchbook it started with. If this moved, the store's render was PUSHED up "
+    + "into a git-era sketchbook — which is the whole defect, and which also makes local and origin equal, so comparing "
+    + "them to each other proves nothing");
+
   const sweep = join(run.root, "sweep");
   const local = execFileSync("git", ["-C", sweep, "rev-parse", "refs/heads/draft/alpha"], { encoding: "utf8" }).trim();
-  const twin = execFileSync("git", ["-C", sweep, "rev-parse", "refs/remotes/origin/draft/alpha"], { encoding: "utf8" }).trim();
-  assert.equal(local, twin,
-    "the store's scratch must be reset to origin's own sketchbook — resetting rather than deleting, because the twin "
-    + "is the git era's and has to survive");
-  assert.match(run.res.stderr, /a store crossing had written over a git-era sketchbook's name/);
-  assert.equal(run.receipt.sketchbook_ghosts, 1, "and it is counted with the other leftovers it swept");
+  assert.equal(local, originBefore,
+    "and the local was reset DOWN to that same pre-crossing sha — resetting rather than deleting, because the twin is "
+    + "the git era's and has to survive");
+
+  assert.equal(run.receipt.sketchbook_resets, 1, "counted as a RESET");
+  assert.equal(run.receipt.sketchbook_ghosts, 0,
+    "and NOT as a ghost: a ghost is a leftover deleted, a reset is a scratch taken off a twin that survives, and one "
+    + "number for both would hide whichever was smaller");
 });
 
 test("F-mode · an unrecognised SETTLEMENT_SOURCE refuses rather than defaulting", { skip: !SH_OK && "no POSIX sh" }, () => {

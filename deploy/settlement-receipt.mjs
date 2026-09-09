@@ -124,6 +124,14 @@ const receipt = {
   // Null on a store crossing, where the question is not asked.
   sketchbook_ghosts: env("SETTLEMENT_GHOSTS") === null ? null : Number(env("SETTLEMENT_GHOSTS")),
   sketchbook_kept_undelivered: env("SETTLEMENT_KEPT_UNDELIVERED") === null ? null : Number(env("SETTLEMENT_KEPT_UNDELIVERED")),
+  // A THIRD NUMBER, never folded into the first. A ghost is a leftover DELETED;
+  // a reset is a store scratch taken OFF a surviving origin twin, and that twin
+  // lives on. The repairs differ — ghosts climbing means store crossings are
+  // dying before their own cleanup, resets climbing means store crossings are
+  // taking git-era sketchbook names — and one count would hide whichever was
+  // smaller, which is the argument the two fields above already make for
+  // themselves. It was folded into `ghosts` for one lap; the reviewer caught it.
+  sketchbook_resets: env("SETTLEMENT_RESETS") === null ? null : Number(env("SETTLEMENT_RESETS")),
 
   // THE `as_of` TRIPLE — the window, the world sha and the town sha the store
   // was read at. Reader 5's finding, in the keeper's own terms: without the

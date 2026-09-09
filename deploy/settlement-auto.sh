@@ -169,6 +169,7 @@ report() { # status detail
   SETTLEMENT_ISOLATE_JSON="${ISOLATE_JSON:-}" SETTLEMENT_REFUSAL_JSON="${REFUSAL_JSON:-}" \
   SETTLEMENT_SOURCE_MODE="$SOURCE" SETTLEMENT_STORE_JSON="${STORE_JSON:-}" \
   SETTLEMENT_GHOSTS="${GHOSTS:-}" SETTLEMENT_KEPT_UNDELIVERED="${KEPT_UNDELIVERED:-}" \
+  SETTLEMENT_RESETS="${RESETS:-}" \
     node "$OFFICE/deploy/settlement-receipt.mjs" > "$OUT" 2>/dev/null || true
   # THE HISTORY. One line per DECIDED crossing, appended, bounded. A single
   # receipt file answers "what did the last crossing do"; nothing on the box
@@ -329,6 +330,7 @@ fi
 # cannot classify is treated as somebody's undelivered work, not as debris.
 GHOSTS=0
 KEPT_UNDELIVERED=0
+RESETS=0
 if [ "$SOURCE" = "git" ]; then
   MAIN_TREE="$(git -C "$SWEEP" rev-parse 'main^{tree}')"
   git -C "$SWEEP" for-each-ref --format='%(refname:short)' 'refs/heads/draft/*' | while read -r b; do
@@ -359,7 +361,14 @@ if [ "$SOURCE" = "git" ]; then
           if [ "$(git -C "$SWEEP" rev-parse "refs/heads/$b")" != "$twin" ]; then
             git -C "$SWEEP" branch -qf "$b" "$twin"
             echo "[settlement-auto] reset $b to its origin twin — a store crossing had written over a git-era sketchbook's name" >&2
-            echo x >> "$WORK/ghosts"
+            # ITS OWN COUNTER, not `ghosts`. A ghost is a leftover DELETED; this
+            # is a store scratch RESET off a twin that survives, and origin's own
+            # sketchbook lives on. Folding them together is exactly what the
+            # receipt's own comment argues against one field up: two alarms in one
+            # number hide whichever is smaller, and these have different repairs —
+            # a ghost means store crossings are dying before their own cleanup, a
+            # reset means a store crossing took a git-era sketchbook's name.
+            echo x >> "$WORK/resets"
           fi ;;
       esac
       continue
@@ -386,6 +395,7 @@ if [ "$SOURCE" = "git" ]; then
   # the same reason the delivery loop below writes `tips.next` to a file.
   [ -f "$WORK/ghosts" ] && GHOSTS="$(wc -l < "$WORK/ghosts" | tr -d ' ')"
   [ -f "$WORK/kept" ] && KEPT_UNDELIVERED="$(wc -l < "$WORK/kept" | tr -d ' ')"
+  [ -f "$WORK/resets" ] && RESETS="$(wc -l < "$WORK/resets" | tr -d ' ')"
 fi
 
 UNDELIVERED=0
