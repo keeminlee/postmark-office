@@ -17,7 +17,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -67,6 +67,41 @@ test("no store credential refuses under its own name, ahead of everything else",
     { WORLD2_PG: "0" });
   assert.equal(r.status, 1);
   assert.equal(JSON.parse(r.stdout).refused, "no-store-credential");
+});
+
+test("TWO foldDeltas REFUSE rather than one winning silently", () => {
+  // The conductor's ownership ruling (2026-09-09) makes `fold-delta.mjs` the
+  // canonical selector and tells lane 2 not to build a second. This is the guard
+  // for the day somebody does anyway — by a merge, a rebase, or a good
+  // intention. Two functions answering "which marks are this crossing's" can
+  // disagree, and nothing downstream could say which one answered.
+  //
+  // Exercised by shadowing lane 2's module in a throwaway copy of the tools
+  // directory, so the real files are untouched.
+  const dir = mkdtempSync(join(tmpdir(), "twodelta-"));
+  try {
+    const tools = join(dir, "world2", "tools");
+    execFileSync("node", ["-e", `require("node:fs").mkdirSync(${JSON.stringify(tools)},{recursive:true})`]);
+    for (const f of ["fold-input-cli.mjs", "fold-delta.mjs", "mark-render.mjs"]) {
+      copyFileSync(join(OFFICE, "world2", "tools", f), join(tools, f));
+    }
+    // A stand-in for lane 2's module that exports BOTH names.
+    writeFileSync(join(tools, "fold-input.mjs"),
+      "export async function foldInputFromStore() { return {}; }\n"
+      + "export async function stakesFromStore() { return []; }\n"
+      + "export async function foldDelta() { return {}; }\n");
+    // `mark-render.mjs` imports ../../src/mark-record.mjs; give it the real one.
+    mkdirSync(join(dir, "src"), { recursive: true });
+    copyFileSync(join(OFFICE, "src", "mark-record.mjs"), join(dir, "src", "mark-record.mjs"));
+
+    const r = spawnSync(process.execPath, [join(tools, "fold-input-cli.mjs"),
+      "--world-sha", "a".repeat(40), "--town-clone", OFFICE, "--town-sha", "b".repeat(40), "--window", "177"], {
+      encoding: "utf8",
+      env: { ...process.env, WORLD2_PG: "1", WORLD2_PG_URL: "postgres://nobody@127.0.0.1:1/nowhere" },
+    });
+    assert.equal(r.status, 1, `expected a refusal; stdout=${r.stdout} stderr=${r.stderr.slice(0, 300)}`);
+    assert.equal(JSON.parse(r.stdout).refused, "two-fold-deltas");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 // ── the ingest ordering, as a pure function over a real repo ─────────────────

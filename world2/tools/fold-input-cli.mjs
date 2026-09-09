@@ -56,11 +56,13 @@
 
 import { execFileSync } from "node:child_process";
 
-// The namespace, not a named import: `foldDelta` is lane 2's delta-contract
-// export and does not exist on every pin of that file. Naming it in a static
-// import would make this whole tool fail to load on a pin that predates it,
-// which turns a missing feature into a crossing that cannot start.
+// The namespace for lane 2's file, because this tool needs to ask whether it
+// exports a `foldDelta` of its own — and a named import of something that does
+// not exist there would make the whole tool fail to LOAD rather than refuse.
 import * as foldInput from "./fold-input.mjs";
+// The selector, imported by name because it is not optional: a crossing without
+// it has no way to say which marks are its own.
+import { foldDelta } from "./fold-delta.mjs";
 
 const argOf = (n, d = null) => { const i = process.argv.indexOf(n); return i !== -1 ? process.argv[i + 1] : d; };
 
@@ -104,6 +106,32 @@ if (isMain) {
   if (!worldSha) { console.error("--world-sha <sha> is required"); process.exit(2); }
   if (!townClone || !fetchedSha) { console.error("--town-clone <path> and --town-sha <sha> are required"); process.exit(2); }
 
+  // ── FIRST, BECAUSE IT IS ABOUT THE CODE AND NOT THE ENVIRONMENT ───────────
+  //
+  // ONE SELECTOR, AND IT IS `fold-delta.mjs`. An earlier version resolved lane
+  // 2's `foldDelta` first and this lane's second, on the plan that lane 2 would
+  // ship its own and win silently. That plan was WITHDRAWN by the conductor on
+  // 2026-09-09: `fold-delta.mjs` is the canonical implementation and lane 2
+  // rebases onto a tree carrying it.
+  //
+  // So a second `foldDelta` appearing in lane 2's file REFUSES instead of quietly
+  // winning. Two functions answering "which marks are this crossing's" is the
+  // same hazard `founder_commit` is kept out of: not that either is wrong, but
+  // that they can disagree and nothing downstream can tell which one answered.
+  //
+  // It is checked BEFORE the credential and before the connection, for the reason
+  // the window check is: this is a fact about the tree, it needs nothing, and a
+  // check that runs after a connection can fail for the connection's reason and
+  // send the operator to the wrong door.
+  if (typeof foldInput.foldDelta === "function") {
+    refuse(
+      "two-fold-deltas",
+      "`world2/tools/fold-input.mjs` exports a `foldDelta` and so does `world2/tools/fold-delta.mjs`, which is the "
+      + "canonical one (conductor's ownership ruling, 2026-09-09). Two functions selecting the crossing's marks can "
+      + "disagree, and a receipt cannot say which answered. Delete one before crossing — and if lane 2's is the one "
+      + "that should live, that is a ruling, not a merge-conflict resolution.");
+  }
+
   if (process.env.WORLD2_PG !== "1" || !process.env.WORLD2_PG_URL) {
     refuse(
       "no-store-credential",
@@ -144,12 +172,19 @@ if (isMain) {
     // the crossing published, not before. The conductor's ruling is that a fold
     // with no docket REFUSES and never reaches a sketchbook.
     //
-    // `foldDelta` is resolved from lane 2's file first and from this lane's
-    // stand-in second, so the day lane 2 ships its own, that one wins with no
-    // edit here.
-    const delta = typeof foldInput.foldDelta === "function"
-      ? { fn: foldInput.foldDelta, entry: "fold-input.mjs § foldDelta" }
-      : { fn: (await import("./fold-delta.mjs")).foldDelta, entry: "fold-delta.mjs § foldDelta (lane 3's stand-in; lane 2 owns this function)" };
+    // ONE SELECTOR, AND IT IS `fold-delta.mjs`.
+    //
+    // An earlier version resolved lane 2's `foldDelta` first and this lane's
+    // second, on the plan that lane 2 would ship its own and win silently. That
+    // plan was WITHDRAWN by the conductor on 2026-09-09: `fold-delta.mjs` is the
+    // canonical implementation and lane 2 rebases onto a tree carrying it.
+    //
+    // So the import is direct, and a second `foldDelta` appearing in lane 2's
+    // file REFUSES instead of quietly winning. Two functions answering "which
+    // marks are this crossing's" is the same hazard `founder_commit` is kept out
+    // of: not that either is wrong, but that they can disagree and nothing
+    // downstream can tell which one answered.
+    const delta = { fn: foldDelta, entry: "fold-delta.mjs § foldDelta" };
 
     out = await delta.fn(client, { window, worldSha });
     selection = { by: "docket", window, entry: delta.entry };

@@ -1,19 +1,29 @@
 #!/usr/bin/env node
 // fold-delta.mjs — THE DOCKET IS THE SELECTOR (G1 lane 3, ruled 2026-09-08).
 //
-// ── WHOSE FILE THIS IS, AND WHY IT IS HERE AND NOT IN LANE 2 ────────────────
+// ── WHOSE FILE THIS IS ──────────────────────────────────────────────────────
 //
-// `foldDelta(client, { window })` is LANE 2's function by right — it belongs
-// beside `foldInputFromStore` in `world2/tools/fold-input.mjs`, which is where
-// the store's read grammar lives. Lane 2's pin `a5ccd224` does not export it
-// (measured: that file exports `stakesFromStore` and `foldInputFromStore` and
-// nothing else), and the conductor's ruling of 18:1x is explicit that if lane
-// 2's second pin has not landed it, this lane builds it against the same
-// signature and says so. This is that, and it says so.
+// THIS IS THE `foldDelta`. Not a stand-in for one.
 //
-// It is a SEPARATE FILE rather than an edit to lane 2's, so the two branches do
-// not collide again the way `fold-input.mjs` did at lap 2. When lane 2 lands its
-// own, this file is deleted and `fold-input-cli.mjs`'s import moves by one line.
+// It was built here because lane 2's pin `a5ccd224` did not export it (measured:
+// that file exports `stakesFromStore` and `foldInputFromStore` and nothing else)
+// and the conductor's 18:1x ruling said to build it in this lane against lane
+// 2's named signature if their second pin had not landed it. **On 2026-09-09 the
+// conductor ruled ownership: this file is the canonical implementation, lane 2
+// has been told not to build a second, and lane 2's pin 2 rebases onto a tree
+// that carries it.**
+//
+// An earlier version of this header said the opposite — that lane 2 owned the
+// function by right and that "when lane 2 lands its own, this file is deleted".
+// **That plan is WITHDRAWN and the sentence is corrected rather than removed**,
+// because a comment instructing the next reader to delete the canonical
+// implementation is worse than no comment: it survives the conversation that
+// retired it, and it reads as authority.
+//
+// If `world2/tools/fold-input.mjs` ever grows a `foldDelta` of its own, that is
+// two answers to "which marks are this crossing's", and `fold-input-cli.mjs`
+// REFUSES rather than picking one. Two selectors that can disagree is the same
+// hazard `founder_commit` is kept out of.
 //
 // ── WHY A DOCKET AND NOT "THE BYTES DIFFER" ─────────────────────────────────
 //
