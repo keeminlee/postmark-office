@@ -310,14 +310,19 @@ test("F-git · SETTLEMENT_SOURCE=git issues the train's chain plus the ghost swe
   // `git rev-parse main` appears because the quiet-pass test now asks the SWEEP
   // whether it published, not `main` — the refresh can move main before the fold
   // and a registry-only crossing must still report `quiet`.
+  //
+  // WRITTEN FROM THE LOG, NOT FROM THE SCRIPT. The `node` wrapper rewrites any
+  // path-shaped argument to its basename, so the export's invocation arrives
+  // here as `--town town --world registry` and not as the paths the script
+  // passes. The first draft of this list guessed the latter and six commands
+  // came back unexplained, which is the assertion below doing its job.
   const REGISTRY_REFRESH = [
-    /^node world-households-export\.mjs --town <root>\/tmp\/town --world <tmp>\/registry$/,
-    /^node world-households-export\.mjs --town <tmp>\/town --world <tmp>\/registry$/,
-    /^node settlement-registry\.mjs --fresh <tmp>\/registry\/WORLD\/households\.json --world <root>\/sweep --town-sha <sha>$/,
-    /^node -e <inline> <tmp>\/registry\.json$/,
-    /^node -e <inline> <tmp>\/registry\.json .*$/,
+    /^node world-households-export\.mjs --town town --world registry$/,
+    /^node settlement-registry\.mjs --fresh households\.json --world <root>\/sweep --town-sha <sha>$/,
+    /^node -e <inline> registry\.json$/,
+    /^node -e <inline> registry\.json .*$/,
     /^git -C <root>\/sweep add -- WORLD\/households\.json$/,
-    /^git -C <root>\/sweep -c user\.name=the settlement sweep \(box\) -c user\.email=postmark-settlement@users\.noreply\.github\.com commit -q -F <tmp>\/registry\.msg$/,
+    /^git -C <root>\/sweep -c user\.name=the settlement sweep \(box\) -c user\.email=postmark-settlement@users\.noreply\.github\.com commit -q -F <tmp>$/,
     /^git -C <root>\/sweep rev-parse HEAD$/,
     /^git -C <root>\/sweep rev-parse main$/,
   ];
@@ -351,7 +356,14 @@ test("F-git · SETTLEMENT_SOURCE=git issues the train's chain plus the ghost swe
   assert.deepEqual(unexplained, [],
     "every command the rollback adds must belong to the ghost sweep (repair 1) or to the registry refresh "
     + `(2026-09-09). An addition this test cannot name is a change to the crossing nobody declared: ${JSON.stringify(unexplained)}`);
-  assert.ok(added.length > 0, "and the ghost sweep must actually run, or repair 1 is not in this tree");
+  // COUNTED OVER GHOST_SWEEP ALONE, and that is a repair rather than a detail.
+  // This used to ask `added.length > 0`. The registry refresh (2026-09-09) makes
+  // `added` non-empty for a reason that has nothing to do with the ghost sweep,
+  // so the unqualified form would have turned this assertion green while the
+  // thing it names was still absent — a check quietly satisfied by an unrelated
+  // change is worse than one that fails.
+  assert.ok(added.some((c) => GHOST_SWEEP.some((re) => re.test(c))),
+    "and the ghost sweep must actually run, or repair 1 is not in this tree");
   assert.ok(added.some((c) => REGISTRY_REFRESH.some((re) => re.test(c))),
     "and the registry refresh must actually run — a crossing that folds on whatever WORLD/households.json "
     + "world main happens to carry is the state this whole step exists to end");
