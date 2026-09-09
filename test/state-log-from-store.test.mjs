@@ -330,3 +330,40 @@ test("F18 · the build-time grammar guard actually throws — driven to its own 
   assert.doesNotThrow(() => logLineFromAct(a, { householdNameFor }));
   assert.doesNotThrow(() => logLineFromAct(a, { householdNameFor, fields: LINE_FIELDS }));
 });
+
+test("F19 · this lane's tool is INERT on import — the CLI tail is guarded", async () => {
+  // THE CONDUCTOR'S 20:2x CLASS, from this lane's own find. A shared module
+  // whose CLI tail is unguarded executes at IMPORT, and a `process.exit()` in
+  // that tail kills the importer. `world2/tools/state-log-rederive.mjs` was
+  // exactly that: everything from the WORLD2_PG_URL check down — including the
+  // refusal's `process.exit(2)` — ran on import, so the resolver it exports for
+  // reuse could never actually be imported. I wrote it as the shared resolver
+  // and never once imported it.
+  //
+  // The guard is the office's BASENAME idiom, not `argv[1] === import.meta.url`
+  // — that form is false under a junction and the tool then runs nothing at all,
+  // which is the shape that cost 33 fixture reds on 2026-09-05.
+  //
+  // Importing it here IS the proof: if the tail ever comes unguarded again, this
+  // process dies and the whole file goes red rather than one assertion.
+  const before = process.env.WORLD2_PG_URL;
+  process.env.WORLD2_PG_URL = "postgres://not-a-scratch/world2_dev";  // the URL the tail REFUSES on
+  try {
+    const tool = await import("../world2/tools/state-log-rederive.mjs");
+    assert.equal(typeof tool.householdNamerFor, "function",
+      "the resolver is reachable — which is the whole point of the guard");
+  } finally {
+    if (before === undefined) delete process.env.WORLD2_PG_URL; else process.env.WORLD2_PG_URL = before;
+  }
+  // And the guard is the right FORM: a basename test, which survives a junction.
+  const src = readFileSync(new URL("../world2/tools/state-log-rederive.mjs", import.meta.url), "utf8");
+  assert.match(src, /process\.argv\[1\]\?\.endsWith\("state-log-rederive\.mjs"\)/,
+    "the office's basename idiom");
+  // COMMENT LINES STRIPPED FIRST. The blunt version of this matched the file's
+  // own comment explaining why NOT to use the URL form — a check that reads
+  // prose as code, which is the third instrument of mine tonight to assert
+  // against the wrong text. Scope the search to what actually executes.
+  const code = src.split(String.fromCharCode(10)).filter((l) => !l.trim().startsWith("//")).join(" ");
+  assert.doesNotMatch(code, /import\.meta\.url\s*===|===\s*import\.meta\.url/,
+    "never the URL-equality form — false under a junction, and the tool then does nothing silently");
+});
