@@ -69,9 +69,25 @@ test("the phase is read against the clock, and one node reads the same phase to 
   for (const p of PHASES) assert.ok(typeof p === "string");
 });
 
-test("NO SURFACE STORES THE PHASE: the fold's rows carry no phase field, and the phase moves without a write", () => {
-  const row = declareRow();
-  assert.ok(!("phase" in row.payload), "the payload a host writes carries the five facts and no phase word");
+test("NO SURFACE STORES THE PHASE: the row THE DOOR WRITES carries no phase field, and the phase moves without a write", async () => {
+  // ⛔ THE LOAD-BEARING SENTENCE IS ASSERTED AGAINST THE DOOR, NOT THE
+  // FIXTURE. Repair 1 of the review: this test used to read `declareRow()` —
+  // a literal defined forty lines up in this file — and assert that the
+  // fixture it had just written had no `phase` key, which is a fact about the
+  // test file. The reviewer wrote `phase: "announced"` into the payload the
+  // door actually writes and the whole file stayed green. So the row here is
+  // the one `gatherViaOffice` wrote to a scratch journal, read back through
+  // the office's own mapper; if a future hand stores a phase word at the door,
+  // this is the assertion that stops it.
+  const door = scratchDoor("no-phase");
+  let row;
+  try {
+    const r = await gatherViaOffice({ place: QUAY.id, doors_open: DOORS, start: START, end: END }, KEY, doorDeps(door));
+    assert.equal(r.phase, "announced", "the DOOR answers a phase — and the next line is why that is not a stored one");
+    [row] = door.rows();
+  } finally { door.restore(); }
+  assert.ok(!("phase" in row.payload), "the payload the door writes carries the five facts and no phase word");
+  assert.ok(!("phase" in row), "and no column of the row carries one either");
   const early = gatheringsFrom([row], at("2026-09-11T00:00:00.000Z"))[0];
   const late = gatheringsFrom([row], at("2026-09-12T20:00:00.000Z"))[0];
   assert.equal(early.phase, "announced");
