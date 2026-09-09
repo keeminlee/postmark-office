@@ -75,6 +75,146 @@ export function loginKeys(pins, households) {
   return { logins, ambiguous };
 }
 
+// ── THE SECOND KEY: a household the authorship wall can read ────────────────
+//
+// WHAT THE WALL ACTUALLY DOES. `settlement-sweep.mjs:905-919` and
+// `tools/lane-wall.mjs:87` both resolve a sketchbook's NAME through this file's
+// `logins` map — `logins[branchName.slice("draft/".length).toLowerCase()]` — and
+// the sweep then compares that against the mark author's own household
+// (`households[record.by]`). It leaves a branch it cannot bind ALONE rather than
+// refusing it: "unverifiable is the status quo, never a new refusal (registry
+// lag must not strand the pen's own writes)".
+//
+// SO AN UNBINDABLE KEY IS A SILENT HOLE, NOT A LOUD ONE. Every mark in such a
+// household publishes with its authorship unchecked, and every test stays green
+// while it happens. That is the same defect `store-writedown.mjs` exists to keep
+// a RENAME from causing, arriving instead from the registry's own side.
+//
+// AND THE MAP ONLY EVER HELD ONE SHAPE. `loginKeys` above binds exactly two
+// things: a pin's GitHub login, and a `login:`-keyed household's own name. Every
+// other household key the town can mint is invisible to the wall by
+// construction. Measured against the live town, 2026-09-09:
+//
+//     gh:<id>   150 handles · 101 distinct keys · every one bound by its pin
+//     hh:<house>  8 handles ·   7 distinct keys · NOT ONE OF THEM BOUND
+//     solo:<handle>  the shape `stamp-mint.householdKeys()` mints for a
+//                    WHITE_PAGES room with no ADDRESS github — zero today, and
+//                    the code path that makes them is live
+//
+// `hh:` is today's instance of the class and `solo:` was yesterday's. The rule
+// below closes the class rather than either instance: EVERY household key the
+// registry holds that no login binds is bound here by the sketchbook name it
+// will actually carry, so the wall can read it.
+//
+// WHY THE NAME COMES FROM THE SAME FUNCTION THE WRITE-DOWN USES. If this planted
+// one spelling and `store-writedown.sketchbookNameFor` chose another, the map
+// would bind a branch nobody opens while the branch that IS opened stays
+// unbindable — a fix that reads as done and changes nothing. So there is one
+// resolver, `sketchbookNameForKey`, and the write-down's refusing wrapper calls
+// it. Two spellings cannot exist.
+//
+// WHAT THIS DELIBERATELY DOES NOT TOUCH. `loginKeys` itself does not move: its
+// output is also the card rail's and the Stripe attribution map's
+// (`tools/stripe-watch.mjs resolveHand`), where a new key is a new way for a
+// typed string to become somebody's hand. The second keys are composed onto the
+// EXPORTED map in `tools/world-households-export.mjs` and nowhere else, so the
+// money surface reads exactly the map it read yesterday.
+
+/** A legal git branch component — the sketchbook name has to be one. */
+export const SKETCHBOOK_COMPONENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+/**
+ * THE ONE RESOLVER: household key → the sketchbook name the world repo speaks.
+ *
+ * Returns `{ name, reason, bound }`. `reason` is null when the name is good;
+ * `"ambiguous"` when several logins bind the key (`bound` names them) and
+ * picking one would bind the wall to a household a mark may not belong to;
+ * `"unnameable"` when the key yields no legal branch component. It REPORTS
+ * rather than throws so both callers can say it in their own words — the
+ * write-down as a `FoldInputRefusal` that stops a crossing, the export as a
+ * shouted line that leaves a key unplanted.
+ *
+ * The mapping is discovered, not invented — it reproduces the names the git era
+ * already uses. `gh:293432145` → `aionsolare`, and origin carries
+ * `draft/AionSolare`; the wall lowercases, so case does not matter to it. Every
+ * other shape is named by the part after its colon: `solo:ev-attractor` →
+ * `ev-attractor`, `hh:cadaeic.space` → `cadaeic.space`, and origin carries
+ * `draft/ev-attractor` today.
+ */
+export function sketchbookNameForKey(householdKey, logins = {}) {
+  const key = String(householdKey);
+  const colon = key.indexOf(":");
+  const prefix = colon === -1 ? null : key.slice(0, colon);
+  const rest = colon === -1 ? key : key.slice(colon + 1);
+
+  let name = rest;
+  if (prefix === "gh") {
+    const bound = Object.entries(logins ?? {}).filter(([, v]) => v === key).map(([login]) => login);
+    if (bound.length === 1) name = bound[0];
+    else if (bound.length > 1) return { name: null, reason: "ambiguous", bound };
+    // No login binds this key. The git era has no sketchbook for it either, so
+    // the numeric id is the only stable name left.
+    else name = `gh-${rest}`;
+  }
+
+  if (!SKETCHBOOK_COMPONENT.test(name)) return { name, reason: "unnameable", bound: [] };
+  return { name, reason: null, bound: [] };
+}
+
+/**
+ * The second keys: `{ additions, collisions, unnameable }`.
+ *
+ * `additions` is lowercased sketchbook name → household key, for every DISTINCT
+ * key in `households` that no entry of `logins` already binds. Merge it UNDER
+ * the real logins, never over them.
+ *
+ * TWO REFUSALS RATHER THAN A WINNER, both the same principle as the write-down's
+ * ambiguity refusal:
+ *
+ *  - a name an actual login already holds is left alone and reported. That login
+ *    is a binding the town wrote down under review; overwriting it would move a
+ *    household's marks under another household's wall.
+ *  - a name TWO unbound keys both want is planted for neither. Binding it to
+ *    either would tell the wall that one household's sketchbook belongs to the
+ *    other, which is the exact silent mis-binding this whole mechanism exists to
+ *    prevent.
+ *
+ * Zero of both today, over the live town — which is when a guard is cheap to
+ * write and impossible to test later.
+ *
+ * IDEMPOTENT BY CONSTRUCTION: a key it has already planted is a key some entry
+ * of `logins` now binds, so a second pass over the merged map adds nothing. A
+ * falsifier holds it to that, because the export is re-run on pin churn and a
+ * projection that grows every run is a projection nobody can diff.
+ */
+export function sketchbookKeys(households, logins) {
+  const alreadyBound = new Set(Object.values(logins ?? {}));
+  const keys = [...new Set(Object.values(households ?? {}))]
+    .filter((key) => !alreadyBound.has(key)).sort((a, b) => a.localeCompare(b));
+
+  const wants = new Map();
+  const unnameable = [];
+  for (const key of keys) {
+    const { name, reason, bound } = sketchbookNameForKey(key, logins);
+    if (reason) { unnameable.push({ key, name, reason, bound }); continue; }
+    const at = name.toLowerCase();
+    if (!wants.has(at)) wants.set(at, []);
+    wants.get(at).push(key);
+  }
+
+  const additions = {};
+  const collisions = [];
+  for (const [name, wanted] of [...wants.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    if (Object.prototype.hasOwnProperty.call(logins ?? {}, name)) {
+      collisions.push({ name, keys: wanted, holds: logins[name] });
+      continue;
+    }
+    if (wanted.length > 1) { collisions.push({ name, keys: wanted, holds: null }); continue; }
+    additions[name] = wanted[0];
+  }
+  return { additions, collisions, unnameable };
+}
+
 /** household key → its current resident handles, sorted. */
 export function handsByKey(households) {
   const byKey = new Map();
