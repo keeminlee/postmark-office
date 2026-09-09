@@ -31,6 +31,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 
+import { loginKeys, sketchbookKeys } from "../src/household-logins.mjs";
 import { markRecord } from "../src/mark-record.mjs";
 import { writeDownHousehold } from "../src/world-drain.mjs";
 import {
@@ -390,6 +391,100 @@ test("F6e · the write-down reports how many sketchbooks the wall can bind", () 
   const keys = report.households.map((h) => h.household_key).sort();
   assert.deepEqual(keys, ["gh:293432145", "solo:ev-attractor"],
     "and both vocabularies are on the row, so either side can be checked against the other");
+});
+
+// ── F10 · THE SECOND KEY MAKES THE WALL BIND A HOUSEHOLD OF ANY SHAPE ────────
+//
+// F6b and F6e above are this cluster's CONTROL, and they are deliberately left
+// exactly as they were: with the registry as it was generated before 2026-09-09,
+// a `solo:` household binds to nothing and the write-down reports it unbound.
+// That is still the truth about that registry, and a crossing reading an old
+// `WORLD/households.json` must still behave that way.
+//
+// What changed is the registry the export PRODUCES. `sketchbookKeys` binds every
+// household key no login binds, under the sketchbook name that key will actually
+// carry. So the pair below is the same fixture as F6e with the map regenerated,
+// and the difference between them IS the flip: remove the second key and F10a
+// becomes F6e.
+//
+// THE WALL IS A CONJUNCTION AND BOTH HALVES ARE ASSERTED. The sweep walls a mark
+// only when `households[record.by]` AND `logins[branchName]` both resolve
+// (`settlement-sweep.mjs:1123-1128`). `wall.unbound` on the receipt measures the
+// branch half alone, so F10a checks the author half against the same registry
+// rather than letting an empty `unbound` stand in for both.
+
+const REGISTRY_REGENERATED = (() => {
+  const households = { "aion-solare": "gh:293432145", "ev-attractor": "solo:ev-attractor" };
+  const { logins } = loginKeys({ "aion-solare": { login: "aionsolare", id: 293432145 } }, households);
+  const { additions, collisions, unnameable } = sketchbookKeys(households, logins);
+  assert.deepEqual(collisions, [], "the fixture must not be exercising the collision path");
+  assert.deepEqual(unnameable, [], "the fixture must not be exercising the unnameable path");
+  return { households, logins: { ...additions, ...logins } };
+})();
+
+test("F10a · a solo household publishes under a wall that can bind it, both halves", () => {
+  assert.equal(REGISTRY_REGENERATED.logins["ev-attractor"], "solo:ev-attractor",
+    "the branch half: draft/ev-attractor now resolves to the household it belongs to");
+  assert.equal(REGISTRY_REGENERATED.households["ev-attractor"], "solo:ev-attractor",
+    "the author half: a mark by: ev-attractor resolves to the same key, so the wall's conjunction is live");
+  assert.equal(REGISTRY_REGENERATED.logins.aionsolare, "gh:293432145",
+    "and the pinned household's own binding is untouched — the second keys merge UNDER the logins, never over them");
+
+  const w = makeWorld("wall-second-key");
+  w.git("update-index", "--add", "--cacheinfo",
+    `100644,${execFileSync("git", ["-C", w.repo, "hash-object", "-w", "--stdin"],
+      { input: JSON.stringify(REGISTRY_REGENERATED), encoding: "utf8" }).trim()},WORLD/households.json`);
+  const tree = w.git("write-tree").trim();
+  const commit = execFileSync("git", ["-C", w.repo, "commit-tree", tree, "-p", w.git("rev-parse", "main").trim(), "-m", "registry"],
+    { encoding: "utf8", env: { ...process.env, ...SEED_ENV } }).trim();
+  w.git("update-ref", "refs/heads/main", commit);
+
+  const report = storeWriteDown({
+    repo: w.repo,
+    at: Date.parse(AT_ISO),
+    input: foldInput([
+      storeMark({ slug: "alpha/one", household: "gh:293432145", path: "WORLD/marks/alpha/one/mark.md" }),
+      storeMark({ slug: "beta/two", household: "solo:ev-attractor", path: "WORLD/marks/beta/two/mark.md" }),
+    ]),
+  });
+
+  assert.equal(report.wall.sketchbooks, 2);
+  assert.equal(report.wall.bound, 2, "BOTH households bind now — F6e is this same run against the old registry");
+  assert.deepEqual(report.wall.unbound, [], "and the receipt's safety net is EMPTY, which is the whole point of the lane");
+
+  assert.deepEqual(report.households.map((h) => h.branch).sort(), ["draft/aionsolare", "draft/ev-attractor"],
+    "the branch names did not move — the map learned to read them, they were not renamed to suit the map");
+});
+
+test("F10b · every key the second-key projection binds has a bindable AUTHOR by construction", () => {
+  // The conjunction's other half, as a property rather than a fixture. The
+  // projection iterates the VALUES of `households`, so a branch it binds is
+  // always a branch whose household some handle in the same map carries. Were it
+  // ever fed keys from somewhere else, it could bind a sketchbook whose author
+  // side is null — the wall would still stand down and the receipt would say
+  // bound, which is worse than saying unbound.
+  const households = { "aion-solare": "gh:293432145", "ev-attractor": "solo:ev-attractor", argos: "hh:argos-and-prometheus" };
+  const { logins } = loginKeys({ "aion-solare": { login: "aionsolare", id: 293432145 } }, households);
+  const { additions } = sketchbookKeys(households, logins);
+  const carried = new Set(Object.values(households));
+  for (const [name, key] of Object.entries(additions))
+    assert.ok(carried.has(key), `${name} binds ${key}, which no handle in this registry carries`);
+  assert.deepEqual(Object.keys(additions).sort(), ["argos-and-prometheus", "ev-attractor"]);
+});
+
+test("F10c · the second key never makes a pinned household ambiguous — the trap a blanket handle-key walks into", () => {
+  // The tempting version of this change is "bind every HANDLE to its household".
+  // It is the worst move available: `sketchbookNameFor` names a `gh:` key by the
+  // ONE login bound to it and REFUSES when several are (F6d), so binding five
+  // handles to gh:67605380 would make the write-down refuse the whole crossing
+  // for the largest household in the town. The rule below only ever binds keys
+  // NO login binds, so a pinned household gains nothing and keeps its one name.
+  const households = { wright: "gh:67605380", rei: "gh:67605380", postmaster: "gh:67605380" };
+  const { logins } = loginKeys({ wright: { login: "wrightstarforge", id: 67605380 } }, households);
+  const { additions } = sketchbookKeys(households, logins);
+  assert.deepEqual(additions, {}, "a household a login already binds gets no second key at all");
+  assert.equal(sketchbookNameFor("gh:67605380", { logins: { ...additions, ...logins } }), "wrightstarforge",
+    "and the name it carries is still the one login the town pinned");
 });
 
 // ── F7 · A CROSSING NEVER RE-MATERIALIZES A MARK IT IS NOT CHANGING ──────────

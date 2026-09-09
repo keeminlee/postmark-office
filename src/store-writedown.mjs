@@ -67,6 +67,7 @@
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 
+import { sketchbookNameForKey } from "./household-logins.mjs";
 import { markRecord } from "./mark-record.mjs";
 import { pathFor } from "./world-journal.mjs";
 import { draftBranch, mainRef } from "./world-branches.mjs";
@@ -531,38 +532,34 @@ export function starvingCheck({ marks = [], stakes = [] } = {}) {
  * An unprefixed key is taken as-is, which is what a key with no era-marker can
  * mean. A key this cannot turn into a legal branch component REFUSES, because at
  * that point there is no honest name left to choose.
+ *
+ * THE RESOLVER MOVED, AND THE REFUSALS DID NOT (2026-09-09). The mapping itself
+ * is now `household-logins.sketchbookNameForKey` — the same function the
+ * registry's own export uses to decide which name to bind a household under, so
+ * the name the map binds and the name the branch carries cannot be two different
+ * strings. What stays here is the only part that is this module's: turning its
+ * reported reason into a refusal that stops a crossing, in this module's words.
  */
 export function sketchbookNameFor(householdKey, { logins = {} } = {}) {
   const key = String(householdKey);
-  const colon = key.indexOf(":");
-  const prefix = colon === -1 ? null : key.slice(0, colon);
-  const rest = colon === -1 ? key : key.slice(colon + 1);
+  const { name, reason, bound } = sketchbookNameForKey(key, logins);
 
-  let name = rest;
-  if (prefix === "gh") {
-    const bound = Object.entries(logins).filter(([, v]) => v === key).map(([login]) => login);
-    if (bound.length === 1) name = bound[0];
-    else if (bound.length > 1) {
-      throw new FoldInputRefusal(
-        "household-key-ambiguous",
-        `${key} is bound by ${bound.length} logins in WORLD/households.json (${bound.join(", ")}) — `
-        + "picking one would name a sketchbook whose authorship wall binds a household this mark may not belong to",
-      );
-    } else {
-      // No login binds this key. The git era has no sketchbook for it either, so
-      // the numeric id is the only stable name left; it binds to nothing in the
-      // wall, exactly like the 13 unbindable sketchbooks already on origin.
-      name = `gh-${rest}`;
-    }
+  if (reason === "ambiguous") {
+    throw new FoldInputRefusal(
+      "household-key-ambiguous",
+      `${key} is bound by ${bound.length} logins in WORLD/households.json (${bound.join(", ")}) — `
+      + "picking one would name a sketchbook whose authorship wall binds a household this mark may not belong to",
+    );
   }
 
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) {
+  if (reason === "unnameable") {
     throw new FoldInputRefusal(
       "household-key-unnameable",
       `household ${key} yields "${name}", which is not a legal sketchbook component — `
       + "there is no honest branch name for it, and inventing one would leave the sweep's authorship wall bound to nothing",
     );
   }
+
   return name;
 }
 

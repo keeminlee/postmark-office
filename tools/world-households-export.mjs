@@ -20,7 +20,7 @@ import { writeFileSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 
-import { householdsOf, loginKeys, readPins } from "../src/household-logins.mjs";
+import { householdsOf, loginKeys, readPins, sketchbookKeys } from "../src/household-logins.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
@@ -51,14 +51,43 @@ const households = householdsOf(map);
 const pins = readPins(TOWN);
 const { logins } = loginKeys(pins, households);
 
+// THE SECOND KEY — every household key no login binds, bound by the sketchbook
+// name it will actually carry (src/household-logins.mjs § THE SECOND KEY, which
+// carries the whole reasoning). Without it the authorship wall is blind to every
+// key shape but `gh:` and `login:`, and blind SILENTLY: the sweep leaves a branch
+// it cannot bind alone rather than refusing it, so those households' marks
+// publish with their authorship unchecked and nothing on any surface says so.
+//
+// Merged UNDER the real logins, never over them: a login is a binding the town
+// wrote down under review, and this projection may add to the map but must never
+// answer a question the pins already answered.
+const second = sketchbookKeys(households, logins);
+const allLogins = { ...second.additions, ...logins };
+
+for (const c of second.collisions) {
+  console.error(`[households-export] NOT BOUND — "${c.name}" is wanted by ${c.keys.join(", ")}`
+    + `${c.holds ? ` and is already the login of ${c.holds}` : ""}; binding it would put one household's `
+    + "sketchbook under another household's wall, so it is left unbindable and said out loud");
+}
+for (const u of second.unnameable) {
+  console.error(`[households-export] NOT BOUND — ${u.key} is ${u.reason}`
+    + `${u.bound?.length ? ` (${u.bound.join(", ")})` : ""}; there is no honest name to bind it under`);
+}
+
 const out = {
   generated_at: new Date().toISOString(),
   source: "town pins (tools/github-ids.json) + ADDRESS logins, via the town's own resolver: postmark tools/stamp-mint.mjs householdKeys() — the ONE household vocabulary (ruling 9's lesson: never a second resolver)",
   note: "DERIVED registry, refreshed by postmark-office/tools/world-households-export.mjs. Handles absent here fold as their own household (solo:<handle>) — a new resident is never blocked by registry lag, only grouped once the pins know them. Consumed by marks-fold.mjs § parcel admissibility (the claim cap, ruled 2026-07-30); logins consumed by the PR lane (lane-wall, settlement-sweep authorship wall).",
+  logins_note: "logins is NOT only GitHub logins. It is the map the authorship wall reads a sketchbook's NAME through, and it binds every household key this registry holds: a pinned handle under its pin's login, and any other key (hh:<house>, solo:<handle>) under the sketchbook name that key carries — the part after its colon. Before 2026-09-09 only gh:/login: keys were bound, so a household of any other shape was invisible to the wall, and invisible SILENTLY: the sweep leaves a branch it cannot bind alone rather than refusing it, so those marks published with their authorship unchecked. A key this file does not bind is a key the export could not name honestly, and it says so on stderr when it happens.",
   households,
-  logins: Object.fromEntries(Object.entries(logins).sort(([a], [b]) => a.localeCompare(b))),
+  logins: Object.fromEntries(Object.entries(allLogins).sort(([a], [b]) => a.localeCompare(b))),
 };
 
 const dest = join(WORLD, "WORLD", "households.json");
 writeFileSync(dest, JSON.stringify(out, null, 2) + "\n");
+const planted = Object.keys(second.additions).length;
 console.log(`households: ${Object.keys(households).length} handles → ${dest}`);
+console.log(`logins: ${Object.keys(logins).length} from pins + ${planted} second key(s) `
+  + `for households no login binds = ${Object.keys(allLogins).length} the wall can read`
+  + `${second.collisions.length || second.unnameable.length
+    ? ` · ${second.collisions.length + second.unnameable.length} key(s) LEFT UNBINDABLE, named above` : ""}`);
