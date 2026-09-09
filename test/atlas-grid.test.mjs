@@ -29,7 +29,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync, unlinkSync, existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync, spawnSync } from "node:child_process";
@@ -595,6 +595,47 @@ test("FALSIFIER: importing the backfill tool is inert; running it is not", () =>
   assert.equal(invoked.status, 1, "invoked directly against a non-town, the CLI must reach its own FATAL");
   assert.match(invoked.stderr, /FATAL: no placements ledger/,
     "the CLI did not run when it was the thing being run - a guard that is never true is a tool that does nothing");
+
+  // ARM 3 - AND THE GUARD SURVIVES A JUNCTION. The reviewer's lap-2 addendum
+  // simplified the guard back to a raw string compare and BOTH arms above
+  // stayed green, because both invoke the tool by its real path - and by a
+  // real path the naive compare is true. Through a junction the naive guard
+  // exits 0 having printed nothing: node resolves the main entry's realpath
+  // for import.meta.url while process.argv[1] keeps the path as typed. So the
+  // comment above promised a check the file did not carry. This arm invokes
+  // the tool through a junction to the office root (a directory symlink off
+  // Windows, where the same realpath split applies) and asks for the same
+  // FATAL. The link comes down with `rmdir` (unlink off Windows) and NEVER a
+  // recursive delete - a recursive delete over a junction follows it into the
+  // target, and this one's target is the office tree the test is running in.
+  const linkRoot = mkdtempSync(join(tmpdir(), "pm-cli-junction-"));
+  const link = join(linkRoot, "office");
+  if (process.platform === "win32") {
+    const mk = spawnSync("cmd", ["/c", "mklink", "/J", link, OFFICE], { encoding: "utf8" });
+    assert.equal(mk.status, 0, `could not make the test junction: ${mk.stderr || mk.stdout}`);
+  } else {
+    symlinkSync(OFFICE, link, "dir");
+  }
+  let viaLink;
+  try {
+    viaLink = spawnSync(process.execPath,
+      [join(link, "tools", "atlas-grid-backfill.mjs"), "--town", join(tmpdir(), "pm-no-town-here")],
+      { encoding: "utf8" });
+  } finally {
+    if (process.platform === "win32") spawnSync("cmd", ["/c", "rmdir", link], { encoding: "utf8" });
+    else unlinkSync(link);
+    // Only the empty parent is removed, and only once the link is verifiably
+    // gone. If the link is still there, leave the directory standing rather
+    // than reach through it.
+    if (!existsSync(link)) rmSync(linkRoot, { recursive: true, force: true });
+  }
+  assert.ok(!existsSync(link), `the test junction at ${link} was not taken down - remove it with rmdir, not a recursive delete`);
+  assert.equal(viaLink.status, 1,
+    "invoked THROUGH A JUNCTION against a non-town, the CLI must still reach its own FATAL - "
+    + "a raw compare of process.argv[1] against import.meta.url is false here, and the tool exits 0 having done nothing "
+    + `(exit ${viaLink.status}, stdout ${JSON.stringify(viaLink.stdout)}, stderr ${JSON.stringify(viaLink.stderr)})`);
+  assert.match(viaLink.stderr, /FATAL: no placements ledger/,
+    "through a junction the CLI did not run - the guard does not realpath both sides");
 });
 
 test("the distance the receipt reports is the distance the backfill's own --check reports", () => {
