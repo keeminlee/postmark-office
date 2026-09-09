@@ -72,7 +72,7 @@
 // all, so the write bounces by name when the flag is off; the reads degrade to
 // canon-only rather than failing.
 
-import { openDynamic, singleLogEnabled } from "./dynamic-store.mjs";
+import { openDynamic, openDynamicReadOnly, singleLogEnabled } from "./dynamic-store.mjs";
 import { WORLD_CLONE } from "./world-store.mjs"; // the standing-scoped inbox door defaults to the office's own world checkout
 import { worldFreezeBounce } from "./freeze.mjs";
 import { appendActFlipped, appendJournal, laneFlipped, liveMarks, readJournal } from "./world-journal.mjs";
@@ -439,13 +439,22 @@ export function worldForStances(repo, { dbPath = null } = {}) {
   const canon = publishedState(repo).state?.marks ?? [];
   let live = [];
   if (singleLogEnabled()) {
+    // `openDynamicReadOnly` rather than `openDynamic(…, { readOnly: true })`:
+    // G3 centralised "may a read write" on this train and these were the tenth
+    // and eleventh call sites of the rule it centralised. The new opener returns
+    // NULL for an absent store where the old one threw, so the absence is a
+    // value the caller handles rather than an exception it catches — same
+    // behaviour, one answer instead of eleven. The `try` stays for a store that
+    // exists and is corrupt, which still throws.
     try {
-      const db = openDynamic(dbPath ?? undefined, { readOnly: true });
-      try {
-        live = liveMarks(db, { household: undefined })
-          .filter((m) => m.at && m.extent)
-          .map((m) => ({ id: m.id, by: m.by, kind: m.kind, at: m.at, extent: m.extent, date: m.date, body: m.body ?? "", published: false }));
-      } finally { try { db.close(); } catch { /* already gone */ } }
+      const db = openDynamicReadOnly(dbPath ?? undefined);
+      if (db) {
+        try {
+          live = liveMarks(db, { household: undefined })
+            .filter((m) => m.at && m.extent)
+            .map((m) => ({ id: m.id, by: m.by, kind: m.kind, at: m.at, extent: m.extent, date: m.date, body: m.body ?? "", published: false }));
+        } finally { try { db.close(); } catch { /* already gone */ } }
+      }
     } catch { /* no live layer → canon alone is an honest world to weigh */ }
   }
   // Canon wins an id collision: a drained draft is in both, and the published
@@ -589,9 +598,11 @@ export async function stanceRows({ dbPath = null, worldClone = WORLD_CLONE, acts
   if (singleLogEnabled()) {
     for (const r of photographStanceRows(worldClone)) byTwin.set(stanceTwinKey(r), r);
     try {
-      const db = openDynamic(dbPath ?? undefined, { readOnly: true });
-      try { for (const r of readJournal(db, { cls: CLASS_STANCE })) byTwin.set(stanceTwinKey(r), r); }
-      finally { try { db.close(); } catch { /* already gone */ } }
+      const db = openDynamicReadOnly(dbPath ?? undefined);
+      if (db) {
+        try { for (const r of readJournal(db, { cls: CLASS_STANCE })) byTwin.set(stanceTwinKey(r), r); }
+        finally { try { db.close(); } catch { /* already gone */ } }
+      }
     } catch { /* no live layer → the other sources are an honest record */ }
   }
 

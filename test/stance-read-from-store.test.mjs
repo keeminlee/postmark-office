@@ -23,7 +23,7 @@
 
 import test, { after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -329,3 +329,27 @@ test("S6 · a register row arrives in hydrateRow's vocabulary, not acts's", asyn
   ] });
   assert.equal(d.written_at, "2026-09-06T10:02:06.744Z", "a Date and a string must land on one spelling or the twin key splits one act in two");
 });
+
+test("S7 · an ABSENT dynamic store is an empty live layer, not a throw — the contract both openers share", withSingleLog(async () => {
+  // THE CONVERGENCE ITEM (G3's `openDynamicReadOnly`). `world-stance.mjs` called
+  // `openDynamic(…, { readOnly: true })` at two sites and caught the throw an
+  // absent store produced; it calls the centralised opener now, which returns
+  // NULL for the same case. Behaviour is identical by construction, which is why
+  // the conductor called it a convergence and not a defect — and it is also why
+  // there is no honest flip for it: remove the `if (db)` guard and the throw is
+  // caught by the same `try`, landing on the same answer.
+  //
+  // So what this pins is the CONTRACT the two forms share, which nothing pinned
+  // before: a store that is not there is an empty live layer, and the read still
+  // answers from its other sources. That is the assertion that would catch a
+  // future opener returning something truthy-but-broken, or a `finally` that
+  // called `.close()` on null outside a try.
+  const repo = emptyWorld("s7");
+  photograph(repo, 177, [photoLine(1283, "neth", "quill-stem/candle-for-the-trail", "welcome", "2026-09-06T23:56:08.137Z")]);
+  const missing = join(scratch, "there-is-no-store-here.db");
+
+  const rows = await stanceRows({ dbPath: missing, worldClone: repo, acts: [] });
+  assert.equal(rows.length, 1, "the photograph still answers when the live store is absent");
+  assert.equal(standingStances(rows).length, 1, "and the stance still stands");
+  assert.equal(existsSync(missing), false, "and the read did not CREATE the store it was pointed at");
+}));

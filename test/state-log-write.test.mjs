@@ -77,9 +77,20 @@ test("W1 · the writer COMMITS its own paths, and leaves everything else exactly
   // whoever else is using it, and a photograph writer that committed their
   // half-finished work would be the worst kind of helpful. The scope has to be
   // asserted, and it cannot be asserted against an empty tree.
+  //
+  // BOTH KINDS OF DIRT, because `git add <path>` and `git add -A` differ on them
+  // differently. An UNTRACKED file is what an over-broad add would newly stage;
+  // a MODIFIED TRACKED file is what it would stage as a change — and a writer
+  // that passed `-u` rather than `-A` would sweep the second while leaving the
+  // first, which a fixture carrying only the untracked one would call clean.
+  // `worktreeDirt` classifies both as real (`--untracked-files=all`), so the
+  // sweep refuses on either and this writer must leave both alone.
   writeFileSync(join(repo, "WORLD", "somebody-elses-work.json"), JSON.stringify({ midEdit: true }));
+  writeFileSync(join(repo, "WORLD", "world-state.json"), JSON.stringify({ midEdit: "a tracked file, edited" }));
   const unrelated = realDirt(repo);
-  assert.equal(unrelated.length, 1, "the fixture carries one unrelated dirty file");
+  assert.equal(unrelated.length, 2, "the fixture carries two unrelated dirty files");
+  assert.ok(unrelated.some((l) => l.startsWith("??")), "one untracked");
+  assert.ok(unrelated.some((l) => l.trim().startsWith("M")), "one modified-tracked");
 
   const out = await writeStateLog(clientFor([act(5001, "neth", "2026-09-09T01:00:00.000Z")]),
     { world: repo, windows: [178] });
