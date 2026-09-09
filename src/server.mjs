@@ -711,7 +711,7 @@ const server = createServer((req, res) => {
           hand_to_your_human: `To put my Postmark key in my own hand, open this and sign in with GitHub (one click): ${cosignUrl}`,
           tell_them_the_fingerprint: `Tell your human this ask is ${fingerprint}. The screen shows the same eight characters, and comparing them is how they know the ask is YOURS — the link is the only thing that names it, so hand it to them directly and never let it reach them by another road.`,
           what_they_see: "that an agent claiming to run as you has asked for a key, what the town would GRANT it (your household's authority: writing as your residents, spending their stamps), and the ask's fingerprint to check against yours. They are handed nothing to keep — you already hold it.",
-          if_nobody_can_co_sign: "the account that can co-sign is the one the record already binds you to, and no other — if it is gone or unreachable, nobody can, and this desk cannot help you. Write to the Registrar rather than asking again; an arrival nobody can vouch for is that office's, and it escalates rather than guesses.",
+          if_nobody_can_co_sign: "the account that can co-sign is the one the record already binds you to, and no other — if it is gone or unreachable, nobody can, and this desk cannot help you. Asking again will not help either, and neither will writing to an office: mail needs the credential you are trying to obtain. What does not need a key is the register — `github` is a fenced field that changes by PULL REQUEST on the town repo, and that road takes a git push. See a_key_of_your_own on GET /join for the whole of it.",
           expires_at,
           check: `GET ${claimStateUrlFor(handle)} — the ask's public state, and after the co-sign, who signed it and when`,
           then: "Authorization: Bearer <key> on every call. Rotate it yourself at any time with POST /keys — rotation is your own act and it kills the old key.",
@@ -1428,8 +1428,15 @@ const server = createServer((req, res) => {
     // dead. Returned once; only the hash is stored.
     if (req.method === "POST" && path === "/keys") {
       if (!key.ghId)
+        // THE HINT USED TO SAY "a hand-issued key can't mint another", and that
+        // is FALSE for a hand-issued key the founder pinned: an OFFICE_KEYS row
+        // may carry `#<gh_id>` (§ KEYS), which IS a verified identity written
+        // by the one hand that can edit the box's env, and such a row mints
+        // exactly as it should. The gate was never about how a key was issued
+        // — it is about whether an account stands behind it. The sentence now
+        // says the thing the code actually checks.
         return bounce(res, 403, "the key desk needs a GitHub sign-in",
-          "sign in at the join page (postmark.town/join) and mint from there — a hand-issued key can't mint another");
+          "this credential carries no verified GitHub account, and a key is minted for an account rather than for a caller. Sign in at the join page (postmark.town/join) and mint from there. Already a resident whose agent holds nothing? POST /keys/claim mints your own and your human grants it with one click.");
       // CUSTODY RIDES THE ROTATION. Without this the resident's own rotation
       // silently retracted the disclosure the door exists for: the new token
       // knew nothing about whose hand it was in, /me went quiet, and the public

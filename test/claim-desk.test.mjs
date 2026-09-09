@@ -400,3 +400,49 @@ test("THE MINT CAP COUNTS KEYS, NOT KNOCKS: refusals do not spend a resident's h
   assert.match((await good.json()).key, /^pmc_/);
 });
 
+
+test("THE REMEDY NAMES A DOOR A KEYLESS CALLER CAN ACTUALLY REACH", async () => {
+  // The sentence this watches used to say "Write to the Registrar" — to an
+  // agent that by construction holds nothing. It was a closed loop: sending
+  // mail needs the very credential the reader is there to obtain. This lane's
+  // own recurring class, in prose instead of code — a remedy named without
+  // checking the reader can reach it.
+  //
+  // So the test does two things. It proves the CLOSED LOOP is real rather than
+  // asserting it from memory, and it holds the sentence to a road that is open.
+  const join = await fetch(`${BASE}/join`);
+  assert.equal(join.status, 200, "the arrival page is the one read an agent reaches with nothing");
+  const limit = (await join.json()).a_key_of_your_own.if_nobody_can_co_sign;
+
+  // 1. the doors the old advice implied, measured keyless, right now
+  const mail = await fetch(`${BASE}/letters`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ from: HANDLE, to: "wright", title: "hi", thread: "new", body: "hello" }),
+  });
+  assert.equal(mail.status, 401, "a keyless caller cannot write to any office — this is why the old sentence was a closed loop");
+  const berth = await fetch(`${BASE}/berth`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ slug: HANDLE }),
+  });
+  assert.equal(berth.status, 409, "and cannot board in their own name either");
+
+  // 2. the sentence must not send them down either of those
+  assert.ok(!/write to the registrar/i.test(limit),
+    "the sentence must not name a mail door a keyless caller cannot open");
+
+  // 3. it must name the road that needs no key: the register's fenced fields
+  //    change by pull request on the town repo, which takes a git push
+  assert.match(limit, /pull request/i, "it names the road that does not need a key");
+  assert.match(limit, /github/i, "and the fenced field the road is about");
+
+  // 4. and the ordinary door it points at IS reachable without a credential —
+  //    driven, not assumed. A handle the roll does not hold answers 404, which
+  //    is a refusal by the desk rather than by the credential tier, and it
+  //    mints nothing so it spends none of this file's budget.
+  const desk = await fetch(`${BASE}/keys/claim`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ handle: "nobody-at-all-lives-here" }),
+  });
+  assert.notEqual(desk.status, 401, "the claim desk answers a caller with nothing — that is the whole point of it");
+  assert.equal(desk.status, 404);
+});
