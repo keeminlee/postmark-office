@@ -77,17 +77,32 @@ export const RECORD_FIELDS = Object.freeze([
  *
  * `market` and `home` are DERIVED by the walk and never read from a file, so a
  * door writing them would be a value with no reader (the 2026-09-08 class,
- * three instances in one lane). The condition here is the VALUE half of that
- * predicate and not the authorship half, on purpose: `constitution` is the
- * town's alone by the world's gate (`mark-lint.mjs`: "tier: constitution is the
- * town's — only by: the-town may claim it"), so the value already implies the
- * author, and keying a grammar on `by:` was refused. Measured on world main
- * `cab0da3a` before this was written: 480 canon files carry a `tier:` line, all
- * 480 read `constitution`, all 480 are `by: the-town`; the 319 with a store row
- * agree with `data.tier` 319 of 319; no resident row reads `constitution`.
+ * three instances in one lane).
+ *
+ * THE RULE IS THE GATES' OWN PREDICATE, WHOLE (sharpened 2026-09-08 21:4x):
+ * `by === the-town AND tier === constitution`. Three readers on the file side
+ * carry that exact pair, quoted verbatim so a drift in any of them is a drift
+ * from this line:
+ *
+ *   world `tools/mark-standing.mjs:91` / office `world2/tools/standing.mjs:376`
+ *     if ((mark.by ?? mark.household) === TOWN && mark.tier === "constitution") return "constitution";
+ *   world `tools/mark-lint.mjs:189` — the gate that refuses every other tier line
+ *     if (rawTier && rawTier !== "draft" && !(rec.by === TOWN && rawTier === "constitution"))
+ *
+ * So the `by` half here is the reader's, not a selector of the door's own
+ * invention (keying a grammar on authorship by itself was refused). On today's
+ * corpus the two halves are redundant — measured on world main `cab0da3a`
+ * before either was written: 480 canon files carry a `tier:` line, all 480 read
+ * `constitution`, all 480 are `by: the-town`; the 319 with a store row agree
+ * with `data.tier` 319 of 319; no resident row reads `constitution` (0 of 653)
+ * — which means the `by` clause CANNOT be driven red by any captured row. What
+ * would red it is a hand-written record carrying `tier: constitution` under a
+ * resident's `by:`, the shape `world-drain.mjs`'s `fileRec = { ...p }` would
+ * hand this grammar if a journal payload ever carried the word; the test holds
+ * exactly that record.
  */
 export const EMITS = Object.freeze({
-  tier: (v) => v === "constitution",
+  tier: (v, record) => (record?.by ?? record?.household) === "the-town" && v === "constitution",
 });
 
 /**
@@ -101,7 +116,7 @@ export const EMITS = Object.freeze({
 export function markRecord(record, body) {
   const fm = RECORD_FIELDS
     .filter((k) => record[k] !== undefined && record[k] !== null && record[k] !== "")
-    .filter((k) => !(k in EMITS) || EMITS[k](record[k]))
+    .filter((k) => !(k in EMITS) || EMITS[k](record[k], record))
     .map((k) => `${k}: ${fmtVal(record[k])}`)
     .join("\n");
   return `---\n${fm}\n---\n\n${String(body).trim()}\n`;

@@ -25,7 +25,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 import { recordFromRow, renderRecord, renderMarkFromStore } from "../world2/tools/mark-render.mjs";
-import { RECORD_FIELDS, EMITS } from "../src/mark-record.mjs";
+import { RECORD_FIELDS, EMITS, markRecord } from "../src/mark-record.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIX = JSON.parse(readFileSync(join(HERE, "fixtures", "world2-mark-render.json"), "utf8"));
@@ -131,7 +131,21 @@ test("THE VALUE RULE, both ways: every resident capture (data.tier home/market) 
     assert.ok(["home", "market"].includes(p.row.data?.tier), `${p.slug}: data.tier is ${p.row.data?.tier} — every resident row carries a DERIVED tier (1,031 of 1,031 measured)`);
     assert.equal(/^tier:/m.test(renderRecord(p.row)), false, `${p.slug} rendered a tier line for a derived tier`);
   }
-  assert.ok(!EMITS.tier("market") && !EMITS.tier("home") && EMITS.tier("constitution"), "the rule admits exactly the one value the walk reads from a file");
+  const town = { by: "the-town" }, resident = { by: "aion-solare" };
+  assert.ok(!EMITS.tier("market", town) && !EMITS.tier("home", town) && EMITS.tier("constitution", town), "the rule admits exactly the one value the walk reads from a file");
+  assert.ok(!EMITS.tier("constitution", resident), "and only from the town — the gate's own predicate carries `by`");
+});
+
+test("THE `by` CLAUSE CAN FAIL ONLY OFF-CORPUS, so here is the record that reds it: a hand-written record carrying `tier: constitution` under a resident's `by:` — the shape the drain's payload spread could carry — renders NO tier line", () => {
+  // No resident row in the store reads `constitution` (0 of 653, measured
+  // 2026-09-09) and the office's declaration never carries `tier`, so no capture
+  // in either fixture can exercise this clause. A synthetic record does: it is
+  // exactly what `world-drain.mjs`'s `fileRec = { ...p }` would hand the grammar
+  // if a journal payload ever carried the word.
+  const forged = markRecord({ kind: "sited", by: "aion-solare", tier: "constitution", date: "2026-09-09", at: { x: 1, y: 2 }, extent: { w: 3, h: 3 } }, "a resident claiming the town's tier");
+  assert.equal(/^tier:/m.test(forged), false, "a resident's `tier: constitution` reached the file");
+  const towns = markRecord({ kind: "sited", by: "the-town", tier: "constitution", date: "2026-09-09", at: { x: 1, y: 2 }, extent: { w: 3, h: 3 } }, "the town's own");
+  assert.match(towns, /^by: the-town\ntier: constitution\n/m, "the town's line, after by");
   for (const p of TOWN.town_docket_177) {
     const fm = frontmatter(renderRecord(p.row));
     assert.equal(fm[fm.indexOf("by: the-town") + 1], "tier: constitution", `${p.slug}: tier is not the line after by`);
