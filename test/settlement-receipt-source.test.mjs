@@ -158,13 +158,29 @@ test("`selection` reaches the receipt, and says the fold chose by DOCKET with it
   // supposed to tell them apart.
   const r = compose({
     source: "store",
-    store: { ...STORE_REPORT, selection: { by: "docket", window: 177, entry: "fold-delta.mjs § foldDelta", note: null } },
+    store: { ...STORE_REPORT, selection: { by: "docket", window: 177, entry: "fold-delta.mjs § foldDelta", docket_claims: 33, note: null } },
   });
   assert.equal(r.store.selection.by, "docket",
     "the selector must be legible on the receipt; `standing` here would mean the crossing folded the whole store");
   assert.equal(r.store.selection.window, 177, "and it must name WHICH window's docket, or it names nothing checkable");
   assert.equal(r.store.selection.entry, "fold-delta.mjs § foldDelta");
   assert.equal(r.store.selection.note, null, "an empty channel is named, not omitted");
+  assert.equal(r.store.selection.docket_claims, 33,
+    "and HOW BIG the docket was — read beside `marks`, it is the only thing on this receipt that separates a town "
+    + "where nobody claimed from a docket that was never materialized");
+});
+
+test("`docket_claims` survives the composer at ZERO — the value the whole field exists for", () => {
+  // THE READER CHECK, ON THE FIELD THIS LANE ADDED. Zero is the interesting
+  // value: it is what an empty docket puts here, and it is the one a `??`
+  // anywhere on the path would turn into `null`. A field that is present at 33
+  // and absent at 0 would refuse exactly the crossings it was added to pass.
+  const r = compose({
+    source: "store",
+    store: { ...STORE_REPORT, marks: 0, selection: { by: "docket", window: 180, entry: "fold-delta.mjs § foldDelta", docket_claims: 0, note: null } },
+  });
+  assert.equal(r.store.selection.docket_claims, 0);
+  assert.ok(Object.hasOwn(r.store.selection, "docket_claims"), "present at zero, not dropped");
 });
 
 test("a store crossing with NO selection reads as null, never as a docket by default", () => {
