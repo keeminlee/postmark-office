@@ -155,6 +155,14 @@ async function main() {
     : `dry-run · ${rows.length} open positions over ${marks} marks · k=${k} from ${dial_source}`);
 }
 
-if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
+// THE BASENAME IDIOM, not the href comparison — the conductor's 2026-09-08 class
+// note, and this room already carries the receipt for the other half of it: a
+// junction in the path makes `pathToFileURL(argv[1]).href === import.meta.url`
+// FALSE, so the tool runs nothing and exits 0, which is indistinguishable from
+// success at the call site (33 fixture reds hid behind exactly that guard on
+// 2026-09-05). This file is IMPORTED by `stamp-ingest.mjs`, so the tail must
+// also stay inert on import — `test/world2-tool-imports.test.mjs` proves that by
+// importing it rather than by reading this line.
+if (process.argv[1] && import.meta.url.endsWith(process.argv[1].split(/[\\/]/).pop())) {
   main().catch((e) => { console.error(String(e?.stack ?? e)); process.exit(1); });
 }
