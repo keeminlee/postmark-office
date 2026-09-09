@@ -183,6 +183,36 @@ export function liveHandoffs(rows = [], now = Date.now()) {
 export const handoffFor = (rows = [], resident = null, now = Date.now()) =>
   liveHandoffs(rows, now).find((h) => h.resident === String(resident)) ?? null;
 
+/**
+ * THE ROWS THE PROJECTION COULD NOT READ — counted and named, never silent.
+ *
+ * `liveHandoffs` skips a handoff row whose instant it cannot read (the guard
+ * above), which is right: one torn row must not take down every seat read in
+ * the office. But a skip that nobody counts is the states-with-no-receipt
+ * shape, and here it drops a SEAT: a resident whose one handoff row is torn
+ * was told "you seat nobody right now" with no hint a row existed. The
+ * office's own precedent is to name exactly this silence — `wakesFor` logs
+ * that a broken presence read and an empty room are the same silence "so the
+ * failure is NAMED"; `receiptFor` carries `unread_witness_lines`; the shadow
+ * says "unavailable" rather than publishing an empty town. This is the same
+ * discipline for the torn row: the shadow carries the count and the ids, so
+ * "no seat stands" and "a seat may stand in a row I could not read" are two
+ * different answers.
+ *
+ * Counts ONLY rows of this class and action — a torn row of another class is
+ * another projection's to name.
+ */
+export function unreadRows(rows = []) {
+  const ids = [];
+  for (const row of Array.isArray(rows) ? rows : []) {
+    if (String(row?.action ?? "") !== ACTION_HAND_TO_HUMAN) continue;
+    if (String(row?.class ?? "") !== CLASS_HANDOFF) continue;
+    if (Number.isFinite(ms(row?.at))) continue;
+    ids.push(row?.id ?? row?.seq ?? null);
+  }
+  return { count: ids.length, ids };
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 // READING THE LOG — the one query, household-scoped at the SQL
 // ═════════════════════════════════════════════════════════════════════════════
@@ -524,9 +554,19 @@ export async function handoffShadow(key, { handle = null, now = Date.now(), rows
   }
   const mine = new Set(handle ? [handle] : handles);
   const live = liveHandoffs(log, now).filter((h) => mine.has(h.resident));
+  // A SKIPPED ROW IS A NAMED ROW. `live` counts what the projection could
+  // read; a torn row is not in it, and this says so beside the count rather
+  // than letting "you seat nobody" stand for "a seat may be in a row this
+  // office could not read". Absent when there is nothing to name.
+  const unread = unreadRows(log);
   return {
     handoffs: live,
     live: live.length,
+    ...(unread.count ? {
+      unread_rows: unread.count,
+      unread_ids: unread.ids,
+      unread_note: `${unread.count} handoff row(s) in this log carry an instant this office cannot read and were skipped — a seat declared in one of them is NOT in the count above. The row is in the log; the projection could not read it. That is a different fact from "you seat nobody", which is why it is named here.`,
+    } : {}),
     terms: HANDOFF_LAW,
     disclosure: P6,
     note: live.length

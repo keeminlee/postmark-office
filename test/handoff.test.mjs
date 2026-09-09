@@ -15,7 +15,7 @@ import assert from "node:assert/strict";
 
 import {
   ACTION_HAND_TO_HUMAN, CLASS_HANDOFF, DIAL_FALLBACK, HANDOFF_LAW, P6,
-  capsFrom, handoffFor, handoffReadNeverPerforms, handoffShadow, liveHandoffs, readDeclaration, seatFromHandoff,
+  capsFrom, handoffFor, handoffReadNeverPerforms, handoffShadow, liveHandoffs, readDeclaration, seatFromHandoff, unreadRows,
 } from "../src/handoff.mjs";
 import { resolveForActor, resolveGrants } from "../src/world-grants.mjs";
 import { exitAllowed, fenceGroundFor } from "../src/embodiment.mjs";
@@ -287,6 +287,35 @@ test("A JOURNAL ROW IS UNREADABLE BY THIS PROJECTION UNTIL IT IS MAPPED — the 
   assert.equal(live.length, 1, "mapped, the same row is the seat the resident declared");
   assert.equal(live[0].expires_at, T("2026-09-08T21:00:00.000Z"));
   assert.equal(live[0].seq, 7, "and the journal's seq is the id the projection orders by");
+});
+
+test("A TORN ROW IS SKIPPED *AND NAMED* — 'you seat nobody' and 'a seat may be in a row I could not read' are two answers", async () => {
+  // Repair 9 of the review. The skip was right (one torn row must not take
+  // down every seat read) and both halves of it were tested; the NAMING was
+  // not — the loop counted nothing on the skip path and no caller asked, so a
+  // resident whose one handoff row was torn read "you seat nobody right now"
+  // with no hint a row existed. The office's precedent (wakesFor, receiptFor's
+  // unread_witness_lines, the shadow's own "unavailable") is to name exactly
+  // this silence, and it drops a SEAT here rather than a courtesy.
+  const key = { handles: new Set(["wright"]) };
+  const torn = {
+    seq: 7, actor: "wright", action: ACTION_HAND_TO_HUMAN, class: CLASS_HANDOFF,
+    at: { anchor: "the-town/the-quay-reach", dx: 3, dy: -1 },       // the witnessed line where an instant should be
+    payload: { ttl_min: 60, human: "human-of-wright" },
+  };
+  assert.deepEqual(unreadRows([torn]), { count: 1, ids: [7] }, "the count names the row, by its seq");
+  const r = await handoffShadow(key, { rows: [torn], now: at("2026-09-08T20:30:00.000Z") });
+  assert.equal(r.live, 0, "the projection still counts what it could read — nothing");
+  assert.equal(r.unread_rows, 1, "and the shadow says a row was skipped");
+  assert.deepEqual(r.unread_ids, [7]);
+  assert.match(r.unread_note, /cannot read/);
+  assert.match(r.unread_note, /NOT in the count above/, "the note says which fact the count is not");
+  // NOTHING TO NAME, NOTHING NAMED — the ordinary answer is byte-identical to before.
+  const clean = await handoffShadow(key, { rows: [row()], now: at("2026-09-08T20:30:00.000Z") });
+  assert.ok(!("unread_rows" in clean) && !("unread_note" in clean), "a readable log carries no unread block");
+  // ANOTHER CLASS'S TORN ROW IS ANOTHER PROJECTION'S TO NAME.
+  assert.equal(unreadRows([{ ...torn, class: "voice", action: "say" }]).count, 0);
+  assert.equal(unreadRows([{ ...torn, at: DECLARED }]).count, 0, "a readable instant is not torn");
 });
 
 test("the mapper carries the witnessed line across, because the receipt derivation reads it", () => {

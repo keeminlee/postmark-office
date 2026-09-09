@@ -17,7 +17,7 @@ import {
   ACTION_GATHER, CLASS_GATHERING, DIAL_FALLBACK, PHASES, RECEIPT_FENCE,
   capsFrom, gatherReadNeverPerforms, gatheredAt, gatheringById, gatheringIdFor,
   gatheringsFrom, groupCount, phaseAt, readDeclaration, receiptFor,
-  gatheringShadow, refuseOutOfPlace, standingGatherings, standsAt,
+  gatheringShadow, refuseOutOfPlace, standingGatherings, standsAt, unreadRows,
 } from "../src/gatherings.mjs";
 import { standsWithin } from "../src/reach.mjs";
 
@@ -404,4 +404,32 @@ test("read: \"gather\" for an id this log does not hold says so by name", async 
   const r = await gatheringShadow(null, { rows: [declareRow()], gathering: "gathering:nobody:nowhere:0" });
   assert.deepEqual(r.gatherings, []);
   assert.match(r.note, /holds no gathering called/);
+});
+
+test("A TORN ROW IS SKIPPED *AND NAMED* — 'nothing stands' and 'an invitation may be in a row I could not read' are two answers", async () => {
+  // Repair 9 of the review, the gathering half: the fold skips a row whose
+  // instant it cannot read (right), and used to count nothing on that path
+  // (wrong) — a host whose declaration row was torn read "nothing stands right
+  // now" with no hint the invitation was ever written.
+  const torn = {
+    seq: 8, actor: "wright", action: ACTION_GATHER, class: CLASS_GATHERING,
+    at: { anchor: QUAY.id, dx: 3, dy: -1 },                          // a witnessed line, not an instant
+    payload: { gathering: GID, face: "declare", place: QUAY.id, doors_open: DOORS, start: START, end: END },
+  };
+  assert.deepEqual(unreadRows([torn]), { count: 1, ids: [8] });
+  const now = at("2026-09-12T20:00:00.000Z");
+  const r = await gatheringShadow(null, { rows: [torn], now });
+  assert.equal(r.standing, 0);
+  assert.equal(r.unread_rows, 1, "the standing read names the skipped row");
+  assert.deepEqual(r.unread_ids, [8]);
+  assert.match(r.unread_note, /NOT in this answer/);
+  // THE NARROWED READ NAMES IT TOO — the host asking for their own id by name
+  // is the one most owed the sentence.
+  const one = await gatheringShadow(null, { rows: [torn], gathering: GID, now });
+  assert.match(one.note, /holds no gathering called/);
+  assert.equal(one.unread_rows, 1, "'holds no gathering called X' beside 'one row could not be read' is the whole truth; either alone is not");
+  // NOTHING TO NAME, NOTHING NAMED.
+  const clean = await gatheringShadow(null, { rows: [declareRow()], now });
+  assert.ok(!("unread_rows" in clean), "a readable log carries no unread block");
+  assert.equal(unreadRows([{ ...torn, class: "voice", action: "say" }]).count, 0, "another class's torn row is another projection's to name");
 });

@@ -368,6 +368,32 @@ export const standingGatherings = (rows = [], now = Date.now()) =>
 export const gatheringById = (rows = [], id = null, now = Date.now()) =>
   gatheringsFrom(rows, now).find((g) => g.gathering === String(id)) ?? null;
 
+/**
+ * THE ROWS THE FOLD COULD NOT READ — counted and named, never silent.
+ *
+ * `gatheringsFrom` skips a gather row whose instant it cannot read, which is
+ * right (one torn row must not take down every gathering read in the town).
+ * But a skip nobody counts is the states-with-no-receipt shape: a host whose
+ * declaration row is torn is told "nothing stands right now" with no hint the
+ * invitation was ever written. `handoff.mjs § unreadRows` is the same function
+ * one class over, and the shadow carries the count for the same reason the
+ * receipt carries `unread_witness_lines`: "nothing stands" and "something may
+ * stand in a row I could not read" are two different answers.
+ *
+ * Counts ONLY gather rows of the gathering class — a torn row of another class
+ * is another projection's to name.
+ */
+export function unreadRows(rows = []) {
+  const ids = [];
+  for (const row of Array.isArray(rows) ? rows : []) {
+    if (String(row?.action ?? "") !== ACTION_GATHER) continue;
+    if (String(row?.class ?? "") !== CLASS_GATHERING) continue;
+    if (Number.isFinite(ms(row?.at))) continue;
+    ids.push(row?.id ?? row?.seq ?? null);
+  }
+  return { count: ids.length, ids };
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 // WHO IS GATHERED — arriving is walking, so this is a containment question
 // ═════════════════════════════════════════════════════════════════════════════
@@ -971,15 +997,26 @@ export async function gatheringShadow(key, { gathering = null, now = Date.now(),
     };
   }
   const all = gatheringsFrom(log, now);
+  // A SKIPPED ROW IS A NAMED ROW, on every answer this read gives: a torn
+  // declaration is not in `all`, and "nothing stands" / "holds no gathering
+  // called" must not stand for "the row is there and I could not read it".
+  // Absent when there is nothing to name.
+  const unread = unreadRows(log);
+  const unreadFields = unread.count ? {
+    unread_rows: unread.count,
+    unread_ids: unread.ids,
+    unread_note: `${unread.count} gather row(s) in this log carry an instant this office cannot read and were skipped — a gathering declared in one of them is NOT in this answer. The row is in the log; the fold could not read it. That is a different fact from "nothing stands", which is why it is named here.`,
+  } : {};
   if (gathering) {
     const one = all.find((g) => g.gathering === String(gathering)) ?? null;
     if (!one) {
-      return { gatherings: [], note: `this log holds no gathering called "${gathering}"`, terms: GATHERING_LAW };
+      return { gatherings: [], note: `this log holds no gathering called "${gathering}"`, ...unreadFields, terms: GATHERING_LAW };
     }
     const r = typeof receipt === "function" ? await receipt(one) : null;
     return {
       gathering: one,
       ...(r ? { receipt: r } : { receipt_note: "the receipt is derived from the log at the read, and this office could not read the window it needs" }),
+      ...unreadFields,
       terms: GATHERING_LAW,
       fence: RECEIPT_FENCE,
     };
@@ -989,6 +1026,7 @@ export async function gatheringShadow(key, { gathering = null, now = Date.now(),
     gatherings: standing,
     standing: standing.length,
     ended: all.length - standing.length,
+    ...unreadFields,
     terms: GATHERING_LAW,
     note: standing.length
       ? "arriving is walking — walk to the place while it is underway and you are at it. Ask for one by id (args: { gathering }) and the answer carries its derived receipt."
