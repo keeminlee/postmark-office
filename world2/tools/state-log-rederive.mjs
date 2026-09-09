@@ -63,6 +63,30 @@ export function householdNamerFor(worldRoot) {
   };
 }
 
+/**
+ * THE EXIT CODE, AS A FUNCTION, SO ITS DELETION IS VISIBLE.
+ *
+ * MY REVIEWER'S NOTE (a). This lived inline in the CLI tail, where nothing could
+ * reach it — so `--require-byte-equal` had no test and removing it would have
+ * been invisible: the flag would silently stop gating and every run would exit 0
+ * again, which is the exact defect the flag was added to fix, returning through
+ * its own repair. A gate whose removal nothing notices is not a gate.
+ *
+ * PURE, and it is the whole exit decision rather than a piece of it, because a
+ * function that computed only the floor would leave the `||` chain untested and
+ * that chain is where the original defect lived.
+ *
+ * `only_in_file` here is already lane-classified: a governed-exempt lane's
+ * absence sits in `expected_absent` and never reaches this, which is what lets
+ * a parity run over an arena window exit 0 when it should.
+ */
+export function exitCodeFor(report, floor = null) {
+  const n = floor == null ? null : Number(floor);
+  const missed_floor = n != null && Number.isFinite(n) && report.byte_equal_once_seq_supplied < n;
+  const code = (report.only_in_file.length || report.only_in_derived.length || missed_floor) ? 1 : 0;
+  return { code, missed_floor, floor: n };
+}
+
 function readWindowFile(worldRoot, window) {
   const path = join(worldRoot, "STATE", "log", `${window}.journal.jsonl`);
   if (!existsSync(path)) return null;
@@ -199,12 +223,11 @@ if (process.argv[1]?.endsWith("state-log-rederive.mjs")) {
     // first: the honest answer today is 7 of 11, and a tool that exited non-zero
     // on its own true answer would be one nobody could run. Passing the flag is
     // what turns it into a gate, and then the floor is the caller's to state.
-    const floor = argOf("--require-byte-equal", null);
-    const missedFloor = floor != null && byteEqual < Number(floor);
-    if (missedFloor) {
-      console.error(`RED: byte-equal ${byteEqual} of ${out.lines.length}, below the required ${floor}`);
+    const verdict = exitCodeFor(report, argOf("--require-byte-equal", null));
+    if (verdict.missed_floor) {
+      console.error(`RED: byte-equal ${byteEqual} of ${out.lines.length}, below the required ${verdict.floor}`);
     }
-    process.exit(report.only_in_file.length || report.only_in_derived.length || missedFloor ? 1 : 0);
+    process.exit(verdict.code);
   } finally {
     await client.end();
   }

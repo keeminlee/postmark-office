@@ -367,3 +367,32 @@ test("F19 · this lane's tool is INERT on import — the CLI tail is guarded", a
   assert.doesNotMatch(code, /import\.meta\.url\s*===|===\s*import\.meta\.url/,
     "never the URL-equality form — false under a junction, and the tool then does nothing silently");
 });
+
+test("F20 · the parity instrument's exit code is a function, and the byte-equality floor gates it", async () => {
+  // MY REVIEWER'S NOTE (a). `--require-byte-equal` had no test and lived inline
+  // in the CLI tail, so its own deletion was invisible: the flag would silently
+  // stop gating and every run would exit 0 again — the exact defect the flag was
+  // added to fix, returning through its own repair.
+  const { exitCodeFor } = await import("../world2/tools/state-log-rederive.mjs");
+  const clean = { only_in_file: [], only_in_derived: [], byte_equal_once_seq_supplied: 7 };
+
+  // Without a floor it is a MEASURING instrument: 7 of 11 is the honest answer
+  // today and must not red, or nobody can run it.
+  assert.equal(exitCodeFor(clean).code, 0, "no floor, no gate");
+  assert.equal(exitCodeFor(clean, null).code, 0);
+
+  // With one, the headline number decides.
+  assert.equal(exitCodeFor(clean, 7).code, 0, "at the floor is not below it");
+  assert.equal(exitCodeFor(clean, 8).code, 1, "below the floor is RED");
+  assert.equal(exitCodeFor(clean, 8).missed_floor, true);
+  assert.equal(exitCodeFor({ ...clean, byte_equal_once_seq_supplied: 0 }, 7).code, 1,
+    "the 7→0 collapse my reviewer named — this is the case that used to exit 0");
+
+  // And the other two causes still fail on their own, so the floor is an
+  // ADDITION to the gate and not a replacement for it.
+  assert.equal(exitCodeFor({ ...clean, only_in_file: [{}] }).code, 1, "an unexpected absence is still red");
+  assert.equal(exitCodeFor({ ...clean, only_in_derived: [{}] }).code, 1, "a line the drain never wrote is still red");
+
+  // A garbage floor does not silently become a gate of zero.
+  assert.equal(exitCodeFor(clean, "banana").code, 0, "an unparseable floor gates nothing rather than everything");
+});
