@@ -21,6 +21,11 @@ const PORT = 43821;
 const GH_PORT = 43822;
 const BASE = `http://127.0.0.1:${PORT}`;
 const KEY = "statickey";
+// A SECOND STATIC ROW, PINNED. `OFFICE_KEYS` entries may carry `#<gh_id>`
+// (server.mjs § KEYS, the founder's ruling 2026-08-26), and that changes what
+// the row can do — which the lane's report got wrong and the reviewer caught by
+// minting a working key from one.
+const PINNED_KEY = "staticpinned";
 
 // what the mock GitHub says the signed-in user is (flipped per test)
 let ghIdentity = { id: 999, login: "keeminlee" };
@@ -66,7 +71,7 @@ before(async () => {
     "--db", dbPath, "--oauth-db", join(tmp, "oauth.db")], {
     env: {
       ...process.env,
-      OFFICE_KEYS: `${KEY}=keemin:wright`,
+      OFFICE_KEYS: `${KEY}=keemin:wright;${PINNED_KEY}=keemin#999:wright`,
       TOWN_CLONE: clone, TOWN_PUSH: "",
       PUBLIC_BASE: BASE,
       POSTMARK_OAUTH_GITHUB_CLIENT_ID: "mock-gh-app",
@@ -324,10 +329,33 @@ test("key desk: a no-household sign-in mints a visitor-pass key (reads yes, send
   assert.equal(send.status, 403, "a visitor key cannot send as anyone");
 });
 
-test("key desk: a static hand-issued key cannot mint (no GitHub identity)", async () => {
+test("key desk: an UNPINNED static key cannot mint — no account stands behind it", async () => {
   const r = await fetch(`${BASE}/keys`, { method: "POST", headers: { authorization: `Bearer ${KEY}` } });
   assert.equal(r.status, 403);
-  assert.match((await r.json()).hint, /join page/i);
+  assert.match((await r.json()).hint, /no verified GitHub account/i,
+    "and the refusal names what is actually missing, not how the key was issued");
+});
+
+test("key desk: a PINNED static key CAN mint, and that is the right answer", async () => {
+  // THE CASE THE OLD TEST MISSED, and the lane's report asserted the opposite
+  // of: an OFFICE_KEYS row may carry `#<gh_id>`, and the row above does. The
+  // gate reads `key.ghId`, so it passes — and it SHOULD. The pin is a verified
+  // identity written by the only hand that can edit the box's env; refusing it
+  // would protect nothing and would make the founder's own row weaker than a
+  // browser session for the same account. What the old test proved was only
+  // that an UNPINNED row cannot mint, which is a different and narrower fact.
+  const r = await fetch(`${BASE}/keys`, { method: "POST", headers: { authorization: `Bearer ${PINNED_KEY}` } });
+  assert.equal(r.status, 201, "a pinned row carries an account, so it mints");
+  const { key } = await r.json();
+  assert.match(key, /^pmk_/);
+
+  // and the minted key resolves as the household the pin names
+  const me = await (await fetch(`${BASE}/me`, { headers: { authorization: `Bearer ${key}` } })).json();
+  assert.deepEqual(me.handles, ["wright"]);
+  assert.equal(me.verified_github.id, 999);
+  // it is the HUMAN's shape, not a resident's: nothing here was co-signed, so
+  // the custody disclosure is absent rather than guessed
+  assert.equal(me.held_by, undefined, "a key minted from the env is nobody's claim and says so by silence");
 });
 
 test("key desk: anonymous mint is a 401 at the write tier", async () => {

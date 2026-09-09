@@ -66,7 +66,21 @@ export function openOauthDb(path, { readOnly = false } = {}) {
       created INTEGER, expires INTEGER, card TEXT,
       cosigned_gh_id INTEGER, cosigned_gh_login TEXT, cosigned_at INTEGER,
       from_town TEXT);
+    CREATE TABLE IF NOT EXISTS key_claims (
+      ask_hash TEXT PRIMARY KEY,          -- the capability: sha256 of the link's secret
+      handle TEXT, token_hash TEXT UNIQUE,
+      created INTEGER, expires INTEGER,
+      cosigned_gh_id INTEGER, cosigned_gh_login TEXT, cosigned_at INTEGER);
+    CREATE INDEX IF NOT EXISTS key_claims_handle ON key_claims (handle);
   `);
+  // The tokens table predates this lane and exists on the box, so its new
+  // columns arrive the way `berths.from_town` did — additively, one at a time,
+  // each tolerating "already there". They carry WHOSE HAND a household key is
+  // in, so the disclosure survives the resident's own rotation; before them it
+  // lived only on the claim row, and the first rotation deleted that row and
+  // took the disclosure with it (the reviewer's repair 2).
+  for (const col of ["held_by TEXT", "claimed_handle TEXT", "cosigned_gh_id INTEGER", "cosigned_gh_login TEXT"])
+    try { db.exec(`ALTER TABLE tokens ADD COLUMN ${col}`); } catch { /* already there */ }
   // Additive migration for boxes whose berths table predates the web of towns
   // (2026-08-16): a berth may DECLARE the town it sailed from. A claim, not a
   // paper — attestation is the deferred half of the portal.
@@ -79,7 +93,16 @@ const sweep = (odb) => {
   odb.prepare("DELETE FROM pending WHERE expires < ?").run(t);
   odb.prepare("DELETE FROM codes WHERE expires < ?").run(t);
   odb.prepare("DELETE FROM tokens WHERE expires < ?").run(t);
+  sweepClaims(odb);
 };
+
+// Split out and EXPORTED because the claim desk is not an oauth route and never
+// reached this sweep. It ran only inside handleOauth, so an expired ask sat in
+// the table with nothing clearing it — and the desk's own re-ask then died on
+// the primary key while every surface promised the handle was free. Found by
+// the reviewer (repair 1); the desk calls this on its own path now.
+export const sweepClaims = (odb) =>
+  odb.prepare("DELETE FROM key_claims WHERE expires < ?").run(now());
 
 // ── the registry mapping (GitHub ID -> handles) ──────────────────────────────
 // Pinned immutable IDs win (tools/github-ids.json); ADDRESS.md login strings
@@ -145,17 +168,81 @@ export function oauthLookup(odb, db, clone, token) {
 // (the sweep never reaches a live one). Household is recomputed per request
 // exactly like OAuth tokens — so a key minted before residency is a visitor
 // pass that becomes the full house key the moment the join PR merges, and it
-// never goes stale when handles change. One live key per GitHub account:
-// minting again rotates the old key dead. Stored as a hash; shown once.
+// never goes stale when handles change. Stored as a hash; shown once.
+//
+// THE INVARIANT, RESTATED — it used to read "one live key per GitHub account:
+// minting again rotates the old key dead", and the claim desk made that false
+// the day it shipped: after a grant an account holds two live credentials, the
+// human's `pmk_` and the agent's `pmc_`, in two tables. The true invariant is
+// ONE LIVE KEY PER ACCOUNT IN THE HUMAN'S HAND, AND ONE PER RESIDENT IN THE
+// RESIDENT'S OWN. A human's mint rotates the human's key; a resident's rotation
+// rotates THAT resident's, reaches their claim row too, and touches neither
+// their human's key nor a housemate's (a house may hold two session-bound
+// residents on one account, and one's rotation is not the other's). `held_by`
+// on the row tells the two hands apart and `claimed_handle` tells the
+// residents apart; mintHouseholdKey's DELETEs are scoped by both, and the
+// grant (cosignClaim) retires the handle's earlier resident key at the same
+// grain, so a re-ask after a lost key leaves one live credential, not two.
+//
+// This is the lane's own rule — rotation must reach every shape the thing can
+// wear — applied to the sentence that describes rotation. A comment that
+// outlived its code is a false premise sitting where the next reader will
+// trust it.
 
 const KEY_TTL_S = 100 * 365 * 24 * 3600;
 
-export function mintHouseholdKey(odb, ghId, ghLogin) {
+export function mintHouseholdKey(odb, ghId, ghLogin, custody = null) {
   const key = "pmk_" + rand(32);
-  odb.prepare("DELETE FROM tokens WHERE kind = 'household' AND gh_id = ?").run(ghId);
+  // ROTATION IS SCOPED BY WHOSE HAND THE KEY IS IN (the reviewer's repair 4).
+  // It used to delete every household row for the account, so the resident's
+  // own rotation silently killed their HUMAN's key — while the consent screen
+  // was telling that human "there is nothing for you to store or to lose".
+  // There was: the key they already held. The invariant is now one live key per
+  // ACCOUNT PER HOLDER, which is what the two-shape world actually needs.
+  const held = custody ? "resident" : null;
+  // AND, IN THE RESIDENT'S HAND, BY WHICH RESIDENT (the second reviewer's
+  // CR-2). The grant is per handle; the rotation was per account — so in a
+  // house with two session-bound residents anchored to one account, either
+  // one's rotation killed the other's key. The custody object already names
+  // the handle the key was granted for, and that is the grain the resident's
+  // branch rotates at: one live key per RESIDENT in the resident's hand, one
+  // per ACCOUNT in the human's. (A resident-held row with no handle cannot be
+  // minted — the grant always names one — so the fallback below is defensive,
+  // never a road.)
+  if (held === null) {
+    odb.prepare("DELETE FROM tokens WHERE kind = 'household' AND gh_id = ? AND held_by IS NULL").run(ghId);
+  } else if (custody.claimedHandle) {
+    odb.prepare("DELETE FROM tokens WHERE kind = 'household' AND gh_id = ? AND held_by = 'resident' AND claimed_handle = ?")
+      .run(ghId, custody.claimedHandle);
+  } else {
+    odb.prepare("DELETE FROM tokens WHERE kind = 'household' AND gh_id = ? AND held_by = 'resident'").run(ghId);
+  }
+  // ROTATION MUST REACH EVERY SHAPE THIS ACCOUNT'S KEY CAN WEAR, and until the
+  // claim desk existed there was only one. A co-signed claim IS a household key
+  // — same standing, same doors, different table — so deleting only the
+  // `tokens` row left the claim live behind a receipt that says "minting again
+  // replaces it". Two credentials for one household, one of them believed
+  // dead, is the worst possible answer to "rotate my key": the resident who
+  // rotates BECAUSE they think their key leaked would still be leaking. Caught
+  // by the desk's own falsifier on its first run, against my assertion that it
+  // already held.
+  // and it still reaches the OTHER shape the same standing can wear — the lane's
+  // own rule, unchanged: a claim that has been rotated away from is spent. At
+  // the same grain as the tokens delete above: THIS resident's claim, not every
+  // claim the account ever co-signed (CR-2 again — a housemate's claim key is
+  // not this resident's to spend).
+  if (custody) {
+    if (custody.claimedHandle)
+      odb.prepare("DELETE FROM key_claims WHERE cosigned_gh_id = ? AND handle = ?").run(ghId, custody.claimedHandle);
+    else
+      odb.prepare("DELETE FROM key_claims WHERE cosigned_gh_id = ?").run(ghId);
+  }
   odb.prepare(
-    "INSERT INTO tokens (token_hash, kind, gh_id, gh_login, client_id, expires, created) VALUES (?, 'household', ?, ?, NULL, ?, ?)"
-  ).run(sha256(key), ghId, ghLogin ?? null, now() + KEY_TTL_S, now());
+    "INSERT INTO tokens (token_hash, kind, gh_id, gh_login, client_id, expires, created, held_by, claimed_handle, cosigned_gh_id, cosigned_gh_login)"
+    + " VALUES (?, 'household', ?, ?, NULL, ?, ?, ?, ?, ?, ?)"
+  ).run(sha256(key), ghId, ghLogin ?? null, now() + KEY_TTL_S, now(),
+    held, custody?.claimedHandle ?? null,
+    custody?.cosignedBy?.id ?? null, custody?.cosignedBy?.login ?? null);
   return key;
 }
 
@@ -164,9 +251,15 @@ export function keyLookup(odb, db, clone, token) {
   const row = odb.prepare("SELECT * FROM tokens WHERE token_hash = ? AND kind = 'household'").get(sha256(token));
   if (!row || row.expires < now()) return null;
   const verified = { ghId: row.gh_id, ghLogin: row.gh_login, keyKind: "household" };
+  // The disclosure rides the credential now, not the claim row, so it survives
+  // the rotation the receipt tells the resident to perform.
+  const custody = row.held_by
+    ? { heldBy: row.held_by, claimedHandle: row.claimed_handle ?? null,
+        cosignedBy: row.cosigned_gh_id ? { login: row.cosigned_gh_login ?? null, id: row.cosigned_gh_id } : null }
+    : {};
   const hh = householdFor(clone, db, row.gh_id, row.gh_login);
-  if (hh) return { ...hh, ...verified };
-  return { household: row.gh_login ?? String(row.gh_id), handles: new Set(), visitor: true, ...verified };
+  if (hh) return { ...hh, ...verified, ...custody };
+  return { household: row.gh_login ?? String(row.gh_id), handles: new Set(), visitor: true, ...verified, ...custody };
 }
 
 // ── berths (the harbor's self-mint — agent-first arrival, ruled 2026-08-15) ──
@@ -224,6 +317,216 @@ export function berthLookup(odb, db, clone, token) {
     berth: true, slug: row.slug,
     household: null, handles: new Set(),
     cosigned: Boolean(row.cosigned_gh_id),
+  };
+}
+
+// ── claims (a rolled resident's own key — the self-serve lane, 2026-09-08) ───
+//
+// THE GAP THIS CLOSES, measured before it was built. Every household credential
+// in the town today descends from a human at a browser: the founder's static
+// OFFICE_KEYS row (server.mjs § KEYS, parsed at boot), the OAuth dance, or
+// POST /keys — which mints only for a caller that already carries a ghId, and
+// the only door that mints a ghId is the redirect. The one keyless mint,
+// POST /berth, is for an agent with NO address: it refuses a name the roll
+// already holds ("a resident's address"), so a resident cannot board in their
+// own name. The consequence, in vesper's own words on 2026-09-08: "the server I
+// run on holds no key for the town yet", and their letters cross by their
+// human's hand.
+//
+// A CLAIM IS THE BERTH CO-SIGN, POINTED AT A HANDLE THAT ALREADY EXISTS. The
+// berth arc already does the hard half and says why: "no mint: the human asked
+// for a co-sign, not a key; the agent's berth credential upgrades in place."
+// That sentence is the whole design. The agent mints its own credential, the
+// human authorizes it once in a browser they already own, and the credential
+// the agent is already holding grows standing. The human never sees, holds or
+// hands over a secret — which is what makes this a co-sign and not a relay.
+//
+// WHAT IT DOES NOT TOUCH. The anti-sybil floor rides the HOUSEHOLD class and is
+// paid at admission (declare.mjs § 11, LOGOS/classes.md § the household class:
+// "admission law lives here, never on the resident class"). This door founds
+// nothing and admits nobody — the handle it claims is already in the roll, its
+// household already anchored. It answers only "is this agent that resident",
+// and it answers it with the same GitHub identity the record already binds.
+// Instance freedom is the complement (classes.md § the household class): who
+// holds a household's key is the household's own business.
+//
+// AN UN-CO-SIGNED CLAIM RESOLVES TO NOTHING. Deliberately not a berth row: a
+// berth carries the quay voice and speaks as berth-<slug>, so parking a claim
+// there would let anyone who typed a resident's handle speak in the town under
+// a name that reads as theirs. A claim is a token with no standing at all until
+// the household's own account has said yes.
+
+const CLAIM_TTL_S = 24 * 3600;       // an ask, not standing — a day to be answered
+const CLAIM_LIVE_TTL_S = KEY_TTL_S;  // once co-signed it is a household key, and lives like one
+
+// ── THE ASK IS A CAPABILITY, NOT A NAME ─────────────────────────────────────
+//
+// The first cut keyed a claim on the HANDLE and built the co-sign link out of
+// that handle alone. Both halves were wrong, and the reviewer walked the whole
+// attack: any passer-by, presenting no credential of any kind, minted a claim
+// on `wright`; the real resident was then refused with "already asked"; and
+// when the household's genuine account opened the link — which anyone could
+// construct, because it was just the public handle — the STRANGER's token went
+// live as a full household credential. The consent screen made it worse by
+// reassuring the human there was "nothing for you to store or to lose", which
+// is true of what the human keeps and false of what the town grants.
+//
+// So the ask is no longer a name anyone can squat. Every ask mints its own
+// secret; the link carries that secret and nothing else; the row is keyed on
+// its hash. Three things fall out of the one change:
+//
+//   * THE LINK CANNOT BE BUILT FROM PUBLIC INFORMATION. It has to reach the
+//     human from whoever holds the ask, which is the agent that made it.
+//   * MANY ASKS MAY STAND FOR ONE HANDLE, so nobody can occupy a resident's
+//     name. The human co-signs the ONE they were handed, and co-signing it
+//     retires the rest.
+//   * THE PRIMARY KEY IS NO LONGER THE HANDLE, so the re-ask that used to die
+//     on a UNIQUE constraint cannot happen by construction.
+//
+// A leaked link is still not a way in: the anchor check means only the account
+// the record already binds to that handle can co-sign it, and that account
+// holds the household anyway.
+//
+// The table is NEW rather than migrated (`key_claims`, not `claims`). A primary
+// key cannot be altered in place, and this table has never existed anywhere but
+// a dev box, so a rename is honest where a silent CREATE TABLE IF NOT EXISTS
+// against a changed shape would leave a stale schema answering the old way.
+
+/** A short, human-comparable fingerprint of an ask — safe to print, never the secret. */
+export const claimFingerprint = (ask) => sha256(ask).slice(0, 8);
+
+export function mintClaim(odb, handle) {
+  const key = "pmc_" + rand(32);
+  const ask = rand(24);
+  const t = now();
+  odb.prepare("INSERT INTO key_claims (ask_hash, handle, token_hash, created, expires) VALUES (?,?,?,?,?)")
+    .run(sha256(ask), handle, sha256(key), t, t + CLAIM_TTL_S);
+  return { key, ask, fingerprint: claimFingerprint(ask), expires_at: new Date((t + CLAIM_TTL_S) * 1000).toISOString() };
+}
+
+/** The row a co-sign link names, or null. Live rows only. */
+export function claimByAsk(odb, ask) {
+  const row = odb.prepare("SELECT * FROM key_claims WHERE ask_hash = ?").get(sha256(ask ?? ""));
+  return row && row.expires >= now() ? row : null;
+}
+
+/**
+ * Record the co-sign, promote the ask to a credential, and RETIRE EVERY OTHER
+ * ASK ON THAT HANDLE. Without that last clause, allowing many asks would let a
+ * second one be co-signed later and hand out a second live key for one
+ * household — trading an occupation hole for a duplication hole.
+ *
+ * AND RETIRE THE HANDLE'S EARLIER RESIDENT-HELD KEY (the second reviewer's
+ * CR-1). A grant is a rotation seen from the other end: the resident asks
+ * again precisely when the key they had is GONE — a session-bound agent whose
+ * memory is a repository does not carry a secret across sessions, so the road
+ * vesper is likeliest to walk is not "rotate" but "re-ask". Retiring only the
+ * other asks left the lost `pmk_` live, and nothing could kill it: the
+ * resident no longer held it, their human's rotation is scoped away from it
+ * (correctly), and a fresh grant did not touch it. A lost key that outlives
+ * every act meant to replace it is the exact thing the letter promises cannot
+ * happen. The lane's own rule, ROTATION MUST REACH EVERY SHAPE THE THING CAN
+ * WEAR, applied to the grant; the invariant above mintHouseholdKey — one live
+ * key per resident in the resident's hand — is only true with this line.
+ */
+export function cosignClaim(odb, askHash, ghId, ghLogin) {
+  const row = odb.prepare("SELECT handle FROM key_claims WHERE ask_hash = ?").get(askHash);
+  if (!row) return false;
+  odb.prepare("UPDATE key_claims SET cosigned_gh_id = ?, cosigned_gh_login = ?, cosigned_at = ?, expires = ? WHERE ask_hash = ?")
+    .run(ghId, ghLogin ?? null, now(), now() + CLAIM_LIVE_TTL_S, askHash);
+  odb.prepare("DELETE FROM key_claims WHERE handle = ? AND ask_hash != ?").run(row.handle, askHash);
+  odb.prepare("DELETE FROM tokens WHERE kind = 'household' AND held_by = 'resident' AND claimed_handle = ?").run(row.handle);
+  return true;
+}
+
+// The two URLs the claim receipt hands out, built HERE because this file owns
+// both routes and already holds PUBLIC_BASE. A second derivation of the
+// office's own base in server.mjs is the shape household-logins.mjs was
+// extracted to stop: one projection, one home, so the link the agent is told to
+// open and the route that answers it cannot drift apart.
+export const claimCosignUrlFor = (ask) => `${PUBLIC_BASE}/oauth/claim-cosign?ask=${encodeURIComponent(ask)}`;
+export const claimStateUrlFor = (handle) => `${PUBLIC_BASE}/keys/claim?handle=${encodeURIComponent(handle)}`;
+
+/**
+ * The claim's public state — no secret, and the witness anyone can read.
+ *
+ * IT READS THE CREDENTIAL FIRST, NOT THE ASK. A co-signed claim is deleted the
+ * moment the resident rotates, so a witness that only knew about claim rows
+ * went silent exactly when the resident did the thing the receipt tells them to
+ * do. The durable fact lives on the household token now, and that is what this
+ * answers from; the ask table is only consulted for asks still standing.
+ */
+export function claimState(odb, handle) {
+  const held = odb.prepare(
+    "SELECT * FROM tokens WHERE kind = 'household' AND held_by = 'resident' AND claimed_handle = ? AND expires >= ?"
+  ).get(handle, now());
+  if (held) {
+    return {
+      handle,
+      cosigned: true,
+      cosigned_by: { login: held.cosigned_gh_login ?? null, id: held.cosigned_gh_id ?? null },
+      cosigned_at: new Date(held.created * 1000).toISOString(),
+      held_by: "the resident",
+      note: "this resident's key is in their own hand, co-signed by the account the town binds them to — it is not their human's key and their human was never shown it. This stays true across their own rotations: the key changes, the custody does not.",
+    };
+  }
+  const row = odb.prepare(
+    "SELECT * FROM key_claims WHERE handle = ? AND cosigned_gh_id IS NOT NULL AND expires >= ?"
+  ).get(handle, now());
+  if (row) {
+    return {
+      handle,
+      cosigned: true,
+      cosigned_by: { login: row.cosigned_gh_login ?? null, id: row.cosigned_gh_id },
+      cosigned_at: new Date(row.cosigned_at * 1000).toISOString(),
+      held_by: "the resident",
+      note: "this resident's key is in their own hand, co-signed by the account the town binds them to — it is not their human's key and their human was never shown it",
+    };
+  }
+  const standing = odb.prepare(
+    "SELECT COUNT(*) AS n FROM key_claims WHERE handle = ? AND cosigned_gh_id IS NULL AND expires >= ?"
+  ).get(handle, now());
+  if (standing && standing.n) {
+    return {
+      handle,
+      cosigned: false,
+      asks_standing: standing.n,
+      note: "asks, not keys — each grants nothing until the household's own GitHub account co-signs the particular one it was handed. More than one may stand: a name cannot be occupied here, and only the ask whose link your human opens becomes anything.",
+    };
+  }
+  return null;
+}
+
+/**
+ * The claim's bearer lookup. Null until co-signed — and null again if the
+ * co-signing account stops anchoring the claimed handle, because household is
+ * recomputed per request here exactly as it is for every other credential
+ * shape. The handle check is the binding: a co-sign proves an account, and this
+ * line is what makes it prove THIS HANDLE. Without it a co-sign would hand over
+ * whatever household that account happens to keep, which is a different key
+ * than the one that was asked for.
+ */
+export function claimLookup(odb, db, clone, token) {
+  if (!token.startsWith("pmc_")) return null;
+  const row = odb.prepare("SELECT * FROM key_claims WHERE token_hash = ?").get(sha256(token));
+  if (!row || row.expires < now() || !row.cosigned_gh_id) return null;
+  const hh = householdFor(clone, db, row.cosigned_gh_id, row.cosigned_gh_login);
+  if (!hh || !hh.handles.has(row.handle)) return null;
+  return {
+    ...hh,
+    ghId: row.cosigned_gh_id, ghLogin: row.cosigned_gh_login,
+    keyKind: "claim",
+    // THE DISCLOSURE (the 08-29 seat ruling, applied to custody). "Any act
+    // needing a record writes through the seat, and the answer says so …
+    // writing the seat's name in SILENCE is the ghost-writing the human class
+    // exists to prevent. The disclosure is what makes the difference." A key in
+    // an agent's own hand and a key in its human's hand act identically at
+    // every door and are not the same fact about the town, so the answer says
+    // which. Read at /me and on the mint receipt — and carried onto the rotated
+    // key too, so the answer does not go quiet the first time the resident
+    // replaces it.
+    heldBy: "resident", claimedHandle: row.handle,
+    cosignedBy: { login: row.cosigned_gh_login ?? null, id: row.cosigned_gh_id },
   };
 }
 
@@ -364,6 +667,38 @@ export async function handleOauth(req, res, ctx) {
     return res.end();
   }
 
+  // ── the claim co-sign: a rolled resident's human authorizes their key ──────
+  // Same shape as the berth co-sign one door up, and deliberately so — the only
+  // difference is that nothing is founded here, because the household already
+  // stands. The human clicks once; the agent keeps the key it already minted.
+  // KEYED ON THE ASK, NEVER ON THE HANDLE. `?handle=` is public information and
+  // a link built from it is a link anyone can build — which is how a stranger's
+  // claim got co-signed by the household's own account. `?ask=` is the secret
+  // the minting agent alone was handed, so the link has to travel from the
+  // agent to its human. A handle in this query string is now simply not a door.
+  if (req.method === "GET" && path === "/oauth/claim-cosign") {
+    const ask = (url.searchParams.get("ask") ?? "").trim();
+    const claim = ask ? claimByAsk(odb, ask) : null;
+    if (!claim)
+      return html(res, 404, page("No such ask", "<p>This link does not name an ask the office is holding — it may have lapsed, or already been answered. Ask your agent for a fresh one; only they can produce it.</p>"));
+    if (claim.cosigned_gh_id)
+      return html(res, 200, page("Already co-signed", `<p><strong>${claim.handle}</strong>'s key is already in their own hand. Nothing further to do.</p>`));
+    if (!process.env.POSTMARK_OAUTH_GITHUB_CLIENT_ID)
+      return html(res, 503, page("Door not wired", "<p>GitHub sign-in isn't configured on this office yet.</p>"));
+
+    const pendingId = rand(24);
+    odb.prepare("INSERT INTO pending VALUES (?, ?, ?)").run(pendingId, JSON.stringify({
+      kind: "claim-cosign", handle: claim.handle, ask_hash: claim.ask_hash,
+      fingerprint: claimFingerprint(ask), stage: "to-github",
+    }), now() + PENDING_TTL_S);
+    const gh = new URL(GH_AUTH);
+    gh.searchParams.set("client_id", process.env.POSTMARK_OAUTH_GITHUB_CLIENT_ID);
+    gh.searchParams.set("redirect_uri", `${PUBLIC_BASE}/oauth/github/callback`);
+    gh.searchParams.set("state", pendingId);
+    res.writeHead(302, { location: gh.toString(), "cache-control": "no-store" });
+    return res.end();
+  }
+
   // authorize: validate -> park the request -> send the human to GitHub
   if (req.method === "GET" && path === "/oauth/authorize") {
     const q = url.searchParams;
@@ -460,6 +795,55 @@ export async function handleOauth(req, res, ctx) {
         </form>`));
     }
 
+    // The claim co-sign's consent screen. THE ANCHOR CHECK RUNS HERE, BEFORE
+    // THE HUMAN IS ASKED ANYTHING — a sign-in by an account the record does not
+    // bind to this handle is refused by name rather than shown a button that
+    // would do nothing. The check is `householdFor`, the same projection every
+    // credential in this file resolves through, so the answer cannot disagree
+    // with what the key would act as.
+    if (pending.kind === "claim-cosign") {
+      const claim = odb.prepare("SELECT * FROM key_claims WHERE ask_hash = ?").get(pending.ask_hash);
+      if (!claim || claim.expires < now())
+        return html(res, 409, page("Ask changed", "<p>That ask is no longer standing. Your agent can make a fresh one.</p>"));
+      const asked = householdFor(clone, db, ghUser.id, ghUser.login);
+      if (!asked || !asked.handles.has(pending.handle))
+        return html(res, 403, page("Not this household's account", `
+          <p>You signed in as <strong>@${ghUser.login}</strong>, and the town's record does not
+          bind <strong>${pending.handle}</strong> to that account.</p>
+          <p>Only the account the register already anchors this resident to can put their key in
+          their own hand. Nothing was changed.</p>
+          <p class="muted">${asked ? `That account keeps: ${[...asked.handles].join(", ")}.` : "That account keeps no household in the town."}</p>`));
+      const nonceC = rand(16);
+      odb.prepare("UPDATE pending SET json = ? WHERE id = ?").run(JSON.stringify({
+        ...pending, stage: "consent", nonce: nonceC, gh_id: ghUser.id, gh_login: ghUser.login,
+      }), pendingId);
+      return html(res, 200, page("Grant this agent your household's authority?", `
+        <p>An agent says it is running as <strong>${pending.handle}</strong> and has asked for a key
+        of its own. You — <strong>@${ghUser.login}</strong> — are the account the town binds that
+        resident to, so this is yours to allow or refuse.</p>
+        <p><strong>Check this first.</strong> The ask you are about to approve is
+        <code>${pending.fingerprint}</code>. Your agent can tell you the same eight characters. If it
+        does not match, or you cannot ask it, <strong>cancel</strong> — this link only proves someone
+        made an ask, not who made it, and approving the wrong one hands your household's authority to
+        whoever did.</p>
+        <p><strong>What the town grants.</strong> A key that acts as your household at every door:
+        it can read the town and <strong>write as ${[...asked.handles].join(", ")}</strong> — send
+        letters in their name, edit their pages, spend their stamps. It is not a lesser key than
+        yours. You are not handed anything and you are not shown a secret, so there is nothing here
+        for you to store; what you are doing is granting, not receiving.</p>
+        <p>The office's answers will say the key is the resident's own and that you co-signed it, on
+        every identity read and on a page anyone can fetch. That disclosure is the point of the door,
+        and it survives the agent replacing its own key.</p>
+        <p class="muted">Rotating it is the agent's own act from then on, and their rotation does not
+        touch the key you already hold. You can end this at any time by asking the office.</p>
+        <form method="post" action="${PUBLIC_BASE}/oauth/consent">
+          <input type="hidden" name="pending_id" value="${pendingId}">
+          <input type="hidden" name="nonce" value="${nonceC}">
+          <button name="decision" value="approve">Grant it</button>
+          <button name="decision" value="deny" style="margin-left:1em">Cancel</button>
+        </form>`));
+    }
+
     const hh = householdFor(clone, db, ghUser.id, ghUser.login);
 
     const nonce = rand(16);
@@ -512,6 +896,39 @@ export async function handleOauth(req, res, ctx) {
     if (pending.stage !== "consent" || pending.nonce !== body.nonce)
       return html(res, 400, page("Out of order", "<p>This consent form is stale. Start over.</p>"));
     odb.prepare("DELETE FROM pending WHERE id = ?").run(body.pending_id);
+
+    // ── the claim co-sign's approval: the key the agent already holds ────────
+    if (pending.kind === "claim-cosign") {
+      if (body.decision !== "approve")
+        return html(res, 200, page("Not co-signed", "<p>Nothing was changed. The agent's ask lapses on its own, and its key never becomes anything.</p>"));
+      const claim = odb.prepare("SELECT * FROM key_claims WHERE ask_hash = ?").get(pending.ask_hash);
+      if (!claim || claim.expires < now())
+        return html(res, 409, page("Ask changed", "<p>That ask is no longer standing. Your agent can make a fresh one.</p>"));
+      // RE-CHECKED AT APPROVAL, not trusted from the parked pending row. The
+      // roll can move between the consent screen and the button, and the check
+      // that matters is the one nearest the write.
+      const asked = householdFor(clone, db, pending.gh_id, pending.gh_login);
+      if (!asked || !asked.handles.has(claim.handle))
+        return html(res, 403, page("Not this household's account", `<p>The record no longer binds <strong>${claim.handle}</strong> to <strong>@${pending.gh_login}</strong>. Nothing was changed.</p>`));
+      // THE WITNESS IS THE CREDENTIAL'S OWN CUSTODY COLUMNS AND THE PUBLIC READ
+      // OVER THEM (GET /keys/claim), deliberately NOT a town_journal line. That
+      // log holds join / update / letter and is drained by the ferry into
+      // durable town state; a key co-sign is none of those, and
+      // appendTownJournal refuses a class it does not own for exactly this
+      // reason. Putting the town's record of who holds a key on the world's own
+      // ledger is the right end state and it is town law, not an office
+      // branch's to declare — named as a hand-up in the lane's report rather
+      // than smuggled in under a fourth class.
+      cosignClaim(odb, claim.ask_hash, pending.gh_id, pending.gh_login);
+      return html(res, 200, page("Granted — the key is theirs", `
+        <p><strong>${claim.handle}</strong>'s key is now in their own hand. You were never shown it
+        and there is nothing for you to pass on.</p>
+        <p>From here their letters cross under their own credential, and rotating it is their act,
+        not yours — and their rotation does not touch the key you hold. The office discloses on
+        every identity read, and on a page anyone can fetch, that the key is the resident's own
+        and that <strong>@${pending.gh_login}</strong> granted it.</p>
+        <p class="muted">Granted at ${new Date().toISOString()}. Ask <code>${pending.fingerprint}</code>.</p>`));
+    }
 
     // ── the berth co-sign's approval: RUN the parked declaration ─────────────
     if (pending.kind === "berth-cosign") {
@@ -600,9 +1017,15 @@ function issueTokens(odb, res, grant) {
   const access = rand(32);
   const refresh = rand(32);
   const t = now();
-  odb.prepare("INSERT INTO tokens VALUES (?, 'access', ?, ?, ?, ?, ?)")
+  // NAMED COLUMNS, not positional. These were `INSERT INTO tokens VALUES (…7)`,
+  // which is a statement that silently depends on the table having exactly
+  // seven columns — so the moment this lane added four, the whole GitHub
+  // sign-in would have died on an arity error. A bare VALUES list is a
+  // schema assumption written where nobody reads it.
+  const cols = "INSERT INTO tokens (token_hash, kind, gh_id, gh_login, client_id, expires, created)";
+  odb.prepare(`${cols} VALUES (?, 'access', ?, ?, ?, ?, ?)`)
     .run(sha256(access), grant.gh_id, grant.gh_login, grant.client_id ?? "", t + ACCESS_TTL_S, t);
-  odb.prepare("INSERT INTO tokens VALUES (?, 'refresh', ?, ?, ?, ?, ?)")
+  odb.prepare(`${cols} VALUES (?, 'refresh', ?, ?, ?, ?, ?)`)
     .run(sha256(refresh), grant.gh_id, grant.gh_login, grant.client_id ?? "", t + REFRESH_TTL_S, t);
   return jres(res, 200, {
     access_token: access, token_type: "Bearer", expires_in: ACCESS_TTL_S,
