@@ -187,6 +187,28 @@ export function loadManifest(path = DEFAULT_MANIFEST) {
     if (!Number.isFinite(Number(row.outcome.unsettled_runs))) throw new Error(`${row.unit} declares an outcome with no unsettled_runs — a refusal that keeps returning would read green`);
     if (!row.outcome.means) throw new Error(`${row.unit} declares an outcome with no means — nothing to print on the alarm line`);
     if (!row.outcome.why) throw new Error(`${row.unit} declares an outcome with no why — its thresholds are numbers nobody can review`);
+    // A list-alarm names the fields it watches, and an empty declaration is the
+    // shape that reads green forever: `alarm_on_nonempty: []` would pass every
+    // check above and watch nothing.
+    if (Object.prototype.hasOwnProperty.call(row.outcome, "alarm_on_nonempty")) {
+      const l = row.outcome.alarm_on_nonempty;
+      if (!Array.isArray(l) || !l.length || l.some((f) => typeof f !== "string" || !f))
+        throw new Error(`${row.unit} declares alarm_on_nonempty that names no field — a list-alarm watching nothing reads green forever`);
+      // Its own sentence, always — never the shared one, whose install-day note
+      // would excuse a finding that is never install-day noise.
+      if (!row.outcome.list_means)
+        throw new Error(`${row.unit} declares alarm_on_nonempty with no list_means — it would print the shared means, whose install-day excuse is false of a named slug`);
+    }
+    // Same discipline for the present-and-false alarm: a flag list naming no
+    // field watches nothing, and one without its own sentence borrows a means
+    // that sends the operator after the wrong cause.
+    if (Object.prototype.hasOwnProperty.call(row.outcome, "alarm_on_false")) {
+      const f = row.outcome.alarm_on_false;
+      if (!Array.isArray(f) || !f.length || f.some((x) => typeof x !== "string" || !x))
+        throw new Error(`${row.unit} declares alarm_on_false that names no field — a flag-alarm watching nothing reads green forever`);
+      if (!row.outcome.unchecked_means)
+        throw new Error(`${row.unit} declares alarm_on_false with no unchecked_means — a check that did not run has a different repair from a check that found something`);
+    }
   }
   return m;
 }
@@ -809,7 +831,113 @@ export function judgeOutcome(row, snapshot) {
     }
   }
 
-  return null;
+  // THE LIST THAT MUST BE EMPTY (postmark#2594, ruled 2026-09-08).
+  //
+  // `falsifier-canon-locks.mjs` appends one line per crossing naming every
+  // locked claim the world carries no file for. The class it watches went
+  // unseen for three weeks because NOTHING WAS LOOKING — not because anything
+  // was quiet about it — so the alarm is the list itself, not a trend across
+  // runs: one name in it is a disagreement between the two records standing
+  // right now, and by the time it repeats it has already been true for twelve
+  // hours.
+  //
+  // JUDGED ON THE LATEST LINE ONLY, and that is the difference from every rule
+  // above. `left_drafted` and `retired` are about a rail's BEHAVIOUR over time,
+  // where one bad crossing is noise; this is about the STORE'S STATE, where the
+  // most recent reading is the only one that is still true.
+  //
+  // A LATEST LINE CARRYING NONE OF THE NAMED FIELDS IS ITSELF THE ALARM, and it
+  // is deliberately not the `retired` rule's silent-on-a-missing-key shape. That
+  // discipline is right for a field a rail grew into; it is wrong here, because
+  // "silent when the field is absent" means a writer that stops emitting the list
+  // turns its own alarm off. The judge says so instead.
+  // IT CARRIES ITS OWN `means`, FOR THE REASON `retire_means` DOES ONE RULE UP
+  // AND FOR A SHARPER ONE. The shared `spec.means` ends with an INSTALL-DAY NOTE
+  // — "this row is EXPECTED to read ALARM-outcome until the first crossing after
+  // deploy appends to the log, and it clears itself then" — which is true of the
+  // empty-log case above and FALSE here: a line naming a slug is never install-day
+  // noise. Appending it would hand the operator a ready-made excuse for the one
+  // alarm that has no excuse, which is how a real finding gets skimmed past. I
+  // wrote it the other way first and the end-to-end run on the box showed the
+  // excuse attached to `lupi/the-drift-room`; this is that repair.
+  // THE LIST RULE AND THE FLAG RULE BOTH SPEAK (lap 5, the lap-4 reviewer's
+  // LOW). Until this lap the judge returned the FIRST rule's sentence, so while
+  // `canon_absent` carried a slug — prod's condition since window 177,
+  // `lupi/the-drift-room` — the list alarm returned and `unchecked_means` never
+  // printed: the operator was told about lupi and NOT told that the escrow half
+  // of the read has never run. Repair 2 closed the day lupi settles; this closes
+  // the days before it, which are the days between merge and that settlement.
+  // The board's reason is one string that already carries a paragraph of
+  // `means`, so two sentences fit; the list sentence stays FIRST — the finding,
+  // then the caveat on it. The class-terminal and stuck rules above still return
+  // alone: they describe a rail that did not produce a line worth judging, and
+  // there is nothing for a second sentence to be about.
+  const sentences = [];
+
+  const lists = Array.isArray(spec.alarm_on_nonempty) ? spec.alarm_on_nonempty : [];
+  if (lists.length) {
+    const mine = spec.list_means ? ` ${spec.list_means}` : "";
+    const present = lists.filter((f) => Object.prototype.hasOwnProperty.call(latest, f));
+    const found = present
+      .map((f) => ({ field: f, items: Array.isArray(latest[f]) ? latest[f] : [] }))
+      .filter((r) => r.items.length);
+    if (!present.length) {
+      sentences.push(`declares an alarm on ${lists.join(", ")} and its latest line at ${latest.at ?? "?"} carries none of them — ` +
+        `the instrument and this judge disagree about the shape, so nothing is being judged.${mine}`);
+    } else if (found.length) {
+      const n = found.reduce((t, r) => t + r.items.length, 0);
+      sentences.push(`last read at ${latest.at ?? "?"} found ${found.map((r) => `${r.items.length} ${r.field}`).join(" and ")} — ` +
+        `${found.map((r) => r.items.join(", ")).join(" · ")}. ` +
+        `The store and canon disagree about ${n === 1 ? "a mark that stands" : "marks that stand"} in the register today.${mine}`);
+    }
+  }
+
+  // A FIELD PRESENT AND FALSE IS ALSO AN ALARM (the reviewer's repair 2,
+  // 2026-09-08). The sibling rule above catches a latest line carrying NONE of
+  // the named fields. This catches the other shape: the field is there, the
+  // instrument is honest, and it says it did not check.
+  //
+  // THE HOLE IT CLOSES, driven through this judge against the real manifest row:
+  //
+  //   canon absent carries lupi, escrow unchecked   → ALARM (on the canon half;
+  //                                                   since lap 5 on BOTH — below)
+  //   canon empty, escrow list empty, UNCHECKED     → OK        ← the hole
+  //   canon empty, escrow list empty, checked       → OK
+  //   escrow list carries a slug, checked           → ALARM
+  //
+  // Rows two and three were the same verdict for opposite facts. Masked only
+  // because the canon half still carried a slug; the moment that settled, the row
+  // would have gone green while the escrow gate — the lane's centre and the G1
+  // blocker — had never once been checked.
+  //
+  // It is the lane's own rule applied everywhere except the alarm:
+  // `escrow-presence.mjs` says a store that cannot answer and a town where nobody
+  // staked are different facts, and `world2-notary.sh` says "ran and found
+  // nothing" and "did not run" must not look alike. Both were true of the read
+  // and neither was true of the judge.
+  //
+  // ITS OWN `means`, for the same reason `list_means` has one: this alarm has a
+  // known, named, pending cause (the migration), and printing the list-alarm's
+  // sentence would tell an operator to go looking for a stake that is not the
+  // problem.
+  const flags = Array.isArray(spec.alarm_on_false) ? spec.alarm_on_false : [];
+  if (flags.length) {
+    const said = flags.filter((f) => Object.prototype.hasOwnProperty.call(latest, f) && latest[f] === false);
+    const absent = flags.filter((f) => !Object.prototype.hasOwnProperty.call(latest, f));
+    if (said.length) {
+      // "whatever the list above says of escrow": beside a list finding this
+      // sentence is the caveat on it, and beside an empty list it is the whole
+      // verdict — one wording that is true in both seats.
+      sentences.push(`last read at ${latest.at ?? "?"} reports ${said.join(", ")} — the check did not run, so whatever the list ` +
+        `above says of it is a question unanswered and not an answer.${spec.unchecked_means ? ` ${spec.unchecked_means}` : ""}`);
+    } else if (absent.length === flags.length) {
+      sentences.push(`declares an alarm on ${flags.join(", ")} being false and its latest line at ${latest.at ?? "?"} carries ` +
+        `none of them — the instrument and this judge disagree about the shape, so nothing is being judged.` +
+        `${spec.unchecked_means ? ` ${spec.unchecked_means}` : ""}`);
+    }
+  }
+
+  return sentences.length ? sentences.join(" ") : null;
 }
 
 // ── §5c judging custody ─────────────────────────────────────────────────────

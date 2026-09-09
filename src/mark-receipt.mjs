@@ -105,7 +105,25 @@ export const RECEIPT_CLOCK =
  * with the line each came from. A ninth prefix is not guessed at — it answers
  * `null` and says so, which is asserted there too.
  */
-export const CAUSE_WORDS = Object.freeze(["held", "contested", "unbacked", "malformed", "quarantined"]);
+/**
+ * ⚑ `unpublished` IS THE SIXTH WORD, RULED BY KEEMIN 2026-09-08 (postmark#2594).
+ *
+ * The bulletin's published sentence promises four — "held, contested, unbacked,
+ * or malformed" — and `quarantined` was already a fifth this file carried. The
+ * nightly read's canon-absent FINDING — nothing at the candle writes it; the
+ * lock-time refusal was withdrawn the same day — is none of them: the record is typically well
+ * formed, nobody else claims the slug, the stake is fine, and `held` is spent on
+ * `held_review` and defined as "it did not ride and IT WAS NOT REFUSED". It has
+ * a name — the world has no file for it — and the ruling is that a refusal with
+ * a name must not answer null.
+ *
+ * THE BULLETIN'S OWN SENTENCE IS NOT THIS REPO'S TO EDIT. `the-world`'s entry
+ * lives in the town repo and is mirrored into the site's `bulletin.json`; the
+ * office answering a word the bulletin does not list is a seam, and it is
+ * carried up in `docs/2026-09-08/jetto-candle-refusal-report.md` with the exact
+ * sentence to change rather than edited here.
+ */
+export const CAUSE_WORDS = Object.freeze(["held", "contested", "unbacked", "malformed", "quarantined", "unpublished"]);
 
 const CAUSE_OF_CHECK = Object.freeze({
   // ── the CANDLE's writers (world2/tools/clearing-job.mjs) ──────────────────
@@ -117,6 +135,14 @@ const CAUSE_OF_CHECK = Object.freeze({
   "counterclaim": "contested",
   // Not enough liquid stamps behind the stake at the pinned candle read.
   "insufficient-stamps": "unbacked",
+  // NOTHING staked on a commons mark at the pinned town read (step 5.5, ruled a
+  // G1 blocker 2026-09-08). `unbacked` and not `unpublished`: the world's own
+  // sweep would refuse this too — "commons needs escrow > 0" — so the mark is
+  // not merely unpublished, it is unbacked, and the resident's move is a stake
+  // rather than a wait. The two #2594 checks — this one at the candle,
+  // `canon-absent` on the nightly read — land on different words on purpose,
+  // because they ask a resident for different things.
+  "escrow-absent": "unbacked",
   // ── the REVIEW lane's writer (world2/tools/review-rule.mjs) ───────────────
   //
   // ⚑ `contested`, NOT `held` (repaired 2026-09-07, reviewer-found — and it is
@@ -142,6 +168,43 @@ const CAUSE_OF_CHECK = Object.freeze({
   // Both shapes are contest outcomes, so `contested` is the word — which leaves
   // `held` meaning exactly `held_review`. One word, one state.
   "review-ruling": "contested",
+  // ── the NIGHTLY READ's finding (world2/tools/falsifier-canon-locks.mjs) ───
+  //
+  // RULED 2026-09-08 by Keemin: `unpublished`. The world has no file for the
+  // mark, which is a fact about the WORLD and not about the resident's record —
+  // so none of the four older words is honest here (see CAUSE_WORDS above).
+  // This map answered `null` for one lap, by its own guess-nothing rule; a
+  // refusal that has a name gets the name.
+  "canon-absent": "unpublished",
+  // ── the note that lap left, kept because it is the argument (postmark#2594)
+  //
+  // ⚑ TENSE, CORRECTED: NOTHING WRITES THIS CHECK ONTO A CLAIM. The lock-time
+  // refusal this note was written for was WITHDRAWN on 2026-09-08 — the
+  // settlement pushes minutes after the candle clears, so a canon check at the
+  // lock step would refuse the marks its own crossing locked. The string reaches
+  // `causeOf` from `falsifier-canon-locks.mjs`, the nightly read, which composes
+  // it per finding so this word keeps a reader on the only path that still
+  // produces the class.
+  //
+  // The argument for the WORD is unchanged and is why the note is kept: no
+  // honest fit among the five. Not `contested` (nobody else claims the slug),
+  // not `unbacked` (the stake is fine — that is `escrow-absent`, a different
+  // check with a different word), not `quarantined`, and not `held`, which this
+  // file spends on `held_review` and defines as "it did not ride and IT WAS NOT
+  // REFUSED". `malformed` is the near miss and still wrong: the record is
+  // usually perfectly well formed and the world simply has no file for it.
+  //
+  // For one lap it answered `null` WITH THE RAW CHECK BESIDE IT, by this file's
+  // own rule one paragraph up: "guessing one of five promised words for a
+  // refusal nobody has classified would be the town keeping its promise in
+  // appearance only." The founder then classified it, which is the difference
+  // between a guess and a word — so the map answers `unpublished` and the
+  // guess-nothing rule is untouched for the NEXT unclassified check.
+  //
+  // ⚑ THE TOWN HALF IS STILL OWED: the bulletin's published sentence lists four
+  // words and the office now answers a sixth. The exact sentence to change is in
+  // `docs/2026-09-08/jetto-candle-refusal-report.md`; the town repo is not this
+  // branch's to edit.
   // ── the SWEEP's own channels (world tools/settlement-sweep.mjs) ───────────
   // Kept: the 1.0 sweep still refuses on these, and a mark can be refused by
   // either lane. Measured against the sweep's source, not guessed.

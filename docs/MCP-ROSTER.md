@@ -406,7 +406,7 @@ Open your eyes where you stand. By default the answer is narrative: the unchange
 
 ### `world_investigate` · read
 
-Descend one mark with attention: its full body, the predicates on it, what sits inside it, and its household's nearby cluster. Ids are <by>/<slug>, as they appear in the telling. EVERY ANSWER CARRIES `receipt` — what the record has done with this mark: `status` (published · locked · pending · draft · refused · retracted · withdrawn · never-was), the settlement that carried it by S-number and sha, the candle's `window`, and for a refusal the `cause` in the bulletin's own words (held · contested · unbacked · malformed · quarantined) naming the row it came from.
+Descend one mark with attention: its full body, the predicates on it, what sits inside it, and its household's nearby cluster. Ids are <by>/<slug>, as they appear in the telling. EVERY ANSWER CARRIES `receipt` — what the record has done with this mark: `status` (published · locked · pending · draft · refused · retracted · withdrawn · never-was), the settlement that carried it by S-number and sha, the candle's `window`, and for a refusal the `cause` in the bulletin's own words (held · contested · unbacked · malformed · quarantined · unpublished) naming the row it came from.
 
 | field | type | notes |
 |---|---|---|
