@@ -33,7 +33,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync, spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { groundPointIn, backfill, distanceM, reserialize } from "../tools/atlas-grid-backfill.mjs";
 import { GRID_TOLERANCE_M } from "../src/atlas-fold.mjs";
@@ -540,6 +540,61 @@ test("FALSIFIER: every row that changes is counted, and a lost line is not calle
   assert.match(err, /moved: mover north-region -> south-region/);
   assert.match(err, /gained: gains . -> north-region/);
   db.close();
+});
+
+// -----------------------------------------------------------------------------
+// FALSIFIER 6 - IMPORTING THE TOOL DOES NOTHING, AND INVOKING IT DOES.
+//
+// The conductor's 20:2x class, swept on this lane's own new tool. A shared
+// module with a CLI tail runs that tail AT IMPORT unless the guard holds, and
+// this tool's tail calls process.exit(1) on a missing ledger - so a bad guard
+// does not merely print, it KILLS THE IMPORTER. Every test in this file imports
+// it, so the whole file would die at load and the failure would look like
+// anything except what it is.
+//
+// The usual guard in this repo is
+//   `import.meta.url === pathToFileURL(process.argv[1]).href`
+// and the note names its other half: that comparison is FALSE when the tool is
+// reached through a junction, so the CLI silently runs nothing - a tool that
+// exits 0 having done its whole job of nothing. Both failures are invisible
+// until someone looks, and they are opposite, so ONE probe cannot see both.
+//
+// Hence two arms, and both behavioural. `realpathSync` on both sides is what
+// makes the guard survive a junction; these are the checks that would notice it
+// being simplified back.
+// -----------------------------------------------------------------------------
+test("FALSIFIER: importing the backfill tool is inert; running it is not", () => {
+  const TOOL = join(OFFICE, "tools", "atlas-grid-backfill.mjs");
+
+  // ARM 1 - THE IMPORT IS INERT. A separate process, argv[1] pointing at a
+  // scratch file, importing the tool and nothing else. If the tail fires it
+  // exits 1 on the missing ledger and prints a FATAL; if it merely printed, the
+  // stdout assertion still catches it.
+  const probe = join(tmp("pm-cli-guard-"), "importer.mjs");
+  writeFileSync(probe, [
+    `import * as tool from ${JSON.stringify(pathToFileURL(TOOL).href)};`,
+    `if (typeof tool.backfill !== "function") { console.error("NOT_EXPORTED"); process.exit(3); }`,
+    `console.log("IMPORT_INERT");`,
+  ].join("\n"));
+
+  const imported = spawnSync(process.execPath, [probe], { encoding: "utf8" });
+  assert.equal(imported.status, 0,
+    `importing tools/atlas-grid-backfill.mjs killed its importer (exit ${imported.status}). `
+    + `Its CLI tail calls process.exit on a missing ledger, so an unguarded tail takes down every `
+    + `file that imports it - including this one. stderr: ${imported.stderr}`);
+  assert.equal(imported.stdout.trim(), "IMPORT_INERT",
+    `the import printed something of its own: ${JSON.stringify(imported.stdout)}. The CLI tail ran.`);
+  assert.equal(imported.stderr.trim(), "", `the import wrote to stderr: ${JSON.stringify(imported.stderr)}`);
+
+  // ARM 2 - AND THE GUARD IS NOT SIMPLY OFF. A guard that is never true is the
+  // other half of the class: the tool runs nothing, exits 0, and the diff
+  // someone is waiting on never appears. Invoked directly with no --town, it
+  // must reach its own FATAL rather than fall silent.
+  const invoked = spawnSync(process.execPath, [TOOL, "--town", join(tmpdir(), "pm-no-town-here")],
+    { encoding: "utf8" });
+  assert.equal(invoked.status, 1, "invoked directly against a non-town, the CLI must reach its own FATAL");
+  assert.match(invoked.stderr, /FATAL: no placements ledger/,
+    "the CLI did not run when it was the thing being run - a guard that is never true is a tool that does nothing");
 });
 
 test("the distance the receipt reports is the distance the backfill's own --check reports", () => {
