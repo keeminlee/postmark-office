@@ -351,24 +351,35 @@ if (has("--prove-can-fail")) {
 // without a journal to read, check 0b has nothing to be asked about, and a mode
 // that reported "clean" for a check it did not run would be the noise floor
 // hidden in the silence.
+//
+// ⛔ EACH CHECK'S VERDICT COMES FROM ITS OWN FINDINGS (the office-halves
+// review, repair 4). The first cut of this mode pushed check 0b's findings
+// into check 0's `problems` array and then printed "check 0 … RED" off its
+// length — so an unruled journal class was reported as a verb-census failure
+// while LANE_OF was untouched and check 0 was green. A verdict computed from a
+// different source than the one it names is the freshness-stamp class.
 if (has("--census")) {
   const { DISPATCHABLE } = await import("../../src/world-apex.mjs");
-  const problems = checkCensus([...DISPATCHABLE]);
+  const verbProblems = checkCensus([...DISPATCHABLE]);
+  const verbLine = `check 0 asked ${DISPATCHABLE.length} dispatchable verb(s) against LANE_OF — ${verbProblems.length ? "RED" : "every one is named"}`;
+
   let classes = null;
+  let classProblems = [];
+  let classLine;
   const censusDb = arg("--db");
   if (censusDb && existsSync(censusDb)) {
     const db = new DatabaseSync(censusDb, { readOnly: true });
-    classes = db.prepare("SELECT DISTINCT class FROM journal").all().map((r) => String(r.class));
-    db.close();
-    problems.push(...checkClassCensus(classes));
+    try { classes = db.prepare("SELECT DISTINCT class FROM journal").all().map((r) => String(r.class)); }
+    finally { db.close(); }
+    classProblems = checkClassCensus(classes);
+    classLine = `check 0b asked ${classes.length} journal class(es) against CLASS_LANE_OF (${classes.join(", ") || "none"}) — ${classProblems.length ? "RED" : "every one is ruled"}`;
+  } else {
+    classLine = "check 0b was NOT asked — no --db was given, so no journal was read and this run says nothing about which classes the store holds";
   }
-  for (const p of problems) console.error(p);
-  console.log(
-    `census: check 0 asked ${DISPATCHABLE.length} dispatchable verb(s) against LANE_OF — ${problems.length ? "RED" : "every one is named"}; `
-    + (classes
-      ? `check 0b asked ${classes.length} journal class(es) against CLASS_LANE_OF (${classes.join(", ") || "none"})`
-      : "check 0b was NOT asked — no --db was given, so no journal was read and this run says nothing about which classes the store holds"));
-  process.exit(problems.length ? 1 : 0);
+
+  for (const p of [...verbProblems, ...classProblems]) console.error(p);
+  console.log(`census: ${verbLine}; ${classLine}`);
+  process.exit(verbProblems.length || classProblems.length ? 1 : 0);
 }
 
 /**
