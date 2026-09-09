@@ -74,9 +74,9 @@
 //   --dry-run   derive and print the row census; touch no database
 //   --json      machine-readable summary on stdout
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { pathToFileURL, fileURLToPath } from "node:url";
 
 import { assertSha } from "./law-ingest.mjs";   // the same --sha guard, not a twin of it
 import { deriveRoll, writeRoll } from "./roll-ingest.mjs";
@@ -203,6 +203,19 @@ async function main() {
     : `ingested the town ${townSha}\n  stamp_projection: ${rows.length} handles (${held} holding)\n${rollLine}\n  projection_heads['${TOWN_REPO_KEY}'] = ${townSha}`);
 }
 
-if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
+// ── entry guard ──────────────────────────────────────────────────────────────
+// The junction lesson (2026-09-05, HQ memory `junctions-defeat-main-guards`):
+// `pathToFileURL(process.argv[1]).href === import.meta.url` is FALSE when the
+// entry path reaches this file through a Windows junction — the ESM loader
+// realpaths the entry, argv[1] is not — so the tool exits 0 having done nothing.
+// Compare real paths (world2/tools/dispatcher.mjs's idiom); the URL compare is
+// only the fallback for an argv[1] that cannot be realpath'd. The office's
+// test/cli-guard.test.mjs imports this file and spawns it through a junction.
+const isMain = (() => {
+  if (!process.argv[1]) return false;
+  try { return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url)); }
+  catch { return pathToFileURL(process.argv[1]).href === import.meta.url; }
+})();
+if (isMain) {
   main().catch((e) => { console.error(String(e?.stack ?? e)); process.exit(1); });
 }
