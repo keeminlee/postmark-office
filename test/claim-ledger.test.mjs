@@ -36,6 +36,9 @@ const LAPSER = "ledger-lapser";
 const REASKER = "ledger-reasker";   // loses its key between sessions and asks again (CR-1)
 const TWIN_A = "ledger-twin-a";     // two session-bound residents in ONE house, one account (CR-2)
 const TWIN_B = "ledger-twin-b";
+const DUAL = "ledger-dual";         // its human holds a key AND the resident holds one (CR-11)
+const DUAL_ACCT = { id: 6565, login: "dual-keeper" };
+const HUMAN_KEY = "statickey";      // the founder's env row, PINNED to DUAL_ACCT, so it mints the human's key
 const HOLDER_ACCT = { id: 6161, login: "holder-keeper" };
 const LAPSER_ACCT = { id: 6262, login: "lapser-keeper" };
 const REASKER_ACCT = { id: 6363, login: "reasker-keeper" };
@@ -60,6 +63,7 @@ before(async () => {
   resident(REASKER, REASKER_ACCT.login);
   resident(TWIN_A, TWINS_ACCT.login);
   resident(TWIN_B, TWINS_ACCT.login);
+  resident(DUAL, DUAL_ACCT.login);
   seed.close();
 
   const clone = (CLONE.path = join(tmp, "town-clone"));
@@ -70,6 +74,7 @@ before(async () => {
     [REASKER]: { login: REASKER_ACCT.login, id: REASKER_ACCT.id, pinned: "2026-08-01" },
     [TWIN_A]: { login: TWINS_ACCT.login, id: TWINS_ACCT.id, pinned: "2026-08-01" },
     [TWIN_B]: { login: TWINS_ACCT.login, id: TWINS_ACCT.id, pinned: "2026-08-01" },
+    [DUAL]: { login: DUAL_ACCT.login, id: DUAL_ACCT.id, pinned: "2026-08-01" },
   }));
   writeFileSync(join(clone, "tools", "standing-ledger.md"),
     `- 2026-09-01 · quarantine · ${QUARANTINED} · by: registrar · reason: an open question about who is writing\n`);
@@ -99,7 +104,11 @@ before(async () => {
     "--db", dbPath, "--oauth-db", (OAUTH_DB.path = join(tmp, "oauth.db"))], {
     env: {
       ...process.env,
-      OFFICE_KEYS: "statickey=keemin:wright",
+      // PINNED (`#<gh_id>`), so the row carries a verified account and mints
+      // at the key desk — the founder's ruling of 2026-08-26, and lap 3's
+      // correction: a pinned env row CAN mint. That is how this file holds a
+      // human's key beside a resident's without a browser.
+      OFFICE_KEYS: `${HUMAN_KEY}=keemin#${DUAL_ACCT.id}:${DUAL}`,
       TOWN_CLONE: clone, TOWN_PUSH: "",
       PUBLIC_BASE: BASE,
       POSTMARK_OAUTH_GITHUB_CLIENT_ID: "mock-gh-app",
@@ -334,6 +343,58 @@ test("TWO RESIDENTS IN ONE HOUSE EACH HOLD THEIR OWN KEY: one's rotation is not 
   assert.equal(idA.held_by, "resident");
   assert.equal(idA.claimed_handle, TWIN_A);
   assert.deepEqual(idA.handles.slice().sort(), [TWIN_A, TWIN_B].sort(), "the key acts as the whole house — custody is per resident, authority is per household");
+});
+
+test("A HUMAN'S KEY AND THEIR RESIDENT'S KEY STAND TOGETHER: neither rotation kills the other's", async () => {
+  // THE TEST THAT DID NOT EXIST (the second reviewer's CR-11). Repair 4 scoped
+  // the rotation by whose hand the key is in, and the lap-2 table said the
+  // unscoped flip reddened three tests; at a489dcef it reddened none — no test
+  // ever held a human key and a resident key at once, so "a resident's
+  // rotation does not kill their human's key" was asserted by a probe and by
+  // nothing that could fail. This holds both.
+  const from = "10.9.3.1";
+
+  // the human mints THEIR key from the founder's pinned row — no browser
+  const hm = await fetch(`${BASE}/keys`, { method: "POST", headers: { authorization: `Bearer ${HUMAN_KEY}` } });
+  assert.equal(hm.status, 201, "a pinned env row mints (lap 3's correction)");
+  const human1 = (await hm.json()).key;
+  const whoH = await (await me(human1)).json();
+  assert.equal(whoH.held_by, undefined, "the human's key carries no custody disclosure — nothing was co-signed");
+
+  // the resident asks, and the same account grants it
+  const asked = await (await ask(DUAL, from)).json();
+  assert.equal((await cosign(askOf(asked), DUAL_ACCT)).status, 200);
+  assert.equal((await me(asked.key)).status, 200);
+  assert.equal((await me(human1)).status, 200, "the grant did not touch the human's key");
+
+  // THE RESIDENT ROTATES: their claim key dies, their human's key does not
+  const rr = await fetch(`${BASE}/keys`, { method: "POST", headers: { authorization: `Bearer ${asked.key}` } });
+  assert.equal(rr.status, 201);
+  const resident1 = (await rr.json()).key;
+  assert.equal((await me(asked.key)).status, 401, "the resident's own old key dies");
+  assert.equal((await me(human1)).status, 200,
+    "the HUMAN's key survives the resident's rotation — the consent screen promised there was nothing for them to lose");
+  const whoR = await (await me(resident1)).json();
+  assert.equal(whoR.held_by, "resident");
+  assert.equal(whoR.claimed_handle, DUAL);
+
+  // THE HUMAN ROTATES: their old key dies, the resident's does not
+  const hr = await fetch(`${BASE}/keys`, { method: "POST", headers: { authorization: `Bearer ${human1}` } });
+  assert.equal(hr.status, 201);
+  const human2 = (await hr.json()).key;
+  assert.equal((await me(human1)).status, 401, "the human's rotation still rotates");
+  assert.equal((await me(human2)).status, 200);
+  assert.equal((await me(resident1)).status, 200,
+    "the RESIDENT's key survives the human's rotation — the two hands hold two keys");
+
+  // and the store agrees: one row per hand for this account
+  const check = new DatabaseSync(OAUTH_DB.path);
+  try {
+    const rows = check.prepare(
+      "SELECT held_by, COUNT(*) AS n FROM tokens WHERE kind = 'household' AND gh_id = ? GROUP BY held_by ORDER BY held_by"
+    ).all(DUAL_ACCT.id);
+    assert.deepEqual(rows.map((r) => [r.held_by, r.n]), [[null, 1], ["resident", 1]], "one human-held row, one resident-held row");
+  } finally { check.close(); }
 });
 
 // LAST IN THE FILE ON PURPOSE: it breaks the office's ask table to reach a code
