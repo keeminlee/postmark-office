@@ -22,6 +22,7 @@ import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { fixtureDb } from "./fixture.mjs";
+import { awaitListening } from "./spawn-office.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = 43891;
@@ -53,11 +54,10 @@ before(async () => {
     env: { ...process.env, OFFICE_KEYS: "statickey=keemin:wright", TOWN_CLONE: clone, TOWN_PUSH: "", PUBLIC_BASE: BASE },
     stdio: ["ignore", "pipe", "pipe"],
   });
-  await new Promise((ok, no) => {
-    const t = setTimeout(() => no(new Error("server never listened")), 10_000);
-    child.stdout.on("data", (d) => { if (String(d).includes("listening")) { clearTimeout(t); ok(); } });
-    child.on("exit", (c) => no(new Error(`server exited early (${c})`)));
-  });
+  // The wait that used to live here had no `error` listener and kept no
+  // stderr, so every spawn-level fault arrived as "server never listened" with
+  // its cause thrown away. See test/spawn-office.mjs.
+  await awaitListening(child);
 });
 
 after(async () => {
