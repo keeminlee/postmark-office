@@ -44,17 +44,38 @@
 // So provenance is the selector: a mark is in this crossing because the candle
 // LOCKED it at the window this crossing is folding, and for no other reason.
 //
-// ── THE SET IS `marks WHERE locked_window = <closed>` AND THAT IS THE CLAIMS ─
+// ── THE SET, AND THE PREMISE THAT WAS TRUE ONLY WHERE IT WAS USED ───────────
 //
 // The ruling names `claims WHERE window_id = <closed> AND status = 'locked'`.
-// `marks.id` IS the locking claim's id (`001_tables.sql:99` — "= the locking
-// claim's id") and `marks.locked_window` is the window that locked it, so the
-// two are the same set, materialized. Measured on a scratch of the live store at
-// window 177: 33 locked claims, 33 marks with `locked_window = 177`. Reading
-// `marks` rather than `claims` is what lets the row go straight into lane 2's
-// `renderRecord`, which takes a `marks` row and nothing else — joining back from
-// `claims` would be a second projection of the same fact and a second thing to
-// keep in step.
+// This reads `marks WHERE locked_window = <closed>` instead, because a `marks`
+// row goes straight into `renderRecord` and joining back from `claims` would be
+// a second projection of the same fact and a second thing to keep in step.
+//
+// AN EARLIER VERSION OF THIS HEADER JUSTIFIED THAT WITH A COUNT — "33 locked
+// claims, 33 marks with locked_window = 177" — AND A COUNT IS NOT AN IDENTITY.
+// Measured read-only against prod, 2026-09-09:
+//
+//   window 177   33 marks · 33 claims · 17 SHARED IDS · 33 shared slugs
+//   window 176    4 marks ·  4 claims ·  4 shared ids ·  4 shared slugs
+//   window 172  116 marks · 118 claims · 2 slugs in claims and NOT in marks
+//
+// At 177 the two sets agree on every SLUG and share barely half their ids: 16
+// marks carry an earlier claim's id, because `marks.id` is the id of the claim
+// that FIRST locked the slug and a later window can lock a second claim on it.
+// At 172 they do not even agree on slugs — `berthillon/cone-blue-moon-2026-08-30`
+// and `wright/the-flip-day-plumb-line` were locked at 172 and now read
+// `locked_window = 177`.
+//
+// THE REASON IS THAT THE TWO COLUMNS ANSWER DIFFERENT QUESTIONS.
+// `claims.window_id` is HISTORICAL — the window that claim was filed under, kept
+// forever. `marks.locked_window` is LATEST-WINS — the window that most recently
+// locked this slug. They coincide only for the NEWEST CLOSED WINDOW, where
+// "most recently locked" and "locked at this window" are the same sentence.
+//
+// So this refuses any other window rather than under-selecting quietly. The
+// crossing's own wait can run to 240 s, and a replay or a catch-up crossing
+// landing on an older window would otherwise fold a set missing every slug that
+// has since been re-locked — a real, silent, unattributable shortfall.
 //
 // A RETIRED mark locked at this window is carried too, and deliberately: the
 // fold has to know a mark left. Its `status` rides on the row and the write-down
@@ -73,7 +94,14 @@ import { stakesFromStore } from "./fold-input.mjs";
  * to, and the stakes are as-of a town sha with no "latest".
  */
 export async function foldDelta(client, { window = null, worldSha = null, townSha = null } = {}) {
-  if (!Number.isFinite(Number(window))) {
+  // `window == null` is checked SEPARATELY from finiteness, and that separation
+  // is the whole guard: `Number(null)` is 0, which is finite, so the obvious
+  // one-line version accepted a missing window and went looking for window 0. It
+  // would have refused there with `not-a-window` — a true sentence about the
+  // wrong problem, sending the operator to look for a window nobody asked for
+  // instead of at the caller that named none. Found by this function's own
+  // falsifier asserting the refusal happened before any query.
+  if (window === null || window === undefined || !Number.isFinite(Number(window))) {
     throw new Error(
       "foldDelta: no window — the docket IS the selector, so a fold with no window has no way to say which marks are "
       + "this crossing's. Falling back to the standing set here would be the 956-write configuration wearing a "
@@ -86,18 +114,40 @@ export async function foldDelta(client, { window = null, worldSha = null, townSh
   }
 
   const w = Number(window);
+
+  // ── THE WINDOW IS CHECKED BEFORE ANYTHING IS READ FROM IT ──────────────────
   const closed = await client.query(
     "SELECT id, status, cleared_at, town_sha FROM windows WHERE id = $1", [w]);
   if (closed.rows.length === 0) {
-    throw new Error(`foldDelta: window ${w} is not in the store — a fold cannot file its crossing under a window that does not exist`);
+    throw new Error(`not-a-window: window ${w} is not in the store — a fold cannot file its crossing under a window that does not exist`);
   }
   if (closed.rows[0].status !== "closed") {
     // An OPEN window's docket is still being written. Folding it would publish a
     // half-locked crossing and, worse, would publish it again next crossing when
     // the rest of the docket landed.
     throw new Error(
-      `foldDelta: window ${w} is "${closed.rows[0].status}", not "closed" — the candle has not finished locking this `
-      + "docket, so the crossing's own marks are not all in it yet");
+      `window-not-closed: window ${w} is "${closed.rows[0].status}", not "closed" — the candle has not finished locking `
+      + "this docket, so the crossing's own marks are not all in it yet");
+  }
+
+  // AND IT MUST BE THE NEWEST CLOSED ONE. `marks.locked_window` is latest-wins
+  // and `claims.window_id` is historical, so "the marks locked at window N" is
+  // only the crossing's docket while N is the most recent closed window. One
+  // window back the two disagree by slug (172: two slugs the claims hold that
+  // the marks no longer do, both since re-locked at 177), and folding it would
+  // silently omit every slug re-locked since — a shortfall nothing downstream
+  // could attribute, because each omitted mark simply is not in the fold.
+  const newest = await client.query(
+    "SELECT id FROM windows WHERE status = 'closed' ORDER BY id DESC LIMIT 1");
+  if (newest.rows.length === 0) {
+    throw new Error("no-closed-window: the store holds no closed window, so no docket has been locked to fold");
+  }
+  if (Number(newest.rows[0].id) !== w) {
+    throw new Error(
+      `not-newest-closed-window: asked to fold window ${w}, but the newest closed window is ${newest.rows[0].id}. `
+      + "`marks.locked_window` is latest-wins while `claims.window_id` is historical, so the docket of an older window "
+      + "is no longer recoverable from `marks` — every slug re-locked since would be missing, and nothing downstream "
+      + "could tell. If this is a replay of an older crossing, it needs a different reader than this one.");
   }
 
   const sha = townSha ?? closed.rows[0].town_sha;

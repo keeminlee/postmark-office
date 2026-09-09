@@ -119,10 +119,13 @@ if (isMain) {
   // same hazard `founder_commit` is kept out of: not that either is wrong, but
   // that they can disagree and nothing downstream can tell which one answered.
   //
-  // It is checked BEFORE the credential and before the connection, for the reason
-  // the window check is: this is a fact about the tree, it needs nothing, and a
-  // check that runs after a connection can fail for the connection's reason and
-  // send the operator to the wrong door.
+  // It is checked BEFORE the credential and before the connection. The window
+  // check sits AFTER the credential and before the connection — an earlier
+  // version of this comment said "for the reason the window check is", which
+  // implied an ordering the file does not have. The shared reason is the one
+  // that matters: a check that runs after a connection can fail for the
+  // connection's reason and send the operator to the wrong door. This one goes
+  // first of all because it is a fact about the tree and needs nothing at all.
   if (typeof foldInput.foldDelta === "function") {
     refuse(
       "two-fold-deltas",

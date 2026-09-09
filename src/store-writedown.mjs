@@ -717,8 +717,13 @@ export function storeWriteDown({
   // WHAT THE MEASUREMENT DOES SUPPORT is the narrower sentence inside the same
   // ruling: `the-town` "is not a household". It is the town. It owns law nodes
   // that arrive by PR and ingest, and no resident's record is on the other side
-  // of that line. So that is the test here — one key, six marks at 177, and not
+  // of that line. So that is the test here — one key, FIVE marks at 177, and not
   // one resident touched.
+  //
+  // The registry admits a THIRD key shape besides `gh:` and `solo:` — `login:`
+  // (`login:cadaeix-bot`, arky's). No standing mark carries one: measured
+  // read-only against prod, 0 rows. It is named here rather than handled,
+  // because a branch for a shape nothing produces is a branch nothing tests.
   //
   // `by === "the-town"` is a bare literal across this office already
   // (`world-grants.mjs:309`, `world-apex.mjs:1679`, `world-store.mjs:207`), so
