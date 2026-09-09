@@ -21,7 +21,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { receiptFrom, causeOf, CAUSE_WORDS, RECEIPT_CLOCK, settlementThatCarried } from "../src/mark-receipt.mjs";
+import { receiptFrom, causeOf, checkNameOf, CAUSE_WORDS, RECEIPT_CLOCK, settlementThatCarried } from "../src/mark-receipt.mjs";
 
 const ID = "wright/the-flip-day-plumb-line";
 const S59 = { s: 59, sha: "5c2321aef89e65ac946b5d3b1dc4073da8af5f12", at: "2026-09-06T05:45:00Z" };
@@ -222,9 +222,24 @@ const REAL_REFUSAL_CHECKS = [
   ["counterclaim: collides with 77 — a mind rules (census D2)", "contested", "clearing-job.mjs:190-191"],
   ["review-ruling: wright refused this contest — the ground was already spoken for", "contested", "review-rule.mjs:247"],
   ["review-ruling: wright granted the-long-field — the elder claim stands", "contested", "review-rule.mjs:248"],
+  // ⚑ THE SIXTH WORD, RULED 2026-09-08 (postmark#2594). This answered `null` for
+  // one lap — none of the four bulletin words nor `quarantined` is honest about
+  // a mark the WORLD has no file for — and the founder then classified it as
+  // `unpublished`. It lives in THIS list rather than in a test of its own
+  // because this list is "every refusal string the town can write", and an
+  // exception kept somewhere else is an exception nobody re-reads. THE TOWN HALF
+  // IS STILL OWED: the bulletin's published sentence lists four.
+  ["canon-absent: lupi/the-drift-room @ 91536f76", "unpublished", "falsifier-canon-locks.mjs (the nightly read; no candle step writes it) / canon-register.mjs"],
+  // ⚑ THE TWO #2594 CHECKS — escrow at the candle, canon on the nightly read —
+  // ANSWER DIFFERENT WORDS, ON PURPOSE. `canon-absent`
+  // says the world has no file yet; `escrow-absent` says the world's own sweep
+  // would refuse it for want of a stake ("commons needs escrow > 0"). A resident
+  // told `unpublished` waits; a resident told `unbacked` stakes. Collapsing them
+  // to one word would cost the reader the only thing the difference is for.
+  ["escrow-absent: lupi/the-drift-room @ 723005e5", "unbacked", "clearing-job.mjs step 5.5 / escrow-presence.mjs"],
 ];
 
-test("EVERY refusal string the town can write maps to one of the bulletin's five words", () => {
+test("EVERY refusal string the town can write gets the word this map decided for it", () => {
   const misses = [];
   for (const [raw, expected, where] of REAL_REFUSAL_CHECKS) {
     const { cause, cause_row } = causeOf(raw);
@@ -439,4 +454,36 @@ test("C · a mark whose FILE MOVED names the settlement that carried the MARK, n
   const c = settlementThatCarried(lives, MOVED_TO, { ref: "refs/heads/main" });
   assert.equal(c.s, 7, "without --follow the rename read as an add, and the receipt printed S8 with a real sha");
   assert.equal(c.sha, shaOfS(7));
+});
+
+// ── the canon-absent FINDING answers `unpublished`, by ruling (postmark#2594) ─
+//
+// For one lap this answered null by the guess-nothing rule; Keemin then named
+// the word (2026-09-08). Asserted separately from the list above so the DECISION
+// is legible and not merely a row that happens to expect a word. Nothing at the
+// candle writes this check — the lock-time refusal was withdrawn the same day —
+// so the string reaches `causeOf` from the nightly read,
+// `falsifier-canon-locks.mjs`. A future reader changing the word to `malformed`
+// reds here with the reason in front of them, which is the only thing that stops
+// a well-meaning "fix" from making the town keep its promise in appearance only.
+//
+// THE CAN-FAIL FLIP: change `"canon-absent": "unpublished"` to `"malformed"` in
+// CAUSE_OF_CHECK, src/mark-receipt.mjs. Both this test and the list test above go red.
+test("canon-absent answers `unpublished`, and it is one of the words the town publishes", () => {
+  const raw = "canon-absent: darko/the-second-foundation-stone @ a23a8d17";
+  const { cause, cause_row } = causeOf(raw);
+  assert.equal(cause, "unpublished",
+    "a refusal that has a name must not answer null (Keemin, 2026-09-08)");
+  assert.ok(CAUSE_WORDS.includes(cause),
+    "the word the door answers must be a word the receipt's own vocabulary carries");
+  assert.equal(cause_row, `claims.refusal_check = ${JSON.stringify(raw)}`);
+  assert.equal(checkNameOf(raw), "canon-absent");
+});
+
+test("the guess-nothing rule is UNTOUCHED for the next unclassified check", () => {
+  // The thing the fifth word must not cost: classifying one check is not licence
+  // to guess at the next. A ruling named `canon-absent`; nothing named this.
+  const { cause, cause_row } = causeOf("some-check-the-founder-has-not-ruled-on: with a detail");
+  assert.equal(cause, null);
+  assert.equal(cause_row, 'claims.refusal_check = "some-check-the-founder-has-not-ruled-on: with a detail"');
 });

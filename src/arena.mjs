@@ -76,7 +76,7 @@
 import { createHash } from "node:crypto";
 import { foldEncounter, pendingHostileTurns, hostileAct, timedOut, TURN_ENDING, WHEEL_GATED } from "./encounter.mjs";
 import { appendJournal, readJournal } from "./world-journal.mjs";
-import { openDynamic, singleLogEnabled } from "./dynamic-store.mjs";
+import { openDynamic, openDynamicReadOnly, singleLogEnabled } from "./dynamic-store.mjs";
 import { readAttachments } from "./dynamic-entities.mjs";
 import { holdingsOf } from "./world-hold.mjs";
 import { worldFreezeBounce } from "./freeze.mjs";
@@ -734,8 +734,9 @@ export function weaponInHand(db, handle) {
   if (!db || !handle) return null;
   let dyn = null;
   try {
-    dyn = openDynamic();
-    const held = holdingsOf(readAttachments(dyn), handle);
+    // Read-only: `weaponInHand` only asks what the record says is held.
+    dyn = openDynamicReadOnly();
+    const held = dyn ? holdingsOf(readAttachments(dyn), handle) : [];
     if (!held.length) return null;
     const rows = db.prepare(LOOSE_IN).all().filter((r) => held.includes(r.id));
     for (const r of rows) {

@@ -230,6 +230,34 @@ export const DYNAMIC_SCHEMA = `
  * systemd unit. A busy timeout rather than a lock: the office must never lose a
  * resident's voice because a save was mid-flight.
  */
+/**
+ * THE READER'S OPENER — one definition, because there are nine call sites and
+ * two copies of this rule would be two answers to "may a read write" (runbook
+ * DEC-4 / G3, lap 3).
+ *
+ * Returns a READ-ONLY handle, or **null when the store is not there**, and the
+ * null is the whole point of the function existing.
+ *
+ * ⚑ WHY NULL AND NOT A THROW, WHICH IS WHAT MY LAP-1 FIX DID. Passing
+ * `{ readOnly: true }` straight to `openDynamic` throws on an absent store,
+ * where the write-mode default used to CREATE one and then read it empty. My
+ * report said "no caller depends on that". One does: `test/hold-wirings.test
+ * .mjs` WIRING 1 is green at the base and red at that pin, because
+ * `groundWithinReach` went from answering about the ground to answering "the
+ * ground could not be read". The suite had said so from the moment the change
+ * landed and my § 8 was an empty placeholder, so nobody looked.
+ *
+ * An absent journal means NOTHING HAS BEEN JOURNALLED, which is a fact a reader
+ * can state. It does not mean the reader is blind, and it certainly does not
+ * mean the reader should create the file to find that out. So: null here, and
+ * every caller treats null as EMPTY — which is byte-for-byte the answer the
+ * write-mode default produced, minus the write.
+ */
+export function openDynamicReadOnly(path = dynamicDbPath()) {
+  if (!existsSync(path)) return null;
+  return openDynamic(path, { readOnly: true });
+}
+
 export function openDynamic(path = dynamicDbPath(), { readOnly = false } = {}) {
   if (readOnly && !existsSync(path)) throw new Error(`no dynamic store at ${path} — run: npm run dynamic:rebuild`);
   if (!readOnly) mkdirSync(dirname(path), { recursive: true });

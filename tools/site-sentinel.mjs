@@ -126,7 +126,7 @@
 //   node tools/site-sentinel.mjs [--state <state.json>] [--out <status.json>]
 //                                [--json] [--dry-run] [--now <iso>]
 
-import { readFileSync, writeFileSync, mkdirSync, statSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, statSync, existsSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -1024,6 +1024,19 @@ export async function run({
   return { board, alerts, delivered, message };
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+// ── entry guard ──────────────────────────────────────────────────────────────
+// The junction lesson (2026-09-05, HQ memory `junctions-defeat-main-guards`):
+// `pathToFileURL(process.argv[1]).href === import.meta.url` is FALSE when the
+// entry path reaches this file through a Windows junction — the ESM loader
+// realpaths the entry, argv[1] is not — so the tool exits 0 having done nothing.
+// Compare real paths (world2/tools/dispatcher.mjs's idiom); the URL compare is
+// only the fallback for an argv[1] that cannot be realpath'd. The office's
+// test/cli-guard.test.mjs imports this file and spawns it through a junction.
+const isMain = (() => {
+  if (!process.argv[1]) return false;
+  try { return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url)); }
+  catch { return pathToFileURL(process.argv[1]).href === import.meta.url; }
+})();
+if (isMain) {
   run().catch((e) => { console.error(`site-sentinel FATAL: ${e?.stack ?? e}`); process.exit(1); });
 }

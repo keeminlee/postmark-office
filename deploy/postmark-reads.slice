@@ -1,0 +1,61 @@
+# postmark-reads.slice — the read pool's CPU envelope (runbook DEC-4 / G3).
+#
+# PROPOSED. Not installed on the box by the lane that wrote it.
+#
+# ⚑ WHY A SLICE AND NOT A PER-UNIT QUOTA. The conductor's ask was "a CPUQuota
+# (or the reason for none) so three workers + the writer + the timers cannot
+# starve a crossing". A `CPUQuota=` on the TEMPLATE is a per-instance ceiling:
+# three workers at 85% each bound the pool at 255% only when all three are busy,
+# and throttle a lone worker to 85% when its two siblings are idle — which is
+# most of the time, and which throttles exactly the reads the fourth core was
+# bought to serve. A slice bounds the POOL as one thing: any single worker may
+# use the whole envelope when its siblings are quiet, and the three together
+# still cannot cross it. That is the shape the ask actually describes.
+#
+# ⚑ THE ARITHMETIC, on this box (4 cores = 400% total, measured `nproc`).
+#
+#     writer (postmark-office.service)     ~100%  under load; unbounded, and it
+#                                                 must stay unbounded — it is
+#                                                 the process that takes letters
+#     read pool (this slice)                250%  ceiling
+#     left for the twelve timers            ~50%  floor, and never zero
+#
+# Twelve postmark timers share these cores (`systemctl list-timers`, read
+# 2026-09-08): rehydrate every 12 min, site-sentinel 5 min, usdc-watch 6 min,
+# harbor-watch 6 min, stripe-watch 13 min, site-refresh 15 min,
+# settlement-shadow 28 min, plus ferry, crossing-save (00:02 / 12:02 UTC),
+# settlement (05:45 / 17:45 UTC), world2-notary and world2-backup. The two that
+# must never be starved are crossing-save and settlement, and they are the two
+# that run at fixed clock times rather than on an interval — a starved interval
+# timer runs late, a starved crossing runs LATE AT A CROSSING, which residents
+# see.
+#
+# ⚑ CPUWeight IS THE ONE THAT ACTUALLY PROTECTS THE CROSSING, and the quota is
+# the backstop. A quota is a ceiling that binds whether or not anybody else
+# wants the CPU; a weight only bites under contention, which is the only moment
+# the crossing needs to win. At 50 against the default 100, the writer and every
+# timer out-prioritise a read worker two to one exactly when they are competing,
+# and the pool still gets the whole envelope on a quiet box.
+#
+# Reads today are served by ONE process pinned to ONE core. Even at this
+# envelope the pool has 2.5 cores where it had 1, so the ceiling costs nothing
+# anybody has today.
+#
+# Verified available on the box before proposing: systemd 255, cgroup2fs, and
+# `cpu` present in /sys/fs/cgroup/cgroup.controllers — a CPUQuota on a slice is
+# inert without the cpu controller, and a quota that silently does nothing is
+# worse than no quota, because it reads as protection.
+
+[Unit]
+Description=Postmark office read workers (DEC-4 / G3) — bounded so a crossing cannot be starved
+Before=slices.target
+
+[Slice]
+# The pool's ceiling, across all instances together.
+CPUQuota=250%
+# What decides who wins when the box is actually contended.
+CPUWeight=50
+# A read worker holds the office index and its memos; three of them plus the
+# writer must not be able to push the box into swap and take the writer with
+# them. 15.7 GB total on this box (`free -m`), the writer sits well under 1 GB.
+MemoryMax=3G

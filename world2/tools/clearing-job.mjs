@@ -27,6 +27,16 @@
 // first-step runs as law_ingester (its own pen) BEFORE this transaction; this
 // tool shells to stamp-ingest.mjs for it rather than borrowing its grants.
 //
+// LAW (Keemin, postmark#2594, ruled 2026-09-08 and RE-RULED the same evening on
+// the reviewer's measurement): the canon-absent check is NOT at this lock step.
+// The crossing's own settlement pushes its mark files to origin three to four
+// minutes AFTER this job clears the window — seven consecutive crossings
+// measured, never once before — so a canon check here refuses the marks its own
+// crossing just locked. It lives on the nightly read instead
+// (`falsifier-canon-locks.mjs`, the notary rail) and becomes structurally
+// impossible at the G1 swap. What DOES belong here is step 5.5: the escrow
+// PRESENCE rule, which reads the town and races nothing.
+//
 // Usage (box):
 //   node world2/tools/clearing-job.mjs --window <N> \
 //     [--town-repo <checkout>]        # when given: stamp-ingest first (the census first-step)
@@ -43,7 +53,11 @@ import { dirname, join } from "node:path";
 // Steps 6 and 7's law, extracted the day the REVIEW lane became a second tool
 // holding the same `clearing_job` pen (`review-rule.mjs`). One definition, two
 // callers — see materialize.mjs's header for why it is not a copy.
-import { materializeClaims, recomputeStanding, slugOf } from "./materialize.mjs";
+import { materializeClaims, recomputeStanding, slugOf, ownerHouseholdFor } from "./materialize.mjs";
+// The escrow PRESENCE gate — the sweep's own rule, ported to the candle before
+// G1 deletes the path it lives on. See step 5.5.
+import { escrowAbsentAmong, escrowPresenceAt, escrowLines } from "./escrow-presence.mjs";
+import { computeStanding } from "./standing.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const arg = (n) => { const i = process.argv.indexOf(n); return i === -1 ? null : process.argv[i + 1]; };
@@ -97,7 +111,6 @@ try {
     throw new Error("no town projection head — staked claims cannot be judged without a pinned stamp read; run stamp-ingest first (the census first-step)");
   if (pending.length && !lawSha)
     throw new Error("no world-law projection head — a clearing computes against law-as-of a sha; run law-ingest first");
-
   const outcomes = new Map(); // id -> { status, refusal_check }
   const decide = (id, status, check = null) => outcomes.set(id, { status, refusal_check: check });
 
@@ -193,6 +206,75 @@ try {
     }
   }
 
+  // 5.5 · A COMMONS MARK NEEDS SOMEBODY'S STAMPS BEHIND IT (postmark#2594's
+  //     second half; ruled a G1 blocker 2026-09-08 after lane 2's reviewer found
+  //     it by receipt).
+  //
+  //     Step 3 above is an AFFORDABILITY test and says so — `if (total === 0)
+  //     continue`. A claim staking zero has never been looked at. The 1.0 sweep
+  //     is where the PRESENCE rule lives (`settlement-sweep.mjs:1146-1152`,
+  //     "commons needs escrow > 0"), and G1 deletes the sketchbook path that
+  //     carries it, so after the cutover the rule stops being enforced anywhere
+  //     unless it is here.
+  //
+  //     THE CLASS IS COMPUTED, NOT READ. `marks.data.tier` is written by
+  //     `recomputeStanding` at step 7, AFTER materialization — at this point the
+  //     mark does not exist and the column is null, so a gate reading it would
+  //     judge every claim as classless and refuse nothing, forever. The port's
+  //     own walk answers prospectively over the standing rows PLUS the candidate
+  //     rows, in the shape `materializeClaims` is about to insert. One definition
+  //     of standing, used twice.
+  //
+  //     OWN GROUND IS EXEMPT WITHOUT A CLAUSE: the class rule answers `home` for
+  //     a mark on its own household's ground (`mark-standing.mjs § groundVerdict`,
+  //     ported in `standing.mjs`), and only `commons` needs escrow. Writing an
+  //     own-ground exception here would be a second copy of a law, and copies
+  //     drift.
+  //
+  //     AND IT DEGRADES LOUDLY RATHER THAN EITHER WAY SILENTLY. `escrow_projection`
+  //     is migration 014, which arrives with lane 2 (`jetto/g1-render-stakes`);
+  //     until it lands, `escrowPresenceAt` answers null and every commons claim
+  //     is reported UNCHECKED and locks. It is not read as "nobody staked" —
+  //     that would refuse the whole town on a missing migration — and it is not
+  //     silent: the crossing prints it and the nightly read carries the class.
+  //     (If the conductor would rather the crossing REFUSE while it cannot check,
+  //     that is this block's `if (escrow.unchecked.length)` arm and one throw.)
+  let escrowSeen = null;
+  {
+    const undecidedNamed = pending.filter((c) => !outcomes.has(c.id) && slugOf(c));
+    if (undecidedNamed.length) {
+      const { rows: standingRows } = await q(
+        `SELECT id::text, slug, kind, owner, household, geometry, parent::text, data
+           FROM marks WHERE status = 'standing'`);
+      const candidates = [];
+      for (const c of undecidedNamed) {
+        candidates.push({
+          id: String(c.id), slug: slugOf(c), kind: c.class, owner: c.claimant,
+          household: await ownerHouseholdFor(q, c.claimant),
+          geometry: c.geometry, parent: c.parent, data: c.data,
+        });
+      }
+      const tiers = computeStanding([...standingRows, ...candidates]);
+      const escrowByMark = await escrowPresenceAt(q, { townSha });
+      const verdict = escrowAbsentAmong(
+        undecidedNamed.map((c) => ({ id: c.id, slug: slugOf(c) })),
+        { tiers, escrowByMark, townSha });
+      escrowSeen = {
+        commons: verdict.commons.length,
+        refused: verdict.refused.map((r) => r.slug),
+        unchecked: verdict.unchecked.map((c) => c.slug),
+        town_sha: townSha,
+      };
+      for (const r of verdict.refused) decide(r.id, "refused", r.check);
+      // The strings are composed by `escrowLines`, not here, because this file is
+      // a script and a line composed here is watched by nothing — which is how
+      // the first cut of the UNCHECKED line came to print `[object Object]` over
+      // an array of candidate objects while its sibling and the receipt both
+      // mapped to `.slug` correctly.
+      for (const line of escrowLines(verdict, townSha)) console.log(`  ⚑ ${line}`);
+    }
+  }
+
   // 6 · everything still undecided LOCKS and materializes. The materialization
   //     itself is `materialize.mjs`'s — the same code the REVIEW lane's ruling
   //     runs, so a mark that arrives by a mind's ruling and one that arrives by
@@ -265,6 +347,10 @@ try {
       six_count: sixCount,
       ...(carried ? { review_rulings: carried } : {}),
       computed_against: { law_sha: lawSha, town_sha: townSha },
+      // The escrow gate's own account, including what it could NOT check — a
+      // crossing that locked commons claims unchecked must say so on the record
+      // and not only on a console nobody kept.
+      ...(escrowSeen ? { escrow_presence: escrowSeen } : {}),
       standing: {
         recomputed: standing.length, moved: moved.length,
         // Capped, because the receipt is evidence and not an export: the first

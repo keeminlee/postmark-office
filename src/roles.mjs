@@ -131,7 +131,15 @@ export const displayLogin = (login) => {
 
 // ── storage ─────────────────────────────────────────────────────────────────
 
-export function openRolesDb(path = DEFAULT_ROLES_DB) {
+// `readOnly` for the read worker (runbook DEC-4, G3), same shape and same
+// reason as `openOauthDb`'s: `roleGate` is a SELECT, so a worker must be able
+// to run it, and the schema plus its additive migrations belong to the writer.
+// With OFFICE_ROLE_GATES unset — the default, and every office today — no door
+// consults this handle at all, so a worker that could not open it would still
+// serve every route; opening it read-only keeps the gated case working without
+// giving the worker a pen.
+export function openRolesDb(path = DEFAULT_ROLES_DB, { readOnly = false } = {}) {
+  if (readOnly) return new DatabaseSync(path, { readOnly: true });
   const db = new DatabaseSync(path);
   db.exec(`
     CREATE TABLE IF NOT EXISTS roles (

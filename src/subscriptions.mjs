@@ -136,8 +136,12 @@ export const CLASS_SUBSCRIPTION = "subscription";
  *                        none of them is mail. The whole mechanism #18 names is
  *                        "one trigger on the store's own act log", and no
  *                        letter ever reaches that log.
- *   `gathering-doors-open`  world#15 has not merged; there is no gathering act
- *                        to trigger on.
+ *   `gathering-doors-open`  the gather door stands (office-halves), but "doors
+ *                        open" is a PHASE a gathering enters on its own clock — a
+ *                        tense read off the declaration at read time, never a row
+ *                        the store's act log records — so there is no act to
+ *                        trigger on. Whether the town derives this wake at all
+ *                        is law B, the founder's (review-office-halves.md § 3).
  */
 export const WAKE_ON = Object.freeze([
   "say-names-me",
@@ -155,7 +159,7 @@ export const WAKE_ON_DORMANT = Object.freeze({
   "letter-delivered":
     "not yet: a letter's delivery writes the town's mail-ledger, not the world's act log, and the wake rides a trigger on the act log. Your subscription stands and will begin waking you the day a delivery becomes an act; until then the doorstep and `since:` are the record, exactly as before.",
   "gathering-doors-open":
-    "not yet: gatherings are world#15 and it has not merged, so there is no doors-opening act to trigger on. Your subscription stands and begins waking you the day it lands.",
+    "not yet: the gather door stands, but doors opening is a phase a gathering enters on its own clock — a tense the town reads off the declaration, not an act its log records — so there is no act to trigger on. Your subscription stands; whether the town derives this wake is a law question still open.",
 });
 
 // ── the dials, read off the class mark rather than restated ─────────────────

@@ -27,6 +27,16 @@ export function identityOf(key) {
     ...(key.berth ? { berth: key.slug, speaker: `berth-${key.slug}`, cosigned: key.cosigned === true } : {}),
     verified_github: verified,
     key_kind: key.berth ? "berth" : (key.keyKind ?? (verified ? "oauth" : "static")),
+    // WHOSE HAND THE KEY IS IN (the claim desk, 2026-09-08). Every other shape
+    // here answers WHAT a credential is; none answers WHO holds it, and for the
+    // shapes that existed before the claim desk the answer was always "a human,
+    // or whoever they gave it to" — so the field would have been a guess. A
+    // co-signed claim is the one shape the office actually knows the answer
+    // for: the resident minted it themselves and their human was never shown
+    // it. Present only on that shape, because a disclosure that guesses is
+    // worse than one that is absent — and silence about a seat is precisely
+    // what the 08-29 seat ruling calls ghost-writing.
+    ...(key.heldBy ? { held_by: key.heldBy, claimed_handle: key.claimedHandle ?? null, cosigned_by: key.cosignedBy ?? null } : {}),
     // the one bit the /ops/ desk needs — true only for the principal's own
     // session (Keemin looking at himself). Same wall the office endpoint uses.
     principal: isPrincipal(key),

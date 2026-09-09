@@ -306,7 +306,7 @@ export function headlinesFrom({ rows = [], cap = 3 } = {}) {
   if (refused.length) out.push({
     id: "the-crossing/refused", title: `${refused.length} mark${refused.length === 1 ? "" : "s"} refused at the last crossing`,
     marks: refused.slice(0, 5), more: Math.max(0, refused.length - 5),
-    read: 'world { mark: "<by>/<slug>" } says which of held · contested · unbacked · malformed · quarantined',
+    read: 'world { mark: "<by>/<slug>" } says which of held · contested · unbacked · malformed · quarantined · unpublished',
   });
   return out.slice(0, cap);
 }

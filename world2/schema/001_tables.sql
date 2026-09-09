@@ -98,7 +98,19 @@ CREATE INDEX claims_bbox_idx ON claims USING gist (bbox);
 -- Materialized cleared state. Writer: clearing_job only, inside the window
 -- transaction. 1.0 source: WORLD/marks/**/mark.md + the sweep's fold.
 CREATE TABLE marks (
-  id            uuid PRIMARY KEY,            -- = the locking claim's id
+  -- = A claim that locked this slug — NOT necessarily the one that locked it at
+  -- `locked_window`. A slug amended at a later window gets a new locked claim
+  -- whose `supersedes` (below) points back at this id, so `marks.id` and
+  -- `claims.id` part company exactly where an amend happened. Measured on prod
+  -- 2026-09-09 at window 177: 33 marks, 33 locked claims, the same 33 slugs,
+  -- only 17 shared ids, and `claims.supersedes = marks.id` on 16 of the 16 that
+  -- differ. It is NOT reliably the FIRST locking claim either — that holds for
+  -- 24 of the 33.
+  --
+  -- The old comment read "= the locking claim's id", and a reader took it to
+  -- mean the two columns were the same fact under two names. They are not, and
+  -- that reading put a wrong premise in a fold's header (G1 lane 3).
+  id            uuid PRIMARY KEY,
   slug          text NOT NULL UNIQUE,        -- <owner>/<name>, the 1.0 path identity
   kind          text NOT NULL,
   owner         text NOT NULL,

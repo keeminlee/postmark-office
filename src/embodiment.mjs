@@ -75,6 +75,39 @@ export function walkAllowed({ ground = null, groundRow = null, to = null } = {})
 }
 
 /**
+ * WHICH GROUND FENCES THIS ACTOR — the one decision, answerable on its own.
+ *
+ * ⛔ THIS WAS INLINE IN THE APEX AND WATCHED BY NOTHING, and the flip run of
+ * this lane is how that was found: deleting the handoff arm reddened ZERO
+ * tests. The whole of "a handoff seat has no fence" could have been dropped and
+ * the suite would have stayed green — lane H's own F6 defect, one lane later,
+ * in the same office. A ternary buried three screens inside a 200-line branch
+ * is not reachable by any test, which is a property of its SHAPE and not of its
+ * content; so it moved here, beside the two rules it decides between.
+ *
+ * The three answers, in the order they decide it:
+ *
+ *   · A RESIDENT is fenced by the grant's own ground and by nothing else. They
+ *     are not seated — asking whether they may be themselves is not a question.
+ *   · A HANDOFF-SEATED HUMAN IS FENCED BY NOTHING. LOGOS § The human class —
+ *     the handoff: "the seat is the resident's standing, NOT A GROUND — so it
+ *     moves with the resident and ends at the ttl, NOT AT A FENCE." Their feet
+ *     are their own household's resident's feet, lent by that resident's own
+ *     act; fencing them to a room would fence a resident out of their own
+ *     stride. Answering `null` here is what makes the apex skip the fence
+ *     whole, and it is a ruling rather than an omission.
+ *   · AN EMBODIED HUMAN is fenced by THE SEATING ground where there is one and
+ *     by the matching grant's otherwise — the 2026-08-29 correction, kept
+ *     verbatim: reading the matching grant alone waved a seated human's
+ *     `via_seat` walk straight past the boundary.
+ */
+export function fenceGroundFor({ kind = "resident", handoff = null, seated = null, matchGround = null } = {}) {
+  if (String(kind) !== "human") return matchGround ?? null;
+  if (handoff) return null;
+  return seated ?? matchGround ?? null;
+}
+
+/**
  * May an embodied human step out of the ground that embodies them?
  *
  * No, and the refusal is the same sentence as the walk's — deliberately, so a

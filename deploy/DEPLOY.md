@@ -680,12 +680,67 @@ one line, named below.
 |---|---|---|
 | `postmark-world2-clearing.timer` | `world2-clearing.sh` → `clearing-job.mjs` | 05:45 / 17:45 UTC |
 | `postmark-world2-ingest.timer` | `world2-ingest.sh` → `law-ingest.mjs` + `stamp-ingest.mjs` | every 15 min, :04/:19/:34/:49 |
-| `postmark-world2-notary.timer` | `world2-notary.sh` → `snapshot-export.mjs` | 03:20 UTC |
+| `postmark-world2-notary.timer` | `world2-notary.sh` → `snapshot-export.mjs` + `falsifier-canon-locks.mjs` (postmark#2594, nightly — the section below) | 03:20 UTC |
 | `postmark-world2-backup.timer` | `world2-backup.sh` → `pg_dump` + ship, `pg_basebackup` | 04:10 UTC |
 
 All four carry rows in `deploy/box-rollcall-manifest.json`. `world2-restore-rehearse.sh`
 is a hand-run, deliberately: it drops and recreates a database, and nothing that
 does that belongs on a clock.
+
+### The canon check is NIGHTLY, not at the candle — and why (2026-09-08, postmark#2594)
+
+Keemin first ruled *refusal at the candle*, and the lane's reviewer measured it
+impossible the same evening. **The crossing's settlement pushes its mark files to
+origin three to four minutes AFTER the candle clears the window** — seven
+consecutive crossings timed from both units' journals, never once before, and on
+2026-09-07 the push landed 1h56m late. Today's 17:45 crossing would have refused
+all three of the marks it locked.
+
+The lane's own first table said the opposite ("twelve seconds before"), and it was
+wrong because it read **commit** timestamps, which are local authoring times,
+while the candle fetches **origin**. That is the freshness-stamps-name-their-own-
+source rule turned on the lane's own measurement.
+
+So the ruling moved: the canon-absent check is **withdrawn from the lock step**
+and lives on the **nightly read**, `world2/tools/falsifier-canon-locks.mjs`, which
+runs on the **notary rail** (`world2-notary.sh`, 03:20 UTC) as `snapshot_reader`.
+At 03:20 the 17:45 push is nine hours old, so the read asks about a world that has
+finished moving. It refreshes the world clone itself, appends one line per run —
+clean or not — to `/srv/world2-lab/state/canon-locks.jsonl`, and **its RED does
+not fail the notary**: the certification is the notary's job, and this finding is
+about the register. The alarm is the roll-call's outcome rule on the
+`postmark-world2-notary.timer` row (`alarm_on_nonempty` on its lists, and
+`alarm_on_false` on `escrow_checked` — a read that could not run is never a
+clean town).
+
+At the G1 swap the class becomes structurally impossible — the fold writes what
+the candle locked — and the read stays as the detector.
+
+### What DOES gate at the candle: the escrow presence rule (2026-09-08)
+
+`clearing-job.mjs` step 5.5. The clearing's only escrow step was an
+**affordability** test — `if (total === 0) continue` — so a claim staking zero was
+never looked at. The 1.0 sweep holds the **presence** rule ("commons needs escrow
+> 0", `settlement-sweep.mjs:1146-1152`) and G1 deletes the sketchbook path it
+lives on, so the rule would simply stop being enforced. A commons-class claim with
+zero escrow at the window's own pinned `town_sha` is now refused
+`escrow-absent: <slug> @ <sha>`, which the receipt maps to `unbacked`.
+
+This one races nothing: it reads the **town** projection and the store, never a
+git push. The class is computed prospectively by the port's own `computeStanding`
+over the standing rows plus the candidates, because `data.tier` is not written
+until step 7. Own ground is exempt without a clause, because the class rule
+answers `home` for it.
+
+**Until migration 014 lands** (lane 2's `escrow_projection`), `escrowPresenceAt`
+answers null, every commons claim is reported UNCHECKED on the crossing and on the
+window's `receipts.escrow_presence`, and the nightly read carries the same class.
+Null is never read as zero — that would refuse the whole town on a missing
+migration.
+
+The REVIEW door (`review-rule.mjs`) re-runs the same presence rule at ruling time
+and treats a failure as a **blocker on the run**, which is that file's own
+established shape for a fact that changed while a claim was held.
 
 ### Which branch the ingest lane reads (2026-09-05)
 

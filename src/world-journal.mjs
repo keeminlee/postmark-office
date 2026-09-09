@@ -496,6 +496,26 @@ export function penFor(entry) {
 export { PenUnreachableError, laneFlipped };
 
 /**
+ * WHICH ACT LOG THIS OFFICE READS, named for a disclosure — one sentence, one
+ * place, so two doors cannot name two different stores for the same fact.
+ *
+ * Exists because of a borrowed sentence (the office-halves review, repair 11):
+ * the gathering and handoff shadows copied the subscription door's "the act
+ * log this reads is Postgres, and this office is not pointed at it" — CORRECT
+ * there, because that door has no journal arm and being un-pointed at Postgres
+ * really is its only cause — and then grew a journal arm, after which the one
+ * configuration the sentence blamed was the one that could not produce it. A
+ * resident with a torn `dynamic.db` was sent to check a Postgres setting. The
+ * after-a-repeal-grep-its-citations class: the journal arm repealed the
+ * premise and the disclosure still cited it.
+ */
+export function actLogNameFor(env = process.env) {
+  return world2Enabled(env)
+    ? "Postgres (this office is pointed at it: WORLD2_PG=1 with WORLD2_PG_URL)"
+    : "the sqlite journal (WORLD_DYNAMIC_DB, or dynamic.db beside world.db — this office is not pointed at Postgres, which is the ordinary working configuration)";
+}
+
+/**
  * ONE ROW, NORMALIZED — the whole of what a journal line IS, with no store in
  * sight.
  *
@@ -712,6 +732,38 @@ export function readJournal(db, { household = null, cls = null, sinceSeq = 0, li
     + (limit != null && Number.isFinite(Number(limit)) ? ` LIMIT ${Math.max(1, Math.floor(Number(limit)))}` : "");
   return db.prepare(sql).all(...args).map(hydrateRow);
 }
+
+/**
+ * A journal row in the `acts` row shape a projection reads — THE ONE PLACE THE
+ * TWO STORES' COLUMN NAMES MEET.
+ *
+ * `emissionToVoice`'s discipline (src/dynamic-emissions.mjs), and it exists for
+ * a defect a flip run found rather than for tidiness. A class-lane projection
+ * — `liveSubscriptions`, `liveHandoffs`, `gatheringsFrom` — is pure over rows
+ * whose instant is `at` and whose id is `id`, which is Postgres' `acts`. A
+ * journal row's instant is `written_at` and its `at` is the WITNESSED LINE, an
+ * anchor-and-offset object. Handing a journal row straight to one of those
+ * projections yields `NaN` for every instant and an empty live set — silently,
+ * because an empty projection is exactly what "nothing stands" looks like.
+ *
+ * So an office not pointed at Postgres would accept a declaration at the door
+ * and then answer that nothing was ever declared. This is the mapping that
+ * stops it, and it is one function so the two shapes cannot come apart.
+ */
+export const journalRowAsAct = (r) => ({
+  id: r.seq,
+  at: r.written_at,
+  actor: r.actor,
+  action: r.action,
+  object: r.object ?? null,
+  class: r.class,
+  payload: r.payload,
+  household: r.household ?? null,
+  at_anchor: r.at?.anchor ?? null,
+  at_dx: r.at?.dx ?? null,
+  at_dy: r.at?.dy ?? null,
+  witnesses: r.witnesses ?? null,
+});
 
 /** One stored row, in the vocabulary the ruling used. Exported so a test can hydrate a row it built by hand. */
 export function hydrateRow(r) {

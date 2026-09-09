@@ -60,7 +60,7 @@
 
 import { worldFreezeBounce } from "./freeze.mjs";
 import { readAttachments, declareAttachment } from "./dynamic-entities.mjs";
-import { openDynamic } from "./dynamic-store.mjs";
+import { openDynamic, openDynamicReadOnly } from "./dynamic-store.mjs";
 import { classDials } from "./world-classes.mjs";
 
 /** The thing class's own params, read from the record every time (never cached here). */
@@ -298,7 +298,11 @@ async function refuseShroudedLoot(thingId) {
     ]);
     store = openStore();
     if (!store?.db) return;
-    dyn = openDynamic();
+    // Read-only: this guard only READS to decide whether to refuse. It sits on
+    // a write path, which is why it is not a worker breach, but a reader that
+    // holds a writable handle is the class this lane is closing everywhere.
+    dyn = openDynamicReadOnly();
+    if (!dyn) return; // nothing journalled means nothing is shrouded
     const hidden = lootHiddenReason(store.db, dyn, String(thingId));
     if (!hidden) return;
     throw bounce(409, `${thingId} is not in this room yet`,
@@ -693,10 +697,29 @@ export function holdEffectsFrom({ rows = [], handles = [], sinceCrossing, nowCro
 export async function readHoldEffects({ handles = [], sinceCrossing, nowCrossing } = {}) {
   let db = null;
   try {
-    const [{ openDynamic }, { readJournal }] = await Promise.all([
+    // Read-only. Not a worker breach TODAY — it is reached only when `since:`
+    // resolves, and `since` is not a query parameter on GET /world/apex, so it
+    // arrives only through the MCP door or a POST, both 405 on a worker. But it
+    // is a pure reader holding a writable handle on the writer's hottest keyed
+    // path, and it is one query parameter away from being a breach with nothing
+    // in the code tying those two facts together. (The g3 reviewer scoped this
+    // one correctly after first over-reading it; the scoping is why it is a
+    // hygiene fix rather than a blocker.)
+    const [{ openDynamicReadOnly }, { readJournal }] = await Promise.all([
       import("./dynamic-store.mjs"), import("./world-journal.mjs"),
     ]);
-    db = openDynamic();
+    db = openDynamicReadOnly();
+    // ⚑ `readable` IS A CLAIM ABOUT WHETHER THE RECORD WAS READ, not about
+    // whether this function threw (reviewer's repair 2, lap 4). My first pass
+    // turned a null store into an empty row list and fell through to
+    // `readable: true`, which says "I read the holding record and it is empty"
+    // about a store that is not there. That is the same sentence a genuinely
+    // empty store produces, and a caller cannot tell them apart — the exact
+    // shape this file's own catch was written to avoid.
+    //
+    // An absent store gets the catch's shape, with its own reason. Empty and
+    // unreadable are different answers and the door must keep saying which.
+    if (!db) return { readable: false, events: [], reason: "the holding record could not be read (no dynamic store at this office)" };
     const rows = readJournal(db, { cls: "holding" });
     return { readable: true, events: holdEffectsFrom({ rows, handles, sinceCrossing, nowCrossing }) };
   } catch (e) {

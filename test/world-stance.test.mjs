@@ -689,3 +689,50 @@ test("the ambient block names its ground too, and TIER 1 stays one integer", asy
   assert.deepEqual(Object.keys(away), ["stances_awaiting"],
     "a market read grows no second key — the exposure model is a ruling, not a default");
 });
+
+// ── the `superseded` courtesy reads the whole record (G1 lane 3b lap 3) ──────
+//
+// MY REVIEWER'S FINDING. The declare path computed `prior` from
+// `readJournal(db)` alone — the live sqlite journal — while the read side had
+// already moved to photographs ∪ journal (#2454) and now to the register beside
+// them. Nothing asserted `superseded`, so the gap was invisible: the suite was
+// green before the fix and green after it, which is why it took a reviewer.
+//
+// And the lane's own journal reaper ACCELERATES the decay: once a stance row's
+// twin is confirmed in `acts` the reaper takes the sqlite row, so the window
+// shrinks from "until the next drain" to "until the next reap". A courtesy
+// field that rots faster because of a fix shipped in the same lane.
+
+test("#2454's smallest type: a stance whose row has left sqlite is still SUPERSEDED, not forgotten", async () => {
+  const first = await speak({ on: "beta/on-alphas-edge", stance: "welcomed" });
+  assert.equal(first.error, undefined, "the first stance is spoken");
+  const spoken = withDb((db) => readJournal(db, { cls: CLASS_STANCE }).find((r) => r.object === "beta/on-alphas-edge"));
+  assert.ok(spoken, "and it is in the journal");
+
+  // The row is DRAINED: it moves to the photograph and leaves sqlite. This is
+  // what the drain did every twelve hours, and what the reaper now does as soon
+  // as the register confirms the twin.
+  const logDir = join(repo, "STATE", "log");
+  mkdirSync(logDir, { recursive: true });
+  writeFileSync(join(logDir, "145.journal.jsonl"), JSON.stringify({
+    at: spoken.written_at, type: spoken.action, actor: spoken.actor, seq: spoken.seq,
+    class: spoken.class, object: spoken.object, household: spoken.household, crossing: spoken.crossing,
+    standing: spoken.at, witnesses: spoken.witnesses, effect: spoken.effect, payload: spoken.payload,
+  }) + "\n");
+  withDb((db) => db.prepare("DELETE FROM journal WHERE seq = ?").run(spoken.seq));
+  assert.equal(withDb((db) => readJournal(db, { cls: CLASS_STANCE }).length), 0, "sqlite no longer holds it");
+
+  const second = await speak({ on: "beta/on-alphas-edge", stance: "opposed" });
+  assert.equal(second.error, undefined);
+  assert.ok(second.superseded, "the door must still know the resident already spoke — the record has not forgotten, and neither may the receipt");
+  assert.equal(second.superseded.stance, "welcomed");
+  assert.equal(second.superseded.seq, spoken.seq);
+});
+
+test("CONTROL · a FIRST stance on untouched ground reports no `superseded` at all", async () => {
+  // Without this, the assertion above would pass on a door that attached a
+  // `superseded` block to every answer.
+  const r = await speak({ on: "gamma/well-inside", stance: "welcomed" });
+  assert.equal(r.error, undefined);
+  assert.equal(r.superseded, undefined, "nothing was said before, so nothing is superseded");
+});

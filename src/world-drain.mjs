@@ -408,7 +408,17 @@ export function writeDownHousehold(repo, { household, upserts, removals }, { whe
       // an amend is the ordinary next thing to happen to a draft.
       const filed = findMarkPath(repo, base, paths, { by: u.by, slug: u.slug });
       const path = filed ?? u.path;
-      const bytes = markRecord(u.fileRec, u.body);
+      // `u.bytes` is a PASSTHROUGH, not a second serializer, and the difference
+      // matters because this module's own grammar file exists to stop there
+      // being two (`mark-record.mjs`: "two copies of a serialization is how two
+      // eras come to disagree about the bytes of the same declaration"). The
+      // drain never sets it. The store write-down (G1 lane 3) sets it only when
+      // its supplier handed it rendered bytes and no record to re-derive them
+      // from — and when the supplier hands BOTH, that caller compares them and
+      // refuses on a mismatch before ever reaching here. So the invariant this
+      // line preserves is unchanged: any bytes written from a record are written
+      // by `markRecord`, once.
+      const bytes = u.bytes ?? markRecord(u.fileRec, u.body);
       const blob = execFileSync("git", ["-C", repo, "hash-object", "-w", "--stdin"],
         { input: bytes, encoding: "utf8", env: { ...process.env, ...env } }).trim();
       git(repo, ["update-index", "--add", "--cacheinfo", `100644,${blob},${path}`], { env: { ...process.env, ...env } });
