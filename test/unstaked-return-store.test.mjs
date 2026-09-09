@@ -2,6 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { planFrom, storeOnlyFrom, NAMED_DISAGREEMENT, REFUSED_KINDS } from "../world2/tools/unstaked-return-store.mjs";
 import { stakeRefusalFor } from "../src/world-stake.mjs";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { tmpdir } from "node:os";
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+const TOOL = join(dirname(fileURLToPath(import.meta.url)), "..", "world2", "tools", "unstaked-return-store.mjs");
 
 // The shape the store actually holds, measured on world2_dev 2026-09-09: the
 // column named `slug` carries the fold's FULL mark id, and `owner` repeats its
@@ -188,4 +194,55 @@ test("the zero path keeps its own ruling — this seam does not touch it", () =>
   assert.equal(stakeRefusalFor({ mark: "rei/a-bench", n: 0, promoted: false,
     status: { known: true, found: true, retired: true } }), null,
     "n === 0 is decided by the existing 422 a few lines down, not here");
+});
+
+// ── the split-key falsifier the reviewer asked for, in all three shapes ─────
+//
+// Measured on prod: of the 64 standing split-key marks, `identities.household`
+// agrees with `marks.household` in 38 cases and with `claims.household` in ZERO;
+// the other 26 have no identities row at all, and for every one of those
+// `marks.household` is exactly `solo:<owner>` — which is what `householdKeyFor`
+// returns as its own fallback. So the mark's household is right in all 64.
+// Without this test a later hand "fixing" the split by reaching for the claim
+// would break 64 marks and stay green.
+
+test("split-key: gh:<id> vs solo:<login> — the MARK's household is written", () => {
+  const { retire } = planFrom(
+    [setRow("lupi/the-drift-room")],
+    [{ id: "id-1", slug: "lupi/the-drift-room", owner: "lupi", kind: "sited",
+       household: "gh:312847595" }]);   // the locked claim says solo:lupi-agent
+  assert.equal(retire[0].household, "gh:312847595");
+});
+
+test("split-key: solo:<town-slug> vs solo:<login> — 26 of the 64 take this shape", () => {
+  const { retire } = planFrom(
+    [setRow("berthillon/cone-coing-2026-09-04")],
+    [{ id: "id-2", slug: "berthillon/cone-coing-2026-09-04", owner: "berthillon",
+       kind: "sited", household: "solo:berthillon" }]);   // claim says solo:devadavisson
+  assert.equal(retire[0].household, "solo:berthillon");
+});
+
+test("split-key: no identities row at all — solo:<owner> is the resolver's own fallback", () => {
+  const { retire } = planFrom(
+    [setRow("tarn/a-mark")],
+    [{ id: "id-3", slug: "tarn/a-mark", owner: "tarn", kind: "sited", household: "solo:tarn" }]);
+  assert.equal(retire[0].household, "solo:tarn",
+    "householdKeyFor returns `solo:${handle}` when identities has no row, so this is what the promote will look for");
+});
+
+test("a dry-run receipt is refused before any database is opened", () => {
+  // O1: handed a dry run, the tool would retire marks that still stand on main,
+  // leaving the two records disagreeing about every one of them — and reporting
+  // success. Run end to end so the gate itself is what is being read.
+  const dir = mkdtempSync(join(tmpdir(), "unstaked-return-o1-"));
+  const path = join(dir, "dry.json");
+  try {
+    writeFileSync(path, JSON.stringify({ applied: false, moved: [{ mark: "rei/a-bench", household: "rei" }] }));
+    let code = 0, err = "";
+    try {
+      execFileSync("node", [TOOL, "--set", path], { encoding: "utf8", env: { ...process.env, PGHOST: "/nowhere" } });
+    } catch (e) { code = e.status; err = String(e.stderr ?? ""); }
+    assert.equal(code, 2, "a dry-run receipt must not reach a database at all");
+    assert.match(err, /DRY-RUN receipt/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

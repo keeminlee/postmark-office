@@ -229,12 +229,33 @@ async function main() {
   }
 
   const gitReceipt = JSON.parse(readFileSync(SET, "utf8"));
+
+  // O1 — THE GIT HALF MUST HAVE APPLIED. The receipt carries `applied`,
+  // `repo_head` and `new_head` and this tool read none of them. Handed a DRY-RUN
+  // receipt it would retire every named mark in the store while all of them
+  // still stand on main — the two records left disagreeing, by a run that
+  // reported success. The runbook writes both runs to the same path, so the
+  // happy path hid it; a failed or skipped apply is not the happy path.
+  if (gitReceipt.applied !== true) {
+    console.error(
+      `unstaked-return-store: "${SET}" is a DRY-RUN receipt (applied: ${JSON.stringify(gitReceipt.applied)}).\n` +
+      "  The git half has not moved these marks, so retiring them here would leave the store\n" +
+      "  disagreeing with main about every one of them. Run the git half with --apply and use\n" +
+      "  the receipt it writes.");
+    process.exit(2);
+  }
+
   const setRows = gitReceipt.moved ?? [];
   if (!setRows.length) { console.error("unstaked-return-store: the git receipt moves nothing; there is nothing to apply."); process.exit(2); }
 
   const url = process.env.DATABASE_URL ?? process.env.WORLD2_DB ?? null;
   const dbName = url ? (url.split("/").pop() ?? "").split("?")[0] : (process.env.PGDATABASE ?? "(default)");
-  const looksScratch = /lab|scratch/i.test(dbName);
+  // O3: NOT `/lab|scratch/`. THIS TOWN HAS NO LAB STORE — `/srv/world2-lab` is
+  // prod's Postgres, so a database called `world2_lab` is prod wearing a safe
+  // name, and matching "lab" would open `--apply` on it without the second flag
+  // that is the whole guard. Only `scratch` earns the shortcut, and the
+  // rehearsal names its databases `w2_scratch_<stamp>` already.
+  const looksScratch = /scratch/i.test(dbName);
   if (APPLY && !looksScratch && !PROD) {
     console.error(`unstaked-return-store: --apply refuses database "${dbName}" — its name contains neither "lab" nor "scratch".\n` +
       "  Rehearse on a pg_dump scratch clone. Pass --prod as a second, deliberate flag to mean the live store.");
@@ -292,6 +313,20 @@ async function main() {
                                             claims_household: r.claims_household })),
     });
 
+    // A RECEIPT PROVEN STALE IS NOT A RECEIPT TO HALF-TRUST. The parcel refusal
+    // was per-row: the tool named the parcels, printed "this receipt predates the
+    // ruling", and then retired the other 178 anyway. A build old enough to name
+    // parcels may be wrong about the rest of the set too — same class as O1.
+    if (refused.length && !ALLOW_SKEW) {
+      console.error(`unstaked-return-store: this receipt names ${refused.length} parcel(s), so it predates the ` +
+        "founder's ruling of 2026-09-09 that parcels need no staking.\n" +
+        "  Refusing the WHOLE receipt rather than the parcels alone: a receipt wrong about the law\n" +
+        "  is not evidence about the rest of its set. Re-run the git half and use its receipt.\n" +
+        "  (--allow-skew proceeds with the non-parcel rows, having decided that is right.)");
+      if (RECEIPT) writeFileSync(RECEIPT, JSON.stringify(receipt, null, 2) + "\n");
+      process.exit(3);
+    }
+
     if (missRate > NAMED_DISAGREEMENT && !ALLOW_SKEW) {
       console.error(`unstaked-return-store: ${missing.length} of ${setRows.length} marks in the set ` +
         `(${(missRate * 100).toFixed(1)}%) have no standing row in the store — past the named ` +
@@ -312,8 +347,14 @@ async function main() {
             "UPDATE marks SET status = 'retired', retired_window = $1 WHERE id = $2 AND status = 'standing'",
             [win.id, r.id]);
           // The draft is planted in the household's own name, which is what the
-          // RLS insert policy checks — so the SET LOCAL is load-bearing, not
-          // decorative, and a draft can never be written for somebody else.
+          // RLS insert policy checks — WHEN THE CONNECTION IS SUBJECT TO RLS.
+          // It is not, on the path the runbook actually uses: that connects as
+          // `postgres`, a superuser, and 007's policies are `TO office_api`, so
+          // they are bypassed entirely. The `SET LOCAL` is still correct and
+          // still required for any office_api connection; what it is NOT is a
+          // guarantee that a draft cannot be written for somebody else on this
+          // run. The guarantee here is the code above, which takes the household
+          // from the mark's own row.
           await client.query("SELECT set_config('app.household', $1, true)", [r.household ?? r.owner]);
           const { rows: [mark] } = await client.query(
             "SELECT body, geometry, bbox, kind, data FROM marks WHERE id = $1", [r.id]);
