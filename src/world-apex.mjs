@@ -81,7 +81,26 @@ import {
   subscribeReadNeverPerforms, subscribeViaOffice, subscriptionShadow, unsubscribeViaOffice,
 } from "./subscriptions.mjs";
 import { callHoldTool, holdingsOf, liveHolder } from "./world-hold.mjs";
-import { openDynamic } from "./dynamic-store.mjs";
+import { openDynamic, openDynamicReadOnly } from "./dynamic-store.mjs";
+// ⚑ THE READ OPENER (runbook DEC-4, G3, 2026-09-08). Four functions in this
+// file are pure readers of the dynamic store — `phaseAt`, `portalBlockAt`,
+// `groundWithinReach`, `holdingsFor` — and all four opened it in WRITE mode,
+// because `openDynamic`'s default is `readOnly: false`. That default runs
+// `PRAGMA journal_mode = WAL` and the whole `DYNAMIC_SCHEMA` DDL on every call.
+//
+// It is not a theoretical write. MEASURED 2026-09-08, on the branch, before the
+// fix: drop the `emissions` table, make ONE call to `holdingsFor`, and the table
+// is back. A read re-created schema in the store.
+//
+// The reason nobody had met it is that the write is a no-op in steady state —
+// `CREATE TABLE IF NOT EXISTS` against a store that has the table, and a WAL
+// pragma against a store already in WAL, both attempt nothing — so the handle's
+// MODE and the handle's BEHAVIOUR had come apart, and only the behaviour was
+// ever watched. DEC-4's gate is on the mode: "a read worker holds no write
+// grant and OPENS NO SQLITE HANDLE IN WRITE MODE." These four are why that
+// falsifier could not have passed, and they are read-only now for the writer
+// too, because they were always readers.
+const openDynamicRead = () => openDynamicReadOnly();
 import { declareMovement, readAttachments } from "./dynamic-entities.mjs";
 // The stride a placement is stamped with — read off the record like every other
 // departure's, never a constant here (decision 008b).
@@ -324,7 +343,7 @@ export function phaseAt(db, spineIds = []) {
   if (!place) return null;
   let dyn = null;
   try {
-    dyn = openDynamic();
+    dyn = openDynamicRead();
     return encounterOn(db, dyn, place)?.phase ?? null;
   } catch { return null; }
   finally { try { dyn?.close(); } catch { /* a reader that cannot close still read */ } }
@@ -662,7 +681,7 @@ export function portalBlockAt(db, spineIds = []) {
   if (!place) return null;
   let dyn = null;
   try {
-    dyn = openDynamic();
+    dyn = openDynamicRead();
     const state = encounterOn(db, dyn, place);
     // THE SHROUD IS COMPUTED WHERE THE PHASE IS, and nowhere else. LOGOS § The
     // portal ground: a loot thing is "absent from what a standpoint says stands
@@ -698,7 +717,7 @@ export function portalBlockAt(db, spineIds = []) {
     // store is.
     const phase = state?.phase ?? null;
     let held = [];
-    try { held = readAttachments(dyn); } catch { held = []; }
+    try { held = dyn ? readAttachments(dyn) : []; } catch { held = []; }
     const floor = looseIn(db, place.row, { phase })
       .filter((t) => liveHolder(held, String(t.thing)) == null);
     return { place, state, shrouded: lootShroudedIn(db, place.row, phase), floor };
@@ -1518,9 +1537,13 @@ export async function groundWithinReach(oriented, key = null) {
       import("./world-journal.mjs"), import("./world-hold.mjs"), import("./reach.mjs"),
       import("./dynamic-entities.mjs"),
     ]);
-    dyn = openDynamic();
-    const attachments = readAtt(dyn);
-    const journal = readJournal(dyn, { cls: "holding" });
+    // NULL IS "NOTHING HAS BEEN JOURNALLED", NOT "I CANNOT SEE" — the answer
+    // the write-mode default used to produce by creating an empty store and
+    // reading it, minus the write. `test/hold-wirings.test.mjs` WIRING 1 is the
+    // caller my lap-1 report wrongly said did not exist.
+    dyn = openDynamicRead();
+    const attachments = dyn ? readAtt(dyn) : [];
+    const journal = dyn ? readJournal(dyn, { cls: "holding" }) : [];
     const rows = store.db.prepare(GROUND_THINGS).all();
     const marks = rows.map((r) => ({ id: r.id, at: { x: Number(r.at_x), y: Number(r.at_y) }, extent: { w: Number(r.extent_w) || 1, h: Number(r.extent_h) || 1 } }));
     const centreOf = (id) => marks.find((m) => m.id === id)?.at ?? null;
@@ -1584,8 +1607,8 @@ export function holdingsFor(args = {}, key = null) {
   if (!who) return [];
   let db = null;
   try {
-    db = openDynamic();
-    return holdingsOf(readAttachments(db), who);
+    db = openDynamicRead();
+    return db ? holdingsOf(readAttachments(db), who) : [];
   } catch { return []; }
   finally { try { db?.close(); } catch { /* a reader that cannot close is still a reader that read */ } }
 }
