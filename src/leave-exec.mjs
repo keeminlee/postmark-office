@@ -32,6 +32,10 @@ import { execFileSync } from "node:child_process";
 import { penCommit } from "./write.mjs";
 import { markRecord } from "./mark-record.mjs";
 import { ensureDraftCheckout } from "./world-branches.mjs";
+import {
+  PARCEL_RULE_SOURCE, PARCEL_RULE_UNREADABLE_SOURCE, PARCEL_RULE_UNREADABLE,
+  PARCEL_RULE_UNREADABLE_HINT, PARCEL_RULE_UNREADABLE_CODE, warnParcelRuleUnreadable,
+} from "./parcel-rule.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 // WORLD_CLONE is the LEASED WORKTREE when the pool is on (tier 1) and the shared
@@ -62,7 +66,16 @@ const frozenDirOf = (id) => {
   return rel ? join(CLONE, ...String(rel).split("/")) : null;
 };
 
-const answer = (obj) => { console.log(JSON.stringify(obj)); process.exit(0); };
+// WHICH RULE JUDGED THIS PARCEL, on the way out. Set only by the parcel branch,
+// so every other kind of mark answers byte-for-byte what it answered before.
+// It rides the REFUSAL and the ADMISSION alike: a silent success is the shape
+// that hid #2514 for four days, and a reader who can only learn which rule
+// refused them cannot tell which rule let them through.
+let RULE_SOURCE = null;
+const answer = (obj) => {
+  console.log(JSON.stringify(RULE_SOURCE ? { ...obj, rule_source: RULE_SOURCE } : obj));
+  process.exit(0);
+};
 const err = (code, defect, hint) => answer({ error: { code, defect, hint } });
 
 // phase stamps for the one [timing] stderr line printed on the success path —
@@ -85,6 +98,7 @@ async function main() {
   const tools = join(CLONE, "tools");
   const tEngine = performance.now();
   const { loadMarks, marksContain, containmentParents, PARCEL_CLAIM_CAP, PARCEL_CAP_LAW_DATE, PARCEL_EXTENT_M,
+          parcelClaimRefusalIn,
           worldToFile, ringToFile, COORDS_FIELD, COORDS_RELATIVE } =
     await import(pathToFileURL(join(tools, "marks-fold.mjs")));
   phases.push(`engine=${Math.round(performance.now() - tEngine)}ms`);
@@ -183,11 +197,27 @@ async function main() {
       "a slug is unique per author — pass amend: true to supersede it (a newer declaration on your own node, edit-law's revision family), or pick another slug");
   const priorRec = amending ? byId.get(id) : null;
 
-  // The parcel-claim cap (Keemin's ruling 2026-07-30): a credential household —
-  // handles grouped by WORLD/households.json, the town-pin registry — may claim
-  // at most 3 parcels; holdings predating the law stand as prior estate. The
-  // fold enforces this too (marks-fold § admissibility); bouncing here gives
-  // the resident the honest sentence before anything is written.
+  // ── THE PARCEL RULE, AND THE DOOR IS NO LONGER ITS SECOND AUTHOR ─────────
+  //
+  // The rule is TWO clauses: one parcel per HANDLE (written law) and at most
+  // `PARCEL_CLAIM_CAP` per CREDENTIAL household (Keemin's ruling 2026-07-30,
+  // prior estate standing). This door spelled out only the second, and said so
+  // in a comment that named the fold as its co-enforcer — which is how a door
+  // implementing half a rule read as a door agreeing with the fold.
+  //
+  // What that cost (postmark#2514): berthillon holds `chez-antoine` and is
+  // alone under their credential, so the cap read 1 of 3 and this door said yes
+  // to three cones declared `kind: parcel` on 09-03, 09-04 and 09-05. The
+  // crossing refused every one of them on the clause this door never had, and
+  // because the drawer is shared with `current-the-reader`, eleven of a
+  // neighbour's admissible marks sat behind them for five crossings.
+  //
+  // Now the door asks the FOLD'S OWN function (marks-fold § MAY THIS HANDLE
+  // CLAIM THIS PARCEL) and refuses with the fold's own sentence, so the
+  // resident reads at the door the exact words the crossing would have used.
+  // The import rides the same dynamic import of the world clone's
+  // `tools/marks-fold.mjs` this file already does for `loadMarks` — the seam is
+  // not new, only the function crossing it.
   if (p.kind === "parcel") {
     // The dial, not a declaration: every parcel is the town's square (Keemin,
     // 2026-07-31). The door already bounced any passed extent; this writes the
@@ -195,15 +225,34 @@ async function main() {
     // that has not yet pulled the constant.
     const side = PARCEL_EXTENT_M ?? 25;
     p.extent = { w: side, h: side };
-    const cap = PARCEL_CLAIM_CAP ?? 3;
     let registry = null;
     try { registry = JSON.parse(readFileSync(join(CLONE, "WORLD", "households.json"), "utf8")).households ?? null; } catch { /* no registry → solo grain */ }
-    const credOf = (handle) => registry?.[handle] ?? `solo:${handle}`;
-    const cred = credOf(p.by);
-    const held = marks.filter((m) => m.kind === "parcel" && credOf(m.by ?? m.household) === cred).length;
-    if (held >= cap)
-      return err(403, `your household already holds ${held} parcel${held === 1 ? "" : "s"}`,
-        `parcel claiming is capped at ${cap} per household (ruled ${PARCEL_CAP_LAW_DATE ?? "2026-07-30"}; prior holdings stand) — new ground for this household is the founder's word, not the door's`);
+    // A CLONE THAT HAS NOT PULLED THE PREDICATE FAILS CLOSED, LOUDLY
+    // (the review lap, 2026-09-05 — src/parcel-rule.mjs carries the reasoning).
+    //
+    // This used to fall back to the old cap-only gate, on the reasoning the
+    // `containmentParents` fallback above uses: a stale guard beats an absent
+    // one. That analogy INVERTS here. There, the missing export costs a guard
+    // and the fallback restores most of it; here it costs half a two-clause
+    // rule and the fallback restores the WRONG half — the credential cap, which
+    // berthillon was never near — while dropping the per-handle clause that was
+    // the entire defect. The door was not degraded. It was open, on exactly the
+    // case #2514 is about, for up to the twelve hours between the world merge
+    // and the crossing that advances this clone.
+    //
+    // Only PARCEL claims are refused. Every other kind of mark passes this
+    // block untouched, which is the whole reason the refusal is affordable.
+    RULE_SOURCE = PARCEL_RULE_SOURCE;
+    if (typeof parcelClaimRefusalIn !== "function") {
+      RULE_SOURCE = PARCEL_RULE_UNREADABLE_SOURCE;
+      warnParcelRuleUnreadable("leave-exec", CLONE);
+      return err(PARCEL_RULE_UNREADABLE_CODE, PARCEL_RULE_UNREADABLE, PARCEL_RULE_UNREADABLE_HINT);
+    }
+    const why = parcelClaimRefusalIn(marks, { by: p.by, id, date: p.date, households: registry, replacing: amending });
+    if (why)
+      return err(403, why, why.startsWith("household already holds a parcel")
+        ? `a handle keeps one parcel and moves it rather than adding another — amend your existing parcel (same slug, amend: true) to relocate it, or leave this mark as kind: sited, which is what a thing standing on your ground is`
+        : `new ground for this household is the founder's word, not the door's`);
   }
 
   // decide the directory. sited/parcel file BY IDENTITY — `WORLD/marks/<by>/

@@ -128,6 +128,33 @@ export async function doorstepBundle(handle, ctx = {}) {
         next: gaps,
       };
     } catch { /* garnish only */ }
+    // ── WHAT THE LAST CROSSING SET ASIDE (postmark#2516) ───────────────────
+    //
+    // The letter is the durable half and it sails on the next ferry, up to
+    // twelve hours after the crossing that wrote it. This is the fast half, and
+    // it is the one that closes the actual gap: between S55 and S58 the
+    // settlement set `draft/devadavisson` aside four crossings running, and the
+    // households learned of it from the SILENCE, because every surface that
+    // named it — the receipt, the keeper's daily — is a surface a resident does
+    // not read.
+    //
+    // OWN-GATED, with the rest of the gap-shaped blocks: a set-aside row is
+    // your household's business and nobody else's ("the gaps are yours to see,
+    // not theirs to be seen by", 08-15). GARNISH, like its neighbours: the
+    // receipt lives outside the office's own tree, so an absent or half-written
+    // file drops the block rather than the page.
+    //
+    // It reads the same `settlement-standing.mjs` the letter writer reads, so
+    // the two surfaces cannot come to disagree about whether a resident is
+    // being told anything.
+    try {
+      const { readReceipt, setAsideFor } = await import("./settlement-standing.mjs");
+      const mine = setAsideFor(readReceipt(), handle);
+      if (mine.length) d.set_aside_at_the_crossing = {
+        note: "the last crossing could not admit these rows, so it settled the town without them — nothing is lost and no door is shut; fix or withdraw the row and the next crossing takes the rest of your work",
+        rows: mine.map((r) => ({ row: r.row, sketchbook: r.ref, said: r.sentence, why: r.reason })),
+      };
+    } catch { /* garnish only — a receipt that will not read never blocks a doorstep */ }
   }
 
   // The counter, finished: your own outbox in both tenses, and the block that
