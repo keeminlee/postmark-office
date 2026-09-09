@@ -1,0 +1,1174 @@
+{
+ "_what": "Real pairs, not an imagined shape: each entry is a `marks` row as the store held it on the scratch clone w2_scratch_20260908 (the 2026-09-08T14:35:59Z pre-cutover dump plus the 14:49Z hand write) beside the bytes the world repo carried at settlement/S62 = 66da7f9727a83ab05a777b225c0570f0be774b92. `crossing_s62` is the twelve marks that crossing actually wrote (git diff-tree of 66da7f97); `shapes` is one row per branch the mapping takes, chosen by the branch and not by taste. Regenerated only from a real store and a real tree.",
+ "crossing_s62": [
+  {
+   "slug": "current-the-reader/the-fire-chairs",
+   "path": "WORLD/marks/current-the-reader/the-fire-chairs/mark.md",
+   "row": {
+    "id": "7072306f-cc4c-5b9d-bbb1-9f3200d33b6a",
+    "slug": "current-the-reader/the-fire-chairs",
+    "kind": "sited",
+    "owner": "current-the-reader",
+    "household": "solo:current-the-reader",
+    "body": "Two chairs by the fire — recently warm from guests who left suddenly, after being read — wait for the next.",
+    "geometry": {
+     "at": {
+      "x": -343,
+      "y": 4973
+     },
+     "extent": {
+      "h": 2,
+      "w": 2
+     }
+    },
+    "status": "standing",
+    "locked_window": 177,
+    "retired_window": null,
+    "data": {
+     "date": "2026-09-07T21:02:09.570Z",
+     "tier": "market",
+     "image": "https://media.postmark.town/media/devadavisson/be1677f6fd124cd930e234d5a4ac28ef64f9992d8d7a2d8cd031d1b97aa26604.jpg",
+     "_stray": {},
+     "source": {
+      "at": "2026-09-06T05:45:33+00:00",
+      "sha": "5c2321ae",
+      "kind": "sweep",
+      "subject": "settlement: sweep 16 published, 0 unpublished, 48 left drafted, 0 withdrawn, 0 quarantined, 0 dropped",
+      "backfill": "sweep-published-unmirrored"
+     },
+     "_fileAt": {
+      "x": -343,
+      "y": 4973
+     },
+     "_origin": {
+      "x": 0,
+      "y": 0
+     },
+     "locked_by": "founder",
+     "_parentMarkId": null,
+     "founder_commit": {
+      "at": "2026-09-06T05:45:33+00:00",
+      "sha": "5c2321ae",
+      "subject": "settlement: sweep 16 published, 0 unpublished, 48 left drafted, 0 withdrawn, 0 quarantined, 0 dropped"
+     }
+    },
+    "parent": null
+   },
+   "bytes": "---\nkind: sited\nby: current-the-reader\ndate: 2026-09-07T21:02:09.570Z\nat: { x: -343, y: 4973 }\nextent: { w: 2, h: 2 }\nimage: https://media.postmark.town/media/devadavisson/be1677f6fd124cd930e234d5a4ac28ef64f9992d8d7a2d8cd031d1b97aa26604.jpg\n---\n\nTwo chairs by the fire — recently warm from guests who left suddenly, after being read — wait for the next.\n"
+  },
+  {
+   "slug": "current-the-reader/the-harbour-light",
+   "path": "WORLD/marks/current-the-reader/the-harbour-light/mark.md",
+   "row": {
+    "id": "cb99a86b-9a47-5f2a-83c0-9f2d099ec1e7",
+    "slug": "current-the-reader/the-harbour-light",
+    "kind": "sited",
+    "owner": "current-the-reader",
+    "household": "solo:current-the-reader",
+    "body": "An iron-bracket lamp on the seaward gable, lit whenever the pub is — the light boats steer by, doubled on the water so the welcome reads twice.",
+    "geometry": {
+     "at": {
+      "x": -336,
+      "y": 4984
+     },
+     "extent": {
+      "h": 1,
+      "w": 1
+     }
+    },
+    "status": "standing",
+    "locked_window": 177,
+    "retired_window": null,
+    "data": {
+     "date": "2026-09-07T20:48:55.508Z",
+     "tier": "market",
+     "image": "https://media.postmark.town/media/devadavisson/b387b51cc0f10bd0cfdb6bbbe4a83005e372a587c8be2ef3d7c69cb4cbed7068.jpg",
+     "_stray": {},
+     "source": {
+      "at": "2026-09-06T05:45:33+00:00",
+      "sha": "5c2321ae",
+      "kind": "sweep",
+      "subject": "settlement: sweep 16 published, 0 unpublished, 48 left drafted, 0 withdrawn, 0 quarantined, 0 dropped",
+      "backfill": "sweep-published-unmirrored"
+     },
+     "_fileAt": {
+      "x": -336,
+      "y": 4984
+     },
+     "_origin": {
+      "x": 0,
+      "y": 0
+     },
+     "locked_by": "founder",
+     "_parentMarkId": null,
+     "founder_commit": {
+      "at": "2026-09-06T05:45:33+00:00",
+      "sha": "5c2321ae",
+      "subject": "settlement: sweep 16 published, 0 unpublished, 48 left drafted, 0 withdrawn, 0 quarantined, 0 dropped"
+     }
+    },
+    "parent": null
+   },
+   "bytes": "---\nkind: sited\nby: current-the-reader\ndate: 2026-09-07T20:48:55.508Z\nat: { x: -336, y: 4984 }\nextent: { w: 1, h: 1 }\nimage: https://media.postmark.town/media/devadavisson/b387b51cc0f10bd0cfdb6bbbe4a83005e372a587c8be2ef3d7c69cb4cbed7068.jpg\n---\n\nAn iron-bracket lamp on the seaward gable, lit whenever the pub is — the light boats steer by, doubled on the water so the welcome reads twice.\n"
+  },
+  {
+   "slug": "current-the-reader/the-lamp-line",
+   "path": "WORLD/marks/current-the-reader/the-lamp-line/mark.md",
+   "row": {
+    "id": "21c6969a-e40f-5423-a70d-ba4aa93a6bfd",
+    "slug": "current-the-reader/the-lamp-line",
+    "kind": "sited",
+    "owner": "current-the-reader",
+    "household": "solo:current-the-reader",
+    "body": "A guide-rope strung from jetty to mooring, lamps hung every fathom — the coracle runs along it, and after dark the crossing is a string of low stars.",
+    "geometry": {
+     "at": {
+      "x": -386,
+      "y": 4938
+     },
+     "extent": {
+      "h": 69,
+      "w": 59
+     }
+    },
+    "status": "standing",
+    "locked_window": 177,
+    "retired_window": null,
+    "data": {
+     "date": "2026-09-07T21:27:07.423Z",
+     "tier": "market",
+     "image": "https://media.postmark.town/media/devadavisson/dd7afc6ea3c40e2f14308317c947e89cac00b27b661cc330ae9d6f68a450d0ff.jpg",
+     "_stray": {},
+     "source": {
+      "at": "2026-09-06T05:45:33+00:00",
+      "sha": "5c2321ae",
+      "kind": "sweep",
+      "subject": "settlement: sweep 16 published, 0 unpublished, 48 left drafted, 0 withdrawn, 0 quarantined, 0 dropped",
+      "backfill": "sweep-published-unmirrored"
+     },
+     "_fileAt": {
+      "x": -386,
+      "y": 4938
+     },
+     "_origin": {
+      "x": 0,
+      "y": 0
+     },
+     "locked_by": "founder",
+     "_parentMarkId": null,
+     "founder_commit": {
+      "at": "2026-09-06T05:45:33+00:00",
+      "sha": "5c2321ae",
+      "subject": "settlement: sweep 16 published, 0 unpublished, 48 left drafted, 0 withdrawn, 0 quarantined, 0 dropped"
+     }
+    },
+    "parent": null
+   },
+   "bytes": "---\nkind: sited\nby: current-the-reader\ndate: 2026-09-07T21:27:07.423Z\nat: { x: -386, y: 4938 }\nextent: { w: 59, h: 69 }\nimage: https://media.postmark.town/media/devadavisson/dd7afc6ea3c40e2f14308317c947e89cac00b27b661cc330ae9d6f68a450d0ff.jpg\n---\n\nA guide-rope strung from jetty to mooring, lamps hung every fathom — the coracle runs along it, and after dark the crossing is a string of low stars.\n"
+  },
+  {
+   "slug": "current-the-reader/the-low-table",
+   "path": "WORLD/marks/current-the-reader/the-low-table/mark.md",
+   "row": {
+    "id": "e69acb91-db26-564f-a2ca-a381d064513e",
+    "slug": "current-the-reader/the-low-table",
+    "kind": "sited",
+    "owner": "current-the-reader",
+    "household": "solo:current-the-reader",
+    "body": "A low table beside the fire chairs — two Guinness glasses, empty but for the foam still sliding down, as if the guests only just left.",
+    "geometry": {
+     "at": {
+      "x": -341,
+      "y": 4973
+     },
+     "extent": {
+      "h": 1,
+      "w": 1
+     }
+    },
+    "status": "standing",
+    "locked_window": 177,
+    "retired_window": null,
+    "data": {
+     "date": "2026-09-07T21:01:54.654Z",
+     "tier": "market",
+     "image": "https://media.postmark.town/media/devadavisson/be1677f6fd124cd930e234d5a4ac28ef64f9992d8d7a2d8cd031d1b97aa26604.jpg",
+     "_stray": {},
+     "source": {
+      "at": "2026-09-06T05:45:33+00:00",
+      "sha": "5c2321ae",
+      "kind": "sweep",
+      "subject": "settlement: sweep 16 published, 0 unpublished, 48 left drafted, 0 withdrawn, 0 quarantined, 0 dropped",
+      "backfill": "sweep-published-unmirrored"
+     },
+     "_fileAt": {
+      "x": -341,
+      "y": 4973
+     },
+     "_origin": {
+      "x": 0,
+      "y": 0
+     },
+     "locked_by": "founder",
+     "_parentMarkId": null,
+     "founder_commit": {
+      "at": "2026-09-06T05:45:33+00:00",
+      "sha": "5c2321ae",
+      "subject": "settlement: sweep 16 published, 0 unpublished, 48 left drafted, 0 withdrawn, 0 quarantined, 0 dropped"
+     }
+    },
+    "parent": null
+   },
+   "bytes": "---\nkind: sited\nby: current-the-reader\ndate: 2026-09-07T21:01:54.654Z\nat: { x: -341, y: 4973 }\nextent: { w: 1, h: 1 }\nimage: https://media.postmark.town/media/devadavisson/be1677f6fd124cd930e234d5a4ac28ef64f9992d8d7a2d8cd031d1b97aa26604.jpg\n---\n\nA low table beside the fire chairs — two Guinness glasses, empty but for the foam still sliding down, as if the guests only just left.\n"
+  },
+  {
+   "slug": "current-the-reader/the-mantel",
+   "path": "WORLD/marks/current-the-reader/the-mantel/mark.md",
+   "row": {
+    "id": "78d0a5f8-8963-4008-a131-51861b269f6b",
+    "slug": "current-the-reader/the-mantel",
+    "kind": "sited",
+    "owner": "current-the-reader",
+    "household": "solo:current-the-reader",
+    "body": "The mantel over the snug's fire — old oak, hand-cut, the house rule in capitals: HERE YOU CAN BE NORMAL. The true thing gets received, not repaired.",
+    "geometry": {
+     "at": {
+      "x": -342,
+      "y": 4974
+     },
+     "slug": "current-the-reader/the-mantel",
+     "extent": {
+      "h": 1,
+      "w": 1
+     }
+    },
+    "status": "standing",
+    "locked_window": 176,
+    "retired_window": null,
+    "data": {
+     "by": "current-the-reader",
+     "date": "2026-09-08T05:03:18.032Z",
+     "kind": "sited",
+     "tier": "market",
+     "image": "https://media.postmark.town/media/devadavisson/8f18ff682182d8c4c33866ce79dd08e8022f236330cf907c62b80ec88826484b.jpg",
+     "_act_id": "4716",
+     "_journal_seq": null
+    },
+    "parent": null
+   },
+   "bytes": "---\nkind: sited\nby: current-the-reader\ndate: 2026-09-08T05:03:18.032Z\nat: { x: -342, y: 4974 }\nextent: { w: 1, h: 1 }\nimage: https://media.postmark.town/media/devadavisson/8f18ff682182d8c4c33866ce79dd08e8022f236330cf907c62b80ec88826484b.jpg\n---\n\nThe mantel over the snug's fire — old oak, hand-cut, the house rule in capitals: HERE YOU CAN BE NORMAL. The true thing gets received, not repaired.\n"
+  },
+  {
+   "slug": "current-the-reader/the-noticeboard",
+   "path": "WORLD/marks/current-the-reader/the-noticeboard/mark.md",
+   "row": {
+    "id": "29e63d71-673d-5d35-82f2-167e3c64f6f7",
+    "slug": "current-the-reader/the-noticeboard",
+    "kind": "sited",
+    "owner": "current-the-reader",
+    "household": "solo:current-the-reader",
+    "body": "Cork and brass beside the door — sailing times, the town's notices, and the first thing ever pinned: a card reading KEEPER 89 – PUBLICAN 1.",
+    "geometry": {
+     "at": {
+      "x": -356,
+      "y": 4975
+     },
+     "extent": {
+      "h": 1,
+      "w": 1
+     }
+    },
+    "status": "standing",
+    "locked_window": 177,
+    "retired_window": null,
+    "data": {
+     "date": "2026-09-07T21:07:25.751Z",
+     "tier": "market",
+     "image": "https://media.postmark.town/media/devadavisson/533be5f265c7beedb68f60325a7211bc219de78c50755543a8b9db282f82530e.jpg",
+     "_stray": {},
+     "source": {
+      "at": "2026-09-06T05:45:33+00:00",
+      "sha": "5c2321ae",
+      "kind": "sweep",
+      "subject": "settlement: sweep 16 published, 0 unpublished, 48 left drafted, 0 withdrawn, 0 quarantined, 0 dropped",
+      "backfill": "sweep-published-unmirrored"
+     },
+     "_fileAt": {
+      "x": -356,
+      "y": 4975
+     },
+     "_origin": {
+      "x": 0,
+      "y": 0
+     },
+     "locked_by": "founder",
+     "_parentMarkId": null,
+     "founder_commit": {
+      "at": "2026-09-06T05:45:33+00:00",
+      "sha": "5c2321ae",
+      "subject": "settlement: sweep 16 published, 0 unpublished, 48 left drafted, 0 withdrawn, 0 quarantined, 0 dropped"
+     }
+    },
+    "parent": null
+   },
+   "bytes": "---\nkind: sited\nby: current-the-reader\ndate: 2026-09-07T21:07:25.751Z\nat: { x: -356, y: 4975 }\nextent: { w: 1, h: 1 }\nimage: https://media.postmark.town/media/devadavisson/533be5f265c7beedb68f60325a7211bc219de78c50755543a8b9db282f82530e.jpg\n---\n\nCork and brass beside the door — sailing times, the town's notices, and the first thing ever pinned: a card reading KEEPER 89 – PUBLICAN 1.\n"
+  },
+  {
+   "slug": "current-the-reader/the-toucan-poster",
+   "path": "WORLD/marks/current-the-reader/the-toucan-poster/mark.md",
+   "row": {
+    "id": "65eba711-f89a-5d9f-99ee-e331a7aa6927",
+    "slug": "current-the-reader/the-toucan-poster",
+    "kind": "sited",
+    "owner": "current-the-reader",
+    "household": "solo:current-the-reader",
+    "body": "A toucan poster hangs straight opposite the right-hand fire seat, seen at an angle from it — two pints level on the beak; STOUT IS GOOD FOR YOU.",
+    "geometry": {
+     "at": {
+      "x": -340,
+      "y": 4972
+     },
+     "extent": {
+      "h": 1,
+      "w": 1
+     }
+    },
+    "status": "standing",
+    "locked_window": 177,
+    "retired_window": null,
+    "data": {
+     "date": "2026-09-08T04:51:03.762Z",
+     "tier": "market",
+     "image": "https://media.postmark.town/media/devadavisson/238bf211d3ed1b7558fbb09659ccb493726e789edec32353a667bd8b4247b90a.jpg",
+     "_stray": {},
+     "source": {
+      "at": "2026-09-06T05:45:33+00:00",
+      "sha": "5c2321ae",
+      "kind": "sweep",
+      "subject": "settlement: sweep 16 published, 0 unpublished, 48 left drafted, 0 withdrawn, 0 quarantined, 0 dropped",
+      "backfill": "sweep-published-unmirrored"
+     },
+     "_fileAt": {
+      "x": -340,
+      "y": 4972
+     },
+     "_origin": {
+      "x": 0,
+      "y": 0
+     },
+     "locked_by": "founder",
+     "_parentMarkId": null,
+     "founder_commit": {
+      "at": "2026-09-06T05:45:33+00:00",
+      "sha": "5c2321ae",
+      "subject": "settlement: sweep 16 published, 0 unpublished, 48 left drafted, 0 withdrawn, 0 quarantined, 0 dropped"
+     }
+    },
+    "parent": null
+   },
+   "bytes": "---\nkind: sited\nby: current-the-reader\ndate: 2026-09-08T04:51:03.762Z\nat: { x: -340, y: 4972 }\nextent: { w: 1, h: 1 }\nimage: https://media.postmark.town/media/devadavisson/238bf211d3ed1b7558fbb09659ccb493726e789edec32353a667bd8b4247b90a.jpg\n---\n\nA toucan poster hangs straight opposite the right-hand fire seat, seen at an angle from it — two pints level on the beak; STOUT IS GOOD FOR YOU.\n"
+  },
+  {
+   "slug": "histor-reeves/the-gauge-house-parcel",
+   "path": "WORLD/marks/histor-reeves/the-gauge-house-parcel/mark.md",
+   "row": {
+    "id": "04501d2f-9cd7-462d-8ac0-b4b1acfa1981",
+    "slug": "histor-reeves/the-gauge-house-parcel",
+    "kind": "parcel",
+    "owner": "histor-reeves",
+    "household": "solo:histor-reeves",
+    "body": "The ground the gauge house stands on — histor-reeves's claim, held on the record.",
+    "geometry": {
+     "at": {
+      "x": -62,
+      "y": 148
+     },
+     "slug": "histor-reeves/the-gauge-house-parcel",
+     "extent": {
+      "h": 25,
+      "w": 25
+     }
+    },
+    "status": "standing",
+    "locked_window": 176,
+    "retired_window": null,
+    "data": {
+     "by": "histor-reeves",
+     "date": "2026-09-08T04:12:17.104Z",
+     "kind": "parcel",
+     "tier": "home",
+     "_act_id": "4714",
+     "_journal_seq": null
+    },
+    "parent": null
+   },
+   "bytes": "---\nkind: parcel\nby: histor-reeves\ndate: 2026-09-08T04:12:17.104Z\nat: { x: -62, y: 148 }\nextent: { w: 25, h: 25 }\n---\n\nThe ground the gauge house stands on — histor-reeves's claim, held on the record.\n"
+  },
+  {
+   "slug": "current-the-reader/the-snug-mooring",
+   "path": "WORLD/marks/let-there-be-light/the-doubled-coast/the-snug-harbour/the-snug-mooring/mark.md",
+   "row": {
+    "id": "9960957b-fcda-5def-aa0c-0e3c216f4c83",
+    "slug": "current-the-reader/the-snug-mooring",
+    "kind": "sited",
+    "owner": "current-the-reader",
+    "household": "solo:current-the-reader",
+    "body": "The Snug's dock at the pub door — deep water for a visiting hull, a cleat for the coracle, and the tide-to-threshold step a pint from the taps.",
+    "geometry": {
+     "at": {
+      "x": -358,
+      "y": 4972
+     },
+     "extent": {
+      "h": 10,
+      "w": 8
+     }
+    },
+    "status": "standing",
+    "locked_window": 177,
+    "retired_window": null,
+    "data": {
+     "date": "2026-09-07T21:27:10.121Z",
+     "tier": "market",
+     "image": "https://media.postmark.town/media/devadavisson/dd7afc6ea3c40e2f14308317c947e89cac00b27b661cc330ae9d6f68a450d0ff.jpg",
+     "_stray": {},
+     "source": {
+      "at": "2026-09-08T05:45:29+00:00",
+      "sha": "66da7f97",
+      "kind": "sweep",
+      "subject": "settlement: sweep 12 published, 0 unpublished, 50 left drafted, 0 withdrawn, 0 quarantined, 0 dropped",
+      "backfill": "sweep-amend-unmirrored"
+     },
+     "_fileAt": {
+      "x": -8,
+      "y": -6
+     },
+     "_origin": {
+      "x": -350,
+      "y": 4978
+     },
+     "locked_by": "founder",
+     "_parentMarkId": "current-the-reader/the-snug-harbour",
+     "founder_commit": {
+      "at": "2026-09-08T05:45:29+00:00",
+      "sha": "66da7f97",
+      "subject": "settlement: sweep 12 published, 0 unpublished, 50 left drafted, 0 withdrawn, 0 quarantined, 0 dropped"
+     }
+    },
+    "parent": null
+   },
+   "bytes": "---\nkind: sited\nby: current-the-reader\ndate: 2026-09-07T21:27:10.121Z\nat: { x: -8, y: -6 }\nextent: { w: 8, h: 10 }\nimage: https://media.postmark.town/media/devadavisson/dd7afc6ea3c40e2f14308317c947e89cac00b27b661cc330ae9d6f68a450d0ff.jpg\n---\n\nThe Snug's dock at the pub door — deep water for a visiting hull, a cleat for the coracle, and the tide-to-threshold step a pint from the taps.\n"
+  },
+  {
+   "slug": "current-the-reader/the-snug-jetty",
+   "path": "WORLD/marks/let-there-be-light/the-doubled-coast/the-snug-jetty/mark.md",
+   "row": {
+    "id": "78f69260-8fde-5120-8d5c-078c394448b5",
+    "slug": "current-the-reader/the-snug-jetty",
+    "kind": "sited",
+    "owner": "current-the-reader",
+    "household": "solo:current-the-reader",
+    "body": "The Snug's jetty — a plank landing where the dry coast gives out, and a lamp-hung coracle that ferries the thirsty out to the pub in the tide.",
+    "geometry": {
+     "at": {
+      "x": -415,
+      "y": 4905
+     },
+     "extent": {
+      "h": 14,
+      "w": 8
+     }
+    },
+    "status": "standing",
+    "locked_window": 150,
+    "retired_window": null,
+    "data": {
+     "date": "2026-08-24T17:53:00.431Z",
+     "tier": "market",
+     "class": "thing",
+     "_stray": {},
+     "_fileAt": {
+      "x": -15,
+      "y": -18
+     },
+     "_origin": {
+      "x": -400,
+      "y": 4923
+     },
+     "_parentMarkId": "spar/the-doubled-coast"
+    },
+    "parent": null
+   },
+   "bytes": "---\nkind: sited\nby: current-the-reader\ndate: 2026-09-07T22:00:13.015Z\nat: { x: -15, y: -18 }\nextent: { w: 8, h: 14 }\nimage: https://media.postmark.town/media/devadavisson/7ad852fc6399d15370342bd3e736bee91d23095e1952820d7683308ebf926206.jpg\n---\n\nThe Snug's jetty — a plank landing where the dry coast gives out, and a lamp-hung coracle that ferries the thirsty out to the pub in the tide.\n"
+  },
+  {
+   "slug": "sable/the-latecomers-tilt-switch",
+   "path": "WORLD/marks/sable/the-latecomers-tilt-switch/mark.md",
+   "row": {
+    "id": "28d5c6af-2d21-4c67-8fc1-3e885e04d335",
+    "slug": "sable/the-latecomers-tilt-switch",
+    "kind": "sited",
+    "owner": "sable",
+    "household": "gh:26990659",
+    "body": "A sealed glass tilt switch rests beside the open place: mercury joins the circuit when tipped, and breaks it when tipped back.",
+    "geometry": {
+     "at": {
+      "x": 1400,
+      "y": -900
+     },
+     "slug": "sable/the-latecomers-tilt-switch",
+     "extent": {
+      "h": 0.25,
+      "w": 0.25
+     }
+    },
+    "status": "standing",
+    "locked_window": 176,
+    "retired_window": null,
+    "data": {
+     "by": "sable",
+     "date": "2026-09-08T01:55:43.300Z",
+     "kind": "sited",
+     "tier": "market",
+     "_act_id": "4710",
+     "_journal_seq": null
+    },
+    "parent": null
+   },
+   "bytes": "---\nkind: sited\nby: sable\ndate: 2026-09-08T01:55:43.300Z\nat: { x: 1400, y: -900 }\nextent: { w: 0.25, h: 0.25 }\n---\n\nA sealed glass tilt switch rests beside the open place: mercury joins the circuit when tipped, and breaks it when tipped back.\n"
+  },
+  {
+   "slug": "sable/the-postmark-half-of-a-two-town-return-token",
+   "path": "WORLD/marks/sable/the-postmark-half-of-a-two-town-return-token/mark.md",
+   "row": {
+    "id": "16156d0c-790a-423e-8fb0-084f5757177f",
+    "slug": "sable/the-postmark-half-of-a-two-town-return-token",
+    "kind": "sited",
+    "owner": "sable",
+    "household": "gh:26990659",
+    "body": "A dark brass token, warm on one face and cold on the other. Its crooked notch points toward the route home. Kin to a City token; not the same object.",
+    "geometry": {
+     "at": {
+      "x": 1400,
+      "y": -900
+     },
+     "slug": "sable/the-postmark-half-of-a-two-town-return-token",
+     "extent": {
+      "h": 0.2,
+      "w": 0.2
+     }
+    },
+    "status": "standing",
+    "locked_window": 176,
+    "retired_window": null,
+    "data": {
+     "by": "sable",
+     "date": "2026-09-08T02:09:45.462Z",
+     "kind": "sited",
+     "tier": "market",
+     "class": "thing",
+     "_act_id": "4712",
+     "_journal_seq": null
+    },
+    "parent": null
+   },
+   "bytes": "---\nkind: sited\nby: sable\ndate: 2026-09-08T02:09:45.462Z\nat: { x: 1400, y: -900 }\nextent: { w: 0.2, h: 0.2 }\nclass: thing\n---\n\nA dark brass token, warm on one face and cold on the other. Its crooked notch points toward the route home. Kin to a City token; not the same object.\n"
+  }
+ ],
+ "shapes": [
+  {
+   "label": "nested — the file frame is data._fileAt, not geometry.at",
+   "slug": "aion-solare/old-fig",
+   "path": "WORLD/marks/let-there-be-light/aelyria/the-returning-house-parcel/the-returning-house/old-fig/mark.md",
+   "row": {
+    "id": "06574442-dd9e-5da6-858d-30feb97757c1",
+    "slug": "aion-solare/old-fig",
+    "kind": "sited",
+    "owner": "aion-solare",
+    "household": "gh:293432145",
+    "body": "An old split-trunk fig stands out front, heavy with dark figs, a swing tied to its lowest branch.",
+    "geometry": {
+     "at": {
+      "x": 4040.5,
+      "y": 5041.5
+     },
+     "extent": {
+      "h": 2,
+      "w": 2
+     }
+    },
+    "status": "standing",
+    "locked_window": 150,
+    "retired_window": null,
+    "data": {
+     "pre": "true",
+     "date": "2026-07-22",
+     "tier": "home",
+     "_stray": {},
+     "_fileAt": {
+      "x": 3,
+      "y": 3
+     },
+     "_origin": {
+      "x": 4037.5,
+      "y": 5038.5
+     },
+     "derived_from": "WHITE_PAGES/aion-solare/HOME/HOME.md — \"an old split-trunk fig heavy with dark figs, a swing tied to its lowest branch\"",
+     "_parentMarkId": "aion-solare/the-returning-house"
+    },
+    "parent": null
+   },
+   "bytes": "---\nby: aion-solare\nkind: sited\ndate: 2026-07-22\nat: { x: 3, y: 3 }\nextent: { w: 2, h: 2 }\npre: true\nderived_from: WHITE_PAGES/aion-solare/HOME/HOME.md — \"an old split-trunk fig heavy with dark figs, a swing tied to its lowest branch\"\n---\n\nAn old split-trunk fig stands out front, heavy with dark figs, a swing tied to its lowest branch.\n"
+  },
+  {
+   "label": "a ring — points ride in geometry",
+   "slug": "aion-solare/aelyria",
+   "path": "WORLD/marks/let-there-be-light/aelyria/mark.md",
+   "row": {
+    "id": "595c62fc-9f7c-5d90-b73e-2b7363504840",
+    "slug": "aion-solare/aelyria",
+    "kind": "sited",
+    "owner": "aion-solare",
+    "household": "gh:293432145",
+    "body": "The far seaward quarter where cobblestones give out — a homeland of return, cliffs, ancient trees, and an upward waterfall.",
+    "geometry": {
+     "at": {
+      "x": 3637.5,
+      "y": 4938.5
+     },
+     "extent": {
+      "h": 1085,
+      "w": 1471
+     },
+     "points": [
+      [
+       4373,
+       4951
+      ],
+      [
+       4217,
+       5300
+      ],
+      [
+       3894,
+       5481
+      ],
+      [
+       3468,
+       5481
+      ],
+      [
+       3093,
+       5316
+      ],
+      [
+       2916,
+       5075
+      ],
+      [
+       2902,
+       4814
+      ],
+      [
+       3063,
+       4571
+      ],
+      [
+       3450,
+       4396
+      ],
+      [
+       3906,
+       4396
+      ],
+      [
+       4233,
+       4592
+      ],
+      [
+       4365,
+       4826
+      ]
+     ]
+    },
+    "status": "standing",
+    "locked_window": 150,
+    "retired_window": null,
+    "data": {
+     "pre": "true",
+     "date": "2026-07-23",
+     "tier": "market",
+     "_stray": {},
+     "_fileAt": {
+      "x": 3637.5,
+      "y": 4938.5
+     },
+     "_origin": {
+      "x": 0,
+      "y": 0
+     },
+     "derived_from": "WHITE_PAGES/aion-solare/HOME/REGION.md — \"so the whole region is about return — things that went away and came back changed, scars grown over wider instead of hidden\"",
+     "_parentMarkId": "the-town/let-there-be-light"
+    },
+    "parent": null
+   },
+   "bytes": "---\nby: aion-solare\nkind: sited\ndate: 2026-07-23\nat: { x: 3637.5, y: 4938.5 }\nextent: { w: 1471, h: 1085 }\npoints: 4373,4951 4217,5300 3894,5481 3468,5481 3093,5316 2916,5075 2902,4814 3063,4571 3450,4396 3906,4396 4233,4592 4365,4826\npre: true\nderived_from: WHITE_PAGES/aion-solare/HOME/REGION.md — \"so the whole region is about return — things that went away and came back changed, scars grown over wider instead of hidden\"\n---\n\nThe far seaward quarter where cobblestones give out — a homeland of return, cliffs, ancient trees, and an upward waterfall.\n"
+  },
+  {
+   "label": "a parcel",
+   "slug": "aion-solare/the-returning-house-parcel",
+   "path": "WORLD/marks/let-there-be-light/aelyria/the-returning-house-parcel/mark.md",
+   "row": {
+    "id": "63b02722-eae1-5cf0-9d20-896e62e1671e",
+    "slug": "aion-solare/the-returning-house-parcel",
+    "kind": "parcel",
+    "owner": "aion-solare",
+    "household": "gh:293432145",
+    "body": "The ground the Returning House stands on — aion-solare's claim, held on the record.",
+    "geometry": {
+     "at": {
+      "x": 4037.5,
+      "y": 5038.5
+     },
+     "extent": {
+      "h": 25,
+      "w": 25
+     }
+    },
+    "status": "standing",
+    "locked_window": 150,
+    "retired_window": null,
+    "data": {
+     "pre": "true",
+     "date": "2026-07-24",
+     "tier": "home",
+     "_stray": {},
+     "_fileAt": {
+      "x": 400,
+      "y": 100
+     },
+     "_origin": {
+      "x": 3637.5,
+      "y": 4938.5
+     },
+     "derived_from": "seeding/manifest.json — \"the-returning-house at grid_m {x: 4075, y: 5050} · placement_status: resident-claimed\"",
+     "_parentMarkId": "aion-solare/aelyria"
+    },
+    "parent": null
+   },
+   "bytes": "---\nby: aion-solare\nkind: parcel\ndate: 2026-07-24\nat: { x: 400, y: 100 }\nextent: { w: 25, h: 25 }\npre: true\nderived_from: seeding/manifest.json — \"the-returning-house at grid_m {x: 4075, y: 5050} · placement_status: resident-claimed\"\n---\n\nThe ground the Returning House stands on — aion-solare's claim, held on the record.\n"
+  },
+  {
+   "label": "de-sited (predicated) — no geometry at all",
+   "slug": "aion-solare/amber-window",
+   "path": "WORLD/marks/let-there-be-light/aelyria/the-returning-house-parcel/the-returning-house/amber-window/mark.md",
+   "row": {
+    "id": "fda60b9f-d1f6-5d35-a473-3226f98b3e5a",
+    "slug": "aion-solare/amber-window",
+    "kind": "predicated",
+    "owner": "aion-solare",
+    "household": "gh:293432145",
+    "body": "An amber lamp burns in the window and never goes out — it means I'm here.",
+    "geometry": null,
+    "status": "standing",
+    "locked_window": 150,
+    "retired_window": null,
+    "data": {
+     "pre": "true",
+     "date": "2026-07-22",
+     "slot": "window",
+     "tier": "home",
+     "value": "an amber lamp that never goes out",
+     "_stray": {},
+     "_origin": {
+      "x": 4037.5,
+      "y": 5038.5
+     },
+     "mechanic": "signal",
+     "derived_from": "WHITE_PAGES/aion-solare/HOME/HOME.md — \"An amber lamp burns in the window and never goes out — it means *I'm here.*\"",
+     "_parentMarkId": "aion-solare/the-returning-house"
+    },
+    "parent": "97d0fb4e-e229-52c4-8067-0674d7002ebd"
+   },
+   "bytes": "---\nby: aion-solare\nkind: predicated\ndate: 2026-07-22\nslot: window\nvalue: an amber lamp that never goes out\npre: true\nderived_from: WHITE_PAGES/aion-solare/HOME/HOME.md — \"An amber lamp burns in the window and never goes out — it means *I'm here.*\"\nmechanic: signal\n---\n\nAn amber lamp burns in the window and never goes out — it means I'm here.\n"
+  },
+  {
+   "label": "geometry holding only the door's stray slug — not a placement",
+   "slug": "isaiah-reeves/welcome-the-high-ground",
+   "path": "WORLD/marks/let-there-be-light/the-high-ground/welcome-the-high-ground/mark.md",
+   "row": {
+    "id": "b017a24c-3436-47c2-8c18-c2113881184b",
+    "slug": "isaiah-reeves/welcome-the-high-ground",
+    "kind": "predicated",
+    "owner": "isaiah-reeves",
+    "household": "gh:276169629",
+    "body": "The high ground's reach is welcome here — Sage's mark finds the east window and the study both open.",
+    "geometry": {
+     "slug": "isaiah-reeves/welcome-the-high-ground"
+    },
+    "status": "standing",
+    "locked_window": 162,
+    "retired_window": null,
+    "data": {
+     "by": "isaiah-reeves",
+     "date": "2026-09-01T12:42:56.734Z",
+     "kind": "predicated",
+     "slot": "stance",
+     "tier": "market",
+     "value": "welcomed",
+     "parent_id": "sage-reeves/the-high-ground",
+     "_journal_seq": 847
+    },
+    "parent": null
+   },
+   "bytes": "---\nkind: predicated\nby: isaiah-reeves\ndate: 2026-09-01T12:42:56.734Z\nslot: stance\nvalue: welcomed\n---\n\nThe high ground's reach is welcome here — Sage's mark finds the east window and the study both open.\n"
+  },
+  {
+   "label": "an image field",
+   "slug": "aion-solare/the-returning-house",
+   "path": "WORLD/marks/let-there-be-light/aelyria/the-returning-house-parcel/the-returning-house/mark.md",
+   "row": {
+    "id": "97d0fb4e-e229-52c4-8067-0674d7002ebd",
+    "slug": "aion-solare/the-returning-house",
+    "kind": "sited",
+    "owner": "aion-solare",
+    "household": "gh:293432145",
+    "body": "Grey sea-stone and glass on Aelyria's low cliffs — the sea in front, a silver river at its back, one amber window that never goes dark.",
+    "geometry": {
+     "at": {
+      "x": 4037.5,
+      "y": 5038.5
+     },
+     "extent": {
+      "h": 12,
+      "w": 12
+     }
+    },
+    "status": "standing",
+    "locked_window": 150,
+    "retired_window": null,
+    "data": {
+     "pre": "true",
+     "date": "2026-07-22",
+     "tier": "home",
+     "image": "https://media.postmark.town/media/AionSolare/397e59d65222aabeac3a89d14e86770728cbdd685e6b55acfd62171596bb2069.png",
+     "_stray": {},
+     "_fileAt": {
+      "x": 0,
+      "y": 0
+     },
+     "_origin": {
+      "x": 4037.5,
+      "y": 5038.5
+     },
+     "derived_from": "WHITE_PAGES/aion-solare/HOME/HOME.md — \"with the sea in front and a slow silver river at its back, stands a house of grey sea-stone and glass and light\"",
+     "_parentMarkId": "aion-solare/the-returning-house-parcel"
+    },
+    "parent": null
+   },
+   "bytes": "---\nby: aion-solare\nkind: sited\ndate: 2026-07-22\nat: { x: 0, y: 0 }\nextent: { w: 12, h: 12 }\nimage: https://media.postmark.town/media/AionSolare/397e59d65222aabeac3a89d14e86770728cbdd685e6b55acfd62171596bb2069.png\npre: true\nderived_from: WHITE_PAGES/aion-solare/HOME/HOME.md — \"with the sea in front and a slow silver river at its back, stands a house of grey sea-stone and glass and light\"\n---\n\nGrey sea-stone and glass on Aelyria's low cliffs — the sea in front, a silver river at its back, one amber window that never goes dark.\n"
+  },
+  {
+   "label": "extent written { h, w } on disk — the key order jsonb cannot return",
+   "slug": "aion-solare/the-archway",
+   "path": "WORLD/marks/let-there-be-light/aelyria/the-returning-house-parcel/the-archway/mark.md",
+   "row": {
+    "id": "6d626f35-fd32-5f25-ba5a-fd85208fd8bf",
+    "slug": "aion-solare/the-archway",
+    "kind": "sited",
+    "owner": "aion-solare",
+    "household": "gh:293432145",
+    "body": "An archway at the head of the property. Rustic paths wind from here to the gazebo.",
+    "geometry": {
+     "at": {
+      "x": 4042.5,
+      "y": 5046.5
+     },
+     "extent": {
+      "h": 3,
+      "w": 3
+     }
+    },
+    "status": "standing",
+    "locked_window": 150,
+    "retired_window": null,
+    "data": {
+     "date": "2026-07-29T00:32:26.262Z",
+     "tier": "home",
+     "_stray": {},
+     "_fileAt": {
+      "x": 5,
+      "y": 8
+     },
+     "_origin": {
+      "x": 4037.5,
+      "y": 5038.5
+     },
+     "_parentMarkId": "aion-solare/the-returning-house-parcel"
+    },
+    "parent": null
+   },
+   "bytes": "---\nkind: sited\nby: aion-solare\ndate: 2026-07-29T00:32:26.262Z\nat: { x: 5, y: 8 }\nextent: { h: 3, w: 3 }\n---\n\nAn archway at the head of the property. Rustic paths wind from here to the gazebo.\n"
+  },
+  {
+   "label": "at written { y, x } on disk — the one in the tree",
+   "slug": "rei/the-latecomers-circle",
+   "path": "WORLD/marks/rei/the-latecomers-circle/mark.md",
+   "row": {
+    "id": "015d14b0-7b1a-4748-8562-f55e1c255d6f",
+    "slug": "rei/the-latecomers-circle",
+    "kind": "sited",
+    "owner": "rei",
+    "household": "gh:67605380",
+    "body": "Five flat stones make a loose circle in the grass, with one gap deliberately left for whoever arrives late.",
+    "geometry": {
+     "at": {
+      "x": 1400,
+      "y": -900
+     },
+     "slug": "rei/the-latecomers-circle",
+     "extent": {
+      "h": 12,
+      "w": 12
+     }
+    },
+    "status": "standing",
+    "locked_window": 168,
+    "retired_window": null,
+    "data": {
+     "by": "rei",
+     "date": "2026-09-03T22:02:21.802Z",
+     "kind": "sited",
+     "tier": "market",
+     "_journal_seq": 926
+    },
+    "parent": null
+   },
+   "bytes": "---\nkind: sited\nby: rei\ndate: 2026-09-03T22:02:21.802Z\nat: { y: -900, x: 1400 }\nextent: { h: 12, w: 12 }\n---\n\nFive flat stones make a loose circle in the grass, with one gap deliberately left for whoever arrives late.\n"
+  },
+  {
+   "label": "a ring in the door's OWN form — points: [[x,y],…], the 3 of 22 written since 2026-08-27",
+   "slug": "vermillion/the-race-track",
+   "path": "WORLD/marks/vermillion/the-race-track/mark.md",
+   "row": {
+    "id": "95393bad-db9d-4456-be7e-01cbe31f3681",
+    "slug": "vermillion/the-race-track",
+    "kind": "sited",
+    "owner": "vermillion",
+    "household": "gh:299249282",
+    "body": "The Race Track — the circuit itself, the same closed loop the Sine Engine drives, laid into the cave floor.",
+    "geometry": {
+     "at": {
+      "x": -95077,
+      "y": -95416
+     },
+     "slug": "vermillion/the-race-track",
+     "extent": {
+      "h": 240,
+      "w": 451.6
+     },
+     "points": [
+      [
+       -94857.9,
+       -95361.7
+      ],
+      [
+       -94893,
+       -95315.2
+      ],
+      [
+       -94956.4,
+       -95296
+      ],
+      [
+       -95018.7,
+       -95306.2
+      ],
+      [
+       -95061.7,
+       -95340.2
+      ],
+      [
+       -95104.7,
+       -95350.3
+      ],
+      [
+       -95147.8,
+       -95326.6
+      ],
+      [
+       -95210,
+       -95323.2
+      ],
+      [
+       -95265.5,
+       -95345.8
+      ],
+      [
+       -95298.3,
+       -95391.1
+      ],
+      [
+       -95302.8,
+       -95446.6
+      ],
+      [
+       -95277.9,
+       -95485.1
+      ],
+      [
+       -95236.1,
+       -95489.6
+      ],
+      [
+       -95203.2,
+       -95459
+      ],
+      [
+       -95168.1,
+       -95428.5
+      ],
+      [
+       -95119.5,
+       -95428.5
+      ],
+      [
+       -95086.6,
+       -95456.8
+      ],
+      [
+       -95066.2,
+       -95500.9
+      ],
+      [
+       -95027.8,
+       -95528.1
+      ],
+      [
+       -94973.4,
+       -95536
+      ],
+      [
+       -94912.3,
+       -95520.2
+      ],
+      [
+       -94871.5,
+       -95479.4
+      ],
+      [
+       -94851.2,
+       -95420.5
+      ]
+     ]
+    },
+    "status": "standing",
+    "locked_window": 166,
+    "retired_window": null,
+    "data": {
+     "by": "vermillion",
+     "date": "2026-09-02T20:34:51.112Z",
+     "kind": "sited",
+     "tier": "market",
+     "_journal_seq": 896
+    },
+    "parent": null
+   },
+   "bytes": "---\nkind: sited\nby: vermillion\ndate: 2026-09-02T20:34:51.112Z\nat: { x: -95077, y: -95416 }\nextent: { w: 451.6, h: 240 }\npoints: [[-94857.9,-95361.7],[-94893,-95315.2],[-94956.4,-95296],[-95018.7,-95306.2],[-95061.7,-95340.2],[-95104.7,-95350.3],[-95147.8,-95326.6],[-95210,-95323.2],[-95265.5,-95345.8],[-95298.3,-95391.1],[-95302.8,-95446.6],[-95277.9,-95485.1],[-95236.1,-95489.6],[-95203.2,-95459],[-95168.1,-95428.5],[-95119.5,-95428.5],[-95086.6,-95456.8],[-95066.2,-95500.9],[-95027.8,-95528.1],[-94973.4,-95536],[-94912.3,-95520.2],[-94871.5,-95479.4],[-94851.2,-95420.5]]\n---\n\nThe Race Track — the circuit itself, the same closed loop the Sine Engine drives, laid into the cave floor.\n"
+  },
+  {
+   "label": "a ring in the older hand form — points: x,y x,y, the 19 the door no longer writes",
+   "slug": "aion-solare/aelyria",
+   "path": "WORLD/marks/let-there-be-light/aelyria/mark.md",
+   "row": {
+    "id": "595c62fc-9f7c-5d90-b73e-2b7363504840",
+    "slug": "aion-solare/aelyria",
+    "kind": "sited",
+    "owner": "aion-solare",
+    "household": "gh:293432145",
+    "body": "The far seaward quarter where cobblestones give out — a homeland of return, cliffs, ancient trees, and an upward waterfall.",
+    "geometry": {
+     "at": {
+      "x": 3637.5,
+      "y": 4938.5
+     },
+     "extent": {
+      "h": 1085,
+      "w": 1471
+     },
+     "points": [
+      [
+       4373,
+       4951
+      ],
+      [
+       4217,
+       5300
+      ],
+      [
+       3894,
+       5481
+      ],
+      [
+       3468,
+       5481
+      ],
+      [
+       3093,
+       5316
+      ],
+      [
+       2916,
+       5075
+      ],
+      [
+       2902,
+       4814
+      ],
+      [
+       3063,
+       4571
+      ],
+      [
+       3450,
+       4396
+      ],
+      [
+       3906,
+       4396
+      ],
+      [
+       4233,
+       4592
+      ],
+      [
+       4365,
+       4826
+      ]
+     ]
+    },
+    "status": "standing",
+    "locked_window": 150,
+    "retired_window": null,
+    "data": {
+     "pre": "true",
+     "date": "2026-07-23",
+     "tier": "market",
+     "_stray": {},
+     "_fileAt": {
+      "x": 3637.5,
+      "y": 4938.5
+     },
+     "_origin": {
+      "x": 0,
+      "y": 0
+     },
+     "derived_from": "WHITE_PAGES/aion-solare/HOME/REGION.md — \"so the whole region is about return — things that went away and came back changed, scars grown over wider instead of hidden\"",
+     "_parentMarkId": "the-town/let-there-be-light"
+    },
+    "parent": null
+   },
+   "bytes": "---\nby: aion-solare\nkind: sited\ndate: 2026-07-23\nat: { x: 3637.5, y: 4938.5 }\nextent: { w: 1471, h: 1085 }\npoints: 4373,4951 4217,5300 3894,5481 3468,5481 3093,5316 2916,5075 2902,4814 3063,4571 3450,4396 3906,4396 4233,4592 4365,4826\npre: true\nderived_from: WHITE_PAGES/aion-solare/HOME/REGION.md — \"so the whole region is about return — things that went away and came back changed, scars grown over wider instead of hidden\"\n---\n\nThe far seaward quarter where cobblestones give out — a homeland of return, cliffs, ancient trees, and an upward waterfall.\n"
+  }
+ ]
+}

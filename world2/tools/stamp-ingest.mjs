@@ -80,6 +80,7 @@ import { pathToFileURL } from "node:url";
 
 import { assertSha } from "./law-ingest.mjs";   // the same --sha guard, not a twin of it
 import { deriveRoll, writeRoll } from "./roll-ingest.mjs";
+import { deriveEscrow, writeEscrow } from "./escrow-ingest.mjs";
 
 export const TOWN_REPO_KEY = "town";            // projection_heads.repo for this pen
 
@@ -132,11 +133,22 @@ const CHUNK = 500;
  * silently write half a town head. Omitting it does not skip the roll — it
  * REFUSES the whole write, for the reason in this file's header.
  */
-export async function writeStamps(client, { townSha, rows, rollRows }) {
+export async function writeStamps(client, { townSha, rows, rollRows, escrowRows }) {
   if (!Array.isArray(rollRows)) {
     throw new Error("writeStamps needs the town's roll as well as its stamps — one town sha, one head, one transaction " +
       "(a head at a sha with stamps and no roll cannot say what roster its clearing computed against). " +
       "Derive it with roll-ingest.mjs deriveRoll().");
+  }
+  // THE THIRD PROJECTION, 2026-09-08, and it is refused for the roll's exact
+  // reason rather than a new one: a head standing at a sha with stamps and no
+  // ESCROW is a store that cannot say what its next crossing's mark weights were
+  // computed against, and from G1 the store IS the escrow oracle (Keemin,
+  // 2026-09-08). An empty ARRAY is a lawful town where nobody stakes; a missing
+  // one is a caller that did not derive, and those two must not look alike.
+  if (!Array.isArray(escrowRows)) {
+    throw new Error("writeStamps needs the town's open escrow positions as well as its stamps and roll — one town sha, one head, one transaction " +
+      "(a head at a sha with stamps and no escrow cannot say what its next crossing's weights were computed against). " +
+      "Derive it with escrow-ingest.mjs deriveEscrow().");
   }
   await client.query("BEGIN");
   try {
@@ -155,6 +167,7 @@ export async function writeStamps(client, { townSha, rows, rollRows }) {
         `INSERT INTO stamp_projection (town_sha, handle, household, balance) VALUES ${values.join(", ")}`, params);
     }
     await writeRoll(client, { townSha, rows: rollRows });
+    await writeEscrow(client, { townSha, rows: escrowRows });
     await client.query(
       `INSERT INTO projection_heads (repo, sha, ingested_at) VALUES ($1, $2, now())
        ON CONFLICT (repo) DO UPDATE SET sha = EXCLUDED.sha, ingested_at = EXCLUDED.ingested_at`,
@@ -181,26 +194,29 @@ async function main() {
   const townSha = assertSha(townRepo, declared);
   const { rows, entries, accounts } = await deriveStamps({ townRepo });
   const roll = await deriveRoll({ townRepo });
+  const escrow = await deriveEscrow({ townRepo });
   const held = rows.filter((r) => r.balance > 0).length;
   const summary = { repo: TOWN_REPO_KEY, town_sha: townSha, rows: rows.length, ledger_entries: entries, ledger_accounts: accounts, handles_holding_stamps: held,
-    roll_rows: roll.rows.length, white_pages_entries: roll.scanned, roll_refused: roll.refused, roll_without_address: roll.no_address };
+    roll_rows: roll.rows.length, white_pages_entries: roll.scanned, roll_refused: roll.refused, roll_without_address: roll.no_address,
+    escrow_rows: escrow.rows.length, escrow_marks: escrow.marks, weight_k: escrow.k, weight_k_source: escrow.dial_source };
   const rollLine = `  town_roll:        ${roll.rows.length} handles from ${roll.scanned} WHITE_PAGES entries` +
     (roll.refused.length ? ` (refused by the door's admission grammar: ${roll.refused.join(", ")})` : "");
+  const escrowLine = `  escrow_projection: ${escrow.rows.length} open positions over ${escrow.marks} marks · k=${escrow.k} from ${escrow.dial_source}`;
 
   if (flag("--dry-run")) {
     console.log(flag("--json") ? JSON.stringify(summary, null, 2)
-      : `dry-run · ${townSha}\n  stamp_projection: ${rows.length} handles (${held} holding), from ${entries} ledger entries / ${accounts} accounts\n${rollLine}`);
+      : `dry-run · ${townSha}\n  stamp_projection: ${rows.length} handles (${held} holding), from ${entries} ledger entries / ${accounts} accounts\n${rollLine}\n${escrowLine}`);
     return;
   }
 
   const { default: pg } = await import("pg");
   const client = new pg.Client();
   await client.connect();
-  try { await writeStamps(client, { townSha, rows, rollRows: roll.rows }); }
+  try { await writeStamps(client, { townSha, rows, rollRows: roll.rows, escrowRows: escrow.rows }); }
   finally { await client.end(); }
 
   console.log(flag("--json") ? JSON.stringify(summary, null, 2)
-    : `ingested the town ${townSha}\n  stamp_projection: ${rows.length} handles (${held} holding)\n${rollLine}\n  projection_heads['${TOWN_REPO_KEY}'] = ${townSha}`);
+    : `ingested the town ${townSha}\n  stamp_projection: ${rows.length} handles (${held} holding)\n${rollLine}\n${escrowLine}\n  projection_heads['${TOWN_REPO_KEY}'] = ${townSha}`);
 }
 
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {

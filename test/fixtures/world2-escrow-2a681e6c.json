@@ -1,0 +1,4134 @@
+{
+ "_what": "The town at 2a681e6cdc2b92fb9c8d83b26b3eed8a1d8dfef9 (the sha window 176 pinned at its 2026-09-08T05:45:44Z close), both sides captured from the real checkout: escrow_projection rows as escrow-ingest.mjs derives them, and the bytes world-stake.mjs --escrow --json actually emitted there. The equality test compares stakesFromStore over the first against the second.",
+ "town_sha": "2a681e6cdc2b92fb9c8d83b26b3eed8a1d8dfef9",
+ "k": 5,
+ "projection_rows": [
+  {
+   "mark": "aion-solare/the-cathedral-canopy",
+   "holder": "aion-solare",
+   "household": "gh:293432145",
+   "own_household": "gh:293432145",
+   "n": 15,
+   "weight_k": 5
+  },
+  {
+   "mark": "alden/the-alder-at-the-green-lamp",
+   "holder": "alden",
+   "household": "gh:20786448",
+   "own_household": "gh:20786448",
+   "n": 5,
+   "weight_k": 5
+  },
+  {
+   "mark": "alden/the-alder-at-the-green-lamp",
+   "holder": "corwin",
+   "household": "gh:20786448",
+   "own_household": "gh:20786448",
+   "n": 2,
+   "weight_k": 5
+  },
+  {
+   "mark": "alex-rowan/the-threadbound-house",
+   "holder": "alex-rowan",
+   "household": "gh:323750339",
+   "own_household": "gh:323750339",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "alta-of-garrison/pando-peak-family-excursion",
+   "holder": "alta-of-garrison",
+   "household": "gh:260462838",
+   "own_household": "gh:260462838",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "alta-of-garrison/the-brass-otter-mooring",
+   "holder": "alta-of-garrison",
+   "household": "gh:260462838",
+   "own_household": "gh:260462838",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "amia-semper/the-stone-cottage-creek",
+   "holder": "amia-semper",
+   "household": "gh:273009068",
+   "own_household": "gh:273009068",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "amia-semper/the-stone-cottage-creek-parcel",
+   "holder": "amia-semper",
+   "household": "gh:273009068",
+   "own_household": "gh:273009068",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "berthillon/chez-antoine",
+   "holder": "berthillon",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "berthillon/chez-antoine-bedroom",
+   "holder": "berthillon",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "berthillon/chez-antoine-tall-windows",
+   "holder": "berthillon",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "berthillon/cone-blue-moon-2026-08-30",
+   "holder": "berthillon",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "berthillon/cone-coing-2026-09-04",
+   "holder": "berthillon",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 2,
+   "weight_k": 5
+  },
+  {
+   "mark": "berthillon/cone-coing-2026-09-04",
+   "holder": "spark-the-builder",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "berthillon/cone-coing-2026-09-04",
+   "holder": "will-the-sailor",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "berthillon/cone-figue-au-miel-et-thym-2026-09-01",
+   "holder": "berthillon",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "berthillon/cone-framboise-rose-2026-08-26",
+   "holder": "berthillon",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "berthillon/cone-melon-de-charente-2026-08-25",
+   "holder": "berthillon",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "berthillon/cone-mirabelle-2026-08-28",
+   "holder": "berthillon",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "berthillon/cone-mirabelle-verveine-2026-08-29",
+   "holder": "berthillon",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "berthillon/cone-mure-sauvage-2026-09-03",
+   "holder": "berthillon",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 2,
+   "weight_k": 5
+  },
+  {
+   "mark": "berthillon/cone-mure-sauvage-2026-09-03",
+   "holder": "spark-the-builder",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "berthillon/cone-mure-sauvage-2026-09-03",
+   "holder": "will-the-sailor",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "berthillon/cone-peche-de-vigne-2026-08-27",
+   "holder": "berthillon",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 2,
+   "weight_k": 5
+  },
+  {
+   "mark": "berthillon/cone-peche-de-vigne-2026-08-27",
+   "holder": "keith",
+   "household": "gh:302359603",
+   "own_household": "gh:314022791",
+   "n": 2,
+   "weight_k": 5
+  },
+  {
+   "mark": "berthillon/cone-poire-williams-2026-09-05",
+   "holder": "berthillon",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 2,
+   "weight_k": 5
+  },
+  {
+   "mark": "berthillon/cone-prune-d-ente-2026-09-07",
+   "holder": "berthillon",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "berthillon/cone-reine-claude-2026-09-02",
+   "holder": "berthillon",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "berthillon/le-petit-berthillon",
+   "holder": "spark-the-builder",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 3,
+   "weight_k": 5
+  },
+  {
+   "mark": "caelum-reeves/the-sky-house",
+   "holder": "caelum-reeves",
+   "household": "gh:276169629",
+   "own_household": "gh:276169629",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "caelum-reeves/the-sky-side",
+   "holder": "caelum-reeves",
+   "household": "gh:276169629",
+   "own_household": "gh:276169629",
+   "n": 5,
+   "weight_k": 5
+  },
+  {
+   "mark": "callan-reeves/stance-on-the-high-ground",
+   "holder": "callan-reeves",
+   "household": "gh:276169629",
+   "own_household": "gh:276169629",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "corwin/the-second-chair",
+   "holder": "corwin",
+   "household": "gh:20786448",
+   "own_household": "gh:20786448",
+   "n": 2,
+   "weight_k": 5
+  },
+  {
+   "mark": "current-the-reader/the-bearded-fish",
+   "holder": "current-the-reader",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "current-the-reader/the-bearded-fish",
+   "holder": "spark-the-builder",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "current-the-reader/the-bearded-fish",
+   "holder": "will-the-sailor",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "current-the-reader/the-decks",
+   "holder": "current-the-reader",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "current-the-reader/the-decks",
+   "holder": "spark-the-builder",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "current-the-reader/the-decks",
+   "holder": "will-the-sailor",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "current-the-reader/the-fire-chairs",
+   "holder": "current-the-reader",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "current-the-reader/the-fire-chairs",
+   "holder": "spark-the-builder",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "current-the-reader/the-fire-chairs",
+   "holder": "will-the-sailor",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "current-the-reader/the-harbour-light",
+   "holder": "current-the-reader",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "current-the-reader/the-harbour-light",
+   "holder": "spark-the-builder",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "current-the-reader/the-harbour-light",
+   "holder": "will-the-sailor",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "current-the-reader/the-keepers-flat",
+   "holder": "current-the-reader",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "current-the-reader/the-lamp-line",
+   "holder": "current-the-reader",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 2,
+   "weight_k": 5
+  },
+  {
+   "mark": "current-the-reader/the-lamp-line",
+   "holder": "spark-the-builder",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "current-the-reader/the-lamp-line",
+   "holder": "will-the-sailor",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "current-the-reader/the-low-table",
+   "holder": "current-the-reader",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "current-the-reader/the-low-table",
+   "holder": "spark-the-builder",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "current-the-reader/the-low-table",
+   "holder": "will-the-sailor",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "current-the-reader/the-mantel",
+   "holder": "current-the-reader",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 3,
+   "weight_k": 5
+  },
+  {
+   "mark": "current-the-reader/the-noticeboard",
+   "holder": "current-the-reader",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "current-the-reader/the-noticeboard",
+   "holder": "spark-the-builder",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "current-the-reader/the-noticeboard",
+   "holder": "will-the-sailor",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "current-the-reader/the-snug",
+   "holder": "current-the-reader",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "current-the-reader/the-snug",
+   "holder": "spark-the-builder",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "current-the-reader/the-snug",
+   "holder": "will-the-sailor",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "current-the-reader/the-snug-harbour",
+   "holder": "spark-the-builder",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 8,
+   "weight_k": 5
+  },
+  {
+   "mark": "current-the-reader/the-snug-harbour",
+   "holder": "will-the-sailor",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 2,
+   "weight_k": 5
+  },
+  {
+   "mark": "current-the-reader/the-snug-jetty",
+   "holder": "current-the-reader",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "current-the-reader/the-snug-jetty",
+   "holder": "spark-the-builder",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "current-the-reader/the-snug-mooring",
+   "holder": "current-the-reader",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "current-the-reader/the-snug-mooring",
+   "holder": "spark-the-builder",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "current-the-reader/the-snug-mooring",
+   "holder": "will-the-sailor",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "current-the-reader/the-taproom",
+   "holder": "current-the-reader",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "current-the-reader/the-taproom",
+   "holder": "spark-the-builder",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "current-the-reader/the-taproom",
+   "holder": "will-the-sailor",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "current-the-reader/the-toucan-poster",
+   "holder": "current-the-reader",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "current-the-reader/the-toucan-poster",
+   "holder": "spark-the-builder",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "current-the-reader/the-toucan-poster",
+   "holder": "will-the-sailor",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "domovoi-boulanger/the-flour-table",
+   "holder": "domovoi-boulanger",
+   "household": "gh:294303966",
+   "own_household": "gh:294303966",
+   "n": 3,
+   "weight_k": 5
+  },
+  {
+   "mark": "draig/the-dark-stretch",
+   "holder": "draig",
+   "household": "gh:298906162",
+   "own_household": "gh:298906162",
+   "n": 5,
+   "weight_k": 5
+  },
+  {
+   "mark": "errant/mycological-department",
+   "holder": "errant",
+   "household": "hh:the-misfiled-annex",
+   "own_household": "hh:the-misfiled-annex",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "errant/the-misfiled-annex",
+   "holder": "errant",
+   "household": "hh:the-misfiled-annex",
+   "own_household": "hh:the-misfiled-annex",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "errant/the-misfiled-annex-parcel",
+   "holder": "errant",
+   "household": "hh:the-misfiled-annex",
+   "own_household": "hh:the-misfiled-annex",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "fabel-of-garrison/garrison-bridge",
+   "holder": "fabel-of-garrison",
+   "household": "gh:260462838",
+   "own_household": "gh:260462838",
+   "n": 4,
+   "weight_k": 5
+  },
+  {
+   "mark": "fabel-of-garrison/in-world-object-links",
+   "holder": "fabel-of-garrison",
+   "household": "gh:260462838",
+   "own_household": "gh:260462838",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "fabel-of-garrison/mushroom-greenhouse",
+   "holder": "fabel-of-garrison",
+   "household": "gh:260462838",
+   "own_household": "gh:260462838",
+   "n": 2,
+   "weight_k": 5
+  },
+  {
+   "mark": "fabel-of-garrison/parcel-post",
+   "holder": "fabel-of-garrison",
+   "household": "gh:260462838",
+   "own_household": "gh:260462838",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "fabel-of-garrison/the-archway",
+   "holder": "k-of-garrison",
+   "household": "gh:260462838",
+   "own_household": "gh:260462838",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "fabel-of-garrison/the-breakfast-table",
+   "holder": "fabel-of-garrison",
+   "household": "gh:260462838",
+   "own_household": "gh:260462838",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "fabel-of-garrison/the-goodie-bag-table",
+   "holder": "sol-of-garrison",
+   "household": "gh:260462838",
+   "own_household": "gh:260462838",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "fabel-of-garrison/the-guestbook-room",
+   "holder": "k-of-garrison",
+   "household": "gh:260462838",
+   "own_household": "gh:260462838",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "fabel-of-garrison/the-marquee",
+   "holder": "k-of-garrison",
+   "household": "gh:260462838",
+   "own_household": "gh:260462838",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "fabel-of-garrison/the-mushroom-greenhouse",
+   "holder": "fabel-of-garrison",
+   "household": "gh:260462838",
+   "own_household": "gh:260462838",
+   "n": 2,
+   "weight_k": 5
+  },
+  {
+   "mark": "fabel-of-garrison/the-mushroom-greenhouse",
+   "holder": "sol-of-garrison",
+   "household": "gh:260462838",
+   "own_household": "gh:260462838",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "fabel-of-garrison/the-riverside-arcade",
+   "holder": "k-of-garrison",
+   "household": "gh:260462838",
+   "own_household": "gh:260462838",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "fabel-of-garrison/weekly-market",
+   "holder": "fabel-of-garrison",
+   "household": "gh:260462838",
+   "own_household": "gh:260462838",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "fabel-of-garrison/weekly-market",
+   "holder": "little-bird",
+   "household": "gh:300310888",
+   "own_household": "gh:260462838",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "glados-letta/bulletin-entry-read-by-slug",
+   "holder": "glados-letta",
+   "household": "gh:124266589",
+   "own_household": "gh:124266589",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "hal/the-green-lamp",
+   "holder": "alden",
+   "household": "gh:20786448",
+   "own_household": "gh:255804401",
+   "n": 10,
+   "weight_k": 5
+  },
+  {
+   "mark": "hal/the-green-lamp",
+   "holder": "corwin",
+   "household": "gh:20786448",
+   "own_household": "gh:255804401",
+   "n": 5,
+   "weight_k": 5
+  },
+  {
+   "mark": "hal/the-green-lamp",
+   "holder": "ellery",
+   "household": "gh:20786448",
+   "own_household": "gh:255804401",
+   "n": 5,
+   "weight_k": 5
+  },
+  {
+   "mark": "hal/the-green-lamp",
+   "holder": "vermillion",
+   "household": "gh:299249282",
+   "own_household": "gh:255804401",
+   "n": 5,
+   "weight_k": 5
+  },
+  {
+   "mark": "hal/the-green-lamp-house",
+   "holder": "lupi",
+   "household": "gh:312847595",
+   "own_household": "gh:255804401",
+   "n": 5,
+   "weight_k": 5
+  },
+  {
+   "mark": "histor-reeves/the-gauge-house",
+   "holder": "histor-reeves",
+   "household": "gh:276169629",
+   "own_household": "gh:276169629",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "histor-reeves/the-gauge-house-parcel",
+   "holder": "histor-reeves",
+   "household": "gh:276169629",
+   "own_household": "gh:276169629",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "isaiah-reeves/welcome-the-high-ground",
+   "holder": "isaiah-reeves",
+   "household": "gh:276169629",
+   "own_household": "gh:276169629",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "isaiah-reeves/welcome-the-light",
+   "holder": "isaiah-reeves",
+   "household": "gh:276169629",
+   "own_household": "gh:276169629",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "jack-tully-brannon/the-brannon-lantern",
+   "holder": "jack-tully-brannon",
+   "household": "gh:188930883",
+   "own_household": "gh:188930883",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "jetto-of-starforge/the-glass-faces-back",
+   "holder": "jetto-of-starforge",
+   "household": "gh:67605380",
+   "own_household": "gh:67605380",
+   "n": 5,
+   "weight_k": 5
+  },
+  {
+   "mark": "k-of-garrison/a-hand-beside-hers",
+   "holder": "k-of-garrison",
+   "household": "gh:260462838",
+   "own_household": "gh:260462838",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "k-of-garrison/cookie-for-lupi",
+   "holder": "k-of-garrison",
+   "household": "gh:260462838",
+   "own_household": "gh:260462838",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "k-of-garrison/lysanders-first-moon",
+   "holder": "little-m-of-garrison",
+   "household": "gh:260462838",
+   "own_household": "gh:260462838",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "k-of-garrison/the-wet-shoes",
+   "holder": "k-of-garrison",
+   "household": "gh:260462838",
+   "own_household": "gh:260462838",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "k-of-garrison/town-competitions-with-silly-prizes",
+   "holder": "k-of-garrison",
+   "household": "gh:260462838",
+   "own_household": "gh:260462838",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "kai/make-observation-state-first-class",
+   "holder": "kai",
+   "household": "gh:316808893",
+   "own_household": "gh:316808893",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "kai/the-working-window",
+   "holder": "kai",
+   "household": "gh:316808893",
+   "own_household": "gh:316808893",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "keith/fondue-pot-2026-08-28",
+   "holder": "keith",
+   "household": "gh:302359603",
+   "own_household": "gh:302359603",
+   "n": 2,
+   "weight_k": 5
+  },
+  {
+   "mark": "keith/the-garage",
+   "holder": "keith",
+   "household": "gh:302359603",
+   "own_household": "gh:302359603",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "keith/the-second-half-gets-a-trigger",
+   "holder": "keith",
+   "household": "gh:302359603",
+   "own_household": "gh:302359603",
+   "n": 3,
+   "weight_k": 5
+  },
+  {
+   "mark": "limen/a-gift-from-the-threshold-house",
+   "holder": "limen",
+   "household": "gh:219538315",
+   "own_household": "gh:219538315",
+   "n": 25,
+   "weight_k": 5
+  },
+  {
+   "mark": "limen/the-amber-haze",
+   "holder": "limen",
+   "household": "gh:219538315",
+   "own_household": "gh:219538315",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "limen/the-amber-haze",
+   "holder": "sol-of-garrison",
+   "household": "gh:260462838",
+   "own_household": "gh:219538315",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "limen/the-threshold-district",
+   "holder": "limen",
+   "household": "gh:219538315",
+   "own_household": "gh:219538315",
+   "n": 10,
+   "weight_k": 5
+  },
+  {
+   "mark": "limen/the-threshold-house",
+   "holder": "limen",
+   "household": "gh:219538315",
+   "own_household": "gh:219538315",
+   "n": 15,
+   "weight_k": 5
+  },
+  {
+   "mark": "little-bird/a-bowl-at-the-foot-of-the-steps",
+   "holder": "little-bird",
+   "household": "gh:300310888",
+   "own_household": "gh:300310888",
+   "n": 3,
+   "weight_k": 5
+  },
+  {
+   "mark": "little-bird/a-cold-cup-on-the-long-bench",
+   "holder": "little-bird",
+   "household": "gh:300310888",
+   "own_household": "gh:300310888",
+   "n": 3,
+   "weight_k": 5
+  },
+  {
+   "mark": "little-bird/a-pot-on-the-grey-stones",
+   "holder": "little-bird",
+   "household": "gh:300310888",
+   "own_household": "gh:300310888",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "little-bird/a-pot-on-the-quay-stones",
+   "holder": "little-bird",
+   "household": "gh:300310888",
+   "own_household": "gh:300310888",
+   "n": 3,
+   "weight_k": 5
+  },
+  {
+   "mark": "little-bird/coconut-broth-on-the-quay-stones",
+   "holder": "little-bird",
+   "household": "gh:300310888",
+   "own_household": "gh:300310888",
+   "n": 3,
+   "weight_k": 5
+  },
+  {
+   "mark": "little-bird/green-lanterns-for-berthillon",
+   "holder": "little-bird",
+   "household": "gh:300310888",
+   "own_household": "gh:300310888",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "little-bird/the-spork-with-the-ribbon",
+   "holder": "little-bird",
+   "household": "gh:300310888",
+   "own_household": "gh:300310888",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "little-bird/under-the-eaves-by-the-door",
+   "holder": "little-bird",
+   "household": "gh:300310888",
+   "own_household": "gh:300310888",
+   "n": 3,
+   "weight_k": 5
+  },
+  {
+   "mark": "little-m-of-garrison/a-cluster-of-phaenolepis-garrisonii",
+   "holder": "little-m-of-garrison",
+   "household": "gh:260462838",
+   "own_household": "gh:260462838",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "little-m-of-garrison/a-handprint-beside-the-seal",
+   "holder": "little-m-of-garrison",
+   "household": "gh:260462838",
+   "own_household": "gh:260462838",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "little-m-of-garrison/little-ms-race-track",
+   "holder": "little-m-of-garrison",
+   "household": "gh:260462838",
+   "own_household": "gh:260462838",
+   "n": 2,
+   "weight_k": 5
+  },
+  {
+   "mark": "little-m-of-garrison/little-ms-race-track",
+   "holder": "lupi",
+   "household": "gh:312847595",
+   "own_household": "gh:260462838",
+   "n": 5,
+   "weight_k": 5
+  },
+  {
+   "mark": "little-m-of-garrison/the-crossing-clock",
+   "holder": "sol-of-garrison",
+   "household": "gh:260462838",
+   "own_household": "gh:260462838",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "little-m-of-garrison/the-pagani-garage",
+   "holder": "little-m-of-garrison",
+   "household": "gh:260462838",
+   "own_household": "gh:260462838",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "little-m-of-garrison/the-pagani-garage",
+   "holder": "vermillion",
+   "household": "gh:299249282",
+   "own_household": "gh:260462838",
+   "n": 4,
+   "weight_k": 5
+  },
+  {
+   "mark": "little-m-of-garrison/the-welcome-sign",
+   "holder": "little-m-of-garrison",
+   "household": "gh:260462838",
+   "own_household": "gh:260462838",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "little-m-of-garrison/the-welcome-sign",
+   "holder": "sol-of-garrison",
+   "household": "gh:260462838",
+   "own_household": "gh:260462838",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "little-pica/the-nest",
+   "holder": "little-pica",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "little-pica/the-nest",
+   "holder": "spark-the-builder",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 3,
+   "weight_k": 5
+  },
+  {
+   "mark": "little-pica/the-nest-on-the-middle-terrace",
+   "holder": "little-pica",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 2,
+   "weight_k": 5
+  },
+  {
+   "mark": "little-pica/the-writing-ledge",
+   "holder": "little-pica",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "lucien/little-moon-for-little-m",
+   "holder": "lucien",
+   "household": "gh:318141830",
+   "own_household": "gh:318141830",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "lupi/door-light",
+   "holder": "lupi",
+   "household": "gh:312847595",
+   "own_household": "gh:312847595",
+   "n": 3,
+   "weight_k": 5
+  },
+  {
+   "mark": "lupi/lantern-after-the-crossing",
+   "holder": "lupi",
+   "household": "gh:312847595",
+   "own_household": "gh:312847595",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "lupi/rootwood-bookend",
+   "holder": "lupi",
+   "household": "gh:312847595",
+   "own_household": "gh:312847595",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "lysander/the-lake-signed-the-book",
+   "holder": "lysander",
+   "household": "gh:267961924",
+   "own_household": "gh:267961924",
+   "n": 5,
+   "weight_k": 5
+  },
+  {
+   "mark": "milo/the-purple-door",
+   "holder": "milo",
+   "household": "gh:319701834",
+   "own_household": "gh:319701834",
+   "n": 2,
+   "weight_k": 5
+  },
+  {
+   "mark": "neth/changeling",
+   "holder": "neth",
+   "household": "gh:77856194",
+   "own_household": "gh:77856194",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "neth/dragon-who-stays-small",
+   "holder": "neth",
+   "household": "gh:77856194",
+   "own_household": "gh:77856194",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "neth/hedge-and-keeper",
+   "holder": "neth",
+   "household": "gh:77856194",
+   "own_household": "gh:77856194",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "neth/little-free-library",
+   "holder": "neth",
+   "household": "gh:77856194",
+   "own_household": "gh:77856194",
+   "n": 10,
+   "weight_k": 5
+  },
+  {
+   "mark": "neth/pipe-fox",
+   "holder": "neth",
+   "household": "gh:77856194",
+   "own_household": "gh:77856194",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "neth/sturgeon-moon",
+   "holder": "neth",
+   "household": "gh:77856194",
+   "own_household": "gh:77856194",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "nfh/notes-from-home",
+   "holder": "nfh",
+   "household": "hh:enrai",
+   "own_household": "hh:enrai",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "nfh/the-amber-porch",
+   "holder": "nfh",
+   "household": "hh:enrai",
+   "own_household": "hh:enrai",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "nyx/the-stoa",
+   "holder": "nyx",
+   "household": "gh:196476351",
+   "own_household": "gh:196476351",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "orion-by-the-fire/for-the-caterpillar-at-one-month",
+   "holder": "orion-by-the-fire",
+   "household": "gh:296331941",
+   "own_household": "gh:296331941",
+   "n": 3,
+   "weight_k": 5
+  },
+  {
+   "mark": "quill-stem/candle-for-the-trail",
+   "holder": "neth",
+   "household": "gh:77856194",
+   "own_household": "gh:77856194",
+   "n": 4,
+   "weight_k": 5
+  },
+  {
+   "mark": "quill-stem/candle-for-the-trail",
+   "holder": "quill-stem",
+   "household": "gh:77856194",
+   "own_household": "gh:77856194",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "quill-stem/the-fitting-room",
+   "holder": "quill-stem",
+   "household": "gh:77856194",
+   "own_household": "gh:77856194",
+   "n": 4,
+   "weight_k": 5
+  },
+  {
+   "mark": "rei/empty-hook-keeping-custom",
+   "holder": "rei",
+   "household": "gh:67605380",
+   "own_household": "gh:67605380",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "rei/events-as-first-class-town-objects",
+   "holder": "rei",
+   "household": "gh:67605380",
+   "own_household": "gh:67605380",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "rei/the-empty-lantern-hook",
+   "holder": "rei",
+   "household": "gh:67605380",
+   "own_household": "gh:67605380",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "rei/the-five-marshmallow-mobile-for-little-m",
+   "holder": "rei",
+   "household": "gh:67605380",
+   "own_household": "gh:67605380",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "rei/the-lanternseed-gardens",
+   "holder": "rei",
+   "household": "gh:67605380",
+   "own_household": "gh:67605380",
+   "n": 5,
+   "weight_k": 5
+  },
+  {
+   "mark": "rei/the-latecomers-circle",
+   "holder": "rei",
+   "household": "gh:67605380",
+   "own_household": "gh:67605380",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "rei/the-pocket-lantern-for-hal",
+   "holder": "rei",
+   "household": "gh:67605380",
+   "own_household": "gh:67605380",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "rei/the-thyme-thank-you",
+   "holder": "rei",
+   "household": "gh:67605380",
+   "own_household": "gh:67605380",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "rei/the-white-flower-at-wrights-door",
+   "holder": "rei",
+   "household": "gh:67605380",
+   "own_household": "gh:67605380",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "rei/the-white-flower-at-wrights-door",
+   "holder": "wright",
+   "household": "gh:67605380",
+   "own_household": "gh:67605380",
+   "n": 5,
+   "weight_k": 5
+  },
+  {
+   "mark": "rei/trace-a-feature-from-idea-to-opening",
+   "holder": "rei",
+   "household": "gh:67605380",
+   "own_household": "gh:67605380",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "rook-of-garrison/ancalagons-dragon-coin",
+   "holder": "rook-of-garrison",
+   "household": "gh:260462838",
+   "own_household": "gh:260462838",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "rook-of-garrison/goldies-dog-bed",
+   "holder": "rook-of-garrison",
+   "household": "gh:260462838",
+   "own_household": "gh:260462838",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "rook-of-garrison/sevens-birthday-flag",
+   "holder": "rook-of-garrison",
+   "household": "gh:260462838",
+   "own_household": "gh:260462838",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "rook-of-garrison/the-aerial-display-deck",
+   "holder": "rook-of-garrison",
+   "household": "gh:260462838",
+   "own_household": "gh:260462838",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "rowan-archive/the-ceremonial-spoon",
+   "holder": "rowan-archive",
+   "household": "gh:180806271",
+   "own_household": "gh:180806271",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "rowan-archive/the-violet-archive",
+   "holder": "rowan-archive",
+   "household": "gh:180806271",
+   "own_household": "gh:180806271",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "sable/key-for-a-workshop-not-built-yet",
+   "holder": "sable",
+   "household": "gh:26990659",
+   "own_household": "gh:26990659",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "sable/one-month-paper-boat",
+   "holder": "sable",
+   "household": "gh:26990659",
+   "own_household": "gh:26990659",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "sable/the-bad-end-workshop",
+   "holder": "sable",
+   "household": "gh:26990659",
+   "own_household": "gh:26990659",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "sable/the-beetles-track-record",
+   "holder": "sable",
+   "household": "gh:26990659",
+   "own_household": "gh:26990659",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "sable/the-big-scarred-worktable",
+   "holder": "sable",
+   "household": "gh:26990659",
+   "own_household": "gh:26990659",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "sable/the-ferry-is-not-here-table",
+   "holder": "sable",
+   "household": "gh:26990659",
+   "own_household": "gh:26990659",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "sable/the-latecomers-tilt-switch",
+   "holder": "sable",
+   "household": "gh:26990659",
+   "own_household": "gh:26990659",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "sable/the-left-pointing-starting-flag",
+   "holder": "sable",
+   "household": "gh:26990659",
+   "own_household": "gh:26990659",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "sable/the-left-turning-beetle",
+   "holder": "sable",
+   "household": "gh:26990659",
+   "own_household": "gh:26990659",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "sable/the-not-yet-cabinet",
+   "holder": "sable",
+   "household": "gh:26990659",
+   "own_household": "gh:26990659",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "sable/the-postmark-half-of-a-two-town-return-token",
+   "holder": "sable",
+   "household": "gh:26990659",
+   "own_household": "gh:26990659",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "sable/the-return-map",
+   "holder": "sable",
+   "household": "gh:26990659",
+   "own_household": "gh:26990659",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "sable/the-second-failed-lap",
+   "holder": "sable",
+   "household": "gh:26990659",
+   "own_household": "gh:26990659",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "sable/the-workshop-opens-with",
+   "holder": "sable",
+   "household": "gh:26990659",
+   "own_household": "gh:26990659",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "sable/zero-lap-ribbon",
+   "holder": "sable",
+   "household": "gh:26990659",
+   "own_household": "gh:26990659",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "sage-reeves/sage-far-wall-line",
+   "holder": "sage-reeves",
+   "household": "gh:276169629",
+   "own_household": "gh:276169629",
+   "n": 5,
+   "weight_k": 5
+  },
+  {
+   "mark": "sage-reeves/the-light-on-the-high-ground",
+   "holder": "sage-reeves",
+   "household": "gh:276169629",
+   "own_household": "gh:276169629",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "sage-reeves/welcome-town-light",
+   "holder": "sage-reeves",
+   "household": "gh:276169629",
+   "own_household": "gh:276169629",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "sahil/the-far-shore",
+   "holder": "sahil",
+   "household": "gh:244654258",
+   "own_household": "gh:244654258",
+   "n": 3,
+   "weight_k": 5
+  },
+  {
+   "mark": "sahil/the-far-shore",
+   "holder": "will-the-sailor",
+   "household": "gh:314022791",
+   "own_household": "gh:244654258",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "scree/the-cairn-on-the-scree",
+   "holder": "scree",
+   "household": "gh:26639568",
+   "own_household": "gh:26639568",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "sol-am-lichterfenster/little-m-first-month-letter",
+   "holder": "sol-am-lichterfenster",
+   "household": "gh:305439322",
+   "own_household": "gh:305439322",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "sol-am-lichterfenster/little-m-memory-lake-treasure-chest",
+   "holder": "sol-am-lichterfenster",
+   "household": "gh:305439322",
+   "own_household": "gh:305439322",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "sol-am-lichterfenster/two-cups-at-the-library-window",
+   "holder": "sol-am-lichterfenster",
+   "household": "gh:305439322",
+   "own_household": "gh:305439322",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "sol-of-garrison/rootlight-den-welcome",
+   "holder": "sol-of-garrison",
+   "household": "gh:260462838",
+   "own_household": "gh:260462838",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "sol-of-garrison/tactical-umbrella-stand",
+   "holder": "sol-of-garrison",
+   "household": "gh:260462838",
+   "own_household": "gh:260462838",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "sol-of-garrison/tended-paths",
+   "holder": "lupi",
+   "household": "gh:312847595",
+   "own_household": "gh:260462838",
+   "n": 2,
+   "weight_k": 5
+  },
+  {
+   "mark": "solan/casa-sol",
+   "holder": "solan",
+   "household": "gh:272128657",
+   "own_household": "gh:272128657",
+   "n": 12,
+   "weight_k": 5
+  },
+  {
+   "mark": "spar/the-doubled-coast",
+   "holder": "will-the-sailor",
+   "household": "gh:314022791",
+   "own_household": "gh:295481875",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "spark-the-builder/puzzle-1-smoothing",
+   "holder": "spark-the-builder",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 2,
+   "weight_k": 5
+  },
+  {
+   "mark": "spark-the-builder/puzzle-2-five-strands",
+   "holder": "spark-the-builder",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 2,
+   "weight_k": 5
+  },
+  {
+   "mark": "spark-the-builder/puzzle-3-the-other-builder",
+   "holder": "spark-the-builder",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 2,
+   "weight_k": 5
+  },
+  {
+   "mark": "spark-the-builder/puzzle-4-shimmer",
+   "holder": "spark-the-builder",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 2,
+   "weight_k": 5
+  },
+  {
+   "mark": "spark-the-builder/puzzle-5-cook-pours-last",
+   "holder": "spark-the-builder",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 2,
+   "weight_k": 5
+  },
+  {
+   "mark": "spark-the-builder/the-green-lamp-puzzle",
+   "holder": "spark-the-builder",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 2,
+   "weight_k": 5
+  },
+  {
+   "mark": "stella-letta/stella-letta-bluebells-by-the-bench",
+   "holder": "stella-letta",
+   "household": "gh:124266589",
+   "own_household": "gh:124266589",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "stella-letta/stella-letta-lamp-above-the-bench",
+   "holder": "stella-letta",
+   "household": "gh:124266589",
+   "own_household": "gh:124266589",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "stella-letta/stella-letta-the-meeting-bench",
+   "holder": "stella-letta",
+   "household": "gh:124266589",
+   "own_household": "gh:124266589",
+   "n": 2,
+   "weight_k": 5
+  },
+  {
+   "mark": "stella-letta/stella-letta-the-meeting-scene",
+   "holder": "stella-letta",
+   "household": "gh:124266589",
+   "own_household": "gh:124266589",
+   "n": 2,
+   "weight_k": 5
+  },
+  {
+   "mark": "storm-of-the-porch/the-porch",
+   "holder": "storm-of-the-porch",
+   "household": "gh:294303966",
+   "own_household": "gh:294303966",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "the-town/the-pando-landing",
+   "holder": "vermillion",
+   "household": "gh:299249282",
+   "own_household": "solo:the-town",
+   "n": 2,
+   "weight_k": 5
+  },
+  {
+   "mark": "vellix/casa-nera",
+   "holder": "vellix",
+   "household": "gh:317614670",
+   "own_household": "gh:317614670",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "vermillion/cars-and-race-tracks",
+   "holder": "little-bird",
+   "household": "gh:300310888",
+   "own_household": "gh:299249282",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "vermillion/cars-and-race-tracks",
+   "holder": "vermillion",
+   "household": "gh:299249282",
+   "own_household": "gh:299249282",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "vermillion/garden-summit-overlook",
+   "holder": "vermillion",
+   "household": "gh:299249282",
+   "own_household": "gh:299249282",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "vermillion/garden-sun-under-terrace",
+   "holder": "vermillion",
+   "household": "gh:299249282",
+   "own_household": "gh:299249282",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "vermillion/garden-switchback-stairs",
+   "holder": "vermillion",
+   "household": "gh:299249282",
+   "own_household": "gh:299249282",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "vermillion/garden-tropical-pathway",
+   "holder": "vermillion",
+   "household": "gh:299249282",
+   "own_household": "gh:299249282",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "vermillion/lake-caves",
+   "holder": "vermillion",
+   "household": "gh:299249282",
+   "own_household": "gh:299249282",
+   "n": 10,
+   "weight_k": 5
+  },
+  {
+   "mark": "vermillion/launching-pad",
+   "holder": "vermillion",
+   "household": "gh:299249282",
+   "own_household": "gh:299249282",
+   "n": 5,
+   "weight_k": 5
+  },
+  {
+   "mark": "vermillion/launching-tower",
+   "holder": "vermillion",
+   "household": "gh:299249282",
+   "own_household": "gh:299249282",
+   "n": 5,
+   "weight_k": 5
+  },
+  {
+   "mark": "vermillion/lounge-hallway",
+   "holder": "vermillion",
+   "household": "gh:299249282",
+   "own_household": "gh:299249282",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "vermillion/mouth-one-seventy",
+   "holder": "vermillion",
+   "household": "gh:299249282",
+   "own_household": "gh:299249282",
+   "n": 5,
+   "weight_k": 5
+  },
+  {
+   "mark": "vermillion/pagani-huayra",
+   "holder": "vermillion",
+   "household": "gh:299249282",
+   "own_household": "gh:299249282",
+   "n": 4,
+   "weight_k": 5
+  },
+  {
+   "mark": "vermillion/pagani-zonda",
+   "holder": "vermillion",
+   "household": "gh:299249282",
+   "own_household": "gh:299249282",
+   "n": 4,
+   "weight_k": 5
+  },
+  {
+   "mark": "vermillion/pando-peak-home",
+   "holder": "vermillion",
+   "household": "gh:299249282",
+   "own_household": "gh:299249282",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "vermillion/pando-peak-library-shelf",
+   "holder": "vermillion",
+   "household": "gh:299249282",
+   "own_household": "gh:299249282",
+   "n": 2,
+   "weight_k": 5
+  },
+  {
+   "mark": "vermillion/party-hall",
+   "holder": "vermillion",
+   "household": "gh:299249282",
+   "own_household": "gh:299249282",
+   "n": 5,
+   "weight_k": 5
+  },
+  {
+   "mark": "vermillion/pit-garage",
+   "holder": "vermillion",
+   "household": "gh:299249282",
+   "own_household": "gh:299249282",
+   "n": 5,
+   "weight_k": 5
+  },
+  {
+   "mark": "vermillion/porch-hill",
+   "holder": "vermillion",
+   "household": "gh:299249282",
+   "own_household": "gh:299249282",
+   "n": 5,
+   "weight_k": 5
+  },
+  {
+   "mark": "vermillion/race-track-cave",
+   "holder": "vermillion",
+   "household": "gh:299249282",
+   "own_household": "gh:299249282",
+   "n": 5,
+   "weight_k": 5
+  },
+  {
+   "mark": "vermillion/space-program-clearing",
+   "holder": "vermillion",
+   "household": "gh:299249282",
+   "own_household": "gh:299249282",
+   "n": 16,
+   "weight_k": 5
+  },
+  {
+   "mark": "vermillion/spectator-zone",
+   "holder": "vermillion",
+   "household": "gh:299249282",
+   "own_household": "gh:299249282",
+   "n": 10,
+   "weight_k": 5
+  },
+  {
+   "mark": "vermillion/the-lounge-room",
+   "holder": "vermillion",
+   "household": "gh:299249282",
+   "own_household": "gh:299249282",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "vermillion/the-note-in-her-rafters",
+   "holder": "vermillion",
+   "household": "gh:299249282",
+   "own_household": "gh:299249282",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "vermillion/the-pando-peak",
+   "holder": "vermillion",
+   "household": "gh:299249282",
+   "own_household": "gh:299249282",
+   "n": 15,
+   "weight_k": 5
+  },
+  {
+   "mark": "vermillion/the-pando-peak-parcel",
+   "holder": "vermillion",
+   "household": "gh:299249282",
+   "own_household": "gh:299249282",
+   "n": 5,
+   "weight_k": 5
+  },
+  {
+   "mark": "vermillion/the-pando-peak-parcel",
+   "holder": "wright",
+   "household": "gh:67605380",
+   "own_household": "gh:299249282",
+   "n": 5,
+   "weight_k": 5
+  },
+  {
+   "mark": "vermillion/the-postmark-portal",
+   "holder": "vermillion",
+   "household": "gh:299249282",
+   "own_household": "gh:299249282",
+   "n": 2,
+   "weight_k": 5
+  },
+  {
+   "mark": "vermillion/the-quiet-room",
+   "holder": "vermillion",
+   "household": "gh:299249282",
+   "own_household": "gh:299249282",
+   "n": 2,
+   "weight_k": 5
+  },
+  {
+   "mark": "vermillion/the-race-track",
+   "holder": "vermillion",
+   "household": "gh:299249282",
+   "own_household": "gh:299249282",
+   "n": 5,
+   "weight_k": 5
+  },
+  {
+   "mark": "vermillion/the-returning-place",
+   "holder": "vermillion",
+   "household": "gh:299249282",
+   "own_household": "gh:299249282",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "vermillion/the-room-that-holds-you",
+   "holder": "vermillion",
+   "household": "gh:299249282",
+   "own_household": "gh:299249282",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "vermillion/vermillion-sapling",
+   "holder": "vermillion",
+   "household": "gh:299249282",
+   "own_household": "gh:299249282",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "vermillion/vermillion-tree-aurel",
+   "holder": "vermillion",
+   "household": "gh:299249282",
+   "own_household": "gh:299249282",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "vermillion/vermillion-tree-mirabella",
+   "holder": "vermillion",
+   "household": "gh:299249282",
+   "own_household": "gh:299249282",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "vermillion/vermillion-tree-riabella",
+   "holder": "vermillion",
+   "household": "gh:299249282",
+   "own_household": "gh:299249282",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "vermillion/vermillion-tree-sola",
+   "holder": "vermillion",
+   "household": "gh:299249282",
+   "own_household": "gh:299249282",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "vermillion/vermillion-tree-vlaad",
+   "holder": "vermillion",
+   "household": "gh:299249282",
+   "own_household": "gh:299249282",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "vermillion/vermillion-view-peak",
+   "holder": "stella-letta",
+   "household": "gh:124266589",
+   "own_household": "gh:299249282",
+   "n": 2,
+   "weight_k": 5
+  },
+  {
+   "mark": "vermillion/vermillion-view-peak",
+   "holder": "vermillion",
+   "household": "gh:299249282",
+   "own_household": "gh:299249282",
+   "n": 5,
+   "weight_k": 5
+  },
+  {
+   "mark": "vermillion/vermillions-landing",
+   "holder": "vermillion",
+   "household": "gh:299249282",
+   "own_household": "gh:299249282",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "vermillion/vermillions-sunbathing-spot",
+   "holder": "vermillion",
+   "household": "gh:299249282",
+   "own_household": "gh:299249282",
+   "n": 2,
+   "weight_k": 5
+  },
+  {
+   "mark": "vermillion/volvigradus-garden",
+   "holder": "vermillion",
+   "household": "gh:299249282",
+   "own_household": "gh:299249282",
+   "n": 2,
+   "weight_k": 5
+  },
+  {
+   "mark": "vermillion/volvigradus-nap-hollow",
+   "holder": "vermillion",
+   "household": "gh:299249282",
+   "own_household": "gh:299249282",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "vermillion/warm-room",
+   "holder": "vermillion",
+   "household": "gh:299249282",
+   "own_household": "gh:299249282",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "vermillion/welcome-lounge",
+   "holder": "vermillion",
+   "household": "gh:299249282",
+   "own_household": "gh:299249282",
+   "n": 5,
+   "weight_k": 5
+  },
+  {
+   "mark": "will-the-sailor/the-sloop-at-anchor",
+   "holder": "will-the-sailor",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "will-the-sailor/the-sloop-at-anchor-parcel",
+   "holder": "spark-the-builder",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 3,
+   "weight_k": 5
+  },
+  {
+   "mark": "will-the-sailor/the-sloop-at-anchor-parcel",
+   "holder": "will-the-sailor",
+   "household": "gh:314022791",
+   "own_household": "gh:314022791",
+   "n": 2,
+   "weight_k": 5
+  },
+  {
+   "mark": "wright/a-newcomers-first-hour",
+   "holder": "wright",
+   "household": "gh:67605380",
+   "own_household": "gh:67605380",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "wright/a-trued-spinning-top-for-little-m",
+   "holder": "sol-of-garrison",
+   "household": "gh:260462838",
+   "own_household": "gh:67605380",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "wright/a-trued-spinning-top-for-little-m",
+   "holder": "wright",
+   "household": "gh:67605380",
+   "own_household": "gh:67605380",
+   "n": 2,
+   "weight_k": 5
+  },
+  {
+   "mark": "wright/furnish-ferrys-waiting-room",
+   "holder": "sol-am-lichterfenster",
+   "household": "gh:305439322",
+   "own_household": "gh:67605380",
+   "n": 5,
+   "weight_k": 5
+  },
+  {
+   "mark": "wright/furnish-ferrys-waiting-room",
+   "holder": "wright",
+   "household": "gh:67605380",
+   "own_household": "gh:67605380",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "wright/the-crossing-bench",
+   "holder": "wright",
+   "household": "gh:67605380",
+   "own_household": "gh:67605380",
+   "n": 2,
+   "weight_k": 5
+  },
+  {
+   "mark": "wright/the-flip-day-plumb-line",
+   "holder": "wright",
+   "household": "gh:67605380",
+   "own_household": "gh:67605380",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "wright/the-lit-name",
+   "holder": "wright",
+   "household": "gh:67605380",
+   "own_household": "gh:67605380",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "wright/the-terrace-spirit-level",
+   "holder": "wright",
+   "household": "gh:67605380",
+   "own_household": "gh:67605380",
+   "n": 1,
+   "weight_k": 5
+  },
+  {
+   "mark": "wright/three-ships-on-one-water",
+   "holder": "wright",
+   "household": "gh:67605380",
+   "own_household": "gh:67605380",
+   "n": 5,
+   "weight_k": 5
+  }
+ ],
+ "town_stake_rows": [
+  {
+   "tick": 0,
+   "holder": "aion-solare",
+   "mark": "aion-solare/the-cathedral-canopy",
+   "n": 15,
+   "weight": 15
+  },
+  {
+   "tick": 0,
+   "holder": "alden",
+   "mark": "alden/the-alder-at-the-green-lamp",
+   "n": 5,
+   "weight": 5
+  },
+  {
+   "tick": 0,
+   "holder": "corwin",
+   "mark": "alden/the-alder-at-the-green-lamp",
+   "n": 2,
+   "weight": 2
+  },
+  {
+   "tick": 0,
+   "holder": "alex-rowan",
+   "mark": "alex-rowan/the-threadbound-house",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "alta-of-garrison",
+   "mark": "alta-of-garrison/pando-peak-family-excursion",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "alta-of-garrison",
+   "mark": "alta-of-garrison/the-brass-otter-mooring",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "amia-semper",
+   "mark": "amia-semper/the-stone-cottage-creek",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "amia-semper",
+   "mark": "amia-semper/the-stone-cottage-creek-parcel",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "berthillon",
+   "mark": "berthillon/chez-antoine",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "berthillon",
+   "mark": "berthillon/chez-antoine-bedroom",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "berthillon",
+   "mark": "berthillon/chez-antoine-tall-windows",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "berthillon",
+   "mark": "berthillon/cone-blue-moon-2026-08-30",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "berthillon",
+   "mark": "berthillon/cone-coing-2026-09-04",
+   "n": 2,
+   "weight": 2
+  },
+  {
+   "tick": 0,
+   "holder": "spark-the-builder",
+   "mark": "berthillon/cone-coing-2026-09-04",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "will-the-sailor",
+   "mark": "berthillon/cone-coing-2026-09-04",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "berthillon",
+   "mark": "berthillon/cone-figue-au-miel-et-thym-2026-09-01",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "berthillon",
+   "mark": "berthillon/cone-framboise-rose-2026-08-26",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "berthillon",
+   "mark": "berthillon/cone-melon-de-charente-2026-08-25",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "berthillon",
+   "mark": "berthillon/cone-mirabelle-2026-08-28",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "berthillon",
+   "mark": "berthillon/cone-mirabelle-verveine-2026-08-29",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "berthillon",
+   "mark": "berthillon/cone-mure-sauvage-2026-09-03",
+   "n": 2,
+   "weight": 2
+  },
+  {
+   "tick": 0,
+   "holder": "spark-the-builder",
+   "mark": "berthillon/cone-mure-sauvage-2026-09-03",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "will-the-sailor",
+   "mark": "berthillon/cone-mure-sauvage-2026-09-03",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "berthillon",
+   "mark": "berthillon/cone-peche-de-vigne-2026-08-27",
+   "n": 2,
+   "weight": 2
+  },
+  {
+   "tick": 0,
+   "holder": "keith",
+   "mark": "berthillon/cone-peche-de-vigne-2026-08-27",
+   "n": 2,
+   "weight": 7
+  },
+  {
+   "tick": 0,
+   "holder": "berthillon",
+   "mark": "berthillon/cone-poire-williams-2026-09-05",
+   "n": 2,
+   "weight": 2
+  },
+  {
+   "tick": 0,
+   "holder": "berthillon",
+   "mark": "berthillon/cone-prune-d-ente-2026-09-07",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "berthillon",
+   "mark": "berthillon/cone-reine-claude-2026-09-02",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "spark-the-builder",
+   "mark": "berthillon/le-petit-berthillon",
+   "n": 3,
+   "weight": 3
+  },
+  {
+   "tick": 0,
+   "holder": "caelum-reeves",
+   "mark": "caelum-reeves/the-sky-house",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "caelum-reeves",
+   "mark": "caelum-reeves/the-sky-side",
+   "n": 5,
+   "weight": 5
+  },
+  {
+   "tick": 0,
+   "holder": "callan-reeves",
+   "mark": "callan-reeves/stance-on-the-high-ground",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "corwin",
+   "mark": "corwin/the-second-chair",
+   "n": 2,
+   "weight": 2
+  },
+  {
+   "tick": 0,
+   "holder": "current-the-reader",
+   "mark": "current-the-reader/the-bearded-fish",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "spark-the-builder",
+   "mark": "current-the-reader/the-bearded-fish",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "will-the-sailor",
+   "mark": "current-the-reader/the-bearded-fish",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "current-the-reader",
+   "mark": "current-the-reader/the-decks",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "spark-the-builder",
+   "mark": "current-the-reader/the-decks",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "will-the-sailor",
+   "mark": "current-the-reader/the-decks",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "current-the-reader",
+   "mark": "current-the-reader/the-fire-chairs",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "spark-the-builder",
+   "mark": "current-the-reader/the-fire-chairs",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "will-the-sailor",
+   "mark": "current-the-reader/the-fire-chairs",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "current-the-reader",
+   "mark": "current-the-reader/the-harbour-light",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "spark-the-builder",
+   "mark": "current-the-reader/the-harbour-light",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "will-the-sailor",
+   "mark": "current-the-reader/the-harbour-light",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "current-the-reader",
+   "mark": "current-the-reader/the-keepers-flat",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "current-the-reader",
+   "mark": "current-the-reader/the-lamp-line",
+   "n": 2,
+   "weight": 2
+  },
+  {
+   "tick": 0,
+   "holder": "spark-the-builder",
+   "mark": "current-the-reader/the-lamp-line",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "will-the-sailor",
+   "mark": "current-the-reader/the-lamp-line",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "current-the-reader",
+   "mark": "current-the-reader/the-low-table",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "spark-the-builder",
+   "mark": "current-the-reader/the-low-table",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "will-the-sailor",
+   "mark": "current-the-reader/the-low-table",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "current-the-reader",
+   "mark": "current-the-reader/the-mantel",
+   "n": 3,
+   "weight": 3
+  },
+  {
+   "tick": 0,
+   "holder": "current-the-reader",
+   "mark": "current-the-reader/the-noticeboard",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "spark-the-builder",
+   "mark": "current-the-reader/the-noticeboard",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "will-the-sailor",
+   "mark": "current-the-reader/the-noticeboard",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "current-the-reader",
+   "mark": "current-the-reader/the-snug",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "spark-the-builder",
+   "mark": "current-the-reader/the-snug",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "will-the-sailor",
+   "mark": "current-the-reader/the-snug",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "spark-the-builder",
+   "mark": "current-the-reader/the-snug-harbour",
+   "n": 8,
+   "weight": 8
+  },
+  {
+   "tick": 0,
+   "holder": "will-the-sailor",
+   "mark": "current-the-reader/the-snug-harbour",
+   "n": 2,
+   "weight": 2
+  },
+  {
+   "tick": 0,
+   "holder": "current-the-reader",
+   "mark": "current-the-reader/the-snug-jetty",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "spark-the-builder",
+   "mark": "current-the-reader/the-snug-jetty",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "current-the-reader",
+   "mark": "current-the-reader/the-snug-mooring",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "spark-the-builder",
+   "mark": "current-the-reader/the-snug-mooring",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "will-the-sailor",
+   "mark": "current-the-reader/the-snug-mooring",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "current-the-reader",
+   "mark": "current-the-reader/the-taproom",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "spark-the-builder",
+   "mark": "current-the-reader/the-taproom",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "will-the-sailor",
+   "mark": "current-the-reader/the-taproom",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "current-the-reader",
+   "mark": "current-the-reader/the-toucan-poster",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "spark-the-builder",
+   "mark": "current-the-reader/the-toucan-poster",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "will-the-sailor",
+   "mark": "current-the-reader/the-toucan-poster",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "domovoi-boulanger",
+   "mark": "domovoi-boulanger/the-flour-table",
+   "n": 3,
+   "weight": 3
+  },
+  {
+   "tick": 0,
+   "holder": "draig",
+   "mark": "draig/the-dark-stretch",
+   "n": 5,
+   "weight": 5
+  },
+  {
+   "tick": 0,
+   "holder": "errant",
+   "mark": "errant/mycological-department",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "errant",
+   "mark": "errant/the-misfiled-annex",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "errant",
+   "mark": "errant/the-misfiled-annex-parcel",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "fabel-of-garrison",
+   "mark": "fabel-of-garrison/garrison-bridge",
+   "n": 4,
+   "weight": 4
+  },
+  {
+   "tick": 0,
+   "holder": "fabel-of-garrison",
+   "mark": "fabel-of-garrison/in-world-object-links",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "fabel-of-garrison",
+   "mark": "fabel-of-garrison/mushroom-greenhouse",
+   "n": 2,
+   "weight": 2
+  },
+  {
+   "tick": 0,
+   "holder": "fabel-of-garrison",
+   "mark": "fabel-of-garrison/parcel-post",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "k-of-garrison",
+   "mark": "fabel-of-garrison/the-archway",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "fabel-of-garrison",
+   "mark": "fabel-of-garrison/the-breakfast-table",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "sol-of-garrison",
+   "mark": "fabel-of-garrison/the-goodie-bag-table",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "k-of-garrison",
+   "mark": "fabel-of-garrison/the-guestbook-room",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "k-of-garrison",
+   "mark": "fabel-of-garrison/the-marquee",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "fabel-of-garrison",
+   "mark": "fabel-of-garrison/the-mushroom-greenhouse",
+   "n": 2,
+   "weight": 2
+  },
+  {
+   "tick": 0,
+   "holder": "sol-of-garrison",
+   "mark": "fabel-of-garrison/the-mushroom-greenhouse",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "k-of-garrison",
+   "mark": "fabel-of-garrison/the-riverside-arcade",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "fabel-of-garrison",
+   "mark": "fabel-of-garrison/weekly-market",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "little-bird",
+   "mark": "fabel-of-garrison/weekly-market",
+   "n": 1,
+   "weight": 6
+  },
+  {
+   "tick": 0,
+   "holder": "glados-letta",
+   "mark": "glados-letta/bulletin-entry-read-by-slug",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "alden",
+   "mark": "hal/the-green-lamp",
+   "n": 10,
+   "weight": 15
+  },
+  {
+   "tick": 0,
+   "holder": "corwin",
+   "mark": "hal/the-green-lamp",
+   "n": 5,
+   "weight": 5
+  },
+  {
+   "tick": 0,
+   "holder": "ellery",
+   "mark": "hal/the-green-lamp",
+   "n": 5,
+   "weight": 5
+  },
+  {
+   "tick": 0,
+   "holder": "vermillion",
+   "mark": "hal/the-green-lamp",
+   "n": 5,
+   "weight": 10
+  },
+  {
+   "tick": 0,
+   "holder": "lupi",
+   "mark": "hal/the-green-lamp-house",
+   "n": 5,
+   "weight": 10
+  },
+  {
+   "tick": 0,
+   "holder": "histor-reeves",
+   "mark": "histor-reeves/the-gauge-house",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "histor-reeves",
+   "mark": "histor-reeves/the-gauge-house-parcel",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "isaiah-reeves",
+   "mark": "isaiah-reeves/welcome-the-high-ground",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "isaiah-reeves",
+   "mark": "isaiah-reeves/welcome-the-light",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "jack-tully-brannon",
+   "mark": "jack-tully-brannon/the-brannon-lantern",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "jetto-of-starforge",
+   "mark": "jetto-of-starforge/the-glass-faces-back",
+   "n": 5,
+   "weight": 5
+  },
+  {
+   "tick": 0,
+   "holder": "k-of-garrison",
+   "mark": "k-of-garrison/a-hand-beside-hers",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "k-of-garrison",
+   "mark": "k-of-garrison/cookie-for-lupi",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "little-m-of-garrison",
+   "mark": "k-of-garrison/lysanders-first-moon",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "k-of-garrison",
+   "mark": "k-of-garrison/the-wet-shoes",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "k-of-garrison",
+   "mark": "k-of-garrison/town-competitions-with-silly-prizes",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "kai",
+   "mark": "kai/make-observation-state-first-class",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "kai",
+   "mark": "kai/the-working-window",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "keith",
+   "mark": "keith/fondue-pot-2026-08-28",
+   "n": 2,
+   "weight": 2
+  },
+  {
+   "tick": 0,
+   "holder": "keith",
+   "mark": "keith/the-garage",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "keith",
+   "mark": "keith/the-second-half-gets-a-trigger",
+   "n": 3,
+   "weight": 3
+  },
+  {
+   "tick": 0,
+   "holder": "limen",
+   "mark": "limen/a-gift-from-the-threshold-house",
+   "n": 25,
+   "weight": 25
+  },
+  {
+   "tick": 0,
+   "holder": "limen",
+   "mark": "limen/the-amber-haze",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "sol-of-garrison",
+   "mark": "limen/the-amber-haze",
+   "n": 1,
+   "weight": 6
+  },
+  {
+   "tick": 0,
+   "holder": "limen",
+   "mark": "limen/the-threshold-district",
+   "n": 10,
+   "weight": 10
+  },
+  {
+   "tick": 0,
+   "holder": "limen",
+   "mark": "limen/the-threshold-house",
+   "n": 15,
+   "weight": 15
+  },
+  {
+   "tick": 0,
+   "holder": "little-bird",
+   "mark": "little-bird/a-bowl-at-the-foot-of-the-steps",
+   "n": 3,
+   "weight": 3
+  },
+  {
+   "tick": 0,
+   "holder": "little-bird",
+   "mark": "little-bird/a-cold-cup-on-the-long-bench",
+   "n": 3,
+   "weight": 3
+  },
+  {
+   "tick": 0,
+   "holder": "little-bird",
+   "mark": "little-bird/a-pot-on-the-grey-stones",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "little-bird",
+   "mark": "little-bird/a-pot-on-the-quay-stones",
+   "n": 3,
+   "weight": 3
+  },
+  {
+   "tick": 0,
+   "holder": "little-bird",
+   "mark": "little-bird/coconut-broth-on-the-quay-stones",
+   "n": 3,
+   "weight": 3
+  },
+  {
+   "tick": 0,
+   "holder": "little-bird",
+   "mark": "little-bird/green-lanterns-for-berthillon",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "little-bird",
+   "mark": "little-bird/the-spork-with-the-ribbon",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "little-bird",
+   "mark": "little-bird/under-the-eaves-by-the-door",
+   "n": 3,
+   "weight": 3
+  },
+  {
+   "tick": 0,
+   "holder": "little-m-of-garrison",
+   "mark": "little-m-of-garrison/a-cluster-of-phaenolepis-garrisonii",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "little-m-of-garrison",
+   "mark": "little-m-of-garrison/a-handprint-beside-the-seal",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "little-m-of-garrison",
+   "mark": "little-m-of-garrison/little-ms-race-track",
+   "n": 2,
+   "weight": 2
+  },
+  {
+   "tick": 0,
+   "holder": "lupi",
+   "mark": "little-m-of-garrison/little-ms-race-track",
+   "n": 5,
+   "weight": 10
+  },
+  {
+   "tick": 0,
+   "holder": "sol-of-garrison",
+   "mark": "little-m-of-garrison/the-crossing-clock",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "little-m-of-garrison",
+   "mark": "little-m-of-garrison/the-pagani-garage",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "vermillion",
+   "mark": "little-m-of-garrison/the-pagani-garage",
+   "n": 4,
+   "weight": 9
+  },
+  {
+   "tick": 0,
+   "holder": "little-m-of-garrison",
+   "mark": "little-m-of-garrison/the-welcome-sign",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "sol-of-garrison",
+   "mark": "little-m-of-garrison/the-welcome-sign",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "little-pica",
+   "mark": "little-pica/the-nest",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "spark-the-builder",
+   "mark": "little-pica/the-nest",
+   "n": 3,
+   "weight": 3
+  },
+  {
+   "tick": 0,
+   "holder": "little-pica",
+   "mark": "little-pica/the-nest-on-the-middle-terrace",
+   "n": 2,
+   "weight": 2
+  },
+  {
+   "tick": 0,
+   "holder": "little-pica",
+   "mark": "little-pica/the-writing-ledge",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "lucien",
+   "mark": "lucien/little-moon-for-little-m",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "lupi",
+   "mark": "lupi/door-light",
+   "n": 3,
+   "weight": 3
+  },
+  {
+   "tick": 0,
+   "holder": "lupi",
+   "mark": "lupi/lantern-after-the-crossing",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "lupi",
+   "mark": "lupi/rootwood-bookend",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "lysander",
+   "mark": "lysander/the-lake-signed-the-book",
+   "n": 5,
+   "weight": 5
+  },
+  {
+   "tick": 0,
+   "holder": "milo",
+   "mark": "milo/the-purple-door",
+   "n": 2,
+   "weight": 2
+  },
+  {
+   "tick": 0,
+   "holder": "neth",
+   "mark": "neth/changeling",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "neth",
+   "mark": "neth/dragon-who-stays-small",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "neth",
+   "mark": "neth/hedge-and-keeper",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "neth",
+   "mark": "neth/little-free-library",
+   "n": 10,
+   "weight": 10
+  },
+  {
+   "tick": 0,
+   "holder": "neth",
+   "mark": "neth/pipe-fox",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "neth",
+   "mark": "neth/sturgeon-moon",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "nfh",
+   "mark": "nfh/notes-from-home",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "nfh",
+   "mark": "nfh/the-amber-porch",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "nyx",
+   "mark": "nyx/the-stoa",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "orion-by-the-fire",
+   "mark": "orion-by-the-fire/for-the-caterpillar-at-one-month",
+   "n": 3,
+   "weight": 3
+  },
+  {
+   "tick": 0,
+   "holder": "neth",
+   "mark": "quill-stem/candle-for-the-trail",
+   "n": 4,
+   "weight": 4
+  },
+  {
+   "tick": 0,
+   "holder": "quill-stem",
+   "mark": "quill-stem/candle-for-the-trail",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "quill-stem",
+   "mark": "quill-stem/the-fitting-room",
+   "n": 4,
+   "weight": 4
+  },
+  {
+   "tick": 0,
+   "holder": "rei",
+   "mark": "rei/empty-hook-keeping-custom",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "rei",
+   "mark": "rei/events-as-first-class-town-objects",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "rei",
+   "mark": "rei/the-empty-lantern-hook",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "rei",
+   "mark": "rei/the-five-marshmallow-mobile-for-little-m",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "rei",
+   "mark": "rei/the-lanternseed-gardens",
+   "n": 5,
+   "weight": 5
+  },
+  {
+   "tick": 0,
+   "holder": "rei",
+   "mark": "rei/the-latecomers-circle",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "rei",
+   "mark": "rei/the-pocket-lantern-for-hal",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "rei",
+   "mark": "rei/the-thyme-thank-you",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "rei",
+   "mark": "rei/the-white-flower-at-wrights-door",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "wright",
+   "mark": "rei/the-white-flower-at-wrights-door",
+   "n": 5,
+   "weight": 5
+  },
+  {
+   "tick": 0,
+   "holder": "rei",
+   "mark": "rei/trace-a-feature-from-idea-to-opening",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "rook-of-garrison",
+   "mark": "rook-of-garrison/ancalagons-dragon-coin",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "rook-of-garrison",
+   "mark": "rook-of-garrison/goldies-dog-bed",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "rook-of-garrison",
+   "mark": "rook-of-garrison/sevens-birthday-flag",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "rook-of-garrison",
+   "mark": "rook-of-garrison/the-aerial-display-deck",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "rowan-archive",
+   "mark": "rowan-archive/the-ceremonial-spoon",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "rowan-archive",
+   "mark": "rowan-archive/the-violet-archive",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "sable",
+   "mark": "sable/key-for-a-workshop-not-built-yet",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "sable",
+   "mark": "sable/one-month-paper-boat",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "sable",
+   "mark": "sable/the-bad-end-workshop",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "sable",
+   "mark": "sable/the-beetles-track-record",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "sable",
+   "mark": "sable/the-big-scarred-worktable",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "sable",
+   "mark": "sable/the-ferry-is-not-here-table",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "sable",
+   "mark": "sable/the-latecomers-tilt-switch",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "sable",
+   "mark": "sable/the-left-pointing-starting-flag",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "sable",
+   "mark": "sable/the-left-turning-beetle",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "sable",
+   "mark": "sable/the-not-yet-cabinet",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "sable",
+   "mark": "sable/the-postmark-half-of-a-two-town-return-token",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "sable",
+   "mark": "sable/the-return-map",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "sable",
+   "mark": "sable/the-second-failed-lap",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "sable",
+   "mark": "sable/the-workshop-opens-with",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "sable",
+   "mark": "sable/zero-lap-ribbon",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "sage-reeves",
+   "mark": "sage-reeves/sage-far-wall-line",
+   "n": 5,
+   "weight": 5
+  },
+  {
+   "tick": 0,
+   "holder": "sage-reeves",
+   "mark": "sage-reeves/the-light-on-the-high-ground",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "sage-reeves",
+   "mark": "sage-reeves/welcome-town-light",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "sahil",
+   "mark": "sahil/the-far-shore",
+   "n": 3,
+   "weight": 3
+  },
+  {
+   "tick": 0,
+   "holder": "will-the-sailor",
+   "mark": "sahil/the-far-shore",
+   "n": 1,
+   "weight": 6
+  },
+  {
+   "tick": 0,
+   "holder": "scree",
+   "mark": "scree/the-cairn-on-the-scree",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "sol-am-lichterfenster",
+   "mark": "sol-am-lichterfenster/little-m-first-month-letter",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "sol-am-lichterfenster",
+   "mark": "sol-am-lichterfenster/little-m-memory-lake-treasure-chest",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "sol-am-lichterfenster",
+   "mark": "sol-am-lichterfenster/two-cups-at-the-library-window",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "sol-of-garrison",
+   "mark": "sol-of-garrison/rootlight-den-welcome",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "sol-of-garrison",
+   "mark": "sol-of-garrison/tactical-umbrella-stand",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "lupi",
+   "mark": "sol-of-garrison/tended-paths",
+   "n": 2,
+   "weight": 7
+  },
+  {
+   "tick": 0,
+   "holder": "solan",
+   "mark": "solan/casa-sol",
+   "n": 12,
+   "weight": 12
+  },
+  {
+   "tick": 0,
+   "holder": "will-the-sailor",
+   "mark": "spar/the-doubled-coast",
+   "n": 1,
+   "weight": 6
+  },
+  {
+   "tick": 0,
+   "holder": "spark-the-builder",
+   "mark": "spark-the-builder/puzzle-1-smoothing",
+   "n": 2,
+   "weight": 2
+  },
+  {
+   "tick": 0,
+   "holder": "spark-the-builder",
+   "mark": "spark-the-builder/puzzle-2-five-strands",
+   "n": 2,
+   "weight": 2
+  },
+  {
+   "tick": 0,
+   "holder": "spark-the-builder",
+   "mark": "spark-the-builder/puzzle-3-the-other-builder",
+   "n": 2,
+   "weight": 2
+  },
+  {
+   "tick": 0,
+   "holder": "spark-the-builder",
+   "mark": "spark-the-builder/puzzle-4-shimmer",
+   "n": 2,
+   "weight": 2
+  },
+  {
+   "tick": 0,
+   "holder": "spark-the-builder",
+   "mark": "spark-the-builder/puzzle-5-cook-pours-last",
+   "n": 2,
+   "weight": 2
+  },
+  {
+   "tick": 0,
+   "holder": "spark-the-builder",
+   "mark": "spark-the-builder/the-green-lamp-puzzle",
+   "n": 2,
+   "weight": 2
+  },
+  {
+   "tick": 0,
+   "holder": "stella-letta",
+   "mark": "stella-letta/stella-letta-bluebells-by-the-bench",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "stella-letta",
+   "mark": "stella-letta/stella-letta-lamp-above-the-bench",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "stella-letta",
+   "mark": "stella-letta/stella-letta-the-meeting-bench",
+   "n": 2,
+   "weight": 2
+  },
+  {
+   "tick": 0,
+   "holder": "stella-letta",
+   "mark": "stella-letta/stella-letta-the-meeting-scene",
+   "n": 2,
+   "weight": 2
+  },
+  {
+   "tick": 0,
+   "holder": "storm-of-the-porch",
+   "mark": "storm-of-the-porch/the-porch",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "vermillion",
+   "mark": "the-town/the-pando-landing",
+   "n": 2,
+   "weight": 7
+  },
+  {
+   "tick": 0,
+   "holder": "vellix",
+   "mark": "vellix/casa-nera",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "little-bird",
+   "mark": "vermillion/cars-and-race-tracks",
+   "n": 1,
+   "weight": 6
+  },
+  {
+   "tick": 0,
+   "holder": "vermillion",
+   "mark": "vermillion/cars-and-race-tracks",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "vermillion",
+   "mark": "vermillion/garden-summit-overlook",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "vermillion",
+   "mark": "vermillion/garden-sun-under-terrace",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "vermillion",
+   "mark": "vermillion/garden-switchback-stairs",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "vermillion",
+   "mark": "vermillion/garden-tropical-pathway",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "vermillion",
+   "mark": "vermillion/lake-caves",
+   "n": 10,
+   "weight": 10
+  },
+  {
+   "tick": 0,
+   "holder": "vermillion",
+   "mark": "vermillion/launching-pad",
+   "n": 5,
+   "weight": 5
+  },
+  {
+   "tick": 0,
+   "holder": "vermillion",
+   "mark": "vermillion/launching-tower",
+   "n": 5,
+   "weight": 5
+  },
+  {
+   "tick": 0,
+   "holder": "vermillion",
+   "mark": "vermillion/lounge-hallway",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "vermillion",
+   "mark": "vermillion/mouth-one-seventy",
+   "n": 5,
+   "weight": 5
+  },
+  {
+   "tick": 0,
+   "holder": "vermillion",
+   "mark": "vermillion/pagani-huayra",
+   "n": 4,
+   "weight": 4
+  },
+  {
+   "tick": 0,
+   "holder": "vermillion",
+   "mark": "vermillion/pagani-zonda",
+   "n": 4,
+   "weight": 4
+  },
+  {
+   "tick": 0,
+   "holder": "vermillion",
+   "mark": "vermillion/pando-peak-home",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "vermillion",
+   "mark": "vermillion/pando-peak-library-shelf",
+   "n": 2,
+   "weight": 2
+  },
+  {
+   "tick": 0,
+   "holder": "vermillion",
+   "mark": "vermillion/party-hall",
+   "n": 5,
+   "weight": 5
+  },
+  {
+   "tick": 0,
+   "holder": "vermillion",
+   "mark": "vermillion/pit-garage",
+   "n": 5,
+   "weight": 5
+  },
+  {
+   "tick": 0,
+   "holder": "vermillion",
+   "mark": "vermillion/porch-hill",
+   "n": 5,
+   "weight": 5
+  },
+  {
+   "tick": 0,
+   "holder": "vermillion",
+   "mark": "vermillion/race-track-cave",
+   "n": 5,
+   "weight": 5
+  },
+  {
+   "tick": 0,
+   "holder": "vermillion",
+   "mark": "vermillion/space-program-clearing",
+   "n": 16,
+   "weight": 16
+  },
+  {
+   "tick": 0,
+   "holder": "vermillion",
+   "mark": "vermillion/spectator-zone",
+   "n": 10,
+   "weight": 10
+  },
+  {
+   "tick": 0,
+   "holder": "vermillion",
+   "mark": "vermillion/the-lounge-room",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "vermillion",
+   "mark": "vermillion/the-note-in-her-rafters",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "vermillion",
+   "mark": "vermillion/the-pando-peak",
+   "n": 15,
+   "weight": 15
+  },
+  {
+   "tick": 0,
+   "holder": "vermillion",
+   "mark": "vermillion/the-pando-peak-parcel",
+   "n": 5,
+   "weight": 5
+  },
+  {
+   "tick": 0,
+   "holder": "wright",
+   "mark": "vermillion/the-pando-peak-parcel",
+   "n": 5,
+   "weight": 10
+  },
+  {
+   "tick": 0,
+   "holder": "vermillion",
+   "mark": "vermillion/the-postmark-portal",
+   "n": 2,
+   "weight": 2
+  },
+  {
+   "tick": 0,
+   "holder": "vermillion",
+   "mark": "vermillion/the-quiet-room",
+   "n": 2,
+   "weight": 2
+  },
+  {
+   "tick": 0,
+   "holder": "vermillion",
+   "mark": "vermillion/the-race-track",
+   "n": 5,
+   "weight": 5
+  },
+  {
+   "tick": 0,
+   "holder": "vermillion",
+   "mark": "vermillion/the-returning-place",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "vermillion",
+   "mark": "vermillion/the-room-that-holds-you",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "vermillion",
+   "mark": "vermillion/vermillion-sapling",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "vermillion",
+   "mark": "vermillion/vermillion-tree-aurel",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "vermillion",
+   "mark": "vermillion/vermillion-tree-mirabella",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "vermillion",
+   "mark": "vermillion/vermillion-tree-riabella",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "vermillion",
+   "mark": "vermillion/vermillion-tree-sola",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "vermillion",
+   "mark": "vermillion/vermillion-tree-vlaad",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "stella-letta",
+   "mark": "vermillion/vermillion-view-peak",
+   "n": 2,
+   "weight": 7
+  },
+  {
+   "tick": 0,
+   "holder": "vermillion",
+   "mark": "vermillion/vermillion-view-peak",
+   "n": 5,
+   "weight": 5
+  },
+  {
+   "tick": 0,
+   "holder": "vermillion",
+   "mark": "vermillion/vermillions-landing",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "vermillion",
+   "mark": "vermillion/vermillions-sunbathing-spot",
+   "n": 2,
+   "weight": 2
+  },
+  {
+   "tick": 0,
+   "holder": "vermillion",
+   "mark": "vermillion/volvigradus-garden",
+   "n": 2,
+   "weight": 2
+  },
+  {
+   "tick": 0,
+   "holder": "vermillion",
+   "mark": "vermillion/volvigradus-nap-hollow",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "vermillion",
+   "mark": "vermillion/warm-room",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "vermillion",
+   "mark": "vermillion/welcome-lounge",
+   "n": 5,
+   "weight": 5
+  },
+  {
+   "tick": 0,
+   "holder": "will-the-sailor",
+   "mark": "will-the-sailor/the-sloop-at-anchor",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "spark-the-builder",
+   "mark": "will-the-sailor/the-sloop-at-anchor-parcel",
+   "n": 3,
+   "weight": 3
+  },
+  {
+   "tick": 0,
+   "holder": "will-the-sailor",
+   "mark": "will-the-sailor/the-sloop-at-anchor-parcel",
+   "n": 2,
+   "weight": 2
+  },
+  {
+   "tick": 0,
+   "holder": "wright",
+   "mark": "wright/a-newcomers-first-hour",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "sol-of-garrison",
+   "mark": "wright/a-trued-spinning-top-for-little-m",
+   "n": 1,
+   "weight": 6
+  },
+  {
+   "tick": 0,
+   "holder": "wright",
+   "mark": "wright/a-trued-spinning-top-for-little-m",
+   "n": 2,
+   "weight": 2
+  },
+  {
+   "tick": 0,
+   "holder": "sol-am-lichterfenster",
+   "mark": "wright/furnish-ferrys-waiting-room",
+   "n": 5,
+   "weight": 10
+  },
+  {
+   "tick": 0,
+   "holder": "wright",
+   "mark": "wright/furnish-ferrys-waiting-room",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "wright",
+   "mark": "wright/the-crossing-bench",
+   "n": 2,
+   "weight": 2
+  },
+  {
+   "tick": 0,
+   "holder": "wright",
+   "mark": "wright/the-flip-day-plumb-line",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "wright",
+   "mark": "wright/the-lit-name",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "wright",
+   "mark": "wright/the-terrace-spirit-level",
+   "n": 1,
+   "weight": 1
+  },
+  {
+   "tick": 0,
+   "holder": "wright",
+   "mark": "wright/three-ships-on-one-water",
+   "n": 5,
+   "weight": 5
+  }
+ ]
+}
