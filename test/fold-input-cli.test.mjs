@@ -121,12 +121,29 @@ test("ingestOrdering: the same sha is `current`, behind 0", () => {
 test("ingestOrdering: an ancestor is `behind`, with the distance NAMED", () => {
   // `behind` climbing across successive receipts is the only surface a stopped
   // ingest has, so the number matters more than the boolean.
-  const head = execFileSync("git", ["-C", OFFICE, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
-  const parent = execFileSync("git", ["-C", OFFICE, "rev-parse", "HEAD~2"], { encoding: "utf8" }).trim();
-  const o = ingestOrdering(OFFICE, { storeSha: parent, fetchedSha: head });
-  assert.equal(o.ok, true);
-  assert.equal(o.reason, "behind");
-  assert.equal(o.behind, 2);
+  //
+  // The repo is built here, not read off the office's own history. An earlier
+  // form took the office's `HEAD~2` and asserted `behind === 2`, which is true
+  // only while HEAD~2..HEAD is a straight line of two: on a tree where this
+  // branch sits behind two --no-ff merges the same walk counts 26, so the test
+  // went red on the merged train and would have stayed red on main for good.
+  // A test whose oracle is the repository it lives in measures that
+  // repository's shape, not the function (the class: calendar-pinned controls).
+  const dir = mkdtempSync(join(tmpdir(), "foldcli-behind-"));
+  try {
+    const g = (...a) => execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    g("init", "-q", "-b", "main");
+    g("config", "user.email", "t@x.invalid"); g("config", "user.name", "t");
+    g("commit", "-q", "--allow-empty", "-m", "one");
+    const first = g("rev-parse", "HEAD").trim();
+    g("commit", "-q", "--allow-empty", "-m", "two");
+    g("commit", "-q", "--allow-empty", "-m", "three");
+    const head = g("rev-parse", "HEAD").trim();
+    const o = ingestOrdering(dir, { storeSha: first, fetchedSha: head });
+    assert.equal(o.ok, true);
+    assert.equal(o.reason, "behind");
+    assert.equal(o.behind, 2);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test("ingestOrdering: a head that is NOT an ancestor refuses — a rewritten branch or the wrong clone", () => {
