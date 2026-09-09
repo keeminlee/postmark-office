@@ -101,6 +101,27 @@ import { renderRecord, MARK_COLUMNS } from "./mark-render.mjs";
 import { stakesFromStore } from "./fold-input.mjs";
 
 /**
+ * WHAT COUNTS AS A DOCKET COUNT — one rule, one home, two readers.
+ *
+ * `selection.docket_claims` is produced here and consumed in two places that
+ * must agree about what a valid one is: `fold-input-cli.mjs`, which refuses a
+ * fold whose selection cannot carry the guard's third input, and
+ * `src/store-writedown.mjs § starvingCheck`, which is the guard. Two copies of
+ * this predicate is how two eras come to disagree about one field — the exact
+ * argument `mark-record.mjs` makes about serializations — so there is one.
+ *
+ * IT IS A TYPE TEST, NOT A COERCION, and the reviewer's note of 2026-09-09 is
+ * why. `Number("")`, `Number(false)` and `Number([])` are all 0, so an empty
+ * string, a `false` and an empty array each read as "the docket was empty" and
+ * PASS the last guard before publication. `Number(null)` is 0 too, which is the
+ * same trap a second time: the first version of the CLI's own check spelled it
+ * `Number.isFinite(Number(v))` and so accepted the explicit null its message
+ * said it existed to catch. A count is a non-negative integer or it is not a
+ * count, and anything else refuses rather than being read charitably.
+ */
+export const isDocketCount = (v) => typeof v === "number" && Number.isInteger(v) && v >= 0;
+
+/**
  * THE CROSSING'S OWN MARKS, from the docket the candle locked.
  *
  * Signature is lane 2's as the ruling names it: `(client, { window })`, plus the

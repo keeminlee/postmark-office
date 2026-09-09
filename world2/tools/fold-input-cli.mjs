@@ -62,7 +62,7 @@ import { execFileSync } from "node:child_process";
 import * as foldInput from "./fold-input.mjs";
 // The selector, imported by name because it is not optional: a crossing without
 // it has no way to say which marks are its own.
-import { foldDelta } from "./fold-delta.mjs";
+import { foldDelta, isDocketCount } from "./fold-delta.mjs";
 
 const argOf = (n, d = null) => { const i = process.argv.indexOf(n); return i !== -1 ? process.argv[i + 1] : d; };
 
@@ -209,11 +209,21 @@ if (isMain) {
         + `but this crossing called ${delta.entry}. The selection is what the receipt shows a keeper to say WHICH `
         + "module folded, so it must be the module that ran, not a name copied beside it.");
     }
-    if (!Number.isFinite(Number(selection.docket_claims))) {
+    // THE CHECK THAT DID NOT DO WHAT ITS OWN SENTENCE SAID (reviewer, 2026-09-09).
+    //
+    // This was `!Number.isFinite(Number(selection.docket_claims))`, and
+    // `Number(null)` is 0, which is finite — so an explicit `docket_claims:
+    // null` sailed through the check whose message says it exists to catch
+    // exactly that. The same coercion trap this lane found in `starvingCheck`,
+    // committed one file away in the fix for it, which is the whole argument for
+    // `isDocketCount` being one shared predicate rather than two spellings.
+    if (!isDocketCount(selection.docket_claims)) {
       throw new Error(
-        "fold-selection-incomplete: the fold returned no `selection.docket_claims`. That is the loud-empty guard's "
-        + "third input — without it an empty docket (nobody claimed) and an empty mark read over a docket with rows "
-        + "(the store did not answer) are the same value again, which is the defect this field exists to close.");
+        "fold-selection-incomplete: `selection.docket_claims` is "
+        + `${JSON.stringify(selection.docket_claims ?? null)}, which is not a count (a non-negative integer). That is `
+        + "the loud-empty guard's third input — without it an empty docket (nobody claimed) and an empty mark read "
+        + "over a docket with rows (the store did not answer) are the same value again, which is the defect this "
+        + "field exists to close.");
     }
   } catch (e) {
     // Lane 2's refusals are thrown Errors whose messages carry the sha or window
