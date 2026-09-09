@@ -83,10 +83,38 @@
 // can have its act written afterwards. `--journal-only` is that repair, and it
 // refuses to write a second act for a ruling that already has one.
 //
+// ── THE SECOND DOOR, AND WHY IT NAMES RATHER THAN REFUSES (postmark#2594) ───
+//
+// Keemin ruled on 2026-09-08: "a claim that would lock while the mark it
+// materializes has no file on main at the locking crossing is REFUSED at the
+// clearing job's lock step" — and WITHDREW that lock-time refusal the same
+// evening, when the reviewer measured the settlement's push landing minutes
+// AFTER the candle clears (`canon-register.mjs`'s header carries the table).
+// Nothing at the candle reads canon now. What survives of the ruling here is
+// the door: this file is the OTHER lawful writer of `marks` — it writes
+// `status = 'locked'` and calls the same `materializeClaims` — so a mind
+// granting a contest can materialize a mark canon does not carry, and no
+// candle step ever saw or sees it.
+//
+// A GUARD HERE WOULD BE THE WRONG SHAPE, and that is a judgement the lane made
+// and the conductor took (2026-09-08): a mind ruling on a contest is a
+// deliberate act by somebody who can read canon for themselves, and the ruling
+// covers the candle. What was missing is not a refusal — it is the FACT. So this
+// prints one line when the granted claim's slug has no canon file, and the mind
+// rules with it in front of them.
+//
+// AND IT NAMES ITS OWN ABSENCE. Without `--world-repo` the line says the check
+// did not run, rather than printing nothing: "asked and found nothing" and
+// "never asked" must not look alike, which is the whole of what #2594 is about.
+// The nightly read (`falsifier-canon-locks.mjs`) catches whatever comes through
+// this door regardless, because it walks standing marks and does not care which
+// door they arrived by.
+//
 // ── USAGE ───────────────────────────────────────────────────────────────────
 //
 //   node world2/tools/review-rule.mjs --claim <uuid> --rule grant|refuse|hold \
-//        --by <handle> --because "<one sentence>" [--dry-run] [--json]
+//        --by <handle> --because "<one sentence>" [--world-repo <checkout>] \
+//        [--dry-run] [--json]
 //   node world2/tools/review-rule.mjs --claim <uuid> --journal-only
 //
 //   env: WORLD2_CLEARING_URL = postgres://clearing_job:…@localhost/world2_dev
@@ -103,8 +131,15 @@
 
 import { realpathSync } from "node:fs";
 import { pathToFileURL, fileURLToPath } from "node:url";
-import { materializeClaims, recomputeStanding, slugOf } from "./materialize.mjs";
+import { materializeClaims, recomputeStanding, slugOf, ownerHouseholdFor } from "./materialize.mjs";
 import { fractionalCrossing } from "./live-reads.mjs";
+// The #2594 predicate, for NAMING only — this door is deliberately not gated by
+// it. See § THE SECOND DOOR below.
+import { canonRegisterAt } from "./canon-register.mjs";
+// The escrow PRESENCE rule — a real blocker here, unlike the canon note. See
+// § THE SECOND DOOR.
+import { escrowAbsentAmong, escrowPresenceAt } from "./escrow-presence.mjs";
+import { computeStanding } from "./standing.mjs";
 
 const arg = (n) => { const i = process.argv.indexOf(n); return i === -1 ? null : process.argv[i + 1]; };
 const has = (n) => process.argv.includes(n);
@@ -150,7 +185,7 @@ export async function contestOf(q, claim) {
  * at ruling time. Returns the reasons the run must refuse, and the standing mark
  * the winner amends when there is one.
  */
-export async function reCheckGrant(q, winner) {
+export async function reCheckGrant(q, winner, { townSha = null } = {}) {
   const blockers = [];
   let amended = null;
   const slug = slugOf(winner);
@@ -171,6 +206,48 @@ export async function reCheckGrant(q, winner) {
     if (rows.length) blockers.push(`this parcel now overlaps standing parcel "${rows[0].slug}" — ` +
       `the ground was taken while the claim was held; contesting a STANDING mark is a different question from the one that was held`);
   }
+  // ── THE ESCROW PRESENCE RULE, RE-RUN AT RULING TIME (postmark#2594) ───────
+  //
+  // This door LOCKS and MATERIALIZES, so the rule the candle's step 5.5 carries
+  // has to hold here too, or the register grows commons marks with nothing
+  // behind them through the one door nobody is watching. The conductor ruled it
+  // in on 2026-09-08: the review door gets the predicate, not only the canon
+  // naming line above.
+  //
+  // A BLOCKER, NOT A REFUSAL OF THE CLAIM — which is this file's own established
+  // shape for a fact that changed while the claim was held: "a failure REFUSES
+  // THE RUN rather than refusing the claim. A mind ruled on facts that have
+  // changed; that wants the mind again, not this tool's guess." A mind that
+  // still wants to grant it can have the stake put on first.
+  //
+  // The class is computed prospectively, exactly as the candle does it, so the
+  // two doors cannot disagree about what `commons` means: `computeStanding` over
+  // the standing rows plus this candidate, in the shape `materializeClaims` is
+  // about to insert. And an escrow projection that cannot answer blocks NOTHING —
+  // `escrowAbsentAmong` returns `unchecked` for that, never a refusal, because a
+  // store that cannot answer and a town where nobody staked are different facts.
+  if (townSha) {
+    const { rows: standingRows } = await q(
+      `SELECT id::text, slug, kind, owner, household, geometry, parent::text, data
+         FROM marks WHERE status = 'standing'`);
+    const candidate = {
+      id: String(winner.id), slug, kind: winner.class, owner: winner.claimant,
+      household: await ownerHouseholdFor(q, winner.claimant),
+      geometry: winner.geometry, parent: winner.parent, data: winner.data,
+    };
+    const tiers = computeStanding([...standingRows, candidate]);
+    const escrowByMark = await escrowPresenceAt(q, { townSha });
+    const verdict = escrowAbsentAmong([{ id: winner.id, slug }], { tiers, escrowByMark, townSha });
+    if (verdict.refused.length)
+      blockers.push(`"${slug}" would stand as a COMMONS mark with nothing staked on it at town ${String(townSha).slice(0, 8)} — ` +
+        `the town's own sweep refuses this ("commons needs escrow > 0") and the candle refuses it at the lock step; ` +
+        `a mind granting it here would put the one mark in the register that neither other door would allow`);
+    if (verdict.unchecked.length)
+      console.log(`  ⚑ escrow NOT CHECKED for ${slug} — escrow_projection cannot answer at town ${String(townSha).slice(0, 8)} (migration 014); this ruling does not know whether the mark is backed`);
+  } else {
+    console.log(`  ⚑ escrow NOT CHECKED for ${slug} — this window pinned no town read, so the presence rule could not be asked`);
+  }
+
   return { blockers, amended };
 }
 
@@ -188,6 +265,7 @@ async function main() {
   const kind = arg("--rule");
   const by = arg("--by");
   const because = arg("--because");
+  const worldRepo = arg("--world-repo");   // § THE SECOND DOOR — naming, not gating
   if (!RULINGS.includes(kind)) usage(`--rule must be one of ${RULINGS.join(" | ")}`);
   // A RECEIPT WITH NO NAME IS NOT A RECEIPT. `held_review` means "a mind rules",
   // and a ruling that cannot say whose mind it was is exactly the state-with-no-
@@ -226,7 +304,17 @@ async function main() {
 
     let amended = null;
     if (kind === "grant") {
-      const re = await reCheckGrant(q, claim);
+      // THE TOWN SHA IS THE LATEST PINNED ONE, NOT THE OPEN WINDOW'S.
+      // `windows.town_sha` is written by the clearing AT CLOSE, so the open
+      // window this ruling lands in has none — reading `open.town_sha` would
+      // hand `reCheckGrant` a null on every run and the presence rule would
+      // never fire. That is the value-with-no-reader defect, and I wrote it
+      // before checking which write fills the column. The latest CLOSED window's
+      // pin is also the right answer on its own terms: this file's rule for a
+      // re-check is "the world as it now stands".
+      const { rows: [pinned] } = await q(
+        "SELECT town_sha FROM windows WHERE town_sha IS NOT NULL ORDER BY id DESC LIMIT 1");
+      const re = await reCheckGrant(q, claim, { townSha: pinned?.town_sha ?? null });
       if (re.blockers.length) {
         throw new Error(`the world moved while this claim was held, so the ruling is REFUSED rather than applied:\n  - ` +
           re.blockers.join("\n  - ") + `\nNothing was written. Re-decide the contest against the world as it now stands.`);
@@ -254,7 +342,25 @@ async function main() {
 
     let materialized = 0;
     let standingMoved = { moved: [], standing: [], notes: [] };
+    let canonNote = null;
     if (kind === "grant") {
+      // § THE SECOND DOOR — the fact, printed. Never a refusal, and never silent.
+      const grantedSlug = slugOf(claim);
+      if (!grantedSlug) {
+        canonNote = null;                       // a claim naming no mark makes none
+      } else if (!worldRepo) {
+        canonNote = `canon NOT CHECKED for ${grantedSlug} — no --world-repo was given, so this ruling does not know whether the world carries the mark it is about to stand (postmark#2594)`;
+      } else {
+        try {
+          const register = await canonRegisterAt({ backend: "git", worldRepo });
+          canonNote = register.slugs.has(grantedSlug) ? null
+            : `canon carries NO FILE for ${grantedSlug} at ${register.sha.slice(0, 8)} — this ruling stands a mark the world does not hold (postmark#2594); the nightly read will list it at 03:20 until the world carries it or it is retired, and a mind may not be wrong to grant it anyway`;
+        } catch (err) {
+          canonNote = `canon could not be read (${err.message}) — this ruling does not know whether the world carries ${grantedSlug}`;
+        }
+      }
+      if (canonNote) console.log(`  ⚑ ${canonNote}`);
+
       materialized = await materializeClaims(q, {
         claims: [claim],
         amends: amended ? new Map([[String(claim.id), amended]]) : new Map(),
@@ -271,13 +377,18 @@ async function main() {
       `UPDATE windows SET receipts = coalesce(receipts, '{}'::jsonb) || jsonb_build_object('review_rulings', $2::jsonb) WHERE id = $1`,
       [open.id, JSON.stringify([...existing, {
         ...ruling, held_window: claim.window_id, outcomes,
+        // The canon fact rides on the RULING, not only on the console. The
+        // conductor asked for one printed line; a printed line is gone the
+        // moment the terminal scrolls, and this receipt is the durable record of
+        // what a mind ruled and what it knew when it ruled. Same key on both.
+        ...(canonNote ? { canon_note: canonNote } : {}),
         ...(kind === "grant" ? { materialized, standing_moved: standingMoved.moved.length } : {}),
       }])]);
 
     out = {
       claim: String(claim.id), slug: slugOf(claim), rule: kind, by, because, at,
       held_window: claim.window_id, ruled_in_window: open.id,
-      contest: contest.length, outcomes, materialized,
+      contest: contest.length, outcomes, materialized, canon_note: canonNote,
       standing: { recomputed: standingMoved.standing.length, moved: standingMoved.moved.length, moves: standingMoved.moved.slice(0, 10) },
       notes: standingMoved.notes,
       act: null,
