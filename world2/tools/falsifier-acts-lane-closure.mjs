@@ -358,6 +358,14 @@ if (has("--prove-can-fail")) {
 // length — so an unruled journal class was reported as a verb-census failure
 // while LANE_OF was untouched and check 0 was green. A verdict computed from a
 // different source than the one it names is the freshness-stamp class.
+//
+// ⛔ GIVEN-BUT-UNREADABLE IS A REFUSAL, NOT "NO --db WAS GIVEN" (repair 5).
+// The first cut gated on `censusDb && existsSync(censusDb)` and fell into the
+// no-db disclosure otherwise, so an operator who typo'd the path got exit 0
+// and a sentence blaming them for something they did do. Now a path that was
+// given and cannot be read as a journal is a usage refusal — exit 2, the
+// same code the full run's usage gate uses — that names the path and the
+// reason, and the run says nothing green about a check it could not ask.
 if (has("--census")) {
   const { DISPATCHABLE } = await import("../../src/world-apex.mjs");
   const verbProblems = checkCensus([...DISPATCHABLE]);
@@ -367,14 +375,25 @@ if (has("--census")) {
   let classProblems = [];
   let classLine;
   const censusDb = arg("--db");
-  if (censusDb && existsSync(censusDb)) {
-    const db = new DatabaseSync(censusDb, { readOnly: true });
-    try { classes = db.prepare("SELECT DISTINCT class FROM journal").all().map((r) => String(r.class)); }
-    finally { db.close(); }
+  if (censusDb == null || censusDb === "") {
+    classLine = "check 0b was NOT asked — no --db was given, so no journal was read and this run says nothing about which classes the store holds";
+  } else {
+    try {
+      if (!existsSync(censusDb)) throw new Error("no such file");
+      const db = new DatabaseSync(censusDb, { readOnly: true });
+      try { classes = db.prepare("SELECT DISTINCT class FROM journal").all().map((r) => String(r.class)); }
+      finally { db.close(); }
+    } catch (e) {
+      for (const p of verbProblems) console.error(p);
+      console.error(
+        `REFUSED (census usage): --db ${censusDb} was given and could not be read as a journal (${String(e?.message ?? e)}). `
+        + "Check 0b was asked of it and could not be answered — this run says nothing about which classes the store holds, "
+        + "and it refuses rather than passing that silence off as green or as the operator's omission.");
+      console.log(`census: ${verbLine}; check 0b was asked of ${censusDb} and could NOT read it — REFUSED (exit 2)`);
+      process.exit(2);
+    }
     classProblems = checkClassCensus(classes);
     classLine = `check 0b asked ${classes.length} journal class(es) against CLASS_LANE_OF (${classes.join(", ") || "none"}) — ${classProblems.length ? "RED" : "every one is ruled"}`;
-  } else {
-    classLine = "check 0b was NOT asked — no --db was given, so no journal was read and this run says nothing about which classes the store holds";
   }
 
   for (const p of [...verbProblems, ...classProblems]) console.error(p);

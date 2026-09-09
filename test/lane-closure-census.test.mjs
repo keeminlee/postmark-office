@@ -16,7 +16,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -66,6 +66,26 @@ test("a journal whose every class is ruled says so, per check, and exits 0", () 
   const r = census("--db", journalWith("ruled.db", ["mark", "voice", "gathering", "handoff"]));
   assert.equal(r.code, 0, `stderr: ${r.err}`);
   assert.match(r.out, /check 0 asked \d+ dispatchable verb\(s\) against LANE_OF — every one is named; check 0b asked 4 journal class\(es\) against CLASS_LANE_OF \(mark, voice, gathering, handoff\) — every one is ruled/);
+});
+
+test("GIVEN BUT UNREADABLE IS A REFUSAL, not 'no --db was given' — a typo'd path exits 2 and names itself", () => {
+  // Repair 5. The first cut gated on existsSync and fell into the no-db
+  // disclosure, so `--db /g/nope/not-a-journal.db` printed "no --db was
+  // given" and exited 0 — blaming the operator for something they did do,
+  // and passing a check it could not ask off as clean.
+  const missing = join(dir, "nope", "not-a-journal.db");
+  const r = census("--db", missing);
+  assert.equal(r.code, 2, "a usage refusal, the same code the full run's usage gate uses");
+  assert.match(r.err, /REFUSED \(census usage\): --db .*not-a-journal\.db was given and could not be read as a journal \(no such file\)/);
+  assert.ok(!/no --db was given/.test(r.out) && !/no --db was given/.test(r.err), "the sentence that blamed the operator is gone from both streams");
+  assert.match(r.out, /check 0b was asked of .*not-a-journal\.db and could NOT read it — REFUSED/);
+  // AND A FILE THAT EXISTS BUT IS NOT A JOURNAL IS THE SAME REFUSAL — the
+  // reason changes, the shape does not.
+  const notADb = join(dir, "plain.txt");
+  writeFileSync(notADb, "this is not a sqlite database\n");
+  const r2 = census("--db", notADb);
+  assert.equal(r2.code, 2);
+  assert.match(r2.err, /REFUSED \(census usage\): --db .*plain\.txt was given and could not be read as a journal/);
 });
 
 test("with no --db at all, check 0b is disclosed as NOT ASKED — and that is not counted green for 0b, nor red for 0", () => {
