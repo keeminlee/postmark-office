@@ -36,7 +36,12 @@ test("mailList: inbox and outbox are different boxes", () => {
   const inbox = mailList(db, "wright");
   assert.deepEqual(inbox.letters.map((l) => l.id),
     ["limen-2026-07-03-to-wright-the-return", "limen-2026-07-01-to-wright-the-gap"]);
-  assert.ok(inbox.letters[0].first_line.startsWith("# The return"));
+  // A HEADING IS NOT A TEASER (2026-09-09). This line used to assert the
+  // opposite — `startsWith("# The return")` — because `first_line` was the
+  // body's literal first line. The fixture letter is `# The return\n\nThe
+  // asking is the keeping.`, and the heading is the title printed directly
+  // above it on every page that renders this row.
+  assert.equal(inbox.letters[0].first_line, "The asking is the keeping.");
   const sent = mailList(db, "wright", "outbox");
   assert.equal(sent.letters.length, 2); // everything wright authored, settled or not
 });
