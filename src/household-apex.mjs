@@ -33,7 +33,7 @@ import { standingBounce } from "./standing.mjs";
 import { resident as residentQ, home as homeQ, identityOf, indexAsOf, mailList, mailAwaiting, mailCorrespondents, outboxSettled, windowRead, DOORSTEP_SEGMENTS } from "./queries.mjs";
 import { doorstepBundle } from "./doorstep-bundle.mjs";
 import { worldBlockForHandle } from "./world.mjs";
-import { actionFields, declareStanceAtOffice, openStore, residueOf, parseEnvelope } from "./world-apex.mjs";
+import { actionFields, declareStanceAtOffice, lawOf, openStore, residueOf, parseEnvelope } from "./world-apex.mjs";
 // The consent door's own name and its own schema, read rather than copied —
 // world-stance.mjs is already in this module's static graph (world-apex imports
 // it), so naming it here costs nothing and buys the one-grammar guarantee.
@@ -644,7 +644,16 @@ function fieldsForAct(act, { schemas, schemaRequired } = {}) {
 function actCard(act, db, ctx = {}) {
   const spec = ACTS[act];
   if (!spec) return null;
-  const means = db ? residueOf(db, spec.residue) : null;
+  // A residue is a CLASS mark for most acts, and residueOf's gate is `class IS
+  // NOT NULL` by design. The media law (the-town/the-media) is a PREDICATED
+  // clause of logos — slot: media, no class — the shape residueOf filters out
+  // on purpose, so the upload act's residue was named and never quoted (the
+  // reviewer's probe, 2026-09-09: blurb = the inline restatement, no
+  // blurb_from). lawOf is residueOf's sibling for exactly that shape (the same
+  // quote `read: "media"` already makes), so the fallback quotes the law's own
+  // sentence and names it. A residue that resolves through neither stays the
+  // inline sentence, as before.
+  const means = db ? (residueOf(db, spec.residue) ?? lawOf(db, spec.residue)) : null;
   return {
     act,
     blurb: means ? means.text.slice(0, 150) : spec.inline,

@@ -351,7 +351,7 @@ test("F7 · an unknown read bounces naming BOTH namespaces — the reads and the
   assert.match(r.hint, /reads back its own full card/);
 });
 
-test("F7b · the TEN acts that own their name answer their card; the THREE that are also reads keep their read", async () => {
+test("F7b · the ELEVEN acts that own their name answer their card; the THREE that are also reads keep their read", async () => {
   // ⚠ THE ROUND ASKED FOR A DISJOINTNESS GUARD. It fired on the live door:
   // `address`, `home` and `window` have been both an act and a read since long
   // before this branch, because a read here IS that act's shadow. At the world
@@ -368,9 +368,13 @@ test("F7b · the TEN acts that own their name answer their card; the THREE that 
   // number catches is an act quietly becoming a read (or the reverse), and a
   // census that moves with the thing it counts catches nothing. Update it in
   // the commit that changes the roster, and say why — as this line does.
+  // ⚑ TEN → ELEVEN, 2026-09-09 (the atlas sitting): `upload` joined the roster
+  // as a BARE act — the media door under the apex, routed to uploadMedia; its
+  // read is `media` (the wall), a different name, so it does not shadow. Updated
+  // in the commit that changes the roster, as this line asks.
   const { bare, shadowed } = assertActCardsReachable([...HOUSEHOLD_DISPATCHABLE], HOUSEHOLD_READS);
   assert.deepEqual(shadowed, ["address", "home", "window"]);
-  assert.equal(bare.length, 10);
+  assert.equal(bare.length, 11);
   for (const act of bare) {
     const r = await householdApex({ read: act }, KEY, ctx({ slim: true, schemas: SCHEMAS, schemaRequired: REQUIRED }));
     assert.equal(r.error, undefined, `read: "${act}" bounced — an act nobody can read is an act nobody can learn`);

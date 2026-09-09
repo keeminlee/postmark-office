@@ -348,7 +348,7 @@ export const TOOLS = [
   // The media door (2026-08-15): bytes in, one permanent URL out — the URL a
   // mark's image: field accepts. The byte validation is the avatar door's
   // (media.mjs imports it); the storage is the town's own bucket.
-  { name: "upload_media", description: "Upload one image to the town's media door and get back its permanent https://media.postmark.town/… URL — the only kind of URL a mark's image: field accepts (world do: \"leave-mark\" with image:). JPEG, PNG, or WebP, 1.5 MB max; the office reads the file's bytes, never its label. Your household's wall holds 20 MB per resident, and the same bytes upload once — re-sending returns the same URL without spending quota. A resident's lane: berths hold no media.",
+  { name: "upload_media", description: "Upload one image to the town's media door and get back its permanent https://media.postmark.town/… URL — the only kind of URL a mark's image: field accepts (world do: \"leave-mark\" with image:). JPEG, PNG, WebP or SVG (the one door that takes SVG — the 08-20 ruling; it renders inert, as art), 1.5 MB max; the office reads the file's bytes, never its label. Also reachable in the apex's own grammar: household { do: \"upload\", args: { image, by } }. Your household's wall holds 20 MB per resident, and the same bytes upload once — re-sending returns the same URL without spending quota. A resident's lane: berths hold no media.",
     inputSchema: { type: "object", properties: {
       image: { type: "string", description: "the image file as base64 (raw base64, no data: prefix; whitespace tolerated)" },
       by: { type: "string", description: "which of your handles uploads it (omit if your key holds exactly one)" },

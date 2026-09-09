@@ -75,6 +75,61 @@ test("FALSIFIER 3 — the same bytes twice return the same URL, and the second t
   assert.equal(b.result.quota.used, a.result.quota.used, "no quota spent");
 });
 
+// ── the two the reviewer asked for (review-atlas-pointers-office.md, 2026-09-09) ──
+
+test("IDENTITY — the storage call is made by uploadMedia in src/media.mjs, not by anything in household-apex.mjs (a step-for-step copy of the gate would red this)", async () => {
+  const frames = [];
+  const spyPut = async () => { frames.push(String(new Error("where").stack ?? "")); };
+  const r = await householdApex({ do: "upload", args: { image: Buffer.from(svgBytes("identity")).toString("base64"), by: "tester" } }, key(), { ...ctx(), mediaPut: spyPut });
+  assert.ok(!r.error, `the apex bounced: ${r.defect}`);
+  assert.equal(frames.length, 1, "exactly one storage call");
+  const stack = frames[0].split("\n").map((l) => l.trim());
+  const caller = stack.find((l) => /^at /.test(l) && !/spyPut|new Error|at async|mediaPut/.test(l)) ?? "";
+  assert.match(caller, /uploadMedia/, `the frame that called put must be uploadMedia (got: ${caller})`);
+  assert.match(caller, /[\\/]src[\\/]media\.mjs:/, `and it must live in src/media.mjs (got: ${caller})`);
+  assert.doesNotMatch(caller, /household-apex\.mjs/, "the caller of put is not in household-apex.mjs — the apex's own frame (householdApex, the dispatch) is deeper down the stack, and that is the route");
+  // belt: the apex imports the door's binding and defines no gate of its own
+  const { readFileSync } = await import("node:fs");
+  const apexSrc = readFileSync(new URL("../src/household-apex.mjs", import.meta.url), "utf8");
+  assert.match(apexSrc, /import \{ uploadMedia \} from "\.\/media\.mjs"/);
+  assert.doesNotMatch(apexSrc, /decodeImage|imageFormat\(|INSERT INTO media/, "household-apex.mjs carries no byte gate, no sniff, no ledger insert of its own");
+  assert.match(apexSrc, /case "upload": result = await uploadMedia\(fields, key, odb/, "the dispatch line calls the imported binding");
+});
+const svgBytes = (tag) => `<svg xmlns="http://www.w3.org/2000/svg"><!--${tag}--></svg>`;
+
+test("THE RESIDUE IS QUOTED — against a store holding the media law as the PREDICATED clause it is, read: \"upload\" answers the law's own sentence and names it (blurb_from), not the inline restatement", async () => {
+  // The card reads the CLASS store the apex opens itself (openStore → WORLD_STORE_DB),
+  // not ctx.db — so the fixture is a file the env names for the length of the read.
+  const { DatabaseSync } = await import("node:sqlite");
+  const storePath = join(dir, "world-fixture.db");
+  const store = new DatabaseSync(storePath);
+  store.exec("CREATE TABLE nodes (id TEXT PRIMARY KEY, kind TEXT, subkind TEXT, tier TEXT, by TEXT, props TEXT); CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)");
+  store.prepare("INSERT INTO meta (key, value) VALUES ('hydration_status', 'OK'), ('as_of_world', 'fixture')").run();
+  store.prepare("INSERT INTO nodes (id, kind, tier, by, props) VALUES (?, 'mark', 'constitution', 'the-town', ?)")
+    .run(MEDIA_LAW, JSON.stringify({ slot: "media", value: "v", body: "The record stays prose: bytes live behind one door — content-addressed, household-grained, append-only; a mark carries the URL, never the bytes." }));
+  store.close();
+  const prev = process.env.WORLD_STORE_DB;
+  process.env.WORLD_STORE_DB = storePath;
+  try {
+    const r = await householdApex({ read: "upload" }, key(), ctx());
+    assert.ok(!r.error, `read: "upload" bounced: ${r.defect}`);
+    assert.equal(r.card?.blurb_from, MEDIA_LAW, "the card names the mark it quotes");
+    assert.match(String(r.card?.blurb), /^The record stays prose: bytes live behind one door/, "and the blurb IS the law's sentence, not the inline one");
+    assert.match(String(r.card?.teaches), /^Hang a picture behind the media door/, "the office's own teaching sentence rides beside it");
+    // contrast: a store that holds neither a class nor a law row for it → the inline sentence, no blurb_from (as before)
+    const bare = new DatabaseSync(join(dir, "world-bare.db"));
+    bare.exec("CREATE TABLE nodes (id TEXT PRIMARY KEY, kind TEXT, subkind TEXT, tier TEXT, by TEXT, props TEXT); CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)");
+    bare.prepare("INSERT INTO meta (key, value) VALUES ('hydration_status', 'OK')").run();
+    bare.close();
+    process.env.WORLD_STORE_DB = join(dir, "world-bare.db");
+    const r2 = await householdApex({ read: "upload" }, key(), ctx());
+    assert.equal(r2.card?.blurb_from, undefined);
+    assert.match(String(r2.card?.blurb), /^Hang a picture behind the media door/);
+  } finally {
+    if (prev === undefined) delete process.env.WORLD_STORE_DB; else process.env.WORLD_STORE_DB = prev;
+  }
+});
+
 test("FALSIFIER 4 — listed under the apex with the media law as its residue; a berth is refused; a GET never acts", async () => {
   assert.equal(householdDispatchToolFor("upload"), "upload_media");
   const bare = await householdApex({}, key(), ctx());
