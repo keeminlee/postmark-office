@@ -15,11 +15,15 @@
 // MEASURED, prod `world2_dev` read-only against the fold `wright/atlas-dev-fold`
 // @ `0e1a35d5`, 2026-09-09 ~21:2x Z:
 //
-//   store: 1,040 marks · 106 carry a non-empty `data.image` · of those exactly
-//          ONE is a standing parcel (`jack-tully-brannon/the-brannon-lantern`)
+//   store: 1,040 marks · 106 carry a non-empty `data.image` · 105 of those are
+//          `sited` and exactly ONE is a standing parcel (`vellix/casa-nera`)
 //   fold:  1,185 marks · 193 carry `image:` · 76 of them parcels
 //   join:  87 standing store rows have a picture in the fold and none in the
 //          store — 74 parcels and 13 sited marks. Zero disagree.
+//
+// (The brief expected 0 rows with `data.image` on prod. The true figure is 106.
+// The absence is not of the KEY, it is of the PARCELS: the store has one imaged
+// parcel and the fold has 76, which is the picture the swap would lose.)
 //
 // ── WHY THIS IS A SIBLING AND NOT A COLUMN ADDED TO `backfill-register` ──────
 //
@@ -84,8 +88,13 @@
 //     appears between the plan and the write is not clobbered either.
 //  3. NEVER TOUCH A DRAFT'S ROW. A slug with a draft claim standing against it
 //     is mid-conversation; the pen owns it, not this. Enforced in the plan from
-//     a live `claims` read (19 such marks on prod, 12 of them in the picture
-//     set — `the-brannon-lantern` among them).
+//     a live `claims` read: 23 draft claims on prod, 19 of them naming a mark
+//     that stands, and 2 of those are rows this rail would otherwise have
+//     written (`jack-tully-brannon/the-brannon-lantern`,
+//     `current-the-reader/the-snug-jetty`). The other 10 imaged draft slugs
+//     already agree with the fold, so they are `equal`, not `held` — the
+//     idempotence check comes first, and a row with nothing to do is not a
+//     row this rail had to refuse.
 //  4. NEVER PLANT WHAT THE READER REFUSES. The fold's lint accepts any path
 //     under the media host; the viewer accepts only the `/media/` shelf the
 //     upload door issues. Two of the fold's 193 pointers are off-shelf, and one
