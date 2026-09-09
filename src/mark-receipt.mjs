@@ -106,11 +106,12 @@ export const RECEIPT_CLOCK =
  * `null` and says so, which is asserted there too.
  */
 /**
- * ⚑ `unpublished` IS THE FIFTH WORD, RULED BY KEEMIN 2026-09-08 (postmark#2594).
+ * ⚑ `unpublished` IS THE SIXTH WORD, RULED BY KEEMIN 2026-09-08 (postmark#2594).
  *
  * The bulletin's published sentence promises four — "held, contested, unbacked,
  * or malformed" — and `quarantined` was already a fifth this file carried. The
- * candle's canon-absent refusal is none of them: the record is typically well
+ * nightly read's canon-absent FINDING — nothing at the candle writes it; the
+ * lock-time refusal was withdrawn the same day — is none of them: the record is typically well
  * formed, nobody else claims the slug, the stake is fine, and `held` is spent on
  * `held_review` and defined as "it did not ride and IT WAS NOT REFUSED". It has
  * a name — the world has no file for it — and the ruling is that a refusal with
@@ -134,12 +135,13 @@ const CAUSE_OF_CHECK = Object.freeze({
   "counterclaim": "contested",
   // Not enough liquid stamps behind the stake at the pinned candle read.
   "insufficient-stamps": "unbacked",
-  // NOTHING staked on a commons mark at the pinned town read (step 5.6, ruled a
+  // NOTHING staked on a commons mark at the pinned town read (step 5.5, ruled a
   // G1 blocker 2026-09-08). `unbacked` and not `unpublished`: the world's own
   // sweep would refuse this too — "commons needs escrow > 0" — so the mark is
   // not merely unpublished, it is unbacked, and the resident's move is a stake
-  // rather than a wait. The two candle checks land on different words on
-  // purpose, because they ask a resident for different things.
+  // rather than a wait. The two #2594 checks — this one at the candle,
+  // `canon-absent` on the nightly read — land on different words on purpose,
+  // because they ask a resident for different things.
   "escrow-absent": "unbacked",
   // ── the REVIEW lane's writer (world2/tools/review-rule.mjs) ───────────────
   //
@@ -166,7 +168,7 @@ const CAUSE_OF_CHECK = Object.freeze({
   // Both shapes are contest outcomes, so `contested` is the word — which leaves
   // `held` meaning exactly `held_review`. One word, one state.
   "review-ruling": "contested",
-  // ── the CANDLE's canon check (world2/tools/clearing-job.mjs step 5.5) ─────
+  // ── the NIGHTLY READ's finding (world2/tools/falsifier-canon-locks.mjs) ───
   //
   // RULED 2026-09-08 by Keemin: `unpublished`. The world has no file for the
   // mark, which is a fact about the WORLD and not about the resident's record —

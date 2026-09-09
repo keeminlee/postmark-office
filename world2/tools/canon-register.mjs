@@ -1,9 +1,11 @@
 // canon-register.mjs — DOES CANON CARRY THIS SLUG, and at which state.
 //
-// ONE PREDICATE, TWO BACKENDS, READ AT ONE LINE. The candle and the nightly read
-// ask the identical question of the identical function, so a refusal at the lock
-// step and a listing of what already slipped can never disagree about what
-// "canon carries it" means.
+// ONE PREDICATE, TWO BACKENDS, READ AT ONE LINE. The nightly read
+// (`falsifier-canon-locks.mjs`) and the review door's naming line
+// (`review-rule.mjs`) ask the identical question of the identical function, so
+// a listing of what slipped and a mind's ruling can never disagree about what
+// "canon carries it" means. The candle does NOT ask it — the lock-time refusal
+// was withdrawn the same day it was ruled; the two sections below carry why.
 //
 // ── THE RULING THIS SERVES (Keemin, 2026-09-08, postmark#2594), verbatim ─────
 //
@@ -14,8 +16,9 @@
 //    instances were silent for weeks; a `held_review` row would have been just as
 //    silent."
 //
-// `held_review` is therefore NOT this check's outcome, and the clearing job says
-// so again beside its own call.
+// `held_review` was never this check's outcome, and with the lock-time refusal
+// withdrawn there is no candle call for it to be the outcome of: the read LISTS
+// and the review door NAMES; neither holds anything for review.
 //
 // ── THE STATE THIS IS ASKED AT, AND WHY IT IS NOT `law_sha` ──────────────────
 //

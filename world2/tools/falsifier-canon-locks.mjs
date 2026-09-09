@@ -32,7 +32,7 @@
 //                  sha of the window that LOCKED it. The 1.0 sweep refuses this
 //                  ("commons needs escrow > 0", `settlement-sweep.mjs:1146-1152`)
 //                  and G1 deletes the path that rule lives on; `clearing-job.mjs`
-//                  step 5.6 stops a new one and this lists the ones already
+//                  step 5.5 stops a new one and this lists the ones already
 //                  standing. Its repair is a STAKE, not a retire — which is why
 //                  it is a third class and not folded into canon-absent.
 //

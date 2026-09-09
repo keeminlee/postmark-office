@@ -1,6 +1,7 @@
 // canon-register.test.mjs — the falsifiers for the #2594 predicate.
 //
-// THE LAW EACH ONE QUOTES (Keemin, 2026-09-08 at the G1 sitting, verbatim):
+// THE LAW THIS WAS BUILT FROM (Keemin, 2026-09-08 at the G1 sitting, verbatim —
+// its lock-time half WITHDRAWN the same evening; the next section says where):
 //
 //   "refusal at the candle. A claim that would lock while the mark it
 //    materializes has no file on main at the locking crossing is REFUSED at the
@@ -19,13 +20,16 @@
 //
 // ── WHAT THESE CAN AND CANNOT PROVE ─────────────────────────────────────────
 //
-// `clearing-job.mjs` is a SCRIPT — top-level await, `process.argv`, a
-// `process.exit` — so nothing can import it and no test here reaches step 5.5's
-// WIRING. That is a property of the file's shape, not of its content, and saying
-// otherwise is the defect this room has already recorded once (the hydrate fold,
-// 2026-09-08). What these prove is the PREDICATE. What proves the wiring is the
-// scratch rehearsal in `docs/2026-09-08/jetto-candle-refusal-report.md`, where
-// window 154's lock is replayed against a real Postgres.
+// `falsifier-canon-locks.mjs` and `review-rule.mjs` — this predicate's two
+// callers — are CLI tools: `process.argv`, `process.exit`, a store URL from the
+// environment. So no test here reaches their WIRING, and nothing in
+// `clearing-job.mjs` calls this predicate at all since the withdrawal. That is a
+// property of the files' shape, not of their content, and saying otherwise is
+// the defect this room has already recorded once (the hydrate fold,
+// 2026-09-08). What these prove is the PREDICATE. What proves the read's wiring
+// is the rehearsal in `docs/2026-09-08/jetto-candle-refusal-report.md` § C —
+// the read on the pre-cutover dump, five findings, then one after the retire —
+// and the lap-4 review's run of it against prod on the notary rail.
 //
 // ── THE CAN-FAIL FLIP, REPRODUCIBLE ─────────────────────────────────────────
 //
@@ -126,7 +130,7 @@ test("the three never-stood marks are absent; a mark canon carries is not", asyn
 });
 
 // ── 3 · the check string is the writers' grammar ────────────────────────────
-test("the refusal check is `canon-absent: <slug> @ <sha8>` and splits on the first colon", async () => {
+test("the finding's check string is `canon-absent: <slug> @ <sha8>` and splits on the first colon", async () => {
   const dir = worldFixture(["wright/the-lit-name"]);
   const reg = await canonRegisterAt({ backend: "git", worldRepo: dir });
   const [only] = canonAbsentAmong([claim("x", "lupi/the-drift-room")], reg, slugOf);

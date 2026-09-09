@@ -678,9 +678,9 @@ one line, named below.
 
 | unit | what it runs | when |
 |---|---|---|
-| `postmark-world2-clearing.timer` | `world2-clearing.sh` → `clearing-job.mjs` + `falsifier-canon-locks.mjs` | 05:45 / 17:45 UTC |
+| `postmark-world2-clearing.timer` | `world2-clearing.sh` → `clearing-job.mjs` | 05:45 / 17:45 UTC |
 | `postmark-world2-ingest.timer` | `world2-ingest.sh` → `law-ingest.mjs` + `stamp-ingest.mjs` | every 15 min, :04/:19/:34/:49 |
-| `postmark-world2-notary.timer` | `world2-notary.sh` → `snapshot-export.mjs` | 03:20 UTC |
+| `postmark-world2-notary.timer` | `world2-notary.sh` → `snapshot-export.mjs` + `falsifier-canon-locks.mjs` (postmark#2594, nightly — the section below) | 03:20 UTC |
 | `postmark-world2-backup.timer` | `world2-backup.sh` → `pg_dump` + ship, `pg_basebackup` | 04:10 UTC |
 
 All four carry rows in `deploy/box-rollcall-manifest.json`. `world2-restore-rehearse.sh`
@@ -709,7 +709,9 @@ finished moving. It refreshes the world clone itself, appends one line per run �
 clean or not — to `/srv/world2-lab/state/canon-locks.jsonl`, and **its RED does
 not fail the notary**: the certification is the notary's job, and this finding is
 about the register. The alarm is the roll-call's outcome rule on the
-`postmark-world2-notary.timer` row (`alarm_on_nonempty`).
+`postmark-world2-notary.timer` row (`alarm_on_nonempty` on its lists, and
+`alarm_on_false` on `escrow_checked` — a read that could not run is never a
+clean town).
 
 At the G1 swap the class becomes structurally impossible — the fold writes what
 the candle locked — and the read stays as the detector.

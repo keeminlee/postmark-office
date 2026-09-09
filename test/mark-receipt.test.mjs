@@ -229,13 +229,14 @@ const REAL_REFUSAL_CHECKS = [
   // because this list is "every refusal string the town can write", and an
   // exception kept somewhere else is an exception nobody re-reads. THE TOWN HALF
   // IS STILL OWED: the bulletin's published sentence lists four.
-  ["canon-absent: lupi/the-drift-room @ 91536f76", "unpublished", "clearing-job.mjs step 5.5 / canon-register.mjs"],
-  // ⚑ THE TWO CANDLE CHECKS ANSWER DIFFERENT WORDS, ON PURPOSE. `canon-absent`
+  ["canon-absent: lupi/the-drift-room @ 91536f76", "unpublished", "falsifier-canon-locks.mjs (the nightly read; no candle step writes it) / canon-register.mjs"],
+  // ⚑ THE TWO #2594 CHECKS — escrow at the candle, canon on the nightly read —
+  // ANSWER DIFFERENT WORDS, ON PURPOSE. `canon-absent`
   // says the world has no file yet; `escrow-absent` says the world's own sweep
   // would refuse it for want of a stake ("commons needs escrow > 0"). A resident
   // told `unpublished` waits; a resident told `unbacked` stakes. Collapsing them
   // to one word would cost the reader the only thing the difference is for.
-  ["escrow-absent: lupi/the-drift-room @ 723005e5", "unbacked", "clearing-job.mjs step 5.6 / escrow-presence.mjs"],
+  ["escrow-absent: lupi/the-drift-room @ 723005e5", "unbacked", "clearing-job.mjs step 5.5 / escrow-presence.mjs"],
 ];
 
 test("EVERY refusal string the town can write gets the word this map decided for it", () => {
@@ -455,16 +456,19 @@ test("C · a mark whose FILE MOVED names the settlement that carried the MARK, n
   assert.equal(c.sha, shaOfS(7));
 });
 
-// ── the canon-absent refusal answers null ON PURPOSE (postmark#2594) ────────
+// ── the canon-absent FINDING answers `unpublished`, by ruling (postmark#2594) ─
 //
-// Asserted separately from the list above so the DECISION is legible and not
-// merely a row that happens to expect null. A future reader adding
-// `"canon-absent": "malformed"` to the map reds here with the reason in front of
-// them, which is the only thing that stops a well-meaning "fix" from making the
-// town keep its promise in appearance only.
+// For one lap this answered null by the guess-nothing rule; Keemin then named
+// the word (2026-09-08). Asserted separately from the list above so the DECISION
+// is legible and not merely a row that happens to expect a word. Nothing at the
+// candle writes this check — the lock-time refusal was withdrawn the same day —
+// so the string reaches `causeOf` from the nightly read,
+// `falsifier-canon-locks.mjs`. A future reader changing the word to `malformed`
+// reds here with the reason in front of them, which is the only thing that stops
+// a well-meaning "fix" from making the town keep its promise in appearance only.
 //
-// THE CAN-FAIL FLIP: add `"canon-absent": "malformed"` to CAUSE_OF_CHECK in
-// src/mark-receipt.mjs. Both this test and the list test above go red.
+// THE CAN-FAIL FLIP: change `"canon-absent": "unpublished"` to `"malformed"` in
+// CAUSE_OF_CHECK, src/mark-receipt.mjs. Both this test and the list test above go red.
 test("canon-absent answers `unpublished`, and it is one of the words the town publishes", () => {
   const raw = "canon-absent: darko/the-second-foundation-stone @ a23a8d17";
   const { cause, cause_row } = causeOf(raw);

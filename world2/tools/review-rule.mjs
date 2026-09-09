@@ -87,10 +87,14 @@
 //
 // Keemin ruled on 2026-09-08: "a claim that would lock while the mark it
 // materializes has no file on main at the locking crossing is REFUSED at the
-// clearing job's lock step". THE CLEARING JOB'S. This file is the OTHER lawful
-// writer of `marks` — it writes `status = 'locked'` and calls the same
-// `materializeClaims` — so a mind granting a contest can materialize a mark
-// canon does not carry, and the candle's step 5.5 never sees it.
+// clearing job's lock step" — and WITHDREW that lock-time refusal the same
+// evening, when the reviewer measured the settlement's push landing minutes
+// AFTER the candle clears (`canon-register.mjs`'s header carries the table).
+// Nothing at the candle reads canon now. What survives of the ruling here is
+// the door: this file is the OTHER lawful writer of `marks` — it writes
+// `status = 'locked'` and calls the same `materializeClaims` — so a mind
+// granting a contest can materialize a mark canon does not carry, and no
+// candle step ever saw or sees it.
 //
 // A GUARD HERE WOULD BE THE WRONG SHAPE, and that is a judgement the lane made
 // and the conductor took (2026-09-08): a mind ruling on a contest is a
@@ -349,7 +353,7 @@ async function main() {
         try {
           const register = await canonRegisterAt({ backend: "git", worldRepo });
           canonNote = register.slugs.has(grantedSlug) ? null
-            : `canon carries NO FILE for ${grantedSlug} at ${register.sha.slice(0, 8)} — this ruling stands a mark the world does not hold (postmark#2594); the candle would have refused it, and a mind may not be wrong to`;
+            : `canon carries NO FILE for ${grantedSlug} at ${register.sha.slice(0, 8)} — this ruling stands a mark the world does not hold (postmark#2594); the nightly read will list it at 03:20 until the world carries it or it is retired, and a mind may not be wrong to grant it anyway`;
         } catch (err) {
           canonNote = `canon could not be read (${err.message}) — this ruling does not know whether the world carries ${grantedSlug}`;
         }

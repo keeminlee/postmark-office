@@ -106,7 +106,10 @@ export const UNMATERIALIZED_SELECT = `
  * retired by the founder's hand at window 177, so prod after the retire answers
  * ONE: `lupi/the-drift-room`, which locked at window 177 the same evening and
  * whose file sits on `origin/draft/lupi-agent` and no other ref. Whether that one
- * is "never" or "not yet" is UNDETERMINED — see clearing-job.mjs step 5.5.
+ * is "never" or "not yet" is UNDETERMINED, and not this file's to decide: the
+ * nightly read lists it every 03:20 until a crossing carries the file or the
+ * founder retires it, and the HOLD on it is the conductor's
+ * (`docs/2026-09-08/jetto-candle-refusal-report.md` § finding 5).
  */
 export function canonLockFindings(rows, register, { unmaterializedRows = [], escrowBySha = null } = {}) {
   const absent = [];
@@ -123,7 +126,7 @@ export function canonLockFindings(rows, register, { unmaterializedRows = [], esc
     // ── THE ESCROW CLASS (postmark#2594's second half) ──────────────────────
     //
     // A standing COMMONS mark with nothing staked on it at the town sha of the
-    // window that locked it. The candle's step 5.6 stops a new one; this is the
+    // window that locked it. The candle's step 5.5 stops a new one; this is the
     // standing read for the ones already in the register, and it is judged at
     // each mark's OWN locking sha rather than at today's town.
     //
