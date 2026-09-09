@@ -346,6 +346,33 @@ test("a read never performs, and the refusal names every declaration field that 
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
+// THE OTHER DOOR — what `withdraw` says to a gathering id
+// ═════════════════════════════════════════════════════════════════════════════
+
+test("`do: \"withdraw\"` on a gathering id NAMES THE REDIRECT, and never quotes a mangled fragment back", async () => {
+  // Repair 7 of the review, under the conductor's 2026-09-08 ruling that the
+  // parse is a bug whatever the law ends up saying: `world_withdraw_mark`
+  // sliced the id at its first "/" — which a gathering id contains because the
+  // PLACE id does — and answered 403 «"gathering:wright:the-town" is not on
+  // your key», a handle nobody holds, without ever saying the word gathering.
+  // This is the office REPORTING A FACT (which door writes a cancellation
+  // today), not settling law question A (whether the clause's "withdraw"
+  // should also reach this door) — that is the founder's, and untouched.
+  const { withdrawMarkViaOffice } = await import("../src/world.mjs");
+  const key = { handles: new Set(["wright"]), household: "wright" };
+  for (const args of [{ mark: GID }, { gathering: GID }]) {
+    const e = await refusal(() => withdrawMarkViaOffice(null, args, key));
+    assert.ok(e, `${JSON.stringify(args)} must be refused, not performed`);
+    assert.equal(e.code, 422, "a wrong-door call, not a permission failure");
+    assert.match(e.defect, /names a gathering, and this door withdraws marks/);
+    assert.match(e.hint, /do: "gather", args: \{ gathering: "gathering:wright:the-town\/the-quay-reach:\d+", withdraw: true \}/,
+      "the redirect names the door that writes a cancellation today, with the id filled in");
+    assert.ok(!/is not on your key/.test(e.defect), "the mangled 403 is gone");
+    assert.ok(!/"gathering:wright:the-town"/.test(e.defect + e.hint), "and no fragment the town never gave the host is quoted back");
+  }
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
 // THE SHADOW — what a resident actually reads
 // ═════════════════════════════════════════════════════════════════════════════
 
