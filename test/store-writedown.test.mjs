@@ -34,6 +34,7 @@ import { tmpdir } from "node:os";
 import { loginKeys, sketchbookKeys } from "../src/household-logins.mjs";
 import { markRecord } from "../src/mark-record.mjs";
 import { writeDownHousehold } from "../src/world-drain.mjs";
+import { isDocketCount } from "../world2/tools/fold-delta.mjs";
 import {
   FoldInputRefusal, clearGitSketchbooks, normalizeFoldInput, normalizeMark,
   planStoreWriteDown, sketchbookNameFor, starvingCheck, storeWriteDown,
@@ -748,6 +749,96 @@ test("F8j · storeWriteDown still refuses a docket with rows and no marks, befor
     1,
     "the git-era ref is still there: the guard still runs before any work",
   );
+});
+
+// ── F8k–F8n · A COUNT IS A NON-NEGATIVE INTEGER, OR IT IS NOT A COUNT ────────
+//
+// The reviewer's note of 2026-09-09. `Number("")`, `Number(false)` and
+// `Number([])` are all 0, so the first version of the absent-check read each of
+// them as "the docket was empty" and PASSED — a fail-open on the last guard
+// before a crossing publishes. Reachable only from hand-written input, which is
+// exactly the supplier the guard exists to be suspicious of.
+//
+// One test per coercion, because a loop over a table would report the three as
+// one failure and a reader would not know which coercion came back.
+
+for (const [label, value] of [["an empty string", ""], ["false", false], ["an empty array", []]]) {
+  test(`F8k · ${label} is NOT a docket of zero — it refuses as a shape, not as starving`, () => {
+    const e = caught(() => starvingCheck({
+      marks: [],
+      stakes: [{ mark: "alpha/staked", holder: "beta", n: 3, weight: 3, tick: 0 }],
+      docketClaims: value,
+      window: 180,
+    }));
+    assert.ok(e instanceof FoldInputRefusal, `${label} must not pass as an empty docket`);
+    assert.equal(e.reason, "fold-input-shape",
+      "and it refuses under its OWN name: an operator reading `store-starving` here would go looking at the store, "
+      + "when the defect is in what the supplier sent");
+    assert.match(e.detail, /not a count/);
+  });
+}
+
+test("F8l · a negative count and a fractional one refuse too", () => {
+  // The other side of the same rule. `-1` and `1.5` are finite numbers and would
+  // both survive a `Number.isFinite` test; neither is a number of claims.
+  for (const bad of [-1, 1.5, Number.NaN, Infinity]) {
+    const e = caught(() => starvingCheck({
+      marks: [], stakes: [{ mark: "alpha/staked", holder: "beta", n: 3, weight: 3, tick: 0 }],
+      docketClaims: bad, window: 180,
+    }));
+    assert.ok(e instanceof FoldInputRefusal, `${String(bad)} must refuse`);
+    assert.equal(e.reason, "fold-input-shape", `${String(bad)} must refuse as a shape`);
+  }
+});
+
+test("F8m · a STRING count refuses rather than being read charitably", () => {
+  // `"0"` is the dangerous one: it coerces to a docket of zero and would pass a
+  // crossing quietly. A supplier speaking JSON gives a number; one giving a
+  // string does not know the contract, and guessing for it is how a guard ends
+  // up trusting a value nobody checked.
+  const e = caught(() => starvingCheck({
+    marks: [], stakes: [{ mark: "alpha/staked", holder: "beta", n: 3, weight: 3, tick: 0 }],
+    docketClaims: "0", window: 180,
+  }));
+  assert.ok(e instanceof FoldInputRefusal);
+  assert.equal(e.reason, "fold-input-shape");
+});
+
+test("F8n · absent is STILL the one charitable reading, and 0 still passes", () => {
+  // The control that stops F8k–F8m from being a guard that refuses everything.
+  // Absent refuses as starving (F8h's rule, unchanged); a real zero passes.
+  const absent = caught(() => starvingCheck({
+    marks: [], stakes: [{ mark: "alpha/staked", holder: "beta", n: 3, weight: 3, tick: 0 }],
+  }));
+  assert.equal(absent.reason, "store-starving", "absent is unproved quiet, not a shape error");
+
+  const zero = starvingCheck({
+    marks: [], stakes: [{ mark: "alpha/staked", holder: "beta", n: 3, weight: 3, tick: 0 }],
+    docketClaims: 0, window: 180,
+  });
+  assert.equal(zero.quiet, true);
+  assert.equal(zero.docket_claims, 0);
+});
+
+test("F8o · the guard and the fold CLI share ONE rule, not two spellings of it", () => {
+  // The reviewer found the coercion trap in `fold-input-cli`'s check one file
+  // away from this lane's own fix for it. That is the two-copies class, so the
+  // predicate has one home — `fold-delta.mjs § isDocketCount` — and this asserts
+  // the guard actually agrees with it rather than carrying a private twin.
+  for (const bad of ["", false, [], null, undefined, -1, 1.5, "0", {}]) {
+    assert.equal(isDocketCount(bad), false, `${JSON.stringify(bad ?? null)} must not be a count`);
+  }
+  for (const good of [0, 1, 33, 831]) assert.equal(isDocketCount(good), true, `${good} is a count`);
+
+  // And the guard's own behaviour tracks it: everything the predicate rejects
+  // and that is not absent refuses here.
+  for (const bad of ["", false, [], -1, 1.5, "0"]) {
+    const e = caught(() => starvingCheck({
+      marks: [], stakes: [{ mark: "alpha/staked", holder: "beta", n: 1, weight: 1, tick: 0 }],
+      docketClaims: bad, window: 180,
+    }));
+    assert.equal(e?.reason, "fold-input-shape", `${JSON.stringify(bad)} must refuse in the guard too`);
+  }
 });
 
 // ── F9 · A MARK THE WALL CANNOT BIND IS HELD OUT, NOT WRITTEN ────────────────

@@ -73,6 +73,10 @@ import { pathFor } from "./world-journal.mjs";
 import { draftBranch, mainRef } from "./world-branches.mjs";
 import { sketchbookBase, writeDownHousehold } from "./world-drain.mjs";
 import { WORLD_CLONE } from "./world-store.mjs";
+// THE ONE COPY of "what is a docket count", from the module that produces the
+// field. The CLI's incomplete-selection refusal reads the same predicate, so the
+// producer, the gate and the guard cannot drift into three spellings of it.
+import { isDocketCount } from "../world2/tools/fold-delta.mjs";
 
 const git = (repo, args, opts = {}) => execFileSync("git", ["-C", repo, ...args], {
   encoding: "utf8",
@@ -512,21 +516,73 @@ export function planStoreWriteDown(marks, { publishedPathOf = null, canonBytesAt
  *                                 was has not proved the day was quiet, and an
  *                                 unproved quiet is the 2026-08-26 shape. The
  *                                 register's own entry point always says.
+ *   anything else                 → `fold-input-shape`. A count is a
+ *                                 non-negative integer; `""`, `false` and `[]`
+ *                                 all coerce to 0 and would have read as "the
+ *                                 docket was empty" on the last guard before
+ *                                 publication. See `fold-delta.mjs §
+ *                                 isDocketCount`, which is the one copy of that
+ *                                 rule and is shared with the CLI.
+ *
+ * ── WHAT THIS GUARD NOW RESTS ON, SAID OUT LOUD (reviewer, 2026-09-09) ───────
+ *
+ * Reading the docket from `claims` buys a second path, and it buys one premise
+ * with it: **that every locked claim names a mark.** There is exactly one code
+ * path where that is false by design — `world2/tools/materialize.mjs:122`:
+ *
+ *     const named = claims.filter((c) => slugOf(c));   // a stake or escrow
+ *                                                      // claim names no mark
+ *
+ * A locked claim that names no mark is never materialized, so a window whose
+ * whole docket was slugless would arrive here as `docketClaims > 0` with an
+ * empty mark read while escrow stands — and would refuse, wrongly, because that
+ * is a LAWFUL crossing.
+ *
+ * IT IS NOT REACHABLE TODAY, and that is measured rather than asserted.
+ * Read-only on prod, 2026-09-09, over every claim the store holds:
+ *
+ *   · 831 slugless locked claims, **every one of them at window 150** — the seed
+ *     import, which wrote its marks directly rather than through `materialize`
+ *     (150 carries 831 locked claims, all slugless, and 820 marks)
+ *   · **zero** slugless locked claims at any window after 150
+ *   · so window 150 is the one window in the store's history whose entire docket
+ *     is slugless — and `foldDelta` folds only the NEWEST closed window, which
+ *     150 has not been for thirty windows
+ *
+ * The live door composes a slug on every path, which is why the count stops at
+ * the import. **If that ever stops being true — a claim class that lawfully
+ * names no mark reaching a live window — this guard gets a false refusal, and
+ * the repair is to count only claims that name a mark.** Written here rather
+ * than left for the next reader to rediscover, because the premise is invisible
+ * from this file and the failure would arrive as a refusal naming a resident.
  */
 export function starvingCheck({ marks = [], stakes = [], docketClaims = null, window = null } = {}) {
   const staked = stakes.filter((s) => Number(s.n) > 0);
   const stakedMarks = new Set(staked.map((s) => s.mark));
   const offered = marks.length;
-  // ABSENT IS CHECKED SEPARATELY FROM FINITE, and the separation is the whole
-  // of it: `Number(null)` is 0, which is finite, so the obvious one-liner read a
+  // ABSENT IS CHECKED SEPARATELY FROM VALID, and the separation is the whole of
+  // it: `Number(null)` is 0, which is finite, so the obvious one-liner read a
   // supplier that said NOTHING as a supplier that said "the docket was empty" —
   // and passed quietly on precisely the crossings this guard is the last word
-  // on. Caught by F8h, which is the falsifier for the absent case and reds on
-  // the one-line version. `foldDelta`'s own window check carries the same note
-  // for the same reason; this is that trap in a second place.
-  const docket = docketClaims === null || docketClaims === undefined || !Number.isFinite(Number(docketClaims))
-    ? null
-    : Number(docketClaims);
+  // on. Caught by F8h, which is the falsifier for the absent case.
+  //
+  // ABSENT is the only charitable reading there is. Anything PRESENT and not a
+  // count REFUSES rather than being coerced: the first version of this line
+  // spelled the test `Number.isFinite(Number(docketClaims))`, which reads `""`,
+  // `false` and `[]` as a docket of zero and passes them — a fail-open on the
+  // last guard before publication (reviewer, 2026-09-09).
+  const absent = docketClaims === null || docketClaims === undefined;
+  if (!absent && !isDocketCount(docketClaims)) {
+    throw new FoldInputRefusal(
+      "fold-input-shape",
+      `\`selection.docket_claims\` is ${JSON.stringify(docketClaims)}, which is not a count. The docket's size is a `
+      + "non-negative integer or it is nothing: an empty string, a false and an empty array all become 0 under "
+      + "`Number()`, and a 0 here is read as \"nobody locked a claim\" — a quiet pass on the last guard before the "
+      + "crossing publishes. A supplier that cannot say how big its docket was must say NOTHING, which refuses, "
+      + "rather than something that coerces to a lawful answer.",
+    );
+  }
+  const docket = absent ? null : docketClaims;
 
   if (offered > 0) {
     return { starving: false, offered, docket_claims: docket, staked_marks: stakedMarks.size, staked_positions: staked.length };
