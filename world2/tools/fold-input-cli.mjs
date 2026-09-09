@@ -187,7 +187,11 @@ if (isMain) {
     const delta = { fn: foldDelta, entry: "fold-delta.mjs § foldDelta" };
 
     out = await delta.fn(client, { window, worldSha });
-    selection = { by: "docket", window, entry: delta.entry };
+    // `note: null` is not decoration. There is one selector now and no fallback,
+    // so nothing ever fills this — and that is exactly when a field goes missing
+    // and its absence starts meaning "fine". An empty channel is named, the same
+    // rule the receipt composer keeps for its own.
+    selection = { by: "docket", window, entry: delta.entry, note: null };
   } catch (e) {
     // Lane 2's refusals are thrown Errors whose messages carry the sha or window
     // they wanted and the sentence for why. They are passed through WHOLE rather

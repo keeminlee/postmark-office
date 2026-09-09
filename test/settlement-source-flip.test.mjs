@@ -286,6 +286,12 @@ test("F-git · SETTLEMENT_SOURCE=git issues the train's chain plus the ghost swe
     /^git -C <root>\/sweep rev-parse refs\/heads\/draft\/.*\^\{tree\}$/,
     /^git -C <root>\/sweep update-ref -d refs\/heads\/draft\//,
   ];
+  // The collide branch's own commands (`rev-parse refs/remotes/origin/draft/…`
+  // and `branch -qf`) are deliberately NOT listed. They do not fire on a clean
+  // clone, so they are not "added" here — and `branch -qf` is already something
+  // the sync loop issues, so admitting it as a ghost-sweep pattern would let a
+  // genuine unexplained one through. F-collide covers that path; this list stays
+  // narrow, which is what makes it worth having.
 
   // Multiset difference both ways, so a reordering or a dropped duplicate shows.
   const minus = (a, b) => { const c = [...b]; return a.filter((x) => { const i = c.indexOf(x); if (i === -1) return true; c.splice(i, 1); return false; }); };
@@ -486,6 +492,43 @@ test("F-sequence · a REAL store crossing followed by a git crossing leaves zero
   assert.deepEqual(localOnly, [],
     `no sketchbook without an origin twin may reach the fold on a rollback; the sweep saw ${JSON.stringify(seen)} `
     + `against origin's ${JSON.stringify(originDrafts)}`);
+});
+
+test("F-collide · a store-written local whose name COLLIDES with an origin draft is reset, not pushed", { skip: !SH_OK && "no POSIX sh" }, () => {
+  // The residual hole, closed rather than documented. A store-written local with
+  // an origin twin skipped the ghost sweep entirely and fell through to the sync
+  // loop, which asks only about ancestry — so if origin's draft were an ancestor
+  // of main, the store branch (built FROM main) would be AHEAD of it, be classed
+  // "undelivered drain", be kept, and be PUSHED by the lease loop. A store render
+  // into a git-era sketchbook, on origin.
+  //
+  // Unreachable on today's world and measured, not assumed: 0 of the 40 origin
+  // drafts are ancestors of main at S63. Reachable the first time a fully merged
+  // draft is left standing on origin — a green-week merge, or G2's cleanup. This
+  // fixture builds that world on purpose, because a test that can only pass is
+  // not a test.
+  const script = readFileSync(join(OFFICE, "deploy", "settlement-auto.sh"), "utf8");
+  const run = crossing("collide", script, {
+    env: { SETTLEMENT_SOURCE: "git" },
+    plant: (root) => {
+      // `draft/alpha` HAS an origin twin in this fixture, and the twin is an
+      // ancestor of main. A store crossing then wrote over the local name.
+      plantLeftover(root, {
+        branch: "draft/alpha",
+        subject: "store write-down: 2 mark(s) — solo:alpha (window 178)",
+      });
+    },
+  });
+
+  assert.equal(run.res.status, 0, `the crossing must complete: ${run.res.stderr}`);
+  const sweep = join(run.root, "sweep");
+  const local = execFileSync("git", ["-C", sweep, "rev-parse", "refs/heads/draft/alpha"], { encoding: "utf8" }).trim();
+  const twin = execFileSync("git", ["-C", sweep, "rev-parse", "refs/remotes/origin/draft/alpha"], { encoding: "utf8" }).trim();
+  assert.equal(local, twin,
+    "the store's scratch must be reset to origin's own sketchbook — resetting rather than deleting, because the twin "
+    + "is the git era's and has to survive");
+  assert.match(run.res.stderr, /a store crossing had written over a git-era sketchbook's name/);
+  assert.equal(run.receipt.sketchbook_ghosts, 1, "and it is counted with the other leftovers it swept");
 });
 
 test("F-mode · an unrecognised SETTLEMENT_SOURCE refuses rather than defaulting", { skip: !SH_OK && "no POSIX sh" }, () => {

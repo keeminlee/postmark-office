@@ -333,8 +333,37 @@ if [ "$SOURCE" = "git" ]; then
   MAIN_TREE="$(git -C "$SWEEP" rev-parse 'main^{tree}')"
   git -C "$SWEEP" for-each-ref --format='%(refname:short)' 'refs/heads/draft/*' | while read -r b; do
     [ -n "$b" ] || continue
-    if git -C "$SWEEP" rev-parse --verify -q "refs/remotes/origin/$b" >/dev/null; then continue; fi
     subject="$(git -C "$SWEEP" log -1 --format=%s "refs/heads/$b" 2>/dev/null || echo '')"
+    if git -C "$SWEEP" rev-parse --verify -q "refs/remotes/origin/$b" >/dev/null; then
+      # ── THE COLLIDING-NAME HOLE, CLOSED RATHER THAN DOCUMENTED ──────────────
+      #
+      # A store-written local whose name COLLIDES with an origin draft used to
+      # skip this sweep entirely and fall through to the sync loop. That loop
+      # asks only about ancestry, and if origin's draft were an ancestor of main
+      # the store-written branch — built from main — would be AHEAD of it, get
+      # classed "undelivered drain", be KEPT, and then be PUSHED by the lease
+      # loop at the end. A store render into a git-era sketchbook, on origin.
+      #
+      # Unreachable today and measured rather than assumed: 0 of the 40 origin
+      # drafts are ancestors of `main` at S63. It becomes reachable the first
+      # time a fully merged draft is left standing on origin — a green-week
+      # merge, or G2's cleanup.
+      #
+      # So a store-written local is RESET to its origin twin here, before the
+      # sync loop can form an opinion about it. Resetting rather than deleting is
+      # the whole point when a twin exists: origin's sketchbook is the git era's
+      # own and must survive; only the store's scratch on top of it goes.
+      case "$subject" in
+        "store write-down:"*)
+          twin="$(git -C "$SWEEP" rev-parse "refs/remotes/origin/$b")"
+          if [ "$(git -C "$SWEEP" rev-parse "refs/heads/$b")" != "$twin" ]; then
+            git -C "$SWEEP" branch -qf "$b" "$twin"
+            echo "[settlement-auto] reset $b to its origin twin — a store crossing had written over a git-era sketchbook's name" >&2
+            echo x >> "$WORK/ghosts"
+          fi ;;
+      esac
+      continue
+    fi
     tree="$(git -C "$SWEEP" rev-parse "refs/heads/$b^{tree}" 2>/dev/null || echo '')"
     case "$subject" in
       "store write-down:"*)

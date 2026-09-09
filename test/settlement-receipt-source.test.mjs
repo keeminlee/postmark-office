@@ -143,6 +143,38 @@ test("entry, rehearsal and wall all ARRIVE on the receipt — the reader check o
     "and the wall's reach, because its failure mode is silence: an unbindable sketchbook is left alone, not refused");
 });
 
+test("`selection` reaches the receipt, and says the fold chose by DOCKET with its window", () => {
+  // ── THE READER CHECK, RUN ON MYSELF FOR THE SECOND TIME ────────────────────
+  //
+  // `selection` was written in seven places across three files and asserted by
+  // none. That is this lane's own recurring class, caught once at f2274e4 for
+  // `entry`/`rehearsal`/`wall` and reintroduced by me for the field that carries
+  // the single most consequential fact on a store receipt: whether the fold
+  // selected by the crossing's docket or by everything the store holds.
+  //
+  // The two produce very different amounts of canon — 10 written against 813 —
+  // and a rename or a dropped line anywhere between the CLI and the composer
+  // would have left the field silently absent on exactly the surface that is
+  // supposed to tell them apart.
+  const r = compose({
+    source: "store",
+    store: { ...STORE_REPORT, selection: { by: "docket", window: 177, entry: "fold-delta.mjs § foldDelta", note: null } },
+  });
+  assert.equal(r.store.selection.by, "docket",
+    "the selector must be legible on the receipt; `standing` here would mean the crossing folded the whole store");
+  assert.equal(r.store.selection.window, 177, "and it must name WHICH window's docket, or it names nothing checkable");
+  assert.equal(r.store.selection.entry, "fold-delta.mjs § foldDelta");
+  assert.equal(r.store.selection.note, null, "an empty channel is named, not omitted");
+});
+
+test("a store crossing with NO selection reads as null, never as a docket by default", () => {
+  // The control. A supplier that did not say how it chose must not be recorded
+  // as having chosen well — that is the shape where a missing field starts
+  // meaning "fine".
+  const r = compose({ source: "store", store: STORE_REPORT });
+  assert.equal(r.store.selection, null);
+});
+
 test("no SETTLEMENT_SOURCE_MODE at all reads as git — the pre-G1 receipt is not silently a store one", () => {
   // An older receipt, or a composer invoked by something that has not learned
   // the field yet, must not read as a store crossing. `git` is the truthful
