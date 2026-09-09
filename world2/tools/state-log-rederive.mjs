@@ -64,6 +64,37 @@ export function householdNamerFor(worldRoot) {
 }
 
 /**
+ * ABSENCE, SPLIT BY LANE — EXPECTED vs A FINDING.
+ *
+ * MY REVIEWER'S NOTE 1, SECOND HALF. The byte-equality floor moved into
+ * `exitCodeFor` last lap and this did not: it stayed inline in the CLI tail
+ * where nothing under `test/` could reach it, and **inverting the ternary left
+ * the suite 31/31 green** — a parity run would then have called every arena
+ * absence a finding and every real finding expected, which is the check reading
+ * exactly backwards while reporting nothing wrong. Half a repair is its own
+ * defect: the half that moved is now guarded and the half that stayed was not,
+ * and the second half is the one that decides what the exit means.
+ *
+ * A governed-exempt lane's absence is EXPECTED — the arena is never mirrored by
+ * ruling (`LANE_MIRROR.arena`, P-143), so its rows cannot be in the register and
+ * a red that fires on that is a red nobody reads. Anything else is a finding.
+ *
+ * `lanes` and `laneOf` are injected with the real ones as defaults, so a test
+ * can drive the split without standing up the office's lane table AND the
+ * default path is the one production takes. `laneOf` is the office's own census
+ * — the same call the reaper makes, for the same reason.
+ */
+export async function classifyAbsence(lines, { lanes = null, laneOf = null } = {}) {
+  const exemptOf = lanes ?? new Set((await import("../../src/world2-acts.mjs")).exemptLanes());
+  const laneFor = laneOf ?? (await import("../../src/world2-pen.mjs")).laneOf;
+  const expected = [], unexpected = [];
+  for (const l of lines) {
+    (exemptOf.has(laneFor({ class: l.class, action: l.type })) ? expected : unexpected).push(l);
+  }
+  return { expected, unexpected };
+}
+
+/**
  * THE EXIT CODE, AS A FUNCTION, SO ITS DELETION IS VISIBLE.
  *
  * MY REVIEWER'S NOTE (a). This lived inline in the CLI tail, where nothing could
@@ -176,13 +207,8 @@ if (process.argv[1]?.endsWith("state-log-rederive.mjs")) {
   // the office's own census, and the same call the reaper makes for the same
   // reason. A governed-exempt lane's absence is EXPECTED and reported in its own
   // field; anything else is a finding and fails the exit.
-  const { exemptLanes } = await import("../../src/world2-acts.mjs");
   const { laneOf } = await import("../../src/world2-pen.mjs");
-  const exempt = new Set(exemptLanes());
-  const expectedAbsent = [], unexpectedAbsent = [];
-  for (const l of cmp.onlyInFile) {
-    (exempt.has(laneOf({ class: l.class, action: l.type })) ? expectedAbsent : unexpectedAbsent).push(l);
-  }
+  const { expected: expectedAbsent, unexpected: unexpectedAbsent } = await classifyAbsence(cmp.onlyInFile);
 
   const report = {
       window,

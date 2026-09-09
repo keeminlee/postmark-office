@@ -396,3 +396,63 @@ test("F20 · the parity instrument's exit code is a function, and the byte-equal
   // A garbage floor does not silently become a gate of zero.
   assert.equal(exitCodeFor(clean, "banana").code, 0, "an unparseable floor gates nothing rather than everything");
 });
+
+test("F21 · absence is split by LANE, and an inverted split is caught", async () => {
+  // MY REVIEWER'S NOTE 1, SECOND HALF. The byte-equality floor moved into
+  // `exitCodeFor` last lap; THIS did not. It stayed inline in the CLI tail where
+  // nothing under test/ could reach it, and inverting the ternary left the suite
+  // 31/31 green — a parity run would then have called every arena absence a
+  // finding and every real finding expected. The check reading exactly backwards
+  // while reporting nothing wrong.
+  //
+  // Half a repair is its own defect, and it is the more dangerous half here:
+  // this is what decides whether the exit means anything.
+  const { classifyAbsence } = await import("../world2/tools/state-log-rederive.mjs");
+
+  const arena = { seq: 1, actor: "wright", type: "strike", class: "arena-act" };
+  const voice = { seq: 2, actor: "nyx", type: "say", class: "voice" };
+
+  // The REAL lane table and the REAL census — the path production takes.
+  const split = await classifyAbsence([arena, voice]);
+  assert.deepEqual(split.expected.map((l) => l.seq), [1],
+    "the arena is exempt BY RULING and its absence is expected, not a finding");
+  assert.deepEqual(split.unexpected.map((l) => l.seq), [2],
+    "a voice row missing from the register is a finding — that lane is mirrored");
+
+  // AND THE DIRECTION IS ASSERTED, not just the membership: swapping the two
+  // buckets must not still satisfy this test. Inverting the ternary makes the
+  // arena a finding and the voice expected, which is what these two lines catch.
+  assert.equal(split.expected.length, 1);
+  assert.equal(split.expected[0].class, "arena-act");
+  assert.equal(split.unexpected[0].class, "voice");
+
+  // An arena `join` routes by ACTION, not class — `laneOf`'s own rule, and the
+  // reason a class map could not have done this job.
+  const byAction = await classifyAbsence([{ seq: 3, actor: "w", type: "join", class: "arena-act" }]);
+  assert.equal(byAction.expected.length, 1);
+
+  // With NOTHING exempt, both are findings — so the split is reading the lane
+  // table and not hard-coding the arena.
+  const noneExempt = await classifyAbsence([arena, voice], { lanes: new Set() });
+  assert.deepEqual(noneExempt.expected, []);
+  assert.equal(noneExempt.unexpected.length, 2);
+});
+
+test("F21b · the exit code follows the split — an exempt absence does not red, an unexpected one does", async () => {
+  // The two halves joined: `classifyAbsence` decides what reaches
+  // `exitCodeFor.only_in_file`, so a parity run over an arena window must exit 0
+  // and the same run with one real finding must exit 1.
+  const { classifyAbsence, exitCodeFor } = await import("../world2/tools/state-log-rederive.mjs");
+  const base = { only_in_derived: [], byte_equal_once_seq_supplied: 7 };
+
+  const arenaOnly = await classifyAbsence([{ seq: 1, actor: "w", type: "strike", class: "arena-act" }]);
+  assert.equal(exitCodeFor({ ...base, only_in_file: arenaOnly.unexpected }).code, 0,
+    "a roll call over an arena window is GREEN — its rows are absent by ruling");
+
+  const withFinding = await classifyAbsence([
+    { seq: 1, actor: "w", type: "strike", class: "arena-act" },
+    { seq: 2, actor: "nyx", type: "say", class: "voice" },
+  ]);
+  assert.equal(exitCodeFor({ ...base, only_in_file: withFinding.unexpected }).code, 1,
+    "and one voice row the register cannot produce is still RED");
+});
