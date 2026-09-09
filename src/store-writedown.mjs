@@ -292,6 +292,21 @@ export function normalizeFoldInput(input) {
     // which is provenance) or `standing` (everything the store holds, which is
     // not). The two produce very different amounts of canon and must never be
     // told apart by reading the code that happened to be deployed.
+    //
+    // THE FIELDS, and `docket_claims` is the one that is also read rather than
+    // only shown:
+    //   `by`          — `docket`, the only selector there is
+    //   `window`      — which window's docket
+    //   `entry`       — the module that selected, checked against the module the
+    //                   CLI actually called
+    //   `docket_claims` — HOW MANY CLAIMS THE CANDLE LOCKED AT THAT WINDOW, read
+    //                   from `claims` by `fold-delta.mjs § foldDelta`. The
+    //                   loud-empty guard's third input: beside `marks` on the
+    //                   receipt it separates "nobody claimed" (`0, 0` — lawful)
+    //                   from "the store did not answer" (`33, 0` — refused).
+    //                   Absent from a supplier that does not say, and absent
+    //                   means the guard refuses as it did before the field.
+    //   `note`        — an empty channel, named rather than omitted
     selection: input.selection ?? null,
     as_of: {
       window: input.as_of.window,
@@ -463,19 +478,80 @@ export function planStoreWriteDown(marks, { publishedPathOf = null, canonBytesAt
  * that is empty while escrow stands is a store that did not answer; an offered
  * set that is entirely unchanged is a town where nothing moved, and those are
  * different states that a `written === 0` test would collapse into one.
+ *
+ * ── THE THIRD INPUT, AND WHY THE FIRST TWO WERE NOT ENOUGH (2026-09-09) ──────
+ *
+ * The paragraph above is right about which two states must not be collapsed and
+ * was wrong about what `marks` is. Under `foldDelta` the OFFERED set IS the
+ * docket, so "nobody claimed in this window" and "the docket had rows and the
+ * mark read returned none" reached this function as the same value —
+ * `marks.length === 0` — and the collapse the header was written to prevent
+ * happened one field earlier than the field it inspected. The guard fired on
+ * exactly the lawfully quiet delta it forbids itself.
+ *
+ * IT WAS NOT RARE. Measured read-only on prod, 2026-09-09, over all 30 closed
+ * windows the store has ever had: 6 of them (151, 156, 157, 158, 165, 167 — one
+ * in five) had an empty docket. Rehearsed end to end on a `pg_dump` scratch of
+ * prod at window 180: `SETTLEMENT EXIT=1`, `world_to` empty, and a refusal
+ * naming a resident's mark for a crossing in which no resident did anything.
+ *
+ * SO THE DOCKET'S SIZE IS PASSED IN, from `fold-delta.mjs § foldDelta`, read
+ * from `claims` and not from the `marks` array this function already holds —
+ * see that file for why a same-array size would be a check that cannot disagree
+ * with itself. With it:
+ *
+ *   docketClaims === 0            → a lawful quiet crossing. Nobody locked a
+ *                                 claim; there is nothing for the store to have
+ *                                 failed to answer.
+ *   docketClaims > 0, marks empty → `store-starving`, exactly as before. The
+ *                                 docket had rows and the mark read returned
+ *                                 none while escrow stands: the disagreement.
+ *   docketClaims === null         → `store-starving`, exactly as before. A
+ *                                 supplier that will not say how big its docket
+ *                                 was has not proved the day was quiet, and an
+ *                                 unproved quiet is the 2026-08-26 shape. The
+ *                                 register's own entry point always says.
  */
-export function starvingCheck({ marks = [], stakes = [] } = {}) {
+export function starvingCheck({ marks = [], stakes = [], docketClaims = null, window = null } = {}) {
   const staked = stakes.filter((s) => Number(s.n) > 0);
   const stakedMarks = new Set(staked.map((s) => s.mark));
   const offered = marks.length;
+  // ABSENT IS CHECKED SEPARATELY FROM FINITE, and the separation is the whole
+  // of it: `Number(null)` is 0, which is finite, so the obvious one-liner read a
+  // supplier that said NOTHING as a supplier that said "the docket was empty" —
+  // and passed quietly on precisely the crossings this guard is the last word
+  // on. Caught by F8h, which is the falsifier for the absent case and reds on
+  // the one-line version. `foldDelta`'s own window check carries the same note
+  // for the same reason; this is that trap in a second place.
+  const docket = docketClaims === null || docketClaims === undefined || !Number.isFinite(Number(docketClaims))
+    ? null
+    : Number(docketClaims);
 
-  if (offered > 0) return { starving: false, offered, staked_marks: stakedMarks.size, staked_positions: staked.length };
+  if (offered > 0) {
+    return { starving: false, offered, docket_claims: docket, staked_marks: stakedMarks.size, staked_positions: staked.length };
+  }
 
   if (stakedMarks.size === 0) {
     // Both paths agree there is nothing: a genuinely quiet crossing. The world's
     // own guard makes the same call for the same reason, and saying so here
     // keeps "quiet" a claim this function actually made rather than a default.
-    return { starving: false, offered: 0, staked_marks: 0, staked_positions: 0, quiet: true };
+    return {
+      starving: false, offered: 0, docket_claims: docket, staked_marks: 0, staked_positions: 0, quiet: true,
+      why: "nothing was offered and nothing is staked: both paths agree the crossing is quiet",
+    };
+  }
+
+  if (docket === 0) {
+    // THE LAWFUL QUIET DELTA. Escrow stands — it always does, 281 positions on
+    // an ordinary day — but the docket this crossing folds is empty, so there is
+    // no store answer missing. The sentence is on the receipt rather than in a
+    // log line because the keeper reads receipts twelve hours later, and "the
+    // guard passed" and "the guard was never asked" must not look alike.
+    return {
+      starving: false, offered: 0, docket_claims: 0, staked_marks: stakedMarks.size, staked_positions: staked.length,
+      quiet: true,
+      why: `the docket was empty: nobody locked a claim in window ${window ?? "?"}`,
+    };
   }
 
   const first = [...stakedMarks].sort()[0];
@@ -636,7 +712,17 @@ export function storeWriteDown({
   // BEFORE ANY WORK. The guard's job is to refuse a blind crossing rather than
   // to notice afterwards that it built nothing, and a refusal that lands after
   // the clone has been rewritten is a refusal that also has to be undone.
-  const starving = starvingCheck(normalized);
+  //
+  // `docketClaims` is UNWRAPPED HERE rather than read inside the guard, so the
+  // guard stays a function of three plain values and its falsifiers do not have
+  // to build a selection to ask it a question. `?? null` is the whole of the
+  // back-compatibility: a supplier with no `selection` refuses exactly as it did
+  // before this field existed.
+  const starving = starvingCheck({
+    ...normalized,
+    docketClaims: normalized.selection?.docket_claims ?? null,
+    window: normalized.as_of.window,
+  });
 
   const cleared = clearSketchbooks ? clearGitSketchbooks(world) : { removed_remote: 0, removed_local: 0, skipped: true };
 

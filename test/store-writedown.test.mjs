@@ -540,6 +540,113 @@ test("F8e · the guard runs inside storeWriteDown, before the clone is touched",
   );
 });
 
+// ── F8f–F8j · THE DOCKET'S SIZE IS THE GUARD'S THIRD INPUT (2026-09-09) ──────
+//
+// F8c above says the guard must not fire on a lawfully quiet DELTA and proves it
+// with an offered set that is non-empty and entirely unchanged. It passed, and
+// the guard was still wrong: under `foldDelta` the OFFERED set IS the docket, so
+// a window in which NOBODY LOCKED A CLAIM arrived as `marks: []` — the same
+// value as a store that failed to answer — and refused.
+//
+// Measured on prod 2026-09-09, all 30 closed windows the store has ever had: 6
+// of them (151, 156, 157, 158, 165, 167) had an empty docket, one crossing in
+// five. Rehearsed on a `pg_dump` scratch at window 180: `store-starving`,
+// `SETTLEMENT EXIT=1`, `world_to` empty.
+//
+// BOTH HALVES RUN HERE, and they must. A test of only the quiet half would pass
+// on a guard that had simply been deleted.
+
+test("F8f · an empty DOCKET passes quietly, and the sentence names the window", () => {
+  // The lawful quiet crossing. Escrow stands — it always does, 281 positions on
+  // an ordinary prod day — and that is not evidence of anything when nobody
+  // filed a claim to be answered.
+  const r = starvingCheck({
+    marks: [],
+    stakes: [{ mark: "alpha/staked", holder: "beta", n: 3, weight: 3, tick: 0 }],
+    docketClaims: 0,
+    window: 180,
+  });
+  assert.equal(r.starving, false, "an empty docket is a quiet day, not a blind crossing");
+  assert.equal(r.quiet, true);
+  assert.equal(r.docket_claims, 0);
+  assert.match(r.why, /the docket was empty: nobody locked a claim in window 180/,
+    "the keeper reads this twelve hours later; a bare `quiet: true` does not say WHICH quiet");
+});
+
+test("F8g · a NON-EMPTY docket whose mark read returns nothing still REFUSES — the teeth", () => {
+  // The state the guard exists for, and the one the fix must not spend. The
+  // candle locked 33 claims; the mark read came back with none; escrow stands.
+  // That is two tables written by two pens disagreeing, which is exactly what
+  // `store-starving` is the word for.
+  const e = caught(() => starvingCheck({
+    marks: [],
+    stakes: [{ mark: "alpha/staked", holder: "beta", n: 3, weight: 3, tick: 0 }],
+    docketClaims: 33,
+    window: 177,
+  }));
+  assert.ok(e instanceof FoldInputRefusal, "a docket with rows and no marks must still refuse");
+  assert.equal(e.reason, "store-starving");
+  assert.match(e.detail, /alpha\/staked/);
+});
+
+test("F8h · a supplier that does not say how big its docket was refuses exactly as before", () => {
+  // Back-compatibility stated as a claim rather than assumed. An absent
+  // `docket_claims` is not proof of a quiet day, and an unproved quiet is the
+  // 2026-08-26 starving-crossing shape. The register's own entry point always
+  // says; a hand-built input or an older instrument may not.
+  const e = caught(() => starvingCheck({
+    marks: [],
+    stakes: [{ mark: "alpha/staked", holder: "beta", n: 3, weight: 3, tick: 0 }],
+  }));
+  assert.ok(e instanceof FoldInputRefusal);
+  assert.equal(e.reason, "store-starving");
+});
+
+test("F8i · storeWriteDown carries `docket_claims` onto the receipt, and passes an empty docket end to end", () => {
+  // The whole path, not the function alone: a fold input whose `selection` says
+  // the docket was empty must reach a receipt that says `source: store`, carries
+  // the size, and did not refuse.
+  const w = makeWorld("quiet-docket", { gitEraSketchbooks: ["alpha"] });
+  const out = storeWriteDown({
+    repo: w.repo,
+    at: Date.parse(AT_ISO),
+    input: foldInput([], {
+      as_of: { window: 180, world_sha: "0".repeat(40), town_sha: "1".repeat(40) },
+      stakes: [{ mark: "alpha/staked", holder: "beta", n: 2, weight: 2, tick: 0 }],
+      selection: { by: "docket", window: 180, entry: "fold-delta.mjs § foldDelta", docket_claims: 0, note: null },
+    }),
+  });
+  assert.equal(out.source, "store");
+  assert.equal(out.marks, 0);
+  assert.equal(out.selection.docket_claims, 0, "the receipt must carry the size, or nobody can check the guard's call");
+  assert.equal(out.starving_check.starving, false);
+  assert.equal(out.starving_check.quiet, true);
+  assert.equal(out.starving_check.docket_claims, 0);
+  assert.match(out.starving_check.why, /nobody locked a claim in window 180/);
+});
+
+test("F8j · storeWriteDown still refuses a docket with rows and no marks, before the clone is touched", () => {
+  // F8e's twin on the other side of the fix. The refusal must still land BEFORE
+  // `clearGitSketchbooks`, because a refusal that arrives after the clone was
+  // rewritten is a refusal that also has to be undone.
+  const w = makeWorld("starve-docket", { gitEraSketchbooks: ["alpha"] });
+  const e = caught(() => storeWriteDown({
+    repo: w.repo,
+    at: Date.parse(AT_ISO),
+    input: foldInput([], {
+      stakes: [{ mark: "alpha/staked", holder: "beta", n: 2, weight: 2, tick: 0 }],
+      selection: { by: "docket", window: 177, entry: "fold-delta.mjs § foldDelta", docket_claims: 33, note: null },
+    }),
+  }));
+  assert.ok(e instanceof FoldInputRefusal);
+  assert.equal(e.reason, "store-starving");
+  assert.equal(
+    w.git("for-each-ref", "--format=%(refname)", "refs/remotes/origin/draft/").trim().split("\n").filter(Boolean).length,
+    1,
+    "the git-era ref is still there: the guard still runs before any work",
+  );
+});
+
 // ── F9 · A MARK THE WALL CANNOT BIND IS HELD OUT, NOT WRITTEN ────────────────
 //
 // The ruling, revised on measurement. The first version filtered on `by:
