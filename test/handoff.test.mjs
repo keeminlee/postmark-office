@@ -12,14 +12,19 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   ACTION_HAND_TO_HUMAN, CLASS_HANDOFF, DIAL_FALLBACK, HANDOFF_LAW, P6,
-  capsFrom, handoffFor, handoffReadNeverPerforms, handoffShadow, liveHandoffs, readDeclaration, seatFromHandoff, unreadRows,
+  capsFrom, handToHumanViaOffice, handoffFor, handoffReadNeverPerforms, handoffShadow, liveHandoffs, readDeclaration,
+  seatFromHandoff, standingHandoffFor, unreadRows,
 } from "../src/handoff.mjs";
 import { resolveForActor, resolveGrants } from "../src/world-grants.mjs";
 import { exitAllowed, fenceGroundFor } from "../src/embodiment.mjs";
-import { journalRowAsAct } from "../src/world-journal.mjs";
+import { journalRowAsAct, readJournal } from "../src/world-journal.mjs";
+import { openDynamic } from "../src/dynamic-store.mjs";
 
 const T = (s) => new Date(s).toISOString();
 const at = (s) => Date.parse(s);
@@ -271,6 +276,124 @@ test("the calculus without the seat is BYTE-IDENTICAL to what it was — nothing
   const after = resolveForActor(AMBIENT, { kind: "human", spineIds: [] });
   assert.deepEqual(after.entries, before.entries);
   assert.deepEqual(after.refused, before.refused);
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// THE DOOR, DRIVEN — from the door to the journal to the ONE predicate
+// ═════════════════════════════════════════════════════════════════════════════
+//
+// Repair 2 of the review: NOTHING in test/ or world2/ drove
+// `handToHumanViaOffice`. What it delegates to — the dial, the fields, the
+// projection, the seat shape, the predicate — is tested above; the ASSEMBLY
+// was not: the payload the door writes, the derived human, the write, the
+// read-back through the office's own reader on the journal arm, and the gates.
+// So these drive the real door on a scratch journal and read the seat back
+// through `standingHandoffFor` with `env: {}` — the journal arm — into the one
+// predicate. The whole of the law's sentence, executed, with no store this
+// lane does not own.
+
+const KEY = { handles: new Set(["wright"]), household: "wright" };
+const NOW = at("2026-09-08T20:00:00.000Z");
+
+/** A scratch journal the door writes to; every env key restored after. */
+function scratchDoor(name) {
+  const dir = mkdtempSync(join(tmpdir(), `handoff-door-${name}-`));
+  const prior = {};
+  for (const k of ["WORLD_DYNAMIC_DB", "WORLD_SINGLE_LOG", "WORLD2_PG", "WORLD_FREEZE"]) prior[k] = process.env[k];
+  process.env.WORLD_DYNAMIC_DB = join(dir, "dynamic.db");
+  process.env.WORLD_SINGLE_LOG = "1";
+  delete process.env.WORLD2_PG;
+  delete process.env.WORLD_FREEZE;
+  const rows = () => {
+    const db = openDynamic();
+    try { return readJournal(db, { cls: CLASS_HANDOFF }).map(journalRowAsAct); }
+    finally { try { db.close(); } catch { /* already gone */ } }
+  };
+  const restore = () => {
+    for (const [k, v] of Object.entries(prior)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    try { rmSync(dir, { recursive: true, force: true }); } catch { /* a WAL handle still closing on Windows; the tmpdir sweeps it */ }
+  };
+  return { rows, restore };
+}
+const refusal = async (fn) => { try { await fn(); return null; } catch (e) { return e; } };
+
+test("THE DOOR, DRIVEN: one row whose payload is the disclosure and nothing else — and the seat reaches the ONE predicate from the journal, then lapses", async () => {
+  const door = scratchDoor("declare");
+  try {
+    const r = await handToHumanViaOffice({ ttl_min: 60 }, KEY, { dials: null, now: NOW, crossing: 7 });
+    assert.equal(r.handoff, "stands");
+    assert.equal(r.log, "journal");
+    assert.equal(r.ttl_min, 60);
+    assert.match(r.human, /^human-of-/, "THE HUMAN IS NOT A PARAMETER: derived from the household, never passed in");
+    assert.equal(r.seat.ground, null, "not a ground, said at the door");
+    assert.equal(r.disclosure, P6);
+    assert.match(r.caps.from, /the office's fallback/);
+    const rows = door.rows();
+    assert.equal(rows.length, 1, "one declaration, one row");
+    assert.deepEqual(rows[0].payload, { ttl_min: 60, human: r.human },
+      "THE PAYLOAD IS THE DISCLOSURE AND NOTHING ELSE — acts leaves the box, frozen on write");
+    assert.equal(rows[0].object, null);
+    assert.equal(rows[0].household, "wright");
+    assert.equal(rows[0].actor, "wright");
+    // THE EXPIRY THE DOOR ANSWERS IS THE RECORD'S. The row's instant is the
+    // pen's own stamp (`written_at`), not the clock this test handed the door;
+    // the first run of this test caught the door answering an expires_at off
+    // `deps.now` while the projection computed one off the stamp — two clocks,
+    // one fact. Now the answer is derived from the row the pen handed back.
+    const t0 = at(rows[0].at);
+    assert.ok(Number.isFinite(t0), "the journal row's instant is readable through the mapper");
+    assert.equal(r.expires_at, T(new Date(t0 + 60 * 60_000)), "expires_at = the row's own stamp + ttl — the projection's arithmetic, not a second clock's");
+    // THE READ-BACK, through the office's own reader, on the journal arm.
+    const live = await standingHandoffFor(KEY, { env: {}, now: t0 + 30 * 60_000 });
+    assert.ok(live, "the seat the door wrote is the seat the reader finds — this is the no-op the journal arm was written to prevent");
+    assert.equal(live.human, r.human);
+    assert.equal(live.expires_at, r.expires_at, "and the record's expiry IS the door's answer, byte for byte");
+    const seat = seatFromHandoff(live);
+    const seated = resolveForActor(AMBIENT, { kind: "human", spineIds: [], handoff: seat });
+    assert.deepEqual(seated.entries.map((e) => e.action).sort(), ["enter", "exit", "say", "take", "walk"],
+      "door → journal → projection → the one predicate: the resident set, whole");
+    assert.equal(seated.seated, null);
+    // AND AFTER THE TTL, THE SAME CHAIN SEATS NOBODY — nothing ran to end it.
+    assert.equal(await standingHandoffFor(KEY, { env: {}, now: t0 + 90 * 60_000 }), null);
+    assert.equal(door.rows().length, 1, "and the row is untouched: expiry is arithmetic, not a write");
+    // ANOTHER HOUSEHOLD'S KEY reads none of it — the scope holds on the journal arm too.
+    assert.equal(await standingHandoffFor({ handles: new Set(["amber"]), household: "amber" }, { env: {}, now: t0 + 30 * 60_000 }), null);
+  } finally { door.restore(); }
+});
+
+test("WITHDRAW THROUGH THE DOOR ends the seat at the next read, with nothing to delete", async () => {
+  const door = scratchDoor("withdraw");
+  try {
+    await handToHumanViaOffice({ ttl_min: 60 }, KEY, { dials: null, now: NOW, crossing: 7 });
+    const w = await handToHumanViaOffice({ withdraw: true }, KEY, { dials: null, now: NOW + 10 * 60_000, crossing: 7 });
+    assert.equal(w.handoff, "withdrawn");
+    assert.equal(w.log, "journal");
+    const rows = door.rows();
+    assert.equal(rows.length, 2, "the withdrawal is a row like the declaration was");
+    assert.deepEqual(rows[1].payload, { withdraw: true });
+    const t0 = at(rows[0].at);
+    assert.equal(await standingHandoffFor(KEY, { env: {}, now: t0 + 30 * 60_000 }), null, "and the next read seats nobody");
+  } finally { door.restore(); }
+});
+
+test("THE DOOR'S GATES: over the cap is refused by name and writes nothing; no pen when the log is off (501); the freeze bounce is RETURNED", async () => {
+  const door = scratchDoor("gates");
+  try {
+    const over = await refusal(() => handToHumanViaOffice({ ttl_min: 600 }, KEY, { dials: { ttl_max_min: 30 }, now: NOW }));
+    assert.equal(over.code, 422);
+    assert.match(over.hint, /the-town\/handoff/, "the cap came off the mark, and the refusal says so");
+    assert.equal(door.rows().length, 0, "a refused declaration writes nothing");
+    delete process.env.WORLD_SINGLE_LOG;
+    const off = await refusal(() => handToHumanViaOffice({ ttl_min: 60 }, KEY, { dials: null, now: NOW }));
+    assert.equal(off.code, 501);
+    assert.match(off.hint, /WORLD_SINGLE_LOG=1/);
+    process.env.WORLD_SINGLE_LOG = "1";
+    process.env.WORLD_FREEZE = "1";
+    const fz = await handToHumanViaOffice({ ttl_min: 60 }, KEY, { dials: null, now: NOW });
+    assert.equal(fz.error, "bounce");
+    assert.equal(fz.code, 503);
+    assert.equal(door.rows().length, 0, "neither gate let a row through");
+  } finally { door.restore(); }
 });
 
 // ═════════════════════════════════════════════════════════════════════════════

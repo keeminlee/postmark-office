@@ -454,7 +454,6 @@ export async function handToHumanViaOffice(args = {}, key = null, deps = {}) {
 
   const crossing = deps.crossing ?? currentCrossing();
   const nowMs = deps.now ?? Date.now();
-  const expires = fields.withdraw ? null : iso(nowMs + fields.ttl_min * MIN_MS);
 
   const row = await writeHandoffAct({
     crossing, actor: by, household: resolvedWorldHousehold(key) ?? null,
@@ -470,8 +469,21 @@ export async function handToHumanViaOffice(args = {}, key = null, deps = {}) {
     payload: fields.withdraw ? { withdraw: true } : { ttl_min: fields.ttl_min, human },
     effect: fields.withdraw
       ? `${by} ends the seat early; their human is seated nowhere`
-      : `${by} seats ${human} at their own standing until ${expires}; every act through the seat is written through ${by} and discloses the hand`,
+      : `${by} seats ${human} at their own standing for ${fields.ttl_min} min; every act through the seat is written through ${by} and discloses the hand`,
   });
+
+  // THE EXPIRY IS THE RECORD'S, NOT THE DOOR'S. The projection computes a
+  // seat's end from the row's own instant (`written_at`, stamped by the pen)
+  // plus its ttl; an `expires_at` computed here from this door's clock is a
+  // SECOND answer to the same fact, and the first driven test of this door
+  // caught the two disagreeing. So the answer derives it from the row the pen
+  // handed back — the same arithmetic over the same stamp the projection will
+  // read — and falls to this door's clock only if a pen ever answers no stamp.
+  // (subscriptions.mjs § subscribeViaOffice records the same class at its own
+  // `expires_at` and removed the copy from the PAYLOAD for it; this is the
+  // ANSWER-side half of that lesson.)
+  const stampedAt = Number.isFinite(ms(row?.written_at)) ? ms(row.written_at) : nowMs;
+  const expires = fields.withdraw ? null : iso(stampedAt + fields.ttl_min * MIN_MS);
 
   if (fields.withdraw) {
     return {

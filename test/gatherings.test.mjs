@@ -12,14 +12,19 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   ACTION_GATHER, CLASS_GATHERING, DIAL_FALLBACK, PHASES, RECEIPT_FENCE,
-  capsFrom, gatherReadNeverPerforms, gatheredAt, gatheringById, gatheringIdFor,
+  capsFrom, gatherReadNeverPerforms, gatherViaOffice, gatheredAt, gatheringById, gatheringIdFor,
   gatheringsFrom, groupCount, phaseAt, readDeclaration, receiptFor,
   gatheringShadow, refuseOutOfPlace, standingGatherings, standsAt, unreadRows,
 } from "../src/gatherings.mjs";
 import { standsWithin } from "../src/reach.mjs";
+import { openDynamic } from "../src/dynamic-store.mjs";
+import { journalRowAsAct, readJournal } from "../src/world-journal.mjs";
 
 // The world engine's own containment, restated ONLY as a test double — the
 // production path injects `verbs.pointWithinMark` out of the clone, and a test
@@ -343,6 +348,135 @@ test("a read never performs, and the refusal names every declaration field that 
   assert.equal(r.code, 422);
   assert.match(r.hint, /place, start/);
   assert.match(r.hint, /world \{ do: "gather"/);
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// THE DOOR, DRIVEN — a scratch journal, the real pen, the real read-back
+// ═════════════════════════════════════════════════════════════════════════════
+//
+// Repair 2 of the review: NOTHING in test/ or world2/ drove `gatherViaOffice`
+// at all. Every clause it delegates to was tested — the dials, the reach, the
+// fold, the receipt — which is why the coverage read convincing; the ASSEMBLY
+// was not: the payload the door writes, the id it mints, the face routing, the
+// 403 on a stranger's gathering, the 404 on an unknown id, the 501 with the
+// log off, the freeze bounce, and the write itself. The reviewer wrote a phase
+// word into the payload the door actually writes and 47/47 stayed green. The
+// door already took a full deps bag; this is that bag, filled, over a scratch
+// journal — the hold door's own harness (test/hold-reach.test.mjs), one lane
+// over.
+
+const KEY = { handles: new Set(["wright"]), household: "wright" };
+const NOW = at("2026-09-10T10:00:00.000Z");
+
+/** A scratch journal the door writes to and the tests read back. Every env key is restored after. */
+function scratchDoor(name) {
+  const dir = mkdtempSync(join(tmpdir(), `gather-door-${name}-`));
+  const prior = {};
+  for (const k of ["WORLD_DYNAMIC_DB", "WORLD_SINGLE_LOG", "WORLD2_PG", "WORLD_FREEZE"]) prior[k] = process.env[k];
+  process.env.WORLD_DYNAMIC_DB = join(dir, "dynamic.db");
+  process.env.WORLD_SINGLE_LOG = "1";
+  delete process.env.WORLD2_PG;
+  delete process.env.WORLD_FREEZE;
+  const rows = () => {
+    const db = openDynamic();
+    try { return readJournal(db, { cls: CLASS_GATHERING }).map(journalRowAsAct); }
+    finally { try { db.close(); } catch { /* already gone */ } }
+  };
+  const restore = () => {
+    for (const [k, v] of Object.entries(prior)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    try { rmSync(dir, { recursive: true, force: true }); } catch { /* a WAL handle still closing on Windows; the tmpdir sweeps it */ }
+  };
+  return { rows, restore };
+}
+/** The door's deps bag: fallback dials, the scratch rows, a host standing inside the quay, a fixed clock. */
+const doorDeps = (door, over = {}) => ({ dials: null, rows: door.rows, reachCtx: ctxOf(QUAY, { x: 410, y: 1210 }), now: NOW, crossing: 7, ...over });
+
+test("THE DOOR, DRIVEN: a declaration writes ONE journal row — the five facts, the minted id, the face — and answers the phase it did not store", async () => {
+  const door = scratchDoor("declare");
+  try {
+    const r = await gatherViaOffice({ place: QUAY.id, doors_open: DOORS, start: START, end: END, shape: "open house" }, KEY, doorDeps(door));
+    assert.equal(r.gathered, GID, "the id is minted from host, place and start — the same id the fixtures above use, so the two halves of this file agree");
+    assert.equal(r.face, "declare");
+    assert.equal(r.log, "journal");
+    assert.equal(r.phase, "announced");
+    assert.match(r.phase_note, /nothing stores it/);
+    assert.equal(r.stood.how, "extent", "the reach was asked, and answered which leg let the host in");
+    assert.match(r.caps.from, /the office's fallback/, "no dials were handed in, and the answer says so");
+    const rows = door.rows();
+    assert.equal(rows.length, 1, "one declaration, one row");
+    const row = rows[0];
+    assert.equal(row.action, ACTION_GATHER);
+    assert.equal(row.class, CLASS_GATHERING);
+    assert.equal(row.actor, "wright");
+    assert.equal(row.household, "wright");
+    assert.equal(row.object, QUAY.id, "a declaration's object is the place it rides");
+    assert.deepEqual(row.payload, { gathering: GID, face: "declare", place: QUAY.id, doors_open: DOORS, start: START, end: END, shape: "open house" },
+      "THE PAYLOAD THE DOOR WRITES is the id, the face, the five facts and the shape — and nothing else");
+    const g = gatheringById(rows, GID, NOW);
+    assert.equal(g.host, "wright");
+    assert.equal(g.phase, "announced", "and the fold reads the door's own row back as the node the host declared");
+  } finally { door.restore(); }
+});
+
+test("THE THREE FACES ROUTE THROUGH ONE DOOR: an amend moves the hour on the same node, a withdraw ends it, and each is a row", async () => {
+  const door = scratchDoor("faces");
+  try {
+    await gatherViaOffice({ place: QUAY.id, start: START, end: END }, KEY, doorDeps(door));
+    const a = await gatherViaOffice({ amend: true, gathering: GID, end: T("2026-09-12T23:30:00.000Z") }, KEY, doorDeps(door));
+    assert.equal(a.face, "amend");
+    assert.equal(a.end, T("2026-09-12T23:30:00.000Z"));
+    assert.equal(a.start, START, "an amend names what MOVES; the rest is read off the prior the door folded");
+    const w = await gatherViaOffice({ withdraw: true, gathering: GID }, KEY, doorDeps(door));
+    assert.equal(w.face, "withdraw");
+    assert.ok(!("place" in w), "a withdrawal answers no terms, because it declares none");
+    const rows = door.rows();
+    assert.deepEqual(rows.map((r) => r.payload.face), ["declare", "amend", "withdraw"], "three rows — nothing edited, nothing deleted");
+    assert.deepEqual(rows[2].payload, { gathering: GID, face: "withdraw" }, "a withdrawal's payload names the node and the face, nothing more");
+    assert.equal(rows[2].object, GID, "a withdrawal's object is the gathering; a declaration's is the place");
+    const g = gatheringById(rows, GID, at("2026-09-12T20:00:00.000Z"));
+    assert.equal(g.phase, "withdrawn");
+    assert.equal(g.end, T("2026-09-12T23:30:00.000Z"), "the amended hour is the one the record keeps");
+    assert.equal(g.declarations.length, 3, "every prior invitation stays in the log");
+  } finally { door.restore(); }
+});
+
+test("THE DOOR'S OWN REFUSALS: a stranger's gathering (403), an id the log does not hold (404), a host not at the place (409 — and NO row written), a handle not on the key (403)", async () => {
+  const door = scratchDoor("refusals");
+  try {
+    const amber = { handles: new Set(["amber"]), household: "amber" };
+    const theirs = await gatherViaOffice({ place: QUAY.id, start: START, end: END }, amber, doorDeps(door));
+    const e403 = await refusal(() => gatherViaOffice({ amend: true, gathering: theirs.gathered, end: END }, KEY, doorDeps(door)));
+    assert.equal(e403.code, 403);
+    assert.match(e403.defect, /amber's gathering, not yours/, "the door's message — the fold's own refusal of the same row is tested above; this is the sentence the host reads");
+    const e404 = await refusal(() => gatherViaOffice({ amend: true, gathering: "gathering:nobody:nowhere:0", end: END }, KEY, doorDeps(door)));
+    assert.equal(e404.code, 404);
+    assert.match(e404.defect, /holds no gathering called/);
+    const before = door.rows().length;
+    const e409 = await refusal(() => gatherViaOffice({ place: QUAY.id, start: START, end: END }, KEY, doorDeps(door, { reachCtx: ctxOf(QUAY, { x: 400, y: 4200 }) })));
+    assert.equal(e409.code, 409);
+    assert.match(e409.defect, /you are not at/);
+    assert.equal(door.rows().length, before, "THE REACH IS ASKED BEFORE THE PEN: a refused declaration writes nothing");
+    const eWho = await refusal(() => gatherViaOffice({ place: QUAY.id, start: START, end: END, handle: "amber" }, KEY, doorDeps(door)));
+    assert.equal(eWho.code, 403);
+    assert.match(eWho.defect, /not one of your residents/);
+    assert.equal(door.rows().length, before, "and neither does a refused host");
+  } finally { door.restore(); }
+});
+
+test("THE DOOR'S GATES: no pen when the single log is off (501), and the freeze bounce is RETURNED, not thrown — and neither writes", async () => {
+  const door = scratchDoor("gates");
+  try {
+    delete process.env.WORLD_SINGLE_LOG;
+    const e = await refusal(() => gatherViaOffice({ place: QUAY.id, start: START, end: END }, KEY, doorDeps(door)));
+    assert.equal(e.code, 501);
+    assert.match(e.hint, /WORLD_SINGLE_LOG=1/, "the refusal names the key the operator turns");
+    process.env.WORLD_SINGLE_LOG = "1";
+    process.env.WORLD_FREEZE = "1";
+    const fz = await gatherViaOffice({ place: QUAY.id, start: START, end: END }, KEY, doorDeps(door));
+    assert.equal(fz.error, "bounce", "the freeze gate RETURNS its bounce — the one shape all the doors speak");
+    assert.equal(fz.code, 503);
+    assert.equal(door.rows().length, 0, "neither gate let a row through");
+  } finally { door.restore(); }
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
