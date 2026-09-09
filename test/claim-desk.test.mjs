@@ -371,6 +371,13 @@ test("THE CONSENT SCREEN'S CHECK IS THE HANDLE, NOT MERELY A HOUSEHOLD: an accou
   const fresh = await asked.json();
 
   const r = await cosign(askOf(fresh), FIFTH);
+  // AT THE SCREEN, NOT AT THE BUTTON. The helper only carries `consentHtml`
+  // when the screen rendered and it went on to press Grant — and the approval
+  // re-checks the handle, so a screen that let the wrong account through
+  // would STILL answer 403 one step later. Asserting the status alone would
+  // pass with the screen's check gone (the flip found exactly that); the
+  // claim is that the refusal comes before any button exists.
+  assert.equal(r.consentHtml, undefined, "refused at the consent screen itself — no Grant button was ever rendered, so none was pressed");
   assert.equal(r.status, 403, "an account that keeps a household but not this handle is refused at the screen");
   assert.ok(!/name="pending_id"/.test(r.html), "no Grant button is rendered for it");
   assert.match(r.html, /does not\s+bind/i, "and it is told the record does not bind this handle to it");
