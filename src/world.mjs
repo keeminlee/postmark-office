@@ -2485,6 +2485,23 @@ export async function withdrawMarkViaOffice(worldClone, args = {}, key = null) {
   { const fz = worldFreezeBounce(); if (fz) return fz; }
   const bounce = (code, defect, hint) => { const e = new Error(defect); Object.assign(e, { code, defect, hint }); return e; };
   const mark = String(args.mark ?? "").trim();
+  // A GATHERING IS NOT A MARK, and this door says so BEFORE it parses the id.
+  // A gathering id (`gathering:<host>:<place id>:<start ms>`, minted by
+  // gatherings.mjs § gatheringIdFor) contains a "/" because the PLACE id does,
+  // so it passed the shape check below and was then sliced at its first "/" —
+  // the office answered 403 «"gathering:wright:the-town" is not on your key»,
+  // a handle nobody holds, and never said the word gathering. The conductor's
+  // ruling (2026-09-08): that parse is a bug whatever the law ends up saying.
+  // This refusal is the office REPORTING A FACT — which door writes a
+  // gathering's cancellation on this tree — and not a ruling on law question A
+  // (whether the clause's word "withdraw" should also reach this door), which
+  // is the founder's. If the founder rules that it should, this branch becomes
+  // the routing and the sentence goes away.
+  const gatheringId = String(args.gathering ?? "").trim() || (mark.startsWith("gathering:") ? mark : "");
+  if (gatheringId) {
+    throw bounce(422, `"${gatheringId}" names a gathering, and this door withdraws marks`,
+      `a gathering is a fleeting node that rides a mark, not a mark of its own, so this door cannot withdraw it. Cancel it through the door that declared it: world { do: "gather", args: { gathering: "${gatheringId}", withdraw: true } } — the cancellation is a row like the declaration was, and every prior invitation stays in the log.`);
+  }
   if (!mark || !mark.includes("/")) throw bounce(422, "which mark?", "pass mark: '<by>/<slug>' — ids as the telling shows them");
   const by = mark.slice(0, mark.indexOf("/"));
   const slug = mark.slice(mark.indexOf("/") + 1);

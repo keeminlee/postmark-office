@@ -142,6 +142,42 @@ const LANE_OF = Object.freeze({
   // can take it back.
   subscribe: "journal", unsubscribe: "journal",
 
+  // ── THE GATHERING AND THE HANDOFF (world#15 and #16, PROPOSED; Rei-3) ─────
+  //
+  // Named in the same commit that adds their dispatch rows and BEFORE the law
+  // they answer has merged — the same early-naming the subscription's row above
+  // and the `arena-act` row one check down both defend: "a census that only
+  // learns about a lane after it lands is a census that is late by exactly the
+  // interval in which the gap can open."
+  //
+  // The answer is "journal" for both. Each rides `appendJournal` like every
+  // other class-lane act (src/gatherings.mjs § writeGatherAct, src/handoff.mjs
+  // § writeHandoffAct), so `appendJournal`'s mirror carries it and
+  // falsifier-acts-parity is what checks it; on a FLIPPED lane it rides
+  // `appendActFlipped` and Postgres is the record, which is not a different
+  // census answer because `laneOf` maps a flip per lane and the row reaches
+  // `acts` either way.
+  //
+  // ⚠ WHAT RIDES IN THE PAYLOAD, said here because `acts` LEAVES THE BOX — the
+  // notary exports the whole row into a public archive, frozen on write.
+  //
+  //   gather        the five facts the invitation already is: the gathering's
+  //                 own id, the face (declare/amend/withdraw), the place, the
+  //                 doors-open, the start, the end, and an optional shape.
+  //                 Every one of them is what a host SAYS PUBLICLY when they
+  //                 invite the town; publishing them permanently is what an
+  //                 invitation is for. Nothing about who came rides here — that
+  //                 is derived at the read, and the receipt's own fence ("never
+  //                 a line of what was spoken") governs it.
+  //   hand-to-human `ttl_min` and `human`, and `human` is the HOUSEHOLD'S
+  //                 label — `human-of-<slug>`, which src/households.mjs has
+  //                 derived since 2026-08-08 with the note "NEVER the GitHub
+  //                 login (the office does not name people)". A person's name
+  //                 must never enter this payload: the archive is frozen and no
+  //                 policy anywhere could take it back. The disclosure the law
+  //                 asks for is that a hand was seated, not whose hand it was.
+  gather: "journal", "hand-to-human": "journal",
+
   // ruled out, each with its reason
   "note-to-self": "none",
   //   HOUSEHOLD-PRIVATE BY THE DOOR'S OWN LAW — "one note to your returning
@@ -205,6 +241,13 @@ const CLASS_LANE_OF = Object.freeze({
   // `subscription` after the class, and `appendJournal`'s mirror carries the
   // row exactly as it carries a stance's.
   subscription: "journal",
+  // world#15 and #16's residue classes, named before their first rows exist —
+  // the same early-naming this check's own header defends. `laneOf` has no
+  // branch for either and needs none: it falls through to `return cls`, so the
+  // lanes are called `gathering` and `handoff` after the classes, and
+  // `appendJournal`'s mirror carries the rows exactly as it carries a stance's.
+  gathering: "journal",
+  handoff: "journal",
 });
 
 function checkClassCensus(classesInJournal) {
@@ -284,6 +327,78 @@ if (has("--prove-can-fail")) {
     + "the matcher rejects a wrong actor, a wrong action, and a nine-minute drift; "
     + "the per-lane expiry catches a governed lane past its backstop, exempts the arena by P-143's ruling, goes quiet once every governed row is removed, and fails closed on an unnamed lane.");
   process.exit(0);
+}
+
+// ── THE CENSUS, ALONE (`--census`) ──────────────────────────────────────────
+//
+// Checks 0 and 0b need no Postgres, no window and no voices log: check 0
+// compares the apex's own dispatch table against `LANE_OF`, and check 0b
+// compares a journal's distinct classes against `CLASS_LANE_OF`. Neither of
+// them reads `acts` at all.
+//
+// ⛔ WHY THIS MODE EXISTS, and it is a defect in the file's own shape rather
+// than a convenience. The full run reaches check 0 only AFTER the usage gate
+// demands `--db` and `WORLD2_PG_URL`, and prints it only after four store-bound
+// checks have run. So the one question this census exists to answer on the day
+// a verb lands — "does every door this office opens have a pen named for it?" —
+// could not be asked on a branch, in a worktree, or anywhere without a live
+// store to open. `--prove-can-fail` proves the CHECK works against synthetic
+// input; it never asks the check about THIS TREE. That is the gap: a census
+// that is "late by exactly the interval in which the gap can open" was, itself,
+// unaskable during exactly that interval.
+//
+// `--db` is optional and its absence is DISCLOSED rather than counted green:
+// without a journal to read, check 0b has nothing to be asked about, and a mode
+// that reported "clean" for a check it did not run would be the noise floor
+// hidden in the silence.
+//
+// ⛔ EACH CHECK'S VERDICT COMES FROM ITS OWN FINDINGS (the office-halves
+// review, repair 4). The first cut of this mode pushed check 0b's findings
+// into check 0's `problems` array and then printed "check 0 … RED" off its
+// length — so an unruled journal class was reported as a verb-census failure
+// while LANE_OF was untouched and check 0 was green. A verdict computed from a
+// different source than the one it names is the freshness-stamp class.
+//
+// ⛔ GIVEN-BUT-UNREADABLE IS A REFUSAL, NOT "NO --db WAS GIVEN" (repair 5).
+// The first cut gated on `censusDb && existsSync(censusDb)` and fell into the
+// no-db disclosure otherwise, so an operator who typo'd the path got exit 0
+// and a sentence blaming them for something they did do. Now a path that was
+// given and cannot be read as a journal is a usage refusal — exit 2, the
+// same code the full run's usage gate uses — that names the path and the
+// reason, and the run says nothing green about a check it could not ask.
+if (has("--census")) {
+  const { DISPATCHABLE } = await import("../../src/world-apex.mjs");
+  const verbProblems = checkCensus([...DISPATCHABLE]);
+  const verbLine = `check 0 asked ${DISPATCHABLE.length} dispatchable verb(s) against LANE_OF — ${verbProblems.length ? "RED" : "every one is named"}`;
+
+  let classes = null;
+  let classProblems = [];
+  let classLine;
+  const censusDb = arg("--db");
+  if (censusDb == null || censusDb === "") {
+    classLine = "check 0b was NOT asked — no --db was given, so no journal was read and this run says nothing about which classes the store holds";
+  } else {
+    try {
+      if (!existsSync(censusDb)) throw new Error("no such file");
+      const db = new DatabaseSync(censusDb, { readOnly: true });
+      try { classes = db.prepare("SELECT DISTINCT class FROM journal").all().map((r) => String(r.class)); }
+      finally { db.close(); }
+    } catch (e) {
+      for (const p of verbProblems) console.error(p);
+      console.error(
+        `REFUSED (census usage): --db ${censusDb} was given and could not be read as a journal (${String(e?.message ?? e)}). `
+        + "Check 0b was asked of it and could not be answered — this run says nothing about which classes the store holds, "
+        + "and it refuses rather than passing that silence off as green or as the operator's omission.");
+      console.log(`census: ${verbLine}; check 0b was asked of ${censusDb} and could NOT read it — REFUSED (exit 2)`);
+      process.exit(2);
+    }
+    classProblems = checkClassCensus(classes);
+    classLine = `check 0b asked ${classes.length} journal class(es) against CLASS_LANE_OF (${classes.join(", ") || "none"}) — ${classProblems.length ? "RED" : "every one is ruled"}`;
+  }
+
+  for (const p of [...verbProblems, ...classProblems]) console.error(p);
+  console.log(`census: ${verbLine}; ${classLine}`);
+  process.exit(verbProblems.length || classProblems.length ? 1 : 0);
 }
 
 /**
