@@ -927,7 +927,25 @@ export async function declareStanceViaOffice(repo, args = {}, key = null, { dbPa
 
   const db = openDynamic(dbPath ?? undefined);
   try {
-    const prior = standingStances(readJournal(db, { cls: CLASS_STANCE }), { by }).find((s) => s.on === on) ?? null;
+    // THE SUPERSEDED COURTESY READS THE WHOLE RECORD, NOT ONE STORE.
+    //
+    // This computed `prior` from `readJournal(db)` alone — the live sqlite
+    // journal — while the read side had already moved to photographs ∪ journal
+    // (#2454) and now to the register beside them. So a resident re-declaring a
+    // stance whose first word had been drained got a receipt saying nothing was
+    // superseded, which is the #2454 sentence in the smallest possible type: the
+    // town knew, and the door told them it did not.
+    //
+    // AND MY OWN REAPER ACCELERATES IT. Once a stance row's twin is confirmed in
+    // `acts` the reaper takes the sqlite row, so this window shrinks from "until
+    // the next drain" to "until the next reap". A courtesy field decaying faster
+    // because of a fix I shipped in the same lane is not a courtesy, it is a
+    // regression I would have introduced and then not been able to see — nothing
+    // asserts `superseded`, which is why it took my reviewer to find it.
+    //
+    // `stanceRows` is the one derivation every tier reads from; this now shares
+    // it rather than keeping a fourth opinion about what has been said.
+    const prior = standingStances(await stanceRows({ dbPath, worldClone: repo }), { by }).find((s) => s.on === on) ?? null;
     const entry = {
       crossing, actor: by, household: resolvedWorldHousehold(key) ?? null,
       action: ACTION_STANCE, object: on, cls: CLASS_STANCE,

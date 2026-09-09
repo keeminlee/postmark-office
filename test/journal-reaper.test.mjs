@@ -27,6 +27,7 @@ import { tmpdir } from "node:os";
 import { openDynamic, putMeta } from "../src/dynamic-store.mjs";
 import { DRAIN_CURSOR } from "../src/world-drain.mjs";
 import { exemptLanesOf, indexActs, reapJournal, reapPlan } from "../src/journal-reaper.mjs";
+import { __setPoolForTest } from "../src/world2-acts.mjs";
 
 const sweep = (d) => { try { rmSync(d, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); } catch { /* litter */ } };
 const scratch = mkdtempSync(join(tmpdir(), "postmark-reaper-"));
@@ -284,4 +285,73 @@ test("R9 · indexActs normalizes a pg Date and a text instant to one spelling", 
     act(2, "voice", "say", "b", null, "2026-09-08T12:00:00.000Z"),
   ], RETIRED);
   assert.equal(plan.reap.length, 2, "a Date and a string pair the same row");
+});
+
+// ── R10: the PRODUCTION query, which had no coverage at all ─────────────────
+//
+// THE MERGE HELD ON THIS, and my reviewer was right to hold it. Every one of
+// R1–R9 passes `acts` in, so not one of them ever executed the SELECT the
+// office actually runs. Removing `object` from it left the suite 47/47 green
+// while production would have paired NOTHING, reaped NOTHING, and reported
+// every row as "no twin in the register" — which is this module's own
+// description of a CORRECT and healthy state. The reaper would have quietly
+// stopped reaping and its report would have read as the mirror being behind.
+//
+// That is the same defect three times in this lane, now in its worst form: a
+// test that asserts the SHAPE of a query instead of driving it. The stance
+// read's S5 spied the text; this had not even that.
+
+test("R10 · the reaper's own SELECT is driven, and every column the pairing consumes is in it", async () => {
+  const seen = [];
+  __setPoolForTest({ async query(text, params) { seen.push({ text, params }); return { rows: [
+    act(9001, "voice", "say", "neth", null, "2026-09-08T12:00:00.000Z"),
+  ] }; } });
+  const had = { flag: process.env.WORLD2_PG, url: process.env.WORLD2_PG_URL };
+  process.env.WORLD2_PG = "1";
+  process.env.WORLD2_PG_URL = "postgres://stub/w2_scratch_none";
+  const db = journalWith("r10", [[1, "voice", "say", "neth", null, "2026-09-08T12:00:00.000Z"]]);
+  try {
+    // NO `acts` argument — this is the call the office makes, and the one no
+    // other test in this file has ever made.
+    const out = await reapJournal(db, { drainRetired: true, exempt: new Set() });
+    assert.equal(seen.length, 1, "the register was actually queried");
+
+    const selected = new Set(
+      /SELECT\s+([\s\S]+?)\s+FROM\s+acts/i.exec(seen[0].text)[1].split(",").map((c) => c.trim()));
+    // `indexActs` and `reapPlan` between them consume exactly these. A column
+    // the query omits arrives `undefined`, and `twinKey(actor, action, at,
+    // object)` then keys every row on the same wrong tuple.
+    assert.deepEqual(["id", "at", "actor", "action", "object", "class"].filter((c) => !selected.has(c)), [],
+      "every column the pairing consumes must be SELECTed");
+
+    assert.equal(out.deleted, 1, "and the row paired and was reaped, end to end, off the real query");
+    assert.equal(db.prepare("SELECT count(*) n FROM journal").get().n, 0);
+  } finally {
+    db.close();
+    __setPoolForTest(null);
+    if (had.flag === undefined) delete process.env.WORLD2_PG; else process.env.WORLD2_PG = had.flag;
+    if (had.url === undefined) delete process.env.WORLD2_PG_URL; else process.env.WORLD2_PG_URL = had.url;
+  }
+});
+
+test("R10-CONTROL · with the register unconfigured the pool is never reached, and the reap REFUSES", async () => {
+  // R10 must be shown to depend on the gate opening, or it says nothing about
+  // `world2Enabled`; and the refusal path is what stops a missing connection
+  // string from reading as an empty register.
+  const seen = [];
+  __setPoolForTest({ async query(text, params) { seen.push({ text, params }); return { rows: [] }; } });
+  const had = { flag: process.env.WORLD2_PG, url: process.env.WORLD2_PG_URL };
+  delete process.env.WORLD2_PG; delete process.env.WORLD2_PG_URL;
+  const db = journalWith("r10c", [[1, "voice", "say", "neth", null, "2026-09-08T12:00:00.000Z"]]);
+  try {
+    const out = await reapJournal(db, { drainRetired: true, exempt: new Set() });
+    assert.equal(seen.length, 0, "the gate is closed, so the pool is never asked");
+    assert.equal(out.refused, "no-register", "and an unread register refuses rather than reaping");
+    assert.equal(db.prepare("SELECT count(*) n FROM journal").get().n, 1, "nothing deleted");
+  } finally {
+    db.close();
+    __setPoolForTest(null);
+    if (had.flag !== undefined) process.env.WORLD2_PG = had.flag;
+    if (had.url !== undefined) process.env.WORLD2_PG_URL = had.url;
+  }
 });

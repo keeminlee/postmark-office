@@ -250,6 +250,34 @@ test("S5 · the read reaches `acts` through actsQuery, with the class and order 
     assert.match(seen[0].text, /FROM acts WHERE class = \$1/, "filtered in the database, not in node");
     assert.deepEqual(seen[0].params, [CLASS_STANCE]);
     assert.match(seen[0].text, /ORDER BY id/);
+
+    // ── EVERY COLUMN THE READER CONSUMES IS SELECTED ────────────────────────
+    //
+    // MY REVIEWER'S FINDING, and it is the whole point of this test. The three
+    // assertions above spy the query's SHAPE — its table, its filter, its order
+    // — and none of them touches what the rows have to CONTAIN. Removing
+    // `payload` from the SELECT left the suite 56/56 green while production
+    // would have answered every stance with `stance: null`, because the stub
+    // supplies rows the query never asked for.
+    //
+    // Driven off `stanceRowFromAct`'s consumers rather than a list retyped here:
+    // `standingStances` reads `class`, `object`, `actor`, `payload.stance`,
+    // `written_at`, `crossing`, `seq`; the twin key adds `action`; the shape
+    // conversion adds `at_anchor`/`at_dx`/`at_dy`, `witnesses`, `effect`,
+    // `household`, and `id` for the seq.
+    // PARSED, not pattern-matched. My first version built this with
+    // new RegExp(`\\b${col}\\b`) inside a template literal, where \\b is a
+    // BACKSPACE and not a word boundary — so every assertion tested a regex
+    // that could match nothing. It went red on the first column with a message
+    // blaming the query, which is the only reason it was not a third instance
+    // of the very defect it checks for.
+    const selected = new Set(
+      /SELECT\s+([\s\S]+?)\s+FROM\s+acts/i.exec(seen[0].text)[1]
+        .split(",").map((c) => c.trim()));
+    const consumed = ["id", "at", "crossing", "actor", "action", "object",
+      "at_anchor", "at_dx", "at_dy", "witnesses", "class", "payload", "effect", "household"];
+    assert.deepEqual(consumed.filter((c) => !selected.has(c)), [],
+      "every column the reader consumes must be SELECTed — one the query omits comes back undefined, silently, in production only");
     assert.equal(rows.length, 1);
     assert.equal(rows[0].register, true);
   } finally {

@@ -134,13 +134,40 @@ if (process.argv[1]?.endsWith("state-log-rederive.mjs")) {
         fields: LINE_FIELDS.filter((key) => JSON.stringify(rebuilt[key]) !== JSON.stringify(f[key])) });
     }
 
-    const report = {
+    // ── THE ROLL CALL SPLITS ABSENCE IN TWO (the conductor's ruling, lap 3) ────
+  //
+  // This ships as the PARITY INSTRUMENT, not as a writer: the drain does not
+  // die at the swap, it NARROWS to the arena's windows (P-143 is Keemin's —
+  // until his word the arena stays sqlite-first and the drain is its only pen),
+  // and the check is that the store re-derives what the drain wrote for those
+  // windows.
+  //
+  // Which makes a plain `only_in_file` useless here. An arena window's rows are
+  // arena acts, the arena is never mirrored BY RULING, so every one of them is
+  // absent from the register and a check keyed on raw absence exits 1 every
+  // time it runs. A red that fires on a governed exemption is a red nobody
+  // reads, and a roll call nobody reads is worse than none.
+  //
+  // So absence is classified by the lane it belongs to, through `laneOf` —
+  // the office's own census, and the same call the reaper makes for the same
+  // reason. A governed-exempt lane's absence is EXPECTED and reported in its own
+  // field; anything else is a finding and fails the exit.
+  const { exemptLanes } = await import("../../src/world2-acts.mjs");
+  const { laneOf } = await import("../../src/world2-pen.mjs");
+  const exempt = new Set(exemptLanes());
+  const expectedAbsent = [], unexpectedAbsent = [];
+  for (const l of cmp.onlyInFile) {
+    (exempt.has(laneOf({ class: l.class, action: l.type })) ? expectedAbsent : unexpectedAbsent).push(l);
+  }
+
+  const report = {
       window,
       world: worldRoot,
       upto,
       file_lines: file.length,
       derived_lines: out.lines.length,
-      only_in_file: cmp.onlyInFile.map((l) => ({ seq: l.seq, actor: l.actor, type: l.type, object: l.object })),
+      only_in_file: unexpectedAbsent.map((l) => ({ seq: l.seq, actor: l.actor, type: l.type, object: l.object })),
+      expected_absent: expectedAbsent.map((l) => ({ seq: l.seq, actor: l.actor, type: l.type, lane: laneOf({ class: l.class, action: l.type }) })),
       only_in_derived: cmp.onlyInDerived.map((l) => ({ seq: l.seq, actor: l.actor, type: l.type, object: l.object })),
       byte_equal_once_seq_supplied: byteEqual,
       not_byte_equal: notByteEqual,
@@ -152,7 +179,8 @@ if (process.argv[1]?.endsWith("state-log-rederive.mjs")) {
       console.log(`window ${window} · file ${file.length} line(s) · derived ${out.lines.length} line(s)`);
       console.log(`byte-equal once the journal seq is supplied: ${byteEqual} of ${out.lines.length}`);
       for (const n of notByteEqual) console.log(`  NOT byte-equal · ${n.actor} ${n.type} (${n.class}) · ${n.fields.join(" + ")}`);
-      if (report.only_in_file.length) console.log(`  ONLY IN THE FILE: ${report.only_in_file.length} — the register cannot produce these`);
+      if (report.expected_absent.length) console.log(`  expected absent: ${report.expected_absent.length} — governed-exempt lanes (${[...new Set(report.expected_absent.map((l) => l.lane))].join(", ")}), never mirrored by ruling`);
+    if (report.only_in_file.length) console.log(`  ONLY IN THE FILE: ${report.only_in_file.length} — the register cannot produce these, and their lanes are NOT exempt`);
       if (report.only_in_derived.length) console.log(`  ONLY IN THE REGISTER: ${report.only_in_derived.length} — the drain never wrote these`);
       if (out.unnamed_households.length) console.log(`  UNNAMED HOUSEHOLDS: ${out.unnamed_households.join(", ")}`);
       const byField = {};
