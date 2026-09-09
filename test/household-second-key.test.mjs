@@ -51,11 +51,18 @@ const scratch = mkdtempSync(join(tmpdir(), "postmark-second-key-"));
 after(() => { try { rmSync(scratch, { recursive: true, force: true }); } catch { /* litter */ } });
 
 const PINS = { "aion-solare": { login: "aionsolare", id: 293432145 } };
+// EVERY SHAPE, AND ONE OF THEM CARRIES A DOT ON PURPOSE. `hh:cadaeic.space` is a
+// live key in the town today, and a dot is the one character in a legal branch
+// component that a re-implementation is most likely to "clean up". Without a
+// dotted key in this fixture, H7's flip — a second resolver in the projection —
+// runs green, because every other key spells the same both ways. Found by
+// running that flip: the check could not fail on the drift it names.
 const HOUSEHOLDS = {
   "aion-solare": "gh:293432145",       // pinned: a login already binds it
   "ev-attractor": "solo:ev-attractor", // a WHITE_PAGES room with no ADDRESS github
   argos: "hh:argos-and-prometheus",    // a house key from the stamp ledger
   vertas: "hh:argos-and-prometheus",   // ... which two handles share
+  arky: "hh:cadaeic.space",            // ... and a live house key with a DOT in it
 };
 
 const project = (households = HOUSEHOLDS, pins = PINS) => {
@@ -103,6 +110,8 @@ test("H1 · the emitted registry binds a household of EVERY shape the town can m
     "draft/ev-attractor now resolves to the household it belongs to; before this it resolved to nothing");
   assert.equal(emitted.logins["argos-and-prometheus"], "hh:argos-and-prometheus",
     "and a house key is bound once, under the house's name, not once per handle in it");
+  assert.equal(emitted.logins["cadaeic.space"], "hh:cadaeic.space",
+    "a dot is legal in a branch component and the name is taken as it stands — nothing is cleaned up");
 
   // THE CONJUNCTION. The sweep walls a mark only when the branch AND the author
   // both resolve (settlement-sweep.mjs:1123-1128), so an emitted map that binds

@@ -479,6 +479,14 @@ test("F10c · the second key never makes a pinned household ambiguous — the tr
   // handles to gh:67605380 would make the write-down refuse the whole crossing
   // for the largest household in the town. The rule below only ever binds keys
   // NO login binds, so a pinned household gains nothing and keeps its one name.
+  //
+  // AND IT IS GUARDED TWICE, WHICH THE CAN-FAIL FLIP FOUND. Removing the
+  // "no login binds it" filter alone leaves this GREEN, because the collision
+  // check catches the same key on the way out. Only removing BOTH reddens it
+  // (measured: additions gains `wrightstarforge -> gh:67605380`). So this test
+  // names an OUTCOME two independent rules produce, not either rule — which is
+  // the honest reading of it, and worth knowing before someone deletes one of
+  // them because "the test still passes".
   const households = { wright: "gh:67605380", rei: "gh:67605380", postmaster: "gh:67605380" };
   const { logins } = loginKeys({ wright: { login: "wrightstarforge", id: 67605380 } }, households);
   const { additions } = sketchbookKeys(households, logins);
