@@ -1198,7 +1198,7 @@ test("the reviewer's four rows: only ONE of them used to be wrong, and it is row
   const r3 = judge({ escrow_checked: true });
   const r4 = judge({ escrow_unbacked: ["someone/a-commons-mark"], escrow_checked: true });
 
-  assert.ok(r1, "1 · canon carries a slug, escrow unchecked → ALARM (on the canon half)");
+  assert.ok(r1, "1 · canon carries a slug, escrow unchecked → ALARM (on the canon half — and, since lap 5, on both; the test below)");
   assert.ok(r2, "2 · lists empty but escrow UNCHECKED → ALARM. This is the repair; it read OK before.");
   assert.equal(r3, null, "3 · lists empty and escrow CHECKED → OK, and it must stay OK");
   assert.ok(r4, "4 · an unbacked slug, escrow checked → ALARM");
@@ -1208,6 +1208,34 @@ test("the reviewer's four rows: only ONE of them used to be wrong, and it is row
   assert.match(r2, /a question unanswered and not an answer/);
   assert.match(r2, /UNCHECKED-MEANS\./, "its OWN sentence — the list-alarm's would send an operator after a stake that is not the problem");
   assert.doesNotMatch(r2, /LIST-MEANS\./);
+});
+
+// ── ON PROD TODAY, BOTH HALVES SPEAK (lap 5 — the lap-4 reviewer's LOW) ─────
+//
+// `judgeOutcome` returned the FIRST rule's sentence. With `canon_absent`
+// non-empty — prod's condition since window 177, `lupi/the-drift-room` — the
+// list alarm returned first and `unchecked_means` never reached the board: the
+// operator was told about lupi and not told that the escrow half of the read
+// has never run. Repair 2 (the four-row test above) covers the day lupi
+// settles; this covers the days before it. The board's reason is one string
+// that already carries a paragraph of `means`, so two sentences fit, and the
+// list sentence stays first — the finding, then the caveat on it.
+//
+// THE CAN-FAIL FLIP: in `judgeOutcome`, turn the list block's `sentences.push`
+// back into a `return`. Row 1 loses `escrow_checked` and this test reds; the
+// four-row test above stays green, which is what makes it the control.
+test("row 1 — canon carries a slug AND escrow is unchecked — carries BOTH sentences, the finding first", () => {
+  const r1 = judge({ canon_absent: ["lupi/the-drift-room"], escrow_checked: false });
+  assert.match(r1, /lupi\/the-drift-room/, "the list half names the slug");
+  assert.match(r1, /LIST-MEANS\./, "the list half carries its own repair");
+  assert.match(r1, /escrow_checked/, "the flag half is on the board too — this is the repair");
+  assert.match(r1, /UNCHECKED-MEANS\./, "the flag half names ITS repair (the migration), beside the list's");
+  assert.ok(r1.indexOf("lupi/the-drift-room") < r1.indexOf("escrow_checked"), "the finding first, the caveat after");
+  // The controls: rows with one fact still carry exactly one sentence.
+  const r2 = judge({ escrow_checked: false });
+  assert.doesNotMatch(r2, /LIST-MEANS\./, "an empty list earns no list sentence");
+  const r4 = judge({ escrow_unbacked: ["someone/a-commons-mark"], escrow_checked: true });
+  assert.doesNotMatch(r4, /UNCHECKED-MEANS\./, "a checked flag earns no flag sentence");
 });
 
 test("a latest line carrying no flag at all is itself the alarm — the writer cannot switch it off", () => {

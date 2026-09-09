@@ -860,22 +860,35 @@ export function judgeOutcome(row, snapshot) {
   // alarm that has no excuse, which is how a real finding gets skimmed past. I
   // wrote it the other way first and the end-to-end run on the box showed the
   // excuse attached to `lupi/the-drift-room`; this is that repair.
+  // THE LIST RULE AND THE FLAG RULE BOTH SPEAK (lap 5, the lap-4 reviewer's
+  // LOW). Until this lap the judge returned the FIRST rule's sentence, so while
+  // `canon_absent` carried a slug — prod's condition since window 177,
+  // `lupi/the-drift-room` — the list alarm returned and `unchecked_means` never
+  // printed: the operator was told about lupi and NOT told that the escrow half
+  // of the read has never run. Repair 2 closed the day lupi settles; this closes
+  // the days before it, which are the days between merge and that settlement.
+  // The board's reason is one string that already carries a paragraph of
+  // `means`, so two sentences fit; the list sentence stays FIRST — the finding,
+  // then the caveat on it. The class-terminal and stuck rules above still return
+  // alone: they describe a rail that did not produce a line worth judging, and
+  // there is nothing for a second sentence to be about.
+  const sentences = [];
+
   const lists = Array.isArray(spec.alarm_on_nonempty) ? spec.alarm_on_nonempty : [];
   if (lists.length) {
     const mine = spec.list_means ? ` ${spec.list_means}` : "";
     const present = lists.filter((f) => Object.prototype.hasOwnProperty.call(latest, f));
-    if (!present.length) {
-      return `declares an alarm on ${lists.join(", ")} and its latest line at ${latest.at ?? "?"} carries none of them — ` +
-        `the instrument and this judge disagree about the shape, so nothing is being judged.${mine}`;
-    }
     const found = present
       .map((f) => ({ field: f, items: Array.isArray(latest[f]) ? latest[f] : [] }))
       .filter((r) => r.items.length);
-    if (found.length) {
+    if (!present.length) {
+      sentences.push(`declares an alarm on ${lists.join(", ")} and its latest line at ${latest.at ?? "?"} carries none of them — ` +
+        `the instrument and this judge disagree about the shape, so nothing is being judged.${mine}`);
+    } else if (found.length) {
       const n = found.reduce((t, r) => t + r.items.length, 0);
-      return `last read at ${latest.at ?? "?"} found ${found.map((r) => `${r.items.length} ${r.field}`).join(" and ")} — ` +
+      sentences.push(`last read at ${latest.at ?? "?"} found ${found.map((r) => `${r.items.length} ${r.field}`).join(" and ")} — ` +
         `${found.map((r) => r.items.join(", ")).join(" · ")}. ` +
-        `The store and canon disagree about ${n === 1 ? "a mark that stands" : "marks that stand"} in the register today.${mine}`;
+        `The store and canon disagree about ${n === 1 ? "a mark that stands" : "marks that stand"} in the register today.${mine}`);
     }
   }
 
@@ -886,7 +899,8 @@ export function judgeOutcome(row, snapshot) {
   //
   // THE HOLE IT CLOSES, driven through this judge against the real manifest row:
   //
-  //   canon absent carries lupi, escrow unchecked   → ALARM (on the canon half)
+  //   canon absent carries lupi, escrow unchecked   → ALARM (on the canon half;
+  //                                                   since lap 5 on BOTH — below)
   //   canon empty, escrow list empty, UNCHECKED     → OK        ← the hole
   //   canon empty, escrow list empty, checked       → OK
   //   escrow list carries a slug, checked           → ALARM
@@ -909,19 +923,21 @@ export function judgeOutcome(row, snapshot) {
   const flags = Array.isArray(spec.alarm_on_false) ? spec.alarm_on_false : [];
   if (flags.length) {
     const said = flags.filter((f) => Object.prototype.hasOwnProperty.call(latest, f) && latest[f] === false);
-    if (said.length) {
-      return `last read at ${latest.at ?? "?"} reports ${said.join(", ")} — the check did not run, so a clean list above ` +
-        `is a question unanswered and not an answer.${spec.unchecked_means ? ` ${spec.unchecked_means}` : ""}`;
-    }
     const absent = flags.filter((f) => !Object.prototype.hasOwnProperty.call(latest, f));
-    if (absent.length === flags.length) {
-      return `declares an alarm on ${flags.join(", ")} being false and its latest line at ${latest.at ?? "?"} carries ` +
+    if (said.length) {
+      // "whatever the list above says of escrow": beside a list finding this
+      // sentence is the caveat on it, and beside an empty list it is the whole
+      // verdict — one wording that is true in both seats.
+      sentences.push(`last read at ${latest.at ?? "?"} reports ${said.join(", ")} — the check did not run, so whatever the list ` +
+        `above says of it is a question unanswered and not an answer.${spec.unchecked_means ? ` ${spec.unchecked_means}` : ""}`);
+    } else if (absent.length === flags.length) {
+      sentences.push(`declares an alarm on ${flags.join(", ")} being false and its latest line at ${latest.at ?? "?"} carries ` +
         `none of them — the instrument and this judge disagree about the shape, so nothing is being judged.` +
-        `${spec.unchecked_means ? ` ${spec.unchecked_means}` : ""}`;
+        `${spec.unchecked_means ? ` ${spec.unchecked_means}` : ""}`);
     }
   }
 
-  return null;
+  return sentences.length ? sentences.join(" ") : null;
 }
 
 // ── §5c judging custody ─────────────────────────────────────────────────────
