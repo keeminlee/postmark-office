@@ -219,8 +219,20 @@ test("the ttl cap comes off the class mark, and says when it came off the office
   assert.equal(off.ttl_max_min, DIAL_FALLBACK.ttl_max_min);
   assert.match(off.from, /the office's fallback/);
   assert.equal(capsFrom({ ttl_max_min: 30 }).from, "the-town/handoff");
-  assert.equal(readDeclaration({ ttl_min: 600 }, capsFrom({ ttl_max_min: 30 })).ttl_min, 30,
-    "a ttl over the cap is capped, not refused — the dial is a response boundary, not a trap");
+  // Repair 6 of the review: this door used to CLAMP an over-cap ttl in silence
+  // (`Math.min`, no word) while the gathering door one file over REFUSES an
+  // over-cap interval and names whose cap it is — two doors of one lane,
+  // opposite treatments of the same situation. Now both refuse by name: a cap
+  // the office applies without saying so is a declared term the office
+  // changed. The refusal names the cap and its SOURCE, because a cap from the
+  // office's fallback is not a cap the town declared.
+  const over = (() => { try { readDeclaration({ ttl_min: 600 }, capsFrom({ ttl_max_min: 30 })); return null; } catch (e) { return e; } })();
+  assert.equal(over.code, 422, "a ttl over the cap is refused, not clamped");
+  assert.match(over.defect, /at most 30 min and this one asks for 600/);
+  assert.match(over.hint, /the-town\/handoff/, "whose cap it is: the class mark, by name, when the mark was read");
+  const overFallback = (() => { try { readDeclaration({ ttl_min: 600 }, capsFrom(null)); return null; } catch (e) { return e; } })();
+  assert.match(overFallback.hint, /the office's fallback/, "and the fallback says it is the fallback");
+  assert.equal(readDeclaration({ ttl_min: 30 }, capsFrom({ ttl_max_min: 30 })).ttl_min, 30, "AT the cap is admitted — the cap is a maximum, not an exclusion");
 });
 
 test("an omitted ttl is the cap, and a nonsense one is refused", () => {

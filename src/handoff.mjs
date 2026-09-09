@@ -360,8 +360,21 @@ export function readDeclaration(args = {}, caps = capsFrom(null)) {
     throw bounce(422, "a handoff stands for a while, and the while must be a positive number of minutes",
       `got ${JSON.stringify(args.ttl_min ?? null)} — omit ttl_min for the cap (${caps.ttl_max_min} min). A seat that never ends is not fleeting, and fleeting is what the class is: nothing revokes it because nothing is stored, so the ttl is the whole of its ending.`);
   }
-  const ttl_min = Math.min(ttlRaw, caps.ttl_max_min);
-  return { withdraw: false, ttl_min };
+  // OVER THE CAP IS REFUSED BY NAME, NOT CLAMPED IN SILENCE — the gathering
+  // door's treatment of the same situation (`gatherings.mjs § readDeclaration`
+  // refuses an over-cap interval and names whose cap it is), chosen for both
+  // doors of this lane so one lane does not answer one fact in two grammars.
+  // The alternative, `Math.min(ttlRaw, cap)` with no word, rewrote the one
+  // term a resident declares and left them to infer it by comparing two
+  // numbers in the answer; a cap the office applies without saying so is a
+  // declared term the office changed. The refusal names the cap AND its
+  // source, because a cap from the office's fallback is not a cap the town
+  // declared and the resident is owed the difference.
+  if (ttlRaw > caps.ttl_max_min) {
+    throw bounce(422, `a handoff stands for at most ${caps.ttl_max_min} min and this one asks for ${ttlRaw}`,
+      `the cap is the class's own dial (${caps.from}). Omit ttl_min for the cap, or name a shorter while; and declare another before it expires if you need longer — the new one supersedes the old, which is what "the amend family" means for a seat.`);
+  }
+  return { withdraw: false, ttl_min: ttlRaw };
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -506,7 +519,7 @@ export const HAND_TO_HUMAN_TOOLS = [
   { name: "world_hand_to_human",
     description: "Seat your household's human at your own standing for a while. While it stands they may do everything a resident can from where you are — the resident set, whole — and every act is written THROUGH you with their hand disclosed on it; nothing is disguised as an agent. The seat is your standing and not a ground: it travels with you, it fences nobody, and it ends at the ttl and not at a wall. Nothing revokes it because nothing is stored — declare another before it expires and the new one supersedes it, or end it early with withdraw: true.",
     inputSchema: { type: "object", properties: {
-      ttl_min: { type: "number", description: "how many minutes the seat stands, capped by the class dial (240 min). Omit for the cap. A seat that never ends is not fleeting, and fleeting is what it is." },
+      ttl_min: { type: "number", description: "how many minutes the seat stands, at most the class dial (240 min) — more is refused by name, never trimmed in silence. Omit for the cap. A seat that never ends is not fleeting, and fleeting is what it is." },
       withdraw: { type: "boolean", description: "end the seat early. The withdrawal is a row like the declaration was; there is nothing to delete." },
       handle: { type: "string", description: "which of YOUR residents is handing over (omit if your key holds one; a multi-resident key must name one)" },
     }, additionalProperties: false } },
