@@ -40,8 +40,13 @@
 // None of that is the store's fault and none of it is reachable: the door
 // REFUSES the extra fields today (`RECORD_FIELDS`'s note on `tier`: "standing is
 // derived from the ground your mark stands on, never asserted by the author"),
-// and jsonb has no key order to return. So the honest claim is the narrow one,
-// and it is the one G1 needs:
+// and jsonb has no key order to return. Two of those keys became reachable on
+// 2026-09-08/09 by ruling, because a crossing DOES write them for the town's
+// own marks: `tier` is emitted for the one value the walk reads from a file
+// (`constitution`; `src/mark-record.mjs § EMITS`, the reader's predicate quoted
+// there) and `version` is written last. The key order lived on the tree side
+// (world PR #23 normalised the 36 `{ h, w }` files). So the honest claim is the
+// narrow one, and it is the one G1 needs:
 //
 //   A MARK A CROSSING WRITES renders byte-identical from the store.
 //

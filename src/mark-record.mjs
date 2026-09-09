@@ -34,15 +34,20 @@ export const fmtVal = (v) => Array.isArray(v) ? JSON.stringify(v)
  * for the same mark, and every diff in the world repo would show a rewrite
  * where nothing changed.
  *
- * `tier` is deliberately absent and stays absent — the door refuses it as a
- * field ("standing is derived from the ground your mark stands on, never
- * asserted by the author", ruled 2026-08-12, applied 2026-08-13). The G1 fold
- * renders town-authored marks from the store and the store carries a DERIVED
- * `data.tier` on every standing row (1,031 of 1,031, measured 2026-09-09), so
- * admitting `tier` here unconditionally would put the walk's verdict on every
- * resident record as if the author had asserted it — exactly what the world's
- * own gate refuses (`tools/mark-lint.mjs § an AUTHORED tier: is residue`). The
- * town's constitution exception is the conductor's ruling, not this list's.
+ * `tier` sits after `by`, and it is written for ONE VALUE ONLY — see `EMITS`
+ * below. The door refuses the field from an author ("standing is derived from
+ * the ground your mark stands on, never asserted by the author", ruled
+ * 2026-08-12, applied 2026-08-13) and that stands: `leave-exec.mjs` still
+ * answers 422 to a payload carrying it, and the office's declaration
+ * (`world.mjs § clean`) never includes it, so neither the git door nor the
+ * drain can reach this list with a `tier`. The G1 fold can: it renders from the
+ * store, and the store carries a DERIVED `data.tier` on every standing row
+ * (1,031 of 1,031, measured 2026-09-09 — `home` 422 / `market` 231 on resident
+ * rows, `constitution` 319 / `market` 59 on the town's). Written unconditionally
+ * that would put the walk's verdict on every resident record as if the author
+ * had asserted it — what the world's own gate refuses (`tools/mark-lint.mjs §
+ * an AUTHORED tier: is residue`) and what a store crossing would rewrite on 27
+ * of window 177's 33 docket marks (measured; the standing flip rose 717 → 911).
  *
  * `version` is LAST, and it is here for the G1 fold (ruled 2026-09-08 18:1x):
  * the town's own law plaques carry `version:` as their final frontmatter line
@@ -55,21 +60,48 @@ export const fmtVal = (v) => Array.isArray(v) ? JSON.stringify(v)
  * carries `data.version`.
  */
 export const RECORD_FIELDS = Object.freeze([
-  "kind", "by", "date", "at", "extent", "points",
+  "kind", "by", "tier", "date", "at", "extent", "points",
   "slot", "value", "class", "ask", "reward", "status", "image",
   "version",
 ]);
+
+/**
+ * THE GRAMMAR MIRRORS ITS READER, BY VALUE (ruled 2026-09-08 21:3x): a field
+ * is written only where something on the file side READS it, and `tier` has
+ * exactly one reader. The world's fold takes the file's own line —
+ * `tools/marks-fold.mjs:329`: `rec.tier = rec.tier ?? "market";` — into the
+ * standing walk's one shortcut, `world2/tools/standing.mjs:376` (transcribed
+ * from the world's own):
+ *
+ *   if ((mark.by ?? mark.household) === TOWN && mark.tier === "constitution") return "constitution";
+ *
+ * `market` and `home` are DERIVED by the walk and never read from a file, so a
+ * door writing them would be a value with no reader (the 2026-09-08 class,
+ * three instances in one lane). The condition here is the VALUE half of that
+ * predicate and not the authorship half, on purpose: `constitution` is the
+ * town's alone by the world's gate (`mark-lint.mjs`: "tier: constitution is the
+ * town's — only by: the-town may claim it"), so the value already implies the
+ * author, and keying a grammar on `by:` was refused. Measured on world main
+ * `cab0da3a` before this was written: 480 canon files carry a `tier:` line, all
+ * 480 read `constitution`, all 480 are `by: the-town`; the 319 with a store row
+ * agree with `data.tier` 319 of 319; no resident row reads `constitution`.
+ */
+export const EMITS = Object.freeze({
+  tier: (v) => v === "constitution",
+});
 
 /**
  * A mark record's bytes: frontmatter, then the body, then one trailing newline.
  *
  * A field that is undefined, null or the empty string is OMITTED rather than
  * written empty — that is the door's rule and the reason a bare thing does not
- * carry `ask: undefined` into permanent canon.
+ * carry `ask: undefined` into permanent canon. A field with an `EMITS` rule is
+ * written only for the values that rule admits.
  */
 export function markRecord(record, body) {
   const fm = RECORD_FIELDS
     .filter((k) => record[k] !== undefined && record[k] !== null && record[k] !== "")
+    .filter((k) => !(k in EMITS) || EMITS[k](record[k]))
     .map((k) => `${k}: ${fmtVal(record[k])}`)
     .join("\n");
   return `---\n${fm}\n---\n\n${String(body).trim()}\n`;

@@ -25,7 +25,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 import { recordFromRow, renderRecord, renderMarkFromStore } from "../world2/tools/mark-render.mjs";
-import { RECORD_FIELDS } from "../src/mark-record.mjs";
+import { RECORD_FIELDS, EMITS } from "../src/mark-record.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIX = JSON.parse(readFileSync(join(HERE, "fixtures", "world2-mark-render.json"), "utf8"));
@@ -111,16 +111,31 @@ test("a de-sited mark gets no at/extent, and a geometry holding only the door's 
     "the fixture row must actually be a non-null geometry with no at, or the `geometry && g.at && g.extent` test is untested");
 });
 
-test("the derived tier and the parser's internal keys never reach the file — and it is RECORD_FIELDS that stops them, not a second rule here", () => {
+test("a DERIVED tier (home/market) and the parser's internal keys never reach the file — and it is the grammar that stops them (RECORD_FIELDS + its EMITS value rule), not a second rule here", () => {
   const p = FIX.shapes.find((s) => s.label.startsWith("nested"));
   const rec = recordFromRow(p.row);
   assert.equal(rec.tier, p.row.data.tier, "the mapping carries the whole of data — an allowlist here was a live defect in apex-reads");
+  assert.notEqual(rec.tier, "constitution", "the fixture row must carry a derived tier (home/market) or the value rule is untested here");
   assert.ok(rec._fileAt && rec._origin, "the internal keys ride too");
   const out = keysOf(renderRecord(p.row));
   for (const k of ["tier", "_fileAt", "_origin", "_stray", "_parentMarkId"]) {
     assert.ok(!out.includes(k), `${k} reached the file`);
   }
   for (const k of out) assert.ok(RECORD_FIELDS.includes(k), `${k} is on the file but not in RECORD_FIELDS`);
+});
+
+test("THE VALUE RULE, both ways: every resident capture (data.tier home/market) renders NO tier line, and a row reading `constitution` renders `tier:` immediately after `by:` — the reader's own predicate, standing.mjs:376", () => {
+  const residents = [...FIX.crossing_s62, ...FIX.shapes].filter((p) => p.row.owner !== "the-town");
+  assert.ok(residents.length >= 22, "the captures must hold resident rows or the control is empty");
+  for (const p of residents) {
+    assert.ok(["home", "market"].includes(p.row.data?.tier), `${p.slug}: data.tier is ${p.row.data?.tier} — every resident row carries a DERIVED tier (1,031 of 1,031 measured)`);
+    assert.equal(/^tier:/m.test(renderRecord(p.row)), false, `${p.slug} rendered a tier line for a derived tier`);
+  }
+  assert.ok(!EMITS.tier("market") && !EMITS.tier("home") && EMITS.tier("constitution"), "the rule admits exactly the one value the walk reads from a file");
+  for (const p of TOWN.town_docket_177) {
+    const fm = frontmatter(renderRecord(p.row));
+    assert.equal(fm[fm.indexOf("by: the-town") + 1], "tier: constitution", `${p.slug}: tier is not the line after by`);
+  }
 });
 
 // ── WHAT THE STORE CANNOT RETURN, ASSERTED SO IT STAYS KNOWN ────────────────
@@ -146,9 +161,10 @@ test("the ring's VALUE FORM is the door's own, and the tree holds both — the 3
 });
 
 test("the historical classes are named and bounded: a key the door refuses, a value form it no longer writes, and an object key order jsonb does not keep", () => {
-  // `version` is NOT in this set any more: the grammar admits it (pin 2), so a
-  // version line that differs is a new class, not a known-unreachable one.
-  const unreachable = new Set(["pre", "derived_from", "tier", "mechanic_draft", "source", "dials",
+  // `tier` and `version` are NOT in this set any more: the grammar admits them
+  // (pin 2 — `tier` for `constitution` only, `version` last), so a line of either
+  // that differs is a new class, not a known-unreachable one.
+  const unreachable = new Set(["pre", "derived_from", "mechanic_draft", "source", "dials",
     "implements", "extends", "feature", "subject", "object", "from-class", "to-class", "mechanic",
     "affordances", "mobility", "belong-to", "actions", "values-tier", "requires", "entry", "becomes",
     "residue", "reports-to", "tells", "derives-from", "anchor", "rides", "ambient", "coords", "far",
@@ -186,14 +202,13 @@ test("`version` is the LAST frontmatter line and it reaches the file — the two
   }
 });
 
-test("the five town marks at docket 177: with `version` admitted, the ONLY line left between the store's render and canon is `tier` — the half that is a ruling, not a grammar change", () => {
+test("THE FIVE TOWN MARKS AT DOCKET 177 RENDER BYTE-EQUAL TO CANON — `tier: constitution` after `by`, `version` last; the reviewer's residue (5 of 33) closes here", () => {
   assert.equal(TOWN.town_docket_177.length, 5);
   for (const p of TOWN.town_docket_177) {
-    const keys = causes(p.bytes, renderRecord(p.row)).map((c) => c.key);
-    assert.deepEqual(keys, ["tier"],
-      `${p.slug}: expected exactly the tier line to differ, got ${JSON.stringify(keys)} — if this is [] the ruling landed and this test becomes byte-equality; anything else is a new class`);
-    assert.match(p.bytes, /^tier: constitution$/m, "the fixture's own file must carry the town's constitution line or the difference is not the one named");
+    assert.match(p.bytes, /^tier: constitution$/m, "the fixture's own file must carry the town's constitution line or this proves nothing");
     assert.equal(p.row.data.tier, "constitution");
+    const got = renderRecord(p.row);
+    assert.equal(got, p.bytes, `${p.slug} (${p.path}): ${JSON.stringify(causes(p.bytes, got))}`);
   }
 });
 
