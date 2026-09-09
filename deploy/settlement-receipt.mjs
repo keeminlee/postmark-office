@@ -216,6 +216,13 @@ const receipt = {
         // that was meant to fold a docket is the single most consequential thing
         // this receipt can say, and its absence would be indistinguishable from
         // the correct case.
+        //
+        // `selection.docket_rows` IS READ WITH `marks` BELOW, NOT ALONE. It is
+        // how many claims the candle locked at this window (`claims`, read by
+        // `fold-delta.mjs § foldDelta`), and `marks` is what the mark read
+        // returned. `0` and `0` is a town where nobody claimed — lawful, and one
+        // prod window in five. Any positive `docket_rows` over `marks: 0` is a
+        // docket that was never materialized, and the crossing refuses.
         selection: store.selection ?? null,
         marks: store.marks ?? 0,
         // OFFERED vs WRITTEN. A crossing must never re-materialize a mark it is
