@@ -14,3 +14,12 @@
 # Systemd units run on the box. A CRLF in ExecStart fails as a missing file.
 *.service text eol=lf
 *.timer text eol=lf
+
+# G1 lane 3b: the photograph fixtures are BYTE-EXACT copies of files the town
+# committed into the world repo — `test/fixtures/177.journal.jsonl` is world main
+# `256db2fe:STATE/log/177.journal.jsonl`, sha256 b9ab7268…. `core.autocrlf=true`
+# on a Windows checkout would rewrite those bytes, and the byte-equality
+# falsifier would then be comparing the register against a file the town never
+# wrote — the same guard as above, for the same reason, on the one extension
+# that carries evidence rather than source.
+test/fixtures/** text eol=lf
