@@ -154,6 +154,34 @@ test("§0 a read worker refuses to boot without the writer's key store", async (
   assert.equal(existsSync(absent), false, "and it created nothing on its way out");
 });
 
+test("§0b a read worker refuses to boot on an ABSENT dynamic store", async () => {
+  // Reviewer's repair 1, and the driving is what made it a repair: two workers
+  // side by side, one at the real store and one at a path that does not exist,
+  // BOTH booted and BOTH answered 200 — and the misconfigured one silently
+  // dropped the whole `stands` block, `stands: null` where its twin had an
+  // answer. Behind nginx that is a pool member serving quietly wrong readings
+  // to a share of the town with nothing in the answer saying so.
+  //
+  // The null-as-empty opener STAYS: an absent journal at read time is the
+  // world's news and a reader may state it. What changed is WHOSE MISTAKE the
+  // absence is. At boot, with an operator-named path, it is the operator's —
+  // and a process that cannot see the store it was pointed at must not take
+  // traffic. Same rule and same exit code as the key store's.
+  const absent = join(tmp, "no-such-dir", "dynamic.db");
+  const code = await new Promise((ok) => {
+    const p = spawn(process.execPath, [
+      join(ROOT, "src", "server.mjs"), "--port", String(PORT + 3),
+      "--db", join(tmp, "fixture.db"), "--oauth-db", join(tmp, "oauth.db"),
+      "--roles-db", join(tmp, "roles.db"), "--role", "read",
+    ], { env: { ...process.env, OFFICE_KEYS: `${KEY}=keemin:wright`, WORLD_DYNAMIC_DB: absent,
+      TOWN_CLONE: join(ROOT, "town-clone"), WORLD_CLONE: join(tmp, "no-world-clone") },
+      stdio: ["ignore", "pipe", "pipe"] });
+    p.on("exit", (c) => ok(c));
+  });
+  assert.equal(code, 78, "EX_CONFIG — a worker that cannot see its store does not serve");
+  assert.equal(existsSync(absent), false, "and it created nothing on its way out");
+});
+
 // ── § 1 · the route refusal ─────────────────────────────────────────────────
 
 // Every shape of write the office has a door for. Not a sample: the list is
@@ -298,13 +326,31 @@ test("§3 the store is unwritable underneath the worker and the reads keep worki
   }
 
   try {
-    const res = await call("/world/holdings?handle=wright");
+    // ⚑ THE DOOR THIS DRIVES MUST BE ALIVE, AND THE OLD ONE WAS NOT (reviewer's
+    // repair 4). This leg used to call `GET /world/holdings`, which is DEAD at
+    // every office: its handler sits in the write tier at server.mjs:1657,
+    // below the GET tier's catch-all 404 at :1295, so a GET can never reach it
+    // — while the manifest at :622 advertises it as a read. So the assertion
+    // "not a 500" was being made about a 404 from the catch-all, and would have
+    // held just as firmly with the whole store on fire. (The dead route itself
+    // is pre-existing and handed up as its own issue; it is not this lane's.)
+    //
+    // `/world/dynamic` is live in the GET tier (:1058) and its answer reports
+    // the store by path, so it is a door that actually looks at the thing this
+    // leg is about.
+    const res = await call("/world/dynamic");
     const body = await res.json().catch(() => ({}));
-    // The door answers 404 with the world flags off in this fixture, and 200
-    // with them on. Either is fine; what must never happen is a 500 — the
-    // shape a write-mode open produces when the store refuses it.
+
+    // AND THE GUARD THAT WOULD HAVE CAUGHT THE DEAD DOOR: prove the probe
+    // reached a real handler before trusting what it said. The catch-all's
+    // hint begins "GET /town ..." and names the whole read tier; a live door
+    // never answers that. A probe that cannot tell "the door said fine" from
+    // "there is no door" is asserting nothing.
+    assert.notEqual(res.status, 404,
+      `this leg drove a door that does not exist — the catch-all answered: ${JSON.stringify(body).slice(0, 120)}`);
     assert.notEqual(res.status, 500,
       `a read against an unwritable store tripped the office: ${JSON.stringify(body).slice(0, 200)}`);
+
     const town = await call("/town");
     assert.equal(town.status, 200, "the index reads must be untouched by an unwritable world store");
     await town.text();

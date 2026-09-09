@@ -709,7 +709,18 @@ export async function readHoldEffects({ handles = [], sinceCrossing, nowCrossing
       import("./dynamic-store.mjs"), import("./world-journal.mjs"),
     ]);
     db = openDynamicReadOnly();
-    const rows = db ? readJournal(db, { cls: "holding" }) : [];
+    // ⚑ `readable` IS A CLAIM ABOUT WHETHER THE RECORD WAS READ, not about
+    // whether this function threw (reviewer's repair 2, lap 4). My first pass
+    // turned a null store into an empty row list and fell through to
+    // `readable: true`, which says "I read the holding record and it is empty"
+    // about a store that is not there. That is the same sentence a genuinely
+    // empty store produces, and a caller cannot tell them apart — the exact
+    // shape this file's own catch was written to avoid.
+    //
+    // An absent store gets the catch's shape, with its own reason. Empty and
+    // unreadable are different answers and the door must keep saying which.
+    if (!db) return { readable: false, events: [], reason: "the holding record could not be read (no dynamic store at this office)" };
+    const rows = readJournal(db, { cls: "holding" });
     return { readable: true, events: holdEffectsFrom({ rows, handles, sinceCrossing, nowCrossing }) };
   } catch (e) {
     return { readable: false, events: [], reason: `the holding record could not be read (${String(e?.message ?? e).slice(0, 160)})` };

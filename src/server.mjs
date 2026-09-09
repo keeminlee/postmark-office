@@ -111,6 +111,34 @@ if (READ_ONLY_ROLE && !existsSync(OAUTH_DB_PATH)) {
 }
 const odb = openOauthDb(OAUTH_DB_PATH, { readOnly: READ_ONLY_ROLE });
 
+// ── AND THE SAME REFUSAL FOR THE DYNAMIC STORE (reviewer's repair 1, lap 4) ──
+//
+// `openDynamicReadOnly` answers null on an absent store and every reader treats
+// null as EMPTY. That is the right shape FOR A READER — an absent journal means
+// nothing has been journalled, which is a fact a reader may state — and it is
+// what fixed `hold-wirings` WIRING 1. But it is exactly the wrong shape for a
+// MISCONFIGURED PROCESS, and the two were being answered by one mechanism.
+//
+// Driven, two workers side by side, one pointed at the real store and one at a
+// path that does not exist: BOTH boot and BOTH answer 200, and the misconfigured
+// one silently drops the whole `stands` block — `stands: null` where its twin
+// has an answer. Behind nginx that is a pool member serving quietly wrong
+// readings to a share of the town, and nothing in the answer says so.
+//
+// So the guard goes UPSTREAM, at boot, beside the key store's — because the
+// distinction that matters is not "is the store there" but WHOSE MISTAKE ITS
+// ABSENCE IS. Absent at a read, mid-flight, is the world's news and the reader
+// reports it. Absent at boot, when an operator named the path, is the
+// operator's, and a process that cannot see the store it was pointed at must
+// not take traffic. Same rule as `oauth.db` directly above; same exit code.
+const DYNAMIC_DB_PATH = process.env.WORLD_DYNAMIC_DB ?? resolve(ROOT, "dynamic.db");
+if (READ_ONLY_ROLE && !existsSync(DYNAMIC_DB_PATH)) {
+  console.error(`FATAL: --role read needs an existing dynamic store at ${DYNAMIC_DB_PATH}, and a read worker will not create one.`);
+  console.error("       Start the writer first, or point WORLD_DYNAMIC_DB at the writer's file (npm run dynamic:rebuild creates it).");
+  console.error("       Booting anyway would serve 200s with the `stands` block silently missing, which nginx cannot tell from a good answer.");
+  process.exit(78); // EX_CONFIG
+}
+
 // roles.db — the subscription lane's registry (hand-kept; tools/roles.mjs is the
 // only writer). Its own file for the same reason oauth.db has one: it is office
 // paperwork, not town truth, so it must not sit in an index that gets deleted and

@@ -152,6 +152,25 @@ test("§3b the slice carries a real quota, and the recipe's expected cpu.max mat
   assert.ok(/^CPUWeight=\d+$/m.test(slice), "the weight is what protects a crossing under contention; the quota is only the backstop");
 });
 
+test("§3c the recipe's own envelope check is one that CAN fail", () => {
+  // Reviewer's repair 3, and it is this file's turn to be caught by a flip: D3
+  // put the always-passing `systemctl show -p Slice` check back into the recipe
+  // and every leg here stayed green. I had CORRECTED that check in lap 3 and
+  // then written no test that would notice it coming back — a fix with no
+  // guard is a fix that lasts until the next edit.
+  //
+  // `-p Slice` echoes the name the unit asked for whether or not the slice
+  // exists, so it cannot fail. `FragmentPath` is empty when there is no unit
+  // file, which is exactly the "named a slice that does not ship" case.
+  const unit = read(TEMPLATE);
+  assert.ok(/systemctl show -p FragmentPath --value postmark-reads\.slice/.test(unit),
+    "the recipe must check FragmentPath — it is the only one of the three that goes empty when the bound is absent");
+  assert.ok(/ControlGroup/.test(unit),
+    "and it must check the worker is actually IN the slice, not merely that it asked for one");
+  assert.ok(!/systemctl show .*-p Slice/.test(unit),
+    "`-p Slice` echoes the requested name whether or not the slice exists — a check that cannot fail must not sit in a recipe as though it can");
+});
+
 // ── § 4 · the verify list must name what broke ─────────────────────────────
 
 test("§4 the kit's verify list drives the OAuth doors", () => {
