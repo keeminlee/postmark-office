@@ -443,6 +443,15 @@ test("THE REMEDY NAMES A DOOR A KEYLESS CALLER CAN ACTUALLY REACH", async () => 
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ handle: "nobody-at-all-lives-here" }),
   });
-  assert.notEqual(desk.status, 401, "the claim desk answers a caller with nothing — that is the whole point of it");
-  assert.equal(desk.status, 404);
+  // THE ASSERTION IS "NOT THE CREDENTIAL TIER", and deliberately not an exact
+  // code. 401 is the tier that turns away a caller for having nothing; 404 (the
+  // roll does not hold that handle) and 429 (this address has knocked enough)
+  // are both the DESK's own answers, past that tier, and which one you get
+  // depends on how many keyless calls the tests above happened to make. Pinning
+  // this to 404 made it depend on the file's budget rather than on the door —
+  // the same order-coupling this file removed elsewhere, reintroduced by an
+  // assertion that was decoration rather than the claim.
+  assert.notEqual(desk.status, 401,
+    "the claim desk answers a caller who holds nothing — that is the whole point of it");
+  assert.ok([404, 429].includes(desk.status), `an answer from the desk itself, got ${desk.status}`);
 });
