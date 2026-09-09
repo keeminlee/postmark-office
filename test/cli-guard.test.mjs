@@ -106,6 +106,7 @@ const ROSTER = {
   // src/
   "src/dynamic-store.mjs": { args: [], env: { WORLD_DYNAMIC_DB: NOWHERE_DB, WORLD_STORE_DB: NOWHERE_DB }, code: 0, needle: '"present": false' },
   "src/pot-stake-exec.mjs": { args: ["{}"], env: { STAMP_KEY: NOWHERE, TOWN_CLONE: NOWHERE }, code: 0, needle: "not-yet-open" },
+  "src/store-writedown.mjs": { args: [], env: NO_PG, code: 2, needle: "--input <fold-input.json> is required" },
   "src/world-drain.mjs": { args: ["--at", "not-a-date"], code: 2, needle: "unparseable --at" },
   "src/world-lints.mjs": { args: ["--db", NOWHERE_DB], code: 1, needle: "" },
   "src/world-serve.mjs": { args: [], env: { WORLD_STORE_DB: NOWHERE_DB, WORLD_CLONE: NOWHERE }, code: 0, needle: "{" },
@@ -136,10 +137,12 @@ const ROSTER = {
   // as a POSIX `if`); exit 1 against a never-true guard's 0 is the whole proof here.
   "deploy/settlement-history.mjs": { args: ["--recurring", "3", "--history", NOWHERE], code: 1, needle: "", silent: true },
   // world2/tools/
+  "world2/tools/await-clearing.mjs": { args: [], env: NO_PG, code: 2, needle: "--since <iso8601> is required" },
   "world2/tools/backfill-register.mjs": { args: [], env: NO_PG, code: 2, needle: "--class must be one of" },
   "world2/tools/dispatcher.mjs": { args: ["--once"], env: NO_PG, code: 2, needle: "Nothing to listen to" },
   "world2/tools/escrow-ingest.mjs": { args: [], env: NO_PG, code: 2, needle: "usage: escrow-ingest.mjs --town-repo <checkout>" },
   "world2/tools/falsifier-conversations-equality.mjs": { args: [], env: NO_PG, code: 2, needle: "--voices-log <path> is required" },
+  "world2/tools/fold-input-cli.mjs": { args: [], env: NO_PG, code: 2, needle: "--world-sha <sha> is required" },
   "world2/tools/falsifier-pen-flip.mjs": { args: ["--help"], env: NO_PG, code: 0, needle: "usage" },
   "world2/tools/falsifier-projection-equality.mjs": { args: [], env: NO_PG, code: 2, needle: "usage: falsifier-projection-equality.mjs" },
   "world2/tools/falsifier-review-closure.mjs": { args: [], env: NO_PG, code: 2, needle: "WORLD2_PG_URL missing" },
