@@ -71,6 +71,13 @@ const refusal = readJson(env("SETTLEMENT_REFUSAL_JSON"));
 // store. Like the drain's and the retirement's, it arrives on its own report
 // rather than as a sweep channel — the sweep holds no store credential.
 const store = readJson(env("SETTLEMENT_STORE_JSON"));
+// THE HOUSEHOLD REGISTRY REFRESH (2026-09-09). Named on every crossing, like the
+// drain's and the retirement's, and for the sharpest version of their reason:
+// this step's whole point is that "the registry was re-derived" and "nobody
+// re-derived it for 33 days" printed identically for 33 days. `changed: false`
+// is the receipt that the crossing LOOKED; its absence is the state that made
+// the step necessary.
+const registry = readJson(env("SETTLEMENT_REGISTRY_JSON"));
 
 const channels = {};
 let unnamed = null;
@@ -240,6 +247,42 @@ const receipt = {
         sketchbooks_cleared: store.sketchbooks_cleared ?? null,
       }
     : { ran: false, reason: "the store write-down did not run for this crossing" },
+
+  // ── THE HOUSEHOLD REGISTRY THIS CROSSING FOLDED ON ─────────────────────────
+  //
+  // `town_sha` is the tree the mapping was DERIVED from and `changed` says
+  // whether this crossing moved it. Both are needed and neither substitutes for
+  // the other: an unchanged registry keeps an older `town_sha`, so `town_sha`
+  // alone reads as staleness where there is none, and `changed: false` alone
+  // says nothing about which town the standing file came from.
+  //
+  // `added`, `removed` and `rekeyed` are carried BY NAME, not counted. A handle
+  // that joined a household and a handle that was re-keyed to a different
+  // credential have the same count and completely different consequences: the
+  // first can only group marks that were ungrouped, the second moves marks
+  // between households and can push one over the parcel-claim cap. The keeper is
+  // the reader who can tell those apart, and a count would hide the difference.
+  registry: registry
+    ? (registry.refused
+        ? { ran: true, refused: registry.refused, detail: registry.detail ?? null }
+        : registry.ran === false
+          ? { ran: false, reason: registry.reason ?? "the registry refresh did not run for this crossing" }
+          : {
+              ran: true,
+              changed: registry.changed === true,
+              commit: env("SETTLEMENT_REGISTRY_COMMIT") ?? null,
+              town_sha: registry.town_sha ?? null,
+              generated_at: registry.generated_at ?? null,
+              previous_generated_at: registry.previous_generated_at ?? null,
+              previous_town_sha: registry.previous_town_sha ?? null,
+              handles: registry.handles ?? null,
+              households: registry.households ?? null,
+              logins: registry.logins ?? null,
+              added: registry.added ?? [],
+              removed: registry.removed ?? [],
+              rekeyed: registry.rekeyed ?? [],
+            })
+    : { ran: false, reason: "the registry refresh did not run for this crossing" },
 
   // WHAT THE CROSSING SURVEYED. A quiet pass without this is a claim with no
   // receipt: "nothing eligible" and "I looked at nothing" print identically.

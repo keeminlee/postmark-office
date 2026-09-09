@@ -145,11 +145,33 @@ process.stdout.write(JSON.stringify({
   execFileSync("git", ["-C", sweepClone, "config", "user.email", "sweep@postmark.invalid"], { stdio: "ignore" });
   execFileSync("git", ["-C", sweepClone, "config", "user.name", "sweep"], { stdio: "ignore" });
 
-  // ── the town: a stake deriver at a pinned sha ──────────────────────────────
+  // ── the town: a stake deriver AND a household resolver, at a pinned sha ────
+  //
+  // The resolver arrived 2026-09-09 with the registry refresh. The crossing now
+  // derives `WORLD/households.json` from the town at the top of every crossing
+  // and REFUSES when it cannot — deliberately, because folding under a registry
+  // nobody can vouch for is a wrong publication and a silent one. So a fixture
+  // town with no resolver is a town no crossing can cross, and every test in
+  // this file would refuse before reaching the behaviour it names.
+  //
+  // `stamp-mint.mjs` is injected as a fixture module, which is the pattern
+  // `src/household-logins.mjs` blesses in its own header: "`engine` is injected
+  // — the town's own stamp-mint module — so a falsifier hands in a fixture
+  // engine rather than a real town."
   const townSeed = join(root, "town-seed");
   mkdirSync(join(townSeed, "tools"), { recursive: true });
   writeFileSync(join(townSeed, "tools", "world-stake.mjs"),
     'process.stdout.write(JSON.stringify([{ holder: "alpha", mark: "alpha/one", n: 1, weight: 3, tick: 0 }]) + "\\n");\n');
+  writeFileSync(join(townSeed, "tools", "github-ids.json"),
+    `${JSON.stringify({ alpha: { login: "alpha-hub", id: 1 } }, null, 2)}\n`);
+  writeFileSync(join(townSeed, "tools", "stamp-mint.mjs"), `
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+export function currentHouseholds(clone) {
+  const pins = JSON.parse(readFileSync(join(clone, "tools", "github-ids.json"), "utf8"));
+  return new Map(Object.entries(pins).map(([handle, rec]) => [handle, { key: "gh:" + rec.id }]));
+}
+`);
   g(".", "init", "-q", "-b", "main", townSeed);
   g(townSeed, "config", "user.email", "seed@postmark.invalid");
   g(townSeed, "config", "user.name", "seed");
@@ -278,6 +300,28 @@ test("F-git · SETTLEMENT_SOURCE=git issues the train's chain plus the ghost swe
   const trainCmds = normalize(train.commands, train.root);
   const branchCmds = normalize(branch.commands, branch.root);
 
+  // ── THE REGISTRY REFRESH, NAMED COMMAND BY COMMAND (2026-09-09) ───────────
+  //
+  // The branch re-derives `WORLD/households.json` before the fold, so it issues
+  // commands the train does not. Listing them here rather than loosening the
+  // comparison is the whole point of this test: an addition it cannot name is a
+  // change to the crossing that nobody declared.
+  //
+  // `git rev-parse main` appears because the quiet-pass test now asks the SWEEP
+  // whether it published, not `main` — the refresh can move main before the fold
+  // and a registry-only crossing must still report `quiet`.
+  const REGISTRY_REFRESH = [
+    /^node world-households-export\.mjs --town <root>\/tmp\/town --world <tmp>\/registry$/,
+    /^node world-households-export\.mjs --town <tmp>\/town --world <tmp>\/registry$/,
+    /^node settlement-registry\.mjs --fresh <tmp>\/registry\/WORLD\/households\.json --world <root>\/sweep --town-sha <sha>$/,
+    /^node -e <inline> <tmp>\/registry\.json$/,
+    /^node -e <inline> <tmp>\/registry\.json .*$/,
+    /^git -C <root>\/sweep add -- WORLD\/households\.json$/,
+    /^git -C <root>\/sweep -c user\.name=the settlement sweep \(box\) -c user\.email=postmark-settlement@users\.noreply\.github\.com commit -q -F <tmp>\/registry\.msg$/,
+    /^git -C <root>\/sweep rev-parse HEAD$/,
+    /^git -C <root>\/sweep rev-parse main$/,
+  ];
+
   const GHOST_SWEEP = [
     /^git -C <root>\/sweep rev-parse main\^\{tree\}$/,
     /^git -C <root>\/sweep for-each-ref --format=%\(refname:short\) refs\/heads\/draft\/\*$/,
@@ -302,11 +346,15 @@ test("F-git · SETTLEMENT_SOURCE=git issues the train's chain plus the ghost swe
     "the rollback must issue every command the train's chain issues — anything missing here is behaviour the "
     + "rollback silently dropped, and the rollback is the hatch reached for when the store path has already gone wrong");
 
-  const unexplained = added.filter((c) => !GHOST_SWEEP.some((re) => re.test(c)));
+  const explained = [...GHOST_SWEEP, ...REGISTRY_REFRESH];
+  const unexplained = added.filter((c) => !explained.some((re) => re.test(c)));
   assert.deepEqual(unexplained, [],
-    "every command the rollback adds must belong to the ghost sweep (repair 1). An addition this test cannot "
-    + `name is a change to the rollback nobody declared: ${JSON.stringify(unexplained)}`);
+    "every command the rollback adds must belong to the ghost sweep (repair 1) or to the registry refresh "
+    + `(2026-09-09). An addition this test cannot name is a change to the crossing nobody declared: ${JSON.stringify(unexplained)}`);
   assert.ok(added.length > 0, "and the ghost sweep must actually run, or repair 1 is not in this tree");
+  assert.ok(added.some((c) => REGISTRY_REFRESH.some((re) => re.test(c))),
+    "and the registry refresh must actually run — a crossing that folds on whatever WORLD/households.json "
+    + "world main happens to carry is the state this whole step exists to end");
 
   assert.equal(branch.receipt.status, train.receipt.status);
   assert.equal(branch.receipt.source, "git", "and it says which path it took");
