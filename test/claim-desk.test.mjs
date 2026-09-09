@@ -160,8 +160,12 @@ after(async () => {
 
 // ── the agent's half: keyless, one POST, no human ────────────────────────────
 
-const ask = (handle) => fetch(`${BASE}/keys/claim`, {
-  method: "POST", headers: { "content-type": "application/json" },
+// `from`: the caller's address as the office sees it (clientIp reads the last
+// x-forwarded-for hop). The desk's mint cap is five keys an hour per address
+// and this file's own address spends all five; a test that must mint beyond
+// them names an address of its own rather than loosening the cap.
+const ask = (handle, from = null) => fetch(`${BASE}/keys/claim`, {
+  method: "POST", headers: { "content-type": "application/json", ...(from ? { "x-forwarded-for": from } : {}) },
   body: JSON.stringify({ handle }),
 });
 
@@ -351,6 +355,28 @@ test("A CO-SIGN BY ANY OTHER ACCOUNT HANDS OVER NOTHING", async () => {
   // the household's OWN account still can — the refusal is about who, not a dead claim
   assert.equal((await cosign(freshAsk, OWNER)).status, 200);
   assert.equal((await me(strangersTarget)).status, 200, "the right account's co-sign still lands");
+});
+
+test("THE CONSENT SCREEN'S CHECK IS THE HANDLE, NOT MERELY A HOUSEHOLD: an account that keeps a house but not THIS resident is refused before any button", async () => {
+  // THE GAP THE FLIP FOUND (the second reviewer's CR-10): reducing the consent
+  // screen's check to "does this account keep any household" stayed green,
+  // because the only wrong account this file ever sent to the screen kept NO
+  // household. The approval re-checks the handle and claimLookup's binding is
+  // watched, so the key would still act as nothing — but the screen would
+  // have shown the wrong household a Grant button and then a "Granted" page
+  // for a key that does nothing, which is a lie told to the one person the
+  // door asks to be careful. fifth-keeper keeps wright-fifth and not wright.
+  const asked = await ask(HANDLE, "10.9.10.1");
+  assert.equal(asked.status, 201, "a fresh ask on the arc's handle, from its own address");
+  const fresh = await asked.json();
+
+  const r = await cosign(askOf(fresh), FIFTH);
+  assert.equal(r.status, 403, "an account that keeps a household but not this handle is refused at the screen");
+  assert.ok(!/name="pending_id"/.test(r.html), "no Grant button is rendered for it");
+  assert.match(r.html, /does not\s+bind/i, "and it is told the record does not bind this handle to it");
+  assert.match(r.html, new RegExp(`That account keeps: ${HANDLE5}`), "and which household it does keep");
+
+  assert.equal((await me(fresh.key)).status, 401, "the ask it was aimed at grants nothing");
 });
 
 test("A NAME CANNOT BE OCCUPIED: many asks may stand, and only the one your human opens becomes a key", async () => {
