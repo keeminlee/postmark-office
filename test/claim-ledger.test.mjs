@@ -357,3 +357,36 @@ test("THE 500 IS THE OFFICE'S OWN SENTENCE, never SQLite's, to a caller who pres
     assert.ok(!whole.includes(leak), `the answer must not carry "${leak}" to a keyless caller`);
   assert.match(b.hint, /inside the office, not in your ask/, "and it tells them whose fault it is");
 });
+
+// AFTER THE ONE ABOVE, and for the same reason: it takes the lane's own
+// migration back out from under the live office, which nothing after it could
+// survive either.
+test("ONE KEYLESS GET DOES NOT KILL THE OFFICE: the witness on an unmigrated key store answers 500 and the process lives", async () => {
+  // The second reviewer booted the train's READ WORKER against a key store the
+  // writer had not yet migrated and sent one keyless GET /keys/claim: the
+  // worker exited 1 (`ERR_SQLITE_ERROR` from claimState's SELECT on
+  // tokens.held_by) and every request after it was ECONNREFUSED. The GET branch
+  // had no catch, the POST did, and the office has no process-level handler.
+  //
+  // This branch has no read worker to boot, and a writer boot migrates the
+  // store, so the reachable shape here is the reviewer's fault reproduced
+  // from the other side: the office is up, and the column its SELECT names is
+  // taken away — the same statement, the same error, the same missing catch.
+  const odb = new DatabaseSync(OAUTH_DB.path);
+  odb.exec("ALTER TABLE tokens DROP COLUMN held_by");
+  odb.close();
+
+  const r = await fetch(`${BASE}/keys/claim?handle=${REASKER}`);
+  assert.equal(r.status, 500, "the witness trips rather than answering nonsense");
+  const b = await r.json();
+  assert.equal(b.defect, "the key desk tripped");
+  const whole = JSON.stringify(b).toLowerCase();
+  for (const leak of ["sqlite", "no such column", "held_by", "tokens", "prepare", "syntax"])
+    assert.ok(!whole.includes(leak), `the answer must not carry "${leak}" to a keyless caller`);
+
+  // THE CLAIM: the process is still there. A worker that answers 500 is one an
+  // operator can see; one that exits on a stranger's GET is not.
+  assert.equal(child.exitCode, null, "the office did not exit");
+  const alive = await fetch(`${BASE}/join`);
+  assert.equal(alive.status, 200, "and it still answers the next caller");
+});

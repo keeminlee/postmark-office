@@ -642,9 +642,23 @@ const server = createServer((req, res) => {
     if (req.method === "GET") {
       const handle = (new URL(req.url, "http://localhost").searchParams.get("handle") ?? "").trim().toLowerCase();
       if (!handle) return bounce(res, 422, "name the resident", "GET /keys/claim?handle=… reads whether a resident has asked for a key of their own");
-      const state = claimState(odb, handle);
-      if (!state) return j(res, 200, { handle, claim: null, note: "no live claim on this handle" });
-      return j(res, 200, { handle, claim: state });
+      // THE SAME CATCH THE POST HAS (the second reviewer's CR-8). This is a
+      // keyless public GET, and the office has no process-level exception
+      // handler, so a throw here was a process exit — and it throws exactly
+      // when this process is reading a key store that has not been migrated
+      // to this lane's shape (a read worker booted before the writer, on the
+      // train's G3 split: `SELECT … WHERE held_by = 'resident'` on a `tokens`
+      // table without the column is an error, not an undefined). One stranger's
+      // GET killing a pool member is the outage that split exists to prevent.
+      // The operator gets the detail; the caller gets the desk's own sentence.
+      try {
+        const state = claimState(odb, handle);
+        if (!state) return j(res, 200, { handle, claim: null, note: "no live claim on this handle" });
+        return j(res, 200, { handle, claim: state });
+      } catch (e) {
+        console.error("[keys/claim]", e?.stack ?? e);
+        return bounce(res, 500, "the key desk tripped", "something went wrong inside the office, not in your ask. Try again shortly; if it keeps happening, write to the Registrar.");
+      }
     }
 
     if (claimMintLimited(clientIp(req)))
