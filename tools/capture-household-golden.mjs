@@ -33,9 +33,9 @@
 //
 // ⚠ REGENERATE ONLY FROM A COMMIT YOU MEAN TO FREEZE. Re-capturing after a
 // change makes the assertion say your change equals your change.
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, realpathSync } from "node:fs";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { pathToFileURL, fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { DatabaseSync } from "node:sqlite";
 import { fixtureDb } from "../test/fixture.mjs";
@@ -63,7 +63,20 @@ export function shapeOf(v) {
 // The capture runs only when this file is the ENTRY POINT, so the falsifier can
 // import `shapeOf` above and compare with the very function that wrote the
 // golden — a test that re-implements the tool's shaping is testing its own copy.
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+// ── entry guard ──────────────────────────────────────────────────────────────
+// The junction lesson (2026-09-05, HQ memory `junctions-defeat-main-guards`):
+// `pathToFileURL(process.argv[1]).href === import.meta.url` is FALSE when the
+// entry path reaches this file through a Windows junction — the ESM loader
+// realpaths the entry, argv[1] is not — so the tool exits 0 having done nothing.
+// Compare real paths (world2/tools/dispatcher.mjs's idiom); the URL compare is
+// only the fallback for an argv[1] that cannot be realpath'd. The office's
+// test/cli-guard.test.mjs imports this file and spawns it through a junction.
+const isMain = (() => {
+  if (!process.argv[1]) return false;
+  try { return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url)); }
+  catch { return pathToFileURL(process.argv[1]).href === import.meta.url; }
+})();
+if (isMain) {
   const dir = mkdtempSync(join(tmpdir(), "pm-golden-"));
   const dbPath = join(dir, "fixture.db");
   fixtureDb(dbPath).close();

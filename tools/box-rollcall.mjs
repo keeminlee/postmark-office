@@ -110,10 +110,10 @@
 // Exit: 0 = every row OK or PARKED · 1 = at least one ALARM · 2 = the roll-call
 // itself could not run (no manifest, unreadable manifest, systemctl absent).
 
-import { readFileSync, writeFileSync, existsSync, statSync, lstatSync, readdirSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, statSync, lstatSync, readdirSync, realpathSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const DEFAULT_MANIFEST = join(HERE, "..", "deploy", "box-rollcall-manifest.json");
@@ -1100,5 +1100,17 @@ export function run() {
   return result.exitCode;
 }
 
-const invoked = process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
-if (invoked) process.exit(run());
+// ── entry guard ──────────────────────────────────────────────────────────────
+// The junction lesson (2026-09-05, HQ memory `junctions-defeat-main-guards`):
+// `pathToFileURL(process.argv[1]).href === import.meta.url` is FALSE when the
+// entry path reaches this file through a Windows junction — the ESM loader
+// realpaths the entry, argv[1] is not — so the tool exits 0 having done nothing.
+// Compare real paths (world2/tools/dispatcher.mjs's idiom); the URL compare is
+// only the fallback for an argv[1] that cannot be realpath'd. The office's
+// test/cli-guard.test.mjs imports this file and spawns it through a junction.
+const isMain = (() => {
+  if (!process.argv[1]) return false;
+  try { return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url)); }
+  catch { return pathToFileURL(process.argv[1]).href === import.meta.url; }
+})();
+if (isMain) process.exit(run());
