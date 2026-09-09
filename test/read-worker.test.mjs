@@ -127,7 +127,39 @@ after(async () => {
   rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
+/**
+ * Wait for a spawned process to exit, WITH AN UPPER BOUND (reviewer's repair A,
+ * lap 5).
+ *
+ * ⚑ WHY THIS EXISTS. The two boot-refusal legs waited on `p.on("exit")` and
+ * nothing else. That is correct only while the process really does exit — and
+ * the whole point of those legs is a process that MUST exit, so the case they
+ * are written to catch is precisely the case that hangs them. The flip proved
+ * it: F14 removed the boot guard, the worker booted and served happily, the leg
+ * waited forever, and `timeout` killed the run at 300 s. It was scored RED, and
+ * it was red for the wrong reason — the harness reporting a hang as a failure,
+ * which is luck rather than a test.
+ *
+ * THIS IS THE SAME CLASS AS THE SUITE FILE THAT WAITS ON A SOCKET FOREVER and
+ * cost this lane an hour tonight, and I wrote that lesson down before writing
+ * this leg. **A wait with no upper bound is not a test; it is a hope with a
+ * stack trace.** A booting worker now reads as RED, with a sentence saying it
+ * booted when it should have refused.
+ */
+const exitedWithin = (p, ms, what) => new Promise((ok) => {
+  const t = setTimeout(() => {
+    try { p.kill(); } catch { /* already gone */ }
+    ok({ code: null, timedOut: true, what });
+  }, ms);
+  p.on("exit", (code) => { clearTimeout(t); ok({ code, timedOut: false, what }); });
+});
+
+// Every fetch in this file is bounded too, for the same reason and because §1's
+// 15 s red under machine contention had the same shape: an unbounded wait on a
+// saturated box is indistinguishable from a broken door.
+const FETCH_MS = 20_000;
 const call = (path, init = {}) => fetch(`${BASE}${path}`, {
+  signal: AbortSignal.timeout(FETCH_MS),
   ...init,
   headers: { authorization: `Bearer ${KEY}`, "content-type": "application/json", ...(init.headers ?? {}) },
 });
@@ -140,17 +172,16 @@ test("§0 a read worker refuses to boot without the writer's key store", async (
   // traffic. This asserts the LOUD failure, and that the worker did not create
   // the file it was missing.
   const absent = join(tmp, "no-such-oauth.db");
-  const code = await new Promise((ok) => {
-    const p = spawn(process.execPath, [
-      join(ROOT, "src", "server.mjs"), "--port", String(PORT + 2),
-      "--db", join(tmp, "fixture.db"), "--oauth-db", absent,
-      "--roles-db", join(tmp, "roles.db"), "--role", "read",
-    ], { env: { ...process.env, OFFICE_KEYS: `${KEY}=keemin:wright`, WORLD_DYNAMIC_DB: dynPath,
-      TOWN_CLONE: join(ROOT, "town-clone"), WORLD_CLONE: join(tmp, "no-world-clone") },
-      stdio: ["ignore", "pipe", "pipe"] });
-    p.on("exit", (c) => ok(c));
-  });
-  assert.equal(code, 78, "EX_CONFIG — a misconfigured worker exits, it does not serve");
+  const p = spawn(process.execPath, [
+    join(ROOT, "src", "server.mjs"), "--port", String(PORT + 2),
+    "--db", join(tmp, "fixture.db"), "--oauth-db", absent,
+    "--roles-db", join(tmp, "roles.db"), "--role", "read",
+  ], { env: { ...process.env, OFFICE_KEYS: `${KEY}=keemin:wright`, WORLD_DYNAMIC_DB: dynPath,
+    TOWN_CLONE: join(ROOT, "town-clone"), WORLD_CLONE: join(tmp, "no-world-clone") },
+    stdio: ["ignore", "pipe", "pipe"] });
+  const r = await exitedWithin(p, 15_000, "absent key store");
+  assert.equal(r.timedOut, false, "the worker BOOTED and kept serving where it should have refused — a hang is not a pass");
+  assert.equal(r.code, 78, "EX_CONFIG — a misconfigured worker exits, it does not serve");
   assert.equal(existsSync(absent), false, "and it created nothing on its way out");
 });
 
@@ -168,17 +199,16 @@ test("§0b a read worker refuses to boot on an ABSENT dynamic store", async () =
   // and a process that cannot see the store it was pointed at must not take
   // traffic. Same rule and same exit code as the key store's.
   const absent = join(tmp, "no-such-dir", "dynamic.db");
-  const code = await new Promise((ok) => {
-    const p = spawn(process.execPath, [
-      join(ROOT, "src", "server.mjs"), "--port", String(PORT + 3),
-      "--db", join(tmp, "fixture.db"), "--oauth-db", join(tmp, "oauth.db"),
-      "--roles-db", join(tmp, "roles.db"), "--role", "read",
-    ], { env: { ...process.env, OFFICE_KEYS: `${KEY}=keemin:wright`, WORLD_DYNAMIC_DB: absent,
-      TOWN_CLONE: join(ROOT, "town-clone"), WORLD_CLONE: join(tmp, "no-world-clone") },
-      stdio: ["ignore", "pipe", "pipe"] });
-    p.on("exit", (c) => ok(c));
-  });
-  assert.equal(code, 78, "EX_CONFIG — a worker that cannot see its store does not serve");
+  const p = spawn(process.execPath, [
+    join(ROOT, "src", "server.mjs"), "--port", String(PORT + 3),
+    "--db", join(tmp, "fixture.db"), "--oauth-db", join(tmp, "oauth.db"),
+    "--roles-db", join(tmp, "roles.db"), "--role", "read",
+  ], { env: { ...process.env, OFFICE_KEYS: `${KEY}=keemin:wright`, WORLD_DYNAMIC_DB: absent,
+    TOWN_CLONE: join(ROOT, "town-clone"), WORLD_CLONE: join(tmp, "no-world-clone") },
+    stdio: ["ignore", "pipe", "pipe"] });
+  const r = await exitedWithin(p, 15_000, "absent dynamic store");
+  assert.equal(r.timedOut, false, "the worker BOOTED on a store that is not there — this is the flip's own case and it must read RED, not hang");
+  assert.equal(r.code, 78, "EX_CONFIG — a worker that cannot see its store does not serve");
   assert.equal(existsSync(absent), false, "and it created nothing on its way out");
 });
 
@@ -359,27 +389,106 @@ test("§3 the store is unwritable underneath the worker and the reads keep worki
   }
 });
 
-test("§3b the four apex readers ask for a READ handle, and the ask is load-bearing", async () => {
-  // The unit half of § 3, and the one that would have caught the defect this
-  // lane found. `openDynamic(readOnly:true)` THROWS on a missing store where
-  // write mode CREATES one — so pointing the readers at a path that does not
-  // exist separates the two modes by behaviour rather than by inspection.
-  const missing = join(tmp, "not-a-store", "dynamic.db");
+test("§3b ALL SIX store readers ask for a READ handle, and the ask is load-bearing", async () => {
+  // ⚑ THE TITLE SAID FOUR AND THE BODY DROVE ONE (reviewer's repair C, lap 5).
+  // And my first fix of that said FIVE over a loop of SIX — the same defect,
+  // committed inside the repair for it, which is how little attention a title
+  // gets even from someone who has just been told to read one. The count is
+  // asserted at the bottom now, so the title and the loop cannot drift again
+  // without something going red.
+  // A title is a claim about coverage, and a reviewer reading "the four apex
+  // readers" and a green tick has been told something untrue by me. Either
+  // drive them or say one — so this drives all of them, and the count in the
+  // title is now the count in the loop.
+  //
+  // FIVE, not four: the lap-3 class sweep found `weaponInHand` and
+  // `refuseShroudedLoot` beyond the three the review named, so "the four apex
+  // readers" had also gone stale as a description of the class.
+  //
+  // The probe: point the readers at a store path that does not exist and ask
+  // whether a file appears. `openDynamic`'s default runs the WAL pragma and the
+  // whole schema DDL, so a write-mode open CREATES the store; a read-only open
+  // does not. That separates the two modes by behaviour rather than by reading
+  // the constructor, which is the distinction this whole lane turns on.
   const before = process.env.WORLD_DYNAMIC_DB;
-  process.env.WORLD_DYNAMIC_DB = missing;
+  const results = [];
   try {
-    const { holdingsFor } = await import("../src/world-apex.mjs?g3b");
-    const answer = holdingsFor({ handle: "wright" }, null);
-    assert.deepEqual(answer, [], "an absent store means no holdings, not an exception");
-    assert.equal(existsSync(missing), false,
-      "A READ CREATED THE STORE. openDynamic's default is readOnly:false, which runs the WAL pragma and the whole schema DDL — this is the write-mode open DEC-4 forbids, and it is what four apex readers did before this lane.");
+    for (const [name, drive] of [
+      ["holdingsFor", async (m) => {
+        const { holdingsFor } = await import(`../src/world-apex.mjs?p=${m}`);
+        return holdingsFor({ handle: "wright" }, null);
+      }],
+      ["groundWithinReach", async (m) => {
+        const { groundWithinReach } = await import(`../src/world-apex.mjs?p=${m}`);
+        return groundWithinReach({ standpoint: { x: 0, y: 0 } }, null);
+      }],
+      ["phaseAt", async (m) => {
+        const { phaseAt } = await import(`../src/world-apex.mjs?p=${m}`);
+        return phaseAt(null, []);
+      }],
+      ["portalBlockAt", async (m) => {
+        const { portalBlockAt } = await import(`../src/world-apex.mjs?p=${m}`);
+        return portalBlockAt(null, []);
+      }],
+      ["readHoldEffects", async (m) => {
+        const { readHoldEffects } = await import(`../src/world-hold.mjs?p=${m}`);
+        return readHoldEffects({ handles: ["wright"] });
+      }],
+      ["weaponInHand", async (m) => {
+        const { weaponInHand } = await import(`../src/arena.mjs?p=${m}`);
+        return weaponInHand(null, "wright");
+      }],
+    ]) {
+      const missing = join(tmp, `no-store-${name}`, "dynamic.db");
+      process.env.WORLD_DYNAMIC_DB = missing;
+      let threw = null;
+      try { await drive(name); } catch (e) { threw = String(e?.message ?? e).slice(0, 80); }
+      results.push({ name, created: existsSync(missing), threw });
+    }
+  } finally {
+    if (before === undefined) delete process.env.WORLD_DYNAMIC_DB;
+    else process.env.WORLD_DYNAMIC_DB = before;
+  }
+
+  const creators = results.filter((r) => r.created);
+  assert.equal(creators.length, 0,
+    "THESE READS CREATED THE STORE — a write-mode open, which is the handle DEC-4 forbids a worker to hold: "
+    + creators.map((r) => r.name).join(", "));
+  const throwers = results.filter((r) => r.threw);
+  assert.equal(throwers.length, 0,
+    "a reader met an absent store and threw instead of answering empty: "
+    + throwers.map((r) => `${r.name} (${r.threw})`).join(", "));
+  assert.equal(results.length, 6, "the count in the title must be the count in the loop");
+});
+
+test("§3c readHoldEffects says UNREADABLE on an absent store, not empty", async () => {
+  // ⚑ THE FLIP FOUND THIS ONE GREEN. F15 made `readHoldEffects` claim
+  // `readable: true` on an absent store and NOTHING reddened — the repair had
+  // landed with no check behind it, which is the third time this lane has met
+  // "a correction with no guard". `readable` is a claim about whether the
+  // record was READ; "I read it and it is empty" is the same sentence a
+  // genuinely empty store produces, and a caller cannot tell them apart.
+  const before = process.env.WORLD_DYNAMIC_DB;
+  try {
+    const missing = join(tmp, "no-store-readable", "dynamic.db");
+    process.env.WORLD_DYNAMIC_DB = missing;
+    const { readHoldEffects } = await import("../src/world-hold.mjs?readable");
+    const absent = await readHoldEffects({ handles: ["wright"] });
+    assert.equal(absent.readable, false, "an absent store is UNREADABLE, not empty");
+    assert.match(String(absent.reason ?? ""), /no dynamic store/i, "and it must say why, in words a caller can act on");
+
+    // The other pole, without which the check passes against a hardcoded false:
+    // a store that IS there reads, and says so.
+    process.env.WORLD_DYNAMIC_DB = dynPath;
+    const { readHoldEffects: rhe2 } = await import("../src/world-hold.mjs?readable2");
+    const present = await rhe2({ handles: ["wright"] });
+    assert.equal(present.readable, true, "a store that exists is readable — otherwise `readable` is a constant");
   } finally {
     if (before === undefined) delete process.env.WORLD_DYNAMIC_DB;
     else process.env.WORLD_DYNAMIC_DB = before;
   }
 });
-
-test("§3c openOauthDb's readOnly is a handle that REFUSES a write, not a flag", () => {
+test("§3d openOauthDb's readOnly is a handle that REFUSES a write, not a flag", () => {
   // Flip F10 — make `openOauthDb` ignore readOnly and always take the DDL path —
   // left the suite GREEN, because every other leg exercises a store that is
   // perfectly writable, so nothing anywhere observed the handle's mode. § 3
