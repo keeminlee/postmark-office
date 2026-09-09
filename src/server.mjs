@@ -51,7 +51,7 @@ import { worldStakeViaOffice, worldUnstakeViaOffice, worldStakeRead } from "./wo
 import { resetStoreSnapshot, storeDbPath, storeEngaged, storeSnapshot, worldStoreHealth } from "./world-serve.mjs"; // stage 1: the serving flag's instrument panel
 import { resetGraphCache, worldGraphView, NODE_KINDS, gexfPath } from "./world-graph.mjs"; // stage E: the window
 import { resetClassFieldsCache } from "./world-frames.mjs"; // the frame law's class read, dropped on a world.db swap
-import { dynamicHealth, resetClassCache } from "./dynamic-store.mjs"; // stage 2: the dynamic layer's instrument panel
+import { dynamicHealth, dynamicDbPath, resetClassCache } from "./dynamic-store.mjs"; // stage 2: the dynamic layer's instrument panel
 import { servedEnterExitLedger, DEPRECATED_DOOR } from "./enter-exit-ledger.mjs"; // the passages, derived from the frozen era + the journal (2026-08-26)
 import { Bouncer, keyIdForToken, worldWriteVerbForRest } from "./bouncer.mjs";
 import { readReleaseStamp } from "./release.mjs"; // POS-60: the deploy receipt the auto-deploy probes
@@ -131,7 +131,17 @@ const odb = openOauthDb(OAUTH_DB_PATH, { readOnly: READ_ONLY_ROLE });
 // reports it. Absent at boot, when an operator named the path, is the
 // operator's, and a process that cannot see the store it was pointed at must
 // not take traffic. Same rule as `oauth.db` directly above; same exit code.
-const DYNAMIC_DB_PATH = process.env.WORLD_DYNAMIC_DB ?? resolve(ROOT, "dynamic.db");
+// ⚑ THE READERS' OWN FUNCTION, NOT A SECOND COPY OF THE RULE (reviewer's
+// repair B, lap 5). This line was `process.env.WORLD_DYNAMIC_DB ?? resolve(ROOT,
+// "dynamic.db")` — the same rule as `dynamicDbPath()` spelled a second time from
+// a different root (`ROOT` here is `resolve(HERE, "..")`; the readers' is
+// `OFFICE_ROOT`, `resolve(import.meta.dirname, "..")` in world-store.mjs). They
+// resolve to the same string today, which is exactly what makes a second copy
+// dangerous: it agrees until it doesn't, and the failure it produces is a guard
+// that PASSES on a path the readers never open — a boot check policing the
+// wrong file while the workers serve `stands: null`. A guard must ask the
+// question in the words of the thing it guards.
+const DYNAMIC_DB_PATH = dynamicDbPath();
 if (READ_ONLY_ROLE && !existsSync(DYNAMIC_DB_PATH)) {
   console.error(`FATAL: --role read needs an existing dynamic store at ${DYNAMIC_DB_PATH}, and a read worker will not create one.`);
   console.error("       Start the writer first, or point WORLD_DYNAMIC_DB at the writer's file (npm run dynamic:rebuild creates it).");
