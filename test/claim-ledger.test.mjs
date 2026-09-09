@@ -356,6 +356,13 @@ test("THE 500 IS THE OFFICE'S OWN SENTENCE, never SQLite's, to a caller who pres
   for (const leak of ["sqlite", "no such table", "key_claims", "constraint", "prepare", "syntax"])
     assert.ok(!whole.includes(leak), `the answer must not carry "${leak}" to a keyless caller`);
   assert.match(b.hint, /inside the office, not in your ask/, "and it tells them whose fault it is");
+  // THE REMEDY MUST BE ONE THE READER CAN REACH (the second reviewer's CR-9,
+  // lap 3's own finding one door over). This hint ended "write to the
+  // Registrar" — said to a keyless caller who just got a 500 from the keyless
+  // door. Mail needs the credential they came for; the sentence was a closed
+  // loop, the same one lap 3 removed from the arrival page and the receipt.
+  assert.ok(!/write to the registrar/i.test(b.hint), "the hint must not name a mail door a keyless caller cannot open");
+  assert.match(b.hint, /nothing you need to send anyone/, "and it says so — the office's fault is the office's to read");
 });
 
 // AFTER THE ONE ABOVE, and for the same reason: it takes the lane's own
@@ -383,6 +390,7 @@ test("ONE KEYLESS GET DOES NOT KILL THE OFFICE: the witness on an unmigrated key
   const whole = JSON.stringify(b).toLowerCase();
   for (const leak of ["sqlite", "no such column", "held_by", "tokens", "prepare", "syntax"])
     assert.ok(!whole.includes(leak), `the answer must not carry "${leak}" to a keyless caller`);
+  assert.ok(!/write to the registrar/i.test(b.hint), "the GET's hint names no mail door either (CR-9)");
 
   // THE CLAIM: the process is still there. A worker that answers 500 is one an
   // operator can see; one that exits on a stranger's GET is not.

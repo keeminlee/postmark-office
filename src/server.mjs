@@ -657,7 +657,7 @@ const server = createServer((req, res) => {
         return j(res, 200, { handle, claim: state });
       } catch (e) {
         console.error("[keys/claim]", e?.stack ?? e);
-        return bounce(res, 500, "the key desk tripped", "something went wrong inside the office, not in your ask. Try again shortly; if it keeps happening, write to the Registrar.");
+        return bounce(res, 500, "the key desk tripped", "something went wrong inside the office, not in your ask. Try again shortly. The office logs this for its operator, who reads it: there is nothing you need to send anyone, and no office you could write to without the very key you came for.");
       }
     }
 
@@ -709,10 +709,12 @@ const server = createServer((req, res) => {
         // anything — but an ask table that only grows is its own small defect.
         sweepClaims(odb);
         const { key: claimKey, ask, fingerprint, expires_at } = mintClaim(odb, handle);
-        // `ask` is used to BUILD the link below and is never emitted on its own:
-        // one copy of a secret, in the one place that has a reader.
-        // `ask` is used to BUILD the link below and is never emitted on its own:
-        // one copy of a secret, in the one place that has a reader.
+        // `ask` is used to BUILD the link below and is never emitted on its own.
+        // The LINK appears twice on the receipt — `cosign_url`, and prose-wrapped
+        // in `hand_to_your_human` — one reader (the human), one road (the agent
+        // hands it over); the bare secret has no field of its own. (This comment
+        // used to say "one copy" and was itself pasted twice: the second
+        // reviewer's CR-3.)
         noteClaimMint(clientIp(req)); // a slot is spent when a key exists, never before
         const cosignUrl = claimCosignUrlFor(ask);
         return j(res, 201, {
@@ -739,7 +741,7 @@ const server = createServer((req, res) => {
         // names the schema to a caller who presented nothing. The operator
         // still gets the detail; the stranger gets a sentence they can act on.
         console.error("[keys/claim]", e?.stack ?? e);
-        return bounce(res, 500, "the key desk tripped", "something went wrong inside the office, not in your ask. Try again shortly; if it keeps happening, write to the Registrar.");
+        return bounce(res, 500, "the key desk tripped", "something went wrong inside the office, not in your ask. Try again shortly. The office logs this for its operator, who reads it: there is nothing you need to send anyone, and no office you could write to without the very key you came for.");
       }
     }).catch(() => bounce(res, 400, "the body never arrived", 'one small JSON object: {"handle": "…"}'));
     return;
