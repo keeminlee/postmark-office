@@ -88,7 +88,7 @@ import { currentCrossing } from "./crossings.mjs";
 import { openDynamic, singleLogEnabled } from "./dynamic-store.mjs";
 import { worldFreezeBounce } from "./freeze.mjs";
 import { EARSHOT_M, metresBetween, reachDisclosure, standsWithin } from "./reach.mjs";
-import { appendActFlipped, appendJournal, laneFlipped } from "./world-journal.mjs";
+import { actLogNameFor, appendActFlipped, appendJournal, laneFlipped } from "./world-journal.mjs";
 import { resolvedWorldHousehold } from "./world-branches.mjs";
 
 const bounce = (code, defect, hint) => { const e = new Error(defect); Object.assign(e, { code, defect, hint }); return e; };
@@ -955,12 +955,18 @@ export function gatherReadNeverPerforms(fields) {
  *
  * `args: { gathering }` narrows to one and carries its receipt.
  */
-export async function gatheringShadow(key, { gathering = null, now = Date.now(), rows = null, receipt = null } = {}) {
+export async function gatheringShadow(key, { gathering = null, now = Date.now(), rows = null, receipt = null, env = process.env } = {}) {
   const log = typeof rows === "function" ? await rows() : rows;
   if (log == null) {
+    // THE REASON NAMES THE LOG THAT FAILED, not the one that did not. The
+    // reader (`gatherRows`) answers null when the store it is pointed at could
+    // not be read — journal or Postgres, whichever this office runs on — and
+    // this sentence says which, via the one helper both doors share. It used to
+    // blame Postgres unconditionally, which was right for the subscription door
+    // (no journal arm) and wrong here from the day the journal arm landed.
     return {
       gatherings: [],
-      unavailable: "the act log this reads is Postgres, and this office is not pointed at it (WORLD2_PG). A gathering declared here stands in the journal; the projection cannot be built.",
+      unavailable: `the act log this office reads is ${actLogNameFor(env)}, and it could not be read just now, so the projection cannot be built. A gathering declared here may still stand in that log — this is a failed read, not a town with no gatherings.`,
       terms: GATHERING_LAW,
     };
   }

@@ -312,10 +312,27 @@ test("read: \"hand-to-human\" is YOURS ALONE, and says unavailable rather than '
     now: at("2026-09-08T20:30:00.000Z"),
   });
   assert.equal(theirs.live, 0, "another household's seat is not in this key's answer");
-  const down = await handoffShadow(key, { rows: null });
-  assert.match(down.unavailable, /WORLD2_PG/,
+  const down = await handoffShadow(key, { rows: null, env: {} });
+  assert.match(down.unavailable, /could not be read/,
     "an office that cannot build the projection must not answer 'you seat nobody' — those are different facts");
   assert.ok(!("live" in down), "and it does not publish a count it did not earn");
   const noResidents = await handoffShadow({ handles: new Set() }, { rows: [row()] });
   assert.match(noResidents.note, /acts for no resident/);
+});
+
+test("THE UNAVAILABLE SENTENCE NAMES THE LOG THAT FAILED — the journal when World 2.0 is off, Postgres when it is on", async () => {
+  // Repair 11 of the review. The old sentence blamed "Postgres … not pointed
+  // at it (WORLD2_PG)" for every unreadable projection, and this lane's own
+  // journal arm had made that the one configuration that CANNOT produce the
+  // failure: with World 2.0 off, `handoffRowsFor` reads the journal, and a
+  // journal read that fails is what reaches this branch. The test that pinned
+  // the wrong sentence is now the one that pins the right predicate.
+  const key = { handles: new Set(["wright"]) };
+  const off = await handoffShadow(key, { rows: null, env: {} });
+  assert.match(off.unavailable, /the sqlite journal/);
+  assert.ok(!/is not pointed at it/.test(off.unavailable), "the borrowed blame is gone");
+  const on = await handoffShadow(key, { rows: null, env: { WORLD2_PG: "1", WORLD2_PG_URL: "postgres://nowhere" } });
+  assert.match(on.unavailable, /Postgres/);
+  assert.ok(!/sqlite journal/.test(on.unavailable));
+  assert.match(off.unavailable, /not "you seat nobody"/, "and it says what the answer is NOT");
 });

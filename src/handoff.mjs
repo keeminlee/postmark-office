@@ -69,7 +69,7 @@ import { openDynamic, singleLogEnabled } from "./dynamic-store.mjs";
 import { worldFreezeBounce } from "./freeze.mjs";
 import { humanHandFor } from "./households.mjs";
 import * as journalMod from "./world-journal.mjs";
-import { appendActFlipped, appendJournal, laneFlipped } from "./world-journal.mjs";
+import { actLogNameFor, appendActFlipped, appendJournal, laneFlipped } from "./world-journal.mjs";
 import { resolvedWorldHousehold } from "./world-branches.mjs";
 
 const bounce = (code, defect, hint) => { const e = new Error(defect); Object.assign(e, { code, defect, hint }); return e; };
@@ -500,7 +500,7 @@ export function handoffReadNeverPerforms(fields) {
  * town's answer to "whose hand was that" is on those acts, not in a roster
  * anyone can browse.
  */
-export async function handoffShadow(key, { handle = null, now = Date.now(), rows = null } = {}) {
+export async function handoffShadow(key, { handle = null, now = Date.now(), rows = null, env = process.env } = {}) {
   const handles = [...(key?.handles ?? [])];
   if (!handles.length) {
     return { handoffs: [], note: "this key acts for no resident, so it seats nobody", terms: HANDOFF_LAW };
@@ -510,9 +510,15 @@ export async function handoffShadow(key, { handle = null, now = Date.now(), rows
   }
   const log = typeof rows === "function" ? await rows() : rows;
   if (log == null) {
+    // THE REASON NAMES THE LOG THAT FAILED. `handoffRowsFor` answers null when
+    // the store this office is pointed at could not be read — and since the
+    // journal arm landed that store is the journal at every office not running
+    // World 2.0. The sentence used to blame Postgres for it, which sent a
+    // resident with a torn dynamic.db to check a setting that was not the
+    // cause; `actLogNameFor` is the one helper both doors now share.
     return {
       handoffs: [],
-      unavailable: "the act log this reads is Postgres, and this office is not pointed at it (WORLD2_PG). A handoff declared here stands in the journal; the projection cannot be built.",
+      unavailable: `the act log this office reads is ${actLogNameFor(env)}, and it could not be read just now, so the projection cannot be built. A handoff declared here may still stand in that log — this is a failed read, not "you seat nobody".`,
       terms: HANDOFF_LAW,
     };
   }

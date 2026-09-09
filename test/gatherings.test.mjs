@@ -377,11 +377,27 @@ test("read: \"gather\" narrowed to one carries its derived receipt, and says so 
 });
 
 test("read: \"gather\" says the projection is unavailable rather than reporting a town with no gatherings", async () => {
-  const r = await gatheringShadow(null, { rows: null });
+  const r = await gatheringShadow(null, { rows: null, env: {} });
   assert.deepEqual(r.gatherings, []);
-  assert.match(r.unavailable, /WORLD2_PG/,
+  assert.match(r.unavailable, /could not be read/,
     "an office that cannot build the projection must not answer 'nothing stands' — those are different facts");
   assert.ok(!("standing" in r), "and it does not publish a count it did not earn");
+});
+
+test("THE UNAVAILABLE SENTENCE NAMES THE LOG THAT FAILED — the journal at an office not on Postgres, Postgres at one that is", async () => {
+  // The reviewer's repair 11: the sentence blamed Postgres unconditionally,
+  // which was borrowed from the subscription door (no journal arm, so correct
+  // there) and was wrong here from the day the journal arm landed — being
+  // un-pointed at Postgres is the ordinary working configuration, and the log
+  // that actually failed was the journal. Two envs, two names, and the test
+  // that used to pin the wrong sentence now pins the right predicate.
+  const off = await gatheringShadow(null, { rows: null, env: {} });
+  assert.match(off.unavailable, /the sqlite journal/, "World 2.0 off: the journal is the log this office reads, so the journal is what could not be read");
+  assert.ok(!/is not pointed at it/.test(off.unavailable), "and the old sentence's blame is gone");
+  const on = await gatheringShadow(null, { rows: null, env: { WORLD2_PG: "1", WORLD2_PG_URL: "postgres://nowhere" } });
+  assert.match(on.unavailable, /Postgres/, "World 2.0 on: Postgres is the log, so Postgres is named");
+  assert.ok(!/sqlite journal/.test(on.unavailable));
+  assert.match(off.unavailable, /not a town with no gatherings/, "and both say what the answer is NOT");
 });
 
 test("read: \"gather\" for an id this log does not hold says so by name", async () => {

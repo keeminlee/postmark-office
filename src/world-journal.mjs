@@ -496,6 +496,26 @@ export function penFor(entry) {
 export { PenUnreachableError, laneFlipped };
 
 /**
+ * WHICH ACT LOG THIS OFFICE READS, named for a disclosure — one sentence, one
+ * place, so two doors cannot name two different stores for the same fact.
+ *
+ * Exists because of a borrowed sentence (the office-halves review, repair 11):
+ * the gathering and handoff shadows copied the subscription door's "the act
+ * log this reads is Postgres, and this office is not pointed at it" — CORRECT
+ * there, because that door has no journal arm and being un-pointed at Postgres
+ * really is its only cause — and then grew a journal arm, after which the one
+ * configuration the sentence blamed was the one that could not produce it. A
+ * resident with a torn `dynamic.db` was sent to check a Postgres setting. The
+ * after-a-repeal-grep-its-citations class: the journal arm repealed the
+ * premise and the disclosure still cited it.
+ */
+export function actLogNameFor(env = process.env) {
+  return world2Enabled(env)
+    ? "Postgres (this office is pointed at it: WORLD2_PG=1 with WORLD2_PG_URL)"
+    : "the sqlite journal (WORLD_DYNAMIC_DB, or dynamic.db beside world.db — this office is not pointed at Postgres, which is the ordinary working configuration)";
+}
+
+/**
  * ONE ROW, NORMALIZED — the whole of what a journal line IS, with no store in
  * sight.
  *
