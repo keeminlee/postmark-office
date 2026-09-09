@@ -59,9 +59,24 @@
 //   window 176    4 marks ·  4 claims ·  4 shared ids ·  4 shared slugs
 //   window 172  116 marks · 118 claims · 2 slugs in claims and NOT in marks
 //
-// At 177 the two sets agree on every SLUG and share barely half their ids: 16
-// marks carry an earlier claim's id, because `marks.id` is the id of the claim
-// that FIRST locked the slug and a later window can lock a second claim on it.
+// At 177 the two sets agree on every SLUG and share barely half their ids. THE
+// LINK IS `supersedes`, and here is the check rather than the prose — it takes
+// ten seconds to re-run:
+//
+//   claims.supersedes = marks.id on 16 of 16 of the differing rows at window 177
+//
+// (`supersedes uuid REFERENCES claims(id)` — `001_tables.sql`, the amend-chain
+// column, three lines below the `id` comment that misled the first version of
+// this header.) A slug amended at a later window gets a NEW locked claim whose
+// `supersedes` points back at the claim `marks.id` still names, so the id sets
+// part company exactly where an amend happened and nowhere else.
+//
+// WHAT `marks.id` IS NOT: the first locking claim's id. Measured at 177, it is
+// the earliest locked claim on the slug for only 24 of 33 — so "first" is a
+// tempting sentence and a false one, and this header does not make it. What is
+// safe to say is the narrow thing: `marks.id` names A claim that locked this
+// slug, not necessarily the one that locked it at `locked_window`, and a later
+// locked claim points back at it through `supersedes`.
 // At 172 they do not even agree on slugs — `berthillon/cone-blue-moon-2026-08-30`
 // and `wright/the-flip-day-plumb-line` were locked at 172 and now read
 // `locked_window = 177`.

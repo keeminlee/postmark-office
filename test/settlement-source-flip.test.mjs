@@ -555,6 +555,39 @@ test("F-collide · a store-written local whose name COLLIDES with an origin draf
     + "number for both would hide whichever was smaller");
 });
 
+test("F-default · with NO env at all the chain takes the GIT path — the swap is never a default", { skip: !SH_OK && "no POSIX sh" }, () => {
+  // The deploy condition. This shipped as `:-store` for eight laps, so the first
+  // office tag to land on the box would have flipped the 05:45Z crossing to the
+  // store path by default — with the preconditions unsettled, or refusing loudly
+  // for want of a store credential, which is a dark crossing either way. Nobody
+  // would have decided that. They would have discovered it.
+  //
+  // Asserted on BEHAVIOUR rather than on the literal, because a test that greps
+  // the script for `:-git` would pass over a second assignment further down.
+  const script = readFileSync(join(OFFICE, "deploy", "settlement-auto.sh"), "utf8");
+  const run = crossing("default", script, {});   // no SETTLEMENT_SOURCE at all
+
+  assert.equal(run.res.status, 0, `an un-armed box must cross exactly as it does today: ${run.res.stderr}`);
+  assert.equal(run.receipt.source, "git", "the receipt says which path it took, and it must say git");
+  assert.equal(run.receipt.store.ran, false, "the store step did not run");
+  assert.ok(
+    run.commands.some((c) => c.includes("world-drain.mjs")),
+    "and the drain DID run — this is the today-path, unchanged, not merely a store path that declined",
+  );
+});
+
+test("F-armed · SETTLEMENT_SOURCE=store is what arms it, and nothing else", { skip: !SH_OK && "no POSIX sh" }, () => {
+  // The control for F-default. Without it, F-default passes for a script that
+  // can no longer reach the store path at all.
+  const script = readFileSync(join(OFFICE, "deploy", "settlement-auto.sh"), "utf8");
+  const run = crossing("armed", script, { env: { SETTLEMENT_SOURCE: "store" } });
+  assert.equal(run.receipt.source, "store");
+  assert.ok(
+    !run.commands.some((c) => c.includes("world-drain.mjs")),
+    "the drain does not run on the store path",
+  );
+});
+
 test("F-mode · an unrecognised SETTLEMENT_SOURCE refuses rather than defaulting", { skip: !SH_OK && "no POSIX sh" }, () => {
   // A typo taking the git path silently would publish a git fold under whatever
   // the receipt claimed. This is the cheapest guard in the lane and the one

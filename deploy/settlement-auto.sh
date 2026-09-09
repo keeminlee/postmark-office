@@ -92,7 +92,11 @@
 # G2's line, not G1's.
 #
 # Env (unit): TOWN_CLONE, WORLD_CLONE (origin URL discovery only).
-#   SETTLEMENT_SOURCE  `store` (default) or `git` (the one-crossing rollback)
+#   SETTLEMENT_SOURCE  `git` (THE DEFAULT) or `store`. A box that has not been
+#                      told crosses exactly as it does today; the swap is armed by
+#                      setting `store` in the unit's environment, deliberately, on
+#                      the day it is ruled. It is a decision, not a default
+#                      somebody discovers on the first tag that lands.
 #   OFFICE_ROOT        the office checkout (default /srv/postmark-office)
 #   SETTLEMENT_CLONE   the sweep's own clone (default $OFFICE_ROOT/settlement-clone)
 #   SETTLEMENT_REPORT  the receipt path (default /srv/postmark-harbor/settlement-auto.json)
@@ -118,7 +122,19 @@ WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 # from. An unrecognised value REFUSES rather than defaulting: a typo silently
 # taking the git path would publish a git fold under a receipt saying `store`,
 # which is the one failure this whole lane is meant to make impossible.
-SOURCE="${SETTLEMENT_SOURCE:-store}"
+# THE DEFAULT IS `git`, AND THAT IS THE SWAP'S SAFETY CATCH.
+#
+# It shipped as `:-store` for eight laps, which meant the first office tag to
+# land on the box would have flipped the 05:45Z crossing to the store path BY
+# DEFAULT — with the preconditions unsettled, or refusing loudly with no store
+# credential, which is a dark crossing either way. Nobody would have decided
+# that; they would have discovered it.
+#
+# **The swap is a decision, never a default somebody discovers.** So the arm is
+# `SETTLEMENT_SOURCE=store`, set explicitly in the unit's environment on the day
+# the swap is ruled, and a box that has not been told still crosses exactly as it
+# does today.
+SOURCE="${SETTLEMENT_SOURCE:-git}"
 case "$SOURCE" in
   store|git) ;;
   *) echo "[settlement-auto] SETTLEMENT_SOURCE=\"$SOURCE\" is not \`store\` or \`git\` — refusing rather than guessing which record to publish" >&2; exit 1 ;;
