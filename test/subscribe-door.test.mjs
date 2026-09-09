@@ -906,11 +906,18 @@ test("EVERY WAKE POINTS AT A DOOR THAT EXISTS — a pointer to a read nobody can
   }
 
   // The two dormant kinds are exempt AND named as exempt, rather than quietly
-  // skipped: `gather` is world#15's and does not exist yet, which is exactly
-  // why that wake_on does not fire. If a dormant kind ever gains a door, the
-  // exemption should shrink — so the set is asserted, not assumed.
+  // skipped — and each exemption's REASON must be true of the tree it ships on.
+  // `gather` landed with office-halves, so the old reason ("world#15 has not
+  // merged") went false the day it did; the sentinel below caught that on the
+  // merged train. The true reason now: "doors open" is a phase read off the
+  // declaration at read time, never an act the store's log records, so there is
+  // no row to trigger on. If gathering-doors-open ever becomes derivable (law B,
+  // the founder's), it moves to WAKE_ON_LIVE and the deepEqual below shrinks.
   assert.deepEqual(Object.keys(subs.WAKE_ON_DORMANT).sort(), ["gathering-doors-open", "letter-delivered"]);
-  assert.equal(worldReadable.has("gather"), false, "if `gather` has landed, gathering-doors-open is no longer dormant and this file is stale");
+  assert.equal(worldReadable.has("gather"), true, "the gather door is gone again — the dormant reason for gathering-doors-open describes a door that stands");
+  const dormantReason = subs.WAKE_ON_DORMANT["gathering-doors-open"];
+  assert.doesNotMatch(dormantReason, /has not merged|does not exist/, "the reason still says the gather door is absent, and it stands");
+  assert.match(dormantReason, /not an act|no act/, "the reason must say WHY the wake cannot fire: no act in the log to trigger on");
 });
 
 test("a subscribe act is what makes the dispatcher rebuild — it never patches its set by hand", () => {
