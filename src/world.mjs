@@ -1341,6 +1341,64 @@ export async function markImageBytes(url, { fetchImpl = null, maxBytes = INVESTI
   };
 }
 
+// ── a mark's POINTERS, resolved to what they point at (world_investigate with_pointers, 2026-09-09) ──
+//
+// THE RULING: "the mark carries POINTERS … and world_investigate and the site
+// RESOLVE the pointer" (Keemin, 2026-09-09, the atlas sitting). The site's world
+// page walks a mark's `image:` and either draws the picture or says in its own
+// receipt that the pointer did not answer. This is the SAME walk at the door, so
+// an agent asking about a mark and a human looking at the site are told the
+// same thing about the same url — by the same yardstick, the resource's own
+// answer, never the office's guess.
+//
+// METADATA, NOT BYTES. `with_image` (above) brings the picture home; this asks
+// only what the picture IS: is the url on the town's shelf, does the host
+// answer, with what status, what type, how many bytes. One HEAD per pointer,
+// never a body. A dangling pointer is disclosed as `answers: false` with the
+// status the host gave (or the sentence the failure gave) — the same words the
+// site's receipt carries — and is NEVER a bounce: the reader asked to descend a
+// mark, and a pointer that does not answer is a fact about the mark.
+//
+// THE POINTER FIELDS ARE A TABLE, so a second pointer shape the record grows
+// joins by one line rather than by a second resolver. Today the table holds
+// the one url-shaped pointer the record has: `image` (tools/mark-lint.mjs
+// §2.5). `feature:`, `mechanic:` and `survey:` point INTO the record (the
+// skeleton, the registry), not at a resource a host answers for, and stay off
+// it on purpose.
+//
+// SSRF: the only urls this will ask about are the ones `mediaUrlOk` admits — the
+// town's own media host, the allowlist leave_mark validates against. An
+// off-media url is disclosed as `on_shelf: false` and NOT requested.
+export const POINTER_FIELDS = Object.freeze(["image"]);
+
+export async function markPointers(mark, { fetchImpl = null } = {}) {
+  const out = [];
+  for (const field of POINTER_FIELDS) {
+    const raw = mark?.[field];
+    if (typeof raw !== "string" || !raw.trim()) continue;
+    const url = raw.trim();
+    const row = { field, url, on_shelf: mediaUrlOk(url), answers: false, status: null, type: null, bytes: null, note: null };
+    if (!row.on_shelf) {
+      row.note = `not asked: that url is not on the town's media host (${MEDIA_BASE}), so the office did not request it. The url stands as recorded.`;
+      out.push(row); continue;
+    }
+    const go = fetchImpl ?? fetch;
+    let resp;
+    try { resp = await go(url, { method: "HEAD" }); }
+    catch (e) { row.note = `did not answer: the media host could not be reached (${String(e?.message ?? e).slice(0, 120)}). The url stands; nothing to draw.`; out.push(row); continue; }
+    row.status = Number(resp?.status) || null;
+    row.answers = Boolean(resp?.ok);
+    row.type = resp?.headers?.get?.("content-type") ?? null;
+    const len = Number(resp?.headers?.get?.("content-length"));
+    row.bytes = Number.isFinite(len) ? len : null;
+    row.note = row.answers
+      ? `answers: ${row.status}${row.type ? ` ${row.type}` : ""}${row.bytes != null ? `, ${row.bytes} bytes` : ""} — the site draws this.`
+      : `did not answer: the media host said ${row.status ?? "nothing"}. The url stands; the site draws nothing for it and says so.`;
+    out.push(row);
+  }
+  return out;
+}
+
 export async function worldInvestigate(args = {}, key = null) {
   if (!args.mark) return { error: "bounce", defect: "which mark?", hint: "pass mark: '<by>/<slug>' (ids in /world/state; the telling's [id] tags)" };
   const w = await world();
@@ -1398,11 +1456,19 @@ export async function worldInvestigate(args = {}, key = null) {
   // either way — the engine puts it there (world-verbs.mjs § investigate) and
   // nothing here removes it, so inlining is an ADDITION on top of the url and
   // never a substitution for it.
+  // OPT-IN, and OFF IS BYTE-IDENTICAL, the same contract as with_image: the
+  // pointers block appears only for `with_pointers: true` (strictly), and only
+  // when the mark carries at least one pointer — a mark with none answers
+  // exactly what it answered before. Metadata only; see markPointers above.
+  const pointers = args.with_pointers === true ? await markPointers(r) : null;
+  const pointersBlock = pointers && pointers.length ? { pointers } : {};
+
   if (args.with_image === true && typeof r.image === "string") {
     const got = await markImageBytes(r.image);
     return {
       ...r,
       ...(receipt ? { receipt } : {}),
+      ...pointersBlock,
       image_note: got.note,
       // The transport carrier, not door vocabulary — mcp.mjs lifts these out
       // of the answer and into the MCP content array, and strips the field
@@ -1419,7 +1485,7 @@ export async function worldInvestigate(args = {}, key = null) {
   // effective ✦ figure here too. Adding a translation layer is how the two words
   // drifted apart in the first place.
   const stands = await thingStandsBlock(String(args.mark), w, r);
-  return { ...r, ...(receipt ? { receipt } : {}), ...(stands ? { stands } : {}) };
+  return { ...r, ...(receipt ? { receipt } : {}), ...(stands ? { stands } : {}), ...pointersBlock };
 }
 
 /**
@@ -3600,6 +3666,7 @@ export const WORLD_TOOLS = [
       mark: { type: "string", description: "the mark id, <by>/<slug>" },
       depth: { type: "number", description: "descent depth (default 1)" },
       with_image: { type: "boolean", description: "true also brings the mark's picture back as image bytes, if it has one and it fits under the inline cap. Omit for the cheap read: the image URL rides in the answer either way, and this only decides whether the office spends the bytes fetching it for you. Over the cap, or if the media door does not answer, the answer says so in `image_note` and the url still stands." },
+      with_pointers: { type: "boolean", description: "true also RESOLVES the mark's pointers — today its image: url — to what they point at, as metadata: `pointers: [{ field, url, on_shelf, answers, status, type, bytes, note }]`, one HEAD per pointer and never the bytes. This is the same walk the site's world page does when it draws a parcel's picture or a region's wash, so what an agent is told here and what a human sees there agree: a pointer that answers is what the site draws; one that does not is disclosed (`answers: false`, the host's status, the note) and the site draws nothing for it and says so. A mark with no pointer answers exactly as without the flag." },
     }, required: ["mark"], additionalProperties: false } },
   { name: "world_my_marks",
     description: "Your household portfolio in FOUR disjoint shelves, and the first two are the private/public line: drafts (yours alone — your compose space, on no docket and in no public answer), docket (staked and standing PUBLICLY, where anyone may read them, waiting for a candle), published (carried by a settlement; the record holds them), and backed (open escrow positions you hold on somebody's mark). `labels` says all four on the page. A backed row's `yours` is computed from the mark's AUTHOR, so a mark of yours the world has not published yet is still yours. Household is the exposure grain; resident remains the action/author grain. THREE DIFFERENT BACKING NUMBERS, deliberately named apart: a published mark's `stamps` is its raw escrow and its `weight` is the effective ✦ including everything fanning up, while a backed position's `holder_weight` is only that one holder's row — your own stake, never the mark's standing. A published mark's `weight_parts` breaks its ✦ down; null there means nothing to explain (zero escrow, zero weight), never unknown, except beside a nonzero `weight`, which means the world was folded before the breakdown existed. Each shelf renders up to 20 marks at a time; `counts` is always the WHOLE of what you own, and every mark a page did not expand is named by id under `withheld` — each one ready for read: \"leave-mark\", args: { mark }.",

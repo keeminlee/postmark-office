@@ -1937,7 +1937,7 @@ async function focusOn(args, key) {
 export function focusArgs(args = {}) {
   const mark = args.mark == null ? "" : String(args.mark).trim();
   if (!mark) return null;
-  return { mark, ...(args.with_image === true ? { with_image: true } : {}) };
+  return { mark, ...(args.with_image === true ? { with_image: true } : {}), ...(args.with_pointers === true ? { with_pointers: true } : {}) };
 }
 
 /** The landing's answer: the vessel's next departures from the stop you stand at. Null away from any stop. */
@@ -2970,6 +2970,7 @@ export const APEX_TOOL = {
     args: { type: "object", description: "the action's own fields (with do:) or narrowing fields (with read:), exactly as the entry's `fields` block names them — world { do: \"say\", args: { text: \"hello\" } }. Unknown fields bounce by name. Your standpoint (handle) stays top-level.", additionalProperties: true },
     mark: { type: "string", description: "FOCUS the bare read on one mark — <by>/<slug>, as ids appear in the telling. The answer is the read you would have got anyway, plus `focus`: the close look at that mark (its body, the properties predicated on it, what stands inside it). It is a focus rather than an action because investigating performs nothing — do: would be a lie, and read: is an action's shadow, so a shadow with no action is the reverse the apex's law forbids. Never rides with do: or read:." },
     with_image: { type: "boolean", description: "with mark:, also bring that mark's picture back as image bytes if it has one and it fits under the inline cap. The url rides in the answer either way; this only decides whether the office spends the bytes." },
+    with_pointers: { type: "boolean", description: "with mark:, also resolve that mark's pointers (its image: url today) to what they point at, as metadata — on the shelf or not, answers or not, status, type, bytes — the same walk the site's world page does before it draws. One HEAD per pointer, never the bytes." },
     handle: { type: "string", description: "which of YOUR residents acts (omit if your key holds one; a multi-resident key must name one)" },
     // `as:`/`beside:` joined the schema 2026-08-28. The actor seam (apexDo →
     // resolveHumanActor) had read them since 08-23 — but this schema is the
