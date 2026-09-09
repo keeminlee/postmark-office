@@ -121,6 +121,20 @@ export async function stakesFromStore(client, { townSha } = {}) {
  * same way (`SELECT id FROM windows WHERE status='open'`) rather than being
  * passed one, for the reason the retire lane established — a window passed in is
  * a window that can be wrong, and the store already knows which one is open.
+ *
+ * ── `projection_heads['town']` IS A PROXY, AND HERE IS THE COUPLING IT RESTS ON ──
+ *
+ * This function never reads `stamp_projection`. It trusts the head row, and
+ * `stakesFromStore` then trusts `escrow_projection` at that sha. That is sound
+ * ONLY because `stamp-ingest.mjs` is the one pen for all three town projections
+ * (`stamp_projection`, `town_roll`, `escrow_projection`) and writes them in ONE
+ * transaction, moving `projection_heads['town']` ONCE at the end — so a head at
+ * sha S is a guarantee that every projection carries S, and a head that is absent
+ * or behind means none of them do. `014_escrow_projection.sql`'s header states
+ * the invariant; this is the reader that depends on it. If a second pen ever
+ * writes one projection without the others, or the head moves before the last
+ * `INSERT`, the proxy lies and the fold reads stakes for a sha the stamps do not
+ * carry — and nothing here would refuse. (Reviewer's repair 5, 2026-09-08.)
  */
 async function asOf(client) {
   const { rows } = await client.query(
