@@ -1,0 +1,244 @@
+{
+  "_what": "The FIVE the-town marks in window 177's locked docket — real `marks` rows from w2_scratch_pin2 (a fresh pg_dump of prod at 2026-09-09T00:49:41Z, restored as meepo) beside the real bytes the world repo carries at main cab0da3a88b5f159d28aa50b9227bb79d62cbcd6 (PR #23's key-order normalisation and PR #24 are ancestors). These are the rows the reviewer measured as losing `tier` (all five) and `version` (co-sign-guard, come-ashore-trigger) under the 13-field grammar (review-g1-render.md § Claim 2b). Captured, not typed: a fixture built to an imagined shape is a test of the imagination (this room, 2026-09-05).",
+  "world_sha": "cab0da3a88b5f159d28aa50b9227bb79d62cbcd6",
+  "store": "w2_scratch_pin2 = pg_dump of world2_dev at 2026-09-09T00:49:41Z (1,031 standing / 5 retired; window 177 closed, 178 open)",
+  "town_docket_177": [
+    {
+      "slug": "the-town/co-sign-guard",
+      "path": "WORLD/marks/let-there-be-light/the-town-centre/the-keeping-works/postmark-edge/settle/co-sign-guard/mark.md",
+      "row": {
+        "id": "54500ebf-a900-5140-aba1-bf751d4e9b81",
+        "slug": "the-town/co-sign-guard",
+        "kind": "predicated",
+        "owner": "the-town",
+        "household": "solo:the-town",
+        "body": "Settle's precondition is the anchor, and a co-sign is one of its two forms: a verified GitHub id or a human's hand, either one, and never neither.",
+        "geometry": null,
+        "status": "standing",
+        "locked_window": 177,
+        "retired_window": null,
+        "data": {
+          "date": "2026-08-30",
+          "slot": "guard",
+          "tier": "constitution",
+          "value": "anchored = a verified GitHub id OR a human co-sign",
+          "_stray": {},
+          "source": {
+            "at": "2026-08-30T11:04:30-04:00",
+            "sha": "df48027d",
+            "kind": "hand",
+            "subject": "the admission path stops lying about consent: settling is automatic at the crossing, and a co-sign is one of two anchors",
+            "backfill": "hand-amend-on-main"
+          },
+          "_origin": {
+            "x": -654,
+            "y": -429.5
+          },
+          "version": 1,
+          "locked_by": "founder",
+          "_parentMarkId": "the-town/settle",
+          "_parent_is_law": "the-town/settle",
+          "founder_commit": {
+            "at": "2026-08-30T11:04:30-04:00",
+            "sha": "df48027d",
+            "subject": "the admission path stops lying about consent: settling is automatic at the crossing, and a co-sign is one of two anchors"
+          }
+        }
+      },
+      "bytes": "---\nkind: predicated\nby: the-town\ntier: constitution\ndate: 2026-08-30\nslot: guard\nvalue: anchored = a verified GitHub id OR a human co-sign\nversion: 1\n---\n\nSettle's precondition is the anchor, and a co-sign is one of its two forms: a verified GitHub id or a human's hand, either one, and never neither.\n"
+    },
+    {
+      "slug": "the-town/come-ashore-trigger",
+      "path": "WORLD/marks/let-there-be-light/the-town-centre/the-keeping-works/postmark-edge/settle/come-ashore-trigger/mark.md",
+      "row": {
+        "id": "0d336b4c-acdf-529a-bd5a-296eabccedc3",
+        "slug": "the-town/come-ashore-trigger",
+        "kind": "predicated",
+        "owner": "the-town",
+        "household": "solo:the-town",
+        "body": "Arrival is automatic: a berth settles at the ferry's next crossing once its household is anchored, and no berth acts to make it happen.",
+        "geometry": null,
+        "status": "standing",
+        "locked_window": 177,
+        "retired_window": null,
+        "data": {
+          "date": "2026-08-30",
+          "slot": "trigger",
+          "tier": "constitution",
+          "value": "the ferry's next crossing — automatic, once the household is anchored",
+          "_stray": {},
+          "source": {
+            "at": "2026-08-30T11:04:30-04:00",
+            "sha": "df48027d",
+            "kind": "hand",
+            "subject": "the admission path stops lying about consent: settling is automatic at the crossing, and a co-sign is one of two anchors",
+            "backfill": "hand-amend-on-main"
+          },
+          "_origin": {
+            "x": -654,
+            "y": -429.5
+          },
+          "version": 1,
+          "locked_by": "founder",
+          "_parentMarkId": "the-town/settle",
+          "_parent_is_law": "the-town/settle",
+          "founder_commit": {
+            "at": "2026-08-30T11:04:30-04:00",
+            "sha": "df48027d",
+            "subject": "the admission path stops lying about consent: settling is automatic at the crossing, and a co-sign is one of two anchors"
+          }
+        }
+      },
+      "bytes": "---\nkind: predicated\nby: the-town\ntier: constitution\ndate: 2026-08-30\nslot: trigger\nvalue: the ferry's next crossing — automatic, once the household is anchored\nversion: 1\n---\n\nArrival is automatic: a berth settles at the ferry's next crossing once its household is anchored, and no berth acts to make it happen.\n"
+    },
+    {
+      "slug": "the-town/pace-slot",
+      "path": "WORLD/marks/let-there-be-light/the-town-centre/the-keeping-works/postmark-edge/depart/pace-slot/mark.md",
+      "row": {
+        "id": "ed30e9c5-845f-56aa-b8af-7542d3132673",
+        "slug": "the-town/pace-slot",
+        "kind": "predicated",
+        "owner": "the-town",
+        "household": "solo:the-town",
+        "body": "The stride every departure is read against is the mover's own — the number lives on the-town/resident, never here: one place to change it.",
+        "geometry": null,
+        "status": "standing",
+        "locked_window": 177,
+        "retired_window": null,
+        "data": {
+          "date": "2026-08-30",
+          "slot": "pace-km-per-crossing",
+          "tier": "constitution",
+          "value": "the-town/resident",
+          "_stray": {},
+          "source": {
+            "at": "2026-08-30T11:08:36-04:00",
+            "sha": "43d083ed",
+            "kind": "hand",
+            "subject": "the walk pace stops being written three times: the two dead copies become pointers at the one live declaration",
+            "backfill": "hand-amend-on-main"
+          },
+          "_origin": {
+            "x": -654,
+            "y": -429.5
+          },
+          "locked_by": "founder",
+          "_parentMarkId": "the-town/depart",
+          "_parent_is_law": "the-town/depart",
+          "founder_commit": {
+            "at": "2026-08-30T11:08:36-04:00",
+            "sha": "43d083ed",
+            "subject": "the walk pace stops being written three times: the two dead copies become pointers at the one live declaration"
+          }
+        }
+      },
+      "bytes": "---\nkind: predicated\nby: the-town\ntier: constitution\ndate: 2026-08-30\nslot: pace-km-per-crossing\nvalue: the-town/resident\n---\n\nThe stride every departure is read against is the mover's own — the number lives on the-town/resident, never here: one place to change it.\n"
+    },
+    {
+      "slug": "the-town/the-ballot-house",
+      "path": "WORLD/marks/let-there-be-light/the-town-centre/the-keeping-works/the-ballot-house/mark.md",
+      "row": {
+        "id": "71a9f4ef-8b06-523e-8ec9-5a1d49c0e5d4",
+        "slug": "the-town/the-ballot-house",
+        "kind": "sited",
+        "owner": "the-town",
+        "household": "solo:the-town",
+        "body": "Your resident can vote here on the town's open questions — stamps staked on a vote come back when it closes.",
+        "geometry": {
+          "at": {
+            "x": -329,
+            "y": -229.5
+          },
+          "extent": {
+            "h": 80,
+            "w": 90
+          }
+        },
+        "status": "standing",
+        "locked_window": 177,
+        "retired_window": null,
+        "data": {
+          "date": "2026-08-01",
+          "tier": "constitution",
+          "_stray": {},
+          "source": {
+            "at": "2026-09-01T00:53:09-04:00",
+            "sha": "243cc57b",
+            "kind": "hand",
+            "subject": "civic quarter: the law the five plaques used to say returns as predicated children (22 marks, SCHEMA § predicated)",
+            "backfill": "hand-amend-on-main"
+          },
+          "_fileAt": {
+            "x": 325,
+            "y": 200
+          },
+          "_origin": {
+            "x": -654,
+            "y": -429.5
+          },
+          "locked_by": "founder",
+          "_parentMarkId": "the-town/the-keeping-works",
+          "founder_commit": {
+            "at": "2026-09-01T00:53:09-04:00",
+            "sha": "243cc57b",
+            "subject": "civic quarter: the law the five plaques used to say returns as predicated children (22 marks, SCHEMA § predicated)"
+          }
+        }
+      },
+      "bytes": "---\nkind: sited\nby: the-town\ntier: constitution\ndate: 2026-08-01\nat: { x: 325, y: 200 }\nextent: { w: 90, h: 80 }\n---\n\nYour resident can vote here on the town's open questions — stamps staked on a vote come back when it closes.\n"
+    },
+    {
+      "slug": "the-town/the-bounty-board",
+      "path": "WORLD/marks/let-there-be-light/the-town-centre/the-bounty-board/mark.md",
+      "row": {
+        "id": "041fa055-eb53-5b8e-b4cd-1e27d9c7b50a",
+        "slug": "the-town/the-bounty-board",
+        "kind": "sited",
+        "owner": "the-town",
+        "household": "solo:the-town",
+        "body": "Your resident can ask other residents for help here, with stamps on the line — and earn stamps answering theirs.",
+        "geometry": {
+          "at": {
+            "x": 196,
+            "y": -179.5
+          },
+          "extent": {
+            "h": 20,
+            "w": 30
+          }
+        },
+        "status": "standing",
+        "locked_window": 177,
+        "retired_window": null,
+        "data": {
+          "date": "2026-08-11",
+          "tier": "constitution",
+          "_stray": {},
+          "source": {
+            "at": "2026-09-01T00:16:24-04:00",
+            "sha": "b9fd4b3f",
+            "kind": "hand",
+            "subject": "civic quarter: the five buildings' plaques say what a HUMAN's resident can do there (founder's words, 2026-08-31 sitting)",
+            "backfill": "hand-amend-on-main"
+          },
+          "_fileAt": {
+            "x": 250,
+            "y": -100
+          },
+          "_origin": {
+            "x": -54,
+            "y": -79.5
+          },
+          "locked_by": "founder",
+          "_parentMarkId": "the-town/the-town-centre",
+          "founder_commit": {
+            "at": "2026-09-01T00:16:24-04:00",
+            "sha": "b9fd4b3f",
+            "subject": "civic quarter: the five buildings' plaques say what a HUMAN's resident can do there (founder's words, 2026-08-31 sitting)"
+          }
+        }
+      },
+      "bytes": "---\nkind: sited\nby: the-town\ntier: constitution\ndate: 2026-08-11\nat: { x: 250, y: -100 }\nextent: { w: 30, h: 20 }\n---\n\nYour resident can ask other residents for help here, with stamps on the line — and earn stamps answering theirs.\n"
+    }
+  ]
+}

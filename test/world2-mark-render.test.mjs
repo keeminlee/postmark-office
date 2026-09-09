@@ -146,7 +146,9 @@ test("the ring's VALUE FORM is the door's own, and the tree holds both — the 3
 });
 
 test("the historical classes are named and bounded: a key the door refuses, a value form it no longer writes, and an object key order jsonb does not keep", () => {
-  const unreachable = new Set(["pre", "derived_from", "tier", "mechanic_draft", "source", "version", "dials",
+  // `version` is NOT in this set any more: the grammar admits it (pin 2), so a
+  // version line that differs is a new class, not a known-unreachable one.
+  const unreachable = new Set(["pre", "derived_from", "tier", "mechanic_draft", "source", "dials",
     "implements", "extends", "feature", "subject", "object", "from-class", "to-class", "mechanic",
     "affordances", "mobility", "belong-to", "actions", "values-tier", "requires", "entry", "becomes",
     "residue", "reports-to", "tells", "derives-from", "anchor", "rides", "ambient", "coords", "far",
@@ -165,6 +167,41 @@ test("the historical classes are named and bounded: a key the door refuses, a va
         `${p.slug}: '${c.key}' differs and is none of the three known classes (a key the door refuses, the old ring form, an at/extent key order) — a FOURTH class has appeared and it needs reading, not adding to this list.\n  on disk:  ${c.on_disk}\n  rendered: ${c.rendered}`);
     }
   }
+});
+
+// ── THE TOWN'S FIVE AT WINDOW 177 — the residue the reviewer measured (pin 2) ─
+
+const TOWN = JSON.parse(readFileSync(join(HERE, "fixtures", "world2-town-docket-177.json"), "utf8"));
+
+test("`version` is the LAST frontmatter line and it reaches the file — the two law plaques that carry it render their `version:` where canon holds it", () => {
+  const carrying = TOWN.town_docket_177.filter((p) => p.row.data.version !== undefined);
+  assert.equal(carrying.length, 2, "co-sign-guard and come-ashore-trigger carry data.version in the docket — the fixture must, or this proves nothing");
+  for (const p of carrying) {
+    const got = renderRecord(p.row);
+    const fm = frontmatter(got);
+    assert.equal(fm[fm.length - 1], `version: ${p.row.data.version}`, `${p.slug}: version is not the last frontmatter line`);
+    const onDisk = frontmatter(p.bytes);
+    assert.equal(onDisk[onDisk.length - 1], fm[fm.length - 1], `${p.slug}: canon's last line and the render's last line disagree`);
+    assert.ok(!causes(p.bytes, got).some((c) => c.key === "version"), `${p.slug}: version still differs from canon`);
+  }
+});
+
+test("the five town marks at docket 177: with `version` admitted, the ONLY line left between the store's render and canon is `tier` — the half that is a ruling, not a grammar change", () => {
+  assert.equal(TOWN.town_docket_177.length, 5);
+  for (const p of TOWN.town_docket_177) {
+    const keys = causes(p.bytes, renderRecord(p.row)).map((c) => c.key);
+    assert.deepEqual(keys, ["tier"],
+      `${p.slug}: expected exactly the tier line to differ, got ${JSON.stringify(keys)} — if this is [] the ruling landed and this test becomes byte-equality; anything else is a new class`);
+    assert.match(p.bytes, /^tier: constitution$/m, "the fixture's own file must carry the town's constitution line or the difference is not the one named");
+    assert.equal(p.row.data.tier, "constitution");
+  }
+});
+
+test("`version` reaches NO resident record: no resident row in either capture carries data.version, and the S62 crossing's eleven still render byte-equal (the control for the grammar growing a field)", () => {
+  const residents = [...FIX.crossing_s62, ...FIX.shapes].filter((p) => p.row.owner !== "the-town");
+  assert.ok(residents.length >= 22, "the captures must hold resident rows or this control is empty");
+  for (const p of residents) assert.equal(p.row.data?.version, undefined, `${p.slug} carries data.version`);
+  for (const p of residents) assert.equal(/^version:/m.test(renderRecord(p.row)), false, `${p.slug} rendered a version line`);
 });
 
 test("the key-order loss is real and it is the tree that disagrees with itself, not the store: the two on-disk minorities render in the canonical order", () => {

@@ -36,11 +36,28 @@ export const fmtVal = (v) => Array.isArray(v) ? JSON.stringify(v)
  *
  * `tier` is deliberately absent and stays absent — the door refuses it as a
  * field ("standing is derived from the ground your mark stands on, never
- * asserted by the author", ruled 2026-08-12, applied 2026-08-13).
+ * asserted by the author", ruled 2026-08-12, applied 2026-08-13). The G1 fold
+ * renders town-authored marks from the store and the store carries a DERIVED
+ * `data.tier` on every standing row (1,031 of 1,031, measured 2026-09-09), so
+ * admitting `tier` here unconditionally would put the walk's verdict on every
+ * resident record as if the author had asserted it — exactly what the world's
+ * own gate refuses (`tools/mark-lint.mjs § an AUTHORED tier: is residue`). The
+ * town's constitution exception is the conductor's ruling, not this list's.
+ *
+ * `version` is LAST, and it is here for the G1 fold (ruled 2026-09-08 18:1x):
+ * the town's own law plaques carry `version:` as their final frontmatter line
+ * (`the-town/co-sign-guard`, `come-ashore-trigger` … five standing rows, all
+ * `by: the-town`), and a store-side render that dropped it would rewrite them
+ * at the first store crossing. It reaches a resident record from NOTHING: the
+ * office builds a declaration from named keys only (`world.mjs § clean`), so
+ * neither the git door (`leave-exec.mjs`) nor the drain (a journal payload IS
+ * that declaration) can be handed one — measured on the store, no resident row
+ * carries `data.version`.
  */
 export const RECORD_FIELDS = Object.freeze([
   "kind", "by", "date", "at", "extent", "points",
   "slot", "value", "class", "ask", "reward", "status", "image",
+  "version",
 ]);
 
 /**
