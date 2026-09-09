@@ -71,80 +71,114 @@ function readWindowFile(worldRoot, window) {
 
 const argOf = (n, d = null) => { const i = process.argv.indexOf(n); return i !== -1 ? process.argv[i + 1] : d; };
 
-const url = process.env.WORLD2_PG_URL ?? "";
-if (!SCRATCH.test(url)) {
-  console.error("REFUSED · WORLD2_PG_URL must name a database beginning `w2_scratch_`.");
-  console.error("  There is no lab store: /srv/world2-lab/lab.env and /etc/postmark-office.env name the same");
-  console.error("  database. Take a fresh pg_dump into a scratch and point this at that.");
-  process.exit(2);
-}
-const worldRoot = resolve(argOf("--world", "."));
-const window = Number(argOf("--window"));
-if (!Number.isFinite(window)) { console.error("--window <exact crossing value> is required"); process.exit(2); }
-const upto = argOf("--upto", null);
 
-const { default: pg } = await import("pg");
-const client = new pg.Client({ connectionString: url });
-await client.connect();
-try {
-  const namer = householdNamerFor(worldRoot);
-  const out = await stateLogFromStore(client, { window, upto, householdNameFor: namer });
-  const file = readWindowFile(worldRoot, window);
+// ── the CLI ──────────────────────────────────────────────────────────────────
+//
+// GUARDED, and it was not. Everything below ran at IMPORT time — including the
+// `process.exit(2)` refusal — so `import { householdNamerFor }` from a sibling
+// tool killed the importing process before it reached its own first line. The
+// resolver above is the one piece of this file worth reusing and it was
+// unreachable to anything but a shell.
+//
+// The guard is a BASENAME comparison, not `argv[1] === import.meta.url`. The
+// URL form is the one that breaks under a junction — a junctioned path makes
+// the two strings differ and the tool exits 0 having done nothing, which is the
+// shape that cost 33 fixture reds on 2026-09-05. `world-drain.mjs` and
+// `enter-exit-ledger.mjs` both use the basename form; this matches them.
+if (process.argv[1]?.endsWith("state-log-rederive.mjs")) {
+  const url = process.env.WORLD2_PG_URL ?? "";
+  if (!SCRATCH.test(url)) {
+    console.error("REFUSED · WORLD2_PG_URL must name a database beginning `w2_scratch_`.");
+    console.error("  There is no lab store: /srv/world2-lab/lab.env and /etc/postmark-office.env name the same");
+    console.error("  database. Take a fresh pg_dump into a scratch and point this at that.");
+    process.exit(2);
+  }
+  const worldRoot = resolve(argOf("--world", "."));
+  const window = Number(argOf("--window"));
+  if (!Number.isFinite(window)) { console.error("--window <exact crossing value> is required"); process.exit(2); }
+  const upto = argOf("--upto", null);
 
-  if (!file) {
-    console.log(JSON.stringify({ window, derived: out.lines.length, file: null,
-      note: "the drain never photographed this window — nothing to diff against, and nothing to merge into" }, null, 2));
-    process.exit(0);
+  const { default: pg } = await import("pg");
+  const client = new pg.Client({ connectionString: url });
+  await client.connect();
+  try {
+    const namer = householdNamerFor(worldRoot);
+    const out = await stateLogFromStore(client, { window, upto, householdNameFor: namer });
+    const file = readWindowFile(worldRoot, window);
+
+    if (!file) {
+      console.log(JSON.stringify({ window, derived: out.lines.length, file: null,
+        note: "the drain never photographed this window — nothing to diff against, and nothing to merge into" }, null, 2));
+      process.exit(0);
+    }
+
+    const cmp = compareWindow(file, out.lines);
+
+    // BYTE-equality is measured with the FILE's own seq supplied, because `seq`
+    // has no store source and reporting it as a difference on every line would
+    // bury the three that are about the record. The substitution is stated, never
+    // silent: the count below is "byte-equal once the journal seq is supplied".
+    const sig = (l) => JSON.stringify([l.actor, l.type, l.object ?? null]);
+    const buckets = new Map();
+    for (const l of file) { const k = sig(l); if (!buckets.has(k)) buckets.set(k, []); buckets.get(k).push(l); }
+    const used = new Map();
+    let byteEqual = 0; const notByteEqual = [];
+    for (const d of out.lines) {
+      const k = sig(d); const i = used.get(k) ?? 0; used.set(k, i + 1);
+      const f = (buckets.get(k) ?? [])[i];
+      if (!f) continue;
+      const rebuilt = {};
+      for (const key of LINE_FIELDS) rebuilt[key] = key === "seq" ? f.seq : d[key];
+      if (JSON.stringify(rebuilt) === JSON.stringify(f)) byteEqual++;
+      else notByteEqual.push({ actor: d.actor, type: d.type, class: d.class, object: d.object,
+        fields: LINE_FIELDS.filter((key) => JSON.stringify(rebuilt[key]) !== JSON.stringify(f[key])) });
+    }
+
+    const report = {
+      window,
+      world: worldRoot,
+      upto,
+      file_lines: file.length,
+      derived_lines: out.lines.length,
+      only_in_file: cmp.onlyInFile.map((l) => ({ seq: l.seq, actor: l.actor, type: l.type, object: l.object })),
+      only_in_derived: cmp.onlyInDerived.map((l) => ({ seq: l.seq, actor: l.actor, type: l.type, object: l.object })),
+      byte_equal_once_seq_supplied: byteEqual,
+      not_byte_equal: notByteEqual,
+      causes: cmp.differing,
+      unnamed_households: out.unnamed_households,
+    };
+    if (process.argv.includes("--json")) { console.log(JSON.stringify(report, null, 2)); }
+    else {
+      console.log(`window ${window} · file ${file.length} line(s) · derived ${out.lines.length} line(s)`);
+      console.log(`byte-equal once the journal seq is supplied: ${byteEqual} of ${out.lines.length}`);
+      for (const n of notByteEqual) console.log(`  NOT byte-equal · ${n.actor} ${n.type} (${n.class}) · ${n.fields.join(" + ")}`);
+      if (report.only_in_file.length) console.log(`  ONLY IN THE FILE: ${report.only_in_file.length} — the register cannot produce these`);
+      if (report.only_in_derived.length) console.log(`  ONLY IN THE REGISTER: ${report.only_in_derived.length} — the drain never wrote these`);
+      if (out.unnamed_households.length) console.log(`  UNNAMED HOUSEHOLDS: ${out.unnamed_households.join(", ")}`);
+      const byField = {};
+      for (const d of cmp.differing) for (const c of d.causes) (byField[c.field] ??= new Set()).add(c.cause);
+      for (const [f, causes] of Object.entries(byField)) for (const c of causes) console.log(`  ${f}: ${c}`);
+    }
+    // THE EXIT CODE HAS TO SEE THE NUMBER THE TOOL IS FOR.
+    //
+    // It keyed only on `only_in_file` / `only_in_derived`, so a run whose
+    // byte-equal count fell from 7 of 11 to 0 of 11 still exited 0 — every act
+    // present, every line differing, and a gate reading the status would have
+    // called that a pass. My reviewer found it. A tool whose headline number
+    // cannot fail its own exit is a tool that only looks like a check.
+    //
+    // `--require-byte-equal <n>` is opt-in because this is a MEASURING instrument
+    // first: the honest answer today is 7 of 11, and a tool that exited non-zero
+    // on its own true answer would be one nobody could run. Passing the flag is
+    // what turns it into a gate, and then the floor is the caller's to state.
+    const floor = argOf("--require-byte-equal", null);
+    const missedFloor = floor != null && byteEqual < Number(floor);
+    if (missedFloor) {
+      console.error(`RED: byte-equal ${byteEqual} of ${out.lines.length}, below the required ${floor}`);
+    }
+    process.exit(report.only_in_file.length || report.only_in_derived.length || missedFloor ? 1 : 0);
+  } finally {
+    await client.end();
   }
 
-  const cmp = compareWindow(file, out.lines);
-
-  // BYTE-equality is measured with the FILE's own seq supplied, because `seq`
-  // has no store source and reporting it as a difference on every line would
-  // bury the three that are about the record. The substitution is stated, never
-  // silent: the count below is "byte-equal once the journal seq is supplied".
-  const sig = (l) => JSON.stringify([l.actor, l.type, l.object ?? null]);
-  const buckets = new Map();
-  for (const l of file) { const k = sig(l); if (!buckets.has(k)) buckets.set(k, []); buckets.get(k).push(l); }
-  const used = new Map();
-  let byteEqual = 0; const notByteEqual = [];
-  for (const d of out.lines) {
-    const k = sig(d); const i = used.get(k) ?? 0; used.set(k, i + 1);
-    const f = (buckets.get(k) ?? [])[i];
-    if (!f) continue;
-    const rebuilt = {};
-    for (const key of LINE_FIELDS) rebuilt[key] = key === "seq" ? f.seq : d[key];
-    if (JSON.stringify(rebuilt) === JSON.stringify(f)) byteEqual++;
-    else notByteEqual.push({ actor: d.actor, type: d.type, class: d.class, object: d.object,
-      fields: LINE_FIELDS.filter((key) => JSON.stringify(rebuilt[key]) !== JSON.stringify(f[key])) });
-  }
-
-  const report = {
-    window,
-    world: worldRoot,
-    upto,
-    file_lines: file.length,
-    derived_lines: out.lines.length,
-    only_in_file: cmp.onlyInFile.map((l) => ({ seq: l.seq, actor: l.actor, type: l.type, object: l.object })),
-    only_in_derived: cmp.onlyInDerived.map((l) => ({ seq: l.seq, actor: l.actor, type: l.type, object: l.object })),
-    byte_equal_once_seq_supplied: byteEqual,
-    not_byte_equal: notByteEqual,
-    causes: cmp.differing,
-    unnamed_households: out.unnamed_households,
-  };
-  if (process.argv.includes("--json")) { console.log(JSON.stringify(report, null, 2)); }
-  else {
-    console.log(`window ${window} · file ${file.length} line(s) · derived ${out.lines.length} line(s)`);
-    console.log(`byte-equal once the journal seq is supplied: ${byteEqual} of ${out.lines.length}`);
-    for (const n of notByteEqual) console.log(`  NOT byte-equal · ${n.actor} ${n.type} (${n.class}) · ${n.fields.join(" + ")}`);
-    if (report.only_in_file.length) console.log(`  ONLY IN THE FILE: ${report.only_in_file.length} — the register cannot produce these`);
-    if (report.only_in_derived.length) console.log(`  ONLY IN THE REGISTER: ${report.only_in_derived.length} — the drain never wrote these`);
-    if (out.unnamed_households.length) console.log(`  UNNAMED HOUSEHOLDS: ${out.unnamed_households.join(", ")}`);
-    const byField = {};
-    for (const d of cmp.differing) for (const c of d.causes) (byField[c.field] ??= new Set()).add(c.cause);
-    for (const [f, causes] of Object.entries(byField)) for (const c of causes) console.log(`  ${f}: ${c}`);
-  }
-  process.exit(report.only_in_file.length || report.only_in_derived.length ? 1 : 0);
-} finally {
-  await client.end();
 }

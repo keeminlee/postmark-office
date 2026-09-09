@@ -241,7 +241,7 @@ export function witnessesOf(act) {
  * to recover, and which number stands in its place is a decision about a file
  * other tools merge by, not a detail.
  */
-export function logLineFromAct(act, { householdNameFor = (k) => k, seqOf = (a) => a.id } = {}) {
+export function logLineFromAct(act, { householdNameFor = (k) => k, seqOf = (a) => a.id, fields = LINE_FIELDS } = {}) {
   const line = {
     at: journalInstant(act.at),
     type: act.action,
@@ -259,9 +259,16 @@ export function logLineFromAct(act, { householdNameFor = (k) => k, seqOf = (a) =
   // The field list is the grammar. Building the literal above in order is what
   // makes the bytes right; this assertion is what makes a future edit that
   // reorders it fail here instead of in a world repo.
+  // `fields` is a test seam, and it exists because DELETING THIS GUARD IS
+  // INVISIBLE: the guard can only fire on an edit that reorders the literal
+  // above, so no falsifier over the real grammar can ever make it throw, and a
+  // future hand could remove it with the whole suite green. Handing the guard
+  // its expectation lets a test drive it to its own red without touching the
+  // literal — the one way to show it is wired at all. Nothing in production
+  // passes it. (My reviewer's item; not a merge condition, one line.)
   const keys = Object.keys(line);
-  if (keys.length !== LINE_FIELDS.length || keys.some((k, i) => k !== LINE_FIELDS[i])) {
-    throw new Error(`the line grammar drifted: built [${keys}], LINE_FIELDS is [${LINE_FIELDS}]`);
+  if (keys.length !== fields.length || keys.some((k, i) => k !== fields[i])) {
+    throw new Error(`the line grammar drifted: built [${keys}], LINE_FIELDS is [${fields}]`);
   }
   return line;
 }

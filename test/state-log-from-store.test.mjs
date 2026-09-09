@@ -312,3 +312,21 @@ test("F17 · this module's two exported names do not collide with the office's o
   // name — without this the assertions above would pass on an alias.
   assert.notEqual(mine.standingFieldOf, standing.standingOf);
 });
+
+test("F18 · the build-time grammar guard actually throws — driven to its own red through its seam", () => {
+  // MY REVIEWER'S ITEM. The guard in `logLineFromAct` can only fire on an edit
+  // that reorders the object literal it sits under, so no falsifier over the
+  // real grammar can ever make it throw — which means DELETING IT IS INVISIBLE
+  // and a future hand could remove it with the whole suite green. `fields` is a
+  // test seam that hands the guard a different expectation, so its red can be
+  // seen once without touching the literal.
+  const a = acts[0];
+  assert.throws(() => logLineFromAct(a, { householdNameFor, fields: ["at", "type"] }),
+    /the line grammar drifted/, "a shorter expectation must throw");
+  assert.throws(() => logLineFromAct(a, { householdNameFor, fields: [...LINE_FIELDS].reverse() }),
+    /the line grammar drifted/, "a reordered expectation must throw");
+  // And the control: the real grammar does NOT throw, so the guard is a guard
+  // and not an unconditional error.
+  assert.doesNotThrow(() => logLineFromAct(a, { householdNameFor }));
+  assert.doesNotThrow(() => logLineFromAct(a, { householdNameFor, fields: LINE_FIELDS }));
+});
