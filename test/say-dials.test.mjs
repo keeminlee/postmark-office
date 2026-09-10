@@ -82,17 +82,25 @@ describe("the say dials, read off the live world store", { skip: storeHasSay ? f
 
   // ── the id a surface PUBLISHES must be one the record carries ──────────────
   //
-  // `available` sends a resident to the node that governed its answer. It used
-  // to build that id from the class name and its own lookup key —
-  // `the-town/say/presence_min` — which is wrong three ways at once: no world id
-  // has two slashes, a dial is a SIBLING of its class, and the record spells the
-  // name with a hyphen where the key uses an underscore. Its falsifier compared
-  // the published string to the same string typed again, so it locked the error
-  // in instead of catching it. This resolves the published id AGAINST THE
-  // RECORD, in the one file that refuses to run on a fixture — because a
-  // fixture answers to whatever name the fixture used, which is the same
-  // circularity that let the wrong id ship.
-  test("the node `available` publishes for its window is one the record actually carries", async () => {
+  // `PRESENCE_DIAL_NODE` is where a surface sends a resident to read the law
+  // that governed a presence_min answer. It used to be built from the class
+  // name and the lookup key — `the-town/say/presence_min` — which is wrong
+  // three ways at once: no world id has two slashes, a dial is a SIBLING of its
+  // class, and the record spells the name with a hyphen where the key uses an
+  // underscore. Its falsifier compared the published string to the same string
+  // typed again, so it locked the error in instead of catching it. This
+  // resolves the published id AGAINST THE RECORD, in the one file that refuses
+  // to run on a fixture — because a fixture answers to whatever name the
+  // fixture used, which is the same circularity that let the wrong id ship.
+  //
+  // ⚑ ITS FIRST PUBLISHER WAS `available`, and that derived is parked
+  // (2026-09-10, the founder's word; world#19 reverted, office half on
+  // `wright/parked-proposals-office`). The export and this falsifier both STAY:
+  // the id-resolution bug they exist for is a property of how a dial node is
+  // NAMED, not of who happened to publish it first, and the next surface to
+  // send a reader to presence_min would otherwise rediscover it. The test's
+  // name no longer claims a publisher that does not exist.
+  test("the presence_min dial node this office publishes is one the record actually carries", async () => {
     const { PRESENCE_DIAL_NODE } = await import("../src/voices.mjs");
     assert.notEqual(PRESENCE_DIAL_NODE, null,
       "the store carries the-town/say, so it must be able to name where presence_min stands");
