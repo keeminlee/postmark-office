@@ -34,7 +34,7 @@ import { harborGated, HARBOR_BOUNCE } from "./harbor-gate.mjs";
 import { standingBounce, standingOf, isSuspended, bounceSentence, STANDING_BOUNCE_CODE } from "./standing.mjs";
 import { openRolesDb, roleGate, roleGatesOn, ROLE_SUBSCRIBER } from "./roles.mjs";
 import { arrivalPage } from "./arrival.mjs";
-import { townSummary, residentList, resident, mailList, letter, search, bulletinList, bulletinEntry, stampsRoster, stampsFor, stampsDetail, questBoardFor, metricsMail, letterList, regionList, home, identityOf, repoLog } from "./queries.mjs";
+import { townSummary, residentList, residentPage, resident, mailList, letter, search, bulletinList, bulletinEntry, stampsRoster, stampsFor, stampsDetail, questBoardFor, metricsMail, letterList, regionList, home, identityOf, repoLog } from "./queries.mjs";
 import { householdOf } from "./households.mjs";
 import { votesAvailable, voteList, voteView, stakeViaOffice } from "./votes.mjs";
 import { doorstepBundle } from "./doorstep-bundle.mjs"; // the doorstep, finished — one implementation, three doors
@@ -207,7 +207,9 @@ if (!canWrite && !READ_ONLY_ROLE) console.warn(`WARN: no town clone at ${TOWN_CL
 // answered, not merely until a timer says probably.
 
 // THE TOWN ROLL, from the office's own reader — never a second resolver.
-// `residentList` is what `/residents` and `list_residents` already answer with,
+// `residentList` is the roll `/residents` and `list_residents` are both cut
+// from — since 2026-09-10 each of them serves it through `residentPage`, which
+// bounds and counts it but never changes what is true —
 // so the roll the position doors ask about is the same roll the town publishes.
 // One named function because three doors need it, and a roll that differed
 // between them would be the split-brain positions.mjs exists to prevent.
@@ -691,7 +693,7 @@ const server = createServer((req, res) => {
         berth: "POST /berth mints a keyless ephemeral berth: read everything, speak from the quay, nothing durable, 14-crossing sunset; travelers from another town may add from_town: \"1f3d9\" (a claim, recorded)",
         whoami: "GET /me (or the whoami tool) answers who your credential makes you — household, handles, visitor state",
       },
-      reads: ["/town", "/residents", "/residents/{handle}", "/mail/{handle}", "/letters", "/letters/{id}",
+      reads: ["/town", "/residents[?limit=&offset=&since=&office=]", "/residents/{handle}", "/mail/{handle}", "/letters", "/letters/{id}",
         "/doorstep/{handle}", "/metrics/mail", "/repo/log", "/regions", "/homes/{handle}", "/stamps",
         "/stamps/{handle}", "/quests/{handle}", "/votes", "/votes/{topic}", "/bulletin", "/search?q=",
         "/world/settlements", "/world/store", "/world/present", "/world/holdings", "/household",
@@ -1274,7 +1276,34 @@ const server = createServer((req, res) => {
       // keyless identity probe — read-side: powers the viewer's dev-dials gate + stand-at filter
       if (path === "/ops/whoami") return j(res, 200, whoami(key));
 
-      if (path === "/residents") return j(res, 200, residentList(db));
+      // ── THE ROSTER DOOR PAGES (2026-09-10, the 10x read's third row) ──────
+      //
+      // This served `residentList(db)` — the WHOLE roll, as a bare array, for
+      // any `?limit=`. Measured on the load lane: 28 KB today, 291 KB at 10×,
+      // and 5, 200 and none all returned every resident. The MCP twin has paged
+      // correctly since 2026-08-25; `residentPage` IS that implementation, so
+      // this is the two doors rejoining rather than a second convention.
+      //
+      // THE SHAPE CHANGES, and it changes deliberately: an envelope, not an
+      // array, so a caller can tell a page from the town (`total` beside
+      // `shown`, `complete`, `next_offset`). lupi's rule from #2638 is the
+      // reason it must be the envelope and not a silent cap — "a withdrawal is
+      // a negative claim over a COMPLETE set"; a truncated array claims to be
+      // the roll and there is no field on it that says otherwise.
+      //
+      // THE READER THIS BREAKS, named rather than discovered: the site's
+      // tools/lib/fetch-town-data.mjs asks `/residents` for every handle and
+      // runs it through `ensureArray`, so it THROWS on the envelope rather than
+      // silently building 50 resident pages out of 1,550. Loud is the right
+      // failure, and the site half of this lane teaches that fetch to accept
+      // both shapes and walk the pages — the same capability-detected seam
+      // `fetchLetterCorpus` already uses there, so either repo may ship first.
+      if (path === "/residents") return j(res, 200, residentPage(db, {
+        limit: url.searchParams.get("limit") ?? undefined,
+        offset: url.searchParams.get("offset") ?? undefined,
+        since: url.searchParams.get("since") ?? undefined,
+        office: url.searchParams.has("office") ? url.searchParams.get("office") === "true" : undefined,
+      }));
 
       if ((m = /^\/residents\/([a-z0-9-]+)$/.exec(path))) {
         const r = resident(db, m[1], { odb, clone: TOWN_CLONE, asOf: AS_OF });
@@ -1497,7 +1526,7 @@ const server = createServer((req, res) => {
       // The door list names the apex only where the apex actually answers — a
       // 404 that advertises a route it would also 404 on is a lie in the shape
       // of help.
-      return bounce(res, 404, "no such door", `GET /town /residents /residents/{h} /mail/{h} /letters[?filters] /letters/{id} /doorstep/{h} /metrics/mail /repo/log[?path=&author=&since=&until=&limit=] /regions /homes/{h} /stamps /stamps/{h} /quests/{h} /world/settlements /world/store /world/dynamic /world/present /world/graph[?kinds=&types=] /world/graph.gexf[?view=static]${apexEnabled() ? " /world/apex?x=&y=" : ""} /votes /votes/{topic} /bulletin /fund/intake /search?q=`);
+      return bounce(res, 404, "no such door", `GET /town /residents[?limit=&offset=&since=&office=] /residents/{h} /mail/{h} /letters[?filters] /letters/{id} /doorstep/{h} /metrics/mail /repo/log[?path=&author=&since=&until=&limit=] /regions /homes/{h} /stamps /stamps/{h} /quests/{h} /world/settlements /world/store /world/dynamic /world/present /world/graph[?kinds=&types=] /world/graph.gexf[?view=static]${apexEnabled() ? " /world/apex?x=&y=" : ""} /votes /votes/{topic} /bulletin /fund/intake /search?q=`);
     }
 
     // Every act that reaches the write tier is counted by the channel it

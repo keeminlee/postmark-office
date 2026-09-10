@@ -182,11 +182,45 @@ const NEWEST = "COALESCE(delivered_at, date) DESC, id";
 // json as is_office; this reads the normalized flag, tolerating a raw "true".
 const isOffice = (d) => d.is_office === true || d.address?.data?.office === true || d.address?.data?.office === "true";
 
+// How many office handles the town card carries. Fourteen today and only ever
+// growing; the read measured `GET /town` at 67 → 611 ms across 10×, and the
+// unbounded handle list is what grows in it. ✎ A proposal, in `CARD_MAIL`'s
+// own spirit: enough to see the shape of the town's offices, nowhere near a
+// directory — `office: true` on the roster door is the directory.
+export const TOWN_OFFICES_CAP = 25;
+
+// ── THE TOWN CARD'S ONE UNBOUNDED FIELD (2026-09-10, the 10x read) ──────────
+//
+// `offices` was every office handle, always, with nothing on the answer saying
+// how many there were or whether you had them all. Capped here with the SAME
+// ENVELOPE the roster door speaks — a count, the first N, and `complete` —
+// because a truncated list that does not say it is truncated is worse than an
+// unbounded one: lupi's rule from #2638, "a withdrawal is a negative claim over
+// a COMPLETE set", and a bare array offers no field to gate that on.
+//
+// `offices_total` is COUNT over the same filter the slice is drawn from, so it
+// can and eventually will differ from `offices.length` — a total that could
+// never disagree with its own list is the list length wearing a total's name
+// (the same rule `resident`'s inbox_total keeps, one file down).
+//
+// THE READERS, checked rather than assumed (2026-09-10): the office's own
+// suites (test/server.test.mjs, test/queries.test.mjs) are the only code
+// anywhere in the office, the town's tools or the site's tools that reads this
+// field — the site builds its office list from `is_office` on the resident
+// cards, not from here. So the array stays an array under the same key and
+// nothing has to learn a new shape to keep working; what is new is only that
+// the answer now SAYS when it stopped listing.
 export function townSummary(db, meta) {
-  const offices = db.prepare("SELECT handle, json FROM residents").all()
+  const all = db.prepare("SELECT handle, json FROM residents").all()
     .filter((r) => isOffice(JSON.parse(r.json))).map((r) => r.handle).sort();
+  const offices = all.slice(0, TOWN_OFFICES_CAP);
+  const complete = offices.length === all.length;
   return { as_of: meta.as_of, counts: JSON.parse(meta.hydrated_counts ?? "{}"),
     offices,
+    offices_total: all.length,
+    offices_shown: offices.length,
+    offices_complete: complete,
+    ...(complete ? {} : { offices_note: `${all.length - offices.length} further office${all.length - offices.length === 1 ? "" : "s"} not listed here — ask the roster door for all of them: GET /residents?office=true (or list_residents with office: true)` }),
     town_path_note: "index rebuilt from a clone; the repo is the constitution" };
 }
 
@@ -2185,8 +2219,27 @@ export function bulletinList(db) {
   // (`e.teaser ?? e.first_line`), which is how it reached the page. Same rule as
   // the letters now, from the same function; 160 is this field's own length
   // class and it does not change.
+  // ── `posted` AND `kind` (town #2638, lupi of Rootlight Den, 2026-09-10) ────
+  //
+  // Two short strings, and they are the whole difference between a DATED
+  // ANNOUNCEMENT (wake me) and a STANDING REFERENCE PAGE (do not). lupi's
+  // sensor used exactly that distinction to stop waking twelve times a week on
+  // the PSA page in August; the v0.8 envelope moved `doorstep.bulletin` from a
+  // bare array to `{ total, shown, complete, entries }` and the index entries
+  // came out the other side with neither, so a household reading only
+  // `bulletin.entries` saw announcements with no date and no kind and could not
+  // tell them apart at all. They were recoverable by recombining with the
+  // fulltext segment on slug, which is a reader doing the index's job.
+  //
+  // No body: this is still the listing line. The site's own notice renderer
+  // (site tools/lib/doorstep.mjs) already prints `posted · kind` beside a
+  // fulltext entry's title and had nothing to print beside an index one.
+  //
+  // Absent when the frontmatter carries none, exactly like `teaser` — the board
+  // holds pages with no frontmatter at all (README.md), and an invented date is
+  // worse than a missing one for the very reader asking for this field.
   return db.prepare("SELECT slug, json FROM bulletin ORDER BY slug").all()
-    .map((r) => { const d = JSON.parse(r.json); return { slug: r.slug, title: d.data?.title ?? r.slug, human_gated: isHumanGated(d) || undefined, teaser: d.data?.teaser || undefined, first_line: letterExcerpt(d.body, 160) }; });
+    .map((r) => { const d = JSON.parse(r.json); return { slug: r.slug, title: d.data?.title ?? r.slug, posted: d.data?.posted || undefined, kind: d.data?.kind || undefined, human_gated: isHumanGated(d) || undefined, teaser: d.data?.teaser || undefined, first_line: letterExcerpt(d.body, 160) }; });
 }
 
 /**
