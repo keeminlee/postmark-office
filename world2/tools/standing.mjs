@@ -724,11 +724,73 @@ export function computeStanding(rows, { only = null, containment = null } = {}) 
  * today's register rather than a law, stated as something that can fire.
  *
  * A premise nobody can watch break is a premise that breaks silently. Returns
- * [] when all three hold.
+ * [] when all four hold.
  */
 export function admissionNotes(rows) {
   const notes = [];
   const records = rows.map(recordOf);
+
+  // 0 · THE TOWN IS THE TOWN — the constitution shortcut's own premise, which is
+  //     the one that broke without a word.
+  //
+  //     THE INCIDENT (docs/2026-09-09/jetto-load-store-report.md § one fill
+  //     artefact, found by measurement): the first 10x fill suffixed the `by`
+  //     half of every mark id, the town's included, so copy 3's law was authored
+  //     by `the-town-s3`. `markStanding`'s first line keys on the LITERAL `TOWN`
+  //     (`mark-standing.mjs:57`, vendored above), so a town under any other name
+  //     is not demoted loudly — it is simply walked like a resident. The
+  //     clearing reported "standing recomputed over 10350, 2871 moved" against
+  //     0 moved at 1x, and the lane's own verdict on it is the reason this
+  //     tripwire exists:
+  //
+  //       "The general finding is worth more than the fix: anything that keys on
+  //        a literal household name is a scaling seam. It did not error, it did
+  //        not warn — it silently added work and would have inflated this
+  //        report's headline by 20%."
+  //
+  //     WHY THE LITERAL STAYS, and it is a receipt rather than a preference.
+  //     Three things had to be true for the indirection the class fix implies,
+  //     and none of them is:
+  //       * THE PORT IS VERBATIM. `falsifier-standing-equality.mjs` runs 1.0's
+  //         `mark-standing.mjs` and this file over the same register and compares
+  //         every slug. 1.0 holds `const TOWN = "the-town"` at line 57; a port
+  //         that read the name from somewhere else would be a port that can
+  //         disagree with its original about who the town is, which is precisely
+  //         what the falsifier exists to prevent.
+  //       * THERE IS NOWHERE TO READ IT FROM. `registry` manifests OBJECTS
+  //         (001_tables.sql § the manifest) — `marks`, `claims`, `windows` — not
+  //         residents. `identities` is ingested from the world repo's
+  //         households.json, which carries the 73 `gh:` keys and no `the-town`
+  //         row at all; `solo:the-town` exists only as `world2-claims.mjs`'s
+  //         fallback template. The one authoritative datum is the TOWN repo's
+  //         `ECONOMY-DIALS.json` `law_side.town_issuance.treasury_handle`, and
+  //         the candle holds no checkout — this file's own header says why ("the
+  //         stateless contract is the ingesters', and the candle is not an
+  //         ingester").
+  //       * THE OFFICE ALREADY RULED. `store-writedown.mjs:867`: "`by ===
+  //         \"the-town\"` is a bare literal across this office already ... so
+  //         naming it once here is the house spelling rather than a new
+  //         convention." Ruled 2026-09-08, on measurement.
+  //
+  //     So the class fix is not indirection. It is that the seam stops being
+  //     SILENT: a record carrying the town's own word for its standing that the
+  //     walk does not answer `constitution` for is either a town under another
+  //     name or a resident asserting law, and both are worth a line.
+  //     The test mirrors `markStanding`'s own first line — `(mark.by ??
+  //     mark.household) === TOWN && mark.tier === "constitution"` — negated on
+  //     the author half only, so it names exactly the rows the shortcut declines.
+  //     It reads the row as it stood BEFORE the recompute, which is why it fires
+  //     on the first crossing after a rename rather than after the damage is
+  //     written back and the evidence is gone.
+  const claimed = records.filter((m) => m.tier === "constitution" && (m.by ?? m.household) !== TOWN);
+  if (claimed.length) {
+    const byAuthor = new Map();
+    for (const m of claimed) byAuthor.set(m.by ?? m._cred, (byAuthor.get(m.by ?? m._cred) ?? 0) + 1);
+    notes.push(`${claimed.length} mark(s) carry \`tier: constitution\` in the record but are NOT authored by ` +
+      `\`${TOWN}\`, so the constitution shortcut does not fire for them and the walk resolves them as ordinary ` +
+      `ground — a town under a different name looks exactly like this. Authors: ` +
+      `${[...byAuthor].slice(0, 4).map(([a, n]) => `${a} (${n})`).join(", ")}`);
+  }
 
   // 1 · the class-parent edge, and why the walk never needs it.
   const lawParented = records.filter((m) => m._parent_is_law);
