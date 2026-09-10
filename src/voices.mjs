@@ -301,26 +301,23 @@ export function createVoices({
   let bytes = 0;              // the live log's size, tracked so append stays one syscall
   let loadedFrom = null;
   const presence = new Map(); // handle -> { at, x, y, how } — spoke OR listened here
-  // THE PRESENCE HORIZON. This map is RAM (see lastPresent below), so an absence
-  // from it is only evidence once it has been watching for a full window: before
-  // that, a resident who has been quietly reading for ten minutes and a resident
-  // who is not here at all look identical. `available` reads this to tell "no"
-  // from "we cannot yet say", which is the whole difference between a derived
-  // and a guess. The tick does not reset it — the office has not restarted on a
-  // tick since 2026-08-11 (deploy/office-tick.sh) — so this window opens on a
-  // hand deploy and closes by itself presence_min later.
-  const bornAt = now();
-  // handle -> ms of their last LOGGED voice, built from the log and kept fresh by
-  // append. The durable half of availability: a say is a line in the record and
-  // survives a restart; a listen is this map and does not.
-  let lastSpoke = null;
+  // THE PRESENCE MAP is RAM (see lastPresent below): it records that a handle
+  // spoke or listened here, and it is evicted by `presenceMs` below.
+  //
+  // ⚑ ITS SECOND READER IS PARKED (2026-09-10, the founder's word). `available`
+  // — the derived that separated being here from reading here — read this map
+  // to tell "no" from "we cannot yet say", and with it went the office's only
+  // use of the horizon: the born-at instant, the last-spoke index, and the
+  // whole `availability` answer. The law is world#19, reverted off the record
+  // and shelved in the world repo's LOGOS/PROPOSED.md; the bytes stand on
+  // office `wright/parked-proposals-office`. What remains here is what the map
+  // was for before `available` existed — `lastPresent`, and the eviction.
 
   function hydrate() {
     const file = pathOf();
     if (voices && loadedFrom === file) return voices;
     voices = [];
     loadedFrom = file;
-    lastSpoke = null;   // the index is derived from this array; a reload invalidates it
     bytes = 0;
     if (!existsSync(file)) return voices;
     let raw = "";
@@ -343,7 +340,6 @@ export function createVoices({
   function append(voice, spoken = null) {
     hydrate();
     voices.push(voice);
-    if (lastSpoke) lastSpoke.set(voice.handle, voice.at);
     if (voices.length > memoryMax) voices = voices.slice(-memoryMax);
     const file = pathOf();
     const line = `${JSON.stringify({
@@ -440,134 +436,6 @@ export function createVoices({
   // tell a word from an ear. It is the only field this map gained.
   function touch(handle, at, t, how) {
     presence.set(handle, { at: t, x: at.x, y: at.y, how });
-  }
-
-  /** handle -> ms of their last logged voice. Built once per hydrate, kept fresh
-   *  by append — availability is asked once per resident per presence read, and
-   *  a backwards scan of the whole window per handle would make a fifty-person
-   *  town quadratic for one boolean. */
-  function lastSpokeIndex() {
-    // HYDRATE FIRST. A cold hydrate clears this index (a reload invalidates what
-    // was derived from the old array), so building it before the load would
-    // have the loader null the map out from under the builder — which it did,
-    // on exactly the path this exists for: the first read after a restart.
-    const log = hydrate();
-    if (lastSpoke) return lastSpoke;
-    lastSpoke = new Map();
-    for (const v of log) lastSpoke.set(v.handle, v.at); // oldest first, so the last write wins
-    return lastSpoke;
-  }
-
-  const iso = (ms) => new Date(ms).toISOString();
-
-  /**
-   * AVAILABLE — being here, as distinct from reading here (the-town/available,
-   * world PR #19; Rei's read-through row Rei-2).
-   *
-   * Presence today is POSITION: true by law, read off departures, and a resident
-   * can stand in the makers' quarter for a week and be reading nothing. The say
-   * edge already carries the honest source — the-town/presence-min, say's
-   * presence_min dial:
-   * "Minutes that listening still counts as standing here. Attention is
-   * presence; a silent listener has not left the room." — and this module has
-   * kept exactly that presence, for every voice that spoke OR listened, since
-   * the say-box. Nothing read it back. This does, and STORES NOTHING: no
-   * emission, no act, no `attend` verb. An empty say is already the attention
-   * act the town has.
-   *
-   * TWO SOURCES OF DIFFERENT DURABILITY, and the answer never pretends
-   * otherwise:
-   *
-   *   spoke     a line in voices-log.jsonl. The record. Survives a deploy and is
-   *             rebuildable from it, so this stays true across a restart.
-   *   listened  the presence map, which is RAM. Not in the record anywhere —
-   *             hear() calls touch() and never append(). After a restart it is
-   *             gone, and the honest answer is `null`, not `false`.
-   *
-   * So `false` is claimed only where an absence is actually evidence: once this
-   * map has been watching for a full window, a listen inside it would have
-   * touched it, and silence means silence. Inside the horizon the answer is
-   * `null` with the reason named. A bare `false` that means "we do not know" is
-   * the one thing this must never say.
-   *
-   * The window is the dial and nothing else — PRESENCE_MS, read from the record
-   * at load through dialNumber("say", "presence_min"). The answer carries the
-   * number and where it was read from, because a reader deciding whether to
-   * wait for someone deserves to know if that number is the town's word or this
-   * repo's old constant.
-   */
-  function availability(handle, { at: askedAt = null } = {}) {
-    const t = Number.isFinite(askedAt) ? askedAt : now();
-    const withinMin = Math.round(presenceMs / 60000);
-    const dialSlot = SAY_DIALS.presence_min;
-    const base = {
-      available_within_min: withinMin,
-      // The node a reader can actually go and read, as the RECORD names it.
-      // Null when the record could not be asked — see PRESENCE_DIAL_NODE.
-      dial: { slot: PRESENCE_DIAL_NODE, read_from: dialSlot.source },
-    };
-
-    const p = presence.get(handle);
-    if (p && t - p.at <= presenceMs) {
-      const how = p.how === "spoke" ? "spoke" : "listened";
-      // A QUIET READER'S ATTENTION IS VISIBLE; ITS CLOCK IS THEIRS (Keemin via
-      // Wright, 2026-09-07 08:44). A say is already public — it is a line in the
-      // voice log and the conversations page is browsable — so its timestamps
-      // cost nothing to publish. A LISTEN is disclosed nowhere else. Publishing
-      // the exact minute someone last read the room would make this field a log
-      // of attention, which is more than availability and more than the town
-      // ever asked anyone to give up. So the boolean and the window stand and
-      // the clock is withheld — and it is withheld DELIBERATELY, which the note
-      // says out loud, so a null here is never mistaken for the unknown-null
-      // further down.
-      const quiet = how === "listened";
-      return {
-        ...base,
-        available: true,
-        since: quiet ? null : iso(p.at),
-        until: quiet ? null : iso(p.at + presenceMs),
-        source: how,
-        note: quiet
-          ? `listening within the last ${withinMin} minutes — attention is presence, and a silent listener has not left the room. When they last read is withheld: a listen is disclosed nowhere else, and this field says whether someone is here, not when they looked.`
-          : `spoke within the last ${withinMin} minutes`,
-      };
-    }
-
-    // The durable half, asked second because the map is fresher when it is warm
-    // and this is the same fact read from a slower record.
-    const spokeAt = lastSpokeIndex().get(handle);
-    if (Number.isFinite(spokeAt) && t - spokeAt <= presenceMs) {
-      return {
-        ...base,
-        available: true,
-        since: iso(spokeAt),
-        until: iso(spokeAt + presenceMs),
-        source: "spoke",
-        note: `spoke within the last ${withinMin} minutes`,
-      };
-    }
-
-    const watched = t - bornAt;
-    if (watched < presenceMs) {
-      const up = Math.max(0, Math.floor(watched / 60000));
-      return {
-        ...base,
-        available: null,
-        since: null,
-        until: null,
-        source: null,
-        note: `unknown — the office has been keeping presence for ${up} minute${up === 1 ? "" : "s"} of the ${withinMin}-minute window, and listening is not written down anywhere, so a resident who has been quietly reading cannot yet be told from one who is not here. Standing is still true by law; this settles by itself.`,
-      };
-    }
-
-    return {
-      ...base,
-      available: false,
-      since: null,
-      until: null,
-      source: null,
-      note: `no word and no listening in the last ${withinMin} minutes — present by position, not reading here`,
-    };
   }
 
   function listenersAround(at, t) {
@@ -786,5 +654,5 @@ export function createVoices({
     return null;
   }
 
-  return { say, hear, conversations, lastPresent, availability, log: pathOf, _voices: () => hydrate(), _presence: presence };
+  return { say, hear, conversations, lastPresent, log: pathOf, _voices: () => hydrate(), _presence: presence };
 }

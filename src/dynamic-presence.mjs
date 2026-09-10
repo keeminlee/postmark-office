@@ -302,43 +302,9 @@ async function readPresence({ dbPath = null, repo = WORLD_CLONE, atMs = Date.now
  * carry no place words, which is the right default for a world-wide read where
  * the count is unbounded.
  */
-/**
- * The injected `available` resolver, asked SAFELY and AS OF THE SAME INSTANT.
- *
- * TWO SEAM RULES IN ONE PLACE, because both are about the boundary rather than
- * about availability:
- *
- * 1. A DERIVED THAT CANNOT ANSWER IS ABSENT, NEVER FATAL. Unguarded, a throw in
- *    the resolver escaped `near()` — which 500s GET /world/present — and inside
- *    `presentNear`'s catch it cost `orient` and `open_your_eyes` the WHOLE
- *    presence block: every position, band, count and disclosure, traded for one
- *    boolean about attention. That is not additive, and additive is the field's
- *    whole claim. This lane already met the failure once (a cold-load bug in
- *    `lastSpokeIndex` threw on the first read after a restart); that was fixed
- *    as an instance and this is the class. A row that cannot say whether someone
- *    is reading still knows where they stand.
- *
- * 2. THE ROW'S TWO CLOCKS MUST BE ONE CLOCK. `near()` derives position as of
- *    `atMs`; the resolver defaulted to `now()`. Nothing passes a past `atMs`
- *    today, so no live answer is wrong — but a presence read at a crossing
- *    boundary would have said "standing at X as of then" beside "reading here as
- *    of now", quietly. The instant is held HERE and nowhere else: the world doors
- *    do not carry `atMs` and this function does, so forwarding it at the seam
- *    closes it for every door at once instead of four times.
- */
-async function askAvailable(available, handle, atMs) {
-  if (!available) return null;
-  try {
-    return await available(handle, atMs);
-  } catch (e) {
-    console.error(`[presence] availability tripped for ${handle} (${String(e?.message ?? e).slice(0, 120)}) — the row answers without it`);
-    return null;
-  }
-}
-
 export async function near({
   x, y, radiusM = PRESENCE_DIALS.near_radius_m, limit = PRESENCE_DIALS.near_cap,
-  exclude = [], place = null, available = null, dbPath = null, repo = WORLD_CLONE, atMs = Date.now(),
+  exclude = [], place = null, dbPath = null, repo = WORLD_CLONE, atMs = Date.now(),
   walk = null, engine = null, world = null, where = null, roll = [],
 } = {}) {
   const read = await readPresence({ dbPath, repo, atMs, walk, engine, world, where, roll });
@@ -356,7 +322,6 @@ export async function near({
   const shown = hits.slice(0, limit);
   const residents = [];
   for (const r of shown) {
-    const av = await askAvailable(available, r.handle, atMs);
     residents.push({
       handle: r.handle,
       distance_m: r.distance_m,
@@ -368,13 +333,13 @@ export async function near({
       band: distanceBand(r.distance_m),
       at: { x: Math.round(r.x), y: Math.round(r.y) },
       standing: r.standing, moving: r.moving, aboard: r.aboard,
-      // AVAILABLE, beside standing and moving, because that is where the
-      // conflation was: those two are about a body and this one is about
-      // attention. Injected exactly as `place` is, for the same reason — this
-      // module must never grow a second answer to a question voices.mjs owns,
-      // and with no resolver passed the row is byte-identical to the one it
-      // has always served.
-      ...(av ? { available: av } : {}),
+      // ⚑ `available` STOOD HERE, beside standing and moving, and is parked
+      // (2026-09-10, the founder's word; world#19 reverted, bytes on office
+      // `wright/parked-proposals-office`). It was injected exactly as `place`
+      // is, and its own guarantee was that with no resolver passed the row was
+      // byte-identical to the one this module had always served — so removing
+      // the injection returns the row to precisely that byte-identical shape,
+      // which is why nothing downstream had to change with it.
       ...(r.moving ? { remaining_m: Math.round(r.remaining_m ?? 0) } : {}),
       ...(place ? { place: await place({ x: r.x, y: r.y, aboard: r.aboard, moving: r.moving }) } : {}),
     });
@@ -404,7 +369,7 @@ export async function near({
  * walkers door's, already paid for, and it is not re-learned here.
  */
 export async function everyone({
-  place = null, available = null, dbPath = null, repo = WORLD_CLONE, atMs = Date.now(), walk = null, engine = null,
+  place = null, dbPath = null, repo = WORLD_CLONE, atMs = Date.now(), walk = null, engine = null,
   world = null, where = null, roll = [],
 } = {}) {
   const read = await readPresence({ dbPath, repo, atMs, walk, engine, world, where, roll });
@@ -412,13 +377,12 @@ export async function everyone({
 
   const residents = [];
   for (const r of read.rows) {
-    const av = await askAvailable(available, r.handle, atMs);
     residents.push({
       handle: r.handle,
       at: { x: Math.round(r.x), y: Math.round(r.y) },
       source: r.source,
       standing: r.standing, moving: r.moving, aboard: r.aboard,
-      ...(av ? { available: av } : {}),   // see near() and askAvailable
+      // ⚑ `available` stood here too — parked with near()'s; see the note there.
       ...(r.moving ? { remaining_m: Math.round(r.remaining_m ?? 0), eta_crossings: r.eta_crossings } : {}),
       ...(place ? { place: await place({ x: r.x, y: r.y, aboard: r.aboard, moving: r.moving }) } : {}),
     });
