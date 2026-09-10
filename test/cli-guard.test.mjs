@@ -143,6 +143,10 @@ const ROSTER = {
   "world2/tools/escrow-ingest.mjs": { args: [], env: NO_PG, code: 2, needle: "usage: escrow-ingest.mjs --town-repo <checkout>" },
   "world2/tools/falsifier-conversations-equality.mjs": { args: [], env: NO_PG, code: 2, needle: "--voices-log <path> is required" },
   "world2/tools/fold-input-cli.mjs": { args: [], env: NO_PG, code: 2, needle: "--world-sha <sha> is required" },
+  // The safe entry proof is the --set gate: the store cannot compute the 09-16
+  // return set (no escrow_projection, no sovereignty flag), so a run without the
+  // git half's receipt refuses before it touches a database at all.
+  "world2/tools/unstaked-return-store.mjs": { args: [], env: NO_PG, code: 2, needle: "refusing to run without --set" },
   "world2/tools/falsifier-pen-flip.mjs": { args: ["--help"], env: NO_PG, code: 0, needle: "usage" },
   "world2/tools/falsifier-projection-equality.mjs": { args: [], env: NO_PG, code: 2, needle: "usage: falsifier-projection-equality.mjs" },
   "world2/tools/falsifier-review-closure.mjs": { args: [], env: NO_PG, code: 2, needle: "WORLD2_PG_URL missing" },
