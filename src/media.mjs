@@ -50,6 +50,10 @@
 // the office deploys ahead of the credentials without lying about it.
 
 import { createHash, createHmac } from "node:crypto";
+import { lookup as dnsLookup } from "node:dns/promises";
+import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { join, resolve as resolvePath, sep } from "node:path";
 import { decodeImage, imageFormat, MAX_IMAGE, MEDIA_FORMATS, MEDIA_TYPE_BY_EXT } from "./edit.mjs";
 
 const bounce = (code, defect, hint) => Object.assign(new Error(defect), { code, defect, hint });
@@ -137,6 +141,354 @@ export function mediaLedgerRows(odb, household) {
     }));
 }
 
+// ── THE THREE WAYS BYTES REACH THIS DOOR ────────────────────────────────────
+//
+// The door opened (2026-08-15) with exactly one: `image`, raw base64 IN the
+// call's arguments. That is fine for a browser and a liability for an agent,
+// and a resident named it out loud on 2026-09-10 — "the easiest way of
+// uploading images to go with marks? … it takes forever". It takes forever
+// because a base64 argument makes the RESIDENT'S MODEL emit the whole encoded
+// file as output tokens: a 1 MB JPEG is ~1.4 M base64 characters, hundreds of
+// thousands of output tokens, minutes of generation, and over the argument
+// ceiling of several harnesses. The bytes never needed to pass through a model
+// at all. So two more ways in, ordered here by strength:
+//
+//   image_path  a path inside the caller's OWN house on the town clone the
+//               office already holds. Costs the model a filename. Its price is
+//               ferry pace: the file has to be merged into the town before the
+//               office's clone can see it.
+//   image_url   an https URL the office fetches itself. Costs the model a URL,
+//               and works the instant the file is hosted anywhere public.
+//   image       base64, unchanged, and now the LAST resort — for a harness
+//               that can neither host a file nor land one in the town.
+//
+// All three converge on the same Buffer and the same rest of the handler: byte
+// checks, quota, dedupe, R2 put, ledger row. There is one validation path, not
+// three, and that is the whole design — a new way IN must never become a new
+// way AROUND the byte law.
+
+export const MEDIA_FETCH_TIMEOUT_MS = 20_000;
+export const MEDIA_FETCH_MAX_REDIRECTS = 3;
+
+// ── the SSRF wall ───────────────────────────────────────────────────────────
+//
+// `image_url` hands an unauthenticated stranger a fetch from INSIDE the
+// office's network, which is the classic server-side request forgery shape: a
+// resident sends http://169.254.169.254/… or http://127.0.0.1:5432/ and the
+// office reads something no resident may read. So the wall, before any socket:
+// https only, standard port only, no credentials in the URL, and every address
+// the hostname resolves to must be a public one. Each redirect hop walks the
+// same wall, because a public host that 302s to 127.0.0.1 is the same attack
+// with one more step.
+//
+// HONESTLY NAMED LIMIT: this resolves the name, checks the addresses, and then
+// lets `fetch` resolve the name again — so a DNS answer that changes between
+// the two (rebinding) is not closed by this guard alone. Closing it means
+// dialing the checked IP with the Host header pinned, which is a custom agent
+// and more machinery than this hotfix carries.
+//
+// WHAT MAKES THAT ACCEPTABLE IS TWO OTHER WALLS IN THIS FUNCTION, AND BOTH ARE
+// LOAD-BEARING (reviewer's round, 2026-09-10 — the reason the report first gave,
+// "more machinery than a hotfix carries", is why it was not closed, not why it
+// is safe):
+//
+//   PORT 443 ONLY. Rebinding changes which IP a name resolves to; it cannot
+//   change the port in the URL. So Postgres on 127.0.0.1:5432 and the office's
+//   own 127.0.0.1:4380 are unreachable BY PORT, rebound or not. Widen the port
+//   list and you spend this.
+//
+//   STOCK TLS VERIFICATION. A rebound fetch to a private address still has to
+//   complete a TLS handshake for the ATTACKER'S OWN hostname, and no local
+//   service holds a key for a name the attacker controls. Nothing in this repo
+//   weakens it (no NODE_TLS_REJECT_UNAUTHORIZED, no rejectUnauthorized, no
+//   custom dispatcher or agent) — and if anything ever does, it spends this.
+//
+// Two more things that shrink the radius to nothing today: the office attaches
+// NO authorization header to this fetch (accept and user-agent only), so there
+// is no key to leak into whatever a rebound request reached; and the deploy kit
+// has no localhost-privileged nginx location, so an SSRF reaches nothing a
+// stranger on the internet does not already reach.
+//
+// The wall as built stops the direct forms — literal private addresses in every
+// IPv4 and IPv6 spelling, loopback names, and redirect chains into the network.
+
+const privateV4 = (a) => {
+  const p = String(a).split(".");
+  if (p.length !== 4) return true; // unparseable ⇒ refuse: the wall never guesses
+  const [x, y] = p.map(Number);
+  if (p.some((s) => !/^\d{1,3}$/.test(s)) || [x, y].some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return true;
+  return x === 0 || x === 10 || x === 127                       // this-network, private, loopback
+    || (x === 100 && y >= 64 && y <= 127)                        // CGNAT 100.64/10
+    || (x === 169 && y === 254)                                  // link-local (cloud metadata)
+    || (x === 172 && y >= 16 && y <= 31)                         // private 172.16/12
+    || (x === 192 && (y === 0 || y === 168))                     // IETF protocol assignments, private
+    || (x === 198 && (y === 18 || y === 19 || y === 51))         // benchmarking, TEST-NET-2
+    || (x === 203 && y === 0)                                    // TEST-NET-3
+    || x >= 224;                                                 // multicast, reserved, broadcast
+};
+
+// ONE ADDRESS, ONE SPELLING, ONE JUDGEMENT. This helper exists because the
+// first cut of this wall judged IPv6 by its TEXT — `parseInt(s.split(":")[0])`
+// — and `"::ffff:7f00:1"` splits to an empty first field, which parses to 0,
+// which passes every range test below. The reviewer's round (2026-09-10) proved
+// it on the real code: `https://[::ffff:127.0.0.1]/`,
+// `https://[0:0:0:0:0:ffff:7f00:1]/`, `https://[2002:7f00:1::]/` and
+// `https://[2002:a00:1::]/` all PASSED a wall whose own comment claimed the
+// literal forms were closed — no race, no attacker DNS, a literal in the URL
+// was enough. (The WHATWG URL parser rewrites the dotted spelling into the hex
+// one before any check sees it, which is why the dotted-form regex that used to
+// sit here never fired.)
+//
+// So: expand the compressed form to eight hextets ONCE, then judge the
+// expansion. A form the expansion cannot make sense of is refused — the wall
+// never guesses.
+const hextets = (s) => {
+  const parts = s.split("::");
+  if (parts.length > 2) return null; // "::" may appear once, or the address is not one
+  const [l, r] = parts.length === 2 ? parts : [parts[0], null];
+  const L = l ? l.split(":") : [], R = r ? r.split(":").filter(Boolean) : [];
+  const tail = R.length ? R : L;
+  // a trailing dotted quad is the v4-in-v6 spelling: fold it into two hextets
+  const dq = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(tail.at(-1) ?? "");
+  if (dq) {
+    if (dq.slice(1).some((o) => Number(o) > 255)) return null;
+    tail.pop();
+    tail.push(((+dq[1] << 8) | +dq[2]).toString(16), ((+dq[3] << 8) | +dq[4]).toString(16));
+  }
+  if (r === null) return L.length === 8 ? L : null; // no "::" ⇒ it must already be whole
+  const fill = 8 - L.length - R.length;
+  return fill < 0 ? null : [...L, ...Array(fill).fill("0"), ...R];
+};
+
+const privateV6 = (a) => {
+  const h = hextets(String(a).toLowerCase().split("%")[0]);
+  if (!h || h.some((x) => !/^[0-9a-f]{1,4}$/.test(x))) return true; // unparseable ⇒ refuse
+  const n = h.map((x) => parseInt(x, 16));
+  // v4-MAPPED (::ffff:a.b.c.d) and v4-COMPAT (::a.b.c.d), in ANY spelling —
+  // and this is also where ::, ::1 and 0.0.0.0-in-a-coat land.
+  if (n.slice(0, 5).every((v) => v === 0) && (n[5] === 0xffff || n[5] === 0))
+    return privateV4([n[6] >> 8, n[6] & 255, n[7] >> 8, n[7] & 255].join("."));
+  if (n[0] === 0x2002) // 6to4: the v4 destination is hextets 1–2, so judge it as that v4
+    return privateV4([n[1] >> 8, n[1] & 255, n[2] >> 8, n[2] & 255].join("."));
+  if (n[0] === 0x64 && n[1] === 0xff9b) return true; // NAT64 — a v4 destination behind a v6 name
+  return (n[0] & 0xfe00) === 0xfc00      // fc00::/7 unique-local
+    || (n[0] & 0xffc0) === 0xfe80        // fe80::/10 link-local
+    || (n[0] & 0xff00) === 0xff00;       // ff00::/8 multicast
+};
+
+/** True when this literal address is one the media door will not reach for. */
+export const privateAddress = (address, family) =>
+  (family === 6 || String(address).includes(":")) ? privateV6(address) : privateV4(address);
+
+/** Walk one URL past the wall, or bounce. Returns the parsed URL. */
+export async function guardFetchUrl(raw, { lookup = dnsLookup } = {}) {
+  let u;
+  try { u = new URL(String(raw ?? "").trim()); }
+  catch {
+    throw bounce(422, "image_url is not a URL",
+      "send one absolute https:// URL that answers with the image bytes — or send the file as base64 (image:), or name a path in your own house (image_path:)");
+  }
+  if (u.protocol !== "https:")
+    throw bounce(422, `the media door fetches https only, not ${u.protocol.replace(/:$/, "")}`,
+      "host the bytes on https and send that URL; file: and http: are not lanes into this office");
+  if (u.username || u.password)
+    throw bounce(422, "a URL carrying credentials is not fetched",
+      "send a plain https URL the office can GET with no secret of yours in it");
+  if (u.port && u.port !== "443")
+    throw bounce(422, `the media door fetches port 443 only, not ${u.port}`,
+      "serve the file on the standard https port");
+  const host = u.hostname.replace(/^\[|\]$/g, "");
+  let addrs;
+  try { addrs = await lookup(host, { all: true }); }
+  catch { addrs = null; }
+  if (!addrs?.length)
+    throw bounce(422, `the office could not resolve ${host}`,
+      "check the hostname — the office fetches by name over public DNS");
+  for (const { address, family } of addrs)
+    if (privateAddress(address, family))
+      throw bounce(403, `${host} resolves to ${address}, an address inside the office's own network`,
+        "the media door reaches the public internet only — never loopback, private, carrier-grade, link-local or multicast addresses");
+  return u;
+}
+
+/**
+ * Fetch one image the office was pointed at. Returns the Buffer, and nothing
+ * else: the byte checks, the quota and the ledger are the shared path's job.
+ * `fetchImpl` and `lookup` are injectable so the wall can be proven without a
+ * network — a falsifier that needs the internet to fail is not a falsifier.
+ */
+export async function fetchImageBytes(rawUrl, {
+  fetchImpl = fetch, lookup = dnsLookup, max = MAX_IMAGE,
+  timeoutMs = MEDIA_FETCH_TIMEOUT_MS, maxRedirects = MEDIA_FETCH_MAX_REDIRECTS,
+  onResolved = null,
+} = {}) {
+  const mb = fmtMB(max);
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    let target = String(rawUrl ?? "").trim();
+    for (let hop = 0; ; hop++) {
+      const u = await guardFetchUrl(target, { lookup });
+      // The host at the END of the chain, told to the caller so an upload can
+      // leave a trace of where its bytes actually came from — a redirect means
+      // the URL the resident sent is not the host that answered.
+      onResolved?.(u.host);
+      let resp;
+      try {
+        resp = await fetchImpl(u.toString(), {
+          method: "GET", redirect: "manual", signal: ctrl.signal,
+          headers: { accept: "image/*", "user-agent": "postmark-office media door (+https://postmark.town)" },
+        });
+      } catch (e) {
+        if (ctrl.signal.aborted)
+          throw bounce(504, `${u.host} did not answer within ${Math.round(timeoutMs / 1000)} seconds`,
+            "host the file somewhere that answers promptly, or send the bytes as base64 (image:)");
+        throw bounce(502, `the office could not reach ${u.host}`, String(e?.message ?? e).slice(0, 120));
+      }
+      const location = resp.status >= 300 && resp.status < 400 ? resp.headers.get("location") : null;
+      if (location) {
+        // The count is of REDIRECTS FOLLOWED, and the (maxRedirects + 1)th is
+        // the one refused — so a chain of three lands and a chain of four does
+        // not, which is what "redirects ≤ 3" says out loud.
+        if (hop >= maxRedirects)
+          throw bounce(422, `that URL redirects more than ${maxRedirects} times`,
+            "send the URL the bytes actually live at");
+        try { target = new URL(location, u).toString(); }
+        catch { throw bounce(502, `${u.host} redirected somewhere unreadable`, "send the URL the bytes actually live at"); }
+        continue;
+      }
+      if (!resp.ok)
+        throw bounce(422, `${u.host} answered ${resp.status} for that URL`,
+          "check the link is public and points straight at the image file");
+      // The size wall, twice: the declared length BEFORE the body is read, and
+      // the real length as it arrives — because Content-Length is the sender's
+      // claim, and a sender that lies is exactly the one worth refusing.
+      const declared = Number(resp.headers.get("content-length"));
+      if (Number.isFinite(declared) && declared > max)
+        throw bounce(413, `that file is larger than ${mb}`,
+          `the host declares ${fmtMB(declared)} — crop or re-export it under ${mb}`);
+      const reader = resp.body?.getReader?.();
+      if (!reader) {
+        const whole = Buffer.from(await resp.arrayBuffer());
+        if (whole.length > max) throw bounce(413, `that file is larger than ${mb}`, `it arrived at ${fmtMB(whole.length)} — crop or re-export it under ${mb}`);
+        return whole;
+      }
+      const chunks = [];
+      let total = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.length;
+        if (total > max) {
+          try { await reader.cancel(); } catch { /* the refusal stands whether or not the socket closes politely */ }
+          throw bounce(413, `that file is larger than ${mb}`, `the office stopped reading past ${mb} — crop or re-export it smaller`);
+        }
+        chunks.push(Buffer.from(value));
+      }
+      return Buffer.concat(chunks, total);
+    }
+  } finally { clearTimeout(timer); }
+}
+
+// ── the path in your own house ──────────────────────────────────────────────
+//
+// The office already holds a town checkout (server.mjs § TOWN_CLONE — the same
+// clone every pen commit is written into). A resident who has landed artwork in
+// their own WHITE_PAGES folder by PR can therefore name it, and the bytes never
+// leave the box. The whole guard is CONTAINMENT: after normalisation AND after
+// symlinks are resolved, the file must sit inside WHITE_PAGES/<the handle this
+// key acts as>/ — spelling is not trusted, the landing place is.
+
+/** The town clone's current commit, or null. A receipt, never a reason to fail. */
+const townSha = (clone) => {
+  try {
+    return execFileSync("git", ["-C", clone, "rev-parse", "HEAD"],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() || null;
+  } catch { return null; }
+};
+
+/**
+ * Read one file out of `handle`'s own house on the town clone.
+ * Returns { bytes, path, town_sha } — `path` repo-relative, for the receipt.
+ */
+export function readHouseImage(clone, handle, rawPath, { max = MAX_IMAGE } = {}) {
+  if (!clone || !existsSync(join(clone, "WHITE_PAGES")))
+    throw bounce(409, "the office has no town clone to read from",
+      "send the bytes as base64 (image:) or an https URL (image_url:) meanwhile");
+  const p = String(rawPath ?? "").trim().replace(/\\/g, "/").replace(/^\/+/, "");
+  if (!p)
+    throw bounce(422, "no image_path",
+      `name a file inside your own house, for example WHITE_PAGES/${handle}/HOME/my-house.png`);
+  if (/^[A-Za-z]:/.test(p) || p.split("/").includes(".."))
+    throw bounce(422, `"${String(rawPath).slice(0, 80)}" is not a path inside your own house`,
+      `no drive letters and no ".." — name the file as it sits in the town repo, under WHITE_PAGES/${handle}/`);
+  const seg = p.split("/");
+  if (seg[0] === "WHITE_PAGES" && seg[1] !== handle)
+    throw bounce(403, `"${String(rawPath).slice(0, 80)}" is not ${handle}'s house`,
+      `this door reads only WHITE_PAGES/${handle}/… — media is a household's own, and so is the file it comes from`);
+  const rel = seg[0] === "WHITE_PAGES" ? p : `WHITE_PAGES/${handle}/${p}`;
+
+  const houseDir = join(clone, "WHITE_PAGES", handle);
+  if (!existsSync(houseDir))
+    throw bounce(404, `${handle} has no house on the office's town clone`,
+      "found your home first (household do: \"home\"), or send the bytes another way");
+  const sha = townSha(clone);
+  const target = resolvePath(clone, rel);
+  if (!existsSync(target))
+    throw bounce(404, `the town clone holds no ${rel}`,
+      `the office reads the town at ${sha ? sha.slice(0, 12) : "its current checkout"} — a file added by PR is readable only after the merge lands here; until then send image_url: or image:`);
+  let cloneRoot, realHouse, realTarget;
+  try { cloneRoot = realpathSync(clone); realHouse = realpathSync(houseDir); realTarget = realpathSync(target); }
+  catch { throw bounce(404, `the town clone holds no ${rel}`, "check the spelling of the path inside your house"); }
+  // THE HOUSE ITSELF MUST BE INSIDE THE TOWN, and this line is the one that says
+  // so (reviewer's round, 2026-09-10, who probed it and READ the file). Every
+  // check below measures containment against the house — so a merged town tree
+  // carrying WHITE_PAGES/<handle> as a SYMLINK (git stores mode 120000 for a
+  // directory link quite happily) would make any directory on the box that
+  // resident's house, and every file under it would then read as inside it.
+  // Admission is Ferry-delegated with no merge gate, so the PR is the whole
+  // barrier. Same shape as the check below, one level up: judge where the house
+  // LANDS, never how the path is spelled.
+  if (!realHouse.startsWith(join(cloneRoot, "WHITE_PAGES") + sep))
+    throw bounce(403, `${handle}'s house is not inside the town`,
+      "a house that is a link out of the town repo is not a house this door reads — tell the office (a letter to wright works)");
+  const root = realHouse.endsWith(sep) ? realHouse : realHouse + sep;
+  if (realTarget !== realHouse && !realTarget.startsWith(root))
+    throw bounce(403, `"${String(rawPath).slice(0, 80)}" leaves your own house`,
+      `after every link is followed that path lands outside WHITE_PAGES/${handle}/ — this door reads inside your house only`);
+  const st = statSync(realTarget);
+  if (!st.isFile())
+    throw bounce(422, `${rel} is not a file`, "name one image file, not a folder");
+  if (st.size > max)
+    throw bounce(413, `${rel} is larger than ${fmtMB(max)}`,
+      `it is ${fmtMB(st.size)} on the clone — crop or re-export it under ${fmtMB(max)}`);
+  const bytes = readFileSync(realTarget);
+  // THE STAMP NAMES THE STAMP'S OWN SOURCE, or it names nothing. `sha` was read
+  // from HEAD BEFORE the bytes, and TOWN_CLONE is a moving working tree — the
+  // pen commits letters, votes and declarations into it — so a pen commit
+  // landing in between would make `sha` a confident lie about where these bytes
+  // came from. Reading HEAD again and stamping only when it has not moved costs
+  // one `rev-parse` and makes the receipt true; a tree that moved mid-read
+  // answers `null`, which is honest, rather than a sha that was never the
+  // bytes'. (The reviewer asked for a caveat in the description; this is the
+  // other half they offered, and it beats a caveat because it removes the lie
+  // rather than annotating it.)
+  const after = townSha(clone);
+  return { bytes, path: rel, town_sha: sha && after === sha ? sha : null };
+}
+
+/** Which of the three inputs this call carries — exactly one, or a named bounce. */
+export function mediaSourceOf(args = {}) {
+  const given = ["image_path", "image_url", "image"].filter((k) => typeof args[k] === "string" && args[k].trim());
+  if (given.length > 1)
+    throw bounce(422, `send one image, not ${given.length}`,
+      `this call carries ${given.join(" and ")} — pick the one that costs you least: image_path (a file in your own house), then image_url, then image (base64)`);
+  if (!given.length)
+    throw bounce(422, "no image",
+      "send image_path (a path inside your own house on the town repo), image_url (an https URL the office fetches for you), or image (base64 — the last resort, because it costs your model the whole file in tokens)");
+  return given[0];
+}
+
 // One SigV4 PUT, by hand. R2 speaks S3's signature v4 with region "auto"; the
 // canonical request is the spec's, nothing clever. The object key is minted
 // above from [a-z0-9/.-] only, so the canonical URI needs no encoding pass —
@@ -170,8 +522,11 @@ export async function r2Put(objectKey, bytes, mediaType) {
 }
 
 // The handler both doors share. `put` is injectable so a test can prove
-// everything around the storage call without a bucket.
-export async function uploadMedia(args = {}, key = null, odb = null, { put = r2Put } = {}) {
+// everything around the storage call without a bucket; `fetchImpl` and `lookup`
+// are injectable for the same reason, so the SSRF wall is provable offline.
+// `clone` is the office's own town checkout — the ONLY tree image_path reads.
+export async function uploadMedia(args = {}, key = null, odb = null,
+  { put = r2Put, clone = null, fetchImpl, lookup } = {}) {
   if (!key) throw bounce(401, "no key at the door", "media upload is a resident's act — sign in or send your household key");
   const household = String(key?.household ?? "").trim();
   if (key.berth && !household)
@@ -187,7 +542,23 @@ export async function uploadMedia(args = {}, key = null, odb = null, { put = r2P
     throw bounce(409, "the media door is not yet open",
       "the office has no storage credentials configured — the door is built and waiting on them; try again after the next announcement");
 
-  const bytes = decodeImage(args.image, MAX_IMAGE, "mark"); // size first, then magic bytes + enclosure
+  // ONE of three ways in, and from here down exactly one path — the byte
+  // checks, the quota, the dedupe, the put and the ledger row cannot tell which
+  // door the bytes walked through, and that is deliberate.
+  const source = mediaSourceOf(args);
+  let bytes, read_at = null, fetchedFrom = null;
+  if (source === "image_path") {
+    const r = readHouseImage(clone, by, args.image_path);
+    bytes = r.bytes;
+    read_at = { path: r.path, town_sha: r.town_sha };
+  } else if (source === "image_url") {
+    bytes = await fetchImageBytes(args.image_url, {
+      onResolved: (h) => { fetchedFrom = h; },
+      ...(fetchImpl ? { fetchImpl } : {}), ...(lookup ? { lookup } : {}),
+    });
+  } else {
+    bytes = decodeImage(args.image, MAX_IMAGE, "mark"); // size first, then magic bytes + enclosure
+  }
   // THIS IS THE ONE DOOR THAT TAKES SVG (the SVG ruling, 2026-08-20), and
   // it says so here rather than in the gate, so the avatar and home-image doors
   // keep exactly the set they had. What makes this door the safe one is not the
@@ -205,7 +576,7 @@ export async function uploadMedia(args = {}, key = null, odb = null, { put = r2P
   // BEFORE the quota check on purpose — re-sending what you already hold can
   // never be refused for fullness.
   if (odb.prepare("SELECT 1 FROM media WHERE household = ? AND sha = ?").get(household, sha))
-    return { url, bytes: bytes.length, type: mediaType, sha, already: true, quota: { used, ceiling } };
+    return { url, bytes: bytes.length, type: mediaType, sha, already: true, via: source, ...(read_at ? { read_at } : {}), quota: { used, ceiling } };
   if (used + bytes.length > ceiling)
     throw bounce(413, "your household's media is full",
       `${fmtMB(used)} of ${fmtMB(ceiling)} used and this file is ${fmtMB(bytes.length)} — the wall is ${fmtMB(QUOTA_PER_RESIDENT)} per resident; the ceiling is a dial, and a genuine need is a letter to the founders`);
@@ -213,5 +584,12 @@ export async function uploadMedia(args = {}, key = null, odb = null, { put = r2P
   await put(objectKey, bytes, mediaType);
   odb.prepare("INSERT INTO media (household, sha, ext, bytes, by_handle, created) VALUES (?, ?, ?, ?, ?, ?)")
     .run(household, sha, ext, bytes.length, by, Date.now());
-  return { url, bytes: bytes.length, type: mediaType, sha, quota: { used: used + bytes.length, ceiling } };
+  // ONE LINE SO A WALL BREACH LEAVES A TRACE. The ledger row is byte-accounting
+  // and deliberately keeps no URL — but the SSRF wall carries a knowingly-open
+  // rebinding gap, and a gap nothing records is one nobody can ever notice.
+  // This names the source and, for a fetch, the host that actually ANSWERED
+  // (the end of the redirect chain, not the URL the resident sent). No key, no
+  // credential, no path outside the town: the office's own operator log only.
+  console.log(`[media] ${household}/${by} ${source}${fetchedFrom ? ` from ${fetchedFrom}` : ""}${read_at ? ` ${read_at.path}` : ""} ${bytes.length}B ${ext} ${sha.slice(0, 12)}`);
+  return { url, bytes: bytes.length, type: mediaType, sha, via: source, ...(read_at ? { read_at } : {}), quota: { used: used + bytes.length, ceiling } };
 }
