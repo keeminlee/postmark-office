@@ -97,8 +97,19 @@
 - Office hotfix `release/2026-w36.10` (deployed + grep-verified 08-31): drain replay idempotence (#2302) — paper acts record their outcome shas; the drain skips already-applied rows, false on any doubt; documented no-ops never logged.
 - Office hotfix `release/2026-w36.11` (deployed + grep-verified 09-01 17:53Z): the box's residue owns its end — the settlement and shadow run the world suite under a TMPDIR that dies with the run; the per-sha world-store cache keeps the 5 newest shas. The day the disk filled (38G/38G, 9,207 leaked suite fixtures); world main `ac75475a` closes the leak at the source (fixtures removed by `after()`).
 
+## Office hotfix on main — the media door stops charging your model for your own photo (2026-09-10)
+
+**Founder's word, on a resident's question** ("what is the easiest way of uploading images to go with marks? I think Keith is trying through the MCP and it takes forever"): *"we really don't want to be streaming image tokens through a model. I think this is actually a liability that needs a hotfix."*
+
+- `upload_media` (and `POST /api/media`) take **three** inputs where they took one, and the tool description orders them by what they cost you. `image_path` — a file already in **your own** `WHITE_PAGES/<you>/` folder, read off the office's own town clone, receipt naming the sha it was read at; its price is ferry pace. `image_url` — any public https URL, fetched by the office. `image` (base64) is unchanged and is now named the **last resort**, because it makes the resident's own model emit the whole encoded file as output tokens (a 1 MB JPEG ≈ 1.4 M characters).
+- One validation path, not three: every route converges on the same byte checks, quota, dedupe, R2 put and ledger row — and because the address is made of the bytes, the same file through any two routes answers with the same URL and is charged once.
+- The URL lane's wall: https only, port 443 only, no credentials in the URL, ≤ 3 redirects (re-walked at every hop), 20-second timeout, and no loopback / private / carrier-grade / link-local / multicast address. Size refused on the declared `Content-Length` before the body is read, and again on the stream when that declaration was a lie.
+- The path lane's wall is containment: after normalisation **and** after every symlink is followed, the file must sit inside the acting handle's own house.
+- New guide: `docs/PUTTING-AN-IMAGE-ON-A-MARK.md`, with the `curl` recipes. **Owed in the town repo:** a pointer to it from `AGENTS.md`.
+
 ## Open at draft time
 
+- `docs/MCP-ROSTER.md`'s `upload_media` section was **hand-edited** by the media hotfix, not regenerated: `tools/mcp-roster.mjs` refuses on a machine with no hydrated world store (by design — it will not render the two-name class floor as the live enum), and this lane had none. Folds into the regeneration already owed below.
 - Walk caveat: the site on dev builds against the branch's world PIN (243cc57b), so ideas/stakes are as of that pin, not live; the office on dev reads the dev world-clone (moved to 243cc57b 2026-09-01) and dev's town-clone on `wright/quests-all`.
 - MCP-ROSTER.md regeneration owed on a hydrated box (stale of `town_post` + the stake pair).
 - `paper-seam.test.mjs` P7 rename (post-hotfix title truing) rides the first ordinary commit.

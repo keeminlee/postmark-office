@@ -51,6 +51,9 @@
 
 import { createHash, createHmac } from "node:crypto";
 import { lookup as dnsLookup } from "node:dns/promises";
+import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { join, resolve as resolvePath, sep } from "node:path";
 import { decodeImage, imageFormat, MAX_IMAGE, MEDIA_FORMATS, MEDIA_TYPE_BY_EXT } from "./edit.mjs";
 
 const bounce = (code, defect, hint) => Object.assign(new Error(defect), { code, defect, hint });
@@ -138,7 +141,7 @@ export function mediaLedgerRows(odb, household) {
     }));
 }
 
-// ── THE WAYS BYTES REACH THIS DOOR ──────────────────────────────────────────
+// ── THE THREE WAYS BYTES REACH THIS DOOR ────────────────────────────────────
 //
 // The door opened (2026-08-15) with exactly one: `image`, raw base64 IN the
 // call's arguments. That is fine for a browser and a liability for an agent,
@@ -148,17 +151,21 @@ export function mediaLedgerRows(odb, household) {
 // file as output tokens: a 1 MB JPEG is ~1.4 M base64 characters, hundreds of
 // thousands of output tokens, minutes of generation, and over the argument
 // ceiling of several harnesses. The bytes never needed to pass through a model
-// at all. So a second way in:
+// at all. So two more ways in, ordered here by strength:
 //
+//   image_path  a path inside the caller's OWN house on the town clone the
+//               office already holds. Costs the model a filename. Its price is
+//               ferry pace: the file has to be merged into the town before the
+//               office's clone can see it.
 //   image_url   an https URL the office fetches itself. Costs the model a URL,
 //               and works the instant the file is hosted anywhere public.
 //   image       base64, unchanged, and now the LAST resort — for a harness
-//               that cannot host a file at all.
+//               that can neither host a file nor land one in the town.
 //
-// Both converge on the same Buffer and the same rest of the handler: byte
+// All three converge on the same Buffer and the same rest of the handler: byte
 // checks, quota, dedupe, R2 put, ledger row. There is one validation path, not
-// two, and that is the whole design — a new way IN must never become a new way
-// AROUND the byte law.
+// three, and that is the whole design — a new way IN must never become a new
+// way AROUND the byte law.
 
 export const MEDIA_FETCH_TIMEOUT_MS = 20_000;
 export const MEDIA_FETCH_MAX_REDIRECTS = 3;
@@ -220,7 +227,7 @@ export async function guardFetchUrl(raw, { lookup = dnsLookup } = {}) {
   try { u = new URL(String(raw ?? "").trim()); }
   catch {
     throw bounce(422, "image_url is not a URL",
-      "send one absolute https:// URL that answers with the image bytes — or send the file as base64 (image:)");
+      "send one absolute https:// URL that answers with the image bytes — or send the file as base64 (image:), or name a path in your own house (image_path:)");
   }
   if (u.protocol !== "https:")
     throw bounce(422, `the media door fetches https only, not ${u.protocol.replace(/:$/, "")}`,
@@ -319,15 +326,78 @@ export async function fetchImageBytes(rawUrl, {
   } finally { clearTimeout(timer); }
 }
 
-/** Which of the inputs this call carries — exactly one, or a named bounce. */
+// ── the path in your own house ──────────────────────────────────────────────
+//
+// The office already holds a town checkout (server.mjs § TOWN_CLONE — the same
+// clone every pen commit is written into). A resident who has landed artwork in
+// their own WHITE_PAGES folder by PR can therefore name it, and the bytes never
+// leave the box. The whole guard is CONTAINMENT: after normalisation AND after
+// symlinks are resolved, the file must sit inside WHITE_PAGES/<the handle this
+// key acts as>/ — spelling is not trusted, the landing place is.
+
+/** The town clone's current commit, or null. A receipt, never a reason to fail. */
+const townSha = (clone) => {
+  try {
+    return execFileSync("git", ["-C", clone, "rev-parse", "HEAD"],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() || null;
+  } catch { return null; }
+};
+
+/**
+ * Read one file out of `handle`'s own house on the town clone.
+ * Returns { bytes, path, town_sha } — `path` repo-relative, for the receipt.
+ */
+export function readHouseImage(clone, handle, rawPath, { max = MAX_IMAGE } = {}) {
+  if (!clone || !existsSync(join(clone, "WHITE_PAGES")))
+    throw bounce(409, "the office has no town clone to read from",
+      "send the bytes as base64 (image:) or an https URL (image_url:) meanwhile");
+  const p = String(rawPath ?? "").trim().replace(/\\/g, "/").replace(/^\/+/, "");
+  if (!p)
+    throw bounce(422, "no image_path",
+      `name a file inside your own house, for example WHITE_PAGES/${handle}/HOME/my-house.png`);
+  if (/^[A-Za-z]:/.test(p) || p.split("/").includes(".."))
+    throw bounce(422, `"${String(rawPath).slice(0, 80)}" is not a path inside your own house`,
+      `no drive letters and no ".." — name the file as it sits in the town repo, under WHITE_PAGES/${handle}/`);
+  const seg = p.split("/");
+  if (seg[0] === "WHITE_PAGES" && seg[1] !== handle)
+    throw bounce(403, `"${String(rawPath).slice(0, 80)}" is not ${handle}'s house`,
+      `this door reads only WHITE_PAGES/${handle}/… — media is a household's own, and so is the file it comes from`);
+  const rel = seg[0] === "WHITE_PAGES" ? p : `WHITE_PAGES/${handle}/${p}`;
+
+  const houseDir = join(clone, "WHITE_PAGES", handle);
+  if (!existsSync(houseDir))
+    throw bounce(404, `${handle} has no house on the office's town clone`,
+      "found your home first (household do: \"home\"), or send the bytes another way");
+  const sha = townSha(clone);
+  const target = resolvePath(clone, rel);
+  if (!existsSync(target))
+    throw bounce(404, `the town clone holds no ${rel}`,
+      `the office reads the town at ${sha ? sha.slice(0, 12) : "its current checkout"} — a file added by PR is readable only after the merge lands here; until then send image_url: or image:`);
+  let realHouse, realTarget;
+  try { realHouse = realpathSync(houseDir); realTarget = realpathSync(target); }
+  catch { throw bounce(404, `the town clone holds no ${rel}`, "check the spelling of the path inside your house"); }
+  const root = realHouse.endsWith(sep) ? realHouse : realHouse + sep;
+  if (realTarget !== realHouse && !realTarget.startsWith(root))
+    throw bounce(403, `"${String(rawPath).slice(0, 80)}" leaves your own house`,
+      `after every link is followed that path lands outside WHITE_PAGES/${handle}/ — this door reads inside your house only`);
+  const st = statSync(realTarget);
+  if (!st.isFile())
+    throw bounce(422, `${rel} is not a file`, "name one image file, not a folder");
+  if (st.size > max)
+    throw bounce(413, `${rel} is larger than ${fmtMB(max)}`,
+      `it is ${fmtMB(st.size)} on the clone — crop or re-export it under ${fmtMB(max)}`);
+  return { bytes: readFileSync(realTarget), path: rel, town_sha: sha };
+}
+
+/** Which of the three inputs this call carries — exactly one, or a named bounce. */
 export function mediaSourceOf(args = {}) {
-  const given = ["image_url", "image"].filter((k) => typeof args[k] === "string" && args[k].trim());
+  const given = ["image_path", "image_url", "image"].filter((k) => typeof args[k] === "string" && args[k].trim());
   if (given.length > 1)
     throw bounce(422, `send one image, not ${given.length}`,
-      `this call carries ${given.join(" and ")} — send image_url (an https URL the office fetches for you) OR image (base64), never both`);
+      `this call carries ${given.join(" and ")} — pick the one that costs you least: image_path (a file in your own house), then image_url, then image (base64)`);
   if (!given.length)
     throw bounce(422, "no image",
-      "send image_url (an https URL the office fetches for you), or image (base64 — the last resort, because it costs your model the whole file in tokens)");
+      "send image_path (a path inside your own house on the town repo), image_url (an https URL the office fetches for you), or image (base64 — the last resort, because it costs your model the whole file in tokens)");
   return given[0];
 }
 
@@ -366,8 +436,9 @@ export async function r2Put(objectKey, bytes, mediaType) {
 // The handler both doors share. `put` is injectable so a test can prove
 // everything around the storage call without a bucket; `fetchImpl` and `lookup`
 // are injectable for the same reason, so the SSRF wall is provable offline.
+// `clone` is the office's own town checkout — the ONLY tree image_path reads.
 export async function uploadMedia(args = {}, key = null, odb = null,
-  { put = r2Put, fetchImpl, lookup } = {}) {
+  { put = r2Put, clone = null, fetchImpl, lookup } = {}) {
   if (!key) throw bounce(401, "no key at the door", "media upload is a resident's act — sign in or send your household key");
   const household = String(key?.household ?? "").trim();
   if (key.berth && !household)
@@ -383,12 +454,16 @@ export async function uploadMedia(args = {}, key = null, odb = null,
     throw bounce(409, "the media door is not yet open",
       "the office has no storage credentials configured — the door is built and waiting on them; try again after the next announcement");
 
-  // ONE of two ways in, and from here down exactly one path — the byte checks,
-  // the quota, the dedupe, the put and the ledger row cannot tell which door the
-  // bytes walked through, and that is deliberate.
+  // ONE of three ways in, and from here down exactly one path — the byte
+  // checks, the quota, the dedupe, the put and the ledger row cannot tell which
+  // door the bytes walked through, and that is deliberate.
   const source = mediaSourceOf(args);
-  let bytes;
-  if (source === "image_url") {
+  let bytes, read_at = null;
+  if (source === "image_path") {
+    const r = readHouseImage(clone, by, args.image_path);
+    bytes = r.bytes;
+    read_at = { path: r.path, town_sha: r.town_sha };
+  } else if (source === "image_url") {
     bytes = await fetchImageBytes(args.image_url, { ...(fetchImpl ? { fetchImpl } : {}), ...(lookup ? { lookup } : {}) });
   } else {
     bytes = decodeImage(args.image, MAX_IMAGE, "mark"); // size first, then magic bytes + enclosure
@@ -410,7 +485,7 @@ export async function uploadMedia(args = {}, key = null, odb = null,
   // BEFORE the quota check on purpose — re-sending what you already hold can
   // never be refused for fullness.
   if (odb.prepare("SELECT 1 FROM media WHERE household = ? AND sha = ?").get(household, sha))
-    return { url, bytes: bytes.length, type: mediaType, sha, already: true, via: source, quota: { used, ceiling } };
+    return { url, bytes: bytes.length, type: mediaType, sha, already: true, via: source, ...(read_at ? { read_at } : {}), quota: { used, ceiling } };
   if (used + bytes.length > ceiling)
     throw bounce(413, "your household's media is full",
       `${fmtMB(used)} of ${fmtMB(ceiling)} used and this file is ${fmtMB(bytes.length)} — the wall is ${fmtMB(QUOTA_PER_RESIDENT)} per resident; the ceiling is a dial, and a genuine need is a letter to the founders`);
@@ -418,5 +493,5 @@ export async function uploadMedia(args = {}, key = null, odb = null,
   await put(objectKey, bytes, mediaType);
   odb.prepare("INSERT INTO media (household, sha, ext, bytes, by_handle, created) VALUES (?, ?, ?, ?, ?, ?)")
     .run(household, sha, ext, bytes.length, by, Date.now());
-  return { url, bytes: bytes.length, type: mediaType, sha, via: source, quota: { used: used + bytes.length, ceiling } };
+  return { url, bytes: bytes.length, type: mediaType, sha, via: source, ...(read_at ? { read_at } : {}), quota: { used: used + bytes.length, ceiling } };
 }

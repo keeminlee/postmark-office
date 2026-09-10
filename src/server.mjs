@@ -1737,20 +1737,21 @@ const server = createServer((req, res) => {
     // avatar door's; the 3 MB body cap fits a 1.5 MB image's base64 enclosure,
     // same arithmetic as the other image doors.
     //
-    // TWO INPUTS since 2026-09-10 (media.mjs § the ways bytes reach this door):
-    // image_url (the office fetches it, past an SSRF wall) and image (base64,
-    // now the last resort). The cap above is base64's alone — an image_url call
-    // sends a body of a few hundred bytes.
+    // THREE INPUTS since 2026-09-10 (media.mjs § the three ways bytes reach
+    // this door): image_path (a file in the caller's own house on TOWN_CLONE),
+    // image_url (the office fetches it, past an SSRF wall), image (base64, now
+    // the last resort). The cap above is base64's alone — the other two send a
+    // body of a few hundred bytes.
     if (req.method === "POST" && path === "/media") {
       if (!key) return bounce(res, 401, "an upload needs a key", "media upload is a resident's act — send your household key as a Bearer token");
       readJsonBody(req, 3_000_000).then(async (raw) => {
         try {
           const payload = JSON.parse(raw || "{}");
-          const result = await uploadMedia(payload, key, odb);
+          const result = await uploadMedia(payload, key, odb, { clone: TOWN_CLONE });
           return j(res, 200, result);
         } catch (e) {
           if (e.code) return bounce(res, e.code, e.defect, e.hint);
-          if (e instanceof SyntaxError) return bounce(res, 400, "body is not JSON", '{"image_url"|"image": "…", "by"?: "<handle>"}');
+          if (e instanceof SyntaxError) return bounce(res, 400, "body is not JSON", '{"image_path"|"image_url"|"image": "…", "by"?: "<handle>"}');
           return bounce(res, 500, "the office tripped", String(e?.message ?? e).slice(0, 200));
         }
       }).catch(() => bounce(res, 400, "could not read the body", "send a JSON object"));
