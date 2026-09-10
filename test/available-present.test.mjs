@@ -3,9 +3,15 @@
 // The derived is computed in voices.mjs (available.test.mjs falsifies the
 // derivation itself). This file falsifies its ARRIVAL: that the presence layer
 // carries it beside `standing` and `moving`, that it carries NOTHING when no
-// resolver is injected — which is the whole of Lane B's guarantee, since the
-// dispatcher reads near() and must see the row it has always seen — and that it
-// never leaks into the mark channels.
+// resolver is injected — and that it never leaks into the mark channels.
+//
+// ⚑ THE ORIGINAL REASON FOR THE NO-RESOLVER GUARANTEE IS PARKED, and the
+// guarantee is not. It was written for Lane B's wake dispatcher, which read
+// near() and had to see the row it had always seen; that dispatcher was parked
+// with the subscription on 2026-09-10 (world#20; office
+// `wright/parked-proposals-office`). Every other caller of near() still has the
+// same claim on an unchanged row, so the falsifier below stands on its own
+// feet — it is now a plain no-regression fence rather than one lane's promise.
 //
 //   the room, answered   iris stands 30 m east and has listened; wright stands
 //                        at the origin and has not. Same position, same

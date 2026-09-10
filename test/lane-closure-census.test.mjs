@@ -62,10 +62,20 @@ test("EACH CHECK'S VERDICT COMES FROM ITS OWN FINDINGS: an unruled journal class
     "and 0b's clause carries 0b's verdict");
 });
 
+// ⚑ THE FIXTURE'S CLASSES CHANGED 2026-09-10, and the test did not. It used to
+// name `gathering` and `handoff` — two classes CLASS_LANE_OF ruled before their
+// first row existed, on this file's own early-naming discipline. Both were
+// parked with their law (world#15 and #16; office `wright/parked-proposals-office`)
+// and left CLASS_LANE_OF with them, so a fixture naming them would now be
+// asserting that the census rules a class nothing can write. `frame` and
+// `stance` are live journalled classes and ask the same question of the same
+// table. The COUNT is deliberately still four: the sentence under test is the
+// per-check disclosure, and changing its arity would have been a second edit
+// hiding inside a first.
 test("a journal whose every class is ruled says so, per check, and exits 0", () => {
-  const r = census("--db", journalWith("ruled.db", ["mark", "voice", "gathering", "handoff"]));
+  const r = census("--db", journalWith("ruled.db", ["mark", "voice", "frame", "stance"]));
   assert.equal(r.code, 0, `stderr: ${r.err}`);
-  assert.match(r.out, /check 0 asked \d+ dispatchable verb\(s\) against LANE_OF — every one is named; check 0b asked 4 journal class\(es\) against CLASS_LANE_OF \(mark, voice, gathering, handoff\) — every one is ruled/);
+  assert.match(r.out, /check 0 asked \d+ dispatchable verb\(s\) against LANE_OF — every one is named; check 0b asked 4 journal class\(es\) against CLASS_LANE_OF \(mark, voice, frame, stance\) — every one is ruled/);
 });
 
 test("GIVEN BUT UNREADABLE IS A REFUSAL, not 'no --db was given' — a typo'd path exits 2 and names itself", () => {

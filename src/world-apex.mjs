@@ -72,26 +72,14 @@ import { servedEnterExitLedger } from "./enter-exit-ledger.mjs";
 // POS-5's consent verb. STANCE_TOOLS ride the schema lookup without joining
 // the flat tool list, exactly as CROSSING_TOOLS do and for the same reason.
 import { ACTION_STANCE, STANCE_TOOLS, declareStanceViaOffice, readNeverPerforms, stanceShadow, stancesBlock } from "./world-stance.mjs";
-// Rei-1's subscription (world#18, PROPOSED). SUBSCRIBE_TOOLS ride the schema
-// lookup without joining the flat tool list — the same precedent again, and
-// here it also keeps the office from advertising a public tool for a clause the
-// founder has not ruled on.
-import {
-  ACTION_SUBSCRIBE, ACTION_UNSUBSCRIBE, SUBSCRIBE_TOOLS,
-  subscribeReadNeverPerforms, subscribeViaOffice, subscriptionShadow, unsubscribeViaOffice,
-} from "./subscriptions.mjs";
-// Rei-3's gathering (world#15, PROPOSED) and the handoff stacked on it
-// (world#16). GATHER_TOOLS and HAND_TO_HUMAN_TOOLS ride the schema lookup
-// without joining the flat tool list — the SUBSCRIBE_TOOLS precedent, for the
-// same reason: the office does not advertise a public tool for a clause the
-// founder has not ruled on.
-import {
-  ACTION_GATHER, GATHER_TOOLS, gatherReadNeverPerforms, gatherViaOffice, gatheringShadow,
-} from "./gatherings.mjs";
-import {
-  ACTION_HAND_TO_HUMAN, HAND_TO_HUMAN_TOOLS,
-  handToHumanViaOffice, handoffReadNeverPerforms, handoffShadow, seatFromHandoff, standingHandoffFor,
-} from "./handoff.mjs";
+// ⚑ PARKED 2026-09-10 (the founder's word): the subscription (world#20), the
+// gathering (world#15) and the handoff (world#16) were three finished modules
+// imported here against law that was never ruled. They are held whole on office
+// branch `wright/parked-proposals-office` and shelved by name in the world
+// repo's LOGOS/PROPOSED.md, which carries the road back — the founder's ruling
+// on the clause, then the grant on the resident class, then the office. Nothing
+// here was reachable: the resident class grants no `subscribe`, `gather` or
+// `hand-to-human`, so no resident could open these doors on any day they stood.
 import { callHoldTool, holdingsOf, liveHolder } from "./world-hold.mjs";
 import { openDynamic, openDynamicReadOnly } from "./dynamic-store.mjs";
 // ⚑ THE READ OPENER (runbook DEC-4, G3, 2026-09-08). Four functions in this
@@ -752,167 +740,6 @@ export function portalBlockAt(db, spineIds = []) {
 export const declareStanceAtOffice = (args, key) =>
   declareStanceViaOffice(WORLD_CLONE, args, key, { witnessStamp, crossing: currentCrossing() });
 
-// ── THE SUBSCRIPTION'S DIALS, READ OFF THE MARK ─────────────────────────────
-//
-// `ttl_max_h` and `earshot_max_m` live on `the-town/subscription` (world#18).
-// They are READ, never restated: a cap this file spelled out would be a second
-// copy of a number the town declared, and dec18-parity measured what a second
-// copy costs — a comparison drifted from the gate's in a day and proposed 466
-// amends where the gate reported 15.
-//
-// The store may not hold the class at all — #18 is PROPOSED and the office
-// builds against a world train that does not carry it — so this returns null
-// and the door falls back to the same numbers with `from:` saying it did. A cap
-// that came from a default is not a cap the town declared, and the resident is
-// owed the difference in the receipt.
-export function subscriptionDials() {
-  const store = openStore();
-  try { return residueOf(store.db, "the-town/subscription")?.dials ?? null; }
-  catch { return null; }
-  finally { try { store.db?.close(); } catch { /* already gone */ } }
-}
-
-const subscribeAtOffice = (args, key) =>
-  subscribeViaOffice(args, key, { witnessStamp, crossing: currentCrossing(), dials: subscriptionDials });
-const unsubscribeAtOffice = (args, key) =>
-  unsubscribeViaOffice(args, key, { witnessStamp, crossing: currentCrossing() });
-
-/** The gathering class's dials, off the record. `subscriptionDials`'s shape, one class over. */
-export function gatheringDials() {
-  const store = openStore();
-  try { return residueOf(store.db, "the-town/gathering")?.dials ?? null; }
-  catch { return null; }
-  finally { try { store.db?.close(); } catch { /* already gone */ } }
-}
-
-/** The handoff class's dials, off the record. */
-export function handoffDials() {
-  const store = openStore();
-  try { return residueOf(store.db, "the-town/handoff")?.dials ?? null; }
-  catch { return null; }
-  finally { try { store.db?.close(); } catch { /* already gone */ } }
-}
-
-/**
- * The `gather` rows this office can fold, or null when it cannot fold any.
- *
- * NULL AND AN EMPTY ARRAY ARE DIFFERENT ANSWERS and the door depends on the
- * difference: an empty log is "no gatherings stand", and null is "this office
- * cannot build the projection", which is what the shadow says out loud instead
- * of reporting an empty town. The subscription door learned the same shape and
- * says it in the same words.
- */
-async function gatherRows() {
-  try {
-    const { world2Enabled } = await import("./world2-acts.mjs");
-    // THE JOURNAL ARM, for the handoff door's reason one file over: an office
-    // not pointed at Postgres writes `gather` to the journal, and a projection
-    // that only ever read `acts` would answer that nothing was ever declared.
-    // A gathering is an INVITATION — the one act in this pair whose whole point
-    // is that other people can read it — so a town that could not read back its
-    // own invitations would be the quietest failure of the two.
-    if (!world2Enabled()) {
-      const { readJournal, journalRowAsAct } = await import("./world-journal.mjs");
-      const db = openDynamic();
-      try { return readJournal(db, { cls: "gathering" }).map(journalRowAsAct); }
-      finally { try { db.close(); } catch { /* already gone */ } }
-    }
-    const { officeRead } = await import("./world2-pen.mjs");
-    return await officeRead(async (client) => {
-      const { rows } = await client.query(
-        "SELECT id, at, actor, action, class, payload, household, at_anchor, at_dx, at_dy, witnesses, object FROM acts WHERE class = $1 AND action = $2 ORDER BY at ASC, id ASC",
-        ["gathering", ACTION_GATHER]);
-      return rows;
-    });
-  } catch { return null; }
-}
-
-const gatherAtOffice = (args, key) =>
-  gatherViaOffice(args, key, { witnessStamp, crossing: currentCrossing(), dials: gatheringDials, rows: gatherRows });
-const handToHumanAtOffice = (args, key) =>
-  handToHumanViaOffice(args, key, { witnessStamp, crossing: currentCrossing(), dials: handoffDials });
-
-/**
- * THE RECEIPT, assembled: the log window, the place, and the two dials.
- *
- * `receiptFor` is PURE and stays pure — it is handed rows, a mark and two
- * numbers, and derives the rest. Everything that touches a store is here, which
- * is what lets a falsifier drive real say payloads through the derivation and
- * assert the fence holds without a clone, a store or a world engine.
- *
- * The window is the gathering's own interval, asked of `acts` directly, because
- * a receipt reads what HAPPENED and the gathering's rows are only one class of
- * that. Null when the log cannot be read — the shadow says so rather than
- * publishing an empty room as a quiet evening.
- */
-async function gatheringReceipt(g) {
-  if (!g) return null;
-  try {
-    const { world2Enabled } = await import("./world2-acts.mjs");
-    if (!world2Enabled()) return null;
-    const [{ officeRead }, { receiptFor }, { worldMarkById, pointWithinMarkFn }, { SAY_DIALS }] = await Promise.all([
-      import("./world2-pen.mjs"), import("./gatherings.mjs"), import("./world.mjs"), import("./voices.mjs"),
-    ]);
-    const from = g.doors_open ?? g.start;
-    const to = g.end;
-    if (!from || !to) return null;
-    const rows = await officeRead(async (client) => {
-      const { rows: r } = await client.query(
-        "SELECT id, at, actor, action, class, payload, household, at_anchor, at_dx, at_dy, witnesses, object FROM acts WHERE at >= $1 AND at < $2 ORDER BY at ASC, id ASC",
-        [from, to]);
-      return r;
-    });
-    const { mark } = await worldMarkById(g.place);
-    const within = await pointWithinMarkFn();
-    const lull = SAY_DIALS?.conversation_lull_min ?? null;
-    return receiptFor(g, rows, {
-      place: mark,
-      pointWithinMark: within,
-      lullMin: lull?.value ?? null,
-      lullRead: lull?.read ?? null,
-    });
-  } catch { return null; }
-}
-
-/** This key's own handoff rows, for the shadow. Household-scoped at the SQL, in handoff.mjs. */
-const allHandoffRowsForKey = (key) => async () => {
-  try {
-    const { handoffRowsFor } = await import("./handoff.mjs");
-    return await handoffRowsFor(key);
-  } catch { return null; }
-};
-
-/**
- * The seat a live handoff makes, for the ONE predicate — or null.
- *
- * ⚑ ASKED ONLY OF A HUMAN, at both call sites, and that is a cost decision with
- * a law behind it: a handoff seats a HUMAN and nobody else, so asking it of a
- * resident would be a store read for an answer that could not change anything.
- * `phaseAt`'s note in this file is the same discipline: "an ordinary act pays
- * nothing for this".
- *
- * ⛔ THE SEAM (the office-halves review, repair 3 — the F12 residual). This
- * used to call the statically-imported `standingHandoffFor(key, { handle })`
- * and take no deps, so the apex's own seat reader — the function whose answer
- * the walk fence is guarded on — could not be driven without World 2.0 on and
- * a Postgres nobody has a lab copy of. `standingHandoffFor` already accepted
- * `read`, `env` and `now`; `deps` threads them through, and both call sites
- * hand it `ctx.handoff` so a harness can point the reader at a scratch journal
- * (`env: {}`) with hand-built rows. Production passes nothing and nothing
- * changes. Exported for the same reason: a test drives THIS function, not a
- * copy of it.
- */
-export async function handoffSeatFor(args, key, deps = {}) {
-  if (actorKindOf(args) !== "human") return null;
-  const live = await standingHandoffFor(key, {
-    handle: standingHandle(args, key),
-    ...(deps.env !== undefined ? { env: deps.env } : {}),
-    ...(deps.read !== undefined ? { read: deps.read } : {}),
-    ...(deps.now !== undefined ? { now: deps.now } : {}),
-  });
-  return seatFromHandoff(live);
-}
-
 // ── THE STANDING-SCOPED DOORS ───────────────────────────────────────────────
 //
 // An act whose grant hangs on a class that NOBODY IS and NOTHING SITES cannot
@@ -1053,40 +880,6 @@ const DISPATCH = {
   // — the split-brain this office keeps a museum of. ONE DERIVATION, TWO
   // DOORS, and here that is literally one function with two callers.
   [ACTION_STANCE]: { tool: "world_declare_stance", run: (args, key) => declareStanceAtOffice(args, key) },
-  // ── the subscription (Rei-1; world#18, PROPOSED) ──────────────────────────
-  //
-  // THESE TWO ROWS ARE UNREACHABLE UNTIL #18 MERGES, and that is the point of
-  // landing them first. `apexDo` admits an action when `gatherActions` returns
-  // it, and nothing on the world train grants `subscribe`, so today both rows
-  // are law-less machinery: a resident asking for the act gets the ordinary
-  // "afforded nowhere in the world" bounce and never reaches here.
-  //
-  // The day the resident class's `actions:` gains the pair (it does on
-  // `wright/law-subscribe`, version 10 -> 11), the grant arrives from the store
-  // with no office change at all — and lint L6 ("every exposed action has a
-  // live handler", src/world-lints.mjs) goes GREEN rather than red, which is
-  // what these rows are for. The five arena verbs were the opposite order and
-  // it cost the town a 501 on every call for a fortnight (see the ARENA_VERBS
-  // note below, in this same table).
-  [ACTION_SUBSCRIBE]: { tool: "world_subscribe", run: (args, key) => subscribeAtOffice(args, key) },
-  [ACTION_UNSUBSCRIBE]: { tool: "world_unsubscribe", run: (args, key) => unsubscribeAtOffice(args, key) },
-  // ── the gathering and the handoff (Rei-3; world#15 and #16, PROPOSED) ─────
-  //
-  // THESE TWO ROWS ARE UNREACHABLE UNTIL #15 AND #16 MERGE, and that is the
-  // point of landing them first — the subscription's own note two rows up says
-  // it, and this pair is the third time this office has taken that order
-  // deliberately after the arena's five verbs cost the town a 501 on every call
-  // for a fortnight by taking the other one.
-  //
-  // `apexDo` admits an action when `gatherActions` returns it, and nothing on
-  // the world train grants `gather` or `hand-to-human`, so today both rows are
-  // law-less machinery: a resident asking for either gets the ordinary
-  // "afforded nowhere in the world" bounce and never reaches here. The day the
-  // resident class's `actions:` gains them (version 8 -> 9 -> 10 on the two law
-  // branches), the grants arrive from the store with no office change at all,
-  // and lint L6 goes GREEN rather than red — which is what these rows are for.
-  [ACTION_GATHER]: { tool: "world_gather", run: (args, key) => gatherAtOffice(args, key) },
-  [ACTION_HAND_TO_HUMAN]: { tool: "world_hand_to_human", run: (args, key) => handToHumanAtOffice(args, key) },
   // ── the arena's five verbs (2026-08-27) ───────────────────────────────────
   //
   // ⚑ THESE FIVE WERE THE 501. The class marks granted them from the day the
@@ -1196,7 +989,7 @@ function flatSchemas() {
   // fields an act takes must still come from the act's own schema — the seam-4
   // discipline — and inventing a second grammar here for two verbs would be
   // exactly the drift that seam exists to close.
-  for (const tool of [...WORLD_TOOLS, ...WORLD_STAKE_TOOLS, ...CROSSING_TOOLS, ...STANCE_TOOLS, ...SUBSCRIBE_TOOLS, ...GATHER_TOOLS, ...HAND_TO_HUMAN_TOOLS, ...ARENA_TOOLS]) {
+  for (const tool of [...WORLD_TOOLS, ...WORLD_STAKE_TOOLS, ...CROSSING_TOOLS, ...STANCE_TOOLS, ...ARENA_TOOLS]) {
     _flatSchemas.set(tool.name, actionFields(tool?.inputSchema?.properties, tool?.inputSchema?.required));
   }
   return _flatSchemas;
@@ -1209,7 +1002,7 @@ let _fullProps = null;
 function fullPropsFor(toolName) {
   if (!_fullProps) {
     _fullProps = new Map();
-    for (const t of [...WORLD_TOOLS, ...WORLD_STAKE_TOOLS, ...CROSSING_TOOLS, ...STANCE_TOOLS, ...SUBSCRIBE_TOOLS, ...GATHER_TOOLS, ...HAND_TO_HUMAN_TOOLS, ...ARENA_TOOLS]) _fullProps.set(t.name, t?.inputSchema?.properties ?? {});
+    for (const t of [...WORLD_TOOLS, ...WORLD_STAKE_TOOLS, ...CROSSING_TOOLS, ...STANCE_TOOLS, ...ARENA_TOOLS]) _fullProps.set(t.name, t?.inputSchema?.properties ?? {});
   }
   return _fullProps.get(toolName) ?? null;
 }
@@ -2112,12 +1905,11 @@ async function apexRead(args, key, ctx = {}) {
       groundHouseholdOf: (id) => worldHouseholdOf(ground.byId?.get(id)?.by ?? null),
       // root-first, so the seat lands on the OUTERMOST room that seats you
       spineIds,
-      // The read gathers the seat the same way the act does — "anything you can
-      // do, you can read, and never the reverse". A read that showed a
-      // handoff-seated human less than the door admits is that reverse wearing
-      // an omission, and it is the exact asymmetry the seat ruling's own note
-      // one screen up was written about.
-      handoff: await handoffSeatFor(args, key, ctx.handoff ?? {}),
+      // ⚑ NO HANDOFF SEAT IS PASSED (parked 2026-09-10). `resolveForActor`
+      // still takes `handoff` and still answers `handoff: null` without it, so
+      // this read is byte-identical to what it served before the handoff module
+      // existed. The seat's reader came back out with world#16; the calculus
+      // that would consume it stays in world-grants.mjs, one argument away.
     });
     actions = resolved.entries;
     refusedGrants = resolved.refused;
@@ -2378,11 +2170,9 @@ async function apexDo(args, key, ctx = {}) {
         actorHousehold: worldHouseholdOf(standingHandle(args, key)),
         groundHouseholdOf: (id) => worldHouseholdOf(ground.byId?.get(id)?.by ?? null),
         spineIds,
-        // THE THIRD SEATING GROUND (world#16). Read here, decided there — the
-        // calculus is the office's one answer to who is seated, and this is an
-        // argument to it rather than a second reader beside it. Null for a
-        // resident, and the read costs nothing then.
-        handoff: await handoffSeatFor(args, key, ctx.handoff ?? {}),
+        // ⚑ THE THIRD SEATING GROUND (world#16) IS PARKED, 2026-09-10. No
+        // handoff is passed, `resolveForActor` answers `handoff: null`, and the
+        // door admits exactly whom it admitted before the module existed.
       });
     const rows = [...amb.rows, ...ground.classRows];
     const match = entries.find((e) => e.action === action);
@@ -2798,41 +2588,6 @@ export async function readDomainFor(action, fields, key, oriented, ctx = {}) {
       const performing = readNeverPerforms(fields);
       if (performing) return performing;
       return await stanceShadow(WORLD_CLONE, key, { cursor: fields?.cursor ?? null, limit: fields?.limit });
-    }
-    // THE SUBSCRIPTION'S SHADOW (Rei-1). Both verbs read the same thing — the
-    // caller's own live subscriptions — because `unsubscribe`'s domain IS the
-    // set it can withdraw from, and answering it with anything else would make
-    // a resident guess which name to pass to see what they hold.
-    //
-    // A read never performs, so an envelope carrying declaration fields is
-    // refused by name rather than quietly ignored — the stance door's own rule,
-    // reused rather than re-argued.
-    case ACTION_SUBSCRIBE:
-    case ACTION_UNSUBSCRIBE: {
-      const performing = subscribeReadNeverPerforms(fields);
-      if (performing) return performing;
-      return await subscriptionShadow(key, { handle: fields?.handle ?? null });
-    }
-    // THE GATHERING'S SHADOW (Rei-3). Unlike a subscription this read is NOT
-    // household-scoped: the invitation is the point of a gathering, and a
-    // resident deciding where to walk tonight needs what the town holds rather
-    // than what they themselves declared. `args: { gathering }` narrows to one
-    // and carries its derived receipt.
-    case ACTION_GATHER: {
-      const performing = gatherReadNeverPerforms(fields);
-      if (performing) return performing;
-      return await gatheringShadow(key, {
-        gathering: fields?.gathering ?? null,
-        rows: gatherRows,
-        receipt: (g) => gatheringReceipt(g),
-      });
-    }
-    // THE HANDOFF'S SHADOW. Household-scoped, and for a sharper reason than the
-    // subscription's: a seat is an impersonation risk, not only a disclosure.
-    case ACTION_HAND_TO_HUMAN: {
-      const performing = handoffReadNeverPerforms(fields);
-      if (performing) return performing;
-      return await handoffShadow(key, { handle: fields?.handle ?? null, rows: allHandoffRowsForKey(key) });
     }
     default:
       return { domain: { unavailable: `no shadow read is wired for "${action}" yet — its card above is the law that stands` } };

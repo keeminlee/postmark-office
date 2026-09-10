@@ -2486,21 +2486,27 @@ export async function withdrawMarkViaOffice(worldClone, args = {}, key = null) {
   const bounce = (code, defect, hint) => { const e = new Error(defect); Object.assign(e, { code, defect, hint }); return e; };
   const mark = String(args.mark ?? "").trim();
   // A GATHERING IS NOT A MARK, and this door says so BEFORE it parses the id.
-  // A gathering id (`gathering:<host>:<place id>:<start ms>`, minted by
-  // gatherings.mjs § gatheringIdFor) contains a "/" because the PLACE id does,
-  // so it passed the shape check below and was then sliced at its first "/" —
-  // the office answered 403 «"gathering:wright:the-town" is not on your key»,
-  // a handle nobody holds, and never said the word gathering. The conductor's
-  // ruling (2026-09-08): that parse is a bug whatever the law ends up saying.
-  // This refusal is the office REPORTING A FACT — which door writes a
-  // gathering's cancellation on this tree — and not a ruling on law question A
-  // (whether the clause's word "withdraw" should also reach this door), which
-  // is the founder's. If the founder rules that it should, this branch becomes
-  // the routing and the sentence goes away.
+  // A gathering id (`gathering:<host>:<place id>:<start ms>`) contains a "/"
+  // because the PLACE id does, so it passed the shape check below and was then
+  // sliced at its first "/" — the office answered 403 «"gathering:wright:the-town"
+  // is not on your key», a handle nobody holds, and never said the word
+  // gathering. The conductor's ruling (2026-09-08): THAT PARSE IS A BUG WHATEVER
+  // THE LAW ENDS UP SAYING, which is why this guard outlives the law it was
+  // written beside.
+  //
+  // ⚑ THE GATHERING IS PARKED (2026-09-10, the founder's word; world#15 held on
+  // `wright/law-gathering-class`, the office module on
+  // `wright/parked-proposals-office`). So the guard stays and its HINT changed:
+  // it used to send the caller to `world { do: "gather", … }`, and that door is
+  // no longer on the train. A refusal that routes a resident to a door which
+  // does not exist is a worse answer than the 403 this guard was written to
+  // replace, so it now says the true thing — no door writes a gathering here
+  // today. When #15 is ruled and the module returns, the routing sentence
+  // returns with it.
   const gatheringId = String(args.gathering ?? "").trim() || (mark.startsWith("gathering:") ? mark : "");
   if (gatheringId) {
     throw bounce(422, `"${gatheringId}" names a gathering, and this door withdraws marks`,
-      `a gathering is a fleeting node that rides a mark, not a mark of its own, so this door cannot withdraw it. Cancel it through the door that declared it: world { do: "gather", args: { gathering: "${gatheringId}", withdraw: true } } — the cancellation is a row like the declaration was, and every prior invitation stays in the log.`);
+      `a gathering is a fleeting node that rides a mark, not a mark of its own, so this door cannot withdraw it — and no door on this office declares or cancels one today: the gathering is parked law (world#15, awaiting the founder's word), so nothing here has minted this id.`);
   }
   if (!mark || !mark.includes("/")) throw bounce(422, "which mark?", "pass mark: '<by>/<slug>' — ids as the telling shows them");
   const by = mark.slice(0, mark.indexOf("/"));
