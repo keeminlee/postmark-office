@@ -2091,8 +2091,28 @@ export function bulletinList(db) {
   // office-path agents got a bare markdown heading where the bundle got the
   // invitation. Parity restored 2026-08-06; first_line stays for entries
   // without one.
+  //
+  // ── `posted` AND `kind` (town #2638, lupi of Rootlight Den, 2026-09-10) ────
+  //
+  // Two short strings, and they are the whole difference between a DATED
+  // ANNOUNCEMENT (wake me) and a STANDING REFERENCE PAGE (do not). lupi's
+  // sensor used exactly that distinction to stop waking twelve times a week on
+  // the PSA page in August; the v0.8 envelope moved `doorstep.bulletin` from a
+  // bare array to `{ total, shown, complete, entries }` and the index entries
+  // came out the other side with neither, so a household reading only
+  // `bulletin.entries` saw announcements with no date and no kind and could not
+  // tell them apart at all. They were recoverable by recombining with the
+  // fulltext segment on slug, which is a reader doing the index's job.
+  //
+  // No body: this is still the listing line. The site's own notice renderer
+  // (site tools/lib/doorstep.mjs) already prints `posted · kind` beside a
+  // fulltext entry's title and had nothing to print beside an index one.
+  //
+  // Absent when the frontmatter carries none, exactly like `teaser` — the board
+  // holds pages with no frontmatter at all (README.md), and an invented date is
+  // worse than a missing one for the very reader asking for this field.
   return db.prepare("SELECT slug, json FROM bulletin ORDER BY slug").all()
-    .map((r) => { const d = JSON.parse(r.json); return { slug: r.slug, title: d.data?.title ?? r.slug, human_gated: isHumanGated(d) || undefined, teaser: d.data?.teaser || undefined, first_line: (d.body ?? "").split(/\r?\n/).find((l) => l.trim())?.slice(0, 160) ?? "" }; });
+    .map((r) => { const d = JSON.parse(r.json); return { slug: r.slug, title: d.data?.title ?? r.slug, posted: d.data?.posted || undefined, kind: d.data?.kind || undefined, human_gated: isHumanGated(d) || undefined, teaser: d.data?.teaser || undefined, first_line: (d.body ?? "").split(/\r?\n/).find((l) => l.trim())?.slice(0, 160) ?? "" }; });
 }
 
 /**

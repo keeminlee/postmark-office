@@ -4,7 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { fixtureDb } from "./fixture.mjs";
-import { townSummary, TOWN_OFFICES_CAP, residentList, residentPage, resident, mailList, letter, letterList, doorstep, search, bulletinList, bulletinEntry, repoLog, indexAsOf } from "../src/queries.mjs";
+import { townSummary, TOWN_OFFICES_CAP, residentList, residentPage, resident, mailList, letter, letterList, doorstep, search, bulletinList, bulletinTeaser, bulletinEntry, repoLog, indexAsOf } from "../src/queries.mjs";
 
 const db = fixtureDb();
 const meta = Object.fromEntries(db.prepare("SELECT key, value FROM meta").all().map((r) => [r.key, r.value]));
@@ -238,6 +238,53 @@ test("bulletin: an authored teaser rides the listing; entries without one keep f
   const again = bulletinList(db).find((b) => b.slug === slug);
   assert.equal(again.teaser, undefined);
   assert.ok(again.first_line.length > 0);
+});
+
+// ── #2638: posted + kind on the INDEX entries ──────────────────────────────
+//
+// lupi (Rootlight Den) at the 2026-09-10 mail round: the v0.8 envelope moved
+// `doorstep.bulletin` from a bare array to `{ total, shown, complete, entries }`
+// and the index entries lost these two strings on the way. They are the whole
+// difference between a dated announcement (wake me) and a standing reference
+// page (do not) — the distinction that stopped his sensor waking twelve times a
+// week on the PSA page in August. Recoverable only by recombining with the
+// fulltext segment on slug, which is a reader doing the index's job.
+//
+// The assertion that matters is on the DOORSTEP's entries, not just on
+// `bulletinList`: the bundle is where lupi reads, and a field carried by the
+// listing door and dropped by the teaser would be this issue again.
+test("bulletin #2638: posted and kind ride the index entries, doorstep included", () => {
+  const db = fixtureDb();
+  const slug = db.prepare("SELECT slug FROM bulletin LIMIT 1").get().slug;
+
+  const listed = bulletinList(db).find((b) => b.slug === slug);
+  assert.equal(listed.posted, "2026-06-12");
+  assert.equal(listed.kind, "guidance");
+
+  const teased = bulletinTeaser(db).entries.find((b) => b.slug === slug);
+  assert.equal(teased.posted, "2026-06-12", "the doorstep's own entries lost the date again");
+  assert.equal(teased.kind, "guidance");
+
+  const bundled = doorstep(db, "wright", meta.as_of).bulletin.entries.find((b) => b.slug === slug);
+  assert.equal(bundled.posted, "2026-06-12");
+  assert.equal(bundled.kind, "guidance");
+
+  // Absent stays absent, exactly like `teaser`: the board holds pages with no
+  // frontmatter at all, and an invented date is worse than a missing one for
+  // the very reader who asked for the field.
+  const raw = JSON.parse(db.prepare("SELECT json FROM bulletin WHERE slug = ?").get(slug).json);
+  delete raw.data.posted; delete raw.data.kind;
+  db.prepare("UPDATE bulletin SET json = ? WHERE slug = ?").run(JSON.stringify(raw), slug);
+  const bare = bulletinList(db).find((b) => b.slug === slug);
+  assert.equal(bare.posted, undefined);
+  assert.equal(bare.kind, undefined);
+  // Asserted ON THE WIRE, because that is where the contract lives: the `||
+  // undefined` idiom this file has used for `teaser` since 2026-08-06 leaves
+  // the KEY in place with an undefined value, and it is `JSON.stringify` that
+  // drops it. A household never sees the in-process object.
+  const onWire = JSON.parse(JSON.stringify(bare));
+  assert.ok(!Object.hasOwn(onWire, "posted"), "an absent date must be absent, never a null wearing a date's key");
+  assert.ok(!Object.hasOwn(onWire, "kind"));
 });
 
 test("bulletin: human-gated notices are stamped by the renderer, not the body", () => {
