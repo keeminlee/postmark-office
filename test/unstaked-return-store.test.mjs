@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { planFrom, storeOnlyFrom, NAMED_DISAGREEMENT, REFUSED_KINDS } from "../world2/tools/unstaked-return-store.mjs";
 import { stakeRefusalFor } from "../src/world-stake.mjs";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
@@ -245,4 +245,81 @@ test("a dry-run receipt is refused before any database is opened", () => {
     assert.equal(code, 2, "a dry-run receipt must not reach a database at all");
     assert.match(err, /DRY-RUN receipt/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ── O5: the whole-receipt refusal, read end to end ─────────────────────────
+//
+// The reviewer deleted the whole-receipt parcel refusal outright and the suite
+// stayed green — the same class as W2 on lap 2, a fix that nothing reads. These
+// spawn the tool so the gate itself is what is being tested, not a pure function
+// standing in for it.
+
+const receiptFile = (obj) => {
+  const dir = mkdtempSync(join(tmpdir(), "unstaked-return-o5-"));
+  const path = join(dir, "r.json");
+  writeFileSync(path, JSON.stringify(obj));
+  return { dir, path };
+};
+const runTool = (args) => {
+  try {
+    return { code: 0, out: execFileSync("node", [TOOL, ...args],
+      { encoding: "utf8", env: { ...process.env, PGHOST: "/nowhere", PGDATABASE: "w2_scratch_none" } }) };
+  } catch (e) { return { code: e.status, out: String(e.stdout ?? ""), err: String(e.stderr ?? "") }; }
+};
+
+test("O5: an APPLIED receipt naming a parcel exits non-zero — the whole receipt is refused", () => {
+  // It must be `applied: true`, or O1 would refuse it first and this would pass
+  // for the wrong reason.
+  const { dir, path } = receiptFile({
+    applied: true, moved: [
+      { mark: "rei/rei-parcel", household: "rei", kind: "parcel" },
+      { mark: "rei/a-bench", household: "rei", kind: "sited" },
+    ],
+  });
+  try {
+    const r = runTool(["--set", path]);
+    assert.notEqual(r.code, 0, "a receipt that predates the parcel ruling must not be half-trusted");
+    assert.match(String(r.err), /predates the ruling|parcel/i);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("O5: the refusal is the WHOLE receipt, not just the parcel rows", () => {
+  const { dir, path } = receiptFile({
+    applied: true, moved: [
+      { mark: "rei/rei-parcel", household: "rei", kind: "parcel" },
+      { mark: "rei/a-bench", household: "rei", kind: "sited" },
+    ],
+  });
+  try {
+    const r = runTool(["--set", path]);
+    // exit 3 is the refusal code, distinct from 2 (bad invocation) — and it must
+    // not be 0, which is what "retire the other rows anyway" looked like.
+    assert.equal(r.code, 3);
+    assert.doesNotMatch(String(r.out), /APPLIED/, "nothing may be retired from a receipt proven stale");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("O7: --allow-skew does NOT unlock the stale-receipt gate", () => {
+  // The two flags answer different questions about different evidence. An
+  // operator who accepted a row-count disagreement has not accepted a receipt
+  // that predates the law.
+  const { dir, path } = receiptFile({
+    applied: true, moved: [{ mark: "rei/rei-parcel", household: "rei", kind: "parcel" }],
+  });
+  try {
+    const r = runTool(["--set", path, "--allow-skew"]);
+    assert.equal(r.code, 3, "--allow-skew must not reach the law gate");
+    assert.match(String(r.err), /allow-stale-receipt/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("O6: the db-name refusal names the word the code actually accepts", () => {
+  // The message used to say the name "contains neither lab nor scratch" while
+  // the code accepted only `scratch` — so an operator following it would rename
+  // their database to include "lab", which is `world2_lab`: prod wearing a safe
+  // name, and the exact footgun the change had just closed.
+  const src = readFileSync(TOOL, "utf8");
+  assert.doesNotMatch(src, /contains neither "lab" nor "scratch"/,
+    "the refusal must not send an operator toward a lab-shaped name");
+  assert.match(src, /does not contain "scratch"/);
 });
