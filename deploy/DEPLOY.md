@@ -788,7 +788,15 @@ sequence that resets the checkout off the law, so carry the script first.
 ### Where things live
 
     /srv/world2-lab/ops/            the scripts (a plain file copy from this repo,
-                                    the same shape as /srv/postmark-office)
+                                    the same shape as /srv/postmark-office).
+                                    NOTHING DEPLOYS THIS — see the one-tree
+                                    section below; the roll-call's
+                                    `world2-ops-scripts` row is what says so.
+    /srv/world2-lab/office/         RETIRED 2026-09-10. A second office checkout
+                                    the release workflow never deployed; the
+                                    lanes read /srv/postmark-office now. If a
+                                    tree is still sitting here it is residue,
+                                    never a fallback.
     /srv/world2-lab/state/          one JSON per lane — the roll-call heartbeats
     /srv/world2-lab/private-dumps/  pg_dump output, 0700, outside every checkout
     /srv/world2-lab/basebackups/    pg_basebackup output, 0700
@@ -810,6 +818,77 @@ sequence that resets the checkout off the law, so carry the script first.
     ssh meepo-ec2 'sudo install -m0644 -o root -g root /tmp/postmark-world2-* /etc/systemd/system/ && sudo systemctl daemon-reload'
     ssh meepo-ec2 'for u in clearing ingest notary backup; do sudo systemctl enable --now postmark-world2-$u.timer; done'
     ssh meepo-ec2 'sh /srv/postmark-office/deploy/box-rollcall.sh'
+
+### ONE TREE PER BOX — the office-tree drop-in (2026-09-10)
+
+**What happened.** The 05:45Z scheduled crossing published **green** under
+`release/2026-w37.9` and `escrow_projection` held **zero** rows after that same
+timer's clearing. The candle runs `clearing-job.mjs` out of `/srv/world2-lab/office`
+— a *second* office checkout at `7926461` (2026-09-05, schema ≤ 012, no escrow
+ingest) that the release workflow never deploys. All four world2 lanes shared it
+through one line in `world2-lib.sh`. Every heartbeat on the board read fresh,
+because the lanes *did* run: on time, to completion, on three-day-old code.
+
+The notary's `ALARM-outcome` was the same cause from the other side.
+`world2/tools/falsifier-canon-locks.mjs` **does not exist at `7926461`** — it
+landed 2026-09-08 in `59ff9b9` — so under the lab tree the nightly canon read
+could not run and `/srv/world2-lab/state/canon-locks.jsonl` stayed empty. The row
+was reporting the register and the fault was the tree.
+
+**The fix, in two halves that say the same thing.** `deploy/world2-lib.sh` now
+defaults `WORLD2_OFFICE` to `/srv/postmark-office`, and
+`deploy/postmark-world2-office-tree.conf` is a drop-in that sets it on the units.
+The redundancy is deliberate: the lib reaches the box as a hand file copy, so a
+box whose copy is old still carries the old default, and the drop-in is the half
+`systemctl cat` shows and the roll-call reads.
+
+Install the drop-in on all four units:
+
+```sh
+scp deploy/postmark-world2-office-tree.conf meepo-ec2:/tmp/office-tree.conf
+ssh meepo-ec2 'for u in clearing notary backup ingest; do
+  sudo install -d -m0755 /etc/systemd/system/postmark-world2-$u.service.d
+  sudo install -m0644 -o root -g root /tmp/office-tree.conf \
+    /etc/systemd/system/postmark-world2-$u.service.d/office-tree.conf
+done && sudo systemctl daemon-reload'
+```
+
+`daemon-reload` is **not a restart**. All four are `Type=oneshot` driven by
+timers; the next fire reads the new environment. Do not restart them — for the
+clearing that runs a crossing off-cadence.
+
+**Verify by key name only.** The obvious check is the wrong one:
+
+> Never run `systemctl show postmark-settlement.service -p Environment`. A
+> sibling drop-in on that unit carries `WORLD2_CLEARING_URL` with its password
+> inside, and `show` prints the merged environment. `world2-lib.sh`'s own header
+> says the journal is readable by group `adm`.
+
+The world2 units carry no secret in `Environment=` (theirs arrive by
+`EnvironmentFile=`), so `systemctl show postmark-world2-clearing.service -p Environment`
+is safe *on those four*. The habit that is safe everywhere is the grep:
+
+```sh
+ssh meepo-ec2 'grep -c "^Environment=WORLD2_OFFICE=/srv/postmark-office$" \
+  /etc/systemd/system/postmark-world2-clearing.service.d/office-tree.conf'
+```
+
+Receipt: `1`. The real acceptance is a receipt that exists only if the pin took —
+`escrow_rows > 0` on the first window the deployed candle closes.
+
+**The half the drop-in does not fix.** `ExecStart` is
+`/srv/world2-lab/ops/world2-<lane>.sh`, and that directory is a hand file copy of
+this repo's `deploy/` that no deploy updates (§ *Where things live*). The
+roll-call's `world2-ops-scripts` tree row compares it byte-for-byte against the
+release and reddens on drift; carrying it is still a person's act, with the `scp`
+at the top of this section.
+
+**The roll-call now reads trees.** `deploy/box-rollcall-manifest.json` § `trees`
+carries one row per unit that execs out of a checkout, comparing the tree the
+unit *will run* to `/srv/postmark-office/release.json`. Verdict `ALARM-tree`, and
+the roll-call exits nonzero on it like any other alarm. A live unit that names a
+tree and has no row comes back `ALARM-tree` from the reverse check, the same
+discipline `ALARM-unmanifested` keeps over units.
 
 The scripts are `bash`, not `sh` — the same reason `/srv/world2-lab/launch.sh`
 is. Strip CR after any copy from a Windows checkout and check it stuck; a unit

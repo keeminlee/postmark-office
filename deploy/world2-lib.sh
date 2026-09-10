@@ -60,7 +60,33 @@
 
 WORLD2_ENV_FILE="${WORLD2_ENV_FILE:-/etc/postmark-world2-dev.env}"
 WORLD2_LAB="${WORLD2_LAB:-/srv/world2-lab}"
-WORLD2_OFFICE="${WORLD2_OFFICE:-$WORLD2_LAB/office}"
+
+# ── ONE TREE PER BOX (2026-09-10) ───────────────────────────────────────────
+# This default was `$WORLD2_LAB/office` and it cost a crossing.
+#
+# THE MEASUREMENT. On 2026-09-10 the 05:45Z scheduled crossing published GREEN
+# under release/2026-w37.9 and `escrow_projection` held ZERO rows after the same
+# timer's clearing. `$WORLD2_LAB/office` is a SECOND office checkout at 7926461
+# (2026-09-05, schema <= 012, no escrow ingest) that the release workflow never
+# deploys — release-train.yml rsyncs the tag into /srv/postmark-office and
+# nowhere else. Four lanes read this one line, so all four were running a tree
+# three days behind the release while every heartbeat on the board read fresh.
+#
+# /srv/postmark-office IS the deployed release, and it is the only tree on this
+# box that anything keeps up to date. `$WORLD2_LAB/office` is named here ONLY as
+# the retired one: do not point a lane back at it, and if a checkout is still
+# sitting there, it is residue rather than a fallback.
+#
+# THE UNITS SAY IT TOO, and that redundancy is deliberate: this file reaches the
+# box as a HAND FILE COPY (DEPLOY.md § Where things live — "a plain file copy
+# from this repo"), so a box whose copy is old still has the old default. The
+# drop-in `deploy/postmark-world2-office-tree.conf` sets WORLD2_OFFICE in the
+# units, where `systemctl cat` shows it and the roll-call's tree rows read it
+# back. Between the two, the environment is the one that wins here — the
+# roll-call therefore judges the environment and refuses to guess this default
+# (deploy/box-rollcall-manifest.json § trees, `require_env`).
+WORLD2_OFFICE="${WORLD2_OFFICE:-/srv/postmark-office}"
+
 WORLD2_STATE_DIR="${WORLD2_STATE_DIR:-$WORLD2_LAB/state}"
 
 # Reads one key. THE ENVIRONMENT WINS, and that is the ordinary path under
