@@ -14,6 +14,13 @@
 # Systemd units run on the box. A CRLF in ExecStart fails as a missing file.
 *.service text eol=lf
 *.timer text eol=lf
+# …and so do their DROP-INS, which the two lines above did not cover (found
+# 2026-09-10 while adding deploy/postmark-world2-office-tree.conf). A drop-in is
+# read by systemd exactly like the unit it extends: a CRLF here makes
+# `Environment=WORLD2_OFFICE=/srv/postmark-office` set a path with a trailing CR,
+# and every lane that `cd`s into it fails looking like a missing directory. The
+# nginx confs on the box are the same argument from the other side.
+*.conf text eol=lf
 
 # G1 lane 3b: the photograph fixtures are BYTE-EXACT copies of files the town
 # committed into the world repo — `test/fixtures/177.journal.jsonl` is world main

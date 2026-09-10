@@ -77,6 +77,13 @@
 #  order does not matter: between the two, the roll-call reports
 #  ALARM-unmanifested for a unit with no row, which is the reminder. A row you
 #  are not ready to run is legal — set stage to "parked" and say why.
+#
+#  If the unit EXECS OUT OF A CHECKOUT, it also wants a row in the manifest's
+#  `trees` block naming the tree it runs and the release it must be. The reverse
+#  check is the reminder there too: a live unit whose service names a tree and
+#  has no tree row comes back ALARM-tree. That section exists because on
+#  2026-09-10 the World 2.0 candle ran a three-day-old second checkout through a
+#  board on which every row was individually correct.
 
 set -eu
 

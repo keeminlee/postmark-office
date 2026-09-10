@@ -372,5 +372,221 @@
    "why": "Every push this box makes reads it — the settlement clone is configured with credential.helper 'store --file /srv/postmark-office/.git-credentials' by settlement-auto.sh itself, and deploy/settlement-escalate.mjs reads the same file to reach the operator queue. A root-owned credential store is the exact shape of the 2026-08-28 two-hour pen lockout: readable by nobody who needs it, and silent until the moment something tries to push.",
    "repair": "sudo chown meepo:meepo /srv/postmark-office/.git-credentials && sudo chmod 600 /srv/postmark-office/.git-credentials"
   }
- ]
+ ],
+ "_trees_readme": [
+  "§2c — WHICH TREE EACH UNIT WILL ACTUALLY RUN.",
+  "",
+  "§2b asks whether a mechanism still CAN run. These ask whether the code it runs",
+  "is the code somebody deployed.",
+  "",
+  "WHY IT EXISTS (2026-09-10, the arm gate). The 05:45Z crossing published green",
+  "under release/2026-w37.9 and escrow_projection held ZERO rows after that same",
+  "timer's clearing. The candle — postmark-world2-clearing.service — runs",
+  "clearing-job.mjs out of /srv/world2-lab/office, a SECOND office checkout at",
+  "7926461 (2026-09-05, schema <= 012, no escrow ingest) that the release workflow",
+  "never deploys: release-train.yml rsyncs the tag into /srv/postmark-office and",
+  "nothing else. Four units share that tree through deploy/world2-lib.sh's",
+  "WORLD2_OFFICE=\"${WORLD2_OFFICE:-$WORLD2_LAB/office}\".",
+  "",
+  "EVERY ROW ON THE BOARD READ CORRECTLY AND THE BOARD WAS WRONG. The candle read",
+  "OK, because its row reads its TICK: the lane ran, on time, wrote its state file,",
+  "and did three-day-old work. The notary read ALARM-outcome, because this manifest",
+  "was written from the new tree and declares an outcome log the OLD notary has no",
+  "code to write. Neither row could say the word tree, so the single fact that",
+  "explained both was the one fact nothing on the box was holding.",
+  "",
+  "THE RULE. For every unit that execs out of a checkout, a row naming the tree it",
+  "will run and the release it must be. Path identity when the tree IS the release",
+  "root; otherwise that tree's own release.json sha against the deployed one, so a",
+  "second copy the deploy genuinely keeps up with is green and a stale one is not.",
+  "Verdict ALARM-tree, and the roll-call exits nonzero on it like any other alarm.",
+  "",
+  "FIELDS.",
+  "  id                  short slug, the row's name on the board",
+  "  unit                the .SERVICE that execs. A timer execs nothing, and a row",
+  "                      pointed at one would read WorkingDirectory off a unit that",
+  "                      has never had one. The checker refuses a timer here.",
+  "  env_key             the variable that names the tree, when one does",
+  "  require_env         the drop-in that must set env_key. A row carrying this",
+  "                      REFUSES TO GUESS when the key is unset (see below).",
+  "  default_when_unset  the tree the row falls back to, for rows that may guess",
+  "  must_be             \"release\" (the deployed tree) or a literal path",
+  "  divergence_because  REQUIRED beside a literal must_be. A row that can excuse",
+  "                      itself without a sentence is how a wrong tree gets",
+  "                      silenced, so the excuse has to be typed where a reviewer",
+  "                      reads it.",
+  "  why                 what breaks when this tree drifts",
+  "  activation_owner    who decided it runs from there",
+  "  kind: file_copy     a DIRECTORY on the box compared byte-for-byte against a",
+  "                      directory in the release (path, from, match, repair)",
+  "",
+  "WHY THE WORLD2 ROWS REFUSE TO GUESS. Their fallback lives in",
+  "/srv/world2-lab/ops/world2-lib.sh, which DEPLOY.md itself calls \"a plain file",
+  "copy from this repo\" — no deploy updates it, and on 2026-09-05 this repo had to",
+  "carry a one-line change to it by scp. So the roll-call cannot READ that default,",
+  "only assume it, and an assumed default is precisely how this class hid: the repo",
+  "said one path and the box ran another. Those rows carry require_env, and an",
+  "unset WORLD2_OFFICE is the alarm rather than an occasion to guess.",
+  "",
+  "THE GAP THIS RULE DOES NOT COVER, NAMED RATHER THAN LEFT SILENT. A unit that",
+  "carries no WorkingDirectory and no env key, and names its tree only inside an",
+  "absolute ExecStart path, is invisible here — postmark-site-refresh.service",
+  "(/srv/postmark-office/deploy/site-refresh.sh) and postmark-dev-freshen.service",
+  "(/srv/postmark-office-dev/postmark-dev-freshen.sh) are the two today. Reading a",
+  "tree out of ExecStart means parsing systemd's ExecStart struct and guessing",
+  "which argument is the script, which is a different and worse instrument than",
+  "reading a property that answers a path. Both of those scripts DO sit under a",
+  "tree that another row already checks, so nothing is unwatched today; a unit that",
+  "execs out of a tree NO row names would be, and that is the day to build it.",
+  "",
+  "ADDING A ROW is not optional in one direction: a live unit whose service names",
+  "a tree and has no row here comes back ALARM-tree from the reverse check, the",
+  "same discipline ALARM-unmanifested keeps over units."
+ ],
+ "trees": {
+  "release_root": "/srv/postmark-office",
+  "_release_root_source": "deploy/remote-deploy.sh is invoked with ROOT=/srv/postmark-office for target prod (.github/workflows/release-train.yml, the lane step), and the workflow writes release.json into the tree it rsyncs there. That stamp is the only thing on the box that says which commit is deployed.",
+  "rows": [
+   {
+    "id": "office",
+    "unit": "postmark-office.service",
+    "label": "the office door's tree",
+    "must_be": "release",
+    "why": "This is the door the town reads through. A drifted tree here serves yesterday's API from a green unit.",
+    "activation_owner": "Wright — the office has run from /srv/postmark-office since the box was built; release-train.yml deploys prod there and nowhere else."
+   },
+   {
+    "id": "office-dev",
+    "unit": "postmark-office-dev.service",
+    "label": "the dev office's tree",
+    "must_be": "/srv/postmark-office-dev",
+    "divergence_because": "Dev is a SEPARATE deploy target by design and runs the train tip rather than the release tag — release-train.yml's own lane step: 'dev) ROOT=/srv/postmark-office-dev'. Comparing it to the prod release would redden every day dev is ahead, which is every day dev is doing its job. What this row still catches is dev pointed at the PROD tree, which would make the :4381 door a second prod door and every dev rehearsal a prod act.",
+    "why": "A dev office running the prod tree turns rehearsals into prod writes, and a dev office running some third tree is a rehearsal that proves nothing about what will ship.",
+    "activation_owner": "Wright — the dev lane's own deploy target, named in release-train.yml."
+   },
+   {
+    "id": "ferry",
+    "unit": "postmark-ferry.service",
+    "label": "the ferry's tree",
+    "must_be": "release",
+    "why": "The ferry moves the town's mail. A stale tree delivers by yesterday's rules under a fresh tick.",
+    "activation_owner": "Wright — WorkingDirectory=/srv/postmark-office in deploy/postmark-ferry.service."
+   },
+   {
+    "id": "crossing-save",
+    "unit": "postmark-crossing-save.service",
+    "label": "the crossing save's tree",
+    "must_be": "release",
+    "why": "It commits the town's state after a crossing. Old code here writes a shape the deployed door no longer reads.",
+    "activation_owner": "Wright — WorkingDirectory=/srv/postmark-office in deploy/postmark-crossing-save.service."
+   },
+   {
+    "id": "office-rehydrate",
+    "unit": "postmark-office-rehydrate.service",
+    "label": "the office tick's tree",
+    "must_be": "release",
+    "why": "The tick rehydrates the door's own caches; a stale tree rehydrates them into the shape the old code expected.",
+    "activation_owner": "Wright — WorkingDirectory=/srv/postmark-office in deploy/postmark-office-rehydrate.service."
+   },
+   {
+    "id": "harbor-watch",
+    "unit": "postmark-harbor-watch.service",
+    "label": "the harbor watch's tree",
+    "must_be": "release",
+    "why": "It writes the harbour snapshot every other row on this board is read against. A stale watcher is a stale board.",
+    "activation_owner": "Wright — WorkingDirectory=/srv/postmark-office in deploy/postmark-harbor-watch.service."
+   },
+   {
+    "id": "usdc-watch",
+    "unit": "postmark-usdc-watch.service",
+    "label": "the USDC watcher's tree",
+    "must_be": "release",
+    "why": "It witnesses money arriving. Old code here misses an arrival shape the deployed door already knows about, and the miss looks like a quiet day.",
+    "activation_owner": "Wright — WorkingDirectory=/srv/postmark-office in deploy/postmark-usdc-watch.service."
+   },
+   {
+    "id": "stripe-watch",
+    "unit": "postmark-stripe-watch.service",
+    "label": "the Stripe watcher's tree",
+    "must_be": "release",
+    "why": "Same class as the USDC watcher, on the other rail: a payment the deployed code would have witnessed and the running code does not.",
+    "activation_owner": "Wright — adopted 2026-08-27; WorkingDirectory=/srv/postmark-office in deploy/postmark-stripe-watch.service."
+   },
+   {
+    "id": "site-sentinel",
+    "unit": "postmark-site-sentinel.service",
+    "label": "the site sentinel's tree",
+    "must_be": "release",
+    "why": "The sentinel is a checker, and a checker running old code checks the old law — the worst kind of green.",
+    "activation_owner": "Wright — WorkingDirectory=/srv/postmark-office in deploy/postmark-site-sentinel.service."
+   },
+   {
+    "id": "settlement",
+    "unit": "postmark-settlement.service",
+    "label": "the crossing settlement's tree",
+    "must_be": "release",
+    "why": "The settlement is the crossing. It runs deploy/settlement-auto.sh out of this tree and the sweep beneath it, and every guard the train adds arrives only when this tree does. This is the row that would have caught the candle's twin had the candle been on this side of the fence.",
+    "activation_owner": "Wright — WorkingDirectory=/srv/postmark-office in deploy/postmark-settlement.service."
+   },
+   {
+    "id": "settlement-shadow",
+    "unit": "postmark-settlement-shadow.service",
+    "label": "the settlement shadow's tree",
+    "must_be": "release",
+    "why": "The shadow rehearses the next crossing against the CURRENT law. Rehearsing from a stale tree is rehearsing the wrong crossing, and its would-refuse verdicts would be about code nobody is going to run.",
+    "activation_owner": "Wright — WorkingDirectory=/srv/postmark-office in deploy/postmark-settlement-shadow.service."
+   },
+   {
+    "id": "world2-clearing",
+    "unit": "postmark-world2-clearing.service",
+    "label": "the World 2.0 candle's office tree",
+    "env_key": "WORLD2_OFFICE",
+    "require_env": "/etc/systemd/system/postmark-world2-clearing.service.d/office-tree.conf (deploy/postmark-world2-office-tree.conf)",
+    "must_be": "release",
+    "why": "THE INCIDENT'S OWN ROW. The candle closes windows and opens their successors, and its clearing-job.mjs is what fills escrow_projection. On 2026-09-10 it ran from a checkout three days behind the release, at schema <= 012 with no escrow ingest, and the store crossed a green crossing into an empty projection. A store crossing armed on that state folds at a pin with no escrow and refuses.",
+    "activation_owner": "Wright — founder ruling 2026-08-29 (prod Postgres on the box); the tree pinned by drop-in on 2026-09-10 on Keemin's go ('agreed with your instance and class fixes for the arm gate')."
+   },
+   {
+    "id": "world2-notary",
+    "unit": "postmark-world2-notary.service",
+    "label": "the World 2.0 notary's office tree",
+    "env_key": "WORLD2_OFFICE",
+    "require_env": "/etc/systemd/system/postmark-world2-notary.service.d/office-tree.conf (deploy/postmark-world2-office-tree.conf)",
+    "must_be": "release",
+    "why": "The notary execs world2/tools/snapshot-export.mjs and world2/tools/falsifier-canon-locks.mjs out of this tree. falsifier-canon-locks.mjs DOES NOT EXIST at 7926461 — it landed on 2026-09-08 in 59ff9b9 — so under the lab tree the nightly read cannot run, /srv/world2-lab/state/canon-locks.jsonl stays empty, and this unit's own outcome row reads ALARM-outcome for a reason that has nothing to do with the register. That alarm was the second symptom of this one cause.",
+    "activation_owner": "Wright — 2026-08-29, paying the deferred-timer debt; the tree pinned by drop-in on 2026-09-10."
+   },
+   {
+    "id": "world2-backup",
+    "unit": "postmark-world2-backup.service",
+    "label": "the World 2.0 durability lane's office tree",
+    "env_key": "WORLD2_OFFICE",
+    "require_env": "/etc/systemd/system/postmark-world2-backup.service.d/office-tree.conf (deploy/postmark-world2-office-tree.conf)",
+    "must_be": "release",
+    "why": "The backup lane does not exec out of the office tree today — it runs pg_dump and pg_basebackup. It gets the drop-in and the row anyway, because the whole point of this section is that a lane must not acquire a second tree by inheriting a default nobody looked at, and the day it grows a node step is not the day to remember.",
+    "activation_owner": "Wright — 2026-08-29 with the other three world2 lanes; the tree pinned by drop-in on 2026-09-10."
+   },
+   {
+    "id": "world2-ingest",
+    "unit": "postmark-world2-ingest.service",
+    "label": "the World 2.0 projections lane's office tree",
+    "env_key": "WORLD2_OFFICE",
+    "require_env": "/etc/systemd/system/postmark-world2-ingest.service.d/office-tree.conf (deploy/postmark-world2-office-tree.conf)",
+    "must_be": "release",
+    "why": "law-ingest.mjs and stamp-ingest.mjs exec out of this tree, and they are the pens that write the projections the candle then reads. An ingest on an old tree is the escrow class from the upstream side: rows written to a schema the deployed clearing no longer expects. The unit is PARKED today, so this row reports PARKED and alarms on nothing; it exists so that adopting the timer does not also silently adopt a tree.",
+    "activation_owner": "Wright — installed 2026-08-29, timer disabled since 2026-09-05 pending the world-branch carry (DEPLOY.md § Which branch the ingest lane reads)."
+   },
+   {
+    "id": "world2-ops-scripts",
+    "kind": "file_copy",
+    "label": "the World 2.0 ops scripts on the box",
+    "path": "/srv/world2-lab/ops",
+    "from": "deploy",
+    "match": "\\.sh$",
+    "why": "THE SAME CLASS ONE LAYER DOWN, and it is already live. The four world2 units do not exec node directly — their ExecStart is /srv/world2-lab/ops/world2-<lane>.sh, and DEPLOY.md calls that directory 'a plain file copy from this repo'. No deploy writes it. On 2026-09-05 a one-line default in world2-refresh-clone.sh had to be carried by scp, and DEPLOY.md's own sentence for it is 'The box's copy of the script is stale until it is carried.' Nothing goes red while it is uncarried, which is the whole complaint. The drop-in above pins which OFFICE the scripts read; this row is what says the SCRIPTS themselves are the ones that shipped. Read as bytes, so a CRLF from a Windows copy reddens here rather than failing later in a way that reads like a missing file.",
+    "repair": "scp deploy/world2-*.sh meepo-ec2:/srv/world2-lab/ops/ && ssh meepo-ec2 'chmod +x /srv/world2-lab/ops/*.sh' — then re-run the roll-call",
+    "activation_owner": "Wright — the ops directory was placed by hand on 2026-08-29 with the four world2 lanes and has been carried by hand since."
+   }
+  ]
+ }
 }
