@@ -147,12 +147,25 @@ export const ALARM_OUTCOME = "ALARM-outcome";
 // Somebody else owns the files a service must write. Its own class because the
 // repair is `chown`, not `systemctl` — see §2b in the manifest's readme.
 export const ALARM_CUSTODY = "ALARM-custody";
+// The unit is up, on time, and RUNNING CODE THAT IS NOT THE DEPLOYED RELEASE.
+// Its own class because the repair is neither `systemctl` nor `chown` — it is a
+// drop-in, a symlink, or a file copy that the release workflow never performs.
+// See §2c in the manifest's readme for the incident that earned it.
+export const ALARM_TREE = "ALARM-tree";
 
 export function isAlarm(verdict) {
   return String(verdict).startsWith("ALARM");
 }
 
 // ── §2 the manifest ─────────────────────────────────────────────────────────
+
+/** The units[] row that decides whether a .service is live or parked — itself, or
+ *  the .timer that triggers it. Tree rows do not carry their own `stage`: two
+ *  places to park one rail is two places to forget. */
+export function unitRowGoverning(manifest, serviceUnit) {
+  const timer = serviceUnit.replace(/\.service$/, ".timer");
+  return manifest.units.find((r) => r.unit === serviceUnit) || manifest.units.find((r) => r.unit === timer) || null;
+}
 
 export function loadManifest(path = DEFAULT_MANIFEST) {
   const raw = readFileSync(path, "utf8");
@@ -177,6 +190,39 @@ export function loadManifest(path = DEFAULT_MANIFEST) {
     if (!row.path) throw new Error(`custody row ${row.id} names no path`);
     if (!row.must_be_owned_by) throw new Error(`custody row ${row.id} names no must_be_owned_by`);
     if (!row.why) throw new Error(`custody row ${row.id} does not say what breaks when custody slips`);
+  }
+  // §2c, the tree rows. Same discipline again, and one clause of its own: a row
+  // that permits a tree OTHER than the deployed release must say why in a
+  // sentence, because "this one is allowed to be different" is also what the
+  // row would say if somebody had simply pointed it wrong and silenced the alarm.
+  if (m.trees) {
+    if (!m.trees.release_root) throw new Error(`the trees block names no release_root — nothing can say which tree is the right one`);
+    if (!Array.isArray(m.trees.rows)) throw new Error(`the trees block has no rows[]`);
+    for (const row of m.trees.rows) {
+      if (!row.id) throw new Error(`tree row with no id: ${JSON.stringify(row)}`);
+      if (!row.activation_owner) throw new Error(`tree row ${row.id} names no activation_owner`);
+      if (!row.why) throw new Error(`tree row ${row.id} does not say what breaks when the tree drifts`);
+      if (row.kind === "file_copy") {
+        if (!row.path) throw new Error(`tree row ${row.id} is a file_copy and names no path on the box`);
+        if (!row.from) throw new Error(`tree row ${row.id} is a file_copy and names no directory in the release to compare against`);
+        continue;
+      }
+      if (!row.unit) throw new Error(`tree row ${row.id} names no unit`);
+      if (!row.unit.endsWith(".service")) {
+        // The tree belongs to the thing that EXECS, and a timer execs nothing.
+        // A row pointed at a timer would read WorkingDirectory= off a unit that
+        // has never had one and report the lib default forever.
+        throw new Error(`tree row ${row.id} names ${row.unit} — a tree row must name the .service that execs, never the timer`);
+      }
+      if (!row.must_be) throw new Error(`tree row ${row.id} names no must_be — "release", or the literal path it is allowed to run instead`);
+      if (row.must_be !== "release" && !row.divergence_because) {
+        throw new Error(`tree row ${row.id} allows the tree ${row.must_be} instead of the release and does not say why — a row that can excuse itself without a sentence is how a wrong tree gets silenced`);
+      }
+      // Exactly one unit row must govern it, so the stage answer has one source.
+      if (!unitRowGoverning(m, row.unit)) {
+        throw new Error(`tree row ${row.id} names ${row.unit}, which no manifest unit row governs (neither it nor its .timer is in units[]) — a tree row nobody rolls-call is a check on a rail that may not exist`);
+      }
+    }
   }
   // The same discipline on an outcome block: the short sentence the board prints
   // and the long one a reviewer weighs are different jobs, and a row that only
@@ -380,6 +426,177 @@ export function scanCustody(root, expectUid, { cap = CUSTODY_SCAN_CAP, readdir =
   return { scanned: seen, truncated, offenders };
 }
 
+// ── §3c tree collection ─────────────────────────────────────────────────────
+//
+// WHY THIS EXISTS (2026-09-10, the arm gate). The 05:45Z crossing published
+// green under release/2026-w37.9 and `escrow_projection` held ZERO rows after
+// the same timer's clearing, because the candle — postmark-world2-clearing.service
+// — runs clearing-job.mjs out of /srv/world2-lab/office, A SECOND OFFICE
+// CHECKOUT at 7926461 (2026-09-05, schema <= 012, no escrow ingest) THAT THE
+// RELEASE WORKFLOW NEVER DEPLOYS. Four units share that tree through
+// deploy/world2-lib.sh's `WORLD2_OFFICE="${WORLD2_OFFICE:-$WORLD2_LAB/office}"`.
+//
+// EVERY ROW ON THE BOARD READ CORRECTLY AND THE BOARD WAS WRONG. The candle's
+// row read OK because it reads the candle's TICK — the lane ran, on time, wrote
+// its state file, and did old work. The notary's row read ALARM-outcome because
+// the manifest (written from the new tree) declares an outcome log the OLD
+// notary has no code to write. Neither row could say the word "tree", so the one
+// fact that explained both was the one fact nothing on the box was holding.
+//
+// So this collects, for every unit the manifest names, THE TREE IT WILL
+// ACTUALLY RUN, and the release stamp of that tree beside the deployed one.
+//
+// ⚑ THE SECRET. `systemctl show <unit> -p Environment` PRINTS THE MERGED
+//   ENVIRONMENT, and on this box that includes
+//   postmark-settlement.service.d/clearing-url.conf, whose WORLD2_CLEARING_URL
+//   carries a Postgres password. The runbook's own rule is "never run
+//   `systemctl show postmark-settlement.service -p Environment`", and a
+//   collector that stuffed that string into a snapshot would be the same leak
+//   with a file attached — `--dump-snapshot` writes to /tmp and the runbook
+//   copies it OFF THE BOX. `pickEnv` is therefore a WHITELIST, applied at the
+//   moment of reading: only the keys the manifest's tree rows name survive the
+//   call, and the raw string is never stored, never returned and never logged.
+
+/** Parse systemd's `Environment=` value and keep ONLY the named keys.
+ *
+ *  The whitelist is the whole point (see the note above), so this returns a
+ *  fresh object holding nothing else — not the raw string, not the other pairs.
+ *  systemd quotes any value containing whitespace, so the tokenizer has to
+ *  respect quoting or a password with a space in it would split into fragments
+ *  and one of the fragments could look like a key. */
+export function pickEnv(raw, keys) {
+  const want = new Set(keys || []);
+  const out = Object.create(null);
+  if (typeof raw !== "string" || !raw.length || !want.size) return out;
+  let i = 0;
+  while (i < raw.length) {
+    while (i < raw.length && /\s/.test(raw[i])) i += 1;
+    if (i >= raw.length) break;
+    let tok = "";
+    let quote = null;
+    while (i < raw.length) {
+      const c = raw[i];
+      if (c === "\\" && i + 1 < raw.length) { tok += raw[i + 1]; i += 2; continue; }
+      if (quote === null && (c === '"' || c === "'")) { quote = c; i += 1; continue; }
+      if (quote !== null && c === quote) { quote = null; i += 1; continue; }
+      if (quote === null && /\s/.test(c)) break;
+      tok += c; i += 1;
+    }
+    const eq = tok.indexOf("=");
+    if (eq > 0) {
+      const k = tok.slice(0, eq);
+      if (want.has(k)) out[k] = tok.slice(eq + 1);
+    }
+  }
+  return out;
+}
+
+/** The deploy stamp the release workflow ships beside the code it ships. */
+export function readRelease(root, { read = readFile } = {}) {
+  const path = join(root, "release.json");
+  const f = read(path);
+  if (!f || !f.exists || typeof f.text !== "string") return { exists: false, root, path };
+  try {
+    const d = JSON.parse(f.text);
+    return { exists: true, root, path, sha: d.sha ? String(d.sha) : "", tag: d.tag ? String(d.tag) : "", deployed_at: d.deployed_at ?? null };
+  } catch {
+    return { exists: false, root, path, unreadable: true };
+  }
+}
+
+// A hand-copied directory is the same failure class one layer down, and it is
+// ALREADY LIVE on this box: DEPLOY.md says of /srv/world2-lab/ops "a plain file
+// copy from this repo" and, of a one-line default it had to fix on 2026-09-05,
+// "The box's copy of the script is stale until it is carried." Nothing carries
+// it, and nothing goes red while it is uncarried. Bounded, and it says so when
+// it hits the bound, for scanCustody's reason: a scan that could not finish is
+// not a clean scan.
+export const COPY_SCAN_CAP = 500;
+
+/** Every file the box's copy holds, compared BYTE FOR BYTE against the release's.
+ *  Read as bytes rather than text on purpose — DEPLOY.md's own warning is that a
+ *  trailing `\r` from a Windows checkout "fails in a way that reads like a
+ *  missing file", and a text compare would call that pair identical. */
+export function compareFileCopy(boxDir, releaseDir, matchRe, {
+  cap = COPY_SCAN_CAP, readdir = readdirSync, read = readFileSync, exists = existsSync,
+} = {}) {
+  const base = { box_dir: boxDir, release_dir: releaseDir };
+  if (!exists(boxDir)) return { ...base, exists: false };
+  if (!exists(releaseDir)) return { ...base, exists: true, release_dir_missing: true, scanned: 0, missing: [], differing: [], truncated: false };
+  let names;
+  try { names = readdir(boxDir); } catch { return { ...base, exists: true, unreadable: true }; }
+  names = names.filter((n) => matchRe.test(n)).sort();
+  const missing = [];
+  const differing = [];
+  let scanned = 0;
+  let truncated = false;
+  for (const n of names) {
+    if (scanned >= cap) { truncated = true; break; }
+    scanned += 1;
+    const rp = join(releaseDir, n);
+    if (!exists(rp)) { missing.push(n); continue; }
+    try {
+      if (!read(join(boxDir, n)).equals(read(rp))) differing.push(n);
+    } catch { differing.push(n); }
+  }
+  return { ...base, exists: true, scanned, missing, differing, truncated };
+}
+
+function safeRealpath(p) {
+  try { return realpathSync(p); } catch { return p; }
+}
+
+/** The service unit that EXECS for a manifest row — a timer execs nothing. */
+export function serviceOf(unitName) {
+  return unitName.endsWith(".service") ? unitName : unitName.replace(/\.timer$/, ".service");
+}
+
+export function collectTrees(manifest, {
+  show = showProps, realpath = safeRealpath, readRel = readRelease, compare = compareFileCopy,
+} = {}) {
+  const spec = manifest.trees;
+  const tree_sources = Object.create(null);
+  const tree_realpath = Object.create(null);
+  const releases = Object.create(null);
+  const file_copies = Object.create(null);
+  if (!spec) return { tree_sources, tree_realpath, releases, file_copies };
+
+  const envKeys = [...new Set((spec.rows || []).map((r) => r.env_key).filter(Boolean))];
+
+  // Every manifest unit, not only the rowed ones — the omission check in §5d
+  // reads this, and it is what keeps the tree rows from decaying into a snapshot
+  // of the day they were written.
+  for (const row of manifest.units) {
+    const svc = serviceOf(row.unit);
+    if (svc in tree_sources) continue;
+    const kv = show(svc, ["WorkingDirectory", "Environment"]);
+    tree_sources[svc] = { working_directory: kv.WorkingDirectory || "", env: pickEnv(kv.Environment || "", envKeys) };
+  }
+
+  const note = (p) => {
+    if (!p || p in tree_realpath) return tree_realpath[p] ?? p;
+    const real = realpath(p);
+    tree_realpath[p] = real;
+    if (!(real in releases)) releases[real] = readRel(real);
+    return real;
+  };
+
+  const releaseReal = note(spec.release_root);
+  for (const row of spec.rows || []) {
+    if (row.kind === "file_copy") {
+      const boxDir = row.path;
+      const releaseDir = join(releaseReal, row.from);
+      file_copies[row.id] = compare(boxDir, releaseDir, new RegExp(row.match || "."));
+      continue;
+    }
+    const declared = declaredTree(row, { tree_sources }, spec);
+    if (declared.tree) note(declared.tree);
+    if (row.must_be !== "release") note(row.must_be);
+  }
+
+  return { tree_sources, tree_realpath, releases, file_copies };
+}
+
 export function collect(manifest, { now = Date.now() } = {}) {
   const units = Object.create(null);
   const services = Object.create(null);
@@ -433,6 +650,7 @@ export function collect(manifest, { now = Date.now() } = {}) {
     services,
     files,
     custody,
+    ...collectTrees(manifest),
   };
 }
 
@@ -995,9 +1213,191 @@ export function classifyCustody(row, snapshot) {
   };
 }
 
+// ── §5d judging THE TREE A UNIT WILL RUN ────────────────────────────────────
+//
+// Pure, like every other judgment here, and derived from `tree_sources` rather
+// than from anything the collector decided — so a falsifier that repoints one
+// unit's environment moves exactly one row, which is the whole test idiom of
+// this file.
+
+/** Which tree this row's unit will run, and where that answer came from. */
+export function declaredTree(row, snapshot, spec) {
+  const src = (snapshot.tree_sources || {})[row.unit] || { working_directory: "", env: {} };
+  if (row.env_key) {
+    const v = (src.env || {})[row.env_key];
+    if (v) return { tree: v, source: `${row.env_key} in the unit's environment` };
+  }
+  if (src.working_directory) return { tree: src.working_directory, source: "the unit's WorkingDirectory" };
+  if (row.default_when_unset) {
+    return {
+      tree: row.default_when_unset,
+      source: row.env_key
+        ? `nothing sets ${row.env_key}, so ${row.default_source || "the ops lib's default"} decides`
+        : row.default_source || "the ops lib's default",
+      by_default: true,
+    };
+  }
+  return { tree: "", source: "" };
+}
+
+export function classifyTree(row, manifest, snapshot) {
+  const spec = manifest.trees;
+  const label = row.label || row.id;
+  const unit = `tree:${row.kind === "file_copy" ? row.id : row.unit}`;
+  const real = (p) => (snapshot.tree_realpath || {})[p] ?? p;
+  const releaseRoot = real(spec.release_root);
+  const deployed = (snapshot.releases || {})[releaseRoot] || { exists: false };
+
+  // A row whose rail the manifest has parked is not running anything, so there
+  // is no tree to be wrong. Reported forever, like every parked row here — the
+  // unit row's own ALARM-unparked is what catches a parked rail that came alive.
+  const gov = row.kind === "file_copy" ? null : unitRowGoverning(manifest, row.unit);
+  if (gov && gov.stage === "parked") {
+    return { unit, label, verdict: PARKED, reason: `${label} is parked with ${gov.unit} — nothing is running this tree (adoption owner: ${gov.activation_owner})` };
+  }
+
+  // THE DEPLOYED STAMP IS THE YARDSTICK, so an unreadable one is an alarm and
+  // never a pass. Judged before anything else for the reason RULE 1 is: a check
+  // that cannot read its own reference must say so rather than report clean.
+  if (!deployed.exists) {
+    return {
+      unit, label, verdict: ALARM_TREE,
+      reason:
+        `${label} cannot be judged — the deployed release stamp at ${releaseRoot}/release.json is ` +
+        `${deployed.unreadable ? "unreadable" : "not on the box"}, so nothing here can say which tree is the right one. ` +
+        `${row.why} Activation owner: ${row.activation_owner}`,
+    };
+  }
+  const shipped = `${deployed.tag || "?"} @ ${String(deployed.sha || "?").slice(0, 12)}`;
+
+  if (row.kind === "file_copy") {
+    const c = (snapshot.file_copies || {})[row.id];
+    const where = `${row.path} against ${releaseRoot}/${row.from}`;
+    if (!c || !c.exists) {
+      return { unit, label, verdict: ALARM_TREE, reason: `${label} — ${row.path} is not on the box at all, so nothing can be said about whether its copies match the release ${shipped}. ${row.why} Activation owner: ${row.activation_owner}` };
+    }
+    if (c.unreadable || c.release_dir_missing) {
+      return { unit, label, verdict: ALARM_TREE, reason: `${label} — ${where} could not be compared (${c.release_dir_missing ? "the release carries no such directory" : "the box directory is unreadable"}). A comparison that could not run is not a clean comparison. ${row.why} Activation owner: ${row.activation_owner}` };
+    }
+    if (c.truncated) {
+      return { unit, label, verdict: ALARM_TREE, reason: `${label} — the comparison of ${where} hit its ${COPY_SCAN_CAP}-file bound after ${c.scanned} files and did not finish. A scan that could not finish is not a clean scan. ${row.why} Activation owner: ${row.activation_owner}` };
+    }
+    const bad = [...c.differing.map((n) => `${n} (differs)`), ...c.missing.map((n) => `${n} (not in the release)`)];
+    if (bad.length) {
+      return {
+        unit, label, verdict: ALARM_TREE,
+        reason:
+          `${label} — ${bad.length} of ${c.scanned} file(s) under ${row.path} are NOT the release ${shipped}: ${bad.slice(0, 6).join(", ")}` +
+          `${bad.length > 6 ? ` …and ${bad.length - 6} more` : ""}. The units exec these copies, so the box is running code no deploy shipped. ` +
+          `${row.why} Repair: ${row.repair || `carry them from ${releaseRoot}/${row.from}`}`,
+      };
+    }
+    return { unit, label, verdict: OK, reason: `${label} — all ${c.scanned} file(s) under ${row.path} are byte-identical to the release ${shipped}` };
+  }
+
+  const d = declaredTree(row, snapshot, spec);
+
+  // THE ROW MAY REFUSE TO GUESS, AND THE WORLD2 ROWS DO. Their tree comes from
+  // WORLD2_OFFICE, whose fallback lives in `/srv/world2-lab/ops/world2-lib.sh`
+  // — a HAND FILE COPY that no deploy updates (DEPLOY.md § Where things live:
+  // "a plain file copy from this repo"). So the roll-call cannot read that
+  // default, only assume it, and an assumed default is how this class hid: the
+  // repo said one path and the box ran another. A row carrying `require_env`
+  // says the environment must ANSWER, and an unset key is the alarm rather than
+  // an occasion to guess.
+  if (!d.tree && row.env_key && row.require_env) {
+    return {
+      unit, label, verdict: ALARM_TREE,
+      reason:
+        `${label} — nothing in ${row.unit}'s environment sets ${row.env_key}, so the tree it runs is whatever ` +
+        `the box's own copy of the ops lib falls back to, and that copy is not deployed by anything. Install ` +
+        `${row.require_env} and daemon-reload. Until then this unit's code is unknowable, which is not the same ` +
+        `as correct. ${row.why} Activation owner: ${row.activation_owner}`,
+    };
+  }
+  if (!d.tree) {
+    return {
+      unit, label, verdict: ALARM_TREE,
+      reason:
+        `${label} names no tree at all — ${row.unit} carries no WorkingDirectory` +
+        `${row.env_key ? `, nothing sets ${row.env_key},` : ""} and the row declares no default, so the roll-call ` +
+        `cannot say what code this unit runs. ${row.why} Activation owner: ${row.activation_owner}`,
+    };
+  }
+  const resolved = real(d.tree);
+
+  // A tree that is deliberately NOT the release. Legal, and it costs a sentence
+  // in the manifest — see loadManifest's `divergence_because` clause.
+  if (row.must_be !== "release") {
+    const allowed = real(row.must_be);
+    if (resolved === allowed) {
+      return { unit, label, verdict: OK, reason: `${label} runs from ${d.tree} (${d.source}), which is the tree this row allows — ${row.divergence_because}` };
+    }
+    return {
+      unit, label, verdict: ALARM_TREE,
+      reason:
+        `${label} runs from ${d.tree} (${d.source}), which is neither the release ${shipped} at ${releaseRoot} nor ` +
+        `the ${row.must_be} this row allows. ${row.why} Activation owner: ${row.activation_owner}`,
+    };
+  }
+
+  if (resolved === releaseRoot) {
+    return { unit, label, verdict: OK, reason: `${label} runs from ${d.tree} (${d.source}) — the deployed release ${shipped}` };
+  }
+
+  // Not the same path. It may still be the same CODE: a second copy carrying the
+  // same release stamp is a copy the deploy is keeping up with, and reddening on
+  // it would be reddening on tidiness rather than on drift.
+  const there = (snapshot.releases || {})[resolved] || { exists: false };
+  if (there.exists && there.sha && deployed.sha && there.sha === deployed.sha) {
+    return { unit, label, verdict: OK, reason: `${label} runs from ${d.tree} (${d.source}) — a separate tree, carrying the same release ${shipped}` };
+  }
+  const carries = there.exists
+    ? `it carries ${there.tag || "?"} @ ${String(there.sha || "?").slice(0, 12)}`
+    : there.unreadable
+      ? `its release.json is unreadable`
+      : `it carries NO release stamp at all — nothing has ever deployed it`;
+  return {
+    unit, label, verdict: ALARM_TREE,
+    reason:
+      `${label} runs from ${d.tree} (${d.source}), which is NOT the deployed release ${shipped} at ${releaseRoot} — ` +
+      `${carries}. The unit ticks and its work runs OLD CODE. ${row.why} Activation owner: ${row.activation_owner}`,
+  };
+}
+
+/** RULE 4 for trees. A unit that names a tree and has no row naming it back. */
+export function unrowedTrees(manifest, snapshot) {
+  const spec = manifest.trees;
+  if (!spec) return [];
+  const rowed = new Set((spec.rows || []).filter((r) => r.kind !== "file_copy").map((r) => r.unit));
+  const envKeys = [...new Set((spec.rows || []).map((r) => r.env_key).filter(Boolean))];
+  const out = [];
+  for (const row of manifest.units) {
+    if (row.stage === "parked") continue;
+    const svc = serviceOf(row.unit);
+    if (rowed.has(svc)) continue;
+    const src = (snapshot.tree_sources || {})[svc];
+    if (!src) continue;
+    const named = src.working_directory || envKeys.map((k) => (src.env || {})[k]).find(Boolean);
+    if (!named) continue;
+    out.push({
+      unit: `tree:${svc}`,
+      label: svc,
+      verdict: ALARM_TREE,
+      reason:
+        `${svc} runs from ${named} and appears in NO tree row — nothing is checking that the code this unit ` +
+        `executes is the code the release deployed, which is exactly how the candle ran a three-day-old checkout ` +
+        `through a green board on 2026-09-10. Add its row to deploy/box-rollcall-manifest.json § trees`,
+    });
+  }
+  return out;
+}
+
 export function rollcall(manifest, snapshot, now = Date.now()) {
   const rows = manifest.units.map((row) => classifyRow(row, snapshot, now));
   for (const row of manifest.custody ?? []) rows.push(classifyCustody(row, snapshot));
+  for (const row of manifest.trees?.rows ?? []) rows.push(classifyTree(row, manifest, snapshot));
+  rows.push(...unrowedTrees(manifest, snapshot));
 
   // RULE 4, the other direction. Anything the box carries that the manifest does
   // not name. Without this the roll-call silently becomes a snapshot of the day

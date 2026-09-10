@@ -81,6 +81,13 @@ const refusal = readJson(env("SETTLEMENT_REFUSAL_JSON"));
 // store. Like the drain's and the retirement's, it arrives on its own report
 // rather than as a sweep channel — the sweep holds no store credential.
 const store = readJson(env("SETTLEMENT_STORE_JSON"));
+// THE HOUSEHOLD REGISTRY REFRESH (2026-09-09). Named on every crossing, like the
+// drain's and the retirement's, and for the sharpest version of their reason:
+// this step's whole point is that "the registry was re-derived" and "nobody
+// re-derived it for 33 days" printed identically for 33 days. `changed: false`
+// is the receipt that the crossing LOOKED; its absence is the state that made
+// the step necessary.
+const registry = readJson(env("SETTLEMENT_REGISTRY_JSON"));
 
 const channels = {};
 let unnamed = null;
@@ -257,6 +264,59 @@ const receipt = {
         sketchbooks_cleared: store.sketchbooks_cleared ?? null,
       }
     : { ran: false, reason: "the store write-down did not run for this crossing" },
+
+  // ── THE HOUSEHOLD REGISTRY THIS CROSSING FOLDED ON ─────────────────────────
+  //
+  // `town_sha` is the tree the mapping was DERIVED from and `changed` says
+  // whether this crossing moved it. Both are needed and neither substitutes for
+  // the other: an unchanged registry keeps an older `town_sha`, so `town_sha`
+  // alone reads as staleness where there is none, and `changed: false` alone
+  // says nothing about which town the standing file came from.
+  //
+  // `added`, `removed` and `rekeyed` are carried BY NAME, not counted. A handle
+  // that joined a household and a handle that was re-keyed to a different
+  // credential have the same count and completely different consequences: the
+  // first can only group marks that were ungrouped, the second moves marks
+  // between households and can push one over the parcel-claim cap. The keeper is
+  // the reader who can tell those apart, and a count would hide the difference.
+  registry: registry
+    ? (registry.refused
+        ? { ran: true, verified: false, refused: registry.refused, detail: registry.detail ?? null }
+        : registry.ran === false
+          ? {
+              ran: false,
+              // LOUD, and on every unverified crossing. `verified: false` beside
+              // `bypass: true` is the pair a reader needs: the first says the
+              // registry was not checked against the town, the second says a
+              // person meant that. An unverified crossing that reads like an
+              // ordinary one is the 2026-08-07 shape in this lane's own clothes.
+              verified: false,
+              bypass: registry.bypass === true,
+              reason: registry.reason ?? "the registry refresh did not run for this crossing",
+            }
+          : {
+              ran: true,
+              verified: true,
+              // THE SHA IT WAS CHECKED AGAINST, which is not the stamp the file
+              // carries. A registry re-derived and found unchanged keeps an
+              // older stamp and is fresh; `verified_at` is the field that says
+              // so, and `town_sha` below is the file's own. Two facts, two
+              // fields, because conflating them refuses every quiet crossing.
+              verified_at: registry.verified_at ?? null,
+              changed: registry.changed === true,
+              commit: env("SETTLEMENT_REGISTRY_COMMIT") ?? null,
+              town_sha: registry.town_sha ?? null,
+              generated_at: registry.generated_at ?? null,
+              previous_generated_at: registry.previous_generated_at ?? null,
+              previous_town_sha: registry.previous_town_sha ?? null,
+              handles: registry.handles ?? null,
+              households: registry.households ?? null,
+              logins: registry.logins ?? null,
+              added: registry.added ?? [],
+              removed: registry.removed ?? [],
+              rekeyed: registry.rekeyed ?? [],
+            })
+    : { ran: false, verified: false, bypass: false, reason: "the registry refresh did not run for this crossing" },
 
   // WHAT THE CROSSING SURVEYED. A quiet pass without this is a claim with no
   // receipt: "nothing eligible" and "I looked at nothing" print identically.

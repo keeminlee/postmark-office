@@ -102,6 +102,11 @@
 #   SETTLEMENT_REPORT  the receipt path (default /srv/postmark-harbor/settlement-auto.json)
 #   SETTLEMENT_HISTORY the rolling receipt log (default beside the receipt, .jsonl)
 #   SETTLEMENT_DRAIN   0 disables the drain step (the seam a falsifier pins)
+#   SETTLEMENT_REGISTRY 0 disables the household registry refresh — the crossing
+#                      then folds on whatever WORLD/households.json world main
+#                      already carries, which is the pre-2026-09-09 behaviour and
+#                      the seam this lane's falsifier flips. It lands on the
+#                      receipt as `ran: false` with its reason, never as silence.
 #   SETTLEMENT_ISOLATE 0 disables the isolation pass — a red suite refuses the town, as before
 #   SETTLEMENT_RACE_ATTEMPTS  how many times a LOST RACE re-runs the whole crossing (default 3)
 #   SETTLEMENT_ATTEMPT set by the retry wrapper on each child; never set it by hand
@@ -186,6 +191,7 @@ report() { # status detail
   SETTLEMENT_SOURCE_MODE="$SOURCE" SETTLEMENT_STORE_JSON="${STORE_JSON:-}" \
   SETTLEMENT_GHOSTS="${GHOSTS:-}" SETTLEMENT_KEPT_UNDELIVERED="${KEPT_UNDELIVERED:-}" \
   SETTLEMENT_RESETS="${RESETS:-}" \
+  SETTLEMENT_REGISTRY_JSON="${REGISTRY_JSON:-}" SETTLEMENT_REGISTRY_COMMIT="${REGISTRY_COMMIT:-}" \
     node "$OFFICE/deploy/settlement-receipt.mjs" > "$OUT" 2>/dev/null || true
   # THE HISTORY. One line per DECIDED crossing, appended, bounded. A single
   # receipt file answers "what did the last crossing do"; nothing on the box
@@ -254,14 +260,26 @@ fi
 # The FETCH and the pinned read happen in both modes, because `town_sha` is the
 # crossing's identity in the receipt and, after G1, the key the store's
 # `stamp_projection` is looked up by — `(town_sha, handle)`, `world2/schema/
-# 001_tables.sql:136-143`. The frozen local SNAPSHOT is git-mode only: its one
-# reader is `tools/world-stake.mjs`, which the store path replaces.
+# 001_tables.sql:136-143`.
+#
+# THE FROZEN SNAPSHOT IS NO LONGER GIT-MODE ONLY (2026-09-09). It had exactly one
+# reader, `tools/world-stake.mjs`, which the store path replaces — so the
+# checkout was skipped under `store`. The household registry refresh below is its
+# SECOND reader and it runs in both modes, so the snapshot is taken in both.
+#
+# AND IT MUST BE THE SNAPSHOT, NEVER `$TOWN` ITSELF. This script only FETCHES the
+# long-lived town clone; nothing here advances its working tree, so the files on
+# disk there are whatever some other hand's last checkout left. Measured rather
+# than feared: on 2026-09-09 that tree sat at `5fa468e9` while its own
+# `origin/main` was `4c234d47`. A registry derived from those files and stamped
+# with `$TOWN_SHA` would name a tree its values did not come from, which is the
+# one failure a freshness stamp exists to make impossible. So the export reads
+# `$WORK/town`, and `deploy/settlement-registry.mjs` REFUSES unless the stamp
+# that comes back is this crossing's own sha.
 git -C "$TOWN" fetch -q origin
 TOWN_SHA="$(git -C "$TOWN" rev-parse origin/main)"
-if [ "$SOURCE" = "git" ]; then
-  git clone -q --local --no-checkout "$TOWN" "$WORK/town"
-  git -C "$WORK/town" checkout -qf "$TOWN_SHA"
-fi
+git clone -q --local --no-checkout "$TOWN" "$WORK/town"
+git -C "$WORK/town" checkout -qf "$TOWN_SHA"
 
 # World: main, and — in git mode only — every sketchbook at its exact remote tip
 # with its lease recorded.
@@ -285,6 +303,127 @@ fi
 WORLD_FROM="$(git -C "$SWEEP" rev-parse origin/main)"
 git -C "$SWEEP" checkout -qf -B main origin/main
 git -C "$SWEEP" clean -fdq  # a killed run leaves untracked debris; the clone is disposable
+
+# ── THE HOUSEHOLD REGISTRY IS RE-DERIVED AT THE START OF EVERY CROSSING ──────
+#                                                        (founder, 2026-09-09)
+#
+# `WORLD/households.json` is the World's ONLY knowledge of which handles form one
+# household. It is an EXPORT of this office's resolver, and until this step it was
+# written into the world BY HAND: the export tool's own header ruled that the
+# refresh "belongs with pin churn, not on a timer" and is "the caller's act
+# (founder hand or the keeper's crossing sweep)".
+#
+# Nobody was that caller after 2026-08-07. Thirty-three days later the committed
+# file named 101 handles in 73 households while the town's own resolver named 157
+# in 108, and every household that had joined in between was a stranger to the
+# fold. The founder, reading the count: "How do we determine n households? How
+# can that go stale? That seems very wrong."
+#
+# THREE READERS TAKE THIS FILE AS LIVE, AND THE THIRD FAILS SILENTLY:
+#   · tools/marks-fold.mjs § parcel admissibility — the claim cap, sovereignty,
+#     rivalry, consent. Takes `--households <file>`; the crossing passes none.
+#   · tools/mark-lint.mjs § the consent gate — "your own household's ground".
+#     Takes `--households <file>`; the crossing passes none.
+#   · tools/settlement-sweep.mjs + tools/lane-wall.mjs — the AUTHORSHIP WALL.
+#     Takes NO flag at all, and the sweep leaves a sketchbook it cannot bind
+#     ALONE rather than refusing it. So a registry that does not know a household
+#     produces a crossing that looks clean and verified nobody.
+#
+# A value nothing refreshes, read as live. SO THE CROSSING IS THE CALLER — here,
+# at the top, in BOTH modes, BEFORE the fold reads it. Under `store` the same step
+# runs and for the same reasons: the store's `identities`/`town_roll` do not yet
+# feed the wall or the lint, so this file is still what both of them read.
+#
+# IT REFUSES RATHER THAN FOLD ON A REGISTRY IT CANNOT VOUCH FOR, exactly as the
+# drain does. Folding under an unattributable registry is a WRONG publication —
+# marks filed into the wrong households, a wall standing down — and it is silent.
+# A refused crossing is a finding somebody reads. `SETTLEMENT_REGISTRY=0` is the
+# deliberate bypass for an operator whose export is broken and who needs the town
+# to cross anyway; it lands on the receipt as `ran: false` with its reason.
+#
+# THE COMMIT IS ITS OWN, AND THAT IS NOT A PREFERENCE. It would ride the sweep's
+# `settlement: sweep …` commit if it could — that is where the crossing's other
+# derived files land. It cannot: `settlement-sweep.mjs` REFUSES on a dirty
+# checkout (its `clean-check` phase) and its commit stages an explicit path list
+# this file is not on. A registry written into the clone and left uncommitted
+# would refuse the crossing before the fold ever ran. Putting it on the sweep's
+# list is a WORLD-repo change, and this office chain must not depend on a world
+# change that has not landed — so the refresh commits itself, ahead of the fold,
+# and world main carries the two commits in the order they actually happened.
+REGISTRY_JSON=""
+REGISTRY_COMMIT=""
+REGISTRY_FLAG=""
+REGISTRY_ARG=""
+if [ "${SETTLEMENT_REGISTRY:-1}" = "1" ]; then
+  mkdir -p "$WORK/registry/WORLD"
+  # The export writes into a SCRATCH world, never straight into the sweep clone.
+  # If it half-writes, or stamps a tree it did not read, the clone was never
+  # touched and there is nothing to restore — and a restore of a generated file
+  # is exactly the step a crashed crossing skips.
+  if ! (cd "$OFFICE" && node "$OFFICE/tools/world-households-export.mjs" \
+        --town "$WORK/town" --world "$WORK/registry") > "$WORK/registry.log" 2>&1; then
+    REGISTRY_JSON="$WORK/registry.json"
+    node -e 'const fs=require("node:fs");fs.writeFileSync(process.argv[1],JSON.stringify({refused:"the household export tripped",detail:process.argv[2]},null,1)+"\n")' \
+      "$REGISTRY_JSON" "$(head -c 400 "$WORK/registry.log" | tr '\n"' ' .')" 2>/dev/null || REGISTRY_JSON=""
+    report refused "the household registry could not be re-derived: $(head -c 200 "$WORK/registry.log" | tr '\n"' ' .')"
+    echo "[settlement-auto] REGISTRY EXPORT TRIPPED — publishing nothing" >&2
+    cat "$WORK/registry.log" >&2; exit 1
+  fi
+  REGISTRY_JSON="$WORK/registry.json"
+  if ! node "$OFFICE/deploy/settlement-registry.mjs" \
+        --fresh "$WORK/registry/WORLD/households.json" --world "$SWEEP" --town-sha "$TOWN_SHA" \
+        > "$REGISTRY_JSON" 2>"$WORK/registry.err"; then
+    report refused "the household registry refused: $(node -e 'const r=require(process.argv[1]);process.stdout.write(String(r.refused||"unknown")+" — "+String(r.detail||""))' "$REGISTRY_JSON" 2>/dev/null || head -c 200 "$WORK/registry.err" | tr '\n"' ' .')"
+    echo "[settlement-auto] REGISTRY REFUSED — publishing nothing" >&2
+    cat "$REGISTRY_JSON" >&2 2>/dev/null || true; cat "$WORK/registry.err" >&2; exit 1
+  fi
+  # A REFRESH THAT CHANGED NOTHING COMMITS NOTHING. The export stamps a new
+  # `generated_at` on every run, so copying it in unconditionally would put a
+  # commit on world main every twelve hours forever and turn every quiet crossing
+  # into one that moved main. settlement-registry.mjs compares the SUBSTANCE and
+  # writes the file only when the mapping actually moved; the receipt is where
+  # "this crossing looked" is said on every crossing either way.
+  if [ "$(node -e 'const r=require(process.argv[1]);process.stdout.write(String(r.changed===true))' "$REGISTRY_JSON")" = "true" ]; then
+    node -e 'const r=require(process.argv[1]);process.stdout.write(r.commit_message)' "$REGISTRY_JSON" > "$WORK/registry.msg"
+    git -C "$SWEEP" add -- WORLD/households.json
+    git -C "$SWEEP" \
+      -c user.name="the settlement sweep (box)" \
+      -c user.email="postmark-settlement@users.noreply.github.com" \
+      commit -q -F "$WORK/registry.msg"
+    REGISTRY_COMMIT="$(git -C "$SWEEP" rev-parse HEAD)"
+  fi
+  echo "[settlement-auto] registry: $(node -e 'const r=require(process.argv[1]);process.stdout.write(String(r.summary||""))' "$REGISTRY_JSON")" >&2
+  # WHAT THE WORLD IS TOLD. The sha this crossing VERIFIED the registry against,
+  # never the stamp the file carries — those are different facts, and the world
+  # must not compare them for equality. See deploy/settlement-registry.mjs.
+  REGISTRY_FLAG="--registry-verified-at"
+  REGISTRY_ARG="$TOWN_SHA"
+else
+  REGISTRY_JSON="$WORK/registry.json"
+  node -e 'const fs=require("node:fs");fs.writeFileSync(process.argv[1],JSON.stringify({ran:false,bypass:true,reason:"SETTLEMENT_REGISTRY=0 — this crossing folded on whatever WORLD/households.json world main already carried"},null,1)+"\n")' \
+    "$REGISTRY_JSON" 2>/dev/null || REGISTRY_JSON=""
+  # ── THE BYPASS MUST ACTUALLY BYPASS ────────────────────────────────────────
+  #
+  # The first cut passed the verification unconditionally, so the documented
+  # escape hatch refused the crossing on the very file it exists to tolerate. A
+  # bypass that refuses is not a bypass. The world is told the registry was NOT
+  # verified and why, it does not refuse, and the crossing is LOUD about it here
+  # and on the receipt — because an unverified crossing that reads like an
+  # ordinary one is the 2026-08-07 shape wearing this lane's own clothes.
+  REGISTRY_FLAG="--registry-unverified"
+  REGISTRY_ARG="SETTLEMENT_REGISTRY=0"
+  echo "[settlement-auto] *** REGISTRY UNVERIFIED (bypass) *** SETTLEMENT_REGISTRY=0 — nothing checked WORLD/households.json against the town this crossing; the fold, the lint and the authorship wall read whatever world main already carries" >&2
+fi
+
+# THE BASE THE SWEEP IS MEASURED AGAINST. `main` may already be ahead of
+# `origin/main` at this line, because the registry refresh commits before the
+# fold. The quiet-pass test at the end of this script asks whether THE SWEEP
+# published anything, which is a different question from whether main moved, and
+# `deploy/settlement-history.mjs --recurring` reads that answer to decide whether
+# the town has settled in three days. A registry refresh must never be able to
+# answer it yes.
+WORLD_BASE="$(git -C "$SWEEP" rev-parse main)"
+
 : > "$WORK/tips"
 if [ "$SOURCE" = "git" ]; then
   git -C "$SWEEP" for-each-ref --format='%(refname:short) %(objectname)' 'refs/remotes/origin/draft/*' > "$WORK/tips"
@@ -626,7 +765,31 @@ fi
 # The sweep: publishes eligible drafts into local main, rebases local
 # sketchbooks. It never pushes — publication is gated below.
 SWEEP_JSON="$WORK/sweep.json"
-(cd "$SWEEP" && node tools/settlement-sweep.mjs --stakes "$WORK/stakes.json" --json) > "$SWEEP_JSON" 2>"$WORK/sweep.err" || {
+# `--town-sha` is the OTHER HALF of the registry refresh, and it is what makes the
+# refresh a construction rather than a habit (founder, 2026-09-09: "please make
+# sure this incident cannot happen again by construction"). The step above
+# re-derives the registry; this makes the world REFUSE to fold one derived from
+# any town but the one this crossing pinned — including an unstamped one, which
+# is the 2026-08-07 file exactly. Without it the refresh is a thing that usually
+# runs, and "usually" is what thirty-three days of staleness looked like from
+# inside.
+#
+# NOT passed to tools/settlement-isolate.mjs below, and that is sound rather than
+# an omission: the isolation pass only runs after this sweep has SUCCEEDED, so
+# the registry it would re-check has already been checked, on this same tree, by
+# this same line.
+# THE FLAG AND ITS VALUE ARE TWO QUOTED WORDS, and that is a repair rather than
+# a style. They were one variable expanded UNQUOTED so the shell would split it
+# into two arguments — which works only while the value contains no space, and
+# the value is a REASON. The first bypass reason anybody writes as a sentence
+# would have split into three arguments and handed the world a flag with a
+# truncated reason and two stray words after it. Quoted, the reason may say
+# whatever an operator needs it to say.
+#
+# Neither is ever empty: every path above sets both. A falsifier holds the
+# crossing to that, because a chain that stops stating anything about the
+# registry is the regression this whole construction exists to catch.
+(cd "$SWEEP" && node tools/settlement-sweep.mjs --stakes "$WORK/stakes.json" "$REGISTRY_FLAG" "$REGISTRY_ARG" --json) > "$SWEEP_JSON" 2>"$WORK/sweep.err" || {
   # THE STARVING CROSSING has its own status, because "refused" is what a
   # crossing says when the record is wrong and this is what it says when the
   # crossing itself is broken — an operator must be able to tell them apart at
@@ -744,26 +907,13 @@ if ! (cd "$SWEEP" && TMPDIR="$SUITE_TMP" TMP="$SUITE_TMP" TEMP="$SUITE_TMP" npm 
   fi
 fi
 
-WORLD_TO="$(git -C "$SWEEP" rev-parse main)"
-if [ "$WORLD_TO" = "$WORLD_FROM" ]; then
-  # THE QUIET PASS SAYS WHAT IT SURVEYED. "Nothing eligible" is a claim about
-  # the record; without the survey beside it, it is indistinguishable from
-  # "I looked at nothing", which is what the starving crossing actually was.
-  #
-  # AND IT SAYS WHOSE SKETCHBOOKS IT COUNTED (G1 lane 3, 2026-09-09). On the
-  # store path `src/store-writedown.mjs` deletes every draft ref and then builds
-  # one sketchbook per household before the sweep looks, so these counts are the
-  # write-down's own output rather than a register of waiting work. The wording
-  # lives in deploy/surveyed-reading.mjs, which the receipt's `surveyed_reading`
-  # field also reads — the inline `node -e` that used to be here was the second
-  # copy of a sentence, and two copies are how the operator's line and the
-  # keeper's receipt drift apart. The git wording is unchanged to the byte.
-  report quiet "nothing eligible; suite green at $WORLD_FROM"
-  echo "[settlement-auto] quiet pass — $(node "$OFFICE/deploy/surveyed-reading.mjs" --echo --sweep "$SWEEP_JSON" --source "$SOURCE")"
-  exit 0
-fi
-
-# Publish: main strictly fast-forward; sketchbooks only under their leases.
+# ── PUBLISHING MAIN, IN ONE PLACE ────────────────────────────────────────────
+#
+# A function, because there are now TWO crossings that push main and they are not
+# the same crossing: the ordinary one, where the sweep published, and the one
+# where the sweep published nothing and the household registry moved. Both need
+# the cheap salvage and the race exit; a second copy of this block is how one of
+# them quietly loses the salvage a year from now.
 #
 # THE CHEAP SALVAGE (founder, 2026-08-22, after S45 lost its push to a resident
 # walking through doors mid-sweep: "can we just push whatever slightly stale
@@ -777,22 +927,75 @@ fi
 # that is the founder's ruling (the 28-minute sweep losing to a 5-second
 # ledger line, twice, is the worse outcome), and the disjointness check is
 # what makes it sound.
-git -C "$SWEEP" push -q origin main:main || {
-  git -C "$SWEEP" fetch -q origin main
-  MB="$(git -C "$SWEEP" merge-base main origin/main)"
-  git -C "$SWEEP" diff --name-only "$MB" main | sort > "$WORK/swept-paths"
-  git -C "$SWEEP" diff --name-only "$MB" origin/main | sort > "$WORK/raced-paths"
-  if [ -s "$WORK/raced-paths" ] && [ -z "$(comm -12 "$WORK/swept-paths" "$WORK/raced-paths")" ] \
-     && git -C "$SWEEP" rebase -q origin/main >/dev/null 2>&1 \
-     && git -C "$SWEEP" push -q origin main:main; then
-    echo "[settlement-auto] main raced by disjoint paths ($(tr '\n' ' ' < "$WORK/raced-paths")) — sweep rebased and pushed" >&2
-    WORLD_TO="$(git -C "$SWEEP" rev-parse main)"   # the receipt names what actually landed
-  else
-    git -C "$SWEEP" rebase --abort >/dev/null 2>&1 || true
-    report race "world main moved underneath the sweep — rerun"
-    echo "[settlement-auto] RACE on main — rerun" >&2; exit 2
-  fi
+#
+# `exit` inside a shell function exits the script, which is what the race branch
+# means; and `WORLD_TO` assigned inside it is the script's own variable, which is
+# what the salvage branch means. Both are POSIX and both are load-bearing.
+publish_main() {
+  git -C "$SWEEP" push -q origin main:main || {
+    git -C "$SWEEP" fetch -q origin main
+    MB="$(git -C "$SWEEP" merge-base main origin/main)"
+    git -C "$SWEEP" diff --name-only "$MB" main | sort > "$WORK/swept-paths"
+    git -C "$SWEEP" diff --name-only "$MB" origin/main | sort > "$WORK/raced-paths"
+    if [ -s "$WORK/raced-paths" ] && [ -z "$(comm -12 "$WORK/swept-paths" "$WORK/raced-paths")" ] \
+       && git -C "$SWEEP" rebase -q origin/main >/dev/null 2>&1 \
+       && git -C "$SWEEP" push -q origin main:main; then
+      echo "[settlement-auto] main raced by disjoint paths ($(tr '\n' ' ' < "$WORK/raced-paths")) — sweep rebased and pushed" >&2
+      WORLD_TO="$(git -C "$SWEEP" rev-parse main)"   # the receipt names what actually landed
+    else
+      git -C "$SWEEP" rebase --abort >/dev/null 2>&1 || true
+      report race "world main moved underneath the sweep — rerun"
+      echo "[settlement-auto] RACE on main — rerun" >&2; exit 2
+    fi
+  }
 }
+
+WORLD_TO="$(git -C "$SWEEP" rev-parse main)"
+# ── DID THE SWEEP PUBLISH ANYTHING — ASKED OF THE SWEEP, NOT OF MAIN ─────────
+#
+# This compared `main` against `origin/main`, and those were one question while
+# the sweep was the only thing on this path that ever committed. The registry
+# refresh commits before the fold, so on a crossing where a household joined and
+# nothing settled, main is ahead of origin/main and the sweep published nothing.
+#
+# Comparing against `$WORLD_FROM` there would report `published` with six zero
+# channels, and `deploy/settlement-history.mjs --recurring` reads exactly that
+# word to answer "has this town settled in three days" — the 2026-08-26 starving
+# crossing's own question. A registry refresh must never be able to answer it
+# yes. So the test asks `$WORLD_BASE`: main AFTER the refresh and BEFORE the
+# fold. A registry-only crossing stays `quiet`; it simply has something to push
+# before it says so.
+if [ "$WORLD_TO" = "$WORLD_BASE" ]; then
+  if [ "$WORLD_BASE" != "$WORLD_FROM" ]; then
+    publish_main
+    WORLD_TO="$(git -C "$SWEEP" rev-parse main)"
+    report quiet "nothing eligible; the household registry was refreshed and published; suite green at $WORLD_TO"
+    echo "[settlement-auto] quiet pass, registry refreshed: $WORLD_FROM -> $WORLD_TO — $(node "$OFFICE/deploy/surveyed-reading.mjs" --echo --sweep "$SWEEP_JSON" --source "$SOURCE")"
+    exit 0
+  fi
+  # THE QUIET PASS SAYS WHAT IT SURVEYED. "Nothing eligible" is a claim about
+  # the record; without the survey beside it, it is indistinguishable from
+  # "I looked at nothing", which is what the starving crossing actually was.
+  #
+  # AND IT SAYS WHOSE SKETCHBOOKS IT COUNTED (G1 lane 3, 2026-09-09). On the
+  # store path `src/store-writedown.mjs` deletes every draft ref and then builds
+  # one sketchbook per household before the sweep looks, so these counts are the
+  # write-down's own output rather than a register of waiting work. The wording
+  # lives in deploy/surveyed-reading.mjs, which the receipt's `surveyed_reading`
+  # field also reads — the inline `node -e` that used to be here was the second
+  # copy of a sentence, and two copies are how the operator's line and the
+  # keeper's receipt drift apart. The git wording is unchanged to the byte.
+  #
+  # BOTH quiet exits read it, because this lane gave the quiet pass a second one:
+  # a crossing where the sweep published nothing and the household registry did
+  # move still pushes, and still reports `quiet`. Two exits, one sentence.
+  report quiet "nothing eligible; suite green at $WORLD_FROM"
+  echo "[settlement-auto] quiet pass — $(node "$OFFICE/deploy/surveyed-reading.mjs" --echo --sweep "$SWEEP_JSON" --source "$SOURCE")"
+  exit 0
+fi
+
+# Publish: main strictly fast-forward; sketchbooks only under their leases.
+publish_main
 # THE SKETCHBOOK LEASES. In store mode `$WORK/tips` is empty by construction —
 # nothing was fetched into it and nothing was delivered — so this loop is a
 # no-op and no draft branch is pushed. That is stated here rather than left to

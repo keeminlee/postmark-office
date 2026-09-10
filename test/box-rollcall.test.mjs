@@ -64,8 +64,18 @@ import {
   ALARM_UNMANIFESTED,
   ALARM_OUTCOME,
   ALARM_CUSTODY,
+  ALARM_TREE,
   scanCustody,
   judgeOutcome,
+  classifyTree,
+  declaredTree,
+  unrowedTrees,
+  serviceOf,
+  pickEnv,
+  readRelease,
+  compareFileCopy,
+  collectTrees,
+  COPY_SCAN_CAP,
   MINUTE,
 } from "../tools/box-rollcall.mjs";
 
@@ -73,6 +83,15 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const MANIFEST_PATH = join(HERE, "..", "deploy", "box-rollcall-manifest.json");
 
 const T0 = Date.parse("2026-08-27T06:00:00Z");
+
+// The release the box was carrying when the tree class was found — the stamp
+// release-train.yml wrote for release/2026-w37.9, under which the 2026-09-10
+// 05:45Z crossing published green while the candle ran 7926461.
+const DEPLOYED_TAG = "release/2026-w37.9";
+const DEPLOYED_SHA = "b01b3bad946dfb14f5479e9b677e17dad59ebbbe";
+// The retired second checkout, and the commit it was stuck at.
+const LAB_TREE = "/srv/world2-lab/office";
+const LAB_SHA = "7926461a0000000000000000000000000000feed";
 
 function manifest() {
   return loadManifest(MANIFEST_PATH);
@@ -221,7 +240,43 @@ function healthy(m = manifest()) {
     };
   }
 
-  return { schema: 1, collected_at: new Date(T0).toISOString(), host: "meepo-ec2", discovered, units, services, files, custody };
+  // §2c: every tree row healthy by construction — each unit running the tree its
+  // row says it must, and the deployed stamp readable. Generated from the shipped
+  // manifest for the reason everything else here is: a tree row somebody adds
+  // must not go green because nobody remembered to widen a fixture.
+  const tree_sources = {};
+  const tree_realpath = {};
+  const releases = {};
+  const file_copies = {};
+  const spec = m.trees;
+  if (spec) {
+    releases[spec.release_root] = {
+      exists: true, root: spec.release_root, path: `${spec.release_root}/release.json`,
+      sha: DEPLOYED_SHA, tag: DEPLOYED_TAG, deployed_at: new Date(T0).toISOString(),
+    };
+    for (const row of m.units) {
+      const svc = serviceOf(row.unit);
+      if (!(svc in tree_sources)) tree_sources[svc] = { working_directory: "", env: {} };
+    }
+    for (const row of spec.rows ?? []) {
+      if (row.kind === "file_copy") {
+        file_copies[row.id] = {
+          exists: true, box_dir: row.path, release_dir: `${spec.release_root}/${row.from}`,
+          scanned: 9, missing: [], differing: [], truncated: false,
+        };
+        continue;
+      }
+      const tree = row.must_be === "release" ? spec.release_root : row.must_be;
+      // A row that declares an env_key gets an ENVIRONMENT that answers, never a
+      // planted default: those rows carry `require_env` precisely because the
+      // default is unreadable from here, and a fixture that supplied one would
+      // be proving the opposite of what the row says.
+      if (row.env_key) tree_sources[row.unit].env[row.env_key] = tree;
+      else tree_sources[row.unit].working_directory = tree;
+    }
+  }
+
+  return { schema: 1, collected_at: new Date(T0).toISOString(), host: "meepo-ec2", discovered, units, services, files, custody, tree_sources, tree_realpath, releases, file_copies };
 }
 
 // Deep-equality guard. A mutation that changes nothing is a falsifier that never
@@ -259,8 +314,9 @@ test("THE CONTROL: the planted healthy state is entirely green and exits 0", () 
   // a verdict rather than an omission. Whether the SHIPPED manifest carries a
   // parked row today is a fact about the town, not about this checker, so the
   // PARKED path itself is proven below over a row this file plants.
-  assert.equal(result.rows.length, m.units.length + (m.custody ?? []).length);
+  assert.equal(result.rows.length, m.units.length + (m.custody ?? []).length + (m.trees?.rows ?? []).length);
   assert.ok((m.custody ?? []).length > 0, "the manifest declares no custody row — §2b is not being run at all");
+  assert.ok((m.trees?.rows ?? []).length > 0, "the manifest declares no tree row — §2c is not being run at all");
   for (const p of m.units.filter((u) => u.stage === "parked")) {
     assert.equal(rowFor(result, p.unit).verdict, PARKED);
   }
@@ -1269,4 +1325,360 @@ test("the manifest no longer describes the WITHDRAWN lock-time check as live", (
   const row = manifest().units.find((u) => u.unit === "postmark-world2-notary.timer");
   assert.doesNotMatch(row.outcome.why, /refuses a fourth at the lock step/);
   assert.match(row.outcome.why, /WITHDRAWN/);
+});
+
+// ── §2c WHICH TREE EACH UNIT WILL ACTUALLY RUN (2026-09-10, the arm gate) ────
+//
+// THE LAW THESE ASSERT, quoted from the incident that earned the class and from
+// the founder's go on the fix:
+//
+//     "escrow_projection stayed at ZERO rows after that same timer's clearing,
+//      because the candle unit runs clearing-job.mjs from /srv/world2-lab/office
+//      — a second office checkout at 7926461 that the release workflow never
+//      deploys. … The box roll-call read the candle OK because it reads its tick
+//      file. Two trees, one store."
+//
+//     Keemin, 2026-09-10: "agreed with your instance and class fixes for the arm
+//     gate."
+//
+// THE FLIP THAT MATTERS is not "delete the row and watch it go green" — that
+// proves only that a deleted check does not fire. It is the INCIDENT'S OWN
+// FLIP: with the tree comparison removed, does the board read OK over a unit
+// ticking perfectly on a stale checkout? The last test in this section runs it.
+
+const CANDLE = "postmark-world2-clearing.service";
+const CANDLE_ROW = "tree:postmark-world2-clearing.service";
+
+function unitRowStage(m, treeRow) {
+  const timer = treeRow.unit.replace(/\.service$/, ".timer");
+  const gov = m.units.find((u) => u.unit === treeRow.unit) || m.units.find((u) => u.unit === timer);
+  return gov && gov.stage;
+}
+
+/** Point one tree row's unit at a different tree, and plant what is there. */
+function repoint(base, m, unit, tree, release) {
+  return mutate(base, (s) => {
+    const row = m.trees.rows.find((r) => r.unit === unit);
+    if (row.env_key) s.tree_sources[unit].env[row.env_key] = tree;
+    else s.tree_sources[unit].working_directory = tree;
+    if (release !== undefined) s.releases[tree] = release;
+  });
+}
+
+test("FALSIFIER (t): THE INCIDENT — a unit ticking perfectly on a STALE CHECKOUT is ALARM-tree", () => {
+  const m = manifest();
+  const before = rollcall(m, healthy(m), T0);
+  assert.equal(rowFor(before, CANDLE_ROW).verdict, OK, "the control for this falsifier is not green");
+  assert.equal(rowFor(before, "postmark-world2-clearing.timer").verdict, OK);
+
+  const snap = repoint(healthy(m), m, CANDLE, LAB_TREE, {
+    exists: true, root: LAB_TREE, path: LAB_TREE + "/release.json", sha: LAB_SHA, tag: "release/2026-w36.4",
+  });
+  const after = rollcall(m, snap, T0);
+  const row = rowFor(after, CANDLE_ROW);
+
+  assert.equal(row.verdict, ALARM_TREE);
+  // The roll-call's own ALARM line text, quoted.
+  assert.match(row.reason, /runs from \/srv\/world2-lab\/office/);
+  assert.match(row.reason, /which is NOT the deployed release release\/2026-w37\.9 @ b01b3bad946d at \/srv\/postmark-office/);
+  assert.match(row.reason, /The unit ticks and its work runs OLD CODE/);
+  assert.equal(after.exitCode, 1, "the roll-call must exit nonzero on ALARM-tree like every other alarm");
+
+  // AND THE POINT OF THE WHOLE SECTION: the candle's OWN row stays green,
+  // because the lane really did run, on time, to completion. That is what the
+  // board said on 2026-09-10 and it was true.
+  assert.equal(rowFor(after, "postmark-world2-clearing.timer").verdict, OK);
+  // Exactly one row moved.
+  assert.deepEqual(after.rows.filter((r) => isAlarm(r.verdict)).map((r) => r.unit), [CANDLE_ROW]);
+});
+
+test("FALSIFIER (t2): THE CONTROL — the same unit pointed BACK AT THE RELEASE goes green again", () => {
+  // The rehearsal the brief asks for, run in both directions on one fixture:
+  // stale tree -> ALARM-tree, release tree -> OK. A row that only ever reddens
+  // is a row that might be reddening for a reason nobody has isolated.
+  const m = manifest();
+  const stale = repoint(healthy(m), m, CANDLE, LAB_TREE, {
+    exists: true, root: LAB_TREE, sha: LAB_SHA, tag: "release/2026-w36.4",
+  });
+  assert.equal(rowFor(rollcall(m, stale, T0), CANDLE_ROW).verdict, ALARM_TREE);
+
+  const armed = repoint(stale, m, CANDLE, "/srv/postmark-office");
+  const row = rowFor(rollcall(m, armed, T0), CANDLE_ROW);
+  assert.equal(row.verdict, OK);
+  assert.match(row.reason, /the deployed release release\/2026-w37\.9 @ b01b3bad946d/);
+  assert.equal(rollcall(m, armed, T0).exitCode, 0, "the board must come back clean once the tree is pinned");
+});
+
+test("FALSIFIER (t3): a SECOND tree carrying the SAME release is green — this reddens on drift, not on tidiness", () => {
+  const m = manifest();
+  const same = repoint(healthy(m), m, CANDLE, "/srv/postmark-office-mirror", {
+    exists: true, root: "/srv/postmark-office-mirror", sha: DEPLOYED_SHA, tag: DEPLOYED_TAG,
+  });
+  const ok = rowFor(rollcall(m, same, T0), CANDLE_ROW);
+  assert.equal(ok.verdict, OK);
+  assert.match(ok.reason, /a separate tree, carrying the same release/);
+
+  // …and one commit behind is not the same release.
+  const behind = repoint(healthy(m), m, CANDLE, "/srv/postmark-office-mirror", {
+    exists: true, root: "/srv/postmark-office-mirror", sha: LAB_SHA, tag: "release/2026-w36.4",
+  });
+  assert.equal(rowFor(rollcall(m, behind, T0), CANDLE_ROW).verdict, ALARM_TREE);
+});
+
+test("FALSIFIER (t4): a tree with NO release stamp at all is an alarm that says so", () => {
+  const m = manifest();
+  const snap = repoint(healthy(m), m, CANDLE, LAB_TREE, undefined);
+  const row = rowFor(rollcall(m, snap, T0), CANDLE_ROW);
+  assert.equal(row.verdict, ALARM_TREE);
+  assert.match(row.reason, /it carries NO release stamp at all — nothing has ever deployed it/);
+});
+
+test("FALSIFIER (t5): a symlinked tree is judged by what it RESOLVES to, both ways", () => {
+  const m = manifest();
+  // The alternative instance fix that was on the table: /srv/world2-lab/office
+  // made a symlink to the release. The string differs and the code is identical,
+  // so it must be green — a check that reddened here would push the operator to
+  // undo a correct repair.
+  const linked = mutate(healthy(m), (s) => {
+    s.tree_sources[CANDLE].env.WORLD2_OFFICE = LAB_TREE;
+    s.tree_realpath[LAB_TREE] = "/srv/postmark-office";
+  });
+  assert.equal(rowFor(rollcall(m, linked, T0), CANDLE_ROW).verdict, OK);
+
+  // …and the same machinery must not launder a link to somewhere else.
+  const elsewhere = mutate(healthy(m), (s) => {
+    s.tree_sources[CANDLE].env.WORLD2_OFFICE = LAB_TREE;
+    s.tree_realpath[LAB_TREE] = "/srv/postmark-office.old";
+  });
+  assert.equal(rowFor(rollcall(m, elsewhere, T0), CANDLE_ROW).verdict, ALARM_TREE);
+});
+
+test("FALSIFIER (t6): the world2 rows REFUSE TO GUESS — an unset WORLD2_OFFICE is the alarm", () => {
+  const m = manifest();
+  // The state of the box before Wright's drop-in: nothing sets the key, and the
+  // answer then lives in a hand-copied lib this checker cannot read.
+  const snap = mutate(healthy(m), (s) => { delete s.tree_sources[CANDLE].env.WORLD2_OFFICE; });
+  const row = rowFor(rollcall(m, snap, T0), CANDLE_ROW);
+  assert.equal(row.verdict, ALARM_TREE);
+  assert.match(row.reason, /nothing in postmark-world2-clearing\.service's environment sets WORLD2_OFFICE/);
+  assert.match(row.reason, /office-tree\.conf/, "the alarm must name the drop-in that fixes it");
+  assert.match(row.reason, /which is not the same as correct/);
+});
+
+test("FALSIFIER (t7): the deployed stamp is the YARDSTICK — an unreadable one alarms rather than passes", () => {
+  // acceptance-names-its-yardstick, from the other side: a checker that cannot
+  // read the thing it compares against must not report clean.
+  const m = manifest();
+  const snap = mutate(healthy(m), (s) => { s.releases["/srv/postmark-office"] = { exists: false, unreadable: true }; });
+  const result = rollcall(m, snap, T0);
+  const row = rowFor(result, CANDLE_ROW);
+  assert.equal(row.verdict, ALARM_TREE);
+  assert.match(row.reason, /the deployed release stamp at \/srv\/postmark-office\/release\.json is unreadable/);
+  // EVERY checkout row, not just this one — the yardstick is shared.
+  const checkoutRows = m.trees.rows.filter((r) => r.kind !== "file_copy" && unitRowStage(m, r) !== "parked");
+  for (const r of checkoutRows) assert.equal(rowFor(result, "tree:" + r.unit).verdict, ALARM_TREE);
+});
+
+// ── the hand-copied ops directory: the same class one layer down ────────────
+
+test("FALSIFIER (t8): an ops script that DIFFERS from the release is ALARM-tree and names the file", () => {
+  const m = manifest();
+  const copyRow = m.trees.rows.find((r) => r.kind === "file_copy");
+  assert.ok(copyRow, "the manifest declares no file_copy row — the ops-script half is not being run at all");
+  const id = "tree:" + copyRow.id;
+  assert.equal(rowFor(rollcall(m, healthy(m), T0), id).verdict, OK, "the control for this falsifier is not green");
+
+  const drifted = mutate(healthy(m), (s) => { s.file_copies[copyRow.id].differing = ["world2-notary.sh"]; });
+  const row = rowFor(rollcall(m, drifted, T0), id);
+  assert.equal(row.verdict, ALARM_TREE);
+  assert.match(row.reason, /world2-notary\.sh \(differs\)/);
+  assert.match(row.reason, /the box is running code no deploy shipped/);
+
+  // A file the box carries and the release does not is the same finding.
+  const orphan = mutate(healthy(m), (s) => { s.file_copies[copyRow.id].missing = ["world2-oldlane.sh"]; });
+  assert.match(rowFor(rollcall(m, orphan, T0), id).reason, /world2-oldlane\.sh \(not in the release\)/);
+
+  // A comparison that could not finish is not a clean comparison.
+  const cut = mutate(healthy(m), (s) => { s.file_copies[copyRow.id].truncated = true; });
+  assert.match(rowFor(rollcall(m, cut, T0), id).reason, /did not finish/);
+
+  // …and a directory that is not there at all must not read as nothing to say.
+  const gone = mutate(healthy(m), (s) => { s.file_copies[copyRow.id] = { exists: false }; });
+  assert.equal(rowFor(rollcall(m, gone, T0), id).verdict, ALARM_TREE);
+});
+
+// ── the reverse direction, RULE 4 for trees ─────────────────────────────────
+
+test("FALSIFIER (t9): a live unit that names a tree and has NO tree row is ALARM-tree", () => {
+  const m = manifest();
+  assert.deepEqual(unrowedTrees(m, healthy(m)), [], "the shipped manifest already leaves a tree unrowed");
+
+  // A unit the manifest rolls-calls, whose service names a tree, and which no
+  // tree row mentions — the shape the candle had on 2026-09-10.
+  const snap = mutate(healthy(m), (s) => {
+    s.tree_sources["postmark-site-refresh.service"].working_directory = "/srv/some-other-checkout";
+  });
+  const result = rollcall(m, snap, T0);
+  const row = rowFor(result, "tree:postmark-site-refresh.service");
+  assert.equal(row.verdict, ALARM_TREE);
+  assert.match(row.reason, /appears in NO tree row/);
+  assert.match(row.reason, /Add its row to deploy\/box-rollcall-manifest\.json § trees/);
+  assert.equal(result.exitCode, 1);
+});
+
+test("a PARKED rail's tree row is reported and alarms on nothing", () => {
+  const m = manifest();
+  const parked = m.trees.rows.find((r) => r.kind !== "file_copy" && unitRowStage(m, r) === "parked");
+  assert.ok(parked, "no tree row is governed by a parked unit — the PARKED path here is untested");
+  // Even pointed at the retired checkout, a rail nobody is running has no tree
+  // to be wrong about; ALARM-unparked on the UNIT row is what catches adoption.
+  const snap = repoint(healthy(m), m, parked.unit, LAB_TREE, undefined);
+  assert.equal(rowFor(rollcall(m, snap, T0), "tree:" + parked.unit).verdict, PARKED);
+});
+
+// ── the manifest's own law for §2c ──────────────────────────────────────────
+
+test("the manifest refuses a tree row that cannot say who owns it, what breaks, or why it diverges", () => {
+  const dir = mkdtempSync(join(tmpdir(), "rollcall-trees-"));
+  const cases = [
+    [(t) => { delete t.rows[0].activation_owner; }, /names no activation_owner/],
+    [(t) => { delete t.rows[0].why; }, /does not say what breaks/],
+    [(t) => { delete t.rows[0].must_be; }, /names no must_be/],
+    [(t) => { t.rows[0].must_be = "/srv/somewhere-else"; }, /does not say why/],
+    [(t) => { t.rows[0].unit = "postmark-office.timer"; }, /must name the \.service that execs, never the timer/],
+    [(t) => { t.rows[0].unit = "postmark-nobody-rolls-this.service"; }, /which no manifest unit row governs/],
+    [(t) => { delete t.release_root; }, /names no release_root/],
+  ];
+  for (const [mutateTrees, want] of cases) {
+    const m = manifest();
+    mutateTrees(m.trees);
+    const bad = join(dir, "m" + Math.random() + ".json");
+    writeFileSync(bad, JSON.stringify(m));
+    assert.throws(() => loadManifest(bad), want);
+  }
+});
+
+test("the shipped manifest carries a tree row for every world2 lane, all pinned to the release", () => {
+  const m = manifest();
+  for (const lane of ["clearing", "notary", "backup", "ingest"]) {
+    const row = m.trees.rows.find((r) => r.unit === "postmark-world2-" + lane + ".service");
+    assert.ok(row, "no tree row for the " + lane + " lane");
+    assert.equal(row.env_key, "WORLD2_OFFICE");
+    assert.equal(row.must_be, "release");
+    assert.match(row.require_env, /office-tree\.conf/, "the row must name the drop-in that answers its key");
+  }
+  assert.equal(m.trees.release_root, "/srv/postmark-office");
+});
+
+// ── the collector's own hazards ─────────────────────────────────────────────
+
+test("pickEnv is a WHITELIST — a password in a sibling drop-in never reaches the snapshot", () => {
+  // The runbook's rule: "Never run `systemctl show postmark-settlement.service
+  // -p Environment`. The sibling drop-in carries WORLD2_CLEARING_URL with its
+  // password inside, and `show` prints the merged environment." A collector that
+  // stored that string would be the same leak with a file attached, because
+  // --dump-snapshot writes a file the runbook copies OFF THE BOX.
+  const secret = "postgres://clearing_job:hunter2hunter2@localhost:5432/world2_dev";
+  const raw = "WORLD2_CLEARING_URL=" + secret + " SETTLEMENT_SOURCE=store WORLD2_OFFICE=/srv/postmark-office";
+  const picked = pickEnv(raw, ["WORLD2_OFFICE"]);
+  assert.deepEqual({ ...picked }, { WORLD2_OFFICE: "/srv/postmark-office" });
+  assert.doesNotMatch(JSON.stringify(picked), /hunter2/);
+  assert.doesNotMatch(JSON.stringify(picked), /WORLD2_CLEARING_URL/);
+
+  // A quoted value with a space must not split into fragments, or a fragment
+  // could look like a key and the whitelist would be reading the wrong token.
+  const quoted = 'PG_NOTE="a b WORLD2_OFFICE=/tmp/evil" WORLD2_OFFICE=/srv/postmark-office';
+  assert.deepEqual({ ...pickEnv(quoted, ["WORLD2_OFFICE"]) }, { WORLD2_OFFICE: "/srv/postmark-office" });
+  assert.deepEqual({ ...pickEnv(raw, []) }, {});
+});
+
+test("collectTrees reads every manifest unit's tree source and never keeps a value it was not asked for", () => {
+  const m = manifest();
+  const asked = [];
+  const show = (unit, props) => {
+    asked.push([unit, props.join(",")]);
+    return {
+      WorkingDirectory: unit === "postmark-office.service" ? "/srv/postmark-office" : "",
+      Environment: "WORLD2_CLEARING_URL=postgres://u:pw@h/db WORLD2_OFFICE=/srv/postmark-office",
+    };
+  };
+  const snap = collectTrees(m, {
+    show,
+    realpath: (p) => p,
+    readRel: (root) => ({ exists: true, root, sha: DEPLOYED_SHA, tag: DEPLOYED_TAG }),
+    compare: () => ({ exists: true, scanned: 1, missing: [], differing: [], truncated: false }),
+  });
+  // One read per distinct SERVICE, and the timer is never asked.
+  assert.ok(asked.length > 0);
+  for (const [unit, props] of asked) {
+    assert.match(unit, /\.service$/, "a timer was asked for a WorkingDirectory it can never have");
+    assert.equal(props, "WorkingDirectory,Environment");
+  }
+  assert.doesNotMatch(JSON.stringify(snap), /pw@h/, "the raw Environment string reached the snapshot");
+  assert.equal(snap.tree_sources[CANDLE].env.WORLD2_OFFICE, "/srv/postmark-office");
+  assert.equal(rowFor(rollcall(m, { ...healthy(m), ...snap }, T0), CANDLE_ROW).verdict, OK);
+});
+
+test("readRelease answers a MISSING stamp as missing rather than as a guess", () => {
+  const reads = {
+    "/good/release.json": { exists: true, text: JSON.stringify({ tag: DEPLOYED_TAG, sha: DEPLOYED_SHA }) },
+    "/torn/release.json": { exists: true, text: "{not json" },
+  };
+  const read = (p) => reads[p.split("\\").join("/")] ?? { exists: false };
+  assert.equal(readRelease("/good", { read }).sha, DEPLOYED_SHA);
+  assert.equal(readRelease("/missing", { read }).exists, false);
+  assert.equal(readRelease("/torn", { read }).unreadable, true);
+});
+
+test("compareFileCopy reads BYTES — a CRLF copy of the same script is not the same script", () => {
+  // DEPLOY.md's own warning: "Strip CR after any copy from a Windows checkout
+  // and check it stuck; a unit file with a trailing CR in ExecStart fails in a
+  // way that reads like a missing file." A text compare would call this pair
+  // identical and the box would keep failing for a reason nothing named.
+  const lf = Buffer.from("#!/bin/bash\nexec node x.mjs\n");
+  const crlf = Buffer.from("#!/bin/bash\r\nexec node x.mjs\r\n");
+  const files = { "/box/a.sh": crlf, "/rel/a.sh": lf, "/box/b.sh": lf, "/rel/b.sh": lf, "/box/c.sh": lf };
+  const norm = (p) => p.split("\\").join("/");
+  const io = {
+    readdir: () => ["a.sh", "b.sh", "c.sh", "notes.md"],
+    read: (p) => { const f = files[norm(p)]; if (!f) throw new Error("nope"); return f; },
+    exists: (p) => norm(p) === "/box" || norm(p) === "/rel" || norm(p) in files,
+  };
+  const r = compareFileCopy("/box", "/rel", /\.sh$/, io);
+  assert.equal(r.scanned, 3, "the match filter let a non-script through, or dropped a script");
+  assert.deepEqual(r.differing, ["a.sh"]);
+  assert.deepEqual(r.missing, ["c.sh"]);
+  assert.equal(r.truncated, false);
+
+  // Bounded, and it says when it hit the bound.
+  const many = compareFileCopy("/box", "/rel", /\.sh$/, { ...io, cap: 1 });
+  assert.equal(many.truncated, true);
+  assert.equal(COPY_SCAN_CAP > 1, true);
+});
+
+// ── THE CAN-FAIL FLIP ───────────────────────────────────────────────────────
+
+test("THE FLIP: with the tree comparison removed, the 2026-09-10 board reads CLEAN over a stale candle", () => {
+  // The falsifiers above prove the row reddens. This proves the row is WHY —
+  // it reconstructs the board as it stood before this lane and asserts that the
+  // exact state that cost a crossing came up green, which is the finding the
+  // incident is about. A check that could not be shown to have been ABSENT is a
+  // check nobody can tell was ever added.
+  const m = manifest();
+  const stale = repoint(healthy(m), m, CANDLE, LAB_TREE, {
+    exists: true, root: LAB_TREE, sha: LAB_SHA, tag: "release/2026-w36.4",
+  });
+
+  const withCheck = rollcall(m, stale, T0);
+  assert.equal(withCheck.exitCode, 1);
+  assert.deepEqual(withCheck.rows.filter((r) => isAlarm(r.verdict)).map((r) => r.unit), [CANDLE_ROW]);
+
+  // Now the board WITHOUT §2c, on the identical snapshot: no tree rows, no
+  // reverse check. This is the roll-call as it shipped on 2026-09-09.
+  const blind = { ...m, trees: undefined };
+  const without = rollcall(blind, stale, T0);
+  assert.equal(without.counts.ALARM, 0, "the flip did not reproduce the incident — something else is reddening");
+  assert.equal(without.exitCode, 0);
+  assert.equal(rowFor(without, "postmark-world2-clearing.timer").verdict, OK);
+  assert.match(formatLines(without).at(-1), /^roll-call clean/);
 });
