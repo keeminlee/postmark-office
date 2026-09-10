@@ -89,6 +89,25 @@
 // matched, and refuses when the miss rate passes NAMED_DISAGREEMENT without
 // `--allow-skew`.
 //
+// ── THE FRAME PROBLEM DOES NOT REACH THIS RECORD, AND HERE IS THE CHECK ─────
+//
+// On the GIT record a nested mark's `at:` is an OFFSET from its framing parent,
+// so when a parent returns its staying children re-frame and MOVE — 22 of them,
+// the furthest by 1,042 m. The git half fixes that by rewriting each staying
+// descendant's `at:` to preserve its world coordinate.
+//
+// THE STORE NEEDS NO SUCH REWRITE, because it holds WORLD coordinates and has no
+// frame tree at all. Verified read-only against prod rather than assumed:
+//
+//   rei/the-garden-notebook-tin
+//     store  geometry = {"at": {"x": 1089.8, "y": -806.7}, "extent": {...}}
+//     fold   world at = {x: 1089.8, y: -806.7}
+//
+// The two agree, and the store's number is already the world number. A mark whose
+// git-side offset is rewritten keeps the same world position, so its store row is
+// correct before and after and this tool does not touch geometry. If a later hand
+// ever teaches the store to hold offsets, THIS is the comment that becomes false.
+//
 // CONSUMERS: the apex reads (`world2/tools/apex-reads.mjs`), the doorstep's
 // standing segment, `standing_marks` (the view 001 defines as status='standing'),
 // the candle's clearing job, and the fold-input path that reads the store.
