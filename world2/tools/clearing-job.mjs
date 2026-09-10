@@ -57,7 +57,7 @@ import { materializeClaims, recomputeStanding, slugOf, ownerHouseholdFor } from 
 // The escrow PRESENCE gate — the sweep's own rule, ported to the candle before
 // G1 deletes the path it lives on. See step 5.5.
 import { escrowAbsentAmong, escrowPresenceAt, escrowLines } from "./escrow-presence.mjs";
-import { computeStanding } from "./standing.mjs";
+import { computeStanding, gistContainment } from "./standing.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const arg = (n) => { const i = process.argv.indexOf(n); return i === -1 ? null : process.argv[i + 1]; };
@@ -266,8 +266,16 @@ try {
       //   The slug set is `candidates`' own, which is `undecidedNamed` mapped
       //   through the same `slugOf` — one derivation, so the two cannot drift
       //   into a gate that quietly checks nothing.
+      //
+      //   The containment candidates come from the store's own GiST
+      //   (standing.mjs § the spatial index). The CLAIMS in this set are not in
+      //   `marks` and no index has seen them, which is not a gap: the reader
+      //   hands back the set it can speak for, and the walk keeps scanning the
+      //   long way for everything else — including, deliberately, every one of
+      //   these candidates.
+      const containment = await gistContainment(q);
       const tiers = computeStanding([...standingRows, ...candidates],
-        { only: new Set(candidates.map((c) => c.slug)) });
+        { only: new Set(candidates.map((c) => c.slug)), containment });
       const escrowByMark = await escrowPresenceAt(q, { townSha });
       const verdict = escrowAbsentAmong(
         undecidedNamed.map((c) => ({ id: c.id, slug: slugOf(c) })),

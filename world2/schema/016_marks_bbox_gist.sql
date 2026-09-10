@@ -1,0 +1,93 @@
+-- 016 — marks(bbox) GiST: the containment walk stops asking every mark
+--
+-- THE MEASUREMENT THAT ASKED FOR IT (lane `load-store`, 2026-09-09,
+-- docs/2026-09-09/jetto-load-store-report.md § the ceiling):
+--
+--   "`computeStanding` … is 32.8 s of the 65.5 s crossing at 10x … The exponent
+--    is rising toward 2 as N grows, which is what an O(N^2) walk with early
+--    exits looks like."
+--
+--   and its own third recommendation, which is this migration's other half:
+--
+--   "Give `containmentParentOf` a spatial index instead of a linear scan — the
+--    bboxes are already in Postgres under a GiST index, and the walk currently
+--    re-derives containment in JS over an array. This is the real fix and it is
+--    the one that removes the exponent rather than moving the constant."
+--
+-- FOUNDER'S RULING, 2026-09-10: the store's containment walk gets the POSTGRES
+-- GiST, not a JS grid. The JS grid belongs to the world fold, which has no
+-- database under it; the store has one, and it already speaks this operator —
+-- `parcels_do_not_overlap` and `claims_bbox_idx` are both GiST over `box`, and
+-- `clearing-job.mjs`'s own overlap test (`a.bbox && b.bbox`) is the same
+-- question this index answers in bulk.
+--
+-- ── WHY A SECOND GiST WHEN `marks` ALREADY HAS ONE ──────────────────────────
+--
+-- `parcels_do_not_overlap` is an EXCLUDE constraint, and its index is PARTIAL:
+--   EXCLUDE USING gist (bbox WITH &&) WHERE (kind = 'parcel' AND status = 'standing')
+-- Eighty-nine rows at 1x. The walk asks about every SITED mark too — 409 placed
+-- rows at 1x, 4,090 at 10x — and the constraint's index cannot answer for a
+-- single one of them. This one covers exactly the set the walk ranks as
+-- candidate ground: `standing` and `kind IN ('sited','parcel')`, which is
+-- `rankCandidates`' own filter (standing.mjs), written as the index predicate so
+-- the two cannot drift apart quietly.
+--
+-- ── WHAT IT COSTS AND WHAT IT BUYS, MEASURED ────────────────────────────────
+--
+-- On a local 10x store (8,310 marks, 4,090 of them geometric), the pair query
+-- `gistContainment` runs — every (inner, outer) whose extents overlap:
+--
+--   | | plan | wall |
+--   |---|---|---|
+--   | without | Nested Loop + Seq Scan on `b` | 16.5 s |
+--   | with    | Nested Loop + Index Scan using `marks_bbox_gist` | 40 ms |
+--
+-- 400 kB, and it returns 32,500 pairs — about eight candidates per mark instead
+-- of four thousand. That ratio is the exponent: the walk's cost stops being a
+-- function of the register and becomes a function of how crowded a mark's own
+-- neighbourhood is.
+--
+-- ── THE INDEX IS NOT THE ANSWER, IT IS A PREFILTER ──────────────────────────
+--
+-- `bbox` is `at ± extent/2` and nothing else (seed-import.mjs § boxOf), so it
+-- does NOT bound a mark's `points:` ring, and `marksContain` is coverage-honest
+-- about rings. A mark whose ring leaves its own extent — there is one at 1x —
+-- could contain something this index never pairs it with. The reader
+-- (`standing.mjs § gistContainment`) therefore measures that, per row, and hands
+-- the walk a LOOSE list it must keep asking about the long way. The index makes
+-- the common case cheap; it is never allowed to make an answer different.
+--
+-- NO REGISTRY ROW — 006_claim_identity.sql's precedent, and 015's header states
+-- the reasoning: the manifest holds objects with a pen, and an index has none.
+--
+-- IDEMPOTENT. Apply as `world2_owner` by the swap runbook's step-1 idiom:
+--
+--   sudo -n -u postgres psql -v ON_ERROR_STOP=1 -d world2_dev \
+--     -c "SET ROLE world2_owner;" -f world2/schema/016_marks_bbox_gist.sql
+--
+-- HOW TO PROVE IT LANDED, and that it is CHOSEN rather than merely present:
+--
+--   SELECT indexdef FROM pg_indexes WHERE indexname = 'marks_bbox_gist';
+--   EXPLAIN (ANALYZE, BUFFERS)
+--     SELECT a.slug, b.slug FROM marks a JOIN marks b ON b.bbox && a.bbox
+--      WHERE a.status='standing' AND b.status='standing'
+--        AND a.kind IN ('sited','parcel') AND b.kind IN ('sited','parcel')
+--        AND a.slug <> b.slug;
+--
+-- WITHOUT IT THE READER DOES NOT RUN. `gistContainment` checks `pg_indexes` for
+-- this index by name and returns null when it is absent, so the walk falls back
+-- to the scan it has always used. That is deliberate and it is not politeness:
+-- the pair query WITHOUT the index costs 16.5 s at 10x, which is slower than the
+-- walk it was meant to replace. A missing migration must cost the old price, not
+-- a worse one.
+--
+-- CONSUMERS, named: `standing.mjs § gistContainment`, read by
+-- `materialize.mjs § recomputeStanding` (step 7 of every crossing) and by
+-- `clearing-job.mjs`'s escrow-presence gate (step 5.5).
+
+BEGIN;
+
+CREATE INDEX IF NOT EXISTS marks_bbox_gist ON marks USING gist (bbox)
+  WHERE status = 'standing' AND kind IN ('sited', 'parcel');
+
+COMMIT;

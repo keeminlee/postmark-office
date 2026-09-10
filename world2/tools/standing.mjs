@@ -361,6 +361,136 @@ export function groundVerdict(ground, mark, house) {
   return mark.id != null && word === "welcomed" ? "home" : "market";
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// THE SPATIAL INDEX — `containmentParentOf`'s candidate set, asked of Postgres
+//
+// `placementParent` above says what this replaces, in its own words: "846 marks
+// is O(n^2) either way in the worst case, and in practice this is where 'a real
+// spatial query' earns its name." This is the real spatial query, and the store
+// is the only one of the walk's two homes that can ask it — 1.0's fold runs in a
+// checkout with no database, which is why the JS grid is the world's answer and
+// this is the store's (Keemin, 2026-09-10).
+//
+// WHAT IT RETURNS is a CANDIDATE set, never an answer. `marksContain` still
+// decides every pair, in the same ranked order, so the walk's verdict cannot
+// move — the index only decides which pairs are worth asking about.
+//
+// THE PREFILTER'S OWN LAW: `outer` can contain `inner` only if their EFFECTIVE
+// extents touch. That is exact for every case `marksContain` can answer yes to —
+//   * neither irregular: `contains()` needs `overlapArea >= 0.99 * innerArea`,
+//     which for a positive-area inner needs a positive overlap;
+//   * either irregular: at least 99 % of `inner`'s coverage cells must fall
+//     inside `outer`, and a cell inside both is a point inside both.
+// — and it has exactly two escapes, both of which are measured per row rather
+// than assumed, because a prefilter whose premise is a comment is a prefilter
+// that will silently change an answer:
+//
+//   1. `bbox` IS NOT THE EFFECTIVE EXTENT WHEN A RING LEAVES IT. `bbox` is
+//      `at ± extent/2` (seed-import.mjs § boxOf) and says nothing about a
+//      `points:` ring. ONE mark at 1x has a ring outside its own extent.
+//   2. A DEGENERATE INNER makes `contains()` vacuously true — `overlapArea >= 0`
+//      holds for every pair when `inner.w * inner.h` is zero — so the linear scan
+//      returns the smallest candidate anywhere and no overlap test reproduces
+//      that. (None exist today; the check is what says so.)
+//
+// Both are answered by the same query, and every row either escape touches goes
+// on the LOOSE list: loose marks are scanned the old way as inners, and are
+// offered to every other mark as candidates. So the index is an accelerator for
+// the rows it can speak for and is simply absent for the rows it cannot.
+//
+// IT REFUSES TO RUN UNINDEXED. Without `016_marks_bbox_gist.sql` the pair query
+// costs 16.5 s at 10x — slower than the walk it replaces — so the reader checks
+// `pg_indexes` for the index by name and returns null instead, and the walk uses
+// the scan it has always used. A missing migration costs the old price, never a
+// worse one.
+
+/** Every standing geometric mark, and whether `bbox` speaks for it. */
+const COVERAGE_SQL = `
+  WITH g AS (
+    SELECT slug, bbox, geometry,
+           (geometry->'at'->>'x')::float8      AS ax,
+           (geometry->'at'->>'y')::float8      AS ay,
+           (geometry->'extent'->>'w')::float8  AS w,
+           (geometry->'extent'->>'h')::float8  AS h
+      FROM marks
+     WHERE status = 'standing' AND kind IN ('sited','parcel')
+  )
+  SELECT slug,
+         ( bbox IS NULL OR ax IS NULL OR ay IS NULL OR w IS NULL OR h IS NULL
+           OR w <= 0 OR h <= 0
+           OR (bbox[1])[0] <> ax - w/2 OR (bbox[1])[1] <> ay - h/2
+           OR (bbox[0])[0] <> ax + w/2 OR (bbox[0])[1] <> ay + h/2
+           OR (geometry ? 'points' AND EXISTS (
+                SELECT 1 FROM jsonb_array_elements(geometry->'points') p
+                 WHERE coalesce((p->>0)::float8, (p->>'x')::float8) IS NULL
+                    OR coalesce((p->>1)::float8, (p->>'y')::float8) IS NULL
+                    OR coalesce((p->>0)::float8, (p->>'x')::float8) < ax - w/2
+                    OR coalesce((p->>0)::float8, (p->>'x')::float8) > ax + w/2
+                    OR coalesce((p->>1)::float8, (p->>'y')::float8) < ay - h/2
+                    OR coalesce((p->>1)::float8, (p->>'y')::float8) > ay + h/2))
+         ) AS loose
+    FROM g`;
+
+/** The pairs whose extents touch — the GiST index's whole job. */
+const PAIRS_SQL = `
+  SELECT a.slug AS inner_slug, b.slug AS outer_slug
+    FROM marks a JOIN marks b ON b.bbox && a.bbox
+   WHERE a.status = 'standing' AND b.status = 'standing'
+     AND a.kind IN ('sited','parcel') AND b.kind IN ('sited','parcel')
+     AND a.slug <> b.slug`;
+
+const INDEX_SQL =
+  `SELECT 1 FROM pg_indexes WHERE tablename = 'marks' AND indexname = 'marks_bbox_gist'`;
+
+/**
+ * gistContainment(q) → { covered, pairs, loose, indexed } | null
+ *
+ * `q` is the caller's own query function, so this runs inside the caller's
+ * transaction and sees exactly the rows the caller's SELECT saw. Null means "no
+ * index, walk it the old way" and is not an error.
+ */
+export async function gistContainment(q) {
+  const idx = await q(INDEX_SQL);
+  if (!idx?.rows?.length) return null;
+
+  const cov = await q(COVERAGE_SQL);
+  const covered = new Set(), loose = [];
+  for (const r of cov.rows) {
+    if (r.loose) loose.push(r.slug);
+    else covered.add(r.slug);
+  }
+
+  const pr = await q(PAIRS_SQL);
+  const pairs = new Map();
+  for (const s of covered) pairs.set(s, []);
+  for (const r of pr.rows) {
+    // A loose OUTER is not a candidate list entry — it is offered to every mark
+    // by `computeStanding`, because the index cannot say where it really reaches.
+    if (!covered.has(r.outer_slug)) continue;
+    const list = pairs.get(r.inner_slug);
+    if (list) list.push(r.outer_slug);
+  }
+  return { covered, pairs, loose, indexed: true };
+}
+
+/**
+ * The effective extent a containment test can actually reach — the record's
+ * rect widened to hold its ring, which is what `marksContain` rasterizes.
+ */
+function effBox(mk) {
+  const r = rect(mk);
+  let x0 = r.x - r.w / 2, x1 = r.x + r.w / 2, y0 = r.y - r.h / 2, y1 = r.y + r.h / 2;
+  const ring = polygonOf(mk);
+  if (ring) for (const p of ring) {
+    if (p.x < x0) x0 = p.x; if (p.x > x1) x1 = p.x;
+    if (p.y < y0) y0 = p.y; if (p.y > y1) y1 = p.y;
+  }
+  return { x0, y0, x1, y1 };
+}
+// Touching counts, deliberately: `&&` in Postgres counts it too, and a prefilter
+// that is looser than the test it guards can only cost a `marksContain` call.
+const boxesTouch = (a, b) => a.x0 <= b.x1 && b.x0 <= a.x1 && a.y0 <= b.y1 && b.y0 <= a.y1;
+
 /**
  * markStanding — mark-standing.mjs:89, verbatim, with the up-chain widened by
  * exactly one link for the store (see § the one edge the store cannot walk).
@@ -431,7 +561,7 @@ export function markStanding(mark, byId) {
  * the set. So an `only` naming a slug that is not among `rows` throws here, where
  * the mistake is, instead of passing quietly through a gate.
  */
-export function computeStanding(rows, { only = null } = {}) {
+export function computeStanding(rows, { only = null, containment = null } = {}) {
   const records = rows.map(recordOf);
   const byId = new Map();
   for (const r of records) if (!byId.has(r.id)) byId.set(r.id, r);
@@ -481,6 +611,75 @@ export function computeStanding(rows, { only = null } = {}) {
   const root = worldRootOf(records);
   const ranked = rankCandidates(records);
 
+  // ── the candidate set, narrowed by the store's GiST when there is one ──────
+  //
+  // `containment` comes from `gistContainment` (§ the spatial index) and is a
+  // PREFILTER, never an answer: `placementParent` still tests every candidate
+  // with `marksContain`, in the same ascending-area order, so its verdict is the
+  // one the full scan gives. What changes is the length of the list.
+  //
+  // THREE ROWS GET THE OLD SCAN, and between them they are every row the index
+  // cannot speak for:
+  //   * a mark that is not in the store at all — the clearing's step 5.5 walks
+  //     the standing rows PLUS candidate claims, and no index over `marks` has
+  //     ever seen a claim;
+  //   * a LOOSE mark, whose `bbox` does not bound what `marksContain` reads
+  //     (a ring outside its extent, a degenerate rect, geometry the column
+  //     disagrees with) — measured per row by `gistContainment`, not assumed;
+  //   * every mark, when there is no index.
+  // The same rows, as OUTERS, are offered to every mark: `extras` below, gated
+  // only by the effective-extent test the prefilter's law is stated in.
+  const rankPos = new Map(), rankBySlug = new Map();
+  const useIndex = containment != null && ranked.length > 0;
+  if (useIndex) for (const [i, e] of ranked.entries()) {
+    rankPos.set(e.m.slug, i);
+    if (!rankBySlug.has(e.m.slug)) rankBySlug.set(e.m.slug, e);
+  }
+  const extras = useIndex ? ranked.filter((e) => !containment.covered.has(e.m.slug)) : [];
+  const boxCache = new Map();
+  const boxOfRecord = (mk) => {
+    let b = boxCache.get(mk);
+    if (b === undefined) boxCache.set(mk, (b = effBox(mk)));
+    return b;
+  };
+  const rankedFor = !useIndex ? () => ranked : (mk) => {
+    // ESCAPE 2, and it is the reason this is a branch and not a filter.
+    // `contains()` reads `overlapArea >= 0.99 * inner.w * inner.h`, so a
+    // zero-area inner is contained by EVERYTHING and `placementParent` returns
+    // the smallest candidate in the world, wherever it is. No overlap test can
+    // reproduce that, so a degenerate mark keeps the scan. (None exist in the
+    // register today — `gistContainment`'s own query is what says so.)
+    const r = rect(mk);
+    if (!(r.w > 0) || !(r.h > 0)) return ranked;
+
+    const eb = boxOfRecord(mk);
+    const outers = containment.pairs.get(mk.slug);
+    if (outers === undefined) {
+      // A row the index does not speak for — a CLAIM at step 5.5, which no index
+      // over `marks` has seen, or a mark whose `bbox` does not bound what
+      // `marksContain` reads. The prefilter's law does not need a database: an
+      // extent that cannot touch cannot contain, and asking that of the ranking
+      // in JS costs one cheap comparison per candidate instead of one coverage
+      // rasterization. `filter` keeps the ranking's own order, so no re-sort.
+      //
+      // THIS IS WHERE THE MEASUREMENT WENT, and it is worth the sentence: with
+      // these rows left on the raw scan, FORTY-EIGHT loose marks out of 8,310
+      // cost 10.6 s of a 13.4 s walk, because every one of them carries a
+      // `points:` ring and each candidate test rasterizes it.
+      return ranked.filter((e) => e.m !== mk && boxesTouch(eb, boxOfRecord(e.m)));
+    }
+    const sub = [];
+    for (const s of outers) { const e = rankBySlug.get(s); if (e) sub.push(e); }
+    if (extras.length) {
+      for (const e of extras) if (e.m !== mk && boxesTouch(eb, boxOfRecord(e.m))) sub.push(e);
+    }
+    // `placementParent`'s contract is "smallest containing wins", which it reads
+    // off ASCENDING AREA ORDER and a stable sort. The sub-list is put back into
+    // the full ranking's own order so the tie-break is the same one.
+    sub.sort((a, b) => rankPos.get(a.m.slug) - rankPos.get(b.m.slug));
+    return sub;
+  };
+
   // LAZILY, and `markStanding` must not be able to tell. The walk climbs
   // `m._parentSlug ?? m._parent_is_law ?? m._containedBy ?? …` and that chain is
   // 1.0's, ported verbatim under this file's own standing instruction ("a second
@@ -495,7 +694,7 @@ export function computeStanding(rows, { only = null } = {}) {
     Object.defineProperty(mk, "_containedBy", {
       configurable: true, enumerable: true,
       get() {
-        const v = containmentParentOf(this, records, root, ranked) ?? null;
+        const v = containmentParentOf(this, records, root, rankedFor(this)) ?? null;
         Object.defineProperty(this, "_containedBy",
           { value: v, writable: true, enumerable: true, configurable: true });
         return v;

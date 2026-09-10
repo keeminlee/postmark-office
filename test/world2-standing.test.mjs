@@ -288,6 +288,102 @@ test("`only` refuses a slug that is not among the rows — it does not answer nu
   assert.doesNotThrow(() => computeStanding(rows, { only: new Set([rows[0].slug]) }));
 });
 
+// ── `containment`: the GiST prefilter, held to the scan it replaces ─────────
+//
+// standing.mjs § the spatial index states the prefilter's law: "`outer` can
+// contain `inner` only if their EFFECTIVE extents touch", with two measured
+// escapes — a ring outside its own extent, and a degenerate inner. These build
+// the prefilter by hand (the database's answer, without a database) and hold the
+// indexed walk to the scanning one, including on both escapes.
+
+/** The prefilter `gistContainment` would return for `world`, computed honestly. */
+function containmentOver(world, { loose = [] } = {}) {
+  const looseSet = new Set(loose);
+  const geometric = world.filter((m) => (m.kind === "sited" || m.kind === "parcel") && m.at);
+  const covered = new Set(geometric.map((m) => m.slug).filter((s) => !looseSet.has(s)));
+  const box = (m) => {
+    const r = { x: m.at?.x ?? 0, y: m.at?.y ?? 0, w: m.extent?.w ?? 1, h: m.extent?.h ?? 1 };
+    return { x0: r.x - r.w / 2, x1: r.x + r.w / 2, y0: r.y - r.h / 2, y1: r.y + r.h / 2 };
+  };
+  const touch = (a, b) => a.x0 <= b.x1 && b.x0 <= a.x1 && a.y0 <= b.y1 && b.y0 <= a.y1;
+  const pairs = new Map();
+  for (const s of covered) pairs.set(s, []);
+  for (const a of geometric) {
+    if (!covered.has(a.slug)) continue;
+    for (const b of geometric)
+      if (b.slug !== a.slug && covered.has(b.slug) && touch(box(a), box(b))) pairs.get(a.slug).push(b.slug);
+  }
+  return { covered, pairs, loose, indexed: true };
+}
+
+test("the GiST prefilter gives the scan's own answer, mark for mark", () => {
+  const world = [ROOT,
+    row({ slug: "a/outer", kind: "sited", owner: "a", household: "solo:a", at: { x: 0, y: 0 }, extent: { w: 100, h: 100 } }),
+    row({ slug: "a/mid", kind: "sited", owner: "a", household: "solo:a", at: { x: 0, y: 0 }, extent: { w: 40, h: 40 } }),
+    row({ slug: "b/mid-twin", kind: "sited", owner: "b", household: "solo:b", at: { x: 0, y: 0 }, extent: { w: 40, h: 40 } }),
+    row({ slug: "a/inner", kind: "sited", owner: "a", household: "solo:a", at: { x: 0, y: 0 }, extent: { w: 4, h: 4 } }),
+    row({ slug: "a/twin", kind: "sited", owner: "a", household: "solo:a", at: { x: 0, y: 0 }, extent: { w: 4, h: 4 } }),
+    row({ slug: "b/parcel", kind: "parcel", owner: "b", household: "solo:b", at: { x: 0, y: 0 }, extent: { w: 25, h: 25 } }),
+    row({ slug: "c/far", kind: "sited", owner: "c", household: "solo:c", at: { x: 9000, y: 9000 }, extent: { w: 2, h: 2 } }),
+  ];
+  const scanned = computeStanding(world);
+  const indexed = computeStanding(world, { containment: containmentOver(world.map(recordOf)) });
+  assert.deepEqual([...indexed.entries()].sort(), [...scanned.entries()].sort());
+  // the world is not all one word, so a prefilter that answered a default would show
+  assert.ok(new Set(scanned.values()).size > 1);
+});
+
+test("a mark the prefilter cannot speak for is still found — as a container and as a child", () => {
+  // `outer` is LOOSE: its `points:` ring reaches well past its own extent, which
+  // is exactly the case `bbox` cannot bound (standing.mjs § the prefilter's own
+  // law, escape 1). The child sits under the RING and outside the extent, so the
+  // scan finds `outer` and any prefilter that trusted `bbox` would not.
+  const outer = row({ slug: "d/lake", kind: "sited", owner: "d", household: "solo:d",
+    at: { x: 0, y: 0 }, extent: { w: 10, h: 10 },
+    points: [[-100, -100], [100, -100], [100, 100], [-100, 100]] });
+  const child = row({ slug: "e/skiff", kind: "sited", owner: "e", household: "solo:e",
+    at: { x: 60, y: 60 }, extent: { w: 2, h: 2 } });
+  const world = [ROOT, outer, child];
+  const records = world.map(recordOf);
+
+  // the premise: the scan really does put the skiff under the lake
+  assert.equal(placementParent(records[2], records, { ranked: rankCandidates(records) }), "d/lake");
+
+  const scanned = computeStanding(world);
+  const indexed = computeStanding(world, { containment: containmentOver(records, { loose: ["d/lake"] }) });
+  assert.deepEqual([...indexed.entries()].sort(), [...scanned.entries()].sort());
+
+  // CAN FAIL: hand the same prefilter the lake as a COVERED row — which is what
+  // a reader that trusted `bbox` over the ring would do — and the skiff loses
+  // its container. This is the assertion that the loose list is load-bearing and
+  // not decoration.
+  const trusting = computeStanding(world, { containment: containmentOver(records) });
+  const trustingRecords = world.map(recordOf);
+  const r = rankCandidates(trustingRecords);
+  assert.notEqual(
+    placementParent(trustingRecords[2], trustingRecords, { ranked: r.filter((e) => e.m.slug !== "d/lake") }),
+    "d/lake", "the fixture no longer distinguishes the two readings");
+  assert.ok(trusting instanceof Map);
+});
+
+test("a mark not in the index at all — a claim, at step 5.5 — keeps the full scan", () => {
+  // The clearing walks standing rows PLUS candidate claims, and no index over
+  // `marks` has seen a claim. The prefilter covers only the store's rows; the
+  // candidate must still find its ground.
+  const parcel = row({ slug: "f/ground", kind: "parcel", owner: "f", household: "solo:f",
+    at: { x: 300, y: 300 }, extent: { w: 25, h: 25 } });
+  const store = [ROOT, parcel];
+  const candidate = row({ slug: "f/a-bench", kind: "sited", owner: "f", household: "solo:f",
+    at: { x: 300, y: 300 }, extent: { w: 2, h: 2 } });
+  const world = [...store, candidate];
+  // the prefilter knows only the store's two rows — the candidate is absent from
+  // `covered` and from every pair list, exactly as the database would have it
+  const containment = containmentOver(store.map(recordOf));
+  const indexed = computeStanding(world, { containment });
+  assert.equal(indexed.get("f/a-bench"), computeStanding(world).get("f/a-bench"));
+  assert.equal(indexed.get("f/a-bench"), "home");   // its own household's ground
+});
+
 test("a NULL household column falls back to solo:<owner>, never to a bare handle", () => {
   // The household-spelling ruling: "A roster owner keeps the household KEY
   // (`gh:<id>`); a non-roster owner is `solo:<handle>`, never NULL." A pre-repair

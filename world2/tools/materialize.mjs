@@ -20,7 +20,7 @@
 // caller's `q(text, args)` and runs inside the caller's transaction, because a
 // materialization that could commit on its own would be a second candle.
 
-import { computeStanding, admissionNotes } from "./standing.mjs";
+import { computeStanding, admissionNotes, gistContainment } from "./standing.mjs";
 
 /**
  * The identity a claim will materialize under.
@@ -172,7 +172,14 @@ export async function recomputeStanding(q) {
   const { rows: standing } = await q(
     `SELECT id::text, slug, kind, owner, household, geometry, parent::text, data
        FROM marks WHERE status = 'standing'`);
-  const tiers = computeStanding(standing);
+  // THE CONTAINMENT CANDIDATES, ASKED OF THE STORE (standing.mjs § the spatial
+  // index, 016_marks_bbox_gist.sql). Read INSIDE this transaction, off `q`, so
+  // the index answers about exactly the rows the SELECT above returned. Null
+  // when migration 016 is not applied, and then the walk scans as it always has
+  // — the reader refuses to run its pair query unindexed precisely because
+  // unindexed it is slower than the walk it would replace.
+  const containment = await gistContainment(q);
+  const tiers = computeStanding(standing, { containment });
   const moved = [];
   for (const m of standing) {
     const next = tiers.get(m.slug);
