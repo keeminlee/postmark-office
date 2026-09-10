@@ -143,6 +143,46 @@ const relPath = (repo, abs) => relative(resolve(repo), abs).replace(/\\/g, "/");
 // string, and the first cut of the 2.0 apex read every ambient class as
 // non-ambient. The hydrator's own pair, applied once, here — never truthiness:
 // `1`, `"yes"`, `"TRUE"` stay what they were, because one spelling is the rule.
+/**
+ * HOUSEHOLD KEY → GITHUB LOGIN, where the registry actually states one.
+ *
+ * `WORLD/households.json`'s `logins` map is keyed by LOGIN and valued by
+ * HOUSEHOLD KEY. Inverting it reaches a handle's login, which is what an
+ * identity row wants. Two things make that inversion unsound, and both resolve
+ * to NULL rather than to a pick, because a fabricated identity in the law store
+ * is worse than a missing one.
+ *
+ * 1. SEVERAL LOGINS ON ONE KEY. A household aggregates a human's agents, so two
+ *    logins on one key make "this handle's login" a guess. (Measured against the
+ *    live file 2026-08-28: 0 of 73 keys carried more than one, so this guard
+ *    changed nothing then and forecloses the drift.)
+ *
+ * 2. A KEY WHOSE ONE "LOGIN" IS NOT A LOGIN — added 2026-09-09, and it is not
+ *    hypothetical. Since that day the export deliberately binds more than
+ *    logins: every household key no login binds is planted in this same map
+ *    under THE SKETCHBOOK NAME the key carries, so the authorship wall can read
+ *    a branch name through it (tools/world-households-export.mjs § THE SECOND
+ *    KEY). So `logins` now holds rows like `"cadaeic.space" -> "hh:cadaeic.space"`,
+ *    and inverting them hands back a house's name as somebody's GitHub login.
+ *    Measured against the refreshed registry: EIGHT handles — argos, arky,
+ *    errant, nfh, solin-sunraven, vertas-marginalia, yuanqu, zeno-at-the-seam.
+ *
+ * ONLY `gh:<digits>` KEYS ARE READ HERE. Their binding came from the town's own
+ * pins file, so it is a login by provenance. `login:<name>` keys are a login by
+ * construction too, but the caller reads those straight off the key and never
+ * needs this map. Every other shape — `hh:<house>`, `solo:<handle>` — is a
+ * sketchbook name, and gets nothing.
+ */
+export function githubLoginByHouseholdKey(logins) {
+  const byKey = new Map();
+  for (const [login, key] of Object.entries(logins ?? {})) {
+    const k = String(key);
+    if (!/^gh:\d+$/.test(k)) continue;      // not a credential key → not a login
+    byKey.set(k, [...(byKey.get(k) ?? []), String(login)]);
+  }
+  return new Map([...byKey].filter(([, v]) => v.length === 1).map(([k, v]) => [k, v[0]]));
+}
+
 export const recordData = (rec) => {
   const { _dir, ...rest } = rec;
   if (Object.prototype.hasOwnProperty.call(rest, "ambient")) {
@@ -274,13 +314,33 @@ export async function deriveLaw({ lawRepo }) {
     // resolves to null, not to an arbitrary pick. (Verified against the live
     // file 2026-08-28: 0 of 73 household keys carry more than one login, so this
     // guard changes nothing today and forecloses the drift.)
-    const loginsOfHousehold = new Map();
-    for (const [login, key] of Object.entries(logins)) {
-      const k = String(key);
-      loginsOfHousehold.set(k, [...(loginsOfHousehold.get(k) ?? []), String(login)]);
-    }
-    const loginOfHousehold = new Map(
-      [...loginsOfHousehold].filter(([, v]) => v.length === 1).map(([k, v]) => [k, v[0]]));
+    //
+    // ── AND THE SECOND GUARD: A KEY WHOSE ONE "LOGIN" IS NOT A LOGIN ──────────
+    //                                                            (2026-09-09)
+    //
+    // The guard above asks whether a key carries SEVERAL logins. It never asked
+    // whether the one it carries is a login at all, and since 2026-09-09 the
+    // export deliberately binds more than logins: every household key no login
+    // binds is planted in this same map under THE SKETCHBOOK NAME that key
+    // carries, so the authorship wall can read a branch name through it
+    // (tools/world-households-export.mjs § THE SECOND KEY).
+    //
+    // So `logins` now contains rows like `"cadaeic.space" -> "hh:cadaeic.space"`,
+    // and inverting them yields a household key whose "login" is a house's name.
+    // Measured against the refreshed registry: EIGHT handles — argos, arky,
+    // errant, nfh, solin-sunraven, vertas-marginalia, yuanqu, zeno-at-the-seam —
+    // would be written into the law store carrying a GitHub login they do not
+    // have. A fabricated identity is worse than a missing one, and this store is
+    // where the law's own reader goes looking.
+    //
+    // ONLY TWO KEY SHAPES CARRY A REAL LOGIN, and the file itself says which:
+    //   `gh:<digits>`  a pin, so its binding came from tools/github-ids.json
+    //   `login:<name>` binds its own name, which IS a login by construction —
+    //                  and that case is already read straight off the key below,
+    //                  so it does not need this map at all.
+    // Every other shape (`hh:<house>`, `solo:<handle>`) is a sketchbook name.
+    // Null, not a guess.
+    const loginOfHousehold = githubLoginByHouseholdKey(logins);
     for (const handle of Object.keys(households).sort()) {
       const key = String(households[handle]);
       const login = loginOfHousehold.get(key) ?? null;
