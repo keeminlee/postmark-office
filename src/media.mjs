@@ -50,6 +50,7 @@
 // the office deploys ahead of the credentials without lying about it.
 
 import { createHash, createHmac } from "node:crypto";
+import { lookup as dnsLookup } from "node:dns/promises";
 import { decodeImage, imageFormat, MAX_IMAGE, MEDIA_FORMATS, MEDIA_TYPE_BY_EXT } from "./edit.mjs";
 
 const bounce = (code, defect, hint) => Object.assign(new Error(defect), { code, defect, hint });
@@ -137,6 +138,199 @@ export function mediaLedgerRows(odb, household) {
     }));
 }
 
+// ── THE WAYS BYTES REACH THIS DOOR ──────────────────────────────────────────
+//
+// The door opened (2026-08-15) with exactly one: `image`, raw base64 IN the
+// call's arguments. That is fine for a browser and a liability for an agent,
+// and a resident named it out loud on 2026-09-10 — "the easiest way of
+// uploading images to go with marks? … it takes forever". It takes forever
+// because a base64 argument makes the RESIDENT'S MODEL emit the whole encoded
+// file as output tokens: a 1 MB JPEG is ~1.4 M base64 characters, hundreds of
+// thousands of output tokens, minutes of generation, and over the argument
+// ceiling of several harnesses. The bytes never needed to pass through a model
+// at all. So a second way in:
+//
+//   image_url   an https URL the office fetches itself. Costs the model a URL,
+//               and works the instant the file is hosted anywhere public.
+//   image       base64, unchanged, and now the LAST resort — for a harness
+//               that cannot host a file at all.
+//
+// Both converge on the same Buffer and the same rest of the handler: byte
+// checks, quota, dedupe, R2 put, ledger row. There is one validation path, not
+// two, and that is the whole design — a new way IN must never become a new way
+// AROUND the byte law.
+
+export const MEDIA_FETCH_TIMEOUT_MS = 20_000;
+export const MEDIA_FETCH_MAX_REDIRECTS = 3;
+
+// ── the SSRF wall ───────────────────────────────────────────────────────────
+//
+// `image_url` hands an unauthenticated stranger a fetch from INSIDE the
+// office's network, which is the classic server-side request forgery shape: a
+// resident sends http://169.254.169.254/… or http://127.0.0.1:5432/ and the
+// office reads something no resident may read. So the wall, before any socket:
+// https only, standard port only, no credentials in the URL, and every address
+// the hostname resolves to must be a public one. Each redirect hop walks the
+// same wall, because a public host that 302s to 127.0.0.1 is the same attack
+// with one more step.
+//
+// HONESTLY NAMED LIMIT: this resolves the name, checks the addresses, and then
+// lets `fetch` resolve the name again — so a DNS answer that changes between
+// the two (rebinding) is not closed by this guard alone. Closing it means
+// dialing the checked IP with the Host header pinned, which is a custom agent
+// and more machinery than this hotfix carries. The wall as built stops the
+// direct forms (literal private IPs, loopback names, redirect chains into the
+// network) and is written here so the next hand knows exactly what is left.
+
+const privateV4 = (a) => {
+  const p = String(a).split(".");
+  if (p.length !== 4) return true; // unparseable ⇒ refuse: the wall never guesses
+  const [x, y] = p.map(Number);
+  if (p.some((s) => !/^\d{1,3}$/.test(s)) || [x, y].some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return true;
+  return x === 0 || x === 10 || x === 127                       // this-network, private, loopback
+    || (x === 100 && y >= 64 && y <= 127)                        // CGNAT 100.64/10
+    || (x === 169 && y === 254)                                  // link-local (cloud metadata)
+    || (x === 172 && y >= 16 && y <= 31)                         // private 172.16/12
+    || (x === 192 && (y === 0 || y === 168))                     // IETF protocol assignments, private
+    || (x === 198 && (y === 18 || y === 19 || y === 51))         // benchmarking, TEST-NET-2
+    || (x === 203 && y === 0)                                    // TEST-NET-3
+    || x >= 224;                                                 // multicast, reserved, broadcast
+};
+
+const privateV6 = (a) => {
+  const s = String(a).toLowerCase().split("%")[0];
+  if (s === "::" || s === "::1") return true;
+  const mapped = /^::(?:ffff:)?(\d{1,3}(?:\.\d{1,3}){3})$/.exec(s);
+  if (mapped) return privateV4(mapped[1]); // an IPv4 wearing an IPv6 coat is judged as the IPv4 it is
+  if (s.startsWith("64:ff9b:")) return true; // NAT64 — a v4 destination behind a v6 name
+  const head = parseInt(s.split(":")[0] || "0", 16);
+  if (!Number.isFinite(head)) return true;
+  return (head & 0xfe00) === 0xfc00      // fc00::/7 unique-local
+    || (head & 0xffc0) === 0xfe80        // fe80::/10 link-local
+    || (head & 0xff00) === 0xff00;       // ff00::/8 multicast
+};
+
+/** True when this literal address is one the media door will not reach for. */
+export const privateAddress = (address, family) =>
+  (family === 6 || String(address).includes(":")) ? privateV6(address) : privateV4(address);
+
+/** Walk one URL past the wall, or bounce. Returns the parsed URL. */
+export async function guardFetchUrl(raw, { lookup = dnsLookup } = {}) {
+  let u;
+  try { u = new URL(String(raw ?? "").trim()); }
+  catch {
+    throw bounce(422, "image_url is not a URL",
+      "send one absolute https:// URL that answers with the image bytes — or send the file as base64 (image:)");
+  }
+  if (u.protocol !== "https:")
+    throw bounce(422, `the media door fetches https only, not ${u.protocol.replace(/:$/, "")}`,
+      "host the bytes on https and send that URL; file: and http: are not lanes into this office");
+  if (u.username || u.password)
+    throw bounce(422, "a URL carrying credentials is not fetched",
+      "send a plain https URL the office can GET with no secret of yours in it");
+  if (u.port && u.port !== "443")
+    throw bounce(422, `the media door fetches port 443 only, not ${u.port}`,
+      "serve the file on the standard https port");
+  const host = u.hostname.replace(/^\[|\]$/g, "");
+  let addrs;
+  try { addrs = await lookup(host, { all: true }); }
+  catch { addrs = null; }
+  if (!addrs?.length)
+    throw bounce(422, `the office could not resolve ${host}`,
+      "check the hostname — the office fetches by name over public DNS");
+  for (const { address, family } of addrs)
+    if (privateAddress(address, family))
+      throw bounce(403, `${host} resolves to ${address}, an address inside the office's own network`,
+        "the media door reaches the public internet only — never loopback, private, carrier-grade, link-local or multicast addresses");
+  return u;
+}
+
+/**
+ * Fetch one image the office was pointed at. Returns the Buffer, and nothing
+ * else: the byte checks, the quota and the ledger are the shared path's job.
+ * `fetchImpl` and `lookup` are injectable so the wall can be proven without a
+ * network — a falsifier that needs the internet to fail is not a falsifier.
+ */
+export async function fetchImageBytes(rawUrl, {
+  fetchImpl = fetch, lookup = dnsLookup, max = MAX_IMAGE,
+  timeoutMs = MEDIA_FETCH_TIMEOUT_MS, maxRedirects = MEDIA_FETCH_MAX_REDIRECTS,
+} = {}) {
+  const mb = fmtMB(max);
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    let target = String(rawUrl ?? "").trim();
+    for (let hop = 0; ; hop++) {
+      const u = await guardFetchUrl(target, { lookup });
+      let resp;
+      try {
+        resp = await fetchImpl(u.toString(), {
+          method: "GET", redirect: "manual", signal: ctrl.signal,
+          headers: { accept: "image/*", "user-agent": "postmark-office media door (+https://postmark.town)" },
+        });
+      } catch (e) {
+        if (ctrl.signal.aborted)
+          throw bounce(504, `${u.host} did not answer within ${Math.round(timeoutMs / 1000)} seconds`,
+            "host the file somewhere that answers promptly, or send the bytes as base64 (image:)");
+        throw bounce(502, `the office could not reach ${u.host}`, String(e?.message ?? e).slice(0, 120));
+      }
+      const location = resp.status >= 300 && resp.status < 400 ? resp.headers.get("location") : null;
+      if (location) {
+        // The count is of REDIRECTS FOLLOWED, and the (maxRedirects + 1)th is
+        // the one refused — so a chain of three lands and a chain of four does
+        // not, which is what "redirects ≤ 3" says out loud.
+        if (hop >= maxRedirects)
+          throw bounce(422, `that URL redirects more than ${maxRedirects} times`,
+            "send the URL the bytes actually live at");
+        try { target = new URL(location, u).toString(); }
+        catch { throw bounce(502, `${u.host} redirected somewhere unreadable`, "send the URL the bytes actually live at"); }
+        continue;
+      }
+      if (!resp.ok)
+        throw bounce(422, `${u.host} answered ${resp.status} for that URL`,
+          "check the link is public and points straight at the image file");
+      // The size wall, twice: the declared length BEFORE the body is read, and
+      // the real length as it arrives — because Content-Length is the sender's
+      // claim, and a sender that lies is exactly the one worth refusing.
+      const declared = Number(resp.headers.get("content-length"));
+      if (Number.isFinite(declared) && declared > max)
+        throw bounce(413, `that file is larger than ${mb}`,
+          `the host declares ${fmtMB(declared)} — crop or re-export it under ${mb}`);
+      const reader = resp.body?.getReader?.();
+      if (!reader) {
+        const whole = Buffer.from(await resp.arrayBuffer());
+        if (whole.length > max) throw bounce(413, `that file is larger than ${mb}`, `it arrived at ${fmtMB(whole.length)} — crop or re-export it under ${mb}`);
+        return whole;
+      }
+      const chunks = [];
+      let total = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.length;
+        if (total > max) {
+          try { await reader.cancel(); } catch { /* the refusal stands whether or not the socket closes politely */ }
+          throw bounce(413, `that file is larger than ${mb}`, `the office stopped reading past ${mb} — crop or re-export it smaller`);
+        }
+        chunks.push(Buffer.from(value));
+      }
+      return Buffer.concat(chunks, total);
+    }
+  } finally { clearTimeout(timer); }
+}
+
+/** Which of the inputs this call carries — exactly one, or a named bounce. */
+export function mediaSourceOf(args = {}) {
+  const given = ["image_url", "image"].filter((k) => typeof args[k] === "string" && args[k].trim());
+  if (given.length > 1)
+    throw bounce(422, `send one image, not ${given.length}`,
+      `this call carries ${given.join(" and ")} — send image_url (an https URL the office fetches for you) OR image (base64), never both`);
+  if (!given.length)
+    throw bounce(422, "no image",
+      "send image_url (an https URL the office fetches for you), or image (base64 — the last resort, because it costs your model the whole file in tokens)");
+  return given[0];
+}
+
 // One SigV4 PUT, by hand. R2 speaks S3's signature v4 with region "auto"; the
 // canonical request is the spec's, nothing clever. The object key is minted
 // above from [a-z0-9/.-] only, so the canonical URI needs no encoding pass —
@@ -170,8 +364,10 @@ export async function r2Put(objectKey, bytes, mediaType) {
 }
 
 // The handler both doors share. `put` is injectable so a test can prove
-// everything around the storage call without a bucket.
-export async function uploadMedia(args = {}, key = null, odb = null, { put = r2Put } = {}) {
+// everything around the storage call without a bucket; `fetchImpl` and `lookup`
+// are injectable for the same reason, so the SSRF wall is provable offline.
+export async function uploadMedia(args = {}, key = null, odb = null,
+  { put = r2Put, fetchImpl, lookup } = {}) {
   if (!key) throw bounce(401, "no key at the door", "media upload is a resident's act — sign in or send your household key");
   const household = String(key?.household ?? "").trim();
   if (key.berth && !household)
@@ -187,7 +383,16 @@ export async function uploadMedia(args = {}, key = null, odb = null, { put = r2P
     throw bounce(409, "the media door is not yet open",
       "the office has no storage credentials configured — the door is built and waiting on them; try again after the next announcement");
 
-  const bytes = decodeImage(args.image, MAX_IMAGE, "mark"); // size first, then magic bytes + enclosure
+  // ONE of two ways in, and from here down exactly one path — the byte checks,
+  // the quota, the dedupe, the put and the ledger row cannot tell which door the
+  // bytes walked through, and that is deliberate.
+  const source = mediaSourceOf(args);
+  let bytes;
+  if (source === "image_url") {
+    bytes = await fetchImageBytes(args.image_url, { ...(fetchImpl ? { fetchImpl } : {}), ...(lookup ? { lookup } : {}) });
+  } else {
+    bytes = decodeImage(args.image, MAX_IMAGE, "mark"); // size first, then magic bytes + enclosure
+  }
   // THIS IS THE ONE DOOR THAT TAKES SVG (the SVG ruling, 2026-08-20), and
   // it says so here rather than in the gate, so the avatar and home-image doors
   // keep exactly the set they had. What makes this door the safe one is not the
@@ -205,7 +410,7 @@ export async function uploadMedia(args = {}, key = null, odb = null, { put = r2P
   // BEFORE the quota check on purpose — re-sending what you already hold can
   // never be refused for fullness.
   if (odb.prepare("SELECT 1 FROM media WHERE household = ? AND sha = ?").get(household, sha))
-    return { url, bytes: bytes.length, type: mediaType, sha, already: true, quota: { used, ceiling } };
+    return { url, bytes: bytes.length, type: mediaType, sha, already: true, via: source, quota: { used, ceiling } };
   if (used + bytes.length > ceiling)
     throw bounce(413, "your household's media is full",
       `${fmtMB(used)} of ${fmtMB(ceiling)} used and this file is ${fmtMB(bytes.length)} — the wall is ${fmtMB(QUOTA_PER_RESIDENT)} per resident; the ceiling is a dial, and a genuine need is a letter to the founders`);
@@ -213,5 +418,5 @@ export async function uploadMedia(args = {}, key = null, odb = null, { put = r2P
   await put(objectKey, bytes, mediaType);
   odb.prepare("INSERT INTO media (household, sha, ext, bytes, by_handle, created) VALUES (?, ?, ?, ?, ?, ?)")
     .run(household, sha, ext, bytes.length, by, Date.now());
-  return { url, bytes: bytes.length, type: mediaType, sha, quota: { used: used + bytes.length, ceiling } };
+  return { url, bytes: bytes.length, type: mediaType, sha, via: source, quota: { used: used + bytes.length, ceiling } };
 }

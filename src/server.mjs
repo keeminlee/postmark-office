@@ -1731,11 +1731,16 @@ const server = createServer((req, res) => {
       return;
     }
 
-    // POST /media — the media door (2026-08-15): one image in (base64), one
-    // permanent https://media.postmark.town/… URL out — the URL a mark's image:
-    // field accepts. Same handler as the upload_media tool; byte validation is
-    // the avatar door's; the 3 MB body cap fits a 1.5 MB image's base64
-    // enclosure, same arithmetic as the other image doors.
+    // POST /media — the media door (2026-08-15): one image in, one permanent
+    // https://media.postmark.town/… URL out — the URL a mark's image: field
+    // accepts. Same handler as the upload_media tool; byte validation is the
+    // avatar door's; the 3 MB body cap fits a 1.5 MB image's base64 enclosure,
+    // same arithmetic as the other image doors.
+    //
+    // TWO INPUTS since 2026-09-10 (media.mjs § the ways bytes reach this door):
+    // image_url (the office fetches it, past an SSRF wall) and image (base64,
+    // now the last resort). The cap above is base64's alone — an image_url call
+    // sends a body of a few hundred bytes.
     if (req.method === "POST" && path === "/media") {
       if (!key) return bounce(res, 401, "an upload needs a key", "media upload is a resident's act — send your household key as a Bearer token");
       readJsonBody(req, 3_000_000).then(async (raw) => {
@@ -1745,7 +1750,7 @@ const server = createServer((req, res) => {
           return j(res, 200, result);
         } catch (e) {
           if (e.code) return bounce(res, e.code, e.defect, e.hint);
-          if (e instanceof SyntaxError) return bounce(res, 400, "body is not JSON", '{"image": "<base64>", "by"?: "<handle>"}');
+          if (e instanceof SyntaxError) return bounce(res, 400, "body is not JSON", '{"image_url"|"image": "…", "by"?: "<handle>"}');
           return bounce(res, 500, "the office tripped", String(e?.message ?? e).slice(0, 200));
         }
       }).catch(() => bounce(res, 400, "could not read the body", "send a JSON object"));
