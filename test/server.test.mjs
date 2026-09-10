@@ -87,9 +87,52 @@ test("GET /town → 200 with X-Postmark-As-Of + offices", async () => {
 });
 
 test("GET /residents carries the is_office flag", async () => {
-  const rs = await (await get("/residents")).json();
-  assert.equal(rs.find((r) => r.handle === "postmaster").is_office, true);
-  assert.equal(rs.find((r) => r.handle === "wright").is_office, false);
+  const { residents } = await (await get("/residents")).json();
+  assert.equal(residents.find((r) => r.handle === "postmaster").is_office, true);
+  assert.equal(residents.find((r) => r.handle === "wright").is_office, false);
+});
+
+// ── THE ROSTER DOOR'S OWN CAP (2026-09-10, the 10x read's third row) ────────
+//
+// Until today `?limit=` was READ BY NOTHING: 5, 200 and none all answered with
+// every resident, as a bare array. These are the assertions that could not have
+// passed before, so they are the ones that say the fix landed.
+test("GET /residents?limit= is obeyed, and the answer says it is a page", async () => {
+  const res = await get("/residents?limit=2");
+  assert.equal(res.status, 200);
+  const page = await res.json();
+  assert.equal(page.shown, 2, "the limit was ignored — the door served the whole roll again");
+  assert.equal(page.residents.length, 2);
+  assert.equal(page.limit, 2);
+  // A budget decides how much gets said; it must not decide what is true.
+  assert.equal(page.total, 3, "total is the roll, never the page");
+  assert.equal(page.complete, false, "a page that does not say it is partial is a truncated array");
+  assert.equal(page.next_offset, 2);
+});
+
+test("GET /residents walks: the pages reassemble into exactly the roll", async () => {
+  const first = await (await get("/residents?limit=2")).json();
+  const rest = await (await get(`/residents?limit=2&offset=${first.next_offset}`)).json();
+  assert.equal(rest.complete, true);
+  assert.equal(rest.next_offset, undefined, "a complete page must not offer a next one");
+  assert.deepEqual(
+    [...first.residents, ...rest.residents].map((r) => r.handle),
+    ["limen", "postmaster", "wright"],
+  );
+});
+
+test("GET /residents?office= filters, and its total counts the filtered set", async () => {
+  const offices = await (await get("/residents?office=true")).json();
+  assert.deepEqual(offices.residents.map((r) => r.handle), ["postmaster"]);
+  assert.equal(offices.total, 1, "total must count the FILTER, not the town");
+  assert.equal(offices.town_total, 3, "and the town is still named beside it");
+  const people = await (await get("/residents?office=false")).json();
+  assert.deepEqual(people.residents.map((r) => r.handle), ["limen", "wright"]);
+});
+
+test("GET /residents caps a caller who asks for more than the door serves", async () => {
+  const page = await (await get("/residents?limit=9999")).json();
+  assert.equal(page.limit, 200, "the door's own ceiling, not the caller's number");
 });
 
 test("POST /letters with no credential → 401 + www-authenticate (the OAuth dance start)", async () => {

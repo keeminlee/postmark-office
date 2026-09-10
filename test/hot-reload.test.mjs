@@ -154,7 +154,7 @@ test("a rebuilt index is picked up in place — header, meta and handle all flip
   assert.equal(town.as_of, B_SHA);
   assert.equal(town.counts.residents, 4);
   // … and so did the HANDLE: this row exists only in B.
-  const residents = await (await get("/residents")).json();
+  const { residents } = await (await get("/residents")).json();
   assert.ok(residents.some((r) => r.handle === "newcomer"), "the new resident row never appeared — the db handle did not swap");
 
   assert.match(out.stdout, /\[office\] index reloaded — as-of bbbbbbbb1111 \(was fixturesha00\)/);
@@ -204,7 +204,7 @@ test("...and recovers the moment a good file lands", async () => {
   copyFileSync(aPath, dbPath);
   const flipped = await until(async () => (await asOfOf()) === A_SHA);
   assert.ok(flipped, `never recovered to ${A_SHA}; stderr: ${out.stderr.slice(-400)}`);
-  const residents = await (await get("/residents")).json();
+  const { residents } = await (await get("/residents")).json();
   assert.ok(!residents.some((r) => r.handle === "newcomer"), "still serving B's rows after recovering to A");
 });
 
