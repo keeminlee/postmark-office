@@ -111,73 +111,6 @@ const LANE_OF = Object.freeze({
                  // flag-off arm is journalled, and both are the same act
   give: "lane", drop: "lane", take: "lane",  // check 2 · dynamic.db/attachments
 
-  // ── THE SUBSCRIPTION'S TWO VERBS (world#18, PROPOSED; Rei-1, Lane B) ──────
-  //
-  // Named here in the same commit that adds their dispatch rows, and BEFORE the
-  // law they answer has merged — the `arena-act` discipline one check down:
-  // "Naming it early was deliberate … A census that only learns about a lane
-  // after it lands is a census that is late by exactly the interval in which
-  // the gap can open."
-  //
-  // The answer is "journal", and it is the same answer for both: the act rides
-  // `appendJournal` like every other class-lane act (src/subscriptions.mjs §
-  // writeSubscriptionAct), so `appendJournal`'s mirror carries it and
-  // falsifier-acts-parity is what checks it. On a FLIPPED lane it rides
-  // `appendActFlipped` instead and Postgres is the record — which is not a
-  // different census answer, because `laneOf` maps a flip per lane and the row
-  // reaches `acts` either way. That is the same shape `declare-stance-on` has
-  // carried since its own lane flipped.
-  //
-  // ⚠ WHAT RIDES IN THE PAYLOAD, and why this row is the right place to say it.
-  // `acts` leaves the box — the notary exports the whole row into a public
-  // archive, frozen on write — and a subscription's `deliver_to` is a URL
-  // carrying its household's own token. So the payload carries a FINGERPRINT of
-  // that URL and never the URL: `{wake_on, earshot_m?, ttl_h, deliver_to_fp}`.
-  // (`expires_at` was in that list and was removed: the projection recomputes
-  // expiry from `at + ttl_h` and never read it, and a field the archive freezes
-  // forever and the town does not honour is a promise with no keeper.) This is the `note-to-self` reasoning below reaching a
-  // different answer because the act has a public half worth publishing, not a
-  // weaker version of it. If a future hand puts `deliver_to` in this payload,
-  // the archive publishes a live credential permanently and no policy anywhere
-  // can take it back.
-  subscribe: "journal", unsubscribe: "journal",
-
-  // ── THE GATHERING AND THE HANDOFF (world#15 and #16, PROPOSED; Rei-3) ─────
-  //
-  // Named in the same commit that adds their dispatch rows and BEFORE the law
-  // they answer has merged — the same early-naming the subscription's row above
-  // and the `arena-act` row one check down both defend: "a census that only
-  // learns about a lane after it lands is a census that is late by exactly the
-  // interval in which the gap can open."
-  //
-  // The answer is "journal" for both. Each rides `appendJournal` like every
-  // other class-lane act (src/gatherings.mjs § writeGatherAct, src/handoff.mjs
-  // § writeHandoffAct), so `appendJournal`'s mirror carries it and
-  // falsifier-acts-parity is what checks it; on a FLIPPED lane it rides
-  // `appendActFlipped` and Postgres is the record, which is not a different
-  // census answer because `laneOf` maps a flip per lane and the row reaches
-  // `acts` either way.
-  //
-  // ⚠ WHAT RIDES IN THE PAYLOAD, said here because `acts` LEAVES THE BOX — the
-  // notary exports the whole row into a public archive, frozen on write.
-  //
-  //   gather        the five facts the invitation already is: the gathering's
-  //                 own id, the face (declare/amend/withdraw), the place, the
-  //                 doors-open, the start, the end, and an optional shape.
-  //                 Every one of them is what a host SAYS PUBLICLY when they
-  //                 invite the town; publishing them permanently is what an
-  //                 invitation is for. Nothing about who came rides here — that
-  //                 is derived at the read, and the receipt's own fence ("never
-  //                 a line of what was spoken") governs it.
-  //   hand-to-human `ttl_min` and `human`, and `human` is the HOUSEHOLD'S
-  //                 label — `human-of-<slug>`, which src/households.mjs has
-  //                 derived since 2026-08-08 with the note "NEVER the GitHub
-  //                 login (the office does not name people)". A person's name
-  //                 must never enter this payload: the archive is frozen and no
-  //                 policy anywhere could take it back. The disclosure the law
-  //                 asks for is that a hand was seated, not whose hand it was.
-  gather: "journal", "hand-to-human": "journal",
-
   // ruled out, each with its reason
   "note-to-self": "none",
   //   HOUSEHOLD-PRIVATE BY THE DOOR'S OWN LAW — "one note to your returning
@@ -235,19 +168,6 @@ const CLASS_LANE_OF = Object.freeze({
   "arena-act": "journal", // gold §1: "LIVE — acts: ... throws, arena beats"
   voice: "lane",          // check 1 — never written to the journal; see world-journal.mjs
   holding: "lane",        // check 2 — likewise
-  // world#18's residue class, named before its first row exists — the same
-  // early-naming this check's own header defends. `laneOf` has no branch for
-  // it and needs none: it falls through to `return cls`, so the lane is called
-  // `subscription` after the class, and `appendJournal`'s mirror carries the
-  // row exactly as it carries a stance's.
-  subscription: "journal",
-  // world#15 and #16's residue classes, named before their first rows exist —
-  // the same early-naming this check's own header defends. `laneOf` has no
-  // branch for either and needs none: it falls through to `return cls`, so the
-  // lanes are called `gathering` and `handoff` after the classes, and
-  // `appendJournal`'s mirror carries the rows exactly as it carries a stance's.
-  gathering: "journal",
-  handoff: "journal",
 });
 
 function checkClassCensus(classesInJournal) {

@@ -411,7 +411,7 @@ export async function backfill(client, { crossings, walks, sources }, { dryRun =
 // `pathToFileURL(process.argv[1]).href === import.meta.url` is FALSE when the
 // entry path reaches this file through a Windows junction — the ESM loader
 // realpaths the entry, argv[1] is not — so the tool exits 0 having done nothing.
-// Compare real paths (world2/tools/dispatcher.mjs's idiom); the URL compare is
+// Compare real paths (world2/tools/await-clearing.mjs's idiom); the URL compare is
 // only the fallback for an argv[1] that cannot be realpath'd. The office's
 // test/cli-guard.test.mjs imports this file and spawns it through a junction.
 const isMain = (() => {

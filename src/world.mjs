@@ -1063,12 +1063,13 @@ export async function worldOrient(args = {}, key = null, { roll = [] } = {}) {
   // answer is the one orient has always given.
   const present = await presentNear(at, {
     place: (p) => placeWords(p),
-    // AVAILABLE (the-town/available, world PR #19; Rei-2). The presence layer
-    // answers WHERE from the walk ledger; this answers WHETHER THEY ARE READING
-    // from the say edge's own presence, which the office has kept since the
-    // say-box and nothing ever read back. Injected, not imported — the derived
-    // is voices.mjs's to compute and dynamic-presence's only to carry.
-    available: (handle, atMs) => voices.availability(handle, { at: atMs }),
+    // ⚑ AVAILABLE IS PARKED (2026-09-10, the founder's word). `the-town/available`
+    // was world#19, reverted off the record; the derived was voices.mjs's to
+    // compute and this door's only to inject. With the injection gone the
+    // presence block is the one orient has always given — which was the
+    // injection's own stated guarantee, so this is a return and not a loss.
+    // Bytes on office `wright/parked-proposals-office`; shelf in the world
+    // repo's LOGOS/PROPOSED.md.
     // You are not your own audience — the same ruling the earshot reply follows
     // for `listeners`. A spectator glance excludes nobody: it is nobody's.
     exclude: choice.handle ? [choice.handle] : [],
@@ -1176,7 +1177,7 @@ export async function worldEyes(args = {}, key = null, { roll = [] } = {}) {
   // office a second author of the world's voice.
   const present = await presentNear(at, {
     place: (p) => placeWords(p),
-    available: (handle, atMs) => voices.availability(handle, { at: atMs }),   // see worldOrient
+    // (`available` was injected here too — parked; see worldOrient's note.)
     exclude: choice.handle ? [choice.handle] : [],
     repo: WORLD_CLONE,
     world: w,
@@ -1233,19 +1234,17 @@ export async function worldPresent(args = {}, { roll = null } = {}) {
   // The fold, so this door answers over the whole position union — everyone with
   // a walk on record AND everyone holding ground (issue #7 §1).
   const w = await foldForPresence();
-  // AVAILABLE HERE TOO, from the same resolver the apex and the walkers door
-  // use. This is the THIRD presence surface, and a field that landed on two of
-  // three would leave the standalone door — the one the town's map draws from —
-  // disagreeing with `orient` about who is reading. That is the split-brain
-  // issue #7 and DEC-11 each paid for once; it is not worth buying a third
-  // time for one line. The disclosure is the boolean and its window, which is
-  // the same fact any keyed caller already reads, and nothing more: no text, no
-  // position this door did not already publish.
-  const available = (handle, atMs) => voices.availability(handle, { at: atMs });
-  if (!has) return presenceEveryone({ place, available, repo: WORLD_CLONE, world: w, roll: roll ?? [] });
+  // ⚑ `available` WAS INJECTED HERE TOO, and it came out with the other two.
+  // It was on all THREE presence surfaces on purpose — a field landing on two
+  // of three would have left this standalone door, the one the town's map draws
+  // from, disagreeing with `orient` about who is reading, which is the
+  // split-brain issue #7 and DEC-11 each paid for once. That argument is why it
+  // is parked from all three IN ONE COMMIT rather than door by door: the
+  // symmetry is the point in both directions.
+  if (!has) return presenceEveryone({ place, repo: WORLD_CLONE, world: w, roll: roll ?? [] });
   const radiusM = Number.isFinite(Number(args.radius_m)) ? Math.max(1, Number(args.radius_m)) : undefined;
   const limit = Number.isFinite(Number(args.limit)) ? Math.max(1, Math.floor(Number(args.limit))) : undefined;
-  return presenceNear({ x, y, place, available, repo: WORLD_CLONE, world: w, roll: roll ?? [], ...(radiusM ? { radiusM } : {}), ...(limit ? { limit } : {}) });
+  return presenceNear({ x, y, place, repo: WORLD_CLONE, world: w, roll: roll ?? [], ...(radiusM ? { radiusM } : {}), ...(limit ? { limit } : {}) });
 }
 
 // ── a mark's image, as bytes (world_investigate with_image, 2026-08-23) ──────
@@ -2486,21 +2485,27 @@ export async function withdrawMarkViaOffice(worldClone, args = {}, key = null) {
   const bounce = (code, defect, hint) => { const e = new Error(defect); Object.assign(e, { code, defect, hint }); return e; };
   const mark = String(args.mark ?? "").trim();
   // A GATHERING IS NOT A MARK, and this door says so BEFORE it parses the id.
-  // A gathering id (`gathering:<host>:<place id>:<start ms>`, minted by
-  // gatherings.mjs § gatheringIdFor) contains a "/" because the PLACE id does,
-  // so it passed the shape check below and was then sliced at its first "/" —
-  // the office answered 403 «"gathering:wright:the-town" is not on your key»,
-  // a handle nobody holds, and never said the word gathering. The conductor's
-  // ruling (2026-09-08): that parse is a bug whatever the law ends up saying.
-  // This refusal is the office REPORTING A FACT — which door writes a
-  // gathering's cancellation on this tree — and not a ruling on law question A
-  // (whether the clause's word "withdraw" should also reach this door), which
-  // is the founder's. If the founder rules that it should, this branch becomes
-  // the routing and the sentence goes away.
+  // A gathering id (`gathering:<host>:<place id>:<start ms>`) contains a "/"
+  // because the PLACE id does, so it passed the shape check below and was then
+  // sliced at its first "/" — the office answered 403 «"gathering:wright:the-town"
+  // is not on your key», a handle nobody holds, and never said the word
+  // gathering. The conductor's ruling (2026-09-08): THAT PARSE IS A BUG WHATEVER
+  // THE LAW ENDS UP SAYING, which is why this guard outlives the law it was
+  // written beside.
+  //
+  // ⚑ THE GATHERING IS PARKED (2026-09-10, the founder's word; world#15 held on
+  // `wright/law-gathering-class`, the office module on
+  // `wright/parked-proposals-office`). So the guard stays and its HINT changed:
+  // it used to send the caller to `world { do: "gather", … }`, and that door is
+  // no longer on the train. A refusal that routes a resident to a door which
+  // does not exist is a worse answer than the 403 this guard was written to
+  // replace, so it now says the true thing — no door writes a gathering here
+  // today. When #15 is ruled and the module returns, the routing sentence
+  // returns with it.
   const gatheringId = String(args.gathering ?? "").trim() || (mark.startsWith("gathering:") ? mark : "");
   if (gatheringId) {
     throw bounce(422, `"${gatheringId}" names a gathering, and this door withdraws marks`,
-      `a gathering is a fleeting node that rides a mark, not a mark of its own, so this door cannot withdraw it. Cancel it through the door that declared it: world { do: "gather", args: { gathering: "${gatheringId}", withdraw: true } } — the cancellation is a row like the declaration was, and every prior invitation stays in the log.`);
+      `a gathering is a fleeting node that rides a mark, not a mark of its own, so this door cannot withdraw it — and no door on this office declares or cancels one today: the gathering is parked law (world#15, awaiting the founder's word), so nothing here has minted this id.`);
   }
   if (!mark || !mark.includes("/")) throw bounce(422, "which mark?", "pass mark: '<by>/<slug>' — ids as the telling shows them");
   const by = mark.slice(0, mark.indexOf("/"));
@@ -3522,23 +3527,12 @@ export async function worldWalkers(worldClone, key = null, { roll = null } = {})
     // frame needs the engine; what it takes is a precomputed map, so the purity
     // holds and the two derivations still meet in exactly one place.
     const walkers = everyonePlaced({ world: w, departures, at, where, roll: roll ?? [] });
-    // AVAILABLE on the walkers door too, from the SAME resolver `present` uses.
-    // These are two row-builders for one roster — "world_walkers and present
-    // name the same residents, one derivation, two doors" (dynamic-presence.mjs
-    // § the roll) — and a field that landed on one of them would be the exact
-    // split-brain that consolidation ended. `world { read: "walk" }` reads this
-    // door, so this is where the apex's walk shadow gets the word.
-    // GUARDED, for the reason dynamic-presence's `askAvailable` is guarded: a
-    // derived that cannot answer is absent, never fatal. This door has no
-    // try/catch above it at all, so an unguarded throw here took out the whole
-    // walkers answer — the door the town's map draws from — for one boolean.
-    const withAvailability = (rows) => rows.map((r) => {
-      try { return { ...r, available: voices.availability(r.handle) }; }
-      catch (e) {
-        console.error(`[walkers] availability tripped for ${r.handle} (${String(e?.message ?? e).slice(0, 120)}) — the row answers without it`);
-        return r;
-      }
-    });
+    // ⚑ `available` WAS ON THE WALKERS DOOR TOO — the fourth surface, from the
+    // same resolver `present` used, because these are two row-builders for one
+    // roster ("world_walkers and present name the same residents, one
+    // derivation, two doors"). Parked 2026-09-10 with the other three; the row
+    // returns to what it was before the field existed, and the apex's walk
+    // shadow reads this door, so it loses the word here and nowhere else.
     // THE ROLL'S ABSENCE IS A DISCLOSURE, not a silence. Given no roll this door
     // answers about doers only — which is exactly the shape of the original
     // defect — so it says which question it asked rather than letting a narrower
@@ -3548,7 +3542,7 @@ export async function worldWalkers(worldClone, key = null, { roll = null } = {})
       : "no town roll supplied to this door — the answer covers residents with a walk record or ground, and cannot include a resident who has neither";
     return {
       at,
-      walkers: withAvailability(movementV2Enabled() ? await walkersInFrames(walkers, w, departures) : walkers),
+      walkers: movementV2Enabled() ? await walkersInFrames(walkers, w, departures) : walkers,
       // The disclosure the reader assembled, carried rather than dropped. A door
       // that reads half the record and says nothing is the failure this whole
       // change is about.

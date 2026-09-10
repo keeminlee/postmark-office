@@ -739,16 +739,26 @@ export function readJournal(db, { household = null, cls = null, sinceSeq = 0, li
  *
  * `emissionToVoice`'s discipline (src/dynamic-emissions.mjs), and it exists for
  * a defect a flip run found rather than for tidiness. A class-lane projection
- * — `liveSubscriptions`, `liveHandoffs`, `gatheringsFrom` — is pure over rows
- * whose instant is `at` and whose id is `id`, which is Postgres' `acts`. A
- * journal row's instant is `written_at` and its `at` is the WITNESSED LINE, an
- * anchor-and-offset object. Handing a journal row straight to one of those
- * projections yields `NaN` for every instant and an empty live set — silently,
- * because an empty projection is exactly what "nothing stands" looks like.
+ * is pure over rows whose instant is `at` and whose id is `id`, which is
+ * Postgres' `acts`. A journal row's instant is `written_at` and its `at` is the
+ * WITNESSED LINE, an anchor-and-offset object. Handing a journal row straight to
+ * one of those projections yields `NaN` for every instant and an empty live set
+ * — silently, because an empty projection is exactly what "nothing stands"
+ * looks like.
  *
  * So an office not pointed at Postgres would accept a declaration at the door
  * and then answer that nothing was ever declared. This is the mapping that
  * stops it, and it is one function so the two shapes cannot come apart.
+ *
+ * ⚑ NO LIVE CALLER TODAY, and this note is here so the next reader does not
+ * have to discover that with a grep. The three class-lane projections that
+ * consumed it — `liveSubscriptions`, `liveHandoffs`, `gatheringsFrom` — were
+ * parked on 2026-09-10 with the law they served (world#20, #16, #15; the
+ * modules are held whole on office `wright/parked-proposals-office`, the shelf
+ * is the world repo's LOGOS/PROPOSED.md). It is kept rather than deleted
+ * because it is the STATEMENT OF THE DEFECT as much as the fix for it: the next
+ * class lane to be journalled needs this mapping and would otherwise rediscover
+ * the silent-NaN failure the flip run already paid for.
  */
 export const journalRowAsAct = (r) => ({
   id: r.seq,

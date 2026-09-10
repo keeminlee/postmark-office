@@ -289,7 +289,7 @@ export function foldAtSha(worldRepo, sha) {
 
 // ── the arm ──────────────────────────────────────────────────────────────────
 //
-// The main guard, BOTH SIDES REALPATHED — `dispatcher.mjs`'s idiom, and the one
+// The main guard, BOTH SIDES REALPATHED — `await-clearing.mjs`'s idiom, and the one
 // the CLI-guard sweep converted the office to. A junction anywhere in the path
 // makes the naive URL compare false and the tool exits 0 having done nothing,
 // which is indistinguishable from success at the call site (33 fixture reds,

@@ -10,8 +10,10 @@
 // tool exits 0 having done nothing (HQ memory `junctions-defeat-main-guards`,
 // 2026-09-05: 33 fixture reds). The office's sound idioms are the basename
 // compare (src/world-drain.mjs) and the realpath compare
-// (world2/tools/dispatcher.mjs); this lane converted every fragile guard to the
-// latter.
+// (world2/tools/await-clearing.mjs); this lane converted every fragile guard to
+// the latter. (The realpath exemplar was world2/tools/dispatcher.mjs until the
+// subscription was parked on 2026-09-10 — the idiom outlived the file that
+// taught it, and every citation in this repo was repointed with it.)
 //
 // FACE ONE — the import is inert. For every tool, a small importer
 // (test/helpers/cli-guard-importer.mjs) is spawned as the ENTRY and imports the
@@ -139,7 +141,6 @@ const ROSTER = {
   // world2/tools/
   "world2/tools/await-clearing.mjs": { args: [], env: NO_PG, code: 2, needle: "--since <iso8601> is required" },
   "world2/tools/backfill-register.mjs": { args: [], env: NO_PG, code: 2, needle: "--class must be one of" },
-  "world2/tools/dispatcher.mjs": { args: ["--once"], env: NO_PG, code: 2, needle: "Nothing to listen to" },
   "world2/tools/escrow-ingest.mjs": { args: [], env: NO_PG, code: 2, needle: "usage: escrow-ingest.mjs --town-repo <checkout>" },
   "world2/tools/falsifier-conversations-equality.mjs": { args: [], env: NO_PG, code: 2, needle: "--voices-log <path> is required" },
   "world2/tools/fold-input-cli.mjs": { args: [], env: NO_PG, code: 2, needle: "--world-sha <sha> is required" },
