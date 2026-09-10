@@ -57,7 +57,7 @@ import { materializeClaims, recomputeStanding, slugOf, ownerHouseholdFor } from 
 // The escrow PRESENCE gate — the sweep's own rule, ported to the candle before
 // G1 deletes the path it lives on. See step 5.5.
 import { escrowAbsentAmong, escrowPresenceAt, escrowLines } from "./escrow-presence.mjs";
-import { computeStanding } from "./standing.mjs";
+import { computeStanding, gistContainment } from "./standing.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const arg = (n) => { const i = process.argv.indexOf(n); return i === -1 ? null : process.argv[i + 1]; };
@@ -254,7 +254,28 @@ try {
           geometry: c.geometry, parent: c.parent, data: c.data,
         });
       }
-      const tiers = computeStanding([...standingRows, ...candidates]);
+      //   ONE FULL WALK PER CROSSING, and this is not it. The whole world is
+      //   still resolved — a candidate's standing depends on ground it does not
+      //   own — but the ANSWERS this gate needs are the candidates' and nothing
+      //   else: `escrowAbsentAmong` reads `tiers.get(c.slug)` for exactly the
+      //   claims handed to it three lines below. Naming that set turns the walk
+      //   from a pass over the register into a climb up the candidates' own
+      //   ancestry, and leaves `recomputeStanding` at step 7 as the crossing's
+      //   single all-marks walk (standing.mjs § `only`).
+      //
+      //   The slug set is `candidates`' own, which is `undecidedNamed` mapped
+      //   through the same `slugOf` — one derivation, so the two cannot drift
+      //   into a gate that quietly checks nothing.
+      //
+      //   The containment candidates come from the store's own GiST
+      //   (standing.mjs § the spatial index). The CLAIMS in this set are not in
+      //   `marks` and no index has seen them, which is not a gap: the reader
+      //   hands back the set it can speak for, and the walk keeps scanning the
+      //   long way for everything else — including, deliberately, every one of
+      //   these candidates.
+      const containment = await gistContainment(q);
+      const tiers = computeStanding([...standingRows, ...candidates],
+        { only: new Set(candidates.map((c) => c.slug)), containment });
       const escrowByMark = await escrowPresenceAt(q, { townSha });
       const verdict = escrowAbsentAmong(
         undecidedNamed.map((c) => ({ id: c.id, slug: slugOf(c) })),
@@ -328,7 +349,7 @@ try {
   //     The walk itself is `materialize.mjs`'s, shared with the REVIEW lane for
   //     the same reason step 6 is: a ruling that grants ground has to move the
   //     neighbours' standing exactly as a clearing does.
-  const { standing, moved, notes } = await recomputeStanding(q);
+  const { standing, moved, notes, containment: containmentSeen } = await recomputeStanding(q);
   for (const n of notes) console.log(`  ⚑ standing: ${n}`);
 
   // Close, pin, open the successor.
@@ -357,6 +378,11 @@ try {
         // recompute over a freshly floored store can move hundreds of rows, and a
         // window row is not where that list belongs. The count is exact.
         moves: moved.slice(0, 25),
+        // What the containment index could speak for (016_marks_bbox_gist.sql).
+        // `indexed: false` is a crossing that paid the old price for the walk
+        // because the migration is not applied — the one state that otherwise
+        // shows up nowhere but the clock.
+        containment: containmentSeen,
         ...(notes.length ? { notes } : {}),
       },
     })]);

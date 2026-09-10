@@ -16,7 +16,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { computeStanding, admissionNotes, markStanding, recordOf,
-  placementParent, rankCandidates } from "../world2/tools/standing.mjs";
+  placementParent, rankCandidates, rect, contains } from "../world2/tools/standing.mjs";
 
 // ── the fixture world, in `marks`-row shape ──────────────────────────────────
 let n = 0;
@@ -241,6 +241,266 @@ test("every standing row gets an answer, and only the three words", () => {
   for (const v of t.values()) assert.ok(["home", "market", "constitution"].includes(v), `unknown standing ${v}`);
 });
 
+// ── `only`: the answer set the escrow gate asks for ─────────────────────────
+//
+// standing.mjs § `only` states the law this pair holds it to: "`only` can
+// therefore only ever REMOVE entries from the returned Map; it can never change
+// one." The first test is that sentence; the second is the refusal that keeps a
+// mistyped set from reaching `escrowAbsentAmong`, which reads a missing tier as
+// "not commons, skip".
+
+test("`only` narrows the answer set and never changes an answer", () => {
+  // A world where the answers are not all the same word, so a narrowing that
+  // returned a DEFAULT rather than the walk's own verdict would be caught: the
+  // town's constitution, a mark on its own household's ground (`home`), and a
+  // mark on nobody's ground (`market`).
+  const flower = row({ slug: "rei/a-flower", kind: "sited", owner: "rei", household: REI,
+    at: { x: 108, y: 108 }, extent: { w: 2, h: 2 } });
+  const stray = row({ slug: "rei/a-stray", kind: "sited", owner: "rei", household: REI,
+    at: { x: 9000, y: 9000 }, extent: { w: 2, h: 2 } });
+  const rows = [...base(), flower, stray];
+
+  const full = computeStanding(rows);
+  for (const slug of full.keys()) {
+    const narrowed = computeStanding(rows, { only: new Set([slug]) });
+    assert.equal(narrowed.size, 1, `only asked for ${slug} and got ${narrowed.size} answer(s)`);
+    assert.equal(narrowed.get(slug), full.get(slug), `${slug} moved when it was asked about alone`);
+  }
+  // and asking for several at once is the same restriction, not a different walk
+  const some = new Set([flower.slug, stray.slug]);
+  const many = computeStanding(rows, { only: some });
+  assert.deepEqual([...many.keys()].sort(), [...some].sort());
+  for (const slug of some) assert.equal(many.get(slug), full.get(slug));
+  // the three words are all still reachable through the narrow path, so this
+  // world would have caught a narrowing that answered one word for everything
+  assert.deepEqual([...new Set(full.values())].sort(), ["constitution", "home", "market"]);
+});
+
+test("`only` answers about the CANDIDATE when a claim carries a standing mark's slug", () => {
+  // THE AMENDMENT, which is the one shape at step 5.5 where two records share a
+  // slug — and the shape this office opened on purpose. `clearing-job.mjs`'s
+  // step 1 refuses a claim whose slug already stands, EXCEPT an amendment:
+  //
+  //   if (c.supersedes && String(c.supersedes) === rows[0].id) { amends.set(…); continue; }
+  //
+  // No `decide()`, so the claim stays undecided, so it is in `candidates` at
+  // step 5.5 carrying a slug a standing mark already holds. Step 1's own comment
+  // names the live instance: "settlement/S49 published 14 claims, four of them
+  // amendments of standing marks (vellix/casa-nera, vermillion's three
+  // space-program marks)."
+  //
+  // `records` there is `[...standingRows, ...candidates]`, and the base walk's
+  // `out.set` is LAST-wins, so the answer is the CANDIDATE's — which is what the
+  // gate is asking about ("in the shape `materializeClaims` is about to insert").
+  // A narrowing that resolved the slug FIRST-wins would answer with the standing
+  // mark instead, and the two answers differ exactly when the amendment moves
+  // the mark off its own ground — which is what an amendment is for.
+  //
+  // CAN FAIL: this is red on `ffbd9850`'s `standing.mjs`, where `bySlug` keeps
+  // the first record. Found by the reviewer on the real tool: the amended claim
+  // dropped out of `escrow: 51 commons claim(s) LOCKED UNCHECKED` and locked
+  // with nothing staked behind it, silently.
+  const standing = row({ slug: "wright/the-bench", kind: "sited", owner: "wright",
+    household: WRIGHT, at: { x: 100, y: 100 }, extent: { w: 2, h: 2 } });   // on wright's own parcel
+  const amended = row({ slug: "wright/the-bench", kind: "sited", owner: "wright",
+    household: WRIGHT, at: { x: 9000, y: 9000 }, extent: { w: 2, h: 2 } });  // moved to open ground
+  const rows = [...base(), standing, amended];
+
+  // the premise: the two records really do answer differently, or this fixture
+  // proves nothing about which one `only` picked
+  assert.equal(computeStanding([...base(), standing]).get("wright/the-bench"), "home");
+  assert.equal(computeStanding([...base(), amended]).get("wright/the-bench"), "market");
+
+  const full = computeStanding(rows);
+  const narrowed = computeStanding(rows, { only: new Set(["wright/the-bench"]) });
+  assert.equal(narrowed.get("wright/the-bench"), full.get("wright/the-bench"),
+    "`only` resolved the shared slug to a different record than the full walk did");
+  assert.equal(narrowed.get("wright/the-bench"), "market",
+    "the shared slug must answer as the CANDIDATE — the shape the gate is about to materialize");
+});
+
+test("`only` refuses a slug that is not among the rows — it does not answer null", () => {
+  // CAN FAIL: delete the throw in standing.mjs and this test goes red, because
+  // the Map would come back holding `undefined` for the missing slug and
+  // `escrowAbsentAmong` reads that as "the walk had no verdict, skip" — a commons
+  // claim locking with nothing staked behind it, silently.
+  const rows = base();
+  assert.throws(() => computeStanding(rows, { only: new Set(["rei/never-submitted"]) }),
+    /only.*rei\/never-submitted.*not among/s);
+  // the guard is about ABSENCE, not about narrowing: a slug that IS there passes
+  assert.doesNotThrow(() => computeStanding(rows, { only: new Set([rows[0].slug]) }));
+});
+
+// ── `containment`: the GiST prefilter, held to the scan it replaces ─────────
+//
+// standing.mjs § the spatial index states the prefilter's law: "`outer` can
+// contain `inner` only if their EFFECTIVE extents touch", with two measured
+// escapes — a ring outside its own extent, and a degenerate inner. These build
+// the prefilter by hand (the database's answer, without a database) and hold the
+// indexed walk to the scanning one, including on both escapes.
+
+/** The prefilter `gistContainment` would return for `world`, computed honestly. */
+function containmentOver(world, { loose = [] } = {}) {
+  const looseSet = new Set(loose);
+  const geometric = world.filter((m) => (m.kind === "sited" || m.kind === "parcel") && m.at);
+  const covered = new Set(geometric.map((m) => m.slug).filter((s) => !looseSet.has(s)));
+  const box = (m) => {
+    const r = { x: m.at?.x ?? 0, y: m.at?.y ?? 0, w: m.extent?.w ?? 1, h: m.extent?.h ?? 1 };
+    return { x0: r.x - r.w / 2, x1: r.x + r.w / 2, y0: r.y - r.h / 2, y1: r.y + r.h / 2 };
+  };
+  const touch = (a, b) => a.x0 <= b.x1 && b.x0 <= a.x1 && a.y0 <= b.y1 && b.y0 <= a.y1;
+  const pairs = new Map();
+  for (const s of covered) pairs.set(s, []);
+  for (const a of geometric) {
+    if (!covered.has(a.slug)) continue;
+    for (const b of geometric)
+      if (b.slug !== a.slug && covered.has(b.slug) && touch(box(a), box(b))) pairs.get(a.slug).push(b.slug);
+  }
+  return { covered, pairs, loose, indexed: true };
+}
+
+// THE FIXTURES BELOW ARE BUILT SO THE VERDICT MOVES, not merely the chain.
+//
+// The first cut of all three compared `computeStanding` against `computeStanding`
+// over worlds where every candidate container answered the same WORD — so the
+// prefilter could drop a container, the containment parent could change, and the
+// tier came out identical. The reviewer ran the flips: dropping `extras`,
+// starving the uncovered path, and reversing the sub-ranking all left the suite
+// GREEN. Three of fix 3's four mechanisms had no witness anywhere.
+//
+// Each fixture now puts a DIFFERENT VERDICT on either side of the mechanism it
+// names — a parcel that confers `home` against ground that answers `market` —
+// and each names the flip that turns it red.
+
+test("the GiST prefilter gives the scan's own answer, and smallest-containing still wins", () => {
+  // SMALLEST-CONTAINING-WINS IS THE THING UNDER TEST, so the two candidate
+  // containers must answer differently: the tight one is ground that welcomes
+  // the child (`home`), the loose one is ground that does not (`market`).
+  // `placementParent` reads its answer off ASCENDING AREA and a stable sort, so
+  // reversing the sub-ranking picks the big parcel and the tier moves.
+  //
+  // CAN FAIL: replace the rank re-sort in standing.mjs's `rankedFor` with
+  // `sub.reverse()` and this goes red — `c/thing` answers `market` on the
+  // indexed walk and `home` on the scan.
+  const world = [ROOT,
+    // the tight container: G's ground, welcoming C's thing by name
+    row({ slug: "g/near-ground", kind: "parcel", owner: "g", household: "solo:g",
+      at: { x: 0, y: 0 }, extent: { w: 20, h: 20 }, consent: { "c/thing": "welcomed" } }),
+    // the loose container: B's ground, welcoming nobody
+    row({ slug: "b/far-ground", kind: "parcel", owner: "b", household: "solo:b",
+      at: { x: 0, y: 0 }, extent: { w: 200, h: 200 } }),
+    // C holds no parcel, so `_sovereign` is false and the walk MUST read
+    // `_containedBy` — the trap the other two fixtures fell into
+    row({ slug: "c/thing", kind: "sited", owner: "c", household: "solo:c",
+      at: { x: 0, y: 0 }, extent: { w: 2, h: 2 } }),
+    row({ slug: "c/far", kind: "sited", owner: "c", household: "solo:c",
+      at: { x: 9000, y: 9000 }, extent: { w: 2, h: 2 } }),
+  ];
+  const records = world.map(recordOf);
+
+  // the premise, stated as an assertion: the two containers really do disagree,
+  // so a fixture that stopped distinguishing them would say so here
+  const ranked = rankCandidates(records);
+  assert.equal(placementParent(records[3], records, { ranked }), "g/near-ground");
+  assert.equal(
+    placementParent(records[3], records, { ranked: ranked.filter((e) => e.m.slug !== "g/near-ground") }),
+    "b/far-ground");
+
+  const scanned = computeStanding(world);
+  const indexed = computeStanding(world, { containment: containmentOver(records) });
+  assert.deepEqual([...indexed.entries()].sort(), [...scanned.entries()].sort());
+  assert.equal(scanned.get("c/thing"), "home");     // the TIGHT ground's word
+  assert.equal(scanned.get("c/far"), "market");     // and the world is not all one word
+});
+
+test("a LOOSE mark is still offered as a container, and it is the one that confers home", () => {
+  // `d/lake` is LOOSE: its `points:` ring reaches well past its own extent, the
+  // case `bbox` cannot bound (standing.mjs § the prefilter's own law, escape 1).
+  //
+  // IT IS A PARCEL, AND THE CHILD IS ITS OWN HOUSEHOLD'S. That is what makes the
+  // fixture bite: losing the lake as a container does not merely lengthen the
+  // chain, it changes the WORD. With `extras` the skiff stops at D's own ground
+  // and answers `home`; without it the skiff walks to the world root and answers
+  // `market`.
+  //
+  // The skiff is NOT sovereign — `_sovereign` tests the parcel's RECT, and the
+  // skiff sits under the ring and outside the rect — so `_containedBy` is what
+  // has to answer, which is the mechanism under test.
+  //
+  // CAN FAIL: delete the `extras` term from `rankedFor` in standing.mjs (both
+  // the loose-outer loop and the `extras.length` guard) and this goes red.
+  const lake = row({ slug: "d/lake", kind: "parcel", owner: "d", household: "solo:d",
+    at: { x: 0, y: 0 }, extent: { w: 10, h: 10 },
+    points: [[-100, -100], [100, -100], [100, 100], [-100, 100]] });
+  const skiff = row({ slug: "d/skiff", kind: "sited", owner: "d", household: "solo:d",
+    at: { x: 60, y: 60 }, extent: { w: 2, h: 2 } });
+  const world = [ROOT, lake, skiff];
+  const records = world.map(recordOf);
+
+  // the two premises this fixture stands on, both asserted rather than assumed
+  assert.equal(placementParent(records[2], records, { ranked: rankCandidates(records) }), "d/lake");
+  // sovereignty is tested against the parcel's RECT, and the skiff is outside it
+  // — so `markStanding` cannot answer before it reads `_containedBy`
+  assert.equal(contains(rect(records[1]), rect(records[2])), false,
+    "the skiff must not be sovereign, or the walk answers before it reads containment");
+
+  const scanned = computeStanding(world);
+  const indexed = computeStanding(world, { containment: containmentOver(records, { loose: ["d/lake"] }) });
+  assert.deepEqual([...indexed.entries()].sort(), [...scanned.entries()].sort());
+  assert.equal(scanned.get("d/skiff"), "home");
+
+  // AND THE OTHER READING IS THE MARKET ONE. A prefilter that trusted `bbox`
+  // over the ring would call the lake COVERED — so it is not a loose extra
+  // offered to everyone, and the bbox pair query never pairs it with a skiff
+  // sixty metres outside its ten-metre extent. That is this containment, and it
+  // is the walk run rather than described.
+  const bbox_trusting = computeStanding(world, {
+    containment: {
+      covered: new Set(["d/lake", "d/skiff"]),
+      pairs: new Map([["d/lake", []], ["d/skiff", []]]),
+      loose: [], indexed: true,
+    },
+  });
+  assert.equal(bbox_trusting.get("d/skiff"), "market",
+    "the fixture no longer distinguishes the two readings");
+});
+
+test("a mark not in the index at all — a claim, at step 5.5 — keeps the full scan", () => {
+  // The clearing walks standing rows PLUS candidate claims, and no index over
+  // `marks` has ever seen a claim, so `pairs.get(slug)` is `undefined` and the
+  // walk falls back to the JS `boxesTouch` filter over the whole ranking.
+  //
+  // THE CANDIDATE IS ON SOMEONE ELSE'S GROUND, welcomed by name. Its own
+  // household holds no parcel, so `_sovereign` is false and cannot answer first
+  // — the trap that made the first cut of this fixture green no matter what.
+  // The consent word is what turns G's ground into `home` for H's bench, and the
+  // walk can only read it if containment found the ground.
+  //
+  // CAN FAIL: make the uncovered branch of `rankedFor` return `[]` in
+  // standing.mjs and this goes red — the bench answers `market`.
+  const ground = row({ slug: "g/ground", kind: "parcel", owner: "g", household: "solo:g",
+    at: { x: 300, y: 300 }, extent: { w: 25, h: 25 }, consent: { "h/a-bench": "welcomed" } });
+  const store = [ROOT, ground];
+  const candidate = row({ slug: "h/a-bench", kind: "sited", owner: "h", household: "solo:h",
+    at: { x: 300, y: 300 }, extent: { w: 2, h: 2 } });
+  const world = [...store, candidate];
+
+  // the prefilter knows only the store's two rows — the candidate is absent from
+  // `covered` and from every pair list, exactly as the database would have it
+  const containment = containmentOver(store.map(recordOf));
+  assert.ok(!containment.covered.has("h/a-bench"));
+  assert.equal(containment.pairs.get("h/a-bench"), undefined);
+
+  const indexed = computeStanding(world, { containment });
+  assert.equal(indexed.get("h/a-bench"), computeStanding(world).get("h/a-bench"));
+  assert.equal(indexed.get("h/a-bench"), "home");   // welcomed onto G's ground
+
+  // and the same claim with the welcome withdrawn answers `market`, so this
+  // fixture is reading the ground the walk found and not a default
+  const unwelcome = world.map((r) => (r.slug === "g/ground" ? { ...r, data: {} } : r));
+  assert.equal(computeStanding(unwelcome, { containment }).get("h/a-bench"), "market");
+});
+
 test("a NULL household column falls back to solo:<owner>, never to a bare handle", () => {
   // The household-spelling ruling: "A roster owner keeps the household KEY
   // (`gh:<id>`); a non-roster owner is `solo:<handle>`, never NULL." A pre-repair
@@ -253,6 +513,26 @@ test("a NULL household column falls back to solo:<owner>, never to a bare handle
 });
 
 // ── the tripwires ────────────────────────────────────────────────────────────
+
+test("admissionNotes fires when a mark claims constitution under a name that is not the town's", () => {
+  // The 10x fill's own artefact, reproduced: rename the town and its law is
+  // walked like a resident's ground, with nothing said. The load-store lane's
+  // verdict — "anything that keys on a literal household name is a scaling seam.
+  // It did not error, it did not warn" — is what this note answers.
+  const renamed = row({ slug: "the-town-s3/pledges", kind: "sited", owner: "the-town-s3",
+    household: "solo:the-town-s3", tier: "constitution", at: { x: 0, y: 0 }, extent: { w: 400, h: 400 } });
+  const notes = admissionNotes([...base(), renamed]);
+  assert.equal(notes.length, 1);
+  assert.match(notes[0], /the-town-s3/);
+  assert.match(notes[0], /constitution/);
+  // and it is the AUTHOR that decides, not the tier word: the real town's own
+  // constitution marks are in `base()` and say nothing
+  assert.ok(!/^0 mark/.test(notes[0]));
+  // CAN FAIL in the other direction too: give the same record the town's name
+  // back and the note goes away, which is the thing being asserted
+  const restored = { ...renamed, owner: "the-town", household: "solo:the-town" };
+  assert.deepEqual(admissionNotes([...base(), restored]), []);
+});
 
 test("admissionNotes is silent on a register whose premises hold", () => {
   assert.deepEqual(admissionNotes([...base(),

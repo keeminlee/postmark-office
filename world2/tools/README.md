@@ -1403,6 +1403,61 @@ WORLD2_SCRATCH_URL=postgres://world2_owner:…@127.0.0.1:5432/world2_scratch_x \
   node world2/tools/falsifier-candle-tiling.mjs
 ```
 
+### Applying a migration to a live store — 014, 015, 016
+
+There is no migrations table in this store. Every `world2/schema/*.sql` past the
+floor is hand-applied, and this is the whole of the operator's contract for the
+three that have been applied that way.
+
+**As `world2_owner`, by `SET ROLE` — no URL, no password, nothing sourced:**
+
+```sh
+sudo -n -u postgres psql -v ON_ERROR_STOP=1 -d world2_dev \
+  -c "SET ROLE world2_owner;" -f world2/schema/016_marks_bbox_gist.sql
+```
+
+Applied as `postgres` instead, the object's owner diverges from the table's and
+**nothing fails** — the swap runbook found that the hard way with 014's table,
+and the divergence is silent and permanent.
+
+**014 is not idempotent; 015 and 016 are.** 014 run twice raises
+`relation "escrow_projection" already exists` inside its own `BEGIN`, so nothing
+partial lands, but the operator needs a pre-check. 015 and 016 use
+`CREATE INDEX IF NOT EXISTS` and print a `NOTICE`.
+
+**015 and 016 may be applied in either order, before or after the code, and a
+crossing with NEITHER applied is correct and slow — never wrong.** Measured on a
+10× store: with 016 the crossing takes 8.1 s, without it 25.8 s, and the outcome
+sha is byte-identical either way. `gistContainment` checks `pg_indexes` for the
+index by name and returns null when it is absent, and the walk falls back to the
+scan it has always used. So there is no deploy-order trap in either direction,
+and no window in which the store answers differently.
+
+**Prove 016 landed by the RECEIPT, not by `pg_indexes`.** An index that exists
+and is not *chosen* has bought nothing. Read a cleared window:
+
+```sql
+SELECT jsonb_pretty(receipts->'standing'->'containment') FROM windows WHERE id = <a cleared window>;
+```
+
+Both readings, taken off real cleared windows on a throwaway 10× clone — the
+first with 016 applied, the second with the index dropped between crossings:
+
+```
+{ "indexed": true, "covered": 4092, "loose": 48, "loose_marks": [ "vermillion/space-program-clearing", … ] }
+{ "indexed": false }
+```
+
+`"indexed": false` on a cleared window is a crossing that paid the old price.
+`loose` is the count of rows whose `bbox` does not bound what `marksContain`
+reads — they are correct and they are scanned, so a `loose` that climbs is a
+slower walk, never a wrong one.
+
+**Both `CREATE INDEX`es are NOT `CONCURRENTLY`** — they cannot be, inside a
+transaction block — so each takes a SHARE lock on `marks` and blocks writes to it
+for the build. Measured under 0.5 s at 10×, but **the crossing must not be
+mid-flight**: apply between candle runs, not during one.
+
 ### Re-flooring
 
 The replay leaves the store past the floor, and `acts` is append-only for every

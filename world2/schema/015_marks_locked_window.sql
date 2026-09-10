@@ -1,0 +1,79 @@
+-- 015 — marks(locked_window): the fold's own core read stops scanning the table
+--
+-- THE MEASUREMENT THAT ASKED FOR IT (lane `load-store`, 2026-09-09, on a
+-- `pg_dump` scratch clone at 10x — docs/2026-09-09/jetto-load-store-report.md
+-- § instrument 5, Q1):
+--
+--   `SELECT … FROM marks WHERE locked_window = $1 ORDER BY slug` — fold-delta.mjs:173
+--
+--   | | plan | Execution Time | buffers |
+--   |---|---|---|---|
+--   | before | Seq Scan on marks | 4.752 ms | 993 |
+--   | after  | Index Scan using marks_locked_window_idx | 0.194 ms | 16 |
+--
+--   "24x faster, 62x fewer buffers, for an 88 kB index built in 0.075 s. This is
+--    the clearest cheap win in the report — and it is a FOLD query, so it pays on
+--    every crossing including quiet ones."
+--
+-- `marks` carried exactly three indexes before this one — `marks_pkey`,
+-- `marks_slug_key`, and the partial GiST `parcels_do_not_overlap` — so the fold
+-- read the whole table on every crossing to answer a question about ONE window.
+-- The column is already a foreign key into `windows`; Postgres does not index
+-- the referencing side of a FK on its own, which is the whole reason a table
+-- with three indexes had none on the column its hottest read filters by.
+--
+-- WHY NOT A COMPOSITE `(locked_window, slug)`. The query's `ORDER BY slug` is
+-- over the rows of a single window — 30 at 10x, 3 at 1x — and sorting thirty
+-- rows costs nothing next to the 993 buffers this removes. A second column would
+-- double the index for a sort Postgres does in microseconds, and it would stop
+-- being the smallest change that answers the measurement.
+--
+-- WHY NOT AN INDEX ON `status`. Asked and answered by the same instrument, and
+-- the answer is no: `marks WHERE status = 'standing'` (Q6, Q12) returns 10,350
+-- of 10,400 rows. An index is the wrong tool at 99.5 % selectivity, Postgres
+-- would decline it, and it would cost writes on every materialization. The scan
+-- there is inherent and it is 11 ms.
+--
+-- NO REGISTRY ROW, and the precedent is in this directory. `registry` manifests
+-- OBJECTS with a pen and a consumer set (001_tables.sql § the manifest, rule 4:
+-- unmanifested = alarm); `marks` already carries its row, and an index has no
+-- pen of its own — it is part of the table it sits on. 006_claim_identity.sql
+-- added `claims_slug_idx` and wrote no registry row for exactly this reason.
+-- 014 wrote one because it created a TABLE.
+--
+-- IDEMPOTENT, unlike 014. 014 is not, and the swap runbook had to hand the
+-- operator a pre-check to compensate (docs/2026-09-09/jetto-swap-runbook-report.md
+-- § step 1: "It is not idempotent, and it fails safely"). There is no reason for
+-- this one to make the operator carry that, so it does not.
+--
+-- APPLY AS `world2_owner`, the runbook's step-1 idiom — secret-free, nothing
+-- sourced, no URL and no password anywhere on the line:
+--
+--   sudo -n -u postgres psql -v ON_ERROR_STOP=1 -d world2_dev \
+--     -c "SET ROLE world2_owner;" -f world2/schema/015_marks_locked_window.sql
+--
+-- Applied as `postgres` instead, the index's owner diverges from the table's and
+-- nothing fails — the runbook found that the hard way with 014's table, and the
+-- divergence is silent and permanent.
+--
+-- HOW TO PROVE IT LANDED (there is no migrations table in this store):
+--
+--   SELECT indexname, indexdef FROM pg_indexes
+--    WHERE tablename = 'marks' AND indexname = 'marks_locked_window_idx';
+--   EXPLAIN (ANALYZE, BUFFERS)
+--     SELECT id, slug, kind, owner, household, geometry, bbox, locked_window
+--       FROM marks WHERE locked_window = <a real window id> ORDER BY slug;
+--
+-- The second line is the one that matters: an index that exists and is not
+-- CHOSEN has bought nothing, and only the plan says which it is.
+--
+-- CONSUMERS of what this speeds, named: `fold-delta.mjs § foldDelta` (the
+-- crossing's mark read, the query above), and the `standing_marks` /`docket`
+-- views' callers inherit nothing here — they filter on `status`, not on the
+-- window.
+
+BEGIN;
+
+CREATE INDEX IF NOT EXISTS marks_locked_window_idx ON marks (locked_window);
+
+COMMIT;

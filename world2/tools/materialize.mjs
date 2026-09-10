@@ -20,7 +20,7 @@
 // caller's `q(text, args)` and runs inside the caller's transaction, because a
 // materialization that could commit on its own would be a second candle.
 
-import { computeStanding, admissionNotes } from "./standing.mjs";
+import { computeStanding, admissionNotes, gistContainment } from "./standing.mjs";
 
 /**
  * The identity a claim will materialize under.
@@ -172,7 +172,14 @@ export async function recomputeStanding(q) {
   const { rows: standing } = await q(
     `SELECT id::text, slug, kind, owner, household, geometry, parent::text, data
        FROM marks WHERE status = 'standing'`);
-  const tiers = computeStanding(standing);
+  // THE CONTAINMENT CANDIDATES, ASKED OF THE STORE (standing.mjs § the spatial
+  // index, 016_marks_bbox_gist.sql). Read INSIDE this transaction, off `q`, so
+  // the index answers about exactly the rows the SELECT above returned. Null
+  // when migration 016 is not applied, and then the walk scans as it always has
+  // — the reader refuses to run its pair query unindexed precisely because
+  // unindexed it is slower than the walk it would replace.
+  const containment = await gistContainment(q);
+  const tiers = computeStanding(standing, { containment });
   const moved = [];
   for (const m of standing) {
     const next = tiers.get(m.slug);
@@ -190,7 +197,19 @@ export async function recomputeStanding(q) {
   // than law (standing.mjs § the tripwires). Recorded in the receipts, not
   // thrown: a write must not fail because the town outgrew a premise, but nobody
   // should have to go looking for the day it did.
-  return { standing, moved, notes: admissionNotes(standing) };
+  // WHAT THE PREFILTER COULD SPEAK FOR, on the record. Without this the
+  // containment index is a thing that either helped or did not and left nothing
+  // behind to say which — and its two failure modes are both quiet: migration
+  // 016 absent (`indexed: false`, the walk silently pays the old price) and the
+  // loose set growing (rows whose `bbox` does not bound them, which the walk
+  // must keep scanning). Both are counts a reader can watch move.
+  return {
+    standing, moved, notes: admissionNotes(standing),
+    containment: containment
+      ? { indexed: true, covered: containment.covered.size, loose: containment.loose.length,
+          ...(containment.loose.length ? { loose_marks: containment.loose.slice(0, 10) } : {}) }
+      : { indexed: false },
+  };
 }
 
 /**

@@ -361,6 +361,136 @@ export function groundVerdict(ground, mark, house) {
   return mark.id != null && word === "welcomed" ? "home" : "market";
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// THE SPATIAL INDEX — `containmentParentOf`'s candidate set, asked of Postgres
+//
+// `placementParent` above says what this replaces, in its own words: "846 marks
+// is O(n^2) either way in the worst case, and in practice this is where 'a real
+// spatial query' earns its name." This is the real spatial query, and the store
+// is the only one of the walk's two homes that can ask it — 1.0's fold runs in a
+// checkout with no database, which is why the JS grid is the world's answer and
+// this is the store's (Keemin, 2026-09-10).
+//
+// WHAT IT RETURNS is a CANDIDATE set, never an answer. `marksContain` still
+// decides every pair, in the same ranked order, so the walk's verdict cannot
+// move — the index only decides which pairs are worth asking about.
+//
+// THE PREFILTER'S OWN LAW: `outer` can contain `inner` only if their EFFECTIVE
+// extents touch. That is exact for every case `marksContain` can answer yes to —
+//   * neither irregular: `contains()` needs `overlapArea >= 0.99 * innerArea`,
+//     which for a positive-area inner needs a positive overlap;
+//   * either irregular: at least 99 % of `inner`'s coverage cells must fall
+//     inside `outer`, and a cell inside both is a point inside both.
+// — and it has exactly two escapes, both of which are measured per row rather
+// than assumed, because a prefilter whose premise is a comment is a prefilter
+// that will silently change an answer:
+//
+//   1. `bbox` IS NOT THE EFFECTIVE EXTENT WHEN A RING LEAVES IT. `bbox` is
+//      `at ± extent/2` (seed-import.mjs § boxOf) and says nothing about a
+//      `points:` ring. ONE mark at 1x has a ring outside its own extent.
+//   2. A DEGENERATE INNER makes `contains()` vacuously true — `overlapArea >= 0`
+//      holds for every pair when `inner.w * inner.h` is zero — so the linear scan
+//      returns the smallest candidate anywhere and no overlap test reproduces
+//      that. (None exist today; the check is what says so.)
+//
+// Both are answered by the same query, and every row either escape touches goes
+// on the LOOSE list: loose marks are scanned the old way as inners, and are
+// offered to every other mark as candidates. So the index is an accelerator for
+// the rows it can speak for and is simply absent for the rows it cannot.
+//
+// IT REFUSES TO RUN UNINDEXED. Without `016_marks_bbox_gist.sql` the pair query
+// costs 16.5 s at 10x — slower than the walk it replaces — so the reader checks
+// `pg_indexes` for the index by name and returns null instead, and the walk uses
+// the scan it has always used. A missing migration costs the old price, never a
+// worse one.
+
+/** Every standing geometric mark, and whether `bbox` speaks for it. */
+const COVERAGE_SQL = `
+  WITH g AS (
+    SELECT slug, bbox, geometry,
+           (geometry->'at'->>'x')::float8      AS ax,
+           (geometry->'at'->>'y')::float8      AS ay,
+           (geometry->'extent'->>'w')::float8  AS w,
+           (geometry->'extent'->>'h')::float8  AS h
+      FROM marks
+     WHERE status = 'standing' AND kind IN ('sited','parcel')
+  )
+  SELECT slug,
+         ( bbox IS NULL OR ax IS NULL OR ay IS NULL OR w IS NULL OR h IS NULL
+           OR w <= 0 OR h <= 0
+           OR (bbox[1])[0] <> ax - w/2 OR (bbox[1])[1] <> ay - h/2
+           OR (bbox[0])[0] <> ax + w/2 OR (bbox[0])[1] <> ay + h/2
+           OR (geometry ? 'points' AND EXISTS (
+                SELECT 1 FROM jsonb_array_elements(geometry->'points') p
+                 WHERE coalesce((p->>0)::float8, (p->>'x')::float8) IS NULL
+                    OR coalesce((p->>1)::float8, (p->>'y')::float8) IS NULL
+                    OR coalesce((p->>0)::float8, (p->>'x')::float8) < ax - w/2
+                    OR coalesce((p->>0)::float8, (p->>'x')::float8) > ax + w/2
+                    OR coalesce((p->>1)::float8, (p->>'y')::float8) < ay - h/2
+                    OR coalesce((p->>1)::float8, (p->>'y')::float8) > ay + h/2))
+         ) AS loose
+    FROM g`;
+
+/** The pairs whose extents touch — the GiST index's whole job. */
+const PAIRS_SQL = `
+  SELECT a.slug AS inner_slug, b.slug AS outer_slug
+    FROM marks a JOIN marks b ON b.bbox && a.bbox
+   WHERE a.status = 'standing' AND b.status = 'standing'
+     AND a.kind IN ('sited','parcel') AND b.kind IN ('sited','parcel')
+     AND a.slug <> b.slug`;
+
+const INDEX_SQL =
+  `SELECT 1 FROM pg_indexes WHERE tablename = 'marks' AND indexname = 'marks_bbox_gist'`;
+
+/**
+ * gistContainment(q) → { covered, pairs, loose, indexed } | null
+ *
+ * `q` is the caller's own query function, so this runs inside the caller's
+ * transaction and sees exactly the rows the caller's SELECT saw. Null means "no
+ * index, walk it the old way" and is not an error.
+ */
+export async function gistContainment(q) {
+  const idx = await q(INDEX_SQL);
+  if (!idx?.rows?.length) return null;
+
+  const cov = await q(COVERAGE_SQL);
+  const covered = new Set(), loose = [];
+  for (const r of cov.rows) {
+    if (r.loose) loose.push(r.slug);
+    else covered.add(r.slug);
+  }
+
+  const pr = await q(PAIRS_SQL);
+  const pairs = new Map();
+  for (const s of covered) pairs.set(s, []);
+  for (const r of pr.rows) {
+    // A loose OUTER is not a candidate list entry — it is offered to every mark
+    // by `computeStanding`, because the index cannot say where it really reaches.
+    if (!covered.has(r.outer_slug)) continue;
+    const list = pairs.get(r.inner_slug);
+    if (list) list.push(r.outer_slug);
+  }
+  return { covered, pairs, loose, indexed: true };
+}
+
+/**
+ * The effective extent a containment test can actually reach — the record's
+ * rect widened to hold its ring, which is what `marksContain` rasterizes.
+ */
+function effBox(mk) {
+  const r = rect(mk);
+  let x0 = r.x - r.w / 2, x1 = r.x + r.w / 2, y0 = r.y - r.h / 2, y1 = r.y + r.h / 2;
+  const ring = polygonOf(mk);
+  if (ring) for (const p of ring) {
+    if (p.x < x0) x0 = p.x; if (p.x > x1) x1 = p.x;
+    if (p.y < y0) y0 = p.y; if (p.y > y1) y1 = p.y;
+  }
+  return { x0, y0, x1, y1 };
+}
+// Touching counts, deliberately: `&&` in Postgres counts it too, and a prefilter
+// that is looser than the test it guards can only cost a `marksContain` call.
+const boxesTouch = (a, b) => a.x0 <= b.x1 && b.x0 <= a.x1 && a.y0 <= b.y1 && b.y0 <= a.y1;
+
 /**
  * markStanding — mark-standing.mjs:89, verbatim, with the up-chain widened by
  * exactly one link for the store (see § the one edge the store cannot walk).
@@ -391,7 +521,7 @@ export function markStanding(mark, byId) {
 }
 
 /**
- * computeStanding(rows) → Map slug → tier.
+ * computeStanding(rows, { only }) → Map slug → tier.
  *
  * `rows` are `marks` rows: { id, slug, kind, owner, household, geometry, parent,
  * data }. Only STANDING rows should be handed in — a retired mark is not part of
@@ -401,8 +531,50 @@ export function markStanding(mark, byId) {
  * The three derived fields the walk reads are stamped first, in the fold's own
  * order, because that order is load-bearing: `_cred` before sovereignty (the
  * grain decides whose parcels count as "own"), sovereignty before the walk.
+ *
+ * ── `only`: THE ANSWER SET, AND WHY IT IS NOT AN OPTIMISATION FLAG ───────────
+ *
+ * A crossing walks this twice (the 10x store lane, § the ceiling): once at the
+ * clearing's escrow-presence gate and once at `recomputeStanding`. The second
+ * one has to answer for EVERY standing mark — that is finding 4's whole ruling,
+ * "tier is recomputed for ALL standing marks inside the clearing transaction".
+ * The first one does not: `escrowAbsentAmong` reads `tiers.get(c.slug)` for the
+ * undecided named CLAIMS and for nothing else, so it was paying for 10,350
+ * answers to use fifty.
+ *
+ * `only` is that difference made explicit. The set of records is unchanged — the
+ * whole world is still resolved, because a candidate's standing depends on
+ * ground it does not own — and what changes is how many marks get WALKED.
+ * Containment is now resolved lazily, per record, the first time the walk climbs
+ * to it, so the O(N^2) pass runs over the answered marks' ancestry instead of
+ * over the register.
+ *
+ * THE TWO THINGS `only` MUST NOT CHANGE, and the second one is the one that got
+ * away the first time this was written.
+ *
+ *   1 · THE VERDICT FOR A RECORD. `containmentParentOf` is a pure function of
+ *       (mark, records, root, ranked), and all four are the same whether it is
+ *       called eagerly for every record or lazily for some.
+ *   2 · WHICH RECORD A SLUG RESOLVES TO. The base walk is last-wins, and at
+ *       step 5.5 two records DO share a slug — see § last-wins at the bottom of
+ *       this function. The first cut resolved first-wins, and a real amendment
+ *       then answered as the standing mark instead of as the claim: a commons
+ *       claim through the escrow gate unchecked, silently. That is the whole of
+ *       the difference between "only removes entries" and "only is exact".
+ *
+ * NO FALSIFIER COVERS THIS PATH. `falsifier-standing-equality.mjs` runs the FULL
+ * walk against 1.0's fold and never passes `only` at all, so it is green on both
+ * readings and cannot see the difference. What holds this is
+ * `test/world2-standing.test.mjs`'s duplicate-slug fixture, which was run red
+ * against the first-wins version before the fix went in.
+ *
+ * IT REFUSES A SLUG IT WAS NOT GIVEN. `escrowAbsentAmong` reads a missing tier
+ * as "not commons, skip" — which is right when the walk genuinely had no verdict
+ * and would be a silently unchecked commons claim if the caller simply misspelled
+ * the set. So an `only` naming a slug that is not among `rows` throws here, where
+ * the mistake is, instead of passing quietly through a gate.
  */
-export function computeStanding(rows) {
+export function computeStanding(rows, { only = null, containment = null } = {}) {
   const records = rows.map(recordOf);
   const byId = new Map();
   for (const r of records) if (!byId.has(r.id)) byId.set(r.id, r);
@@ -451,10 +623,128 @@ export function computeStanding(rows) {
   // the GROUND the store holds, not of the directory a record was filed in.
   const root = worldRootOf(records);
   const ranked = rankCandidates(records);
-  for (const mk of records) mk._containedBy = containmentParentOf(mk, records, root, ranked) ?? null;
+
+  // ── the candidate set, narrowed by the store's GiST when there is one ──────
+  //
+  // `containment` comes from `gistContainment` (§ the spatial index) and is a
+  // PREFILTER, never an answer: `placementParent` still tests every candidate
+  // with `marksContain`, in the same ascending-area order, so its verdict is the
+  // one the full scan gives. What changes is the length of the list.
+  //
+  // THREE ROWS GET THE OLD SCAN, and between them they are every row the index
+  // cannot speak for:
+  //   * a mark that is not in the store at all — the clearing's step 5.5 walks
+  //     the standing rows PLUS candidate claims, and no index over `marks` has
+  //     ever seen a claim;
+  //   * a LOOSE mark, whose `bbox` does not bound what `marksContain` reads
+  //     (a ring outside its extent, a degenerate rect, geometry the column
+  //     disagrees with) — measured per row by `gistContainment`, not assumed;
+  //   * every mark, when there is no index.
+  // The same rows, as OUTERS, are offered to every mark: `extras` below, gated
+  // only by the effective-extent test the prefilter's law is stated in.
+  const rankPos = new Map(), rankBySlug = new Map();
+  const useIndex = containment != null && ranked.length > 0;
+  if (useIndex) for (const [i, e] of ranked.entries()) {
+    rankPos.set(e.m.slug, i);
+    if (!rankBySlug.has(e.m.slug)) rankBySlug.set(e.m.slug, e);
+  }
+  const extras = useIndex ? ranked.filter((e) => !containment.covered.has(e.m.slug)) : [];
+  const boxCache = new Map();
+  const boxOfRecord = (mk) => {
+    let b = boxCache.get(mk);
+    if (b === undefined) boxCache.set(mk, (b = effBox(mk)));
+    return b;
+  };
+  const rankedFor = !useIndex ? () => ranked : (mk) => {
+    // ESCAPE 2, and it is the reason this is a branch and not a filter.
+    // `contains()` reads `overlapArea >= 0.99 * inner.w * inner.h`, so a
+    // zero-area inner is contained by EVERYTHING and `placementParent` returns
+    // the smallest candidate in the world, wherever it is. No overlap test can
+    // reproduce that, so a degenerate mark keeps the scan. (None exist in the
+    // register today — `gistContainment`'s own query is what says so.)
+    const r = rect(mk);
+    if (!(r.w > 0) || !(r.h > 0)) return ranked;
+
+    const eb = boxOfRecord(mk);
+    const outers = containment.pairs.get(mk.slug);
+    if (outers === undefined) {
+      // A row the index does not speak for — a CLAIM at step 5.5, which no index
+      // over `marks` has seen, or a mark whose `bbox` does not bound what
+      // `marksContain` reads. The prefilter's law does not need a database: an
+      // extent that cannot touch cannot contain, and asking that of the ranking
+      // in JS costs one cheap comparison per candidate instead of one coverage
+      // rasterization. `filter` keeps the ranking's own order, so no re-sort.
+      //
+      // THIS IS WHERE THE MEASUREMENT WENT, and it is worth the sentence: with
+      // these rows left on the raw scan, FORTY-EIGHT loose marks out of 8,310
+      // cost 10.6 s of a 13.4 s walk, because every one of them carries a
+      // `points:` ring and each candidate test rasterizes it.
+      return ranked.filter((e) => e.m !== mk && boxesTouch(eb, boxOfRecord(e.m)));
+    }
+    const sub = [];
+    for (const s of outers) { const e = rankBySlug.get(s); if (e) sub.push(e); }
+    if (extras.length) {
+      for (const e of extras) if (e.m !== mk && boxesTouch(eb, boxOfRecord(e.m))) sub.push(e);
+    }
+    // `placementParent`'s contract is "smallest containing wins", which it reads
+    // off ASCENDING AREA ORDER and a stable sort. The sub-list is put back into
+    // the full ranking's own order so the tie-break is the same one.
+    sub.sort((a, b) => rankPos.get(a.m.slug) - rankPos.get(b.m.slug));
+    return sub;
+  };
+
+  // LAZILY, and `markStanding` must not be able to tell. The walk climbs
+  // `m._parentSlug ?? m._parent_is_law ?? m._containedBy ?? …` and that chain is
+  // 1.0's, ported verbatim under this file's own standing instruction ("a second
+  // copy of this walk is a future drift"). So the field stays a field: a getter
+  // that computes the containment answer on first read and then replaces itself
+  // with the value, which is why a record is walked at most once no matter how
+  // many descendants climb through it.
+  //
+  // With no `only`, every record is answered and every getter fires, so this is
+  // the same total work as the eager pass it replaces.
+  for (const mk of records) {
+    Object.defineProperty(mk, "_containedBy", {
+      configurable: true, enumerable: true,
+      get() {
+        const v = containmentParentOf(this, records, root, rankedFor(this)) ?? null;
+        Object.defineProperty(this, "_containedBy",
+          { value: v, writable: true, enumerable: true, configurable: true });
+        return v;
+      },
+    });
+  }
 
   const out = new Map();
-  for (const mk of records) out.set(mk.slug, markStanding(mk, byId));
+  if (only == null) {
+    for (const mk of records) out.set(mk.slug, markStanding(mk, byId));
+    return out;
+  }
+  // LAST-WINS, and it is the whole of `only`'s exactness.
+  //
+  // The base walk is `for (const mk of records) out.set(mk.slug, …)`, so when two
+  // records share a slug the LAST one is the answer. At step 5.5 `records` is
+  // `[...standingRows, ...candidates]`, so the last one is the CANDIDATE — which
+  // is what that gate is asking about in its own words, "in the shape
+  // `materializeClaims` is about to insert".
+  //
+  // Two records DO share a slug there, on a path this office opened deliberately:
+  // `clearing-job.mjs` step 1 refuses a claim whose slug already stands, except
+  // an amendment, which continues undecided and reaches step 5.5 carrying the
+  // standing mark's slug. A first-wins map answered with the standing MARK
+  // instead, and the two differ exactly when the amendment moves the mark off its
+  // own ground — which is what an amendment is for. Found by the reviewer on the
+  // shipped tool: the amended claim dropped out of `escrow: 51 commons claim(s)
+  // LOCKED UNCHECKED` and locked with nothing staked behind it, silently.
+  const bySlug = new Map();
+  for (const mk of records) bySlug.set(mk.slug, mk);
+  for (const slug of only) {
+    const mk = bySlug.get(slug);
+    // See § `only` — a slug the caller asked about and did not hand in is a
+    // caller bug, and the reader downstream cannot tell it from "no verdict".
+    if (!mk) throw new Error(`computeStanding: \`only\` names ${slug}, which is not among the ${rows.length} row(s) given`);
+    out.set(slug, markStanding(mk, byId));
+  }
   return out;
 }
 
@@ -463,11 +753,73 @@ export function computeStanding(rows) {
  * today's register rather than a law, stated as something that can fire.
  *
  * A premise nobody can watch break is a premise that breaks silently. Returns
- * [] when all three hold.
+ * [] when all four hold.
  */
 export function admissionNotes(rows) {
   const notes = [];
   const records = rows.map(recordOf);
+
+  // 0 · THE TOWN IS THE TOWN — the constitution shortcut's own premise, which is
+  //     the one that broke without a word.
+  //
+  //     THE INCIDENT (docs/2026-09-09/jetto-load-store-report.md § one fill
+  //     artefact, found by measurement): the first 10x fill suffixed the `by`
+  //     half of every mark id, the town's included, so copy 3's law was authored
+  //     by `the-town-s3`. `markStanding`'s first line keys on the LITERAL `TOWN`
+  //     (`mark-standing.mjs:57`, vendored above), so a town under any other name
+  //     is not demoted loudly — it is simply walked like a resident. The
+  //     clearing reported "standing recomputed over 10350, 2871 moved" against
+  //     0 moved at 1x, and the lane's own verdict on it is the reason this
+  //     tripwire exists:
+  //
+  //       "The general finding is worth more than the fix: anything that keys on
+  //        a literal household name is a scaling seam. It did not error, it did
+  //        not warn — it silently added work and would have inflated this
+  //        report's headline by 20%."
+  //
+  //     WHY THE LITERAL STAYS, and it is a receipt rather than a preference.
+  //     Three things had to be true for the indirection the class fix implies,
+  //     and none of them is:
+  //       * THE PORT IS VERBATIM. `falsifier-standing-equality.mjs` runs 1.0's
+  //         `mark-standing.mjs` and this file over the same register and compares
+  //         every slug. 1.0 holds `const TOWN = "the-town"` at line 57; a port
+  //         that read the name from somewhere else would be a port that can
+  //         disagree with its original about who the town is, which is precisely
+  //         what the falsifier exists to prevent.
+  //       * THERE IS NOWHERE TO READ IT FROM. `registry` manifests OBJECTS
+  //         (001_tables.sql § the manifest) — `marks`, `claims`, `windows` — not
+  //         residents. `identities` is ingested from the world repo's
+  //         households.json, which carries the 73 `gh:` keys and no `the-town`
+  //         row at all; `solo:the-town` exists only as `world2-claims.mjs`'s
+  //         fallback template. The one authoritative datum is the TOWN repo's
+  //         `ECONOMY-DIALS.json` `law_side.town_issuance.treasury_handle`, and
+  //         the candle holds no checkout — this file's own header says why ("the
+  //         stateless contract is the ingesters', and the candle is not an
+  //         ingester").
+  //       * THE OFFICE ALREADY RULED. `store-writedown.mjs:867`: "`by ===
+  //         \"the-town\"` is a bare literal across this office already ... so
+  //         naming it once here is the house spelling rather than a new
+  //         convention." Ruled 2026-09-08, on measurement.
+  //
+  //     So the class fix is not indirection. It is that the seam stops being
+  //     SILENT: a record carrying the town's own word for its standing that the
+  //     walk does not answer `constitution` for is either a town under another
+  //     name or a resident asserting law, and both are worth a line.
+  //     The test mirrors `markStanding`'s own first line — `(mark.by ??
+  //     mark.household) === TOWN && mark.tier === "constitution"` — negated on
+  //     the author half only, so it names exactly the rows the shortcut declines.
+  //     It reads the row as it stood BEFORE the recompute, which is why it fires
+  //     on the first crossing after a rename rather than after the damage is
+  //     written back and the evidence is gone.
+  const claimed = records.filter((m) => m.tier === "constitution" && (m.by ?? m.household) !== TOWN);
+  if (claimed.length) {
+    const byAuthor = new Map();
+    for (const m of claimed) byAuthor.set(m.by ?? m._cred, (byAuthor.get(m.by ?? m._cred) ?? 0) + 1);
+    notes.push(`${claimed.length} mark(s) carry \`tier: constitution\` in the record but are NOT authored by ` +
+      `\`${TOWN}\`, so the constitution shortcut does not fire for them and the walk resolves them as ordinary ` +
+      `ground — a town under a different name looks exactly like this. Authors: ` +
+      `${[...byAuthor].slice(0, 4).map(([a, n]) => `${a} (${n})`).join(", ")}`);
+  }
 
   // 1 · the class-parent edge, and why the walk never needs it.
   const lawParented = records.filter((m) => m._parent_is_law);
