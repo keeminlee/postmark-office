@@ -231,6 +231,12 @@ async function main() {
   const SET = opt("--set", null);
   const APPLY = has("--apply");
   const ALLOW_SKEW = has("--allow-skew");
+  // O7: `--allow-skew` used to unlock TWO different judgments — the store/fold
+  // skew gate AND the pre-ruling-receipt gate. An operator passing it because
+  // they had read and accepted a 30% miss rate would silently also accept a
+  // receipt that predates the parcel ruling. They are different decisions about
+  // different evidence, so they get different flags.
+  const ALLOW_STALE_RECEIPT = has("--allow-stale-receipt");
   const PROD = has("--prod");
   const RECEIPT = opt("--receipt", null);
   const JSON_OUT = has("--json");
@@ -265,6 +271,27 @@ async function main() {
   }
 
   const setRows = gitReceipt.moved ?? [];
+
+  // THE STALE-RECEIPT GATE RUNS BEFORE ANY DATABASE IS OPENED. A receipt that
+  // names a parcel predates the founder's ruling of 2026-09-09, and that is
+  // readable from the receipt itself — the git half writes `kind` on every moved
+  // row. Waiting until after `planFrom` to notice would mean connecting, reading
+  // 1,035 rows and joining them before refusing on a fact that was on disk all
+  // along. Same discipline as the dry-run gate above: refuse without touching
+  // the store. The store-side check further down stays as the second net, for a
+  // receipt whose rows carry no `kind`.
+  const namedParcels = setRows.filter((m) => REFUSED_KINDS.includes(m.kind));
+  if (namedParcels.length && !has("--allow-stale-receipt")) {
+    console.error(
+      `unstaked-return-store: "${SET}" names ${namedParcels.length} parcel(s), so it predates the\n` +
+      "  founder's ruling of 2026-09-09 that parcels need no staking.\n" +
+      "  Refusing the WHOLE receipt rather than the parcel rows alone: a receipt wrong about the\n" +
+      "  law is not evidence about the rest of its set. Re-run the git half and use its receipt.\n" +
+      "  (--allow-stale-receipt proceeds with the non-parcel rows, having decided that is right.\n" +
+      "   It is deliberately NOT --allow-skew, which is about a store/fold row-count disagreement.)\n" +
+      `  first named: ${namedParcels.slice(0, 3).map((m) => m.mark).join(", ")}`);
+    process.exit(3);
+  }
   if (!setRows.length) { console.error("unstaked-return-store: the git receipt moves nothing; there is nothing to apply."); process.exit(2); }
 
   const url = process.env.DATABASE_URL ?? process.env.WORLD2_DB ?? null;
@@ -276,7 +303,7 @@ async function main() {
   // rehearsal names its databases `w2_scratch_<stamp>` already.
   const looksScratch = /scratch/i.test(dbName);
   if (APPLY && !looksScratch && !PROD) {
-    console.error(`unstaked-return-store: --apply refuses database "${dbName}" — its name contains neither "lab" nor "scratch".\n` +
+    console.error(`unstaked-return-store: --apply refuses database "${dbName}" — its name does not contain "scratch".\n` +
       "  Rehearse on a pg_dump scratch clone. Pass --prod as a second, deliberate flag to mean the live store.");
     process.exit(2);
   }
@@ -336,12 +363,14 @@ async function main() {
     // was per-row: the tool named the parcels, printed "this receipt predates the
     // ruling", and then retired the other 178 anyway. A build old enough to name
     // parcels may be wrong about the rest of the set too — same class as O1.
-    if (refused.length && !ALLOW_SKEW) {
+    if (refused.length && !ALLOW_STALE_RECEIPT) {
       console.error(`unstaked-return-store: this receipt names ${refused.length} parcel(s), so it predates the ` +
         "founder's ruling of 2026-09-09 that parcels need no staking.\n" +
         "  Refusing the WHOLE receipt rather than the parcels alone: a receipt wrong about the law\n" +
         "  is not evidence about the rest of its set. Re-run the git half and use its receipt.\n" +
-        "  (--allow-skew proceeds with the non-parcel rows, having decided that is right.)");
+        "  (--allow-stale-receipt proceeds with the non-parcel rows, having decided that is right.\n" +
+        "   It is deliberately NOT --allow-skew: that flag is about a store/fold row-count\n" +
+        "   disagreement, and accepting one is not accepting the other.)");
       if (RECEIPT) writeFileSync(RECEIPT, JSON.stringify(receipt, null, 2) + "\n");
       process.exit(3);
     }
