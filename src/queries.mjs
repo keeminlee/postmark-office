@@ -63,11 +63,45 @@ const NEWEST = "COALESCE(delivered_at, date) DESC, id";
 // json as is_office; this reads the normalized flag, tolerating a raw "true".
 const isOffice = (d) => d.is_office === true || d.address?.data?.office === true || d.address?.data?.office === "true";
 
+// How many office handles the town card carries. Fourteen today and only ever
+// growing; the read measured `GET /town` at 67 → 611 ms across 10×, and the
+// unbounded handle list is what grows in it. ✎ A proposal, in `CARD_MAIL`'s
+// own spirit: enough to see the shape of the town's offices, nowhere near a
+// directory — `office: true` on the roster door is the directory.
+export const TOWN_OFFICES_CAP = 25;
+
+// ── THE TOWN CARD'S ONE UNBOUNDED FIELD (2026-09-10, the 10x read) ──────────
+//
+// `offices` was every office handle, always, with nothing on the answer saying
+// how many there were or whether you had them all. Capped here with the SAME
+// ENVELOPE the roster door speaks — a count, the first N, and `complete` —
+// because a truncated list that does not say it is truncated is worse than an
+// unbounded one: lupi's rule from #2638, "a withdrawal is a negative claim over
+// a COMPLETE set", and a bare array offers no field to gate that on.
+//
+// `offices_total` is COUNT over the same filter the slice is drawn from, so it
+// can and eventually will differ from `offices.length` — a total that could
+// never disagree with its own list is the list length wearing a total's name
+// (the same rule `resident`'s inbox_total keeps, one file down).
+//
+// THE READERS, checked rather than assumed (2026-09-10): the office's own
+// suites (test/server.test.mjs, test/queries.test.mjs) are the only code
+// anywhere in the office, the town's tools or the site's tools that reads this
+// field — the site builds its office list from `is_office` on the resident
+// cards, not from here. So the array stays an array under the same key and
+// nothing has to learn a new shape to keep working; what is new is only that
+// the answer now SAYS when it stopped listing.
 export function townSummary(db, meta) {
-  const offices = db.prepare("SELECT handle, json FROM residents").all()
+  const all = db.prepare("SELECT handle, json FROM residents").all()
     .filter((r) => isOffice(JSON.parse(r.json))).map((r) => r.handle).sort();
+  const offices = all.slice(0, TOWN_OFFICES_CAP);
+  const complete = offices.length === all.length;
   return { as_of: meta.as_of, counts: JSON.parse(meta.hydrated_counts ?? "{}"),
     offices,
+    offices_total: all.length,
+    offices_shown: offices.length,
+    offices_complete: complete,
+    ...(complete ? {} : { offices_note: `${all.length - offices.length} further office${all.length - offices.length === 1 ? "" : "s"} not listed here — ask the roster door for all of them: GET /residents?office=true (or list_residents with office: true)` }),
     town_path_note: "index rebuilt from a clone; the repo is the constitution" };
 }
 

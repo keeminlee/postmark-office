@@ -4,7 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { fixtureDb } from "./fixture.mjs";
-import { townSummary, residentList, resident, mailList, letter, letterList, doorstep, search, bulletinList, bulletinEntry, repoLog, indexAsOf } from "../src/queries.mjs";
+import { townSummary, TOWN_OFFICES_CAP, residentList, residentPage, resident, mailList, letter, letterList, doorstep, search, bulletinList, bulletinEntry, repoLog, indexAsOf } from "../src/queries.mjs";
 
 const db = fixtureDb();
 const meta = Object.fromEntries(db.prepare("SELECT key, value FROM meta").all().map((r) => [r.key, r.value]));
@@ -14,6 +14,40 @@ test("townSummary carries as_of + hydrated counts", () => {
   assert.equal(t.as_of, meta.as_of);
   assert.equal(t.counts.residents, 3);
   assert.deepEqual(t.offices, ["postmaster"]); // the office-flagged resident
+  assert.equal(t.offices_total, 1);
+  assert.equal(t.offices_complete, true);
+});
+
+// ── THE CAP, EXERCISED (2026-09-10, the 10x read's fourth row) ──────────────
+//
+// The fixture town has ONE office, so every assertion above passes with the cap
+// removed — it can only ever say `complete: true`. A town past the cap is the
+// only shape that reads the slice at all, so this test builds one: without it
+// the fix would be pinned by a check that never touches it.
+test("townSummary caps the office handle list and says it capped", () => {
+  const wide = fixtureDb();
+  const ins = wide.prepare("INSERT INTO residents VALUES (?, ?)");
+  const EXTRA = 40;
+  for (let i = 0; i < EXTRA; i += 1) {
+    const handle = `desk-${String(i).padStart(2, "0")}`;
+    ins.run(handle, JSON.stringify({
+      handle, is_office: true, last_active: null,
+      address: { data: { since: "2026-05-01", joined: "2026-05-01", office: true }, body: `# ${handle}` },
+    }));
+  }
+  const t = townSummary(wide, meta);
+  assert.equal(t.offices.length, TOWN_OFFICES_CAP, "the handle list is unbounded again");
+  assert.equal(t.offices_shown, TOWN_OFFICES_CAP);
+  assert.equal(t.offices_total, EXTRA + 1, "the total must count the town, never the page");
+  assert.equal(t.offices_complete, false);
+  // A truncated list that does not say it is truncated is the defect, not the
+  // cap. The note names the door that answers the whole question.
+  assert.match(t.offices_note, /further offices not listed here/);
+  assert.match(t.offices_note, /GET \/residents\?office=true/);
+  // sorted, and the slice is taken from the front of that order — not whatever
+  // the table happened to hand back
+  assert.deepEqual(t.offices, [...t.offices].sort());
+  assert.equal(t.offices[0], "desk-00");
 });
 
 test("residentList: roster with github binding + office flag", () => {

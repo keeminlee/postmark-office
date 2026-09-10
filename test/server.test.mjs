@@ -84,6 +84,15 @@ test("GET /town → 200 with X-Postmark-As-Of + offices", async () => {
   const t = await res.json();
   assert.equal(t.counts.residents, 3);
   assert.deepEqual(t.offices, ["postmaster"]);
+  // The card now says how many offices there are and whether it listed them
+  // all — the 10x read's fourth row: this handle list had no bound and no
+  // count, and `GET /town` went 67 → 611 ms across 10×. The CAP itself is
+  // exercised in test/queries.test.mjs, where a town wide enough to trip it can
+  // be built; one office can only ever say complete.
+  assert.equal(t.offices_total, 1);
+  assert.equal(t.offices_shown, 1);
+  assert.equal(t.offices_complete, true);
+  assert.equal(t.offices_note, undefined, "a complete list must not apologise for itself");
 });
 
 test("GET /residents carries the is_office flag", async () => {
