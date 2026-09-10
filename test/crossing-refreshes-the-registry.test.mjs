@@ -423,6 +423,32 @@ test("F16 · every crossing STATES something about the registry, verified or byp
     "a crossing that skipped the refresh must say so, or the world cannot tell it from one that forgot");
 });
 
+test("F17 · VERIFIED IMPLIES STAMPED — an unstamped standing registry is rewritten even when the mapping matches", { skip: !SH_OK && "no POSIX sh" }, () => {
+  // The premise the world's one remaining refusal rests on. That side refuses a
+  // caller claiming VERIFIED over a registry the export has never written, and
+  // it tells the two apart by the absence of `town_sha`. The claim is only sound
+  // if a verified registry is always a written one — so the refresh rewrites
+  // whenever the standing file is unstamped, mapping or no mapping.
+  //
+  // Without it, a first refresh that happened to find the mapping already
+  // correct would leave the file unattributable while the crossing declared it
+  // verified: a claim neither side could check, which is the 2026-08-07 state
+  // with a fresh receipt on top.
+  const pins = { alpha: { login: "alpha-hub", id: 1 } };   // exactly what the fixture registry holds
+  const c = crossing("verified-implies-stamped", { env: { SETTLEMENT_SOURCE: "git" }, pins });
+
+  assert.equal(c.res.status, 0, c.res.stderr);
+  assert.equal(c.receipt.registry.changed, true,
+    "the mapping did NOT move — the rewrite happened because the standing file carried no town_sha");
+  assert.deepEqual(c.receipt.registry.added, [], "…and it is not a membership change: nothing was added");
+  assert.deepEqual(c.receipt.registry.removed, []);
+  assert.deepEqual(c.receipt.registry.rekeyed, []);
+  assert.ok(c.published.town_sha,
+    "the published registry is stamped, so `verified implies stamped` holds and the world's refusal is sound");
+  assert.deepEqual(c.published.households, { alpha: "gh:1" },
+    "and the mapping itself is untouched, which is what makes this a stamping and not a migration");
+});
+
 test("F3 · a second crossing over an unchanged town commits nothing and stays quiet", { skip: !SH_OK && "no POSIX sh" }, () => {
   const first = crossing("idem", { env: { SETTLEMENT_SOURCE: "git" } });
   assert.equal(first.res.status, 0, first.res.stderr);
