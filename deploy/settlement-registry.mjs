@@ -85,7 +85,21 @@ let prior = null;
 try { prior = JSON.parse(readFileSync(dest, "utf8")); } catch { /* first refresh, or no registry in this world */ }
 
 const substance = (r) => JSON.stringify([r?.households ?? null, r?.logins ?? null]);
-const changed = substance(prior) !== substance(fresh);
+
+// ── WRITE WHEN THE MAPPING MOVED, *OR* WHEN THE STANDING FILE IS UNSTAMPED ───
+//
+// The second clause is what makes "verified" imply "stamped" on the world's
+// side, and it is not a tidy-up. A registry with no `town_sha` has never been
+// written by this export — it is the 2026-08-07 file exactly — and the world
+// refuses a crossing that claims to have verified such a file, because a
+// verified registry is a written one. Without this clause a first refresh that
+// happened to find the mapping already correct would leave the file unstamped
+// and unattributable while the crossing declared it verified, which is a claim
+// nothing on either side could check.
+//
+// It fires at most once per world: the moment it writes, the file is stamped.
+const unstamped = !prior?.town_sha;
+const changed = substance(prior) !== substance(fresh) || unstamped;
 
 // ── 3. what moved, by name ──────────────────────────────────────────────────
 const ph = prior?.households ?? {};
@@ -129,10 +143,20 @@ ${added.length ? `\nadded: ${added.join(", ")}` : ""}${removed.length ? `\nremov
 process.stdout.write(`${JSON.stringify({
   ran: true,
   changed,
+  // THE SHA THIS REGISTRY WAS VERIFIED AGAINST ON THIS CROSSING, which is the
+  // town the crossing pinned — NOT the stamp the file carries. A registry the
+  // refresh re-derived and found unchanged keeps an older stamp and is fresh;
+  // the world reads this field and never compares the two for equality. That
+  // comparison was the first cut of this lane and it would have refused every
+  // crossing after a quiet one.
+  verified_at: TOWN_SHA,
+  // Named because the file's own stamp and the sha it was checked against are
+  // different facts, and a reader who conflates them re-invents the defect.
+  stamped_only_when_changed: true,
   commit_message: commitMessage,
   summary: changed
-    ? `re-derived from town ${short}: ${Object.keys(fh).length} handle(s) → ${new Set(Object.values(fh)).size} household(s), ${Object.keys(fresh.logins ?? {}).length} login(s); ${movedLine}`
-    : `re-derived from town ${short} and IDENTICAL to what world main already carries — nothing committed`,
+    ? `verified against town ${TOWN_SHA.slice(0, 9)} and REWRITTEN: ${Object.keys(fh).length} handle(s) → ${new Set(Object.values(fh)).size} household(s), ${Object.keys(fresh.logins ?? {}).length} login(s); ${movedLine}${unstamped ? " (the standing file carried no town_sha — first refresh)" : ""}`
+    : `verified against town ${TOWN_SHA.slice(0, 9)} and IDENTICAL to what world main already carries — nothing committed, and the file's older stamp is not staleness`,
   town_sha: fresh.town_sha,
   generated_at: fresh.generated_at ?? null,
   // The stamp the file carried BEFORE this crossing. On the first refresh after

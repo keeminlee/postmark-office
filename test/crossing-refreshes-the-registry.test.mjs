@@ -135,6 +135,10 @@ const repo = process.cwd();
 // WHAT THE FOLD WOULD HAVE READ. Written outside the repo so the assertion is
 // about the input the wall gets, not about a file the sweep could have fixed up.
 writeFileSync(process.env.REGISTRY_SEEN_OUT, readFileSync(join(repo, "WORLD", "households.json"), "utf8"));
+// WHAT THE CHAIN TOLD THE WORLD ABOUT THE REGISTRY. This stub cannot refuse —
+// that is the REAL sweep's job and F14 drives it — so what it can do is record
+// the claim, and let a test assert the crossing always makes one.
+writeFileSync(process.env.SWEEP_ARGV_OUT, process.argv.slice(2).join(" "));
 const drafts = execFileSync("git", ["-C", repo, "for-each-ref", "--format=%(refname:short)", "refs/heads/draft/", "refs/remotes/origin/draft/"], { encoding: "utf8" })
   .split("\\n").map((l) => l.trim()).filter(Boolean);
 // A quiet sweep unless the caller plants something to publish: the registry-only
@@ -208,12 +212,46 @@ export function currentHouseholds(clone) {
   return runCrossing(root, { env });
 }
 
+/**
+ * MOVE THE TOWN WITHOUT MOVING THE MAPPING — the state no test asked for, and
+ * the one the first cut of this lane refused.
+ *
+ * The export writes `WORLD/households.json` only when the MAPPING moved, so a
+ * registry nothing changed keeps its older `town_sha`. The real town takes
+ * 150-300 commits a day, so two crossings never pin the same sha. A guard that
+ * compares the file's stamp to the crossing's pin therefore refuses every
+ * crossing after a quiet one, and the town settles only on the days somebody
+ * joins. This commits a file the resolver does not read, so `origin/main` moves
+ * and the households do not.
+ */
+function moveTownWithoutMovingTheMapping(root, note) {
+  const townSeed = join(root, "town-seed");
+  const g = (...a) => execFileSync("git", ["-C", townSeed, ...a], {
+    encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+    env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: "seed", GIT_AUTHOR_EMAIL: "seed@postmark.invalid",
+      GIT_COMMITTER_NAME: "seed", GIT_COMMITTER_EMAIL: "seed@postmark.invalid",
+    },
+  });
+  const before = g("rev-parse", "main").trim();
+  writeFileSync(join(townSeed, `a-letter-${note}.md`), `the town moved: ${note}
+`);
+  g("add", "-A");
+  g("commit", "-qm", `town moves, households do not: ${note}`);
+  g("push", "-q", "origin", "main");
+  const after = g("rev-parse", "main").trim();
+  assert.notEqual(after, before, "the fixture town must actually move, or this proves nothing");
+  return { before, after };
+}
+
 function runCrossing(root, { env = {} } = {}) {
   const sweepClone = join(root, "sweep");
   const townClone = join(root, "town");
   const origin = join(root, "world.git");
   const harbor = join(root, "harbor");
   const seen = join(root, `registry-seen-${++seq}.json`);
+  const argvOut = join(root, `sweep-argv-${seq}.txt`);
 
   const res = spawnSync("sh", [join(OFFICE, "deploy", "settlement-auto.sh")], {
     encoding: "utf8",
@@ -229,6 +267,7 @@ function runCrossing(root, { env = {} } = {}) {
       WORLD_SINGLE_LOG: "1",
       WORLD_DYNAMIC_DB: join(root, "dynamic.db"),
       REGISTRY_SEEN_OUT: seen,
+      SWEEP_ARGV_OUT: argvOut,
       ...env,
     },
   });
@@ -246,7 +285,10 @@ function runCrossing(root, { env = {} } = {}) {
     published = JSON.parse(execFileSync("git", ["-C", origin, "show", "main:WORLD/households.json"], { encoding: "utf8" }));
   } catch { /* origin has no registry */ }
 
-  return { root, origin, sweepClone, res, receipt, registrySeen, published };
+  let sweepArgs = "";
+  try { sweepArgs = readFileSync(argvOut, "utf8"); } catch { /* the sweep never ran */ }
+
+  return { root, origin, sweepClone, res, receipt, registrySeen, published, sweepArgs };
 }
 
 /**
@@ -298,10 +340,87 @@ test("F2 · THE FLIP — skip the step and the same wall cannot bind the same ha
   assert.equal(wallBinds(c.registrySeen, NEWCOMER, `draft/${NEWCOMER_LOGIN}`), false,
     "the fold read the stale registry, which is the state this whole lane is about");
 
-  // A NAMED ABSENCE, never silence: an operator who disabled the step must be
-  // able to see that on the receipt months later.
+  // ── A NAMED ABSENCE, AND IT MUST BE LOUD ──────────────────────────────────
+  //
+  // `ran: false` alone was what this asserted, and it was not enough: a reader
+  // scanning receipts needs the crossing to SAY it folded on a registry nothing
+  // checked. `verified: false` is that word and `bypass: true` says a person
+  // meant it.
   assert.equal(c.receipt.registry.ran, false);
+  assert.equal(c.receipt.registry.verified, false,
+    "an unverified crossing must say so on the receipt — one that reads like an ordinary crossing is the "
+    + "2026-08-07 shape in this lane's own clothes");
+  assert.equal(c.receipt.registry.bypass, true, "and that a person meant it");
   assert.match(String(c.receipt.registry.reason), /SETTLEMENT_REGISTRY=0/);
+  assert.match(c.res.stderr, /REGISTRY UNVERIFIED \(bypass\)/,
+    "and the crossing shouts it where the operator watching the run will see it");
+
+  // AND THE CHAIN MUST HAVE TOLD THE WORLD SO. The bypass is the case the first
+  // cut got wrong: it passed a verification unconditionally, so the documented
+  // escape hatch refused on the very file it exists to tolerate.
+  assert.match(c.res.stderr + c.sweepArgs, /--registry-unverified/,
+    "the crossing must state the registry was NOT verified, or the world cannot tell a bypass from a "
+    + "crossing that simply forgot");
+});
+
+test("F13 · THE CROSSING AFTER A QUIET ONE PUBLISHES — the town moves, the mapping does not", { skip: !SH_OK && "no POSIX sh" }, () => {
+  // THE BLOCKER THIS LANE SHIPPED AND REVIEW CAUGHT. The export writes the file
+  // only when the MAPPING moved, so a registry nothing changed keeps its older
+  // `town_sha`. The first cut then demanded that stamp EQUAL the sha the
+  // crossing pinned — and the real town takes 150-300 commits a day, so two
+  // crossings never pin the same sha. Every crossing after a quiet one would
+  // have refused, and the town would have settled only on the days somebody
+  // joined. The export's own header says the sentence that refutes it: "an older
+  // town_sha means the mapping has not changed since — never that nobody
+  // looked."
+  //
+  // No test asked for this state, which is why it shipped: F3 runs a second
+  // crossing over a town that has NOT moved, so the two shas are equal and the
+  // defect is invisible.
+  const first = crossing("quiet-then-move", { env: { SETTLEMENT_SOURCE: "git" } });
+  assert.equal(first.res.status, 0, first.res.stderr);
+  const stampAfterFirst = first.published.town_sha;
+  assert.ok(stampAfterFirst, "the first crossing must have written a stamped registry");
+
+  const moved = moveTownWithoutMovingTheMapping(first.root, "one");
+  const second = runCrossing(first.root, { env: { SETTLEMENT_SOURCE: "git" } });
+
+  assert.equal(second.res.status, 0,
+    `the crossing after a quiet one MUST complete — this is the blocker: ${second.res.stderr}`);
+  assert.equal(second.receipt.registry.ran, true);
+  assert.equal(second.receipt.registry.changed, false, "the mapping did not move, so nothing was rewritten");
+  assert.equal(second.receipt.registry.verified, true, "…and the crossing verified it anyway, which is the point");
+
+  // THE TWO FACTS ARE DIFFERENT, AND THAT IS THE WHOLE LESSON.
+  assert.equal(second.receipt.registry.verified_at, moved.after,
+    "`verified_at` is the town this crossing CHECKED against");
+  assert.equal(second.published.town_sha, stampAfterFirst,
+    "…while the file keeps the stamp of the town it was DERIVED from");
+  assert.notEqual(second.receipt.registry.verified_at, second.published.town_sha,
+    "they differ, and a guard that compares them for equality refuses a town that is merely alive");
+
+  // And a THIRD crossing, because "after a quiet one" must not be a one-off.
+  moveTownWithoutMovingTheMapping(first.root, "two");
+  const third = runCrossing(first.root, { env: { SETTLEMENT_SOURCE: "git" } });
+  assert.equal(third.res.status, 0, `and the one after that: ${third.res.stderr}`);
+  assert.equal(third.receipt.registry.changed, false);
+});
+
+test("F16 · every crossing STATES something about the registry, verified or bypassed", { skip: !SH_OK && "no POSIX sh" }, () => {
+  // The construction's own seam. The world refuses a caller that states neither,
+  // and the only way this chain states neither is a future edit dropping the
+  // flag — which is precisely the regression that would put the town back where
+  // it was in August, silently. So the claim is asserted on the crossing's own
+  // invocation of the sweep.
+  const verified = crossing("states-verified", { env: { SETTLEMENT_SOURCE: "git" } });
+  assert.match(verified.sweepArgs, /--registry-verified-at [0-9a-f]{40}/,
+    "a crossing that refreshed must hand the world the sha it verified against");
+  assert.ok(!/--town-sha/.test(verified.sweepArgs),
+    "and NOT --town-sha, which is the flag that asked the wrong question");
+
+  const bypassed = crossing("states-bypass", { env: { SETTLEMENT_SOURCE: "git", SETTLEMENT_REGISTRY: "0" } });
+  assert.match(bypassed.sweepArgs, /--registry-unverified/,
+    "a crossing that skipped the refresh must say so, or the world cannot tell it from one that forgot");
 });
 
 test("F3 · a second crossing over an unchanged town commits nothing and stays quiet", { skip: !SH_OK && "no POSIX sh" }, () => {

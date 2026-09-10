@@ -352,6 +352,7 @@ git -C "$SWEEP" clean -fdq  # a killed run leaves untracked debris; the clone is
 # and world main carries the two commits in the order they actually happened.
 REGISTRY_JSON=""
 REGISTRY_COMMIT=""
+REGISTRY_VERIFICATION=""
 if [ "${SETTLEMENT_REGISTRY:-1}" = "1" ]; then
   mkdir -p "$WORK/registry/WORLD"
   # The export writes into a SCRATCH world, never straight into the sweep clone.
@@ -391,11 +392,24 @@ if [ "${SETTLEMENT_REGISTRY:-1}" = "1" ]; then
     REGISTRY_COMMIT="$(git -C "$SWEEP" rev-parse HEAD)"
   fi
   echo "[settlement-auto] registry: $(node -e 'const r=require(process.argv[1]);process.stdout.write(String(r.summary||""))' "$REGISTRY_JSON")" >&2
+  # WHAT THE WORLD IS TOLD. The sha this crossing VERIFIED the registry against,
+  # never the stamp the file carries — those are different facts, and the world
+  # must not compare them for equality. See deploy/settlement-registry.mjs.
+  REGISTRY_VERIFICATION="--registry-verified-at $TOWN_SHA"
 else
   REGISTRY_JSON="$WORK/registry.json"
-  node -e 'const fs=require("node:fs");fs.writeFileSync(process.argv[1],JSON.stringify({ran:false,reason:"SETTLEMENT_REGISTRY=0 — this crossing folded on whatever WORLD/households.json world main already carried"},null,1)+"\n")' \
+  node -e 'const fs=require("node:fs");fs.writeFileSync(process.argv[1],JSON.stringify({ran:false,bypass:true,reason:"SETTLEMENT_REGISTRY=0 — this crossing folded on whatever WORLD/households.json world main already carried"},null,1)+"\n")' \
     "$REGISTRY_JSON" 2>/dev/null || REGISTRY_JSON=""
-  echo "[settlement-auto] REGISTRY REFRESH DISABLED (SETTLEMENT_REGISTRY=0) — the fold, the lint and the authorship wall read whatever world main already carries" >&2
+  # ── THE BYPASS MUST ACTUALLY BYPASS ────────────────────────────────────────
+  #
+  # The first cut passed the verification unconditionally, so the documented
+  # escape hatch refused the crossing on the very file it exists to tolerate. A
+  # bypass that refuses is not a bypass. The world is told the registry was NOT
+  # verified and why, it does not refuse, and the crossing is LOUD about it here
+  # and on the receipt — because an unverified crossing that reads like an
+  # ordinary one is the 2026-08-07 shape wearing this lane's own clothes.
+  REGISTRY_VERIFICATION="--registry-unverified SETTLEMENT_REGISTRY=0"
+  echo "[settlement-auto] *** REGISTRY UNVERIFIED (bypass) *** SETTLEMENT_REGISTRY=0 — nothing checked WORLD/households.json against the town this crossing; the fold, the lint and the authorship wall read whatever world main already carries" >&2
 fi
 
 # THE BASE THE SWEEP IS MEASURED AGAINST. `main` may already be ahead of
@@ -761,7 +775,11 @@ SWEEP_JSON="$WORK/sweep.json"
 # an omission: the isolation pass only runs after this sweep has SUCCEEDED, so
 # the registry it would re-check has already been checked, on this same tree, by
 # this same line.
-(cd "$SWEEP" && node tools/settlement-sweep.mjs --stakes "$WORK/stakes.json" --town-sha "$TOWN_SHA" --json) > "$SWEEP_JSON" 2>"$WORK/sweep.err" || {
+# $REGISTRY_VERIFICATION is UNQUOTED on purpose: it is a two-word flag pair, and
+# it is never empty — every path above sets it to one or the other. A falsifier
+# holds the crossing to that, because a chain that stops stating anything about
+# the registry is the regression this whole construction exists to catch.
+(cd "$SWEEP" && node tools/settlement-sweep.mjs --stakes "$WORK/stakes.json" $REGISTRY_VERIFICATION --json) > "$SWEEP_JSON" 2>"$WORK/sweep.err" || {
   # THE STARVING CROSSING has its own status, because "refused" is what a
   # crossing says when the record is wrong and this is what it says when the
   # crossing itself is broken — an operator must be able to tell them apart at
