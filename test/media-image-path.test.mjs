@@ -93,6 +93,27 @@ test("containment: .. is refused by spelling, and a symlink out is refused by wh
     "a junction/symlink out of the house is refused where it lands");
 });
 
+// The escape one level up from the test above, and the one the lane's own first
+// cut READ rather than refused (reviewer's round, 2026-09-10): every containment
+// check measures against the HOUSE, and nothing asserted the house itself was
+// inside the town. Git stores a directory symlink as mode 120000 quite happily,
+// and admission is Ferry-delegated with no merge gate, so the PR was the whole
+// barrier between "my house" and any directory on the box.
+test("containment: a house that is itself a link out of the town is not a house", async (t) => {
+  const clone = townFixture(t);
+  const elsewhere = mkdtempSync(join(tmpdir(), "postmark-not-the-town-"));
+  mkdirSync(join(elsewhere, "HOME"), { recursive: true });
+  writeFileSync(join(elsewhere, "HOME", "house.png"), PNG); // a REAL, valid PNG: only the house's location is wrong
+  t.after(() => rmSync(elsewhere, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
+  symlinkSync(elsewhere, join(clone, "WHITE_PAGES", "squatter"), "junction");
+
+  assert.throws(() => readHouseImage(clone, "squatter", "HOME/house.png"),
+    (e) => e.code === 403 && /not inside the town/.test(e.defect),
+    "a linked-out house is refused even though the file under it is a perfectly good image");
+  assert.throws(() => readHouseImage(clone, "squatter", "WHITE_PAGES/squatter/HOME/house.png"),
+    (e) => e.code === 403 && /not inside the town/.test(e.defect));
+});
+
 test("containment: another resident's house is not yours to read", async (t) => {
   const clone = townFixture(t);
   mkdirSync(join(clone, "WHITE_PAGES", "neighbour", "HOME"), { recursive: true });

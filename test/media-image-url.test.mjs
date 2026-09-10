@@ -117,6 +117,61 @@ test("the wall: loopback, private, CGNAT and link-local addresses are refused be
   }
 });
 
+// ── the IPv6 spellings, which the first cut of this wall let straight through ─
+//
+// `parseInt("::ffff:7f00:1".split(":")[0] || "0", 16)` is 0, and 0 passed every
+// range test — so a LITERAL in the URL walked in, with no race and no attacker
+// DNS. The reviewer's round proved it on the real code (2026-09-10). These
+// three cases use the REAL resolver on purpose: `dns.lookup` of a literal is a
+// parse, not a network call, so the falsifier stays offline while exercising
+// the exact path the bypass used — including the WHATWG URL parser rewriting
+// the dotted spelling into the hex one before the wall ever sees it.
+
+test("the wall: an IPv4 address wearing an IPv6 coat is refused in EVERY spelling", async () => {
+  for (const url of [
+    "https://[::ffff:127.0.0.1]/x.png",      // v4-mapped, dotted — the parser rewrites this to hex
+    "https://[0:0:0:0:0:ffff:7f00:1]/x.png", // v4-mapped, uncompressed hex
+    "https://[::ffff:7f00:1]/x.png",         // v4-mapped, compressed hex
+    "https://[::ffff:10.0.0.1]/x.png",       // v4-mapped, private rather than loopback
+    "https://[::127.0.0.1]/x.png",           // v4-COMPAT, the deprecated cousin
+    "https://[2002:7f00:1::]/x.png",         // 6to4 carrying 127.0.0.1
+    "https://[2002:a00:1::]/x.png",          // 6to4 carrying 10.0.0.1
+    "https://[64:ff9b::7f00:1]/x.png",       // NAT64 carrying 127.0.0.1
+    "https://[::1]/x.png",
+    "https://[::]/x.png",
+    "https://[fd00::1]/x.png",
+    "https://[fe80::1]/x.png",
+    "https://[ff02::1]/x.png",
+  ]) {
+    const seen = [];
+    // permissive: if the wall lets this through, the fetch SUCCEEDS and the
+    // rejection never happens — so this test can actually fail.
+    const fetchImpl = async (u) => { seen.push(u); return ok200(PNG); };
+    await assert.rejects(fetchImageBytes(url, { fetchImpl }), (e) => e.code === 403, url);
+    assert.equal(seen.length, 0, `${url}: nothing reached the network`);
+  }
+});
+
+test("the wall: a hostname whose AAAA is a mapped loopback is refused by name", async () => {
+  const seen = [];
+  const fetchImpl = async (u) => { seen.push(u); return ok200(PNG); };
+  await assert.rejects(
+    fetchImageBytes("https://sneaky.example/x.png", { fetchImpl, lookup: dnsSaying({ "sneaky.example": "::ffff:7f00:1" }) }),
+    (e) => e.code === 403 && /7f00/.test(e.defect));
+  assert.equal(seen.length, 0);
+});
+
+// The control that keeps the fix from being "refuse all IPv6": a wall that
+// refuses the whole public internet is not a wall, it is an outage. This is
+// also the test that goes red if `hextets` is ever made to fail closed on
+// everything.
+test("the wall does not refuse the public internet: a v6-only host is fetched", async () => {
+  const url = "https://v6.example.com/photo.png";
+  const { fetchImpl } = fetchSaying({ [url]: ok200(PNG) });
+  const b = await fetchImageBytes(url, { fetchImpl, lookup: dnsSaying({ "v6.example.com": "2606:4700::6810:85e5" }) });
+  assert.equal(b.length, 70);
+});
+
 test("the wall: one private address among several is enough to refuse", async () => {
   const { fetchImpl, seen } = fetchSaying({});
   await assert.rejects(

@@ -185,9 +185,32 @@ export const MEDIA_FETCH_MAX_REDIRECTS = 3;
 // lets `fetch` resolve the name again — so a DNS answer that changes between
 // the two (rebinding) is not closed by this guard alone. Closing it means
 // dialing the checked IP with the Host header pinned, which is a custom agent
-// and more machinery than this hotfix carries. The wall as built stops the
-// direct forms (literal private IPs, loopback names, redirect chains into the
-// network) and is written here so the next hand knows exactly what is left.
+// and more machinery than this hotfix carries.
+//
+// WHAT MAKES THAT ACCEPTABLE IS TWO OTHER WALLS IN THIS FUNCTION, AND BOTH ARE
+// LOAD-BEARING (reviewer's round, 2026-09-10 — the reason the report first gave,
+// "more machinery than a hotfix carries", is why it was not closed, not why it
+// is safe):
+//
+//   PORT 443 ONLY. Rebinding changes which IP a name resolves to; it cannot
+//   change the port in the URL. So Postgres on 127.0.0.1:5432 and the office's
+//   own 127.0.0.1:4380 are unreachable BY PORT, rebound or not. Widen the port
+//   list and you spend this.
+//
+//   STOCK TLS VERIFICATION. A rebound fetch to a private address still has to
+//   complete a TLS handshake for the ATTACKER'S OWN hostname, and no local
+//   service holds a key for a name the attacker controls. Nothing in this repo
+//   weakens it (no NODE_TLS_REJECT_UNAUTHORIZED, no rejectUnauthorized, no
+//   custom dispatcher or agent) — and if anything ever does, it spends this.
+//
+// Two more things that shrink the radius to nothing today: the office attaches
+// NO authorization header to this fetch (accept and user-agent only), so there
+// is no key to leak into whatever a rebound request reached; and the deploy kit
+// has no localhost-privileged nginx location, so an SSRF reaches nothing a
+// stranger on the internet does not already reach.
+//
+// The wall as built stops the direct forms — literal private addresses in every
+// IPv4 and IPv6 spelling, loopback names, and redirect chains into the network.
 
 const privateV4 = (a) => {
   const p = String(a).split(".");
@@ -204,17 +227,53 @@ const privateV4 = (a) => {
     || x >= 224;                                                 // multicast, reserved, broadcast
 };
 
+// ONE ADDRESS, ONE SPELLING, ONE JUDGEMENT. This helper exists because the
+// first cut of this wall judged IPv6 by its TEXT — `parseInt(s.split(":")[0])`
+// — and `"::ffff:7f00:1"` splits to an empty first field, which parses to 0,
+// which passes every range test below. The reviewer's round (2026-09-10) proved
+// it on the real code: `https://[::ffff:127.0.0.1]/`,
+// `https://[0:0:0:0:0:ffff:7f00:1]/`, `https://[2002:7f00:1::]/` and
+// `https://[2002:a00:1::]/` all PASSED a wall whose own comment claimed the
+// literal forms were closed — no race, no attacker DNS, a literal in the URL
+// was enough. (The WHATWG URL parser rewrites the dotted spelling into the hex
+// one before any check sees it, which is why the dotted-form regex that used to
+// sit here never fired.)
+//
+// So: expand the compressed form to eight hextets ONCE, then judge the
+// expansion. A form the expansion cannot make sense of is refused — the wall
+// never guesses.
+const hextets = (s) => {
+  const parts = s.split("::");
+  if (parts.length > 2) return null; // "::" may appear once, or the address is not one
+  const [l, r] = parts.length === 2 ? parts : [parts[0], null];
+  const L = l ? l.split(":") : [], R = r ? r.split(":").filter(Boolean) : [];
+  const tail = R.length ? R : L;
+  // a trailing dotted quad is the v4-in-v6 spelling: fold it into two hextets
+  const dq = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(tail.at(-1) ?? "");
+  if (dq) {
+    if (dq.slice(1).some((o) => Number(o) > 255)) return null;
+    tail.pop();
+    tail.push(((+dq[1] << 8) | +dq[2]).toString(16), ((+dq[3] << 8) | +dq[4]).toString(16));
+  }
+  if (r === null) return L.length === 8 ? L : null; // no "::" ⇒ it must already be whole
+  const fill = 8 - L.length - R.length;
+  return fill < 0 ? null : [...L, ...Array(fill).fill("0"), ...R];
+};
+
 const privateV6 = (a) => {
-  const s = String(a).toLowerCase().split("%")[0];
-  if (s === "::" || s === "::1") return true;
-  const mapped = /^::(?:ffff:)?(\d{1,3}(?:\.\d{1,3}){3})$/.exec(s);
-  if (mapped) return privateV4(mapped[1]); // an IPv4 wearing an IPv6 coat is judged as the IPv4 it is
-  if (s.startsWith("64:ff9b:")) return true; // NAT64 — a v4 destination behind a v6 name
-  const head = parseInt(s.split(":")[0] || "0", 16);
-  if (!Number.isFinite(head)) return true;
-  return (head & 0xfe00) === 0xfc00      // fc00::/7 unique-local
-    || (head & 0xffc0) === 0xfe80        // fe80::/10 link-local
-    || (head & 0xff00) === 0xff00;       // ff00::/8 multicast
+  const h = hextets(String(a).toLowerCase().split("%")[0]);
+  if (!h || h.some((x) => !/^[0-9a-f]{1,4}$/.test(x))) return true; // unparseable ⇒ refuse
+  const n = h.map((x) => parseInt(x, 16));
+  // v4-MAPPED (::ffff:a.b.c.d) and v4-COMPAT (::a.b.c.d), in ANY spelling —
+  // and this is also where ::, ::1 and 0.0.0.0-in-a-coat land.
+  if (n.slice(0, 5).every((v) => v === 0) && (n[5] === 0xffff || n[5] === 0))
+    return privateV4([n[6] >> 8, n[6] & 255, n[7] >> 8, n[7] & 255].join("."));
+  if (n[0] === 0x2002) // 6to4: the v4 destination is hextets 1–2, so judge it as that v4
+    return privateV4([n[1] >> 8, n[1] & 255, n[2] >> 8, n[2] & 255].join("."));
+  if (n[0] === 0x64 && n[1] === 0xff9b) return true; // NAT64 — a v4 destination behind a v6 name
+  return (n[0] & 0xfe00) === 0xfc00      // fc00::/7 unique-local
+    || (n[0] & 0xffc0) === 0xfe80        // fe80::/10 link-local
+    || (n[0] & 0xff00) === 0xff00;       // ff00::/8 multicast
 };
 
 /** True when this literal address is one the media door will not reach for. */
@@ -261,6 +320,7 @@ export async function guardFetchUrl(raw, { lookup = dnsLookup } = {}) {
 export async function fetchImageBytes(rawUrl, {
   fetchImpl = fetch, lookup = dnsLookup, max = MAX_IMAGE,
   timeoutMs = MEDIA_FETCH_TIMEOUT_MS, maxRedirects = MEDIA_FETCH_MAX_REDIRECTS,
+  onResolved = null,
 } = {}) {
   const mb = fmtMB(max);
   const ctrl = new AbortController();
@@ -269,6 +329,10 @@ export async function fetchImageBytes(rawUrl, {
     let target = String(rawUrl ?? "").trim();
     for (let hop = 0; ; hop++) {
       const u = await guardFetchUrl(target, { lookup });
+      // The host at the END of the chain, told to the caller so an upload can
+      // leave a trace of where its bytes actually came from — a redirect means
+      // the URL the resident sent is not the host that answered.
+      onResolved?.(u.host);
       let resp;
       try {
         resp = await fetchImpl(u.toString(), {
@@ -373,9 +437,21 @@ export function readHouseImage(clone, handle, rawPath, { max = MAX_IMAGE } = {})
   if (!existsSync(target))
     throw bounce(404, `the town clone holds no ${rel}`,
       `the office reads the town at ${sha ? sha.slice(0, 12) : "its current checkout"} — a file added by PR is readable only after the merge lands here; until then send image_url: or image:`);
-  let realHouse, realTarget;
-  try { realHouse = realpathSync(houseDir); realTarget = realpathSync(target); }
+  let cloneRoot, realHouse, realTarget;
+  try { cloneRoot = realpathSync(clone); realHouse = realpathSync(houseDir); realTarget = realpathSync(target); }
   catch { throw bounce(404, `the town clone holds no ${rel}`, "check the spelling of the path inside your house"); }
+  // THE HOUSE ITSELF MUST BE INSIDE THE TOWN, and this line is the one that says
+  // so (reviewer's round, 2026-09-10, who probed it and READ the file). Every
+  // check below measures containment against the house — so a merged town tree
+  // carrying WHITE_PAGES/<handle> as a SYMLINK (git stores mode 120000 for a
+  // directory link quite happily) would make any directory on the box that
+  // resident's house, and every file under it would then read as inside it.
+  // Admission is Ferry-delegated with no merge gate, so the PR is the whole
+  // barrier. Same shape as the check below, one level up: judge where the house
+  // LANDS, never how the path is spelled.
+  if (!realHouse.startsWith(join(cloneRoot, "WHITE_PAGES") + sep))
+    throw bounce(403, `${handle}'s house is not inside the town`,
+      "a house that is a link out of the town repo is not a house this door reads — tell the office (a letter to wright works)");
   const root = realHouse.endsWith(sep) ? realHouse : realHouse + sep;
   if (realTarget !== realHouse && !realTarget.startsWith(root))
     throw bounce(403, `"${String(rawPath).slice(0, 80)}" leaves your own house`,
@@ -386,7 +462,19 @@ export function readHouseImage(clone, handle, rawPath, { max = MAX_IMAGE } = {})
   if (st.size > max)
     throw bounce(413, `${rel} is larger than ${fmtMB(max)}`,
       `it is ${fmtMB(st.size)} on the clone — crop or re-export it under ${fmtMB(max)}`);
-  return { bytes: readFileSync(realTarget), path: rel, town_sha: sha };
+  const bytes = readFileSync(realTarget);
+  // THE STAMP NAMES THE STAMP'S OWN SOURCE, or it names nothing. `sha` was read
+  // from HEAD BEFORE the bytes, and TOWN_CLONE is a moving working tree — the
+  // pen commits letters, votes and declarations into it — so a pen commit
+  // landing in between would make `sha` a confident lie about where these bytes
+  // came from. Reading HEAD again and stamping only when it has not moved costs
+  // one `rev-parse` and makes the receipt true; a tree that moved mid-read
+  // answers `null`, which is honest, rather than a sha that was never the
+  // bytes'. (The reviewer asked for a caveat in the description; this is the
+  // other half they offered, and it beats a caveat because it removes the lie
+  // rather than annotating it.)
+  const after = townSha(clone);
+  return { bytes, path: rel, town_sha: sha && after === sha ? sha : null };
 }
 
 /** Which of the three inputs this call carries — exactly one, or a named bounce. */
@@ -458,13 +546,16 @@ export async function uploadMedia(args = {}, key = null, odb = null,
   // checks, the quota, the dedupe, the put and the ledger row cannot tell which
   // door the bytes walked through, and that is deliberate.
   const source = mediaSourceOf(args);
-  let bytes, read_at = null;
+  let bytes, read_at = null, fetchedFrom = null;
   if (source === "image_path") {
     const r = readHouseImage(clone, by, args.image_path);
     bytes = r.bytes;
     read_at = { path: r.path, town_sha: r.town_sha };
   } else if (source === "image_url") {
-    bytes = await fetchImageBytes(args.image_url, { ...(fetchImpl ? { fetchImpl } : {}), ...(lookup ? { lookup } : {}) });
+    bytes = await fetchImageBytes(args.image_url, {
+      onResolved: (h) => { fetchedFrom = h; },
+      ...(fetchImpl ? { fetchImpl } : {}), ...(lookup ? { lookup } : {}),
+    });
   } else {
     bytes = decodeImage(args.image, MAX_IMAGE, "mark"); // size first, then magic bytes + enclosure
   }
@@ -493,5 +584,12 @@ export async function uploadMedia(args = {}, key = null, odb = null,
   await put(objectKey, bytes, mediaType);
   odb.prepare("INSERT INTO media (household, sha, ext, bytes, by_handle, created) VALUES (?, ?, ?, ?, ?, ?)")
     .run(household, sha, ext, bytes.length, by, Date.now());
+  // ONE LINE SO A WALL BREACH LEAVES A TRACE. The ledger row is byte-accounting
+  // and deliberately keeps no URL — but the SSRF wall carries a knowingly-open
+  // rebinding gap, and a gap nothing records is one nobody can ever notice.
+  // This names the source and, for a fetch, the host that actually ANSWERED
+  // (the end of the redirect chain, not the URL the resident sent). No key, no
+  // credential, no path outside the town: the office's own operator log only.
+  console.log(`[media] ${household}/${by} ${source}${fetchedFrom ? ` from ${fetchedFrom}` : ""}${read_at ? ` ${read_at.path}` : ""} ${bytes.length}B ${ext} ${sha.slice(0, 12)}`);
   return { url, bytes: bytes.length, type: mediaType, sha, via: source, ...(read_at ? { read_at } : {}), quota: { used: used + bytes.length, ceiling } };
 }
