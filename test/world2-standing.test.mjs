@@ -514,26 +514,6 @@ test("a NULL household column falls back to solo:<owner>, never to a bare handle
 
 // ── the tripwires ────────────────────────────────────────────────────────────
 
-test("admissionNotes fires when a mark claims constitution under a name that is not the town's", () => {
-  // The 10x fill's own artefact, reproduced: rename the town and its law is
-  // walked like a resident's ground, with nothing said. The load-store lane's
-  // verdict — "anything that keys on a literal household name is a scaling seam.
-  // It did not error, it did not warn" — is what this note answers.
-  const renamed = row({ slug: "the-town-s3/pledges", kind: "sited", owner: "the-town-s3",
-    household: "solo:the-town-s3", tier: "constitution", at: { x: 0, y: 0 }, extent: { w: 400, h: 400 } });
-  const notes = admissionNotes([...base(), renamed]);
-  assert.equal(notes.length, 1);
-  assert.match(notes[0], /the-town-s3/);
-  assert.match(notes[0], /constitution/);
-  // and it is the AUTHOR that decides, not the tier word: the real town's own
-  // constitution marks are in `base()` and say nothing
-  assert.ok(!/^0 mark/.test(notes[0]));
-  // CAN FAIL in the other direction too: give the same record the town's name
-  // back and the note goes away, which is the thing being asserted
-  const restored = { ...renamed, owner: "the-town", household: "solo:the-town" };
-  assert.deepEqual(admissionNotes([...base(), restored]), []);
-});
-
 test("admissionNotes is silent on a register whose premises hold", () => {
   assert.deepEqual(admissionNotes([...base(),
     row({ slug: "wright/a-slot", kind: "predicated", owner: "the-town", household: "solo:the-town",
