@@ -101,6 +101,27 @@ import { renderRecord, MARK_COLUMNS } from "./mark-render.mjs";
 import { stakesFromStore } from "./fold-input.mjs";
 
 /**
+ * WHAT COUNTS AS A DOCKET COUNT — one rule, one home, two readers.
+ *
+ * `selection.docket_claims` is produced here and consumed in two places that
+ * must agree about what a valid one is: `fold-input-cli.mjs`, which refuses a
+ * fold whose selection cannot carry the guard's third input, and
+ * `src/store-writedown.mjs § starvingCheck`, which is the guard. Two copies of
+ * this predicate is how two eras come to disagree about one field — the exact
+ * argument `mark-record.mjs` makes about serializations — so there is one.
+ *
+ * IT IS A TYPE TEST, NOT A COERCION, and the reviewer's note of 2026-09-09 is
+ * why. `Number("")`, `Number(false)` and `Number([])` are all 0, so an empty
+ * string, a `false` and an empty array each read as "the docket was empty" and
+ * PASS the last guard before publication. `Number(null)` is 0 too, which is the
+ * same trap a second time: the first version of the CLI's own check spelled it
+ * `Number.isFinite(Number(v))` and so accepted the explicit null its message
+ * said it existed to catch. A count is a non-negative integer or it is not a
+ * count, and anything else refuses rather than being read charitably.
+ */
+export const isDocketCount = (v) => typeof v === "number" && Number.isInteger(v) && v >= 0;
+
+/**
  * THE CROSSING'S OWN MARKS, from the docket the candle locked.
  *
  * Signature is lane 2's as the ruling names it: `(client, { window })`, plus the
@@ -173,9 +194,82 @@ export async function foldDelta(client, { window = null, worldSha = null, townSh
   const { rows } = await client.query(
     `SELECT ${MARK_COLUMNS} FROM marks WHERE locked_window = $1 ORDER BY slug`, [w]);
 
+  // ── HOW BIG THE DOCKET WAS, READ FROM THE DOCKET AND NOT FROM THE ANSWER ────
+  //
+  // WHY THIS QUERY EXISTS AT ALL. The loud-empty guard
+  // (`src/store-writedown.mjs § starvingCheck`) has to tell two states apart:
+  // NOBODY CLAIMED (lawful — a quiet crossing) and THE STORE DID NOT ANSWER (the
+  // disagreement it exists to catch). Its own header forbids it firing on the
+  // first. Before this line it had no way to see the difference: it was handed
+  // `marks` and inferred emptiness from `marks.length === 0`, and under the
+  // delta contract the OFFERED set IS the docket, so both states arrived as the
+  // same value. Measured on prod 2026-09-09: 6 of the 30 closed windows ever
+  // (151, 156, 157, 158, 165, 167 — one in five) had an empty docket, so one
+  // crossing in five refused with `store-starving` and published nothing.
+  //
+  // WHY `claims` AND NOT `rows.length`. `rows.length` is the same array the
+  // guard already holds. A guard whose two inputs are one read cannot disagree
+  // with itself, which is the exact defect its own header names ("a guard that
+  // asked the same array twice would be a check that cannot disagree with
+  // itself"). So the size comes from the OTHER table: `claims`, which the
+  // clearing sets to `locked` in one step and materializes into `marks` in a
+  // second (`clearing-job.mjs § materializeClaims`). A materialization that
+  // wrote nothing shows here as a docket with rows and a mark read with none —
+  // and that is the state the guard must still refuse.
+  //
+  // THIS IS THE RULING'S OWN DEFINITION OF THE DOCKET, recovered. The ruling
+  // names `claims WHERE window_id = <closed> AND status = 'locked'`; this file
+  // reads `marks` for the CONTENT, for the reasons in the header above, and now
+  // reads `claims` for the SIZE. Two questions, two pens, one window.
+  //
+  // MEASURED BEFORE IT WAS WRITTEN, because a size that can lawfully exceed the
+  // mark read would be a new false refusal. Read-only against prod, all 30
+  // closed windows:
+  //
+  //   · the two agree on EMPTINESS on 30 of 30 — the same six ids by either read
+  //   · zero windows have locked claims and no mark rows (the false-refusal shape)
+  //   · windows 173–179: zero locked-claim slugs with no `marks` row at all
+  //   · they differ in SIZE on the older windows (150: 831 vs 820; 172: 118 vs
+  //     116), which is `marks.locked_window` being latest-wins — and this
+  //     function refuses any window but the newest closed one, where the two
+  //     coincide (176: 4·4, 177: 33·33, 178: 1·1, 179: 3·3).
+  const docket = await client.query(
+    "SELECT count(*)::int AS n FROM claims WHERE window_id = $1 AND status = 'locked'", [w]);
+  const docketClaims = docket.rows[0].n;
+
   const stakes = await stakesFromStore(client, { townSha: sha });
 
   return {
+    // THE SELECTOR, SAID BY THE FUNCTION THAT DID THE SELECTING. It used to be
+    // assembled by `fold-input-cli.mjs`, which knew `by`, `window` and `entry`
+    // but could not know `docket_claims` without running this query a second time.
+    // A caller re-deriving a callee's fact is two answers to one question, which
+    // is the hazard this file's header keeps `foldDelta` single for.
+    selection: {
+      by: "docket",
+      window: w,
+      entry: "fold-delta.mjs § foldDelta",
+      // THE SIZE OF THE DOCKET THIS CROSSING FOLDED, and the guard's third
+      // input. On the receipt beside `marks` (what the mark read returned), so
+      // `docket_claims: 33, marks: 0` reads as a materialization that did not
+      // happen and `docket_claims: 0, marks: 0` reads as a town where nobody
+      // claimed — two sentences that were one number until this field existed.
+      //
+      // THE NAME SAYS WHICH TABLE, and that is the whole of it. This field was
+      // first written as `docket_rows`, which is what you call a number when you
+      // have not decided where it comes from — and the only thing that makes it
+      // worth putting on a receipt is that it comes from `claims` and not from
+      // the mark array beside it. A keeper reading `docket_rows: 0, marks: 0`
+      // cannot tell a second read from a restatement of the first; reading
+      // `docket_claims: 0, marks: 0` they can. Renamed 2026-09-09, before any
+      // receipt carrying the old name reached a history file.
+      docket_claims: docketClaims,
+      // `note: null` is not decoration. There is one selector now and no
+      // fallback, so nothing ever fills this — and that is exactly when a field
+      // goes missing and its absence starts meaning "fine". An empty channel is
+      // named, the same rule the receipt composer keeps for its own.
+      note: null,
+    },
     marks: rows.map((r) => ({
       slug: r.slug,
       kind: r.kind,

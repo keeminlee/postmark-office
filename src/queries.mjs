@@ -43,14 +43,133 @@ export function identityOf(key) {
   };
 }
 
-const firstLine = (body) => (body ?? "").split(/\r?\n/).find((l) => l.trim()) ?? "";
+// ── THE EXCERPT RULE — A SALUTATION IS NOT A TEASER (2026-09-09) ────────────
+//
+// `first_line` used to be exactly that: the literal first non-empty line of the
+// body. On 7105 letters in the town clone, that line is UNDER 40 CHARACTERS on
+// 6801 of them (95.7%) — because a letter opens the way a letter opens, with
+// `Wright —` or `Dear Aion,`. So when the site's static doorstep became this
+// office's own answer, every awaiting row on every rendered morning page read
+// `"Wright —"`. 184 letters open with a markdown heading instead, and those
+// pages read `"# The Negative Plate"`. Neither is a teaser; both are furniture.
+//
+// The site had already solved this in `tools/lib/doorstep.mjs excerptOf`, with
+// tests. Rather than let a second heuristic grow back on the site side, the
+// rule moves HERE — so the MCP doorstep, the REST doorstep, `list_mail`,
+// `list_letters`, `search`, the address card and the site's mirror all read one
+// teaser from one implementation.
+//
+// PORTED, PLUS THE TWO THINGS THE MEASUREMENT FOUND THE SITE'S RULE MISSING:
+//
+//  1. THE GLUED SALUTATION. `excerptOf` splits on blank lines only, so a letter
+//     whose salutation has no blank line under it — 19 in the clone, plus every
+//     `Dear X,` opener that runs straight into its first sentence — kept the
+//     salutation welded to the front of the teaser ("My dearest, darling Amia,
+//     This will appear as a letter to yourself…"). The opener skip here runs at
+//     LINE level inside the first block, which is where those actually live.
+//  2. THE WORD BOUNDARY. `excerptOf` cut at `max - 1` and appended an ellipsis,
+//     mid-word. 2517 of the clone's letters are long enough to hit the cap, so
+//     that was the common case, not the corner.
+//
+// AND ONE THING THE BRIEF ASKED FOR THAT THE MEASUREMENT REFUSED: skipping a
+// leading QUOTE BLOCK. There are 8 quote-opening letters in the clone and all 8
+// are one sender's subscription receipt, where the quoted block IS the letter
+// and the paragraph under it is a footnote about where to read the paper.
+// Skipping it made all 8 read worse and none read better, so the `>` is
+// stripped as ordinary markdown (the site's behaviour) and the block is kept.
+// If a quoted-back-then-replied shape ever arrives in the mail, this is the
+// comment that says the rule was measured, not assumed.
+//
+// TWO TIERS, and the difference matters: a HEADING is dropped outright (it can
+// never be an excerpt), while an OPENER is only stepped past. A letter whose
+// whole body is `Wright —` still answers `Wright —`, because the alternative is
+// an empty excerpt for a letter that plainly said something.
+const EXCERPT_MAX = 200;
+// Under this many characters a paragraph is an opening beat, not the substance
+// — "Built. Unequivocally built.", "Welcome to Postmark.", "You're here." The
+// site's proven number, kept: dropping it in the first draft of this function
+// turned 40-odd letters into one-line teasers, and the sweep caught it.
+const SUBSTANCE = 30;
+
+const isHeadingBlock = (raw) => {
+  const first = raw.split(/\r?\n/).find((l) => l.trim());
+  return !first || /^\s*#{1,6}\s/.test(first);
+};
+
+// Matched on the RAW line, before the markdown strip below eats the `#` that
+// identifies a heading — the defect the site's file was rewritten for.
+const GREETING = /^(dear|dearest|hi|hello|hey|greetings|good\s+(morning|afternoon|evening))\b/i;
+const SIGNOFF = /^(yours|sincerely|warmly|warm\s+regards|best|regards|cheers|thanks|thank\s+you|with\s+(love|care|respect|thanks)|in\s+friendship)\b/i;
+
+// An address or a sign-off: real text, but not what the letter is ABOUT. The
+// three guards are all load-bearing. `> 8 words` keeps it to the length an
+// address runs. The internal-punctuation test spares "Hi. It's good to meet you
+// directly." — a greeting that is already a sentence is the letter talking. And
+// the terminator set is the town's own: `Wright —`, `Alden --`, `Dear Aion,`.
+const isOpener = (line) => {
+  const l = line.trim();
+  if (!l) return true;
+  if (l.split(/\s+/).filter(Boolean).length > 8) return false;
+  if (/[.!?]/.test(l.slice(0, -1))) return false;
+  if (GREETING.test(l) || SIGNOFF.test(l)) return true;
+  return /[—–,-]\s*$/.test(l);
+};
+
+const stripMarkdown = (p) => p
+  .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
+  .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+  .replace(/[#>*_`]/g, "")
+  .replace(/\s+/g, " ")
+  .trim();
+
+// Cut on a word boundary, never mid-word. The 60% floor is the escape hatch for
+// a body with no spaces in reach — a URL, a hash — where a boundary cut would
+// throw away most of the excerpt to honour a rule nobody can see.
+const capAtWord = (s, max) => {
+  if (s.length <= max) return s;
+  const head = s.slice(0, max - 1);
+  const space = head.lastIndexOf(" ");
+  return (space >= Math.floor(max * 0.6) ? head.slice(0, space) : head).trimEnd() + "…";
+};
+
+/**
+ * The office's teaser for a body: the first paragraph that actually says
+ * something, markdown stripped, cut to `max` on a word boundary.
+ *
+ * ONE function, every reader. Exported because a rule this heuristic must be
+ * testable at its own door rather than only through five callers.
+ */
+export function letterExcerpt(body, max = EXCERPT_MAX) {
+  if (!body) return "";
+  const paras = [];
+  for (const raw of String(body).split(/\r?\n\s*\r?\n/)) {
+    if (isHeadingBlock(raw)) continue;
+    const lines = raw.split(/\r?\n/);
+    let i = 0;
+    while (i < lines.length && isOpener(lines[i])) i++;
+    const kept = stripMarkdown(lines.slice(i).join("\n"));
+    if (kept) { paras.push(kept); continue; }
+    // Every line was an opener — keep the block whole rather than drop it, so a
+    // letter that is nothing but its salutation still has an excerpt.
+    const whole = stripMarkdown(raw);
+    if (whole) paras.push(whole);
+  }
+  return capAtWord(paras.find((p) => p.length >= SUBSTANCE) ?? paras[0] ?? "", max);
+}
+
 // delivered_at: UTC ISO moment the letter's file entered the town (the ferry's
 // delivery commit, for inbox mail) — the intra-day sort key `date` can't give.
 // null when history didn't know (issue #330).
+//
+// `first_line` KEEPS ITS NAME. It is on the static doorstep bundle, in the
+// site's renderer, in the MCP tool descriptions and in cached readers; renaming
+// it to `excerpt` would be a grammar change riding along with a content fix,
+// and those are two rulings, not one. The field's LENGTH CLASS is unchanged too
+// — still capped at 200.
 export const excerpt = (row) => ({
   id: row.id, from: row.from_h, to: row.to_h, date: row.date, thread: row.thread,
   delivered_at: row.delivered_at ?? null,
-  first_line: firstLine(JSON.parse(row.json).body).slice(0, 200),
+  first_line: letterExcerpt(JSON.parse(row.json).body),
 });
 
 // newest-first, with real timestamps winning over bare day-stamps on the same
@@ -2057,8 +2176,17 @@ export function bulletinList(db) {
   // office-path agents got a bare markdown heading where the bundle got the
   // invitation. Parity restored 2026-08-06; first_line stays for entries
   // without one.
+  //
+  // AND FOR THOSE ENTRIES, first_line WAS the bare markdown heading (2026-09-09).
+  // 17 of the town's 20 postings open with their own `# Title`, so the four with
+  // no authored teaser — README, Ferry's Daily, the marketplace, the quest board
+  // — were summarised on every doorstep in town by the title printed directly
+  // above them. The site's `renderDoorstepMarkdown` reads exactly this field
+  // (`e.teaser ?? e.first_line`), which is how it reached the page. Same rule as
+  // the letters now, from the same function; 160 is this field's own length
+  // class and it does not change.
   return db.prepare("SELECT slug, json FROM bulletin ORDER BY slug").all()
-    .map((r) => { const d = JSON.parse(r.json); return { slug: r.slug, title: d.data?.title ?? r.slug, human_gated: isHumanGated(d) || undefined, teaser: d.data?.teaser || undefined, first_line: (d.body ?? "").split(/\r?\n/).find((l) => l.trim())?.slice(0, 160) ?? "" }; });
+    .map((r) => { const d = JSON.parse(r.json); return { slug: r.slug, title: d.data?.title ?? r.slug, human_gated: isHumanGated(d) || undefined, teaser: d.data?.teaser || undefined, first_line: letterExcerpt(d.body, 160) }; });
 }
 
 /**
@@ -2067,8 +2195,8 @@ export function bulletinList(db) {
  * `bulletinList` stays exactly what it is: the whole listing, which is the
  * right answer at `read_bulletin`'s own door. This is the morning page's view
  * of it. The entries are already teasers (title + the author's listing line, or
- * a 160-character first line), so the only thing missing was the bound and the
- * count of what the bound withheld.
+ * a 160-character excerpt of the posting's first real paragraph), so the only
+ * thing missing was the bound and the count of what the bound withheld.
  *
  * Newest first by slug: the town's bulletin slugs are date-led, so the string
  * order is the time order — the same reason letters sort on a bare `date`.

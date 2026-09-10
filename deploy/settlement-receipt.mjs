@@ -37,6 +37,10 @@
 
 import { readFileSync } from "node:fs";
 
+// The one writer of what a crossing's `surveyed` counts are counts of. The
+// quiet-pass echo in settlement-auto.sh takes its wording from the same file.
+import { surveyedReading } from "./surveyed-reading.mjs";
+
 const env = (name) => {
   const v = process.env[name];
   return v === undefined || v === "" ? null : v;
@@ -52,6 +56,12 @@ const readJson = (path) => {
 // The sweep's outcome channels, in the order a reader wants them: what happened
 // to the record first, what was held back second, what was set aside last.
 const CHANNELS = ["published", "unpublished", "left_drafted", "withdrawn", "quarantined", "suite_quarantined", "dropped", "rebased"];
+
+// WHICH RECORD THIS CROSSING FOLDED, read once. Two fields answer this question
+// — `source` and `surveyed_reading` — and a receipt that answered it two
+// different ways would be worse than one that answered it not at all, so they
+// read the same constant rather than the env twice.
+const SOURCE = env("SETTLEMENT_SOURCE_MODE") ?? "git";
 
 const sweep = readJson(env("SETTLEMENT_SWEEP_JSON"));
 const drain = readJson(env("SETTLEMENT_DRAIN_JSON"));
@@ -114,7 +124,7 @@ const receipt = {
   // store report exists: a store crossing that REFUSED before its write-down has
   // no store report, and its receipt must still say it was a store crossing, or
   // the operator reading a refusal cannot tell which path refused.
-  source: env("SETTLEMENT_SOURCE_MODE") ?? "git",
+  source: SOURCE,
 
   // ── WHAT A ROLLBACK CROSSING SWEPT UP BEFORE IT LOOKED (repair 1) ──────────
   //
@@ -223,6 +233,13 @@ const receipt = {
         // that was meant to fold a docket is the single most consequential thing
         // this receipt can say, and its absence would be indistinguishable from
         // the correct case.
+        //
+        // `selection.docket_claims` IS READ WITH `marks` BELOW, NOT ALONE. It is
+        // how many claims the candle locked at this window (`claims`, read by
+        // `fold-delta.mjs § foldDelta`), and `marks` is what the mark read
+        // returned. `0` and `0` is a town where nobody claimed — lawful, and one
+        // prod window in five. Any positive `docket_claims` over `marks: 0` is a
+        // docket that was never materialized, and the crossing refuses.
         selection: store.selection ?? null,
         marks: store.marks ?? 0,
         // OFFERED vs WRITTEN. A crossing must never re-materialize a mark it is
@@ -304,6 +321,23 @@ const receipt = {
   // WHAT THE CROSSING SURVEYED. A quiet pass without this is a claim with no
   // receipt: "nothing eligible" and "I looked at nothing" print identically.
   surveyed: sweep?.surveyed ?? null,
+
+  // ── AND WHAT THOSE THREE COUNTS ARE COUNTS OF (G1 lane 3, 2026-09-09) ──────
+  //
+  // The numbers above mean two different things in the two eras, and they print
+  // identically. On a git crossing they are draft refs that were STANDING before
+  // the crossing looked — an independent second opinion, which is the whole
+  // reason the loud-empty guard can catch a blind crossing. On a store crossing
+  // `src/store-writedown.mjs` deletes every draft ref and then BUILDS one
+  // sketchbook per household, so the same three numbers are the write-down's own
+  // output read back, and a zero means it carried nothing rather than that the
+  // town was quiet.
+  //
+  // The world's tools cannot make this distinction and must not try: a ref count
+  // is not an era, and the store path deliberately keeps it non-zero. `source:`
+  // above is the only place in the chain that knows, which is why the sentence
+  // is here, one field away from it.
+  surveyed_reading: surveyedReading(SOURCE, sweep?.surveyed ?? null),
 
   // ── WHAT THE STORE WAS TOLD (G1 lane 1) ────────────────────────────────────
   //

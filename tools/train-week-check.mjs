@@ -18,6 +18,7 @@
 //   node tools/train-week-check.mjs <ref>            e.g. train/2026-w37 · release/2026-w36.15 · refs/heads/train/2026-w37
 //   node tools/train-week-check.mjs <ref> --on 2026-09-03   (the date to judge against; default today, America/New_York)
 //   node tools/train-week-check.mjs --self-test        (the check can fail: every rule flipped red once)
+//   node tools/train-week-check.mjs --tag-for train/2026-w38   (prints the lawful tag BASE for shipping that train TODAY: release/2026-w37 on a Tuesday of week 37, release/2026-w38 on its Sunday; exit 1 if no lawful tag exists)
 //
 // Exit 0 = lawful. Exit 1 = refused, with the sentence that names the fix.
 // Exit 0 with a WARN line = flexed by the founder's word (the FLEXED table).
@@ -87,6 +88,39 @@ export function todayLocal(tz = "America/New_York") {
   return new Date(Date.UTC(get("year"), get("month") - 1, get("day")));
 }
 
+/**
+ * THE TAG IS NAMED FOR THE WEEK IT SHIPS IN, NOT FOR THE TRAIN IT CAME FROM.
+ *
+ * The release workflows used to name the tag from the merge subject's train
+ * (`train/2026-w38` → `release/2026-w38`) and then ask `judge` — which refused
+ * it on every mid-week ship, because the OPEN train is always named for NEXT
+ * week (the 2026-09-08 class: the w37 continuation ship merged from
+ * `train/2026-w38` on a Tuesday of release week 37; the workflow failed, and the
+ * tags w37.5 and w37.6 were cut by hand). The subject names where the work came
+ * FROM; the clock names what the ship IS. So the workflow asks this for the
+ * base, and `judge` stays as the confirmation on the tag it then cuts.
+ *
+ *   train w(cur)   → release/w(cur)      (this week's train: its ship, or a patch of it)
+ *   train w(cur+1) → release/w(cur)      (the open train merged mid-week: a patch of the CURRENT week;
+ *                                         on Sunday cur has already rolled, so it is release/w(cur) too)
+ *   anything else  → no lawful tag (ok: false) — an old train does not reopen; two weeks ahead is the 09-03 class
+ *
+ * Returns { ok, base?, note?, defect?, hint? }. The `.N` suffix is the workflow's (it counts existing tags).
+ */
+export function tagBaseFor(trainRef, { on = todayLocal() } = {}) {
+  const name = String(trainRef).replace(/^refs\/heads\//, "");
+  const m = name.match(/^train\/(\d{4})-w(\d{1,2})$/);
+  if (!m) return { ok: false, defect: `${name}: not a train/YYYY-wNN name — no tag base to derive` };
+  const [, year, weekStr] = m;
+  const week = Number(weekStr);
+  const cur = releaseWeek(on);
+  if (Number(year) !== cur.year && !(week === 1 || cur.week >= 52)) return { ok: false, defect: `${name}: names year ${year}; today is in ${cur.year}-w${cur.week}` };
+  if (week === cur.week) return { ok: true, base: `release/${year}-w${cur.week}`, note: `${name} is this week's train — its tag is release/${year}-w${cur.week}[.N]` };
+  if (week === cur.week + 1) return { ok: true, base: `release/${year}-w${cur.week}`, note: `${name} is the open train shipped mid-week — a patch of the CURRENT week, release/${year}-w${cur.week}.N (its own tag is cut on its Sunday)` };
+  if (week > cur.week + 1) return { ok: false, defect: `${name}: is ${week - cur.week - 1} week(s) AHEAD of the open train (today is release week ${cur.week}; the open train is w${cur.week + 1})`, hint: `put this work on train/${year}-w${cur.week + 1}` };
+  return { ok: false, defect: `${name}: is ${cur.week - week} week(s) behind (release week ${cur.week})`, hint: "an old train does not reopen — cut a patch tag of the current week from the open train" };
+}
+
 function selfTest() {
   const on = (s) => new Date(`${s}T00:00:00Z`);
   const cases = [
@@ -107,6 +141,28 @@ function selfTest() {
     console.log(`${got === want ? "ok " : "RED"} ${ref} on ${day} → ${got ? "lawful" : "refused"}${r.warn ? " (" + r.warn + ")" : ""}${r.defect ? " — " + r.defect : ""}`);
     if (got !== want) bad++;
   }
+  // --tag-for: the tag is named for the week it ships in, never for the train
+  const tagCases = [
+    ["train/2026-w38", "2026-09-08", "release/2026-w37"],  // the 09-08 class: the open train shipped on a Tuesday of week 37
+    ["train/2026-w37", "2026-09-08", "release/2026-w37"],  // this week's train, patched mid-week
+    ["train/2026-w38", "2026-09-13", "release/2026-w38"],  // its own Sunday: cur has rolled to 38
+    ["train/2026-w39", "2026-09-08", null],                 // two weeks ahead — no lawful tag
+    ["train/2026-w36", "2026-09-08", null],                 // an old train does not reopen
+    ["release/2026-w37", "2026-09-08", null],               // not a train name
+  ];
+  for (const [ref, day, want] of tagCases) {
+    const r = tagBaseFor(ref, { on: on(day) });
+    const got = r.ok ? r.base : null;
+    console.log(`${got === want ? "ok " : "RED"} --tag-for ${ref} on ${day} → ${got ?? "refused"}${r.defect ? " — " + r.defect : ""}`);
+    if (got !== want) bad++;
+  }
+  // and every base --tag-for hands out must pass judge on the same day — the two halves agree
+  for (const [ref, day, want] of tagCases) {
+    if (!want) continue;
+    const j = judge(want, { on: on(day) });
+    console.log(`${j.ok ? "ok " : "RED"} judge(${want}) on ${day} → ${j.ok ? "lawful" : "refused"}`);
+    if (!j.ok) bad++;
+  }
   // and with the flex table emptied, the flexed case must refuse — the check can fail
   const r = judge("release/2026-w37", { on: on("2026-09-03"), flexed: {} });
   console.log(`${r.ok ? "RED" : "ok "} release/2026-w37 on 2026-09-03 with no flex → ${r.ok ? "lawful (the check cannot fail)" : "refused"}`);
@@ -120,6 +176,17 @@ function selfTest() {
 if (import.meta.url === new URL(`file://${process.argv[1].replace(/\\/g, "/")}`).href || process.argv[1]?.endsWith("train-week-check.mjs")) {
   const args = process.argv.slice(2);
   if (args.includes("--self-test")) selfTest();
+  else if (args.includes("--tag-for")) {
+    const ref = args[args.indexOf("--tag-for") + 1];
+    if (!ref || ref.startsWith("--")) { console.error("usage: node tools/train-week-check.mjs --tag-for train/YYYY-wNN [--on YYYY-MM-DD]"); process.exit(2); }
+    const onIdx = args.indexOf("--on");
+    const on = onIdx >= 0 ? new Date(`${args[onIdx + 1]}T00:00:00Z`) : todayLocal();
+    const r = tagBaseFor(ref, { on });
+    if (r.ok) { console.error(`OK · ${r.note}`); console.log(r.base); process.exit(0); }
+    const cur = releaseWeek(on);
+    console.error(`REFUSED · ${r.defect}${r.hint ? "\n  " + r.hint : ""}\n  (today is release week ${cur.year}-w${cur.week}; a train is a week's ship — OPERATIONS.md § Release Day)`);
+    process.exit(1);
+  }
   else {
     const ref = args.find((a) => !a.startsWith("--"));
     if (!ref) { console.error("usage: node tools/train-week-check.mjs <ref> [--on YYYY-MM-DD] | --self-test"); process.exit(2); }

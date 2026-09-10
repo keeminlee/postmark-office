@@ -62,7 +62,7 @@ import { execFileSync } from "node:child_process";
 import * as foldInput from "./fold-input.mjs";
 // The selector, imported by name because it is not optional: a crossing without
 // it has no way to say which marks are its own.
-import { foldDelta } from "./fold-delta.mjs";
+import { foldDelta, isDocketCount } from "./fold-delta.mjs";
 
 const argOf = (n, d = null) => { const i = process.argv.indexOf(n); return i !== -1 ? process.argv[i + 1] : d; };
 
@@ -190,11 +190,41 @@ if (isMain) {
     const delta = { fn: foldDelta, entry: "fold-delta.mjs § foldDelta" };
 
     out = await delta.fn(client, { window, worldSha });
-    // `note: null` is not decoration. There is one selector now and no fallback,
-    // so nothing ever fills this — and that is exactly when a field goes missing
-    // and its absence starts meaning "fine". An empty channel is named, the same
-    // rule the receipt composer keeps for its own.
-    selection = { by: "docket", window, entry: delta.entry, note: null };
+    // ── THE SELECTOR COMES BACK FROM THE SELECTOR ────────────────────────────
+    //
+    // This used to be assembled here — `{ by, window, entry, note }` — and that
+    // was fine while every field was something the CALLER already knew. It
+    // stopped being fine when the selection gained `docket_claims`, which only the
+    // function that read the docket can say without running its query a second
+    // time. So `foldDelta` returns its own selection and this reads it.
+    //
+    // `entry` is CHECKED rather than trusted. It is the field a keeper reads to
+    // tell the register's fold from a rehearsal instrument wearing the same
+    // path, so a selection whose entry does not match the module this file
+    // actually imported is a fold input that would misname its own author.
+    selection = out.selection ?? null;
+    if (!selection || selection.entry !== delta.entry) {
+      throw new Error(
+        `fold-selection-mismatch: the fold returned selection.entry ${JSON.stringify(selection?.entry ?? null)} `
+        + `but this crossing called ${delta.entry}. The selection is what the receipt shows a keeper to say WHICH `
+        + "module folded, so it must be the module that ran, not a name copied beside it.");
+    }
+    // THE CHECK THAT DID NOT DO WHAT ITS OWN SENTENCE SAID (reviewer, 2026-09-09).
+    //
+    // This was `!Number.isFinite(Number(selection.docket_claims))`, and
+    // `Number(null)` is 0, which is finite — so an explicit `docket_claims:
+    // null` sailed through the check whose message says it exists to catch
+    // exactly that. The same coercion trap this lane found in `starvingCheck`,
+    // committed one file away in the fix for it, which is the whole argument for
+    // `isDocketCount` being one shared predicate rather than two spellings.
+    if (!isDocketCount(selection.docket_claims)) {
+      throw new Error(
+        "fold-selection-incomplete: `selection.docket_claims` is "
+        + `${JSON.stringify(selection.docket_claims ?? null)}, which is not a count (a non-negative integer). That is `
+        + "the loud-empty guard's third input — without it an empty docket (nobody claimed) and an empty mark read "
+        + "over a docket with rows (the store did not answer) are the same value again, which is the defect this "
+        + "field exists to close.");
+    }
   } catch (e) {
     // Lane 2's refusals are thrown Errors whose messages carry the sha or window
     // they wanted and the sentence for why. They are passed through WHOLE rather

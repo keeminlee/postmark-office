@@ -37,6 +37,37 @@ const WORLD_CLONE = process.env.WORLD_CLONE ?? resolve(HERE, "..", "world-clone"
 
 const bounce = (code, defect, hint, extra = {}) => ({ error: "bounce", code, defect, hint, ...extra });
 
+/**
+ * Should this stake be refused BEFORE the ledger runs? Returns a bounce, or null.
+ *
+ * ── THE HOLE THIS CLOSES (found by the runbook reviewer, 2026-09-09) ─────────
+ *
+ * For `n === 0` the promotion result is consulted and a stake that put nothing
+ * forward bounces 422. For `n >= 1` it was not: `runExec` ran first and the
+ * promotion result was read only to DECORATE the answer, so a stake on a mark
+ * the town no longer stands moved real stamps into escrow and came back as a
+ * plain stake result — no `put_forward`, no sentence, no refusal. The resident
+ * is charged and told nothing.
+ *
+ * The 2026-09-16 move makes that reachable rather than theoretical: it retires
+ * the mark in the store and puts its files in the household's own sketchbook,
+ * and `markExists` accepts a mark it finds in the caller's own sketchbook — so
+ * the 404 gate waves through exactly the marks this move has just returned.
+ *
+ * PURE ON PURPOSE. The decision takes the three facts and returns the answer, so
+ * the falsifiers can put a retired mark in front of it without a database, and
+ * the door and the test cannot drift into two rules.
+ */
+export function stakeRefusalFor({ mark, n, promoted, status }) {
+  if (!(n >= 1)) return null;                 // the zero path has its own ruling, below
+  if (promoted) return null;                  // it went forward; nothing to refuse
+  if (!status?.known || !status?.found) return null;  // the store cannot say; the ledger still runs
+  if (!status.retired) return null;           // it stands; an ordinary stake on a public mark
+  return bounce(422, `"${mark}" is not standing — it returned to your drafts`,
+    "a mark that has come back to your sketchbook is not on the commons, so there is nothing for stamps to stand behind yet. " +
+    "Put it forward first — leave it again with `stamps:`, or stake the draft — and the escrow rides that act, which is what a stake IS.");
+}
+
 // Which resident is acting. Mirrors world.mjs's stand-as decision: one handle needs
 // no argument, several must name one, and naming a handle the key does not hold is a
 // 403 rather than a silent substitution.
@@ -308,6 +339,31 @@ export async function worldStakeViaOffice(args = {}, key = null) {
       : bounce(422, "a zero stake puts forward only your own ground's marks",
           `"${args.mark}" is not a private draft of yours standing on your household's own ground — a commons mark publishes only with escrow behind it, so stake at least ✦1 to put it forward`);
   }
+
+  // BEFORE THE LEDGER, NOT AFTER. Stamps taken for a mark that never reached the
+  // docket are "a debt with no receipt" in this function's own words a few lines
+  // up; a retired mark is that case, and the promotion above already told us it
+  // did not go forward.
+  //
+  // AND THAT IS NOT A RARE PATH — an earlier draft of this comment said it was,
+  // and the reviewer was right to call it. `promoteDraftOnStake` answers
+  // `{ promoted: false }` for EVERY stake on an already-public mark, which its
+  // own doc-comment calls "the ordinary answer ... and never an error". So this
+  // read runs on essentially every ordinary stake. It is one indexed lookup on
+  // `marks.slug` against a store the door already holds a pool to, which is why
+  // it is affordable; it is not an exceptional case, and the comment should not
+  // have claimed it was.
+  let status = { known: false };
+  try {
+    const { markStandingStatus } = await import("./world2-claims.mjs");
+    status = await markStandingStatus({ slug: args.mark });
+  } catch (e) {
+    // Same posture as the promotion above: a store that is down must not swallow
+    // a resident's stake. Loud, and the ledger still runs.
+    console.error(`[world-stake] could not read the store's standing for "${args.mark}": ${String(e?.message ?? e)}`);
+  }
+  const refusal = stakeRefusalFor({ mark: args.mark, n, promoted: !!putForward?.promoted, status });
+  if (refusal) return refusal;
 
   const staked = await runExec({ verb: "stake", handle: who.handle, mark: args.mark, n, via: "api", date: townDay() });
   if (staked?.error) return staked;

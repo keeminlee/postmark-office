@@ -970,14 +970,27 @@ if [ "$WORLD_TO" = "$WORLD_BASE" ]; then
     publish_main
     WORLD_TO="$(git -C "$SWEEP" rev-parse main)"
     report quiet "nothing eligible; the household registry was refreshed and published; suite green at $WORLD_TO"
-    echo "[settlement-auto] quiet pass, registry refreshed: $WORLD_FROM -> $WORLD_TO — $(node -e 'const s=require(process.argv[1]);const v=s.surveyed||{};process.stdout.write("surveyed "+(v.branches??"?")+" sketchbook(s), "+(v.delta_rows??"?")+" delta row(s), "+(v.escrow_backed_deltas??"?")+" escrow-backed; nothing eligible")' "$SWEEP_JSON")"
+    echo "[settlement-auto] quiet pass, registry refreshed: $WORLD_FROM -> $WORLD_TO — $(node "$OFFICE/deploy/surveyed-reading.mjs" --echo --sweep "$SWEEP_JSON" --source "$SOURCE")"
     exit 0
   fi
   # THE QUIET PASS SAYS WHAT IT SURVEYED. "Nothing eligible" is a claim about
   # the record; without the survey beside it, it is indistinguishable from
   # "I looked at nothing", which is what the starving crossing actually was.
+  #
+  # AND IT SAYS WHOSE SKETCHBOOKS IT COUNTED (G1 lane 3, 2026-09-09). On the
+  # store path `src/store-writedown.mjs` deletes every draft ref and then builds
+  # one sketchbook per household before the sweep looks, so these counts are the
+  # write-down's own output rather than a register of waiting work. The wording
+  # lives in deploy/surveyed-reading.mjs, which the receipt's `surveyed_reading`
+  # field also reads — the inline `node -e` that used to be here was the second
+  # copy of a sentence, and two copies are how the operator's line and the
+  # keeper's receipt drift apart. The git wording is unchanged to the byte.
+  #
+  # BOTH quiet exits read it, because this lane gave the quiet pass a second one:
+  # a crossing where the sweep published nothing and the household registry did
+  # move still pushes, and still reports `quiet`. Two exits, one sentence.
   report quiet "nothing eligible; suite green at $WORLD_FROM"
-  echo "[settlement-auto] quiet pass — $(node -e 'const s=require(process.argv[1]);const v=s.surveyed||{};process.stdout.write("surveyed "+(v.branches??"?")+" sketchbook(s), "+(v.delta_rows??"?")+" delta row(s), "+(v.escrow_backed_deltas??"?")+" escrow-backed; nothing eligible")' "$SWEEP_JSON")"
+  echo "[settlement-auto] quiet pass — $(node "$OFFICE/deploy/surveyed-reading.mjs" --echo --sweep "$SWEEP_JSON" --source "$SOURCE")"
   exit 0
 fi
 

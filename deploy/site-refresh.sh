@@ -392,7 +392,16 @@ build_once() {
   ( cd "$SITE" && GH_TOKEN="${GH_TOKEN:-}" POSTMARK_CROSSING="$crossing" node tools/extract-town.mjs --town "$TOWN" ) \
     || die "extract-town.mjs tripped"
   say "extract: the API-fed half"
-  ( cd "$SITE" && POSTMARK_API="$API" node tools/fetch-town.mjs --town "$TOWN" ) \
+  # fetch-town.mjs also writes /data/pin.json (the site's tools/lib/world-pin-publish.mjs),
+  # which names its lane and ref from PUBLIC_CHANNEL and BUILD_CODE_REF. deploy.yml
+  # started passing both on 2026-09-08 (postmark-site #62); this script did not,
+  # so every BOX build — which is every prod build — kept writing `code_ref: null`
+  # with its own note saying so. Same two values the stamp step below passes, so
+  # the two files cannot disagree about which ref and which lane built the site.
+  # (What pin.json CANNOT say is which world the BUILD tree compiled: it reads
+  # this extract tree's lockfile, i.e. site main's floor, and the build tree may
+  # have advanced past it. /build.json's world_sha is that answer — see the stamp.)
+  ( cd "$SITE" && POSTMARK_API="$API" PUBLIC_CHANNEL=release BUILD_CODE_REF="$TAG" node tools/fetch-town.mjs --town "$TOWN" ) \
     || die "fetch-town.mjs tripped"
   say "extract: approved renditions"
   ( cd "$SITE" && node tools/sync-renditions.mjs --town "$TOWN" ) \
@@ -454,6 +463,12 @@ build_once() {
   # copied: the fallback is on disk before anything is resolved, so a resolver
   # that cannot answer costs nothing.
   local pin decision sha settlement
+  # The settlement tag the build tree's world sits at, when the resolver just
+  # put it there. Stays EMPTY on hold: the floor sha is whatever site main's
+  # package.json froze, which is not necessarily a tag's commit, and a ref that
+  # was not verified is a guess. The stamp reads the SHA itself from the build
+  # tree's lockfile; this only lends it the tag's name when that name is known.
+  local world_ref=""
   if [ -f "$BUILD/tools/resolve-world-pin.mjs" ]; then
     pin="$( cd "$BUILD" && WORLD_REMOTE="$WORLD_REMOTE" node tools/resolve-world-pin.mjs 2>/dev/null || true )"
     decision="$(printf '%s' "$pin" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.stdout.write(String(JSON.parse(s).decision??""))}catch{}})' || true)"
@@ -475,6 +490,7 @@ build_once() {
             process.exit(1);
           }
         ' ) || die "world pin mismatch — refusing to ship the wrong world"
+      world_ref="settlement/S$settlement"
     else
       say "world: holding at the release floor"
     fi
@@ -489,6 +505,13 @@ build_once() {
   # jetto/freshness-disclosure); an older stamper ignores them and emits the
   # two-sha stamp it always did. BUILD_TOWN_DATA_SHA keeps naming site main so
   # the sentinel's existing comparison is unchanged during the transition.
+  #
+  # world_sha (2026-09-08, the night prod served the record-drawn ground): the
+  # stamper reads which postmark-world this BUILD tree compiled from the build
+  # tree's own package-lock.json — it runs `cd "$BUILD"`, so that is the tree it
+  # sees, never the extract tree's floor. BUILD_WORLD_REF is the settlement tag's
+  # name when the resolver advanced to one, otherwise empty (unknown, not guessed).
+  # An older stamper ignores both, as before.
   if [ -f "$BUILD/tools/build-stamp.mjs" ]; then
     ( cd "$BUILD" && \
       PUBLIC_CHANNEL=release \
@@ -496,6 +519,7 @@ build_once() {
       BUILD_TOWN_DATA_SHA="$SITE_MAIN" \
       BUILD_TOWN_SHA="$TOWN_SHA" \
       BUILD_CROSSING="$crossing" \
+      BUILD_WORLD_REF="$world_ref" \
       node tools/build-stamp.mjs --out dist-town/build.json ) || die "the build stamp tripped"
   fi
 

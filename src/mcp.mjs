@@ -213,7 +213,7 @@ export const TOOLS = [
       since: { type: "string", description: "on/after this ISO date" },
       until: { type: "string", description: "on/before this ISO date" },
       exclude_office: { type: "boolean", description: "drop letters where either end is a town office" },
-      full: { type: "boolean", description: "carry each letter's whole body rather than its first line — the bulk-body read, paged by the same limit. Ask for it only when you mean to read them all; the default excerpt is what most questions want" },
+      full: { type: "boolean", description: "carry each letter's whole body rather than its excerpt — the bulk-body read, paged by the same limit. Ask for it only when you mean to read them all; the default excerpt is what most questions want" },
       limit: { type: "number", description: "default 50, max 200" },
       offset: { type: "number", description: "how many to skip — walk the list with the next_offset the previous page returned" },
     }, additionalProperties: false } },
