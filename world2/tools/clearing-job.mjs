@@ -254,7 +254,20 @@ try {
           geometry: c.geometry, parent: c.parent, data: c.data,
         });
       }
-      const tiers = computeStanding([...standingRows, ...candidates]);
+      //   ONE FULL WALK PER CROSSING, and this is not it. The whole world is
+      //   still resolved — a candidate's standing depends on ground it does not
+      //   own — but the ANSWERS this gate needs are the candidates' and nothing
+      //   else: `escrowAbsentAmong` reads `tiers.get(c.slug)` for exactly the
+      //   claims handed to it three lines below. Naming that set turns the walk
+      //   from a pass over the register into a climb up the candidates' own
+      //   ancestry, and leaves `recomputeStanding` at step 7 as the crossing's
+      //   single all-marks walk (standing.mjs § `only`).
+      //
+      //   The slug set is `candidates`' own, which is `undecidedNamed` mapped
+      //   through the same `slugOf` — one derivation, so the two cannot drift
+      //   into a gate that quietly checks nothing.
+      const tiers = computeStanding([...standingRows, ...candidates],
+        { only: new Set(candidates.map((c) => c.slug)) });
       const escrowByMark = await escrowPresenceAt(q, { townSha });
       const verdict = escrowAbsentAmong(
         undecidedNamed.map((c) => ({ id: c.id, slug: slugOf(c) })),

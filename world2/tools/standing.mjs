@@ -391,7 +391,7 @@ export function markStanding(mark, byId) {
 }
 
 /**
- * computeStanding(rows) → Map slug → tier.
+ * computeStanding(rows, { only }) → Map slug → tier.
  *
  * `rows` are `marks` rows: { id, slug, kind, owner, household, geometry, parent,
  * data }. Only STANDING rows should be handed in — a retired mark is not part of
@@ -401,8 +401,37 @@ export function markStanding(mark, byId) {
  * The three derived fields the walk reads are stamped first, in the fold's own
  * order, because that order is load-bearing: `_cred` before sovereignty (the
  * grain decides whose parcels count as "own"), sovereignty before the walk.
+ *
+ * ── `only`: THE ANSWER SET, AND WHY IT IS NOT AN OPTIMISATION FLAG ───────────
+ *
+ * A crossing walks this twice (the 10x store lane, § the ceiling): once at the
+ * clearing's escrow-presence gate and once at `recomputeStanding`. The second
+ * one has to answer for EVERY standing mark — that is finding 4's whole ruling,
+ * "tier is recomputed for ALL standing marks inside the clearing transaction".
+ * The first one does not: `escrowAbsentAmong` reads `tiers.get(c.slug)` for the
+ * undecided named CLAIMS and for nothing else, so it was paying for 10,350
+ * answers to use fifty.
+ *
+ * `only` is that difference made explicit. The set of records is unchanged — the
+ * whole world is still resolved, because a candidate's standing depends on
+ * ground it does not own — and what changes is how many marks get WALKED.
+ * Containment is now resolved lazily, per record, the first time the walk climbs
+ * to it, so the O(N^2) pass runs over the answered marks' ancestry instead of
+ * over the register.
+ *
+ * IDENTICAL BY CONSTRUCTION, and the argument is one line: `containmentParentOf`
+ * is a pure function of (mark, records, root, ranked), and all four are the same
+ * whether it is called eagerly for every record or lazily for some. `only` can
+ * therefore only ever REMOVE entries from the returned Map; it can never change
+ * one. The falsifier proves that rather than trusting it.
+ *
+ * IT REFUSES A SLUG IT WAS NOT GIVEN. `escrowAbsentAmong` reads a missing tier
+ * as "not commons, skip" — which is right when the walk genuinely had no verdict
+ * and would be a silently unchecked commons claim if the caller simply misspelled
+ * the set. So an `only` naming a slug that is not among `rows` throws here, where
+ * the mistake is, instead of passing quietly through a gate.
  */
-export function computeStanding(rows) {
+export function computeStanding(rows, { only = null } = {}) {
   const records = rows.map(recordOf);
   const byId = new Map();
   for (const r of records) if (!byId.has(r.id)) byId.set(r.id, r);
@@ -451,10 +480,43 @@ export function computeStanding(rows) {
   // the GROUND the store holds, not of the directory a record was filed in.
   const root = worldRootOf(records);
   const ranked = rankCandidates(records);
-  for (const mk of records) mk._containedBy = containmentParentOf(mk, records, root, ranked) ?? null;
+
+  // LAZILY, and `markStanding` must not be able to tell. The walk climbs
+  // `m._parentSlug ?? m._parent_is_law ?? m._containedBy ?? …` and that chain is
+  // 1.0's, ported verbatim under this file's own standing instruction ("a second
+  // copy of this walk is a future drift"). So the field stays a field: a getter
+  // that computes the containment answer on first read and then replaces itself
+  // with the value, which is why a record is walked at most once no matter how
+  // many descendants climb through it.
+  //
+  // With no `only`, every record is answered and every getter fires, so this is
+  // the same total work as the eager pass it replaces.
+  for (const mk of records) {
+    Object.defineProperty(mk, "_containedBy", {
+      configurable: true, enumerable: true,
+      get() {
+        const v = containmentParentOf(this, records, root, ranked) ?? null;
+        Object.defineProperty(this, "_containedBy",
+          { value: v, writable: true, enumerable: true, configurable: true });
+        return v;
+      },
+    });
+  }
 
   const out = new Map();
-  for (const mk of records) out.set(mk.slug, markStanding(mk, byId));
+  if (only == null) {
+    for (const mk of records) out.set(mk.slug, markStanding(mk, byId));
+    return out;
+  }
+  const bySlug = new Map();
+  for (const mk of records) if (!bySlug.has(mk.slug)) bySlug.set(mk.slug, mk);
+  for (const slug of only) {
+    const mk = bySlug.get(slug);
+    // See § `only` — a slug the caller asked about and did not hand in is a
+    // caller bug, and the reader downstream cannot tell it from "no verdict".
+    if (!mk) throw new Error(`computeStanding: \`only\` names ${slug}, which is not among the ${rows.length} row(s) given`);
+    out.set(slug, markStanding(mk, byId));
+  }
   return out;
 }
 

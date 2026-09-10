@@ -241,6 +241,53 @@ test("every standing row gets an answer, and only the three words", () => {
   for (const v of t.values()) assert.ok(["home", "market", "constitution"].includes(v), `unknown standing ${v}`);
 });
 
+// ── `only`: the answer set the escrow gate asks for ─────────────────────────
+//
+// standing.mjs § `only` states the law this pair holds it to: "`only` can
+// therefore only ever REMOVE entries from the returned Map; it can never change
+// one." The first test is that sentence; the second is the refusal that keeps a
+// mistyped set from reaching `escrowAbsentAmong`, which reads a missing tier as
+// "not commons, skip".
+
+test("`only` narrows the answer set and never changes an answer", () => {
+  // A world where the answers are not all the same word, so a narrowing that
+  // returned a DEFAULT rather than the walk's own verdict would be caught: the
+  // town's constitution, a mark on its own household's ground (`home`), and a
+  // mark on nobody's ground (`market`).
+  const flower = row({ slug: "rei/a-flower", kind: "sited", owner: "rei", household: REI,
+    at: { x: 108, y: 108 }, extent: { w: 2, h: 2 } });
+  const stray = row({ slug: "rei/a-stray", kind: "sited", owner: "rei", household: REI,
+    at: { x: 9000, y: 9000 }, extent: { w: 2, h: 2 } });
+  const rows = [...base(), flower, stray];
+
+  const full = computeStanding(rows);
+  for (const slug of full.keys()) {
+    const narrowed = computeStanding(rows, { only: new Set([slug]) });
+    assert.equal(narrowed.size, 1, `only asked for ${slug} and got ${narrowed.size} answer(s)`);
+    assert.equal(narrowed.get(slug), full.get(slug), `${slug} moved when it was asked about alone`);
+  }
+  // and asking for several at once is the same restriction, not a different walk
+  const some = new Set([flower.slug, stray.slug]);
+  const many = computeStanding(rows, { only: some });
+  assert.deepEqual([...many.keys()].sort(), [...some].sort());
+  for (const slug of some) assert.equal(many.get(slug), full.get(slug));
+  // the three words are all still reachable through the narrow path, so this
+  // world would have caught a narrowing that answered one word for everything
+  assert.deepEqual([...new Set(full.values())].sort(), ["constitution", "home", "market"]);
+});
+
+test("`only` refuses a slug that is not among the rows — it does not answer null", () => {
+  // CAN FAIL: delete the throw in standing.mjs and this test goes red, because
+  // the Map would come back holding `undefined` for the missing slug and
+  // `escrowAbsentAmong` reads that as "the walk had no verdict, skip" — a commons
+  // claim locking with nothing staked behind it, silently.
+  const rows = base();
+  assert.throws(() => computeStanding(rows, { only: new Set(["rei/never-submitted"]) }),
+    /only.*rei\/never-submitted.*not among/s);
+  // the guard is about ABSENCE, not about narrowing: a slug that IS there passes
+  assert.doesNotThrow(() => computeStanding(rows, { only: new Set([rows[0].slug]) }));
+});
+
 test("a NULL household column falls back to solo:<owner>, never to a bare handle", () => {
   // The household-spelling ruling: "A roster owner keeps the household KEY
   // (`gh:<id>`); a non-roster owner is `solo:<handle>`, never NULL." A pre-repair
