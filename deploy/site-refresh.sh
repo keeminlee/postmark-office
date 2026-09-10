@@ -345,6 +345,29 @@ ensure_deps() { # tree label
   fi
 }
 
+# ── what postmark-world a lockfile NAMES, or empty ────────────────────────
+# TWO LOCKFILES, TWO DIFFERENT QUESTIONS, and keeping them apart is why this is a
+# function rather than one inlined read:
+#
+#   package-lock.json                 what this tree ASKED FOR
+#   node_modules/.package-lock.json   what npm actually PUT ON DISK
+#
+# They diverge on every tick that skips `npm ci` — which is most of them, for the
+# reason the world-pin block below sets out — and prod served a world nobody had
+# asked for because only the first of the two was ever read.
+world_sha_of() { # lockfile-path
+  [ -f "$1" ] || return 0
+  node -e '
+    const { readFileSync } = require("node:fs");
+    try {
+      const lock = JSON.parse(readFileSync(process.argv[1], "utf8"));
+      const got = lock.packages?.["node_modules/postmark-world"]?.resolved ?? "";
+      const m = /#([0-9a-f]{40})$/.exec(String(got));
+      if (m) process.stdout.write(m[1]);
+    } catch {}
+  ' "$1" 2>/dev/null || true
+}
+
 # ── the crossing this build reflects ────────────────────────────────────────
 # Read from the OFFICE, never derived here. crossings.mjs exists precisely
 # because the alternative to one reader is two clocks; the office serves the
@@ -459,10 +482,34 @@ build_once() {
     2>/dev/null || say "warn: the tag predates the deploy machinery on main — pin holds at the floor, no build stamp"
 
   # ── the world pin (POS-55): rebuild-time DATA, not release-time config ────
-  # npm ci above already installed THE FLOOR. That ordering is deliberate and
-  # copied: the fallback is on disk before anything is resolved, so a resolver
-  # that cannot answer costs nothing.
-  local pin decision sha settlement
+  #
+  # npm ci above already installed THE FLOOR — ON A TICK WHERE IT RAN. It very
+  # often does not run, and that is not a bug in ensure_deps: it keys on
+  # package-lock.json's sha1, the `checkout -qf --detach` at the top of this
+  # function has just restored that lockfile to the TAG's copy, and node_modules
+  # SURVIVES from tick to tick. So the comparison matches, npm ci is skipped, and
+  # what is on disk is whatever the last `npm install` below left there.
+  #
+  # 2026-09-10, and this is why the block below changed shape. The 06:40Z tick
+  # advanced prod to settlement/S64 and installed it. The founder landed
+  # HOLD_AT_SETTLEMENT = 63 in site main at 14:37Z. The 14:41Z and 15:10Z ticks
+  # resolved "hold", printed "holding at the release floor", installed NOTHING —
+  # and went on publishing S64's world, because holding was implemented as doing
+  # nothing to a directory that already held S64. Meanwhile /build.json read
+  # world_sha 256db2fe (S63) the whole time: the stamper reads package-lock.json,
+  # which git had just restored, so the receipt described the ASK while prod
+  # served the ANSWER. Two files, two questions, and nothing comparing them. What
+  # the founder saw was the world page's painted ground gone — S64's viewer
+  # replaces the /atlas/town.html fetch with townGround() — under a hold landed
+  # precisely to keep S64 off prod until he had seen it.
+  #
+  # SO: DECIDE, THEN INSTALL, ON BOTH PATHS. `want` is the sha this build has
+  # decided on — the resolver's on advance, the tag's own lockfile floor on hold.
+  # `have` is read from node_modules/.package-lock.json, npm's record of WHAT IS
+  # INSTALLED, never from package-lock.json, which only says what was asked for.
+  # The install is a no-op exactly when the two already agree, so a steady tick
+  # costs one file read — and a hold now means something on disk.
+  local pin decision sha settlement want have
   # The settlement tag the build tree's world sits at, when the resolver just
   # put it there. Stays EMPTY on hold: the floor sha is whatever site main's
   # package.json froze, which is not necessarily a tag's commit, and a ref that
@@ -474,25 +521,33 @@ build_once() {
     decision="$(printf '%s' "$pin" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.stdout.write(String(JSON.parse(s).decision??""))}catch{}})' || true)"
     sha="$(printf '%s' "$pin" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.stdout.write(String(JSON.parse(s).sha??""))}catch{}})' || true)"
     settlement="$(printf '%s' "$pin" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.stdout.write(String(JSON.parse(s).settlement??""))}catch{}})' || true)"
+    want=""
     if [ "$decision" = "advance" ] && [ -n "$sha" ]; then
+      want="$sha"
       say "world: advancing to settlement S$settlement ($(echo "$sha" | cut -c1-8))"
-      ( cd "$BUILD" && npm install --no-audit --no-fund --silent "postmark-world@github:keeminlee/postmark-world#$sha" ) \
-        || die "the blessed world would not install"
-      # deploy.yml's verify, verbatim in intent: a build that silently ships the
-      # WRONG world is worse than a build that does not ship. Prod keeps serving
-      # the standing symlink and the next tick tries again.
-      ( cd "$BUILD" && WORLD_SHA="$sha" node -e '
-          const { readFileSync } = require("node:fs");
-          const lock = JSON.parse(readFileSync("package-lock.json", "utf8"));
-          const got = lock.packages["node_modules/postmark-world"]?.resolved ?? "";
-          if (!got.endsWith("#" + process.env.WORLD_SHA)) {
-            console.error("world pin mismatch: asked for " + process.env.WORLD_SHA + ", lock resolved " + got);
-            process.exit(1);
-          }
-        ' ) || die "world pin mismatch — refusing to ship the wrong world"
       world_ref="settlement/S$settlement"
     else
-      say "world: holding at the release floor"
+      want="$(world_sha_of "$BUILD/package-lock.json")"
+      say "world: holding at the release floor (${want:-unpinned})"
+    fi
+
+    have="$(world_sha_of "$BUILD/node_modules/.package-lock.json")"
+    if [ -n "$want" ] && [ "$want" != "$have" ]; then
+      say "world: node_modules carries ${have:-nothing}, this build wants $(echo "$want" | cut -c1-8) — installing"
+      ( cd "$BUILD" && npm install --no-audit --no-fund --silent "postmark-world@github:keeminlee/postmark-world#$want" ) \
+        || die "the world this build decided on would not install"
+    fi
+
+    # deploy.yml's verify, WIDENED to the failure that actually happened: a build
+    # that silently ships the wrong world is worse than a build that does not
+    # ship, and "wrong" now includes a world inherited from an earlier tick that
+    # nobody asked for on this one. Prod keeps serving the standing symlink and
+    # the next tick tries again. Read from npm's INSTALLED record, because that
+    # is the file that answers "what will world-engine-island stage into dist".
+    if [ -n "$want" ]; then
+      have="$(world_sha_of "$BUILD/node_modules/.package-lock.json")"
+      [ "$want" = "$have" ] \
+        || die "world pin mismatch — refusing to ship the wrong world: this build decided on $want, node_modules carries ${have:-nothing}"
     fi
   fi
 

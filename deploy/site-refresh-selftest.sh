@@ -66,6 +66,10 @@ git -C "$TOWN_SRC" add -A && git -C "$TOWN_SRC" commit -qm "the town, at rest"
 mkgit "$WORLD_SRC"
 echo world > "$WORLD_SRC/w"; git -C "$WORLD_SRC" add -A; git -C "$WORLD_SRC" commit -qm w
 git -C "$WORLD_SRC" tag settlement/S45
+# THE RELEASE FLOOR, as a sha the fake site's lockfile can name. Without a world
+# in the lockfile there is no floor to hold AT, and § 7 would be asserting about
+# an empty string.
+WORLD_FLOOR="$(git -C "$WORLD_SRC" rev-parse settlement/S45)"
 
 mkgit "$SITE_SRC"
 mkdir -p "$SITE_SRC/tools/lib" "$SITE_SRC/public/atelier/postmark" "$SITE_SRC/src/data/postmark" "$SITE_SRC/public/renditions"
@@ -79,8 +83,9 @@ echo "placeholder" > "$SITE_SRC/public/renditions/.keep"
 cat > "$SITE_SRC/package.json" <<'EOF'
 { "name": "fake-site", "version": "0.0.0", "private": true, "scripts": { "build": "true" } }
 EOF
-cat > "$SITE_SRC/package-lock.json" <<'EOF'
-{ "name": "fake-site", "version": "0.0.0", "lockfileVersion": 3, "requires": true, "packages": {} }
+cat > "$SITE_SRC/package-lock.json" <<EOF
+{ "name": "fake-site", "version": "0.0.0", "lockfileVersion": 3, "requires": true, "packages": {
+  "node_modules/postmark-world": { "resolved": "git+ssh://git@github.com/keeminlee/postmark-world.git#$WORLD_FLOOR" } } }
 EOF
 # The site's own recipe, stubbed to the smallest thing that proves it RAN and
 # proves what it was handed. extract-town writes the crossing it was given, so
@@ -100,8 +105,19 @@ cat > "$SITE_SRC/tools/sync-renditions.mjs" <<'EOF'
 import { writeFileSync } from "node:fs";
 writeFileSync("public/renditions/a.html", "<p>a rendition merged after the tag</p>");
 EOF
+# The resolver, stubbed and DRIVEABLE. The real one asks a remote and applies the
+# founder's hold; what the script downstream can be falsified about is the two
+# answers it gives, so the sandbox hands them over by env. Defaults to hold, which
+# is what every test above this line was written against.
 cat > "$SITE_SRC/tools/resolve-world-pin.mjs" <<'EOF'
-console.log(JSON.stringify({ decision: "hold", sha: "", settlement: null, reason: "stub" }));
+const sha = process.env.SELFTEST_PIN_SHA ?? "";
+const settlement = process.env.SELFTEST_PIN_SETTLEMENT ?? "";
+console.log(JSON.stringify({
+  decision: process.env.SELFTEST_PIN_DECISION || "hold",
+  sha,
+  settlement: settlement === "" ? null : Number(settlement),
+  reason: "stub",
+}));
 EOF
 cat > "$SITE_SRC/tools/build-stamp.mjs" <<'EOF'
 import { writeFileSync, mkdirSync } from "node:fs";
@@ -121,8 +137,26 @@ git -C "$SITE_SRC" tag -a release/2026-w35 -m "cut"
 # then has to carry, so the swap below is swapping real bytes.
 cat > "$SANDBOX/bin/npm" <<'EOF'
 #!/usr/bin/env bash
+# The one npm behaviour the world-pin falsifiers turn on: WHAT ENDS UP INSTALLED,
+# recorded where npm actually records it — node_modules/.package-lock.json. `ci`
+# installs what package-lock.json names; `install pkg@github:...#sha` installs that
+# sha AND rewrites package-lock.json, which is exactly how one tick's advance
+# outlives the tick that made it. Everything else stays the no-op it was.
 case "${1:-}" in
-  ci|install) mkdir -p node_modules; exit 0;;
+  ci)
+    mkdir -p node_modules
+    node -e 'const{readFileSync,writeFileSync}=require("node:fs");let r="";try{r=JSON.parse(readFileSync("package-lock.json","utf8")).packages?.["node_modules/postmark-world"]?.resolved??""}catch{};writeFileSync("node_modules/.package-lock.json",JSON.stringify({packages:{"node_modules/postmark-world":{resolved:r}}},null,1))'
+    exit 0;;
+  install)
+    mkdir -p node_modules
+    for a in "$@"; do
+      case "$a" in
+        postmark-world@github:*)
+          node -e 'const{writeFileSync}=require("node:fs");const spec="git+ssh://git@github.com/keeminlee/postmark-world.git#"+process.argv[1];writeFileSync("node_modules/.package-lock.json",JSON.stringify({packages:{"node_modules/postmark-world":{resolved:spec}}},null,1));writeFileSync("package-lock.json",JSON.stringify({name:"fake-site",version:"0.0.0",lockfileVersion:3,requires:true,packages:{"node_modules/postmark-world":{resolved:spec}}},null,1))' "${a##*#}"
+          ;;
+      esac
+    done
+    exit 0;;
   run) if [ "${2:-}" = "build" ]; then mkdir -p dist-town; date -u +%s%N > dist-town/index.html; fi; exit 0;;
 esac
 exit 0
@@ -200,7 +234,47 @@ git -C "$WORLD_SRC" tag settlement/S46
 run
 echo "$OUT" | grep -q "pass 1 —" && ok "a new settlement tag starts a build" || bad "a blessing did not wake it: $OUT"
 
-head_ "7 · SINGLE-FLIGHT: a second trigger mid-build STANDS DOWN, it does not queue"
+head_ "7 · A HOLD IS AN INSTALL, NOT A NO-OP — node_modules does not remember for you"
+# THE DEFECT, worn by prod for eight hours on 2026-09-10. `ensure_deps` keys on
+# package-lock.json's sha1; the `checkout -qf --detach` at the top of build_once
+# has just restored that lockfile to the TAG's copy; node_modules survives the
+# tick. So a tick resolving HOLD skipped npm ci, installed nothing, and shipped
+# whatever world the last ADVANCE had left on disk — while /build.json, which
+# reads the restored package-lock.json, swore it was serving the floor. The
+# founder's HOLD_AT_SETTLEMENT = 63 landed at 14:37Z and prod kept publishing
+# S64's world, and S64's world page, through every tick after it.
+#
+# Driven end to end: advance to a settlement, then hold, then ask npm's OWN
+# record of what is installed — never the ask — which world is really there.
+echo "a settlement's worth of world" > "$WORLD_SRC/w2"
+git -C "$WORLD_SRC" add -A && git -C "$WORLD_SRC" commit -qm "S47's world"
+git -C "$WORLD_SRC" tag settlement/S47
+WORLD_S47="$(git -C "$WORLD_SRC" rev-parse settlement/S47)"
+INSTALLED="$ROOT/build/node_modules/.package-lock.json"
+
+run SELFTEST_PIN_DECISION=advance SELFTEST_PIN_SHA="$WORLD_S47" SELFTEST_PIN_SETTLEMENT=47
+check "exit 0" "$RC" "0"
+echo "$OUT" | grep -q "advancing to settlement S47" && ok "the resolver's advance is taken" || bad "no advance line: $OUT"
+grep -q "$WORLD_S47" "$INSTALLED" 2>/dev/null \
+  && ok "and node_modules really holds S47 afterwards" \
+  || bad "S47 was never installed: $(cat "$INSTALLED" 2>&1 | head -3)"
+
+# THE FLIP. The founder's hold lands. Nothing else about the tree changes — the
+# tag is the same tag, its lockfile is the same lockfile, and npm ci will be
+# skipped exactly as it is on the box.
+echo "crossing 5" >> "$TOWN_SRC/WHITE_PAGES/mail-ledger.md"
+git -C "$TOWN_SRC" commit -qam "the tick after the hold landed"
+run SELFTEST_PIN_DECISION=hold
+check "exit 0" "$RC" "0"
+echo "$OUT" | grep -q "holding at the release floor" && ok "the resolver's hold is taken" || bad "no hold line: $OUT"
+grep -q "$WORLD_FLOOR" "$INSTALLED" 2>/dev/null \
+  && ok "THE POINT: a hold REINSTALLS the floor, so node_modules carries $(echo "$WORLD_FLOOR" | cut -c1-8)" \
+  || bad "THE 2026-09-10 DEFECT: the hold changed nothing on disk — $(cat "$INSTALLED" 2>&1 | head -3)"
+grep -q "$WORLD_S47" "$INSTALLED" 2>/dev/null \
+  && bad "the advanced world OUTLIVED the hold — prod would still be serving S47" \
+  || ok "and the advanced world is gone from disk"
+
+head_ "8 · SINGLE-FLIGHT: a second trigger mid-build STANDS DOWN, it does not queue"
 # The defect: two 30-minute timers stacking behind one slow build is how a box
 # eats itself, and a queued build starts against inputs the running one already
 # passed. Held here with a real flock from a second process, exactly as a second
@@ -216,7 +290,7 @@ echo "$OUT" | grep -q "a build is already running" && ok "it stood down and said
 echo "$OUT" | grep -q "pass 1 —" && bad "IT BUILT ANYWAY — the lock excludes nothing" || ok "and started no competing build"
 wait $HOLDER
 
-head_ "8 · CONVERGENCE: a town that moves DURING a build is built again"
+head_ "9 · CONVERGENCE: a town that moves DURING a build is built again"
 # The defect: publishing a snapshot that was already stale when it landed and
 # then sleeping thirty minutes is the same failure this file exists to end, only
 # faster. The seam is a slow `npm run build` that commits to the town mid-flight.
@@ -244,7 +318,7 @@ grep -q "\"town_sha\": \"$FINAL_TOWN\"" "$(readlink -f "$WEBROOT")/build.json" \
   && ok "THE POINT: it ends at the NEWER town, not the one it started on" \
   || bad "converged on the wrong state: $(cat "$(readlink -f "$WEBROOT")/build.json")"
 
-head_ "9 · A FAILED BUILD PUBLISHES NOTHING — the last good release keeps serving"
+head_ "10 · A FAILED BUILD PUBLISHES NOTHING — the last good release keeps serving"
 STANDING="$(readlink -f "$WEBROOT")"
 echo "crossing 4" >> "$TOWN_SRC/WHITE_PAGES/mail-ledger.md"
 git -C "$TOWN_SRC" commit -qam "yet more"
