@@ -352,7 +352,8 @@ git -C "$SWEEP" clean -fdq  # a killed run leaves untracked debris; the clone is
 # and world main carries the two commits in the order they actually happened.
 REGISTRY_JSON=""
 REGISTRY_COMMIT=""
-REGISTRY_VERIFICATION=""
+REGISTRY_FLAG=""
+REGISTRY_ARG=""
 if [ "${SETTLEMENT_REGISTRY:-1}" = "1" ]; then
   mkdir -p "$WORK/registry/WORLD"
   # The export writes into a SCRATCH world, never straight into the sweep clone.
@@ -395,7 +396,8 @@ if [ "${SETTLEMENT_REGISTRY:-1}" = "1" ]; then
   # WHAT THE WORLD IS TOLD. The sha this crossing VERIFIED the registry against,
   # never the stamp the file carries — those are different facts, and the world
   # must not compare them for equality. See deploy/settlement-registry.mjs.
-  REGISTRY_VERIFICATION="--registry-verified-at $TOWN_SHA"
+  REGISTRY_FLAG="--registry-verified-at"
+  REGISTRY_ARG="$TOWN_SHA"
 else
   REGISTRY_JSON="$WORK/registry.json"
   node -e 'const fs=require("node:fs");fs.writeFileSync(process.argv[1],JSON.stringify({ran:false,bypass:true,reason:"SETTLEMENT_REGISTRY=0 — this crossing folded on whatever WORLD/households.json world main already carried"},null,1)+"\n")' \
@@ -408,7 +410,8 @@ else
   # verified and why, it does not refuse, and the crossing is LOUD about it here
   # and on the receipt — because an unverified crossing that reads like an
   # ordinary one is the 2026-08-07 shape wearing this lane's own clothes.
-  REGISTRY_VERIFICATION="--registry-unverified SETTLEMENT_REGISTRY=0"
+  REGISTRY_FLAG="--registry-unverified"
+  REGISTRY_ARG="SETTLEMENT_REGISTRY=0"
   echo "[settlement-auto] *** REGISTRY UNVERIFIED (bypass) *** SETTLEMENT_REGISTRY=0 — nothing checked WORLD/households.json against the town this crossing; the fold, the lint and the authorship wall read whatever world main already carries" >&2
 fi
 
@@ -775,11 +778,18 @@ SWEEP_JSON="$WORK/sweep.json"
 # an omission: the isolation pass only runs after this sweep has SUCCEEDED, so
 # the registry it would re-check has already been checked, on this same tree, by
 # this same line.
-# $REGISTRY_VERIFICATION is UNQUOTED on purpose: it is a two-word flag pair, and
-# it is never empty — every path above sets it to one or the other. A falsifier
-# holds the crossing to that, because a chain that stops stating anything about
-# the registry is the regression this whole construction exists to catch.
-(cd "$SWEEP" && node tools/settlement-sweep.mjs --stakes "$WORK/stakes.json" $REGISTRY_VERIFICATION --json) > "$SWEEP_JSON" 2>"$WORK/sweep.err" || {
+# THE FLAG AND ITS VALUE ARE TWO QUOTED WORDS, and that is a repair rather than
+# a style. They were one variable expanded UNQUOTED so the shell would split it
+# into two arguments — which works only while the value contains no space, and
+# the value is a REASON. The first bypass reason anybody writes as a sentence
+# would have split into three arguments and handed the world a flag with a
+# truncated reason and two stray words after it. Quoted, the reason may say
+# whatever an operator needs it to say.
+#
+# Neither is ever empty: every path above sets both. A falsifier holds the
+# crossing to that, because a chain that stops stating anything about the
+# registry is the regression this whole construction exists to catch.
+(cd "$SWEEP" && node tools/settlement-sweep.mjs --stakes "$WORK/stakes.json" "$REGISTRY_FLAG" "$REGISTRY_ARG" --json) > "$SWEEP_JSON" 2>"$WORK/sweep.err" || {
   # THE STARVING CROSSING has its own status, because "refused" is what a
   # crossing says when the record is wrong and this is what it says when the
   # crossing itself is broken — an operator must be able to tell them apart at

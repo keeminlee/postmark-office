@@ -355,7 +355,7 @@ test("F-git · SETTLEMENT_SOURCE=git issues the train's chain plus the ghost swe
   // train line matching the first. Anything else is still missing or added.
   const SUBSTITUTIONS = [
     [/^node settlement-sweep\.mjs --stakes stakes\.json --json$/,
-     /^node settlement-sweep\.mjs --stakes stakes\.json --town-sha <sha> --json$/],
+     /^node settlement-sweep\.mjs --stakes stakes\.json --registry-verified-at <sha> --json$/],
   ];
 
   // Multiset difference both ways, so a reordering or a dropped duplicate shows.

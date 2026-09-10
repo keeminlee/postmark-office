@@ -150,9 +150,6 @@ process.stdout.write(`${JSON.stringify({
   // comparison was the first cut of this lane and it would have refused every
   // crossing after a quiet one.
   verified_at: TOWN_SHA,
-  // Named because the file's own stamp and the sha it was checked against are
-  // different facts, and a reader who conflates them re-invents the defect.
-  stamped_only_when_changed: true,
   commit_message: commitMessage,
   summary: changed
     ? `verified against town ${TOWN_SHA.slice(0, 9)} and REWRITTEN: ${Object.keys(fh).length} handle(s) → ${new Set(Object.values(fh)).size} household(s), ${Object.keys(fresh.logins ?? {}).length} login(s); ${movedLine}${unstamped ? " (the standing file carried no town_sha — first refresh)" : ""}`
