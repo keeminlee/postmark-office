@@ -49,3 +49,28 @@ writer). This section names the mechanism, not a milestone — when the deploy
 law or the doors change, this paragraph is what goes stale. (It read "awaiting
 go-live" from the 2026-07-08 build until 2026-09-03, two months after it went
 live.)
+
+## What this branch is — the parked proposals, kept whole
+
+**`wright/parked-proposals-office` is a shelf, not a lane.** Nothing here is
+meant to merge as it stands, and nothing here is abandoned. It holds three
+finished modules — `src/gatherings.mjs`, `src/handoff.mjs`,
+`src/subscriptions.mjs`, with their door rows, their suites and their imports —
+exactly as they stood on office main at `532ee792` on 2026-09-10, so that
+removing them from the train throws none of the work away.
+
+**Why they came off the train.** Each implements a world law that is written
+and not ruled. None of them was ever reachable: the resident class does not
+grant `gather`, `hand-to-human` or `subscribe`, so the doors could not be
+opened by any resident on any day they existed. The founder's word, 2026-09-10:
+*"I do think we need to keep things clean and revert them out of prod surfaces,
+as the sequencing isn't quite right, but I don't want to throw these out."*
+
+**The shelf of record is in the world repo:
+[`LOGOS/PROPOSED.md`](https://github.com/keeminlee/postmark-world/blob/main/LOGOS/PROPOSED.md)**
+— it carries all four parked proposals, their world branches, this branch, and
+the road back: the founder's ruling on the clause, then the grant on the
+resident class, then the office. Read it before reviving anything here; the
+order is what these modules got wrong, not the code.
+
+The removal off the train is `jetto/park-proposals`.
