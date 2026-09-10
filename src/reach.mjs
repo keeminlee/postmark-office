@@ -12,16 +12,6 @@
 // has been asking since the doorstep ruling of 2026-08-27, asked about a thing
 // instead of a door. So this file holds that test once and both doors call it.
 //
-// ── THE NODE THIS QUOTES IS RULED AND NOT YET PLANTED ────────────────────────
-//
-// `the-town/the-reach` is world PR #21 (`wright/law-hold-reach` @ 4e81ac0c),
-// founder-RULED 2026-09-07 and unmerged as this is written, so the refusals
-// below cite an id that canon does not yet hold. That is deliberate — the
-// office builds against the ruling, and the conductor holds the release line —
-// but it is a DATED dependency and it is written here rather than left to be
-// discovered: until #21 merges, a resident who follows the citation gets "no
-// mark".
-//
 // THE ID WAS CHECKED, NOT ASSEMBLED. A day-old lesson: an id built in code out
 // of a class name and a slot is a guess, and one shipped last night naming a
 // node that does not exist. This one is the founder's own text ("Rendered in

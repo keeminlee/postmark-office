@@ -2014,6 +2014,6 @@ const server = createServer((req, res) => {
 // an operator reading `journalctl` cannot otherwise see — four processes on four
 // ports, and only this says which of them can take a letter.
 server.listen(PORT, () => console.log(
-  `postmark-office listening on :${PORT} — as-of ${AS_OF.slice(0, 12)}`
+  `postmark-office listening on :${server.address().port} — as-of ${AS_OF.slice(0, 12)}`
   + (READ_ONLY_ROLE ? ` — ROLE read (sqlite read-only, no write grant; writes → ${WRITER_URL})` : "")
 ));

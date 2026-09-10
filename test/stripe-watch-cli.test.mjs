@@ -108,7 +108,12 @@ const session = (over = {}) => ({
 });
 
 test("the CLI runs end to end: env → reader → pages → journal → state, and writes no ledger row", async (t) => {
-  const { seen, port } = await fakeStripe([session()], t);
+  // ONE session object, fed and then asserted against. `session()` derives
+  // `created` from `Date.now()` at second resolution, so calling it a second
+  // time at assert time asks a different question of the clock — and the answer
+  // differs whenever the run crosses a second boundary.
+  const fed = session();
+  const { seen, port } = await fakeStripe([fed], t);
   const town = seamTown();
   const state = join(town.repo, "state.json");
   const journal = join(town.repo, "intake.jsonl");
@@ -146,7 +151,7 @@ test("the CLI runs end to end: env → reader → pages → journal → state, a
   assert.equal(rows[0].handle_typed, "paz");
 
   // the cursor advanced, and the ledger did not move
-  assert.equal(JSON.parse(readFileSync(state, "utf8")).cursor, session().created);
+  assert.equal(JSON.parse(readFileSync(state, "utf8")).cursor, fed.created);
   assert.equal(readFileSync(ledger, "utf8"), before);
 });
 

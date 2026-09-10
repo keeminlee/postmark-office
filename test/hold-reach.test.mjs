@@ -529,12 +529,6 @@ test("the id this lane cites is the convention its live siblings keep", async ()
     assert.ok(mark, `${id} must stand in canon for this convention to be evidence`);
     assert.equal(mark.kind, "predicated");
   }
-  // And the honest half: the node this lane's refusals cite is RULED and not
-  // yet planted. If this assertion ever flips, world #21 has merged and the
-  // dated dependency in src/reach.mjs's header can come out.
-  const { mark: reach } = await worldMarkById("the-town/the-reach");
-  assert.equal(reach, null,
-    "the-town/the-reach is world PR #21, unmerged — if it now stands, update reach.mjs's dated-dependency note");
 });
 
 // ── the since: shelf's WIRING (found by this lane's own flip run) ────────────
