@@ -31,7 +31,13 @@ before(async () => {
   // by WORLD_STORE_DB, the same override an operator uses to run an office
   // beside a store that lives somewhere else.
   worldStoreFixture(join(tmp, "world.db"));
-  child = spawn(process.execPath, [join(ROOT, "src", "server.mjs"), "--port", "0", "--db", dbPath], {
+  // `--oauth-db` and `--roles-db` too: both default to the OFFICE ROOT, so two
+  // lanes running this file at once opened the same writable SQLite files and
+  // the second office died on `unable to open database file` — the same
+  // collision the port had, one directory over. The berth test below already
+  // passed its own `--oauth-db`; this is that idiom applied to every spawn here.
+  child = spawn(process.execPath, [join(ROOT, "src", "server.mjs"), "--port", "0", "--db", dbPath,
+    "--oauth-db", join(tmp, "oauth.db"), "--roles-db", join(tmp, "roles.db")], {
     env: { ...process.env, OFFICE_KEYS: `${KEY}=keemin:wright`, TOWN_CLONE: join(tmp, "no-clone-here"), WORLD_CLONE: join(tmp, "no-world-clone"), VOICES_LOG: join(tmp, "voices-log.jsonl"), TOWN_PUSH: "", WORLD_STORE_DB: join(tmp, "world.db") },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -209,7 +215,8 @@ test("PATCH /profile/{handle}/avatar reaches the REST image door and keeps its b
   const dir = mkdtempSync(join(tmpdir(), "postmark-office-avatar-srv-"));
   const dbPath = join(dir, "fixture.db");
   fixtureDb(dbPath).close();
-  const avatarServer = spawn(process.execPath, [join(ROOT, "src", "server.mjs"), "--port", "0", "--db", dbPath], {
+  const avatarServer = spawn(process.execPath, [join(ROOT, "src", "server.mjs"), "--port", "0", "--db", dbPath,
+    "--oauth-db", join(dir, "oauth.db"), "--roles-db", join(dir, "roles.db")], {
     env: { ...process.env, OFFICE_KEYS: `${KEY}=keemin:wright`, TOWN_CLONE: clone, WORLD_CLONE: join(dir, "no-world-clone"), TOWN_PUSH: "" },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -572,7 +579,8 @@ test("with NO store at all the window 404s — never an empty graph, which would
   // A second office, on its own port, pointed at a store that is not there:
   // the one shape an operator meets on a box before the first hydration.
   let port;
-  const bare = spawn(process.execPath, [join(ROOT, "src", "server.mjs"), "--port", "0", "--db", join(tmp, "fixture.db")], {
+  const bare = spawn(process.execPath, [join(ROOT, "src", "server.mjs"), "--port", "0", "--db", join(tmp, "fixture.db"),
+    "--oauth-db", join(tmp, "oauth-bare.db"), "--roles-db", join(tmp, "roles-bare.db")], {
     env: { ...process.env, OFFICE_KEYS: `${KEY}=keemin:wright`, TOWN_CLONE: join(tmp, "no-clone-here"), WORLD_CLONE: join(tmp, "no-world-clone"), VOICES_LOG: join(tmp, "voices-log-2.jsonl"), TOWN_PUSH: "", WORLD_STORE_DB: join(tmp, "no-store-here.db") },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -732,7 +740,8 @@ test("POST /berth: one keyless POST mints ephemeral standing; names are single-o
   const dir = mkdtempSync(join(tmpdir(), "postmark-office-berth-srv-"));
   const dbPath = join(dir, "fixture.db");
   fixtureDb(dbPath).close();
-  const child2 = spawn(process.execPath, [join(ROOT, "src", "server.mjs"), "--port", "0", "--db", dbPath, "--oauth-db", join(dir, "oauth.db")], {
+  const child2 = spawn(process.execPath, [join(ROOT, "src", "server.mjs"), "--port", "0", "--db", dbPath,
+    "--oauth-db", join(dir, "oauth.db"), "--roles-db", join(dir, "roles.db")], {
     env: { ...process.env, OFFICE_KEYS: `${KEY}=keemin:wright`, TOWN_CLONE: join(dir, "no-clone"), WORLD_CLONE: join(dir, "no-world-clone"), VOICES_LOG: join(dir, "voices.jsonl"), TOWN_PUSH: "" },
     stdio: ["ignore", "pipe", "pipe"],
   });
