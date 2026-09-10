@@ -157,7 +157,14 @@ process.stdout.write(`${JSON.stringify({
   summary: changed
     ? `verified against town ${TOWN_SHA.slice(0, 9)} and REWRITTEN: ${Object.keys(fh).length} handle(s) → ${new Set(Object.values(fh)).size} household(s), ${Object.keys(fresh.logins ?? {}).length} login(s); ${movedLine}${unstamped ? " (the standing file carried no town_sha — first refresh)" : ""}`
     : `verified against town ${TOWN_SHA.slice(0, 9)} and IDENTICAL to what world main already carries — nothing committed, and the file's older stamp is not staleness`,
-  town_sha: fresh.town_sha,
+  // THE STAMP THE FILE THAT NOW STANDS ACTUALLY CARRIES — not the stamp of the
+  // derivation this crossing threw away. When nothing changed, the standing file
+  // keeps its older stamp, and reporting the fresh derivation's would name a
+  // value from a different source than the thing the field names. That is the
+  // very class this lane exists to end, and the receipt had it: a crossing that
+  // wrote nothing reported a town_sha the committed file did not carry. Caught
+  // by reading the two-crossing rehearsal's own receipt against origin.
+  town_sha: changed ? fresh.town_sha : (prior?.town_sha ?? null),
   generated_at: fresh.generated_at ?? null,
   // The stamp the file carried BEFORE this crossing. On the first refresh after
   // the 2026-08-07 export this reads `2026-08-07T12:58:17.724Z`, which is the

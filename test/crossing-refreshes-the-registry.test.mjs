@@ -399,6 +399,15 @@ test("F13 · THE CROSSING AFTER A QUIET ONE PUBLISHES — the town moves, the ma
   assert.notEqual(second.receipt.registry.verified_at, second.published.town_sha,
     "they differ, and a guard that compares them for equality refuses a town that is merely alive");
 
+  // AND THE RECEIPT'S OWN `town_sha` NAMES THE FILE THAT STANDS, not the
+  // derivation this crossing threw away. It did not, until the two-crossing
+  // rehearsal's receipt was read back against origin: a crossing that wrote
+  // nothing reported the fresh derivation's stamp, which is a value from a
+  // different source than the field names — the very class this lane is about.
+  assert.equal(second.receipt.registry.town_sha, second.published.town_sha,
+    "the receipt's town_sha must be the stamp the committed registry carries");
+  assert.equal(second.receipt.registry.town_sha, stampAfterFirst);
+
   // And a THIRD crossing, because "after a quiet one" must not be a one-off.
   moveTownWithoutMovingTheMapping(first.root, "two");
   const third = runCrossing(first.root, { env: { SETTLEMENT_SOURCE: "git" } });
