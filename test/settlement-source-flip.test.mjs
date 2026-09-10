@@ -342,10 +342,31 @@ test("F-git · SETTLEMENT_SOURCE=git issues the train's chain plus the ghost swe
   // genuine unexplained one through. F-collide covers that path; this list stays
   // narrow, which is what makes it worth having.
 
+  // ── A COMMAND THAT GREW A FLAG IS NOT A COMMAND THAT MOVED ────────────────
+  //
+  // The branch hands the sweep `--town-sha`, the registry-freshness pin. That is
+  // one ARGUMENT added to a command the train already issues, so the raw multiset
+  // difference reports it twice over: the train's spelling as missing and the
+  // branch's as added. Reporting it as "the rollback dropped a command" would be
+  // false, and the assertion below would have to be weakened to swallow it.
+  //
+  // So the substitution is declared, as a PAIR, and both halves must match or it
+  // is not one: a branch line that matches the second pattern cancels exactly one
+  // train line matching the first. Anything else is still missing or added.
+  const SUBSTITUTIONS = [
+    [/^node settlement-sweep\.mjs --stakes stakes\.json --json$/,
+     /^node settlement-sweep\.mjs --stakes stakes\.json --town-sha <sha> --json$/],
+  ];
+
   // Multiset difference both ways, so a reordering or a dropped duplicate shows.
   const minus = (a, b) => { const c = [...b]; return a.filter((x) => { const i = c.indexOf(x); if (i === -1) return true; c.splice(i, 1); return false; }); };
-  const missing = minus(trainCmds, branchCmds);
-  const added = minus(branchCmds, trainCmds);
+  let missing = minus(trainCmds, branchCmds);
+  let added = minus(branchCmds, trainCmds);
+  for (const [was, now] of SUBSTITUTIONS) {
+    const iWas = missing.findIndex((c) => was.test(c));
+    const iNow = added.findIndex((c) => now.test(c));
+    if (iWas !== -1 && iNow !== -1) { missing.splice(iWas, 1); added.splice(iNow, 1); }
+  }
 
   assert.deepEqual(missing, [],
     "the rollback must issue every command the train's chain issues — anything missing here is behaviour the "

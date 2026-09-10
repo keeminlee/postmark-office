@@ -748,7 +748,20 @@ fi
 # The sweep: publishes eligible drafts into local main, rebases local
 # sketchbooks. It never pushes — publication is gated below.
 SWEEP_JSON="$WORK/sweep.json"
-(cd "$SWEEP" && node tools/settlement-sweep.mjs --stakes "$WORK/stakes.json" --json) > "$SWEEP_JSON" 2>"$WORK/sweep.err" || {
+# `--town-sha` is the OTHER HALF of the registry refresh, and it is what makes the
+# refresh a construction rather than a habit (founder, 2026-09-09: "please make
+# sure this incident cannot happen again by construction"). The step above
+# re-derives the registry; this makes the world REFUSE to fold one derived from
+# any town but the one this crossing pinned — including an unstamped one, which
+# is the 2026-08-07 file exactly. Without it the refresh is a thing that usually
+# runs, and "usually" is what thirty-three days of staleness looked like from
+# inside.
+#
+# NOT passed to tools/settlement-isolate.mjs below, and that is sound rather than
+# an omission: the isolation pass only runs after this sweep has SUCCEEDED, so
+# the registry it would re-check has already been checked, on this same tree, by
+# this same line.
+(cd "$SWEEP" && node tools/settlement-sweep.mjs --stakes "$WORK/stakes.json" --town-sha "$TOWN_SHA" --json) > "$SWEEP_JSON" 2>"$WORK/sweep.err" || {
   # THE STARVING CROSSING has its own status, because "refused" is what a
   # crossing says when the record is wrong and this is what it says when the
   # crossing itself is broken — an operator must be able to tell them apart at
