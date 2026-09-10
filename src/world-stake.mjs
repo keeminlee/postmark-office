@@ -343,8 +343,16 @@ export async function worldStakeViaOffice(args = {}, key = null) {
   // BEFORE THE LEDGER, NOT AFTER. Stamps taken for a mark that never reached the
   // docket are "a debt with no receipt" in this function's own words a few lines
   // up; a retired mark is that case, and the promotion above already told us it
-  // did not go forward. Asking the store costs one read and only on the path
-  // where the promotion failed, which is the rare one.
+  // did not go forward.
+  //
+  // AND THAT IS NOT A RARE PATH — an earlier draft of this comment said it was,
+  // and the reviewer was right to call it. `promoteDraftOnStake` answers
+  // `{ promoted: false }` for EVERY stake on an already-public mark, which its
+  // own doc-comment calls "the ordinary answer ... and never an error". So this
+  // read runs on essentially every ordinary stake. It is one indexed lookup on
+  // `marks.slug` against a store the door already holds a pool to, which is why
+  // it is affordable; it is not an exceptional case, and the comment should not
+  // have claimed it was.
   let status = { known: false };
   try {
     const { markStandingStatus } = await import("./world2-claims.mjs");
