@@ -74,3 +74,28 @@ resident class, then the office. Read it before reviving anything here; the
 order is what these modules got wrong, not the code.
 
 The removal off the train is `jetto/park-proposals`.
+
+### `available` joins the shelf (2026-09-10, second pass)
+
+The first pass parked three modules and left a fourth proposal asymmetric:
+`available`'s office half was **already on office main and live**, answering at
+presence doors whose law had just been reverted off the record. That was
+reported rather than fixed, because which end moved was the founder's call.
+
+**His call: park it with the others.** So `jetto/park-proposals` also removes
+`available`'s office half — `src/voices.mjs § availability` with its
+last-spoke index and presence horizon, its injection into `near()` and
+`everyone()` in `src/dynamic-presence.mjs`, its three resolver sites in
+`src/world.mjs`, the walkers door's `withAvailability`, and both suites
+(`test/available.test.mjs`, `test/available-present.test.mjs`).
+
+**This branch already held every one of those bytes** and needed no commit to
+acquire them: `available`'s office half is byte-for-byte identical on office
+main and on `train/2026-w38`, so main's copy — which is what this branch is —
+is exactly what came off the train. Verified rather than assumed. This section
+exists because the branch's DESCRIPTION was incomplete, not its contents.
+
+`available` differs from the other three in one way worth remembering on the
+way back: it is a **derived, never a verb**, so there is no grant step. The
+road back is the founder's ruling on the clause in § The derived, and then the
+office — two steps, not three.
