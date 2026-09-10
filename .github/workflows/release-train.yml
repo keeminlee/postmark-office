@@ -218,7 +218,6 @@ jobs:
           WANTED: ${{ steps.lane.outputs.tag }}
         run: |
           set -euo pipefail
-          git fetch --tags -q origin
           TAG="$WANTED"
           if [ -z "$TAG" ]; then
             TAG=$(git tag -l 'release/*' --sort=-creatordate | head -1)
