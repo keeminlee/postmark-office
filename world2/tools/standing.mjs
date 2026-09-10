@@ -549,11 +549,24 @@ export function markStanding(mark, byId) {
  * to it, so the O(N^2) pass runs over the answered marks' ancestry instead of
  * over the register.
  *
- * IDENTICAL BY CONSTRUCTION, and the argument is one line: `containmentParentOf`
- * is a pure function of (mark, records, root, ranked), and all four are the same
- * whether it is called eagerly for every record or lazily for some. `only` can
- * therefore only ever REMOVE entries from the returned Map; it can never change
- * one. The falsifier proves that rather than trusting it.
+ * THE TWO THINGS `only` MUST NOT CHANGE, and the second one is the one that got
+ * away the first time this was written.
+ *
+ *   1 · THE VERDICT FOR A RECORD. `containmentParentOf` is a pure function of
+ *       (mark, records, root, ranked), and all four are the same whether it is
+ *       called eagerly for every record or lazily for some.
+ *   2 · WHICH RECORD A SLUG RESOLVES TO. The base walk is last-wins, and at
+ *       step 5.5 two records DO share a slug — see § last-wins at the bottom of
+ *       this function. The first cut resolved first-wins, and a real amendment
+ *       then answered as the standing mark instead of as the claim: a commons
+ *       claim through the escrow gate unchecked, silently. That is the whole of
+ *       the difference between "only removes entries" and "only is exact".
+ *
+ * NO FALSIFIER COVERS THIS PATH. `falsifier-standing-equality.mjs` runs the FULL
+ * walk against 1.0's fold and never passes `only` at all, so it is green on both
+ * readings and cannot see the difference. What holds this is
+ * `test/world2-standing.test.mjs`'s duplicate-slug fixture, which was run red
+ * against the first-wins version before the fix went in.
  *
  * IT REFUSES A SLUG IT WAS NOT GIVEN. `escrowAbsentAmong` reads a missing tier
  * as "not commons, skip" — which is right when the walk genuinely had no verdict
@@ -707,8 +720,24 @@ export function computeStanding(rows, { only = null, containment = null } = {}) 
     for (const mk of records) out.set(mk.slug, markStanding(mk, byId));
     return out;
   }
+  // LAST-WINS, and it is the whole of `only`'s exactness.
+  //
+  // The base walk is `for (const mk of records) out.set(mk.slug, …)`, so when two
+  // records share a slug the LAST one is the answer. At step 5.5 `records` is
+  // `[...standingRows, ...candidates]`, so the last one is the CANDIDATE — which
+  // is what that gate is asking about in its own words, "in the shape
+  // `materializeClaims` is about to insert".
+  //
+  // Two records DO share a slug there, on a path this office opened deliberately:
+  // `clearing-job.mjs` step 1 refuses a claim whose slug already stands, except
+  // an amendment, which continues undecided and reaches step 5.5 carrying the
+  // standing mark's slug. A first-wins map answered with the standing MARK
+  // instead, and the two differ exactly when the amendment moves the mark off its
+  // own ground — which is what an amendment is for. Found by the reviewer on the
+  // shipped tool: the amended claim dropped out of `escrow: 51 commons claim(s)
+  // LOCKED UNCHECKED` and locked with nothing staked behind it, silently.
   const bySlug = new Map();
-  for (const mk of records) if (!bySlug.has(mk.slug)) bySlug.set(mk.slug, mk);
+  for (const mk of records) bySlug.set(mk.slug, mk);
   for (const slug of only) {
     const mk = bySlug.get(slug);
     // See § `only` — a slug the caller asked about and did not hand in is a
