@@ -349,7 +349,7 @@ try {
   //     The walk itself is `materialize.mjs`'s, shared with the REVIEW lane for
   //     the same reason step 6 is: a ruling that grants ground has to move the
   //     neighbours' standing exactly as a clearing does.
-  const { standing, moved, notes } = await recomputeStanding(q);
+  const { standing, moved, notes, containment: containmentSeen } = await recomputeStanding(q);
   for (const n of notes) console.log(`  ⚑ standing: ${n}`);
 
   // Close, pin, open the successor.
@@ -378,6 +378,11 @@ try {
         // recompute over a freshly floored store can move hundreds of rows, and a
         // window row is not where that list belongs. The count is exact.
         moves: moved.slice(0, 25),
+        // What the containment index could speak for (016_marks_bbox_gist.sql).
+        // `indexed: false` is a crossing that paid the old price for the walk
+        // because the migration is not applied — the one state that otherwise
+        // shows up nowhere but the clock.
+        containment: containmentSeen,
         ...(notes.length ? { notes } : {}),
       },
     })]);

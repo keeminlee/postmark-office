@@ -197,7 +197,19 @@ export async function recomputeStanding(q) {
   // than law (standing.mjs § the tripwires). Recorded in the receipts, not
   // thrown: a write must not fail because the town outgrew a premise, but nobody
   // should have to go looking for the day it did.
-  return { standing, moved, notes: admissionNotes(standing) };
+  // WHAT THE PREFILTER COULD SPEAK FOR, on the record. Without this the
+  // containment index is a thing that either helped or did not and left nothing
+  // behind to say which — and its two failure modes are both quiet: migration
+  // 016 absent (`indexed: false`, the walk silently pays the old price) and the
+  // loose set growing (rows whose `bbox` does not bound them, which the walk
+  // must keep scanning). Both are counts a reader can watch move.
+  return {
+    standing, moved, notes: admissionNotes(standing),
+    containment: containment
+      ? { indexed: true, covered: containment.covered.size, loose: containment.loose.length,
+          ...(containment.loose.length ? { loose_marks: containment.loose.slice(0, 10) } : {}) }
+      : { indexed: false },
+  };
 }
 
 /**
