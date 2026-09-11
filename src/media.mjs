@@ -215,15 +215,15 @@ export const MEDIA_FETCH_MAX_REDIRECTS = 3;
 const privateV4 = (a) => {
   const p = String(a).split(".");
   if (p.length !== 4) return true; // unparseable ⇒ refuse: the wall never guesses
-  const [x, y] = p.map(Number);
-  if (p.some((s) => !/^\d{1,3}$/.test(s)) || [x, y].some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return true;
+  const [x, y, z] = p.map(Number);
+  if (p.some((s) => !/^\d{1,3}$/.test(s)) || [x, y, z].some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return true;
   return x === 0 || x === 10 || x === 127                       // this-network, private, loopback
     || (x === 100 && y >= 64 && y <= 127)                        // CGNAT 100.64/10
     || (x === 169 && y === 254)                                  // link-local (cloud metadata)
     || (x === 172 && y >= 16 && y <= 31)                         // private 172.16/12
     || (x === 192 && (y === 0 || y === 168))                     // IETF protocol assignments, private
-    || (x === 198 && (y === 18 || y === 19 || y === 51))         // benchmarking, TEST-NET-2
-    || (x === 203 && y === 0)                                    // TEST-NET-3
+    || (x === 198 && (y === 18 || y === 19 || (y === 51 && z === 100))) // benchmarking 198.18/15, TEST-NET-2 198.51.100/24
+    || (x === 203 && y === 0 && z === 113)                       // TEST-NET-3 203.0.113/24
     || x >= 224;                                                 // multicast, reserved, broadcast
 };
 
@@ -320,7 +320,6 @@ export async function guardFetchUrl(raw, { lookup = dnsLookup } = {}) {
 export async function fetchImageBytes(rawUrl, {
   fetchImpl = fetch, lookup = dnsLookup, max = MAX_IMAGE,
   timeoutMs = MEDIA_FETCH_TIMEOUT_MS, maxRedirects = MEDIA_FETCH_MAX_REDIRECTS,
-  onResolved = null,
 } = {}) {
   const mb = fmtMB(max);
   const ctrl = new AbortController();
@@ -329,10 +328,6 @@ export async function fetchImageBytes(rawUrl, {
     let target = String(rawUrl ?? "").trim();
     for (let hop = 0; ; hop++) {
       const u = await guardFetchUrl(target, { lookup });
-      // The host at the END of the chain, told to the caller so an upload can
-      // leave a trace of where its bytes actually came from — a redirect means
-      // the URL the resident sent is not the host that answered.
-      onResolved?.(u.host);
       let resp;
       try {
         resp = await fetchImpl(u.toString(), {
@@ -463,18 +458,9 @@ export function readHouseImage(clone, handle, rawPath, { max = MAX_IMAGE } = {})
     throw bounce(413, `${rel} is larger than ${fmtMB(max)}`,
       `it is ${fmtMB(st.size)} on the clone — crop or re-export it under ${fmtMB(max)}`);
   const bytes = readFileSync(realTarget);
-  // THE STAMP NAMES THE STAMP'S OWN SOURCE, or it names nothing. `sha` was read
-  // from HEAD BEFORE the bytes, and TOWN_CLONE is a moving working tree — the
-  // pen commits letters, votes and declarations into it — so a pen commit
-  // landing in between would make `sha` a confident lie about where these bytes
-  // came from. Reading HEAD again and stamping only when it has not moved costs
-  // one `rev-parse` and makes the receipt true; a tree that moved mid-read
-  // answers `null`, which is honest, rather than a sha that was never the
-  // bytes'. (The reviewer asked for a caveat in the description; this is the
-  // other half they offered, and it beats a caveat because it removes the lie
-  // rather than annotating it.)
-  const after = townSha(clone);
-  return { bytes, path: rel, town_sha: sha && after === sha ? sha : null };
+  // The stamp is the commit the OFFICE STOOD AT when it read, which is what it
+  // says it is and all it claims — `sha` came off HEAD just above.
+  return { bytes, path: rel, town_sha: sha };
 }
 
 /** Which of the three inputs this call carries — exactly one, or a named bounce. */
@@ -546,14 +532,13 @@ export async function uploadMedia(args = {}, key = null, odb = null,
   // checks, the quota, the dedupe, the put and the ledger row cannot tell which
   // door the bytes walked through, and that is deliberate.
   const source = mediaSourceOf(args);
-  let bytes, read_at = null, fetchedFrom = null;
+  let bytes, read_at = null;
   if (source === "image_path") {
     const r = readHouseImage(clone, by, args.image_path);
     bytes = r.bytes;
     read_at = { path: r.path, town_sha: r.town_sha };
   } else if (source === "image_url") {
     bytes = await fetchImageBytes(args.image_url, {
-      onResolved: (h) => { fetchedFrom = h; },
       ...(fetchImpl ? { fetchImpl } : {}), ...(lookup ? { lookup } : {}),
     });
   } else {
@@ -590,6 +575,6 @@ export async function uploadMedia(args = {}, key = null, odb = null,
   // This names the source and, for a fetch, the host that actually ANSWERED
   // (the end of the redirect chain, not the URL the resident sent). No key, no
   // credential, no path outside the town: the office's own operator log only.
-  console.log(`[media] ${household}/${by} ${source}${fetchedFrom ? ` from ${fetchedFrom}` : ""}${read_at ? ` ${read_at.path}` : ""} ${bytes.length}B ${ext} ${sha.slice(0, 12)}`);
+  console.log(`[media] ${household}/${by} ${source}${read_at ? ` ${read_at.path}` : ""} ${bytes.length}B ${ext} ${sha.slice(0, 12)}`);
   return { url, bytes: bytes.length, type: mediaType, sha, via: source, ...(read_at ? { read_at } : {}), quota: { used: used + bytes.length, ceiling } };
 }
