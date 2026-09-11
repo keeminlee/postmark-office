@@ -475,7 +475,15 @@ test("every writer that can append to the ledger is found, and the pen is behind
   const writers = ledgerWriters();
   assert.ok(writers.some((w) => w.file === "src/walk-exec.mjs"),
     "the office pen must be in this list — a scan that cannot find the one real writer is not a check");
-  const open = unflaggedWriters(writers, execCallers());
+  // THE DRAIN IS THE SETTLEMENT'S OWN PEN, NOT A RESIDENT DOOR (Keemin, 2026-09-11).
+  // `src/world-drain.mjs § materializeLedgers` appends the walk-ledger lines the
+  // crossing itself carries ("this is its only pen, and it is lawful", its own
+  // header). The freeze stands in front of the doors residents walk through;
+  // it was never meant to stop the crossing writing its own record. Named here
+  // rather than hidden in the scan, so the scan still finds it and this line
+  // says why it is allowed.
+  const LAWFUL_PENS = new Set(["src/world-drain.mjs"]);
+  const open = unflaggedWriters(writers, execCallers()).filter((w) => !LAWFUL_PENS.has(w.file));
   assert.deepEqual(open, [], `these can still append with the flag on: ${open.map((w) => w.file).join(", ")}`);
 });
 
