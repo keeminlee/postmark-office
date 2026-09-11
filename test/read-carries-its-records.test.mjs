@@ -129,6 +129,32 @@ test("FALSIFIER 3 — the ground set is there, whole, and is not the fold", asyn
   for (const id of ids) assert.equal(bare[id].id, id);
 });
 
+test("FALSIFIER 3b — the DIAGNOSTIC shape carries records too, and the same ones", async (t) => {
+  if (!HAVE_WORLD) return t.skip(NO_WORLD);
+  // The resident view boots on this branch, because it is the only one carrying
+  // the radial whole. It was also the one branch that named ids and carried no
+  // records — the gap closed everywhere except on the shape that needs it.
+  const ground = await groundFromTheRecord();
+  for (const [where, at] of STANDPOINTS) {
+    const d = await worldEyes({ ...at, diagnostic: true });
+    assert.ok(d.records, `${where}: the diagnostic read carries no records at all`);
+    // ITS OWN NAMED SET, from fov — not from `objects`, which this branch never builds
+    const named = new Set([...(d.fov?.carried ?? []), ...(d.fov?.far ?? [])].map((o) => o.id));
+    assert.ok(named.size, `${where}: fov named nothing — this arm would be vacuous`);
+    for (const id of named)
+      assert.ok(Object.hasOwn(d.records, id),
+        `${where}: the diagnostic read names ${id} and carries no record for it`);
+    for (const id of Object.keys(d.records))
+      assert.ok(named.has(id) || ground.ids.has(id),
+        `${where}: the diagnostic \`records\` carries ${id}, neither named nor ground`);
+    // AND THE TWO BRANCHES AGREE about the same standpoint. A door that answered
+    // one set of records bare and another under a flag would be two doors.
+    const bare = await worldEyes(at);
+    assert.deepEqual(Object.keys(d.records).sort(), Object.keys(bare.records).sort(),
+      `${where}: the bare read and the diagnostic read disagree about what they carry`);
+  }
+});
+
 test("FALSIFIER 4 — a read with the ground set gone is DETECTABLY gone", async (t) => {
   if (!HAVE_WORLD) return t.skip(NO_WORLD);
   // The flip this file's other tests are checked against: if `records` ever

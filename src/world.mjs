@@ -1051,7 +1051,23 @@ export async function worldOrient(args = {}, key = null, { roll = [] } = {}) {
   const { verbs } = await mods();
   const at = choice.coords ?? await standCoords(choice.handle, w);
   const crossing = crossingOf(args);
-  const o = verbs.orient({ x: at.x, y: at.y, crossing }, w);
+  // THE SAME DEFECT, ONE DOOR OVER — `orient(state, world, { crossing = 0, dials })`
+  // (world-verbs.mjs:29) reads the crossing from the options exactly as
+  // `openYourEyes` does, and this call put it on the state object exactly as
+  // that one did. Measured before the fix: `you.fog.crossing` came back 0 at
+  // every crossing asked for, up to 999.
+  //
+  // Worse here than next door, because the field is NAMED: `/world/orient`
+  // publishes `you.fog.crossing: 0` — not a number quietly computed from the
+  // wrong clock, but the answer stating the wrong clock outright. `inFog` and
+  // `aboveFog` ride the same fog model, so the light a reader is told they are
+  // standing in was crossing-0's light.
+  //
+  // FIXED WITH ITS TWIN AND NOT AFTER IT. Correcting `openYourEyes` alone would
+  // have left the two doors disagreeing about the fog at one standpoint — a
+  // NEW defect, manufactured by a partial fix, and a worse one than two doors
+  // being wrong together. The falsifier asserts that agreement directly.
+  const o = verbs.orient({ x: at.x, y: at.y }, w, { crossing });
   // the note is embodied property: only the body's standpoint carries it — a
   // spectator glance (coords) is nobody's, so it reads nobody's note.
   const note = choice.handle ? noteForHandle(WORLD_CLONE, key, choice.handle) : null;
@@ -1279,7 +1295,24 @@ export async function worldEyes(args = {}, key = null, { roll = [] } = {}) {
   const { verbs } = await mods();
   const at = choice.coords ?? await standCoords(choice.handle, w);
   const crossing = crossingOf(args);
-  const r = verbs.openYourEyes({ x: at.x, y: at.y, crossing, name: args.name }, w);
+  // ⚑ THE CROSSING GOES IN THE OPTIONS, NOT THE STATE (2026-09-10).
+  //
+  // This read `openYourEyes({ x, y, crossing, name }, w)` and the engine has
+  // never looked there: `openYourEyes(state, world, { crossing = 0, … })`
+  // (world-verbs.mjs:63) takes it from the THIRD argument, which this call did
+  // not pass. So `fogModel(crossing)` ran at 0 on every read this office has
+  // ever served — measured before the fix, at five crossings including 999,
+  // `radial.crossing` came back 0 and `fog.thickness` 0.1 every time.
+  //
+  // It failed silently and it failed CONVINCINGLY: an unknown key on a state
+  // object is not an error, the answer still has a fog block, and the number in
+  // it is a real number for a real crossing — just never the one you asked for.
+  // Nothing in the told SET moved, because at this fold's scale `fogHidden` is
+  // 0 everywhere, which is exactly why it survived: the only witness was a
+  // thickness nobody was comparing against a second source.
+  //
+  // world2-serve.mjs:570 has always had the right form. This is the older twin.
+  const r = verbs.openYourEyes({ x: at.x, y: at.y, name: args.name }, w, { crossing });
   // tell is a lazy thunk on the verb's return — render it here so the JSON
   // skin carries the prose (a function would vanish in serialization).
   const engineTelling = typeof r.tell === "function" ? r.tell() : r.tell ?? null;
@@ -1303,7 +1336,22 @@ export async function worldEyes(args = {}, key = null, { roll = [] } = {}) {
     standpoint: { ...at, stance: choice.stance }, crossing: { n: crossing, derivation: CROSSING_DERIVATION },
     telling, ...rest, ...(present ? { present } : {}),
   };
-  if (args.diagnostic === true) return diagnosticEyes(full);
+  // ── `records` RIDES THE DIAGNOSTIC SHAPE TOO (2026-09-10) ─────────────────
+  //
+  // The resident view boots on this branch, because it is the only one that
+  // carries the radial whole — `fov` + `radial`, the eight fields and the
+  // eighteen-field rows the painting and the telling pane actually read. It was
+  // the one shape that named ids and carried no records, which is the gap
+  // `records` exists to close; leaving it out here would have meant the door
+  // closing the gap on the shape nobody boots on.
+  //
+  // THE IDS ARE `fov.carried` + `fov.far`, not `objects`: `objects` is built
+  // below, on the far side of this return, from exactly those two lists. Taking
+  // the ids from their source rather than from a projection of it is one fewer
+  // place for the two to drift apart.
+  if (args.diagnostic === true)
+    return { ...diagnosticEyes(full),
+      records: await markRecords([...(r.fov?.carried ?? []), ...(r.fov?.far ?? [])].map((o) => o.id), w) };
 
   const markById = new Map((w.marks ?? []).map((mark) => [mark.id, mark]));
   const objects = [...(r.fov?.carried ?? []), ...(r.fov?.far ?? [])].map((object) => {
