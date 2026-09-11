@@ -2895,7 +2895,7 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
 
   const w = await world();
   const skeleton = w?._raw?.skeleton ?? null;
-  const { parseWalkLedger, currentDeparture, positionAt, fractionalCrossing, extentForArrival, isWalkArrival, targetEntryT } =
+  const { parseWalkLedger, currentDeparture, positionAt, fractionalCrossing, extentForArrival, isWalkArrival, targetEntryT, walkTargetFor } =
     await import(pathToFileURL(join(worldClone, "tools", "walk.mjs")));
 
   // WHERE IN THE TARGET — issue #5 §1, RENAMED 2026-08-19 (founder-ruled, the
@@ -2993,6 +2993,37 @@ export async function walkViaOffice(worldClone, payload = {}, key = null) {
     const asked = withinFor(forClone, targetExtent);
     if (asked === null) targetFrom = `${targetFrom} — its center`;
     targetExtent = asked;
+  }
+
+  // ── RING WINS HERE TOO (founder-ruled 2026-09-11) ─────────────────────────
+  //
+  // A RINGED target's ground is its ring, so its arrival point is the ring's
+  // and not its bounding box's. The world's own walk.mjs owns what that MEANS
+  // (`walkTargetFor` — the same discipline as `extentForArrival` right above:
+  // the office asks, it never decides, so the door and the pen cannot drift
+  // into two answers), and it answers null for every mark without a ring, which
+  // is every parcel, every home and all but 23 marks in the town.
+  //
+  // OPTIONAL, exactly as `extentForArrival` and `isWalkArrival` are optional
+  // here: this office deploys on its own clock and may be standing on a clone
+  // that predates the ruling. An older clone has no `walkTargetFor`, this block
+  // does not run, and the door writes the box it has always written.
+  //
+  // The result is a departure with a frozen `toward` and NO `within` — the
+  // shape `src/arena.mjs § arrivalOnGround` already writes and the vessel has
+  // always sailed. The arena block below still runs after this and still wins
+  // for a wheel-keeping ground, which is right: a ground that places its own
+  // entrants has said something more specific than "somewhere on my ground".
+  if (targetMarkId && typeof walkTargetFor === "function") {
+    const m = (w.marks ?? []).find((k) => k.id === targetMarkId);
+    const ringed = m ? walkTargetFor(m, from, forClone) : null;
+    if (ringed) {
+      toward = ringed.toward;
+      targetExtent = null;
+      targetFrom = `${targetFrom.replace(/ — its center$/, "")} — ${
+        forClone === "center" || forClone === "centre" ? "its center" : "its ring's near edge"
+      }, on its own ground`;
+    }
   }
 
   /**

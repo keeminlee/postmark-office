@@ -343,13 +343,35 @@ export async function movementStandpoint(handle, worldState, {
   const moving = own?.arrived === false;
 
   const inFrame = Boolean(fold.frame);
+  // ── AN ARRIVED WALKER STANDS WHERE THE ROAD ENDED ─────────────────────────
+  //
+  // Founder-ruled 2026-09-11, beside "ring wins everywhere". This line used to
+  // read `moving ? own : fold.world` — mid-leg the road owns the position,
+  // arrived, the frame does — and for anyone ASHORE that handed the answer to
+  // `foldFrames`, whose world-frame branch sets `local = endWorld`, which is the
+  // record's `toward`: for a rim walk, the MARK'S ANCHOR. So two functions
+  // answered "where is wright" with two different points. `positionAt` put him
+  // at his rim arrival, (1022.3, -1669); the standpoint put him at the terrace's
+  // anchor, (967, -2450.5), 783 m away — and the enter door, which measures from
+  // the standpoint, let him through a door he was nowhere near, because
+  // `enterExitPlan` saw him already inside and never set `walk`, so the doorstep
+  // check had nothing to run on.
+  //
+  // THE FRAME KEEPS OWNING WHICH THING YOU ARE ATTACHED TO. IT STOPS OWNING
+  // WHERE YOU STAND. Ashore there is no frame to compose through and the road's
+  // end is simply the better of two answers to the same question. Aboard a
+  // CARRIER the composition is the whole point and is untouched: your offset in
+  // her frame plus where she is now, because the road's end is a quay she left
+  // hours ago. That is the entire distinction — `inFrame`, nothing else.
+  // `own` is null only when the clone's `positionAt` could not read the last
+  // record at all, and a standpoint that threw over that would be worse than a
+  // coarse one — the fold still has an answer, so it is still given.
+  const stand = (inFrame && !moving) || !own ? fold.world : own;
+
   return {
     handle,
-    // Mid-leg the road owns the position; arrived, the frame does. Both are the
-    // same function of the same record — they differ only in whether the leg is
-    // finished, which is exactly what `arrived` means.
-    x: moving ? own.x : fold.world.x,
-    y: moving ? own.y : fold.world.y,
+    x: stand.x,
+    y: stand.y,
     placed: true,
     source: inFrame ? "frame" : "walk",
     moving,
