@@ -1231,8 +1231,16 @@ async function groundMarkIds(w) {
   } catch (e) {
     // LOUD, never silent: a read that quietly lost its floor paints a town on
     // nothing, and the page has no way to tell that from a town with no regions.
+    //
+    // ⚑ AND NOT CACHED. The `_grounds.set` below is deliberately inside the
+    // success arm: a cache written on the failure path would let ONE transient
+    // engine-import failure poison the ground for the life of that world
+    // object, and every read after it would answer floorlessly and silently
+    // while the one console line that said why scrolled away. A failed read
+    // pays the retry; that is the cheaper of the two.
     console.error(`[world] the ground set could not be read (${String(e?.message ?? e).slice(0, 140)}) — `
-      + `\`records\` will carry only what the radial names`);
+      + `\`records\` carries only what the radial names for this read, and the next read will try again`);
+    return [];
   }
   _grounds.set(w, ids);
   return ids;
