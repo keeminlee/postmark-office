@@ -1810,6 +1810,30 @@ export async function worldMyMarks(key = null, { offset = 0 } = {}) {
       kind: mark.kind,
       tier: mark.tier,
       body: mark.body,
+      // ── WHERE THE MARK STANDS (2026-09-10, Keemin: "can we just add coords
+      // to my marks?" — yes) ──────────────────────────────────────────────────
+      //
+      // This door was built as a PORTFOLIO read — what you own, what you have
+      // backed — and a portfolio has no map, so it never carried a position.
+      // That was fine while the page looked every id up in the whole fold. It
+      // is not fine now: the resident view draws "the field of view, plus all
+      // of yours whether it holds them or not" (Keemin, 2026-08-04) without a
+      // fold to look anything up in, and a row with no `at` cannot be drawn at
+      // all. The rule did not change; the thing that used to supply the
+      // position went away.
+      //
+      // Same two fields the draft and docket rows have always carried, out of
+      // the same mark record, so a resident's own marks read one way across
+      // this door's four lists rather than two.
+      //
+      // ABSENT, NOT NULL, when the mark has neither — and that is the honest
+      // shape here, not tidiness: a predicated or naming mark HAS no site of
+      // its own (the engine skips exactly these: `if (!mk.at) continue`), and
+      // `at: null` would say "this thing is somewhere unknown" about a thing
+      // that is nowhere by construction. A consumer asks `if (row.at)`, which
+      // is the question it actually has.
+      ...(mark.at ? { at: mark.at } : {}),
+      ...(mark.extent ? { extent: mark.extent } : {}),
       stamps: Number(mark.stamps ?? 0),
       weight: Number(mark.weight ?? 0),
       // The ✦ figure's receipt, straight from the fold (marks-fold.mjs §

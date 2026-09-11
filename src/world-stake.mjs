@@ -225,6 +225,14 @@ export function backedRow(row, { mark = null, belongs = () => false } = {}) {
     kind: mark?.kind ?? null,
     tier: mark?.tier ?? null,
     body: mark?.body ?? null,
+    // WHERE IT STANDS (2026-09-10) — see world.mjs § published rows for the
+    // ruling and the reason. Absent rather than null when the mark carries
+    // neither, and absent again when there is no mark at all: the `unread`
+    // arm below already says the record is elsewhere, and a null `at` beside
+    // that sentence would be a second, weaker way of saying the same thing —
+    // one that reads as "somewhere unknown" instead of "not in hand here".
+    ...(mark?.at ? { at: mark.at } : {}),
+    ...(mark?.extent ? { extent: mark.extent } : {}),
     // Absent from canon AND from the caller's live layer: say so, rather than
     // letting four nulls read as "a mark with no kind and no body".
     ...(mark ? {} : { unread: "this mark's fields are in neither published canon nor your own live layer — the stake is real and its record is elsewhere" }),
