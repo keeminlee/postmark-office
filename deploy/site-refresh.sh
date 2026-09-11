@@ -532,7 +532,16 @@ build_once() {
     fi
 
     have="$(world_sha_of "$BUILD/node_modules/.package-lock.json")"
-    if [ -n "$want" ] && [ "$want" != "$have" ]; then
+    # THE ADVANCE RE-LOCKS EVERY TICK (reviewer, 2026-09-11 § 3). `npm install
+    # pkg@github:…#sha` is what rewrites the build tree's package-lock.json, and
+    # build-stamp.mjs reads THAT file first. Guarded on want != have alone, the
+    # second advance tick with the same decision would skip the install and
+    # leave the lockfile naming the floor while node_modules carries the
+    # settlement — /build.json publishing the floor over a tree serving S47,
+    # the 2026-09-10 receipt lie by a different route. So: install when the
+    # worlds differ, OR whenever the decision is advance. A hold that already
+    # agrees stays the one-file-read no-op.
+    if [ -n "$want" ] && { [ "$want" != "$have" ] || [ "$decision" = "advance" ]; }; then
       say "world: node_modules carries ${have:-nothing}, this build wants $(echo "$want" | cut -c1-8) — installing"
       ( cd "$BUILD" && npm install --no-audit --no-fund --silent "postmark-world@github:keeminlee/postmark-world#$want" ) \
         || die "the world this build decided on would not install"
