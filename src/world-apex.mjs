@@ -52,6 +52,7 @@ import {
   walkViaOffice,
   walkersAround,
   witnessStamp,
+  markRecords,
   worldEyes,
   worldNoteViaOffice,
   worldInvestigate,
@@ -2221,6 +2222,20 @@ async function apexRead(args, key, ctx = {}) {
   // lane that already carries it.
   const focus = await focusOn(args, key);
 
+  // ── THE RECORDS THIS READ NAMES (2026-09-10) ──────────────────────────────
+  //
+  // Computed from the FINAL `nearby`, not from `seen.objects`, and the
+  // difference is `withLoose`: inside a portal it INJECTS the ground's loose
+  // things into the list whether or not salience chose them (see its own note).
+  // Taking the ids before that injection would hand a reader a portal floor it
+  // was told about and cannot resolve — the exact hole this field exists to
+  // close, reopened one branch over.
+  const nearbyOut = portal?.state ? withLoose(nearby, portal, { standpoint: oriented.standpoint }) : nearby;
+  const records = await markRecords([
+    ...spine.map((m) => m.id),
+    ...nearbyOut.map((o) => o.id),
+  ]);
+
   return {
     // ── THE PORTAL RIDES INSIDE THE STANDPOINT ───────────────────────────────
     //
@@ -2278,7 +2293,11 @@ async function apexRead(args, key, ctx = {}) {
     // `loose:` on a nearby entry — what is lying on this ground that a hand
     // could `take`. Only ever added inside a portal, and only to the things
     // that are actually loose there, so an ordinary reach entry is untouched.
-    nearby: portal?.state ? withLoose(nearby, portal, { standpoint: oriented.standpoint }) : nearby,
+    nearby: nearbyOut,
+    // Every id `within` and `nearby` name, plus the town's ground set (the
+    // region rings and the water) — the one small whole a painting needs for
+    // its floor. See world.mjs § `records`.
+    records,
     // ── THE PORTAL AND ITS ENCOUNTER (2026-08-27) ────────────────────────────
     //
     // The two rooms and the fight, as a resident reads them. `space` is the

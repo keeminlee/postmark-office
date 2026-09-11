@@ -1157,6 +1157,108 @@ export function diagnosticEyes(full) {
   };
 }
 
+// ── `records` — a read carries the records it names (2026-09-10) ────────────
+//
+// THE GAP THIS CLOSES. The radial NAMES ids: `objects` here, `within`/`nearby`
+// on the apex. Every reader of those ids then has to resolve each one against
+// something else — and the one thing every reader had was the whole fold. So a
+// door that answers "what can you see from here" in a few dozen entries was
+// only usable by a caller holding 1,197 marks, which is the fold's cost paid to
+// read a radial that deliberately is not the fold.
+//
+// So the read carries what it names. Not more: the promise is exactly "every id
+// this response names, plus the town's ground", and its falsifiers are that
+// biconditional in both directions — an id with no record is a broken read, and
+// a record for an id the response never named is the fold creeping back in.
+//
+// THE GROUND SET is the one whole that is not derived from the standpoint, and
+// it is here because the painting's FLOOR is not a thing you can see — it is
+// the sheet the seen things stand on. It is small and it is fixed: the thirteen
+// region rings the record's own roster names, plus the water the skeleton's own
+// selection names. It is NOT a second fold: it does not grow with the town's
+// marks, only with the town's REGIONS, which is a founding act.
+//
+// ⚑ THE SELECTION IS RESTATED HERE, and that is a cost, not a tidiness. The
+// viewer owns the same rule in `townRegionMarks`/`townWaterShapes`
+// (spectator/viewer.mjs), and those live in a DOM module the office cannot
+// import. What is reused rather than restated is every part that can be: the
+// roster (`REGION_SLUGS`), the ring reader (`polygonOf`) and the water
+// selection (`waterFeatures`/`seaFeature`) all come from the engine the office
+// already imports. What is restated is the ten-line join and the sentinel cut.
+// If the ground ever needs a third reader, that is the moment the rule earns a
+// shared module — not before.
+const GROUND_SENTINEL_M = 50000;   // the positionless marker's magnitude — never ground
+
+// The ring a mark carries, in metres, or null. Mirrors viewer.mjs § tgRing.
+function groundRing(mark, polygonOf) {
+  const ring = mark ? polygonOf(mark) : null;
+  if (!ring?.length) return null;
+  return ring.some((p) => Math.abs(p.x) > GROUND_SENTINEL_M || Math.abs(p.y) > GROUND_SENTINEL_M) ? null : ring;
+}
+
+// Cached per assembled world — the ground moves when the record does and at no
+// other time, and this runs on every read.
+const _grounds = new WeakMap();
+
+async function groundMarkIds(w) {
+  const cached = _grounds.get(w);
+  if (cached) return cached;
+  const marks = w?.marks ?? [];
+  const skeleton = w?._raw?.skeleton ?? null;
+  const ids = [];
+  try {
+    const [{ REGION_SLUGS }, { polygonOf }, { waterFeatures, seaFeature }] = await Promise.all([
+      engineImport("region-outsiders.mjs"), engineImport("geometry.mjs"), engineImport("water.mjs"),
+    ]);
+    const slugOf = (m) => String(m?.id ?? "").split("/")[1];
+    // the regions, in the record's own roster order
+    for (const slug of REGION_SLUGS) {
+      const mark = marks.find((m) => slugOf(m) === slug && groundRing(m, polygonOf));
+      if (mark) ids.push(mark.id);
+    }
+    // the water, by the skeleton's own selection — the same one `waterAt` answers with
+    const feats = [...waterFeatures(skeleton)];
+    const sea = seaFeature(skeleton);
+    if (sea && !feats.some((f) => f.id === sea.id)) feats.push(sea);
+    for (const f of feats) {
+      const mark = marks.find((m) => slugOf(m) === f.id && groundRing(m, polygonOf));
+      if (mark && !ids.includes(mark.id)) ids.push(mark.id);
+    }
+  } catch (e) {
+    // LOUD, never silent: a read that quietly lost its floor paints a town on
+    // nothing, and the page has no way to tell that from a town with no regions.
+    console.error(`[world] the ground set could not be read (${String(e?.message ?? e).slice(0, 140)}) — `
+      + `\`records\` will carry only what the radial names`);
+  }
+  _grounds.set(w, ids);
+  return ids;
+}
+
+/**
+ * The mark record for every id in `ids`, plus the town's ground set.
+ *
+ * Keyed by id because the only question any caller asks of it is "what is this
+ * id" — a list would make every reader build this map first, and two of them
+ * would build it differently.
+ *
+ * An id with no mark behind it is SKIPPED rather than carried as null: the
+ * promise is "what this response names", and a null would be the door asserting
+ * that a named thing has no record, which it cannot know. The falsifier that
+ * catches a genuinely broken read is the one that compares the response's own
+ * named ids against these keys, and it lives beside the doors, not here.
+ */
+export async function markRecords(ids = [], w = null) {
+  w ??= await world();   // cached by ref+sha; the apex has no world of its own in hand
+  const byId = new Map((w?.marks ?? []).map((m) => [m.id, m]));
+  const out = {};
+  for (const id of [...ids, ...(await groundMarkIds(w))]) {
+    if (id == null || out[id]) continue;
+    const mark = byId.get(id);
+    if (mark) out[id] = mark;
+  }
+  return out;
+}
+
 export async function worldEyes(args = {}, key = null, { roll = [] } = {}) {
   const choice = chooseStandpoint(args, key);
   if (choice.bounce) return choice.bounce;
@@ -1205,6 +1307,9 @@ export async function worldEyes(args = {}, key = null, { roll = [] } = {}) {
   });
   return {
     stance: choice.stance, telling, objects,
+    // THE RECORDS THIS ANSWER NAMES (2026-09-10). `objects` is the only list
+    // here that names ids, so this is exactly those plus the ground.
+    records: await markRecords(objects.map((o) => o.id), w),
     // Grouped by the engine's own distance bands, nearest band first — the same
     // organisation the telling uses, so the compact shape and the prose agree.
     // An empty array means nobody is about; the key's ABSENCE means presence is
