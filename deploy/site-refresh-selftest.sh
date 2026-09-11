@@ -259,6 +259,17 @@ grep -q "$WORLD_S47" "$INSTALLED" 2>/dev/null \
   && ok "and node_modules really holds S47 afterwards" \
   || bad "S47 was never installed: $(cat "$INSTALLED" 2>&1 | head -3)"
 
+# THE STEADY STATE (reviewer, 2026-09-11). The box's ordinary tick is the SAME
+# advance decision again — no new tag, no new floor — and build-stamp.mjs reads
+# the build tree's package-lock.json first. A guard that installs only when
+# node_modules disagrees would skip this tick and leave the lockfile naming the
+# floor over a tree serving S47: the receipt lie on the path that was honest.
+echo "crossing 4" >> "$TOWN_SRC/WHITE_PAGES/mail-ledger.md"
+git -C "$TOWN_SRC" commit -qam "the next ordinary tick, same decision"
+run SELFTEST_PIN_DECISION=advance SELFTEST_PIN_SHA="$WORLD_S47" SELFTEST_PIN_SETTLEMENT=47
+check "exit 0" "$RC" "0"
+grep -q "$WORLD_S47" "$ROOT/build/package-lock.json" 2>/dev/null   && ok "THE RECEIPT HOLDS: on the second advance tick the build tree's package-lock.json still names S47, which is what /build.json reads"   || bad "THE RECEIPT LIE: the build tree's package-lock.json does not name S47 after a repeated advance"
+
 # THE FLIP. The founder's hold lands. Nothing else about the tree changes — the
 # tag is the same tag, its lockfile is the same lockfile, and npm ci will be
 # skipped exactly as it is on the box.
