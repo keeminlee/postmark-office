@@ -240,7 +240,14 @@ test("world_leave_mark defaults by on a solo key without changing its author con
 
 test("world_open_your_eyes defaults to telling + compact objects and preserves diagnostics", async () => {
   const narrative = await worldEyes({ x: 100, y: 100 }, null);
-  assert.deepEqual(Object.keys(narrative), ["stance", "telling", "objects"]);
+  // `records` JOINED THIS LOCK ON 2026-09-10, and the lock is why the addition
+  // had to be deliberate: this list is the door's shape, and a field that could
+  // slip into it unnoticed is a field nobody decided to publish. The radial
+  // names ids; this is those ids' records, plus the town's ground set (see
+  // world.mjs § `records`). THIS FIXTURE'S WORLD HAS NO REGIONS, so the ground
+  // is empty here — which is the arm worth having under the lock: the field is
+  // exactly what the answer named, and a world with no floor still answers.
+  assert.deepEqual(Object.keys(narrative), ["stance", "telling", "objects", "records"]);
   assert.equal(narrative.stance, "spectator", "a coords glance says what it is");
   assert.equal(typeof narrative.telling, "string");
   assert.ok(narrative.objects.length > 0);
@@ -248,8 +255,18 @@ test("world_open_your_eyes defaults to telling + compact objects and preserves d
     assert.deepEqual(Object.keys(object), ["id", "at", "bearing", "distance_m", "kind", "tier"]);
     assert.deepEqual(Object.keys(object.at), ["x", "y"]);
   }
+  assert.deepEqual(Object.keys(narrative.records).sort(), narrative.objects.map((o) => o.id).sort(),
+    "in a world with no region rings, `records` is exactly the ids the answer named — no more, no fewer");
+  for (const object of narrative.objects)
+    assert.equal(narrative.records[object.id].id, object.id, `${object.id}'s record is its own`);
 
   const diagnostic = await worldEyes({ x: 100, y: 100, diagnostic: true }, null);
+  // NO `records` HERE, and the lock is what keeps it that way. It rode this
+  // branch for one commit while the resident page was going to boot on the
+  // diagnostic shape; Keemin ruled the page boots on the compact read instead
+  // (2026-09-10 22:4x), so the field went back where it came from. `diagnostic`
+  // is a DIAGNOSTIC — nothing the town's pages run may depend on it, or it
+  // stops being one, and this list is where that stays true.
   assert.deepEqual(Object.keys(diagnostic), ["standpoint", "crossing", "telling", "fov", "radial"]);
   assert.equal(diagnostic.telling, narrative.telling, "narrative mode does not rewrite the telling");
   assert.equal(diagnostic.fov.carried[0].score, 99, "the existing detailed FOV stays intact");

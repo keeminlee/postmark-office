@@ -1051,7 +1051,23 @@ export async function worldOrient(args = {}, key = null, { roll = [] } = {}) {
   const { verbs } = await mods();
   const at = choice.coords ?? await standCoords(choice.handle, w);
   const crossing = crossingOf(args);
-  const o = verbs.orient({ x: at.x, y: at.y, crossing }, w);
+  // THE SAME DEFECT, ONE DOOR OVER — `orient(state, world, { crossing = 0, dials })`
+  // (world-verbs.mjs:29) reads the crossing from the options exactly as
+  // `openYourEyes` does, and this call put it on the state object exactly as
+  // that one did. Measured before the fix: `you.fog.crossing` came back 0 at
+  // every crossing asked for, up to 999.
+  //
+  // Worse here than next door, because the field is NAMED: `/world/orient`
+  // publishes `you.fog.crossing: 0` — not a number quietly computed from the
+  // wrong clock, but the answer stating the wrong clock outright. `inFog` and
+  // `aboveFog` ride the same fog model, so the light a reader is told they are
+  // standing in was crossing-0's light.
+  //
+  // FIXED WITH ITS TWIN AND NOT AFTER IT. Correcting `openYourEyes` alone would
+  // have left the two doors disagreeing about the fog at one standpoint — a
+  // NEW defect, manufactured by a partial fix, and a worse one than two doors
+  // being wrong together. The falsifier asserts that agreement directly.
+  const o = verbs.orient({ x: at.x, y: at.y }, w, { crossing });
   // the note is embodied property: only the body's standpoint carries it — a
   // spectator glance (coords) is nobody's, so it reads nobody's note.
   const note = choice.handle ? noteForHandle(WORLD_CLONE, key, choice.handle) : null;
@@ -1158,6 +1174,121 @@ export function diagnosticEyes(full) {
   };
 }
 
+// ── `records` — a read carries the records it names (2026-09-10) ────────────
+//
+// THE GAP THIS CLOSES. The radial NAMES ids: `objects` here, `within`/`nearby`
+// on the apex. Every reader of those ids then has to resolve each one against
+// something else — and the one thing every reader had was the whole fold. So a
+// door that answers "what can you see from here" in a few dozen entries was
+// only usable by a caller holding 1,197 marks, which is the fold's cost paid to
+// read a radial that deliberately is not the fold.
+//
+// So the read carries what it names. Not more: the promise is exactly "every id
+// this response names, plus the town's ground", and its falsifiers are that
+// biconditional in both directions — an id with no record is a broken read, and
+// a record for an id the response never named is the fold creeping back in.
+//
+// THE GROUND SET is the one whole that is not derived from the standpoint, and
+// it is here because the painting's FLOOR is not a thing you can see — it is
+// the sheet the seen things stand on. It is small and it is fixed: the thirteen
+// region rings the record's own roster names, plus the water the skeleton's own
+// selection names. It is NOT a second fold: it does not grow with the town's
+// marks, only with the town's REGIONS, which is a founding act.
+//
+// ⚑ THE SELECTION IS RESTATED HERE, and that is a cost, not a tidiness. The
+// viewer owns the same rule in `townRegionMarks`/`townWaterShapes`
+// (spectator/viewer.mjs), and those live in a DOM module the office cannot
+// import. What is reused rather than restated is every part that can be: the
+// roster (`REGION_SLUGS`), the ring reader (`polygonOf`) and the water
+// selection (`waterFeatures`/`seaFeature`) all come from the engine the office
+// already imports. What is restated is the ten-line join and the sentinel cut.
+// If the ground ever needs a third reader, that is the moment the rule earns a
+// shared module — not before.
+const GROUND_SENTINEL_M = 50000;   // the positionless marker's magnitude — never ground
+
+// The ring a mark carries, in metres, or null. Mirrors viewer.mjs § tgRing.
+function groundRing(mark, polygonOf) {
+  const ring = mark ? polygonOf(mark) : null;
+  if (!ring?.length) return null;
+  return ring.some((p) => Math.abs(p.x) > GROUND_SENTINEL_M || Math.abs(p.y) > GROUND_SENTINEL_M) ? null : ring;
+}
+
+// Cached per assembled world — the ground moves when the record does and at no
+// other time, and this runs on every read. `_byIds` is the same bargain for the
+// id index: rebuilding a 1,197-entry Map per read measured 78 ms, which is real
+// money next to the 274 ms the world resolution itself costs. Both are WeakMaps
+// keyed on the assembled world, so a re-fold drops them without a sweep.
+const _grounds = new WeakMap();
+const _byIds = new WeakMap();
+
+async function groundMarkIds(w) {
+  const cached = _grounds.get(w);
+  if (cached) return cached;
+  const marks = w?.marks ?? [];
+  const skeleton = w?._raw?.skeleton ?? null;
+  const ids = [];
+  try {
+    const [{ REGION_SLUGS }, { polygonOf }, { waterFeatures, seaFeature }] = await Promise.all([
+      engineImport("region-outsiders.mjs"), engineImport("geometry.mjs"), engineImport("water.mjs"),
+    ]);
+    const slugOf = (m) => String(m?.id ?? "").split("/")[1];
+    // the regions, in the record's own roster order
+    for (const slug of REGION_SLUGS) {
+      const mark = marks.find((m) => slugOf(m) === slug && groundRing(m, polygonOf));
+      if (mark) ids.push(mark.id);
+    }
+    // the water, by the skeleton's own selection — the same one `waterAt` answers with
+    const feats = [...waterFeatures(skeleton)];
+    const sea = seaFeature(skeleton);
+    if (sea && !feats.some((f) => f.id === sea.id)) feats.push(sea);
+    for (const f of feats) {
+      const mark = marks.find((m) => slugOf(m) === f.id && groundRing(m, polygonOf));
+      if (mark && !ids.includes(mark.id)) ids.push(mark.id);
+    }
+  } catch (e) {
+    // LOUD, never silent: a read that quietly lost its floor paints a town on
+    // nothing, and the page has no way to tell that from a town with no regions.
+    //
+    // ⚑ AND NOT CACHED. The `_grounds.set` below is deliberately inside the
+    // success arm: a cache written on the failure path would let ONE transient
+    // engine-import failure poison the ground for the life of that world
+    // object, and every read after it would answer floorlessly and silently
+    // while the one console line that said why scrolled away. A failed read
+    // pays the retry; that is the cheaper of the two.
+    console.error(`[world] the ground set could not be read (${String(e?.message ?? e).slice(0, 140)}) — `
+      + `\`records\` carries only what the radial names for this read, and the next read will try again`);
+    return [];
+  }
+  _grounds.set(w, ids);
+  return ids;
+}
+
+/**
+ * The mark record for every id in `ids`, plus the town's ground set.
+ *
+ * Keyed by id because the only question any caller asks of it is "what is this
+ * id" — a list would make every reader build this map first, and two of them
+ * would build it differently.
+ *
+ * An id with no mark behind it is SKIPPED rather than carried as null: the
+ * promise is "what this response names", and a null would be the door asserting
+ * that a named thing has no record, which it cannot know. The falsifier that
+ * catches a genuinely broken read is the one that compares the response's own
+ * named ids against these keys, and it lives beside the doors, not here.
+ */
+export async function markRecords(ids = [], w = null) {
+  w ??= await world();   // cached by ref+sha; the apex has no world of its own in hand
+  let byId = _byIds.get(w);
+  if (!byId) _byIds.set(w, byId = new Map((w?.marks ?? []).map((m) => [m.id, m])));
+  const out = {};
+  for (const id of [...ids, ...(await groundMarkIds(w))]) {
+    if (id == null || out[id]) continue;
+    const mark = byId.get(id);
+    if (mark) out[id] = mark;
+  }
+  return out;
+}
+
 export async function worldEyes(args = {}, key = null, { roll = [] } = {}) {
   const choice = chooseStandpoint(args, key);
   if (choice.bounce) return choice.bounce;
@@ -1165,7 +1296,24 @@ export async function worldEyes(args = {}, key = null, { roll = [] } = {}) {
   const { verbs } = await mods();
   const at = choice.coords ?? await standCoords(choice.handle, w);
   const crossing = crossingOf(args);
-  const r = verbs.openYourEyes({ x: at.x, y: at.y, crossing, name: args.name }, w);
+  // ⚑ THE CROSSING GOES IN THE OPTIONS, NOT THE STATE (2026-09-10).
+  //
+  // This read `openYourEyes({ x, y, crossing, name }, w)` and the engine has
+  // never looked there: `openYourEyes(state, world, { crossing = 0, … })`
+  // (world-verbs.mjs:63) takes it from the THIRD argument, which this call did
+  // not pass. So `fogModel(crossing)` ran at 0 on every read this office has
+  // ever served — measured before the fix, at five crossings including 999,
+  // `radial.crossing` came back 0 and `fog.thickness` 0.1 every time.
+  //
+  // It failed silently and it failed CONVINCINGLY: an unknown key on a state
+  // object is not an error, the answer still has a fog block, and the number in
+  // it is a real number for a real crossing — just never the one you asked for.
+  // Nothing in the told SET moved, because at this fold's scale `fogHidden` is
+  // 0 everywhere, which is exactly why it survived: the only witness was a
+  // thickness nobody was comparing against a second source.
+  //
+  // world2-serve.mjs:570 has always had the right form. This is the older twin.
+  const r = verbs.openYourEyes({ x: at.x, y: at.y, name: args.name }, w, { crossing });
   // tell is a lazy thunk on the verb's return — render it here so the JSON
   // skin carries the prose (a function would vanish in serialization).
   const engineTelling = typeof r.tell === "function" ? r.tell() : r.tell ?? null;
@@ -1189,6 +1337,20 @@ export async function worldEyes(args = {}, key = null, { roll = [] } = {}) {
     standpoint: { ...at, stance: choice.stance }, crossing: { n: crossing, derivation: CROSSING_DERIVATION },
     telling, ...rest, ...(present ? { present } : {}),
   };
+  // ⚑ `records` DOES NOT RIDE THIS BRANCH, and that is a ruling, not an
+  // oversight (Keemin, 2026-09-10 22:4x: "my confusion is on why we need this
+  // info for the page").
+  //
+  // It briefly did. The resident page was going to boot on `?diagnostic=true`,
+  // because that is the only shape carrying the radial whole, and the field was
+  // added here to serve it. The page now boots on the COMPACT read instead —
+  // `objects`, `records`, `telling`, `present`, exactly what a resident reads —
+  // and adapts to that shape rather than asking the door to hand it the
+  // engine's internals. So the reason this field was here left, and the field
+  // went with it.
+  //
+  // The rule that survives: `diagnostic` is a DIAGNOSTIC. Nothing the town's
+  // pages run is allowed to depend on it, or it stops being one.
   if (args.diagnostic === true) return diagnosticEyes(full);
 
   const markById = new Map((w.marks ?? []).map((mark) => [mark.id, mark]));
@@ -1206,6 +1368,9 @@ export async function worldEyes(args = {}, key = null, { roll = [] } = {}) {
   });
   return {
     stance: choice.stance, telling, objects,
+    // THE RECORDS THIS ANSWER NAMES (2026-09-10). `objects` is the only list
+    // here that names ids, so this is exactly those plus the ground.
+    records: await markRecords(objects.map((o) => o.id), w),
     // Grouped by the engine's own distance bands, nearest band first — the same
     // organisation the telling uses, so the compact shape and the prose agree.
     // An empty array means nobody is about; the key's ABSENCE means presence is
@@ -1644,6 +1809,30 @@ export async function worldMyMarks(key = null, { offset = 0 } = {}) {
       kind: mark.kind,
       tier: mark.tier,
       body: mark.body,
+      // ── WHERE THE MARK STANDS (2026-09-10, Keemin: "can we just add coords
+      // to my marks?" — yes) ──────────────────────────────────────────────────
+      //
+      // This door was built as a PORTFOLIO read — what you own, what you have
+      // backed — and a portfolio has no map, so it never carried a position.
+      // That was fine while the page looked every id up in the whole fold. It
+      // is not fine now: the resident view draws "the field of view, plus all
+      // of yours whether it holds them or not" (Keemin, 2026-08-04) without a
+      // fold to look anything up in, and a row with no `at` cannot be drawn at
+      // all. The rule did not change; the thing that used to supply the
+      // position went away.
+      //
+      // Same two fields the draft and docket rows have always carried, out of
+      // the same mark record, so a resident's own marks read one way across
+      // this door's four lists rather than two.
+      //
+      // ABSENT, NOT NULL, when the mark has neither — and that is the honest
+      // shape here, not tidiness: a predicated or naming mark HAS no site of
+      // its own (the engine skips exactly these: `if (!mk.at) continue`), and
+      // `at: null` would say "this thing is somewhere unknown" about a thing
+      // that is nowhere by construction. A consumer asks `if (row.at)`, which
+      // is the question it actually has.
+      ...(mark.at ? { at: mark.at } : {}),
+      ...(mark.extent ? { extent: mark.extent } : {}),
       stamps: Number(mark.stamps ?? 0),
       weight: Number(mark.weight ?? 0),
       // The ✦ figure's receipt, straight from the fold (marks-fold.mjs §

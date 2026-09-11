@@ -1092,7 +1092,21 @@ const server = createServer((req, res) => {
       if (path === "/world") return worldSummary(key).then((r) => j(res, 200, r)).catch((e) => bounce(res, 500, "the world door tripped", String(e?.message ?? e).slice(0, 200)));
       if (path === "/world/my-marks") {
         if (!key) { setWwwAuth(res); return bounce(res, 401, "no key at the door", "your marks need your resident household identity — sign in first"); }
-        return worldMyMarks(key)
+        // ⚑ THE OFFSET REACHES THE FUNCTION (2026-09-10). This route called
+        // `worldMyMarks(key)` with no second argument while the function has
+        // taken `{ offset }` since it was paged and the MCP twin
+        // (`world_my_marks`) has always passed `args.offset`. So the REST door
+        // silently dropped a parameter its own twin carries: every request
+        // answered page ZERO, `complete` stayed false forever, and a caller
+        // walking the offset re-collected the same twenty rows.
+        //
+        // It is a twin-parity defect rather than a new field — nothing here is
+        // invented, the page bound and the counts are unchanged — and without
+        // it Keemin's "plus all of yours" cannot hold over HTTP at all: this
+        // household owns 91 published marks and the door could only ever show
+        // the first 20.
+        const offset = Number(url.searchParams.get("offset"));
+        return worldMyMarks(key, { offset: Number.isFinite(offset) && offset > 0 ? Math.floor(offset) : 0 })
           .then((r) => j(res, r?.error === "bounce" ? (r.code ?? 403) : 200, r))
           .catch((e) => bounce(res, 500, "the world portfolio tripped", String(e?.message ?? e).slice(0, 200)));
       }
