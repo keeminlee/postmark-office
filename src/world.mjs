@@ -1336,22 +1336,21 @@ export async function worldEyes(args = {}, key = null, { roll = [] } = {}) {
     standpoint: { ...at, stance: choice.stance }, crossing: { n: crossing, derivation: CROSSING_DERIVATION },
     telling, ...rest, ...(present ? { present } : {}),
   };
-  // ── `records` RIDES THE DIAGNOSTIC SHAPE TOO (2026-09-10) ─────────────────
+  // ⚑ `records` DOES NOT RIDE THIS BRANCH, and that is a ruling, not an
+  // oversight (Keemin, 2026-09-10 22:4x: "my confusion is on why we need this
+  // info for the page").
   //
-  // The resident view boots on this branch, because it is the only one that
-  // carries the radial whole — `fov` + `radial`, the eight fields and the
-  // eighteen-field rows the painting and the telling pane actually read. It was
-  // the one shape that named ids and carried no records, which is the gap
-  // `records` exists to close; leaving it out here would have meant the door
-  // closing the gap on the shape nobody boots on.
+  // It briefly did. The resident page was going to boot on `?diagnostic=true`,
+  // because that is the only shape carrying the radial whole, and the field was
+  // added here to serve it. The page now boots on the COMPACT read instead —
+  // `objects`, `records`, `telling`, `present`, exactly what a resident reads —
+  // and adapts to that shape rather than asking the door to hand it the
+  // engine's internals. So the reason this field was here left, and the field
+  // went with it.
   //
-  // THE IDS ARE `fov.carried` + `fov.far`, not `objects`: `objects` is built
-  // below, on the far side of this return, from exactly those two lists. Taking
-  // the ids from their source rather than from a projection of it is one fewer
-  // place for the two to drift apart.
-  if (args.diagnostic === true)
-    return { ...diagnosticEyes(full),
-      records: await markRecords([...(r.fov?.carried ?? []), ...(r.fov?.far ?? [])].map((o) => o.id), w) };
+  // The rule that survives: `diagnostic` is a DIAGNOSTIC. Nothing the town's
+  // pages run is allowed to depend on it, or it stops being one.
+  if (args.diagnostic === true) return diagnosticEyes(full);
 
   const markById = new Map((w.marks ?? []).map((mark) => [mark.id, mark]));
   const objects = [...(r.fov?.carried ?? []), ...(r.fov?.far ?? [])].map((object) => {

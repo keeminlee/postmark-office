@@ -261,11 +261,13 @@ test("world_open_your_eyes defaults to telling + compact objects and preserves d
     assert.equal(narrative.records[object.id].id, object.id, `${object.id}'s record is its own`);
 
   const diagnostic = await worldEyes({ x: 100, y: 100, diagnostic: true }, null);
-  // `records` joined THIS lock on 2026-09-10 as well, and for the sharper
-  // reason: the resident view boots on the diagnostic shape, because it is the
-  // only one carrying the radial whole. The bare branch got the field first and
-  // this one was the branch that still named ids and carried none of them.
-  assert.deepEqual(Object.keys(diagnostic), ["standpoint", "crossing", "telling", "fov", "radial", "records"]);
+  // NO `records` HERE, and the lock is what keeps it that way. It rode this
+  // branch for one commit while the resident page was going to boot on the
+  // diagnostic shape; Keemin ruled the page boots on the compact read instead
+  // (2026-09-10 22:4x), so the field went back where it came from. `diagnostic`
+  // is a DIAGNOSTIC — nothing the town's pages run may depend on it, or it
+  // stops being one, and this list is where that stays true.
+  assert.deepEqual(Object.keys(diagnostic), ["standpoint", "crossing", "telling", "fov", "radial"]);
   assert.equal(diagnostic.telling, narrative.telling, "narrative mode does not rewrite the telling");
   assert.equal(diagnostic.fov.carried[0].score, 99, "the existing detailed FOV stays intact");
   assert.ok(diagnostic.radial.byBearing, "the existing radial organization stays intact");
