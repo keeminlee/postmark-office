@@ -753,21 +753,26 @@ export function groundRow({ id, made_by = null, body = null, stands, reach }) {
       ? { holder: stands.holder, takeable: false,
           why: `${stands.holder} is holding it — a held thing moves by its holder's own give` }
       // ⛔ `takeable` IS THE DOOR'S VERDICT, NOT A STRICTER ONE. The first lap
-      // read `reach.how === "extent"` and threw the doorstep arm away, so a
+      // read `reach.how === "extent"` and threw the margin arm away, so a
       // resident standing 10 m from a thing was told to walk to it — and
       // walking changed nothing, because the take was already admitted where
       // they stood. That is the second opinion `groundWithinReach`'s own
       // comment forbids twenty lines above it, and it undid half the
-      // conductor's decision 1: the doorstep arm was KEPT so the town's small
+      // conductor's decision 1: the margin arm was KEPT so the town's small
       // things stay takeable, and this read told every resident it did not
       // exist. The filter obeyed the door; the verdict did not.
+      //
+      // The word for that arm is REACH, not "doorstep" (founder, 2026-09-11:
+      // "doorstep means something else" — it is the resident's front step and
+      // their morning read, and it was doing double duty as a geometric margin;
+      // reach.mjs § THE WORD THAT LEFT carries the whole ruling).
       : reach.stands
         ? { takeable: true,
             why: reach.how === "extent"
               ? "you are standing within it — a take is admitted here"
-              : `you are at its doorstep, ${reach.distance_round} m off — a take is admitted here` }
+              : `you are within reach of it, ${reach.distance_round} m off — a take is admitted here` }
         : { takeable: false,
-            why: `you are ${reach.distance_round} m off; a take stands within a thing's extent or at its doorstep — world { do: "walk", args: { mark_id: "${id}", mode: "center" } }` }),
+            why: `you are ${reach.distance_round} m off; a take stands within a thing's extent or within reach of it — world { do: "walk", args: { mark_id: "${id}", mode: "center" } }` }),
   };
 }
 

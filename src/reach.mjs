@@ -9,8 +9,27 @@
 //
 // The operative words are "exactly as". A take is not a new containment
 // question wearing a hold's clothes — it is the SAME question the enter door
-// has been asking since the doorstep ruling of 2026-08-27, asked about a thing
-// instead of a door. So this file holds that test once and both doors call it.
+// has been asking since the at-the-door ruling of 2026-08-27, asked about a
+// thing instead of a door. So this file holds that test once and both doors
+// call it.
+//
+// ── THE WORD THAT LEFT, 2026-09-11 ───────────────────────────────────────────
+//
+// This file used to call the tolerance leg a DOORSTEP. In the town a doorstep
+// is a resident's front step — where mail lands and the day's first read is
+// taken (`read_doorstep`, `household { read: "doorstep" }`,
+// `DOORSTEP_SEGMENTS`). Two meanings on one word, and the founder ruled the
+// geometric one out: "doorstep means something else."
+//
+// The margin is now a REACH — this module's own name, the name of the law it
+// quotes (`the-town/the-reach`), and the plain fact of what is measured: how
+// far a thing is from you. THRESHOLD was the other candidate and was refused,
+// because this office already spends that word on the door ITSELF
+// (`THRESHOLD_KINDS`, the threshold ledger, "a take is a threshold act") — so
+// naming the margin "threshold" would have rebuilt the very collision the
+// rename exists to end, one word over.
+//
+// The resident's doorstep keeps its name everywhere. Only the geometry moved.
 //
 // THE ID WAS CHECKED, NOT ASSEMBLED. A day-old lesson: an id built in code out
 // of a class name and a slot is a guess, and one shipped last night naming a
@@ -48,7 +67,7 @@
 // ── THE TWO REACHES, AND WHY THEY ARE DIFFERENT SHAPES ───────────────────────
 //
 //   standsWithin(here, mark)  — a THRESHOLD reach: are you at this thing/door?
-//                               containment first, the doorstep tolerance after.
+//                               containment first, the reach margin after.
 //   withinArmsLength(a, b)    — a BESIDE reach: are you and they in one scene?
 //                               plain distance, because two residents have no
 //                               extent to be inside of.
@@ -89,7 +108,7 @@ export function bearingWord(from, to) {
  * door reaches for it the way it does: it is the world engine's containment
  * definition, loaded out of a clone that deploys on its own clock, and this
  * module must stay importable by an office whose clone predates it. Absent, the
- * containment leg is simply not asked and the doorstep tolerance stands alone —
+ * containment leg is simply not asked and the reach margin stands alone —
  * which is what the enter arm already did (`typeof … === "function" && …`).
  *
  * Returns the WHOLE answer, never a bare boolean: a refusal has to name the
@@ -101,10 +120,12 @@ export function standsWithin(here, mark, { pointWithinMark = null, earshotM = EA
   const anchor = mark?.at ?? null;
   const distance_m = metresBetween(here, anchor);
   const within = typeof pointWithinMark === "function" ? Boolean(pointWithinMark(here, mark)) : false;
-  const doorstep = distance_m !== null && distance_m <= earshotM;
+  // THE MARGIN LEG. Named `reach`, not `doorstep` — see THE WORD THAT LEFT at
+  // the head of this file. `how: "reach"` is what a receipt and a refusal print.
+  const reach = distance_m !== null && distance_m <= earshotM;
   return {
-    stands: within || doorstep,
-    how: within ? "extent" : doorstep ? "doorstep" : null,
+    stands: within || reach,
+    how: within ? "extent" : reach ? "reach" : null,
     distance_m,
     distance_round: distance_m === null ? null : Math.round(distance_m),
     bearing: bearingWord(here, anchor),

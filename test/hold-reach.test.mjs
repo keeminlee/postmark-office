@@ -18,6 +18,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import {
   refuseOutOfReach, refuseGiveOfUnheld, whereThingStands, holdEffectsFrom,
@@ -412,8 +413,25 @@ test("a resident the record does not place cannot hold — and is told why, not 
 test("standsWithin says WHICH leg admitted it, and never merely true", () => {
   const m = thingAt("a/b", 100, 100);
   assert.equal(standsWithin({ x: 100, y: 100 }, m, { pointWithinMark: within }).how, "extent");
-  assert.equal(standsWithin({ x: 130, y: 100 }, m, { pointWithinMark: within }).how, "doorstep");
+  assert.equal(standsWithin({ x: 130, y: 100 }, m, { pointWithinMark: within }).how, "reach");
   assert.equal(standsWithin({ x: 400, y: 100 }, m, { pointWithinMark: within }).how, null);
+});
+
+test("the margin leg is REACH — the word 'doorstep' never comes back to the geometry", () => {
+  // Founder, 2026-09-11: "doorstep means something else". In this town a
+  // doorstep is a resident's front step and their morning read; it was also
+  // doing duty as a geometric margin, and one word cannot mean two things in a
+  // record residents read. CAN-FAIL: restore `how: "doorstep"` in reach.mjs and
+  // both assertions below redden — the first on the value, the second on the
+  // source, so neither a runtime nor a comment can bring the word back quietly.
+  const m = thingAt("a/b", 100, 100);
+  for (const here of [{ x: 100, y: 100 }, { x: 130, y: 100 }, { x: 400, y: 100 }]) {
+    assert.notEqual(standsWithin(here, m, { pointWithinMark: within }).how, "doorstep");
+  }
+  assert.equal(standsWithin({ x: 130, y: 100 }, m, { pointWithinMark: within }).how, "reach");
+  const src = readFileSync(new URL("../src/reach.mjs", import.meta.url), "utf8");
+  assert.doesNotMatch(src, /how:\s*within\s*\?[^\n]*"doorstep"/,
+    "the answer's own word must not be the resident's doorstep");
 });
 
 test("the reach is the TOWN's earshot, read off the record — not a constant typed here", () => {
@@ -444,8 +462,8 @@ test("the bearing is the compass word a resident reads in a walk answer", () => 
 test("a thing with a real extent is takeable anywhere INSIDE it, not only at its centre", () => {
   const shed = thingAt("a/a-long-workbench", 0, 0, { w: 40, h: 4 });
   assert.equal(standsWithin({ x: 19, y: 1 }, shed, { pointWithinMark: within }).how, "extent");
-  assert.equal(standsWithin({ x: 21, y: 1 }, shed, { pointWithinMark: within }).how, "doorstep",
-    "just outside a long bench is the doorstep, not the extent — and the two must not be confused");
+  assert.equal(standsWithin({ x: 21, y: 1 }, shed, { pointWithinMark: within }).how, "reach",
+    "just outside a long bench is within reach, not within the extent — and the two must not be confused");
 });
 
 // ── the holder arithmetic these clauses stand on, unchanged ─────────────────
@@ -610,8 +628,8 @@ test("...and a thing beyond reach is NOT in the answer at all", async () => {
   assert.ok(rr.distance_round > 500);
 });
 
-test("REPAIR 2 — a thing at the DOORSTEP is takeable, because that is what the door does there", async () => {
-  // Reviewer: `takeable` read `reach.how === "extent"` and threw the doorstep
+test("REPAIR 2 — a thing WITHIN REACH is takeable, because that is what the door does there", async () => {
+  // Reviewer: `takeable` read `reach.how === "extent"` and threw the margin
   // arm away, so a resident 10 m from a thing was told to walk to it — and
   // walking changed nothing, because the take was already admitted where they
   // stood. A read publishing a stricter verdict than the door is the second
@@ -623,7 +641,8 @@ test("REPAIR 2 — a thing at the DOORSTEP is takeable, because that is what the
   assert.equal(row.takeable, true, "the door admits at 10 m; the read must not refuse there");
   assert.equal(row.within_its_extent, false, "and the record of WHICH arm answered stays");
   assert.equal(row.distance_m, 10);
-  assert.match(row.why, /doorstep/);
+  assert.match(row.why, /within reach of it/,
+    "and it says so in the word the reach rule now uses — never the resident's doorstep");
 
   // The door's own verdict at the same distance, side by side. One verdict.
   const door = await refuseOutOfReach({
