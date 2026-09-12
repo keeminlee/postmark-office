@@ -512,7 +512,9 @@ export function planStoreWriteDown(marks, { publishedPathOf = null, canonBytesAt
  *                                 unproved quiet is the 2026-08-26 shape. The
  *                                 register's own entry point always says.
  */
-export function starvingCheck({ marks = [], stakes = [], docketClaims = null, window = null } = {}) {
+export function starvingCheck({
+  marks = [], stakes = [], docketClaims = null, carriedAbsent = 0, window = null,
+} = {}) {
   const staked = stakes.filter((s) => Number(s.n) > 0);
   const stakedMarks = new Set(staked.map((s) => s.mark));
   const offered = marks.length;
@@ -527,17 +529,82 @@ export function starvingCheck({ marks = [], stakes = [], docketClaims = null, wi
     ? null
     : Number(docketClaims);
 
-  if (offered > 0) {
-    return { starving: false, offered, docket_claims: docket, staked_marks: stakedMarks.size, staked_positions: staked.length };
+  // ── THE FOURTH INPUT: WHICH PART OF THE OFFERED SET IS THE DOCKET'S ────────
+  //                                                              (2026-09-12)
+  //
+  // The fold now offers this window's docket UNION every standing mark canon does
+  // not carry (`world2/tools/fold-delta.mjs § foldDelta`, the second term), so
+  // `offered` can lawfully exceed `docket_claims`. There were two ways to take
+  // that and only one of them keeps this guard:
+  //
+  //   WIDEN `docket_claims` to include the carry — tidy arithmetic, and it SPENDS
+  //   THE GUARD. A materialization that wrote nothing (7 claims locked, 0 marks
+  //   read) alongside two carried rows would arrive here as `offered 2 > 0` and
+  //   pass. The disagreement this function exists to catch would be masked by the
+  //   repair, and the receipt would show a plausible number for it.
+  //
+  //   NAME THE CARRY AS ITS OWN TERM — what this does. The guard's subject is
+  //   still the DOCKET: it tests `offered − carried`, so a carried row cannot
+  //   stand in for a docket mark that never materialized. The two numbers are
+  //   both on the receipt, so `offered 9 = docket 7 + carried 2` is a sentence a
+  //   keeper can check rather than an identity they have to trust.
+  //
+  // Absent reads as zero, which is the honest default and not a charity: every
+  // fold input written before this field existed carried no rows from any other
+  // window, so zero is what it MEANT. The shape test is the shared one, for the
+  // reason `isDocketCount` is shared at all.
+  const carried = carriedAbsent ?? 0;
+  if (!isDocketCount(carried)) {
+    throw new FoldInputRefusal(
+      "fold-input-shape",
+      `\`selection.carried_absent.count\` is ${JSON.stringify(carriedAbsent)}, which is not a count. The carried rows `
+      + "are subtracted from the offered set to find the docket's own, and a value that coerces to 0 would hand this "
+      + "guard a docket larger than the one the fold actually read.",
+    );
+  }
+  // A SUBSET CANNOT BE LARGER THAN ITS SET, and the reason to say so here is that
+  // the next line is a SUBTRACTION. A supplier claiming more carried rows than it
+  // offered would produce a negative `docket_offered`, which is not `> 0`, so it
+  // would fall through to the quiet branches and read as "the docket offered
+  // nothing" — a wrong input arriving as a lawful-looking answer.
+  if (carried > offered) {
+    throw new FoldInputRefusal(
+      "fold-input-shape",
+      `the fold says it carried ${carried} canon-absent mark(s) and offered only ${offered}. The carried rows are a `
+      + "subset of the offered set, so this input describes no crossing that could have happened, and the docket's own "
+      + "count cannot be recovered from it.",
+    );
+  }
+  // WHAT THIS WINDOW'S OWN DOCKET PUT ON THE TABLE. Every test below is about
+  // this number and not about `offered`, which is the whole of the repair.
+  const docketOffered = offered - carried;
+  const counts = {
+    offered,
+    docket_offered: docketOffered,
+    carried_absent: carried,
+    docket_claims: docket,
+    staked_marks: stakedMarks.size,
+    staked_positions: staked.length,
+  };
+
+  if (docketOffered > 0) {
+    return { starving: false, ...counts };
   }
 
   if (stakedMarks.size === 0) {
     // Both paths agree there is nothing: a genuinely quiet crossing. The world's
     // own guard makes the same call for the same reason, and saying so here
     // keeps "quiet" a claim this function actually made rather than a default.
+    //
+    // `quiet` IS FALSE WHEN SOMETHING IS BEING CARRIED, because files are being
+    // published. A guard that passed correctly and then told the keeper the
+    // crossing was quiet would be right about the town and wrong about the day.
     return {
-      starving: false, offered: 0, docket_claims: docket, staked_marks: 0, staked_positions: 0, quiet: true,
-      why: "nothing was offered and nothing is staked: both paths agree the crossing is quiet",
+      starving: false, ...counts, quiet: carried === 0,
+      why: carried === 0
+        ? "nothing was offered and nothing is staked: both paths agree the crossing is quiet"
+        : `this window's docket offered nothing and nothing is staked, and ${carried} mark(s) canon does not carry `
+          + "are being carried from earlier window(s)",
     };
   }
 
@@ -548,19 +615,27 @@ export function starvingCheck({ marks = [], stakes = [], docketClaims = null, wi
     // log line because the keeper reads receipts twelve hours later, and "the
     // guard passed" and "the guard was never asked" must not look alike.
     return {
-      starving: false, offered: 0, docket_claims: 0, staked_marks: stakedMarks.size, staked_positions: staked.length,
-      quiet: true,
-      why: `the docket was empty: nobody locked a claim in window ${window ?? "?"}`,
+      starving: false, ...counts, quiet: carried === 0,
+      why: carried === 0
+        ? `the docket was empty: nobody locked a claim in window ${window ?? "?"}`
+        : `the docket was empty — nobody locked a claim in window ${window ?? "?"} — and ${carried} mark(s) canon does `
+          + "not carry are being carried from earlier window(s)",
     };
   }
 
   const first = [...stakedMarks].sort()[0];
   throw new FoldInputRefusal(
     "store-starving",
-    `the fold carries no marks at all, but the store holds ${staked.length} escrow position(s) across `
-    + `${stakedMarks.size} mark(s) — first, ${first}. Publishing nothing here would be a quiet day that is not one. `
-    + "This is the loud-empty guard's question asked of the register: the marks and the escrow come from different "
-    + "tables written by different pens at different times, so the two answers can disagree, and this is that disagreement.",
+    `the fold carries no marks of this window's own docket, but the store holds ${staked.length} escrow position(s) `
+    + `across ${stakedMarks.size} mark(s) — first, ${first}. Publishing nothing here would be a quiet day that is not `
+    + "one. This is the loud-empty guard's question asked of the register: the marks and the escrow come from "
+    + "different tables written by different pens at different times, so the two answers can disagree, and this is "
+    + "that disagreement."
+    + (carried > 0
+      ? ` The ${carried} canon-absent mark(s) this crossing is carrying from earlier window(s) are NOT an answer to `
+        + "this one: they are the repair for a window that was cleared outside the sweep's timing, and counting them "
+        + "here would let a docket that never materialized pass behind them."
+      : ""),
   );
 }
 
@@ -718,9 +793,15 @@ export function storeWriteDown({
   // to build a selection to ask it a question. `?? null` is the whole of the
   // back-compatibility: a supplier with no `selection` refuses exactly as it did
   // before this field existed.
+  //
+  // `carriedAbsent` is unwrapped the same way and defaults to 0 rather than to
+  // null, and the difference is deliberate: an absent DOCKET size is unproved
+  // quiet and refuses, while an absent CARRY is a supplier that carried nothing,
+  // which is what every fold input written before 2026-09-12 did.
   const starving = starvingCheck({
     ...normalized,
     docketClaims: normalized.selection?.docket_claims ?? null,
+    carriedAbsent: normalized.selection?.carried_absent?.count ?? 0,
     window: normalized.as_of.window,
   });
 
