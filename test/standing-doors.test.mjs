@@ -208,7 +208,14 @@ test("S6b · THE TOWN APEX holds its own gate — and now it has an act to hold 
   const clone = townClone();
   const key = { household: "keemin", handles: new Set(["wright"]), ghId: "42", ghLogin: "keeminlee" };
   const dispatched = [];
-  const ctx = { clone, schemas: {}, schemaRequired: {}, call: (tool, fields) => { dispatched.push(tool); return { ok: tool, fields }; } };
+  // The REAL schema map, not an empty one (2026-09-11): the town apex's read
+  // branch now validates `args:` against the flat tool's own field list, and a
+  // caller handing it no map is answered as the wiring defect it is. The gate
+  // this test is about is unaffected either way; the map is what lets the two
+  // reads at the bottom still dispatch.
+  const { TOOLS } = await import("../src/mcp.mjs");
+  const ctx = { clone, schemas: Object.fromEntries(TOOLS.map((t) => [t.name, t.inputSchema?.properties ?? {}])),
+    schemaRequired: {}, call: (tool, fields) => { dispatched.push(tool); return { ok: tool, fields }; } };
 
   writeFileSync(join(clone, STANDING_LEDGER_PATH), LEDGER(Q("wright")));
 

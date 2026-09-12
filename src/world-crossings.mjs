@@ -101,31 +101,65 @@ export async function enterViaOffice(worldClone, payload = {}, key = null, deps 
   });
   if (answer.error) throw bounce(422, answer.error, "a mark you can step inside has a place and an extent; a point has no inside");
 
-  // A DOOR IS ENTERED FROM ITS DOORSTEP (founder-ruled 2026-08-27, option A of
-  // the R15 collision — found on the first dev walk: "you can enter things when
-  // you aren't even there"). The world's crossingPlan assumed a "bundled walk"
-  // that R15 forbids this office to perform, so entry-from-anywhere landed as
-  // occupancy with no presence. The ruling keeps R15 clean BOTH ways: no
-  // walking means no arriving. The measure is to the FIRST UNCROSSED LINK of
-  // the chain — entering a cellar from the house's own doorstep still works —
-  // and "at the door" is within its extent, or within EARSHOT_M (60, the
-  // town's own being-part-of-a-scene number) of its anchor. The refusal hands
-  // back the directions instead of the deed; a client that wants one-click
-  // convenience walks first, then knocks again.
+  // A DOOR IS ENTERED FROM WITHIN ITS REACH (founder-ruled 2026-08-27, option A
+  // of the R15 collision — found on the first dev walk: "you can enter things
+  // when you aren't even there"). The world's crossingPlan assumed a "bundled
+  // walk" that R15 forbids this office to perform, so entry-from-anywhere
+  // landed as occupancy with no presence. The ruling keeps R15 clean BOTH ways:
+  // no walking means no arriving. "At the door" is within its extent, or within
+  // EARSHOT_M (60, the town's own being-part-of-a-scene number) of its anchor.
+  // The refusal hands back the directions instead of the deed; a client that
+  // wants one-click convenience walks first, then knocks again.
   //
-  // ⚑ THE TEST MOVED OUT, THE LAW DID NOT (lane-h, 2026-09-07). It is now
+  // ⚑ THE DOOR CHECKED IS THE ONE YOU NAMED (founder-ruled 2026-09-11: "that's
+  // terrible"). This measured to `answer.links[0]` — the OUTERMOST un-held link
+  // of the chain — and called it "the door". It is not the door; it is the
+  // town's own outer wall, and on a town whose outermost link is a 2 km square
+  // it admitted everybody to everything inside it. On prod at
+  // 2026-09-12T00:04:21Z illuminator, standing inside `the-town/the-town-centre`
+  // and 1.7 km from the parcel, entered `the-town/the-town-centre` AND
+  // `illuminator/the-looking-room-parcel` in one act; both rows are in the live
+  // enter-exit ledger. The measure is now to the TARGET — the mark the caller
+  // named — and nothing is lost by it, because `enterExitPlan` says in its own
+  // comment that "walking to the target's own ground puts you inside every link
+  // at once, since the target sits within all of them". The chain still enters
+  // the outer links first; it is the STANDING that is now asked about the mark
+  // the resident actually asked for.
+  //
+  // WHY `answer.walk` STILL GUARDS IT. The engine sets `walk` to null exactly
+  // when the walker is already standing on the target's own ground — so this
+  // branch is "the engine says you are not on it yet", and the leg that then
+  // decides is the 60 m margin around the target's anchor. Guarding on the
+  // engine's own answer rather than re-deriving containment here keeps the
+  // stand-on-it-and-enter case working even against a clone that exports no
+  // `pointWithinMark` for `standsWithin` to borrow.
+  //
+  // ⚑ THE TEST MOVED OUT, THE LAW DID NOT (lane-h, 2026-09-07). It is
   // `standsWithin` in reach.mjs, because `the-town/the-reach` rules that a take
   // stands within a thing's extent "exactly as an entry stands at a threshold
   // you truly stand before" — and "exactly as" is only true if it is the same
-  // function. The one change: the 60 that stood here as a literal is now read
-  // off `the-town/say`'s own `earshot_m`, which is the record this comment has
-  // always named. Same number today; the town's number tomorrow.
-  const firstLink = answer.links?.length ? (w.marks ?? []).find((m) => m.id === answer.links[0]) : null;
-  if (firstLink && answer.walk) {
-    const reach = standsWithin(here, firstLink, { pointWithinMark: verbs.pointWithinMark });
+  // function. The one change there: the 60 that stood here as a literal is read
+  // off `the-town/say`'s own `earshot_m`, the record this comment always named.
+  const target = answer.links?.length
+    ? (w.marks ?? []).find((m) => m.id === (answer.target ?? markId)) ?? null
+    : null;
+  if (target && answer.walk) {
+    const reach = standsWithin(here, target, { pointWithinMark: verbs.pointWithinMark });
     if (!reach.stands) {
-      throw bounce(409, `you are not at that door — ${firstLink.id} stands ~${reach.distance_round} m from where you stand`,
-        `a door is entered from its doorstep (founder-ruled 2026-08-27; R15 keeps walk and entry decoupled in both directions). Walk to (${firstLink.at?.x}, ${firstLink.at?.y}) and knock again; nothing was recorded`);
+      // THE WALK RIDES THE REFUSAL AS A FIELD, NOT ONLY AS A SENTENCE
+      // (founder-agreed 2026-09-11, with the world page's "walk there and enter"
+      // button). The hint already names the coordinates, but a button that read
+      // them would be parsing prose to find a machine fact — the class this
+      // office has been burned by often enough to have a museum of it. So the
+      // plan's OWN bundled walk is handed back whole: `{ to: { x, y }, mark }`,
+      // exactly the object `enterExitPlan` computed, so the page sends
+      // `walk { mark_id: walk.mark, enter_on_arrival: true }` without ever
+      // reading the sentence. It is the plan's object rather than one rebuilt
+      // here on purpose — a second copy of the destination is a second answer to
+      // "where is that door", and this door already has the first.
+      throw bounce(409, `you are not at that door — ${target.id} stands ~${reach.distance_round} m from where you stand`,
+        `a door is entered from within its reach (founder-ruled 2026-08-27; re-ruled 2026-09-11 to measure at the mark you NAMED, not the outermost link of its chain; R15 keeps walk and entry decoupled in both directions). Walk to (${target.at?.x}, ${target.at?.y}) and knock again; nothing was recorded`,
+        { walk: answer.walk });
     }
   }
 

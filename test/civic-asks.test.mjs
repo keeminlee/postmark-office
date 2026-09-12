@@ -234,7 +234,13 @@ test("`asks` is a sibling of quests / bounties / ideas on the town menu", async 
   // the apex names the flat verb and hands the call back — it reimplements
   // nothing, which is what keeps a delisted verb honest.
   const calls = [];
+  // `schemas` rides now (2026-09-11): the read branch validates `args:` against
+  // the flat tool's own field list, so a caller that hands the apex no schema
+  // map is answered as the WIRING defect it is rather than silently validating
+  // nothing. Both live call sites pass it; this probe must too.
+  const { TOOLS } = await import("../src/mcp.mjs");
   const out = await townApex({ read: "asks" }, null, {
+    schemas: Object.fromEntries(TOOLS.map((t) => [t.name, t.inputSchema?.properties ?? {}])),
     call: async (tool, args) => { calls.push({ tool, args }); return { ok: tool }; },
   });
   assert.deepEqual(calls.map((c) => c.tool), ["read_asks"]);

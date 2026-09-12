@@ -1466,6 +1466,12 @@ const server = createServer((req, res) => {
         const qp = Object.fromEntries(url.searchParams.entries());
         if (qp.do != null)
           return bounce(res, 405, "a GET never acts", "acts ride POST /household with a JSON body — GET answers your standing and the focused reads (?read=address|home|standing)");
+        // NO `strictFields` HERE, AND IT IS THE ONE DELIBERATE ABSENCE. This
+        // skin hands the apex the WHOLE query string, so judging top-level
+        // fields would start refusing a browser's cache-buster at a public REST
+        // GET — the founder's call, not a lane's (door-parity report, class 4).
+        // The apex still judges anything riding an `args:` envelope; REST
+        // carries none, so this door answers exactly the bytes it always did.
         return householdApex(qp, key,
           { db, clone: TOWN_CLONE, odb, dbPath: DB_PATH, pen: PEN, canWrite, meta, asOf: AS_OF, schemas: flatPropsFromTools(), schemaRequired: flatRequiredFromTools() })
           .then((r) => j(res, r?.error ? (r.code ?? 400) : 200, r))
@@ -1684,7 +1690,7 @@ const server = createServer((req, res) => {
       readJsonBody(req).then(async (raw) => {
         try {
           const payload = JSON.parse(raw || "{}");
-          const r = await householdApex(payload, key, { db, clone: TOWN_CLONE, odb, dbPath: DB_PATH, pen: PEN, canWrite, meta, asOf: AS_OF, schemas: flatPropsFromTools(), schemaRequired: flatRequiredFromTools(), channel });
+          const r = await householdApex(payload, key, { db, clone: TOWN_CLONE, odb, dbPath: DB_PATH, pen: PEN, canWrite, meta, asOf: AS_OF, schemas: flatPropsFromTools(), schemaRequired: flatRequiredFromTools(), channel, strictFields: true });
           return j(res, r?.error ? (r.code ?? 400) : 200, r);
         } catch (e) {
           if (e instanceof SyntaxError) return bounce(res, 400, "body is not JSON", '{"do": "begin", "args": { "household": "…", "card": "…" }}');

@@ -1261,6 +1261,61 @@ test("read: a multi-resident key that names its handle top-level is not asked to
   assert.ok(!r.heard.error, `the shadow met a bounce the standpoint already answered: ${JSON.stringify(r.heard).slice(0, 200)}`);
 });
 
+// ── THE SHADOW READ VALIDATES ITS ENVELOPE (founder-ruled 2026-09-11) ─────
+//
+// This door's own description has promised it since the apex opened — "Unknown
+// fields in args bounce by name against the target's own schema" — and the
+// promise was true of the ACT branch and false of this one. Measured live on
+// dev before this landed: `world { read: "leave-mark", args: { bogus: 1 } }` →
+// 200, the field dropped, the caller told nothing.
+//
+// CAN-FAIL FLIP: delete the `validateReadArgs` call in world-apex.mjs
+// § apexReadAction and the two refusals below redden by ANSWERING.
+
+test("PARITY · an unknown envelope field on a shadow read bounces BY NAME, with the accepted list", async () => {
+  on();
+  const r = await worldApex({ read: "say", args: { bogus: 1 } }, KEY_ALPHA);
+  assert.equal(r.error, "bounce");
+  assert.equal(r.code, 422);
+  assert.equal(r.defect, 'unknown argument "bogus" for world { read: "say" }');
+  assert.equal(r.hint, "this read takes: text", "and the hint names what this shadow does answer to");
+  assert.deepEqual(r.accepted, ["text"]);
+});
+
+test("PARITY · `text` on a say-read still meets the TEACHING bounce, not the generic one", async () => {
+  // The one field a caller types here for a reason. "a read never performs"
+  // plus the door that does says strictly more than "unknown argument", so it
+  // is declared on THIS read and answered by `readDomainFor`'s own guard —
+  // while `text` on any other shadow bounces by name.
+  on();
+  const teaching = await worldApex({ read: "say", args: { text: "smuggled" } }, KEY_ALPHA);
+  assert.match(teaching.defect, /a read never performs/);
+  assert.equal(teaching.card.action, "say", "the law still rides the refusing path");
+});
+
+test("PARITY · a documented envelope field answers exactly as before", async () => {
+  on();
+  const r = await worldApex({ read: "say" }, KEY_ALPHA);
+  assert.ok(!r.error, JSON.stringify(r).slice(0, 300));
+  assert.ok(r.heard, "the bare shadow is untouched");
+});
+
+test("PARITY · the top level is judged ONCE, by the door's own closed schema", async () => {
+  // `world`'s inputSchema is `additionalProperties: false` and `validateArgs`
+  // has refused unknown top-level keys at the MCP door and at POST /world/apex
+  // since 08-17. Judging them a second time here would be a second opinion
+  // about a question already answered — so the read branch judges the envelope
+  // and nothing else, and `handle` (the standpoint, merged in from the top) is
+  // never the unknown one.
+  on();
+  const { APEX_TOOL } = await import("../src/world-apex.mjs");
+  const { validateArgs } = await import("../src/mcp.mjs");
+  assert.equal(APEX_TOOL.inputSchema.additionalProperties, false);
+  assert.match(validateArgs(APEX_TOOL, { read: "say", bogus: 1 }).defect, /unknown argument "bogus" for world/);
+  const r = await worldApex({ read: "say", handle: "alpha", args: {} }, KEY_ALPHA);
+  assert.ok(!r.error, JSON.stringify(r).slice(0, 300));
+});
+
 // ── the berth: emissions only, from the quay (arrival ruling 2026-08-15) ────
 
 const BERTH_KEY = { berth: true, slug: "field-tester", household: null, handles: new Set() };

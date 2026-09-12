@@ -31,6 +31,7 @@
 import { actionFields, apexEnabled } from "./world-apex.mjs";
 import { standingBounce } from "./standing.mjs";
 import { harborGated, HARBOR_BOUNCE } from "./harbor-gate.mjs";
+import { validateReadArgs } from "./validate-args.mjs"; // the flat tools' own validator, now at the read branch too
 
 const bounce = (code, defect, hint, extra = {}) => ({ error: "bounce", code, defect, hint, ...extra });
 
@@ -273,6 +274,14 @@ export async function townApex(args = {}, key = null, ctx = {}) {
       if (shadowFields.stamps !== undefined)
         return bounce(422, "a read never performs",
           `to stake, use do: — town { do: "${what}", args: { mark, stamps } }. read: "${what}" only looks at the escrow.`);
+      // The shadow read validates against its OWN tool, the same way the plain
+      // reads below do — `stamps` keeps its teaching bounce above because "a
+      // read never performs" says more than "unknown argument" does, and it is
+      // the one field a caller types here for a reason.
+      {
+        const bad = validateReadArgs({ read: what, tool: shadow.tool, properties: schemas?.[shadow.tool], fields: shadowFields });
+        if (bad) return bounce(bad.wiring ? 500 : 422, bad.defect, bad.hint, bad.extra);
+      }
       return { read: what, card, [shadow.key]: await call(shadow.tool, shadowFields), reading_law };
     }
     const spec = TOWN_READS[what];
@@ -283,6 +292,33 @@ export async function townApex(args = {}, key = null, ctx = {}) {
       return bounce(500, "the town door has no dispatcher", "the caller must pass ctx.call — the apex serves the flat verbs, it does not reimplement them");
     const { do: _d, read: _r, args: envelope, ...rest } = args;
     const fields = envelope && typeof envelope === "object" && !Array.isArray(envelope) ? { ...rest, ...envelope } : rest;
+    // ── THE READ VALIDATES, AT LAST (founder-ruled 2026-09-11: "yes on parity
+    // ── shape") ──────────────────────────────────────────────────────────────
+    //
+    // This line used to be `return call(spec.tool, fields)` and nothing else, so
+    // every one of this door's eighteen reads handed `args:` straight to the
+    // implementation. `town { read: "letters", args: { from: "glitch" } }`
+    // answered 200 and `total: 6126` — the whole sandbox corpus, labelled as
+    // matching — while the flat `list_letters` refused `from` BY NAME with the
+    // office's own validator. The validator was live and unreachable: it saw
+    // only the word "town".
+    //
+    // ONE VALIDATOR, THE TARGET'S — the rule the act branches of the two sibling
+    // apexes already keep. The bounce is the sentence the flat tool speaks, so a
+    // caller who moves between the two doors meets one grammar; the hint lists
+    // the names that WOULD have worked, which is the cold-read half the founder
+    // asked for ("this read takes: resident, region, since, until, …"). A read
+    // whose tool declares no properties says "this read takes no arguments" and
+    // refuses the field by name, rather than accepting it and ignoring it.
+    //
+    // What does NOT change: what any read returns for arguments it declares.
+    // `required` is not enforced here (validate-args.mjs § validateReadArgs says
+    // why), and the numeric-string coercion the flat door has done since the
+    // party-night fix rides through, so `args: { limit: "2" }` still pages.
+    {
+      const bad = validateReadArgs({ read: what, tool: spec.tool, properties: schemas?.[spec.tool], fields });
+      if (bad) return bounce(bad.wiring ? 500 : 422, bad.defect, bad.hint, bad.extra);
+    }
     return call(spec.tool, fields);
   }
 
