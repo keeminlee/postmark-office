@@ -72,6 +72,7 @@ import { servedEnterExitLedger } from "./enter-exit-ledger.mjs";
 // POS-5's consent verb. STANCE_TOOLS ride the schema lookup without joining
 // the flat tool list, exactly as CROSSING_TOOLS do and for the same reason.
 import { ACTION_STANCE, STANCE_TOOLS, declareStanceViaOffice, readNeverPerforms, stanceShadow, stancesBlock } from "./world-stance.mjs";
+import { validateReadArgs } from "./validate-args.mjs"; // the flat tools' own validator, now at the read branch too
 // ⚑ PARKED 2026-09-10 (the founder's word): the subscription (world#20), the
 // gathering (world#15) and the handoff (world#16) were three finished modules
 // imported here against law that was never ruled. They are held whole on office
@@ -2501,6 +2502,58 @@ async function apexDo(args, key, ctx = {}) {
 // anything is ever performed. A read never performs; an envelope that tries
 // to smuggle an act (text on a say-read) bounces by name.
 
+/**
+ * ── WHAT EACH SHADOW READ TAKES, DECLARED (founder-ruled 2026-09-11) ────────
+ *
+ * `readDomainFor` below has always whitelisted these fields by NAME — it reads
+ * `fields.mark`, `fields.depth`, `fields.offset`, `fields.cursor`,
+ * `fields.limit` and nothing else — but the whitelist was a set of property
+ * accesses, which cannot refuse: anything else in `args:` arrived, was never
+ * looked at, and the caller was told nothing. This door's own advertised text
+ * has promised the opposite since the apex opened ("Unknown fields in args
+ * bounce by name against the target's own schema"), and that sentence was true
+ * of the ACT branch and false of this one. The table makes it true of both.
+ *
+ * ⛔ THESE ARE NOT THE ACT'S FIELDS, which is why they are declared rather than
+ * looked up. A shadow read takes a SUBSET of what its act takes and sometimes
+ * something the act has no use for: `read: "say"` listens and takes nothing,
+ * while `do: "say"` takes the text; `read: "leave-mark"` narrows to one mark and
+ * how deep to look, where the act writes a body. Borrowing `fullPropsFor(tool)`
+ * would have this branch accept every field of the act it shadows, which is the
+ * opposite of a read that never performs.
+ *
+ * The two fields that already had TEACHING bounces keep them and are absent
+ * here on purpose — `text` on a say-read and `stance` on a stance-read answer
+ * "a read never performs", which says more than "unknown argument" does, and
+ * those two are the fields a caller types for a reason.
+ *
+ * `handle` is exempt everywhere: it is the standpoint field, merged in from the
+ * top level a few lines below and read by `call` itself.
+ */
+const WORLD_READ_FIELDS = Object.freeze({
+  // `text` here and `stance` below are DECLARED so that `readDomainFor`'s own
+  // teaching bounce is the one the caller meets. They are not "accepted": each
+  // is answered with "a read never performs" and the door that does perform it
+  // — which says strictly more than "unknown argument" and is the sentence a
+  // caller who typed read: where they meant do: actually needs. Declared on the
+  // ONE read that teaches about them, so `read: "walk", args: { text }` still
+  // bounces by name.
+  say: { text: { type: "string", description: "refused — a read never performs; speak with do: \"say\"" } },
+  walk: {},
+  "leave-mark": { mark: { type: "string", description: "one mark to look into — <by>/<slug>" },
+                  depth: { type: "number", description: "how far down to descend into that mark" },
+                  offset: { type: "number", description: "walk past the first of your own marks" } },
+  stake: { mark: { type: "string", description: "the mark whose escrow to read — <by>/<slug>" } },
+  unstake: { mark: { type: "string", description: "the mark whose escrow to read — <by>/<slug>" } },
+  take: {},
+  give: {},
+  drop: {},
+  "note-to-self": {},
+  [ACTION_STANCE]: { cursor: { type: "string", description: "walk the consent inbox from where you last looked" },
+                     limit: { type: "number", description: "how many candidates awaiting your word" },
+                     stance: { type: "string", description: "refused — a read never performs; speak with household { do: \"declare-stance-on\" }" } },
+});
+
 /** One action's domain, read. Fields are whitelisted per action — a read
  *  passes through only what the shadow's own tool takes, never the act's. */
 // ⛔ EXPORTED SO A WIRING PROBE CAN DRIVE IT (lane-h, the reviewer's owed lap).
@@ -2660,6 +2713,29 @@ async function apexReadAction(args, key, ctx = {}) {
     // an act — a multi-resident key that named its handle must not meet the
     // which-resident bounce on a read (field-found on the box's own key).
     const fields = { ...(envelope ?? {}), ...(args.handle ? { handle: args.handle } : {}) };
+    // ── THE SHADOW READ VALIDATES ITS ENVELOPE (founder-ruled 2026-09-11) ────
+    //
+    // The act branch has refused unknown envelope fields by name since the
+    // envelope landed (Stage ② above); this branch never did, so `world { read:
+    // "leave-mark", args: { bogus: 1 } }` answered 200 with the field dropped —
+    // measured. The door's own description has promised otherwise all along.
+    //
+    // ONLY THE ENVELOPE IS JUDGED HERE, and nothing at the top level: `world`'s
+    // own schema is closed (`additionalProperties: false`) and `validateArgs`
+    // has already refused an unknown top-level key at the MCP door and at POST
+    // /world/apex. Judging it twice would be a second opinion about a question
+    // that is already answered.
+    //
+    // A read whose card exists but whose shadow is not wired (`default:` in
+    // `readDomainFor`) has no row in the table; it is left unjudged rather than
+    // refused, because "this office has not built that shadow yet" is already
+    // the answer that read gives and a field list would be a guess about a room
+    // nobody has built.
+    if (envelope && WORLD_READ_FIELDS[action]) {
+      const bad = validateReadArgs({ read: action, tool: `world { read: "${action}" }`,
+        properties: WORLD_READ_FIELDS[action], fields, exempt: ["handle"] });
+      if (bad) return bounce(422, bad.defect, bad.hint, bad.extra);
+    }
     const domain = await readDomainFor(action, fields, key, oriented, ctx);
     // A refused read still shows the law — the card rides the bounce exactly
     // as terms ride an act's.

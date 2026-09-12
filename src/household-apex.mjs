@@ -29,6 +29,7 @@ import { requestResidency } from "./residency.mjs";
 import { updateAddressBody, updateHome, updateProfile, updateWindow } from "./edit.mjs";
 import { harborGated, HARBOR_BOUNCE } from "./harbor-gate.mjs";
 import { standingBounce } from "./standing.mjs";
+import { validateReadArgs } from "./validate-args.mjs"; // the flat tools' own validator, now at the read branch too
 import { resident as residentQ, home as homeQ, identityOf, indexAsOf, mailList, mailAwaiting, mailCorrespondents, outboxSettled, windowRead, DOORSTEP_SEGMENTS } from "./queries.mjs";
 import { doorstepBundle } from "./doorstep-bundle.mjs";
 import { worldBlockForHandle } from "./world.mjs";
@@ -234,6 +235,55 @@ export const HOUSEHOLD_READS = Object.freeze({
 });
 
 export const HOUSEHOLD_READABLE = Object.freeze(Object.keys(HOUSEHOLD_READS));
+
+/**
+ * ── WHAT EACH READ TAKES, DECLARED (founder-ruled 2026-09-11, "yes on parity
+ * ── shape") ────────────────────────────────────────────────────────────────
+ *
+ * The read branch used to pass `args:` straight through, so a field this door
+ * does not read was accepted and silently ignored — the same defect the town
+ * apex had, measured live: `household { read: "mail", args: { …, bogus: 1 } }`
+ * answered 200 with the field dropped. Now every read is validated against its
+ * own field list before it dispatches, through the flat tools' own
+ * `validateArgs` (validate-args.mjs), so one grammar answers at every door.
+ *
+ * ⛔ THE LIST IS DECLARED HERE AND NOT BORROWED FROM A FLAT TOOL, and that is
+ * the whole reason this table exists rather than a lookup. Most household reads
+ * have NO flat twin at all (`stances`, `rulings`, `standing`, `fund`, `media`,
+ * `quests` at this door), and the two that do speak a DIFFERENT vocabulary on
+ * purpose: the apex's mail read takes `view:` where flat `list_mail` takes
+ * `box:`, and its doorstep takes `correspondence_offset` where REST spells the
+ * same idea with a hyphen. Borrowing `list_mail`'s schema would have this door
+ * refuse `view` — the only spelling its own description teaches — and accept
+ * `box`, which it does not read. So the list is what the BRANCH BELOW actually
+ * pulls off `f`, and the falsifier in test/household-apex.test.mjs reads the
+ * source to keep the two in step.
+ *
+ * `handle` is exempt everywhere rather than listed on each row: it is this
+ * door's standpoint field, resolved from the key for every read at one line,
+ * exactly as the ACT branch exempts it (`k !== "handle"`).
+ */
+export const HOUSEHOLD_READ_FIELDS = Object.freeze({
+  doorstep: { correspondence_offset: { type: "number", description: "walk the correspondence ledger — the same offset the flat read_doorstep spells correspondence_offset" },
+              offset: { type: "number", description: "alias of correspondence_offset, honoured since before it had its own name" } },
+  mail: { view: { type: "string", description: "inbox | outbox | pending | awaiting | correspondents" },
+          since: { type: "string", description: "inclusive ISO date" },
+          until: { type: "string", description: "inclusive ISO date" },
+          limit: { type: "number", description: "how many rows" },
+          offset: { type: "number", description: "walk past the first rows" },
+          hide_bounces_older_than_days: { type: "number", description: "awaiting only: drop bounces older than this many days" } },
+  window: {},
+  stances: { cursor: { type: "string", description: "walk the inbox from where you last looked" },
+             limit: { type: "number", description: "how many candidates" } },
+  rulings: { crossings: { type: "number", description: "how many crossings back to look — the morning window is two" } },
+  address: {},
+  home: {},
+  standing: {},
+  stamps: {},
+  quests: {},
+  fund: {},
+  media: {},
+});
 
 /**
  * ── THE NAMESPACE IS NOT DISJOINT, AND THREE ACTS PAY FOR IT ─────────────
@@ -795,6 +845,37 @@ export async function householdApex(args = {}, key = null, ctx = {}) {
     const env = parseEnvelope(args);
     const { do: _rd, read: _rr, args: _ra, ...restRead } = args;
     const f = env && typeof env === "object" && !Array.isArray(env) ? { ...restRead, ...env } : restRead;
+    // ── THE READ VALIDATES (founder-ruled 2026-09-11) ───────────────────────
+    //
+    // A field this door does not read is refused BY NAME with the names that
+    // would have worked, instead of being accepted and dropped. The list is
+    // HOUSEHOLD_READ_FIELDS above (why it is declared there and not borrowed
+    // from a flat tool is written beside it); an ACT NAME read back as a card
+    // takes nothing at all, so it is judged against an empty set and says so.
+    //
+    // ⛔ WHAT IT JUDGES DEPENDS ON WHO CALLED, AND ONLY HERE. `GET /household`
+    // hands this function THE WHOLE QUERY STRING as top-level fields
+    // (server.mjs § GET /household), and bouncing unknown query parameters at a
+    // public REST GET is the founder's call, not this lane's — browsers and
+    // proxies append cache-busters. So the envelope, which is the APEX's own
+    // grammar and the shape the ruling was measured on, is always judged; the
+    // top-level leftovers are judged only for the two skins that speak that
+    // grammar (the MCP door and POST /household), which say so by name.
+    // `strictFields` is asserted at all three call sites by a falsifier, so a
+    // skin cannot drop it and quietly stop refusing anything.
+    {
+      const judged = env && typeof env === "object" && !Array.isArray(env)
+        ? (ctx.strictFields ? f : { ...env })
+        : (ctx.strictFields ? f : null);
+      if (judged) {
+        const declared = HOUSEHOLD_READ_FIELDS[what] ?? (ACTS[what] ? {} : null);
+        if (declared) {
+          const bad = validateReadArgs({ read: what, tool: `household { read: "${what}" }`, properties: declared, fields: judged, exempt: ["handle"] });
+          if (bad) return bounce(422, bad.defect, bad.hint, bad.extra);
+          for (const k of Object.keys(judged)) f[k] = judged[k]; // carry the coercion back
+        }
+      }
+    }
     // ASK, DON'T GUESS (2026-08-26). This line used to fall back to the key's
     // FIRST handle, so a key holding several residents read the alphabetically
     // luckiest one's window/mail/doorstep as if it were the caller's own —

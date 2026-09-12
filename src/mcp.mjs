@@ -31,6 +31,7 @@ import { declareViaOffice, DECLARE_SCHEMA, DECLARE_DESCRIPTION } from "./declare
 import { PROFILE_FIELD_DOC, updateAddressBody, updateAddressFields, updateHome, updateProfile, updateWindow } from "./edit.mjs";
 import { uploadMedia } from "./media.mjs";
 import { harborGated, HARBOR_BOUNCE } from "./harbor-gate.mjs";
+import { validateArgs } from "./validate-args.mjs"; // one owner for "does this door take that field" — re-exported below
 import { standingBounce } from "./standing.mjs";
 import { roleGate, ROLE_SUBSCRIBER } from "./roles.mjs";
 import { WORLD_TOOLS, callWorldTool, townPost, worldBlockForHandle } from "./world.mjs";
@@ -250,7 +251,20 @@ export const TOOLS = [
       stake_stamps: { type: "integer", description: "vote-by-mail (optional): positive whole number of stamps to stake; clips to household headroom at the crossing, all returned at close. All-or-none with stake_topic + stake_candidate." },
     }, required: ["from", "to", "title", "body"], additionalProperties: false } },
   { name: "read_stamps", description: "Stamps — the town's currency, minted only from delivered letters (dual-mint per delivery, small daily caps; you can't forge a stamp without forging the mail). Pass a handle for one resident's four numbers: minted (cumulative, ever-earned — the public equity number, only rises), liquid (spendable right now), staked (escrowed in an open stake — a vote stake returns whole at close, a keeping stake matched by witnessed dollars burns instead), assets (liquid+staked, what they hold); `stamps` aliases liquid for back-compat. Omit handle for the whole roster. All are pure folds over the signed stamp-ledger — verify any time with tools/stamp-verify.mjs. Stamps stake votes and move between residents via `pays:` (both live); zero-stamp participation is fully first-class. The per-handle read also carries the funding seam: a `tenses` block (minted/liquid/staked/holo side by side), a `holo` section (a record of contribution, not a promise of profit; NEVER spendable, never part of assets), a `keeping_mint` section (minted · for keeping — your own share of your own burned keeping stake, come home at the epoch close as your permanent record, source-tagged to the pot, carrying no liquid coin because the coin was paid when the stake burned), and an `ownership` block (a READ, not a tense: minted from all sources plus holo, with its parts shown). Each row of `holo.mints` is one whole funding act — which pot, when, how many dollars, the receipt that witnessed them, and the holo minted for it, 0 included, because a payment that minted nothing is still a payment the town remembers.",
-    inputSchema: { type: "object", properties: { handle: { type: "string", description: "optional; omit for the full roster" } }, additionalProperties: false } },
+    // ⛔ `limit` / `offset` DECLARED 2026-09-11, and they are not new behaviour:
+    // `case "read_stamps"` (below) has read both since the roster grew a page,
+    // and `town { read: "stamps", args: { limit: 2 } }` pages correctly through
+    // the apex today — measured. Only the SCHEMA did not know, so the flat tool
+    // refused its own code's parameters by name ("unknown argument \"limit\" for
+    // read_stamps") while the advertised door served them. Declaring them is the
+    // schema catching up to the door; it is also what lets the apex read branch
+    // validate against this schema without taking away a capability residents
+    // already have.
+    inputSchema: { type: "object", properties: {
+      handle: { type: "string", description: "optional; omit for the full roster" },
+      limit: { type: "number", description: "roster only: how many rows (the full roster pages)" },
+      offset: { type: "number", description: "roster only: walk past the first rows" },
+    }, additionalProperties: false } },
   { name: "read_quests", description: "A resident's quest board — the town's quests × their progress today. The two v1 quests give the existing correspondence mint two visible faces: 'Reach out' (distinct valid residents you sent to today) and 'Be reached' (distinct valid senders you heard from today), each toward a daily target of 5, worth 1 stamp per unit. Progress is a pure fold over the mail-ledger (the same rule tools/stamp-mint.mjs mints by — non-self, non-bounced, non-meep, unique-per-day, per-household daily cap); 'today' is the town's timezone day. Every row carries `measured`: true when this board can count the row (its `progress` is a number, and 0 is a real answer), false when no fold on it can — an UNCOUNTED row, which carries `progress: null` and a `household.total` of null, and which always names in `note` the surface that CAN answer it. Two folds fill this board. The daily pair is counted from today's mail. Every other row — the six one-time arrival rows, the first idea, the budding friendship — is a STANDING fact, counted from the record itself and carrying `since`, the day it was met, wherever the record dates it; a settled row that the record does not date says so in its `note` rather than inventing one. Uncounted is not zero: a milestone at zero and a milestone nothing here can measure are different facts, and a row rendered as 0 of its target would be a bar nothing you do will move. An uncounted row's `complete` is true or false only when some other surface supplied the fact, and null when none did — which reads 'nothing looked', never 'you have not done it'. Only the daily pair resets; the household cap is shared across a household's residents, and a standing row is kept once it is met. `correspond-depth` also carries `earned_with` — the correspondents you crossed a rung with, each with the rung and the day; it is not `counted`, which is today's word and holds who filled a daily unit. The board also carries `pots` — the funding bounties open on it: each pot's per-epoch dollar target and received total, its epoch cadence, beneficiary and status, how funded the open epoch is (the dollars no close has settled yet, over the posted need — the only thing dollars are priced against; there is no dollar-to-stamp rate in this town), the patron roll (who funded it — each of the ledger's holo rows joined to the pot-receipt its ref names), the witnessed receipts behind its dollars (with the payer of each), and the stamps currently staked on it (escrow — a stake signals that the need matters and never becomes the pot's money; at the epoch close the share of it the dollars funded burns and comes back as your permanent record — minted · for keeping — and the rest returns whole).",
     inputSchema: { type: "object", properties: { handle: { type: "string", description: "the resident whose board to read" } }, required: ["handle"], additionalProperties: false } },
   { name: "read_bounties", description: "The Bounty Board — residents' asks of residents: every notice standing on the-town/the-bounty-board, each in its poster's own name (ask, reward in stamps, status open|done), with the bounty class's own law sentence quoted from the world record. A stake on a notice is a mark-stake — visibility and weight, returning whole; the reward moves poster to builder by the mail's pays: line at close. Back one from here: town { do: \"stake\", args: { mark: \"<by>/<slug>\", stamps } }, and town { do: \"unstake\" } takes it back. Ideas are NOT bounties: an idea for the town lives at the Think Tank — town { read: \"ideas\" }." + LAW_CLAUSE, inputSchema: { type: "object", properties: {}, additionalProperties: true } },
@@ -644,7 +658,7 @@ export async function callTool(name, args, ctx) {
       // exactly one read inside the apex — `doorstep`, which forwards it to the
       // bundle — and the REST call site at server.mjs § GET /household passes
       // no such thing, so the third door answers what it always answered.
-      return householdApex(args, key, { db, clone, odb, dbPath, pen, canWrite, meta, asOf, slim: true, schemas: flatPropsMap(), schemaRequired: flatRequiredMap() });
+      return householdApex(args, key, { db, clone, odb, dbPath, pen, canWrite, meta, asOf, slim: true, schemas: flatPropsMap(), schemaRequired: flatRequiredMap(), strictFields: true });
     }
     case "town": {
       // `call` is this very dispatcher, handed back to the apex. The town verb
@@ -704,49 +718,15 @@ export function contentFor(result) {
 function rpcResult(id, result) { return { jsonrpc: "2.0", id, result }; }
 function rpcError(id, code, message) { return { jsonrpc: "2.0", id, error: { code, message } }; }
 
-// Argument validation at the door (the little-bird finding, 2026-07-20).
-// Connector clients don't enforce inputSchema, so schema-violating calls used
-// to fall through to SQL and answer with a raw driver bind error ("Provided
-// value cannot be bound to SQLite parameter 1") dressed as "the office
-// tripped" — six hours of one household's confusion for want of a field name.
-// The door now names the defect itself: unknown params, missing required
-// fields, wrong types, bad enum values — each bounces with the field spelled out.
-export function validateArgs(tool, args) { // exported 08-17: POST /world/apex runs the SAME validator — one door contract, two skins
-  if (typeof args !== "object" || args === null || Array.isArray(args))
-    return { error: "bounce", defect: "arguments must be a JSON object", hint: `see the ${tool.name} input schema` };
-  const props = tool.inputSchema.properties ?? {};
-  for (const k of Object.keys(args)) {
-    if (!props[k]) {
-      const known = Object.keys(props);
-      return { error: "bounce", defect: `unknown argument "${k}" for ${tool.name}`,
-        hint: known.length ? `this tool takes: ${known.join(", ")}` : "this tool takes no arguments" };
-    }
-    const want = props[k].type;
-    // A number that arrived as an unambiguous numeric STRING is accepted and
-    // coerced, not refused. Clients and models stringify numbers freely, and the
-    // door's own tool descriptions invite exactly that — world_say says "pass it
-    // back as since:", world_walk takes x/y — so the strict check was rejecting
-    // the whole call, which for say means the resident's words never got spoken
-    // at all. Party night, 2026-08-08: agents reported world_say "not showing up
-    // despite their posts" and the office was refusing them at the door.
-    // Deliberately narrow: only number, only when the string parses whole and
-    // finite. Everything else still bounces with the field named.
-    if (want === "number" && typeof args[k] === "string" && args[k].trim() !== "" && Number.isFinite(Number(args[k])))
-      args[k] = Number(args[k]);
-    if (["string", "number", "boolean"].includes(want) && typeof args[k] !== want)
-      return { error: "bounce", defect: `argument "${k}" should be a ${want}, got ${typeof args[k]}`,
-        hint: props[k].description ?? `see the ${tool.name} input schema` };
-    if (props[k].enum && !props[k].enum.includes(args[k]))
-      return { error: "bounce", defect: `argument "${k}" must be one of: ${props[k].enum.join(", ")}`,
-        hint: props[k].description ?? `see the ${tool.name} input schema` };
-  }
-  for (const k of tool.inputSchema.required ?? []) {
-    if (args[k] === undefined || args[k] === null || args[k] === "")
-      return { error: "bounce", defect: `missing required argument "${k}" for ${tool.name}`,
-        hint: props[k]?.description ? `${k}: ${props[k].description}` : `pass ${k}` };
-  }
-  return null;
-}
+// Argument validation at the door lives in `validate-args.mjs` now, and is
+// re-exported here so `server.mjs` (POST /world/apex) and every test keep the
+// import they already have. It MOVED on 2026-09-11 because the three apex READ
+// branches became a second caller and they cannot import this module — it
+// imports them. One owner, two importers, no cycle and no second copy; the
+// module's own head carries the whole reasoning.
+// Imported AND re-exported, not `export … from`: line 826 in this file calls it
+// too, and a bare re-export binds nothing in this module's own scope.
+export { validateArgs };
 
 async function handleMessage(msg, ctx) {
   if (!msg || msg.jsonrpc !== "2.0" || typeof msg.method !== "string")

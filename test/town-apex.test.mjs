@@ -490,3 +490,108 @@ test("world: do/read carry NO enum (standpoint decides) and suggest the dispatch
     assert.deepEqual(p.as.enum, ["resident", "human"]);
   } finally { if (prev === undefined) delete process.env.WORLD_APEX; else process.env.WORLD_APEX = prev; }
 });
+
+// ── THE READ BRANCH VALIDATES (founder-ruled 2026-09-11: "yes on parity shape") ──
+//
+// THE DEFECT, measured live on dev 2026-09-11 before this landed:
+//   town { read: "letters", args: { from: "glitch" } }  →  200, total 6126
+// the whole sandbox corpus, labelled as matching — while the flat `list_letters`
+// refused `from` by name with the office's own `validateArgs`. The validator
+// was live and unreachable from the only door a connecting agent holds: the
+// apex handed `args:` straight to the implementation, and `validateArgs` only
+// ever saw the word "town".
+//
+// CAN-FAIL FLIP for this whole block: delete the `validateReadArgs` call in
+// town-apex.mjs § the read branch and every test below reddens by ANSWERING —
+// `{ ok: "list_letters" }` comes back with `from` in the dispatched fields,
+// which is the live defect's exact shape.
+
+test("PARITY · an unknown arg on a town read bounces BY NAME, and nothing is dispatched", async () => {
+  const a = spy();
+  const r = await townApex({ read: "letters", args: { from: "glitch" } }, key(), ctx({ call: a.call }));
+  assert.equal(r.error, "bounce");
+  assert.equal(r.code, 422);
+  assert.equal(r.defect, 'unknown argument "from" for list_letters',
+    "the sentence the FLAT tool speaks — one grammar across both doors");
+  assert.deepEqual(a.calls, [], "and the implementation was never reached, so no corpus came back labelled as matching");
+});
+
+test("PARITY · the hint lists the names that WOULD have worked — the cold-read half", async () => {
+  const r = await townApex({ read: "letters", args: { from: "glitch" } }, key(), ctx({ call: spy().call }));
+  assert.equal(r.hint, "this read takes: resident, region, since, until, exclude_office, full, limit, offset");
+  assert.deepEqual(r.accepted, ["resident", "region", "since", "until", "exclude_office", "full", "limit", "offset"]);
+  assert.equal(r.dispatched_to, "list_letters", "and it names which tool's field list answered");
+});
+
+test("PARITY · a read whose tool takes nothing refuses the field by name and says so", async () => {
+  const a = spy();
+  const r = await townApex({ read: "bounties", args: { bogus: 1 } }, key(), ctx({ call: a.call }));
+  assert.equal(r.error, "bounce");
+  assert.equal(r.defect, 'unknown argument "bogus" for read_bounties');
+  assert.equal(r.hint, "this read takes no arguments");
+  assert.deepEqual(a.calls, []);
+});
+
+test("PARITY · a DOCUMENTED argument answers exactly as before, top level or in the envelope", async () => {
+  // The other half of the ruling: nothing a read declares may start bouncing.
+  const a = spy();
+  const good = await townApex({ read: "letters", args: { resident: "glitch", limit: 5 } }, key(), ctx({ call: a.call }));
+  assert.deepEqual(good, { ok: "list_letters" }, "the flat verb's answer, untouched");
+  assert.deepEqual(a.calls, [{ tool: "list_letters", fields: { resident: "glitch", limit: 5 } }]);
+  // top-level fields have always merged at this door and still do
+  const b = spy();
+  await townApex({ read: "search", q: "lanterns" }, key(), ctx({ call: b.call }));
+  assert.deepEqual(b.calls, [{ tool: "search_town", fields: { q: "lanterns" } }]);
+});
+
+test("PARITY · the numeric-string coercion rides through, so args: { limit: \"2\" } still pages", async () => {
+  // The party-night fix (2026-08-08) lives in the same validator: clients and
+  // models stringify numbers freely. A door that validated but did not carry
+  // the coercion back would agree and then hand SQL a string — the half-fix.
+  const a = spy();
+  await townApex({ read: "letters", args: { limit: "2" } }, key(), ctx({ call: a.call }));
+  assert.deepEqual(a.calls, [{ tool: "list_letters", fields: { limit: 2 } }]);
+  assert.equal(typeof a.calls[0].fields.limit, "number", "coerced, not merely permitted");
+});
+
+test("PARITY · the stamps roster keeps its paging — the schema caught up to the code, it did not take a capability away", async () => {
+  // `read_stamps` reads limit/offset (mcp.mjs § case "read_stamps") and the apex
+  // has paged with them since the roster grew a page — measured on dev,
+  // `shown 2, limit 2`. Only the SCHEMA did not know, so the flat tool refused
+  // its own parameters by name. Validating the apex against a schema that still
+  // did not know would have taken a working capability off residents.
+  const a = spy();
+  await townApex({ read: "stamps", args: { limit: 2, offset: 4 } }, key(), ctx({ call: a.call }));
+  assert.deepEqual(a.calls, [{ tool: "read_stamps", fields: { limit: 2, offset: 4 } }]);
+});
+
+test("PARITY · the shadow read validates too, and `stamps` keeps its TEACHING bounce", async () => {
+  const a = spy();
+  const bad = await townApex({ read: "stake", args: { bogus: 1 } }, key(), ctx({ call: a.call }));
+  assert.equal(bad.defect, 'unknown argument "bogus" for town_stake_read');
+  assert.deepEqual(a.calls, []);
+  // …while the one field a caller types here for a reason still gets the
+  // sentence that tells them WHICH verb they wanted.
+  const teaching = await townApex({ read: "stake", args: { mark: "wright/an-idea", stamps: 3 } }, key(), ctx({ call: spy().call }));
+  assert.match(teaching.defect, /a read never performs/,
+    "a sentence that says more than \"unknown argument\" must not be replaced by one that says less");
+});
+
+test("PARITY · every town read's tool is one the schema map can answer for", async () => {
+  // The wiring this branch stands on: `schemas[spec.tool]` must resolve for all
+  // eighteen reads, or the door answers 500 at a resident instead of here. This
+  // is the falsifier for a read added tomorrow whose tool never joined TOOLS.
+  const missing = Object.entries(TOWN_READS).filter(([, s]) => !(s.tool in schemas)).map(([r]) => r);
+  assert.deepEqual(missing, [], "a read whose tool is absent from the flat list cannot be validated, and says so at runtime");
+});
+
+test("PARITY · an apex called WITHOUT its schema map says so — a validator that silently stops is the quiet failure", async () => {
+  // CAN-FAIL: make the missing-schema branch fall through to `call(...)` and
+  // this reddens by answering `{ ok: "read_town" }`.
+  const a = spy();
+  const r = await townApex({ read: "town" }, key(), { call: a.call });
+  assert.equal(r.error, "bounce");
+  assert.equal(r.code, 500, "a wiring defect is the office's, never the caller's");
+  assert.match(r.hint, /ctx\.schemas/);
+  assert.deepEqual(a.calls, []);
+});

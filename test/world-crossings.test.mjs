@@ -170,34 +170,150 @@ test("the dispatch table holds the pair, and the fields come from their own sche
     "closed schemas: an unknown field bounces by name");
 });
 
-// ── the doorstep law (founder-ruled 2026-08-27, option A of the R15 collision) ──
+// ── the reach law (founder-ruled 2026-08-27, option A of the R15 collision) ──
 
-test("a door is entered from its doorstep — entry from afar is refused with directions, and nothing reaches the pen", async () => {
+test("a door is entered from within its reach — entry from afar is refused with directions, and nothing reaches the pen", async () => {
   // "You can enter things when you aren't even there" — the first dev walk's
   // finding. The bundled walk the world's crossingPlan assumed is performed by
   // nobody (R15: the office never writes a walk), so before this guard, entry
   // from anywhere landed as occupancy with no presence. The ruling: at the
-  // door means within the first uncrossed link's extent or within 60 m of its
-  // anchor; farther is a 409 carrying the walk-to coordinates, not a deed.
+  // door means within the TARGET's extent or within 60 m of its anchor
+  // (re-ruled 2026-09-11 — it used to be the first uncrossed link, which is the
+  // outer wall, not the door); farther is a 409 carrying the walk-to
+  // coordinates, not a deed.
   const o = await officeWith({ standing: { x: 90000, y: 90000 } });
   await assert.rejects(
     () => enterViaOffice(CLONE, { mark: SHIP }, key("postmaster"), o.deps),
     (e) => e.code === 409 && /not at that door/.test(e.defect) && /Walk to \(/.test(e.hint ?? e.resolves ?? ""),
     "a caller ~127 km away must be refused with directions");
-  assert.equal(o.written.length, 0, "and nothing reached the pen — a refusal at the doorstep writes no crossing");
+  assert.equal(o.written.length, 0, "and nothing reached the pen — a refusal at the door writes no crossing");
 });
 
-test("...and the doorstep itself still admits — within earshot of the first link is at the door", async () => {
+test("...and the reach itself still admits — within earshot of the TARGET is at the door", async () => {
   // The default fixture standing is the one every chain falsifier above enters
-  // from; if this test reddens, the guard has started refusing the doorstep
-  // and every chain law above it is standing on a corpse.
+  // from; if this test reddens, the guard has started refusing a walker who is
+  // standing at the door, and every chain law above it is standing on a corpse.
   const o = await officeWith();
   const answer = await enterViaOffice(CLONE, { mark: SHIP, accept: true }, key("postmaster"), o.deps);
-  assert.ok((answer.entered ?? []).length > 0 || answer.already, "the doorstep entry must land (or already be within)");
+  assert.ok((answer.entered ?? []).length > 0 || answer.already, "the in-reach entry must land (or already be within)");
+});
+
+// ── THE DOOR CHECKED IS THE ONE YOU NAMED (founder-ruled 2026-09-11) ──────
+//
+// illuminator's case, reproduced. On prod at 2026-09-12T00:04:21Z, standing
+// inside `the-town/the-town-centre` and 1.7 km from the parcel, illuminator
+// entered BOTH `the-town/the-town-centre` and
+// `illuminator/the-looking-room-parcel` in one act — both rows are in the live
+// `GET /api/world/enter-exit-ledger`. The founder: "that's terrible."
+//
+// The cause was arithmetic, not adjudication: the reach was measured to
+// `answer.links[0]`, the OUTERMOST un-held link, which on this town is a
+// 2 092 × 1 745 m square. Standing anywhere inside the town admitted you to
+// anything inside the town. The measure is now the TARGET.
+//
+// CAN-FAIL FLIP: put `answer.links[0]` back in `world-crossings.mjs` and this
+// test goes green-to-red by ADMITTING — `entered` comes back with two ids and
+// the pen takes two rows, exactly the prod ledger's shape.
+
+const PARCEL = "illuminator/the-looking-room-parcel";
+// Inside the town centre (it spans x -1100…992, y -952…793) and 1 721 m from
+// the parcel's anchor — the standpoint class illuminator was in.
+const DEEP_IN_TOWN_FAR_FROM_PARCEL = { x: -1100, y: 150 };
+
+test("illuminator's case: inside the outer link but 1.7 km from the mark you named is REFUSED, and nothing is recorded",
+  { skip: !HAVE_CLONE && "no world clone" }, async () => {
+  const { readFileSync } = await import("node:fs");
+  const world = JSON.parse(readFileSync(join(CLONE, "WORLD", "world-state.json"), "utf8"));
+  const { pathToFileURL } = await import("node:url");
+  const mod = await import(pathToFileURL(join(CLONE, "tools", "world-verbs.mjs")));
+
+  // The premise, measured rather than assumed: he really is inside the outer
+  // link, and the outer link really is the first one the old code reached for.
+  const outer = world.marks.find((m) => m.id === "the-town/the-town-centre");
+  assert.equal(mod.pointWithinMark(DEEP_IN_TOWN_FAR_FROM_PARCEL, outer), true,
+    "the whole point of this case is that the OLD check passed — he is inside the town centre");
+  const plan = mod.enterExitPlan(DEEP_IN_TOWN_FAR_FROM_PARCEL, PARCEL, world, {});
+  assert.equal(plan.links[0], "the-town/the-town-centre", "and that is the link the old measure used");
+  assert.equal(plan.chain.at(-1), PARCEL);
+
+  const o = await officeWith({ standing: DEEP_IN_TOWN_FAR_FROM_PARCEL });
+  const e = await enterViaOffice(CLONE, { mark: PARCEL, handle: "illuminator", accept: true },
+    key("illuminator"), o.deps).then(() => null, (err) => err);
+
+  assert.ok(e, "1.7 km from the parcel is not at the parcel's door");
+  assert.equal(e.code, 409);
+  assert.ok(e.defect.includes(PARCEL), `the refusal names the TARGET: ${e.defect}`);
+  assert.doesNotMatch(e.defect, /the-town\/the-town-centre/,
+    "and not the outer wall he happened to be standing inside");
+  assert.match(e.defect, /~1721 m/, "with the distance to the mark he named");
+  assert.match(e.hint, /Walk to \(563, -294\.5\)/, "and the parcel's own coordinates to walk to");
+  assert.equal(o.written.length, 0, "nothing reached the pen — neither row of the prod ledger's pair");
+});
+
+test("...and from the parcel's own reach the chain still enters the outer links first",
+  { skip: !HAVE_CLONE && "no world clone" }, async () => {
+  // Nothing is lost by measuring at the target: `enterExitPlan` says it in its
+  // own comment — "walking to the target's own ground puts you inside every
+  // link at once, since the target sits within all of them". So the fix is
+  // strictly a TIGHTENING; the lawful entry it used to allow still lands, and
+  // it still lands as a CHAIN. CAN-FAIL: drop the outer links from the chain
+  // and `entered` stops carrying the town centre.
+  const { readFileSync } = await import("node:fs");
+  const world = JSON.parse(readFileSync(join(CLONE, "WORLD", "world-state.json"), "utf8"));
+  const parcel = world.marks.find((m) => m.id === PARCEL);
+  const o = await officeWith({ standing: { x: parcel.at.x, y: parcel.at.y } });
+  const answer = await enterViaOffice(CLONE, { mark: PARCEL, handle: "illuminator", accept: true },
+    key("illuminator"), o.deps);
+  assert.ok(answer.entered.includes(PARCEL), "the mark he named");
+  assert.ok(answer.entered.includes("the-town/the-town-centre"),
+    "and the outer link on the way in — deep entry is never a teleport");
+  assert.equal(o.written.length, answer.entered.length, "one row per link actually crossed");
+});
+
+test("the margin is measured at the target, and it is ±1 m of the town's own earshot",
+  { skip: !HAVE_CLONE && "no world clone" }, async () => {
+  // Observable only because the measure moved: the post office is 9 × 26 m, so
+  // 59 m from its anchor is outside its extent and the margin leg is the only
+  // thing that can admit. Under the old code both of these passed on the town
+  // centre's containment and this test could not exist. CAN-FAIL: widen or
+  // narrow EARSHOT_M and one of the two assertions reddens.
+  const { EARSHOT_M } = await import("../src/reach.mjs");
+  const { readFileSync } = await import("node:fs");
+  const world = JSON.parse(readFileSync(join(CLONE, "WORLD", "world-state.json"), "utf8"));
+  const po = world.marks.find((m) => m.id === SHIP);
+
+  const near = await officeWith({ standing: { x: po.at.x + EARSHOT_M - 1, y: po.at.y } });
+  const admitted = await enterViaOffice(CLONE, { mark: SHIP, accept: true }, key("postmaster"), near.deps);
+  assert.ok((admitted.entered ?? []).length > 0 || admitted.already,
+    `${EARSHOT_M - 1} m from the post office's anchor is at its door`);
+
+  const far = await officeWith({ standing: { x: po.at.x + EARSHOT_M + 1, y: po.at.y } });
+  const e = await enterViaOffice(CLONE, { mark: SHIP, accept: true }, key("postmaster"), far.deps)
+    .then(() => null, (err) => err);
+  assert.ok(e && e.code === 409, `${EARSHOT_M + 1} m is not`);
+  assert.equal(far.written.length, 0);
+});
+
+test("no refusal this door speaks calls the margin a DOORSTEP — the resident's word stays the resident's",
+  async () => {
+  // Founder, 2026-09-11: "doorstep means something else." A doorstep here is a
+  // resident's front step and their morning read (`read_doorstep`,
+  // `household { read: "doorstep" }`, `DOORSTEP_SEGMENTS`); it was also the
+  // name of a geometric margin in this file's bounce. CAN-FAIL: restore the old
+  // hint sentence and this reddens on the source, which is the only place a
+  // sentence nobody currently triggers can be caught.
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../src/world-crossings.mjs", import.meta.url), "utf8");
+  const sentences = [...src.matchAll(/bounce\((\d{3}),([\s\S]*?)\);/g)].map((m) => m[0]);
+  assert.ok(sentences.length >= 3, "the bounces are found at all");
+  for (const b of sentences) {
+    assert.doesNotMatch(b, /doorstep/i, `a bounce still says "doorstep": ${b.slice(0, 120)}`);
+  }
+  assert.match(src, /a door is entered from within its reach/, "and the rule says the word it means");
 });
 
 
-// ── the doorstep's number, read off the record (lane-h, the-town/the-reach) ──
+// ── the reach's number, read off the record (lane-h, the-town/the-reach) ──
 //
 // The 60 that stood in this door as a literal is now `EARSHOT_M` — the say
 // edge's own dial, off the world store, through the one reader that already
@@ -206,16 +322,15 @@ test("...and the doorstep itself still admits — within earshot of the first li
 // read its record is a falsifier that cannot fail, and the town could have
 // moved its own number with this door going on refusing at the old one.
 //
-// ⚑ WHY THIS IS NOT A ±1 m BOUNDARY TEST, which is what I tried first and
-// which does not exist for this door. The measure is to the FIRST UNCROSSED
-// LINK of the chain, and for every mark on this clone that link is
-// `the-town/the-town-centre` — a mark so large that any point within 60 m of
-// its anchor is inside its extent, so the containment leg short-circuits and
-// the doorstep leg is unobservable from here. Probed, not assumed: at 59 m
-// `within` is true and at 1000 m it is false with 1051 m to the anchor. The
-// boundary belongs to `standsWithin` and is tested there, at ±1 m, in
-// test/hold-reach.test.mjs. What this door owes is that it ASKS that function
-// and reports what it measured.
+// ⚑ THE ±1 m BOUNDARY IS OBSERVABLE AT THIS DOOR NOW, and it was not before.
+// While the measure was to the FIRST UNCROSSED LINK, that link was
+// `the-town/the-town-centre` for every mark on this clone — a mark so large
+// that any point within 60 m of its anchor is inside its extent, so the
+// containment leg short-circuited and the margin leg could not be seen from
+// here at all. Measuring at the TARGET (founder, 2026-09-11) puts a 9 × 26 m
+// post office on the other end of the tape, and the margin is the only leg
+// that can admit a walker standing beside it. So the boundary is asserted
+// here, at the door, as well as on `standsWithin` in test/hold-reach.test.mjs.
 
 test("the enter refusal reports the distance the SHARED reach measured, not one of its own", { skip: !HAVE_CLONE && "no world clone" }, async () => {
   const { readFileSync } = await import("node:fs");
@@ -225,13 +340,15 @@ test("the enter refusal reports the distance the SHARED reach measured, not one 
   const o = await officeWith({ standing });
   const e = await enterViaOffice(CLONE, { mark: SHIP }, key("postmaster"), o.deps).then(() => null, (err) => err);
   assert.ok(e, "127 km out is not at the door");
-  // The same question, asked here of the same first link, must produce the same
-  // metre. If the door ever grew a second measurement this diverges.
-  const link = world.marks.find((m) => m.id === "the-town/the-town-centre");
-  const reach = standsWithin(standing, link);
+  // The same question, asked here of the TARGET, must produce the same metre.
+  // If the door ever grew a second measurement this diverges.
+  const target = world.marks.find((m) => m.id === SHIP);
+  const reach = standsWithin(standing, target);
   assert.equal(reach.stands, false);
   assert.match(e.defect, new RegExp(`~${reach.distance_round} m`),
     "the refusal names the shared reach's own number");
+  assert.ok(e.defect.includes(SHIP),
+    "and it names the mark the caller asked for, not the outer wall around it");
 });
 
 test("the enter door and the hold door ask ONE function — the reach is not copied", async () => {

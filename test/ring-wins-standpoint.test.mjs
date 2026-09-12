@@ -15,12 +15,13 @@
 //
 //   The enter door measures from the standpoint. So it let him through a door he
 //   was nowhere near: `enterExitPlan` saw a walker already inside the target,
-//   never set `walk`, and the doorstep check had nothing to run on.
+//   never set `walk`, and the reach check had nothing to run on.
 //
-// THE LAW THE DOORSTEP CHECK QUOTES, verbatim from `world-crossings.mjs`: "A
-// DOOR IS ENTERED FROM ITS DOORSTEP (founder-ruled 2026-08-27, option A of the
+// THE LAW THE REACH CHECK QUOTES, verbatim from `world-crossings.mjs`: "A DOOR
+// IS ENTERED FROM WITHIN ITS REACH (founder-ruled 2026-08-27, option A of the
 // R15 collision — found on the first dev walk: 'you can enter things when you
-// aren't even there')."
+// aren't even there')." The rule said "from its DOORSTEP" until 2026-09-11,
+// when the founder took that word back for the resident's own front step.
 //
 // WHAT DOES NOT CHANGE, and has its own case below: aboard a CARRIER the frame
 // still composes. The road's end is a quay she left hours ago.
@@ -143,14 +144,15 @@ const enterFrom = (point) => enterViaOffice(WORLD_CLONE, { mark: TERRACE.id, han
     now: () => atCrossing(40) / 43200000,
   });
 
-test("THE DOORSTEP HOLDS: from where wright actually landed, the terrace's door REFUSES and names the distance", async () => {
+test("THE REACH HOLDS: from where wright actually landed, the terrace's door REFUSES and names the distance", async () => {
   const e = await enterFrom(DEV_ARRIVAL).then(() => null, (err) => err);
   assert.ok(e, "the door refused rather than admitting him");
   assert.equal(e.code, 409);
   assert.match(e.defect, /you are not at that door/);
   assert.match(e.defect, new RegExp(TERRACE.id.replace("/", "\\/")));
   assert.match(e.defect, /~783 m/, "the refusal quotes the measured distance, not a rounded guess");
-  assert.match(e.hint, /a door is entered from its doorstep/);
+  assert.match(e.hint, /a door is entered from within its reach/,
+    "the rule's own words — the geometric margin stopped borrowing the resident's 'doorstep' on 2026-09-11");
   assert.match(e.hint, /nothing was recorded/);
 });
 
@@ -164,11 +166,11 @@ test("FROM THE RING'S ARRIVAL HE ENTERS — the ruling's other half, landing", a
 test("THE ANCHOR ENTERS TOO — which is exactly why the standpoint had to stop answering it", async () => {
   // Not a bug in the door. The door was told he was standing in the middle of
   // the terrace; `enterExitPlan` correctly saw no threshold left to cross and
-  // set no `walk`, so the doorstep check had nothing to run on. The defect was
+  // set no `walk`, so the reach check had nothing to run on. The defect was
   // upstream, in which point the standpoint handed over.
   const out = await enterFrom({ x: TERRACE.at.x, y: TERRACE.at.y });
   assert.equal(out.entered.length + (out.already ? 1 : 0) > 0, true,
-    "from the anchor the door lets him in and never measures a doorstep");
+    "from the anchor the door lets him in and never measures a margin");
 });
 
 // ── 3. the two halves, wired together ────────────────────────────────────────
