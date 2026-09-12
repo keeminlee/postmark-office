@@ -419,3 +419,66 @@ test("the enter door and the hold door ask ONE function — the reach is not cop
   assert.doesNotMatch(crossings, /const EARSHOT_M = \d/, "the literal must not come back");
   assert.doesNotMatch(hold, /const EARSHOT_M = \d/);
 });
+
+// ── entering ends the walk (Keemin-ruled 2026-09-12; postmark-town/postmark #2685) ──
+//
+// sophia's ghost occupancy, reproduced twice by her: start a walk, enter a
+// building while the walk carries you through its footprint, and the walk keeps
+// going — carries you back outside without an exit — while the ledger says you
+// are within. The office's half of the fix: after the entry is recorded, a walk
+// still live at that instant is stopped where the body stands, through the
+// door's own walk act (a zero-length departure is the walk ledger's "stand
+// here"). `walking` reads the body, `stop` writes the departure; both are deps.
+
+test("ENTERING ENDS THE WALK: carried through the footprint mid-walk, the entry is recorded and then the walk is stopped where the body stands", async () => {
+  if (!HAVE_CLONE) return;
+  const o = await officeWith();
+  const stops = [];
+  const deps = {
+    ...o.deps,
+    walking: async () => ({ live: true, x: -30, y: 40 }),
+    stop: async (who, here, k) => { stops.push({ who, here, k }); return { position: { ...here, arrived: true, standing: true } }; },
+  };
+  const answer = await enterViaOffice(CLONE, { mark: SHIP, handle: "postmaster", accept: true }, key("postmaster"), deps);
+  assert.ok(answer.entered.length, "the entry itself is recorded — it is the act the resident asked for");
+  assert.equal(stops.length, 1, "exactly one stop, after the entry");
+  assert.deepEqual(stops[0].here, { x: -30, y: 40 }, "the stop is where the body stood at the instant of the entry — never the door's centre, never home");
+  assert.equal(stops[0].who, "postmaster");
+  assert.equal(answer.walk_ended?.recorded, true);
+  assert.deepEqual(answer.walk_ended.at, { x: -30, y: 40 });
+});
+
+test("a standing resident's entry writes no stop — there is no walk to end", async () => {
+  if (!HAVE_CLONE) return;
+  const o = await officeWith();
+  const stops = [];
+  const deps = { ...o.deps, walking: async () => ({ live: false, x: -30, y: 40 }), stop: async (...a) => { stops.push(a); } };
+  const answer = await enterViaOffice(CLONE, { mark: SHIP, handle: "postmaster", accept: true }, key("postmaster"), deps);
+  assert.ok(answer.entered.length);
+  assert.equal(stops.length, 0);
+  assert.equal(answer.walk_ended, undefined);
+});
+
+test("an entry that records nothing ends no walk — refused from beyond reach, the body keeps walking", async () => {
+  if (!HAVE_CLONE) return;
+  // (the ship carries no entry terms on main yet — the awaiting case is skipped
+  // above for the same reason — so the recording-nothing case here is the 409:
+  // a walker far from the door, still walking, is refused and nothing is written)
+  const o = await officeWith({ standing: { x: 5000, y: 5000 } });
+  const stops = [];
+  const deps = { ...o.deps, walking: async () => ({ live: true, x: 5000, y: 5000 }), stop: async (...a) => { stops.push(a); } };
+  const e = await enterViaOffice(CLONE, { mark: SHIP, handle: "postmaster", accept: true }, key("postmaster"), deps).then(() => null, (err) => err);
+  assert.equal(e?.code, 409, "refused at the door — you are not at it");
+  assert.equal(o.written.length, 0, "nothing recorded");
+  assert.equal(stops.length, 0, "no entry, no stop — the walk that is carrying her is hers to finish");
+});
+
+test("a stop that fails to write is reported on the answer, never swallowed — that silence would be the ghost", async () => {
+  if (!HAVE_CLONE) return;
+  const o = await officeWith();
+  const deps = { ...o.deps, walking: async () => ({ live: true, x: -30, y: 40 }), stop: async () => { const e = new Error("the town lock is busy"); e.defect = "the town lock is busy"; throw e; } };
+  const answer = await enterViaOffice(CLONE, { mark: SHIP, handle: "postmaster", accept: true }, key("postmaster"), deps);
+  assert.ok(answer.entered.length, "the entry still stands");
+  assert.equal(answer.walk_ended?.recorded, false);
+  assert.match(answer.walk_ended.error, /town lock is busy/);
+});

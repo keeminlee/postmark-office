@@ -191,6 +191,35 @@ export async function enterViaOffice(worldClone, payload = {}, key = null, deps 
     ? await deps.record({ handle: who, act: "enter", at, lines: answer.rows, summary })
     : { within: [...(occupancy.get(who) ?? [])] };
 
+  // ENTERING ENDS THE WALK (Keemin-ruled 2026-09-12 01:1x EDT; postmark-town/postmark
+  // #2685, sophia's ghost occupancy). A walk is a departure whose position is a pure
+  // function of the line and the clock, so a body carried through a footprint
+  // mid-walk could enter — reach is measured at the instant — and then be carried
+  // straight back out by the same line while the ledger still said "within". The
+  // walk ledger's own idiom for "stand here" is a zero-length departure from the
+  // derived position ("latest wins"; tools/walk.mjs § positionAt: centreM === 0 is
+  // the stop, always arrived), so the stop is written THROUGH the door's own walk act
+  // — the same record every reader already derives from — never by a second pen.
+  // Order: the entry first (the act the resident asked for), then the stop; a stop
+  // that fails to write is REPORTED on the answer, never swallowed, because that is
+  // exactly the ghost. `walking`/`stop` are deps so the arrival-bundled entry
+  // (world.mjs § walkViaOffice, enter_on_arrival — the walk has already arrived) and
+  // the tests can leave them out; a standing resident's entry writes nothing.
+  let walkEnded = null;
+  if (answer.rows.length && answer.entered.length && deps.walking && deps.stop) {
+    const walk = await deps.walking(who).catch(() => null);
+    if (walk?.live) {
+      const stood = { x: walk.x, y: walk.y };
+      try {
+        await deps.stop(who, stood, key);
+        walkEnded = { at: stood, recorded: true, note: "you stopped walking when you went in — the walk that carried you here ended at this door" };
+      } catch (e) {
+        walkEnded = { at: stood, recorded: false, error: String(e?.defect ?? e?.message ?? e).slice(0, 200),
+          note: "the entry stands but the walk that carried you here could not be stopped — you may be carried on; walk to where you stand to end it" };
+      }
+    }
+  }
+
   return {
     handle: who, target: markId,
     // the CHAIN, said out loud: deep entry is never a teleport, and a caller who
@@ -206,6 +235,7 @@ export async function enterViaOffice(worldClone, payload = {}, key = null, deps 
     entered: answer.entered,
     within: written.within ?? [],
     ...(answer.walk ? { walk_bundled: answer.walk } : {}),
+    ...(walkEnded ? { walk_ended: walkEnded } : {}),
     ...(answer.refused ? { refused: answer.refused, stranded_at: answer.stranded } : {}),
     ...(answer.awaiting ? { awaiting: answer.awaiting } : {}),
     terms: (answer.adjudications ?? answer.crossings ?? []).map((c) => c.terms).filter(Boolean),
