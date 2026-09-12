@@ -859,9 +859,26 @@ clearing that runs a crossing off-cadence.
 
 **Verify by key name only.** The obvious check is the wrong one:
 
-> Never run `systemctl show postmark-settlement.service -p Environment`. A
-> sibling drop-in on that unit carries `WORLD2_CLEARING_URL` with its password
-> inside, and `show` prints the merged environment. `world2-lib.sh`'s own header
+> Never run `systemctl show postmark-settlement.service -p Environment`. That
+> unit reads `WORLD2_CLEARING_URL` — password inside — from
+> `/etc/postmark-world2-clearing.env`, and `show` prints the merged environment.
+>
+> **The clearing credential is ONE file (office #26, 2026-09-12).**
+> `/etc/postmark-world2-clearing.env` (root:root 0600, one line:
+> `WORLD2_CLEARING_URL=postgres://clearing_job:…@localhost:5432/world2_dev`) is
+> read by `postmark-world2-clearing.service` AND `postmark-settlement.service`
+> through `EnvironmentFile=`. There is no `PG_CLEARING_JOB_PASSWORD` in
+> `/etc/postmark-world2-dev.env` any more and no `clearing-url.conf` drop-in.
+> To rotate: `ALTER ROLE clearing_job PASSWORD '…'` as world2_owner, rewrite
+> that one file by a script that never prints it, `systemctl daemon-reload`,
+> confirm no drop-in still carries the URL —
+> `ls /etc/systemd/system/postmark-settlement.service.d/*.conf` must list no
+> `clearing-url.conf` (a drop-in is ordered after the unit file and would win
+> silently) — then `systemctl start postmark-world2-clearing.service` off-cadence and read
+> `/srv/world2-lab/state/clearing.json` — `nothing-due` or `cleared` proves the
+> login; `cannot-run` names what is wrong. The 09-11 rotation reached the
+> settlement's drop-in and not the candle's env file, and the 05:45Z candle
+> reported "nothing due" over three FATALs — two copies of one secret. `world2-lib.sh`'s own header
 > says the journal is readable by group `adm`.
 
 The world2 units carry no secret in `Environment=` (theirs arrive by
@@ -919,10 +936,15 @@ guard fired. That combination is normal and informative, not contradictory.
 
 ### The prod rename
 
-`EnvironmentFile=` in each `.service`, and nothing else. Point it at a prod
-credential file whose `WORLD2_DB` says `world2`; every script reads the database
-name from there (`world2-lib.sh` § `w2_db`), and the units, the manifest rows and
-the state paths all follow without another edit. The units are named
+`EnvironmentFile=` in each `.service`, **plus the one shared clearing file.**
+Point the env line at a prod credential file whose `WORLD2_DB` says `world2`;
+every script reads the database name from there (`world2-lib.sh` § `w2_db`), and
+the units, the manifest rows and the state paths all follow. The exception since
+2026-09-12 (office #26) is `/etc/postmark-world2-clearing.env`, whose
+`WORLD2_CLEARING_URL` names the database inline — rewrite `/world2_dev` to
+`/world2` there in the same act. The candle checks the two against each other
+and refuses (`cannot-run`, "the prod rename needs both files") when they
+disagree, so forgetting the second edit cannot clear windows in the wrong store. The units are named
 `postmark-world2-*` rather than `postmark-world2-dev-*` for exactly this reason —
 the unit is the mechanism, the env file is which store it points at. The
 `postmark-` prefix is not decoration either: `tools/box-rollcall.mjs` globs

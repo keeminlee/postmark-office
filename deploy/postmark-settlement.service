@@ -8,5 +8,10 @@ Type=oneshot
 # 2 race (lease refused — safe to rerun).
 User=meepo
 EnvironmentFile=/etc/postmark-office.env
+# WORLD2_CLEARING_URL — the clearing pen the retire step and the store-source
+# crossing hold. ONE file, shared with postmark-world2-clearing.service (office
+# #26, 2026-09-12); it replaces the per-unit drop-in that carried the URL inline
+# and that the 09-11 rotation reached while the candle's copy went stale.
+EnvironmentFile=-/etc/postmark-world2-clearing.env
 WorkingDirectory=/srv/postmark-office
 ExecStart=/bin/sh /srv/postmark-office/deploy/settlement-auto.sh
