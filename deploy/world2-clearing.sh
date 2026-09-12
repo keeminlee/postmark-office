@@ -107,10 +107,18 @@ if [ -n "${WORLD2_CLEARING_URL:-}" ]; then
   # windows in the dev store while every other unit moved — and report
   # "cleared" the whole time (PR #29 review, 2026-09-12). So the two must agree,
   # and a disagreement is cannot-run, never a guess about which one is right.
-  url_db="${CLEARING_URL##*/}"; url_db="${url_db%%\?*}"
-  if [ "$url_db" != "$(w2_db)" ]; then
-    echo "[world2-clearing] the shared clearing file names database '$url_db' but WORLD2_DB says '$(w2_db)' — refusing to clear against a store the other units are not on" >&2
-    w2_state clearing.json "\"status\":\"cannot-run\",\"detail\":\"WORLD2_CLEARING_URL names database $url_db, WORLD2_DB says $(w2_db) — the prod rename needs both files\""
+  # NOTHING DERIVED FROM THE URL IS EVER PRINTED (PR #29 review, second pass):
+  # "the part after the last slash" of a URL with no database path is the
+  # authority, password included, and this script's stderr is the journal
+  # (world2-lib.sh's header: readable by group adm). So the database is taken
+  # as the path segment AFTER the authority — empty when there is none — and
+  # only WORLD2_DB's own value is ever named, on either side of the compare.
+  url_rest="${CLEARING_URL#*://}"
+  case "$url_rest" in */*) url_db="${url_rest#*/}" ;; *) url_db="" ;; esac
+  url_db="${url_db%%\?*}"; url_db="${url_db%%/*}"
+  if [ -z "$url_db" ] || [ "$url_db" != "$(w2_db)" ]; then
+    echo "[world2-clearing] the shared clearing file names no database, or one that is not WORLD2_DB ('$(w2_db)') — refusing to clear against a store the other units are not on" >&2
+    w2_state clearing.json "\"status\":\"cannot-run\",\"detail\":$(printf '%s' "WORLD2_CLEARING_URL names no database, or one that is not WORLD2_DB ($(w2_db)) — the prod rename needs both files" | w2_json_escape)"
     exit 2
   fi
 else
