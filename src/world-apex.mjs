@@ -164,6 +164,17 @@ export function crossingDeps() {
       const here = await residentStandpoint(who).catch(() => null);
       return here && Number.isFinite(here.x) ? { x: here.x, y: here.y, name: who } : { x: 0, y: 0, name: who };
     },
+    // ENTERING ENDS THE WALK (Keemin-ruled 2026-09-12; postmark-town/postmark #2685).
+    // `walking` is the ONE reader of "where is this resident" (residentStandpoint:
+    // moving = the derived leg has not arrived); `stop` is the door's own walk act to
+    // the coordinates the body stands at — a zero-length departure, the walk
+    // ledger's "stand here" — so the stop lands in acts/movements exactly as any
+    // walk does and every reader derives it the same way. No second pen.
+    walking: async (who) => {
+      const here = await residentStandpoint(who).catch(() => null);
+      return here?.placed && Number.isFinite(here.x) ? { live: here.moving === true, x: here.x, y: here.y } : null;
+    },
+    stop: async (who, here, key) => walkViaOffice(WORLD_CLONE, { handle: who, x: here.x, y: here.y }, key),
     now: () => (Date.now() - Date.UTC(2026, 5, 12)) / (12 * 3600 * 1000),
     record: async ({ handle, act, at, lines, summary }) => {
       const { execUnderTownLock, lockTimedOut, LOCK_BUSY } = await import("./town-lock.mjs");
