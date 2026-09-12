@@ -86,10 +86,26 @@ if ! w2_pgenv law_ingester PG_LAW_INGESTER_PASSWORD; then
 fi
 # …and the clearing carries its own credential in its URL, where PG* cannot
 # reach it and swap the role out from under the transaction.
-CLEARING_URL="$(w2_url clearing_job PG_CLEARING_JOB_PASSWORD)" || {
-  w2_state clearing.json '"status":"cannot-run","detail":"PG_CLEARING_JOB_PASSWORD unreadable"'
-  exit 2
-}
+#
+# ── ONE FILE OWNS THE CLEARING CREDENTIAL (office #26, 2026-09-12) ──────────
+# /etc/postmark-world2-clearing.env carries WORLD2_CLEARING_URL, and BOTH units
+# that hold the clearing pen read it by EnvironmentFile= — this one and
+# postmark-settlement.service. On 2026-09-11 the role was rotated and the new
+# password reached the settlement's drop-in and not this script's env file, so
+# the 05:45Z candle could not log in. Two copies of one secret is the class; the
+# fix is that there is one. Rotation is: ALTER ROLE, rewrite that one file,
+# systemctl daemon-reload — both units follow. The compose-from-password arm
+# stays for a box that carries only the world2 env file (a rehearsal, a dev
+# box); on prod that arm is never reached and PG_CLEARING_JOB_PASSWORD no
+# longer exists in /etc/postmark-world2-dev.env.
+if [ -n "${WORLD2_CLEARING_URL:-}" ]; then
+  CLEARING_URL="$WORLD2_CLEARING_URL"
+else
+  CLEARING_URL="$(w2_url clearing_job PG_CLEARING_JOB_PASSWORD)" || {
+    w2_state clearing.json '"status":"cannot-run","detail":"neither WORLD2_CLEARING_URL (the shared file) nor PG_CLEARING_JOB_PASSWORD is readable"'
+    exit 2
+  }
+fi
 
 # The town checkout the first step needs. Refreshed here rather than trusted,
 # because a stale checkout would pin the window to a sha the town has moved
@@ -101,9 +117,31 @@ if ! "$HERE/world2-refresh-clone.sh" town >/tmp/w2-clearing-town.log 2>&1; then
   exit 2
 fi
 
+# due_window — sets DUE to the id of the open window past its close, or to the
+# empty string when there is none. Deliberately NOT a `$(...)` function: a
+# subshell cannot end the script, and a failed ask must.
+#
+# ── THE CHECK THAT COULD NOT FAIL (office #26, the refused 05:45Z crossing) ──
+# Until 2026-09-12 this was `psql … 2>/dev/null` inside a `$(...)`, so a query
+# that FAILED and a query that found NOTHING were the same empty string: the
+# candle could not log in, read the silence as "nothing due", and exited 0 with
+# a plausible sentence while Postgres logged three FATALs in the same minute.
+# The settlement's 240 s wait caught it; the candle should have. Now psql's
+# exit is read, and non-zero ends the run as cannot-run (exit 2) with the
+# stderr in the state file — the same shape as the two credential guards above.
 due_window() {
-  psql "$CLEARING_URL" -tAc \
-    "SELECT id FROM windows WHERE status = 'open' AND closes_at <= now() ORDER BY id LIMIT 1" 2>/dev/null
+  local err rc
+  err="$(mktemp)"
+  DUE="$(psql "$CLEARING_URL" -tAc \
+    "SELECT id FROM windows WHERE status = 'open' AND closes_at <= now() ORDER BY id LIMIT 1" 2>"$err")"
+  rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "[world2-clearing] the store could not be asked which window is due (psql exit $rc): $(tr '\n' ' ' < "$err")" >&2
+    w2_state clearing.json "\"status\":\"cannot-run\",\"detail\":$( { printf 'due_window: psql exit %s: ' "$rc"; cat "$err"; } | w2_json_escape)"
+    rm -f "$err"
+    exit 2
+  fi
+  rm -f "$err"
 }
 
 # ── THE BOUNDARY WAIT (the founder's clock catch, 2026-09-02) ───────────────
@@ -115,7 +153,7 @@ due_window() {
 # waits out the offset instead of moving the marks. Bounded at 90s, and a run
 # that starts with a window already due (catch-up, a hand run) waits zero.
 for _ in $(seq 1 18); do
-  [ -n "$(due_window)" ] && break
+  due_window; [ -n "$DUE" ] && break
   sleep 5
 done
 
@@ -123,7 +161,7 @@ closed=0
 last_out=""
 rc=0
 for _ in $(seq 1 "$MAX_CATCHUP"); do
-  win="$(due_window)"
+  due_window; win="$DUE"
   [ -n "$win" ] || break
 
   echo "[world2-clearing] closing window $win"

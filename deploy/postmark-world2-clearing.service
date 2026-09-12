@@ -13,6 +13,11 @@ User=meepo
 # THIS LINE IS THE PROD RENAME: point it at a prod credential file whose
 # WORLD2_DB says `world2`, and every unit here follows without another edit.
 EnvironmentFile=/etc/postmark-world2-dev.env
+# The clearing credential is ONE file, read by this unit and by
+# postmark-settlement.service alike (office #26, 2026-09-12: a rotation reached
+# the settlement's copy and not this one's). The leading `-` means a box without
+# it still starts; the script then composes the URL from the file above.
+EnvironmentFile=-/etc/postmark-world2-clearing.env
 # Exit 0 cleared or nothing due · 1 the clearing REFUSED (a guard fired — the
 # reason is in the journal and in /srv/world2-lab/state/clearing.json) · 2 the
 # lane could not run at all.

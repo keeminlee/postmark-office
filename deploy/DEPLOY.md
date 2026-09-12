@@ -859,9 +859,23 @@ clearing that runs a crossing off-cadence.
 
 **Verify by key name only.** The obvious check is the wrong one:
 
-> Never run `systemctl show postmark-settlement.service -p Environment`. A
-> sibling drop-in on that unit carries `WORLD2_CLEARING_URL` with its password
-> inside, and `show` prints the merged environment. `world2-lib.sh`'s own header
+> Never run `systemctl show postmark-settlement.service -p Environment`. That
+> unit reads `WORLD2_CLEARING_URL` — password inside — from
+> `/etc/postmark-world2-clearing.env`, and `show` prints the merged environment.
+>
+> **The clearing credential is ONE file (office #26, 2026-09-12).**
+> `/etc/postmark-world2-clearing.env` (root:root 0600, one line:
+> `WORLD2_CLEARING_URL=postgres://clearing_job:…@localhost:5432/world2_dev`) is
+> read by `postmark-world2-clearing.service` AND `postmark-settlement.service`
+> through `EnvironmentFile=`. There is no `PG_CLEARING_JOB_PASSWORD` in
+> `/etc/postmark-world2-dev.env` any more and no `clearing-url.conf` drop-in.
+> To rotate: `ALTER ROLE clearing_job PASSWORD '…'` as world2_owner, rewrite
+> that one file by a script that never prints it, `systemctl daemon-reload`,
+> then `systemctl start postmark-world2-clearing.service` off-cadence and read
+> `/srv/world2-lab/state/clearing.json` — `nothing-due` or `cleared` proves the
+> login; `cannot-run` names what is wrong. The 09-11 rotation reached the
+> settlement's drop-in and not the candle's env file, and the 05:45Z candle
+> reported "nothing due" over three FATALs — two copies of one secret. `world2-lib.sh`'s own header
 > says the journal is readable by group `adm`.
 
 The world2 units carry no secret in `Environment=` (theirs arrive by
