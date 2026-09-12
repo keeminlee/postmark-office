@@ -181,6 +181,60 @@ export function escrowLines({ refused = [], unchecked = [] } = {}, townSha) {
  * (migration 014 not yet applied) or no rows at this sha. NULL is the caller's
  * cue to say so out loud, never to treat the town as unstaked.
  */
+/**
+ * ONE HOLDER'S OPEN POSITION PER MARK at one town sha, keyed `<mark>|<holder>`.
+ *
+ * ── WHY THIS IS A SIBLING AND NOT `escrowPresenceAt` WITH A FLAG ────────────
+ *
+ * They answer different questions and the difference is not a granularity
+ * setting. `escrowPresenceAt` asks the GATE's question — has this mark ANY open
+ * stamps, from anybody — so it sums `n` across holders and a mark backed by
+ * three households answers one number. `/world2/docket` asks a CLAIMANT's
+ * question: what is behind this mark FROM THE RESIDENT WHOSE CLAIM THIS IS. Sum
+ * the holders there and a claim staking nothing reads as backed the moment
+ * somebody else stakes the same mark, which is #2686's display defect rebuilt
+ * out of the right table.
+ *
+ * Two questions, two readers, one row set. Neither derives the other, so
+ * neither can quietly answer for the other.
+ *
+ * ── THE KEY IS THE HANDLE, AND IT WAS MEASURED, NOT ASSUMED ────────────────
+ *
+ * `holder` here and `claims.claimant` are the SAME identifier — a bare resident
+ * handle — so the docket joins them directly with no trip through
+ * `identities`. Traced rather than trusted, because both columns' own comments
+ * say "handle" and a comment is not a writer:
+ *
+ *   holder    ← `escrow-ingest.mjs § deriveEscrow`, `key.slice(i + 1)` over
+ *               `worldStakeState().positions`, whose keys `stamp-mint.mjs §
+ *               foldWorldMarkPositions` builds as `${c.mark}|${c.handle}` from
+ *               the stamp ledger's own lines.
+ *   claimant  ← `world2-claims.mjs § claimTxFromJournal`, `row.actor`; and on
+ *               the stake path the `<by>` of the mark id, which
+ *               `world-journal.mjs § MARKS_PREFIX` fixes as the office's slug
+ *               grammar — one bare handle, one slug.
+ *
+ * The HOUSEHOLD columns beside them are the ones that do NOT share a
+ * vocabulary (`gh:<id>`/`solo:<h>` from two different resolvers — 014's header
+ * spends a paragraph on it), which is exactly why this join is on the handles.
+ *
+ * NULL, never an empty Map, when the projection cannot answer — the same
+ * discipline as its sibling above, in that function's own words: "an empty
+ * stake set is indistinguishable from a town where nobody stakes."
+ */
+export async function escrowHeldAt(q, { townSha } = {}) {
+  if (!townSha) throw new Error("escrowHeldAt: no townSha — escrow is as-of a town commit and there is no 'latest'");
+  const { rows: present } = await q("SELECT to_regclass('public.escrow_projection') IS NOT NULL AS ok");
+  if (!present[0]?.ok) return null;
+  const { rows } = await q(
+    "SELECT mark, holder, sum(n)::int AS n FROM escrow_projection WHERE town_sha = $1 GROUP BY mark, holder", [townSha]);
+  if (!rows.length) return null;
+  return new Map(rows.map((r) => [heldKey(r.mark, r.holder), Number(r.n)]));
+}
+
+/** The one spelling of this map's key, so the writer and the reader cannot drift. */
+export const heldKey = (mark, holder) => `${mark}|${holder}`;
+
 export async function escrowPresenceAt(q, { townSha } = {}) {
   if (!townSha) throw new Error("escrowPresenceAt: no townSha — escrow is as-of a town commit and there is no 'latest'");
   const { rows: present } = await q("SELECT to_regclass('public.escrow_projection') IS NOT NULL AS ok");

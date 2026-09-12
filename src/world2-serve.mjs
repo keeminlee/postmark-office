@@ -46,8 +46,9 @@ import { readDraftClaims } from "./world2-claims.mjs";
 import * as live from "../world2/tools/live-reads.mjs";
 import * as talk from "../world2/tools/conversations.mjs";
 import * as apex from "../world2/tools/apex-reads.mjs";
-// The CANDLE'S OWN escrow reader, not a second one — § THE DOCKET ROW says why.
-import { escrowPresenceAt } from "../world2/tools/escrow-presence.mjs";
+// The per-(mark, holder) escrow reader and its key, beside the gate's own
+// summed one — § THE DOCKET ROW says why they are two functions and not one.
+import { escrowHeldAt, heldKey } from "../world2/tools/escrow-presence.mjs";
 import { freshestMainRef, materializeAtRef } from "./world-branches.mjs";
 import { WORLD_CLONE, placeWordsFrom } from "./world.mjs";
 import { CROSSING_DERIVATION, currentCrossing } from "./crossings.mjs";
@@ -172,20 +173,21 @@ function pointOf(searchParams) {
 // a mark holding zero for nine hours and read exactly like a backed claim.
 //
 // `held` is DERIVED, and never stored (Keemin's ruling, 2026-09-12). The store
-// already knows: `escrow_projection` (014) holds the open position per (mark,
-// holder) as-of a town sha, and the CANDLE'S OWN GATE already reads it —
-// `escrowPresenceAt`, whose answer decides whether a commons claim is refused
-// at the close. Asking that same reader here is what makes the docket and the
-// gate it forecasts unable to disagree, and it costs the claim row nothing: no
-// write, no fifth transition in `claims_update_guard`, and no stale snapshot
-// when a resident unstakes before the close.
+// already knows: `escrow_projection` (014, "the store is the escrow oracle from
+// G1 on") holds the open position per (mark, holder) as-of a town sha. 014's own
+// header states the discipline this follows — store the primitive, derive the
+// display — and a `held` written onto the claim would be a second copy of it
+// that goes stale the moment somebody unstakes, on a row
+// `claims_update_guard` would not let anybody correct.
 //
-// ⚑ IT IS THE MARK'S ESCROW, NOT THE CLAIMANT'S POSITION, and that is the
-// candle's grain rather than an approximation of something narrower.
-// `escrowPresenceAt` sums `n` per mark, and `escrowAbsentAmong` asks one
-// question of it — has this mark ANY open stamps. A per-claimant figure would
-// be a second question this read invented, and the two would part company on
-// the first mark two households back.
+// ⚑ THE CLAIMANT'S OWN POSITION, NOT THE MARK'S TOTAL. `escrowPresenceAt` sums
+// every holder, because the GATE's question is whether a mark has any stamps
+// at all from anybody. That is the wrong number here: a claim staking nothing
+// would read as backed the moment a second household staked the same mark —
+// #2686's defect rebuilt out of the right table. So the docket asks
+// `escrowHeldAt`, the per-(mark, holder) sibling in the same file, and joins on
+// the handle, which was measured to be the same identifier in both columns
+// rather than assumed (that function's header names the two writers).
 //
 // ADDITIVE: every field a current reader reads still arrives in the same
 // spelling — the site's docket page, the operator cockpit, and the MCP twin
@@ -196,21 +198,21 @@ export const DOCKET_SELECT =
           stake, geometry, counterclaim_of FROM docket ORDER BY submitted_at`;
 
 /**
- * THE TOWN'S OPEN ESCROW, AS THE CANDLE WILL SEE IT. `{ townSha, byMark, reason }`.
+ * THE TOWN'S OPEN POSITIONS, AS OF ITS INGESTED HEAD. `{ townSha, held, reason }`.
  *
- * The sha is `projection_heads['town']` — the SAME source `clearing-job.mjs`
- * derives its `townSha` from, one line of its own (`heads.find((h) => h.repo
- * === "town")?.sha`). Not the open window's `town_sha`, which 001 says is
- * "pinned at close" and is therefore NULL for every window this read describes.
- * A freshness figure has to name its own source, and this one's is the town
- * head the next crossing will also read.
+ * The sha is `projection_heads['town']` — the head this file already cites by
+ * name elsewhere (`roll_source: "town_roll @ projection_heads['town']"`) and
+ * the same one `clearing-job.mjs` derives its own `townSha` from, in one line:
+ * `heads.find((h) => h.repo === "town")?.sha`. NOT the open window's
+ * `town_sha`, which 001 says is "pinned at close" and is therefore NULL for
+ * every window this read describes. A freshness figure has to name its own
+ * source, and this one's is the town head the next crossing will also read.
  *
- * `byMark: null` is a REFUSAL TO ANSWER and never an empty town. That is
- * `escrowPresenceAt`'s own discipline, in its words: "an empty stake set is
- * indistinguishable from a town where nobody stakes." Two ways to get there —
- * no town head ingested, or the projection cannot answer at that sha (migration
- * 014 unapplied, or this sha not ingested) — and each carries its own sentence,
- * because a reader told "unavailable" with no reason cannot tell which.
+ * `held: null` is a REFUSAL TO ANSWER and never an unstaked town —
+ * `escrowHeldAt`'s discipline, inherited from its sibling's words: "an empty
+ * stake set is indistinguishable from a town where nobody stakes." Three ways
+ * to get there, and each carries its own sentence, because a reader told
+ * "unavailable" with no reason cannot tell which.
  */
 export async function docketEscrow(p) {
   let townSha = null;
@@ -218,18 +220,18 @@ export async function docketEscrow(p) {
     const { rows: [head] } = await p.query("SELECT sha FROM projection_heads WHERE repo = 'town'");
     townSha = head?.sha ?? null;
   } catch (e) {
-    return { townSha: null, byMark: null,
-      reason: `the town's projection head could not be read (${String(e?.message ?? e).slice(0, 120)}), so what stands behind these marks is unknown — not zero` };
+    return { townSha: null, held: null,
+      reason: `the town's projection head could not be read (${String(e?.message ?? e).slice(0, 120)}), so what each claimant holds behind their mark is unknown — not zero` };
   }
-  if (!townSha) return { townSha: null, byMark: null,
-    reason: "no town sha is ingested, so the store cannot say what stands behind these marks — unknown, not zero" };
+  if (!townSha) return { townSha: null, held: null,
+    reason: "no town sha is ingested, so the store cannot say what any claimant holds behind their mark — unknown, not zero" };
   try {
-    const byMark = await escrowPresenceAt((sql, params) => p.query(sql, params), { townSha });
-    if (byMark == null) return { townSha, byMark: null,
-      reason: `escrow_projection cannot answer at town ${townSha.slice(0, 8)} (migration 014 not applied, or this sha not ingested) — what stands behind these marks is unknown, not zero` };
-    return { townSha, byMark, reason: null };
+    const held = await escrowHeldAt((sql, params) => p.query(sql, params), { townSha });
+    if (held == null) return { townSha, held: null,
+      reason: `escrow_projection cannot answer at town ${townSha.slice(0, 8)} (migration 014 not applied, or this sha not ingested) — what each claimant holds is unknown, not zero` };
+    return { townSha, held, reason: null };
   } catch (e) {
-    return { townSha, byMark: null,
+    return { townSha, held: null,
       reason: `the escrow projection could not be read at town ${townSha.slice(0, 8)} (${String(e?.message ?? e).slice(0, 120)}) — unknown, not zero` };
   }
 }
@@ -240,25 +242,26 @@ export async function docketEscrow(p) {
  * `escrowLines`'s lesson, taken literally: a string composed at a call site
  * nothing can assert on "is a line that will say `[object Object]` eventually".
  * Same for a row shaped inline in a route handler — and this one turns on a
- * distinction between null and 0 that an inline `?? 0` erases silently.
+ * null/0 distinction that an inline `?? 0` erases silently.
  *
- * ── THE TWO ABSENCES, WHICH ARE NOT THE SAME ABSENCE ───────────────────────
+ * ⚑ ABSENCE IS NULL, NOT ZERO, and that is the ruling (Keemin, 2026-09-12).
+ * A projection with no row for this (mark, claimant) at this sha is the store
+ * declining to speak about that pair, and the docket says so rather than
+ * asserting a zero on its behalf. It is the same direction `escrowHeldAt`
+ * itself takes for the whole answer, applied to one row of it: a position of
+ * zero is not a row in that table at all — `escrow-ingest.mjs § deriveEscrow`
+ * says it plainly, "a closed position is an absence, not a zero" — so reading
+ * absence back as zero would be the office inventing a fact the ingest
+ * deliberately did not write.
  *
- * `byMark == null` — the reader REFUSED. Nothing is known about any mark, so
- * every row answers `held: null` and the body carries the reason.
- *
- * `byMark` present, this mark not in it — the reader ANSWERED, and the answer
- * is zero. This is `escrowAbsentAmong`'s own reading of the same Map, one line
- * of it: `const n = Number(escrowByMark.get(c.slug) ?? 0); if (n > 0) continue;`
- * — and the claim it is about to refuse at the close is exactly the claim this
- * read must show as unbacked NOW. Answering `null` there would be the docket
- * saying "unknown" about the one fact the store holds precisely, which is
- * #2686's shape wearing a different word.
+ * The KEY is `escrowHeldAt`'s own `heldKey`, imported rather than respelled,
+ * so the map's writer and its reader cannot drift on the separator.
  */
-export function docketRow(row = {}, { byMark = null } = {}) {
+export function docketRow(row = {}, { held = null } = {}) {
   const mark = row?.geometry?.slug ?? row?.slug ?? null;
-  return { ...row,
-    held: byMark == null || !mark ? null : Number(byMark.get(mark) ?? 0) };
+  const holder = row?.claimant ?? null;
+  const n = held == null || !mark || !holder ? null : held.get(heldKey(mark, holder));
+  return { ...row, held: n == null ? null : Number(n) };
 }
 
 /**
@@ -277,14 +280,15 @@ export async function world2Serve(path, searchParams) {
     return { code: 200, body: {
       what: "the public docket — every pending claim, and the candle it locks at. "
         + "`stake` is what the claimant ASKED to put behind the mark; `held` is what the town's stamp "
-        + "ledger actually holds on it, read from the same escrow projection the candle's own gate "
-        + "reads at the close, so the two cannot disagree. They differ when a balance could not carry "
-        + "the ask. `held` is the MARK's open escrow across every household, not this claimant's own "
-        + "position, because that is the quantity the close is judged on. It is as-of the ingested town "
-        + "head named in `escrow_at_town_sha`, not the instant you asked: a stake made since that sha "
-        + "arrives here when the town is next ingested, which is the same lag the candle judges under. "
-        + "`held: null` means the store could not answer, never that nothing is held — the reason is in "
-        + "`held_unavailable`.",
+        + "ledger actually holds for that claimant on it, read from `escrow_projection` — the same rows "
+        + "the candle's own escrow gate reads at the close. They differ when a balance could not carry "
+        + "the ask. `held` is THIS CLAIMANT's own "
+        + "position behind it, not the mark's total across households. It is as-of the ingested town head "
+        + "named in `escrow_at_town_sha`, not the instant you asked: a stake made since that sha arrives "
+        + "here when the town is next ingested, which is the same lag the candle judges under. "
+        + "`held: null` means the store did not speak to this pair — the projection holds no row for this "
+        + "claimant on this mark at that sha, or could not answer at all — and never that nothing is held. "
+        + "A store-wide silence names its reason in `held_unavailable`.",
       window: win ?? null, pending: rows.length,
       // The freshness stamp names its own source: this figure is as-of the town
       // head, which is what the next crossing will read too.
