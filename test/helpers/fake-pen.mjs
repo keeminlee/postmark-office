@@ -88,6 +88,37 @@ const jsonGet = (v, k) => {
   return o?.[k] ?? null;
 };
 
+// ── `claims_update_guard`, MODELLED — the four transitions, and no fifth ────
+//
+// 007_private_drafts.sql § the transition guard. An office pen may compose a
+// draft (draft -> draft), submit it (draft -> pending), or retract a pending
+// claim (pending -> retracted); the only exemption is
+// `current_user = 'clearing_job'`, which no door holds — and 007's own header
+// says the table OWNER is bound too ("FORCE would make the TABLE OWNER subject
+// to these policies … no runtime pen holds that role").
+//
+// WHY A FAKE HAS TO CARRY IT. Without this, an UPDATE the box would refuse
+// simply assigns a field here and the suite goes green — the exact shape of
+// failure this helper's header forbids ("a silent {rows:[]} for an unrecognized
+// statement is how a fake starts lying"). And the pen has already paid for that
+// once, in `world2-claims.mjs § promoteDraftOnStake`'s own words: "a second
+// `UPDATE … SET data = data - '_deferred_act'` on the now-PENDING row is not
+// one of the four transitions 007 permits, so it raised — after the promotion
+// had already committed and the act had already been mirrored." A test that
+// cannot reproduce that raise is a test that will let it happen again.
+//
+// The message is the guard's own, so a reader who hits it can grep the schema.
+function guardTransition(from, to) {
+  if (to === "draft" && from !== "draft")
+    throw new Error(`claims: is already on the public docket and cannot become a draft again `
+      + `— submit is the private/public boundary and it crosses once [attempted ${from} -> ${to}]`);
+  if (from === "draft" && (to === "draft" || to === "pending")) return;
+  if (from === "pending" && to === "retracted") return;
+  throw new Error(`claims: office_api may compose a draft (draft -> draft), submit it `
+    + `(draft -> pending), or retract a pending claim (pending -> retracted, fields untouched) `
+    + `— nothing else, and never back to draft [attempted ${from} -> ${to}]`);
+}
+
 class FakeClient {
   constructor(id) { this.id = id; this.open = false; this.staged = []; }
 
@@ -147,6 +178,7 @@ class FakeClient {
       const [windowId, slug, claimant] = params;
       const hit = store.claims.filter((c) => c.window_id === windowId && c.status === "pending"
         && jsonGet(c.geometry, "slug") === slug && c.claimant === claimant);
+      for (const c of hit) guardTransition(c.status, "retracted");
       defer(() => { for (const c of hit) { c.status = "retracted"; c.decided_at = "now"; } });
       return { rows: [], rowCount: hit.length };
     }
@@ -163,6 +195,7 @@ class FakeClient {
       const [windowId, kind, body, geometry, bbox, stake, supersedes, data, slug, claimant, household, status] = params;
       const hit = store.claims.find((c) => c.status === "draft" && c.claimant === claimant && c.slug === slug && c.household === household);
       if (!hit) return { rows: [], rowCount: 0 };
+      guardTransition(hit.status, status);
       defer(() => Object.assign(hit, {
         status, class: kind, body, geometry, bbox, stake, supersedes, data, slug,
         ...(status === "pending" ? { window_id: windowId, submitted_at: "now" } : {}),
@@ -186,15 +219,23 @@ class FakeClient {
       return { rows: [{ id: c.id, held: data._deferred_act ?? null }], rowCount: 1 };
     }
     if (/UPDATE claims SET status = 'pending', window_id/i.test(t)) {
-      const [windowId, stamps, id, actId] = params;
+      const [windowId, stamps, id, actId, held] = params;
       const c = store.claims.find((x) => x.id === id);
       if (!c) return { rows: [], rowCount: 0 };
+      // The promotion is keyed on the row's ID alone, so unlike its siblings it
+      // has no `status = 'draft'` in its own WHERE keeping it lawful — the
+      // guard is the only thing standing between it and a second write onto a
+      // row that has already gone pending.
+      guardTransition(c.status, "pending");
       defer(() => {
         const data = typeof c.data === "string" ? JSON.parse(c.data) : (c.data ?? {});
         delete data._deferred_act;
         // the `|| jsonb_build_object('_act_id', …)` half of the one promotion
         // statement — the released act's identity, stamped as it is released
         if (actId != null) data._act_id = String(actId);
+        // and the `|| jsonb_build_object('held', …)` half — what the ledger
+        // moved at submit. NULL writes no key: absent and zero are two facts.
+        if (held != null) data.held = Number(held);
         Object.assign(c, { status: "pending", window_id: windowId, submitted_at: "now", stake: Math.max(Number(c.stake) || 0, Number(stamps) || 0), data: JSON.stringify(data) });
       });
       return { rows: [], rowCount: 1 };

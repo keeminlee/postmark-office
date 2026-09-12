@@ -68,6 +68,70 @@ export function stakeRefusalFor({ mark, n, promoted, status }) {
     "Put it forward first — leave it again with `stamps:`, or stake the draft — and the escrow rides that act, which is what a stake IS.");
 }
 
+/**
+ * A STAKE THAT HOLDS NOTHING IS NEVER FILED. Returns a bounce, or null.
+ *
+ * ── THE HOLE THIS CLOSES (postmark-town/postmark #2686, sophia, 2026-09-12) ──
+ *
+ * A stake on a draft is two writes in one act, and their order is chosen (§ THE
+ * BOUNDARY, ARRIVING ON ITS OWN, below): the promotion first, the ledger move
+ * second, so the failure that CAN happen is the recoverable one. What was never
+ * written was the recovery.
+ *
+ * Sophia held 0 and staked ✦1 on a commons mark. The promotion succeeded and
+ * recorded `stake: 1` — the number ASKED. The ledger moved 0 and said so in its
+ * own receipt ("your balance has no stamps free to stake", the town engine's
+ * words). Nothing read that receipt, so the docket carried `stake: 1` behind a
+ * mark holding nothing for nine hours, indistinguishable from a backed claim,
+ * until the candle refused it at the close as nothing staked (window 184).
+ * Correct judgment, wrong display, for nine hours.
+ *
+ * So the door closes its own loop: the act that made the promotion takes it
+ * back, in the same act, and answers with the law rather than a receipt nobody
+ * reads.
+ *
+ * ── ITS TWIN AT THE OTHER END ───────────────────────────────────────────────
+ *
+ * `world2/tools/escrow-presence.mjs § escrowAbsentAmong` is the CANDLE's
+ * version of this same rule — "a commons mark needs somebody's stamps behind
+ * it" — applied at the close instead of at submit, and printing
+ * `⚑ escrow: refused … nothing staked`. Two gates, one rule. They are pinned
+ * against one fixture in `test/stake-held.test.mjs`, which is what
+ * `test/forecast-sweep-parity.test.mjs` exists to do for the other twinned pair
+ * in this office.
+ *
+ * PURE ON PURPOSE, for `stakeRefusalFor`'s reason one function up: the decision
+ * takes the facts and returns the answer, so a falsifier can put an empty
+ * balance in front of it with no store, no clone and no crossing.
+ *
+ * ── THE THREE CASES IT MUST NOT TOUCH ───────────────────────────────────────
+ *
+ * · `promoted: false` — an ordinary stake on an already-public mark, which
+ *   `promoteDraftOnStake` calls "the ordinary answer … and never an error".
+ *   This door retracts the promotion IT JUST MADE and nothing else; a pending
+ *   row some other act filed is not this act's to take off the docket.
+ * · `applied >= 1` — a PARTIAL stake (holds 1, asks 3) leaves something real
+ *   behind the mark, and a partially backed claim is the candle's to judge at
+ *   the close, not the door's to refuse at submit.
+ * · `ownGround` anything but `false` — the 2026-08-28 ruling makes an own-ground
+ *   mark publishable with nothing behind it, and `null` means the office could
+ *   not tell. Refusing on "could not tell" would retract a lawful publication
+ *   over a geometry engine that failed to load.
+ */
+export function unbackedRefusalFor({ mark, n, promoted, applied, ownGround }) {
+  if (!(n >= 1)) return null;              // ✦0 has its own ruling, below
+  if (!promoted) return null;              // this act promoted nothing; nothing to take back
+  if (Number(applied) !== 0) return null;  // something is held; the candle judges how much
+  if (ownGround !== false) return null;    // own ground, or the office could not say
+  return bounce(422, `nothing held — the claim on "${mark}" was not filed`,
+    "you hold 0 stamps, and a claim on the commons is backed or it is not made — so the mark stays " +
+    "your private draft rather than standing on the docket with nothing behind it. Stamps are earned by " +
+    "corresponding: the quest board (`read_quests`) pays one per unit toward the daily pair, reaching out " +
+    "and being reached. The claim files itself the moment it is backed — stake it again with a stamp behind " +
+    "you and that same act puts it forward.",
+    { held: 0, requested: n });
+}
+
 // Which resident is acting. Mirrors world.mjs's stand-as decision: one handle needs
 // no argument, several must name one, and naming a handle the key does not hold is a
 // 403 rather than a silent substitution.
@@ -103,7 +167,14 @@ export async function markExists(mark, key = null) {
     return { known: false, reason: "the office has no world clone to check against" };
   try {
     const { state } = publishedState(WORLD_CLONE);
-    if ((state?.marks ?? []).some((m) => m.id === mark)) return { known: true, exists: true };
+    // `record` rides back with the answer since 2026-09-12, additively: the
+    // unbacked-stake refusal below has to ask whose GROUND this mark stands on,
+    // and the record it needs is the one this function has just found. Looking
+    // it up a second time would be a second reading of the same two layers,
+    // with the drift that implies — and this half of the door already pays for
+    // the canon read.
+    const canonRow = (state?.marks ?? []).find((m) => m.id === mark);
+    if (canonRow) return { known: true, exists: true, record: canonRow };
     // THE SECOND LOOK — your own drafts count (2026-08-22). The world read is
     // canon for everyone, so a resident staking the draft they just left would
     // bounce 404 on a mark sitting on their own branch; that is exactly what
@@ -113,8 +184,9 @@ export async function markExists(mark, key = null) {
     // only ever shows the caller their OWN sketchbook.
     if (key) {
       const delta = await guardedDraftsForKey(WORLD_CLONE, key);
-      if (!delta?.error && (delta?.marks ?? []).some((m) => m.id === mark && m.status !== "deleted"))
-        return { known: true, exists: true };
+      const draftRow = delta?.error ? null
+        : (delta?.marks ?? []).find((m) => m.id === mark && m.status !== "deleted");
+      if (draftRow) return { known: true, exists: true, record: draftRow };
     }
     return { known: true, exists: false };
   } catch { return { known: false, reason: "the world record could not be read" }; }
@@ -325,7 +397,17 @@ export async function worldStakeViaOffice(args = {}, key = null) {
   try {
     const { promoteDraftOnStake } = await import("./world2-claims.mjs");
     putForward = await promoteDraftOnStake({
-      actor: by, householdName: key?.household, slug: args.mark, stamps: n });
+      actor: by, householdName: key?.household, slug: args.mark, stamps: n,
+      // WHAT THE ROW MAY HONESTLY SAY IT HOLDS, at the only moment the row can
+      // be told. `claims_update_guard` gives an office pen four transitions and
+      // `pending -> pending` is not one of them, so this statement is the last
+      // write this door has onto the claim — and it runs BEFORE the ledger, by
+      // the order the paragraph above defends. A zero stake is therefore the
+      // one case the door can answer here: the ledger is never asked at all, so
+      // nothing moves, so `held` is 0 and that is a finding rather than a guess.
+      // For `n >= 1` it passes null, which writes no key: absent and zero are
+      // two facts and the docket read keeps them apart.
+      held: n === 0 ? 0 : null });
   } catch (e) {
     // The docket is a shadow-era pen; a store that is down must not swallow a
     // resident's stake. Loud, and the ledger still runs.
@@ -367,9 +449,68 @@ export async function worldStakeViaOffice(args = {}, key = null) {
 
   const staked = await runExec({ verb: "stake", handle: who.handle, mark: args.mark, n, via: "api", date: townDay() });
   if (staked?.error) return staked;
+
+  // ── THE DOOR CLOSES ITS OWN LOOP (#2686) ─────────────────────────────────
+  //
+  // The ledger has answered. `applied` is what it actually moved — the town
+  // engine clips to the liquid balance (`worldStakeApply`: `applied =
+  // Math.min(n, balance)`) — and it is the only number that says what stands
+  // behind this mark. If it is zero on the commons, the promotion above put a
+  // claim on the public docket that nothing backs, and THIS ACT takes it back
+  // rather than leaving the candle to say so nine hours later.
+  //
+  // The ground read runs only here, on the path where the balance came up
+  // empty, and only through `world.mjs § markStandsOnOwnGround` — the leave-
+  // mark door's own rule, asked rather than copied. It is imported lazily
+  // because world.mjs imports this file.
+  const applied = Number(staked?.applied ?? 0);
+  if (putForward?.promoted && n >= 1 && applied === 0) {
+    let ownGround = null;
+    try {
+      const { markStandsOnOwnGround } = await import("./world.mjs");
+      const rec = ex?.record ?? null;
+      if (rec) ownGround = await markStandsOnOwnGround({
+        by, at: rec.at, extent: rec.extent, points: rec.points, parent_id: rec.parent_id ?? rec.parent ?? null });
+    } catch (e) {
+      console.error(`[world-stake] the ground under "${args.mark}" could not be read: ${String(e?.message ?? e)}`);
+    }
+    const unbacked = unbackedRefusalFor({ mark: args.mark, n, promoted: true, applied, ownGround });
+    if (unbacked) {
+      // THE PROMOTION THIS ACT MADE, TAKEN BACK BY THIS ACT. `retractPendingClaim`
+      // is the one retraction the withdraw arm also uses, so the row lands in
+      // the crossing's own `retracted_before_close` account rather than
+      // vanishing — 007's delete guard forbids removing a row the docket has
+      // carried, and the tally is the reason not to want to.
+      //
+      // A retraction that FAILS must not turn into a silent success: the
+      // resident would be told the claim was never filed while it sat pending.
+      // So the refusal only goes out when the row is actually off the docket.
+      try {
+        const { retractPendingClaim } = await import("./world2-claims.mjs");
+        const undone = await retractPendingClaim(null,
+          { windowId: putForward.window, slug: args.mark, claimant: by });
+        if (!undone) throw new Error("no pending row came back off the docket");
+        return unbacked;
+      } catch (e) {
+        console.error(`[world-stake] the unbacked promotion of "${args.mark}" could not be retracted: ${String(e?.message ?? e)}`);
+        return bounce(500, `nothing was held behind "${args.mark}" and the claim could not be taken back`,
+          "the stamp ledger moved nothing, so this claim stands on the docket with nothing behind it and the " +
+          "candle will refuse it by name at the next crossing. Withdraw it (`world { do: \"withdraw-mark\" }`) " +
+          "or back it before the close — and tell the postmaster, because a promotion this office could not " +
+          "retract is the office's defect, not yours.", { held: 0, requested: n });
+      }
+    }
+  }
+
+  // WHAT ACTUALLY MOVED, in the sentence too. This read `✦${n} stands behind
+  // it` — the number ASKED — so a clipped stake told a resident holding 1 that
+  // three stamps stood behind their mark. The receipt beside it has always
+  // carried `applied` and `clipped`; the prose was the half that had not been
+  // told.
   return putForward?.promoted
     ? { ...staked, put_forward: true, claim: putForward.claim,
-        effect: `✦${n} stands behind it and that is what put it forward — it is on the public docket now, and locks or is refused by name at the next crossing.` }
+        effect: `✦${applied} stands behind it and that is what put it forward — it is on the public docket now, and locks or is refused by name at the next crossing.`
+          + (applied < n ? ` You asked for ✦${n}; your balance carried ✦${applied}, and that is what the docket shows as held.` : "") }
     : staked;
 }
 

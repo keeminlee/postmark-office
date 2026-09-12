@@ -161,6 +161,49 @@ function pointOf(searchParams) {
   return { x, y, radiusM: Number.isFinite(r) && r > 0 ? r : null, limit: Number.isFinite(l) && l > 0 ? l : null };
 }
 
+// ── THE DOCKET ROW: WHAT WAS ASKED, AND WHAT IS HELD ───────────────────────
+//
+// `stake` alone was the whole of #2686's display half. It is written by the
+// promotion, which runs BEFORE the stamp ledger by design (world-stake.mjs §
+// THE BOUNDARY, ARRIVING ON ITS OWN), so it is the number the claimant ASKED
+// for and nothing on this read said so. Sophia's row carried `stake: 1` behind
+// a mark holding zero for nine hours and read exactly like a backed claim.
+//
+// `held` is the ledger's own applied count at submit, carried in the claim's
+// `data` (world2-claims § promoteDraftOnStake). ADDITIVE: every field a current
+// reader reads still arrives, in the same spelling — the site's docket page,
+// the operator cockpit, and the MCP twin (src/town-marks.mjs, which calls this
+// very route and filters its rows by claimant) all keep working untouched.
+//
+// THE JOIN, and why the view was not changed. `docket` is a VIEW over `claims`
+// (001_tables.sql) and it does not carry `data`; widening it is a schema
+// change, which this lane does not make. Joining `claims` back on the view's
+// own `id` costs one indexed lookup per pending row and leaves the view — and
+// every other reader of it — exactly as it was.
+export const DOCKET_SELECT =
+  `SELECT d.id, d.window_id, d.closes_at, d.class, d.claimant, d.household, d.submitted_at,
+          d.stake, d.geometry, d.counterclaim_of, (c.data->>'held')::int AS held
+     FROM docket d JOIN claims c ON c.id = d.id
+    ORDER BY d.submitted_at`;
+
+/**
+ * ONE ROW OF THE DOCKET. Pure, and exported so a falsifier can read it.
+ *
+ * `escrowLines`'s lesson, taken literally: a string composed at a call site
+ * nothing can assert on "is a line that will say `[object Object]` eventually".
+ * Same for a row shaped inline in a route handler — and this one has a field
+ * whose whole point is that NULL and 0 mean different things, which is exactly
+ * the distinction an inline `?? 0` erases without anybody noticing.
+ *
+ * `held: null` is "not recorded", never "nothing held". Every claim standing on
+ * the docket the day this landed predates the field, and rendering those as
+ * `held 0` would accuse each of them of being unbacked.
+ */
+export function docketRow(row = {}) {
+  const { held, ...rest } = row;
+  return { ...rest, held: held == null ? null : Number(held) };
+}
+
 /**
  * Route a GET under /world2/*. Returns null when the path is not ours
  * (server.mjs falls through), else { code, body }.
@@ -170,14 +213,16 @@ export async function world2Serve(path, searchParams) {
   const p = await pool();
 
   if (path === "/world2/docket") {
-    const { rows } = await p.query(
-      `SELECT id, window_id, closes_at, class, claimant, household, submitted_at,
-              stake, geometry, counterclaim_of FROM docket ORDER BY submitted_at`);
+    const { rows } = await p.query(DOCKET_SELECT);
     const { rows: [win] } = await p.query(
       "SELECT id, opens_at, closes_at FROM windows WHERE status = 'open' ORDER BY id DESC LIMIT 1");
     return { code: 200, body: {
-      what: "the public docket — every pending claim, and the candle it locks at",
-      window: win ?? null, pending: rows.length, claims: rows,
+      what: "the public docket — every pending claim, and the candle it locks at. "
+        + "`stake` is what the claimant ASKED to put behind the mark and `held` is what the stamp "
+        + "ledger actually moved into escrow at submit; they differ when a balance could not carry the "
+        + "ask. `held: null` means not recorded — every claim filed before 2026-09-12 carries no such "
+        + "figure, and null is not zero.",
+      window: win ?? null, pending: rows.length, claims: rows.map(docketRow),
     } };
   }
 

@@ -231,10 +231,8 @@ export async function claimTxFromJournal(client, row, seq, { household, actId = 
           "DELETE FROM claims WHERE status = 'draft' AND slug = $1 AND claimant = $2 AND household = $3",
           [slug, row.actor, household]);
         if (dropped.rowCount) { state.written += 1; return; }
-        const { rowCount } = await client.query(
-          `UPDATE claims SET status = 'retracted', decided_at = now()
-           WHERE window_id = $1 AND status = 'pending' AND geometry->>'slug' = $2 AND claimant = $3`,
-          [win.id, slug, row.actor]);
+        const rowCount = await retractPendingClaim(client,
+          { windowId: win.id, slug, claimant: row.actor });
         // rowCount 0 is lawful: withdrawing a PUBLISHED 1.0 mark has no pending
         // claim to retract — that lane is the settlement unpublish, not the docket.
         if (rowCount) state.written += 1;
@@ -371,6 +369,45 @@ export async function claimTxFromJournal(client, row, seq, { household, actId = 
 // keep answering about the docket exactly as before.
 
 /**
+ * A PENDING CLAIM, TAKEN BACK OFF THE DOCKET. One retraction, two callers.
+ *
+ * `pending -> retracted` is one of the four transitions `claims_update_guard`
+ * permits an office pen (007_private_drafts.sql § the transition guard), and
+ * gold §1's reason is in the guard's own comment: "retraction is free until
+ * close". A retracted row STAYS — 007's delete guard forbids removing a row the
+ * public docket has carried — so the crossing's own account keeps it, under
+ * `sixCount.retracted_before_close` (clearing-job.mjs § 6).
+ *
+ * ── WHY THIS IS A FUNCTION AND NOT TWO STATEMENTS ──────────────────────────
+ *
+ * Its callers ask for the same thing from opposite ends. `claimTxFromJournal`
+ * retracts because a resident withdrew a claim that had stood publicly; the
+ * stake door (world-stake.mjs § A STAKE THAT HOLDS NOTHING IS NEVER FILED)
+ * retracts a promotion it made moments earlier and is about to refuse. Two
+ * statements would be two notions of what retraction writes, and the second one
+ * written would be the one that forgot `decided_at` — which is the column the
+ * candle's own tally reads nothing of but every receipt beside it does.
+ *
+ * KEYED ON (window, slug, claimant) rather than on the claim's id, because that
+ * is the key the withdraw arm has in hand: it is holding a journal row, not a
+ * row id. The stake door has both and passes these three.
+ *
+ * `q` is a CLIENT when the caller holds a transaction (the withdraw arm rides
+ * the pen's own), and null when it does not (the stake door, which has already
+ * committed its promotion). The row policy takes no household declaration for
+ * this write — `claims_update_office` is `USING (status <> 'draft' OR …)` and a
+ * pending row satisfies the first arm — so the pool is a lawful place to run it.
+ */
+export async function retractPendingClaim(q, { windowId, slug, claimant, env = process.env } = {}) {
+  const client = q ?? await pool(env);
+  const { rowCount } = await client.query(
+    `UPDATE claims SET status = 'retracted', decided_at = now()
+     WHERE window_id = $1 AND status = 'pending' AND geometry->>'slug' = $2 AND claimant = $3`,
+    [windowId, slug, claimant]);
+  return rowCount;
+}
+
+/**
  * A later `world_stake` on a draft: the boundary act, arriving on its own.
  *
  * The ruling's plainest case -- you composed something, slept on it, and now
@@ -401,11 +438,40 @@ export async function claimTxFromJournal(client, row, seq, { household, actId = 
  * repo catching the office rewriting history, correctly, over something that
  * would have been our own doing.
  *
- * Returns { promoted, claim }. `promoted: false` is the ordinary answer for a
- * stake on an already-public mark, and never an error.
+ * ── `held` · WHAT THE LEDGER ACTUALLY MOVED, ON THE ROW ITSELF ─────────────
+ *
+ * `stake` is the number ASKED. It has to be: this statement runs BEFORE the
+ * stamp ledger, by the order the door's own comment argues for. So a claim
+ * whose escrow move applied less than it asked — or nothing at all — carried a
+ * `stake` figure that read exactly like a backed claim, which is #2686: nine
+ * hours of `stake: 1` behind a mark holding zero.
+ *
+ * `held` is the other number, and it means HELD AT SUBMIT. A later unstake does
+ * not rewrite it; what a mark carries now is `world_stake_read`'s answer and
+ * what it will carry at the close is the candle's, and neither is a fact about
+ * this row's submission. A JSON field rather than a column by Keemin's choice
+ * (2026-09-12): no schema change, no migration.
+ *
+ * ⚑ NULL IS NOT ZERO, and the CASE below writes no key at all rather than a
+ * zero when the caller cannot say. Every claim on the docket the day this
+ * landed was written before the field existed, and rendering those as `held 0`
+ * would accuse each of them of being unbacked. Same discipline as
+ * `escrowPresenceAt`: "an empty stake set is indistinguishable from a town
+ * where nobody stakes."
+ *
+ * ⚑ AND THE DOOR CAN ONLY SAY IT HERE. `claims_update_guard` permits an office
+ * pen four transitions and `pending -> pending` is not among them, so there is
+ * no second write onto the row this statement leaves. The caller therefore
+ * passes what it KNOWS at submit — for a zero stake that is 0, because no
+ * ledger move happens at all — and passes null where the number will not exist
+ * until after the ledger has run.
+ *
+ * Returns { promoted, claim, window }. `promoted: false` is the ordinary answer
+ * for a stake on an already-public mark, and never an error. `window` is the
+ * candle the claim joined, which is the key its retraction is written against.
  */
-export async function promoteDraftOnStake({ actor, householdName, slug, stamps = 0 }, env = process.env) {
-  if (!candleEnabled(env)) return { promoted: false, claim: null };
+export async function promoteDraftOnStake({ actor, householdName, slug, stamps = 0, held = null }, env = process.env) {
+  if (!candleEnabled(env)) return { promoted: false, claim: null, window: null };
   const p = await pool(env);
   const household = await householdKeyFor(p, householdName ?? actor);
   const { rows: [win] } = await p.query(
@@ -445,13 +511,16 @@ export async function promoteDraftOnStake({ actor, householdName, slug, stamps =
               data = (data - '_deferred_act')
                      || CASE WHEN $4::text IS NULL THEN '{}'::jsonb
                              ELSE jsonb_build_object('_act_id', $4::text) END
+                     || CASE WHEN $5::int IS NULL THEN '{}'::jsonb
+                             ELSE jsonb_build_object('held', $5::int) END
         WHERE id = $3`,
-      [win.id, Number(stamps) || 0, draft.id, releasedActId == null ? null : String(releasedActId)]);
+      [win.id, Number(stamps) || 0, draft.id, releasedActId == null ? null : String(releasedActId),
+       held == null ? null : Number(held)]);
     return draft;
   });
-  if (!out) return { promoted: false, claim: null };
+  if (!out) return { promoted: false, claim: null, window: win.id };
   state.submitted += 1;
-  return { promoted: true, claim: out.id };
+  return { promoted: true, claim: out.id, window: win.id };
 }
 
 /**

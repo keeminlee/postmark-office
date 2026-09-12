@@ -273,7 +273,14 @@ export function liveMarkOf(row) {
   // slips through it is the one nobody thought to name. Every field the pen
   // adds to `data` gets a line in this destructure, or it reaches the doors as
   // something the resident wrote.
-  const { _journal_seq, _act_id, _deferred_act, ...declared } = data;
+  //
+  // `held` joined them 2026-09-12 (world2-claims § promoteDraftOnStake), and it
+  // is the first one WITHOUT an underscore — which is why the paragraph above
+  // insists the convention is not the rule. It is the stamp ledger's applied
+  // count at submit, a fact about the CLAIM; spread into a mark record it would
+  // sit beside `stamps` as though the author had declared it, and the collision
+  // guard and the parcel cap would be reading a payload the resident never wrote.
+  const { _journal_seq, _act_id, _deferred_act, held: _held, ...declared } = data;
 
   const payload = {
     ...declared,
