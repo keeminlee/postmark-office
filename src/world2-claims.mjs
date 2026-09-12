@@ -438,39 +438,33 @@ export async function retractPendingClaim(q, { windowId, slug, claimant, env = p
  * repo catching the office rewriting history, correctly, over something that
  * would have been our own doing.
  *
- * ── `held` · WHAT THE LEDGER ACTUALLY MOVED, ON THE ROW ITSELF ─────────────
+ * ── WHY THE ROW DOES NOT SAY WHAT IT HOLDS (ruled 2026-09-12) ─────────────
  *
  * `stake` is the number ASKED. It has to be: this statement runs BEFORE the
- * stamp ledger, by the order the door's own comment argues for. So a claim
- * whose escrow move applied less than it asked — or nothing at all — carried a
- * `stake` figure that read exactly like a backed claim, which is #2686: nine
- * hours of `stake: 1` behind a mark holding zero.
+ * stamp ledger, by the order the stake door's own comment argues for. So a
+ * claim whose escrow move applied less than it asked carries a `stake` figure
+ * that reads exactly like a backed claim — which is #2686, nine hours of
+ * `stake: 1` behind a mark holding zero.
  *
- * `held` is the other number, and it means HELD AT SUBMIT. A later unstake does
- * not rewrite it; what a mark carries now is `world_stake_read`'s answer and
- * what it will carry at the close is the candle's, and neither is a fact about
- * this row's submission. A JSON field rather than a column by Keemin's choice
- * (2026-09-12): no schema change, no migration.
+ * The obvious repair was a second number on this row. It is NOT taken, and the
+ * reason is worth the paragraph. Writing what the ledger moved would need a
+ * write AFTER the ledger, onto a row that has already gone pending, and
+ * `claims_update_guard` permits an office pen four transitions of which
+ * `pending -> pending` is not one. The guard stays as it is (Keemin, 09-12): no
+ * fifth transition, no migration.
  *
- * ⚑ NULL IS NOT ZERO, and the CASE below writes no key at all rather than a
- * zero when the caller cannot say. Every claim on the docket the day this
- * landed was written before the field existed, and rendering those as `held 0`
- * would accuse each of them of being unbacked. Same discipline as
- * `escrowPresenceAt`: "an empty stake set is indistinguishable from a town
- * where nobody stakes."
- *
- * ⚑ AND THE DOOR CAN ONLY SAY IT HERE. `claims_update_guard` permits an office
- * pen four transitions and `pending -> pending` is not among them, so there is
- * no second write onto the row this statement leaves. The caller therefore
- * passes what it KNOWS at submit — for a zero stake that is 0, because no
- * ledger move happens at all — and passes null where the number will not exist
- * until after the ledger has run.
+ * So the docket DERIVES it instead. `escrow_projection` (014) already holds the
+ * open position per (mark, holder) as-of a town sha, and the candle's own gate
+ * already reads it — `escrowPresenceAt` in world2/tools/escrow-presence.mjs.
+ * world2-serve.mjs § THE DOCKET ROW asks that same reader, so the docket and
+ * the gate it forecasts cannot disagree, no claim is ever rewritten, and a later
+ * unstake shows up on the next read rather than leaving a stale snapshot behind.
  *
  * Returns { promoted, claim, window }. `promoted: false` is the ordinary answer
  * for a stake on an already-public mark, and never an error. `window` is the
  * candle the claim joined, which is the key its retraction is written against.
  */
-export async function promoteDraftOnStake({ actor, householdName, slug, stamps = 0, held = null }, env = process.env) {
+export async function promoteDraftOnStake({ actor, householdName, slug, stamps = 0 }, env = process.env) {
   if (!candleEnabled(env)) return { promoted: false, claim: null, window: null };
   const p = await pool(env);
   const household = await householdKeyFor(p, householdName ?? actor);
@@ -511,11 +505,8 @@ export async function promoteDraftOnStake({ actor, householdName, slug, stamps =
               data = (data - '_deferred_act')
                      || CASE WHEN $4::text IS NULL THEN '{}'::jsonb
                              ELSE jsonb_build_object('_act_id', $4::text) END
-                     || CASE WHEN $5::int IS NULL THEN '{}'::jsonb
-                             ELSE jsonb_build_object('held', $5::int) END
         WHERE id = $3`,
-      [win.id, Number(stamps) || 0, draft.id, releasedActId == null ? null : String(releasedActId),
-       held == null ? null : Number(held)]);
+      [win.id, Number(stamps) || 0, draft.id, releasedActId == null ? null : String(releasedActId)]);
     return draft;
   });
   if (!out) return { promoted: false, claim: null, window: win.id };

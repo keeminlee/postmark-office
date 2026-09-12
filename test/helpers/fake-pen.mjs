@@ -219,7 +219,7 @@ class FakeClient {
       return { rows: [{ id: c.id, held: data._deferred_act ?? null }], rowCount: 1 };
     }
     if (/UPDATE claims SET status = 'pending', window_id/i.test(t)) {
-      const [windowId, stamps, id, actId, held] = params;
+      const [windowId, stamps, id, actId] = params;
       const c = store.claims.find((x) => x.id === id);
       if (!c) return { rows: [], rowCount: 0 };
       // The promotion is keyed on the row's ID alone, so unlike its siblings it
@@ -233,9 +233,6 @@ class FakeClient {
         // the `|| jsonb_build_object('_act_id', …)` half of the one promotion
         // statement — the released act's identity, stamped as it is released
         if (actId != null) data._act_id = String(actId);
-        // and the `|| jsonb_build_object('held', …)` half — what the ledger
-        // moved at submit. NULL writes no key: absent and zero are two facts.
-        if (held != null) data.held = Number(held);
         Object.assign(c, { status: "pending", window_id: windowId, submitted_at: "now", stake: Math.max(Number(c.stake) || 0, Number(stamps) || 0), data: JSON.stringify(data) });
       });
       return { rows: [], rowCount: 1 };

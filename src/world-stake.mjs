@@ -396,18 +396,13 @@ export async function worldStakeViaOffice(args = {}, key = null) {
   let putForward = null;
   try {
     const { promoteDraftOnStake } = await import("./world2-claims.mjs");
+    // NOTHING IS WRITTEN ONTO THE CLAIM ABOUT WHAT IS HELD, deliberately
+    // (ruled 2026-09-12). `stake` here is the number ASKED and it stays that;
+    // what is actually behind the mark is DERIVED on the docket read from
+    // `escrow_projection`, through the candle's own reader. See
+    // world2-claims.mjs § WHY THE ROW DOES NOT SAY WHAT IT HOLDS.
     putForward = await promoteDraftOnStake({
-      actor: by, householdName: key?.household, slug: args.mark, stamps: n,
-      // WHAT THE ROW MAY HONESTLY SAY IT HOLDS, at the only moment the row can
-      // be told. `claims_update_guard` gives an office pen four transitions and
-      // `pending -> pending` is not one of them, so this statement is the last
-      // write this door has onto the claim — and it runs BEFORE the ledger, by
-      // the order the paragraph above defends. A zero stake is therefore the
-      // one case the door can answer here: the ledger is never asked at all, so
-      // nothing moves, so `held` is 0 and that is a finding rather than a guess.
-      // For `n >= 1` it passes null, which writes no key: absent and zero are
-      // two facts and the docket read keeps them apart.
-      held: n === 0 ? 0 : null });
+      actor: by, householdName: key?.household, slug: args.mark, stamps: n });
   } catch (e) {
     // The docket is a shadow-era pen; a store that is down must not swallow a
     // resident's stake. Loud, and the ledger still runs.
@@ -510,7 +505,7 @@ export async function worldStakeViaOffice(args = {}, key = null) {
   return putForward?.promoted
     ? { ...staked, put_forward: true, claim: putForward.claim,
         effect: `✦${applied} stands behind it and that is what put it forward — it is on the public docket now, and locks or is refused by name at the next crossing.`
-          + (applied < n ? ` You asked for ✦${n}; your balance carried ✦${applied}, and that is what the docket shows as held.` : "") }
+          + (applied < n ? ` You asked for ✦${n}; your balance carried ✦${applied}, and ✦${applied} is what the ledger moved.` : "") }
     : staked;
 }
 

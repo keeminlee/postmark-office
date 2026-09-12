@@ -46,6 +46,8 @@ import { readDraftClaims } from "./world2-claims.mjs";
 import * as live from "../world2/tools/live-reads.mjs";
 import * as talk from "../world2/tools/conversations.mjs";
 import * as apex from "../world2/tools/apex-reads.mjs";
+// The CANDLE'S OWN escrow reader, not a second one — § THE DOCKET ROW says why.
+import { escrowPresenceAt } from "../world2/tools/escrow-presence.mjs";
 import { freshestMainRef, materializeAtRef } from "./world-branches.mjs";
 import { WORLD_CLONE, placeWordsFrom } from "./world.mjs";
 import { CROSSING_DERIVATION, currentCrossing } from "./crossings.mjs";
@@ -169,39 +171,94 @@ function pointOf(searchParams) {
 // for and nothing on this read said so. Sophia's row carried `stake: 1` behind
 // a mark holding zero for nine hours and read exactly like a backed claim.
 //
-// `held` is the ledger's own applied count at submit, carried in the claim's
-// `data` (world2-claims § promoteDraftOnStake). ADDITIVE: every field a current
-// reader reads still arrives, in the same spelling — the site's docket page,
-// the operator cockpit, and the MCP twin (src/town-marks.mjs, which calls this
-// very route and filters its rows by claimant) all keep working untouched.
+// `held` is DERIVED, and never stored (Keemin's ruling, 2026-09-12). The store
+// already knows: `escrow_projection` (014) holds the open position per (mark,
+// holder) as-of a town sha, and the CANDLE'S OWN GATE already reads it —
+// `escrowPresenceAt`, whose answer decides whether a commons claim is refused
+// at the close. Asking that same reader here is what makes the docket and the
+// gate it forecasts unable to disagree, and it costs the claim row nothing: no
+// write, no fifth transition in `claims_update_guard`, and no stale snapshot
+// when a resident unstakes before the close.
 //
-// THE JOIN, and why the view was not changed. `docket` is a VIEW over `claims`
-// (001_tables.sql) and it does not carry `data`; widening it is a schema
-// change, which this lane does not make. Joining `claims` back on the view's
-// own `id` costs one indexed lookup per pending row and leaves the view — and
-// every other reader of it — exactly as it was.
+// ⚑ IT IS THE MARK'S ESCROW, NOT THE CLAIMANT'S POSITION, and that is the
+// candle's grain rather than an approximation of something narrower.
+// `escrowPresenceAt` sums `n` per mark, and `escrowAbsentAmong` asks one
+// question of it — has this mark ANY open stamps. A per-claimant figure would
+// be a second question this read invented, and the two would part company on
+// the first mark two households back.
+//
+// ADDITIVE: every field a current reader reads still arrives in the same
+// spelling — the site's docket page, the operator cockpit, and the MCP twin
+// (src/town-marks.mjs, which calls this very route and filters its rows by
+// claimant) all keep working untouched.
 export const DOCKET_SELECT =
-  `SELECT d.id, d.window_id, d.closes_at, d.class, d.claimant, d.household, d.submitted_at,
-          d.stake, d.geometry, d.counterclaim_of, (c.data->>'held')::int AS held
-     FROM docket d JOIN claims c ON c.id = d.id
-    ORDER BY d.submitted_at`;
+  `SELECT id, window_id, closes_at, class, claimant, household, submitted_at,
+          stake, geometry, counterclaim_of FROM docket ORDER BY submitted_at`;
+
+/**
+ * THE TOWN'S OPEN ESCROW, AS THE CANDLE WILL SEE IT. `{ townSha, byMark, reason }`.
+ *
+ * The sha is `projection_heads['town']` — the SAME source `clearing-job.mjs`
+ * derives its `townSha` from, one line of its own (`heads.find((h) => h.repo
+ * === "town")?.sha`). Not the open window's `town_sha`, which 001 says is
+ * "pinned at close" and is therefore NULL for every window this read describes.
+ * A freshness figure has to name its own source, and this one's is the town
+ * head the next crossing will also read.
+ *
+ * `byMark: null` is a REFUSAL TO ANSWER and never an empty town. That is
+ * `escrowPresenceAt`'s own discipline, in its words: "an empty stake set is
+ * indistinguishable from a town where nobody stakes." Two ways to get there —
+ * no town head ingested, or the projection cannot answer at that sha (migration
+ * 014 unapplied, or this sha not ingested) — and each carries its own sentence,
+ * because a reader told "unavailable" with no reason cannot tell which.
+ */
+export async function docketEscrow(p) {
+  let townSha = null;
+  try {
+    const { rows: [head] } = await p.query("SELECT sha FROM projection_heads WHERE repo = 'town'");
+    townSha = head?.sha ?? null;
+  } catch (e) {
+    return { townSha: null, byMark: null,
+      reason: `the town's projection head could not be read (${String(e?.message ?? e).slice(0, 120)}), so what stands behind these marks is unknown — not zero` };
+  }
+  if (!townSha) return { townSha: null, byMark: null,
+    reason: "no town sha is ingested, so the store cannot say what stands behind these marks — unknown, not zero" };
+  try {
+    const byMark = await escrowPresenceAt((sql, params) => p.query(sql, params), { townSha });
+    if (byMark == null) return { townSha, byMark: null,
+      reason: `escrow_projection cannot answer at town ${townSha.slice(0, 8)} (migration 014 not applied, or this sha not ingested) — what stands behind these marks is unknown, not zero` };
+    return { townSha, byMark, reason: null };
+  } catch (e) {
+    return { townSha, byMark: null,
+      reason: `the escrow projection could not be read at town ${townSha.slice(0, 8)} (${String(e?.message ?? e).slice(0, 120)}) — unknown, not zero` };
+  }
+}
 
 /**
  * ONE ROW OF THE DOCKET. Pure, and exported so a falsifier can read it.
  *
  * `escrowLines`'s lesson, taken literally: a string composed at a call site
  * nothing can assert on "is a line that will say `[object Object]` eventually".
- * Same for a row shaped inline in a route handler — and this one has a field
- * whose whole point is that NULL and 0 mean different things, which is exactly
- * the distinction an inline `?? 0` erases without anybody noticing.
+ * Same for a row shaped inline in a route handler — and this one turns on a
+ * distinction between null and 0 that an inline `?? 0` erases silently.
  *
- * `held: null` is "not recorded", never "nothing held". Every claim standing on
- * the docket the day this landed predates the field, and rendering those as
- * `held 0` would accuse each of them of being unbacked.
+ * ── THE TWO ABSENCES, WHICH ARE NOT THE SAME ABSENCE ───────────────────────
+ *
+ * `byMark == null` — the reader REFUSED. Nothing is known about any mark, so
+ * every row answers `held: null` and the body carries the reason.
+ *
+ * `byMark` present, this mark not in it — the reader ANSWERED, and the answer
+ * is zero. This is `escrowAbsentAmong`'s own reading of the same Map, one line
+ * of it: `const n = Number(escrowByMark.get(c.slug) ?? 0); if (n > 0) continue;`
+ * — and the claim it is about to refuse at the close is exactly the claim this
+ * read must show as unbacked NOW. Answering `null` there would be the docket
+ * saying "unknown" about the one fact the store holds precisely, which is
+ * #2686's shape wearing a different word.
  */
-export function docketRow(row = {}) {
-  const { held, ...rest } = row;
-  return { ...rest, held: held == null ? null : Number(held) };
+export function docketRow(row = {}, { byMark = null } = {}) {
+  const mark = row?.geometry?.slug ?? row?.slug ?? null;
+  return { ...row,
+    held: byMark == null || !mark ? null : Number(byMark.get(mark) ?? 0) };
 }
 
 /**
@@ -216,13 +273,24 @@ export async function world2Serve(path, searchParams) {
     const { rows } = await p.query(DOCKET_SELECT);
     const { rows: [win] } = await p.query(
       "SELECT id, opens_at, closes_at FROM windows WHERE status = 'open' ORDER BY id DESC LIMIT 1");
+    const escrow = await docketEscrow(p);
     return { code: 200, body: {
       what: "the public docket — every pending claim, and the candle it locks at. "
-        + "`stake` is what the claimant ASKED to put behind the mark and `held` is what the stamp "
-        + "ledger actually moved into escrow at submit; they differ when a balance could not carry the "
-        + "ask. `held: null` means not recorded — every claim filed before 2026-09-12 carries no such "
-        + "figure, and null is not zero.",
-      window: win ?? null, pending: rows.length, claims: rows.map(docketRow),
+        + "`stake` is what the claimant ASKED to put behind the mark; `held` is what the town's stamp "
+        + "ledger actually holds on it, read from the same escrow projection the candle's own gate "
+        + "reads at the close, so the two cannot disagree. They differ when a balance could not carry "
+        + "the ask. `held` is the MARK's open escrow across every household, not this claimant's own "
+        + "position, because that is the quantity the close is judged on. It is as-of the ingested town "
+        + "head named in `escrow_at_town_sha`, not the instant you asked: a stake made since that sha "
+        + "arrives here when the town is next ingested, which is the same lag the candle judges under. "
+        + "`held: null` means the store could not answer, never that nothing is held — the reason is in "
+        + "`held_unavailable`.",
+      window: win ?? null, pending: rows.length,
+      // The freshness stamp names its own source: this figure is as-of the town
+      // head, which is what the next crossing will read too.
+      ...(escrow.townSha ? { escrow_at_town_sha: escrow.townSha } : {}),
+      ...(escrow.reason ? { held_unavailable: escrow.reason } : {}),
+      claims: rows.map((r) => docketRow(r, escrow)),
     } };
   }
 

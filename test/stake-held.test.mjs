@@ -35,6 +35,12 @@
 // holds real rows in a real transaction — because "did the promotion actually
 // come back off the docket" cannot be asked of a stub that swallows statements.
 //
+// The DISPLAY half is DERIVED, never stored (Keemin, 2026-09-12): the claim row
+// says nothing about what is held, and `/world2/docket` reads the figure from
+// `escrow_projection` through the candle's own `escrowPresenceAt`. So the two
+// gates read one number, no claim is ever rewritten, and an unstake before the
+// close shows up on the next read instead of leaving a stale snapshot.
+//
 // And the PARITY is asked of both predicates against ONE fixture, which is why
 // `test/forecast-sweep-parity.test.mjs` exists: two filters, one rule, and they
 // must not drift.
@@ -86,7 +92,7 @@ const { promoteDraftOnStake, retractPendingClaim } = await import("../src/world2
 const { unbackedRefusalFor } = await import("../src/world-stake.mjs");
 const { claimEffectsFrom } = await import("../src/claim-effects.mjs");
 const { escrowAbsentAmong } = await import("../world2/tools/escrow-presence.mjs");
-const { docketRow, DOCKET_SELECT } = await import("../src/world2-serve.mjs");
+const { docketRow, docketEscrow, DOCKET_SELECT } = await import("../src/world2-serve.mjs");
 
 const STAKE_SOURCE = readFileSync(join(HERE, "..", "src", "world-stake.mjs"), "utf8");
 const CLAIMS_SOURCE = readFileSync(join(HERE, "..", "src", "world2-claims.mjs"), "utf8");
@@ -312,60 +318,112 @@ test("THE DOOR ACTUALLY USES BOTH — an exported-but-unused rule is not a fix",
 
 // ── 4 · THE ROW CARRIES WHAT IS HELD ───────────────────────────────────────
 
-test("HELD AT SUBMIT · an own-ground zero stake writes `held: 0` onto the claim", async () => {
+test("THE CLAIM ROW CARRIES NO `held` KEY AT ALL — the read is the only source", async () => {
+  // Ruled 2026-09-12: nothing is written onto a pending row, so the guard needs
+  // no fifth transition. A field written at submit would also go stale the
+  // moment somebody unstaked before the close; a derived one cannot.
   candleOn();
   const db = freshDb();
   try {
-    await appendActFlipped(db, composeRow({ by: "wright", slug: "on-my-own-parcel" }));
-    const out = await promoteDraftOnStake({
-      actor: "wright", householdName: "wright",
-      slug: "wright/on-my-own-parcel", stamps: 0, held: 0 });
-    assert.equal(out.promoted, true);
-    const data = JSON.parse(theStore().claims[0].data);
-    assert.equal(data.held, 0,
-      "a zero stake on your own ground holds nothing and the row says so — `stake 0 · held 0` is a "
-      + "complete sentence, and it is the one row shape where the two numbers agreeing means nothing moved");
+    for (const [by, slug, stamps] of [["neth", "a-thing", 1], ["wright", "on-my-own-parcel", 0]]) {
+      await appendActFlipped(db, composeRow({ by, slug }));
+      const out = await promoteDraftOnStake({
+        actor: by, householdName: by, slug: `${by}/${slug}`, stamps });
+      assert.equal(out.promoted, true);
+    }
+    for (const c of theStore().claims)
+      assert.equal("held" in JSON.parse(c.data), false,
+        `${c.slug} carries a held key — the docket derives that figure and the row must not hold a `
+        + "second copy of it to go stale");
   } finally { db.close(); unflip(); }
 });
 
-test("HELD IS ABSENT, NEVER ZERO, WHEN THE DOOR COULD NOT WRITE IT", async () => {
-  // 0 and "not recorded" are different facts and must not be spelled the same
-  // way — the same discipline `escrowPresenceAt` keeps ("an empty stake set is
-  // indistinguishable from a town where nobody stakes").
-  candleOn();
-  const db = freshDb();
-  try {
-    await appendActFlipped(db, composeRow({ by: "neth", slug: "a-thing" }));
-    await promoteDraftOnStake({
-      actor: "neth", householdName: "neth", slug: "neth/a-thing", stamps: 1, held: null });
-    const data = JSON.parse(theStore().claims[0].data);
-    assert.equal("held" in data, false, "no key at all, so a reader sees null and knows nothing was recorded");
-  } finally { db.close(); unflip(); }
+// A pool stand-in for the two statements `docketEscrow` issues. Narrow on
+// purpose, and it THROWS on anything else — a stub that answers a statement it
+// does not recognise is how a test starts asserting against a lie.
+const escrowPool = ({ head = "deadbeefcafe1234", rows = null }) => ({
+  async query(text, params) {
+    const t = String(text).replace(/\s+/g, " ").trim();
+    if (/FROM projection_heads WHERE repo = 'town'/.test(t))
+      return { rows: head ? [{ sha: head }] : [] };
+    if (/to_regclass\('public\.escrow_projection'\)/.test(t))
+      return { rows: [{ ok: rows !== "no-table" }] };
+    if (/FROM escrow_projection WHERE town_sha = \$1/.test(t)) {
+      assert.equal(params[0], head, "the projection must be read AT the head this answer names");
+      return { rows: rows === "no-table" ? [] : (rows ?? []) };
+    }
+    throw new Error(`escrowPool: unmodelled statement — "${t.slice(0, 90)}"`);
+  },
 });
 
-test("THE DOCKET READ SHOWS BOTH — `held` beside `stake`, additively", () => {
+test("THE DOCKET READ DERIVES `held` FROM THE CANDLE'S OWN PROJECTION", async () => {
+  const escrow = await docketEscrow(escrowPool({ rows: [{ mark: "neth/one-behind-it", n: 1 }] }));
+  assert.equal(escrow.reason, null, "the reader answered");
+  assert.equal(escrow.townSha, "deadbeefcafe1234", "and the answer names the sha it is as-of");
+
   const shaped = docketRow({
     id: "c1", window_id: 184, closes_at: "2026-09-12T17:45:00Z", class: "sited",
     claimant: "neth", household: "gh:9000003", submitted_at: "2026-09-12T05:00:00Z",
-    stake: 3, geometry: { slug: "neth/partly-behind-it" }, counterclaim_of: null, held: 1,
-  });
-  assert.equal(shaped.stake, 3, "what was asked");
-  assert.equal(shaped.held, 1, "and what is actually behind it — the whole point of this lane");
+    stake: 1, geometry: { slug: "neth/one-behind-it" }, counterclaim_of: null,
+  }, escrow);
+  assert.equal(shaped.stake, 1, "what was asked");
+  assert.equal(shaped.held, 1, "and what the town actually holds on it — the whole point of this lane");
   // ADDITIVE. Every field a current reader reads must still arrive: the site's
   // docket page, the cockpit, and the MCP twin (src/town-marks.mjs § the
   // /world2/docket route) all read this row.
   for (const k of ["id", "window_id", "closes_at", "class", "claimant", "household",
                    "submitted_at", "stake", "geometry", "counterclaim_of"])
     assert.ok(k in shaped, `the docket row lost \`${k}\` — a current reader breaks on this`);
+  assert.doesNotMatch(DOCKET_SELECT, /\bheld\b/,
+    "and nothing is selected from the claim — a stored copy is the thing this shape exists to avoid");
 });
 
-test("THE DOCKET READ SAYS NULL, NOT 0, FOR A ROW THAT PREDATES THE FIELD", () => {
-  const old = docketRow({ id: "c0", stake: 1, geometry: { slug: "sophia/nine-hours" } });
-  assert.equal(old.held, null,
-    "every claim on the docket today was written before this field existed; rendering them as `held 0` "
-    + "would accuse every one of them of being unbacked");
-  assert.match(DOCKET_SELECT, /held/,
-    "and the query actually fetches it — a pure shaper reading a column nobody selected answers null forever");
+test("A MARK THE PROJECTION ANSWERED ABOUT AND DID NOT NAME HOLDS ZERO, AND SAYS SO", () => {
+  // `escrowAbsentAmong`'s own reading of the same Map, one line of it:
+  //   const n = Number(escrowByMark.get(c.slug) ?? 0); if (n > 0) continue;
+  // The claim the candle is about to refuse at the close is precisely the claim
+  // this read must show as unbacked NOW. Answering `null` here would be the
+  // docket saying "unknown" about the one fact the store holds exactly — #2686's
+  // shape wearing a different word.
+  const escrow = { townSha: "deadbeefcafe1234", byMark: new Map([["neth/one-behind-it", 1]]), reason: null };
+  const shaped = docketRow({ id: "c2", stake: 1, geometry: { slug: "sophia/nothing-behind-it" } }, escrow);
+  assert.equal(shaped.held, 0,
+    "the reader answered and its answer about this mark is zero — that is a finding, not an absence");
+});
+
+test("A READER THAT CANNOT ANSWER SAYS NULL WITH ITS REASON, NEVER 0", async () => {
+  // `escrowPresenceAt`'s own discipline, verbatim: "an empty stake set is
+  // indistinguishable from a town where nobody stakes." Three ways to get there,
+  // and each carries a sentence, because "unavailable" with no reason leaves a
+  // reader unable to tell which.
+  const noHead = await docketEscrow(escrowPool({ head: null }));
+  assert.equal(noHead.byMark, null);
+  assert.match(noHead.reason, /no town sha is ingested/);
+  assert.match(noHead.reason, /not zero/, "and it says which of the two absences this is");
+
+  const noRows = await docketEscrow(escrowPool({ rows: [] }));
+  assert.equal(noRows.byMark, null, "no rows at this sha is a refusal to answer, not an unstaked town");
+  assert.match(noRows.reason, /migration 014 not applied, or this sha not ingested/);
+
+  for (const escrow of [noHead, noRows]) {
+    const shaped = docketRow({ id: "c3", stake: 1, geometry: { slug: "neth/one-behind-it" } }, escrow);
+    assert.equal(shaped.held, null, "unknown, and the body carries the reason beside it");
+  }
+});
+
+test("FLIP · a projection row removed changes `held` on the next read, with no claim write", async () => {
+  // The whole argument for deriving rather than storing, made as a falsifier: a
+  // resident unstakes before the close, and the docket tells the truth on the
+  // next read without anybody touching the claim — which the transition guard
+  // would not have permitted anyway.
+  const row = { id: "c4", stake: 1, geometry: { slug: "neth/one-behind-it" } };
+  const before = docketRow(row, await docketEscrow(escrowPool({ rows: [{ mark: "neth/one-behind-it", n: 1 }] })));
+  const after = docketRow(row, await docketEscrow(escrowPool({ rows: [{ mark: "someone/else", n: 2 }] })));
+  assert.equal(before.held, 1);
+  assert.equal(after.held, 0, "the stamps came out and the docket says so — no claim row was written either time");
+  assert.deepEqual(
+    { ...before, held: undefined }, { ...after, held: undefined },
+    "and NOTHING else about the row moved — the claim is untouched, which is the point");
 });
 
 // ── 5 · NO CANDLE EVENT FOR A CLAIM THAT WAS NEVER FILED ────────────────────
@@ -408,18 +466,22 @@ test("CLAIM EFFECTS · MEASURED — a retracted row still emits `claim-pending`,
     "the exact sentence a resident reads about a claim the door told them was never filed");
 });
 
-// ── 6 · THE GUARD THAT SAYS WHY `held` CANNOT BE WRITTEN AFTER THE LEDGER ──
+// ── 6 · THE GUARD THAT IS WHY NOTHING IS WRITTEN ───────────────────────────
 
 test("A SECOND WRITE ONTO A PENDING ROW RAISES — the four transitions, and no fifth", async () => {
-  // The receipt for this lane's one blocked half. `held` means what the LEDGER
-  // moved, and the ledger runs AFTER the promotion by the order world-stake.mjs
-  // defends. So recording it for a stake of ✦1 or more would need a second
-  // write onto a row that has already gone pending — and 007's transition guard
-  // does not permit one:
+  // The receipt for the shape this lane ended up with. Recording what the
+  // ledger moved would need a write AFTER the ledger, onto a row that has
+  // already gone pending, and 007's transition guard does not permit one:
   //
   //   "claims: % may compose a draft (draft -> draft), submit it (draft ->
   //    pending), or retract a pending claim (pending -> retracted, fields
   //    untouched) — nothing else, and never back to draft"
+  //
+  // Keemin ruled 2026-09-12 that the guard stays exactly as it is — no fifth
+  // transition, no migration — so the docket DERIVES `held` from
+  // `escrow_projection` instead and the claim row says nothing about it. This
+  // test is the standing proof that the alternative really is closed: if a
+  // future author reaches for a `held` column on a pending row, they meet this.
   //
   // ⚑ A PROBE THAT RELIES ON A REFUSAL MUST PROVE THE REFUSAL. This drives the
   // promotion twice against the fake pen's modelled guard: the first goes
