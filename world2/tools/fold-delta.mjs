@@ -97,8 +97,41 @@
 // decides; dropping it here would make a retirement invisible to the crossing
 // that performed it.
 
+// ── THE SECOND TERM: WHAT THE DOCKET CANNOT REACH (2026-09-12) ──────────────
+//
+// THE DOCKET IS STILL THE SELECTOR. Everything above stands. But the header's
+// own sentence — "a window cleared outside the sweep's timing is orphaned;
+// nothing revisits it" — was a description of the defect, not of a design, and
+// on 2026-09-12 it cost the town two marks.
+//
+// WHAT HAPPENED. The 05:45Z candle could not log in. Window 184 was cleared BY
+// HAND at 05:52Z, locking `neth/warm-stone-for-whoever-waits` and
+// `sophia-familiaris/reachability-is-not-permission`, and the sweep's re-run
+// refused on timing (correctly — the wait had passed). The 17:45Z crossing then
+// folded window 185, published its seven, and never wrote the two. They stand in
+// the store, `status = 'standing'`, with no file in canon, and the notary has
+// listed them as `canon_absent 2` every 03:20 since. `marks.locked_window` is
+// latest-wins, so the refusal above means nothing will ever fold 184 again.
+//
+// THE FIX IS A UNION, NOT A LOOSER SELECTOR. The docket query is untouched and
+// its refusals fire first and unchanged. Beside it sits a second, NAMED term:
+// every standing mark canon does not carry. It is bounded by the thing it is
+// repairing — a mark leaves the set the moment its file lands — so it cannot
+// become the standing set in a delta's clothes, and on an ordinary crossing it
+// is empty.
+//
+// AND IT IS THE NOTARY'S OWN READER, not a second opinion. `STANDING_SELECT` and
+// `canonLockFindings` are the same two the 03:20 read composes, so a mark listed
+// at 03:20 and a mark carried at 17:45 are the same mark by construction. A
+// second "is this slug in canon" written here is exactly the two-answers hazard
+// this file's header keeps `foldDelta` single for. The register itself is built
+// by the CALLER (`fold-input-cli.mjs`, from `--world-repo`), because
+// `canonRegisterAt` reads a git checkout and this function has never touched a
+// filesystem — which is what keeps every rule below provable on hand-built rows
+// with no Postgres and no clone.
 import { renderRecord, MARK_COLUMNS } from "./mark-render.mjs";
 import { stakesFromStore } from "./fold-input.mjs";
+import { STANDING_SELECT, canonLockFindings } from "./canon-locks.mjs";
 
 /**
  * THE CROSSING'S OWN MARKS, from the docket the candle locked.
@@ -108,7 +141,16 @@ import { stakesFromStore } from "./fold-input.mjs";
  * same reasons — the store does not know the world commit and must not appear
  * to, and the stakes are as-of a town sha with no "latest".
  */
-export async function foldDelta(client, { window = null, worldSha = null, townSha = null } = {}) {
+/**
+ * A count is a non-negative integer or it is not a count, and anything else
+ * refuses rather than being read charitably. Carried onto release/2026-w37.11 with
+ * the canon-absent carry (train e6c570f owns it; the carry's starving term reads it).
+ */
+export const isDocketCount = (v) => typeof v === "number" && Number.isInteger(v) && v >= 0;
+
+export async function foldDelta(
+  client, { window = null, worldSha = null, townSha = null, canonRegister = null } = {},
+) {
   // `window == null` is checked SEPARATELY from finiteness, and that separation
   // is the whole guard: `Number(null)` is 0, which is finite, so the obvious
   // one-line version accepted a missing window and went looking for window 0. It
@@ -126,6 +168,37 @@ export async function foldDelta(client, { window = null, worldSha = null, townSh
     throw new Error(
       "foldDelta: no worldSha — the store does not know which world commit this crossing starts from (that is the "
       + "settlement clone's `main`, the chain's `world_from`). Pass the caller's; do not let the receipt carry a blank.");
+  }
+
+  // ── THE REGISTER IS CHECKED BEFORE ANY QUERY, LIKE THE WINDOW ──────────────
+  //
+  // Both refusals here are about the ARGUMENT and need nothing from the store, so
+  // they go where the window's do: a refusal that first opens a database is a
+  // refusal with a second way to fail, and on the night the store is also down
+  // the operator reads the wrong cause.
+  //
+  // THE SHA CHECK IS THE ONE THAT MATTERS. `as_of.world_sha` is what the receipt
+  // says this crossing folded from. A register built at a DIFFERENT checkout
+  // answers "canon does not carry this" about a world this crossing is not
+  // publishing into — a carry that is correct, precise, and about the wrong
+  // subject, which is the worst shape an instrument has. In the sweep the two are
+  // the same by construction (`deploy/settlement-auto.sh` checks `$SWEEP` out at
+  // `$WORLD_FROM` and passes both), so this cannot fire on the rail; it fires on
+  // a hand-run pointed at the wrong clone, which is exactly when it should.
+  if (canonRegister !== null && canonRegister !== undefined) {
+    if (!(canonRegister.slugs instanceof Set) || typeof canonRegister.sha !== "string") {
+      throw new Error(
+        "canon-register-shape: `canonRegister` is not what `canon-register.mjs § canonRegisterAt` returns (a `slugs` "
+        + "Set and the `sha` that answer is true at). The carry is only as good as the register behind it, and a "
+        + "register this function had to interpret would be a second answer to what canon carries.");
+    }
+    if (canonRegister.sha !== worldSha) {
+      throw new Error(
+        `canon-register-sha-mismatch: this crossing folds from world ${String(worldSha).slice(0, 8)} and the canon `
+        + `register was read at ${canonRegister.sha.slice(0, 8)}. "Canon does not carry this slug" is only true of the `
+        + "world it was asked of, so a register from another checkout would carry marks on evidence about a different "
+        + "world. Pass the checkout this crossing's `world_from` names.");
+    }
   }
 
   const w = Number(window);
@@ -216,6 +289,77 @@ export async function foldDelta(client, { window = null, worldSha = null, townSh
     "SELECT count(*)::int AS n FROM claims WHERE window_id = $1 AND status = 'locked'", [w]);
   const docketClaims = docket.rows[0].n;
 
+  // ── THE SECOND TERM: EVERY STANDING MARK CANON DOES NOT CARRY ──────────────
+  //
+  // Read through the NOTARY'S OWN two pieces, so the 03:20 listing and the 17:45
+  // carry cannot come to disagree about what the class is. `canonLockFindings` is
+  // handed no escrow map on purpose: this is the canon-absent question only, and
+  // the escrow class has a different repair (a stake, not a write).
+  //
+  // THE DEDUP IS NOT COSMETIC. Every mark the candle just locked is ALSO absent
+  // from canon at `world_from` — the settlement's push lands three to four
+  // minutes AFTER the clear, seven crossings measured, which is the whole reason
+  // the lock-time refusal was withdrawn (`canon-register.mjs`, the ordering
+  // section). So on an ordinary crossing the absent set CONTAINS this window's
+  // whole docket, and without the dedup every mark would be offered twice.
+  //
+  // THE SECOND READ EXISTS BECAUSE `STANDING_SELECT` IS THE NOTARY'S SHAPE, NOT
+  // THE FOLD'S: it carries the claim's evidence and not `body`, `geometry` or
+  // `data`, and `renderRecord` needs all three. So the slugs come from the
+  // judgement and the BYTES come from `MARK_COLUMNS`, the same columns the docket
+  // read uses — one renderer, one column list, two selectors that agree by
+  // construction.
+  let carriedSlugs = [];
+  let carriedRows = [];
+  let skippedNoHousehold = [];
+  if (canonRegister) {
+    const standing = await client.query(STANDING_SELECT);
+    const { absent } = canonLockFindings(standing.rows, canonRegister);
+    const docketSlugs = new Set(rows.map((r) => r.slug));
+    const candidates = absent.map((r) => r.slug).filter((s) => !docketSlugs.has(s)).sort();
+    if (candidates.length) {
+      const carried = await client.query(
+        `SELECT ${MARK_COLUMNS} FROM marks WHERE slug = ANY($1::text[]) ORDER BY slug`, [candidates]);
+      // A slug the judgement named and the column read cannot produce is a store
+      // disagreeing with itself between two statements of one crossing. It is not
+      // a thing to carry quietly at a smaller count: the receipt would say
+      // `carried_absent 2` over one written mark and nothing downstream could
+      // attribute the gap. Checked BEFORE the household filter below, so a row
+      // that vanished and a row that was skipped stay two different findings.
+      if (carried.rows.length !== candidates.length) {
+        const got = new Set(carried.rows.map((r) => r.slug));
+        throw new Error(
+          `carried-mark-vanished: the canon-absent read named ${candidates.length} slug(s) to carry and the mark `
+          + `read returned ${carried.rows.length} — missing ${candidates.filter((s) => !got.has(s)).join(", ")}. `
+          + "Two reads of `marks` in one crossing disagreed about which rows exist.");
+      }
+
+      // ── A CARRIED CANDIDATE WITH NO HOUSEHOLD IS NAMED AND SKIPPED ─────────
+      //                                            (reviewer, 2026-09-12)
+      //
+      // `marks.household` is NULLABLE (`world2/schema/001_tables.sql`), and
+      // `src/store-writedown.mjs § normalizeMark` refuses the WHOLE fold input
+      // with `mark-without-household` when it meets one. The docket never meets
+      // it — the door composes a household on every path that locks a claim — but
+      // THIS term draws from the whole standing corpus, so a single canon-absent
+      // standing row with a null household would have refused every crossing in
+      // the town until somebody edited the store by hand.
+      //
+      // Skipped, not carried, and NAMED: a silent skip is how a mark stays lost
+      // for another three weeks, which is the defect this whole term exists to
+      // end. The notary goes on listing it at 03:20, which is the right place for
+      // a row that needs a person.
+      //
+      // The test is FALSY, not null-only: an empty-string household resolves to a
+      // sketchbook name of nothing, and `?? null` would have let it through.
+      for (const r of carried.rows) {
+        if (!r.household) { skippedNoHousehold.push(r.slug); continue; }
+        carriedRows.push(r);
+      }
+      carriedSlugs = carriedRows.map((r) => r.slug);   // the query ordered by slug already
+    }
+  }
+
   const stakes = await stakesFromStore(client, { townSha: sha });
 
   return {
@@ -243,13 +387,48 @@ export async function foldDelta(client, { window = null, worldSha = null, townSh
       // `docket_claims: 0, marks: 0` they can. Renamed 2026-09-09, before any
       // receipt carrying the old name reached a history file.
       docket_claims: docketClaims,
+      // WHAT THIS CROSSING SWEPT UP THAT ITS OWN DOCKET DID NOT NAME, and why
+      // the count alone would not do. A keeper reading `docket_claims: 7,
+      // marks: 9` sees a fold that offered more than its docket and has no way
+      // to tell a widened selector from a repair; reading `carried_absent:
+      // { count: 2, slugs: [...] }` beside it they can name both marks.
+      //
+      // `checked` IS THE FIELD THAT KEEPS A ZERO HONEST. A crossing run with no
+      // `--world-repo` carries nothing and a crossing where canon carries
+      // everything carries nothing, and those are different states: the first
+      // never looked. Without this the notary's `canon_absent` could climb for
+      // weeks under a receipt reading `carried_absent: 0` on every crossing —
+      // the same "ran and found nothing" versus "did not run" distinction the
+      // notary's own history line exists for.
+      //
+      // `canon_sha` names the state the absence was judged at, from the register
+      // and never from `world_sha` beside it, even though the two are checked
+      // equal above. One stamp, one source: a field copied from its neighbour
+      // stops being evidence the moment the check between them is edited.
+      //
+      // `skipped_no_household` is the term beside it, present and EMPTY on an
+      // ordinary crossing. A field that appeared only on the bad crossings is a
+      // field whose absence starts meaning "fine" — the same rule `note: null`
+      // keeps. A row here needs a person: nothing downstream can invent a
+      // household, and the notary goes on listing it at 03:20 until one does.
+      carried_absent: {
+        checked: Boolean(canonRegister),
+        count: carriedSlugs.length,
+        slugs: carriedSlugs,
+        skipped_no_household: skippedNoHousehold,
+        canon_sha: canonRegister ? canonRegister.sha : null,
+      },
       // `note: null` is not decoration. There is one selector now and no
       // fallback, so nothing ever fills this — and that is exactly when a field
       // goes missing and its absence starts meaning "fine". An empty channel is
       // named, the same rule the receipt composer keeps for its own.
       note: null,
     },
-    marks: rows.map((r) => ({
+    // THE DOCKET FIRST, THE CARRY AFTER, and not re-sorted into one list. The
+    // order is the structure: a keeper scrolling the fold sees this crossing's
+    // own window, then the rows it swept up behind it, in the same shape
+    // `written_by_locked_window` reports downstream.
+    marks: [...rows, ...carriedRows].map((r) => ({
       slug: r.slug,
       kind: r.kind,
       by: r.owner,

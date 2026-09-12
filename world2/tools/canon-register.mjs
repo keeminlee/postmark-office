@@ -85,8 +85,9 @@
 // `review-g1-retire.md` repair 1 is the receipt of that mistake.
 
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 /** The backends this predicate can be asked through. One line selects. */
@@ -192,6 +193,161 @@ export async function canonRegisterAt({ backend = "git", worldRepo = null } = {}
     count: slugs.size,
     unreadable: records.filter((r) => r._error).map((r) => String(r.id ?? r._dir ?? "?")),
   };
+}
+
+
+/**
+ * THE SAME QUESTION, ASKED AT A NAMED SHA INSTEAD OF AT THE CHECKOUT'S HEAD.
+ *
+ * ── WHY THIS EXISTS, AND IT IS A DEFECT A REVIEWER CAUGHT ───────────────────
+ *
+ * `canonRegisterAt` stamps `git rev-parse HEAD` and reads the WORKING TREE. On
+ * the notary rail at 03:20 those are one state and the answer is right. On the
+ * SETTLEMENT rail they are not:
+ *
+ *   `deploy/settlement-auto.sh` reads `WORLD_FROM` from `origin/main` and checks
+ *   the clone out at it (:303-304). It then COMMITS `WORLD/households.json` onto
+ *   that same clone whenever the household registry moved (:386-395) — before
+ *   the fold runs. The script says so itself at :418-425: "main may already be
+ *   ahead of origin/main at this line, because the registry refresh commits
+ *   before the fold."
+ *
+ * So on any crossing after a household is declared, HEAD is ONE COMMIT PAST the
+ * fold's `worldSha`. A register stamped HEAD would make `foldDelta`'s equality
+ * check throw, `fold-input-cli.mjs` would turn that into `store-refused`, and the
+ * crossing would publish nothing — intermittently, only on the crossings that
+ * follow a household declaration.
+ *
+ * THE REPAIR IS NOT TO LOOSEN THE CHECK. The register answers about the sha the
+ * crossing names, so `register.sha === worldSha` holds BY CONSTRUCTION and the
+ * equality check stays as the falsifier for the day something other than the
+ * registry moves main before the fold.
+ *
+ * ── THE TREE IS MATERIALIZED, AND `loadMarks` IS STILL THE ONE PARSER ───────
+ *
+ * The obvious cheap version — `git ls-tree -r --name-only <sha>` and read the
+ * slugs off the PATHS — is a second reader AND a recorded defect. The identity is
+ * `<by>/<leaf>` where `by` comes from the mark's own frontmatter, not from the
+ * directory above it: "The PATH is a different string and is never the identity"
+ * (`review-g1-retire.md` repair 1, and the header above). So the blobs at the sha
+ * are written to a scratch directory and the CHECKOUT'S OWN loader reads them,
+ * exactly as it reads a checkout — one parser, one grammar, no drift.
+ *
+ * MEASURED before it was written, against the live world clone at HEAD: 1,206
+ * mark records materialized and parsed in 1.4 s, and the slug set is IDENTICAL to
+ * `canonRegisterAt`'s working-tree read at the same commit — zero slugs on either
+ * side of the difference. Twice a day, that cost is nothing.
+ *
+ * NO `tar`, NO WORKTREE, NO INDEX. `git archive` needs an extractor this office
+ * does not otherwise depend on; `git worktree add` leaves state in `.git` that a
+ * killed crossing would strand in the settlement clone. `ls-tree` plus
+ * `cat-file --batch` needs nothing but the git already required on every line of
+ * this path, and it writes only into a scratch directory it removes itself.
+ *
+ * The loader is taken from the checkout's CURRENT tools, not from the sha's, and
+ * that is deliberate and narrow: the sha this is asked at is minutes old on the
+ * settlement rail, and importing a second copy of `marks-fold.mjs` per crossing
+ * to parse a tree that has not changed grammar would be a cost with no reader.
+ *
+ * @param worldRepo  the checkout that HOLDS the object. Not fetched, not cleaned,
+ *                   not modified — the stateless contract the sibling keeps.
+ * @param sha        the 40-hex commit the answer must be true at. A ref name is
+ *                   REFUSED: a register that named a moving pointer could not say
+ *                   which state it answered for, which is the whole point of it.
+ */
+export async function canonRegisterAtSha({ worldRepo = null, sha = null } = {}) {
+  // THE SHA IS CHECKED BEFORE THE CLONE IS TOUCHED. A ref name would resolve and
+  // the register would then stamp a pointer, which is the failure this function
+  // was written to end rather than a new spelling of it.
+  if (typeof sha !== "string" || !/^[0-9a-f]{40}$/.test(sha)) {
+    throw new Error(
+      `canonRegisterAtSha: ${JSON.stringify(sha)} is not a 40-hex commit sha. This register names the STATE its answer `
+      + "is true at, so a ref name — `HEAD`, `main`, `origin/main` — is refused: a pointer moves, and an answer "
+      + "stamped with a pointer cannot be checked against anything later.");
+  }
+  const repo = resolve(String(worldRepo ?? ""));
+  if (!worldRepo || !existsSync(repo)) {
+    throw new Error(`canonRegisterAtSha: no world checkout at ${JSON.stringify(worldRepo)} — this reads a checkout the caller supplies`);
+  }
+  try {
+    execFileSync("git", ["-C", repo, "cat-file", "-e", `${sha}^{commit}`], { stdio: "ignore" });
+  } catch {
+    throw new Error(
+      `canonRegisterAtSha: ${repo} does not hold commit ${sha} — the crossing named a world state this clone has `
+      + "never fetched. Carrying against a register built from some other commit would judge absence in a world "
+      + "this crossing is not publishing into.");
+  }
+
+  const dest = mkdtempSync(join(tmpdir(), "canon-at-sha-"));
+  try {
+    // ── THE BLOBS AT THE SHA, WRITTEN OUT FOR THE CHECKOUT'S OWN LOADER ──────
+    //
+    // `-z` because a mark path may contain anything a directory name may, and a
+    // newline-split listing would silently truncate one. The blob oids go to
+    // `cat-file --batch` in ONE call: 1,206 separate `git show` invocations is
+    // the shape that turns a 1.4 s read into a minute.
+    const listing = execFileSync("git", ["-C", repo, "ls-tree", "-r", "-z", sha, "--", "WORLD/marks"],
+      { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
+    const entries = [];
+    for (const rec of listing.split("\0")) {
+      if (!rec) continue;
+      const tab = rec.indexOf("\t");
+      if (tab === -1) continue;
+      const [, type, oid] = rec.slice(0, tab).split(/\s+/);
+      if (type !== "blob") continue;      // a submodule or a subtree entry is not a file to parse
+      entries.push({ oid, path: rec.slice(tab + 1) });
+    }
+    if (!entries.length) {
+      throw new Error(
+        `canonRegisterAtSha: ${sha.slice(0, 8)} carries no WORLD/marks blobs in ${repo} — refusing to treat an empty `
+        + 'register as "canon carries nothing". Every standing mark would read as absent and the crossing would try '
+        + "to carry the whole corpus.");
+    }
+    const batch = execFileSync("git", ["-C", repo, "cat-file", "--batch"], {
+      input: `${entries.map((e) => e.oid).join("\n")}\n`,
+      maxBuffer: 512 * 1024 * 1024,
+    });
+    // The stream is `<oid> <type> <size>\n<contents>\n` per record, and the size
+    // is read from the HEADER rather than by scanning for a delimiter — a mark
+    // body may contain anything, newlines included.
+    let off = 0;
+    for (const e of entries) {
+      const nl = batch.indexOf(0x0a, off);
+      if (nl === -1) throw new Error(`canonRegisterAtSha: git's batch stream ended early at ${e.path}`);
+      const size = Number(batch.toString("utf8", off, nl).split(" ")[2]);
+      if (!Number.isFinite(size)) throw new Error(`canonRegisterAtSha: unreadable batch header for ${e.path}`);
+      const start = nl + 1;
+      const full = join(dest, e.path);
+      mkdirSync(dirname(full), { recursive: true });
+      writeFileSync(full, batch.subarray(start, start + size));
+      off = start + size + 1;
+    }
+
+    const marksDir = join(dest, "WORLD", "marks");
+    if (!existsSync(marksDir)) {
+      throw new Error(`canonRegisterAtSha: ${sha.slice(0, 8)} has no WORLD/marks — is ${repo} a world checkout?`);
+    }
+    const { loadMarks } = await import(pathToFileURL(join(repo, "tools", "marks-fold.mjs")).href);
+    const records = loadMarks(marksDir);
+    if (!records.length) {
+      throw new Error(`canonRegisterAtSha: the tree at ${sha.slice(0, 8)} loads no marks — refusing to treat an empty register as "canon carries nothing"`);
+    }
+
+    const slugs = new Set();
+    for (const r of records) {
+      if (r._error) continue;           // a record the loader could not parse states nothing, in either direction
+      if (r.id) slugs.add(String(r.id));
+    }
+    return {
+      slugs,
+      sha,
+      source: `world ${repo} @ ${sha} (tree materialized)`,
+      count: slugs.size,
+      unreadable: records.filter((r) => r._error).map((r) => String(r.id ?? r._dir ?? "?")),
+    };
+  } finally {
+    rmSync(dest, { recursive: true, force: true });
+  }
 }
 
 /**

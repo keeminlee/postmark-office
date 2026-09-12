@@ -3,6 +3,22 @@
 //
 //   node world2/tools/fold-input-cli.mjs --world-sha <sha> --town-clone <path>
 //                                        --town-sha <sha> --window <closed-window>
+//                                        [--world-repo <world checkout>]
+//
+// `--world-repo` is THE CARRY'S ONE ARGUMENT (2026-09-12). Given a world
+// checkout, this builds the canon register at it and the fold carries every
+// standing mark canon does not hold, beside its own docket — the repair for a
+// window cleared outside the sweep's timing, whose marks nothing would otherwise
+// ever fold (`fold-delta.mjs`, the second term). The checkout must be at the same
+// commit `--world-sha` names, and `foldDelta` refuses if it is not: an absence
+// judged against another world is a carry about the wrong subject.
+//
+// IT IS OPTIONAL, AND THAT IS A CHOICE ABOUT THE HAND-CARRY. Making it required
+// would mean a crossing whose operator carried the code and not the plumbing
+// REFUSES, which turns a missing repair into a stopped town. Omitted, the fold
+// is exactly what it was before this argument existed and the receipt says
+// `carried_absent.checked: false` — so a zero from a run that never looked is
+// never mistaken for a town whose canon is complete.
 //
 // `--window` is REQUIRED and it is the just-closed window's id. The usage line
 // above once read `[--delta-window N]` — a flag spelled one way in a comment and
@@ -63,6 +79,19 @@ import * as foldInput from "./fold-input.mjs";
 // The selector, imported by name because it is not optional: a crossing without
 // it has no way to say which marks are its own.
 import { foldDelta } from "./fold-delta.mjs";
+// The canon register, built HERE and not inside the fold, because it reads a git
+// checkout and `foldDelta` has never touched a filesystem — which is what keeps
+// the carry's rules provable on hand-built rows with no clone and no Postgres.
+//
+// THE SHA-TAKING SIBLING, NOT THE NOTARY'S `canonRegisterAt` (reviewer,
+// 2026-09-12). That one stamps `git rev-parse HEAD`, and the sweep COMMITS
+// `WORLD/households.json` onto this very clone before the fold runs whenever
+// the household registry moved — so HEAD is one commit past `--world-sha` on
+// any crossing after a household is declared, and the fold's equality check
+// would have refused a crossing that was fine. Reading at the sha makes
+// `register.sha === worldSha` true BY CONSTRUCTION and leaves that check as the
+// falsifier for the day something other than the registry moves main first.
+import { canonRegisterAtSha } from "./canon-register.mjs";
 
 const argOf = (n, d = null) => { const i = process.argv.indexOf(n); return i !== -1 ? process.argv[i + 1] : d; };
 
@@ -103,6 +132,7 @@ if (isMain) {
   const worldSha = argOf("--world-sha");
   const townClone = argOf("--town-clone");
   const fetchedSha = argOf("--town-sha");
+  const worldRepo = argOf("--world-repo");
   if (!worldSha) { console.error("--world-sha <sha> is required"); process.exit(2); }
   if (!townClone || !fetchedSha) { console.error("--town-clone <path> and --town-sha <sha> are required"); process.exit(2); }
 
@@ -161,6 +191,32 @@ if (isMain) {
       + "956 written and a RED suite — under a receipt that looks like a delta.");
   }
 
+  // ── THE CANON REGISTER, BUILT BEFORE THE CONNECTION ───────────────────────
+  //
+  // It needs no store, so it is built where the other storeless checks live: a
+  // refusal that first opens a database is a refusal with a second way to fail,
+  // and on the night the store is also down the operator reads the wrong cause.
+  // After the window check, because a run that is about to refuse for no window
+  // should not first walk a world checkout.
+  //
+  // A CHECKOUT THAT CANNOT ANSWER REFUSES RATHER THAN CARRYING NOTHING.
+  // `canonRegisterAt` already throws on an empty register — "refusing to treat an
+  // empty register as canon carries nothing" — and swallowing that here would
+  // turn its loudest refusal into a silent `carried_absent: 0`, which is the
+  // exact shape this whole repair is about.
+  let canonRegister = null;
+  if (worldRepo) {
+    try {
+      canonRegister = await canonRegisterAtSha({ worldRepo, sha: worldSha });
+    } catch (e) {
+      refuse(
+        "canon-register-unreadable",
+        `${String(e?.message ?? e)} — the crossing was given --world-repo ${worldRepo} and could not read canon at it. `
+        + "Carrying nothing on an unreadable register would publish a receipt saying this crossing found no "
+        + "canon-absent marks, which it did not: it never got an answer.");
+    }
+  }
+
   const { default: pg } = await import("pg");
   const client = new pg.Client({ connectionString: process.env.WORLD2_PG_URL });
   let out;
@@ -189,7 +245,7 @@ if (isMain) {
     // downstream can tell which one answered.
     const delta = { fn: foldDelta, entry: "fold-delta.mjs § foldDelta" };
 
-    out = await delta.fn(client, { window, worldSha });
+    out = await delta.fn(client, { window, worldSha, canonRegister });
     // ── THE SELECTOR COMES BACK FROM THE SELECTOR ────────────────────────────
     //
     // This used to be assembled here — `{ by, window, entry, note }` — and that
