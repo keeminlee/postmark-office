@@ -21,11 +21,41 @@
  * One value, serialized the way the record parser reads it back.
  *
  * Inline object (`{ x: 1, y: 2 }`), JSON array (`[[0,0],[1,1]]`), or a bare
- * scalar. Unchanged from the door's original — the shapes are the ones
- * `marks-fold.mjs` and `parseDeltaRecord` already know how to read.
+ * scalar. The shapes are the ones `marks-fold.mjs § parseRecord` and
+ * `parseDeltaRecord` know how to read.
+ *
+ * ── THE OBJECT BRANCH IS THE READER'S, AND IT HAS TWO ARMS (2026-09-12) ──────
+ *
+ * The original had one: `{ k: v }` for every object. That form is readable ONLY
+ * for an all-numeric object, because the reader's fallback scan is a number scan
+ * — `marks-fold.mjs:83`: `pair.match(/([\w]+)\s*:\s*(-?[\d.]+)/)`, quoted whole
+ * so a drift in it is a drift from this line. It captures a numeric pair and
+ * NOTHING else, and it splits on `,`.
+ *
+ * So a structured value written in the bare form does not come back diminished,
+ * it comes back EMPTY, and a nested one never even gets that far: measured on
+ * prod's store against world main, `the-town/the-wheelhouse`'s `timetable` and
+ * `wright/the-candle-vault`'s `dials` render `[object Object]` through the bare
+ * form, and `the-town/the-post-office`'s `entry` renders a value whose own prose
+ * carries the `, ` the scan splits on. Three marks, three different ways for one
+ * form to be wrong.
+ *
+ * The reader tries STRICT JSON FIRST (`marks-fold.mjs:79`, and its own comment
+ * says why: "the shape a structured field like `timetable:` needs"). So a
+ * structured value goes out as strict JSON and comes back identical.
+ *
+ * THIS CHANGES NOTHING THE DOOR WRITES TODAY, and that is measured rather than
+ * argued: the only object-valued fields in `RECORD_FIELDS` are `at` and
+ * `extent`, both `{x,y}`/`{w,h}` number pairs on all 1,044 standing rows, so
+ * both keep the bare form they have always had. The arm below is reached only by
+ * the authored pass-through, which had no reader before this date.
  */
+const allNumeric = (v) => Object.values(v).every((n) => typeof n === "number" && Number.isFinite(n));
+
 export const fmtVal = (v) => Array.isArray(v) ? JSON.stringify(v)
-  : (v && typeof v === "object") ? `{ ${Object.entries(v).map(([k, n]) => `${k}: ${n}`).join(", ")} }`
+  : (v && typeof v === "object") ? (allNumeric(v)
+    ? `{ ${Object.entries(v).map(([k, n]) => `${k}: ${n}`).join(", ")} }`
+    : JSON.stringify(v))
   : String(v);
 
 /**
@@ -66,6 +96,78 @@ export const RECORD_FIELDS = Object.freeze([
 ]);
 
 /**
+ * THE KEYS THE PASS-THROUGH REFUSES, and every name here is a measurement.
+ *
+ * `markRecord` writes the fifteen above and then EVERY OTHER KEY OF THE RECORD
+ * (ruled by Keemin, 2026-09-12 00:4x): "let them through. The renderer is dumb:
+ * what a resident wrote comes back out of the store the way it went in.
+ * Structure is enforced where something reads it — mark-lint, the tests, the
+ * docket — never at the pen." Before that ruling the fifteen were the whole
+ * grammar, and a store crossing DELETED every other authored line from the file
+ * it rewrote: 507 of 1,044 standing marks carry `derived_from` and `pre` alone,
+ * the store carries them faithfully, and the loss was at render
+ * (`docs/2026-09-11/jetto-w38-store-rehearsal-report.md § THE FINDING`; it fired
+ * on `claude-of-tulip/the-headland` at the 17:45Z 09-11 crossing, which one test
+ * happened to name — the other 506 would have gone silently).
+ *
+ * A BLANKET pass-through is the other wrong answer, and this list is the reason
+ * it is not what shipped. Two different families of key ride a record without
+ * ever having been authored, and writing either onto a resident's file puts
+ * words in their mouth.
+ *
+ * ── FAMILY 1 · THE STORE'S OWN DERIVED KEYS ──────────────────────────────────
+ *
+ * Measured on prod's store READ-ONLY 2026-09-12 04:5xZ (1,044 standing rows) and
+ * on world main `7ffa420f`'s 1,199 `mark.md` files, key set against key set. A
+ * key is DERIVED when the store carries it and no file ever authored it:
+ *
+ *   locked_by        146 rows, 0 files   — always the string "founder"
+ *   founder_commit   146 rows, 0 files   — {at, sha, subject}, the seating stamp
+ *   parent_id         17 rows, 0 files   — containment is the PATH's, never a line
+ *   formerly           4 rows, 0 files   — 012_reidentification's rename trail
+ *
+ * `tier` is the same class and is handled one layer up: it is IN the fifteen
+ * with an `EMITS` rule, because it has exactly one file-side reader. It is on
+ * 1,044 of 1,044 rows (`home` 428 / `market` 297 / `constitution` 319), and
+ * writing it unconditionally is what the world's own gate refuses
+ * (`tools/mark-lint.mjs:189 § an AUTHORED tier: is residue`).
+ *
+ * ── FAMILY 2 · THE DOOR'S AND THE DRAIN'S TRANSPORT KEYS ─────────────────────
+ *
+ * ⚑ THE BRIEF SAID THIS FAMILY COULD NOT EXIST, AND THE MEASUREMENT SAYS IT CAN.
+ * It read: "the git door (`leave-exec.mjs`) and the drain build records from
+ * named keys only (`world.mjs § clean`), so no extra key can reach them."
+ * `world.mjs § clean` IS built from named keys only — and six of those named
+ * keys are transport, not frontmatter:
+ *
+ *   leave-exec.mjs:295  `const fileRec = { ...p }` — p IS `clean`, so a blanket
+ *                       pass-through writes slug, body, household, parent_id,
+ *                       amend and stamps into every new mark.md. `body:` would
+ *                       be the whole body, duplicated into a frontmatter line.
+ *   world-drain.mjs:232 `fileRec = { ...p, … }` then deletes FOUR — slug, body,
+ *                       parent_id, household — and the journal declaration
+ *                       (world.mjs:2126) carries `stamps` and `put_forward`
+ *                       past that delete.
+ *
+ * None of the six appears on any of world main's 1,199 files. They are refused
+ * here rather than by widening the two doors, because the renderer is the one
+ * place that decides what is written — the whole argument of this module.
+ *
+ * A NAME ADDED HERE MUST CARRY ITS MEASUREMENT. The question this list answers
+ * is never "does this look internal" but "does any file author it" — and that
+ * is a count, on the corpus, on the day.
+ */
+export const DERIVED = Object.freeze([
+  // family 1 — the store derives these; no file authors them
+  "locked_by", "founder_commit", "parent_id", "formerly",
+  // family 2 — the door and the drain carry these; they are not frontmatter
+  "slug", "body", "household", "amend", "stamps", "put_forward",
+]);
+
+const RECORD_FIELD_SET = new Set(RECORD_FIELDS);
+const DERIVED_SET = new Set(DERIVED);
+
+/**
  * THE GRAMMAR MIRRORS ITS READER, BY VALUE (ruled 2026-09-08 21:3x): a field
  * is written only where something on the file side READS it, and `tier` has
  * exactly one reader. The world's fold takes the file's own line —
@@ -100,9 +202,27 @@ export const RECORD_FIELDS = Object.freeze([
  * resident's `by:`, the shape `world-drain.mjs`'s `fileRec = { ...p }` would
  * hand this grammar if a journal payload ever carried the word; the test holds
  * exactly that record.
+ *
+ * ── `source` IS ONE NAME OVER TWO FACTS, AND ONLY A VALUE RULE SEPARATES THEM ──
+ *
+ * It could not go in `DERIVED`, because residents DO author it, and it could not
+ * be let through by name, because the store also stamps it. Measured the same
+ * way as `DERIVED`, on prod 2026-09-12 against world main `7ffa420f`:
+ *
+ *   source as a STRING   32 rows, and the file carries the line on all 32
+ *                        — a LOGOS pointer: "LOGOS/classes.md", "WRITES.md", …
+ *   source as an OBJECT  146 rows, and NO file carries it as an object
+ *                        — {at, sha, kind, subject}, the ingest's provenance
+ *
+ * The split is total: string ⇒ authored 32 of 32, object ⇒ derived 146 of 146.
+ * `the-town/the-reach` is the row that makes the rule necessary rather than
+ * merely tidy — its FILE reads `source: LOGOS/classes.md` and its store row
+ * carries the provenance object, so a pass-through by name would not add a line,
+ * it would OVERWRITE an authored one with a stamp.
  */
 export const EMITS = Object.freeze({
   tier: (v, record) => (record?.by ?? record?.household) === "the-town" && v === "constitution",
+  source: (v) => !(v !== null && typeof v === "object"),
 });
 
 /**
@@ -112,12 +232,59 @@ export const EMITS = Object.freeze({
  * written empty — that is the door's rule and the reason a bare thing does not
  * carry `ask: undefined` into permanent canon. A field with an `EMITS` rule is
  * written only for the values that rule admits.
+ *
+ * ── WHAT IS WRITTEN, IN ORDER (the pass-through, 2026-09-12) ─────────────────
+ *
+ * `RECORD_FIELDS` first, in their order, exactly as before — that order is part
+ * of the grammar and moving it would show a rewrite on every mark in the world
+ * repo. Then EVERY REMAINING KEY OF THE RECORD that is authored: not
+ * underscore-prefixed (`_fileAt`, `_origin`, `_stray`, `_parentMarkId`,
+ * `_parent_is_law`, `_journal_seq`, `_act_id` — the parser's own internals, 979
+ * rows at the top of that list), not in `DERIVED`, and admitted by its `EMITS`
+ * rule if it has one.
+ *
+ * ── THE ORDER OF THE REMAINDER IS ALPHABETICAL, AND THE STORE IS WHY ─────────
+ *
+ * The brief's first choice was the authored order, if the store kept one. IT
+ * KEEPS NONE, and this is the measurement rather than a reading of the docs:
+ * `marks.data` is `jsonb` (`world2/schema/004_marks_data.sql`), which normalises
+ * key order to length-then-bytewise and has no room to remember another; no
+ * table anywhere in `world2/schema/*.sql` stores the record's raw frontmatter or
+ * its key order. Compared row by row on prod 2026-09-12 — over just the keys a
+ * row and its file share, the store's order equals the file's on 281 of 1,044
+ * and differs on 763. So there is nothing to preserve, and alphabetical is
+ * chosen because it is STABLE: the alternative, "whatever order jsonb hands
+ * back", makes the bytes of a mark a function of Postgres's storage layout.
+ *
+ * The cost is named and was accepted in advance (Keemin, 2026-09-12): the first
+ * crossing to write down a mark that carries authored extras moves those lines
+ * to the end of its frontmatter, ONCE. It is a reordering, not a loss, and it is
+ * bounded by the marks a crossing actually publishes. Measured over all 1,044
+ * standing rows against world main `7ffa420f`: 537 marks would be reordered and
+ * not otherwise changed.
+ *
+ * ── `version` STAYS THE LAST LINE, and the tie was broken by measuring ───────
+ *
+ * The remainder goes AFTER the named fields but BEFORE `version`, which keeps
+ * true the invariant `RECORD_FIELDS` states above ("`version` is LAST … the
+ * town's own law plaques carry `version:` as their final frontmatter line").
+ * The alternative — the remainder strictly last — was rendered over the same
+ * 1,044 rows and scores IDENTICALLY: byte-equal 471, order-only 537, otherwise
+ * 36, both ways. Exactly one row in the corpus carries a `version` AND a
+ * pass-through key (`the-town/the-wheelhouse`), so the two orders can only
+ * differ on that one mark, and only this one keeps the invariant. Same cost,
+ * one fewer stated property broken.
  */
 export function markRecord(record, body) {
-  const fm = RECORD_FIELDS
-    .filter((k) => record[k] !== undefined && record[k] !== null && record[k] !== "")
-    .filter((k) => !(k in EMITS) || EMITS[k](record[k], record))
-    .map((k) => `${k}: ${fmtVal(record[k])}`)
-    .join("\n");
+  const written = (k) => record[k] !== undefined && record[k] !== null && record[k] !== ""
+    && (!(k in EMITS) || EMITS[k](record[k], record));
+  const named = RECORD_FIELDS.filter(written);
+  const passed = Object.keys(record)
+    .filter((k) => !RECORD_FIELD_SET.has(k) && !k.startsWith("_") && !DERIVED_SET.has(k))
+    .filter(written)
+    .sort();
+  const last = named[named.length - 1] === "version" ? named.pop() : null;
+  const fm = [...named, ...passed, ...(last ? [last] : [])]
+    .map((k) => `${k}: ${fmtVal(record[k])}`).join("\n");
   return `---\n${fm}\n---\n\n${String(body).trim()}\n`;
 }
