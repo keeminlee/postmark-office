@@ -137,7 +137,7 @@ test("giftViaOffice: a non-kebab slug is refused 422 before it ever reaches the 
 
 // ── the HTTP wall: a non-principal key can never reach the mint ───────────────
 
-const PORT = 43877;
+const PORT = 43878; // was 43877 — town-bridge.test.mjs binds that one; the pair collided only under a parallel run (2026-09-12)
 const BASE = `http://127.0.0.1:${PORT}`;
 let child, tmp;
 
