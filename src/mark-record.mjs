@@ -203,10 +203,10 @@ const DERIVED_SET = new Set(DERIVED);
  * hand this grammar if a journal payload ever carried the word; the test holds
  * exactly that record.
  *
- * ── `source` IS ONE NAME OVER TWO FACTS, AND ONLY A VALUE RULE SEPARATES THEM ──
+ * ── `source` WAS ONE NAME OVER TWO FACTS; THE STAMP MOVED, THE RULE STAYS ────
  *
  * It could not go in `DERIVED`, because residents DO author it, and it could not
- * be let through by name, because the store also stamps it. Measured the same
+ * be let through by name, because the store also stamped it. Measured the same
  * way as `DERIVED`, on prod 2026-09-12 against world main `7ffa420f`:
  *
  *   source as a STRING   32 rows, and the file carries the line on all 32
@@ -214,11 +214,29 @@ const DERIVED_SET = new Set(DERIVED);
  *   source as an OBJECT  146 rows, and NO file carries it as an object
  *                        — {at, sha, kind, subject}, the ingest's provenance
  *
- * The split is total: string ⇒ authored 32 of 32, object ⇒ derived 146 of 146.
- * `the-town/the-reach` is the row that makes the rule necessary rather than
+ * The split was total: string ⇒ authored 32 of 32, object ⇒ derived 146 of 146.
+ * `the-town/the-reach` is the row that made the rule necessary rather than
  * merely tidy — its FILE reads `source: LOGOS/classes.md` and its store row
- * carries the provenance object, so a pass-through by name would not add a line,
- * it would OVERWRITE an authored one with a stamp.
+ * carried the provenance object, so a pass-through by name would not have added
+ * a line, it would have OVERWRITTEN an authored one with a stamp.
+ *
+ * ── THE NAME COLLISION IS FIXED AT THE WRITER, AND THIS RULE IS NOW A GUARD ──
+ *
+ * RULED 2026-09-12 (Keemin: "we can have the underscore `_source` to
+ * differentiate. I think that's fine"). The one writer of the object —
+ * `world2/tools/backfill-register.mjs § backfillAdmission`, and it is one
+ * writer, established by grepping every `data.source` / `->'source'` /
+ * `'source'` in the repo — now stamps under `_source`, which line 283 below
+ * refuses structurally because it begins with an underscore. The 146 rows
+ * already in the store move by `world2/schema/017_source_underscore.sql`, which
+ * also gives `the-town/the-reach` its authored string back.
+ *
+ * SO THIS RULE IS MOOT — AND IT STAYS. It costs one `typeof` per render, and it
+ * is the falsifier that catches a writer this rename missed or a future one that
+ * reaches for the resident's word again: the day a store row carries an object
+ * under `source`, the resident's file still does not get a stamp written into
+ * it. A guard whose predicate has become unreachable on today's corpus is not
+ * dead code; it is the reason the corpus looks that way.
  */
 export const EMITS = Object.freeze({
   tier: (v, record) => (record?.by ?? record?.household) === "the-town" && v === "constitution",

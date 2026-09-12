@@ -17,6 +17,18 @@
 // standing rows, 2026-09-12 04:5xZ) against world main `7ffa420f` (1,199
 // `mark.md` files), key set against key set. `src/mark-record.mjs § DERIVED`
 // carries the same measurement beside the list it justifies.
+//
+// ── AND THE COLLISION IT LEFT BEHIND, CLOSED THE SAME DAY ────────────────────
+//
+// The ruling above let a resident's keys through, and `source` was the one name
+// two different facts were writing to: a resident's pointer at the law their mark
+// implements, and the ingest's provenance stamp. The value rule below kept the
+// stamp off the file and, on the one row that had both, cost the author their
+// line. RULED 2026-09-12 (Keemin: "we can have the underscore `_source` to
+// differentiate. I think that's fine") — the stamp moved to `_source`, where the
+// renderer's prefix test refuses it structurally, and
+// `world2/schema/017_source_underscore.sql` moves the 146 rows already written.
+// The value rule stays as the guard for a writer that was missed.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -26,6 +38,7 @@ import { dirname, join } from "node:path";
 
 import { markRecord, fmtVal, RECORD_FIELDS, DERIVED, EMITS } from "../src/mark-record.mjs";
 import { recordFromRow } from "../world2/tools/mark-render.mjs";
+import { backfillAdmission } from "../world2/tools/backfill-register.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const fmOf = (s) => s.split(/\n---\n/)[0].replace(/^---\n/, "").split("\n").filter(Boolean);
@@ -143,15 +156,84 @@ test("`source` AS A STRING IS AUTHORED AND IS WRITTEN; `source` AS AN OBJECT IS 
   assert.ok(EMITS.source("LOGOS/classes.md") && !EMITS.source(stamped), "the rule is the value's shape, both ways");
 });
 
-test("THE ROW THAT MAKES THE `source` RULE NECESSARY: `the-town/the-reach`'s file authors `source: LOGOS/classes.md` while its store row carries the stamp — a pass-through BY NAME would overwrite the author's line, not merely add one", () => {
+test("THE FLIP, AND IT IS WHY THE VALUE RULE STAYS AFTER THE RENAME: a writer that reaches for `source` again puts an object there, and the renderer still refuses it rather than overwriting an author's line", () => {
+  // This is `the-town/the-reach` as its row stood BEFORE 017 — the shape the
+  // collision made, held here on purpose. `EMITS.source` is unreachable on the
+  // migrated corpus; the day it is reachable again, this is what it does.
   const row = {
     slug: "the-town/the-reach", kind: "predicated", owner: "the-town", body: "a take stands within the thing's extent",
     geometry: null,
     data: { tier: "constitution", date: "2026-09-07", slot: "reach", value: "within the thing's extent to take", source: { at: "2026-09-08T10:23:18-04:00", sha: "0a5aff1ab", kind: "hand", subject: "law" } },
   };
   const bytes = markRecord(recordFromRow(row), row.body);
-  assert.equal(/^source:/m.test(bytes), false,
-    "the stamp must not be written — and the consequence is stated in the lane report: this ONE mark loses its authored `source:` line at its next crossing, because the store no longer holds the string it had");
+  assert.equal(/^source:/m.test(bytes), false, "the stamp reached a resident's file");
+});
+
+// ── `_source` — the stamp out of the resident's namespace (RULED 2026-09-12) ──
+
+test("THE SHAPE 017 LEAVES: a row carrying the stamp under `_source` AND the author's pointer under `source` writes the author's line and never the stamp", () => {
+  // `the-town/the-reach` as its row stands AFTER `world2/schema/017_source_underscore.sql`:
+  // the object moved to `_source`, and step 2 gave the file's own string back.
+  // Verified on the scratch — see docs/2026-09-12/jetto-source-underscore-report.md.
+  const row = {
+    slug: "the-town/the-reach", kind: "predicated", owner: "the-town", body: "a take stands within the thing's extent",
+    geometry: null,
+    data: {
+      tier: "constitution", date: "2026-09-07", slot: "reach", value: "within the thing's extent to take",
+      source: "LOGOS/classes.md",
+      _source: { at: "2026-09-08T10:23:18-04:00", sha: "0a5aff1ab", kind: "hand", subject: "law", backfill: "hand-planted-on-main" },
+    },
+  };
+  const bytes = markRecord(recordFromRow(row), row.body);
+  assert.match(bytes, /^source: LOGOS\/classes\.md$/m, "the author's pointer did not come back out of the store");
+  assert.equal(/_source/.test(bytes), false, "the ingest's stamp reached a resident's file");
+  assert.equal((bytes.match(/^source:/gm) ?? []).length, 1, "one `source:` line, not two");
+});
+
+test("AND IT IS THE UNDERSCORE DOING THE WORK, NOT THE VALUE RULE — the same object under `_source` is refused with `EMITS.source` removed from the question entirely", () => {
+  // The two guards are independent, and a test that cannot tell them apart would
+  // pass on a `_source` that the value rule happened to catch. `EMITS` has no
+  // entry for `_source`, so the only thing refusing it is line 283's prefix test.
+  assert.equal("_source" in EMITS, false, "if `_source` ever gets a value rule, this test stops proving what it says");
+  const stamped = { at: "2026-09-01T18:01:18-04:00", sha: "e3be4f5d", kind: "hand", subject: "parcel drain resumed" };
+  const bytes = markRecord({ kind: "sited", by: "caelan-rhys", date: "2026-09-01", _source: stamped }, "home");
+  assert.equal(keysOf(bytes).includes("_source"), false);
+  // …and a STRING under `_source` is refused too, which the value rule could not do.
+  const asString = markRecord({ kind: "sited", by: "caelan-rhys", date: "2026-09-01", _source: "LOGOS/classes.md" }, "home");
+  assert.equal(keysOf(asString).includes("_source"), false,
+    "the refusal is the name, not the shape — that is the whole reason the stamp moved");
+});
+
+test("THE WRITER MOVED WITH THE READER: `backfillAdmission` stamps under `_source`, and an authored `source:` the record carried rides through untouched", () => {
+  // The one writer of the provenance object. Established by search over `src/`,
+  // `world2/`, `tools/` and `test/`: every `data.source`, `->'source'`,
+  // `->>'source'` and quoted `'source'` — no other writer, and no reader at all.
+  const commit = { sha: "0a5aff1ab", subject: "law: the reach of a hold", at: "2026-09-08T10:23:18-04:00", author: "Keemin" };
+  const mark = { data: { tier: "constitution", date: "2026-09-07", source: "LOGOS/classes.md" } };
+  const { data } = backfillAdmission(mark, commit, "hand-planted-on-main");
+
+  assert.equal(data.source, "LOGOS/classes.md", "the ingest overwrote the author's pointer — the whole defect");
+  assert.deepEqual(data._source, {
+    kind: "hand", sha: "0a5aff1ab", subject: "law: the reach of a hold",
+    at: "2026-09-08T10:23:18-04:00", backfill: "hand-planted-on-main",
+  });
+  assert.equal(data.locked_by, "founder", "DEC-17's other two keys are not disturbed by the rename");
+  assert.equal(data.founder_commit.sha, "0a5aff1ab");
+
+  // AND THE WHOLE ADMISSION SURVIVES THE RENDERER: what the ingester writes,
+  // rendered back out, is the author's line and nothing of the store's.
+  const bytes = markRecord({ kind: "predicated", by: "the-town", ...data }, "a take stands");
+  assert.match(bytes, /^source: LOGOS\/classes\.md$/m);
+  for (const derived of ["_source", "locked_by", "founder_commit"]) {
+    assert.equal(bytes.includes(derived), false, `${derived} reached the file`);
+  }
+});
+
+test("THE SWEEP ARM OF THE STAMP IS UNCHANGED BY THE RENAME — only the key moved, never the value", () => {
+  const sweep = { sha: "6f236781", subject: "settlement: sweep 7 published, 1 unpublished", at: "2026-09-02T18:07:01+00:00", author: "Postmark Pen" };
+  const { data } = backfillAdmission({ data: {} }, sweep, "sweep-amend-unmirrored");
+  assert.equal(data._source.kind, "sweep", "isSweepCommit's verdict is still what fills `kind`");
+  assert.equal("source" in data, false, "the resident's word is left empty for the resident");
 });
 
 // ── fmtVal — the reader's own two arms ───────────────────────────────────────
@@ -239,6 +321,17 @@ test("THE ROUND TRIP — every standing mark's file, rendered from its own store
     // The pass-through's own promise: no key the store carries as authored is
     // dropped. `image` and `source` are the two named exceptions and both are
     // store/file CONTENT drift, not a grammar loss — see the lane report.
+    //
+    // `source` LEAVES THIS LIST WHEN 017 RUNS, and it stays until then rather
+    // than being taken out early: the list is an ALLOWLIST, so a key that stops
+    // being dropped does not red here — but a key removed before prod is migrated
+    // would red a test on a store that is behaving exactly as expected. Measured
+    // on a scratch built from prod's own 1,044 rows (2026-09-12, the
+    // `_source` lane): before `world2/schema/017_source_underscore.sql`, the line
+    // above prints `image:4 source:1` and the counts read byte-equal 471 /
+    // order-only 537 / otherwise 36; after it, `image:4` alone, and
+    // `the-town/the-reach` crosses into byte-equal — 472 / 537 / 35. When that is
+    // what prod prints, delete `"source"` from this list.
     for (const [k, n] of lost) {
       assert.ok(["image", "source"].includes(k),
         `the render drops '${k}' on ${n} marks and it is not one of the two known content-drift keys — a new loss class`);

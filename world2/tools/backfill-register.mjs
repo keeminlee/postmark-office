@@ -17,7 +17,7 @@
 // where it came from: each row goes in through `materializeClaims` — the SAME
 // function the clearing job and the review lane use, never a fourth way of
 // turning a claim into a mark — behind a `locked` claim carrying
-// `data.locked_by` and `data.founder_commit` / `data.source`. That is DEC-17's
+// `data.locked_by` and `data.founder_commit` / `data._source`. That is DEC-17's
 // admission path, reused rather than re-implemented, and it means a later reader
 // of any backfilled row can name the commit on world main that is its authority.
 //
@@ -538,7 +538,35 @@ async function planFrom(client, { worldRepo, checkoutDir, sha, windowId, cls, la
   return { adds, amends, skipped, blockedByParent, registerSize: register.size, storeSize: db.size };
 }
 
-/** The admission a backfilled row carries — DEC-17's shape, with its source named. */
+/**
+ * The admission a backfilled row carries — DEC-17's shape, with its source named.
+ *
+ * ── THE STAMP IS `_source`, NOT `source` (RULED 2026-09-12) ──────────────────
+ *
+ * Keemin, 2026-09-12: "we can have the underscore `_source` to differentiate. I
+ * think that's fine."
+ *
+ * `source` IS A RESIDENT'S WORD. Measured on prod 2026-09-12 against world main
+ * `7ffa420f`: 32 standing rows carry `source` as a STRING and the file carries
+ * that same line on all 32 — a LOGOS pointer ("LOGOS/classes.md", "WRITES.md").
+ * This function wrote its provenance into the SAME key on 146 rows, so on the
+ * one row that had both — `the-town/the-reach`, whose file reads
+ * `source: LOGOS/classes.md` — the stamp did not sit beside the author's line,
+ * it REPLACED it.
+ *
+ * The town already has a word for a key the store owns: the underscore prefix
+ * (`_origin`, `_parentMarkId`, `_fileAt`, `_stray`, `_act_id` …), and
+ * `src/mark-record.mjs:283` is its one enforcer — `!k.startsWith("_")` — so a
+ * key named this way can never be written onto a resident's `mark.md`. That is
+ * the whole reason for the rename: the guard becomes structural instead of
+ * value-shaped.
+ *
+ * THE 146 ROWS ALREADY IN THE STORE move by `world2/schema/017_source_underscore.sql`,
+ * which is run by hand between candle runs. This function and that migration
+ * ship in the same commit; running one without the other leaves the store
+ * carrying both spellings, which no reader would notice, because there is no
+ * reader — see the migration's header for the search that establishes that.
+ */
 export const backfillAdmission = (m, commit, cause) => ({
   status: "locked",
   decided_at: commit.at,
@@ -546,7 +574,7 @@ export const backfillAdmission = (m, commit, cause) => ({
     ...(m.data ?? {}),
     locked_by: "founder",
     founder_commit: { sha: commit.sha, subject: commit.subject, at: commit.at },
-    source: {
+    _source: {
       kind: isSweepCommit(commit) ? "sweep" : "hand",
       sha: commit.sha, subject: commit.subject, at: commit.at,
       backfill: cause,
