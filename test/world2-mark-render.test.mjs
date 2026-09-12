@@ -25,7 +25,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 import { recordFromRow, renderRecord, renderMarkFromStore } from "../world2/tools/mark-render.mjs";
-import { RECORD_FIELDS, EMITS, markRecord } from "../src/mark-record.mjs";
+import { RECORD_FIELDS, DERIVED, EMITS, markRecord } from "../src/mark-record.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIX = JSON.parse(readFileSync(join(HERE, "fixtures", "world2-mark-render.json"), "utf8"));
@@ -121,7 +121,22 @@ test("a DERIVED tier (home/market) and the parser's internal keys never reach th
   for (const k of ["tier", "_fileAt", "_origin", "_stray", "_parentMarkId"]) {
     assert.ok(!out.includes(k), `${k} reached the file`);
   }
-  for (const k of out) assert.ok(RECORD_FIELDS.includes(k), `${k} is on the file but not in RECORD_FIELDS`);
+  // Until 2026-09-12 this line read `assert.ok(RECORD_FIELDS.includes(k))` — the
+  // fifteen WERE the whole grammar, and that is the defect the store rehearsal
+  // found: a crossing deleted every other authored line from the file it
+  // rewrote. The pass-through (`mark-record.mjs § DERIVED`, ruled by Keemin
+  // 2026-09-12) admits authored keys, so the assertion narrows to its actual
+  // subject — a key on the file is one of the fifteen or an AUTHORED one, never
+  // an internal and never a derived one.
+  for (const k of out) {
+    assert.ok(RECORD_FIELDS.includes(k) || (!k.startsWith("_") && !DERIVED.includes(k)),
+      `${k} is on the file and is neither a RECORD_FIELD nor an authored key`);
+  }
+  // and the positive half, or the narrowing above would admit a render that
+  // still dropped everything: this row's own authored keys DO reach the file.
+  const authored = Object.keys(rec).filter((k) => !RECORD_FIELDS.includes(k) && !k.startsWith("_") && !DERIVED.includes(k));
+  assert.ok(authored.length > 0, "the fixture row must carry authored extras or this half proves nothing");
+  for (const k of authored) assert.ok(out.includes(k), `${k} is authored on this row and did not reach the file`);
 });
 
 test("THE VALUE RULE, both ways: every resident capture (data.tier home/market) renders NO tier line, and a row reading `constitution` renders `tier:` immediately after `by:` — the reader's own predicate, standing.mjs:376", () => {
@@ -174,15 +189,38 @@ test("the ring's VALUE FORM is the door's own, and the tree holds both — the 3
   assert.match(renderRecord(hand.row), /^points: \[\[/m);
 });
 
-test("the historical classes are named and bounded: a key the door refuses, a value form it no longer writes, and an object key order jsonb does not keep", () => {
-  // `tier` and `version` are NOT in this set any more: the grammar admits them
-  // (pin 2 — `tier` for `constitution` only, `version` last), so a line of either
-  // that differs is a new class, not a known-unreachable one.
-  const unreachable = new Set(["pre", "derived_from", "mechanic_draft", "source", "dials",
-    "implements", "extends", "feature", "subject", "object", "from-class", "to-class", "mechanic",
-    "affordances", "mobility", "belong-to", "actions", "values-tier", "requires", "entry", "becomes",
-    "residue", "reports-to", "tells", "derives-from", "anchor", "rides", "ambient", "coords", "far",
-    "held_grant", "timetable", "locked_by", "founder_commit", "parent_id", "loot"]);
+test("the historical classes are named and bounded: a key the door refuses, a value form it no longer writes, an object key order jsonb does not keep, and the pass-through's ONE-TIME reordering", () => {
+  // `tier` and `version` are NOT in this set: the grammar admits them (pin 2 —
+  // `tier` for `constitution` only, `version` last).
+  //
+  // THE SET SHRANK TO FOUR NAMES ON 2026-09-12 and that shrinking is the whole
+  // point of the pass-through. It used to hold 36 — every authored key the
+  // fifteen dropped (`pre`, `derived_from`, `mechanic_draft`, `dials`, `entry`,
+  // `timetable`, …). Those are WRITTEN now, so a line of any of them that still
+  // differs is a new class and must red. What remains unreachable is what the
+  // renderer deliberately refuses: `mark-record.mjs § DERIVED`, measured on
+  // prod's store against world main — a key the store carries and no file ever
+  // authored.
+  const unreachable = new Set(DERIVED);
+
+  // THE ORDER CHURN, ADMITTED ONCE AND NARROWLY. The pass-through writes
+  // authored keys after the fifteen, and 75 distinct field orders live in the
+  // tree, so a file whose author put `pre:` in the middle now renders it at the
+  // end. `aion-solare/old-fig` also writes `by:` BEFORE `kind:` — an era of the
+  // tree, not this grammar — so the ordering difference is not only the
+  // remainder's, and a first draft of this clause that required the fifteen to
+  // hold their relative order reddened on exactly that.
+  //
+  // So the admission is the strong half and only the strong half: EVERY LINE ON
+  // BOTH SIDES IS THE SAME LINE, and the body is the same body. A dropped key, an
+  // added key, or a changed value all break the multiset and none of them can
+  // hide in here — only the sequence is free.
+  const onlyTheOrderMoved = (fileBytes, gotBytes) => {
+    const a = frontmatter(fileBytes), b = frontmatter(gotBytes);
+    if (bodyOf(fileBytes) !== bodyOf(gotBytes)) return false;
+    if (a.length !== b.length) return false;
+    return [...a].sort().join("\n") === [...b].sort().join("\n");
+  };
 
   for (const p of FIX.shapes) {
     const got = renderRecord(p.row);
@@ -193,10 +231,31 @@ test("the historical classes are named and bounded: a key the door refuses, a va
       // rendered side is the door's JSON-array form. A points difference in any
       // other direction is a new class and must red.
       const oldRingForm = c.key === "points" && /^points: \[\[/.test(String(c.rendered)) && !/^points: \[\[/.test(String(c.on_disk));
-      assert.ok(unreachable.has(c.key) || keyOrder || oldRingForm,
-        `${p.slug}: '${c.key}' differs and is none of the three known classes (a key the door refuses, the old ring form, an at/extent key order) — a FOURTH class has appeared and it needs reading, not adding to this list.\n  on disk:  ${c.on_disk}\n  rendered: ${c.rendered}`);
+      const churn = c.key === "<field-order>" && onlyTheOrderMoved(p.bytes, got);
+      assert.ok(unreachable.has(c.key) || keyOrder || oldRingForm || churn,
+        `${p.slug}: '${c.key}' differs and is none of the four known classes (a DERIVED key the renderer refuses, the old ring form, an at/extent key order, the pass-through's one-time reordering) — a FIFTH class has appeared and it needs reading, not adding to this list.\n  on disk:  ${c.on_disk}\n  rendered: ${c.rendered}`);
     }
   }
+});
+
+test("THE CHURN IS A REORDERING, NOT A LOSS — every fixture file's frontmatter lines come back as the same multiset, and every authored key the file carries is on the render", () => {
+  // The negative above admits `<field-order>`; this is the positive that stops
+  // that admission from covering a loss. Measured over the whole corpus by the
+  // lane, prod 2026-09-12 against world main `7ffa420f`: byte-equal 471,
+  // differs-by-order-only 537, differs-otherwise 36, against 438 / 25 / 581
+  // before the fix.
+  let reordered = 0;
+  for (const p of FIX.shapes) {
+    const got = renderRecord(p.row);
+    const onDisk = keysOf(p.bytes), rendered = keysOf(got);
+    for (const k of onDisk) {
+      if (k === "tier" || k.startsWith("_")) continue;
+      assert.ok(rendered.includes(k),
+        `${p.slug}: the file carries '${k}' and the render dropped it — the pass-through's own promise`);
+    }
+    if (got !== p.bytes && [...frontmatter(p.bytes)].sort().join("\n") === [...frontmatter(got)].sort().join("\n")) reordered++;
+  }
+  assert.ok(reordered > 0, "no fixture exercises the reordering — the admission above would be untested");
 });
 
 // ── THE TOWN'S FIVE AT WINDOW 177 — the residue the reviewer measured (pin 2) ─
