@@ -231,10 +231,8 @@ export async function claimTxFromJournal(client, row, seq, { household, actId = 
           "DELETE FROM claims WHERE status = 'draft' AND slug = $1 AND claimant = $2 AND household = $3",
           [slug, row.actor, household]);
         if (dropped.rowCount) { state.written += 1; return; }
-        const { rowCount } = await client.query(
-          `UPDATE claims SET status = 'retracted', decided_at = now()
-           WHERE window_id = $1 AND status = 'pending' AND geometry->>'slug' = $2 AND claimant = $3`,
-          [win.id, slug, row.actor]);
+        const rowCount = await retractPendingClaim(client,
+          { windowId: win.id, slug, claimant: row.actor });
         // rowCount 0 is lawful: withdrawing a PUBLISHED 1.0 mark has no pending
         // claim to retract — that lane is the settlement unpublish, not the docket.
         if (rowCount) state.written += 1;
@@ -371,6 +369,45 @@ export async function claimTxFromJournal(client, row, seq, { household, actId = 
 // keep answering about the docket exactly as before.
 
 /**
+ * A PENDING CLAIM, TAKEN BACK OFF THE DOCKET. One retraction, two callers.
+ *
+ * `pending -> retracted` is one of the four transitions `claims_update_guard`
+ * permits an office pen (007_private_drafts.sql § the transition guard), and
+ * gold §1's reason is in the guard's own comment: "retraction is free until
+ * close". A retracted row STAYS — 007's delete guard forbids removing a row the
+ * public docket has carried — so the crossing's own account keeps it, under
+ * `sixCount.retracted_before_close` (clearing-job.mjs § 6).
+ *
+ * ── WHY THIS IS A FUNCTION AND NOT TWO STATEMENTS ──────────────────────────
+ *
+ * Its callers ask for the same thing from opposite ends. `claimTxFromJournal`
+ * retracts because a resident withdrew a claim that had stood publicly; the
+ * stake door (world-stake.mjs § A STAKE THAT HOLDS NOTHING IS NEVER FILED)
+ * retracts a promotion it made moments earlier and is about to refuse. Two
+ * statements would be two notions of what retraction writes, and the second one
+ * written would be the one that forgot `decided_at` — which is the column the
+ * candle's own tally reads nothing of but every receipt beside it does.
+ *
+ * KEYED ON (window, slug, claimant) rather than on the claim's id, because that
+ * is the key the withdraw arm has in hand: it is holding a journal row, not a
+ * row id. The stake door has both and passes these three.
+ *
+ * `q` is a CLIENT when the caller holds a transaction (the withdraw arm rides
+ * the pen's own), and null when it does not (the stake door, which has already
+ * committed its promotion). The row policy takes no household declaration for
+ * this write — `claims_update_office` is `USING (status <> 'draft' OR …)` and a
+ * pending row satisfies the first arm — so the pool is a lawful place to run it.
+ */
+export async function retractPendingClaim(q, { windowId, slug, claimant, env = process.env } = {}) {
+  const client = q ?? await pool(env);
+  const { rowCount } = await client.query(
+    `UPDATE claims SET status = 'retracted', decided_at = now()
+     WHERE window_id = $1 AND status = 'pending' AND geometry->>'slug' = $2 AND claimant = $3`,
+    [windowId, slug, claimant]);
+  return rowCount;
+}
+
+/**
  * A later `world_stake` on a draft: the boundary act, arriving on its own.
  *
  * The ruling's plainest case -- you composed something, slept on it, and now
@@ -401,11 +438,34 @@ export async function claimTxFromJournal(client, row, seq, { household, actId = 
  * repo catching the office rewriting history, correctly, over something that
  * would have been our own doing.
  *
- * Returns { promoted, claim }. `promoted: false` is the ordinary answer for a
- * stake on an already-public mark, and never an error.
+ * ── WHY THE ROW DOES NOT SAY WHAT IT HOLDS (ruled 2026-09-12) ─────────────
+ *
+ * `stake` is the number ASKED. It has to be: this statement runs BEFORE the
+ * stamp ledger, by the order the stake door's own comment argues for. So a
+ * claim whose escrow move applied less than it asked carries a `stake` figure
+ * that reads exactly like a backed claim — which is #2686, nine hours of
+ * `stake: 1` behind a mark holding zero.
+ *
+ * The obvious repair was a second number on this row. It is NOT taken, and the
+ * reason is worth the paragraph. Writing what the ledger moved would need a
+ * write AFTER the ledger, onto a row that has already gone pending, and
+ * `claims_update_guard` permits an office pen four transitions of which
+ * `pending -> pending` is not one. The guard stays as it is (Keemin, 09-12): no
+ * fifth transition, no migration.
+ *
+ * So the docket DERIVES it instead. `escrow_projection` (014) already holds the
+ * open position per (mark, holder) as-of a town sha, and the candle's own gate
+ * already reads it — `escrowPresenceAt` in world2/tools/escrow-presence.mjs.
+ * world2-serve.mjs § THE DOCKET ROW asks that same reader, so the docket and
+ * the gate it forecasts cannot disagree, no claim is ever rewritten, and a later
+ * unstake shows up on the next read rather than leaving a stale snapshot behind.
+ *
+ * Returns { promoted, claim, window }. `promoted: false` is the ordinary answer
+ * for a stake on an already-public mark, and never an error. `window` is the
+ * candle the claim joined, which is the key its retraction is written against.
  */
 export async function promoteDraftOnStake({ actor, householdName, slug, stamps = 0 }, env = process.env) {
-  if (!candleEnabled(env)) return { promoted: false, claim: null };
+  if (!candleEnabled(env)) return { promoted: false, claim: null, window: null };
   const p = await pool(env);
   const household = await householdKeyFor(p, householdName ?? actor);
   const { rows: [win] } = await p.query(
@@ -449,9 +509,9 @@ export async function promoteDraftOnStake({ actor, householdName, slug, stamps =
       [win.id, Number(stamps) || 0, draft.id, releasedActId == null ? null : String(releasedActId)]);
     return draft;
   });
-  if (!out) return { promoted: false, claim: null };
+  if (!out) return { promoted: false, claim: null, window: win.id };
   state.submitted += 1;
-  return { promoted: true, claim: out.id };
+  return { promoted: true, claim: out.id, window: win.id };
 }
 
 /**

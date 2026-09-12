@@ -1995,6 +1995,44 @@ async function groundMinimumStake(clean, canon) {
 }
 
 /**
+ * WHOSE GROUND IS THIS — the same rule, answered as a TRI-STATE.
+ *
+ * `true` own ground · `false` the commons · `null` the office cannot tell.
+ *
+ * ── WHY A SECOND ENTRY AND NOT JUST `min === 0` ────────────────────────────
+ *
+ * Because `groundMinimumStake`'s safe read points the OTHER WAY for the caller
+ * that needs this one. Its own comment says so: "an unrecognised ground reads
+ * as commons, so the failure mode is 'your mark stayed private', never 'your
+ * mark published for free on someone else's land'." That is exactly right for
+ * the leave-mark door, where the cost of guessing wrong is a draft the author
+ * can re-stake in a second.
+ *
+ * It is exactly wrong for `world-stake.mjs § unbackedRefusalFor`, which uses
+ * this answer to decide whether to take a mark BACK OFF the docket. There,
+ * guessing "commons" on an office that could not load the geometry engine
+ * retracts an own-ground resident's lawful publication and tells them a law
+ * that does not govern their ground. So this reader separates "I looked and it
+ * is the commons" from "I could not look", and the caller refuses only on the
+ * first — the discipline `escrow-presence.mjs` states in one line: "a store
+ * that cannot answer and a town where nobody staked are different facts."
+ *
+ * The RULE is not duplicated. This asks `groundMinimumStake` and reports its
+ * answer; all it adds is the one condition under which that answer was a
+ * fallback rather than a finding.
+ */
+export async function markStandsOnOwnGround(clean, canon = null) {
+  try {
+    const { marksContain } = await foldConstants();
+    if (typeof marksContain !== "function") return null; // could not look
+    const board = canon ?? canonForGuards();
+    if (!clean?.at && !board.byId.get(clean?.parent_id)) return null; // nothing to place it by
+    const { min } = await groundMinimumStake(clean, board);
+    return min === 0;
+  } catch { return null; }
+}
+
+/**
  * leave-mark / amend, as ONE INSERT.
  *
  * `clean` is exactly the payload `leaveMarkViaOffice` builds for the exec, so
