@@ -146,8 +146,20 @@ export async function enterViaOffice(worldClone, payload = {}, key = null, deps 
   if (target && answer.walk) {
     const reach = standsWithin(here, target, { pointWithinMark: verbs.pointWithinMark });
     if (!reach.stands) {
+      // THE WALK RIDES THE REFUSAL AS A FIELD, NOT ONLY AS A SENTENCE
+      // (founder-agreed 2026-09-11, with the world page's "walk there and enter"
+      // button). The hint already names the coordinates, but a button that read
+      // them would be parsing prose to find a machine fact — the class this
+      // office has been burned by often enough to have a museum of it. So the
+      // plan's OWN bundled walk is handed back whole: `{ to: { x, y }, mark }`,
+      // exactly the object `enterExitPlan` computed, so the page sends
+      // `walk { mark_id: walk.mark, enter_on_arrival: true }` without ever
+      // reading the sentence. It is the plan's object rather than one rebuilt
+      // here on purpose — a second copy of the destination is a second answer to
+      // "where is that door", and this door already has the first.
       throw bounce(409, `you are not at that door — ${target.id} stands ~${reach.distance_round} m from where you stand`,
-        `a door is entered from within its reach (founder-ruled 2026-08-27; re-ruled 2026-09-11 to measure at the mark you NAMED, not the outermost link of its chain; R15 keeps walk and entry decoupled in both directions). Walk to (${target.at?.x}, ${target.at?.y}) and knock again; nothing was recorded`);
+        `a door is entered from within its reach (founder-ruled 2026-08-27; re-ruled 2026-09-11 to measure at the mark you NAMED, not the outermost link of its chain; R15 keeps walk and entry decoupled in both directions). Walk to (${target.at?.x}, ${target.at?.y}) and knock again; nothing was recorded`,
+        { walk: answer.walk });
     }
   }
 

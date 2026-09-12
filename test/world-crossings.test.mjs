@@ -189,6 +189,18 @@ test("a door is entered from within its reach — entry from afar is refused wit
   assert.equal(o.written.length, 0, "and nothing reached the pen — a refusal at the door writes no crossing");
 });
 
+test("...and every such refusal carries the plan's bundled WALK as a field, not only in its sentence", async () => {
+  // A page that parsed "Walk to (563, -294.5)" out of the hint to find a machine
+  // fact would be the prose-scraping class this office keeps a museum of. The
+  // object rides the bounce so the button never reads the sentence.
+  const o = await officeWith({ standing: { x: 90000, y: 90000 } });
+  const e = await enterViaOffice(CLONE, { mark: SHIP }, key("postmaster"), o.deps).then(() => null, (err) => err);
+  assert.ok(e && e.code === 409);
+  assert.equal(e.walk?.mark, SHIP);
+  assert.ok(Number.isFinite(e.walk?.to?.x) && Number.isFinite(e.walk?.to?.y), "with real coordinates, never a shape with holes");
+  assert.equal(o.written.length, 0);
+});
+
 test("...and the reach itself still admits — within earshot of the TARGET is at the door", async () => {
   // The default fixture standing is the one every chain falsifier above enters
   // from; if this test reddens, the guard has started refusing a walker who is
@@ -248,6 +260,17 @@ test("illuminator's case: inside the outer link but 1.7 km from the mark you nam
   assert.match(e.defect, /~1721 m/, "with the distance to the mark he named");
   assert.match(e.hint, /Walk to \(563, -294\.5\)/, "and the parcel's own coordinates to walk to");
   assert.equal(o.written.length, 0, "nothing reached the pen — neither row of the prod ledger's pair");
+
+  // THE WALK AS A FIELD, for the page's "walk there and enter" button
+  // (founder-agreed 2026-09-11). It sends `walk { mark_id, enter_on_arrival:
+  // true }` and reads `walk.mark` off this body — never the sentence.
+  // CAN-FAIL: drop the `{ walk: answer.walk }` extra in world-crossings.mjs and
+  // these three redden on undefined.
+  const parcel = world.marks.find((m) => m.id === PARCEL);
+  assert.equal(e.walk?.mark, PARCEL, "the refusal hands back the mark the button must name");
+  assert.deepEqual(e.walk?.to, { x: parcel.at.x, y: parcel.at.y }, "…and the target's own anchor to walk to");
+  assert.deepEqual(e.walk, plan.walk,
+    "it is the PLAN's own walk object, not a second one rebuilt at this door — a second copy of the destination is a second answer to \"where is that door\"");
 });
 
 test("...and from the parcel's own reach the chain still enters the outer links first",
@@ -349,6 +372,38 @@ test("the enter refusal reports the distance the SHARED reach measured, not one 
     "the refusal names the shared reach's own number");
   assert.ok(e.defect.includes(SHIP),
     "and it names the mark the caller asked for, not the outer wall around it");
+});
+
+test("THE WALK FIELD SURVIVES EVERY DOOR THAT REBUILDS THIS BOUNCE", async () => {
+  // NAME THE READER OF WHAT THE FIX INTRODUCES. The field is added at the enter
+  // door, but the door the world page's button actually calls is the apex
+  // (`POST /api/world/apex` with `{do: "enter", …}`), and BOTH the apex act
+  // branch and the flat `world_*` path REBUILD the bounce from hand-picked
+  // fields rather than passing it through. Before this lane those lists named
+  // `choices` and nothing else, so a `walk` added below would have been dropped
+  // at exactly the door that needed it — a value nothing can read, which is the
+  // quiet failure this office keeps a museum of.
+  //
+  // ⚑ WHAT THIS PROVES AND WHAT IT DOES NOT. It reads the two rebuild sites'
+  // source, not their behaviour: driving `do: "enter"` end to end needs the
+  // live world store, the walk ledger and the crossing exec, which this file
+  // deliberately does not stand up. So it catches the defect it is written for
+  // — a rebuild site that forgets the field — and it does not prove the wire.
+  // CAN-FAIL: drop `walk` from either list and the matching assertion reddens.
+  const { readFileSync } = await import("node:fs");
+  const sites = [
+    ["src/world-apex.mjs", /return \{ \.\.\.bounce\(e\.code, e\.defect, e\.hint,[\s\S]{0,400}?\), \.\.\.done \};/],
+    ["src/mcp.mjs", /if \(e\.code\) return \{ error: "bounce", code: e\.code,[\s\S]{0,400}?\};/],
+  ];
+  for (const [file, re] of sites) {
+    const src = readFileSync(new URL(`../${file}`, import.meta.url), "utf8");
+    const m = src.match(re);
+    assert.ok(m, `${file}: the bounce-rebuild site was not found — this check has stopped reading anything`);
+    assert.match(m[0], /e\.walk \? \{ walk: e\.walk \}/,
+      `${file} rebuilds the bounce and does not carry \`walk\` — the page's "walk there and enter" button reads it off that body`);
+    assert.match(m[0], /e\.choices \? \{ choices: e\.choices \}/,
+      `${file} stopped carrying \`choices\` — the multi-resident bounce needs it and this list is shared`);
+  }
 });
 
 test("the enter door and the hold door ask ONE function — the reach is not copied", async () => {

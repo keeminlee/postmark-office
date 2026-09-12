@@ -479,7 +479,12 @@ export async function callTool(name, args, ctx) {
       const r = name === "world" ? await worldApex(args, key, { roll: rollFor() }) : await callWorldTool(name, args, key, { roll: rollFor() });
       if (r !== null) return r;
     } catch (e) {
-      if (e.code) return { error: "bounce", code: e.code, defect: e.defect, hint: e.hint, ...(e.choices ? { choices: e.choices } : {}) };
+      // Same hand-picked extras list as world-apex.mjs § the act branch, and it
+      // must stay in step with it: both REBUILD the bounce, so a field named in
+      // one and not the other reaches one door and not the other. `walk` joined
+      // 2026-09-11 with the enter door's reach refusal.
+      if (e.code) return { error: "bounce", code: e.code, defect: e.defect, hint: e.hint,
+        ...(e.choices ? { choices: e.choices } : {}), ...(e.walk ? { walk: e.walk } : {}) };
       throw e;
     }
   }

@@ -2466,7 +2466,17 @@ async function apexDo(args, key, ctx = {}) {
       }
     } catch (e) {
       if (!e?.code) throw e;
-      return { ...bounce(e.code, e.defect, e.hint, e.choices ? { choices: e.choices } : {}), ...done };
+      // THE EXTRAS A CALLER READS ARE CARRIED, BY NAME, and this list is the
+      // whole reason to read it twice: this line REBUILDS the bounce, so a
+      // field the door underneath added and this list does not name is dropped
+      // here and reaches nobody. `choices` (which resident?) has ridden since
+      // the multi-resident bounce; `walk` joined 2026-09-11 with the enter
+      // door's reach refusal, because the world page's "walk there and enter"
+      // button reads `walk.mark` off THIS body — the apex is the door it calls.
+      // A value nothing can read is the quiet failure this office has a museum
+      // of; adding a field below without adding it here builds one.
+      return { ...bounce(e.code, e.defect, e.hint,
+        { ...(e.choices ? { choices: e.choices } : {}), ...(e.walk ? { walk: e.walk } : {}) }), ...done };
     }
     // ── CROSSING IS JOINING (`the-town/crossing-is-joining`) ────────────────
     //
