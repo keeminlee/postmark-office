@@ -100,6 +100,19 @@ fi
 # longer exists in /etc/postmark-world2-dev.env.
 if [ -n "${WORLD2_CLEARING_URL:-}" ]; then
   CLEARING_URL="$WORLD2_CLEARING_URL"
+  # THE PROD RENAME HAS TWO EDITS NOW, AND THIS IS THE GUARD THAT SAYS SO. The
+  # shared file carries the database name inline, so `w2_db` no longer governs
+  # which store the clearing pen writes to. At cutover an env file that says
+  # WORLD2_DB=world2 beside a shared file still naming world2_dev would clear
+  # windows in the dev store while every other unit moved — and report
+  # "cleared" the whole time (PR #29 review, 2026-09-12). So the two must agree,
+  # and a disagreement is cannot-run, never a guess about which one is right.
+  url_db="${CLEARING_URL##*/}"; url_db="${url_db%%\?*}"
+  if [ "$url_db" != "$(w2_db)" ]; then
+    echo "[world2-clearing] the shared clearing file names database '$url_db' but WORLD2_DB says '$(w2_db)' — refusing to clear against a store the other units are not on" >&2
+    w2_state clearing.json "\"status\":\"cannot-run\",\"detail\":\"WORLD2_CLEARING_URL names database $url_db, WORLD2_DB says $(w2_db) — the prod rename needs both files\""
+    exit 2
+  fi
 else
   CLEARING_URL="$(w2_url clearing_job PG_CLEARING_JOB_PASSWORD)" || {
     w2_state clearing.json '"status":"cannot-run","detail":"neither WORLD2_CLEARING_URL (the shared file) nor PG_CLEARING_JOB_PASSWORD is readable"'

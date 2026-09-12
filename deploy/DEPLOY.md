@@ -871,7 +871,10 @@ clearing that runs a crossing off-cadence.
 > `/etc/postmark-world2-dev.env` any more and no `clearing-url.conf` drop-in.
 > To rotate: `ALTER ROLE clearing_job PASSWORD '…'` as world2_owner, rewrite
 > that one file by a script that never prints it, `systemctl daemon-reload`,
-> then `systemctl start postmark-world2-clearing.service` off-cadence and read
+> confirm no drop-in still carries the URL —
+> `ls /etc/systemd/system/postmark-settlement.service.d/*.conf` must list no
+> `clearing-url.conf` (a drop-in is ordered after the unit file and would win
+> silently) — then `systemctl start postmark-world2-clearing.service` off-cadence and read
 > `/srv/world2-lab/state/clearing.json` — `nothing-due` or `cleared` proves the
 > login; `cannot-run` names what is wrong. The 09-11 rotation reached the
 > settlement's drop-in and not the candle's env file, and the 05:45Z candle
@@ -933,10 +936,15 @@ guard fired. That combination is normal and informative, not contradictory.
 
 ### The prod rename
 
-`EnvironmentFile=` in each `.service`, and nothing else. Point it at a prod
-credential file whose `WORLD2_DB` says `world2`; every script reads the database
-name from there (`world2-lib.sh` § `w2_db`), and the units, the manifest rows and
-the state paths all follow without another edit. The units are named
+`EnvironmentFile=` in each `.service`, **plus the one shared clearing file.**
+Point the env line at a prod credential file whose `WORLD2_DB` says `world2`;
+every script reads the database name from there (`world2-lib.sh` § `w2_db`), and
+the units, the manifest rows and the state paths all follow. The exception since
+2026-09-12 (office #26) is `/etc/postmark-world2-clearing.env`, whose
+`WORLD2_CLEARING_URL` names the database inline — rewrite `/world2_dev` to
+`/world2` there in the same act. The candle checks the two against each other
+and refuses (`cannot-run`, "the prod rename needs both files") when they
+disagree, so forgetting the second edit cannot clear windows in the wrong store. The units are named
 `postmark-world2-*` rather than `postmark-world2-dev-*` for exactly this reason —
 the unit is the mechanism, the env file is which store it points at. The
 `postmark-` prefix is not decoration either: `tools/box-rollcall.mjs` globs

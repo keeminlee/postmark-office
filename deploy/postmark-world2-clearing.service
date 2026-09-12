@@ -10,8 +10,11 @@ User=meepo
 # /etc/postmark-world2-dev.env is root:root 0600 and this runs as meepo, so
 # systemd (which is root) does the reading and hands the values in. The file is
 # never loosened to make a lane work, and meepo never opens it.
-# THIS LINE IS THE PROD RENAME: point it at a prod credential file whose
-# WORLD2_DB says `world2`, and every unit here follows without another edit.
+# THIS LINE IS THE PROD RENAME, WITH ONE COMPANION: point it at a prod
+# credential file whose WORLD2_DB says `world2`, AND rewrite the database name
+# in /etc/postmark-world2-clearing.env below (the shared clearing URL carries it
+# inline). The clearing script refuses to run when the two disagree, so a
+# rename that forgets the second file is loud, not a dev-store write.
 EnvironmentFile=/etc/postmark-world2-dev.env
 # The clearing credential is ONE file, read by this unit and by
 # postmark-settlement.service alike (office #26, 2026-09-12: a rotation reached
