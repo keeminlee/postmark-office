@@ -72,6 +72,7 @@ import { pathFor } from "./world-journal.mjs";
 import { draftBranch, mainRef } from "./world-branches.mjs";
 import { sketchbookBase, writeDownHousehold } from "./world-drain.mjs";
 import { WORLD_CLONE } from "./world-store.mjs";
+import { isDocketCount } from "../world2/tools/fold-delta.mjs";
 
 const git = (repo, args, opts = {}) => execFileSync("git", ["-C", repo, ...args], {
   encoding: "utf8",

@@ -141,6 +141,13 @@ import { STANDING_SELECT, canonLockFindings } from "./canon-locks.mjs";
  * same reasons — the store does not know the world commit and must not appear
  * to, and the stakes are as-of a town sha with no "latest".
  */
+/**
+ * A count is a non-negative integer or it is not a count, and anything else
+ * refuses rather than being read charitably. Carried onto release/2026-w37.11 with
+ * the canon-absent carry (train e6c570f owns it; the carry's starving term reads it).
+ */
+export const isDocketCount = (v) => typeof v === "number" && Number.isInteger(v) && v >= 0;
+
 export async function foldDelta(
   client, { window = null, worldSha = null, townSha = null, canonRegister = null } = {},
 ) {
