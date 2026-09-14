@@ -26,8 +26,13 @@ import { fixtureDb } from "./fixture.mjs";
 import { awaitListening } from "./spawn-office.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const PORT = 43901;
-const GH_PORT = 43902;
+// The office and mock GitHub belong to this test process. Fixed ports made two
+// concurrent copies of this file share hidden state: one mock died EADDRINUSE
+// and Node cancelled all eight tests. Mirror read-worker.test.mjs' house rule:
+// derive a small port berth from the runner PID so parallel lanes do not collide.
+// Adjacent PIDs land seven ports apart; this file occupies only two.
+const PORT = 44000 + ((process.pid * 7) % 1500);
+const GH_PORT = PORT + 1;
 const BASE = `http://127.0.0.1:${PORT}`;
 
 const QUARANTINED = "ledger-quarantined";
