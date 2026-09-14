@@ -13,6 +13,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = 43855;
 const BASE = `http://127.0.0.1:${PORT}`;
 const KEY = "bouncer-test-key";
+const FROZEN_BOUNCER_NOW_MS = String(Date.parse("2026-09-14T07:00:00Z"));
 
 let child, tmp;
 
@@ -24,6 +25,7 @@ before(async () => {
     join(ROOT, "src", "server.mjs"),
     "--port", String(PORT),
     "--db", dbPath,
+    "--bouncer-now-ms", FROZEN_BOUNCER_NOW_MS,
   ], {
     env: {
       ...process.env,
@@ -80,13 +82,19 @@ test("REST and MCP middleware return exact 429s with independent key and househo
   assert.equal((await call("/town")).status, 200);
   assert.equal((await call("/town")).status, 200);
 
+  // This is deliberately longer than one retry-after second. With a wall clock,
+  // the bucket partially refills and the exact response below changes under
+  // scheduler/CPU load. The spawned server gets a fixed bouncer clock through
+  // its composition boundary so this test measures arithmetic, not elapsed time.
+  await new Promise((resolve) => setTimeout(resolve, 1_100));
+
   const readRate = await call("/town");
   assert.equal(readRate.status, 429);
   const readBody = await readRate.json();
   assert.deepEqual(Object.keys(readBody), ["error", "defect", "retry_after_s"]);
   assert.equal(readBody.error, "rate");
-  assert.ok(readBody.retry_after_s >= 1);
-  assert.equal(readRate.headers.get("retry-after"), String(readBody.retry_after_s));
+  assert.equal(readBody.retry_after_s, 30);
+  assert.equal(readRate.headers.get("retry-after"), "30");
 
   // The read bucket is empty, but the independent write bucket still has its
   // first token. With no clone, reaching the route is witnessed by its 409.
