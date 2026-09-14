@@ -224,13 +224,38 @@ test("FALSIFIER 4 · --by-hand NEVER takes the open window", () => {
   // different pen (`clearing-job.mjs --window N`) and was ruled out of this
   // door's scope.
   //
-  // The fixture puts the ONLY unfolded claims in the open window and leaves every
-  // closed window published, so the sole lawful answer is the refusal.
+  // THE FIXTURE PUTS THE ONLY UNFOLDED CLAIMS IN THE OPEN WINDOW and leaves
+  // every closed window published, so the sole lawful answer is the refusal.
   assert.equal(unfoldedDocket(INSTANCE, lockedUnmaterialized(189, 4)), null,
     "189 is open — its docket is not locked, and an unlocked docket is nobody's to fold");
 
+  // ── AND THE STATUS GUARD IS PROVED ON ITS OWN (reviewer, 2026-09-14) ───────
+  //
+  // THE ARM ABOVE DOES NOT PROVE WHAT IT CLAIMS, and this is the correction.
+  // Window 189 there carries `cleared_at: null`, so it is refused by the
+  // finite-instant filter two lines later, not by `status === "closed"` — drop
+  // the status test alone and that arm stays green. A guard nothing exercises is
+  // a guard that can be deleted by accident, and this one's own comment calls it
+  // law: the open window "is never any sweep's to take".
+  //
+  // So here is the shape that reaches the status test and nothing else: an open
+  // window carrying BOTH a `cleared_at` and the only unfolded claims. The store
+  // does not produce it — the candle writes `cleared_at` in the same act that
+  // closes the window — and that is the point. What a guard is for is the row
+  // that should not exist: a half-applied migration, a repair typed by hand at
+  // 05:52Z, a fixture somebody wrote from memory. The status is the law, so the
+  // status decides, and a stamp on an open window buys nothing.
+  const openWithAStamp = [
+    { id: 189, status: "open", cleared_at: "2026-09-14 13:30:00.000000+00", town_sha: "d0d0d0d0" },
+    { id: 188, status: "closed", cleared_at: "2026-09-14 05:45:44.112907+00", town_sha: "f1f1f1f1" },
+  ];
+  assert.equal(unfoldedDocket(openWithAStamp, lockedUnmaterialized(189, 3)), null,
+    "an OPEN window is refused by its status alone, however cleared it looks — and 188, the only closed "
+    + "window here, has nothing left to publish, so the answer is the refusal and not a fallback");
+
   // And a closed window that never finished its transition is not a docket
-  // either, by the same rule the timer's path already holds.
+  // either, by the same rule the timer's path already holds. This is the other
+  // half of the pair: there the status passes and the instant refuses.
   const halfway = [{ id: 189, status: "closed", cleared_at: null, town_sha: null }];
   assert.equal(unfoldedDocket(halfway, lockedUnmaterialized(189, 4)), null);
 });
