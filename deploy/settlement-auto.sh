@@ -145,6 +145,40 @@ case "$SOURCE" in
   *) echo "[settlement-auto] SETTLEMENT_SOURCE=\"$SOURCE\" is not \`store\` or \`git\` — refusing rather than guessing which record to publish" >&2; exit 1 ;;
 esac
 
+# ── A RERUN BY HAND IS A FLAGGED ACT, NEVER A LOOSER TIMER (postmark#2786) ────
+#
+# On 2026-09-14 window 188 closed at 05:45Z holding 29 locked claims its crossing
+# refused to fold; the world test that refused it merged by 09:1x; two reruns at
+# 13:21Z and 13:26Z then refused `clearing-did-not-run`, because the docket wait
+# accepts only a window cleared at or after THIS crossing's own start and nothing
+# would close until 17:45Z. A correct tree and an unfolded docket sat side by side
+# for eight hours. Keemin's word that morning: *"we REALLY should not be
+# constrained by OUR OWN rules from being able to quickly push fixes as needed."*
+#
+# So the operator gets a SECOND DOOR and the timer's guard is untouched. With
+# this set, the docket read takes the newest CLOSED window that still holds a
+# locked claim with no materialized mark — a fact about the store with no clock
+# in it — and refuses `nothing-unfolded` when the world already carries
+# everything. See the tool's header for why this cannot be reached by relaxing
+# the wait instead.
+#
+# IT IS NEVER THE UNIT'S DEFAULT AND NEVER THE TIMER'S. `postmark-settlement.service`
+# does not set it; `postmark-settlement-by-hand.service` does, carries no timer,
+# and is started by a person — so the journal names the act by its own unit, and
+# the receipt carries `by_hand: true` beside `source` so a by-hand publication can
+# never be read back as a scheduled one.
+BY_HAND="${SETTLEMENT_BY_HAND:-0}"
+case "$BY_HAND" in
+  0|1) ;;
+  *) echo "[settlement-auto] SETTLEMENT_BY_HAND=\"$BY_HAND\" is not \`0\` or \`1\` — refusing rather than guessing whether this crossing is a person's act" >&2; exit 1 ;;
+esac
+# `if`, not `[ … ] && echo`: this script runs under `set -e`, where a one-liner
+# whose test is false is a non-zero last command and takes the whole crossing
+# down. Every scheduled crossing takes that branch.
+if [ "$BY_HAND" = "1" ]; then
+  echo "[settlement-auto] BY HAND — this crossing is an operator's act; the docket is the newest unfolded window, not a fresh close" >&2
+fi
+
 # ── A STORE CROSSING LEAVES THE CLONE AS IT FOUND IT ─────────────────────────
 #
 # The store path's sketchbooks are scratch by construction — this crossing makes
@@ -189,6 +223,7 @@ report() { # status detail
   SETTLEMENT_RETIRE_JSON="${RETIRE_JSON:-}" \
   SETTLEMENT_ISOLATE_JSON="${ISOLATE_JSON:-}" SETTLEMENT_REFUSAL_JSON="${REFUSAL_JSON:-}" \
   SETTLEMENT_SOURCE_MODE="$SOURCE" SETTLEMENT_STORE_JSON="${STORE_JSON:-}" \
+  SETTLEMENT_BY_HAND="$BY_HAND" \
   SETTLEMENT_GHOSTS="${GHOSTS:-}" SETTLEMENT_KEPT_UNDELIVERED="${KEPT_UNDELIVERED:-}" \
   SETTLEMENT_RESETS="${RESETS:-}" \
   SETTLEMENT_REGISTRY_JSON="${REGISTRY_JSON:-}" SETTLEMENT_REGISTRY_COMMIT="${REGISTRY_COMMIT:-}" \
@@ -684,15 +719,29 @@ if [ "$SOURCE" = "store" ]; then
   # `$STAMP` is this crossing's own start instant, which is what makes the
   # condition unambiguous — see the tool's header for why "the most recently
   # closed window" and "the open window has closed" are both wrong.
+  #
+  # `--by-hand` (postmark#2786) swaps the QUESTION, not the guard: the operator
+  # asks which closed window is still unfolded, and the timer goes on asking which
+  # window closed for this crossing. The flag is built here rather than inlined so
+  # the scheduled crossing's command line is byte-for-byte what it was.
   DOCKET_JSON="$WORK/docket.json"
+  BY_HAND_FLAG=""
+  if [ "$BY_HAND" = "1" ]; then BY_HAND_FLAG="--by-hand"; fi
   if ! (cd "$OFFICE" && node "$OFFICE/world2/tools/await-clearing.mjs" \
-        --since "$STAMP" --timeout-s "${SETTLEMENT_CLEARING_WAIT_S:-240}") > "$DOCKET_JSON" 2>"$WORK/docket.err"; then
-    report refused "the candle did not lock this crossing's docket: $(node -e 'const r=require(process.argv[1]);process.stdout.write(String(r.refused||"unknown")+" — "+String(r.detail||""))' "$DOCKET_JSON" 2>/dev/null || head -c 200 "$WORK/docket.err" | tr '\n"' ' .')"
-    echo "[settlement-auto] CLEARING DID NOT RUN — publishing nothing" >&2
+        --since "$STAMP" --timeout-s "${SETTLEMENT_CLEARING_WAIT_S:-240}" $BY_HAND_FLAG) > "$DOCKET_JSON" 2>"$WORK/docket.err"; then
+    # The DETAIL carries the tool's own reason word — `clearing-did-not-run` for
+    # the timer, `nothing-unfolded` for the operator door — so the sentence is
+    # written once, by the tool, and this line does not decide which refusal it
+    # is looking at.
+    report refused "this crossing has no docket to fold: $(node -e 'const r=require(process.argv[1]);process.stdout.write(String(r.refused||"unknown")+" — "+String(r.detail||""))' "$DOCKET_JSON" 2>/dev/null || head -c 200 "$WORK/docket.err" | tr '\n"' ' .')"
+    echo "[settlement-auto] NO DOCKET — publishing nothing" >&2
     cat "$DOCKET_JSON" >&2 2>/dev/null || true; cat "$WORK/docket.err" >&2
     exit 1
   fi
-  echo "[settlement-auto] docket: window $(node -e 'const d=require(process.argv[1]);process.stdout.write(String(d.window)+" locked at "+String(d.cleared_at)+" (waited "+String(d.waited_s)+"s)")' "$DOCKET_JSON")" >&2
+  # `waited_s` is on the timer's docket and not on the by-hand one, because the
+  # by-hand read waits for nothing — printing "waited 0s" for an act that never
+  # waited is a number that describes the wrong thing.
+  echo "[settlement-auto] docket: window $(node -e 'const d=require(process.argv[1]);process.stdout.write(String(d.window)+" locked at "+String(d.cleared_at)+(d.by_hand?" (TAKEN BY HAND — the newest unfolded window)":" (waited "+String(d.waited_s)+"s)"))' "$DOCKET_JSON")" >&2
   DOCKET_WINDOW="$(node -e 'const d=require(process.argv[1]);process.stdout.write(String(d.window))' "$DOCKET_JSON")"
 
   # ── THE ORDERING: THE FOLD READS AFTER THE CLEARING'S INGEST ────────────────

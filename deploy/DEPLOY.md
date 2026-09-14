@@ -687,6 +687,42 @@ All four carry rows in `deploy/box-rollcall-manifest.json`. `world2-restore-rehe
 is a hand-run, deliberately: it drops and recreates a database, and nothing that
 does that belongs on a clock.
 
+### Finishing a refused crossing by hand (2026-09-14, postmark#2786)
+
+**The recovery is one unit, and it is not the settlement's own.** When a crossing
+refuses and the cause is repaired before the next one is due, start:
+
+```sh
+sudo systemctl start postmark-settlement-by-hand.service
+journalctl -u postmark-settlement-by-hand.service -n 200 --no-pager
+```
+
+It publishes **the newest closed window that still holds a locked claim with no
+materialized mark** — the notary's own read — and its receipt says
+`by_hand: true` beside `source`. If the world already carries everything it
+refuses `nothing-unfolded` and names where the town is. It never touches the
+open window.
+
+**Do not rerun `postmark-settlement.service` to recover.** That unit is the
+timer's, and the timer's docket wait accepts only a window cleared **at or after
+that crossing's own start** — correctly, because a crossing that folded an older
+window would publish nothing and read as a quiet day, which is the 2026-08-26
+starving shape. A rerun before the next close therefore refuses
+`clearing-did-not-run` no matter how correct the tree is.
+
+**And the old sweep-then-candle pairing does not answer this.** It was: start the
+settlement (it waits 240s), start the clearing while it waits. The clearing
+closes only *the open window whose `closes_at` has passed*, so mid-window it
+answers `nothing-due` and the sweep times out anyway. Measured on 2026-09-14:
+window 188 closed at 05:45Z holding 29 locked claims its crossing refused on a
+world test; the test merged by 09:1x; reruns at 13:21Z and 13:26Z refused, the
+candle said nothing was due because window 189 did not close until 17:45Z, and
+29 residents' marks stayed locked-but-unpublished for a day.
+
+Install it with the other units; it carries **no timer**, deliberately — a rerun
+by hand is an act, not a second clock, and the journal names it by its own unit
+so a by-hand publication is never read back as a scheduled one.
+
 ### The canon check is NIGHTLY, not at the candle — and why (2026-09-08, postmark#2594)
 
 Keemin first ruled *refusal at the candle*, and the lane's reviewer measured it

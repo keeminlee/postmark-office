@@ -2,6 +2,7 @@
 // await-clearing.mjs — THE ORDER INVERTS AT THE SWAP (G1 lane 3, ruled 2026-09-08).
 //
 //   node world2/tools/await-clearing.mjs --since <iso8601> [--timeout-s 240] [--poll-s 5]
+//   node world2/tools/await-clearing.mjs --since <iso8601> --by-hand
 //
 //   env: WORLD2_PG=1 and WORLD2_PG_URL — consumed at `src/world2-acts.mjs:255`
 //        (`env.WORLD2_PG === "1" && !!env.WORLD2_PG_URL`).
@@ -47,6 +48,47 @@
 // Publishing the previous window's fold under a fresh receipt would be the
 // 2026-08-26 starving crossing with better paperwork, so the refusal names the
 // window it was waiting past and how long it waited.
+//
+// ── `--by-hand`: THE OPERATOR DOOR (postmark#2786, ruled 2026-09-14) ─────────
+//
+// The guard above is right for the timer and wrong for the operator whose
+// PREVIOUS crossing published nothing. Measured: on 2026-09-14 window 188 closed
+// at 05:45Z holding 29 locked claims that its refused crossing never folded; the
+// world test that refused it was fixed and merged by 09:1x; two reruns at 13:21Z
+// and 13:26Z then refused `clearing-did-not-run`, because no window had cleared
+// at or after 13:21Z and none would until 17:45Z. A correct tree and an unfolded
+// docket sat side by side for eight hours, and 29 residents' marks stayed
+// locked-but-unpublished for a day. The paired recovery the record prescribed —
+// the sweep first, the candle while it waits — answered "no window past its
+// close, nothing due", because the open window 189 was not due until 17:45Z.
+//
+// So a rerun by hand is a SECOND DOOR, never a loosening of the first:
+//
+//   the timer asks   "which window closed for THIS crossing"        (an instant)
+//   the operator asks "which closed window is still UNFOLDED"       (a state)
+//
+// The second question has no timing in it at all, so it cannot be answered by
+// relaxing the first — a grace window, a "recent enough", a longer timeout would
+// each have let the timer take a stale docket on the night the candle died,
+// which is the whole class the wait exists to prevent. The by-hand read is
+// instead the NOTARY'S OWN: a closed window holding at least one locked claim
+// with no materialized mark (`canon-locks.mjs § UNMATERIALIZED_SELECT`, the read
+// `falsifier-canon-locks.mjs` runs nightly). "Unfolded" is a fact about the
+// store, true or false without reference to any clock, which is what makes it
+// safe to hand an operator.
+//
+// It never takes the OPEN window: closing a window early is a different act with
+// a different owner (`clearing-job.mjs --window N`, the candle's pen), and the
+// issue's second path was ruled out of this door's scope.
+//
+// It never waits, because there is nothing to wait for — the question is already
+// answered by the store's current state, and a poll loop would only re-ask it.
+//
+// And it is never the unit's own default. `deploy/postmark-settlement.service`
+// does not set it; `deploy/postmark-settlement-by-hand.service` does, carries no
+// timer, and is started by a person — so the journal names the act by its unit
+// and the receipt carries `by_hand: true` beside it. A by-hand publication that
+// could be mistaken for a scheduled one would be a worse record than no rerun.
 
 const argOf = (n, d = null) => { const i = process.argv.indexOf(n); return i !== -1 ? process.argv[i + 1] : d; };
 
@@ -108,6 +150,86 @@ export function docketFor(windows, sinceIso) {
   return closed.length ? { window: Number(closed[0].id), cleared_at: closed[0].cleared_at, town_sha: closed[0].town_sha ?? null } : null;
 }
 
+/**
+ * THE OPERATOR'S PREDICATE, PURE. Window rows and the notary's unmaterialized
+ * claim rows in; the newest closed window that is STILL UNFOLDED out, or null.
+ *
+ * Pure for `docketFor`'s reason and one more: this one is reached by a person
+ * typing a command at an hour when something has already gone wrong, so the
+ * decision it makes has to be readable from a fixture rather than from a store
+ * nobody can rewind.
+ *
+ * NEWEST, not earliest, and the asymmetry with `docketFor` is the point. The
+ * timer takes the EARLIEST qualifying window because two closes while it waited
+ * are two crossings' worth of record and it must not skip one. The operator
+ * takes the NEWEST unfolded one because the fold's own carry
+ * (`fold-input-cli.mjs --world-repo`, § "carried_absent") already sweeps up
+ * standing marks canon does not hold from EARLIER windows — so the newest
+ * unfolded docket is the largest one act can lawfully publish, and an older one
+ * would publish less while claiming the same.
+ *
+ * `status === "closed"` AND a `cleared_at` is the same locked-docket test the
+ * timer uses, for the same reason: a closed window with no `cleared_at` is a
+ * window mid-transition, and the OPEN window is never any sweep's to take.
+ */
+export function unfoldedDocket(windows, unmaterializedRows) {
+  const unfolded = new Set(
+    (unmaterializedRows ?? [])
+      .map((r) => Number(r?.window_id))
+      .filter((n) => Number.isFinite(n)));
+  const closed = (windows ?? [])
+    .filter((w) => w.status === "closed" && w.cleared_at)
+    .map((w) => ({ ...w, at: toMs(w.cleared_at) }))
+    .filter((w) => Number.isFinite(w.at))
+    .sort((a, b) => b.at - a.at || Number(b.id) - Number(a.id));
+  const take = closed.find((w) => unfolded.has(Number(w.id)));
+  return take
+    ? { window: Number(take.id), cleared_at: take.cleared_at, town_sha: take.town_sha ?? null, by_hand: true }
+    : null;
+}
+
+/**
+ * The newest window the store holds, whatever its status — the one both
+ * refusals name so the reader knows where the town actually is.
+ */
+export function newestWindow(windows) {
+  const rows = (windows ?? []).filter((w) => w && w.id !== undefined && w.id !== null);
+  if (!rows.length) return null;
+  const top = rows.reduce((a, b) => (Number(b.id) > Number(a.id) ? b : a));
+  return { id: Number(top.id), status: top.status ?? null, cleared_at: top.cleared_at ?? null };
+}
+
+/**
+ * THE TIMER'S REFUSAL, IN WORDS, and it is a function rather than a template at
+ * the exit site so that the text is falsifiable without a database. The whole
+ * value of `--by-hand` depends on the timer's path being UNCHANGED, and "unchanged"
+ * has to mean something a test can read: `test/await-clearing.test.mjs` holds
+ * this sentence verbatim and reddens if the operator door ever edits it.
+ */
+export function clearingDidNotRunDetail({ waitedS, since, newest }) {
+  return `waited ${waitedS}s and no window cleared at or after this crossing's start (${since}). `
+    + `The newest window is ${newest ? `${newest.id} (${newest.status}, cleared_at ${newest.cleared_at ?? "null"})` : "unreadable"}. `
+    + "The candle has not locked this crossing's docket, so there is no delta to fold. Folding the previous "
+    + "window again would publish nothing and look like a quiet crossing, which is the 2026-08-26 starving "
+    + "shape with better paperwork.";
+}
+
+/**
+ * THE OPERATOR DOOR'S REFUSAL. A by-hand sweep with nothing unfolded is not an
+ * error and not a success: it is the answer "the world already carries this",
+ * and it says so rather than publishing a second copy of a published window
+ * under a fresh receipt — which is the starving shape the timer's refusal names,
+ * reached by the other door.
+ */
+export function nothingUnfoldedDetail({ newest }) {
+  return "no closed window still holds a locked claim with no materialized mark, so there is nothing for a "
+    + "by-hand sweep to publish. "
+    + `The newest window is ${newest ? `${newest.id} (${newest.status}, cleared_at ${newest.cleared_at ?? "null"})` : "unreadable"}. `
+    + "Every closed window's claims are already materialized: the record this run would publish is the record "
+    + "the world already carries. Claims filed since the last close belong to the OPEN window, and closing that "
+    + "window early is the candle's act, not this one's.";
+}
+
 const isMain = process.argv[1]
   && (await import("node:fs")).realpathSync(process.argv[1]).replace(/\\/g, "/").endsWith("/await-clearing.mjs");
 
@@ -115,6 +237,11 @@ if (isMain) {
   const since = argOf("--since");
   const timeoutS = Number(argOf("--timeout-s", "240"));
   const pollS = Number(argOf("--poll-s", "5"));
+  // `--since` stays REQUIRED on both doors even though the by-hand read never
+  // consults it. It is the crossing's own start instant, the receipt's `at`, and
+  // the one field that says WHEN a by-hand publication happened; a door that let
+  // an operator omit it would produce the one receipt nobody can place in time.
+  const byHand = process.argv.includes("--by-hand");
   if (!since) { console.error("--since <iso8601> is required — the crossing's own start instant"); process.exit(2); }
   if (!Number.isFinite(timeoutS) || !Number.isFinite(pollS)) { console.error("--timeout-s and --poll-s must be numbers"); process.exit(2); }
 
@@ -130,24 +257,44 @@ if (isMain) {
   let last = null;
   try {
     await client.connect();
-    for (;;) {
+
+    if (byHand) {
+      // NO `LIMIT` HERE, and the asymmetry with the timer's read is deliberate.
+      // The timer asks "did a window clear in the last 240 seconds", and the
+      // newest twenty answer that with room to spare. The operator asks "which
+      // closed window is still unfolded", and the answer can be older than
+      // twenty windows the moment a crossing has been dark for a week — a cap on
+      // THAT question is a silent denominator that would refuse
+      // `nothing-unfolded` over a docket sitting right there. The table grows
+      // two rows a day.
       const { rows } = await client.query(
-        "SELECT id, status, cleared_at, town_sha FROM windows ORDER BY id DESC LIMIT 20");
-      const found = docketFor(rows, since);
-      if (found) {
-        process.stdout.write(`${JSON.stringify({ ...found, waited_s: Math.round((Date.now() - started) / 1000) }, null, 1)}\n`);
-        break;
+        "SELECT id, status, cleared_at, town_sha FROM windows ORDER BY id DESC");
+      // Imported HERE rather than at the top of the file so the module stays
+      // inert to import — `test/cli-guard.test.mjs` holds that property, and the
+      // pure half above must remain testable without dragging the notary's
+      // module graph in behind it.
+      const { UNMATERIALIZED_SELECT } = await import("./canon-locks.mjs");
+      const { rows: unmaterialized } = await client.query(UNMATERIALIZED_SELECT);
+      const found = unfoldedDocket(rows, unmaterialized);
+      if (!found) refuse("nothing-unfolded", nothingUnfoldedDetail({ newest: newestWindow(rows) }));
+      process.stdout.write(`${JSON.stringify(found, null, 1)}\n`);
+    } else {
+      for (;;) {
+        const { rows } = await client.query(
+          "SELECT id, status, cleared_at, town_sha FROM windows ORDER BY id DESC LIMIT 20");
+        const found = docketFor(rows, since);
+        if (found) {
+          process.stdout.write(`${JSON.stringify({ ...found, waited_s: Math.round((Date.now() - started) / 1000) }, null, 1)}\n`);
+          break;
+        }
+        last = newestWindow(rows);
+        if ((Date.now() - started) / 1000 >= timeoutS) {
+          refuse("clearing-did-not-run", clearingDidNotRunDetail({
+            waitedS: Math.round((Date.now() - started) / 1000), since, newest: last,
+          }));
+        }
+        await new Promise((r) => setTimeout(r, pollS * 1000));
       }
-      last = rows[0] ? { id: rows[0].id, status: rows[0].status, cleared_at: rows[0].cleared_at } : null;
-      if ((Date.now() - started) / 1000 >= timeoutS) {
-        refuse("clearing-did-not-run",
-          `waited ${Math.round((Date.now() - started) / 1000)}s and no window cleared at or after this crossing's start (${since}). `
-          + `The newest window is ${last ? `${last.id} (${last.status}, cleared_at ${last.cleared_at ?? "null"})` : "unreadable"}. `
-          + "The candle has not locked this crossing's docket, so there is no delta to fold. Folding the previous "
-          + "window again would publish nothing and look like a quiet crossing, which is the 2026-08-26 starving "
-          + "shape with better paperwork.");
-      }
-      await new Promise((r) => setTimeout(r, pollS * 1000));
     }
   } catch (e) {
     if (!(e && e.__refused)) refuse("await-clearing-tripped", String(e?.message ?? e));
