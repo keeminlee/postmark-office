@@ -236,7 +236,10 @@ export function replayLetter(row, { doors, key, db, clone }) {
   // own identity fence needs: the sender it acted for and the household it was
   // charged to. Anything more would be this module inventing a credential.
   const asKey = { household: row.household, handles: new Set([row.handle]), ghId: row.ghId, ghLogin: row.ghLogin, ...key };
-  return { row, result: door(row.payload?.args ?? {}, asKey, db, clone) };
+  const acceptedIdentity = row.payload?.id && row.payload?.file
+    ? { id: row.payload.id, file: row.payload.file }
+    : null;
+  return { row, result: door(row.payload?.args ?? {}, asKey, db, clone, acceptedIdentity) };
 }
 
 // ── THE ENVELOPE PRE-FLIGHT ────────────────────────────────────────────────
