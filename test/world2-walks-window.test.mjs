@@ -26,12 +26,16 @@
 //     `falsifier-live-equality.mjs`; this file drives `world2Serve` with an
 //     injected connection, which is the seam `world2Apex` already had.
 //
-// THE FLIP. Drop the window from `src/world2-serve.mjs` — delete the
-// `if (win.sinceMs != null)` filter and the `if (win.last != null)` slice in
-// the `/world2/walks` arm — and re-run:
+// THE FLIP, run 2026-09-16 on the committed tree. Drop the window from
+// `src/world2-serve.mjs` — delete the `if (win.sinceMs != null)` filter and the
+// `if (win.last != null)` slice in the `/world2/walks` arm — and 7 of these 21
+// go red, the first being:
 //
 //   not ok 3 - since keeps only the departures at or after it
-//     AssertionError: Expected values to be strictly equal: 4 !== 2
+//     error: |-
+//       Expected values to be strictly equal:
+//
+//       4 !== 2
 //
 // Run: node --test test/world2-walks-window.test.mjs
 
