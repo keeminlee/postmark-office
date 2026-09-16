@@ -1851,7 +1851,7 @@ sqlite.
 
 | door | question | 1.0's equivalent |
 |---|---|---|
-| `/world2/walks` | every departure the record holds, in the ledger's grammar | `WORLD/walk-ledger.md` (the site's one still-baked record) |
+| `/world2/walks[?since=][&last=]` | every departure the record holds, in the ledger's grammar | `WORLD/walk-ledger.md` (the site's one still-baked record) |
 | `/world2/positions[?at=]` | every walker's derived position at one instant | `walk.mjs positionsAt` |
 | `/world2/present[?at=][&x=&y=&radius=&limit=]` | every PLACED resident: a walk, else ground, else the porch | `GET /world/present` · `world_walkers` |
 | `/world2/say?at=&x=&y=[&radius=&mode=]` | what is still in the air, and what reaches this point | `presentEmissions` |
@@ -1889,6 +1889,28 @@ symptom.
 against the OUTPUT column list first, so a caller selecting `id::text` sorts the
 ids as TEXT — "1019" before "102". That is what this falsifier's own first run
 did, and the order guard is what caught it.
+
+### `/world2/walks` takes a window (POS-84, 2026-09-16)
+
+The door answered the whole record and only the whole record — 2,498 rows /
+1.17 MB on 2026-09-16, growing by ~100 a day — so its one live consumer, the
+world viewer's Lately pane, read a file frozen 2026-08-10 instead. `?since=<ISO>`
+cuts to the departures at or after an instant; `?last=<n>` keeps the last n
+rows. Neither given, the answer is byte-for-byte what it was, including `count`
+and `eras`.
+
+Three properties the window holds and a reader should not have to re-derive:
+
+- **It filters, it never re-sorts.** The order stays the record's own append
+  order, so `last` is the most recently **appended** n. Measured on prod
+  2026-09-16 that differs from the n latest instants in exactly one place, the
+  08-08 sailing documented above. The answer carries a `window.note` saying so.
+- **The cut is on the rendered rows, not in SQL.** `departureRecords` refuses a
+  row it cannot read rather than skipping it, and censuses the eras over
+  everything; a `WHERE` clause would make both depend on who asked, and a fifth
+  pen's act sitting outside the window would quietly stop bouncing.
+- **`count` and `eras` are always about the rows returned**, and `window.count_all`
+  says how big the record is behind them.
 
 ### The four eras of a movement act
 
