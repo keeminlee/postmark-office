@@ -66,6 +66,14 @@ const SOURCE = env("SETTLEMENT_SOURCE_MODE") ?? "git";
 const sweep = readJson(env("SETTLEMENT_SWEEP_JSON"));
 const drain = readJson(env("SETTLEMENT_DRAIN_JSON"));
 const isolate = readJson(env("SETTLEMENT_ISOLATE_JSON"));
+// THE HARM GATE (founder-ruled 2026-09-16): the crossing's refusing gate — five
+// data-shaped checks over the tree the sweep produced, each naming its marks.
+// Present on every crossing that reached it, harm or none; null when the
+// crossing refused before it ran, which is a different state and stays one.
+const harm = readJson(env("SETTLEMENT_HARM_JSON"));
+// THE GRAMMAR SUITE, run AFTER the push as a checker. `red: true` on a PUBLISHED
+// crossing is a warning — an issue is filed and nothing is held.
+const suite = readJson(env("SETTLEMENT_SUITE_JSON"));
 // THE RETIREMENT (G1 lane 1). Not a sweep channel — the sweep holds no database
 // credential and never will — so it arrives on its own report, like the drain's.
 // It is named on every crossing including the ones where it retired nothing,
@@ -396,6 +404,24 @@ const receipt = {
           household: q.household ?? null, id: q.id ?? null, path: q.path ?? null,
         })),
         suite_red_before: isolate.suite_red_before ?? null,
+      }
+    : null,
+  harm: harm
+    ? {
+        ok: harm.ok === true,
+        base: harm.base ?? null,
+        checks: (harm.checks ?? []).map((c) => ({
+          name: c.name ?? null, ok: c.ok === true, count: c.count ?? 0, rows: c.rows ?? [], note: c.note ?? null,
+        })),
+      }
+    : null,
+  suite: suite
+    ? {
+        ran: suite.ran === true,
+        red: suite.red === true,
+        reds: suite.reds ?? [],
+        reds_total: suite.reds_total ?? (suite.reds ?? []).length,
+        log: suite.log ?? null,
       }
     : null,
 

@@ -87,7 +87,9 @@ export const DEFAULT_CRED = "/srv/postmark-office/.git-credentials";
 
 /** The issue title. Stable per class — it IS the update key. */
 export function titleFor(klass) {
-  return `settlement refusal: ${klass}`;
+  // a warning is not a refusal, and its standing issue must not be found under
+  // a refusal's name: the town published, and the title says so
+  return klass === "suite-warning" ? `settlement warning: ${klass}` : `settlement refusal: ${klass}`;
 }
 
 /** The token out of a git credential store, or null. Never logged, never returned in a body. */
@@ -119,6 +121,23 @@ export const SUITE_RED_CAUSE = /grammar suite red/i;
 export function isSuiteRedRefusal(receipt) {
   if (receipt?.status !== "refused") return false;
   return SUITE_RED_CAUSE.test(`${receipt?.detail ?? ""}\n${receipt?.refusal?.cause ?? ""}`);
+}
+
+/**
+ * THE TWO CLASSES OF 2026-09-16, gated the same way. A harm refusal is a refused
+ * receipt whose harm report tripped, or whose detail says the gate could not
+ * run (the two words `settlement-auto.sh` writes at that exit). A suite warning
+ * is a PUBLISHED receipt whose checker went red — a warning over a crossing that
+ * landed, and the receipt must say both or nothing is filed.
+ */
+export const HARM_CAUSE = /HARM NAMED|harm gate could not gate/i;
+export function isHarmRefusal(receipt) {
+  if (receipt?.status !== "refused") return false;
+  if (receipt?.harm && receipt.harm.ok === false) return true;
+  return HARM_CAUSE.test(`${receipt?.detail ?? ""}\n${receipt?.refusal?.cause ?? ""}`);
+}
+export function isSuiteWarning(receipt) {
+  return receipt?.status === "published" && receipt?.suite?.red === true;
 }
 
 /**
@@ -198,17 +217,63 @@ export function bodyFor(klass, receipt, { at = new Date().toISOString(), suiteLo
       + "postmark-settlement-by-hand.service` (#2786) takes the newest window that is still unfolded. Until "
       + "this class existed a suite red reached a person only through `recurring-refusal`, on the THIRD "
       + "unsettled crossing — a day and a half — and the 05:45Z S70 refusal sat unread for seven hours.",
+    harm:
+      "THE CROSSING REFUSED FOR HARM (founder-ruled 2026-09-16: a failed settlement is a crisis). The harm gate "
+      + "compared the tree the sweep produced with the tree it started from and found a resident's mark moved or "
+      + "lost with no act naming it, the sweep's word not matching the tree, a fold that ran stampless, or two "
+      + "parcels on one ground — the checks and the marks are named below. Nothing published. Repair by a world "
+      + "pull request (the sweep or the record, whichever the rows name); the next crossing carries the town. If "
+      + "the gate COULD NOT RUN (no report, no fold, no tool at this world sha), that is the finding, and the "
+      + "repair is the crossing's own chain.",
+    "suite-warning":
+      "THE TOWN IS PUBLISHED. The grammar suite ran after the push and went red — a WARNING, not a refusal "
+      + "(founder-ruled 2026-09-16: the suite holds no crossing; harm does). Every resident's mark stands where "
+      + "the harm gate proved it stands. Read the `not ok` lines below and repair the test or the record by a "
+      + "world pull request, whose CI runs the same suite; no crossing waits on it.",
   };
   const nextStep = OVERRIDE[klass] ?? receipt?.next_step ?? "read the refusal below and decide the removal lane.";
 
   const lines = [
-    `**${klass}** — the settlement refused at \`${receipt?.at ?? at}\` and cannot clear itself.`,
+    klass === "suite-warning"
+      ? `**${klass}** — the settlement PUBLISHED at \`${receipt?.at ?? at}\` and its grammar suite went red afterwards.`
+      : `**${klass}** — the settlement refused at \`${receipt?.at ?? at}\` and cannot clear itself.`,
     "",
     "### What to do",
     "",
     nextStep,
     "",
   ];
+
+  // THE HARM GATE'S OWN ROWS, above the receipt: the checks that tripped and the
+  // marks each one named, which is the whole of what a person acts on.
+  if (klass === "harm") {
+    const tripped = (receipt?.harm?.checks ?? []).filter((c) => c && c.ok !== true);
+    lines.push("### The harm gate's own rows", "");
+    if (tripped.length) {
+      for (const c of tripped) {
+        lines.push(`**${c.name}** — ${c.count ?? (c.rows ?? []).length} row(s)${c.note ? ` (${c.note})` : ""}`, "", "```",
+          ...((c.rows ?? []).length ? c.rows : ["(no rows carried)"]), "```", "");
+      }
+    } else if (receipt?.harm == null) {
+      lines.push("The gate did not produce a report: it could not run. The receipt's `detail` says why (no report, "
+        + "no fold, or no `tools/harm-gate.mjs` at this world sha). That is the finding.", "");
+    } else {
+      lines.push("The receipt carries a harm report with no tripped check — the caller escalated `harm` over a "
+        + "gate that found none. Read the receipt's `detail`.", "");
+    }
+  }
+  if (klass === "suite-warning") {
+    const reds = notOkLines(suiteLog);
+    lines.push("### The suite's own reds, after the push", "");
+    if (reds.length) lines.push("```", ...reds, "```");
+    else if (suiteLog == null)
+      lines.push("The suite log could not be read at escalation time. It is `settlement-last-suite.log` in the "
+        + "office tree on the box — the crossing copies it there.");
+    else
+      lines.push("The suite log carries NO `not ok` line. The runner failed without naming a test — a crash, an "
+        + "out-of-memory, a runner that never started. Read the log's tail.");
+    lines.push("");
+  }
 
   // THE TWO THINGS A PERSON NEEDS BEFORE THEY CAN ACT ON A SUITE RED, and they
   // are above the receipt rather than inside it: the receipt says the suite was
@@ -287,6 +352,18 @@ export async function escalate({
       + `refusal (status ${JSON.stringify(receipt?.status ?? null)}). Nothing was filed: an issue about a red `
       + "that is not there teaches the queue to be ignored, which is the silence this file exists to end.");
     return { filed: false, reason: "not-a-suite-red-refusal", title };
+  }
+  // The same gate for the two classes born 2026-09-16, for the same reason.
+  if (klass === "harm" && !isHarmRefusal(receipt)) {
+    log("[settlement-escalate] NOT FILED — `--class harm` was asked over a receipt that is not a harm refusal "
+      + `(status ${JSON.stringify(receipt?.status ?? null)}). Nothing was filed.`);
+    return { filed: false, reason: "not-a-harm-refusal", title };
+  }
+  if (klass === "suite-warning" && !isSuiteWarning(receipt)) {
+    log("[settlement-escalate] NOT FILED — `--class suite-warning` was asked over a receipt that is not a published "
+      + `crossing with a red suite (status ${JSON.stringify(receipt?.status ?? null)}, suite.red `
+      + `${JSON.stringify(receipt?.suite?.red ?? null)}). Nothing was filed.`);
+    return { filed: false, reason: "not-a-suite-warning", title };
   }
 
   const body = bodyFor(klass, receipt, { suiteLog, isolate });
