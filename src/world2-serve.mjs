@@ -149,6 +149,59 @@ function clockOf(searchParams) {
   return { ms };
 }
 
+// ── THE WALK WINDOW (POS-84) ────────────────────────────────────────────────
+//
+// `/world2/walks` answers the WHOLE record and has since it opened: 2,498
+// departures / 1.17 MB on 2026-09-16, growing by ~100 a day. Its one live
+// consumer — the world viewer's Lately pane — wants a fortnight, and had no way
+// to ask for one, so it read a file frozen 2026-08-10 instead. `?since=<ISO>`
+// and `?last=<n>` are that ask. Neither given, the answer is what it was.
+//
+// THE WINDOW FILTERS; IT NEVER RE-SORTS. This read's order is the record's own
+// APPEND order (§ DEPARTURE_ORDER_SQL), which is not instant order — measured
+// on prod 2026-09-16, the 2,498 rows carry exactly one inversion, and it is the
+// documented one: the 08-08 sailing filed every passenger at 18:00:00.000Z and
+// those lines were appended after walks stamped 18:16. So `last` is the most
+// recently APPENDED n, not the n latest instants, and the answer says so rather
+// than letting a reader assume they are the same thing.
+//
+// `since` is an INSTANT filter over that order, which is a different question
+// from `at` — `at` is the clock the answer is evaluated at (this read ignores
+// it, since a departure record does not move), `since` is a cut on the rows.
+/**
+ * `?since=<ISO>` / `?last=<n>` — the walk read's window, or the whole record.
+ *
+ * Returns `{ asked, since, sinceMs, last }`, or `{ error }` shaped like
+ * `clockOf`'s. An unreadable value BOUNCES rather than being ignored: a door
+ * that silently serves 2,498 rows to a caller who asked for 40 has answered a
+ * question nobody put to it.
+ */
+function walkWindowOf(searchParams) {
+  const rawSince = searchParams?.get("since");
+  const rawLast = searchParams?.get("last");
+  if (rawSince == null && rawLast == null) return { asked: false, since: null, sinceMs: null, last: null };
+
+  let sinceMs = null;
+  if (rawSince != null) {
+    sinceMs = Date.parse(rawSince);
+    if (!Number.isFinite(sinceMs)) {
+      return { error: { code: 422, body: { error: "bounce", defect: `"${rawSince}" is not an instant`,
+        hint: "?since=<ISO-8601>, e.g. ?since=2026-09-02T00:00:00Z — omit it for the whole record" } } };
+    }
+  }
+
+  let last = null;
+  if (rawLast != null) {
+    last = Number(rawLast);
+    if (!Number.isInteger(last) || last < 1) {
+      return { error: { code: 422, body: { error: "bounce", defect: `"${rawLast}" is not a count of rows`,
+        hint: "?last=<n>, a whole number of rows, 1 or more — omit it for the whole record" } } };
+    }
+  }
+
+  return { asked: true, since: rawSince ?? null, sinceMs, last };
+}
+
 /** `?x=&y=[&radius=][&limit=]` — the standpoint a read is taken from, or null. */
 function pointOf(searchParams) {
   const xs = searchParams?.get("x"), ys = searchParams?.get("y");
@@ -264,10 +317,16 @@ export function docketRow(row = {}, { byMark = null } = {}) {
 /**
  * Route a GET under /world2/*. Returns null when the path is not ours
  * (server.mjs falls through), else { code, body }.
+ *
+ * `{ p }` injects the connection, exactly as `world2Apex` below already takes
+ * it, so a door's own shape can be exercised against canned `acts` rows without
+ * a Postgres. It is a test seam and nothing else: the env gate above still
+ * decides whether these doors exist at all, and every caller in `src/` passes
+ * no pool and gets the real one.
  */
-export async function world2Serve(path, searchParams) {
+export async function world2Serve(path, searchParams, { p: injected = null } = {}) {
   if (!world2ServeEnabled()) return null;
-  const p = await pool();
+  const p = injected ?? await pool();
 
   if (path === "/world2/docket") {
     const { rows } = await p.query(DOCKET_SELECT);
@@ -365,13 +424,15 @@ export async function world2Serve(path, searchParams) {
     // rather than passing a reconstruction off as the record.
     const at = clockOf(searchParams);
     if (at.error) return at.error;
+    const win = walkWindowOf(searchParams);
+    if (win.error) return win.error;
     const { rows } = await p.query(
       `SELECT id, at, crossing, actor, action, payload FROM acts
         WHERE action = ANY($1) ${live.DEPARTURE_ORDER_SQL}`, [live.DEPARTURE_ACTIONS]);
     let derived;
     try { derived = live.departureRecords(rows); }
     catch (e) { return { code: 500, body: { error: "bounce", defect: "a departure act matches no known era", hint: String(e.message).slice(0, 400) } }; }
-    const walks = derived.records.map((d) => ({
+    const all = derived.records.map((d) => ({
       iso: d.iso, handle: d.handle,
       from: d.from, toward: d.toward, at: d.at,
       within: d.targetExtent, to: d.targetMarkId, pace: d.pace,
@@ -379,10 +440,41 @@ export async function world2Serve(path, searchParams) {
       line: d.line ?? live.formatDeparture({ ...d, iso: d.iso }),
       ...(d.line ? {} : { line_derived: true }),
     }));
+    // THE CUT IS MADE ON THE RENDERED ROWS, NOT IN SQL, and the reason is this
+    // derivation's own law. `departureRecords` REFUSES a row it cannot read
+    // rather than skipping it, and censuses the eras over everything; a WHERE
+    // clause would make both depend on who asked — an act from a fifth pen
+    // sitting outside the window would stop bouncing, and the door's honesty
+    // would become a function of the query. The instant to cut on is also only
+    // knowable after derivation: `acts.at` and the record's own `iso` are not
+    // the same quantity (a journal payload carries its own).
+    let walks = all;
+    if (win.sinceMs != null) {
+      // Refused by name, never skipped — a row with no readable instant cannot
+      // be placed inside or outside a window, and dropping it would answer with
+      // a record short by exactly the rows nobody looks for. `acts.at` is NOT
+      // NULL and all 2,498 prod rows parse (measured 2026-09-16), so this is
+      // vacuous today and is here so it stays vacuous loudly.
+      const undated = all.find((w) => !Number.isFinite(Date.parse(w.iso)));
+      if (undated) return { code: 500, body: { error: "bounce",
+        defect: `departure act ${undated.act_id} carries no readable instant, so a window cannot place it`,
+        hint: "the unwindowed read still answers — listing a row does not require dating it. Fix the act, not the query." } };
+      walks = walks.filter((w) => Date.parse(w.iso) >= win.sinceMs);
+    }
+    if (win.last != null) walks = walks.slice(-win.last);
     return { code: 200, body: {
-      what: "every departure the record holds, oldest first — the walk ledger's grammar, served from acts",
+      what: win.asked
+        ? "the departures the record holds inside the window you asked for, oldest first — the walk ledger's grammar, served from acts"
+        : "every departure the record holds, oldest first — the walk ledger's grammar, served from acts",
       order: "the record's own append order: the frozen ledger's era first (in file order), then the journal's. NOT by row id, and not by instant.",
-      count: walks.length, eras: derived.eras,
+      // The census is of the rows RETURNED, so `count` and `eras` are always
+      // answers about the same list. With no window that is every record, which
+      // is what this field has always been.
+      count: walks.length, eras: live.departureCensus(walks),
+      ...(win.asked ? { window: {
+        since: win.since, last: win.last, count_all: all.length,
+        note: "a window FILTERS the record's own append order; it never re-sorts it. `last` is therefore the most recently APPENDED n, which where file order and instant order disagree is not the n latest instants.",
+      } } : {}),
       evaluated_at: new Date(at.ms).toISOString(),
       walks,
     } };
