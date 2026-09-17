@@ -4,32 +4,43 @@
 //
 // ── WHY THIS EXISTS BESIDE test/settlement-escalate.test.mjs ────────────────
 //
-// That file proves the escalator: given a suite-red receipt it composes the
-// right issue, gates the wrong receipt, caps its own list. It proves nothing at
-// all about whether `deploy/settlement-auto.sh` ever CALLS it.
+// That file proves the escalator: given a receipt it composes the right issue,
+// gates the wrong receipt, caps its own list. It proves nothing at all about
+// whether `deploy/settlement-auto.sh` ever CALLS it.
 //
-// Measured, on the reviewer's flip of PR #55: delete the call site at the
-// isolate-off exit and both `settlement-escalate` and `cli-guard` stay GREEN.
-// The logic is proven and the wiring is not, which is the same shape as the
-// 2026-09-14 instance itself — an escalator that existed, was correct, and was
-// never reached. A future edit to the sweep script could drop either call with
-// nothing anywhere going red.
+// Measured, on the reviewer's flip of PR #55: delete a call site and every
+// other suite stays GREEN. The logic is proven and the wiring is not, which is
+// the same shape as the 2026-09-14 instance itself — an escalator that existed,
+// was correct, and was never reached. A future edit to the sweep script could
+// drop a call with nothing anywhere going red.
 //
 // So this runs THE REAL SCRIPT. Not a stub of it, not a grep for the line: a
-// whole crossing in a bottle, against a fixture world whose grammar suite is
-// red, driven to the two suite-red exits, asserting that an escalation was
-// attempted before the exit.
+// whole crossing in a bottle, driven to each of its exits, asserting what each
+// one said and whether it escalated.
+//
+// ── THE GATE SPLIT (founder-ruled 2026-09-16) ───────────────────────────────
+//
+// "A failed settlement should be a crisis." The crossing REFUSES only for harm
+// — the world's `tools/harm-gate.mjs`, run after the sweep and before the push
+// — and the grammar suite runs AFTER the push as a checker whose red is a
+// warning: an issue on the first occurrence, `suite.red` on the receipt, and
+// nothing held. Four exits are driven here: harm named; the gate could not run;
+// a red suite after a published crossing; and the green control.
+//
+// The fixture world answers the harm gate with a STUB, and that is the point of
+// a wiring test: the gate's own truth is proven in the world repo
+// (`tools/harm-gate.test.mjs`, nine falsifiers over a real tree); this bottle
+// asks only whether the script calls it, reads its exit, and says the right
+// words to the right escalation before it exits.
 //
 // ── THE BOTTLE, AND WHY IT IS ITS OWN ──────────────────────────────────────
 //
 // It is the shape of test/settlement-source-flip.test.mjs's harness, minus
 // everything that file needs and this one does not: no logging `git`/`npm`/
 // `node` wrappers and no command log, because the question here is not which
-// commands were issued but whether one line of output appeared. What is left is
-// the fixture world, the fixture town, and the env — the minimum a crossing
-// needs to reach its own suite gate.
+// commands were issued but whether one line of output appeared.
 //
-// ── AND IT CANNOT REACH GITHUB ─────────────────────────────────────────────
+// ── AND IT CANNOT REACH GITHUB ────────────────────────────────────────────
 //
 // The observable is the escalator's ISSUE-WANTED line, which it prints when it
 // finds no credential. `SETTLEMENT_ESCALATE_CRED` is pointed at a path inside
@@ -60,7 +71,7 @@ const SH_OK = has("sh -c 'true'");
 
 // ── THE SCRIPT'S OWN LITTER, PUT BACK ──────────────────────────────────────
 //
-// `settlement-auto.sh` copies the failing suite log to
+// `settlement-auto.sh` copies a red suite log to
 // `$OFFICE_ROOT/settlement-last-suite.log` — deliberately, it is where the
 // deploy docs tell an operator to look — and `$OFFICE_ROOT` has to be this
 // checkout, because the script runs tools out of it by absolute path. So the
@@ -99,11 +110,32 @@ const p = join(repo, "WORLD", "swept.txt");
 mkdirSync(dirname(p), { recursive: true });
 writeFileSync(p, "swept; " + stakes.length + " stake row(s)\\n");
 execFileSync("git", ["-C", repo, "add", "-A"]);
-execFileSync("git", ["-C", repo, "commit", "-qm", "settlement: sweep 1 published"], { env: { ...process.env, GIT_AUTHOR_NAME: "sweep", GIT_AUTHOR_EMAIL: "s@x.invalid", GIT_COMMITTER_NAME: "sweep", GIT_COMMITTER_EMAIL: "s@x.invalid", GIT_AUTHOR_DATE: "2026-09-08T00:00:00Z", GIT_COMMITTER_DATE: "2026-09-08T00:00:00Z" } });
+execFileSync("git", ["-C", repo, "commit", "-qm", "settlement: sweep 1 published"], { env: { ...process.env, GIT_AUTHOR_NAME: "sweep", GIT_AUTHOR_EMAIL: "s@x.invalid", GIT_COMMITTER_NAME: "sweep", GIT_COMMITTER_EMAIL: "s@x.invalid" } });
 process.stdout.write(JSON.stringify({
   published: ["alpha/one"], unpublished: [], left_drafted: [], withdrawn: [], quarantined: [], dropped: [], rebased: [],
   surveyed: { branches: 0, delta_rows: 0, escrow_backed_deltas: 0 },
 }) + "\\n");
+`;
+
+/**
+ * The harm gate, as the fixture world answers it. `HARM_GATE_SAYS` drives the
+ * exit the script has to read: `ok` (0, no harm), `harm` (1, a report naming a
+ * mark), `cannot` (2, no report — the gate could not run). Its stdout is the
+ * report the script keeps and the receipt carries.
+ */
+const HARM_GATE_STUB = `
+const says = process.env.HARM_GATE_SAYS ?? "ok";
+if (says === "cannot") { console.error("harm-gate: could not gate: no WORLD/world-state.json — the fold did not run"); process.exit(2); }
+const moved = says === "harm";
+const checks = [
+  { name: "lint", ok: true, count: 0, rows: [] },
+  { name: "moved", ok: !moved, count: moved ? 1 : 0, rows: moved ? ["alpha/one: 10,10 -> 900,900 (no act names it)"] : [] },
+  { name: "lost", ok: true, count: 0, rows: [] },
+  { name: "escrow", ok: true, count: 0, rows: [], note: "fold stamps 1" },
+  { name: "parcels", ok: true, count: 0, rows: [], note: "0 standing parcel(s)" },
+];
+process.stdout.write(JSON.stringify({ ok: !moved, base: "HEAD~1", before: 1, after: 1, checks }) + "\\n");
+process.exit(moved ? 1 : 0);
 `;
 
 const STAMP_MINT_STUB = `
@@ -118,15 +150,14 @@ export function currentHouseholds(clone) {
 let runSeq = 0;
 
 /**
- * ONE CROSSING, IN A BOTTLE, AGAINST A RED SUITE.
+ * ONE CROSSING, IN A BOTTLE.
  *
- * The world carries canon and a sweep stub that really commits; the town carries
- * a stake deriver and the household resolver the crossing refuses without (the
- * registry refresh, 2026-09-09 — a fixture town with no resolver is a town no
- * crossing can cross, and every case here would refuse before reaching the
- * suite). The world's `npm test` is the red one.
+ * The world carries canon, a sweep stub that really commits, and the harm-gate
+ * stub; the town carries a stake deriver and the household resolver the
+ * crossing refuses without (the registry refresh, 2026-09-09). The world's
+ * `test:candle` is red or green as the case asks.
  */
-function crossing(label, env = {}, { redSuite = true } = {}) {
+function crossing(label, env = {}, { redSuite = true, gate = true } = {}) {
   const root = join(scratch, `${label}-${++runSeq}`);
   const seed = join(root, "seed");
   const origin = join(root, "world.git");
@@ -147,22 +178,19 @@ function crossing(label, env = {}, { redSuite = true } = {}) {
     },
   });
 
-  // ── the world ──────────────────────────────────────────────────────────────
+  // ── the world ────────────────────────────────────────────────────────
   mkdirSync(join(seed, "WORLD", "marks", "alpha", "published-note"), { recursive: true });
   mkdirSync(join(seed, "tools"), { recursive: true });
   writeFileSync(join(seed, "WORLD", "marks", "alpha", "published-note", "mark.md"),
     "---\nkind: sited\nby: alpha\ndate: 2026-08-01\n---\n\nalpha published this\n");
   writeFileSync(join(seed, "tools", "settlement-sweep.mjs"), SWEEP_STUB);
-  // NOTE what is NOT here: `tools/settlement-isolate.mjs`. Its absence is what
-  // drives the default arm to the UNATTRIBUTABLE exit — the isolator is invoked,
-  // cannot run, and exits non-zero, which is the same branch a real isolator
-  // takes when it cannot attribute the red to any mark.
+  if (gate) writeFileSync(join(seed, "tools", "harm-gate.mjs"), HARM_GATE_STUB);
   writeFileSync(join(seed, "package.json"), JSON.stringify({
     name: "world-fixture",
     // Both names, one runner: since postmark#2790 the crossing asks the world for
     // `test:candle`, and a fixture that answers only `test` reads as a RED suite
-    // (missing script) — which turned the green control red on the merged train.
-    scripts: (() => { const run = redSuite ? `node -e ${JSON.stringify(RED_SUITE_RUNNER)}` : 'node -e ""'; return { test: run, 'test:candle': run }; })(),
+    // (missing script).
+    scripts: (() => { const run = redSuite ? `node -e ${JSON.stringify(RED_SUITE_RUNNER)}` : 'node -e ""'; return { test: run, "test:candle": run }; })(),
   }));
   g(".", "init", "-q", "-b", "main", seed);
   g(seed, "config", "user.email", "seed@postmark.invalid");
@@ -178,7 +206,7 @@ function crossing(label, env = {}, { redSuite = true } = {}) {
   execFileSync("git", ["-C", sweepClone, "config", "user.email", "sweep@postmark.invalid"], { stdio: "ignore" });
   execFileSync("git", ["-C", sweepClone, "config", "user.name", "sweep"], { stdio: "ignore" });
 
-  // ── the town ───────────────────────────────────────────────────────────────
+  // ── the town ────────────────────────────────────────────────────────
   mkdirSync(join(townSeed, "tools"), { recursive: true });
   writeFileSync(join(townSeed, "tools", "world-stake.mjs"),
     'process.stdout.write(JSON.stringify([{ holder: "alpha", mark: "alpha/one", n: 1, weight: 3, tick: 0 }]) + "\\n");\n');
@@ -223,54 +251,76 @@ function crossing(label, env = {}, { redSuite = true } = {}) {
 }
 
 /** The whole observable, in one place: did the call site fire, and for which class. */
-const escalatedAs = (run) => run.escalations.join("\n").match(/ISSUE-WANTED title: settlement refusal: (\S+)/)?.[1] ?? null;
+const escalatedAs = (run) => run.escalations.join("\n").match(/ISSUE-WANTED title: settlement (?:refusal|warning): (\S+)/)?.[1] ?? null;
 
-test("THE WIRING · the isolate-off suite-red exit ESCALATES before it exits 1", { skip: !SH_OK && "no POSIX sh" }, () => {
-  // `SETTLEMENT_ISOLATE=0` takes the plain-red arm — the one the reviewer's flip
-  // deleted while every other suite stayed green.
-  const run = crossing("plain", { SETTLEMENT_ISOLATE: "0" });
+test("THE WIRING · HARM NAMED refuses, exits 1, and escalates `harm` with the gate's own rows", { skip: !SH_OK && "no POSIX sh" }, () => {
+  const run = crossing("harm", { HARM_GATE_SAYS: "harm" }, { redSuite: false });
 
-  assert.equal(run.res.status, 1, `a red suite publishes nothing and exits 1: ${run.res.stderr.slice(-800)}`);
-  assert.match(run.res.stderr, /SUITE RED/,
-    "the bottle never reached the suite-red exit, so this test proves nothing about it");
-  assert.equal(escalatedAs(run), "suite-red",
-    "the suite-red exit reached `exit 1` with NO escalation — the 2026-09-14 instance, in which an escalator "
-    + "that existed and was correct was simply never called");
+  assert.equal(run.res.status, 1, `harm publishes nothing and exits 1: ${run.res.stderr.slice(-800)}`);
+  assert.match(run.res.stderr, /HARM NAMED/, "the bottle never reached the harm exit, so this proves nothing about it");
+  assert.equal(escalatedAs(run), "harm",
+    "the harm exit reached `exit 1` with NO escalation — a crisis that reaches nobody");
+  assert.equal(run.receipt?.status, "refused");
+  assert.equal(run.receipt?.harm?.ok, false, "the receipt carries the gate's report");
+  assert.deepEqual(run.receipt?.harm?.checks?.find((c) => c.name === "moved")?.rows, ["alpha/one: 10,10 -> 900,900 (no act names it)"],
+    "and the mark it named, verbatim");
+  const body = run.escalations.join("\n") + run.res.stderr;
+  assert.match(body, /alpha\/one: 10,10 -> 900,900/, "the issue names the mark — the whole reason a person can act on it");
+  assert.doesNotMatch(run.res.stderr, /SUITE WARNING/, "no checker ran: nothing published, nothing to check");
+});
 
-  // AND THE ISSUE IT WOULD HAVE FILED IS THE RIGHT ONE. Without this the test
-  // would pass on a call site that fired with the wrong arguments — the suite's
-  // own reds are the whole reason a person can act on this issue at all.
+test("THE WIRING · a gate that COULD NOT RUN refuses too, says so, and escalates `harm` — never a pass", { skip: !SH_OK && "no POSIX sh" }, () => {
+  const run = crossing("cannot", { HARM_GATE_SAYS: "cannot" }, { redSuite: false });
+
+  assert.equal(run.res.status, 1, `a gate that could not run publishes nothing and exits 1: ${run.res.stderr.slice(-800)}`);
+  assert.match(run.res.stderr, /HARM GATE COULD NOT GATE/);
+  assert.equal(escalatedAs(run), "harm");
+  assert.equal(run.receipt?.status, "refused");
+  assert.equal(run.receipt?.harm, null, "no report to carry — the receipt says null, not a fabricated verdict");
+  assert.match(run.receipt?.detail ?? "", /could not gate/);
+});
+
+test("THE WIRING · a world with NO harm gate at its sha refuses rather than publishing ungated", { skip: !SH_OK && "no POSIX sh" }, () => {
+  const run = crossing("nogate", {}, { redSuite: false, gate: false });
+
+  assert.equal(run.res.status, 1, run.res.stderr.slice(-800));
+  assert.match(run.res.stderr, /no tools\/harm-gate\.mjs at this world sha/);
+  assert.equal(escalatedAs(run), "harm");
+  assert.equal(run.receipt?.status, "refused");
+});
+
+test("THE WIRING · a RED suite after the push is a WARNING: the town publishes, exits 0, `suite.red` on the receipt, `suite-warning` escalated with the reds", { skip: !SH_OK && "no POSIX sh" }, () => {
+  const run = crossing("warning", { HARM_GATE_SAYS: "ok" }, { redSuite: true });
+
+  assert.equal(run.res.status, 0, `a red checker holds nothing: ${run.res.stderr.slice(-800)}`);
+  assert.match(run.res.stderr, /SUITE WARNING/, "the bottle never reached the checker's red arm");
+  assert.doesNotMatch(run.res.stderr, /SUITE RED, UNATTRIBUTABLE|publishing nothing/, "the old refusing exits are gone, not renamed");
+  assert.equal(run.receipt?.status, "published");
+  assert.equal(run.receipt?.suite?.red, true);
+  assert.deepEqual(run.receipt?.suite?.reds, [
+    "not ok 12 - the-town/pledges names a mark canon does not carry",
+    "not ok 40 - a household line the register has no row for",
+  ], "the receipt carries the reds themselves, not a count");
+  assert.equal(escalatedAs(run), "suite-warning",
+    "the checker's red reached the exit with NO escalation — a warning nobody hears is the 2026-09-14 shape again");
   const body = run.escalations.join("\n") + run.res.stderr;
   assert.match(body, /not ok 12 - the-town\/pledges names a mark canon does not carry/);
-  assert.match(body, /IT DID NOT RUN/,
-    "the isolate-off exit must say the pass never ran, not that it attributed nothing");
+  assert.match(body, /THE TOWN IS PUBLISHED/, "the issue must say the town published — a warning read as a refusal sends a person to rerun a crossing that landed");
+  assert.equal(existsSync(LITTER), true, "the red log is copied where the deploy docs say to look");
 });
 
-test("THE WIRING · the UNATTRIBUTABLE suite-red exit escalates too, and says so differently", { skip: !SH_OK && "no POSIX sh" }, () => {
-  // The default arm. The fixture world carries no `tools/settlement-isolate.mjs`,
-  // so the isolator is invoked, exits non-zero, and the script takes the exit it
-  // takes when a red cannot be pinned on any mark this crossing carried.
-  const run = crossing("unattributed");
-
-  assert.equal(run.res.status, 1, `a red suite publishes nothing and exits 1: ${run.res.stderr.slice(-800)}`);
-  assert.match(run.res.stderr, /SUITE RED, UNATTRIBUTABLE/,
-    "the bottle took the isolate-off arm instead — the two exits must be reached separately or one is untested");
-  assert.equal(escalatedAs(run), "suite-red");
-
-  const body = run.escalations.join("\n") + run.res.stderr;
-  assert.match(body, /IT RAN AND ATTRIBUTED NOTHING/,
-    "this exit must not borrow the isolate-off verdict: one says nobody looked, the other says nothing was found, "
-    + "and a person reading the wrong one hunts a law-level red that may belong to a single mark");
-  assert.doesNotMatch(body, /IT DID NOT RUN/);
-});
-
-test("THE CONTROL · a GREEN suite reaches no suite-red exit and escalates nothing", { skip: !SH_OK && "no POSIX sh" }, () => {
-  // Without this, both assertions above are satisfied by a script that escalates
+test("THE CONTROL · no harm and a GREEN suite publishes, exits 0, and escalates nothing", { skip: !SH_OK && "no POSIX sh" }, () => {
+  // Without this, the assertions above are satisfied by a script that escalates
   // on every crossing — which would bury the queue exactly as filing a fresh
-  // issue per crossing would, and would look identical from the two tests above.
-  const run = crossing("green", { SETTLEMENT_ISOLATE: "0" }, { redSuite: false });
+  // issue per crossing would.
+  const run = crossing("green", { HARM_GATE_SAYS: "ok" }, { redSuite: false });
 
-  assert.doesNotMatch(run.res.stderr, /SUITE RED/, "the green control reached a suite-red exit");
+  assert.equal(run.res.status, 0, run.res.stderr.slice(-800));
+  assert.match(run.res.stderr, /harm gate: NO HARM/);
+  assert.doesNotMatch(run.res.stderr, /SUITE WARNING|HARM NAMED/);
+  assert.equal(run.receipt?.status, "published");
+  assert.equal(run.receipt?.harm?.ok, true, "the receipt carries the gate's report on a clean crossing too — `ok: true` is the receipt that it RAN");
+  assert.equal(run.receipt?.suite?.red, false, "and the checker's — `red: false` is the receipt that it ran");
   assert.deepEqual(run.escalations, [],
-    "a crossing whose suite passed escalated anyway — an alarm that always fires is an alarm nobody reads");
+    "a clean crossing escalated anyway — an alarm that always fires is an alarm nobody reads");
 });
