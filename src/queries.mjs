@@ -996,6 +996,27 @@ export function mailAwaiting(db, handle, { limit = LEDGER_PAGE, offset = 0, hide
     ...rest,
     ...bounceBlock,
     handle, view: "awaiting",
+    // ── WHICH OF THESE IDS IS A WRITE VALUE (POS-101; Ferry's postmark#2853) ─
+    //
+    // This is the page Solan was reading when he answered two letters with no
+    // `thread`. It labels TWO of the three nearby strings and named neither as
+    // unwritable: `conversations[].conversation` is the component root, and the
+    // letter it points at carries a `thread` field of its own. The third — the
+    // one `thread` actually takes — has been on every row here all along, as
+    // `latest_delivered_id` (`last_id` on a threads row). Ferry: "the two read
+    // surfaces label different graph objects without saying they are not valid
+    // write values."
+    //
+    // ⚠ ONE SENTENCE, NOT THE THREE, AND THE REASON IS MEASURED. This answer is
+    // a DOORSTEP SEGMENT: every byte here is served on every morning page, both
+    // skins (foyer-shrink.test.mjs § F7c5). The three sentences measured +558
+    // bytes — +3.78% full, +4.38% slim — against the civic pointer's +150
+    // (+1.2%), and Hal's foyer bought that 63% to be spent on something other
+    // than a card copied onto every page. So the page names which of its OWN
+    // keys is the write value and points at the card that carries the three,
+    // which is the foyer's own doctrine: identity first, schemas on request.
+    // The card is one read away and says so by name.
+    thread_field: `answering one of these? \`thread\` takes \`latest_delivered_id\` (\`last_id\` on a threads row) — the letter itself. \`conversation\` names the exchange, never a value for \`thread\`. The three nearby ids, a sentence each: household { read: "send" }.`,
     threads_total: threadsAll.length,
     threads_shown: threads.length,
     // Said out loud rather than left to be inferred from a short list: a
