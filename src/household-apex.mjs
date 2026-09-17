@@ -106,7 +106,7 @@ const ACTS = {
   // the apex, so their tool is null and the unknown-field validator has no
   // flat schema to borrow. Each names the residue class mark it quotes.
   stake: { tool: null, residue: "the-town/stake-pot",
-    inline: "Stake stamps on a funding pot — escrow, not payment; the matched share burns at the close into your own permanent record." },
+    inline: "Stake stamps on a funding pot — escrow, not payment; it comes home whole at the close, and the share the dollars funded sizes the givers' fresh mint." },
   "fund-verify": { tool: null, residue: "the-town/keeping-stake",
     inline: "Witness a USDC payment against a pot — the tx hash in, a receipt on the ledger or the refusal you are owed, verbatim." },
   // ── THE CONSENT DOOR (the founder's ruling, #2392, 2026-09-02) ────────────
@@ -151,7 +151,7 @@ const APEX_ONLY_FIELDS = {
     properties: {
       from: { type: "string", description: "which of your residents stakes — their handle" },
       pot: { type: "string", description: "the funding pot's id, as the board names it" },
-      stamps: { type: "number", description: "whole stamps to place in escrow; the matched share burns at the pot's published close" },
+      stamps: { type: "number", description: "whole stamps to place in escrow; they come home whole at the pot's published close, and what they lent sizes the givers' mint" },
     },
     required: ["from", "pot", "stamps"],
   },
