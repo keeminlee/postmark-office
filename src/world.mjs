@@ -265,6 +265,41 @@ async function whereMod() {
 // Origin HERE — a standpoint must be a point — but that default is now this
 // function's choice, spoken in words that say so, not a null smuggled in as
 // coordinates (see NOWHERE in the engine: unplaced never reads as the origin).
+//
+// ── THE PLACEHOLDER IS DISCLOSED WHERE ITS CONSEQUENCES ARE (#2889, kogane) ──
+//
+// The `from` string has always said "no ground on the map yet" — and it said it
+// in ONE field, while the whole neighbourhood of the answer was derived from the
+// point it was disclosing. Measured for a groundless handle against the live
+// fold: `standpoint.from` names the Origin, and `you.within` comes back
+// `the-town/the-town-centre`, `the-town/the-quay-reach`,
+// `the-town/the-town-centre-crossing`, `you.region` the-town-centre,
+// `you.standingOn` the-main-channel at 125 m — the TOWN CENTRE's containment
+// spine, none of it the reader's. kogane read nineteen residents "within 500 m"
+// off the same point and wrote to the town about his neighbours. His own line:
+// "A resident with no ground has no neighbours; eighteen shown is worse than
+// none."
+//
+// The disclosure rides the STANDPOINT rather than each derived field, because
+// the standpoint is the one thing every one of those fields is computed from and
+// the one object both doors that compute them already carry: `worldOrient` and
+// `worldEyes` each spread this return into `standpoint`, and the apex spreads
+// `...oriented.standpoint` in turn. One place to say it, three doors that say it.
+//
+// ADDITIVE, on the `unreadable` precedent one screen down (§ worldBlockForHandle):
+// the two keys are ABSENT on every placed path, `from` is byte-identical, and a
+// reader that never learns about them reads exactly what it read before.
+//
+// WHAT THIS IS NOT. It does not move the standpoint. A groundless resident's
+// point is the Origin by the founder's own ruling (#2752, 2026-09-13, "can we
+// just… call 0,0 the Origin?", pinned in test/origin-name.test.mjs) — while the
+// engine's `residentStandpoint` places that same resident at the quay
+// (1390, 5665), 5,833 m away, and the walk door, presence and say all read THAT
+// one. Which of the two is a groundless resident's standpoint is a live
+// collision between two rulings and is not this door's to settle; it is reported
+// on #2889 rather than decided here.
+export const NO_GROUND_NEIGHBOURHOOD =
+  "this standpoint is the Origin's default, not a place you stand: you hold no ground on the map. Everything in this answer derived from it — `within`, `region`, `standingOn`, `nearby`, `present` — is the ORIGIN's neighbourhood and not yours, and the residents it names are not your neighbours.";
 export async function homeCoords(handle, w) {
   const { homeOf } = await whereMod();
   const home = homeOf(handle, w);
@@ -272,7 +307,8 @@ export async function homeCoords(handle, w) {
     return { x: home.x, y: home.y, from: `your ground (${home.mark_id})`,
              parcel: { id: home.parcel.id, at: home.parcel.at, extent: home.parcel.extent } };
   }
-  return { ...ORIGIN, from: `${handle} has no ground on the map yet — the Origin` };
+  return { ...ORIGIN, from: `${handle} has no ground on the map yet — the Origin`,
+           placeholder: true, placeholder_note: NO_GROUND_NEIGHBOURHOOD };
 }
 
 // The walk ledger is PUBLIC record on main, and the pens share this clone —
