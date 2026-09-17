@@ -36,7 +36,7 @@ const bounce = (code, defect, hint, extra = {}) => ({ error: "bounce", code, def
 //
 //   the OBJECT publishes the menu — `stakeable`, sealed per carrier
 //     (mark = mark-mode/returns-at-unstake · ballot = ballot-mode/returns-at-
-//      close · pot = pot-mode/burns-at-published-close · bounty = mark-mode-
+//      close · pot = pot-mode/returns-whole-at-published-close · bounty = mark-mode-
 //      for-now)
 //   the EDGE records the choice — stake-mark / stake-ballot / stake-pot
 //
@@ -52,9 +52,9 @@ const bounce = (code, defect, hint, extra = {}) => ({ error: "bounce", code, def
 export const STAKE_POT_MARK = "the-town/stake-pot";
 export const POT_STAKEABLE_SLOT = "the-town/pot-stakeable-slot";
 export const STAKE_POT_BODY =
-  "A pot stake is need with weight — it burns when the pot's published close condition is met, and re-mints by the town's one split.";
+  "A pot stake is need with weight — it comes home whole at the pot's published close, and the mass it lent sizes what the givers are minted.";
 export const POT_STAKEABLE_BODY =
-  "A pot accepts pot-mode stakes only: they burn when its own close condition is met, and the split re-mints them.";
+  "A pot accepts pot-mode stakes only: they come home whole at its own close, and what they lent sizes the givers' mint.";
 // Still citable as the underlying keeping law; stake-pot is the primary residue.
 export const KEEPING_STAKE_MARK = "the-town/keeping-stake";
 
@@ -236,7 +236,7 @@ export async function potStakeViaOffice(clone, { from, pot, stamps }, key, { cha
     // WHAT YOU JUST CONSENTED TO, in the planted marks' own words. The menu the
     // object published, and the edge your choice recorded — quoted, never
     // paraphrased, because a paraphrase of a consent term is not the term.
-    stakeable: { slot: "stakeable", value: "pot-mode — burns at the published close", mark: POT_STAKEABLE_SLOT, says: POT_STAKEABLE_BODY },
+    stakeable: { slot: "stakeable", value: "pot-mode — returns whole at the published close", mark: POT_STAKEABLE_SLOT, says: POT_STAKEABLE_BODY },
     mode: { mark: STAKE_POT_MARK, says: STAKE_POT_BODY },
     keeping_law: KEEPING_STAKE_MARK,
     // No mode argument was available to you, and that is the taxonomy: a pot's
@@ -249,8 +249,9 @@ export async function potStakeViaOffice(clone, { from, pot, stamps }, key, { cha
 // THE WORD IS PRIMARY, and a pot that has not said one must never be read as
 // though it had. Three cases here and no fourth:
 //
-//   "epoch"  the monthly pot. Its stakes burn at each epoch close and split by
-//            the keeping law, and the door says so in the pot's own sentence
+//   "epoch"  the monthly pot. Its stakes come home whole at each epoch close
+//            and size the givers' mint by the keeping law (amended 2026-09-14:
+//            nothing burns), and the door says so in the pot's own sentence
 //            rather than leaving the caller to derive it from the cadence and
 //            the target. The word was made EXPLICIT in the record on
 //            2026-08-25 at the founder's word, after a resident found the
@@ -267,10 +268,10 @@ export async function potStakeViaOffice(clone, { from, pot, stamps }, key, { cha
 //
 // The sentence is the pot file's, quoted: pot-keeping-ec2.json § source.
 export const EPOCH_CLOSE_SAYS =
-  "at each month's close, the share of every stake that the month's dollars funded burns and splits between the stakers themselves and the payers per the keeping law (ECONOMY-DIALS.json law_side.keeping)";
+  "At each month's close every stake comes home whole, and the stakes size the reward: the share of the staked mass that the month's dollars funded is minted fresh to the givers by dollar share, per the keeping law (ECONOMY-DIALS.json law_side.keeping)";
 
 export const CLOSE_UNSTATED =
-  "this pot's file names no close word — nothing in the record says when, or whether, a stake on it would burn";
+  "this pot's file names no close word — nothing in the record says when a stake on it would come home";
 
 export function publishedClose(p) {
   if (!p?.close) return { word: null, floor_usd: null, unstated: CLOSE_UNSTATED };
@@ -306,7 +307,7 @@ export function fundRead(_key, { db, stripeUrl = process.env.FUND_STRIPE_URL ?? 
       close: p.close,
       min_close_usd: p.min_close_usd,
       // WHEN THE FIRST CLOSE ACTUALLY RUNS, for every pot that names it — not
-      // only the epoch ones. A caller consenting to a burn is owed the date the
+      // only the epoch ones. A caller consenting to a close is owed the date the
       // first one lands, and until now this read carried the cadence and the
       // target and never the day. § _first_close: "Surfaces render the epoch
       // from this field, not from the posting date." Null on a pot that has not
@@ -317,11 +318,11 @@ export function fundRead(_key, { db, stripeUrl = process.env.FUND_STRIPE_URL ?? 
       escrow: p.escrow?.staked ?? 0,
       // THE CONSENT PAYLOAD, before the money moment rather than after it. The
       // menu this object publishes, in the planted mark's own words, beside the
-      // close word and floor that say when the burn actually happens — a caller
+      // close word and floor that say when the close actually happens — a caller
       // consents to a return, and cannot consent to one nobody stated.
       stakeable: {
         slot: "stakeable",
-        value: "pot-mode — burns at the published close",
+        value: "pot-mode — returns whole at the published close",
         mark: POT_STAKEABLE_SLOT,
         says: POT_STAKEABLE_BODY,
         mode: { mark: STAKE_POT_MARK, says: STAKE_POT_BODY },
