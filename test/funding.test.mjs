@@ -163,8 +163,12 @@ test("the grammar the office guessed before the town landed its own is now inval
     "`pot: x` (loose) is not `pot:x` (tight) — the receipt names no readable pot");
   assert.match(reasonFor(f, "· keeping-burn ·"), /no standalone keeping-burn row/,
     "the burn is the escrow movement to BURN, not a row of its own");
-  assert.match(reasonFor(f, "for: unstake"), /for: pot-return:/,
-    "a stake leaving a pot must name which of the two exits it took");
+  // AMENDED 2026-09-17: `for: unstake` is a lawful exit now (the town's
+  // pot-unstake row), but only with its `via:` — the fixture's row has none,
+  // so it stays invalid, refused for the field it lacks rather than for the
+  // word it uses.
+  assert.match(reasonFor(f, "for: unstake"), /carries no `via:`/,
+    "a stake taken back must name how it was taken; a bare `for: unstake` is refused for the missing field");
 
   // and none of them bought their way into the folds
   assert.equal(f.holoByParty.has("mallory"), false, "a forged holo mints nothing");
