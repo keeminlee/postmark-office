@@ -148,10 +148,16 @@ test("every act's fields are generated, never empty-by-accident", async () => {
   // The apex-only acts have no flat tool to borrow from — their own schema is
   // the source, and it must describe rather than merely exist.
   const stake = at("stake").fields;
-  assert.deepEqual(Object.keys(stake).sort(), ["from", "pot", "stamps"]);
+  assert.deepEqual(Object.keys(stake).sort(), ["from", "pot", "preview", "stamps"]);
   assert.equal(stake.stamps.type, "number");
   assert.equal(stake.from.required, true);
   assert.ok(stake.pot.description.length > 0, "a field with no description teaches nothing");
+  // POS-83's opt-in, and the grammar has to carry it or the unknown-field
+  // validator refuses a preview by name on the one act with no flat tool to
+  // borrow the field from. Described, like every other field on this card.
+  assert.equal(stake.preview.type, "boolean");
+  assert.equal(stake.preview.required, undefined, "the founder ruled opt-in, not a forced two-step");
+  assert.ok(stake.preview.description.length > 0, "a field with no description teaches nothing");
 
   // The paper acts borrow their fields from the flat tool they dispatch to, and
   // those must arrive non-empty — an empty `fields` block does not read as "the

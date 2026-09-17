@@ -40,7 +40,8 @@ import {
 import { moveGuard } from "./world-move-guard.mjs"; // the drain night: moving a mark moves what stands on it
 import { ACTION_AMEND, ACTION_LEAVE, ACTION_WITHDRAW, CLASS_MARK, CLASS_MOVE, CLASS_VOICE, anchorAt, appendActFlipped, appendJournal, filedPathOfAt, laneFlipped, mirrorLaneAct, pathFor, pinWitnesses, singleLogEnabled } from "./world-journal.mjs"; // POS-5 slice 1: the one append-only log
 import { guardedDraftsForKey, guardedLiveChildrenOf, guardedLiveMarks } from "./world2-guards.mjs"; // B1: the door guards' own reads, behind W2_GUARDS (runbook §4 B1)
-import { WORLD_STAKE_TOOLS, callWorldStakeTool, worldPortfolioStakeSlice } from "./world-stake.mjs"; // P3 draft, append-shaped
+import { WORLD_STAKE_TOOLS, callWorldStakeTool, worldPortfolioStakeSlice, markStakeBlock } from "./world-stake.mjs"; // P3 draft, append-shaped
+import { toConfirm } from "./stamps-preview.mjs"; // POS-83: the inline stake's half of the confirmation step
 import { classNames, classRoster, classDials, departurePace, freeCellIn, RESIDENT_INSTANTIABLE, residentMayInstantiate, STRIDE_MARK_ID } from "./world-classes.mjs"; // which classes exist — read from the record, never held
 import { HOLD_TOOLS, callHoldTool } from "./world-hold.mjs"; // the object primitive: who holds what
 import { createVoices, EARSHOT_M } from "./voices.mjs"; // earshot: speech at a position (the party line)
@@ -2845,10 +2846,38 @@ export async function leaveMarkViaOffice(worldClone, payload = {}, key = null) {
       result.stake_bounce = { defect: staked.defect, hint: staked.hint };
     } else {
       result.staked = staked;
+      // ONE GRAMMAR ON EVERY DOOR (POS-83). The stake's own receipt already
+      // carries the block; it is hoisted to the same key here so a caller who
+      // leaves a mark with `stamps:` reads what happened to their stamps in the
+      // same place they would read it at the stake door, rather than one level
+      // down inside a nested receipt they have to know to open.
+      if (staked?.stamps) result.stamps = staked.stamps;
       if (result.publishing?.heads_up) result.publishing = {
         note: `✦${stakeN} stands in escrow behind it — it publishes at the next crossing.`,
       };
     }
+  }
+  // ── THE PREVIEW'S HALF (POS-83) ──────────────────────────────────────────
+  //
+  // The mark preview of #2692 already runs the stake's verdict and says
+  // `put_forward` — what it never said is what the stake does to your stamps.
+  // The block is asked of the stake door's own owner (`markStakeBlock`) rather
+  // than recomputed here, so the numbers a leave-with-stamps previews are the
+  // numbers the stake door would show for the same act.
+  //
+  // GATED ON `put_forward`, exactly as the real ledger move above is: when the
+  // ground refuses the publication the stake never runs, and a block promising
+  // ✦3 would move would be describing a write this door has already ruled out.
+  // ⚑ Only the single-log lane rules on it — `journalLeaveMark` emits
+  // `put_forward`, `leave-exec.mjs` does not — so with WORLD_SINGLE_LOG off
+  // there is no verdict here to gate on and no block rides. That asymmetry is
+  // older than this lane (the same gate gives the flag-off lane no inline stake
+  // at all) and is reported rather than papered over.
+  if (result?.preview === true && stakeN >= 1 && result?.put_forward === true) {
+    result.stamps = await markStakeBlock({
+      handle: by, stamps: stakeN,
+      to_confirm: toConfirm(`world { do: "leave-mark", args: { …, stamps: ${stakeN} } }`),
+    });
   }
   return result;
 }
