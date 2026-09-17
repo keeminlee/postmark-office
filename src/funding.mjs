@@ -91,11 +91,20 @@
 // D1 (same day): "ownership is a derived READ = minted (all sources) + holo —
 // NOT a tense; no fifth tense node." So the door does not invent a fifth tense
 // and does not quietly widen `minted`: it returns an `ownership` block that does
-// the summing in the open. `tenses.minted` stays the EARNED PRIMARY number,
-// because that is the one the tense arithmetic reconciles against (the town's own
-// invariant: liquid = mint_count − staked). Widening it would break that
-// invariant for a leg that carries no coin — which is the whole reason R12 keeps
-// the row arrow-free.
+// the summing in the open.
+//
+// ⚠ `tenses.minted` NO LONGER STAYS THE EARNED PRIMARY NUMBER, and this note
+// said it did until 2026-09-17. It is the town's `foldMintCount`, which gains a
+// holo arm at the founder's ruling (postmark-town/postmark#2886), so it is
+// primary mint PLUS holo. The invariant the old sentence was protecting —
+// `liquid = mint_count − staked` — SURVIVES, and it survives for a specific
+// reason worth writing down: a holo row credits BOTH sides, the mint count and
+// the balance, so widening `minted` by `n` widens `liquid` by the same `n` and
+// the subtraction still closes. That is exactly what made the keeping leg
+// different: it is mint with NO liquid coin, so folding IT in would widen one
+// side only and break the invariant while looking plausible. Holo is a whole
+// stamp; the keeping leg is a record. Hence holo is inside `minted` and the
+// keeping leg is still named beside it.
 //
 // SOULBOUND IS REPEALED — THE FOUNDER'S RULING, 2026-09-17, verbatim: "non-
 // spendable is repealed; the stamps are like any other, but are holo to signify
@@ -190,7 +199,7 @@ export const TEACH = {
   pots_section: "the funding pots open on this board — each gathers real dollars toward a named need; anyone can read who funded what, and stamps staked on a pot signal support without becoming the pot's money",
   pot: "a pot is a funding bounty on the quest board: real dollars gathered toward a named need for a named keeper, epoch by epoch; status says where it stands, and a draft pot may not name its keeper yet",
   patrons: "the patrons who funded this pot — each of the ledger's holo rows joined to the pot-receipt its `ref:` names: who paid, how many dollars, when, and the holo minted to them for it",
-  escrow: "stamps residents currently have staked on this pot — a stake signals that the need matters to you and never becomes the pot's dollars; at the epoch close every stake comes home whole, and the share of the staked mass that the epoch's dollars funded (fund the whole posted need and the whole mass counts, fund half and half of it does) is minted fresh to the givers by dollar share — a giver's own household's stakes left out, rho-capped, the remainder un-minted. Nothing burns (amended 2026-09-14)",
+  escrow: "stamps residents currently have staked on this pot — a stake signals that the need matters to you and never becomes the pot's dollars; at the epoch close every stake comes home whole, and the share of the staked mass that the epoch's dollars funded (fund the whole posted need and the whole mass counts, fund half and half of it does) is minted fresh to the givers by dollar share as HOLO ROWS, one per receipt the close settles, 0 included — a giver's own household's stakes left out, rho-capped against their mint from every source, the remainder un-minted. Nothing burns (amended 2026-09-14), and holo stamps are liquid like any other and count toward that cap themselves (amended 2026-09-17: it compounds by design)",
   funding: "how much of this pot's posted need the payers have actually met — dollars the ledger has witnessed that no close has settled yet, over the pot's per-epoch target. This fraction is the ONLY thing dollars are priced against: there is no dollar-to-stamp rate anywhere in the town, so how much a pot matters is measured by how much the community stakes on it, not by what the money says it is worth",
   receipts: "the witnessed payments behind this pot's dollars — rail (stripe, usdc, or grant), whole dollars, and the receipt ref that is unique forever; the pot file's received and this sum are two clocks, disclosed side by side, never silently reconciled",
   invalid: "rows that claim a funding kind but fail its field law — surfaced here by name rather than rendered as if they were good; a forged row cannot buy legitimacy by being listed",

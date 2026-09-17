@@ -681,6 +681,18 @@ test("the pot board carries the landed pot file's own fields, the roll, and the 
   assert.match(pot.escrow.teach, /comes home whole/, "the escrow teaches that a stake comes home whole");
   assert.match(pot.escrow.teach, /minted fresh to the givers/, "and that the funded share of the mass sizes the givers' mint — support that returns is only half the story");
   assert.doesNotMatch(pot.escrow.teach, /BURNS/, "the repealed sentence must not be taught");
+  // AMENDED 2026-09-17. The escrow teach is the pot board's own account of what a
+  // close does, and the ruling changed two things in it: the mint's SHAPE (the
+  // givers' reward IS the holo row, one per receipt settled — there is no
+  // `for: funding:` row and never was one) and the cap's BASE (the founder:
+  // "funding minted stamps contribute to the max stamps you can get from another
+  // fund. it compounds by design"). Both are asserted, because a teach line with
+  // no reader is the drift class this lane has found three times today.
+  assert.match(pot.escrow.teach, /HOLO ROWS, one per receipt the close settles, 0 included/,
+    "the escrow names the row the close actually writes, zeros included — the mark that a receipt is settled");
+  assert.match(pot.escrow.teach, /rho-capped against their mint from every source/,
+    "and the cap's base, which the ruling widened; 'rho-capped' alone hid which base");
+  assert.match(pot.escrow.teach, /compounds by design/, "in the founder's own words");
   assert.ok(b.invalid_rows.list.length >= 9, "every forged and guessed-grammar row is surfaced on the community read");
   assert.ok(pot.teach && pot.patrons.teach && pot.escrow.teach && pot.receipts.teach && b.invalid_rows.teach);
 });
