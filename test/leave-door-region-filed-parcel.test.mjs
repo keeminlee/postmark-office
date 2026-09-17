@@ -1,32 +1,47 @@
-// leave-door-region-filed-parcel.test.mjs — THE REPRODUCTION for #2888.
+// leave-door-region-filed-parcel.test.mjs — POS-88's law on the door that runs.
 //
-// THE INSTANCE: Current the reader re-amended `the-keepers-flat` (his parcel,
-// canon since 2026-08-24, FILED under the founder's region tree at
-// `WORLD/marks/let-there-be-light/the-doubled-coast/the-keepers-flat/mark.md`)
+// THE INSTANCE (#2888): Current the reader re-amended `the-keepers-flat` — his
+// parcel, canon since 2026-08-24, FILED under the founder's region tree at
+// `WORLD/marks/let-there-be-light/the-doubled-coast/the-keepers-flat/mark.md` —
 // and the door answered "your household already holds four parcels — parcel
-// claiming is capped at three per household". The 409 never fired.
+// claiming is capped at three per household". The 409 never fired. He bounced
+// AFTER POS-88 / #2614 had already ruled that an amendment is not a claim.
 //
-// #2888 reads that as an ID MISMATCH: the door computes `<by>/<slug>` while the
-// record's id is the region path, so the standing mark is never found, `exists`
-// is false, and the act falls through to the cap as a fresh claim.
+// #2888 FIRST READ THAT AS AN ID MISMATCH: the door computes `<by>/<slug>` while
+// the record's id is its region path, so the standing mark is never found,
+// `exists` is false, and the amend falls through the cap as a fresh claim. That
+// reading does not hold, and LEGS 1, 3, 4, 5 and 7 are what killed it.
 //
-// THIS FILE EXISTS TO TEST THAT READING, and it does not hold. A mark's id is
-// `<by>/<leaf-dir-name>`, never its path — `tools/marks-fold.mjs:331` in the
-// world engine: `rec.id = by != null ? `${by}/${slug}` : `?/${slug}`` with
-// `slug = basename(nodeDir)` (L318), its own comment reading "id = by + leaf".
-// The region tree is a FILING location, not an id namespace. So the door DOES
-// find the standing mark, `exists` IS true, `amending` IS true — and the cap
-// fires anyway, because `journalLeaveMark`'s parcel block has no `!amending`
-// guard at all. It has only `m.id !== id` (src/world.mjs:2380), which stops the
-// mark being amended from counting ITSELF and does nothing else.
+// A mark's id is `<by>` plus the LEAF directory name, never its path.
+// `tools/marks-fold.mjs` in the world engine builds it — `slug =
+// basename(nodeDir)` (L318), `rec.id = by + "/" + slug` (L331) — and says so in
+// its own comment: "id = by + leaf". `WORLD/world-state.json`, the only canon
+// `canonForGuards()` reads, carries all 92 of the town's parcels at two-segment
+// ids, including at the sha #2888 measured. The region tree is a FILING
+// location, not an id namespace. The door FOUND the flat every time.
 //
-// POS-88 / #2614 ruled the law — "THE CAP ASKS ONLY OF NEW GROUND" — and landed
-// it in `src/leave-exec.mjs:205` as `if (!amending) { … }`. That is the
-// condemned git-era door. The live journal door never got it. One law, two
-// holders, and the flip at one left the other's falsifiers green.
+// THE REAL CAUSE: `journalLeaveMark`'s parcel block had no `!amending` guard. It
+// had only `m.id !== id`, which stops the mark being amended from counting
+// ITSELF and does nothing else — so a household at or over the cap could not
+// amend ANY held parcel, region-filed or not. POS-88 ruled the law on the 09-14
+// instance and landed it 2026-09-15 in `6f7a889a`, in `src/leave-exec.mjs` — the
+// condemned git-era door — and nowhere else. One law, two holders; the fix at
+// one left the other's falsifiers green, because they drive the other executor.
 //
-// The legs below assert WHAT THE DOOR ACTUALLY DOES at office main bf8ee0c7e,
-// so the record of the cause is a run and not a reading.
+// THE ARITHMETIC IS THE TELL, and it is why the exclusion is not the fix.
+// Current's household holds FIVE parcels across seven handles; the exclusion
+// dropped the flat and left FOUR — the very number he was shown. That count was
+// the exclusion WORKING. Under #2888's reading nothing would have been excluded
+// and he would have been told five.
+//
+// THE FIX (src/world.mjs, the parcel block): `if (!amending && mine >= cap)`.
+//
+// THE CAN-FAIL FLIP: remove `!amending` → LEG 2 and LEG 4 red (403 "already
+// holds 3 parcels"), every other leg green. Run receipt in the hotfix PR.
+//
+// THE OTHER HALF OF THE LAW, asserted so the guard cannot widen into a repeal:
+// LEG 6 (new ground is still capped) and LEG 7 (a slug is unique per author, so
+// `amending` cannot be reached by naming someone else's).
 //
 //   node --test test/leave-door-region-filed-parcel.test.mjs
 
@@ -236,16 +251,21 @@ test("#2888's 404 does NOT fire: the door FINDS the region-filed parcel, because
     `#2888 predicts 404 "no mark reader/the-keepers-flat to amend". Got: ${JSON.stringify(out)}`);
 });
 
-// ── LEG 2 · what actually bounces ───────────────────────────────────────────
+// ── LEG 2 · THE FIX · an amendment of a held parcel is not a claim ──────────
+//
+// THE FLIP: drop `!amending` from the cap at src/world.mjs and this goes red
+// with 403 "your household already holds 3 parcels" — three, not four, because
+// `m.id !== id` excludes the mark being amended. That count was the proof the
+// lookup resolved all along, and it is what #2888 mistook for a missed lookup.
 
-test("THE REAL CAUSE: the amend is found, `amending` is true, and the CAP fires anyway — the journal door has no `!amending` guard", async () => {
+test("THE FIX: a household AT the cap amends a parcel it already holds — POS-88's law, on the door that runs", async () => {
   const out = await leave(flat({ amend: true }), HOUSE);
-  console.log(`    RECEIPT · amend: true  → ${out.code} "${out.defect}" / hint: "${out.hint}"`);
-  assert.equal(out.ok, false, "the amend bounced — that is the instance");
-  assert.equal(out.code, 403, `expected the cap's 403, got ${JSON.stringify(out)}`);
-  assert.match(out.defect, /already holds 3 parcels/,
-    "THREE, not four: `m.id !== id` (src/world.mjs:2380) DID exclude the mark being amended — proof the lookup resolved it. The count is the household's OTHER parcels, and 3 >= 3 still bounces.");
-  assert.match(out.hint, /capped at 3 per household/);
+  console.log(`    RECEIPT · amend: true  → ${out.ok ? `OK id=${out.id} dir=${out.dir} amended=${out.amended}` : `${out.code} "${out.defect}"`}`);
+  assert.equal(out.ok, true, `the amendment must go forward: ${JSON.stringify(out)}`);
+  assert.equal(out.amended, true, "and the door calls it an amendment, not a claim");
+  assert.equal(out.id, "reader/the-keepers-flat", "the receipt names the mark at its real id — `by` + leaf");
+  assert.equal(out.dir, "let-there-be-light/the-doubled-coast/the-keepers-flat",
+    "and it lands on the EXISTING region filing — gate A, never a `<by>/<slug>` twin beside it");
 });
 
 // ── LEG 3 · the 409 says the mark is standing ───────────────────────────────
@@ -260,14 +280,16 @@ test("without `amend`, the 409 fires — the door's own word that it sees a stan
 
 // ── LEG 4 · the region filing is not the variable ───────────────────────────
 
-test("a parcel filed AT ITS ID bounces identically — the filing is not what the door trips over", async () => {
+test("a parcel filed AT ITS ID amends identically — the filing was never the variable", async () => {
   const out = await leave({
     slug: "the-sloop-at-anchor", kind: "parcel", by: "sailor", amend: true,
     at: { x: 500, y: 500 }, body: "the sloop, re-said",
   }, HOUSE);
-  assert.equal(out.code, 403, `expected the same cap bounce, got ${JSON.stringify(out)}`);
-  assert.match(out.defect, /already holds 3 parcels/,
-    "identical to LEG 2. If the region filing were the cause, this leg would go through and LEG 2 would not.");
+  assert.equal(out.ok, true, `the amendment must go forward: ${JSON.stringify(out)}`);
+  assert.equal(out.dir, "sailor/the-sloop-at-anchor", "filed at its id, and it stays there");
+  // The pair is the point: LEG 2 is region-filed and this one is not, and they
+  // behave identically both before and after the fix. Had the filing been the
+  // cause, exactly one of the two would ever have moved.
 });
 
 // ── LEG 6 · the cap's own law, which no fix here may loosen ─────────────────
@@ -286,6 +308,31 @@ test("CONTROL: a genuinely NEW parcel for the same household is still refused at
   assert.match(out.defect, /already holds 4 parcels/,
     "FOUR here — nothing is excluded, because this slug names no standing mark. The same arithmetic that showed Current `four` when his flat WAS excluded from five.");
   assert.match(out.hint, /capped at 3 per household/);
+});
+
+// ── LEG 7 · a slug is unique PER AUTHOR, and the fix does not widen that ────
+//
+// The other way a cap-skip could go wrong: if `amending` could be reached by
+// naming somebody else's slug, this guard would hand a household at the cap a
+// way past it. Ids are author-scoped, so it cannot — asserted rather than
+// assumed, because the fix's whole effect is to trust `amending`.
+
+test("a DIFFERENT author's same slug is a fresh claim, capped as today — and cannot be amended into", async () => {
+  const fresh = await leave({
+    slug: "the-keepers-flat", kind: "parcel", by: "sailor",
+    at: { x: 1800, y: 1800 }, body: "the same word, a different author",
+  }, HOUSE);
+  assert.equal(fresh.code, 403, `a different author's same slug is NEW ground, got ${JSON.stringify(fresh)}`);
+  assert.match(fresh.defect, /already holds 4 parcels/,
+    "FOUR — nothing excluded, because `sailor/the-keepers-flat` names no standing mark. Reader's flat is not sailor's to stand on.");
+
+  const amend = await leave({
+    slug: "the-keepers-flat", kind: "parcel", by: "sailor", amend: true,
+    at: { x: 1800, y: 1800 }, body: "not yours to re-say",
+  }, HOUSE);
+  assert.equal(amend.code, 404, `amending another author's slug must 404, got ${JSON.stringify(amend)}`);
+  assert.match(amend.defect, /no mark "sailor\/the-keepers-flat" to amend/,
+    "the 404 #2888 predicted for the OWNER is the one a stranger to the slug correctly gets");
 });
 
 // ── LEG 5 · the amend's landing path ────────────────────────────────────────
