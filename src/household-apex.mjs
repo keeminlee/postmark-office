@@ -756,6 +756,33 @@ function shadowReadAnswer(what, rest, head, domain, ctx) {
   } finally { store.db?.close(); }
 }
 
+/**
+ * THE SAME CARD, FOR THE ANSWER THAT HAS NO DOMAIN TO CARRY IT (#2889, kogane).
+ *
+ * A shadow read hands back the act's card beside the thing the act wrote. When
+ * the thing does not exist yet the read bounces — and the card, which is exactly
+ * the instructions for making it, went down with the page. This is the half of
+ * `shadowReadAnswer` a bounce can use: same `actCard`, same `slim` gate, same
+ * store discipline, and `{}` when there is nothing to add so the bounce spreads
+ * to byte-identical on every path this does not serve.
+ *
+ * Never throws. A card is a garnish on a refusal — an unreadable class store
+ * must not turn a 404 into a 500, and the door's own sentence (`hint`) already
+ * names the act that fixes it.
+ */
+function cardOnBounce(what, ctx = {}) {
+  const spec = ACTS[what];
+  const { slim, schemas, schemaRequired } = ctx;
+  if (!spec?.shadow || !slim) return {};
+  let store = null;
+  try {
+    store = openStore();
+    const card = actCard(what, store.db, { schemas, schemaRequired });
+    return card ? { card, reading_law: READING_LAW } : {};
+  } catch { return {}; }
+  finally { try { store?.db?.close(); } catch { /* a reader that cannot close still read */ } }
+}
+
 // ── the verb ────────────────────────────────────────────────────────────────
 
 /**
@@ -904,7 +931,25 @@ export async function householdApex(args = {}, key = null, ctx = {}) {
     if (what === "home") {
       if (!handle) return whichResident("home");
       let h = null; try { h = homeQ(db, handle); } catch { h = null; }
-      return h ? shadowReadAnswer("home", { read: "home", of: handle, home: h }, { read: "home", of: handle }, h, ctx) : bounce(404, `no home page for "${handle}"`, "tend one — household { do: \"home\" }");
+      return h ? shadowReadAnswer("home", { read: "home", of: handle, home: h }, { read: "home", of: handle }, h, ctx)
+        // ── THE BOUNCE CARRIES THE CARD (#2889, kogane's third) ──────────────
+        //
+        // "An act's card stands behind the thing it teaches you to make."
+        // `read: "home"` is `do: "home"`'s shadow and answers the card beside
+        // the page — so the ONE caller who most needs the instructions, the one
+        // with no home page yet, was the only caller who could not get them:
+        // the 404 took the card down with the page. Measured on the MCP skin
+        // before building: a handle with a page answers
+        // {read, of, card, home, reading_law}; a handle without answers
+        // {error, code, defect, hint} and nothing else.
+        //
+        // Gated on `slim` exactly as the success path is (§ shadowReadAnswer),
+        // for that function's own reason: the card rides the MCP envelope and
+        // not the REST answer, and REST is "stable/simple for frozen consumers".
+        // A card appearing on a REST 404 would move bytes on a surface this
+        // door deliberately keeps still.
+        : bounce(404, `no home page for "${handle}"`, "tend one — household { do: \"home\" }",
+            cardOnBounce("home", ctx));
     }
     if (what === "standing") return householdStanding(key, ctx);
     // ── the stamps tenancy's reads ──────────────────────────────────────────
