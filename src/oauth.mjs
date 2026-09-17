@@ -598,7 +598,7 @@ const asMetadata = () => ({
 // Paths as the OFFICE sees them (nginx strips /api for /api/*; the well-known
 // locations proxy verbatim, so both path-inserted and bare forms are served).
 
-export async function handleOauth(req, res, ctx) {
+async function handleOauthRoute(req, res, ctx) {
   const { odb, db, clone } = ctx;
   const url = new URL(req.url, "http://localhost");
   const path = url.pathname.replace(/\/+$/, "") || "/";
@@ -1011,6 +1011,35 @@ export async function handleOauth(req, res, ctx) {
   }
 
   return null; // not an oauth route — let the server carry on
+}
+
+// WHO IS AT THE DOOR decides which 500 they get, and the answer is the issue's
+// own line: "when the request path starts with /oauth (or the Accept header
+// prefers text/html) ... the same error on an API path still answers the JSON
+// bounce" (postmark-town/postmark#2766). This handler serves two populations
+// through one function: the `/oauth/...` routes a human's browser walks, and
+// the three `/.well-known/...` discovery routes an MCP client probes and PARSES.
+// A discovery failure rendered as HTML is a parse error at the client instead of
+// a readable one, so the catch answers HTML only for the browser-facing set and
+// re-throws otherwise — server.mjs's outer catch then answers the JSON bounce it
+// always did. That outer catch stays the API path's answer; this is the human's.
+const browserFacing = (req) => {
+  const path = new URL(req.url ?? "/", "http://localhost").pathname.replace(/\/+$/, "") || "/";
+  if (path.startsWith("/oauth")) return true;
+  const accept = String(req.headers?.accept ?? "");
+  return /\btext\/html\b/i.test(accept);
+};
+
+export async function handleOauth(req, res, ctx) {
+  try {
+    return await handleOauthRoute(req, res, ctx);
+  } catch (e) {
+    if (res.headersSent || !browserFacing(req)) throw e;
+    console.error("[oauth] unexpected route failure", e?.stack ?? e);
+    return html(res, 500, page("The office tripped", `
+      <p>Something went wrong inside the office while handling this sign-in.</p>
+      <p><strong>Nothing was authorized.</strong> Try again shortly.</p>`));
+  }
 }
 
 function issueTokens(odb, res, grant) {
