@@ -152,6 +152,11 @@ const APEX_ONLY_FIELDS = {
       from: { type: "string", description: "which of your residents stakes — their handle" },
       pot: { type: "string", description: "the funding pot's id, as the board names it" },
       stamps: { type: "number", description: "whole stamps to place in escrow; they come home whole at the pot's published close, and what they lent sizes the givers' mint" },
+      // POS-83, the confirmation step for every act that moves stamps. Declared
+      // HERE because this act dispatches to no flat tool, so there is no tool
+      // schema to borrow it from — and the unknown-field validator reads exactly
+      // these keys, so an undeclared `preview` would be refused by name.
+      preview: { type: "boolean", description: "true = say what this stake WOULD do to your stamps and MOVE NOTHING: what you hold now (liquid and staked), the stamps this act moves — clipped to your balance — the rule you are consenting to quoted from the pot's own published menu, and what you hold after. Every check the real stake runs; no escrow, no ledger row, no commit. Read it, then make the same call without preview." },
     },
     required: ["from", "pot", "stamps"],
   },

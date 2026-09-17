@@ -722,6 +722,15 @@ test("PREVIEW, flag on — says where the mark would nest and writes no row, no 
   assert.equal(seen.overhang, undefined, "nested where alpha stands — no overhang to disclose");
   assert.equal(seen.staked, undefined, "stamps: 1 on a preview stakes nothing");
   assert.equal(seen.stake_bounce, undefined);
+  // POS-83: …and it says WHAT the stake would do to the stamps, which is the one
+  // thing this preview ran the verdict for and never told anyone. Gated on
+  // `put_forward`, so the block rides exactly when the ledger move would.
+  assert.equal(seen.put_forward, true, "the fixture's inline ✦1 clears the square's minimum");
+  assert.ok(seen.stamps, "the stamps block rides the preview of an act that would move stamps");
+  assert.deepEqual(Object.keys(seen.stamps), ["you_hold", "this_act", "after", "to_confirm"],
+    "one grammar on every door — the same four keys the stake door answers with");
+  assert.equal(seen.stamps.this_act.law, "the-town/stake-mark");
+  assert.match(seen.stamps.to_confirm, /without preview: true/);
   assert.equal(withDb((db) => readJournal(db).length), 0, "NO ROW — a preview is not a declaration");
   assert.equal(git("rev-parse", "draft/alpha").trim(), before, "and the sketchbook did not move");
   // ⚑ THE FLIP: drop the preview branch in journalLeaveMark and the row count reads 1.
