@@ -586,7 +586,27 @@ import { utimesSync as _ut } from "node:fs";
 // pin the mtime relative to the tests' fixed clock, so the probe's verdict is
 // deterministic instead of riding the wall clock the rest of the suite avoids
 _ut(_wstate, new Date((T0 - 5 * 60_000)), new Date((T0 - 5 * 60_000)));
-const FIXTURE_CONFIG = { ..._CFG, watchers: [{ key: "usdc_watch", label: "the usdc-watch timer", state: _wstate, cadenceMs: 6 * 60 * 60_000 }] };
+// §7 fixture, same discipline: a real temp report with a published outcome, so
+// the healthy tick EXERCISES the refresh probe rather than skipping it — and so
+// the suite does not read /srv/postmark-harbor/site-refresh.json, whose verdict
+// would otherwise ride whatever the box last published. This suite runs on the
+// box too.
+const _rrep = join(_wdir, "site-refresh.json");
+_wf(_rrep, JSON.stringify({
+  at: new Date(T0 - 4 * 60_000).toISOString(),
+  status: "published",
+  town_sha: "9468d6e3419b1c6b03d10c82cd19ff6c0a1917a4",
+  site_main: "26d75407b7cc9bfb7bf79008a23380d217939d49",
+  release_tag: "release/2026-w38.2",
+  published: "/srv/postmark-site-refresh/releases/20260917T081659Z-9468d6e3",
+  passes: 2,
+  detail: "converged after 2 pass(es) at town 9468d6e3",
+}, null, 1));
+const FIXTURE_CONFIG = {
+  ..._CFG,
+  watchers: [{ key: "usdc_watch", label: "the usdc-watch timer", state: _wstate, cadenceMs: 6 * 60 * 60_000 }],
+  siteRefresh: { ..._CFG.siteRefresh, report: _rrep, cadenceMs: 6 * 60 * 60_000 },
+};
 // cadence is 6h IN THE FIXTURE ONLY: the LOUDLY test advances its clock ~1h to
 // exercise held-alert semantics, and the watcher must stay inside its window
 // across that whole timeline — its own verdicts are covered by the four
@@ -832,4 +852,205 @@ test("a hand-run sentinel prints the parked rails too, not only the broken ones"
   // must agree about what is worth saying.
   const src = readFileSync(new URL("../tools/site-sentinel.mjs", import.meta.url), "utf8");
   assert.match(src, /PARKED/, "the console names parked probes");
+});
+
+
+// ── §7: the site refresh's OUTCOME (2026-09-17, postmark-town/postmark#2884) ─
+//
+// THE INSTANCE. At 08:12:35Z the box published a town with 48 doors missing,
+// from a three-week-old committed snapshot. The board read 14 green at
+// 08:20:02Z. Nothing on the board was wrong — nothing on it was looking at the
+// refresh at all. The refresh writes its own report; this is the probe that
+// reads it.
+//
+// THE REPORT'S SHAPE IS THE BOX'S, NOT ONE INVENTED HERE. Copied from
+// /srv/postmark-harbor/site-refresh.json as it stood at 2026-09-17T08:10:00Z,
+// which is the run of the instance itself:
+//
+//   { "at": "2026-09-17T08:10:00Z", "status": "published",
+//     "town_sha": "9468d6e3...", "site_main": "26d75407...",
+//     "release_tag": "release/2026-w38.2",
+//     "published": "/srv/postmark-site-refresh/releases/20260917T081659Z-9468d6e3",
+//     "passes": 2, "detail": "converged after 2 pass(es) at town 9468d6e3" }
+//
+// A STANDING FINDING THAT BELONGS BESIDE THESE TESTS: that report — the
+// instance's OWN report — says `published`. The report is written once, at the
+// end of a run, and a run whose first pass published short and whose second
+// pass converged ends `published`. So THIS PROBE ALONE WOULD HAVE BEEN GREEN
+// FOR THE 08:10Z RUN. It is postmark-site#97's exit that makes the pair work: a
+// short fetch there dies the run at deploy/site-refresh.sh L428, `die` writes
+// `report failed`, and this probe reads it. Neither half is the guard on its
+// own, and this comment is here so nobody later reads this probe as one.
+
+import { BAD, classifySiteRefresh } from "../tools/site-sentinel.mjs";
+
+const REFRESH_LABEL = "the box's site refresh";
+const CADENCE = 30 * MINUTE;
+const NOW = Date.parse("2026-09-17T08:20:00Z");
+const freshAt = (minAgo) => NOW - minAgo * MINUTE;
+const boxReport = (over = {}) => ({
+  at: "2026-09-17T08:10:00Z",
+  status: "published",
+  town_sha: "9468d6e3419b1c6b03d10c82cd19ff6c0a1917a4",
+  site_main: "26d75407b7cc9bfb7bf79008a23380d217939d49",
+  release_tag: "release/2026-w38.2",
+  published: "/srv/postmark-site-refresh/releases/20260917T081659Z-9468d6e3",
+  passes: 2,
+  detail: "converged after 2 pass(es) at town 9468d6e3",
+  ...over,
+});
+const classify = (over = {}, { atMinAgo = 10, ...rest } = {}) => classifySiteRefresh({
+  exists: true,
+  report: boxReport(over),
+  atMs: freshAt(atMinAgo),
+  mtimeMs: freshAt(atMinAgo),
+  nowMs: NOW,
+  cadenceMs: CADENCE,
+  label: REFRESH_LABEL,
+  ...rest,
+});
+
+test("§7 FAILED is DOWN, and the report's own detail is the reason VERBATIM", () => {
+  // The detail is the sentence the founder reads on Discord and now in the
+  // site's header popover, so it may not be summarised, reworded or truncated.
+  const detail = "fetch-town.mjs tripped";
+  const r = classify({ status: "failed", detail });
+  assert.equal(r.verdict, "DOWN");
+  assert.ok(r.reason.includes(detail), `the DOWN reason must CONTAIN the report's detail verbatim; got: ${r.reason}`);
+  assert.equal(r.detail, detail, "and it rides onto the board so the site's popover can print it");
+  assert.ok(BAD.has(r.verdict), "DOWN is in the sentinel's own BAD set, so this alerts and shows on the site");
+
+  // a longer, real-shaped detail survives whole
+  const long = "SNAPSHOT SHORT — residents.json keeps 134 rows; the checkout has 182 households; 48 doors are missing from /residents/ until the office answers";
+  assert.ok(classify({ status: "failed", detail: long }).reason.includes(long));
+});
+
+test("§7 PUBLISHED is OK, and it names the release and how long ago", () => {
+  const r = classify({ status: "published" }, { atMinAgo: 3 });
+  assert.equal(r.verdict, "OK");
+  assert.match(r.reason, /^published 20260917T081659Z-9468d6e3 3 min ago$/,
+    `the release dir's own name, not the whole path; got: ${r.reason}`);
+  assert.equal(r.detail, "converged after 2 pass(es) at town 9468d6e3");
+});
+
+test("§7 QUIET is OK — nothing moved is not nothing working", () => {
+  const r = classify({ status: "quiet", published: "", detail: "nothing moved since the last build (town 9468d6e3, release/2026-w38.2)" }, { atMinAgo: 7 });
+  assert.equal(r.verdict, "OK");
+  assert.match(r.reason, /nothing to publish 7 min ago/);
+  assert.match(r.reason, /nothing moved since the last build/);
+});
+
+test("§7 NO REPORT AT ALL is INFO — a fresh box is not a broken one", () => {
+  const r = classifySiteRefresh({ exists: false, nowMs: NOW, cadenceMs: CADENCE, label: REFRESH_LABEL });
+  assert.equal(r.verdict, "INFO");
+  assert.ok(!BAD.has(r.verdict), "INFO never alerts — and composeBoard still counts it and names it as parked");
+  assert.match(r.reason, /has written no report yet/);
+});
+
+test("§7 A STALE `published` IS NOT GREEN — three cadences and the publisher has stopped", () => {
+  const ok = classify({}, { atMinAgo: 89 });
+  assert.equal(ok.verdict, "OK", "89 minutes is inside three 30-minute cadences");
+  const stale = classify({}, { atMinAgo: 91 });
+  assert.equal(stale.verdict, "STALE", "91 is not");
+  assert.ok(BAD.has(stale.verdict));
+  assert.match(stale.reason, /91 min ago/);
+  assert.match(stale.reason, /30-min cadence/);
+  // AND IT SAYS WHICH STAMP IT MEASURED. An instrument that will not name what
+  // it read cannot be checked against the thing it claims to have read.
+  assert.match(stale.reason, /its own `at` stamp/);
+  const byMtime = classifySiteRefresh({
+    exists: true, report: boxReport({ at: "not a date" }),
+    atMs: null, mtimeMs: freshAt(120), nowMs: NOW, cadenceMs: CADENCE, label: REFRESH_LABEL,
+  });
+  assert.equal(byMtime.verdict, "STALE");
+  assert.match(byMtime.reason, /the report file's mtime/, "and when the stamp is unreadable it says it fell back");
+});
+
+test("§7 A FAILURE OUTRANKS ITS AGE, and the reason carries both clocks", () => {
+  // A thing with two clocks needs two numbers (2026-08-25, (vvv)). The founder
+  // needs "the last refresh failed"; the operator needs "and nothing has
+  // reported since". One verdict, both facts, neither hiding the other.
+  const r = classify({ status: "failed", detail: "the site build tripped" }, { atMinAgo: 240 });
+  assert.equal(r.verdict, "DOWN", "a failure does not become merely stale by waiting");
+  assert.match(r.reason, /the site build tripped/);
+  assert.match(r.reason, /nothing has reported since — 240 min/);
+});
+
+test("§7 AN UNKNOWN STATUS WORD IS UNKNOWN, NEVER OK — nobody-has-checked must not render as checked-and-fine", () => {
+  // The 2026-08-25 cancellation finding, in this file's own words: a value
+  // meaning "nothing was decided" was mapped to OK, and the board went
+  // all-green on the afternoon the atlas sync was failing on every tick.
+  for (const status of ["running", "skipped", "", null, undefined, 0, "PUBLISHED"]) {
+    const r = classify({ status });
+    assert.equal(r.verdict, "UNKNOWN", `status ${JSON.stringify(status)} must not be read as healthy`);
+    assert.match(r.reason, /read as unread rather than as healthy/);
+  }
+  assert.match(classify({ status: "running" }).reason, /"running"/, "and it quotes the word it actually saw");
+  // UNKNOWN is not in BAD (it does not page, by this file's own doctrine) but
+  // composeBoard turns it into DEGRADED and says so in the one line read.
+  const board = composeBoard({ probes: [{ key: "site_refresh", verdict: "UNKNOWN", reason: "x" }], nowIso: "t", alerting: {} });
+  assert.equal(board.status, "DEGRADED");
+  assert.match(board.summary, /could not be read/);
+});
+
+test("§7 A HALF-WRITTEN REPORT IS UNKNOWN, and reading it throws nothing", () => {
+  const r = classifySiteRefresh({ exists: true, report: null, readError: "Unexpected end of JSON input", nowMs: NOW, cadenceMs: CADENCE, label: REFRESH_LABEL });
+  assert.equal(r.verdict, "UNKNOWN");
+  assert.match(r.reason, /could not be read \(Unexpected end of JSON input\)/);
+  assert.equal(r.detail, null);
+});
+
+test("§7 the expected cadence is the cadence the shipped timer fires at", () => {
+  // Same law as §6b, and the same reason: the two numbers live in different
+  // files and nothing but this test makes them agree. The refresh timer does
+  // not use the `*:M/N` spelling the §6b reader parses — it is `OnCalendar=*:10,40`,
+  // two marks an hour — so this derives the interval from the marks themselves.
+  const OFFICE = new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
+  const sr = _CFG.siteRefresh;
+  assert.ok(sr, "the config declares the refresh it watches");
+  assert.ok(sr.unit, "and names the unit the cadence comes from");
+  const unitPath = join(OFFICE, "deploy", sr.unit);
+  assert.ok(existsSync(unitPath), `${sr.unit} is a unit this repo ships`);
+  const unit = readFileSync(unitPath, "utf8");
+  const m = unit.match(/^OnCalendar=\*:([\d,]+)\s*$/m);
+  assert.ok(m, `${sr.unit} declares an OnCalendar this test can read`);
+  const marks = m[1].split(",").map(Number);
+  assert.ok(marks.length >= 1 && marks.every((n) => Number.isInteger(n) && n >= 0 && n < 60), "the marks are minutes past the hour");
+  assert.equal(sr.cadenceMs, (60 / marks.length) * 60_000,
+    `the watch expects ${Math.round(sr.cadenceMs / 60_000)} min but ${sr.unit} fires ${marks.length} times an hour (${m[1]})`);
+});
+
+test("§7 the probe reaches the BOARD, with its detail, and its first tick says nothing", async () => {
+  // End to end through `tick`, against a real temp report — the fixture config
+  // above points the probe at it. Two things are asserted that a classifier
+  // test cannot: that the probe is IN the probe list at all, and that `detail`
+  // survives onto the board entry the site's popover reads.
+  const { probes, alerts } = await tick({ fetchImpl: stubFetch(GREEN_TABLE), exec: stubExec(), state: {}, nowMs: T0, config: FIXTURE_CONFIG });
+  const p = probes.find((x) => x.key === "site_refresh");
+  assert.ok(p, "the refresh probe is on the board, beside usdc_watch");
+  assert.equal(p.kind, "refresh");
+  assert.equal(p.verdict, "OK");
+  assert.equal(p.detail, "converged after 2 pass(es) at town 9468d6e3", "the report's detail rides onto the board entry");
+  assert.ok(!alerts.some((a) => a.key === "site_refresh"),
+    "FIRST TICK, HEALTHY: transition() takes its `prev == null && !alertable` branch and says nothing");
+
+  // and the other side of that same branch: never-seen -> bad DOES fire, because
+  // a sentinel that boots into an outage and stays quiet has failed at its job.
+  const onset = transition({ prev: null, next: { key: "site_refresh", verdict: "DOWN", reason: "failed: fetch-town.mjs tripped" }, nowMs: T0 });
+  assert.equal(onset.alert.kind, "onset");
+});
+
+test("§7 the new probe's line reads as a SENTENCE in the Discord message", () => {
+  // composeMessage prints `${verdict} — ${label}: ${reason}.` and the label and
+  // reason were written to sit in that frame rather than beside it.
+  const msg = composeMessage({
+    alerts: [{
+      key: "site_refresh",
+      label: REFRESH_LABEL,
+      alert: { kind: "onset", verdict: "DOWN", reason: classify({ status: "failed", detail: "fetch-town.mjs tripped" }).reason, since: NOW },
+    }],
+    board: { summary: "1 down, 0 stale, 14 green.", published_at: "/srv/postmark-sentinel/status.json" },
+    nowIso: "2026-09-17T08:20:00Z",
+  });
+  assert.match(msg, /DOWN — the box's site refresh: the box's site refresh failed: fetch-town\.mjs tripped\./);
 });
