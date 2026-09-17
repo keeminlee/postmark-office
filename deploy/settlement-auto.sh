@@ -697,7 +697,7 @@ fi
 # to git: a receipt saying `source: store` over a git fold would be a worse lie
 # than a refused crossing, and the rollback is an operator's deliberate act
 # (`SETTLEMENT_SOURCE=git`), never something this script decides for itself at
-# 05:45Z with nobody watching.
+# 06:00Z with nobody watching.
 STORE_JSON=""
 DOCKET_JSON=""
 if [ "$SOURCE" = "store" ]; then

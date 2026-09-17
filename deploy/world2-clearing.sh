@@ -6,8 +6,20 @@
 # cadence, it is a habit, and a habit does not survive the person. This is the
 # runner that ends it.
 #
-# LAW (census.md Decision 3 — the candle cadence): windows close 05:45Z and
-# 17:45Z. The timer carries those two marks and nothing else.
+# LAW (census.md Decision 3 — the candle cadence, amended 2026-09-17 on world
+# main by the founder's word): windows close 06:00Z and 18:00Z. The timer
+# carries those two marks and nothing else.
+#
+# They were 05:45Z / 17:45Z from the cadence's birth until the w39 ship — fifteen
+# minutes of head start so the Worldkeeper's :00 heartbeat would read a finished
+# receipt — while his own constitution (Rulings 8 and 9) and the World's bulletin
+# both said the town crosses at 06:00 and 18:00. The statement is now true. The
+# heartbeat moved to :20 to keep its side of the bargain.
+#
+# ⚑ THE TIMER MOVE ALONE DOES NOT MOVE THE WINDOWS — see the chaining note
+# below, which is the same property read from the other side. One deliberate
+# write re-anchors the chain: `world2/tools/window-reanchor.mjs --apply`, by
+# hand, once.
 #
 # ── WHICH WINDOW, AND WHY THE SCRIPT AND NOT THE TIMER DECIDES ──────────────
 # clearing-job.mjs takes `--window N`. A timer cannot know N. So this asks the
@@ -23,8 +35,16 @@
 #     INSERT INTO windows (id, opens_at, closes_at, status)
 #     VALUES ($1, $2, $2::timestamptz + interval '12 hours', 'open')
 #
-# so a window closed eight hours late still leaves its successor on the 05:45/
-# 17:45 marks. A late run costs lateness, never alignment.
+# so a window closed eight hours late still leaves its successor on the marks it
+# already had. A late run costs lateness, never alignment.
+#
+# ⚑ AND THAT IS WHY MOVING THE TIMER CANNOT MOVE THE WINDOWS. The same property
+# that makes the cadence immune to a late box makes a DELIBERATE move impossible
+# from here: a timer at :00 finds a window still due at :45, closes it fifteen
+# minutes after its own boundary, and writes a successor due at :45 again —
+# forever, with the store's rows contradicting the law. `world2/tools/window-
+# reanchor.mjs` is the one write that moves the chain onto the law's mark; the
+# `+ 12 hours` rule above is untouched and carries it from there.
 #
 # ── THE FIRST STEP IS NOT THIS TOOL ─────────────────────────────────────────
 # clearing-job.mjs § its own header, verbatim:
@@ -166,13 +186,20 @@ due_window() {
 }
 
 # ── THE BOUNDARY WAIT (the founder's clock catch, 2026-09-02) ───────────────
-# The windows' boundaries ride at :45:40 — the genesis offset — while the
-# timer fires on the :45:00 marks. So "the open window whose closes_at has
+# The windows' boundaries rode at :45:40 — the genesis offset — while the
+# timer fired on the :45:00 marks. So "the open window whose closes_at has
 # passed" found only the PREVIOUS window, and every close ran a full cycle
 # late: 163 closed 09-02 05:45Z, twelve hours after its own boundary; 164 the
 # same at 17:45Z. The marks stay the timer's (census Decision 3 is law); this
 # waits out the offset instead of moving the marks. Bounded at 90s, and a run
 # that starts with a window already due (catch-up, a hand run) waits zero.
+#
+# ⚑ AFTER THE w39 SHIP, IN TWO STAGES, AND THIS LOOP IS RIGHT FOR BOTH. With the
+# timer on :00 and the chain still on :45:40, the boundary is fourteen minutes
+# BEHIND the timer, so `due_window` answers on the first check and this waits
+# zero. Once `window-reanchor.mjs` puts the chain on :00:00 the genesis offset is
+# gone entirely and boundary and timer coincide, which is a race of milliseconds
+# rather than forty seconds — still a race, so the loop stays exactly as it is.
 for _ in $(seq 1 18); do
   due_window; [ -n "$DUE" ] && break
   sleep 5
