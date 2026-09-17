@@ -13,6 +13,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = 43855;
 const BASE = `http://127.0.0.1:${PORT}`;
 const KEY = "bouncer-test-key";
+const FROZEN_BOUNCER_NOW_MS = String(Date.parse("2026-09-14T07:00:00Z"));
 
 let child, tmp;
 
@@ -24,6 +25,7 @@ before(async () => {
     join(ROOT, "src", "server.mjs"),
     "--port", String(PORT),
     "--db", dbPath,
+    "--bouncer-now-ms", FROZEN_BOUNCER_NOW_MS,
   ], {
     env: {
       ...process.env,
@@ -80,13 +82,19 @@ test("REST and MCP middleware return exact 429s with independent key and househo
   assert.equal((await call("/town")).status, 200);
   assert.equal((await call("/town")).status, 200);
 
+  // This is deliberately longer than one retry-after second. With a wall clock,
+  // the bucket partially refills and the exact response below changes under
+  // scheduler/CPU load. The spawned server gets a fixed bouncer clock through
+  // its composition boundary so this test measures arithmetic, not elapsed time.
+  await new Promise((resolve) => setTimeout(resolve, 1_100));
+
   const readRate = await call("/town");
   assert.equal(readRate.status, 429);
   const readBody = await readRate.json();
   assert.deepEqual(Object.keys(readBody), ["error", "defect", "retry_after_s"]);
   assert.equal(readBody.error, "rate");
-  assert.ok(readBody.retry_after_s >= 1);
-  assert.equal(readRate.headers.get("retry-after"), String(readBody.retry_after_s));
+  assert.equal(readBody.retry_after_s, 30);
+  assert.equal(readRate.headers.get("retry-after"), "30");
 
   // The read bucket is empty, but the independent write bucket still has its
   // first token. With no clone, reaching the route is witnessed by its 409.
@@ -113,4 +121,93 @@ test("REST and MCP middleware return exact 429s with independent key and househo
   assert.equal(writeBody.error, "rate");
   assert.match(writeBody.defect, /write budget/);
   assert.equal(writeRate.headers.get("retry-after"), String(writeBody.retry_after_s));
+});
+
+// ── THE OTHER HALF OF THE SEAM · production still keeps a LIVE clock ─────────
+//
+// The test above pins the frozen clock: with --bouncer-now-ms the window never
+// moves and retry_after_s is exactly 30 however loaded the box is. Nothing yet
+// reads the default, and the default is the one that matters in the office: if
+// --bouncer-now-ms ever acquired a value when it was not passed, every bucket
+// would stop refilling and the first resident to drain one would be shut out
+// for good. That failure is silent — a frozen limiter looks exactly like a
+// working one until somebody hits it.
+//
+// So this is the same measurement with the flag absent, and it is deliberately
+// an INEQUALITY rather than an exact count: any clock that moves at all makes
+// it true, so load can only make the number smaller, never flaky. A frozen
+// clock answers exactly 30 and nothing else can.
+//
+// Its own server, on its own port, derived from the pid the way
+// test/read-worker.test.mjs derives its berth — and in a band clear of every
+// other one in test/, which is the half of that house rule that is easy to get
+// wrong. The fixed ports live in 43821..43922; claim-ledger takes 44000..45499
+// and read-worker 46000..47999. So this one sits above all three, and takes one
+// port in it. (read-worker's own note that "nothing in test/ sits above 44000"
+// is now out of date, and nothing in the suite reads that invariant — worth a
+// guard of its own, which is not this change's instance.)
+//
+// (This file's own PORT is still a fixed 43855 — the same class as office issue
+// #19 — left alone here for the same reason.)
+const LIVE_PORT = 48000 + ((process.pid * 13) % 1500);
+
+test("with no --bouncer-now-ms the office keeps Date.now — the seam is a test affordance, never a new default", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "postmark-office-liveclock-"));
+  const dbPath = join(dir, "fixture.db");
+  fixtureDb(dbPath).close();
+  const live = spawn(process.execPath, [
+    join(ROOT, "src", "server.mjs"),
+    "--port", String(LIVE_PORT),
+    "--db", dbPath,
+    // no --bouncer-now-ms: this is the production composition
+  ], {
+    env: {
+      ...process.env,
+      OFFICE_KEYS: `${KEY}=keemin:wright`,
+      OFFICE_BOUNCER_KEY_READ_PER_MINUTE: "2",
+      OFFICE_BOUNCER_KEY_WRITE_PER_MINUTE: "3",
+      OFFICE_BOUNCER_WORLD_WRITES_PER_HOUR: "1",
+      TOWN_CLONE: join(dir, "no-clone-here"),
+      WORLD_CLONE: join(dir, "no-world-clone"),
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  try {
+    await new Promise((ok, no) => {
+      const timeout = setTimeout(() => no(new Error("live-clock server never listened")), 10_000);
+      live.stdout.on("data", (data) => {
+        if (String(data).includes("listening")) { clearTimeout(timeout); ok(); }
+      });
+      live.on("exit", (code) => no(new Error(`live-clock server exited early (${code})`)));
+    });
+
+    const hit = (path) => fetch(`http://127.0.0.1:${LIVE_PORT}${path}`, {
+      headers: { authorization: `Bearer ${KEY}` },
+    });
+
+    assert.equal((await hit("/town")).status, 200);
+    assert.equal((await hit("/town")).status, 200);
+    const drained = await hit("/town");
+    assert.equal(drained.status, 429, "two reads is the whole budget here, as above");
+
+    // The same wait the frozen test makes. There the answer cannot change; here
+    // it must.
+    await new Promise((resolve) => setTimeout(resolve, 1_100));
+
+    const later = await hit("/town");
+    assert.equal(later.status, 429, "still empty — one second does not refill a 30-second token");
+    const body = await later.json();
+    assert.equal(body.error, "rate");
+    assert.ok(body.retry_after_s < 30,
+      `a live clock must have shortened the wait; got ${body.retry_after_s}, which is what a FROZEN bouncer answers`);
+    assert.equal(later.headers.get("retry-after"), String(body.retry_after_s));
+  } finally {
+    if (live.exitCode === null) {
+      const gone = new Promise((ok) => live.on("exit", ok));
+      live.kill();
+      await gone;
+    }
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
 });

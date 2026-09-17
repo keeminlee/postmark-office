@@ -377,7 +377,18 @@ function reloadWorldCaches() {
 
 setInterval(() => { reloadIndex(); sweepRetired(); reloadWorldCaches(); }, RELOAD_POLL_MS).unref();
 
-const bouncer = new Bouncer();
+// Keep the deterministic clock seam at the process boundary. Bouncer stays
+// environment-agnostic, while the HTTP integration test can pin only its clock.
+// Production omits the flag and therefore keeps Date.now exactly as before.
+const bouncerNowArg = arg("--bouncer-now-ms", null);
+const bouncerNow = (() => {
+  if (bouncerNowArg === null) return Date.now;
+  const fixed = Number(bouncerNowArg);
+  if (!Number.isFinite(fixed))
+    throw new Error("--bouncer-now-ms must be a finite millisecond timestamp");
+  return () => fixed;
+})();
+const bouncer = new Bouncer({ now: bouncerNow });
 
 // The flat property maps for the household verb's one-validator envelope —
 // built lazily from the MCP tool list, passed down as data (never a cycle).
