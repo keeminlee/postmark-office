@@ -69,8 +69,11 @@ move, whatever the calendar says.
 - **S1 · The law pin is current.** The store cannot be the law's reader with a
   pin twelve days old; every twin that reads law through `law_projection`
   answers under a law the tree has amended (the nothing-burns marks, the holo
-  marks, the harm gate's own). Fix the ingest's instance and add a roll-call row
-  on the pin's age (#2893). A defect today, not only after the flip.
+  marks, the harm gate's own). *Corrected 2026-09-17 13:1x by the #2893 lane:*
+  the ingest did not fail — the unit carrying the law pen is PARKED at the
+  founder's 08-31 word, and that unit carries the town pen too, which is the
+  pen the park was for. So S1 is not a fix but a decision (D-F below); the
+  roll-call row on the pin's age still follows once a pen writes it (#2893).
 - **S2 · The instruments run.** The live falsifier resolves the ledger by the
   name the checkout carries (#2894); the guard falsifier's scratch database is
   ruled one way or the other (D-A). A gate measured by a tool that cannot
@@ -147,6 +150,11 @@ separate work.
   it from rows and never decides; the harm gate stays as the refusal. *Rec: yes.*
 - **D-D · One flag per read, or one for all.** → Per read, mirroring D1's
   per-lane shape. *Rec: per read.*
+- **D-F · The law pen, parked with the town pen (#2893).** One ingest unit
+  carries two pens; the 08-31 park's reason ("a re-lift would launder v1's record
+  into v2's") covers the town pen only, and `law_projection` has no other writer.
+  → Split the unit: `law-ingest` on its own timer, `stamp-ingest` stays parked.
+  *Rec: split it — the smallest change that leaves the 08-31 ruling intact.*
 - **D-E · When a door's tree read dies.** → Kept for one A/B window after its
   flag flips, then deleted per read, dated. *Rec: one window, never longer.*
 
