@@ -1934,12 +1934,23 @@ Every oracle is 1.0's OWN function, imported live — never a re-expression.
 
 ```sh
 export WORLD2_PG_URL="postgres://snapshot_reader:…@localhost:5432/world2_dev"
-git -C ~/world-full worktree add --detach ~/live-lane/w-s50 settlement/S50
-node world2/tools/falsifier-live-equality.mjs --world-repo ~/live-lane/w-s50 --can-fail-proof
+# THE PIN IS DERIVED, NOT TYPED. A tag written into a recipe is a fixture that
+# decays at the next crossing, and this recipe's own S50 pin is what hid #2894
+# for nineteen days: S50 still carries `WORLD/threshold-ledger.md`, so the run
+# that was supposed to prove the pen worked was the one checkout where its
+# filename bug could not appear. Resolve the current settlement instead.
+TAG=$(git -C ~/world-full tag --list 'settlement/S*' | sort -V | tail -1)
+git -C ~/world-full worktree add --detach ~/live-lane/w-now "$TAG"
+node world2/tools/falsifier-live-equality.mjs --world-repo ~/live-lane/w-now --can-fail-proof
 ```
 
-Run against `world2_dev` on 2026-08-28, at `settlement/S50` (the store's own
-state — run it at the FLOOR and E5b reds on marks the replay legitimately moved):
+Run against `world2_dev` on 2026-08-28, at `settlement/S50` — kept below as the
+historical reading, because it is the last one taken before the pen went blind.
+On 2026-09-17 the derived pin resolves to `settlement/S71` (2026-09-17T05:46Z),
+which carries `WORLD/enter-exit-ledger.md` and not the retired name, and is
+therefore the first checkout in the recipe's history where E6occupancy is
+exercised as residents' checkouts actually stand. (Run it at the FLOOR and E5b
+reds on marks the replay legitimately moved.)
 
 ```
 world 0c1aa924 · 1090 departures (ledger 304 · journal 786 · live 0) · 158 passages
@@ -1972,6 +1983,18 @@ Two scoping decisions are worth knowing, because both started as false findings:
   verbatim. Rows from later eras are reported beside it as the named delta they
   are. The store carrying more record than the frozen tag is the store being
   right.
+- **E6 follows the ledger's rename, and says when it did** (#2894, 2026-09-17).
+  The frozen acts name `WORLD/threshold-ledger.md` in `payload._ledger`; that
+  file was deleted from world main on **2026-08-28** by `2a9042d4b` ("the passage
+  record keeps one file, and the retired twin is deleted", #2152) and its record
+  is `WORLD/enter-exit-ledger.md` — byte-identical at `settlement/S50`, where
+  both still stand. A frozen record keeps the vocabulary of the day it was
+  frozen, so the reader maps the retired spelling forward through
+  `world2/tools/ledger-names.mjs` and reports `ledger_followed_rename` when it
+  does; where the named file exists it is read untouched and that field is null.
+  Note that the founder's ENTEREXIT ruling (2026-08-29, world `3ef755913`) is
+  the WORD and not the removal: that commit is not an ancestor of world main, and
+  #2894's body misattributes the deletion to it.
 
 ### The can-fail proof
 
