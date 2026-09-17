@@ -222,6 +222,30 @@ export const CONFIG = {
       adoptedWhen: "/srv/postmark-stripe" }, // Stage B: parked until adopted — absence of the DIR is INFO, not DOWN
   ],
 
+  // §7 — the box's own publisher, and why it is NOT a `watchers` row.
+  //
+  // A watcher is classified on its heartbeat alone: the state file's mtime
+  // against a cadence. That is the right question for a rail whose only job is
+  // to tick. It is the WRONG question here, and 2026-09-17 is the receipt: the
+  // 08:10Z refresh wrote its report on time, from a run that had published a
+  // 134-resident town, and a heartbeat probe would have called that fresh and
+  // green. The refresh's report carries an OUTCOME, so the outcome is what gets
+  // read. (deploy/box-rollcall-manifest.json already watches this same file's
+  // heartbeat — `stamp_field: at`, 100 minutes — and that row stays: the pair
+  // survives either half being the thing that broke, the same reason the
+  // usdc_watch duplicate is deliberate.)
+  //
+  // `unit` is not decoration, exactly as in `watchers`: the cadence and the
+  // timer live in different files, and test/site-sentinel.test.mjs reads the
+  // unit and refuses a cadence that does not match it.
+  siteRefresh: {
+    key: "site_refresh",
+    label: "the box's site refresh",
+    report: "/srv/postmark-harbor/site-refresh.json",
+    unit: "postmark-site-refresh.timer",
+    cadenceMs: 30 * MINUTE,
+  },
+
   requestTimeoutMs: 20_000,
   // One reminder every twelve hours while a probe stays bad. Not per tick —
   // a channel that pings every ten minutes is a channel the reader mutes, and a
@@ -562,6 +586,103 @@ export function classifyWorkflows(latest, { watch = ["Sync Postmark atlas", "Dep
 }
 
 const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+
+// ── §7 the site refresh: the OUTCOME, not the heartbeat ─────────────────────
+//
+// Reads deploy/site-refresh.sh's own report — `report()` writes
+// `at · status · town_sha · site_main · release_tag · published · passes ·
+// detail` to /srv/postmark-harbor/site-refresh.json, once per run, and every
+// failure path writes it too (`die`, and the ERR trap's `on_err`).
+//
+// THE INSTANCE THIS EXISTS FOR (postmark-town/postmark#2884). At 08:12:35Z on
+// 2026-09-17 the box published a town with 48 doors missing, from a three-week-
+// old committed snapshot, because fetch-town.mjs warned and exited 0. The board
+// read 14 green at 08:20:02Z. Nothing on it was wrong; nothing on it was
+// looking at the refresh at all.
+//
+// FOUR THINGS THIS CLASSIFIER REFUSES TO DO, each one a lesson with a date:
+//
+//   - IT NEVER MAPS AN UNKNOWN STATUS WORD TO HEALTHY. A `status` this watch
+//     does not recognise is UNKNOWN and says the word it saw. The 2026-08-25
+//     cancellation finding is the whole reason: a value meaning "nothing was
+//     decided" mapped to OK, and the board went all-green on the afternoon the
+//     atlas sync was failing on every tick. Nobody-has-checked must never
+//     render as checked-and-fine.
+//   - IT NEVER CALLS A STALE `published` GREEN. A four-hour-old "published" is
+//     a stopped publisher wearing a good verdict.
+//   - A FAILURE OUTRANKS ITS AGE. When the newest report is both `failed` and
+//     old, the verdict is DOWN and the reason carries BOTH facts — the founder
+//     reads "the last refresh failed" and the operator reads "…and nothing has
+//     reported since". One verdict, two clocks named, because a thing with two
+//     clocks needs two numbers (2026-08-25, (vvv)).
+//   - IT SAYS WHICH STAMP IT MEASURED. The age comes from the report's own `at`
+//     when that parses and from the file's mtime when it does not, and the
+//     STALE sentence names which, because an instrument that will not say what
+//     it measured cannot be checked.
+//
+// Pure, like every classifier above it, so the falsifiers drive every branch
+// without a box.
+export function classifySiteRefresh({
+  exists,
+  report = null,
+  readError = null,
+  atMs = null,
+  mtimeMs = null,
+  nowMs,
+  cadenceMs,
+  label,
+}) {
+  if (!exists) {
+    // A fresh box, or a timer installed and not yet fired. Not a failure — and
+    // not invisible either: INFO is counted and named in the board's summary.
+    return { verdict: "INFO", reason: `${label} has written no report yet — a fresh box, or the timer has not fired since it was installed`, detail: null };
+  }
+  if (readError != null || report == null || typeof report !== "object") {
+    return { verdict: "UNKNOWN", reason: `${label}'s report could not be read${readError ? ` (${readError})` : ""}`, detail: null };
+  }
+
+  const detail = typeof report.detail === "string" && report.detail !== "" ? report.detail : null;
+  const stampMs = Number.isFinite(atMs) ? atMs : (Number.isFinite(mtimeMs) ? mtimeMs : null);
+  const stampName = Number.isFinite(atMs) ? "its own `at` stamp" : "the report file's mtime";
+  const ageMin = stampMs == null ? null : Math.round((nowMs - stampMs) / 60_000);
+  const stale = stampMs != null && nowMs - stampMs > 3 * cadenceMs;
+  const cadenceMin = Math.round(cadenceMs / 60_000);
+  const oldTail = stale ? `; and nothing has reported since — ${ageMin} min by ${stampName}, against a ${cadenceMin}-min cadence` : "";
+  const ago = ageMin == null ? "at an unreadable time" : `${ageMin} min ago`;
+
+  if (report.status === "failed") {
+    // THE `detail` VERBATIM. It is the sentence the founder reads on Discord and
+    // now on the site, so it is not summarised, reworded or truncated here.
+    return {
+      verdict: "DOWN",
+      reason: `${label} failed: ${detail ?? "no detail was written"}${oldTail}`,
+      detail,
+    };
+  }
+
+  if (report.status === "published" || report.status === "quiet") {
+    if (stale) {
+      return {
+        verdict: "STALE",
+        reason: `${label} last reported ${ageMin} min ago by ${stampName}, against a ${cadenceMin}-min cadence — its newest word is "${report.status}", which stopped being news ${Math.max(0, ageMin - cadenceMin)} min ago`,
+        detail,
+      };
+    }
+    if (report.status === "quiet") {
+      return { verdict: "OK", reason: `nothing to publish ${ago}${detail ? ` — ${detail}` : ""}`, detail };
+    }
+    const rel = typeof report.published === "string" && report.published !== ""
+      ? report.published.split("/").filter(Boolean).pop()
+      : "a release it did not name";
+    return { verdict: "OK", reason: `published ${rel} ${ago}`, detail };
+  }
+
+  return {
+    verdict: "UNKNOWN",
+    reason: `${label} reported a status this watch does not know: "${report.status ?? "(absent)"}" — read as unread rather than as healthy${oldTail}`,
+    detail,
+  };
+}
 
 // ── the edge-triggered alert machine ────────────────────────────────────────
 
@@ -904,6 +1025,31 @@ export async function tick({
     const mtimeMs = exists ? statSync(w.state).mtimeMs : null;
     const { verdict, reason } = classifyWatcher({ adopted, exists, mtimeMs, nowMs, cadenceMs: w.cadenceMs, label: w.label });
     probes.push({ key: w.key, label: w.label, kind: "watcher", verdict, reason });
+  }
+
+  // §7 — the box's own publisher. A local read, no network, no keyless budget:
+  // the report sits on the same disk this process runs on.
+  const sr = config.siteRefresh;
+  if (sr) {
+    const exists = existsSync(sr.report);
+    let report = null;
+    let readError = null;
+    let atMs = null;
+    let mtimeMs = null;
+    if (exists) {
+      mtimeMs = statSync(sr.report).mtimeMs;
+      try {
+        report = JSON.parse(readFileSync(sr.report, "utf8"));
+      } catch (e) {
+        readError = e.message;
+      }
+      const parsed = Date.parse(report?.at ?? "");
+      atMs = Number.isFinite(parsed) ? parsed : null;
+    }
+    const r = classifySiteRefresh({ exists, report, readError, atMs, mtimeMs, nowMs, cadenceMs: sr.cadenceMs, label: sr.label });
+    // `detail` rides onto the board so the site's header popover can say "48
+    // doors are missing" rather than only "failed" — postmark-site#97 reads it.
+    probes.push({ key: sr.key, label: sr.label, kind: "refresh", verdict: r.verdict, reason: r.reason, ...(r.detail ? { detail: r.detail } : {}) });
   }
 
   // the edges
