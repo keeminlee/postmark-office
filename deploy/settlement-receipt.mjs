@@ -41,6 +41,13 @@ import { readFileSync } from "node:fs";
 // quiet-pass echo in settlement-auto.sh takes its wording from the same file.
 import { surveyedReading } from "./surveyed-reading.mjs";
 
+// WHICH MARK DIED AND IN WHOSE WORDS. The sweep writes the fold's own sentence
+// into a quarantined row's `detail` and into a fold refusal's `cause`; this file
+// carried neither, so S71 published a receipt that named Mari's household and
+// not her mark, her cap, or her number. Pure and separate because a line
+// composed in a script is watched by nothing — the lesson `escrowLines` paid for.
+import { refusedMarks } from "./refused-marks.mjs";
+
 const env = (name) => {
   const v = process.env[name];
   return v === undefined || v === "" ? null : v;
@@ -96,6 +103,10 @@ const store = readJson(env("SETTLEMENT_STORE_JSON"));
 // is the receipt that the crossing LOOKED; its absence is the state that made
 // the step necessary.
 const registry = readJson(env("SETTLEMENT_REGISTRY_JSON"));
+
+// Read once, from both places the fold's sentence reaches this side — the
+// quarantined rows' `detail` and a fold refusal's `cause`. See `refused` below.
+const refused = refusedMarks(sweep, refusal);
 
 const channels = {};
 let unnamed = null;
@@ -393,9 +404,31 @@ const receipt = {
 
   // The rows an operator has to act on, in full rather than as a count — these
   // are the two channels where somebody is waiting to be told something.
+  //
+  // `reason` here is the sketchbook's, and it is the SAME SENTENCE every time
+  // ("this sketchbook's own published rows could not be admitted…"): it says a
+  // household was set aside and nothing about which mark or which rule. The mark
+  // and the rule are in `refused` below, parsed out of the sweep's `detail` — not
+  // copied into this row, because one fact written in two places drifts.
   quarantined: (sweep?.quarantined ?? []).map((q) => ({
     household: q.household ?? null, ref: q.ref ?? null, reason: q.reason ?? null, row: q.row ?? null,
   })),
+
+  // ── WHICH MARK THE CROSSING REFUSED, AND WHY, IN THE FOLD'S OWN WORDS ──────
+  //
+  // S71, 2026-09-15: a crossing whose receipt read `status: "published"`,
+  // `class: null`, `refusal: null`, `quarantined: [{ …, row: null }]`. It had
+  // refused Mari's parcel on the world's per-household claim cap, the sweep had
+  // written the whole sentence, and this file mapped the row to four fields that
+  // did not include it. She found out twelve hours later, from a person.
+  //
+  // ABSENT ON AN ORDINARY CROSSING, and that is the one place this file breaks
+  // its own "name the empty ones too" rule on purpose. The other blocks name a
+  // step that RAN — "drained: 0" is the receipt that the drain ran at all. This
+  // is not a step; it is the fold's answer about particular marks, and there is
+  // no such answer on a crossing that refused nothing. `channels.quarantined`
+  // already carries the empty count, so nothing goes unsaid.
+  ...(refused ? { refused } : {}),
   isolated: isolate
     ? {
         attributed: true,
