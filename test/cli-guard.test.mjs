@@ -172,6 +172,11 @@ const ROSTER = {
   "world2/tools/stamp-ingest.mjs": { args: [], env: NO_PG, code: 2, needle: "usage: stamp-ingest.mjs" },
   "world2/tools/state-log-rederive.mjs": { args: [], env: { ...NO_PG, WORLD2_PG_URL: "postgres://nobody@localhost/not_scratch" }, code: 2, needle: "REFUSED · WORLD2_PG_URL must name" },
   "world2/tools/state-log-write.mjs": { args: [], env: NO_PG, code: 2, needle: "--world <checkout> and --windows" },
+  // A safe entry proof for a tool that WRITES to the live world store: no flag,
+  // so it stops on usage. The store is opened lazily precisely so this refusal
+  // never reaches Postgres — NO_PG below would make a connection fail anyway,
+  // but the tool must not have tried.
+  "world2/tools/window-reanchor.mjs": { args: [], env: NO_PG, code: 2, needle: "usage: window-reanchor.mjs --dry-run | --apply" },
 };
 
 // ── the scan: which files carry an entry guard at all ────────────────────────
