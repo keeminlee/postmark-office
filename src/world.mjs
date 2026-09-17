@@ -1735,8 +1735,55 @@ async function markReceipt(id, key, w, { terrain = false } = {}) {
       if (read_at?.sha && asOf && asOf !== read_at.sha)
         disclosed.push(`world-store-at-another-world: this answer was folded from ${read_at.ref} at ${String(read_at.sha).slice(0, 12)}, and the class layer (world.db) stands at ${String(asOf).slice(0, 12)} — the two do not name the same world`);
     } catch { /* an unreadable store is not a claim about freshness */ }
-    return { ...receipt, ...(read_at ? { read_at } : {}), ...(disclosed.length ? { disclosed } : {}) };
+    // ── THE DISCLOSURE REACHES THE FIELDS IT QUALIFIES (#2889, kogane's eighth) ─
+    //
+    // The disclosure above works — kogane's own words, and he is the reason it is
+    // worth keeping: "A read named its own drift unprompted … the August ask,
+    // shipped." What it did not do is reach the three fields a reader actually
+    // decides on. In the same object he read `status: "published"`, `says:
+    // "published at S68 …"` and `cause: null` — three confident summaries with
+    // nothing on them saying a sibling key qualified all three — and he filed the
+    // wrong verdict off them.
+    //
+    // The marker rides `says` and a boolean, and deliberately NOT `status`.
+    // kogane proposed `status: "published (disclosed)"` and that is the natural
+    // shape, but `status` is an enum callers branch on — this office's own
+    // `worldInvestigate` tests it against "never-was" one screen up — and
+    // rewriting the value a consumer switches on is a change to what the field
+    // MEANS, not an addition beside it. So the enum stands untouched and the
+    // qualification arrives twice in ways nothing can silently ignore: in the
+    // SENTENCE, which is what the door hands up as `note` and what a reading
+    // agent actually reads, and as a flag beside the summary for a reader that
+    // branches. `disclosed` still carries the detail; this only stops it being a
+    // sibling nobody was pointed at.
+    //
+    // ADDITIVE: every key is absent whenever nothing was disclosed, which is the
+    // ordinary path, so an answer with no drift is byte-identical to before.
+    return { ...receipt, ...(read_at ? { read_at } : {}), ...qualifiedByDisclosure(receipt, disclosed) };
   } catch { return null; }
+}
+
+/**
+ * THE QUALIFICATION, AS ONE PURE FUNCTION — pure and exported for the same
+ * reason `putForwardVerdict` and `amendmentPublishNote` are: it can be falsified
+ * without a clone, a credential, a store or a write, and the thing worth pinning
+ * is the RELATION (a disclosed read is never summarised bare), not the wording.
+ *
+ * Returns `{}` when nothing was disclosed, so the ordinary answer is
+ * byte-identical and a caller that never learns about these keys reads exactly
+ * what it read before.
+ */
+export function qualifiedByDisclosure(receipt, disclosed = []) {
+  const list = Array.isArray(disclosed) ? disclosed.filter(Boolean) : [];
+  if (list.length === 0) return {};
+  const caveats = list.length === 1 ? "a caveat" : `${list.length} caveats`;
+  return {
+    disclosed: list,
+    qualified: true,
+    ...(typeof receipt?.says === "string"
+      ? { says: `${receipt.says} — ⚑ qualified: this answer discloses ${caveats} about the world it was read from, and the summary above is only as good as that. See \`disclosed\`.` }
+      : {}),
+  };
 }
 
 // The canon pair. No key: /world/state and /world/skeleton answer the same bytes
