@@ -2025,10 +2025,34 @@ export const STANDING_FACT = Object.freeze({
   "hang-your-window": "window",
   "first-letter-out": "sent",
   "first-answer": "received",
+  "welcome-to-postmark": "welcomed",
 });
 
 /** The three paper rows the record settles but does not date. */
 const PAPERS_WITHOUT_A_DATE = Object.freeze(["write-your-card", "tend-your-home", "hang-your-window"]);
+
+/**
+ * ⚑ THE SEVENTH ROW IS UNDATED TOO, AND FOR A DIFFERENT REASON THAN THE PAPERS.
+ *
+ * `welcome-to-postmark` arrived on the town's onboarding line 2026-09-14. Adding
+ * it to `STANDING_FACT` alone — which is all the gate below needed — handed it
+ * the date of the resident's FIRST RECEIVED LETTER, because the `since` ternary
+ * treats every non-paper row as a mail row and falls through to
+ * `received_since`. Measured, not reasoned: a settled fixture read
+ * `{"progress":1,"complete":true,"since":"2026-06-12"}` for a bundle the town
+ * paid on 2026-09-14 — three months before the row existed.
+ *
+ * The date is NOT unknowable: the ledger line carries it exactly
+ * (`- 2026-09-14 · MINT → <handle> · 5 · for: welcome:<key> · by: the-town`).
+ * It is unknowable *here* because the town's fold drops it —
+ * `welcomedHouseholds` (quest-progress.mjs) returns a Set of household keys and
+ * `onboardingFactsFor` answers `welcomed` as a bare boolean. Carrying the day to
+ * this door means changing what the town's fold returns, and the town's welcome
+ * grammar is not this lane's to touch. So the row is honestly undated and says
+ * so in its own words — and the day stays a named question for the town, not a
+ * number this office invents beside it.
+ */
+const WELCOME_ROW = "welcome-to-postmark";
 
 /**
  * ⚑ THESE ARE READ BY RESIDENTS, AND THE FIRST DRAFT WAS WRITTEN IN OFFICE
@@ -2052,6 +2076,7 @@ const PAPERS_WITHOUT_A_DATE = Object.freeze(["write-your-card", "tend-your-home"
 export const STANDING_NOTES = Object.freeze({
   no_index: "the town knows this one; this page has not caught up yet. It fills itself in within the hour.",
   no_date: "you have done this. The town does not keep the day you did it, so there is no date to show.",
+  welcome_paid: "the town has paid your household's welcome bundle — 5 stamps for joining, once for the whole house. The day it was paid is written in the town's stamp ledger; this page does not carry it.",
   ladder_unsealed: "the town has not sealed the friendship ladder yet — this is a rule that has not started, not a milestone you have missed",
   world_elsewhere: "your ground in the World is kept somewhere this page cannot see. Your own doorstep can tell you whether your home mark is standing — ask it there.",
   no_tank: "the Think Tank could not be read just now, so nobody looked. This is not a no.",
@@ -2079,7 +2104,11 @@ export function standingJoin(q, standing, { idea = null, worldSited = null } = {
     if (!standing || !(fact in standing)) return { note: STANDING_NOTES.no_index };
     const complete = Boolean(standing[fact]);
     const isPaper = PAPERS_WITHOUT_A_DATE.includes(q.id);
-    const since = isPaper ? null
+    const isWelcome = q.id === WELCOME_ROW;
+    // The welcome row leaves the mail fallback BEFORE it is reached. It is not
+    // in the paper list because it does not wear the papers' note — the papers
+    // say "you have done this", and the whole of this row is that the town did.
+    const since = (isPaper || isWelcome) ? null
       : (fact === "sent" ? standing.sent_since : standing.received_since) ?? null;
     // ⚑ THE NOTE IS ATTACHED BY ROW ID, NOT BY SHAPE. It used to fire on any
     // complete-and-undated row, which meant a mail row could wear "the town
@@ -2089,7 +2118,8 @@ export function standingJoin(q, standing, { idea = null, worldSited = null } = {
     // self-mail, because the town's own fact does not.) A shape can be worn by
     // a row it was never written for; an id cannot.
     const note = isPaper && complete ? STANDING_NOTES.no_date
-      : (!isPaper && complete && since === null) ? STANDING_NOTES.self_mail_only
+      : isWelcome && complete ? STANDING_NOTES.welcome_paid
+      : (!isPaper && !isWelcome && complete && since === null) ? STANDING_NOTES.self_mail_only
       : null;
     return { progress: complete ? 1 : 0, complete, since, ...(note ? { note } : {}) };
   }

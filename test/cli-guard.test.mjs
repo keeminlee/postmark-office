@@ -148,6 +148,9 @@ const ROSTER = {
   // --recurring answers with an exit code and no words, by design (settlement-auto.sh reads it
   // as a POSIX `if`); exit 1 against a never-true guard's 0 is the whole proof here.
   "deploy/settlement-history.mjs": { args: ["--recurring", "3", "--history", NOWHERE], code: 1, needle: "", silent: true },
+  // A safe entry proof for a tool that SIGNS: no --town, so it refuses before it
+  // reads a plan, spawns a mint or touches a key. The needle is that refusal.
+  "deploy/welcome-pass.mjs": { args: [], code: 1, needle: "--town <town-clone> is required" },
   // world2/tools/
   "world2/tools/await-clearing.mjs": { args: [], env: NO_PG, code: 2, needle: "--since <iso8601> is required" },
   "world2/tools/backfill-register.mjs": { args: [], env: NO_PG, code: 2, needle: "--class must be one of" },
