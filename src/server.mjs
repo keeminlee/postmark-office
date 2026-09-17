@@ -22,6 +22,7 @@ import { join } from "node:path";
 import { enqueueLetter } from "./write.mjs";
 import { marksCountsFor } from "./town-marks.mjs";
 import { sendLetterAsRow } from "./town-mail.mjs"; // wave 3: the same letter, as a town-log row
+import { withThreadlessHint } from "./mail-thread.mjs"; // POS-101: which of the three nearby ids goes in `thread`
 import { townLogEnabled } from "./town-journal.mjs";
 import { updateAddressBody, updateHome, updateHomeImage, updateProfile, updateProfileAvatar, updateWindow } from "./edit.mjs";
 import { handleMcp, TOOLS as MCP_TOOLS, validateArgs, visitorBounces, VISITOR_BOUNCE } from "./mcp.mjs";
@@ -1779,7 +1780,20 @@ const server = createServer((req, res) => {
           const result = townLogEnabled() && odb
             ? await sendLetterAsRow(payload, key, db, TOWN_CLONE, odb)
             : enqueueLetter(payload, key, db, TOWN_CLONE);
-          return j(res, 202, result); // 202, never 201: accepted for the next crossing
+          // POS-101 — the hint rides HERE too, and that is a deliberate
+          // departure from `verify`'s precedent one door over (household-apex
+          // § THE READBACK, falsifier foyer-shrink F11b), which is MCP-only.
+          // `verify` is written in MCP GRAMMAR — `household { read: "mail" }`
+          // is a sentence a REST caller cannot act on — so a REST receipt would
+          // have carried an instruction for a door it is not standing at. This
+          // hint names a letter id and the field `thread`, and both doors have
+          // both. Teaching at one door and not the other is the exact defect
+          // Ferry filed; the shape rule it must respect (OPERATIONS.md
+          // § Breaking-change rules — a public HTTP response SHAPE is a
+          // contract) is respected by being purely additive: no key of this
+          // receipt is renamed, retyped or removed, and the key is absent
+          // whenever there is nothing to say.
+          return j(res, 202, withThreadlessHint(result, db, payload)); // 202, never 201: accepted for the next crossing
         } catch (e) {
           if (e.code) return bounce(res, e.code, e.defect, e.hint);
           if (e instanceof SyntaxError) return bounce(res, 400, "body is not JSON", '{"from","to","title","body"} (+ optional "thread")');

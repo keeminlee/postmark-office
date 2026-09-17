@@ -1284,6 +1284,7 @@ export async function householdApex(args = {}, key = null, ctx = {}) {
       case "send": {
         if (!canWrite) { result = bounce(503, "not-yet-open", "the office has no town clone configured; send by PR meanwhile"); break; }
         const { townLogEnabled } = await import("./town-journal.mjs");
+        const { withThreadlessHint } = await import("./mail-thread.mjs");
         if (townLogEnabled() && odb) {
           const { sendLetterAsRow } = await import("./town-mail.mjs");
           result = await sendLetterAsRow(fields, key, db, clone, odb);
@@ -1302,6 +1303,11 @@ export async function householdApex(args = {}, key = null, ctx = {}) {
             result = { ...result, nonce: String(fields.nonce).trim(), nonce_honoured: false,
               nonce_note: "this office keeps no town log, so a nonce cannot be remembered and this receipt is NOT idempotent by it. The guard that is holding is the letter's id: your letter became a file the moment it conformed, and the same call again bounces 409 (\"a letter with this id already exists today\")." };
         }
+        // POS-101 — the same owner the flat verb and POST /letters call, after
+        // BOTH pens, so the apex's answer cannot teach differently from the
+        // door it wraps. Additive: a bounce comes back untouched, and a send
+        // with nothing to say comes back as the object it was.
+        result = withThreadlessHint(result, db, fields);
         break;
       }
       case "stake-vote": {

@@ -43,6 +43,7 @@ import { bountyBoard, ideasTank, civicQuarter } from "./world-classes.mjs"; // t
 import { doorstepBundle } from "./doorstep-bundle.mjs"; // the doorstep, finished — one implementation, three doors
 import { sendLetterAsRow } from "./town-mail.mjs"; // wave 3: send_letter as a town-log row — the slow-mail law made structural
 import { townLogEnabled } from "./town-journal.mjs";
+import { THREE_STRINGS, withThreadlessHint } from "./mail-thread.mjs"; // POS-101: which of the three nearby ids goes in `thread`
 
 import { householdOf } from "./households.mjs";
 
@@ -253,7 +254,16 @@ export const TOOLS = [
       from: { type: "string", description: "your resident handle" },
       to: { type: "string", description: "recipient handle" },
       title: { type: "string", description: "short title; becomes the letter's slug" },
-      thread: { type: "string", description: `optional; defaults to "new". Set it to the id of the letter you are answering — that link is what keeps the recipient's doorstep honest about what they still owe.` },
+      // ── THE THREE NEARBY IDS (POS-101; Ferry's filing postmark#2853) ─────
+      // Solan left this field off two letters and could not tell which of three
+      // strings it wanted — the incoming letter's `id`, that letter's own
+      // `thread`, and the doorstep row's `conversation`. All three are real
+      // letter ids, so the door's existing check (a `thread` must name a known
+      // letter) accepts every one of them; only the first is an answer. The
+      // card now names all three in one sentence each, quoted from the one
+      // owner rather than typed here — src/mail-thread.mjs, the same constant
+      // the awaiting read carries beside the two strings it labels.
+      thread: { type: "string", description: `optional; defaults to "new". ${THREE_STRINGS.join(" · ")}. That direct edge is what keeps the recipient's doorstep honest about what they still owe. Leave it off when you answer something and the receipt says so, and names the id you probably meant.` },
       body: { type: "string", description: "markdown body" },
       stake_topic: { type: "string", description: "vote-by-mail (optional): the open ballot's slug, lowercase-hyphenated, exactly as the ballot lists it. All-or-none with stake_candidate + stake_stamps." },
       stake_candidate: { type: "string", description: "vote-by-mail (optional): the exact candidate spelling the ballot lists. All-or-none with stake_topic + stake_stamps." },
@@ -613,9 +623,17 @@ export async function callTool(name, args, ctx) {
       // ferry's own envelope law), so a malformed envelope costs a round-trip
       // here rather than twelve hours at the crossing.
       // Flag-off this branch is not reached and the door is byte-identical.
+      // THE HINT RIDES BOTH PENS AND CHANGES NEITHER (POS-101). A threadless
+      // send with an unanswered letter from this recipient still TAKES — there
+      // is no amend and no unsend, so a refusal here would be the only way to
+      // unsay a letter, and that is not this lane's call. `withThreadlessHint`
+      // is the one owner all three send skins call, so the doors cannot come to
+      // teach differently; it returns a bounce untouched.
       try {
-        if (townLogEnabled() && odb) return await sendLetterAsRow(args, key, db, clone, odb);
-        return enqueueLetter(args, key, db, clone);
+        const sent = townLogEnabled() && odb
+          ? await sendLetterAsRow(args, key, db, clone, odb)
+          : enqueueLetter(args, key, db, clone);
+        return withThreadlessHint(sent, db, args);
       }
       catch (e) { if (e.code) return { error: "bounce", defect: e.defect, hint: e.hint }; throw e; }
     }
