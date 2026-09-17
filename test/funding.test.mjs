@@ -67,7 +67,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { DatabaseSync } from "node:sqlite";
 import { SCHEMA } from "../src/schema.mjs";
-import { parseLedgerText, foldFunding, classifyFundingRow, readPots, HOLO_CAPTION, HOLO_EXPANSION, TEACH } from "../src/funding.mjs";
+import { parseLedgerText, foldFunding, classifyFundingRow, readPots, HOLO_CAPTION, HOLO_EXPANSION, WHAT_THIS_BUYS, TEACH } from "../src/funding.mjs";
 import { stampsDetail, potBoard, questBoardFor } from "../src/queries.mjs";
 
 // ── the landed grammar, one row of every kind ────────────────────────────────
@@ -476,6 +476,29 @@ test("a household with holo reads four tenses that sum sanely — and holo is IN
     "and the holo section carries the ruling's own one-line rule");
   assert.match(d.tenses.teach, /a subset of minted and of liquid, never a pile beside them/,
     "the tenses say where holo now lives: inside minted and inside liquid, not beside them");
+});
+
+test("THE MONEY MOMENT says holo votes, and names the cap in the same breath", () => {
+  // THE FOUNDER, 2026-09-17, verbatim: "holo does anything a normal stamp can;
+  //   staking vs voting is a nondistiction."
+  // THE SENTENCE THIS REPEALS, which was live on this door until today: "this
+  //   buys ownership and memory, NEVER VOICE, and converts to real value only
+  //   if the town someday does."
+  //
+  // This is the one place the office made a promise about VOICE, and it made it
+  // at the instant a patron is about to send money. A test that only compared
+  // the door's field to the constant would go green on any wording at all, so
+  // this reads the CLAIM.
+  assert.doesNotMatch(WHAT_THIS_BUYS, /never voice|no voice|not voice|never standing/i,
+    "the repealed promise must not be made at the money moment");
+  assert.match(WHAT_THIS_BUYS, /including vote/,
+    "it says the stamps vote, because they do — a vote is a stake and clips against a fungible balance");
+  assert.match(WHAT_THIS_BUYS, /capped/,
+    "AND it names the bound in the same breath: a patron told their stamps vote and NOT told their share is capped has been told half the truth");
+  assert.match(WHAT_THIS_BUYS, /ownership and memory/,
+    "the two things that did not change are still promised");
+  assert.match(WHAT_THIS_BUYS, /converts to real value only if the town someday does/,
+    "and so is the conversion caveat, which this ruling never touched");
 });
 
 test("minted · for keeping reads as its own section — no liquid coin, and no fifth tense", () => {

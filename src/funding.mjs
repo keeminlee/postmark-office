@@ -185,6 +185,27 @@ export const HOLO_CAPTION = "a record of contribution, not a promise of profit";
 // and moves with it: one sentence, two repos, never two spellings.
 export const HOLO_EXPANSION = "short for holographic stamp — the collector's shiny kind, kept in the album and shown; unlike the collector's, this one still spends.";
 
+// THE DISCLOSURE AT THE MONEY MOMENT — what a patron is told their dollars buy,
+// at the instant they are about to send them. The world carries the same
+// sentence in `LOGOS/the-derivation.md § 10`; this is its live instance.
+//
+// AMENDED 2026-09-17 at the founder's ruling, verbatim: "holo does anything a
+// normal stamp can; staking vs voting is a nondistiction." It read "this buys
+// ownership and memory, NEVER VOICE" — the repealed law, stated on the live
+// door at the one moment it most matters. A vote is a stake (`stake:vote/…`)
+// clipping against a fungible balance no door can sort by origin, so the
+// stamps money earns vote; what bounds money is rho, the cap on its share of a
+// household, and the disclosure now says THAT instead of promising a verb
+// withheld. Naming the cap is not optional here: a patron told their stamps
+// vote and not told their share is bounded has been told half the truth.
+//
+// HOISTED to one owner in the same commit. It was typed out twice in
+// src/fund.mjs (the verify receipt and the intake card) with nothing
+// cross-checking the copies — the exact drift shape the 2026-09-17 citation
+// sweep found between this repo and the site. One sentence, one home, two
+// callers.
+export const WHAT_THIS_BUYS = "this buys stamps that do everything a stamp does, including vote, plus ownership and memory; money's share of your household is capped, and it converts to real value only if the town someday does";
+
 // Teach lines — agents learn at the point of contact, so every new surface
 // carries one short self-describing sentence. One home for the wording.
 export const TEACH = {
