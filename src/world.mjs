@@ -63,6 +63,7 @@ import { byBand, presenceEnabled, presentNear, near as presenceNear, everyone as
 import { MEDIA_BASE, mediaUrlOk } from "./media.mjs"; // the mark door's image allowlist: only the town's own media hangs on marks
 import { imageFormat, MEDIA_FORMATS } from "./edit.mjs"; // the bytes decide the type, never the filename (with_image, below)
 import { everyonePlaced, withFrames } from "./positions.mjs"; // where is everyone: walk records ∪ parcel households, one derivation — plus Stage D's frame overlay
+import { ORIGIN, NO_GROUND_NEIGHBOURHOOD, isGroundlessDefault, groundlessStandpoint } from "./groundless.mjs"; // where a resident with no ground stands: the Origin, said once (#2900)
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..");
@@ -149,7 +150,10 @@ async function world() {
   return assembled;
 }
 
-const ORIGIN = { x: 0, y: 0 }; // the Origin — {0,0}, where the ferry lands; the grid origin and the default standpoint
+// The Origin — {0,0}, where the ferry lands; the grid origin and the default
+// standpoint. It now lives in `./groundless.mjs` (imported above), unchanged in
+// value and in words, because the groundless standpoint needs it in two files
+// and a constant with two homes is a constant with two futures (#2900).
 
 // The BERTH quay is mark-sourced (Keemin-ruled 2026-08-17, the relocation):
 // arrivals stand at the-town/the-quay on the Long Run Harbor's stone edge —
@@ -290,16 +294,19 @@ async function whereMod() {
 // the two keys are ABSENT on every placed path, `from` is byte-identical, and a
 // reader that never learns about them reads exactly what it read before.
 //
-// WHAT THIS IS NOT. It does not move the standpoint. A groundless resident's
-// point is the Origin by the founder's own ruling (#2752, 2026-09-13, "can we
-// just… call 0,0 the Origin?", pinned in test/origin-name.test.mjs) — while the
-// engine's `residentStandpoint` places that same resident at the quay
-// (1390, 5665), 5,833 m away, and the walk door, presence and say all read THAT
-// one. Which of the two is a groundless resident's standpoint is a live
-// collision between two rulings and is not this door's to settle; it is reported
-// on #2889 rather than decided here.
-export const NO_GROUND_NEIGHBOURHOOD =
-  "this standpoint is the Origin's default, not a place you stand: you hold no ground on the map. Everything in this answer derived from it — `within`, `region`, `standingOn`, `nearby`, `present` — is the ORIGIN's neighbourhood and not yours, and the residents it names are not your neighbours.";
+// WHAT THIS IS NOT. It does not move the standpoint — and as of #2900 it no
+// longer has to. The collision this note used to report (the Origin here, the
+// quay 5,833 m away at `residentStandpoint`, read by walk, presence and say) was
+// ruled by the founder on 2026-09-17: "Agreed with the Origin." The Origin is
+// now the ONE answer, owned in `./groundless.mjs` and asked by all three
+// derivations, so the sentence below and the standpoint every other door hands
+// out are the same claim about the same point.
+//
+// Re-exported, not re-declared: the string lives in `./groundless.mjs` so
+// `positions.mjs` can carry it onto a presence row without importing this file
+// (it is pure by law, and this one is not). Byte-identical to what shipped with
+// #2889; test/no-ground-neighbourhood-disclosed.test.mjs imports it from here.
+export { NO_GROUND_NEIGHBOURHOOD };
 export async function homeCoords(handle, w) {
   const { homeOf } = await whereMod();
   const home = homeOf(handle, w);
@@ -472,6 +479,25 @@ export async function residentStandpoint(handle, w = null) {
 
   const here = whereIs(handle, { world: world_, departures });
   if (!here.placed) return { handle, placed: false };
+  // ── ONE STANDPOINT FOR THE GROUNDLESS (#2900, ruled 2026-09-17) ───────────
+  //
+  // The engine's porch answer is CORRECTED HERE, at the office's own seam, and
+  // nowhere upstream: `the-town/the-standing-porch` is still the world's law and
+  // still a mark, and the engine is a read-only input this door does not get to
+  // edit. What the founder ruled is which point the OFFICE hands a resident the
+  // record places nowhere — and that is the Origin, the same answer `homeCoords`
+  // has given `orient`, `eyes` and the apex since #2752.
+  //
+  // It sits after the whereIs call, not before, so it can only ever catch the
+  // one arm that produces `source: "quay"`. A walker, a resident on their own
+  // ground, and every Stage D answer above (`timetable`, `frame`, `store`) reach
+  // this line unchanged or never reach it at all.
+  //
+  // This is the line that moves `walk`, `presence` and `say`: the walk's
+  // departure override reads this function, the say deps' `standpointOf` reads
+  // this function, and `witnessStamp`, `world-hold` and the apex's crossing
+  // readers inherit it rather than each being taught the rule.
+  if (isGroundlessDefault(here)) return groundlessStandpoint(handle);
   const p = here.position ?? null;
   const moving = Boolean(p && p.arrived === false);
   const narration = moving ? aboardOrRoad(handle, departures) : null;
