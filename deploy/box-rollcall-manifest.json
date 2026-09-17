@@ -293,7 +293,7 @@
    "label": "the World 2.0 notary",
    "stage": "live",
    "activation_owner": "Wright — 2026-08-29, PAYING A NAMED DEBT. The notary shipped with 'Nightly TIMER deferred deliberately — the box roll-call manifest law' written into world2/tools/README.md at its merge; the deferral was correct and this row is what settles it. Script deploy/world2-notary.sh, connecting as snapshot_reader and no other role",
-   "cadence": "nightly at 03:20 UTC, jittered up to 2 min — between the 17:45 and 05:45 closes so a certification never races a clearing",
+   "cadence": "nightly at 07:20 UTC, jittered up to 2 min — after the morning crossing has published and its receipt has landed, so the certification reads the docket the crossing cleared (office#83; was 03:20, which read every docketed mark as canon-absent two hours before the crossing cleared it)",
    "cadence_source": "systemctl show postmark-world2-notary.timer -p TimersCalendar",
    "heartbeat": {
     "kind": "state_file",
@@ -324,7 +324,7 @@
    "label": "the World 2.0 durability lane",
    "stage": "live",
    "activation_owner": "Wright — founder ruling 2026-08-29 ('prod Postgres = ON THE BOX with shipped backups, no managed service'). Script deploy/world2-backup.sh. First rehearsed restore from the off-box copy the same night: 6318 rows across 9 tables, every table matching, restore in 1s, projection-equality falsifier GREEN against the restored database",
-   "cadence": "nightly at 04:10 UTC, jittered up to 5 min — after the notary, so the night's certification has already been pushed to its own repo before the dump ships to this one",
+   "cadence": "nightly at 08:10 UTC, jittered up to 5 min — after the notary (moved with it, office#83), so the night's certification has already been pushed to its own repo before the dump ships to this one",
    "cadence_source": "systemctl show postmark-world2-backup.timer -p TimersCalendar",
    "heartbeat": {
     "kind": "state_file",
