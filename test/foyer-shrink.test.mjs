@@ -273,6 +273,32 @@ test('F5 · OPERATIONS.md: "REST: stable/simple for frozen consumers" — the RE
   assert.ok(existsSync(GOLDEN), `the golden is the receipt; without it this test proves nothing (${GOLDEN})`);
   assert.deepEqual(shapeOf(full), JSON.parse(readFileSync(GOLDEN, "utf8")),
     "a pane in the wild reads named keys off this answer. A key REMOVED or RETYPED is the break the shape rule names. A key ADDED reddens this too, and is meant to: additive growth is lawful but 'shape changes ship with a PSA' (founder, 2026-08-31), so the golden is regenerated deliberately, with the PSA, rather than drifting quietly — which is exactly what the old byte golden let the profile act do");
+  // ⚑ REGENERATED 2026-09-17 FOR POS-83, and named here because a regenerated
+  // golden otherwise asserts that the change equals the change. What grew: the
+  // stake act's card gained `preview`, the founder's opt-in confirmation step
+  // for acts that move stamps (#2814). ADDITIVE and proven so rather than
+  // asserted — the capture diff added exactly two keys
+  // (`fields/preview/{type,description}`) and removed or retyped none, which is
+  // what makes it lawful under the shape rule. PSA for the release notes: "a
+  // stamps preview is live — pass preview: true to any stake and read what it
+  // would do before it does it."
+  //
+  // This is the WITNESS the regeneration would otherwise have no room for, and
+  // it is positional-independent on purpose: the stake act is found by the one
+  // field only it carries, so a reordering of the acts list cannot make it pass
+  // by looking at somebody else's card.
+  const frozen = JSON.parse(readFileSync(GOLDEN, "utf8"));
+  const stakeCard = frozen.acts.find((a) => a.fields && "pot" in a.fields);
+  assert.ok(stakeCard, "the stake act is the only one carrying a `pot` field");
+  assert.equal(stakeCard.fields.preview?.type, "string",
+    "the frozen shape carries the preview field's own type — shapeOf records the TYPE NAME, so a boolean field reads as the string 'boolean' here");
+  // …AND THE LIVE DOOR, not only the frozen copy of it. The deepEqual above
+  // cannot tell a matched drop-and-regenerate from a door that never changed:
+  // lose the field and re-capture, and the golden agrees with the loss. This one
+  // reads the answer the door just gave, so it reds on the drop whatever the
+  // golden says.
+  assert.equal(full.acts.find((a) => a.fields && "pot" in a.fields)?.fields?.preview?.type, "boolean",
+    "the live stake card still takes preview — the confirmation step the founder ruled is only live while the card advertises it");
 });
 
 test(`F5c · and the answer stays BOUNDED — REST under ${REST_CEILING}B, the connector's bare answer under ${SLIM_CEILING}B`, async () => {
