@@ -44,6 +44,17 @@ import { pathToFileURL } from "node:url";
 
 import { readDraftClaims, householdKeyForKey, withHousehold } from "./world2-claims.mjs";
 import * as live from "../world2/tools/live-reads.mjs";
+// ── THE GROUNDLESS STANDPOINT, AT THE 2.0 DOOR (#2900, ruled 2026-09-17) ─────
+//
+// `live-reads.mjs` is a VERBATIM port of the world engine's tools/where-is.mjs
+// (VENDOR.whereIs, blob 83e6a766…), held to the original by
+// world2/tools/falsifier-live-equality.mjs. It must keep answering the porch,
+// because being byte-for-byte the engine's law is the whole of what it promises
+// — so the ruling is applied where 1.0 applies it: on the DOOR's answer, one
+// layer above the port, exactly as src/positions.mjs does over the real engine.
+//
+// Same module, same predicate, same rewrite. One owner, now four readers.
+import { isGroundlessDefault, atOrigin } from "./groundless.mjs";
 import * as talk from "../world2/tools/conversations.mjs";
 import * as apex from "../world2/tools/apex-reads.mjs";
 import * as stakeRead from "../world2/tools/stake-reads.mjs";
@@ -790,7 +801,14 @@ export async function world2Serve(path, searchParams, { p: injected = null } = {
     const world = live.worldFromRows({ marks: markRows, identities: idRows });
     const fc = live.fractionalCrossing(at.ms);
     const roll = rollRows.map((r) => r.handle);
-    const residents = live.everyonePlaced({ world, departures: derived.records, at: fc, roll });
+    // ON THE ANSWER, BEFORE ANYTHING READS A COORDINATE (#2900). The `near`
+    // render below filters by distance from these rows, so a map applied after
+    // it would filter the set at the quay and then relabel the survivors at the
+    // Origin — the right label over the wrong set, which is worse than the
+    // defect it replaces. The rewrite rides `everyonePlaced`'s return and
+    // nothing downstream sees the porch.
+    const residents = live.everyonePlaced({ world, departures: derived.records, at: fc, roll })
+      .map((r) => (isGroundlessDefault(r) ? atOrigin(r) : r));
     const notes = live.admissionNotes({ marks: markRows, identities: idRows, roll, departureRecords: derived.records, world });
     const body = {
       what: "every placed resident at one instant — a walk if they have one, else their ground, else the town's porch",
@@ -1153,7 +1171,13 @@ export async function world2Apex(searchParams, { p: injected = null } = {}) {
  * default would have made the new door disagree with the old one by 48
  * residents at the town's front door and called it a fix.
  */
-async function apexPresent(p, { world, at, engine: eng, roster = "roll" }) {
+// EXPORTED for the reason `world2Apex` itself gives one screen up — "the
+// equality falsifier compares ANSWERS, and making it go through HTTP would put
+// a server between the two derivations it is trying to hold to each other". The
+// apex route refuses without a law projection, which is correct and is not what
+// #2900's cross-tier equality is about; a law fixture built only to reach this
+// block would be scaffolding the check could pass against instead of the thing.
+export async function apexPresent(p, { world, at, engine: eng, roster = "roll" }) {
   const { bearingDeg, quantizeBearing, distanceBand } = eng.engine;
   const [{ rows: depRows }, { rows: rollRows }] = await Promise.all([
     p.query(`SELECT id, at, crossing, actor, action, payload FROM acts
@@ -1166,7 +1190,13 @@ async function apexPresent(p, { world, at, engine: eng, roster = "roll" }) {
   catch (e) { return { unavailable: "a departure act matches no known era", detail: String(e?.message ?? e).slice(0, 200) }; }
   const fc = live.fractionalCrossing(Date.now());
   const roll = roster === "roll" ? rollRows.map((r) => r.handle) : [];
-  const residents = live.everyonePlaced({ world, departures: derived.records, at: fc, roll });
+  // BEFORE THE 500 m FILTER, and that ordering is the whole of it (#2900). The
+  // porch is 5,833 m from the Origin, so a groundless resident filtered at the
+  // quay and relabelled afterwards would be absent from the Origin's list and
+  // present in the quay's — the two answers this lane exists to join, swapped
+  // rather than reconciled. Rewrite first, measure distance second.
+  const residents = live.everyonePlaced({ world, departures: derived.records, at: fc, roll })
+    .map((r) => (isGroundlessDefault(r) ? atOrigin(r) : r));
 
   const radiusM = live.PRESENCE_DIALS.near_radius_m, limit = live.PRESENCE_DIALS.near_cap;
   const dist = (r) => Math.hypot((r.x ?? 0) - at.x, (r.y ?? 0) - at.y);
