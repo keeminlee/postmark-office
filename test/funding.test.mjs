@@ -408,7 +408,11 @@ test("a household with holo reads four tenses that sum sanely — and holo is ne
     "one register for the funding facts, not two");
   assert.match(d.moved, /holo\.mints/, "and the read says where those facts live instead of changing shape in silence");
   assert.ok(d.tenses.teach && d.holo.teach, "every new section teaches at the point of contact");
-  assert.match(d.tenses.teach, /BURNS/, "the staked tense says out loud that a dollar-matched keeping stake burns rather than returns");
+  // AMENDED 2026-09-14 (ECONOMY-DIALS.json law_side.keeping): nothing burns.
+  // This used to assert /BURNS/ — that the staked tense said a matched keeping
+  // stake burns rather than returns. It now asserts the opposite, out loud.
+  assert.match(d.tenses.teach, /nothing burns/, "the staked tense says out loud that a keeping stake comes home whole — nothing burns");
+  assert.doesNotMatch(d.tenses.teach, /BURNS/, "the repealed sentence must not be taught");
 });
 
 test("minted · for keeping reads as its own section — no liquid coin, and no fifth tense", () => {
@@ -497,7 +501,12 @@ test("the pot board carries the landed pot file's own fields, the roll, and the 
   assert.equal(pot.patrons.roll.length, 2);
   assert.deepEqual(pot.patrons.roll.map((r) => r.patron).sort(), ["keemin", "marbinner"]);
   assert.equal(pot.escrow.staked, 6);
-  assert.match(pot.escrow.teach, /BURNS/, "the escrow teaches that a matched stake burns — support that returns is only half the story");
+  // AMENDED 2026-09-14: the escrow teaches that every stake comes home whole
+  // and that the funded share of the mass sizes the givers' mint — the reward
+  // half of the story, told without a burn.
+  assert.match(pot.escrow.teach, /comes home whole/, "the escrow teaches that a stake comes home whole");
+  assert.match(pot.escrow.teach, /minted fresh to the givers/, "and that the funded share of the mass sizes the givers' mint — support that returns is only half the story");
+  assert.doesNotMatch(pot.escrow.teach, /BURNS/, "the repealed sentence must not be taught");
   assert.ok(b.invalid_rows.list.length >= 9, "every forged and guessed-grammar row is surfaced on the community read");
   assert.ok(pot.teach && pot.patrons.teach && pot.escrow.teach && pot.receipts.teach && b.invalid_rows.teach);
 });

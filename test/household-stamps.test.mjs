@@ -232,8 +232,8 @@ test("a pot whose word is `epoch` gets the contract stated, in the pot file's ow
   const pc = ec2.stakeable.published_close;
   assert.equal(pc.word, "epoch", "the door says the word the record speaks");
   assert.equal(pc.says,
-    "at each month's close, the share of every stake that the month's dollars funded burns and splits between the stakers themselves and the payers per the keeping law (ECONOMY-DIALS.json law_side.keeping)",
-    "and states the contract in the pot file's own sentence, never a paraphrase of it");
+    "At each month's close every stake comes home whole, and the stakes size the reward: the share of the staked mass that the month's dollars funded is minted fresh to the givers by dollar share, per the keeping law (ECONOMY-DIALS.json law_side.keeping)",
+    "and states the contract in the pot file's own sentence, never a paraphrase of it (amended 2026-09-14: nothing burns)");
   // and the warning for a silent record is GONE from this pot, which is the
   // whole of what the resident found
   assert.equal("unstated" in pc, false,
@@ -255,7 +255,7 @@ test("the WHOLE point: the humble path survives, for a pot that genuinely has no
   assert.equal(hushed.word, null, "no word is a real answer, not a missing field");
   assert.equal(hushed.floor_usd, null);
   assert.equal(hushed.unstated,
-    "this pot's file names no close word — nothing in the record says when, or whether, a stake on it would burn",
+    "this pot's file names no close word — nothing in the record says when a stake on it would come home",
     "the humble sentence stands exactly as written");
   assert.equal("says" in hushed, false,
     "and no contract is stated for a pot that stated none");
@@ -397,7 +397,7 @@ test("the door quotes the planted mark bodies VERBATIM, from the world record it
 test("the stake answer and the fund read carry the menu and the mode, not a summary", () => {
   const src = readFileSync(new URL("../src/household-stamps.mjs", import.meta.url), "utf8");
   // the answer quotes both axes: the object's menu and the edge's mode
-  assert.match(src, /stakeable: \{ slot: "stakeable", value: "pot-mode — burns at the published close", mark: POT_STAKEABLE_SLOT, says: POT_STAKEABLE_BODY \}/);
+  assert.match(src, /stakeable: \{ slot: "stakeable", value: "pot-mode — returns whole at the published close", mark: POT_STAKEABLE_SLOT, says: POT_STAKEABLE_BODY \}/);
   // BOTH surfaces carry the mode — the stake's answer and the fund read's
   // consent payload. Counting matters: a single-match check stayed green when
   // the stake answer dropped its copy and the fund read kept one.
