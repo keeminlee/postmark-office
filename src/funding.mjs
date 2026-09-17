@@ -10,6 +10,7 @@
 //   - <date> · pot-receipt · pot:<pot> · rail: <stripe|usdc|grant> · usd: <n> · from: <payer> · ref: <ref>
 //   - <date> · <handle> → stake:pot/<pot> · <n> · via: <api|mail:letter-id>
 //   - <date> · stake:pot/<pot> → <handle> · <n> · for: pot-return:<epoch>
+//   - <date> · stake:pot/<pot> → <handle> · <n> · for: unstake · via: <founder|api|web>   (a stake taken back BEFORE the close — the founder's word 2026-09-17; not a close, so it never marks an epoch closed)
 //   - <date> · stake:pot/<pot> → BURN · <n> · for: keeping:<epoch> · staker: <handle>
 //   - <date> · minted · <staker> · <n> · for: keeping:<pot> · epoch:<epoch>
 //   - <date> · holo · <payer> · <n> · pot:<pot> · epoch:<epoch> · ref: <ref>
@@ -111,7 +112,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 // The town's kind strings (classifyEntry), in its own order.
-export const FUNDING_KINDS = ["pot-stake", "pot-return", "keeping-burn", "keeping-mint", "pot-receipt", "holo"];
+export const FUNDING_KINDS = ["pot-stake", "pot-return", "pot-unstake", "keeping-burn", "keeping-mint", "pot-receipt", "holo"];
 // Claimed so they can be refused by name, never parsed as good — see the σ-leg
 // note above. A retired shape that reads as silence is indistinguishable from a
 // row the door failed to notice.
@@ -173,6 +174,11 @@ const EPOCH_CLASS = String.raw`\d{4}-\d{2}`;
 const POT_RECEIPT_RE = new RegExp(String.raw`^- (\d{4}-\d{2}-\d{2}) · pot-receipt · pot:(${POT_ID_CLASS}) · rail: (stripe|usdc|grant) · usd: ([1-9]\d*) · from: (\S+) · ref: (\S+)$`);
 const POT_STAKE_RE = new RegExp(String.raw`^- (\d{4}-\d{2}-\d{2}) · (\S+) → stake:pot\/(${POT_ID_CLASS}) · ([1-9]\d*) · via: (\S+)$`);
 const POT_RETURN_RE = new RegExp(String.raw`^- (\d{4}-\d{2}-\d{2}) · stake:pot\/(${POT_ID_CLASS}) → (\S+) · ([1-9]\d*) · for: pot-return:(${EPOCH_CLASS})$`);
+// A stake taken back before the close (the town's `pot-unstake`, 2026-09-17):
+// the same movement shape as a return — escrow → the staker — but its reason
+// is `unstake` and it names how it arrived, exactly as a stake does. It is NOT
+// a close: nothing that reads closes may key on it.
+const POT_UNSTAKE_RE = new RegExp(String.raw`^- (\d{4}-\d{2}-\d{2}) · stake:pot\/(${POT_ID_CLASS}) → (\S+) · ([1-9]\d*) · for: unstake · via: (\S+)$`);
 const KEEPING_BURN_RE = new RegExp(String.raw`^- (\d{4}-\d{2}-\d{2}) · stake:pot\/(${POT_ID_CLASS}) → BURN · ([1-9]\d*) · for: keeping:(${EPOCH_CLASS}) · staker: (\S+)$`);
 const KEEPING_MINT_RE = new RegExp(String.raw`^- (\d{4}-\d{2}-\d{2}) · minted · (\S+) · ([1-9]\d*) · for: keeping:(${POT_ID_CLASS}) · epoch:(${EPOCH_CLASS})$`);
 // The count is `(\d+)`, NOT `([1-9]\d*)`, and that one character is load-bearing
@@ -196,6 +202,7 @@ export function fundingKindOf(canonical) {
   if (canonical.includes("stake:pot/")) {
     if (/→ stake:pot\//.test(canonical)) return "pot-stake";
     if (/stake:pot\/\S* → BURN\b/.test(canonical)) return "keeping-burn";
+    if (/stake:pot\/\S* → /.test(canonical) && /for: unstake( |·|$)/.test(canonical)) return "pot-unstake";
     if (/stake:pot\/\S* → /.test(canonical)) return "pot-return";
     return "pot-stake"; // arrow-free: a keeping stake that forgot it is a movement
   }
@@ -308,9 +315,17 @@ function diagnose(kind, canonical) {
       if (!m) return "a pot return is a movement out of escrow: `stake:pot/<pot> → <handle>`";
       if (!isCount(L.segs[2])) return `pot-return carries no positive whole amount, got ${JSON.stringify(L.segs[2] ?? null)}`;
       const forV = L.get("for") ?? "";
-      if (!/^pot-return:/.test(forV)) return `a stake leaves a pot for exactly two reasons, and each names itself: \`for: pot-return:<epoch>\` (unmatched, returns whole) or \`for: keeping:<epoch>\` with a BURN target (matched by dollars). Got ${JSON.stringify(forV || null)}`;
+      if (!/^pot-return:/.test(forV)) return `a stake leaves a pot for exactly three reasons, and each names itself: \`for: pot-return:<epoch>\` (the close returns it whole), \`for: unstake · via: <channel>\` (taken back before the close, 2026-09-17), or \`for: keeping:<epoch>\` with a BURN target (the pre-2026-09-14 close; nothing burns now). Got ${JSON.stringify(forV || null)}`;
       if (!isEpoch(forV.slice("pot-return:".length))) return epochReason("pot-return");
       return "pot-return has every field but not the landed order: `- <date> · stake:pot/<pot> → <handle> · <n> · for: pot-return:<epoch>`";
+    }
+    case "pot-unstake": {
+      const m = /stake:pot\/(\S+) → (\S+)/.exec(canonical);
+      if (m && !isPot(m[1])) return potReason("pot-unstake");
+      if (!m) return "a pot unstake is a movement out of escrow: `stake:pot/<pot> → <handle>`";
+      if (!isCount(L.segs[2])) return `pot-unstake carries no positive whole amount, got ${JSON.stringify(L.segs[2] ?? null)}`;
+      if (!isHandle(L.get("via"))) return "pot-unstake carries no `via:` — a stake taken back names how it was taken (founder, api, or web), exactly as the stake named how it arrived";
+      return "pot-unstake has every field but not the landed order: `- <date> · stake:pot/<pot> → <handle> · <n> · for: unstake · via: <via>`";
     }
     case "keeping-burn": {
       const m = /stake:pot\/(\S+) → BURN/.exec(canonical);
@@ -360,6 +375,11 @@ export function classifyFundingRow(canonical) {
   if (claimed === "pot-return" && (m = POT_RETURN_RE.exec(canonical))) {
     if (m[2] === TREASURY_POT) return bad(`"${TREASURY_POT}" is the reserved direct-to-town pot; it never stakes, so nothing can return from it`);
     return { kind: "pot-return", date: m[1], pot: m[2], handle: m[3], n: Number(m[4]), epoch: m[5] };
+  }
+
+  if (claimed === "pot-unstake" && (m = POT_UNSTAKE_RE.exec(canonical))) {
+    if (m[2] === TREASURY_POT) return bad(`"${TREASURY_POT}" is the reserved direct-to-town pot; it never stakes, so nothing can be taken back from it`);
+    return { kind: "pot-unstake", date: m[1], pot: m[2], handle: m[3], n: Number(m[4]), via: m[5] };
   }
 
   if (claimed === "keeping-burn" && (m = KEEPING_BURN_RE.exec(canonical))) {
@@ -429,6 +449,9 @@ export function foldFunding(entries) {
       // separate kind of row that leaves the escrow standing.
       case "pot-stake": escrow(row.pot, row.n, row.handle); break;
       case "pot-return": escrow(row.pot, -row.n, row.handle); break;
+      // a stake taken back before the close leaves the escrow the same way a
+      // return does, and closes nothing
+      case "pot-unstake": escrow(row.pot, -row.n, row.handle); break;
       // the burn names its staker in `staker:`, which the classifier hands back
       // as the row's handle — so a burned stake leaves the right books
       case "keeping-burn": escrow(row.pot, -row.n, row.handle); break;
