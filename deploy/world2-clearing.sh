@@ -105,6 +105,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 MAX_CATCHUP="${W2_MAX_CATCHUP:-6}"
 TOWN_CLONE_DIR="$WORLD2_LAB/ingest-clones/town"
+WORLD_CLONE_DIR="$WORLD2_LAB/ingest-clones/world"
 
 # PG* becomes the LAW INGESTER, for the first step the clearing shells out to
 # (world2-lib.sh § two connection shapes — the WORLD2_INGEST_URL hand-off in
@@ -215,6 +216,33 @@ for _ in $(seq 1 18); do
   sleep 5
 done
 
+# ── THE WORLD CHECKOUT THE PARCEL CAP IS READ FROM (POS-98 box 4) ───────────
+#
+# The candle's new step 5.6 asks the world's own `PARCEL_CLAIM_CAP`,
+# `PARCEL_CAP_LAW_DATE` and `PARCEL_CAP_EXCEPTIONS` out of a checkout — the same
+# route the notary already takes for `falsifier-canon-locks.mjs --world-repo`,
+# and the same clone. It is an ARGUMENT and not an env key: `WORLD_CLONE` lives
+# in /etc/postmark-office.env and this unit reads
+# /etc/postmark-world2-dev.env plus -/etc/postmark-world2-clearing.env, so an env
+# key would simply have been absent and the gate would have been quietly off.
+#
+# ⚑ A REFRESH THAT FAILS OMITS THE ARGUMENT RATHER THAN PASSING A STALE TREE,
+# and that direction is the whole judgement here. A stale checkout is not a
+# slightly-old cap — it is an old EXCEPTIONS MAP, and the exceptions are the
+# founder's individual rulings: Mari's parcel, the Reeves' gauge house, deva's
+# household's five. Asking a law that predates a grant refuses ground its owner
+# was given by name. Omitting the argument instead leaves the claim to lock and
+# the sweep to judge it, which is exactly what happens today — no worse than the
+# state this step improves on, and the window's receipt says `checked: false`
+# with the reason rather than going quiet.
+if "$HERE/world2-refresh-clone.sh" world >/tmp/w2-clearing-world.log 2>&1; then
+  WORLD_REPO_ARG=(--world-repo "$WORLD_CLONE_DIR")
+else
+  WORLD_REPO_ARG=()
+  echo "[world2-clearing] world checkout refresh FAILED — the parcel cap will not be asked this run; parcel claims lock unchecked and the sweep remains their gate. The window receipt carries \`parcel_cap.checked: false\`." >&2
+  cat /tmp/w2-clearing-world.log >&2
+fi
+
 closed=0
 last_out=""
 rc=0
@@ -229,7 +257,7 @@ for _ in $(seq 1 "$MAX_CATCHUP"); do
   # die at the call site with nothing written down.
   last_out="$(cd "$WORLD2_OFFICE" && \
     WORLD2_CLEARING_URL="$CLEARING_URL" \
-    node world2/tools/clearing-job.mjs --window "$win" --town-repo "$TOWN_CLONE_DIR" 2>&1)"
+    node world2/tools/clearing-job.mjs --window "$win" --town-repo "$TOWN_CLONE_DIR" "${WORLD_REPO_ARG[@]}" 2>&1)"
   rc=$?          # BEFORE any pipe. $? after `cmd | tee` is tee's, not the tool's.
   echo "$last_out"
 
