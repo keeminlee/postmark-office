@@ -680,8 +680,8 @@ one line, named below.
 |---|---|---|
 | `postmark-world2-clearing.timer` | `world2-clearing.sh` → `clearing-job.mjs` | 05:45 / 17:45 UTC |
 | `postmark-world2-ingest.timer` | `world2-ingest.sh` → `law-ingest.mjs` + `stamp-ingest.mjs` | every 15 min, :04/:19/:34/:49 |
-| `postmark-world2-notary.timer` | `world2-notary.sh` → `snapshot-export.mjs` + `falsifier-canon-locks.mjs` (postmark#2594, nightly — the section below) | 03:20 UTC |
-| `postmark-world2-backup.timer` | `world2-backup.sh` → `pg_dump` + ship, `pg_basebackup` | 04:10 UTC |
+| `postmark-world2-notary.timer` | `world2-notary.sh` → `snapshot-export.mjs` + `falsifier-canon-locks.mjs` (postmark#2594, nightly — the section below) | 07:20 UTC (office#83, from 03:20) |
+| `postmark-world2-backup.timer` | `world2-backup.sh` → `pg_dump` + ship, `pg_basebackup` | 08:10 UTC (office#83, from 04:10) |
 
 All four carry rows in `deploy/box-rollcall-manifest.json`. `world2-restore-rehearse.sh`
 is a hand-run, deliberately: it drops and recreates a database, and nothing that
