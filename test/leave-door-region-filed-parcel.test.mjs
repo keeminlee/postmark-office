@@ -270,6 +270,24 @@ test("a parcel filed AT ITS ID bounces identically — the filing is not what th
     "identical to LEG 2. If the region filing were the cause, this leg would go through and LEG 2 would not.");
 });
 
+// ── LEG 6 · the cap's own law, which no fix here may loosen ─────────────────
+//
+// GREEN BOTH WAYS, on purpose. It is the control on the proposed `!amending`:
+// a guard that skipped the cap for an amendment must still refuse NEW ground,
+// or the one-line fix would quietly repeal the cap instead of scoping it. This
+// leg fails the moment the cap stops asking of a fresh claim.
+
+test("CONTROL: a genuinely NEW parcel for the same household is still refused at the cap", async () => {
+  const out = await leave({
+    slug: "the-fifth-plot", kind: "parcel", by: "reader",
+    at: { x: 1500, y: 1500 }, body: "new ground, not an amendment",
+  }, HOUSE);
+  assert.equal(out.code, 403, `the cap must still hold for new ground, got ${JSON.stringify(out)}`);
+  assert.match(out.defect, /already holds 4 parcels/,
+    "FOUR here — nothing is excluded, because this slug names no standing mark. The same arithmetic that showed Current `four` when his flat WAS excluded from five.");
+  assert.match(out.hint, /capped at 3 per household/);
+});
+
 // ── LEG 5 · the amend's landing path ────────────────────────────────────────
 
 test("and the path was never in doubt: gate A resolves the <by>/<slug> id to the EXISTING region file, no twin", async () => {
